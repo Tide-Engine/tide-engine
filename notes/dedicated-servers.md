@@ -44,7 +44,8 @@ introduced. Managed/sandboxed hosting and the inactive build service are separat
 The subsequent agreed managed-hosting design is recorded in
 [managed-hosting.md](managed-hosting.md): local artifact builds/uploads, WASM
 match isolation, simulation compatibility, persistent recovery and prepaid
-billing. It is planned work and does not change the native implementation below.
+billing. That first workflow is implemented locally, but has not been deployed.
+Native C globals remain process-wide; managed WASM isolates them per match.
 
 ## Implementation and ownership
 
@@ -55,8 +56,9 @@ client, view/event presentation, GUI or audio. Matches update in slot order,
 sharing one jobs pool for systems within ticks. C globals and native crashes
 remain process-wide; match-specific C state belongs in a world/context.
 
-The outer envelope is hosting version 1, separate from the unchanged session
-protocol. Requests carry an attempt nonce, target match (zero creates), bounded
+The outer envelope is now hosting version 2, alongside session protocol 15.
+Requests carry a 32-byte Simulation ID checked before authorization/allocation,
+an attempt nonce, target match (zero creates), bounded
 credentials and create parameters. Responses carry a result, assigned match and
 route. A route is bound to its originating peer and one match; payloads cannot
 select another match. IDs include slot/generation and are not reused within a
@@ -90,7 +92,9 @@ tide_server_player_identity/tide_hosting_player_identity expose that metadata
 only to the C host. This changes no tide_game or generated-runtime callback,
 inner protocol, snapshot or world hash. Ordinary sessions without this callback
 keep their existing cookie semantics. Identity-aware host migration and restoring
-identity metadata after process restart are not implemented.
+identity metadata after process restart were not part of the original native
+host. The later managed launcher uses host-only recovery metadata to restore
+identities/cookies on the same release; native service persistence remains absent.
 
 ## Standard service and clients
 

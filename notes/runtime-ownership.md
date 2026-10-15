@@ -1,5 +1,19 @@
 # Runtime written by Claude for now
 
+## Managed hosting and simulation identity (2026-10-15)
+
+The owner requested implementation of local deployment, isolated WASM matches,
+prepaid billing and durable recovery. The existing temporary session/hosting
+exception includes `tide_game.simulation[32]`, protocol 15 HELLO negotiation,
+hosting envelope 2 and the handwritten managed reactor launcher. New host-only
+`tide_server_recovery`/getter and descriptor identities restore reconnect
+cookies/identities, pending players, seed, dt, start and admission metadata;
+`tide_session_fail_message` provides actionable host admission failures.
+Generated Tide calls no new runtime function. World packing/hashes and game
+save content remain separate from host metadata. Earlier statements below
+about unchanged protocol/ABI describe the original native-host increment.
+Full contracts, ownership, validation and launch gaps: managed-hosting.md.
+
 ## Dedicated hosting (2026-10-15)
 
 The owner approved multiple headless matches per process, match IDs, separate

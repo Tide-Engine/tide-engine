@@ -20,8 +20,9 @@ int main(const int argc, char **argv)
     if (!(room ? tide_platform_room_join(argv[1], &transport, &server)
                : tide_platform_resolve(argv[1], 7777, &server) && tide_platform_udp_open(0, &transport))) return 2;
     double now = (double)tide_time_now_ns() * 1e-9;
-    const tide_hosting_client_desc d = {.transport = transport, .server = server,
+    tide_hosting_client_desc d = {.transport = transport, .server = server,
         .nonce = tide_platform_entropy(), .secure = room};
+    memcpy(d.simulation, tide_game_api.simulation, 32);
     tide_hosting_client *admission = tide_hosting_client_create(&d, now);
     if (!admission) return 2;
     tide_client *client = NULL;

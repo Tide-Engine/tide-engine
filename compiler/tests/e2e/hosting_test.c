@@ -39,8 +39,9 @@ static void begin(const bool anonymous, const tide_net_conditions conditions)
 
 static void request_match(const int i, const uint64_t match)
 {
-    const tide_hosting_client_desc d = {.transport = tide_loopback_endpoint(net, (uint32_t)i + 2u),
+    tide_hosting_client_desc d = {.transport = tide_loopback_endpoint(net, (uint32_t)i + 2u),
         .server = tide_loopback_address(1), .match = match, .nonce = 100u + (uint64_t)i};
+    memcpy(d.simulation, tide_game_api.simulation, 32);
     admissions[i] = tide_hosting_client_create(&d, now);
 }
 
@@ -229,6 +230,7 @@ TIDE_TEST(hosting_credentials_require_transport_protection_and_requests_are_boun
     const uint8_t token[] = {1, 2, 3};
     tide_hosting_client_desc d = {.transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1),
         .nonce = 123, .credential = token, .credential_size = sizeof token};
+    memcpy(d.simulation, tide_game_api.simulation, 32);
     TIDE_CHECK(!tide_hosting_client_create(&d, now));
     d.secure = true; // Even a lying client cannot bypass the host's transport check.
     admissions[0] = tide_hosting_client_create(&d, now);
@@ -237,14 +239,15 @@ TIDE_TEST(hosting_credentials_require_transport_protection_and_requests_are_boun
     TIDE_CHECK(authorizations == 0);
     TIDE_CHECK(tide_hosting_match_count(host) == 0);
     tide_transport raw = tide_loopback_endpoint(net, 3);
-    uint8_t bytes[40] = {0};
+    uint8_t bytes[80] = {0};
     tide_writer w = {.data = bytes, .capacity = sizeof bytes};
     tide_write_u32(&w, UINT32_C(0x48534454));
-    tide_write_u8(&w, 1);
+    tide_write_u8(&w, 2);
     tide_write_u8(&w, 1);
     tide_write_u16(&w, 0);
     tide_write_u64(&w, 456);
     tide_write_u64(&w, 0);
+    tide_write_bytes(&w, tide_game_api.simulation, 32);
     tide_write_u16(&w, UINT16_MAX);
     tide_write_u16(&w, UINT16_MAX);
     for (uint32_t n = 0; n <= w.size; n++) raw.send(raw.self, tide_loopback_address(1), bytes, n);

@@ -1,0 +1,6 @@
+node_modules
+data
+*.test.mjs
+fixtures.mjs
+README.md
+*.log

@@ -159,6 +159,13 @@ if(TIDE_WEB)
         "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libc.a" "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libm.a"
         DESTINATION wasi/sysroot/lib/${TIDE_WASI_TARGET} COMPONENT tide)
     install(FILES "${TIDE_WASI_BUILTINS}" DESTINATION wasi RENAME libclang_rt.builtins.a COMPONENT tide)
+    # Managed matches are reactors with isolated, non-shared memory, rather
+    # than browser programs using wasi-threads.
+    install(DIRECTORY "${TIDE_WASI_SYSROOT}/include/wasm32-wasip1" DESTINATION wasi/sysroot/include COMPONENT tide
+        PATTERN c++ EXCLUDE)
+    install(FILES "${TIDE_WASI_SYSROOT}/lib/wasm32-wasip1/crt1-reactor.o"
+        "${TIDE_WASI_SYSROOT}/lib/wasm32-wasip1/libc.a" "${TIDE_WASI_SYSROOT}/lib/wasm32-wasip1/libm.a"
+        DESTINATION wasi/sysroot/lib/wasm32-wasip1 COMPONENT tide)
 elseif(MINGW)
     # tide builds Windows games for MinGW, with this C runtime (see
     # cmake/mingw-toolchain.cmake): every C header, since a game's C can include

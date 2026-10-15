@@ -25,7 +25,12 @@ tide <command> [folder] [options]
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
 | `tide help` | Lists every option |
+| `tide login` / `tide logout` | Authorizes or revokes this CLI's hosting access through the browser |
+| `tide deploy [folder]` | Locally builds and uploads a web client and WASM server; `--server-only` omits the client, `--bundle-only` only builds |
 | `tide cc <options>` | clang, built into tide, for C you build yourself (see [Calling C](../c/functions.md#where-the-c-goes)) |
+
+Managed deployment, project selection, prepaid credit and current availability
+are described in [Managed hosting](../multiplayer/hosting.md).
 
 ## open
 

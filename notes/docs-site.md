@@ -1,5 +1,15 @@
 # The docs site
 
+Managed hosting guide (2026-10-15): multiplayer/hosting.md and the docs sidebar
+describe login/deploy, server-only bundles, Simulation ID admission and lifetime/
+save controls. The account dashboard is served by hosting/ on a separate origin
+from game pages and the existing docs app. GitHub OAuth/Stripe integration and
+Fly configuration do not deploy or add billing to the docs server. No extra
+main-site header navigation or fake account data was added. Contracts, screenshot
+validation and launch requirements are recorded in managed-hosting.md.
+The browser compiler receives the same source toolchain identity through CMake
+as native tools, rather than using the fallback unidentified-toolchain value.
+
 ## Playground compiler ABI and Docs toolchain (2026-10-14)
 
 Run 38555232799 exposed the cause hidden by the earlier generic timeout:

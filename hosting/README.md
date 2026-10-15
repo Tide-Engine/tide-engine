@@ -1,0 +1,204 @@
+# Tide managed hosting
+
+This is the first single-host implementation of local builds, artifact upload,
+WASM matches, developer accounts and prepaid credit. It has not been launched.
+The checked-in Fly configuration disables allocations. Rates, provider secrets,
+domains and operational launch checks must be configured before paid use.
+
+## Run and validate
+
+Use Node 24.16 or newer. From this directory:
+
+```sh
+npm ci
+npm test
+npm start
+```
+
+The dashboard is `http://localhost:8081`; games use `http://127.0.0.1:8081`.
+These must remain different origins. Production requires two HTTPS origins.
+GitHub OAuth is invite-only, with no repository scopes. Configure an OAuth app
+with callback `https://console.tide-engine.dev/auth/callback`, then supply
+`TIDE_GITHUB_CLIENT_ID` and `TIDE_GITHUB_CLIENT_SECRET`.
+
+Invite the immutable numeric GitHub account ID, rather than a mutable username:
+
+```sh
+node admin.mjs invite 123456
+node admin.mjs status
+node admin.mjs allocations off
+```
+
+`allocations off` blocks creation **and resumption**, without stopping already
+paid matches. `allocations on` removes this database block; environment limits
+still apply. `freeze <github-id>` saves/suspends that account's matches;
+`unfreeze` is an explicit operator decision after reviewing an incident.
+There is no public invitation, free-credit or infrastructure-provisioning API.
+
+The service tests use disposable databases and test payment responses. To run
+the installed-toolchain and real browser cases as well, set `TIDE_STAGED_CLI`
+to this checkout's staged `tide` executable and `TIDE_BROWSER` to Chrome/Edge.
+`TIDE_HOSTING_EVIDENCE` optionally saves desktop/phone dashboard captures.
+The browser test passes `--mute-audio`, uses a disposable profile and terminates
+the browser. No real GitHub login, Stripe payment or Fly resource is needed.
+
+## Developer workflow
+
+```sh
+tide login
+tide deploy --project my-game
+tide deploy --project my-game --server-only
+tide deploy --bundle-only
+tide logout
+```
+
+`deploy` defaults to the current folder, creates a Small/one-match project if
+the selected name doesn't exist, and builds release artifacts locally. It
+returns the immutable release ID, playable URL, room endpoint and dashboard.
+`--server-only` uploads no web client. `--bundle-only` requires no account and
+writes `.tide/deploy/release.tide-deploy`. No source is uploaded or built remotely.
+The default service is `https://console.tide-engine.dev`; set `TIDE_HOSTING_URL`
+to a configured HTTPS origin, or a localhost origin for development.
+
+CLI approval uses a short-lived browser code and a secret one-time polling token.
+Access lasts 30 days and is revocable. Credentials are bound to the service
+origin; Windows stores them encrypted with the current user's DPAPI, and POSIX
+uses a private folder/file. `TIDE_HOSTING_TOKEN` can supply a CLI token in CI.
+Do not put tokens in project files or command-line arguments.
+
+The dashboard controls capacity, lifetime, empty grace, client-requested
+creation, match suspension/end/resume, save downloads, release deletion, logs,
+recovery activity and credit. CPU measurements are fractions of one core; WASM
+memory reports linear memory, excluding the surrounding service/runtime.
+
+## Trusted creation
+
+Client creation is initially allowed, within paid account/project/global limits.
+Disable it in the project dashboard for trusted orchestration. Generate a
+project-scoped runtime credential there and keep it on the trusted backend:
+
+```http
+POST /api/projects/<project-id>/matches
+Authorization: Bearer <runtime-credential>
+Content-Type: application/json
+
+{}
+```
+
+The response includes `id` and `endpoint` (`ROOMID/<match-id>`). Optional
+`parameters` is base64, at most 512 decoded bytes. Runtime credentials expire
+after 30 days, can be revoked and cannot publish artifacts, buy credit, access
+developer accounts or control another project's matches. They can use
+`/api/matches/<id>/suspend`, `/end`, `/resume`, `/policy`, `/logs` and `/save`.
+`POST /policy` takes `lifetime: "occupied" | "explicit"` and `emptySeconds`.
+Match IDs select a world; they do not authenticate a player. Managed player
+accounts/credential verification are not part of this first service.
+
+## Game entry and saves
+
+Managed matches use the ordinary generated simulation/session engine, without
+views, a local player, a window or audio devices. Match `Main` is automatic.
+For a local menu, define `tide_server_entry` and its `start` callback as described
+in `docs/c/network.md`. Select a generated typed `tide_start` there. Guard this
+server C with `#ifdef TIDE_SERVER_BUILD` before including `game.h`; clients do
+not need these callbacks. All game C/libraries must also build for WASM.
+
+Native `authorize`, `secure_peer`, `ready` and `poll` hooks are rejected inside
+managed instances. Trusted process orchestration belongs in the service/API;
+each guest instance owns one match, rather than a native multiplexing process.
+
+Optional game-owned durable payload callbacks, supplied together:
+
+```c
+uint32_t tide_managed_write_save(const void *world, uint8_t *out, uint32_t capacity);
+bool tide_managed_read_save(void *zeroed_world, const uint8_t *data, uint32_t size);
+```
+
+Writing with `out == NULL` returns the required size. A subsequent call writes
+that many bytes and returns the same size. Loading initializes a zeroed world
+and restores it, returning false on failure. Without callbacks, the service
+uses generated world packing as an **exact-release checkpoint**, with no
+cross-release compatibility promise. The host adds reconnect metadata outside
+world bytes. Saves are limited to 8 MiB including this envelope.
+
+Explicit worlds save at startup and every 60 seconds, before normal suspension,
+and during graceful shutdown. A trap restores the last completed save on the
+same release/ID with 1/2/4-second backoff, at most three consecutive recovery
+attempts; five healthy minutes reset the count. Explicitly ended/payment-suspended worlds stay stopped. Incidents and
+save timestamps appear in the dashboard. There is no email notification yet.
+Publishing new code affects new matches; upgrading existing worlds is deferred.
+
+## Resource and payment policy
+
+Current defaults are provisional operator settings, rather than language rules:
+
+| Limit | Initial policy |
+|---|---|
+| Active matches | 2 per account and host; project chooses 1–2 |
+| Match presets | Small: 64 MiB/0.25 core/20 ms update; Standard: 128 MiB/0.5 core/40 ms |
+| Fly memory reservation ceiling | 128 MiB across active matches on the fixed 512 MiB machine |
+| Empty grace | 60 seconds, configurable 5–3600 |
+| Startup/save deadline | 5 seconds; guest update overruns terminate that worker |
+| Prepaid reservation | 30 seconds, renew with 5 seconds left for shutdown |
+| Saved worlds | 8/account, 16/host, at most 8 MiB each |
+| Save retention | 7 days after becoming inactive, with a final-day warning |
+| Projects/releases | 3 projects and 6 releases/account; 32 projects/host |
+| Artifact storage | 64 MiB/account, 512 MiB/host; 32 MiB upload/8 MiB WASM |
+| Daily creation | 200/account, 1000/host, including failed starts |
+| Daily outgoing transfer | 1 GiB/account **and** host, reserved before sending |
+| Peers | 64/host, 32/project; packet/queue/fragment limits are also enforced |
+
+Allocation time is charged using integer millionths of a minor currency unit:
+100,000,000 units = EUR 1. Configure `TIDE_HOSTING_SMALL_RATE` and
+`TIDE_HOSTING_STANDARD_RATE` in those units **per allocated second**. Zero
+disables allocation. Unused whole seconds are returned on settlement; starting
+a match consumes at least the elapsed rounded-up second. Traffic/storage are
+included within hard allowances in this version, with no unannounced overage.
+Transfer counts cover application payloads; they are not physical provider
+traffic measurements or an exact infrastructure currency ceiling. Guest logs
+are in-memory (100 lines for at most 32 matches); incidents persist in SQLite.
+
+Configure `TIDE_STRIPE_SECRET`, `TIDE_STRIPE_WEBHOOK_SECRET` and
+`TIDE_HOSTING_TOPUPS` (comma-separated minor-unit amounts; 500–100000 each).
+Currency defaults to EUR (`TIDE_HOSTING_CURRENCY`). Use Stripe test mode first.
+Register `/webhooks/stripe` for `checkout.session.completed`,
+`checkout.session.async_payment_succeeded`, `charge.refunded` and
+`charge.dispute.created`. Raw webhook signatures, provider state, exact amount,
+currency and account are checked; replay adds credit once. Refunds/disputes
+freeze hosting pending review, including events delivered out of order.
+Browser redirects never grant credit. No postpaid usage or auto top-up exists.
+
+Low credit produces dashboard incidents. Exhaustion stops new allocations,
+saves explicit worlds and suspends them. Resume requires credit/capacity.
+Inactive saves expire; download them before expiry. Old releases cannot be
+deleted while running/saved worlds need them. Detailed allocation ledger and
+unsaved ended-match records retain 30 days; older usage becomes exact daily
+totals. Payment fulfillment/deduplication records remain intact.
+
+## Fly setup and launch boundary
+
+`fly.toml` targets the existing Fly organization/relay setup, using a separate
+`tide-hosting` app, one `fra` machine, a `hosting_data` volume and separate
+console/game domains. Do not put it in the docs app or reuse the docs volume.
+Create a small volume (at least 1 GiB) and configure DNS/certificates for both
+domains, provider secrets, measured rates, top-up amounts and invites. Deploy
+from this directory with `fly deploy --ha=false`; keep the machine count at one.
+The service has no Fly API token or autoscaling/provisioning capability.
+
+The existing relay must supply working TURN credentials for this NAT-hosted
+service; verify real remote native/browser players through TURN before launch.
+Local loopback tests do not establish Fly NAT reachability. No dedicated public
+UDP allocation is required by this initial WebRTC path.
+
+Only after provider test-mode fulfillment/refunds, remote connectivity, restart
+and restore drills, host RSS/CPU/traffic measurements, external save/database
+backup and customer-facing rates/retention are reviewed should allocations be
+enabled (`TIDE_HOSTING_ACCEPTING=1`, plus `admin.mjs allocations on`). A single
+volume is not high availability or an independent backup. No paid resources or
+production payments were created by implementation validation.
+
+Unbuilt: multiple host machines/regions, email notifications, managed player
+auth, cross-release save upgrades, remote builds, native client auto-updates,
+auto top-up and reusable compiled-module caching. WASM memory/import validation
+and worker interruption are exercised locally; the surrounding Node/native RTC
+service still needs production security/operational review.

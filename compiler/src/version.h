@@ -8,6 +8,7 @@
 
 // The version as written, like "0.3.0-nightly.2".
 const char *tide_version_text(void);
+const char *tide_simulation_runtime(void);
 
 // Whether this tide is major.minor.patch or newer.
 bool tide_version_at_least(int major, int minor, int patch);

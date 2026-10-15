@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>Hosting · Tide</title>
+    <link rel="stylesheet" href="/dashboard.css">
+    <script src="/dashboard.js" type="module"></script>
+</head>
+<body>
+    <header><a class="brand" href="https://tide-engine.dev">tide<span> / hosting</span></a><div id="identity"></div></header>
+    <main>
+        <div id="notice" role="status" aria-live="polite"></div>
+        <section id="welcome" class="welcome">
+            <p class="eyebrow">FROM YOUR MACHINE TO YOUR PLAYERS</p>
+            <h1>A home for your<br>next multiplayer game.</h1>
+            <p>Deploy your game, run matches, and keep track of your hosting in one place.</p>
+            <a class="button primary" href="/auth/github">Continue with GitHub <span aria-hidden="true">↗</span></a>
+            <p class="muted small">Hosting is currently invite-only. Charges use prepaid credit.</p>
+        </section>
+        <div id="account" hidden>
+            <section id="device" class="panel" hidden>
+                <p class="eyebrow">CONNECT YOUR TERMINAL</p><h2>Authorize Tide CLI</h2>
+                <p>Only approve this request if you just ran <code>tide login</code> and the code matches your terminal.</p>
+                <form id="device-form"><label>Login code<input name="code" required pattern="[A-Fa-f0-9]{10}" maxlength="10" autocomplete="off"></label><button class="primary">Authorize this CLI</button></form>
+            </section>
+            <section class="intro"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>Hosting</h1><p class="muted">Your games, their worlds, and what they cost.</p></div><button id="refresh">Refresh</button></section>
+            <section class="summary" aria-label="Hosting overview">
+                <article><span class="muted">Prepaid credit</span><strong id="balance">—</strong><span class="small muted">Usage comes out of this balance.</span></article>
+                <article><span class="muted">Running matches</span><strong id="running">—</strong><span class="small muted" id="capacity"></span></article>
+                <article><span class="muted">Hosting region</span><strong id="region">—</strong><span class="small muted">One region per deployment.</span></article>
+            </section>
+            <section class="workspace">
+                <div>
+                    <section class="panel"><div class="section-title"><h2>Projects</h2><span class="muted small">Build locally. Share a link.</span></div><div id="projects"></div>
+                        <details class="create"><summary>Create a project</summary><form id="project-form">
+                            <label>Project name<input name="name" placeholder="my-game" required pattern="[a-z][a-z0-9-]{0,47}" maxlength="48"></label>
+                            <div class="fields"><label>Match size<select name="preset" id="presets"></select></label><label>Maximum matches<input type="number" name="maximum" value="1" min="1" id="maximum" required></label></div>
+                            <label>World lifetime<select name="lifetime"><option value="occupied">End after players leave</option><option value="explicit">Run until explicitly ended</option></select></label>
+                            <label>Empty grace (seconds)<input name="emptySeconds" type="number" min="5" max="3600" value="60" required></label>
+                            <p class="small muted">Long-lived worlds keep running while empty and use credit until suspended or ended.</p><button class="primary">Create project</button>
+                        </form></details>
+                    </section>
+                    <section class="panel"><h2>Matches</h2><div id="matches"></div><pre id="logs" hidden aria-label="Match logs"></pre></section>
+                    <section class="panel"><h2>Activity</h2><div id="activity"></div></section>
+                </div>
+                <aside>
+                    <section class="panel"><p class="eyebrow">KEEP THINGS RUNNING</p><h2>Add hosting credit</h2><form id="credit-form"><label>Credit amount<select name="amount" id="topups"></select></label><button class="primary" id="checkout">Continue to payment ↗</button></form><p class="small muted">Checkout is handled by Stripe. Credit is added after payment is confirmed.</p></section>
+                    <section class="panel policy"><h2>You control the limit.</h2><p>Matches grow on demand up to your capacity limit.</p><p>When credit runs low, new matches stop. When it runs out, long-lived worlds save and suspend.</p><p id="retention"></p></section>
+                    <section class="panel"><h2>Recent usage &amp; credit</h2><div id="ledger"></div></section>
+                </aside>
+            </section>
+        </div>
+    </main>
+    <footer><span>Tide hosting · Early access</span><a href="https://tide-engine.dev/tools/cli">CLI documentation ↗</a></footer>
+</body>
+</html>

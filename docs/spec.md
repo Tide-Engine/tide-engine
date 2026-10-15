@@ -3730,8 +3730,37 @@ provide bounded credentials over protected transports to the game's verifier;
 acceptance binds an opaque identity to the match's `PlayerID`, including
 reconnects. Current ownership, limits and callbacks are documented in
 `docs/c/network.md` and `notes/dedicated-servers.md`. There is no new Tide syntax.
-Account providers, process restart persistence, native crash isolation and
-sandboxed managed hosting are outside this implementation.
+Native process restart persistence and native crash isolation remain outside
+that native host. Sandboxed managed execution is a separate service below.
+
+### Managed hosting and compatibility
+
+**Decided:** build client/server artifacts locally by default; upload exact
+immutable releases, with a server-only option. Match admission uses an automatic
+simulation identity rather than manually maintained versions. Match code,
+transitive helpers, schemas/defaults/settings, simulation-read assets and the
+toolchain participate; presentation-only code/assets can be excluded. Custom C
+and libraries are conservative inputs initially. Release identity and simulation
+compatibility are distinct. No production hot reload or native client code
+delivery is implied.
+
+**Provisional, implemented:** `tide login/logout/deploy`, GitHub developer OAuth,
+Stripe prepaid fulfillment and the single-host Fly service in `hosting/`.
+Each match runs inside a worker-owned WASM instance with bounded imports,
+memory and execution. Project-scoped runtime credentials can control matches
+without publishing authority. Default occupied lifetime has an empty grace;
+explicit worlds save/recover on their original release and stable ID, subject
+to credit, capacity and finite save retention. Game C may supply save/load
+callbacks; the default checkpoint has exact-release scope. Concrete interfaces,
+operator limits, tests and unbuilt production/operational work are recorded in
+`notes/managed-hosting.md` and `hosting/README.md`. This adds no Tide syntax and
+does not declare a publicly launched hosting service.
+
+Generated `tide_game.simulation`/`TIDE_SIMULATION_ID` use a canonical checked
+simulation graph plus normalized compiler/runtime source identity. Session
+protocol 15 checks it; `tide_game.hash` retains its layout/hot-reload role.
+Dedicated admission protocol 2 checks simulation identity before creation.
+Mismatches use the existing Refused reason with update guidance in the message.
 
 ## Settings
 

@@ -1,5 +1,12 @@
 # The standard host: runs with no window, the stats, debug views
 
+Managed hosting (2026-10-15): `managed_run.h` is a separate single-threaded WASI
+reactor launcher without rendering, platform devices or a local client. Ordinary
+host admission copies `tide_game.simulation` into protocol 2 and reports a clear
+update message on mismatch. The session protocol independently checks it too.
+Typed native entry starts are reused; unsupported native process hooks fail
+closed. Contracts/tests/launch limits: managed-hosting.md.
+
 Dedicated service (2026-10-15): serve.h/server_run.h run authoritative matches
 without the graphics capture host or any local player/view/audio. The ordinary
 host recognizes Connect("host:port/id") and built-in Join("room/id"), with 0

@@ -1,5 +1,15 @@
 # Assets and local files
 
+Simulation identity (2026-10-15): simulation-read assets contribute source
+digests and canonical imported skinned data/external buffer digests to the new
+Simulation ID. Presentation-only assets do not. Ordinary simulation-read asset
+edits now set assets_affect_match and trigger regeneration in watch mode;
+pack-only reload remains available for visual-only assets. The server computes
+identity before pruning, so its reduced pack and full client agree. Custom C
+remains conservative for server pack retention and includes every packed asset
+in compatibility, since C reads cannot be inferred. Compiler regression tests cover
+visual/simulation text edits. Full contracts/tests: managed-hosting.md.
+
 Dedicated server packs (2026-10-15): closed server builds keep simulation asset
 dependencies and omit client-only assets after computing the client's unchanged
 compatibility identity. C projects retain all assets unless explicitly opting in.

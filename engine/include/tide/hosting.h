@@ -21,6 +21,7 @@ typedef enum tide_hosting_result {
     TIDE_HOSTING_NOT_FOUND,
     TIDE_HOSTING_TIMED_OUT,
     TIDE_HOSTING_INVALID,
+    TIDE_HOSTING_WRONG_VERSION,
 } tide_hosting_result;
 
 typedef struct tide_hosting_request {
@@ -84,6 +85,7 @@ typedef struct tide_hosting_client_desc {
     tide_address server;
     uint64_t match; // 0 creates; nonzero joins.
     uint64_t nonce; // Fresh nonzero unpredictable value per attempt.
+    uint8_t simulation[32]; // Generated game's compatibility identity.
     const uint8_t *credential;
     uint32_t credential_size;
     const uint8_t *parameters;
