@@ -9,13 +9,13 @@ static const char *const inside_out_solutions[18] = {
     "EEEWWWWW n EEEESEE",
     "WWENNN ee EESSWNSWWN e ennwseswwwee WNNESWSEEENNNWWN ess",
     "w EENNEEESSWWEESESWWWNWNWWW",
-    "S ee E esenss E n EN sws",
-    "wnnnss N s EES eeennwwseneswwse NWS e NWE n WS eswne S e",
-    "N ee NNNES w W w",
+    "S n EEENE seee NSSWS s",
+    "wnnnss N s EES eeennwwseneswwse NWES e NWES neeswwne S e",
+    "N ee NNNES w WE w",
     "EN nne EESE nws",
     "EE neee EEEEE n E",
     "E ssssn SSSSSS e SNN wnnn",
     "SN nwwsessennn SN nsssss",
     "E s EEEESENNNN n NW s EEEWWW snn",
-    "E s EESEENEN es N n N w SSWWSWNW nesw EWWSSWWNN n"
+    "E s EESEENEN es N n N w SSSWWSWNW nesw EWWSSWWNN n"
 };

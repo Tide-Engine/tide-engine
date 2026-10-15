@@ -84,8 +84,16 @@ if(TIDE_WEB)
                     "${CMAKE_CURRENT_BINARY_DIR}/captures/materials-${backend}" "${backend}" "materials")
             set_tests_properties(inside_out_materials_${backend} PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE
                 LABELS "private-prototype" SKIP_REGULAR_EXPRESSION "SKIPPED:")
+            add_test(NAME inside_out_shutters_${backend}
+                COMMAND "${CMAKE_COMMAND}" -E env "TIDE_BROWSER=${TIDE_BROWSER}" "${TIDE_NODE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/test/browser.mjs"
+                    "$<TARGET_FILE_DIR:inside_out>/inside_out.html"
+                    "${CMAKE_CURRENT_BINARY_DIR}/captures/shutters-${backend}" "${backend}" "shutters")
+            set_tests_properties(inside_out_shutters_${backend} PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE
+                LABELS "private-prototype" SKIP_REGULAR_EXPRESSION "SKIPPED:")
         endforeach()
         set_tests_properties(inside_out_play_webgpu PROPERTIES LABELS "private-prototype;webgpu")
         set_tests_properties(inside_out_materials_webgpu PROPERTIES LABELS "private-prototype;webgpu")
+        set_tests_properties(inside_out_shutters_webgpu PROPERTIES LABELS "private-prototype;webgpu")
     endif()
 endif()

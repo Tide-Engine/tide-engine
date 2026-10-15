@@ -383,7 +383,7 @@ bool MenuBack(Rect card)
 
 struct Preferences
 {
-    int version = 2;
+    int version = 3;
     float master = 1;
     float music = .8;
     float effects = 1;
@@ -423,10 +423,13 @@ view ReadPreferences(mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
             mixer.muted = saved.muted;
             hands.reduceMotion = saved.reducedMotion;
             hands.preview = saved.preview;
-            var completed = saved.completed & ((1 << LEVEL_COUNT) - 1);
+            mut var completed = saved.completed & ((1 << LEVEL_COUNT) - 1);
             // Version 2 replaces puzzles 7–13 and 15–18. Keep old ticks only
             // for unchanged puzzles, while retaining every personal setting.
-            hands.completed = saved.version < 2 ? completed & (((1 << 6) - 1) | (1 << 13)) : completed;
+            if (saved.version < 2) completed &= ((1 << 6) - 1) | (1 << 13);
+            // The physical shutter rule changes solutions 10–12 and 18.
+            if (saved.version < 3) completed &= ~((1 << 9) | (1 << 10) | (1 << 11) | (1 << 17));
+            hands.completed = completed;
         }
     }
     hands.savedPreferences = Json.Write(CurrentPreferences(lobby, mixer, hands));
