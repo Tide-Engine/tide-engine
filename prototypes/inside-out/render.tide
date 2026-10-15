@@ -11,6 +11,9 @@ struct SceneObject
     // 1 for a surface that gives its own light: it is drawn in its paint
     // whatever the lamp and the shadows say.
     float glow;
+    SurfaceRole surface = SurfaceRole.Prop;
+    float2 surfaceOrigin;
+    float surfaceTile = 1;
 }
 
 local singleton SceneRender
@@ -47,6 +50,10 @@ local singleton SceneRender
     float tile;
     float depthSpan;
     float lampTexel;
+    int look = -1;
+    float3 fillTint;
+    float3 lampTint;
+    float shadowSoftness = 1;
 }
 
 struct SceneBlurStep { float2 direction; }
@@ -106,6 +113,18 @@ frag SceneFill(SceneVertex vertex, out Color material, out Color normal, Instanc
     if (!SceneCovered(this.world, render.screenSize, object.aperture, object.apertureSide, object.groundHeight, object.tone.a)) this.Discard();
     var facing = instance.Normal(vertex.normal);
     material = Color(object.tone.r, object.tone.g, object.tone.b);
+    if (render.look >= 0 && object.glow < .5 && object.surface != SurfaceRole.Prop)
+    {
+        var foot = float2(this.world.x + render.screenSize.x * .5,
+            render.screenSize.y * .5 - this.world.z * SCENE_SIN - object.groundHeight * SCENE_COS);
+        var uv = (foot - object.surfaceOrigin) / Math.Max(.001, object.surfaceTile);
+        var height = (this.world.y - object.groundHeight) / Math.Max(.001, object.surfaceTile);
+        var study = ChapterMaterial(float3(object.tone.r, object.tone.g, object.tone.b),
+            float3(uv.x, height, uv.y), facing, object.surface, render.look, object.surfaceTile);
+        // Keep alpha nonzero: the material attachment is data, and the final
+        // lighting pass restores occupied pixels to full opacity.
+        material = Color(study.x, study.y, study.z, .5 + study.w * .5);
+    }
     // The alpha is the occurrence's metric scale. Copy blending and point
     // reads keep the floating normal data separate from material opacity.
     // No visible face looks down, so the normal's height is implied and its
@@ -244,7 +263,7 @@ float2 SceneDisc(int index)
 // pixel, so a shadow's edge is a soft band rather than a stair. The point is
 // lifted off its surface by more than a texel of the lamp's map, however
 // small its room: less than that and a flat miniature floor shadows itself.
-float SceneSun(DepthTexture shadow, float4x4 toLamp, float4x4 fromLamp, float3 world, float3 normal, float scale, float tile, float3 direction, float texel, float turn)
+float SceneSun(DepthTexture shadow, float4x4 toLamp, float4x4 fromLamp, float3 world, float3 normal, float scale, float tile, float3 direction, float texel, float turn, float softness)
 {
     var slope = 1 - Math.Max(0, Math.Dot(normal, -direction));
     var bias = Math.Max(texel * 1.6, Math.Min(scale * 0.016, texel * 6)) * (1 + slope);
@@ -252,7 +271,7 @@ float SceneSun(DepthTexture shadow, float4x4 toLamp, float4x4 fromLamp, float3 w
     var uv = float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
     var depth = clip.z / clip.w * 0.5 + 0.5;
     if (uv.x < 0 || uv.y < 0 || uv.x > 1 || uv.y > 1 || depth < 0 || depth > 1) return 1;
-    var reach = 5.2 / 4096;
+    var reach = 5.2 / 4096 * softness;
     var axis = Math.Mul(fromLamp, float4(0, 0, 2, 0));
     var depthSlope = Math.Dot(normal, float3(axis.x, axis.y, axis.z));
     var across = float2(Math.Cos(turn), Math.Sin(turn));
@@ -292,7 +311,7 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     var ao = render.occlusion.Sample(uv, Filter.Bilinear).r;
     var facing = Math.Max(0, Math.Dot(normal, -render.lightDirection));
     var sunlight = SceneSun(render.shadow, render.toLamp, render.fromLamp, point, normal, encoded.a * render.tile, render.tile,
-        render.lightDirection, render.lampTexel, speck * Math.TAU);
+        render.lightDirection, render.lampTexel, speck * Math.TAU, render.shadowSoftness);
     var below = render.normals.Sample(uv + float2(0, 1 / render.screenSize.y), Filter.Point);
     var lip = normal.y > 0.9 && below.a >= 0.005 && SceneNormal(below).y < 0.5 ? 1.12 : 1.0;
     // A drawn edge: slightly darker where the surface behind is a real step
@@ -305,6 +324,24 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     var tint = Math.Lerp(float3(0.74, 0.86, 1.12), float3(1.06, 1.0, 0.88), Math.SmoothStep(0.22, 0.80, shade));
     var paint = float3(material.r, material.g, material.b);
     mut var lit = float3(paint.x * shade * tint.x, paint.y * shade * tint.y, paint.z * shade * tint.z);
+    if (render.look >= 0)
+    {
+        var ambient = .52 * ao * ao;
+        var direct = .62 * facing * sunlight;
+        var illumination = (render.fillTint * ambient + render.lampTint * direct) *
+            ((encoded.b * 2) * lip * grain * contour);
+        lit = paint * illumination;
+        // A restrained studio reflection gives enamel and glaze a different
+        // response from timber. No reflection is added to gameplay props.
+        var satin = material.a < .99 ? Math.Max(0, (material.a - .5) * 2) : 0;
+        var view = float3(0, SCENE_SIN, -SCENE_COS);
+        var halfLight = Math.Normalize(-render.lightDirection + view);
+        var highlight = Math.Pow(Math.Max(0, Math.Dot(normal, halfLight)), 32);
+        // The broad reflected softbox is fixed in the world and changes
+        // continuously as a board moves or the camera enters a room.
+        var softbox = .65 + .35 * MaterialNoise(float2(point.x, point.z) / Math.Max(160, render.screenSize.y * .8));
+        lit += render.lampTint * (highlight * satin * .28 * softbox * sunlight * ao);
+    }
     if (normal.y > 0.9)
     {
         // A painted wall colours what lies at its foot: six looks around,
@@ -327,7 +364,7 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
         var plain = (cast.x + cast.y + cast.z) / 3;
         lit += paint * (cast - float3(plain)) * shade;
     }
-    color = Color(Math.Min(1, lit.x), Math.Min(1, lit.y), Math.Min(1, lit.z), material.a);
+    color = Color(Math.Min(1, lit.x), Math.Min(1, lit.y), Math.Min(1, lit.z), 1);
 }
 
 // What glows, for the bloom: the lit picture where a mark gives its own
@@ -415,9 +452,19 @@ void RenderScene(List<SceneVertex> vertices, List<int> indices, List<SceneObject
 }
 
 [Stage(ArtStage.Board, 1)]
-view SceneLighting(Sculpture sculpture, mut SceneRender render)
+view SceneLighting(Sculpture sculpture, Workshop workshop, Time time, Rooms.Lobby lobby, mut SceneRender render)
 {
     if (!render.pending) return;
+    // Keep the camera and pieces updating in Workbench, but avoid drawing
+    // the entire 3D scene behind the transition's fully opaque name hold.
+    // Prepare the targets/shaders once before the first reveal.
+    if (render.ready && lobby.page == Rooms.Page.Playing && Together(workshop))
+    {
+        var age = time.tick - workshop.openedTick;
+        var named = !workshop.puzzle.solved && age >= 0 && age < workshop.introTicks;
+        var ending = workshop.puzzle.solved && workshop.solvedTick >= 0 && time.tick - workshop.solvedTick >= CLOSE_TICKS;
+        if (named || ending) return;
+    }
     if (!render.ready)
     {
         render.scene = RenderTarget.Window(Format.Rgba8, Format.Rgba16f);
@@ -435,6 +482,10 @@ view SceneLighting(Sculpture sculpture, mut SceneRender render)
         render.ready = true;
     }
     render.screenSize = float2(Screen.width, Screen.height);
+    render.look = sculpture.look;
+    render.fillTint = ChapterFill(render.look);
+    render.lampTint = ChapterLamp(render.look);
+    render.shadowSoftness = render.look < 0 ? 1 : ChapterShadow(render.look);
     render.lightDirection = SceneLightDirection();
     var clip = Rect(render.board.x, render.board.y, render.board.z, render.board.w);
     var focus = float3(render.focusPixels.x - Screen.width * 0.5, 0,

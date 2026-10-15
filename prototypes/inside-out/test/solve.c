@@ -20,6 +20,9 @@
 //       before it.
 //   inside_out_solve all [--limit <positions>]
 //       The shortest search on every puzzle, as a table.
+//   Add --no-battery-plates or --keep-docked for a design counterfactual:
+//       forbid batteries on plates, or any departure from an occupied dock.
+//       Exhaustion proves impossibility only under that additional rule.
 //
 // Levels are numbered from 1, as the game shows them. A search stops at
 // --limit distinct positions (30,000,000 unless given, about 30 bytes
@@ -64,6 +67,10 @@ static const char *const ROBOTS[2] = {"Amber", "Teal"};
 
 static tide_world world;
 static int world_level = -1;
+// Design probes remove one strategy without changing the production rules.
+// A failed bounded search is never an impossibility proof.
+static bool no_battery_plates;
+static bool keep_docked;
 
 // What levels.tide says of a puzzle, handed over by test/solve.tide's
 // Describe handler.
@@ -215,6 +222,24 @@ static bool in_place(const LevelLayout *const layout, const Puzzle *const puzzle
             (puzzle->rooms.at[box].room != inside->dockRoom || !same_cell(puzzle->rooms.at[box].position, inside->dock)))
             return false;
     }
+    return true;
+}
+
+static bool strategy_allowed(const LevelLayout *const layout, const Puzzle *const from, const Puzzle *const to)
+{
+    if (no_battery_plates)
+        for (int battery = 0; battery < battery_count(layout); battery++) {
+            const Cargo cargo = to->crates.at[battery];
+            const Tile tile = tile_at(layout, cargo.room, cargo.position);
+            if (cargo.active && (tile == Tile_PlateA || tile == Tile_PlateB)) return false;
+        }
+    if (keep_docked)
+        for (int box = 0; box < box_count(layout); box++) {
+            const RoomLayout room = layout->rooms.at[box];
+            const RoomShell before = from->rooms.at[box], after = to->rooms.at[box];
+            if (room.dock.x >= 0 && before.room == room.dockRoom && same_cell(before.position, room.dock)
+                && (after.room != before.room || !same_cell(after.position, before.position))) return false;
+        }
     return true;
 }
 
@@ -437,9 +462,13 @@ static Outcome explore(const Setup *const setup, Search *const search, const uin
             Puzzle to;
             outcome.tried++;
             if (!step(&from, seat, (int)(move & 3u), &to)) continue;
+            if (!strategy_allowed(&setup->layout, &from, &to)) continue;
             if (!add(search, key_of(setup, &to), index << 3 | move)) continue;
             if (alone) {
-                if (!outcome.found && in_place(&setup->layout, &to)) outcome.found = true;
+                if (!outcome.found && in_place(&setup->layout, &to)) {
+                    outcome.found = true;
+                    outcome.solution = search->count - 1;
+                }
             } else if (to.solved) {
                 outcome.found = true;
                 outcome.solution = search->count - 1;
@@ -617,6 +646,8 @@ static void print_title(const int level)
     if (!describe(level)) return;
     printf("Puzzle %d of %d: %s (chapter %d, %s)\n%s\n", level + 1, words.puzzles, words.name, words.chapter + 1,
         words.chapter_name, words.lesson);
+    if (no_battery_plates) puts("Design probe: battery placement on either channel's plate is forbidden.");
+    if (keep_docked) puts("Design probe: a box may not leave an outline after occupying it.");
 }
 
 static Search search;
@@ -685,6 +716,12 @@ static int alone_level(const int level, const int seat, const uint32_t limit)
     char label[48], positions[32], most[32];
     snprintf(label, sizeof label, "Puzzle %d, %s alone", level + 1, ROBOTS[seat]);
     const Outcome outcome = explore(&setup, &search, limit, true, label);
+    if (outcome.found && outcome.solution > 0) {
+        int length = 0;
+        char *const moves = moves_to(&search, outcome.solution, &length);
+        printf("Alone placement witness (%d moves): %s\n", length, moves);
+        free(moves);
+    }
     printf("%s (seat %d) alone, %s off the board: every battery seated, every socket filled and every box on its outline "
            "is %s.\n",
         ROBOTS[seat], seat, ROBOTS[1 - seat], outcome.found ? "REACHABLE" : outcome.exhausted ? "unreachable" : "not reached");
@@ -738,6 +775,7 @@ static int usage(void)
           "inside_out_solve <level> --alone <seat> [--limit <positions>]\n"
           "inside_out_solve <level> --play \"<moves>\"\n"
           "inside_out_solve all [--limit <positions>]\n"
+          "Design probes: --no-battery-plates or --keep-docked remove that strategy from search.\n"
           "Levels count from 1; moves are NESW for Amber (seat 0), nesw for Teal (seat 1).\n",
         stderr);
     return 2;
@@ -767,6 +805,8 @@ int main(const int argc, char **const argv)
     long long limit = DEFAULT_LIMIT;
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--print") == 0) print = true;
+        else if (strcmp(argv[i], "--no-battery-plates") == 0) no_battery_plates = true;
+        else if (strcmp(argv[i], "--keep-docked") == 0) keep_docked = true;
         else if (strcmp(argv[i], "--alone") == 0 && i + 1 < argc) {
             long long seat = 0;
             if (!read_number(argv[++i], 0, 1, &seat)) {

@@ -7,12 +7,13 @@ tide_add_game(inside_out_tests SOURCES game.tide levels.tide test/cues.tide NAME
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/simulation.c test/campaign.c)
 target_include_directories(inside_out_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME inside_out_tests COMMAND inside_out_tests)
-set_tests_properties(inside_out_tests PROPERTIES TIMEOUT 120 LABELS "private-prototype")
+set_tests_properties(inside_out_tests PROPERTIES TIMEOUT 300 LABELS "private-prototype")
 
 add_executable(inside_out_invite_test invite.c test/invite.c)
 target_link_libraries(inside_out_invite_test PRIVATE tide_flags)
 set(invite_fallback "https://tide-engine.dev/prototypes/inside-out/")
 add_test(NAME inside_out_invite_fallback COMMAND inside_out_invite_test "${invite_fallback}")
+add_test(NAME inside_out_preview_baseline COMMAND inside_out_invite_test "${invite_fallback}" "--expect-look=-1")
 if(TIDE_WEB)
     add_test(NAME inside_out_invite_local COMMAND inside_out_invite_test
         "http://127.0.0.1:8790/prototypes/inside-out/"
@@ -27,6 +28,13 @@ if(TIDE_WEB)
     string(REPEAT "x" 2100 invite_long_path)
     add_test(NAME inside_out_invite_overlong COMMAND inside_out_invite_test "${invite_fallback}"
         "--inside-out-invite-base=https://preview.example/${invite_long_path}")
+    foreach(look RANGE 0 4)
+        add_test(NAME inside_out_preview_selected_${look} COMMAND inside_out_invite_test "http://127.0.0.1:8790/prototypes/inside-out/"
+            "--inside-out-invite-base=http://127.0.0.1:8790/prototypes/inside-out/"
+            "--inside-out-look=${look}" "--expect-look=${look}")
+    endforeach()
+    add_test(NAME inside_out_preview_invalid COMMAND inside_out_invite_test "${invite_fallback}"
+        "--inside-out-look=-1" "--inside-out-look=5" "--inside-out-look=1junk" "--expect-look=-1")
 endif()
 
 # The puzzle solver and inspector (usage at the top of test/solve.c), a
@@ -44,6 +52,15 @@ if(NOT TARGET tide_platform)
 endif()
 set(TIDE_WEB_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/web.html")
 tide_add_game(inside_out SOURCES ${INSIDE_OUT_SOURCES} invite.c ${INSIDE_OUT_ROOMS} STATS)
+if(TIDE_NODE AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    add_test(NAME inside_out_materials_native
+        COMMAND "${CMAKE_COMMAND}" -E env "TIDE_HIDDEN=1" "${TIDE_NODE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/materials-native.mjs"
+            "$<TARGET_FILE:inside_out>" "${CMAKE_CURRENT_BINARY_DIR}/captures/materials-native")
+    set_tests_properties(inside_out_materials_native PROPERTIES TIMEOUT 150 RUN_SERIAL TRUE)
+    tide_gpu_test(inside_out_materials_native)
+    set_property(TEST inside_out_materials_native APPEND PROPERTY LABELS "private-prototype")
+endif()
 if(TIDE_WEB)
     set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/inside-out")
     add_custom_target(inside_out_page
@@ -60,7 +77,15 @@ if(TIDE_WEB)
                     "${CMAKE_CURRENT_BINARY_DIR}/captures/${backend}" "${backend}")
             set_tests_properties(inside_out_play_${backend} PROPERTIES TIMEOUT 1500 RUN_SERIAL TRUE
                 LABELS "private-prototype" SKIP_REGULAR_EXPRESSION "SKIPPED:")
+            add_test(NAME inside_out_materials_${backend}
+                COMMAND "${CMAKE_COMMAND}" -E env "TIDE_BROWSER=${TIDE_BROWSER}" "${TIDE_NODE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/test/browser.mjs"
+                    "$<TARGET_FILE_DIR:inside_out>/inside_out.html"
+                    "${CMAKE_CURRENT_BINARY_DIR}/captures/materials-${backend}" "${backend}" "materials")
+            set_tests_properties(inside_out_materials_${backend} PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE
+                LABELS "private-prototype" SKIP_REGULAR_EXPRESSION "SKIPPED:")
         endforeach()
         set_tests_properties(inside_out_play_webgpu PROPERTIES LABELS "private-prototype;webgpu")
+        set_tests_properties(inside_out_materials_webgpu PROPERTIES LABELS "private-prototype;webgpu")
     endif()
 endif()

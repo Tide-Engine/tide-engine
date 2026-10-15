@@ -14,8 +14,12 @@ const int MAX_CRATES = 8;
 const int MAX_DEPTH = 8;
 const int LEVEL_COUNT = 18;
 const int UNDO_LIMIT = 128;
-const int SOLVE_TICKS = 72;
-const int REVEAL_TICKS = 24;
+const int CLOSE_TICKS = 36;
+const int NAME_FADE_TICKS = 12;
+const int NAME_HOLD_TICKS = 90;
+const int INTRO_TICKS = NAME_FADE_TICKS * 2 + NAME_HOLD_TICKS;
+const int SOLVE_TICKS = CLOSE_TICKS + INTRO_TICKS;
+const int REVEAL_TICKS = 36;
 
 // A plate and a shutter for each of two channels, A and B.
 enum Tile { Floor, Wall, Target, Exit, PlateA, ShutterA, PlateB, ShutterB }
@@ -76,6 +80,7 @@ singleton Workshop
     int completed;
     int solvedTick = -1;
     int openedTick;
+    int introTicks;
     bool initialized;
     Map<PlayerID, int> seats;
     PlayerID[2] players;
@@ -495,7 +500,9 @@ void Remember(mut Workshop workshop, Puzzle before)
 }
 void OpenLevel(mut Workshop workshop, int level, int tick)
 {
-    workshop.level = Math.Clamp(level, 0, LEVEL_COUNT - 1);
+    var next = Math.Clamp(level, 0, LEVEL_COUNT - 1);
+    workshop.introTicks = !workshop.initialized || workshop.level != next ? INTRO_TICKS : 0;
+    workshop.level = next;
     LoadLevel(workshop.level, workshop.layout, workshop.puzzle);
     workshop.historyCount = 0;
     workshop.solvedTick = -1;
@@ -532,9 +539,11 @@ system ContinueWorkshop(mut Workshop workshop, Time time)
     if (workshop.solvedTick < 0) workshop.solvedTick = time.tick;
     if (!Together(workshop) || workshop.level >= LEVEL_COUNT - 1 || time.tick - workshop.solvedTick < SOLVE_TICKS) return;
     OpenLevel(workshop, workshop.level + 1, time.tick);
+    // Its name has already held on the closed aperture before this switch.
+    workshop.introTicks = 0;
     Send(PuzzleCue { kind = 4, seat = -1 });
 }
-event(PlayerJoined joined) JoinWorkshop(mut Workshop workshop)
+event(PlayerJoined joined) JoinWorkshop(mut Workshop workshop, Time time)
 {
     if (SeatOf(workshop, joined.player) >= 0) return;
     mut var seat = -1;
@@ -551,6 +560,13 @@ event(PlayerJoined joined) JoinWorkshop(mut Workshop workshop)
     workshop.players[seat] = joined.player;
     workshop.present[seat] = true;
     workshop.serial += 1;
+    // Both players must get the readable hold, even after a long absence.
+    if (Together(workshop))
+    {
+        if (workshop.puzzle.solved) workshop.solvedTick = time.tick;
+        else if (workshop.puzzle.moves == 0 && workshop.introTicks > 0)
+            workshop.openedTick = time.tick;
+    }
 }
 event(PlayerLeft left) LeaveWorkshop(mut Workshop workshop)
 {

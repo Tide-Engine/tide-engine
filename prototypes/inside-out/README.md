@@ -66,6 +66,17 @@ completion ticks are saved on this machine. Escape opens the in-game menu;
 your partner's match keeps running. Reset and changing an active puzzle ask
 before clearing the shared moves.
 
+This revision rebuilds puzzles 7–13 and 15–18. Their old completion ticks
+are cleared; personal settings and unchanged puzzles' ticks carry over.
+
+The review build includes five proposed chapter materials. Press **F6** or
+choose **Settings → Appearance preview** to compare painted wood, enamel and
+aluminium, industrial metal, ceramic, and a finished stone/walnut exhibit
+on the current puzzle. **Original appearance** restores the current game.
+Each player chooses independently; the choice lasts only for this run.
+The browser also accepts `?look=1` through `?look=5`. These are art studies
+for review, so chapters still use the original appearance by default.
+
 ## The rules
 
 One rule moves everything: robots, batteries and boxes.
@@ -104,10 +115,14 @@ One rule moves everything: robots, batteries and boxes.
 Shared undo takes back the last successful action, whoever made it, and
 retains 128 actions. Reset restores the complete starting arrangement.
 After solving, the game holds the completed arrangement briefly, then
-opens the next puzzle automatically. Each new arrangement is revealed before
-movement begins. Undo or restart cancels an outstanding transition. The last
-puzzle remains on its completed ending. Losing a participant stops gameplay
-and advancement until both seats are present again.
+closes the view and holds the next puzzle's name clearly for three seconds
+before opening it automatically. The name appears only during this transition;
+the playing header keeps the chapter and puzzle count. Each new arrangement
+is revealed before movement begins. Restarting the same puzzle uses a short
+reveal without repeating its name. Undo or restart cancels an outstanding
+transition. The last puzzle remains on its completed ending. Losing a participant stops gameplay
+and advancement; reconnecting restarts an outstanding name hold so both
+players have time to read it.
 
 ## Development
 
@@ -150,7 +165,10 @@ Enable `TIDE_PRIVATE_PROTOTYPES` when configuring the repository. Build
 `inside_out` and `inside_out_tests` with the native and web debug presets.
 `inside_out_page` stages the web build into the public prototype directory.
 `inside_out_play_webgl` and `inside_out_play_webgpu` test two real browser
-players with muted audio. The campaign test replays checked-in witnesses
+players with muted audio. `inside_out_materials_native`,
+`inside_out_materials_webgl`, and `inside_out_materials_webgpu` compare all
+five material studies, check exact original restoration, and retain captures.
+The campaign test replays checked-in witnesses
 through production commands; it establishes solvability, not optimality
 or measured human difficulty. `inside_out_solve`, a native tool for drawing
 puzzles, moves through the same Move handler: `inside_out_solve 3` finds
@@ -158,3 +176,9 @@ puzzle 3's shortest solution, `--print` shows its maps, `--alone <seat>`
 asks whether one robot can do it alone, `--play "<moves>"` plays moves, and
 `inside_out_solve all` tabulates every puzzle (usage at the top of
 `test/solve.c`). Contracts and validation: `notes/inside-out.md`.
+
+For puzzle design, `--no-battery-plates` removes solutions that use a battery
+to power a plate, and `--keep-docked` prevents moving a box off its outline
+once parked. These probes use the production movement rules. An exhausted
+search can establish that the removed strategy is necessary; reaching a
+search limit cannot establish impossibility.
