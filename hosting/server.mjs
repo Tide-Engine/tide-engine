@@ -21,9 +21,10 @@ export async function createService(config, options = {}) {
     const matches = new Matches(store, bundles, join(config.folder, 'saves'), config);
     const maintenance = new Maintenance(store, bundles, join(config.folder, 'saves'), config);
     const rate = new RateLimits(store.now);
-    const dashboard = await readFile(new URL('./web/dashboard.html', import.meta.url));
-    const script = await readFile(new URL('./web/dashboard.js', import.meta.url));
-    const style = await readFile(new URL('./web/dashboard.css', import.meta.url));
+    // adapter-node passes the IncomingMessage through event.platform.req.
+    // Use a private, server-controlled protocol header after validating Host.
+    process.env.TIDE_CONSOLE_PROTOCOL_HEADER = 'x-tide-console-protocol';
+    const { handler: frontend } = await import('./build/handler.js');
     let uploading = false, timer, closing = false, cleanupAt = 0;
     const rooms = options.rooms === null ? null : options.rooms || new Rooms(store, matches, config);
     const hasClient = (project, release) => Boolean(release && JSON.parse(store.release(project, release)?.manifest || '{}').files?.some(f => f.name === 'client.html'));
@@ -36,6 +37,15 @@ export async function createService(config, options = {}) {
         memoryBytes: matches.running.get(match.id)?.worker?.memoryBytes || 0,
         cpuFraction: matches.running.get(match.id)?.worker?.cpuFraction ?? null,
         created: match.created, updated: match.updated, players: matches.running.get(match.id)?.players || 0 });
+    const accountView = account => ({ id: account.id, login: account.login, balance: account.balance,
+        csrf: account.kind === 'browser' ? account.csrf : undefined, currency: config.currency,
+        topups: config.topups, region: config.region, presets: config.presets,
+        maximum: config.accountMatches, accepting: config.accepting && store.allocationsEnabled(), retentionDays: config.retentionDays,
+        incidents: store.incidents(account.id), projects: store.projects(account.id).map(urls),
+        releases: store.db.prepare('SELECT r.project,r.id,r.created,r.bytes FROM releases r JOIN projects p ON p.id=r.project WHERE p.account=? ORDER BY r.created DESC').all(account.id),
+        credentials: store.db.prepare('SELECT s.hash,s.project,t.expires FROM service_tokens s JOIN tokens t ON t.hash=s.hash WHERE t.account=? AND t.expires>?').all(account.id, store.now()),
+        matches: store.matches(account.id).map(safeMatch),
+        ledger: store.db.prepare('SELECT amount,reference,created FROM ledger WHERE account=? ORDER BY id DESC LIMIT 50').all(account.id) });
     const security = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
         'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY',
         'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" };
@@ -85,13 +95,18 @@ export async function createService(config, options = {}) {
                 response.end(html.slice(0, bootAt + 9) + boot + html.slice(bootAt + 9)); return;
             }
             for (const [name, value] of Object.entries(security)) response.setHeader(name, value);
-            if (method === 'GET' && ['/', '/dashboard', '/device'].includes(url.pathname)) {
-                response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(dashboard); return;
-            }
-            if (method === 'GET' && ['/dashboard.js', '/dashboard.css'].includes(url.pathname)) {
-                const js = url.pathname.endsWith('.js');
-                response.writeHead(200, { 'Content-Type': js ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8' });
-                response.end(js ? script : style); return;
+            const pageRoute = ['/', '/dashboard', '/device', '/__data.json', '/dashboard/__data.json', '/device/__data.json'].includes(url.pathname);
+            if (['GET', 'HEAD'].includes(method) && (pageRoute || url.pathname.startsWith('/_app/')
+                || ['/favicon.svg', '/theme.js', '/inter-latin.woff2', '/Inter-LICENSE.txt'].includes(url.pathname))) {
+                request.tideHostingAccount = null;
+                if (pageRoute) {
+                    try {
+                        const identity = auth.authenticate(request);
+                        if (identity.kind === 'browser') request.tideHostingAccount = accountView(identity);
+                    } catch (error) { if (!(error instanceof ServiceError && error.status === 401)) throw error; }
+                }
+                request.headers['x-tide-console-protocol'] = new URL(config.origin).protocol.slice(0, -1);
+                await frontend(request, response); return;
             }
             if (method === 'GET' && url.pathname === '/auth/github') {
                 rate.take(`oauth/${ip}`, 10);
@@ -143,15 +158,7 @@ export async function createService(config, options = {}) {
                 return json(response, 200, { ok: true });
             }
             if (method === 'GET' && url.pathname === '/api/account') {
-                return json(response, 200, { id: account.id, login: account.login, balance: account.balance,
-                    csrf: account.kind === 'browser' ? account.csrf : undefined, currency: config.currency,
-                    topups: config.topups, region: config.region, presets: config.presets,
-                    maximum: config.accountMatches, accepting: config.accepting && store.allocationsEnabled(), retentionDays: config.retentionDays,
-                    incidents: store.incidents(account.id), projects: store.projects(account.id).map(urls),
-                    releases: store.db.prepare('SELECT r.project,r.id,r.created,r.bytes FROM releases r JOIN projects p ON p.id=r.project WHERE p.account=? ORDER BY r.created DESC').all(account.id),
-                    credentials: store.db.prepare('SELECT s.hash,s.project,t.expires FROM service_tokens s JOIN tokens t ON t.hash=s.hash WHERE t.account=? AND t.expires>?').all(account.id, store.now()),
-                    matches: store.matches(account.id).map(safeMatch),
-                    ledger: store.db.prepare('SELECT amount,reference,created FROM ledger WHERE account=? ORDER BY id DESC LIMIT 50').all(account.id) });
+                return json(response, 200, accountView(account));
             }
             if (method === 'POST' && url.pathname === '/api/checkout') {
                 rate.take(`checkout/${account.id}`, 5);
@@ -251,6 +258,19 @@ export async function createService(config, options = {}) {
             }
             throw new ServiceError(404, 'Hosting endpoint not found.');
         } catch (error) {
+            if (!response.headersSent && request.method === 'GET'
+                && request.headers.host === new URL(config.origin).host
+                && ['/auth/github', '/auth/callback'].includes(request.url.split('?')[0])) {
+                const reason = error instanceof ServiceError && error.status === 403 ? 'restricted'
+                    : error instanceof ServiceError && error.status === 400 ? 'expired' : 'unavailable';
+                const targetCookie = auth.secure ? '__Host-tide-login-target' : 'tide-login-target';
+                const code = cookie(request, targetCookie);
+                const target = /^[A-F0-9]{10}$/.test(code || '') ? `/device?code=${code}&signin=` : '/?signin=';
+                for (const [name, value] of Object.entries(security)) response.setHeader(name, value);
+                response.writeHead(303, { Location: target + reason, 'Set-Cookie': [
+                    setCookie(auth.stateCookie, '', 0, auth.secure), setCookie(targetCookie, '', 0, auth.secure),
+                ] }); response.end(); return;
+            }
             if (!response.headersSent) json(response, error instanceof ServiceError ? error.status : 500,
                 { error: error instanceof ServiceError ? error.message : 'The hosting request failed. Try again shortly.' });
             else response.destroy();
