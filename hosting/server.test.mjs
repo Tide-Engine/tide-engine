@@ -127,6 +127,10 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     });
     assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: deployHeaders, data: bundle })).status, 201);
     assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: cli, data: bundle })).status, 201);
+    const playablePage = await call('/dashboard', { headers: browser });
+    assert.match(playablePage.text, /class="button primary play-game"/);
+    assert.ok(playablePage.text.indexOf('Play game') < playablePage.text.indexOf('Create runtime credential'));
+    assert.ok(playablePage.text.includes(`>${config.gamesOrigin}/g/${project.id}/</a>`));
     assert.equal((await call(`/g/${project.id}/`, { host: '127.0.0.1:8081' })).status, 402);
     assert.equal((await call(`/api/projects/${project.id}/matches`, { method: 'POST', headers: cli, data: {} })).status, 402);
     service.store.createPayment('cs_local', account.id, 1000, 'eur');
