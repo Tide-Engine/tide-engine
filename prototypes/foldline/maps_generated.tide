@@ -67,10 +67,10 @@ void BuildMapReception(Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -13, 13, 4.4, 5.4, -9, 9, CEILING_TILE, false, 2);
     var map_west = Fill(arena, -13, -12, -2, 4.4, -9, 9, WALLPAPER, true, 0);
     var map_east = Fill(arena, 12, 13, -2, 4.4, -9, 9, WALLPAPER, true, 0);
-    Fill(arena, -13, -9, -2, 4.4, -9, -8, PANELS, false, 0);
-    Fill(arena, -3, 13, -2, 4.4, -9, -8, PANELS, false, 0);
-    Fill(arena, -13, 3, -2, 4.4, 8, 9, PANELS, false, 0);
-    Fill(arena, 9, 13, -2, 4.4, 8, 9, PANELS, false, 0);
+    Fill(arena, -13, -10, -2, 4.4, -9, -8, PANELS, false, 0);
+    Fill(arena, -2, 13, -2, 4.4, -9, -8, PANELS, false, 0);
+    Fill(arena, -13, 2, -2, 4.4, 8, 9, PANELS, false, 0);
+    Fill(arena, 10, 13, -2, 4.4, 8, 9, PANELS, false, 0);
     Fill(arena, -0.2, 0.2, 0, 4.4, -8, 0, PANELS, false, 4);
     Fill(arena, -0.4, 0.4, 0, 4.4, 0, 8, CONCRETE, false, 0);
     Fill(arena, 9.2, 9.8, 0, 4.4, 2, 6.6, PANELS, false, 0);

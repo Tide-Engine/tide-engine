@@ -935,7 +935,8 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
                         quaternion.LookRotation(face, float3(0, 1, 0)), out var found))
     {
         foreach (var entity in found)
-            if (world.Has<Piece>(entity)) blocked = true;
+            if (world.Has<Piece>(entity) || world.Has<Prop>(entity) || world.Has<Mover>(entity)
+                || world.Has<Gate>(entity) || world.Has<Door>(entity)) blocked = true;
     }
     if (overlaps || blocked)
         return shot;
@@ -1421,6 +1422,7 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena, q
         body.position = center;
         body.velocity = velocity;
         scale = cube.scale * ratio;
+        this.Snap();
         fold.Snap();
     }
     if (center.y < -8)

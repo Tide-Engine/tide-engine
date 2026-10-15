@@ -147,8 +147,7 @@ Entity Raise(Arena arena, float3 center, float3 size, float paint, bool takes = 
 // is kind 2, and so is a floor with a room under it, which is a roof to the light.
 Entity Fill(Arena arena, float x0, float x1, float y0, float y1, float z0, float z1, float paint, bool takes = false, int kind = 0)
 {
-    var seam = !takes && x1 - x0 > 1 && z1 - z0 > 1 && y1 - y0 <= 2.5 ? 0.06 : 0.0;
-    return Raise(arena, float3((x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5), float3(x1 - x0 + seam, y1 - y0, z1 - z0 + seam), paint, takes, kind,
+    return Raise(arena, float3((x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5), float3(x1 - x0, y1 - y0, z1 - z0), paint, takes, kind,
                  kind == 2 ? 0.833 : 0.5);
 }
 
@@ -157,17 +156,21 @@ Entity Fill(Arena arena, float x0, float x1, float y0, float y1, float z0, float
 // the plane `Doorway` gives: the place's wall there leaves that gap.
 void LiftShell(Arena arena, float3 at, float yaw)
 {
-    Raise(arena, LiftPoint(at, yaw, float3(0, -0.5, 0)), TurnSize(float3(6, 1, 5.4), yaw), CONCRETE, false, 5);
-    Raise(arena, LiftPoint(at, yaw, float3(-3.5, 2.2, 0)), TurnSize(float3(1, 4.4, 5.4), yaw), PANELS, false, 5);
-    Raise(arena, LiftPoint(at, yaw, float3(3.5, 2.2, 0)), TurnSize(float3(1, 4.4, 5.4), yaw), PANELS, false, 5);
+    // The floor ends at the room's floor boundary, rather than continuing
+    // underneath it. Posts, side panels and the back also meet at their edges.
+    Raise(arena, LiftPoint(at, yaw, float3(0, -0.5, -.06)), TurnSize(float3(8, 1, 4.32), yaw), CONCRETE, false, 5);
+    Raise(arena, LiftPoint(at, yaw, float3(-3.5, 2.2, 0)), TurnSize(float3(1, 4.4, 3.12), yaw), PANELS, false, 5);
+    Raise(arena, LiftPoint(at, yaw, float3(3.5, 2.2, 0)), TurnSize(float3(1, 4.4, 3.12), yaw), PANELS, false, 5);
     Raise(arena, LiftPoint(at, yaw, float3(0, 2.2, -2.72)), TurnSize(float3(8, 4.4, 1), yaw), PANELS, false, 5);
     Raise(arena, LiftPoint(at, yaw, float3(0, 4.2, 2.1)), TurnSize(float3(6, 0.4, 1), yaw), PANELS, false, 5);
-    Raise(arena, LiftPoint(at, yaw, float3(0, 4.9, 0)), TurnSize(float3(8, 1, 4.2), yaw), CEILING_TILE, false, 5, 0.833);
-    // The room's opening is eight metres wide, the shutter six: solid jambs fill the metre each side.
-    for (var end = -1; end <= 1; end += 2)
-        for (var side = -1; side <= 1; side += 2)
-            Raise(arena, LiftPoint(at, yaw, float3(side * 3.5, 2.2, 2.1 * end)), float3(1.08, 4.4, 1.08), PANELS, false, 5);
-    Raise(arena, LiftPoint(at, yaw, float3(0, -0.5, 2.1)), TurnSize(float3(6.08, 1, 1.2), yaw), CONCRETE, false, 5);
+    // A real cabin lining sits below the room ceiling, not in its same plane.
+    Raise(arena, LiftPoint(at, yaw, float3(0, 4.8, -.31)), TurnSize(float3(8, 1, 3.82), yaw), CEILING_TILE, false, 5, 0.833);
+    // The room's opening is eight metres wide; the shutter clears six.
+    for (var side = -1; side <= 1; side += 2)
+    {
+        Raise(arena, LiftPoint(at, yaw, float3(side * 3.5, 2.2, 2.1)), TurnSize(float3(1, 4.4, 1.08), yaw), PANELS, false, 5);
+        Raise(arena, LiftPoint(at, yaw, float3(side * 3.5, 2.2, -1.89)), TurnSize(float3(1, 4.4, .66), yaw), PANELS, false, 5);
+    }
 }
 
 // The middle of a lift's doorway at its floor, in the plane of the place's wall.

@@ -656,6 +656,8 @@ static void reticle_checks(void)
     select_place(0);
 }
 
+#include "zfight_render.c"
+
 static int render_checks(void *user, float seconds)
 {
     (void)user;
@@ -734,6 +736,7 @@ static int render_checks(void *user, float seconds)
     lamp_and_fog_checks();
     transition_checks();
     reticle_checks();
+    zfight_render_checks();
 
     tide_draw_forget(&draw);
     tide_draw_free(&draw);

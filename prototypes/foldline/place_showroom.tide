@@ -9,15 +9,15 @@ void BuildShowroom(Arena arena, mut Place place)
     // The extra three metres before the maze are a safe, physical observation
     // landing. InMaze excludes it, including both bodies in the arrival lift.
     Fill(arena, -12, 12, -1, 0, -12, 12, CARPET);
-    Fill(arena, -12, -6, -1, 0, -15.1, -11.9, CARPET);
-    Fill(arena, -13, -12, -2, 4.4, -15.6, 13, PANELS);
-    Fill(arena, 12, 13, -2, 4.4, -13, 13, PANELS);
-    Fill(arena, -6, -5, -2, 4.4, -15.6, -12, PANELS);
+    Fill(arena, -12, -6, -1, 0, -15, -12, CARPET);
+    Fill(arena, -13, -12, -2, 4.4, -14.46, 13, PANELS);
+    Fill(arena, 12, 13, -2, 4.4, -13, 11.46, PANELS);
+    Fill(arena, -6, -5, -2, 4.4, -14.46, -13, PANELS);
     Fill(arena, -9, -6, 0, 3.8, -12.15, -11.95, PANELS, false, 4);
     Fill(arena, -6, 13, -2, 4.4, -13, -12, PANELS);
-    Fill(arena, -13, 6, -2, 4.4, 12, 13, PANELS);
+    Fill(arena, -13, 5, -2, 4.4, 12, 13, PANELS);
     Fill(arena, -13, 13, 4.4, 5.4, -13, 13, CEILING_TILE, false, 2);
-    Fill(arena, -13, -5, 4.4, 5.4, -15.6, -12, CEILING_TILE, false, 2);
+    Fill(arena, -13, -5, 4.4, 5.4, -15.6, -13, CEILING_TILE, false, 2);
     mut int[16] east = default;
     mut int[16] north = default;
     for (int row = 0; row < 8; row++)
