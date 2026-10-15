@@ -1,0 +1,51 @@
+# Tests and deploys the managed hosting service independently of engine releases
+# and the docs site. Run manually on dev to deploy; other refs only run tests.
+name: Hosting
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TIDE_HIDDEN: '1'
+
+# All deployments target the same single-host app, regardless of the ref.
+concurrency:
+  group: hosting-deploy
+  cancel-in-progress: false
+
+jobs:
+  hosting:
+    name: Test and deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: hosting
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.16.0
+          cache: npm
+          cache-dependency-path: hosting/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      # Service tests include HTTP, real relay/WebRTC, WASM isolation and saves.
+      # Installed-toolchain/browser cases require a staged Tide and skip here.
+      - name: Test hosting
+        run: npm test
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: github.ref == 'refs/heads/dev'
+      - name: Validate Fly configuration
+        if: github.ref == 'refs/heads/dev'
+        run: flyctl config validate --config fly.toml
+      # Reuse the existing repository token. OAuth and Stripe credentials stay
+      # in Fly secrets; only the app/configuration differ from the docs deploy.
+      - name: Deploy hosting
+        if: github.ref == 'refs/heads/dev'
+        run: flyctl deploy --remote-only --ha=false --app tide-hosting --config fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

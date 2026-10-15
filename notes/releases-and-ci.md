@@ -1,5 +1,27 @@
 # Releases, installing and CI
 
+## Managed hosting deployment workflow (2026-10-15)
+
+At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
+from Build and Docs. It runs only through `workflow_dispatch`: every ref runs
+the service's `npm ci`/`npm test` on Ubuntu 24.04 with Node 24.16.0; only `dev`
+validates `hosting/fly.toml` and deploys `tide-hosting` with the remote builder
+and `--ha=false`. The owner confirmed the existing `FLY_API_TOKEN` repository
+secret is shared across apps. It is supplied only to the deployment step;
+provider credentials remain in Fly. Global hosting concurrency serializes runs
+without cancelling an active deployment. No connection to engine publication,
+automatic push trigger or allocation-enabling step was added.
+
+The service tests cover real HTTP/relay/WebRTC, ledger/auth, WASM isolation and
+recovery. Two installed-toolchain/browser cases require staged tools and skip in
+this lightweight deployment workflow. The operator README describes invocation,
+coverage and the existing first-deployment setup boundary. Validation:
+actionlint 1.7.12 passes for the new workflow, the Fly configuration validates,
+and the production Docker image builds. Service tests pass on Windows and in
+the Linux service image with Node 24.16.0: 29 passed, two staged-tool integration
+cases skipped as documented. Dependency installation reports no vulnerabilities;
+the whitespace diff passes. No workflow was dispatched or service deployed.
+
 ## Stable upgrade fixture failure (2026-10-14)
 
 Build run 38577620235 builds release commit b23c42ff as 0.3.0 on the stable

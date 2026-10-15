@@ -189,6 +189,22 @@ domains, provider secrets, measured rates, top-up amounts and invites. Deploy
 from this directory with `fly deploy --ha=false`; keep the machine count at one.
 The service has no Fly API token or autoscaling/provisioning capability.
 
+The **Hosting** GitHub Actions workflow (`.github/workflows/hosting.yml`) runs
+independently of engine releases and docs deployments. Start it manually on
+`dev` to test the service and deploy this directory to `tide-hosting`:
+
+```sh
+gh workflow run hosting.yml --ref dev
+```
+
+Other refs run the service tests without deploying. The workflow uses Node
+24.16.0, runs `npm ci` and `npm test`, validates the Fly configuration and deploys
+with `--remote-only --ha=false`. The installed-toolchain/browser integration
+cases skip because this workflow does not stage Tide or a browser. It reuses
+the existing repository `FLY_API_TOKEN`; GitHub OAuth and Stripe credentials
+remain in Fly secrets. It does not configure domains, rates, invites or enable
+allocations. Complete the setup above before the first deployment.
+
 The existing relay must supply working TURN credentials for this NAT-hosted
 service; verify real remote native/browser players through TURN before launch.
 Local loopback tests do not establish Fly NAT reachability. No dedicated public
