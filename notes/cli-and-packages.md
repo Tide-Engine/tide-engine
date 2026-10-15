@@ -1,5 +1,24 @@
 # `tide`, packages and the package
 
+## Failed-build cache comparison (2026-10-15)
+
+Build `38761765659` passed Windows packaging but Linux and macOS packaging
+failed the parallel-compilation fixture's comparison after repairing custom C.
+The managed-hosting identity change intentionally keeps ordinary launcher
+objects through identity-only edits to game.h. A Linux reproduction differs
+only in main.o: its DWARF line table retains the failed build's game.h checksum.
+Recompiling against the restored header changes that checksum; stripping debug
+information leaves byte-identical objects. This is debug metadata, not stale
+gameplay code or a changed Simulation ID in the launcher.
+
+The fixture now requires byte-identical reuse of the failed build's launcher
+and clean-build parity for every other file, including generated game code,
+objects and stamps. Missing/extra files and differing objects are named on
+failure. Its clean builds at different parallelism levels still compare every
+file, including main.o. Compiler/cache behavior and public contracts are unchanged.
+The original comparison fails locally under Linux with only main.o named;
+the corrected fixture passes all parallel-build and failure-recovery checks.
+
 Managed deployment (2026-10-15): `login`, `logout` and `deploy` are implemented
 in deploy.c, using explicit browser device approval, origin-bound credentials,
 Windows DPAPI/POSIX private files and bounded HTTP responses. Whole-game local
