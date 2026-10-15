@@ -10,7 +10,7 @@ set of batteries, boxes and people.
 The 3D rooms keep a fixed, gently tilted view of a painted model: pale
 floors, matte painted boxes, soft shadows, marks that glow, and a lens that
 keeps your room sharp while the larger rooms around it fall out of focus,
-with quiet ventilation.
+with quiet music and soft wooden, brass and robot sounds.
 There are no threats or jumpscares.
 
 Play at <https://tide-engine.dev/prototypes/inside-out/>. The admin prototype
@@ -29,9 +29,8 @@ You can see part of a robot standing beside your box.
 The camera keeps that framing when your partner moves or leaves the screen.
 Your robot walks and shrinks through the doorway; leaving grows them back
 into the surrounding world. Your partner can watch that passage from outside.
-The outside follows the doorway you used: a moved shell changes your surroundings,
-and a recursive doorway can put the same room
-around itself. Amber and Teal keep their identity colours wherever they
+The outside is your room's box, wherever it stands: a moved box changes your
+surroundings, and a box inside itself puts the same room around itself. Amber and Teal keep their identity colours wherever they
 travel. A room shell contains a live miniature of its shared interior;
 nested and recursive preview details collapse to markers after a few layers.
 Floors, walls, batteries and robots are real 3D geometry. The orthographic view
@@ -47,8 +46,8 @@ keeps the grid and movement directions familiar; there is no camera rotation.
 | Show / hide hints | H |
 | Continue after solving | Enter |
 
-Touch uses the same directional arrows. Rooms move first; when a wall,
-another box or your partner stops a room, walking into its open doorway
+Touch uses the same directional arrows. Rooms move first; when a wall
+or your partner stops a row, walking into a stopped box's open doorway
 enters it. Directions match the screen: W is up, D right, S down and A left.
 After undo or reset, release a held direction before pressing it again.
 
@@ -57,10 +56,14 @@ it: a yellow bar against a box you would push, a green arrow into a doorway
 you would enter. The direction buttons show the same for every direction,
 with a bar across the arrow where you cannot go.
 
-The shelf can revisit or skip any of the nine puzzles. A plus beside a
-title marks one you have completed in this match. Hints start with a small
+The menu's chapter selector can revisit or skip any puzzle. A sage tick beside a
+title marks one you have completed. Hints start with a small
 nudge; ask for more to reveal an arrangement and then a more specific plan.
-They are optional. Ambience, sound and reduced motion are local settings.
+They are optional. Settings include master, music, effects and interface
+volumes, mute, reduced motion, step previews and lesson cards. Settings and
+completion ticks are saved on this machine. Escape opens the in-game menu;
+your partner's match keeps running. Reset and changing an active puzzle ask
+before clearing the shared moves.
 
 ## The rules
 
@@ -77,9 +80,21 @@ One rule moves everything: robots, batteries and boxes.
 - A moving box carries everything inside it.
 - A room has one box that is its outside. Walk out through an edge door and
   you come out beside that box; so does anything you push out.
-- A pale box is a copy of a room: a way in, and never the way out. A room is
-  one place, so what is in it shows in every box of it, and a room can hold
-  a copy of itself.
+- Every room has exactly one box. A box can stand inside its own room: leave
+  that room and you come out beside its box, in the same room. Two boxes can
+  stand inside each other: leave one and you come out beside it, in the
+  other. A room is one place, so what is in it shows in every view of it.
+- Pressure plates and shutters come in two colours, each with its own
+  shape: magenta with a ring and lime with a diamond. A plate is pressed
+  while anything stands on it: a robot, a battery, or a box on a plate of the
+  room it stands in. While any plate of a colour is pressed, in any room or
+  on the table, every shutter of that colour, in every room, is open floor.
+  Closed, a shutter is a wall to anything walking, pushed or going into a box
+  through it. Whatever it closed on stays: a robot can step out, and a push
+  moves what is in it on, while whatever pushed stays where it is. Each step
+  is worked out from where everything stood before it, so you can step off a
+  plate and push a battery through its shutter in one move. Plates and
+  shutters are not goals.
 - Every room is a square grid, so a box always fills the cell it stands in.
 - Seat every battery in a socket, park each box on its numbered outline, and
   put both robots on goals. A seated battery can be moved again while you
@@ -92,9 +107,28 @@ until both seats are present again.
 
 ## Development
 
+To play locally without deploying the website, run these commands from the
+repository root (Node 24.16 or newer on Windows):
+
+```powershell
+$env:TIDE_HIDDEN = '1'
+cmake --preset web-release -DTIDE_PRIVATE_PROTOTYPES=ON
+cmake --build --preset web-release --target inside_out_page
+node prototypes/inside-out/serve.mjs
+```
+
+Open <http://127.0.0.1:8790/prototypes/inside-out/> in two tabs. Choose
+**Host a room** in one and **Join a friend** in the other, click the code
+field and enter the host's six-character code. The server runs its own
+local relay on port 8791 and serves the page with the isolation headers
+needed by Tide. It reads the latest staged page on each reload. Ctrl+C
+stops both services; optional HTTP and relay ports are the script's two
+positional arguments. The server binds to this machine only.
+
 The prototype uses Tide and the existing Rooms package. Its deterministic
-match rules are in `game.tide`; campaign layouts and optional hints are in
-`levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
+match rules are in `game.tide`; the puzzles, drawn as text maps (their
+legend is at the top of the file), with their chapters and optional hints,
+are in `levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
 handles lighting, shadow mapping and screen-space ambient occlusion.
 Presentation, controls and original audio are local state.
 There are no new engine or runtime APIs.
@@ -105,4 +139,9 @@ Enable `TIDE_PRIVATE_PROTOTYPES` when configuring the repository. Build
 `inside_out_play_webgl` and `inside_out_play_webgpu` test two real browser
 players with muted audio. The campaign test replays checked-in witnesses
 through production commands; it establishes solvability, not optimality
-or measured human difficulty. Contracts and validation: `notes/inside-out.md`.
+or measured human difficulty. `inside_out_solve`, a native tool for drawing
+puzzles, moves through the same Move handler: `inside_out_solve 3` finds
+puzzle 3's shortest solution, `--print` shows its maps, `--alone <seat>`
+asks whether one robot can do it alone, `--play "<moves>"` plays moves, and
+`inside_out_solve all` tabulates every puzzle (usage at the top of
+`test/solve.c`). Contracts and validation: `notes/inside-out.md`.

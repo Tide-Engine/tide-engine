@@ -11,9 +11,11 @@ import { wasmFixture } from './fixtures.mjs';
 
 test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded client on a separate origin', async t => {
     const folder = await mkdtemp(join(tmpdir(), 'tide-hosting-http-'));
-    const config = configuration({ TIDE_HOSTING_DATA: folder, PORT: '0', TIDE_HOSTING_SMALL_RATE: '1000' });
+    const config = configuration({ TIDE_HOSTING_DATA: folder, PORT: '0', TIDE_HOSTING_SMALL_RATE: '1000',
+        TIDE_GITHUB_CLIENT_ID: 'fixture-client', TIDE_GITHUB_CLIENT_SECRET: 'fixture-secret' });
     const rooms = { ensure: async () => {}, endpoint: (_project, match = '0') => `ABC123/${match}`, close: async () => {} };
-    const service = await createService(config, { rooms });
+    const service = await createService(config, { rooms, fetcher: async url => ({ ok: true, json: async () =>
+        url.includes('/access_token') ? { access_token: 'fixture-token' } : { id: 7, login: 'uninvited' } }) });
     const address = await service.start();
     t.after(async () => { await service.close(); await rm(folder, { recursive: true, force: true }); });
     const call = (path, { method = 'GET', data, headers = {}, host = 'localhost:8081' } = {}) => new Promise((accept, reject) => {
@@ -33,11 +35,49 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     const page = await call('/dashboard');
     assert.equal(page.status, 200);
     assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/);
+    assert.match(page.text, /theme\.js/);
+    assert.equal((await call('/inter-latin.woff2')).headers['content-type'], 'font/woff2');
+    assert.equal((await call('/favicon.svg')).headers['content-type'], 'image/svg+xml');
+    const signIn = await call('/auth/github');
+    const state = new URL(signIn.headers.location).searchParams.get('state');
+    const denied = await call(`/auth/callback?code=fixture-private-code&state=${state}`, {
+        headers: { Cookie: signIn.headers['set-cookie'].map(value => value.split(';')[0]).join('; ') } });
+    assert.equal(denied.status, 303);
+    assert.equal(denied.headers.location, '/?signin=restricted');
+    assert.equal(denied.headers['cache-control'], 'no-store');
+    assert.ok(denied.headers['set-cookie'].every(value => value.includes('Max-Age=0')));
+    assert.doesNotMatch(denied.text + denied.headers.location, /fixture-private-code|fixture-token/);
+    const expired = await call('/auth/callback?code=used', { headers: { Cookie: 'tide-login-target=012345ABCD' } });
+    assert.equal(expired.status, 303);
+    assert.equal(expired.headers.location, '/device?code=012345ABCD&signin=expired');
+    const apiDenied = await call('/api/account');
+    assert.equal(apiDenied.status, 401);
+    assert.match(apiDenied.data.error, /Sign in/);
     service.store.invite(1);
     const account = service.store.signIn({ id: 1, login: 'developer' });
     const session = service.store.issueToken(account.id, 'browser', 100000);
     const browser = { Cookie: `tide-session=${session.token}` };
     assert.equal((await call('/api/account', { headers: browser })).data.login, 'developer');
+    const signedInPage = await call('/dashboard', { headers: browser });
+    assert.match(signedInPage.text, /id="account"/);
+    assert.doesNotMatch(signedInPage.text, /id="welcome"/);
+    assert.match(signedInPage.text, /developer/);
+    assert.match(signedInPage.text, /€0\.00/);
+    assert.equal(signedInPage.headers['cache-control'], 'private, no-store');
+    assert.match(signedInPage.headers['content-security-policy'], /'nonce-/);
+    const pageData = await call('/dashboard/__data.json', { headers: browser });
+    assert.equal(pageData.status, 200);
+    assert.ok(pageData.text.includes(account.id));
+    assert.equal(pageData.headers['cache-control'], 'private, no-store');
+    const signedOutPage = await call('/dashboard');
+    assert.match(signedOutPage.text, /id="welcome"/);
+    assert.doesNotMatch(signedOutPage.text, /id="account"|developer/);
+    assert.ok(!signedOutPage.text.includes(session.csrf));
+    service.store.db.prepare('UPDATE accounts SET login=? WHERE id=?').run('</script><img src=x onerror=alert(1)>', account.id);
+    const escapedPage = await call('/dashboard', { headers: browser });
+    assert.ok(!escapedPage.text.includes('</script><img src=x'));
+    assert.match(escapedPage.text, /&lt;\/script>/);
+    service.store.db.prepare('UPDATE accounts SET login=? WHERE id=?').run('developer', account.id);
     assert.equal((await call('/api/projects', { method: 'POST', headers: browser, data: {} })).status, 403);
     const authenticated = { ...browser, Origin: config.origin, 'X-Tide-CSRF': session.csrf };
     const created = await call('/api/projects', { method: 'POST', headers: authenticated,
@@ -90,6 +130,13 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     service.store.invite(2);
     const other = service.store.signIn({ id: 2, login: 'other' });
     const otherToken = service.store.issueToken(other.id, 'cli', 100000);
+    const otherSession = service.store.issueToken(other.id, 'browser', 100000);
+    const [ownerHtml, otherHtml] = await Promise.all([call('/dashboard', { headers: browser }),
+        call('/dashboard', { headers: { Cookie: `tide-session=${otherSession.token}` } })]);
+    assert.match(ownerHtml.text, /id="account"/);
+    assert.ok(ownerHtml.text.includes(project.id));
+    assert.match(otherHtml.text, /id="account"/);
+    assert.ok(!otherHtml.text.includes(project.id));
     assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', data: bundle,
         headers: { Authorization: `Bearer ${otherToken.token}` } })).status, 404);
     assert.equal((await call('/api/logout', { method: 'POST', data: {}, headers: authenticated })).status, 200);
