@@ -1,5 +1,173 @@
 # Inside Out
 
+## Direct playtest feedback (2026-10-15)
+
+This follow-up supersedes the UI, audio and manual progression decisions in
+the earlier polish round below. Inside Out is intended as a native game;
+the browser build remains a convenient shared playtest. Changes stay in
+this prototype. No engine, compiler, Rooms-package API, website deployment
+or CI changes were needed.
+
+The owner requested plain box entrances, no hints or How to play screen,
+no WASD/directional overlay, functioning arrow movement, URL invitations,
+automatic progression with a visual transition, clearer less repetitive
+sound, and fixes for shutter flicker, recursive shadows and jumpy undo.
+
+UI and progression:
+
+- Removed How to play, the hint panel, text advice, lesson cards, directional
+  buttons and printed key labels. The early puzzles introduce mechanics
+  through their layouts. WASD bindings remain; arrows now also work. The
+  existing optional spatial step preview remains in Settings.
+- The command-only game has no sampled input, so the GUI previously started
+  automatic arrow focus while playing. WorkshopControls claims the keyboard
+  during play and handles Escape itself; menus retain GUI.Navigate. Touch
+  uses a deliberate 28-pixel swipe for one move, with no directional panel.
+- Workshop.solvedTick and openedTick are synchronized match state. A successful
+  solve stamps the clock; ContinueWorkshop opens the next puzzle after 72
+  ticks (2.4 seconds at 30 Hz), only while both participants are present.
+  Undoing the solve clears its deadline; resetting/reselecting clears it too.
+  An overdue solved puzzle advances after the missing partner returns. The
+  last puzzle remains solved and shows an ending. The manual Next command
+  is removed; Enter no longer advances the campaign.
+- transition.tide closes nested painted square frames over the solved room
+  and opens onto the next. Reduced motion uses a fade. Local movement waits
+  for the new room's 24-tick reveal; the simulation commands remain usable
+  immediately by tests/tools. The serial/release guard prevents held keys
+  carrying into the next puzzle. Introductions show only number/name.
+- Copy invite and Copy code are separate controls in the waiting/menu
+  screens. The main-game-only invite.c bridge returns the published preview
+  base on native. The shell passes its actual origin/path as an ordinary
+  WASI argument, so a local invite uses the local preview/relay. The bridge
+  bounds argument count/storage and URL length, allows http(s), and rejects
+  query/hash/control characters. Copying appends a fresh ?join=ROOM. Existing
+  URL joining handles it; no new runtime function is involved.
+- SceneTop is 76 pixels; SceneBottom is 96 on desktop, 112 on phone. The
+  context chip sits at h-118; Undo/Restart at h-92. Phone identity chips sit
+  at h-148 to avoid the stats corner. Title/menu cards are 500/590 high.
+
+Rendering and undo:
+
+- The shutter's dark stripes ended at exactly the same depth as the central
+  painted cover. FloorRelief now shares FloorLine's actual relief formula,
+  including its minimum height. Cover and channel shape each sit above the
+  preceding surface with positive clearance, including miniature scales.
+  Both magenta-ring and lime-diamond tearing were reproduced and corrected.
+- Recursive ancestor walls can exceed a viewport-sized lamp's entire depth
+  interval. Cuboids and rotated floor marks now contribute their exact
+  transformed unit-cube projection bounds along SceneLightDirection to
+  Sculpture.shadowLow/high (reset each frame, conservatively include zero).
+  SceneLighting fits only the lamp's depth axis/far plane to those bounds
+  plus a viewport margin. Its XY footprint/texel size no longer includes
+  the current tile scale, so recursive crossings keep the same receiver
+  bias and PCF radius. Light direction, casters and CPU clipping are retained.
+  Temporary diagnostics across 798 seat-frames of puzzle 15's exit/entry
+  found 764 frames outside the old depth interval, versus zero with the fit;
+  the largest old near-plane deficit was 183,907.85 world pixels. Diagnostics
+  were removed before the final build.
+- Doorway cells now have plain full-cell gaps. Removed brass jambs and short
+  perimeter stubs; real wall blocks provide the entrance's complete surround.
+- Undo previously treated every serial change as a rendering reset, snapping
+  boxes and the passenger's surrounding world while animating the robot.
+  Picture.openedTick distinguishes actual level/reset boundaries; ordinary
+  undo now eases pieces, plates and shutters together. Admission changes do
+  not restart a moving piece. Reset/new level/reduced motion still snap.
+- An interrupted pushed-piece crossing reverses from its visible containing
+  pose and scale. Transit.targetInside records the destination coordinate
+  space independently of shrinking/growing, including consecutive undos;
+  its distance records the reversed interpolation's full length. Same-room
+  robot doorway undo is inferred from restored/current cells and saved
+  facing, and restarts the passage/camera from the current rendered pose.
+  Picture.passageMove remembers a doorway action even when a self-entry
+  leaves canonical coordinates unchanged; reset and reversal clear it.
+- Dock outlines remain hidden under interpolated arriving/departing room
+  footprints, matching the existing rule for signal paint. This prevents an
+  exposed canonical dock outline cutting through a still-overlapping room
+  floor during undo.
+
+Native bounded before/after captures under ignored
+build/inside-out-captures/render-feedback cover both channel shutters and
+both seats across puzzle 15's entry/exit. Carried-room undo captures at
+1/3/6/12/24 frames show progressive context motion and exact settled return;
+the observed outside patch differs from its final state in
+129919/121067/93532/33921/0 pixels respectively. A rapid undo starts from its
+current intermediate pose. UI captures under build/inside-out-captures/ui
+cover desktop/phone pages, arrow-only solving, held movement across automatic
+progression, the transition at multiple phases, and one-move phone swipes.
+Additional bounded captures under build/inside-out-captures/undo-review cover
+fast self-entry undo, consecutive self-entry/self-exit undo, and consecutive
+undos while an occupied room is being pushed. Both seats return to
+pixel-identical canonical scene baselines, including a post-merge native run.
+
+Audio:
+
+The owner's listening supersedes the earlier unlistened aesthetic review.
+There was no sample-rate mismatch: all assets/mixing are 48 kHz. The assets
+had baked-in fourth-order low-pass filtering around 1.1–1.8 kHz, and each
+step included a rising 505–585 Hz servo note plus periodic low tread pulse.
+
+- Steps are now 70–80 ms dry, unpitched rubber scuffs/contact ticks, without
+  the servo, pulse or reverb. Their loudest-50-ms level drops 7 dB, and a
+  per-seat 0.22-second cap limits retriggers. Partner footsteps stay quieter.
+- Blocked actions use shorter unvoiced contacts, 3 dB quieter, capped at
+  0.26 seconds. Material slides/doorways/shutters retain more 2–4 kHz detail
+  while rounded attacks and a controlled upper rolloff avoid sharp hiss.
+- Music retains its arrangement, durations and -22 dBFS RMS target, with a
+  modest presence/low-mid adjustment and 1.5 dB drier reverb. Loop checks
+  remain. No asset paths or Mixer/UiCue APIs change.
+- Both generators reproduced every shipping hash twice. Asset checks pass
+  all 32 files (2,128,602 bytes). Step1's energy centroid changes 481 to
+  2087 Hz while its level falls 7 dB; every effect's energy above 6 kHz stays
+  below -30 dB. Game/menu music measures -22.01/-22.00 dBFS RMS.
+- Device-free production captures match revised step sources at gain 0.29999,
+  correlation >0.99999 after known-music subtraction; the running build adds
+  no muffling filter. Held blocked inputs emit contacts about 0.33 seconds
+  apart instead of every 0.16-second input repeat. Co-op/held runs have no
+  clipped samples. Preferences changed by captures were restored.
+- Changed-level kind-4 cues get only the new-puzzle introduction, avoiding
+  a reset sweep stacked over automatic advancement; same-level reset keeps
+  its reset cue. Reports/spectrograms are under ignored build/audio-feedback;
+  source/generation details and checksums are in sfx/README.md and SHA256SUMS.
+  No physical audio device was used; the owner's next listen judges timbre.
+
+Validation: native and web debug game aggregates pass all 44 cases, including
+all campaign witnesses and new real-solve timing, cancellation, missing-partner
+and final-ending regressions. The native invite fallback and five WASI invite
+cases pass. Browser validation additionally observes the real clipboard copy,
+follows that URL to the host, moves with an arrow, checks held input across
+automatic progression, verifies intermediate occupied-room undo, and swipes
+on phone. The final post-merge, serialized WebGL and WebGPU fixtures pass in
+930.55 and 777.50 seconds respectively. Both complete the real invite/join,
+WASD/arrow movement, reset/held-input recovery, three solved-puzzle automatic
+transitions, occupied-room smooth undo, recursive entry/exact undo and phone
+swipe checks without runtime, shader or GPU errors.
+
+The initial browser attempts ran WebGL and WebGPU concurrently and each hit
+the old 900-second CTest limit while still producing frames/captures; neither
+reported a gameplay, shader or GPU assertion failure. The added automatic
+progression waits make that allowance too short under software-GPU contention.
+The harness now waits 50 rather than 80 ticks for an introduction that ends
+at 48, allows 2.5 seconds per verified tick for long waits, and sets the whole
+browser test allowance to 1500 seconds. Final backend runs are serialized.
+
+Merged origin/dev at d909a851 without conflicts or Inside Out overlap. The
+incoming compiler/engine visibility work changes dependencies, so all game
+targets were rebuilt on native/web debug and the web release page restaged.
+Native aggregate/invite tests and the web aggregate/five invite cases pass
+again against those dependencies. No full engine suite or CI dispatch is
+required by this game-only change. Native captures run without a Vulkan
+validation layer on this machine; browser fixtures enable checkGL and GPU
+validation. All runs use hidden/muted or device-free capture paths.
+
+The final unrelated origin/dev merge at 91a66aa2 contains CLI/hosting work,
+Apple SDK selection and Foldline changes, with no Inside Out, runtime or
+tidec frontend overlap; no repeat validation is required for that merge.
+The local server remains available with the final staged release page.
+A four-second 1280x800/60fps H.264 review clip with synchronized captured
+audio is under ignored build/inside-out-captures/transition-video/
+inside-out-automatic-transition.mp4; it shows the solve, nested aperture
+close and next-room reveal. Its 240 frames/contact sheet were inspected.
+
 ## Current polish round (2026-10-15)
 
 Resumed the owner's interrupted Inside Out task: remove portal-like copies,

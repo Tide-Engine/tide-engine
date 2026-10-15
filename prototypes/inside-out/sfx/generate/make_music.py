@@ -272,7 +272,7 @@ STEMS = ("ep", "mallet", "bass", "pad", "perc")
 # Stem levels (RMS dBFS before the master gain), reverb sends, wet level.
 TARGET_DB = {"ep": -25.5, "mallet": -27.0, "bass": -27.0, "pad": -31.0, "perc": -40.0}
 SEND = {"ep": 0.30, "mallet": 0.45, "bass": 0.0, "pad": 0.55, "perc": 0.25}
-WET_DB = -29.5
+WET_DB = -31.0
 
 
 # ------------------------------------------------------------------ harmony
@@ -752,7 +752,11 @@ def master_eq(freqs):
     f = np.maximum(freqs, 1e-9)
     hp = 1.0 / np.sqrt(1.0 + (32.0 / f) ** 8)       # 4th-order high-pass at 32 Hz
     lp = 1.0 / np.sqrt(1.0 + (f / 9000.0) ** 4)     # 2nd-order low-pass at 9 kHz
-    h = hp * lp
+    # A modest presence shelf and a broad low-mid dip keep the piano's
+    # articulation clear without raising the loop's overall RMS level.
+    presence = 2.5 * (f / 1400.0) ** 2 / (1.0 + (f / 1400.0) ** 2)
+    low_mid = -1.5 * np.exp(-.5 * (np.log2(f / 320.0) / .85) ** 2)
+    h = hp * lp * 10.0 ** ((presence + low_mid) / 20.0)
     h[freqs == 0] = 0.0
     return h
 
