@@ -1,0 +1,229 @@
+settings { maxPlayers = 2; }
+
+component Marker
+{
+    int id;
+    local int seen;
+}
+
+component Details { int secret; }
+component Ghost { int id; local int active; }
+singleton Actions { int next; PlayerID player; int count; }
+struct JournalBits { bool[2] allowed; }
+singleton JournalCache { Resident state; int value = 19; bool ready = true; List<int> items; }
+scene JournalScene { int value; JournalBits bits; }
+local singleton Observed
+{
+    int shown;
+    int verifiedShown;
+    int hidden;
+    int detailsShown;
+    int detailsHidden;
+    int lastSecret;
+    int hiddenRows;
+    int withoutShown;
+    int withoutHidden;
+    int shownRows;
+    int spawned;
+    int destroyed;
+    int forgotten;
+    int destroyedDetails;
+    int withoutDestroyed;
+    int publicRows;
+    int privateRows;
+    int absentRows;
+    int active;
+    int verifiedActive;
+    int verifiedHiddenRows;
+    int verifiedShownRows;
+    int ghostHidden;
+}
+
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Marker { id = 7 }, Details { secret = 77 }, Visibility);
+    Spawn(Ghost { id = 42 }, Visibility);
+}
+
+system Change(Actions actions, with Main)
+{
+    if (actions.next == 4) Spawn(Marker { id = 8 }, Details { secret = 88 }, Visibility);
+    if (actions.next == 19)
+    {
+        for (var i = 0; i < actions.count; i++) Spawn(Ghost { id = i + 100 }, Visibility);
+    }
+}
+
+system Policy(Marker marker, mut Details details, mut Visibility visibility, Actions actions)
+{
+    if (marker.id != 7) return;
+    if (actions.next == 5)
+    {
+        details.secret = 0x13572468;
+        visibility.Set<Details>(Audience.Only(actions.player));
+    }
+    if (actions.next == 7 || actions.next == 8) visibility.group = Visibility.CreateGroup(Audience.None);
+    if (actions.next == 9) visibility.group = Visibility.CreateGroup(Audience.All);
+}
+
+system Edit(Actions actions, with Marker)
+{
+    if (actions.next == 1) this.Remove(Details);
+    if (actions.next == 2) this.Add(Details { secret = 99 });
+    if (actions.next == 3 || actions.next == 6 || actions.next == 8 || actions.next == 9) this.Destroy();
+    if (actions.next == 10 || actions.next == 11 || actions.next == 12) this.Add(Details { secret = 10 });
+    if (actions.next == 10 || actions.next == 11) this.Remove(Details);
+    if (actions.next == 10) this.Add(Details { secret = 12 });
+}
+
+system CreatePrivateVariant(Marker marker, Details details, Actions actions)
+{
+    if (marker.id != 7) return;
+    if (actions.next == 14) Spawn(Marker { id = 8 }, Details { secret = details.secret }, Visibility);
+    if (actions.next == 15) Spawn(Ghost { id = 43 }, Details { secret = details.secret }, Visibility);
+    if (actions.next == 17)
+    {
+        Scene.Load(JournalScene { value = 7 });
+    }
+}
+
+event(Spawned) RestrictPrivateVariant(mut Visibility visibility, Actions actions, with Details)
+{
+    if (actions.next == 14 || actions.next == 15) visibility.Set<Details>(Audience.Only(PlayerID(0)));
+}
+
+system RemoveGhost(Ghost ghost, Actions actions)
+{
+    if (actions.next == 13 || (actions.next == 16 && ghost.id == 43) || (actions.next == 20 && ghost.id >= 100)) this.Destroy();
+}
+
+system RemoveJournalScene(Actions actions, with JournalScene)
+{
+    if (actions.next == 18) Scene.Unload(this);
+}
+
+int JournalItemCount(JournalCache cache) { return cache.items.count; }
+
+local event(Spawned) JournalSceneAppeared(JournalScene scene, JournalCache cache,
+                                        query (JournalScene other) scenes)
+{
+    Debug.Assert(scene.value == 7 && cache.value == 19 && cache.ready && JournalItemCount(cache) == 0);
+    foreach (var row in scenes) Debug.Assert(row.other.value == 7);
+}
+
+local event(Destroyed) JournalSceneDestroyed(JournalScene scene, JournalCache cache,
+                                          query (JournalScene other) scenes)
+{
+    Debug.Assert(scene.value == 7 && cache.value == 19);
+    foreach (var row in scenes) Debug.Assert(row.other.value == 7);
+}
+
+local event(Shown) PrepareGhost(mut Ghost ghost) { ghost.active = 1; }
+local event(Hidden) ConcealGhost(Ghost ghost, mut Observed observed)
+{
+    observed.ghostHidden += ghost.id;
+}
+
+event(Destroyed) LastState(mut Marker marker, mut Details details, Actions actions)
+{
+    if (actions.next != 6) return;
+    marker.id += 100;
+    details.secret += 1000;
+}
+
+local event(Shown) Appeared(mut Marker marker, mut Observed observed)
+{
+    marker.seen += 1;
+    observed.shown += 1;
+}
+
+local event(verified Shown) Confirmed(Marker marker, mut Observed observed)
+{
+    observed.verifiedShown += marker.id;
+}
+
+local event(Hidden) Concealed(Marker marker, mut Observed observed)
+{
+    observed.hidden += marker.id;
+}
+
+local event(Shown) DetailsAppeared(Marker marker, Details details, mut Observed observed)
+{
+    observed.detailsShown += 1;
+    observed.active = 1;
+    observed.lastSecret = details.secret + marker.id;
+}
+
+local event(Hidden) DetailsConcealed(Marker marker, Details details, mut Observed observed,
+                                    query (Details other) others)
+{
+    observed.detailsHidden += 1;
+    observed.active = 0;
+    observed.lastSecret = details.secret + marker.id;
+    foreach (var row in others) observed.hiddenRows += row.other.secret;
+}
+
+local event(verified Shown) DetailsConfirmed(Details details, mut Observed observed,
+                                          query (Details other) others)
+{
+    observed.verifiedActive = 1;
+    foreach (var row in others) observed.verifiedShownRows += row.other.secret;
+    Debug.Assert(details.secret >= 0);
+}
+
+local event(verified Hidden) DetailsConfirmedHidden(Details details, mut Observed observed,
+                                                  query (Details other) others)
+{
+    observed.verifiedActive = 0;
+    foreach (var row in others) observed.verifiedHiddenRows += row.other.secret;
+    Debug.Assert(details.secret >= 0);
+}
+
+local event(Shown) WithoutDetails(mut Observed observed, with Marker, without Details,
+                                query (Details details) others)
+{
+    observed.withoutShown += 1;
+    foreach (var row in others) observed.shownRows += row.details.secret;
+}
+
+local event(Hidden) NoLongerWithoutDetails(mut Observed observed, with Marker, without Details)
+{
+    observed.withoutHidden += 1;
+}
+
+local event(Spawned) ActuallySpawned(Marker marker, mut Observed observed)
+{
+    observed.spawned += marker.id;
+}
+
+local event(Spawned) JournalQueries(Marker marker, mut Observed observed,
+                                  query (Marker other) publicRows,
+                                  query (Details details) privateRows,
+                                  query (Marker other, without Details) absentRows)
+{
+    foreach (var row in publicRows) observed.publicRows += row.other.id;
+    foreach (var row in privateRows) observed.privateRows += row.details.secret;
+    foreach (var row in absentRows) observed.absentRows += row.other.id;
+    Debug.Assert(marker.id > 0);
+}
+
+local event(Destroyed) ActuallyDestroyed(Marker marker, mut Observed observed)
+{
+    observed.destroyed += marker.id;
+}
+
+local event(Destroyed) DestroyedDetails(Details details, mut Observed observed)
+{
+    observed.destroyedDetails += details.secret;
+}
+
+local event(Destroyed) DestroyedWithoutDetails(Marker marker, mut Observed observed, without Details)
+{
+    observed.withoutDestroyed += marker.id;
+}
+
+local event(Forgotten) Released(Marker marker, mut Observed observed)
+{
+    observed.forgotten += marker.seen;
+}

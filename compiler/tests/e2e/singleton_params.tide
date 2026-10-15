@@ -57,8 +57,8 @@ void Paint(mut Duel duel) { duel.paint += duel.points; duel.marks += 1; }
 void PaintThrough(mut Duel duel) { Paint(duel); }
 int Painted(Duel duel) { return duel.paint; }
 int PaintedThrough(Duel duel) { return Painted(duel); }
-void Shown(mut Display display) { display.frames += 1; }
-void FrameThrough(mut Display display) { Shown(display); }
+void Displayed(mut Display display) { display.frames += 1; }
+void FrameThrough(mut Display display) { Displayed(display); }
 int Frames(Display display) { return display.frames; }
 int FramesThrough(Display display) { return Frames(display); }
 float Step(Time time) { return time.dt; }

@@ -219,4 +219,12 @@ n = 0.05
 save('tick', high(noise(n), 1500) * decay(n, 120) + np.sin(2 * np.pi * 880 * t(n)) * decay(n, 90) * 0.5, 0.4)
 n = 0.22
 save('accept', np.sin(2 * np.pi * 165 * t(n)) * decay(n, 14) + low(noise(n), 800) * decay(n, 50), 0.6)
+
+# Added after the original sequence so regenerating these cues does not change
+# the random samples, and therefore the content, of any earlier clip.
+n = 0.18
+ring = sum(np.sin(2 * np.pi * f * t(n)) * a for f, a in ((410, 1), (677, .7), (1133, .35), (1847, .16)))
+save('metal_step', ring * decay(n, 24) + high(noise(n), 1800) * decay(n, 75) * .7, .6)
+n = 0.23
+save('silk', sweep(n, 1100, 370) * decay(n, 18) + high(noise(n), 3200) * decay(n, 65) * .18, .42)
 print(sorted(os.listdir(out)))

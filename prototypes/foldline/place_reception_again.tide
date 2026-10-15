@@ -1,0 +1,27 @@
+component LastWitness { }
+
+void BuildReceptionAgain(mut Arena arena, mut Place place, mut Fold fold)
+{
+    BuildReception(arena, place, fold, true);
+    place.kind = PlaceKind.Ending;
+    place.dead = true;
+    for (int cell = 0; cell < LAMPS_WIDE * LAMPS_LONG; cell++) place.lamps[cell].group = 1;
+    var first = SpawnBeast(arena, BeastKind.Figure, float3(8, 0, -4.5), EAST, skin: BeastSkin.Mannequin, clip: "Stand");
+    var second = SpawnBeast(arena, BeastKind.Figure, float3(8, 0, -1.5), EAST, skin: BeastSkin.Shadow, clip: "Stand");
+    first.Add(LastWitness);
+    second.Add(LastWitness);
+    // There is no active exit circuit in the coda. The tableau can be watched
+    // indefinitely; ordinary menu controls are always available.
+    place.exitNeed = 0;
+}
+
+system TheOtherPair(mut Beast beast, with LastWitness, Arena arena, Place place)
+{
+    if (place.id != RECEPTION_AGAIN || beast.chamber != arena.chamber) return;
+    beast.yaw = arena.arrive < 4 ? EAST : WEST;
+}
+
+system LastLamps(mut Arena arena, Place place)
+{
+    if (place.id == RECEPTION_AGAIN && arena.arrive > 7) arena.darkGroups |= 1 << 1;
+}

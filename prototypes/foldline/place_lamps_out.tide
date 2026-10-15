@@ -1,0 +1,51 @@
+// The first glimpse of the showroom's rule, from behind a physical grille.
+void BuildLampsOut(Arena arena, mut Place place)
+{
+    StoppingLift(arena, place, float3(0), NORTH, 11);
+    place.dead = true;
+    place.light = .35;
+    place.grade = float3(.86, 1, .92);
+    Fill(arena, -4, 4, -1, 0, 2.1, 27, CONCRETE);
+    Fill(arena, -5, -4, -2, 4.4, 1.6, 28, PANELS);
+    Fill(arena, 4, 5, -2, 4.4, 1.6, 28, PANELS);
+    Fill(arena, -5, -3, -2, 4.4, 1.6, 2.6, PANELS);
+    Fill(arena, 3, 5, -2, 4.4, 1.6, 2.6, PANELS);
+    Fill(arena, -5, 5, -2, 4.4, 27, 28, PANELS);
+    Fill(arena, -5, 5, 4.4, 5.4, 1.6, 28, CEILING_TILE, false, 2);
+    Fill(arena, -4, 4, 0, 4.4, 3.9, 4.1, PANELS, false, 4);
+    for (int door = 0; door < 5; door++)
+    {
+        Raise(arena, float3(-3.97, 1.1, 7 + door * 4), float3(.05, 2.2, 1), DOORS, false, 3);
+        Raise(arena, float3(3.97, 1.1, 7 + door * 4), float3(.05, 2.2, 1), DOORS, false, 3);
+    }
+    LampGrid(place, float2(-4, 3), float2(8, 4), 1, 6);
+    for (int row = 0; row < 6; row++) HangLamp(place, 0, row, 4.4, LampState.On, row + 1);
+    SpawnBeast(arena, BeastKind.Flayed, float3(0, 0, 24), SOUTH, 1.35, BeastSkin.Dark, "Run", eyes: true);
+    MenuView(place, float3(0, 1.7, -.8), 0, NORTH);
+}
+
+system LampsOutBeat(mut Beast beast, mut Arena arena, Place place, query (Operator pilot) operators, Time time)
+{
+    if (place.id != LAMPS_OUT || beast.chamber != arena.chamber) return;
+    mut int steps = Math.Clamp(int((arena.arrive - 2) / 1.4) + 1, 0, 6);
+    if (arena.arrive < 2) steps = 0;
+    for (int step = 0; step < steps; step++) arena.darkGroups |= 1 << (6 - step);
+    mut bool watched = false;
+    foreach (var row in operators)
+    {
+        float3 to = beast.at + float3(0, 1.4, 0) - (row.pilot.position + float3(0, EYE_HIGH * row.pilot.scale, 0));
+        if (Math.Dot(Math.Normalize(to), LookDirection(row.pilot.yaw, row.pilot.pitch)) > .5) watched = true;
+    }
+    if (arena.arrive >= 10)
+    {
+        if (beast.clip != "Lunge") { beast.clip = "Lunge"; beast.time = 0; }
+        beast.loop = false;
+        beast.time += time.dt;
+    }
+    else if (!watched)
+    {
+        float before = beast.at.z;
+        beast.at.z = Math.Max(Math.Max(4.8, 24 - steps * 4), beast.at.z - time.dt * 7);
+        beast.time += (before - beast.at.z) * .37;
+    }
+}
