@@ -515,6 +515,7 @@ typedef struct decl {
     struct prefab_node *prefab_root;
     struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    bool visibility_optional; // Whole-component visibility needs an independent per-row presence byte on clients.
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
     // their own, its local part: a local one of the same kind and name, which
@@ -869,7 +870,10 @@ typedef enum builtin_call {
     CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
+    CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
 } builtin_call;
+
+enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
 
 // What a GUI call needs besides its arguments, and which form of a draw
 // setting a call is (expr.gui).
@@ -1041,6 +1045,7 @@ struct expr {
     struct expr *skin_mesh;
     struct expr *skin_pose;
     int skin_operation;  // Checked model/pose operation; shared with generated adapters.
+    unsigned visibility_operation; // VISIBILITY_* flags for private generated helpers.
     // E_MEMBER the checker made of a mesh draw's Mesh, 'Draw.Mesh(tree, ...)': 1 for its vertices and 2 for its
     // indices, in the two arguments' places. Both have the Mesh's expression as their object, the same one: it's
     // worked out for the first, and what's written of it again for the second reads what the first left
@@ -1335,6 +1340,8 @@ typedef struct program {
     VEC(command_channel) channels; // The channels [Channel] names, in order: channel i + 1
     decl *spawned;        // Built-in events
     decl *destroyed;
+    decl *shown;          // Local availability transitions of match entities/components
+    decl *hidden;
     decl *player_joined;
     decl *player_left;
     decl *main;          // The scene named Main, where the program starts
@@ -1424,6 +1431,8 @@ typedef struct program {
     decl *transform;     // Shared Transform component; placement determines its world
     decl *hierarchy[2];  // Private per-world hierarchy state, present only when hierarchy operations are used
     decl *hierarchy_node;
+    decl *visibility, *visibility_group, *audience;
+    decl *visibility_state, *visibility_policy, *visibility_anchor; // Private groups, overrides and exact hierarchy boundary transforms.
     decl *devices;       // The built-in Devices record.
     VEC(decl *) records; // Built-in records: Devices, Keyboard, Mouse, Gamepad, Dpad, Button.
     VEC(device_leaf) device_leaves; // Each value the devices send: a button, stick, trigger, axis, int or bool

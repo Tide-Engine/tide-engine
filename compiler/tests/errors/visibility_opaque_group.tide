@@ -1,0 +1,4 @@
+// expect: has no field 'id'
+singleton State { VisibilityGroup group; }
+system Read(State state) { Debug.Log(state.group.id); }
+scene Main { }

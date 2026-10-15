@@ -1,0 +1,3 @@
+// expect: visibility groups are the match's to change
+view Change() { Visibility.Set(default, Audience.All); }
+scene Main { }

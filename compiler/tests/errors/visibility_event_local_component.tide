@@ -1,0 +1,5 @@
+// expect: 'Shown' describes availability of match entities, so it can't take a local component
+component Marker { int id; }
+local scene Main { }
+local event(Spawned) Setup(with Main) { local Spawn(Marker); }
+local event(Shown) Incorrect(local Marker marker) { Debug.Assert(marker.id == 0); }

@@ -1,0 +1,80 @@
+// An upper operator lays the launch route; the flyer brings its cargo across
+// the void and makes a return route round the landing's opaque corner.
+void BuildLongThrow(mut Arena arena, mut Place place, mut Fold fold)
+{
+    ArrivalLift(arena, place, float3(-9, 0, -14.1), NORTH);
+    ExitLift(arena, place, float3(13, 5.4, 18.1), SOUTH, 1 << 1);
+    Fill(arena, -12, -6, -1, 0, -12, 2, PANELS);
+    Fill(arena, -6, 2, -1, 0, -12, -6, PANELS);
+    Fill(arena, -13, 17, 18, 19, -13, 17, CONCRETE, false, 2);
+    Fill(arena, -13, -12, -3, 18, -13, 17, PANELS);
+    Fill(arena, 16, 17, -3, 18, -13, 17, PANELS);
+    Fill(arena, -13, -12, -3, 18, -13, -12, PANELS);
+    Fill(arena, -6, 3, -3, 8, -13, -12, PANELS);
+    Fill(arena, -12, -6, 4, 18, -13, -12, PANELS);
+    Fill(arena, -13, 10, 0, 18, 16, 17, PANELS);
+    Fill(arena, 10, 16, 9.4, 18, 16, 17, PANELS);
+    // The blood is the existing death drop, below the flight rather than a
+    // puzzle-specific kill plane. Separate rectangles leave all real floors.
+    DigBloodPit(arena, -6, 6, -6, 16);
+    DigBloodPit(arena, -12, -6, 2, 16);
+    DigBloodPit(arena, 6, 16, -6, 2);
+    DigBloodPit(arena, 6, 12, 10, 16);
+    Fill(arena, 1, 14, 4.4, 5.4, 2, 10, PANELS);
+    Fill(arena, 12, 16, 4.4, 5.4, 9, 16, PANELS);
+    Fill(arena, 6, 12, 5.4, 12, 9, 9.6, CONCRETE);
+    Fill(arena, 14, 16, 5.4, 12, 1.5, 2, CONCRETE);
+    // Return panel faces into the L corridor, its back invisible from the
+    // launch and upper cage. Keeping it off z16 leaves the exit gate clear.
+    Fill(arena, 11.2, 12, 5.4, 9.8, 12, 15, WALLPAPER, true);
+    Fill(arena, 10.8, 11.2, 5.4, 10.2, 11.8, 15.2, CONCRETE);
+    Fill(arena, 11.15, 12.02, 5.4, 10.2, 11.6, 12, CONCRETE);
+    Fill(arena, 11.15, 12.02, 5.4, 10.2, 15, 15.4, CONCRETE);
+    // The real pad's angle and its short run to the source are tested with a
+    // carried cube. There is no demonstration-only extra fold or teleport.
+    Fill(arena, -11.5, -8.5, 0, 4.4, 0, .8, WALLPAPER, true);
+    Fill(arena, -11.8, -11.5, 0, 4.4, 0, 1, CONCRETE);
+    Fill(arena, -8.5, -8.2, 0, 4.4, 0, 1, CONCRETE);
+    Fill(arena, -11.8, -8.2, 0, 4.4, .8, 1.2, CONCRETE);
+    SetPad(arena, float3(-10, 0, -.7), float3(0, 7, 14));
+    Fill(arena, -6.8, -6, 8, 12.4, 4, 8, WALLPAPER, true);
+    Fill(arena, -8, -6.8, -2, 18, 3.8, 8.2, CONCRETE);
+    Fill(arena, -6.8, -6, -2, 8, 4, 8, CONCRETE);
+    Fill(arena, -6.8, -6, 12.4, 18, 4, 8, CONCRETE);
+    Fill(arena, -6.85, -5.98, 7.8, 12.6, 3.6, 4, CONCRETE);
+    Fill(arena, -6.85, -5.98, 7.8, 12.6, 8, 8.4, CONCRETE);
+    // Optical wall: lower eyes cannot see the high receiving face. The upper
+    // cage looks over it and round the west edge toward the source panel.
+    Fill(arena, -6, 3, 0, 8.5, -.3, 0, CONCRETE);
+    // Fixed upper cage floor around the freight-deck hole, not over it.
+    Fill(arena, -2, 2, 7.2, 8, -12, -10.5, PANELS);
+    Fill(arena, -2, 2, 7.2, 8, -7.5, 0, PANELS);
+    Fill(arena, -2, -1.5, 7.2, 8, -10.5, -7.5, PANELS);
+    Fill(arena, 1.5, 2, 7.2, 8, -10.5, -7.5, PANELS);
+    Fill(arena, -2.2, -2, 8, 12.4, -12, 0, RUST, false, 4);
+    Fill(arena, 2, 2.2, 8, 12.4, -12, 0, RUST, false, 4);
+    Fill(arena, -2, 2, 8.5, 12.4, 0, .2, RUST, false, 4);
+    Fill(arena, -2, 2, 8, 12.4, -12.8, -12, WALLPAPER, true);
+    Fill(arena, -2.2, 2.2, 7.8, 12.6, -13.2, -12.8, CONCRETE);
+    HangDeck(arena, float3(0, -.15, -9), float3(0, 7.85, -9), float3(3, .3, 3), 1 << 0);
+    LayPlate(arena, float3(-3, 0, -9), 0);
+    RunWire(arena, 0, [float3(-2.4, .025, -9), float3(-2.22, .025, -10.8), float3(-2.22, 7.9, -10.8), float3(0, 7.9, -10.8)]);
+    PutLoose(arena, fold, float3(-9.5, .4, -7));
+    LayPlate(arena, float3(14, 5.4, 13), 1);
+    RunWire(arena, 1, [float3(14.6, 5.425, 13), float3(15.96, 5.425, 13), float3(15.96, 9.6, 13), float3(15.96, 9.6, 15.9), float3(13, 9.6, 15.9)]);
+    // The recovery ferry stays several metres below the balcony.
+    HangDeck(arena, float3(2, .6, 5), float3(5, .6, 5), float3(3, .3, 3), speed: 1.2);
+    SetProp(arena, PropKind.Arrow, float3(-10, .02, -3.5), NORTH, float3(1.5));
+    SetProp(arena, PropKind.Arrow, float3(6.6, 5.42, 6), EAST, float3(1.5));
+    SetProp(arena, PropKind.Pipe, float3(15.5, 0, -8), 0, float3(1, 4, 1));
+    SetProp(arena, PropKind.ExitSign, float3(13, 8.8, 15.8), SOUTH);
+    LampGrid(place, float2(-12, -12), float2(4, 4), 7, 7);
+    HangLamps(place, 0, 6, 0, 6, 18);
+    HangLamps(place, 0, 1, 0, 3, 4.4);
+    HangLamps(place, 3, 3, 0, 2, 12.4);
+    HangLamps(place, 5, 6, 4, 6, 12);
+    place.light = .9;
+    place.fog = .018;
+    place.grade = float3(.88, .95, 1.03);
+    MenuView(place, float3(10, 12, -4), .18, -.95);
+}

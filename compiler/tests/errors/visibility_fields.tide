@@ -1,0 +1,4 @@
+// expect: Visibility restricts a whole component
+component Secret { int value; }
+system Change(mut Visibility visibility) { visibility.Set(Secret.value, Audience.None); }
+scene Main { }

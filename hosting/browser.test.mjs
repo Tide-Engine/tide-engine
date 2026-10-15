@@ -114,17 +114,48 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         await cdp.call('Network.setCookie', { name: 'tide-session', value: session.token, url: origin, httpOnly: true, sameSite: 'Lax' });
         await cdp.call('Page.navigate', { url: `${origin}/dashboard` });
         await until(() => evaluate('!document.querySelector("#account")?.hidden && !!document.querySelector(".match")'), 'Dashboard did not show the live match.');
+        await cdp.call('Emulation.setScriptExecutionDisabled', { value: true });
+        await cdp.call('Page.reload');
+        await until(() => evaluate('document.readyState === "complete" && !!document.querySelector(".match")'), 'SSR did not show matches without JavaScript.');
+        assert.equal(await evaluate('!!document.querySelector("#welcome")'), false);
+        assert.equal(await evaluate('document.querySelector("#balance").textContent.includes("10.00")'), true);
+        await cdp.call('Emulation.setScriptExecutionDisabled', { value: false });
+        await cdp.call('Page.reload');
+        await until(() => evaluate('document.readyState === "complete" && !!document.querySelector(".match")'), 'Dashboard did not reload.');
+        await evaluate('document.fonts.ready');
+        const beforeTheme = await evaluate('document.documentElement.classList.contains("dark")');
+        await until(async () => {
+            await evaluate('document.querySelector("#theme-toggle").click()');
+            return await evaluate('document.documentElement.classList.contains("dark")') !== beforeTheme;
+        }, 'The Svelte theme button did not hydrate.');
+        assert.equal(await evaluate('document.documentElement.classList.contains("dark")'), !beforeTheme);
+        await cdp.call('Page.reload');
+        await until(() => evaluate('!document.querySelector("#account")?.hidden && !!document.querySelector(".match")'), 'Dashboard did not reload.');
+        assert.equal(await evaluate('document.documentElement.classList.contains("dark")'), !beforeTheme);
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         if (process.env.TIDE_HOSTING_EVIDENCE) {
             await mkdir(process.env.TIDE_HOSTING_EVIDENCE, { recursive: true });
             const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
             await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'dashboard-desktop.png'), Buffer.from(shot.data, 'base64'));
+            await evaluate('if (!document.documentElement.classList.contains("dark")) document.querySelector("#theme-toggle").click()');
+            const dark = await cdp.call('Page.captureScreenshot', { format: 'png' });
+            await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'dashboard-desktop-dark.png'), Buffer.from(dark.data, 'base64'));
         }
         await cdp.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         if (process.env.TIDE_HOSTING_EVIDENCE) {
             const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
             await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'dashboard-mobile.png'), Buffer.from(shot.data, 'base64'));
+        }
+        await cdp.call('Network.deleteCookies', { name: 'tide-session', url: origin });
+        await cdp.call('Page.navigate', { url: `${origin}/auth/callback?code=expired-private-code` });
+        await until(() => evaluate('document.querySelector("#notice")?.textContent.includes("fresh GitHub sign-in")'), 'OAuth failure did not return to the styled sign-in page.');
+        assert.equal(await evaluate('document.querySelector("#account") === null'), true);
+        assert.equal(await evaluate('location.search.includes("code=") || location.pathname.includes("callback")'), false);
+        assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+        if (process.env.TIDE_HOSTING_EVIDENCE) {
+            const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
+            await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'signin-error-mobile.png'), Buffer.from(shot.data, 'base64'));
         }
         const loggedOut = await promisify(execFile)(process.env.TIDE_STAGED_CLI, ['logout'], { env, timeout: 10000 });
         assert.match(loggedOut.stdout, /Signed out/);

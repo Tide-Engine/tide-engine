@@ -1,0 +1,60 @@
+using Box3D;
+
+void BuildTheWard(Arena arena, mut Place place)
+{
+    StoppingLift(arena, place, float3(0), EAST, 9);
+    place.dead = true;
+    place.light = .45;
+    place.grade = float3(.83, .98, 1.04);
+    Fill(arena, 2.1, 18, -1, 0, -4, 4, MARBLE);
+    Fill(arena, 1.6, 19, -2, 4.4, -5, -4, PLASTER);
+    Fill(arena, 1.6, 19, -2, 4.4, 4, 5, PLASTER);
+    Fill(arena, 1.6, 2.6, -2, 4.4, -5, -3, PANELS);
+    Fill(arena, 1.6, 2.6, -2, 4.4, 3, 5, PANELS);
+    Fill(arena, 18, 19, -2, 4.4, -5, 5, PLASTER);
+    Fill(arena, 1.6, 19, 4.4, 5.4, -5, 5, CEILING_TILE, false, 2);
+    Fill(arena, 3.9, 4.1, 0, 4.4, -4, 4, PANELS, false, 4);
+    for (int bed = 0; bed < 3; bed++)
+    {
+        SetProp(arena, PropKind.Bed, float3(7 + bed * 4, 0, 2.5), SOUTH);
+        SetProp(arena, PropKind.Curtain, float3(8.8 + bed * 4, 0, 2), EAST);
+    }
+    Machine(arena, float3(12, .8, 0), float3(12, .8, 0), float3(.35, .12, .25), 0, false, 1, float3(0), float3(0));
+    SpawnBeast(arena, BeastKind.Flayed, float3(16, 0, -2), WEST, skin: BeastSkin.Dark, clip: "Twitch");
+    LampGrid(place, float2(2, -4), float2(4, 8), 4, 1);
+    HangLamps(place, 0, 3, 0, 0, 4.4);
+    MenuView(place, float3(-.8, 1.7, 0), 0, EAST);
+}
+
+[After(MoveMovers)]
+[Before(PhysicsStages.Step)]
+system WardBedpan(mut Mover mover, mut Body body, Arena arena, Place place, Time time)
+{
+    if (place.id != THE_WARD || mover.chamber != arena.chamber) return;
+    float fallen = Math.Max(arena.arrive - 2.2, 0);
+    float3 at = float3(12, Math.Max(.08, .8 - 9.8 * fallen * fallen * .5), 0);
+    mover.velocity = (at - mover.at) / time.dt;
+    mover.at = at;
+    body.position = at;
+    body.velocity = float3(0);
+}
+
+system WardListener(mut Beast beast, Arena arena, Place place, query (Operator pilot) operators, Time time)
+{
+    if (place.id != THE_WARD || beast.chamber != arena.chamber) return;
+    if (arena.arrive < 2.59) { beast.time += time.dt; return; }
+    float3 target = float3(12, 0, 0);
+    float gap = Math.Distance(beast.at, target);
+    string clip = gap > .03 ? "Run" : arena.arrive < 7.6 ? "Lunge" : "Twitch";
+    if (beast.clip != clip) { beast.clip = clip; beast.time = 0; }
+    beast.loop = clip != "Lunge";
+    if (gap > .03)
+    {
+        float3 way = (target - beast.at) / gap;
+        beast.yaw = Math.Atan2(way.x, way.z);
+        beast.at += way * Math.Min(gap, 4.5 * time.dt);
+    }
+    else foreach (var row in operators)
+        if (Math.Length(row.pilot.velocity.xz) > 1) beast.yaw = Math.Atan2(row.pilot.position.x - beast.at.x, row.pilot.position.z - beast.at.z);
+    beast.time += time.dt;
+}

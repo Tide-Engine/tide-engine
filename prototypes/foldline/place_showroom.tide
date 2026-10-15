@@ -1,0 +1,74 @@
+// Display aisles with enough straight sight to let an idle partner keep watch.
+void BuildShowroom(Arena arena, mut Place place)
+{
+    place.kind = PlaceKind.Passage;
+    place.dead = true;
+    place.light = .32;
+    place.grade = float3(.96, 1, .84);
+    // The extra three metres before the maze are a safe, physical observation
+    // landing. InMaze excludes it, including both bodies in the arrival lift.
+    ArrivalLift(arena, place, float3(-9, 0, -17.1), NORTH);
+    ExitLift(arena, place, float3(9, 0, 14.1), SOUTH);
+    Fill(arena, -12, 12, -1, 0, -12, 12, CARPET);
+    Fill(arena, -12, -6, -1, 0, -15.1, -11.9, CARPET);
+    Fill(arena, -13, -12, -2, 3.8, -15.6, 13, PANELS);
+    Fill(arena, 12, 13, -2, 3.8, -13, 13, PANELS);
+    Fill(arena, -6, -5, -2, 3.8, -15.6, -12, PANELS);
+    Fill(arena, -13, -12, -2, 4.4, -15.6, -15, PANELS);
+    Fill(arena, -6, -5, -2, 4.4, -15.6, -15, PANELS);
+    Fill(arena, -9, -6, 0, 3.8, -12.15, -11.95, PANELS, false, 4);
+    Fill(arena, -6, 13, -2, 3.8, -13, -12, PANELS);
+    Fill(arena, -13, 6, -2, 3.8, 12, 13, PANELS);
+    Fill(arena, -13, 13, 3.8, 4.8, -13, 13, CEILING_TILE, false, 2);
+    Fill(arena, -13, -5, 4.4, 5.4, -15.6, -12, CEILING_TILE, false, 2);
+    mut int[16] east = default;
+    mut int[16] north = default;
+    for (int row = 0; row < 8; row++)
+    {
+        east[row] = row == 1 || row == 3 || row == 5 ? 28 : 0;
+        north[row] = 255;
+    }
+    north[0] = 127;
+    north[1] = 95;
+    north[2] = 254;
+    north[3] = 250;
+    // A second side of the display loop lets partners pass the watched figure
+    // without having to squeeze inside its lethal reach at the left U-turn.
+    north[2] &= ~(1 << 7);
+    north[3] &= ~(1 << 7);
+    north[4] = 127;
+    north[4] &= ~(1 << 5);
+    north[5] = 95;
+    north[6] = 126;
+    // The nearer start reached the first blind corner before a body could
+    // establish the c5 bypass. One aisle farther gives the observed relay room.
+    var maze = Maze { chamber = arena.chamber, origin = float2(-12), cell = float2(3), wide = 8, long = 8, east = east, north = north, start = 38 };
+    for (int row = 0; row < 8; row++)
+    {
+        for (int column = 0; column < 8; column++)
+        {
+            float3 middle = CellMiddle(maze, row * 8 + column);
+            if (column < 7 && !MazeOpen(maze, row * 8 + column, 0))
+                Raise(arena, middle + float3(1.5, 1.4, 0), float3(.3, 2.8, 3.3), PANELS, false, 4);
+            if (row < 7 && !MazeOpen(maze, row * 8 + column, 2))
+                Raise(arena, middle + float3(0, 1.4, 1.5), float3(3.3, 2.8, .3), PANELS, false, 4);
+        }
+    }
+    Spawn(Maze { chamber = maze.chamber, origin = maze.origin, cell = maze.cell, wide = maze.wide, long = maze.long,
+                 east = east, north = north, start = maze.start });
+    // Two harmless exhibits, held clear of the first aisle and its sightline.
+    SpawnBeast(arena, BeastKind.Figure, float3(-8, .3, -13.2), SOUTH, .7, BeastSkin.Mannequin, "Stand");
+    SpawnBeast(arena, BeastKind.Figure, float3(-7, .3, -13.2), SOUTH, .7, BeastSkin.Mannequin, "Stand");
+    Raise(arena, float3(-7.5, .15, -13.2), float3(2.2, .3, .8), MARBLE, false, 3);
+    SpawnBeast(arena, BeastKind.Figure, float3(-4.5, 0, -7.5), SOUTH, .85, BeastSkin.Mannequin, "Stand");
+    SpawnBeast(arena, BeastKind.Figure, float3(4.5, 0, -1.5), NORTH, .85, BeastSkin.Mannequin, "Stand");
+    SpawnBeast(arena, BeastKind.Figure, float3(-4.5, 0, 4.5), SOUTH, .85, BeastSkin.Mannequin, "Stand");
+    LampGrid(place, float2(-12, -15), float2(3), 8, 9);
+    for (int row = 1; row < 9; row += 2) HangLamps(place, 0, 7, row, row, 3.8);
+    HangLamps(place, 0, 1, 0, 0, 4.4);
+    // Empty, mirror-like display panels frame the major turns without a new
+    // reflection pass or any surface that invites an unusable fold.
+    for (int corner = 0; corner < 3; corner++)
+        Raise(arena, float3(corner == 1 ? -11.82 : 11.82, 1.4, -9 + corner * 6), float3(.04, 2, 1.3), 7, false, 3, 0);
+    MenuView(place, float3(-9, 2.1, -14), .03, NORTH);
+}

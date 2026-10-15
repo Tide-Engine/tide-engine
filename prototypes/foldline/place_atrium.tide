@@ -1,0 +1,73 @@
+// Tiny people enter the cargo island, trade places, and send one three-tonne
+// cube after them. Concrete backs keep the island's receptive faces hidden.
+void BuildCargoAtrium(mut Arena arena, mut Place place, mut Fold fold)
+{
+    ArrivalLift(arena, place, float3(-16, 0, -20.1), NORTH);
+    ExitLift(arena, place, float3(0, 0, 22.1), SOUTH, 1 << 0);
+    Fill(arena, -20, -12, -1, 0, -18, 6, CARPET);
+    Fill(arena, -8, 8, -1, 0, 0, 20, CONCRETE);
+    // This cage wall reaches the room's roof. A whole body cannot jump onto
+    // the pipe's low outer roof, including from a partner or a cube.
+    Fill(arena, -12.15, -11.85, .55, 24, -18, 6.6, PANELS, false, 4);
+    Fill(arena, -20, -11.85, 0, 24, 6, 6.6, PANELS);
+    Fill(arena, -12, -8, -.6, 0, 3.55, 4.45, PANELS);
+    Fill(arena, -12.1, -7.9, 0, .9, 3.25, 3.55, PANELS);
+    Fill(arena, -12.1, -7.9, 0, .9, 4.45, 4.75, PANELS);
+    Fill(arena, -12.1, -7.9, .55, .9, 3.25, 4.75, PANELS, false, 2);
+    DigBloodPit(arena, -12, 20, -18, 24);
+    Fill(arena, -21, 21, 24, 25, -19, 25, PANELS, false, 2);
+    var west = Fill(arena, -21, -20, -2, 24, -19, 25, WALLPAPER, true);
+    Fill(arena, 20, 21, -2, 24, -19, 25, CONCRETE);
+    Fill(arena, -21, -19, -2, 24, -19, -18, CONCRETE);
+    Fill(arena, -13, 21, -2, 24, -19, -18, CONCRETE);
+    Fill(arena, -21, -3, -2, 24, 20, 21, CONCRETE);
+    Fill(arena, 3, 21, -2, 24, 20, 21, CONCRETE);
+    // Concrete strips above the entry gallery leave only approachable low paper.
+    Fill(arena, -19.99, -19.8, 4.4, 24, -19, 20, CONCRETE);
+    PaintFrame(arena, float3(-20, 0, -7), float3(1, 0, 0), .5);
+    PlaceEnd(fold, 0, west, float3(-20, 0, -14), float3(1, 0, 0));
+    PlaceEnd(fold, 1, west, float3(-20, 0, -7), float3(1, 0, 0), .5);
+    PutLoose(arena, fold, float3(-16, .4, -11));
+
+    // Only their north faces can be approached or shot. Reverse and narrow side
+    // faces have actual concrete backing, rather than a special shot rule.
+    Fill(arena, -4.7, 4.7, 0, 12.2, 6.2, 7.2, CONCRETE);
+    Fill(arena, -4.5, 4.5, 0, 12, 7.2, 8, WALLPAPER, true);
+    Fill(arena, -4.7, -4.5, 0, 12.2, 7.2, 8.1, CONCRETE);
+    Fill(arena, 4.5, 4.7, 0, 12.2, 7.2, 8.1, CONCRETE);
+    Fill(arena, -4.7, 4.7, 12, 12.2, 7.2, 8.1, CONCRETE);
+    PaintFrame(arena, float3(0, 0, 8), float3(0, 0, 1), 4);
+    Fill(arena, 4.8, 8.2, 0, 4.5, 6.2, 7.2, CONCRETE);
+    Fill(arena, 5, 8, 0, 4.4, 7.2, 8, WALLPAPER, true);
+    Fill(arena, 4.8, 5, 0, 4.5, 7.2, 8.1, CONCRETE);
+    Fill(arena, 8, 8.2, 0, 4.5, 7.2, 8.1, CONCRETE);
+    Fill(arena, 4.8, 8.2, 4.4, 4.5, 7.2, 8.1, CONCRETE);
+    PaintFrame(arena, float3(6.5, 0, 8), float3(0, 0, 1), .25);
+    // The weighing chute is a grille cage: shots can reach the frame through
+    // it, while the giant cube is physically caught above the heavy plate.
+    Fill(arena, -3.5, -3.2, 0, 6, 8.1, 16.3, PANELS, false, 4);
+    Fill(arena, 3.2, 3.5, 0, 6, 8.1, 16.3, PANELS, false, 4);
+    Fill(arena, -3.5, 3.5, 0, 6, 16, 16.3, PANELS, false, 4);
+    Spawn(Plate { chamber = arena.chamber, at = float3(0, 0, 13.5), half = float2(2.3), need = 2500, heavy = true, signal = 0 });
+    RunWire(arena, 0, [float3(2.3, .025, 13.5), float3(3.8, .025, 13.5), float3(3.8, .025, 18.8),
+                       float3(3.8, .025, 19.96), float3(3.8, 4.15, 19.96), float3(0, 4.15, 19.96)]);
+    SetProp(arena, PropKind.ExitSign, float3(0, 3.5, 19.8), SOUTH);
+    SetProp(arena, PropKind.Arrow, float3(-12.05, .25, 4), EAST, float3(.6));
+    SetProp(arena, PropKind.Dollhouse, float3(-18, 0, 3), EAST, float3(1.5));
+    SetProp(arena, PropKind.Clock, float3(-19.7, 3, -3), EAST, float3(2));
+    for (int floor = 0; floor < 3; floor++)
+    {
+        Fill(arena, 14, 19.8, 6 + floor * 5, 6.4 + floor * 5, -15, 18, CONCRETE, false, 2);
+        for (int desk = 0; desk < 4; desk++)
+            SetProp(arena, PropKind.Desk, float3(17, 6.4 + floor * 5, -10 + desk * 6), WEST);
+    }
+    LampGrid(place, float2(-20, -18), float2(4, 4), 10, 10);
+    HangLamps(place, 0, 1, 0, 5, 8);
+    HangLamps(place, 3, 6, 4, 9, 16);
+    HangLamps(place, 8, 9, 0, 9, 22);
+    HangLamp(place, 5, 9, 16, LampState.Signal, 0, 0);
+    place.light = .8;
+    place.fog = .018;
+    place.grade = float3(1.08, .98, .9);
+    MenuView(place, float3(-16, 8, -14), -.12, .65);
+}

@@ -1,0 +1,167 @@
+settings { maxPlayers = 3; }
+struct Cell { int value; bool solid; }
+struct Nested { string label; List<int> values; }
+component PublicState
+{
+    int kind;
+    string label;
+    List<Nested> nested;
+    Map<string, List<int>> scores;
+    string? note;
+    Grid2<Cell> cells;
+}
+component Secret { int code = 1511518221; string text = "PRIVATE-CARD-DO-NOT-TRANSMIT"; }
+component Health { int value = 1000; }
+component HiddenSource { }
+command ChoosePrivate { int value; }
+singleton PrivateCache { Resident state; }
+singleton Placement
+{
+    bool hideRoot;
+    bool hideRootTransform;
+    bool hideFirstTransform;
+    bool detachFirst;
+    float4x4 firstMatrix;
+}
+singleton Control
+{
+    VisibilityGroup nearby;
+    VisibilityGroup opponent;
+    VisibilityGroup cards;
+    Entity card;
+    Entity chunk;
+    Entity player;
+    Entity root;
+    Entity first;
+    Entity middle;
+    Entity last;
+    bool reverse;
+    bool destroyRoot;
+    bool hideMain;
+    int known;
+    int missing;
+    int phase;
+}
+input Controls
+{
+    bool fire;
+    int secretChoice;
+    int phase;
+    Sample() { }
+}
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Control control)
+{
+    control.nearby = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
+    control.opponent = Visibility.CreateGroup(Audience.Only(PlayerID(1)));
+    control.cards = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
+    control.card = Spawn(PublicState { kind = 1 }, Health, Secret, Visibility, Owner { player = PlayerID(0) });
+    control.chunk = Spawn(PublicState { kind = 2 }, Secret, HiddenSource, Visibility { group = control.nearby });
+    control.player = Spawn(PublicState { kind = 3 }, Secret { text = "permitted-opponent" }, Visibility { group = control.opponent }, Owner { player = PlayerID(1) });
+    control.root = Spawn(Transform, PublicState { kind = 4 }, Visibility);
+    control.first = Spawn(Transform, PublicState { kind = 5 }, Visibility);
+    control.middle = Spawn(Transform, PublicState { kind = 6 }, Visibility { group = control.opponent });
+    control.last = Spawn(Transform, PublicState { kind = 7 });
+    control.first.SetParent(control.root, false);
+    control.middle.SetParent(control.root, false);
+    control.last.SetParent(control.root, false);
+}
+
+event(Spawned) RestrictCard(PublicState state, mut Visibility visibility, Control control)
+{
+    if (state.kind == 1) visibility.Set<Secret>(control.cards);
+}
+
+command(ChoosePrivate choice, PlayerID sender) Choose(Owner owner, mut Secret secret)
+{
+    if (sender == owner.player) secret.code = choice.value;
+}
+
+system RestrictPlacement(PublicState state, mut Visibility visibility, Placement placement, Control control)
+{
+    if (state.kind == 4) {
+        if (placement.hideRoot) visibility.group = control.opponent;
+        if (placement.hideRootTransform) visibility.Set<Transform>(control.opponent);
+    }
+    if (state.kind == 5 && placement.hideFirstTransform) visibility.Set<Transform>(control.opponent);
+}
+
+system MeasurePlacement(mut Placement placement, Control control, World world)
+{
+    placement.firstMatrix = world.LocalToWorld(control.first);
+    if (placement.detachFirst) control.first.SetParent(null, false);
+}
+
+system Fill(mut PublicState state, Control control, Time time)
+{
+    if (time.tick != 0) return;
+    state.label = "public-value";
+    state.nested.Add(Nested { label = "nested-public", values = [1, 2, 3] });
+    state.scores["alpha"] = [7, 8];
+    state.scores["beta"] = [9];
+    state.note = "permitted-note";
+    if (control.reverse) {
+        state.cells[int2(256, 0)] = Cell { value = 30, solid = true };
+        state.cells[int2(0, 128)] = Cell { value = 20 };
+        state.cells[int2(0, 0)] = Cell { value = 10, solid = true };
+    } else {
+        state.cells[int2(0, 0)] = Cell { value = 10, solid = true };
+        state.cells[int2(0, 128)] = Cell { value = 20 };
+        state.cells[int2(256, 0)] = Cell { value = 30, solid = true };
+    }
+    // Allocated zero chunks remain observable to an open-grid foreach.
+    state.cells[int2(1024, 1024)] = Cell { value = 1 };
+    state.cells[int2(1024, 1024)] = default;
+}
+
+[After(Fill)]
+system ResetAndCount(mut Control control, query (with Secret) known, query (with PublicState, without Secret) missing)
+{
+    control.reverse = false;
+    control.known = 0;
+    control.missing = 0;
+    foreach (var row in known) { _ = row.entity; control.known += 1; }
+    foreach (var row in missing) { _ = row.entity; control.missing += 1; }
+}
+
+system ReadInput(PublicState state, Controls controls)
+{
+    if (state.kind == 3 && controls.fire) Debug.Assert(controls.secretChoice >= 0);
+}
+
+system ChangeVisibility(PublicState state, Controls controls, mut Control control)
+{
+    if (state.kind != 1 || control.phase == controls.phase) return;
+    control.phase = controls.phase;
+    if (controls.phase == 1) {
+        Visibility.Set(control.nearby, Audience.Only(PlayerID(1)));
+        Visibility.Set(control.opponent, Audience.Only(PlayerID(0)));
+        Visibility.Set(control.cards, Audience.Only(PlayerID(1)));
+    } else {
+        Visibility.Set(control.nearby, Audience.Only(PlayerID(0)));
+        Visibility.Set(control.opponent, Audience.Only(PlayerID(1)));
+        Visibility.Set(control.cards, Audience.Only(PlayerID(0)));
+    }
+}
+
+system HiddenImpact(with HiddenSource, Secret secret, Control control, mut World world)
+{
+    if (control.phase != 3) return;
+    mut var health = world.Get<Health>(control.card);
+    health.value -= secret.code % 5 + 1;
+    world.Set<Health>(control.card, health);
+}
+
+system DestroyRoot(Control control)
+{
+    if (control.destroyRoot) control.root.Destroy();
+}
+
+system HideScene(with Main, Control control)
+{
+    if (control.hideMain) this.Add(Visibility { group = control.opponent });
+}
+
+extern system CountPresent(Secret secret);
+extern system CountAbsent(with PublicState, without Secret);

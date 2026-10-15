@@ -245,7 +245,7 @@ since: every check is still a scripted run and captures.
   left it: 30 steps a second, and a correction all at once. Each seat now has
   an `Avatar` entity with `[Position]` and `[Rotation]` fields, which `Mirror`
   writes after `Tick` (and `Snap`s when a new avatar spawns, by `Seat.life`).
-  A view copies them into the local `Shown`, and every view that draws or
+  A view copies them into the local `Presentation`, and every view that draws or
   follows a seat reads `Seen(arena, shown, s)`. Bullets are drawn between
   their last two ticks' places, and sliding movers at
   `velocity * (time.t - time.tick * time.dt)`. Measured in a scripted walk:
@@ -280,3 +280,8 @@ The scripted match's hash moved with `Avatar` and the two fields. Validation:
 `cracked_tests` 64 of 64 natively and under WASI with the same new hash; the
 web build compiles; nothing was run in a browser, and the full suites weren't
 run again.
+
+2026-10-15 visibility integration: renamed the local presentation singleton from
+`Shown` to `Presentation`, because `Shown` now names an engine availability event.
+This is a local-only naming change; match layout and deterministic hashes do not change.
+Validation is included in the visibility change's full native/web suites.

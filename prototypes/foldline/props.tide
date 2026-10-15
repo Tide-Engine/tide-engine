@@ -1,0 +1,225 @@
+// Set dressing in metres, with its origin on the floor and its front along +z.
+// Solid props carry one explicit box; their presentation stays in the same list
+// as the walls, so folds cut it too.
+using Box3D;
+enum PropKind
+{
+    Desk, Chair, Cabinet, Partition, Shelf, Locker, Vending, Cooler, Clock, Monitor,
+    Bed, Curtain, Lounger, PlasticChair, Plant, CoatRack, Pipe, Ladder, ExitSign,
+    Arrow, HandSign, EyeSign, FigureSign, Switch, Cardboard, Pallet, Cone, Dollhouse, Web
+}
+
+component Prop
+{
+    PropKind kind;
+    float3 at;
+    float yaw;
+    float3 scale = float3(1);
+    Color tint = Color(1, 1, 1);
+    int chamber;
+}
+
+Entity SetProp(Arena arena, PropKind kind, float3 at, float yaw = 0, float3 scale = float3(1))
+{
+    return Spawn(Prop { kind = kind, at = at, yaw = yaw, scale = scale, chamber = arena.chamber });
+}
+
+Entity SetSolidProp(Arena arena, PropKind kind, float3 at, float3 size, float3 center, float yaw = 0, float3 scale = float3(1))
+{
+    var rotation = quaternion.Euler(0, yaw, 0);
+    return Spawn(Prop { kind = kind, at = at, yaw = yaw, scale = scale, chamber = arena.chamber },
+                 Body { type = BodyType.Static, position = at + Math.Rotate(rotation, center * scale), rotation = rotation }, Box { size = size * scale });
+}
+
+[After(EvaluatePlace)]
+system RetireProps(Prop prop, Arena arena)
+{
+    if (prop.chamber != arena.chamber) this.Destroy();
+}
+
+void PropBox(mut Optics optics, Prop prop, float3 at, float3 size, Color tint, float paint = -1, float glow = 0)
+{
+    var rotation = quaternion.Euler(0, prop.yaw, 0);
+    mut var part = Turned(prop.at + Math.Rotate(rotation, at * prop.scale), rotation, size * prop.scale,
+                          Color(tint.r * prop.tint.r, tint.g * prop.tint.g, tint.b * prop.tint.b), glow);
+    part.cell = paint;
+    part.tiles = paint < 0 ? 0.0 : .5;
+    optics.architecture.Add(part);
+}
+
+void PropLegs(mut Optics optics, Prop prop, float wide, float deep, float high, Color tint)
+{
+    for (int leg = 0; leg < 4; leg++)
+        PropBox(optics, prop, float3((leg & 1) == 0 ? -wide : wide, high * .5, (leg & 2) == 0 ? -deep : deep), float3(.065, high, .065), tint);
+}
+
+void DressProp(mut Optics optics, Prop prop)
+{
+    Color wood = Color(.42, .28, .15);
+    Color metal = Color(.29, .34, .32);
+    Color dark = Color(.055, .065, .06);
+    Color pale = Color(.69, .7, .61);
+    switch (prop.kind)
+    {
+        case PropKind.Web:
+            for (int strand = -1; strand <= 1; strand++)
+                PropBox(optics, prop, float3(strand * .06, .12 + Math.Abs(strand) * .03, 0), float3(.013, .013, 1.45), Color(.6, .62, .56), glow: .4);
+            return;
+        case PropKind.Desk:
+            PropBox(optics, prop, float3(0, .76, 0), float3(1.7, .09, .8), wood, PLANKS);
+            PropLegs(optics, prop, .73, .3, .72, metal);
+            PropBox(optics, prop, float3(-.53, .42, -.02), float3(.48, .6, .68), metal);
+            for (int drawer = 0; drawer < 3; drawer++)
+                PropBox(optics, prop, float3(-.53, .23 + drawer * .19, .333), float3(.18, .025, .035), dark);
+            return;
+        case PropKind.Chair:
+        case PropKind.PlasticChair:
+            PropBox(optics, prop, float3(0, .48, 0), float3(.52, .09, .52), prop.kind == PropKind.Chair ? Color(.2, .24, .25) : pale);
+            PropBox(optics, prop, float3(0, .77, -.22), float3(.52, .55, .075), prop.kind == PropKind.Chair ? Color(.2, .24, .25) : pale);
+            PropLegs(optics, prop, .2, .19, .45, metal);
+            return;
+        case PropKind.Cabinet:
+        case PropKind.Locker:
+            bool locker = prop.kind == PropKind.Locker;
+            PropBox(optics, prop, float3(0, locker ? .95 : .7, 0), float3(.64, locker ? 1.9 : 1.4, .62), metal, PANELS);
+            for (int drawer = 0; drawer < (locker ? 1 : 4); drawer++)
+            {
+                float high = locker ? 1.15 : .22 + drawer * .33;
+                PropBox(optics, prop, float3(0, high, .317), float3(.52, locker ? 1.66 : .28, .024), Color(.37, .4, .36));
+                PropBox(optics, prop, float3(locker ? .17 : 0.0, high, .345), float3(locker ? .025 : .18, .035, .035), dark);
+            }
+            if (locker)
+                for (int vent = 0; vent < 4; vent++)
+                    PropBox(optics, prop, float3(0, 1.65 - vent * .06, .335), float3(.34, .02, .018), dark);
+            return;
+        case PropKind.Partition:
+            PropBox(optics, prop, float3(0, .7, 0), float3(1.8, 1.4, .09), Color(.4, .43, .39), CARPET);
+            PropBox(optics, prop, float3(0, 1.42, 0), float3(1.86, .05, .11), metal);
+            for (int side = -1; side <= 1; side += 2)
+                PropBox(optics, prop, float3(side * .8, .04, 0), float3(.1, .08, .55), metal);
+            return;
+        case PropKind.Shelf:
+            for (int side = -1; side <= 1; side += 2)
+                PropBox(optics, prop, float3(side * .7, 1, 0), float3(.07, 2, .5), metal);
+            for (int board = 0; board < 5; board++)
+                PropBox(optics, prop, float3(0, .12 + board * .45, 0), float3(1.45, .06, .55), metal, RUST);
+            return;
+        case PropKind.Vending:
+            PropBox(optics, prop, float3(0, .95, 0), float3(1.1, 1.9, .8), Color(.28, .12, .1), PANELS);
+            PropBox(optics, prop, float3(-.1, 1.16, .411), float3(.7, 1.1, .026), dark);
+            for (int row = 0; row < 3; row++)
+                for (int col = 0; col < 3; col++)
+                    PropBox(optics, prop, float3(-.32 + col * .23, .82 + row * .32, .43), float3(.12, .2, .035), row == 1 ? Color(.25, .4, .2) : wood);
+            PropBox(optics, prop, float3(.41, 1.1, .43), float3(.13, .35, .045), pale);
+            PropBox(optics, prop, float3(-.1, .26, .43), float3(.7, .17, .05), dark);
+            return;
+        case PropKind.Cooler:
+            PropBox(optics, prop, float3(0, .48, 0), float3(.47, .96, .47), pale);
+            PropBox(optics, prop, float3(0, 1.22, 0), float3(.34, .53, .34), Color(.13, .28, .33));
+            PropBox(optics, prop, float3(0, .72, .26), float3(.18, .05, .09), dark);
+            return;
+        case PropKind.Clock:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.44, .44, .06), metal);
+            PropBox(optics, prop, float3(0, 0, .034), float3(.38, .38, .02), pale);
+            PropBox(optics, prop, float3(0, .08, .05), float3(.018, .16, .015), dark);
+            PropBox(optics, prop, float3(.065, 0, .05), float3(.13, .018, .015), dark);
+            return;
+        case PropKind.Monitor:
+            PropBox(optics, prop, float3(0, .26, 0), float3(.5, .43, .45), pale, PANELS);
+            PropBox(optics, prop, float3(0, .28, .233), float3(.39, .29, .026), Color(.04, .11, .075), glow: .3);
+            PropBox(optics, prop, float3(0, .03, 0), float3(.36, .06, .34), dark);
+            return;
+        case PropKind.Bed:
+        case PropKind.Lounger:
+            PropBox(optics, prop, float3(0, .38, 0), float3(.95, .17, 2), metal);
+            PropBox(optics, prop, float3(0, .51, 0), float3(.9, .15, 1.9), pale);
+            PropBox(optics, prop, float3(0, .64, -.66), float3(.68, .12, .4), Color(.82, .81, .7));
+            PropLegs(optics, prop, .4, .85, .3, metal);
+            for (int side = -1; side <= 1; side += 2)
+                PropBox(optics, prop, float3(0, .62, side * .97), float3(.95, .67, .06), metal);
+            return;
+        case PropKind.Curtain:
+            PropBox(optics, prop, float3(0, 2.2, 0), float3(2.4, .06, .06), metal);
+            for (int fold = 0; fold < 12; fold++)
+                PropBox(optics, prop, float3(-1.1 + fold * .2, 1.22, (fold & 1) * .07), float3(.21, 1.8, .04), Color(.31, .42, .36));
+            return;
+        case PropKind.Plant:
+            PropBox(optics, prop, float3(0, .2, 0), float3(.38, .4, .38), wood);
+            PropBox(optics, prop, float3(0, .69, 0), float3(.055, 1, .055), Color(.16, .22, .09));
+            for (int leaf = 0; leaf < 6; leaf++)
+                PropBox(optics, prop, float3(Math.Sin(leaf * 2.4) * .19, .55 + leaf * .11, Math.Cos(leaf * 2.4) * .19), float3(.35, .075, .23), Color(.18, .28, .1));
+            return;
+        case PropKind.CoatRack:
+            PropBox(optics, prop, float3(0, .92, 0), float3(.065, 1.84, .065), wood);
+            PropBox(optics, prop, float3(0, 1.62, 0), float3(.65, .07, .07), wood);
+            PropBox(optics, prop, float3(0, .04, 0), float3(.6, .08, .5), wood);
+            return;
+        case PropKind.Pipe:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.15, .15, 2), metal, RUST);
+            for (int joint = -1; joint <= 1; joint += 2)
+                PropBox(optics, prop, float3(0, 0, joint * .85), float3(.21, .21, .1), dark);
+            return;
+        case PropKind.Ladder:
+            for (int side = -1; side <= 1; side += 2)
+                PropBox(optics, prop, float3(side * .25, 1.5, 0), float3(.06, 3, .06), metal);
+            for (int rung = 0; rung < 9; rung++)
+                PropBox(optics, prop, float3(0, .18 + rung * .32, 0), float3(.5, .045, .055), metal);
+            return;
+        case PropKind.ExitSign:
+        case PropKind.Arrow:
+        case PropKind.HandSign:
+        case PropKind.EyeSign:
+        case PropKind.FigureSign:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.64, .4, .065), prop.kind == PropKind.ExitSign ? Color(.04, .3, .12) : dark, glow: .35);
+            if (prop.kind == PropKind.EyeSign)
+            {
+                PropBox(optics, prop, float3(0, 0, .044), float3(.36, .1, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(0, 0, .062), float3(.075, .12, .025), dark);
+            }
+            else if (prop.kind == PropKind.HandSign)
+            {
+                PropBox(optics, prop, float3(0, -.03, .044), float3(.16, .16, .025), pale, glow: .6);
+                for (int finger = 0; finger < 4; finger++)
+                    PropBox(optics, prop, float3(-.075 + finger * .05, .09, .044), float3(.03, .12, .025), pale, glow: .6);
+            }
+            else
+            {
+                PropBox(optics, prop, float3(-.12, .1, .044), float3(.07, .07, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(-.12, -.01, .044), float3(.07, .15, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(-.18, -.1, .044), float3(.18, .04, .025), pale, glow: .6);
+                if (prop.kind != PropKind.FigureSign)
+                {
+                    PropBox(optics, prop, float3(.12, 0, .044), float3(.22, .035, .025), pale, glow: .6);
+                    PropBox(optics, prop, float3(.2, .04, .044), float3(.04, .1, .025), pale, glow: .6);
+                }
+            }
+            return;
+        case PropKind.Switch:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.17, .25, .055), pale);
+            PropBox(optics, prop, float3(0, 0, .055), float3(.06, .12, .06), dark);
+            return;
+        case PropKind.Cardboard:
+            PropBox(optics, prop, float3(0, .25, 0), float3(.6, .5, .5), Color(.52, .38, .2));
+            PropBox(optics, prop, float3(0, .505, 0), float3(.06, .015, .51), pale);
+            return;
+        case PropKind.Pallet:
+            for (int slat = 0; slat < 5; slat++)
+                PropBox(optics, prop, float3(-.48 + slat * .24, .16, 0), float3(.18, .06, 1), wood, PLANKS);
+            for (int rail = -1; rail <= 1; rail++)
+                PropBox(optics, prop, float3(0, .07, rail * .38), float3(1.2, .14, .1), wood);
+            return;
+        case PropKind.Cone:
+            PropBox(optics, prop, float3(0, .025, 0), float3(.48, .05, .48), dark);
+            for (int tier = 0; tier < 5; tier++)
+                PropBox(optics, prop, float3(0, .1 + tier * .11, 0), float3(.31 - tier * .055, .11, .31 - tier * .055), tier == 2 ? pale : Color(.85, .27, .05));
+            return;
+        case PropKind.Dollhouse:
+            PropBox(optics, prop, float3(0, .04, 0), float3(1.5, .08, 1), wood);
+            PropBox(optics, prop, float3(0, .5, -.45), float3(1.5, .92, .08), pale, WALLPAPER);
+            for (int side = -1; side <= 1; side += 2)
+                PropBox(optics, prop, float3(side * .7, .5, 0), float3(.08, .92, 1), pale, WALLPAPER);
+            PropBox(optics, prop, float3(0, .51, 0), float3(1.5, .06, 1), wood);
+            PropBox(optics, prop, float3(0, 1, 0), float3(1.5, .08, 1), wood);
+            return;
+    }
+}

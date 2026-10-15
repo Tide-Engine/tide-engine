@@ -1,6 +1,7 @@
 #include "asset_usage.h"
 #include "asset_files.h"
 #include "version.h"
+#include "types.h"
 #include "tide/sha256.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -142,6 +143,149 @@ static void parameters(asset_usage *w, const param *items, const int count)
     }
 }
 
+typedef struct recipient_schema { VEC(type) types; } recipient_schema;
+
+static void recipient_schema_type(asset_usage *w, recipient_schema *schema, const type t)
+{
+    int id = 0;
+    for (; id < schema->types.count; id++) {
+        const type had = schema->types.items[id];
+        if (had.kind == t.kind && had.decl == t.decl) break;
+    }
+    if (id == schema->types.count) vec_push(schema->types, t);
+    number(w, t.kind);
+    number(w, (uint64_t)id + 1u);
+}
+
+// Match client_singleton, arch_scene_column, arch_stores and the logical type
+// traversal in client_state_codegen.inc. These are wire records, not a dump of
+// declarations reachable from executed game code: an unused helper can still
+// change physical sparse storage, and synthetic match singletons are not all
+// in program.decls. Recursive values use stable numbered type records.
+static void recipient_state_schema(asset_usage *w)
+{
+    const program *prog = w->prog;
+    recipient_schema schema = {0};
+    ctext(w, "Tide recipient logical state schema 1");
+    for (int i = 0; i < prog->singletons.count; i++) {
+        decl *d = prog->singletons.items[i];
+        if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0]) continue;
+        recipient_schema_type(w, &schema, (type){TY_SINGLETON, d});
+    }
+    number(w, UINT64_MAX);
+    number(w, prog->input != NULL);
+    if (prog->input) recipient_schema_type(w, &schema, (type){TY_INPUT, prog->input});
+    number(w, prog->hierarchy[0] != NULL); // Filtered links and optional affine anchors.
+    bool scene_column = false;
+    for (int c = 0; c < prog->components.count; c++) {
+        const decl *d = prog->components.items[c];
+        if (d->is_scene && !d->is_local) scene_column = true;
+    }
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (prog->archetype_local.items[a]) continue;
+        number(w, a);
+        number(w, scene_column);
+        for (int c = 0; c < prog->components.count; c++) {
+            const bool sparse = mask_has(prog->sparse_mask, c);
+            if (!mask_has(prog->archetypes.items[a], c)
+                && !(sparse && mask_has(prog->possible.items[a], c))) continue;
+            number(w, c);
+            number(w, sparse); // A presence byte precedes this component value.
+            recipient_schema_type(w, &schema, (type){TY_COMPONENT, prog->components.items[c]});
+        }
+        number(w, UINT64_MAX);
+    }
+    number(w, UINT64_MAX);
+    for (int id = 0; id < schema.types.count; id++) {
+        const type t = schema.types.items[id];
+        number(w, id + 1);
+        number(w, t.kind);
+        if (t.kind == TY_RECORD && t.decl->array_of) {
+            number(w, t.decl->array_length);
+            recipient_schema_type(w, &schema, (type){TY_RECORD, t.decl->array_of});
+        } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT
+            || t.kind == TY_EVENT || t.kind == TY_RECORD) {
+            for (int k = 0; k < t.decl->fields.count; k++) {
+                const field *f = &t.decl->fields.items[k];
+                if (f->typed || (f->hidden && (t.decl->is_scene || t.decl == prog->visibility))) continue;
+                text(w, f->name);
+                recipient_schema_type(w, &schema, f->type);
+            }
+            number(w, UINT64_MAX);
+        } else if (t.kind == TY_ARRAY) {
+            number(w, t.decl->array_length);
+            recipient_schema_type(w, &schema, t.decl->fields.items[0].type);
+        } else if (t.kind == TY_LIST || t.kind == TY_GRID || t.kind == TY_MAP || t.kind == TY_SET) {
+            if (t.kind == TY_GRID) number(w, t.decl->dims);
+            for (int k = 0; k < t.decl->fields.count; k++) recipient_schema_type(w, &schema, t.decl->fields.items[k].type);
+            number(w, UINT64_MAX);
+        } else if (t.kind != TY_STRING && t.kind != TY_RESIDENT) {
+            // Only POD leaves are copied at their raw width. Logical records
+            // recurse fields and must not fingerprint host pointer padding.
+            number(w, type_layout(t).size);
+        }
+    }
+    number(w, UINT64_MAX);
+}
+
+// Only visibility games put the server's listener journals on the wire. The
+// wire contract depends on filters, payload/query layout and listener bit order,
+// not on local handler bodies, local state or presentation-only helpers. Keep
+// this surface aligned with listener_runs_for, heard_data, collect_heard_rows
+// and gen_hear in codegen.c. A query's binding/filter order also fixes its row
+// layout; the global listener order fixes shared query-record IDs.
+static bool listener_wire_parameter(const param *p)
+{
+    if (p->type.kind == TY_QUERY) return p->query_rows && !p->query_local;
+    return !p->placement_local && p->type.decl && !p->type.decl->is_local
+        && (p->type.kind == TY_EVENT || p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON);
+}
+
+static void listener_wire_parameters(asset_usage *w, const param *items, const int count, const bool query)
+{
+    int kept = 0;
+    for (int i = 0; i < count; i++) if (query || listener_wire_parameter(&items[i])) kept++;
+    number(w, kept);
+    for (int i = 0; i < count; i++) {
+        const param *p = &items[i];
+        if (!query && !listener_wire_parameter(p)) continue;
+        // Read and mut both carry the same match payload; mut only permits local writes.
+        number(w, p->mode == PARAM_MUT ? PARAM_READ : p->mode);
+        number(w, p->ownership);
+        number(w, p->verified);
+        if (p->type.kind == TY_QUERY) {
+            number(w, p->query_rows);
+            number(w, p->query_local);
+            for (int k = 0; k < COMP_WORDS; k++) {
+                number(w, p->query_need_mask.w[k]);
+                number(w, p->query_without_mask.w[k]);
+            }
+            listener_wire_parameters(w, p->query.items, p->query.count, true);
+        } else value_type(w, p->type);
+    }
+}
+
+static void listener_wire(asset_usage *w)
+{
+    ctext(w, "Tide recipient listener journals 1");
+    int count = 0;
+    for (int i = 0; i < w->prog->handlers.count; i++) if (w->prog->handlers.items[i]->listens) count++;
+    number(w, count);
+    for (int i = 0; i < w->prog->handlers.count; i++) {
+        const decl *h = w->prog->handlers.items[i];
+        if (!h->listens) continue;
+        text(w, h->qualified); // gen_hear includes names in TIDE_HEARD_BUILD.
+        queue(w, USAGE_DECL, h->event);
+        number(w, h->listens_verified);
+        number(w, h->per_entity);
+        for (int k = 0; k < COMP_WORDS; k++) {
+            number(w, h->need_mask.w[k]);
+            number(w, h->without_mask.w[k]);
+        }
+        listener_wire_parameters(w, h->params.items, h->params.count, false);
+    }
+}
+
 static void declaration(asset_usage *w, const decl *d)
 {
     number(w, d->kind);
@@ -149,6 +293,7 @@ static void declaration(asset_usage *w, const decl *d)
     number(w, d->is_scene);
     if (d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON || d->kind == DECL_EVENT) number(w, d->index);
     number(w, d->is_sparse);
+    number(w, d->visibility_optional);
     number(w, d->is_extern);
     number(w, d->extern_system);
     if (d->is_extern || d->extern_system) ctext(w, d->c_name);
@@ -272,6 +417,7 @@ static void expression(asset_usage *w, const expr *e)
     number(w, e->op);
     number(w, e->postfix);
     number(w, e->skin_operation);
+    number(w, e->visibility_operation);
     number(w, e->asset_reference);
     number(w, e->asset_ref_value);
     number(w, e->is_out);
@@ -432,6 +578,8 @@ bool program_simulation_id(const program *prog, uint8_t out[32], const bool cons
     number(&w, rewind);
     number(&w, prog->host_migration);
     number(&w, prog->delay_prediction);
+    number(&w, prog->visibility_state != NULL);
+    if (prog->visibility_state) { recipient_state_schema(&w); listener_wire(&w); }
     number(&w, prog->start_scenes.count);
     for (int i = 0; i < prog->start_scenes.count; i++) queue(&w, USAGE_DECL, prog->start_scenes.items[i]);
     for (int i = 0; i < DEVICE_WORDS; i++) number(&w, prog->device_uses[i]);
@@ -442,6 +590,19 @@ bool program_simulation_id(const program *prog, uint8_t out[32], const bool cons
             number(&w, prog->archetypes.items[i].w[k]);
             number(&w, prog->possible.items[i].w[k]);
         }
+        // This is arch_stores in codegen.c: sparse columns remain physical
+        // storage even though they are absent from the solid archetype mask.
+        // Match the canonical codec's component order and presence-byte shape,
+        // including targets named only by an otherwise unreachable helper.
+        for (int c = 0; c < prog->components.count; c++) {
+            const bool sparse = mask_has(prog->sparse_mask, c);
+            if (!mask_has(prog->archetypes.items[i], c)
+                && !(sparse && mask_has(prog->possible.items[i], c))) continue;
+            number(&w, c);
+            number(&w, sparse);
+            queue(&w, USAGE_DECL, prog->components.items[c]);
+        }
+        number(&w, UINT64_MAX);
     }
     number(&w, UINT64_MAX);
     // All match schemas participate, even if currently uninstantiated. Native

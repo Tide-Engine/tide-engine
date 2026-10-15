@@ -1,0 +1,67 @@
+// The last view of the target lies inside a quarter-height cable service duct.
+// A second operator must hold its optical shutter while the scout makes a route.
+void BuildExchange(mut Arena arena, mut Place place, mut Fold fold)
+{
+    ArrivalLift(arena, place, float3(-10, 0, -14.1), NORTH);
+    ExitLift(arena, place, float3(13, 0, 16.1), SOUTH, 1 << 2);
+    Fill(arena, -16, 8, -1, 0, -12, 12, CARPET);
+    Fill(arena, 8, 18, -1, 0, 4, 14, CONCRETE);
+    Fill(arena, -17, 9, 4.4, 5.4, -13, 13, CEILING_TILE, false, 2);
+    Fill(arena, 8, 19, 4.4, 5.4, 3, 15, PANELS, false, 2);
+    var west = Fill(arena, -17, -16, -2, 4.4, -13, 13, WALLPAPER, true);
+    Fill(arena, -17, -13, -2, 4.4, -13, -12, PANELS);
+    Fill(arena, -7, 9, -2, 4.4, -13, -12, PANELS);
+    Fill(arena, -17, 9, -2, 4.4, 12, 13, PANELS);
+    Fill(arena, -4.3, -3.7, 0, 4.4, -12, -8, CONCRETE);
+    Fill(arena, -4.3, -3.7, 0, 4.4, -4, 12, CONCRETE);
+    HangDoor(arena, float3(-4, 2.2, -6), float3(.3, 4.4, 4), 1 << 0);
+    LayPlate(arena, float3(-10, 0, 6), 0);
+    RunWire(arena, 0, [float3(-9.4, .025, 6), float3(-4.33, .025, 6), float3(-4.33, 4.1, 6),
+                       float3(-4.33, 4.1, -6)]);
+
+    Fill(arena, 7.9, 8.5, 0, 4.4, -12, 6.5, PANELS);
+    Fill(arena, 7.9, 8.5, 0, 4.4, 8.5, 14, PANELS);
+    Fill(arena, 7.9, 8.1, 0, 4.4, 6.5, 8.5, PANELS, false, 4);
+    HangDoor(arena, float3(8.3, 2.2, 7.5), float3(.3, 4.4, 2), 1 << 1);
+    LayPlate(arena, float3(1, 0, -5), 1);
+    RunWire(arena, 1, [float3(1.6, .025, -5), float3(7.85, .025, -5), float3(7.85, 4.2, -5),
+                       float3(7.85, 4.2, 7.5)]);
+    // The duct is a hollow cable cabinet, not an invisible small-body filter.
+    Fill(arena, 4, 8, .55, 4.4, -1.5, 9, PANELS, false, 2);
+    Fill(arena, 4, 8, 0, .55, -1.5, -1, PANELS);
+    Fill(arena, 4, 5, 0, .55, 1, 9, PANELS);
+    Fill(arena, 7, 8, 0, .55, -1, 6.5, PANELS);
+    Fill(arena, 4, 8, 0, .55, 8.5, 9, PANELS);
+
+    Fill(arena, 8.5, 19, -2, 4.4, 3, 4, CONCRETE);
+    Fill(arena, 18, 19, -2, 4.4, 4, 7.5, PANELS);
+    Fill(arena, 18, 19, -2, 4.4, 7.5, 10.5, WALLPAPER, true);
+    Fill(arena, 18, 19, -2, 4.4, 10.5, 15, PANELS);
+    Fill(arena, 8, 10, -2, 4.4, 14, 15, PANELS);
+    Fill(arena, 16, 19, -2, 4.4, 14, 15, PANELS);
+    LayPlate(arena, float3(14, 0, 11), 2);
+    RunWire(arena, 2, [float3(14, .025, 11.6), float3(14, .025, 13.96), float3(14, 4.15, 13.96),
+                       float3(13, 4.15, 13.96)]);
+    PutLoose(arena, fold, float3(-10, .4, -4));
+    PaintFrame(arena, float3(-16, 0, 2), float3(1, 0, 0), .5);
+    PlaceEnd(fold, 2, west, float3(-16, 0, -8), float3(1, 0, 0));
+    PlaceEnd(fold, 3, west, float3(-16, 0, 2), float3(1, 0, 0), .5);
+
+    for (int rack = 0; rack < 4; rack++)
+    {
+        SetProp(arena, PropKind.Shelf, float3(2.9, 0, 2 + rack * 2.2), EAST, float3(1, 1.6, 1));
+        SetProp(arena, PropKind.Monitor, float3(3, 1.4, 2 + rack * 2.2), EAST);
+        SetProp(arena, PropKind.Cabinet, float3(-.5, 0, 3 + rack * 2.2), EAST);
+    }
+    SetProp(arena, PropKind.Switch, float3(7.84, 3, -5), WEST);
+    SetProp(arena, PropKind.Pipe, float3(5.9, .62, 3), NORTH, float3(.7, 1, 3));
+    SetProp(arena, PropKind.Arrow, float3(3.96, .25, 0), EAST, float3(.6));
+    SetProp(arena, PropKind.ExitSign, float3(13, 3.5, 13.8), SOUTH);
+    LampGrid(place, float2(-16, -12), float2(4, 4), 9, 7);
+    HangLamps(place, 0, 5, 0, 5, 4.4);
+    HangLamps(place, 6, 8, 4, 6, 4.4);
+    HangLamp(place, 5, 1, 4.4, LampState.Signal, 0, 1);
+    place.light = .78;
+    place.grade = float3(.94, 1.04, 1.1);
+    MenuView(place, float3(-13, 2.8, -10), .12, .5);
+}
