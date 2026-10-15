@@ -11,8 +11,10 @@ The first Fly deployment completed on 2026-10-15 through Hosting run
 38754895170 attempt 2 (341051c4): one 512 MiB shared CPU machine in `fra`, one
 1 GiB `hosting_data` volume, a passing Fly health check and `{"ok":true}` from
 the public Fly hostname with the console Host header. All four provider secrets
-are now deployed. Console DNS/certificates and real provider/payment flows remain
-unvalidated; the console domain did not resolve during this check. No customer
+are now deployed. Cloudflare DNS and Fly-managed TLS for console.tide-engine.dev
+and play.tide-engine.dev are configured and verified; both HTTPS health requests
+return 200. The console homepage serves GitHub sign-in. Real provider/payment
+flows remain unvalidated. No customer
 payment was made. Earlier implementation validation used no real provider
 credentials or paid infrastructure. Allocations remain disabled in the Fly
 configuration and prices default to zero
@@ -198,8 +200,14 @@ authorized a fresh run after this correction. Run 38754895170 attempt 2 passes
 tests, validation and deployment. The existing repository token was website-only;
 its replacement combines one-year app-scoped FlyV1 credentials for the website
 and hosting, retaining the same secret name and refusing an unrelated app (403).
-The runtime has no copy of this deployment token. The service is healthy on Fly;
-public console/game domain setup and the launch checks below remain outstanding.
+The runtime has no copy of this deployment token. The service is healthy on Fly.
+The owner then authorized Cloudflare OAuth in their own browser. DNS-only
+A/AAAA records for console/play use the hosting app's public addresses, and
+the console ACME CNAME provides DNS validation. Both Fly certificates are
+issued and both custom-domain HTTPS health checks pass. Website release 282
+adds the requested Console menu on desktop/mobile; the apex remains the docs
+site. See notes/docs-site.md. Provider and other launch checks below remain
+outstanding; allocations and rates were not enabled by domain setup.
 
 Validation exercises SQLite/auth/payment mocks, real HTTP, WASM isolation,
 memory growth limits, infinite-loop interruption, returning CPU-heavy guests,
