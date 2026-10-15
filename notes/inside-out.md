@@ -136,7 +136,11 @@ and final-ending regressions. The native invite fallback and five WASI invite
 cases pass. Browser validation additionally observes the real clipboard copy,
 follows that URL to the host, moves with an arrow, checks held input across
 automatic progression, verifies intermediate occupied-room undo, and swipes
-on phone. Final backend results are recorded below once completed.
+on phone. The final post-merge, serialized WebGL and WebGPU fixtures pass in
+930.55 and 777.50 seconds respectively. Both complete the real invite/join,
+WASD/arrow movement, reset/held-input recovery, three solved-puzzle automatic
+transitions, occupied-room smooth undo, recursive entry/exact undo and phone
+swipe checks without runtime, shader or GPU errors.
 
 The initial browser attempts ran WebGL and WebGPU concurrently and each hit
 the old 900-second CTest limit while still producing frames/captures; neither
@@ -154,6 +158,15 @@ again against those dependencies. No full engine suite or CI dispatch is
 required by this game-only change. Native captures run without a Vulkan
 validation layer on this machine; browser fixtures enable checkGL and GPU
 validation. All runs use hidden/muted or device-free capture paths.
+
+The final unrelated origin/dev merge at 91a66aa2 contains CLI/hosting work,
+Apple SDK selection and Foldline changes, with no Inside Out, runtime or
+tidec frontend overlap; no repeat validation is required for that merge.
+The local server remains available with the final staged release page.
+A four-second 1280x800/60fps H.264 review clip with synchronized captured
+audio is under ignored build/inside-out-captures/transition-video/
+inside-out-automatic-transition.mp4; it shows the solve, nested aperture
+close and next-room reveal. Its 240 frames/contact sheet were inspected.
 
 ## Current polish round (2026-10-15)
 
