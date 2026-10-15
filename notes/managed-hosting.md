@@ -36,6 +36,12 @@ document after navigation, rather than accepting a previous page during reload.
 Svelte check reports zero errors/warnings; console/docs production builds pass.
 No engine/runtime/CLI source changes or CI workflow dispatch are involved.
 
+Merged into dev as 00db7583; incoming changes were unrelated notes only. Deployed
+that source directly to tide-hosting as Fly release 6, image
+deployment-01M509J7E4F74GPYE04QDNNTKQ. The production Linux Svelte check/build,
+machine smoke/health checks and public HTTPS health/SSR requests pass. The
+existing machine/volume, allocation switch and pricing configuration are retained.
+
 ## Status and agreed scope (2026-10-15)
 
 The owner approved a monthly minimum with included usage and opt-in prepaid
