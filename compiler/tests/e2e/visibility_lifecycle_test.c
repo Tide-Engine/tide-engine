@@ -487,13 +487,11 @@ TIDE_TEST(visibility_lifecycle_private_policy_and_resident_do_not_enter_journals
         if (tide_has_JournalScene(&base, candidate)) scene = candidate;
     }
     TIDE_REQUIRE(!tide_entity_is_null(scene));
-    JournalScene scene_a = tide_get_JournalScene(&a, scene);
-    JournalScene scene_b = tide_get_JournalScene(&b, scene);
-    scene_a.tide_visibility = scene_b.tide_visibility = SceneVisibility_Private;
-    scene_a.tide_players = 2;
-    scene_b.tide_players = 3;
-    TIDE_REQUIRE(tide_set_JournalScene(&a, scene, scene_a));
-    TIDE_REQUIRE(tide_set_JournalScene(&b, scene, scene_b));
+    a.Actions.next = b.Actions.next = 21;
+    a.Actions.count = 1;
+    tide_world_tick(&a);
+    tide_world_tick(&b);
+    a.Actions.count = b.Actions.count = 0;
     a.Actions.next = b.Actions.next = 17;
     tide_game_api.tick_client_events(&a, NULL, events_a);
     tide_game_api.tick_client_events(&b, NULL, events_b);
@@ -668,15 +666,11 @@ TIDE_TEST(visibility_lifecycle_received_plain_values_are_checked_before_casts)
             reject_journal_byte(log, cache + offsetof(JournalCache, state), 1);
             reject_journal_byte(log, cache + offsetof(JournalCache, state) + offsetof(tide_resident, stamp), 1);
             const size_t scene = payload + offsetof(received_spawn_payload, scene);
-            reject_journal_byte(log, scene + offsetof(JournalScene, tide_players), 1);
-            reject_journal_byte(log, scene + offsetof(JournalScene, tide_visibility), 1);
             reject_journal_byte(log, scene + offsetof(JournalScene, bits) + offsetof(JournalBits, allowed) + 1u, 2);
             checked_payload = true;
         } else if (h->event == TIDE_HEARD_ROWS && h->same
                    && h->size == ((sizeof *h + h->same * sizeof(received_scene_row) + 7u) & ~UINT64_C(7))) {
             const size_t scene = payload + offsetof(received_scene_row, scene);
-            reject_journal_byte(log, scene + offsetof(JournalScene, tide_players), 1);
-            reject_journal_byte(log, scene + offsetof(JournalScene, tide_visibility), 1);
             reject_journal_byte(log, scene + offsetof(JournalScene, bits) + offsetof(JournalBits, allowed) + 1u, 255);
             checked_rows = true;
         }

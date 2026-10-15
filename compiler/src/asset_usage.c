@@ -207,7 +207,7 @@ static void recipient_state_schema(asset_usage *w)
             || t.kind == TY_EVENT || t.kind == TY_RECORD) {
             for (int k = 0; k < t.decl->fields.count; k++) {
                 const field *f = &t.decl->fields.items[k];
-                if (f->typed || (f->hidden && (t.decl->is_scene || t.decl == prog->visibility))) continue;
+                if (f->typed || (f->hidden && t.decl == prog->visibility)) continue;
                 text(w, f->name);
                 recipient_schema_type(w, &schema, f->type);
             }
@@ -445,7 +445,6 @@ static void expression(asset_usage *w, const expr *e)
             number(w, e->prefab->entities.items[i].parent);
             queue(w, USAGE_EXPR, e->prefab->entities.items[i].spawn);
         }
-        queue(w, USAGE_EXPR, e->prefab->visibility);
     }
     if (e->bind == BIND_ASSET) use_asset(w, e->constant);
     else if (e->bind == BIND_CONST) queue(w, USAGE_DECL, e->constant);

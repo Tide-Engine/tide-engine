@@ -12,6 +12,8 @@ component Button
     int id;
 }
 
+component MenuStyle { string caption; int[2] values; }
+
 local singleton Frames
 {
     int count;
@@ -21,11 +23,12 @@ local singleton Frames
 local event(Spawned) Open(with Main, mut Frames frames)
 {
     frames.opened += 1;
-    Scene.Load(Menu { page = 1 });
+    Scene.Load(Menu { page = 1 }, MenuStyle { caption = "local-root", values = [4, 5] });
 }
 
-local event(Spawned) Buttons(with Menu)
+local event(Spawned) Buttons(with Menu, local MenuStyle style)
 {
+    Debug.Assert(style.caption == "local-root" && style.values[1] == 5);
     local Spawn(Button { id = 1 });
     local Spawn(Button { id = 2 });
 }

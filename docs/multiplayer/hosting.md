@@ -23,9 +23,10 @@ server from the same resolved game, checks their generated simulation IDs and
 uploads both. It returns a playable URL, server endpoint and dashboard link.
 The service receives built artifacts; it does not compile uploaded source.
 
-The console shows the selectable **Game URL** on each project with a web client,
-and a **Match URL** for joining a specific running match. Click a URL field to
-select it for copying. Server-only deployments have no hosted game URL.
+The console shows **Play game** and the clickable game URL directly below the
+project name for releases with a web client. A **Match URL** selects a specific
+running match; click its field to select it for copying. Server-only releases
+explain how to include a web client. **Refresh** reloads the console page.
 
 ```sh
 tide deploy --server-only

@@ -125,7 +125,7 @@
                 <p>Only approve this request if you just ran <code>tide login</code> and the code matches your terminal.</p>
                 <form id="device-form" onsubmit={approve}><label>Login code<input name="code" value={data.code} required pattern={'[A-Fa-f0-9]{10}'} maxlength="10" autocomplete="off"></label><button class="primary" disabled={busy}>Authorize this CLI</button></form>
             </section>{/if}
-            <section class="intro"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>Hosting</h1><p class="muted">Your games, their worlds, and what they cost.</p></div>{@render action('Refresh', refresh)}</section>
+            <section class="intro"><div><p class="eyebrow">YOUR WORKSPACE</p><h1>Hosting</h1><p class="muted">Your games, their worlds, and what they cost.</p></div><button type="button" disabled={busy} onclick={() => location.reload()}>Refresh</button></section>
             <section class="summary" aria-label="Hosting overview">
                 <article><span class="muted">Available hosting credit</span><strong id="balance">{money(account.balance)}</strong><span class="small muted">{account.billing.required ? 'Monthly allowance is used first.' : 'Usage comes out of this balance.'}</span><a class="credit-link" href={account.billing.required ? '#subscription' : '#add-credit'}>{account.billing.required ? 'Plan & extra credit ↗' : 'Add credit ↗'}</a></article>
                 <article><span class="muted">Running matches</span><strong id="running">{running} / {account.maximum}</strong><span class="small muted" id="capacity">{account.accepting ? 'On demand, within your limit.' : 'New allocations are temporarily disabled.'}</span></article>
@@ -136,6 +136,15 @@
                     {#each account.projects as project (project.id)}
                         {@const preset = account.presets[project.preset]}
                         <article class="project"><div class="project-head"><strong>{project.name}</strong><span class="badge">{project.release ? 'Deployed' : 'Awaiting deployment'}</span></div>
+                            {#if project.release}
+                                {#if project.hasClient}
+                                    <div class="project-play">
+                                        {#if project.clientCreate}<a class="button primary play-game" href={project.playUrl} target="_blank" rel="noopener">Play game ↗</a>{/if}
+                                        <a class="game-url" href={project.playUrl} target="_blank" rel="noopener">{project.playUrl}</a>
+                                    </div>
+                                    {#if !project.clientCreate}<p>Client match creation is restricted. Share a running match's URL to join it.</p>{/if}
+                                {:else}<p>Server-only release. Deploy without <code>--server-only</code> to publish a playable web client.</p>{/if}
+                            {/if}
                             <p>{project.preset} · {project.maximum} maximum matches · {project.lifetime === 'explicit' ? 'Until ended' : 'Ends when empty'}</p>
                             <p>{preset.rate ? `${money(preset.rate * 3600)}/hour per allocated match` : 'Hosting prices are not configured.'}</p>
                             <code>tide deploy --project {project.name}</code>
@@ -163,12 +172,7 @@
                                 {/each}
                             </details>
                             {#if project.release}<p>Release {project.release.slice(0,10)}</p>
-                                {#if project.hasClient}
-                                    <label>Game URL<input class="game-url" readonly value={project.playUrl} onclick={event => event.currentTarget.select()}></label>
-                                    {#if !project.clientCreate}<p>Client match creation is restricted. Share a running match's URL to join it.</p>{/if}
-                                {/if}
                             <div class="actions">
-                                {#if project.hasClient && project.clientCreate}<a class="button" href={project.playUrl} target="_blank" rel="noopener">Open game ↗</a>{/if}
                                 {@render action('Start a match', () => startMatch(project))}
                             </div>
                                 {#each account.releases.filter(r => r.project === project.id && r.id !== project.release) as release (release.id)}

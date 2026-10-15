@@ -1,5 +1,11 @@
 # The Box3D package
 
+Scene visibility unification (2026-10-15): removal of generated scene audience
+fields changes complete-world/world-sequence pins in stack, course, sleep and
+mesh (mesh sequence now afa0b803e82fedb1). Native and WASI agree. Body, resident
+digest and query-answer pins remain unchanged; no bridge or vendored physics
+implementation changes. Validation is in notes/language.md.
+
 ## Static mesh colliders (2026-10-15)
 
 The owner requested mesh collider support. `MeshCollider` now accepts

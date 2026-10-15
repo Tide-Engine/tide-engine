@@ -220,6 +220,10 @@ view WorkshopChanges(Workshop workshop, Hands hands, Mixer mixer, mut Hearing he
         mut var docked = false;
         mut var down = false;
         mut var up = false;
+        mut var opened = false;
+        mut var closed = false;
+        var beforePower = Power(workshop.layout, hearing.previous);
+        var afterPower = Power(workshop.layout, workshop.puzzle);
         for (var crate = 0; crate < Math.Min(MAX_CRATES, workshop.layout.crateCount); crate++)
         {
             var was = BatterySeated(workshop.layout, hearing.previous.crates[crate]);
@@ -229,7 +233,6 @@ view WorkshopChanges(Workshop workshop, Hands hands, Mixer mixer, mut Hearing he
         }
         for (var room = 0; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
             if (!BoxDocked(workshop.layout, hearing.previous, room) && BoxDocked(workshop.layout, workshop.puzzle, room)) docked = true;
-        mut var shutters = 0;
         for (var room = -1; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
         {
             var width = RoomWidth(workshop.layout, room);
@@ -238,7 +241,15 @@ view WorkshopChanges(Workshop workshop, Hands hands, Mixer mixer, mut Hearing he
                 var at = int2(cell % width, cell / width);
                 var tile = TileAt(workshop.layout, room, at);
                 var channel = ShutterChannel(tile);
-                if (channel >= 0) shutters |= 1 << channel;
+                if (channel >= 0)
+                {
+                    // Occupancy can keep one slab down after its channel
+                    // loses power, then release it on a later move.
+                    var was = ShutterPassable(workshop.layout, hearing.previous, room, at, beforePower);
+                    var now = ShutterPassable(workshop.layout, workshop.puzzle, room, at, afterPower);
+                    if (!was && now) opened = true;
+                    if (was && !now) closed = true;
+                }
                 if (PlateChannel(tile) < 0) continue;
                 var was = PlateHeld(workshop.layout, hearing.previous, room, at);
                 var now = PlateHeld(workshop.layout, workshop.puzzle, room, at);
@@ -253,10 +264,8 @@ view WorkshopChanges(Workshop workshop, Hands hands, Mixer mixer, mut Hearing he
         if (docked) PlayCue(boxDock, 0.75);
         if (down) PlayCue(plateDown, 0.12);
         if (up) PlayCue(plateUp, 0.09);
-        var beforePower = Power(workshop.layout, hearing.previous) & shutters;
-        var afterPower = Power(workshop.layout, workshop.puzzle) & shutters;
-        if ((afterPower & ~beforePower) != 0) PlayCue(shutterOpen, 0.3);
-        if ((beforePower & ~afterPower) != 0) PlayCue(shutterClose, 0.32);
+        if (opened) PlayCue(shutterOpen, 0.3);
+        if (closed) PlayCue(shutterClose, 0.32);
     }
     hearing.baseline = true;
     hearing.previous = workshop.puzzle;

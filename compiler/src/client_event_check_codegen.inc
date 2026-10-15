@@ -13,7 +13,7 @@ static bool client_event_value_checked(const program *prog, const type t)
     for (int i = 0; i < t.decl->fields.count; i++) {
         const field *f = &t.decl->fields.items[i];
         if (f->typed) continue; // Keyboard.text is synthetic, not a stored Tide text handle.
-        if ((f->hidden && (t.decl->is_scene || t.decl == prog->visibility))
+        if ((f->hidden && t.decl == prog->visibility)
             || client_event_value_checked(prog, f->type)) return true;
     }
     return false;
@@ -42,7 +42,7 @@ static void gen_client_event_value_check(gen *g, const type t, const char *bytes
             if (f->typed) continue;
             sb member = {0};
             sb_printf(&member, "(%s + offsetof(%s, %s))", bytes, elem_ctype(t), field_cname(f));
-            if (f->hidden && (t.decl->is_scene || t.decl == g->prog->visibility)) {
+            if (f->hidden && t.decl == g->prog->visibility) {
                 sb_printf(o, "                if (!tide_client_event_zero(%s, sizeof(((%s *)0)->%s))) return false;\n",
                           member.data, elem_ctype(t), field_cname(f));
             } else gen_client_event_value_check(g, f->type, member.data, depth);

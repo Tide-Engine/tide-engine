@@ -3996,7 +3996,6 @@ static void ex_call(emit *em, const expr *e)
     case CALL_DESTROY:
     case CALL_LOAD:
     case CALL_UNLOAD:
-    case CALL_SCENE_PLAYER:
     case CALL_SNAP: what = "change the world: systems do, on the CPU"; break;
     case CALL_SEND: what = "send events: systems and views do, on the CPU"; break;
     case CALL_DRAW:

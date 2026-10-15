@@ -108,8 +108,8 @@ TIDE_TEST(rows_are_the_same_on_every_platform)
     TIDE_CHECK(world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 4990 && world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.chunks == 3);
     TIDE_CHECK(world.arch2_Owner_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 10);
     TIDE_CHECK(world.arch1_Spark.count > 100); // Breed's
-    if (tide_world_hash(&world) != UINT64_C(0x59fb16987001c4f0)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
-    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0x59fb16987001c4f0));
+    if (tide_world_hash(&world) != UINT64_C(0x69f9eb1141d1ebf7)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
+    TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0x69f9eb1141d1ebf7));
     TIDE_CHECK(tide_world_hash(&world) == plain[TICKS - 1]);
     tide_world_free(&world);
 }

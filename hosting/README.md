@@ -126,8 +126,10 @@ Runtime credentials have an explicit limit of twenty per account. Repeated
 browser/CLI sign-ins rotate their own sessions without revoking backend keys.
 
 The dashboard controls capacity, lifetime, empty grace, client-requested
-creation and shows selectable Game URL/Match URL fields for hosted web clients.
-Server-only releases have no hosted game URL. It also controls
+creation and shows Play game plus the clickable URL directly under each deployed
+web project's name. Match URL fields select their text for copying. Server-only
+releases explain how to include a web client. Refresh reloads the page, including
+the latest console UI. The dashboard also controls
 match suspension/end/resume, save downloads, release deletion, logs,
 recovery activity and credit. CPU measurements are fractions of one core; WASM
 memory reports linear memory, excluding the surrounding service/runtime.
