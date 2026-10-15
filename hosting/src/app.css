@@ -71,8 +71,13 @@ h2 { font-size: 18px; letter-spacing: -.015em; font-weight: 600; margin-bottom: 
 .deploy-start p { margin-bottom: 12px; }
 .deploy-start pre { margin: 12px 0; }
 .deploy-start pre code { padding: 0; }
-#add-credit { scroll-margin-top: 24px; }
+#add-credit, #subscription { scroll-margin-top: 24px; }
 .billing-status { font-size: 13px; color: var(--muted); }
+.billing-details { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-size: 12px; }
+.billing-details dt { color: var(--muted); }
+.billing-details dd { margin: 0; font-weight: 600; }
+label.checkbox { display: flex; align-items: flex-start; gap: 8px; }
+.checkbox input { width: 16px; height: 16px; min-height: 0; padding: 0; margin: 2px 0 0; flex-shrink: 0; accent-color: var(--brand-fill); }
 .workspace { display: grid; grid-template-columns: minmax(0,1fr) 310px; gap: 24px; }
 .workspace > *, .workspace aside { min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin-bottom: 24px; }

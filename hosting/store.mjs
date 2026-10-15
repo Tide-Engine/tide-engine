@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { BillingLedger } from './billing-store.mjs';
 
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export const identifier = () => randomBytes(16).toString('hex');
@@ -96,6 +97,7 @@ export class Store {
             CREATE INDEX IF NOT EXISTS ledger_account_created ON ledger(account,created);
             CREATE INDEX IF NOT EXISTS matches_state_updated ON matches(state,updated);
         `);
+        this.billing = new BillingLedger(this);
     }
     close() { this.db.close(); }
     allocationsEnabled() { return this.db.prepare("SELECT value FROM operator_settings WHERE key='accepting'").get()?.value !== '0'; }
@@ -318,28 +320,24 @@ export class Store {
             this.resourceCapacity(accountId, project, limits);
             if (project.lifetime === 'explicit') this.savedCapacity(accountId, limits);
             const rate = limits.presets[project.preset].rate;
-            const charge = rate * limits.leaseSeconds;
+            const lease = this.billing.lease(accountId, this.now(), limits.leaseSeconds, rate), charge = lease.charge;
             requireValue(Number.isSafeInteger(charge) && charge > 0, 503, 'Hosting prices are not configured.');
-            requireValue(account.balance >= charge, 402, 'Insufficient prepaid credit to start a match.');
+            requireValue(this.billing.state(accountId).balance >= charge, 402, 'Insufficient hosting credit to start a match.');
             let id;
             do { id = String(randomBytes(6).readUIntBE(0, 6)); }
             while (id === '0' || this.db.prepare('SELECT 1 FROM matches WHERE id=?').get(id));
             const now = this.now();
             this.db.prepare(`INSERT INTO matches(id,project,release,state,desired,reserved,paid_until,created,updated,parameters)
                 VALUES (?,?,?,'starting','running',?,?,?,?,?)`)
-                .run(id, projectId, project.release, charge, now + limits.leaseSeconds * 1000, now, now, parameters);
+                .run(id, projectId, project.release, charge, lease.until, now, now, parameters);
             this.configureMatch(accountId, id, { lifetime: project.lifetime, emptySeconds: project.empty_seconds });
             this.db.prepare('INSERT INTO creations VALUES (?,?,1) ON CONFLICT(account,day) DO UPDATE SET count=count+1').run(accountId, day);
-            this.debit(accountId, charge, `lease/${id}/${now + limits.leaseSeconds * 1000}`);
+            this.debit(accountId, charge, `lease/${id}/${lease.until}`);
             return this.match(id);
         });
     }
-    debit(account, amount, reference) {
-        const result = this.db.prepare('UPDATE accounts SET balance=balance-? WHERE id=? AND disabled=0 AND balance>=?')
-            .run(amount, account, amount);
-        requireValue(result.changes === 1, 402, 'Insufficient prepaid credit.');
-        this.db.prepare('INSERT INTO ledger(account,amount,reference,created) VALUES (?,?,?,?)')
-            .run(account, -amount, reference, this.now());
+    debit(account, amount, reference, at = this.now()) {
+        this.billing.debit(account, amount, reference, at);
     }
     renewMatch(id, limits) {
         return this.transaction(() => {
@@ -347,10 +345,11 @@ export class Store {
             requireValue(match && match.desired === 'running' && ['starting', 'running', 'recovering'].includes(match.state),
                 409, 'Match is not running.');
             const project = this.db.prepare('SELECT * FROM projects WHERE id=?').get(match.project);
-            const charge = limits.presets[project.preset].rate * limits.leaseSeconds;
+            const lease = this.billing.lease(project.account, match.paid_until, limits.leaseSeconds, limits.presets[project.preset].rate);
+            const charge = lease.charge;
             requireValue(match.paid_until > this.now(), 402, 'The prepaid hosting lease expired.');
-            const until = match.paid_until + limits.leaseSeconds * 1000;
-            this.debit(project.account, charge, `lease/${id}/${match.generation}/${until}`);
+            const until = lease.until;
+            this.debit(project.account, charge, `lease/${id}/${match.generation}/${until}`, match.paid_until);
             this.db.prepare('UPDATE matches SET reserved=reserved+?,paid_until=?,updated=? WHERE id=?')
                 .run(charge, until, this.now(), id);
             return this.match(id);
@@ -383,9 +382,10 @@ export class Store {
             requireValue(limits.accepting && this.allocationsEnabled() && active.length < limits.hostMatches && own.length < limits.accountMatches
                 && own.filter(m => m.project === project.id).length < project.maximum, 409, 'Match capacity reached.');
             this.resourceCapacity(accountId, project, limits);
-            const charge = limits.presets[project.preset].rate * limits.leaseSeconds;
+            const lease = this.billing.lease(accountId, this.now(), limits.leaseSeconds, limits.presets[project.preset].rate);
+            const charge = lease.charge;
             requireValue(Number.isSafeInteger(charge) && charge > 0 && !account.disabled, 403, 'Hosting is not available for this account.');
-            const until = this.now() + limits.leaseSeconds * 1000;
+            const until = lease.until;
             this.debit(accountId, charge, `resume/${id}/${match.generation + 1}/${until}`);
             this.db.prepare(`UPDATE matches SET state='starting',desired='running',reserved=?,paid_until=?,
                 attempt=0,incident=NULL,generation=generation+1,updated=? WHERE id=?`).run(charge, until, this.now(), String(id));
@@ -409,10 +409,10 @@ export class Store {
             const match = this.match(id);
             if (!match || ['ended', 'suspended', 'failed'].includes(match.state)) return;
             const project = this.db.prepare('SELECT * FROM projects WHERE id=?').get(match.project);
-            const refund = Math.min(match.reserved,
+            const unused = Math.min(match.reserved,
                 Math.max(0, Math.floor((match.paid_until - this.now()) / 1000)) * limits.presets[project.preset].rate);
+            const refund = unused ? this.billing.refund(project.account, match, unused) : 0;
             if (refund) {
-                this.db.prepare('UPDATE accounts SET balance=balance+? WHERE id=?').run(refund, project.account);
                 this.db.prepare('INSERT INTO ledger(account,amount,reference,created) VALUES (?,?,?,?)')
                     .run(project.account, refund, `settle/${id}/${match.generation}/${match.paid_until}`, this.now());
             }

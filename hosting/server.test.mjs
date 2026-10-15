@@ -91,6 +91,9 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     const runtime = await call(`/api/projects/${project.id}/credentials`, { method: 'POST', headers: authenticated, data: {} });
     assert.equal(runtime.status, 201);
     const runtimeHeaders = { Authorization: `Bearer ${runtime.data.token}` };
+    assert.equal((await call('/api/billing/subscribe', { method: 'POST', headers: runtimeHeaders, data: {} })).status, 403);
+    assert.equal((await call('/api/billing/extra', { method: 'POST', headers: browser,
+        data: { enabled: true, cap: 2000, amount: 500 } })).status, 403);
     assert.equal((await call('/api/account', { headers: runtimeHeaders })).status, 403);
     assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: runtimeHeaders, data: {} })).status, 403);
     assert.equal((await call(`/api/projects/${project.id}/matches`, { method: 'POST', headers: runtimeHeaders, data: {} })).status, 409);

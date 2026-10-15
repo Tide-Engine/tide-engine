@@ -137,6 +137,22 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         await until(() => evaluate('!document.querySelector("#account")?.hidden && !!document.querySelector(".match")'), 'Dashboard did not reload.');
         assert.equal(await evaluate('document.documentElement.classList.contains("dark")'), !beforeTheme);
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+        // Exercise the real settings API and subscription UI with paid fixture
+        // state, without making any external payment-provider request.
+        service.config.stripePrice = 'price_browser_fixture'; store.billing.required = true;
+        const started = Date.now();
+        store.billing.grant(account.id, 'sub_browser_fixture', 'in_browser_fixture', started, started + 30 * 86400_000, 2_000_000_000);
+        store.billing.ensure(account.id);
+        store.db.prepare("UPDATE billing_accounts SET status='active' WHERE account=?").run(account.id);
+        await cdp.call('Page.reload');
+        await until(() => evaluate('document.querySelector("#included-balance")?.textContent.includes("20.00")'), 'The paid monthly allowance did not render.');
+        assert.equal(await evaluate('document.querySelector("#purchased-balance").textContent.includes("10.00")'), true);
+        assert.equal(await evaluate('document.querySelector("#checkout").disabled'), true);
+        await until(async () => {
+            await evaluate('document.querySelector("#extra-form input[name=enabled]").checked = true; document.querySelector("#save-extra").click()');
+            return store.billing.state(account.id).extraEnabled;
+        }, 'The extra-usage settings form did not hydrate/save.');
+        await until(() => evaluate('!document.querySelector("#checkout").disabled'), 'The manual credit button did not reflect enabled extra usage.');
         if (process.env.TIDE_HOSTING_EVIDENCE) {
             await mkdir(process.env.TIDE_HOSTING_EVIDENCE, { recursive: true });
             const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
@@ -159,7 +175,7 @@ test('browser joins a real uploaded Tide WASM match; CLI login/deploy/logout and
         await until(() => evaluate('!!document.querySelector(".deploy-start")'), 'Empty account did not explain deployment from a folder.');
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         await evaluate('document.querySelector(".summary .credit-link").click()');
-        await until(() => evaluate('location.hash === "#add-credit"'), 'Add credit did not reach the amount selector.');
+        await until(() => evaluate('location.hash === "#subscription"'), 'The balance link did not reach the hosting plan.');
         if (process.env.TIDE_HOSTING_EVIDENCE) {
             const shot = await cdp.call('Page.captureScreenshot', { format: 'png' });
             await writeFile(join(process.env.TIDE_HOSTING_EVIDENCE, 'credit-mobile.png'), Buffer.from(shot.data, 'base64'));
