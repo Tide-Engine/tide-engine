@@ -181,9 +181,9 @@ void MarkLine(mut Sculpture sculpture, float2 from, float2 to, float stroke, flo
 
 // A channel's shape, for players who cannot tell the two paints apart: a
 // ring for A, a diamond for B. `size` is across.
-void ChannelMark(mut Sculpture sculpture, int channel, float2 at, float size, Color tone, float floor, float scale)
+void ChannelMark(mut Sculpture sculpture, int channel, float2 at, float size, Color tone, float floor, float scale, float minimumStroke = .6)
 {
-    var stroke = Math.Max(.6, size * .15);
+    var stroke = Math.Max(minimumStroke, size * .15);
     var radius = size * .5;
     if (channel == 0)
     {
@@ -237,62 +237,25 @@ void PlateTile(mut Sculpture sculpture, int channel, float2 at, float size, floa
     sculpture.glow = 0;
 }
 
-// How tall a closed shutter stands, below a wall's 0.31 of a tile, and how
-// far one that closed on something rises: its rim only, round what is in it.
+// How tall a closed shutter stands, below a wall's 0.31 of a tile.
 const float SHUTTER_TALL = .22;
-const float SHUTTER_COLLAR = .55;
 
-// A shutter: closed, a block in its channel's paint, lower than a wall, with
-// dark stripes across its top (one way for A, the other for B); open, a slot
-// flush with the floor inside a thin frame of that paint. `rise` is how far
-// it stands up; `held` is something standing in it, which it closes round.
-void ShutterTile(mut Sculpture sculpture, int channel, float2 at, float size, float rise, bool held, float floor)
+// One physical slab at every height: the same paint, stripes and channel
+// mark remain visible when it lowers flush into its groove. Occupancy and
+// power both lower it completely; an occupied cell never grows a collar.
+void ShutterTile(mut Sculpture sculpture, int channel, float2 at, float size, float rise, float floor)
 {
     var tone = ChannelColor(channel);
     var side = Math.Lerp(tone, RUBBER, .40);
-    var height = size * SHUTTER_TALL * rise;
+    var height = size * SHUTTER_TALL * Math.Saturate(rise);
     var slot = size * .80;
-    if (size < 11)
-    {
-        if (height > size * .01) Cuboid(sculpture, at, float2(size * .86), height, tone, floor, size);
-        else Cuboid(sculpture, at, float2(size * .86), size * .004, Math.Lerp(PLASTER, tone, .45), floor, size);
-        var top = floor + Math.Max(height, size * .004) + size * .003;
-        if (channel == 0) FloorOutline(sculpture, at, float2(size * .48), Math.Max(.45, size * .10), RUBBER, top, size);
-        else Cuboid(sculpture, at, float2(size * .36), size * .008, RUBBER, top, size);
-        return;
-    }
-    Cuboid(sculpture, at, float2(slot), size * .003, SEAM, floor, size);
-    FloorOutline(sculpture, at, float2(size * .87), FloorStroke(size), tone, floor + size * .004, size);
-    if (height < size * .006)
-    {
-        // Open: the block's top, flush with the floor.
-        Cuboid(sculpture, at, float2(slot * .95), size * .005, Math.Lerp(PLASTER, tone, .10), floor, size);
-        ChannelMark(sculpture, channel, at, size * .35, side, floor + size * .006, size);
-        return;
-    }
-    if (held)
-    {
-        // Closed round something: a rim along the frame's four edges, which
-        // shows past a battery or a bot.
-        var outer = size * .90;
-        var rim = size * .12;
-        var inner = (outer - rim) * .5;
-        for (var d = 0; d < 4; d++)
-        {
-            var axis = float2(Direction(d));
-            var footprint = d % 2 == 0 ? float2(outer, rim) : float2(rim, outer);
-            Cuboid(sculpture, at + axis * inner, footprint, height, side, floor, size);
-            Cuboid(sculpture, at + axis * inner, footprint, size * .010, tone, floor + height, size);
-        }
-        ChannelMark(sculpture, channel, at + float2(size * .40, -size * .40), size * .18,
-            RUBBER, floor + height + size * .012, size);
-        return;
-    }
-    var lid = Math.Lerp(Math.Lerp(PLASTER, tone, .10), tone, Math.Saturate(rise));
-    Cuboid(sculpture, at, float2(slot), height, side, floor, size);
-    Cuboid(sculpture, at, float2(slot), size * .012, lid, floor + height, size);
+    Cuboid(sculpture, at, float2(size * .86), size * .003, SEAM, floor, size);
+    FloorOutline(sculpture, at, float2(size * .87), Math.Min(FloorStroke(size), size * .045), tone, floor + size * .004, size);
+    var base = floor + size * .004;
+    Cuboid(sculpture, at, float2(slot), height, side, base, size);
+    Cuboid(sculpture, at, float2(slot), size * .012, tone, base + height, size);
     // Three dark stripes across the top, at a slant that mirrors for B.
-    var top = floor + height + size * .012;
+    var top = base + height + size * .012;
     var half = slot * .5 * .86;
     var dark = Math.Lerp(tone, RUBBER, .72);
     var flip = channel == 0 ? 1.0 : -1.0;
@@ -308,7 +271,7 @@ void ShutterTile(mut Sculpture sculpture, int channel, float2 at, float size, fl
     // there is no raised solid badge hiding the middle of the shutter.
     var clearance = Math.Max(.02, size * .003);
     var mark = top + FloorRelief(size) + clearance;
-    ChannelMark(sculpture, channel, at, size * .32, Math.Lerp(tone, DECAL, .80), mark, size);
+    ChannelMark(sculpture, channel, at, size * .32, Math.Lerp(tone, DECAL, .80), mark, size, Math.Min(.6, size * .055));
 }
 
 // The rise of a plate or a shutter cell, eased by Workbench.
@@ -323,7 +286,41 @@ float CellRise(Picture picture, LevelLayout layout, int room, int2 at)
     return index < 0 ? 0.0 : picture.cellRise[index];
 }
 
-void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor, float rise = 0, bool held = false, SurfaceRole surface = SurfaceRole.Floor)
+bool ShutterFootprint(float2 position, int2 cell, float reach)
+{
+    var delta = position - float2(cell);
+    return Math.Abs(delta.x) < reach && Math.Abs(delta.y) < reach;
+}
+
+// Match occupancy decides passability immediately. Its departing drawing
+// must also clear before the slab starts rising, so it cannot grow through
+// a battery, maker or room that is still interpolating away from the cell.
+bool ShutterDrawingOccupied(Workshop workshop, Picture picture, int room, int2 cell)
+{
+    for (var box = 0; box < workshop.layout.roomCount; box++)
+        if (ShownRoom(picture.boxTransit[box], picture.boxParent[box]) == room &&
+            ShutterFootprint(ShownAt(picture.boxTransit[box], picture.boxes[box]), cell, .98)) return true;
+    for (var crate = 0; crate < workshop.layout.crateCount; crate++)
+        if (workshop.puzzle.crates[crate].active && ShownRoom(picture.crateTransit[crate], picture.cargoRoom[crate]) == room &&
+            ShutterFootprint(ShownAt(picture.crateTransit[crate], picture.crates[crate]), cell, .85)) return true;
+    for (var seat = 0; seat < 2; seat++)
+    {
+        if (!workshop.present[seat]) continue;
+        var trip = picture.passages[seat];
+        if (!trip.active)
+        {
+            if (picture.actorRoom[seat] == room && ShutterFootprint(picture.actors[seat], cell, .85)) return true;
+        }
+        else
+        {
+            if (trip.gate.room == room && trip.aliasAlpha < 1 && ShutterFootprint(trip.position, cell, .4 + .45 * trip.scale)) return true;
+            if (trip.child == room && trip.aliasAlpha > 0 && ShutterFootprint(trip.aliasPosition, cell, .85)) return true;
+        }
+    }
+    return false;
+}
+
+void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool occupied, int variation, float floor, float rise = 0, SurfaceRole surface = SurfaceRole.Floor)
 {
     // One pale plaster floor: cells meet without a joint, and only a faint
     // change of shade from one to the next keeps them countable.
@@ -336,7 +333,7 @@ void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool o
     // Game pieces and their symbols retain their own paints and materials.
     sculpture.surface = SurfaceRole.Prop;
     if (PlateChannel(tile) >= 0) PlateTile(sculpture, PlateChannel(tile), at, size, rise, floor + thickness * .25);
-    else if (ShutterChannel(tile) >= 0) ShutterTile(sculpture, ShutterChannel(tile), at, size, rise, held, floor + thickness * .25);
+    else if (ShutterChannel(tile) >= 0) ShutterTile(sculpture, ShutterChannel(tile), at, size, rise, floor + thickness * .25);
     else if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
     else if (tile == Tile.Exit)
     {
@@ -416,14 +413,8 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
                     if (ShownRoom(picture.boxTransit[shell], picture.boxParent[shell]) == room &&
                         Math.Abs(shown.x) < .98 && Math.Abs(shown.y) < .98) covered = true;
                 }
-                mut var held = ShutterChannel(tile) >= 0 && ThingAt(workshop.layout, workshop.puzzle, room, position).kind >= 0;
-                // Keep the collar until a departing battery's rendered body
-                // has cleared it, rather than drawing a block through it.
-                for (var crate = 0; crate < workshop.layout.crateCount && !held; crate++)
-                    if (workshop.puzzle.crates[crate].active && ShownRoom(picture.crateTransit[crate], picture.cargoRoom[crate]) == room &&
-                        Math.Length(ShownAt(picture.crateTransit[crate], picture.crates[crate]) - float2(position)) < .85) held = true;
                 TilePaint(sculpture, covered ? Tile.Floor : tile, at, lens.tile, occupied, x + y, lens.floor,
-                    CellRise(picture, workshop.layout, room, position), held, room < 0 ? SurfaceRole.Table : SurfaceRole.Floor);
+                    CellRise(picture, workshop.layout, room, position), room < 0 ? SurfaceRole.Table : SurfaceRole.Floor);
                 if (covered)
                 {
                     // Signals under boxes must stay below the miniature's
@@ -724,10 +715,9 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview p
     var reopened = levelChanged || picture.openedTick != workshop.openedTick;
     var undo = !reopened && picture.serial != workshop.serial && workshop.puzzle.moves < picture.moves;
     var snap = first || reopened || hands.reduceMotion;
-    // Plates sink while pressed; shutters rise while their channel has no
-    // pressed plate, only round the rim where they closed on something. Each
-    // eases there in about a fifth of a second, and is simply there on a new
-    // puzzle or a reset. Shared undo eases back with the moving pieces.
+    // Plates sink while pressed. A shutter stays fully lowered while powered
+    // or occupied, and raises only once its departing drawing has cleared.
+    // Shared undo eases the same slab back with the moving pieces.
     var power = Power(workshop.layout, workshop.puzzle);
     for (var room = -1; room < MAX_ROOMS; room++)
     {
@@ -742,7 +732,8 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview p
             var held = ThingAt(workshop.layout, workshop.puzzle, room, at).kind >= 0;
             mut var goal = 0.0;
             if (PlateChannel(tile) >= 0) goal = held ? 0.0 : 1.0;
-            else if (!ShutterOpen(channel, power)) goal = held ? SHUTTER_COLLAR : 1.0;
+            else if (!ShutterPassable(workshop.layout, workshop.puzzle, room, at, power) &&
+                (snap || !ShutterDrawingOccupied(workshop, picture, room, at))) goal = 1.0;
             var index = RiseIndex(workshop.layout, room, at);
             if (index < 0) continue;
             var now = picture.cellRise[index];

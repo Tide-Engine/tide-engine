@@ -444,8 +444,8 @@ void HoldTheLine(mut Draft draft)
 {
     Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
     Room(draft, 0, [
-        "#######  .......", "#..#.o#  .......", "#..A..#  .&+....",
-        "#..#x.#  .@.....", "#a.A.a#  ..+....", "#..#xo#  .......", "#######  .......",
+        "#######  .......", "#a.#.o#  .......", "#..A..#  .&+....",
+        "#..#x.#  .@.....", "#..A.a#  ..+....", "#..#xo#  .......", "#######  .......",
     ]);
 }
 // A battery must leave north and return east. Moving the receiving room
@@ -462,7 +462,7 @@ void LongWire(mut Draft draft)
     ]);
 }
 // The occupied room must leave its outline to deliver its battery. Its
-// passenger returns it from the far side after the shutter closes on it.
+// passenger returns it from the far side after the battery leaves its plate.
 void PassItOn(mut Draft draft)
 {
     Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);

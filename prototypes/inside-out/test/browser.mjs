@@ -3,7 +3,7 @@
 // desktop/phone captures for visual review. Frames and match time advance
 // together under runner control; browser/GPU waits consume only wall time.
 // Audio never reaches the device.
-// node browser.mjs <inside_out.html> <capture directory> [webgl|webgpu] [campaign|materials]
+// node browser.mjs <inside_out.html> <capture directory> [webgl|webgpu] [campaign|materials|shutters]
 // materials checks the six local appearances without replaying campaign moves.
 // Set TIDE_INSIDE_OUT_RELAY to probe an existing relay instead of the local one.
 import assert from 'node:assert/strict';
@@ -23,9 +23,9 @@ import { MANUAL_SETTLE_TICKS, AUTO_SETTLE_TICKS, CLOSE_TICKS, NAME_FADE_TICKS,
     NAME_HOLD_TICKS, REVEAL_TICKS, ANIMATED_FRAME_MS, STATIC_FRAME_MS } from './presentation-timing.mjs';
 
 const [gamePage, captureDirectory, backend = 'webgl', mode = 'campaign'] = process.argv.slice(2);
-assert.ok(gamePage && captureDirectory, 'Usage: browser.mjs <inside_out.html> <capture directory> [webgl|webgpu] [campaign|materials]');
+assert.ok(gamePage && captureDirectory, 'Usage: browser.mjs <inside_out.html> <capture directory> [webgl|webgpu] [campaign|materials|shutters]');
 assert.ok(['webgl', 'webgpu'].includes(backend), 'Backend must be webgl or webgpu');
-assert.ok(['campaign', 'materials'].includes(mode), 'Mode must be campaign or materials');
+assert.ok(['campaign', 'materials', 'shutters'].includes(mode), 'Mode must be campaign, materials or shutters');
 const browserPath = [process.env.TIDE_BROWSER, '/usr/bin/google-chrome', '/usr/bin/chromium',
     'C:/Program Files/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -681,6 +681,139 @@ try {
         return nextTitle;
     };
 
+    if (mode === 'shutters') {
+        stage = 'a powered and occupied shutter is the same lowered slab';
+        await choose(9, 2, 0);
+        const geometry = focusedGeometry(host, 7, 7);
+        const tile = geometry.tile;
+        const cellClip = (x, y, left, top, width, height) => ({
+            x: Math.round(geometry.x + (x - 3 + left) * tile),
+            y: Math.round(geometry.y + (y - 3 + top) * tile),
+            width: Math.round(width * tile), height: Math.round(height * tile),
+        });
+        const slabClip = (x, y) => cellClip(x, y, -.45, -.7, .9, 1.15);
+        const frontClip = (x, y) => cellClip(x, y, -.34, .27, .68, .19);
+        // Native powered/held endpoints retain this hue in lit paint and
+        // cool shaded outline edges; nearby pieces change brightness/tint.
+        const pink = (r, g, b) => r > 35 && r > g * 1.4 && b > g * 1.1 && r > b * 1.05;
+        const stripe = (r, g, b) => pink(r, g, b) && r < 140;
+        const pinkMaterials = [[pink]];
+        const stats = png => {
+            let paint = 0, dark = 0, top = Infinity;
+            screenshotPixels(png, (r, g, b, _x, y) => {
+                if (pink(r, g, b)) { paint++; top = Math.min(top, y); }
+                if (stripe(r, g, b)) dark++;
+            });
+            return { paint, dark, top: paint ? top : null };
+        };
+        const report = { geometry };
+        const sample = async (label, client = host, x = 3, y = 4, covered = false) => {
+            // A room's miniature floor deliberately hides the cap itself.
+            // Observe the outside channel band/mark while that box overlaps.
+            const clip = covered ? cellClip(x, y, -.75, -.8, 1.5, 1.5) : slabClip(x, y);
+            const image = await saveCrop(client, label, clip);
+            report[label] = stats(image);
+            await writeFile(path.join(output, `${backend}-shutter-pixels.json`), JSON.stringify(report, null, 2));
+            assert.ok(report[label].paint > 4 && Number.isFinite(report[label].top),
+                `${label}: the observed shutter paint must be present at a finite location`);
+            return image;
+        };
+        const raised = await sample('shutter-raised');
+        await action('n'); // Teal holds A at (1,1).
+        const lowering = await sample('shutter-lowering');
+        await advanceMatch(24);
+        const low = await sample('shutter-powered-low');
+        const lowFront = await host.crop(frontClip(3, 4));
+        assertImagesDiffer(lowering, raised, 'the physical shutter starts lowering after power arrives');
+        assertImagesDiffer(lowering, low, 'lowering includes an intermediate slab height');
+        assert.ok(stats(low).paint > stats(raised).paint * .4,
+            'the lowered cap retains its solid channel paint instead of becoming an empty slot');
+        assert.ok(stats(low).dark > 12, 'the lowered cap retains visible dark stripes');
+        assert.ok(stats(low).top > stats(raised).top + 1, 'the same painted slab visibly lowers into its groove');
+        await witness('S E'); // Amber loads the lower shutter while A is powered.
+        await advanceMatch(24);
+        const poweredBattery = await sample('shutter-powered-battery');
+        await action('s'); // Teal leaves A; the battery must keep the slab down.
+        await advanceMatch(24);
+        const batteryHeld = await sample('shutter-battery-held-low');
+        assertImagesEqual(batteryHeld, poweredBattery,
+            'removing power cannot raise or replace the slab beneath a stationary battery');
+        assert.ok(stats(batteryHeld).paint > 12, 'exposed painted slab remains visible around the battery');
+        const beforeFollow = amberFootprint(await host.crop(cameraBody(host)));
+        const beforeFollowMoves = await moveLabel(host);
+        await action('E');
+        await advanceMatch(24);
+        await sample('shutter-robot-held-low');
+        const afterFollow = amberFootprint(await host.crop(cameraBody(host)));
+        assertImagesDiffer(await moveLabel(host), beforeFollowMoves, 'push-follow is an accepted production command');
+        assert.ok(Math.abs(afterFollow.x - beforeFollow.x - tile) < tile * .1,
+            'the pusher follows the battery exactly one cell onto the unpowered occupied shutter');
+        assertFeaturesEqual(await host.crop(frontClip(3, 4)), lowFront, pinkMaterials,
+            'the exposed front slab stays fully lowered beneath a robot');
+        const robotScene = await saveCrop(host, 'shutter-robot-baseline', cameraBody(host));
+        await host.tapKey('KeyA', 'a');
+        const departing = await sample('shutter-robot-departing');
+        assertFeaturesEqual(await host.crop(frontClip(3, 4)), lowFront, pinkMaterials,
+            'the slab stays down while the departing robot drawing still overlaps it');
+        await host.frames(4);
+        const clearing = await sample('shutter-robot-clearing');
+        await advanceMatch(24);
+        const emptyRaised = await sample('shutter-empty-raised');
+        assertImagesDiffer(clearing, departing, 'the departing robot and shutter have an intermediate rendered pose');
+        assertImagesDiffer(clearing, emptyRaised, 'departure and slab closing reach their endpoint gradually');
+        assertFeaturesEqual(emptyRaised, raised, pinkMaterials,
+            'an empty unpowered shutter returns to the same raised physical footprint');
+        const beforeBlocked = await moveLabel(host);
+        await action('E');
+        await advanceMatch(24);
+        assertImagesEqual(await moveLabel(host), beforeBlocked, 'the now-empty raised shutter blocks fresh entry');
+        await small.tapKey('KeyZ', 'z');
+        await sample('shutter-undo-lowering');
+        await advanceMatch(24);
+        await sample('shutter-undo-held-low');
+        assertImagesEqual(await host.crop(cameraBody(host)), robotScene,
+            'shared undo restores the robot, battery and lowered shutter exactly');
+        await host.screenshot('shutter-robot-restored');
+
+        stage = 'an occupied room box also holds an unpowered shutter down';
+        await choose(11, 2, 2);
+        const lowBoxGate = await sample('shutter-box-gate-powered-low', small, 4, 3);
+        await witness('ee');
+        await advanceMatch(24);
+        const band = cellClip(4, 3, -.35, .49, .7, .08);
+        const boxPoweredBand = await saveCrop(small, 'shutter-box-powered-band', band);
+        featureMask(boxPoweredBand, pinkMaterials, 'the powered box has an exposed channel band');
+        await sample('shutter-box-powered', small, 4, 3, true);
+        await witness('NN');
+        await advanceMatch(24);
+        await sample('shutter-box-held-low', small, 4, 3, true);
+        assertFeaturesEqual(await saveCrop(small, 'shutter-box-unpowered-band', band), boxPoweredBand, pinkMaterials,
+            'a room box keeps the same low outside signal when its internal battery removes power');
+        await host.screenshot('shutter-box-inside-held-low');
+        await small.screenshot('shutter-box-outside-held-low');
+        await small.tapKey('KeyD', 'd');
+        const boxDeparting = await sample('shutter-box-departing', small, 4, 3, true);
+        await small.frames(4);
+        const boxClearing = await sample('shutter-box-clearing', small, 4, 3, true);
+        await advanceMatch(24);
+        const boxFollow = await sample('shutter-box-pusher-held-low', small, 4, 3, true);
+        assertImagesDiffer(boxClearing, boxDeparting, 'the room box has an intermediate departing pose above the low slab');
+        assertImagesDiffer(boxClearing, boxFollow, 'the following pusher and exposed slab settle progressively');
+        assert.ok(stats(boxFollow).paint > 12, 'the same painted slab appears as the room box clears it');
+        await action('w');
+        await advanceMatch(24);
+        const boxGateRaised = await sample('shutter-box-gate-raised', small, 4, 3);
+        assert.ok(stats(lowBoxGate).top > stats(boxGateRaised).top + 1,
+            'the shutter raises only after both the room box and its following pusher have left');
+        const beforeBoxBlocked = await moveLabel(small);
+        await action('e');
+        await advanceMatch(24);
+        assertImagesEqual(await moveLabel(small), beforeBoxBlocked, 'the cleared room-box shutter also blocks fresh entry');
+        for (const client of clients) assert.equal(client.state.aborted, '');
+        assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors in physical shutters');
+        await writeFile(path.join(output, `${backend}-shutter-pixels.json`), JSON.stringify(report, null, 2));
+        console.log(`Inside Out shutters (${backend}): same painted slab raised/lowered, battery/robot/room-box held low, one-cell push-follow, departure clearance, fresh empty-gate block and exact shared undo passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    } else {
     stage = 'nested outward travel, shared undo and reset';
     await host.tapKey('ArrowRight', 'ArrowRight');
     await advanceMatch();
@@ -935,6 +1068,7 @@ try {
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
     console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    }
     }
 } catch (error) {
     process.exitCode = 1;

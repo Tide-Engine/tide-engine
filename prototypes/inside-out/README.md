@@ -66,8 +66,10 @@ completion ticks are saved on this machine. Escape opens the in-game menu;
 your partner's match keeps running. Reset and changing an active puzzle ask
 before clearing the shared moves.
 
-This revision rebuilds puzzles 7–13 and 15–18. Their old completion ticks
-are cleared; personal settings and unchanged puzzles' ticks carry over.
+If your save predates the campaign rebuild, completion ticks for puzzles
+7–13 and 15–18 are cleared. This occupied-shutter update clears earlier
+ticks for puzzles 10–12 and 18, whose solutions change with normal
+push-following. Personal settings and other completion ticks carry over.
 
 The review build includes five proposed chapter materials. Press **F6** or
 choose **Settings → Appearance preview** to compare painted wood, enamel and
@@ -83,7 +85,7 @@ One rule moves everything: robots, batteries and boxes.
 
 - Whatever you walk into is pushed, and whatever is beyond it is pushed too.
   A row of any length moves as one. Nothing can be pulled.
-- Only a wall or the other robot stops a row. A robot is never pushed.
+- A wall, a raised shutter or the other robot stops a row. A robot is never pushed.
 - When a row is stopped, the thing against the stop stays put, and the thing
   behind it goes into it instead, if it is a box with a doorway facing that
   way. So you get into a box only when it cannot be pushed, and so does a
@@ -101,12 +103,12 @@ One rule moves everything: robots, batteries and boxes.
   while anything stands on it: a robot, a battery, or a box on a plate of the
   room it stands in. While any plate of a colour is pressed, in any room or
   on the table, every shutter of that colour, in every room, is open floor.
-  Closed, a shutter is a wall to anything walking, pushed or going into a box
-  through it. Whatever it closed on stays: a robot can step out, and a push
-  moves what is in it on, while whatever pushed stays where it is. Each step
-  is worked out from where everything stood before it, so you can step off a
-  plate and push a battery through its shutter in one move. Plates and
-  shutters are not goals.
+  A shutter also stays lowered while a robot, battery or room box occupies
+  its cell. Push an object off it and you follow onto the slab, keeping it
+  lowered. It rises and blocks entry only once its cell is empty and power
+  is off. Each step uses power and occupancy from before that move, so you
+  can step off a plate and push a battery through its shutter in one move.
+  Plates and shutters are not goals.
 - Every room is a square grid, so a box always fills the cell it stands in.
 - Seat every battery in a socket, park each box on its numbered outline, and
   put both robots on goals. A seated battery can be moved again while you
@@ -168,6 +170,8 @@ Enable `TIDE_PRIVATE_PROTOTYPES` when configuring the repository. Build
 players with muted audio. `inside_out_materials_native`,
 `inside_out_materials_webgl`, and `inside_out_materials_webgpu` compare all
 five material studies, check exact original restoration, and retain captures.
+`inside_out_shutters_webgl` and `inside_out_shutters_webgpu` check the physical
+slab, occupied push-following, vacancy closure and shared undo in two players.
 The campaign test replays checked-in witnesses
 through production commands; it establishes solvability, not optimality
 or measured human difficulty. `inside_out_solve`, a native tool for drawing

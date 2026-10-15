@@ -1,5 +1,172 @@
 # Inside Out
 
+## Physical occupied shutters (2026-10-15)
+
+This rule supersedes every earlier description of a shutter closing on an
+object while its pusher stays behind. The owner found that exception
+unintuitive and approved normal push-following plus consistent moving slabs.
+
+A shutter is lowered/passable while its channel is powered **or its own
+cell is occupied** by a robot, battery or room box. Pushing an object away
+follows normally into that cell, so the next occupant keeps it lowered.
+Only an empty, unpowered shutter rises and blocks entry. Occupying one
+shutter does not power any other shutter of that channel. Robots still stop
+push rows normally. The same rule applies through incoming doorways,
+outgoing doorways and nested stopped boxes.
+
+Power and occupancy are read from the pre-move Puzzle; a push resolves its
+entire row before writing any destination. No latch/timer state was added
+to the match. `ShutterPassable` shares this rule with local painting and
+accepts optional cached power for callers that already computed it.
+`Passable` separately rejects walls. The old `ClosedOnThing`, `through`
+and `closedDoor` special cases were removed. Step previews use the same
+production MovePuzzle on a copy, and doorway cues now describe actual
+crossings when a pusher follows its cargo out of a room.
+
+Shutter sound cues compare each cell's previous/current `ShutterPassable`
+state, using cached power for both puzzles. Losing power under an occupied
+slab is silent; vacating it later cues closing even if channel power did
+not change. Open/close events still coalesce to at most one of each cue per
+frame. Undo/reset keep their existing standalone cues and serial guards.
+
+### One visible slab
+
+ShutterTile uses one 0.80-tile cap, channel paint, three diagonal stripes
+and light ring/diamond at every height, including fully lowered and tiny
+miniatures. The same cap rises to 0.22 tile. A narrow seam/groove stays at
+its base. The pale empty-looking open substitute, small-size substitute,
+colour interpolation and occupied collar are removed; there is no filled
+central badge. Shape stroke minima shrink with miniature size, retaining
+positive clearance above stripe relief. Plain room entrances are unchanged.
+
+Match occupancy controls passability immediately. Local animation also
+waits until a departing rendered battery, robot or room clears the slab's
+footprint before starting its rise, including the two drawn sides of a
+maker's doorway passage. This is presentation only; it adds no simulation
+delay or state. New layouts, resets and reduced motion snap to the correct
+state instead of consulting stale drawings. A room box legitimately hides
+the slab beneath its own floor; the existing outer signal band stays visible.
+
+### Campaign adaptation
+
+All eighteen puzzles were audited and replayed under the new handlers.
+Only puzzle **10's layout** changes: its near A plate moves from the lower
+battery's pushing position (1,4) to the upper alcove (1,1). The old position
+would let a lone robot load and follow its battery across the shutter.
+Separating the control and loading positions restores the existing
+two-shipment handoff. Puzzles 11–14/18 retain their distinct layouts.
+
+Replacement production witnesses:
+
+| Puzzle | Moves | Witness | Search evidence |
+|---|---:|---|---|
+| 10 | 17 | `S n EEENE seee NSSWS s` | Shortest BFS, 23,502 positions |
+| 11 | 46 | `wnnnss N s EES eeennwwseneswwse NWES e NWES neeswwne S e` | Shortest BFS, 441,180 positions |
+| 12 | 12 | `N ee NNNES w WE w` | Shortest BFS, 2,961 positions |
+| 18 | 39 | `E s EESEENEN es N n N w SSSWWSWNW nesw EWWSSWWNN n` | Authored/replayed; minimum unclaimed |
+
+Puzzle 11 preserves its actual north export/east re-import and circuit
+holder exchange, with normal following positions. Puzzle 12's returning
+pusher follows onto the shutter, then takes one extra step onto its goal.
+Puzzle 18 needs one additional south step after its northward export.
+Its search stopped at two million positions/depth 21 without exhaustion;
+no new optimality or mandatory borrowing/undocking claim is made there.
+Puzzles 13/14 retain their checked 12/13-move minima (555/31,848 positions).
+The full current witness lengths are
+`10,12,20,15,11,19,16,50,26,17,46,12,12,13,20,21,25,39`.
+These establish solvability and decision structure, not human difficulty.
+
+Both robots' solo cargo/dock searches, ignoring robot goals, fully exhaust
+unsolved for every signal puzzle. Canonical solver counts:
+
+| Puzzle | Seat 0 | Seat 1 |
+|---|---:|---:|
+| 10 | 80 | 80 |
+| 11 | 842 | 1,773 |
+| 12 | 89 | 264 |
+| 13 | 22 | 1 |
+| 14 | 2,080 | 3,186 |
+| 18 | 217 | 7,530 |
+
+The raw-Puzzle C regression also re-exhausted all twenty-six co-operation
+searches for puzzles 6–18 below its one-million cap, without cargo/dock
+completion. Its identity-sensitive counts can exceed the canonical tool's,
+as explained below. A limit hit remains a failing test, never a proof.
+Necessary-strategy probes exhaust unsolved: puzzle 10 without battery
+plates (64,284 positions), puzzle 12 without undocking (178), and puzzle 13
+without battery plates (three). Battery power handoffs, temporary room
+movement and borrowing completed cargo still matter.
+
+Preferences version 3 clears old completion ticks for puzzles 10–12/18,
+preserving personal settings and all other version-2 completions. Version-1
+files first apply the existing campaign-revision mask. Starting from all
+eighteen old ticks, expected results are 127487 for v2 and 8255 for v1.
+
+### Validation
+
+The native test executable rebuilt warning-free. All 47 cases pass: the
+expensive complete co-operation search passed in 61.05 seconds, then the
+remaining 46 cases passed individually on that same executable in under
+one second combined. The new/rewritten assertions cover battery-to-robot
+handoff, whole rows, both channels, occupied room boxes with passengers,
+local occupancy versus channel power, incoming/outgoing/nested doorways,
+actual travel cues, re-closing after vacancy and exact Undo. WASM passed
+the complete 47-case aggregate in 88.86 seconds; all thirteen aggregate
+and argument-bridge CTest entries passed in 89.61 seconds.
+
+A CPU-only probe against the native game's generated `WorkshopChanges`,
+production movement and queued `CueVoice` clip IDs passed 41 exact cue-count
+assertions. Puzzle 10 coalesces two opening/closing slabs into one cue,
+keeps the occupied lower slab silent while its empty partner rises, follows
+battery-to-robot silently and closes on later vacancy. Puzzle 12 isolates
+room-box power loss, box-to-robot handoff and final vacancy. Repeating each
+unchanged presentation snapshot emits no additional shutter cue. The probe
+is retained under ignored `build/inside-out-cue-check.c`; it opened no GPU
+or audio device.
+
+Native debug, final web debug and the staged web release page build
+warning-free. Bounded
+native captures of puzzles 10/12/13 passed, including both channel paints,
+battery/robot/room occupancy, departure clearance and the nested room view.
+`inside_out_materials_native` passed in 2.97 seconds. Actual preference
+migration produced v2=127487 and v1=8255 while retaining custom volume,
+reduced-motion and preview settings; its deliberate mute toggle saved v3.
+The capture runner restored the owner's original Preferences absence in
+`finally`. Captures and a seven-second native clip are retained under
+ignored `build/inside-out-captures/physical-shutters/`.
+
+The complete two-player WebGL gameplay fixture passed in 1153.57 seconds
+(1635/1584 frames), covering ordinary/nested/recursive movement, shared
+Undo, occupied-box transport, readable automatic progression, arrow/touch
+input and reduced motion with no runtime/shader/browser errors. The focused
+physical-shutter WebGL fixture passed in 483.61 seconds (645/594 frames),
+including intermediate lowering, persistent stripes, exact powered versus
+unpowered battery crops, one-cell robot following, departure clearance,
+vacancy closure, blocked re-entry, exact shared Undo and room-box outside
+band parity. Every sampled paint/stripe metric was finite and nonempty;
+comparison masks remain exact with no pixel tolerance. The new magenta
+classifier includes observed shaded magenta hues while excluding the
+floor, walls and robot paints; existing campaign classifiers are unchanged.
+The same focused WebGPU fixture passed in 448.31 seconds (649/594 frames),
+including every room-box/Undo assertion with no runtime/shader/GPU errors.
+Logs, PNGs and incremental pixel reports are retained in
+`build/web-debug/prototypes/inside-out/captures/shutters-{webgl,webgpu}/`.
+JavaScript syntax and `git diff --check` pass. The unchanged
+gate-free full WebGPU fixture's prior 1229.20-second pass is recorded below;
+this round targets changed slab geometry/occupancy directly on both web
+backends rather than repeating that broad fixture. No CI or deployment was
+requested. Native Vulkan validation-layer coverage remains unavailable on
+this machine.
+
+An additional 1.989-second native puzzle-11 run uses production prefix
+`nwe S` to expose an empty B shutter in the miniature, then remove power.
+Both seats' powered-low, intermediate and raised captures retain the same
+lime striped cap and diamond at tiny and full sizes, without depth/body
+intersection. Its Preferences cleanup also restored the original absence.
+The seven-second clip there is `inside-out-physical-shutters.mp4`:
+silent H.264, 1280×800, 60 fps, 420 actual frames;
+offline decoding passed.
+
 ## Pacing, puzzle variety and finish follow-up (2026-10-15)
 
 This feedback supersedes the earlier short progression, repeated name
