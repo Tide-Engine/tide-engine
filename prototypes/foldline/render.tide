@@ -10,7 +10,6 @@ asset SkinnedMesh<StoneVertex> figure = "art/character.fbx";
 asset AnimationCatalog moves = ["art/idle.fbx", "art/run.fbx", "art/jump.fbx"];
 [Filter(Filter.Point)] asset Texture skinA = "art/operator-a.png";
 [Filter(Filter.Point)] asset Texture skinB = "art/operator-b.png";
-[Filter(Filter.Point)] asset Texture skinWatcher = "art/watcher.png";
 [Filter(Filter.Point)] asset Texture kit = "art/kit.png";
 struct StoneVertex
 {
@@ -48,19 +47,19 @@ struct Sight
     float3[4] foldFace; // Which way each end's wall faces
     float[4] foldSize;  // How big each end's opening is
     float[4] foldOn;    // 1 for an end whose fold is whole
-    float3 plateA;
-    float3 plateB;
-    float2 plates;
+    float3 exitLamp;  // The lamp in the lift out, and the way its doorway faces: it lights what's before it
+    float3 exitWay;
     float phase;
     bool held;        // The piece is in the viewer's hand: lit as the eye is
+    bool beastEyes;   // This creature's eye texels emit their own light
     float2 grid;      // Half the picture's pixels each way: corners land on them
-    float4 dim;       // A part of the place whose lamps are another's to switch: from x to x, from z to z
-    float dimmed = 1; // ...and how much of their light there is
+    float fog;        // The place's air: how thick, and what it's thick with
+    float3 fogColor;
     float3 torchAt;   // Each operator's torch: where it is and which way it points
     float3 torchWay;
     float3 otherAt;
     float3 otherWay;
-    float lamps;      // How much of the ceiling's light there is: none for the moment a watcher comes or goes
+    float lamps;      // How much of the lamps' light there is: none for the moment a watcher comes or goes
     bool cut;         // The piece is the room's: a fold opens a hole in it
     float fold;       // The piece is part of the way through an end: one more than which, and it stops at that wall's face
     bool echoed;      // ...and this is the part of it at the fold's other end, lit as the part it left behind is:
@@ -132,6 +131,8 @@ local singleton Optics
     List<int> tubeTriangles;
     List<StoneVertex> blade;
     List<int> bladeTriangles;
+    List<StoneVertex> creatureEyes;
+    List<int> creatureEyeTriangles;
     List<Vertex3> card;
     List<int> cardTriangles;
     List<Fixture> architecture;
@@ -139,6 +140,9 @@ local singleton Optics
     List<Fixture> leaves;
     List<Fixture> furnishings;
     List<Fixture> dynamic;
+    // What's laid on the place's floors and walls and changes as it works: the wires, and the lamps of what they
+    // work. Drawn every frame, and cut by a fold's hole as the walls are
+    List<Fixture> wiring;
     // The cube's pieces, and the same again at a fold's other end while it's part of the way through one
     // The loose things: the one that's part of the way through a fold, that one again at the fold's other end,
     // and all the rest
@@ -168,13 +172,34 @@ local singleton Optics
     int walls = -1;
 }
 
+// A lamp of the place's grid as the frags have it: the light it gives this frame (none where there's no lamp,
+// where it's dead, or out) and how high it hangs.
+struct Bulb
+{
+    float3 light;
+    float high;
+}
+
+// Where the place's grid of lamps is: the corner of its first cell, how big a cell is, and how many a row has.
+struct LampLayout
+{
+    float2 from;
+    float2 step = float2(5, 3.25);
+    int wide;
+    int long;
+}
+
 // What the sun sees, and what each fold's light sees: how far, along each
-// pixel of its image.
+// pixel of its image. And the place's lamps, which the sun stands for: a row
+// of the grid at a time.
 local singleton Daylight
 {
     RenderTarget map;
     DepthTexture depth;
     float4x4 toSun;
+    float sunTexel = 56.0 / SUN_PIXELS; // How much of the place a pixel of the sun's image is, at most
+    List<Bulb> bulbs;
+    LampLayout layout;
     RenderTarget fold0;
     RenderTarget fold1;
     RenderTarget fold2;
@@ -226,10 +251,7 @@ local singleton Lens
 }
 
 const int SUN_PIXELS = 2048;
-const float SUN_WIDE = 28;
-const float SUN_LONG = 56;
-const float STOREY = 5;      // A storey's height: each has its lamps CEILING over its floor
-const float CEILING = 4.4;   // Where the lamps are
+const float SUN_REACH = 4;   // How far past the place's grid of lamps their image of what's in the way reaches
 const float LINES = 300;     // The picture's rows, whatever the window's are
 const float RENDER = 0.5;    // How much of the window's pixels the room is drawn at: the picture has fewer still
 const float SUN_SOFT = 1.1 / SUN_PIXELS;
@@ -243,6 +265,10 @@ const float FOLD_ROUND = 0.6;
 const float FOLD_DEEP = 0.3;
 const float FOLD_SOFT = 1.2 / FOLD_PIXELS;
 const float FIGURE_SCALE = 0.45;
+const float WIRE = 0.055;
+const float PULSE_SPEED = 2.6;
+const float PULSE_EVERY = 2.4;
+const float PULSE_LONG = 0.5;
 
 // Shadows fall straight down from the ceiling's lamps.
 float3 SunWay()
@@ -280,20 +306,19 @@ Color Displayed(float3 light, bool packed)
 }
 
 // Where a place is in the lamps' image, stepped off its surface so that a
-// slanted wall isn't in its own shadow.
-float3 FromSun(float3 world, float3 normal, float4x4 toSun)
+// slanted wall isn't in its own shadow: by a pixel of that image, `texel`.
+float3 FromSun(float3 world, float3 normal, float4x4 toSun, float texel)
 {
     float facing = Math.Dot(normal, SunWay());
     float slant = Math.Sqrt(Math.Saturate(1 - facing * facing));
-    float step = SUN_LONG / SUN_PIXELS;
-    float4 clip = Math.Mul(toSun, float4(world + normal * (step * (0.9 + 2.2 * slant)), 1));
+    float4 clip = Math.Mul(toSun, float4(world + normal * (texel * (0.9 + 2.2 * slant)), 1));
     if (Math.Max(Math.Abs(clip.x), Math.Abs(clip.y)) > 1) return float3(0.5, 0.5, 0);
     return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
 }
 
-float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toSun)
+float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toSun, float texel)
 {
-    float3 seen = FromSun(world, normal, toSun);
+    float3 seen = FromSun(world, normal, toSun, texel);
     return (depth.Compare(seen.xy + float2(-SUN_SOFT, -SUN_SOFT), seen.z) + depth.Compare(seen.xy + float2(SUN_SOFT, -SUN_SOFT), seen.z)
           + depth.Compare(seen.xy + float2(-SUN_SOFT, SUN_SOFT), seen.z) + depth.Compare(seen.xy + float2(SUN_SOFT, SUN_SOFT), seen.z)) * 0.25;
 }
@@ -304,49 +329,47 @@ float SunThrough(DepthTexture depth, float3 world, float4x4 toSun)
     return depth.Compare(float2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5), clip.z * 0.5 + 0.5);
 }
 
-// The ceiling has a lamp every 5 meters across the room and every 3.25 along
-// it. Which is which: its column and its row.
-// Where the lamps over a place are: under the roof of the storey it's in.
-float LampPlane(float y)
+// The place's lamps are a grid it says: a cell has one lamp or none, hanging
+// under that cell's ceiling. Which cell a place is over: its column and its row.
+int2 LampCell(float2 over, LampLayout layout)
 {
-    return Math.Floor(Math.Max(y + 0.3, 0) / STOREY) * STOREY + CEILING;
+    return int2(int(Math.Floor((over.x - layout.from.x) / layout.step.x)), int(Math.Floor((over.y - layout.from.y) / layout.step.y)));
 }
 
-int2 LampCell(float2 over)
+float2 LampMiddle(int2 cell, LampLayout layout)
 {
-    return int2(int(Math.Floor(over.x / 5 + 2)), int(Math.Floor((over.y + 13) / 3.25)));
+    return layout.from + (float2(cell.x, cell.y) + float2(0.5)) * layout.step;
 }
 
-float2 LampMiddle(int2 cell)
+// A cell's lamp as it is this frame: none off the grid.
+Bulb BulbAt(List<Bulb> bulbs, LampLayout layout, int2 cell)
 {
-    return float2((cell.x - 1.5) * 5, -13 + (cell.y + 0.5) * 3.25);
+    if (cell.x < 0 || cell.y < 0 || cell.x >= layout.wide || cell.y >= layout.long) return Bulb { light = float3(0), high = 0 };
+    return bulbs[cell.y * layout.wide + cell.x];
 }
 
-// How brightly a lamp burns: some are dead, one in nine stutters, the rest hum.
-float LampOn(int2 cell, float phase)
+bool Burning(Bulb bulb)
 {
-    int roll = Math.Abs(Math.Hash(cell)) % 9;
-    if (roll < 2) return 0;
-    if (roll == 2) return Math.Step(0.2, Math.Sin(phase * 31 + cell.x) * Math.Sin(phase * 7 + cell.y) + 0.5) * 0.9;
-    return 1;
+    return bulb.light.x + bulb.light.y + bulb.light.z > 0.0001;
 }
 
 // The light of the lamps about a place on a surface that faces `normal`: each
 // is a small bright sheet that shines mostly down, so the floor has a pool
-// under each, and a wall its arc, dark towards the ceiling.
-float Lamps(float3 at, float3 normal, float phase)
+// under each, and a wall its arc, dark towards the ceiling. Nine of them at
+// most, the cell it's in and those round it.
+float3 Lamps(List<Bulb> bulbs, LampLayout layout, float3 at, float3 normal)
 {
-    int2 home = LampCell(at.xz);
-    mut float sum = 0;
+    int2 home = LampCell(at.xz, layout);
+    mut float3 sum = float3(0);
     for (int row = -1; row <= 1; row++)
     {
         for (int column = -1; column <= 1; column++)
         {
             int2 cell = int2(home.x + column, home.y + row);
-            float on = LampOn(cell, phase);
-            if (on <= 0) continue;
-            float2 middle = LampMiddle(cell);
-            float3 to = float3(middle.x, LampPlane(at.y), middle.y) - at;
+            Bulb bulb = BulbAt(bulbs, layout, cell);
+            if (!Burning(bulb)) continue;
+            float2 middle = LampMiddle(cell, layout);
+            float3 to = float3(middle.x, bulb.high - 0.08, middle.y) - at;
             float far = Math.Dot(to, to);
             float3 along = to / Math.Sqrt(far + 0.0001);
             float down = Math.Max(along.y, 0);
@@ -354,36 +377,50 @@ float Lamps(float3 at, float3 normal, float phase)
             mut float tight = down * down * down * down;
             tight *= tight;
             tight *= tight;
-            sum += on * Math.Saturate(Math.Dot(normal, along)) * (0.75 * tight + 0.25 * down * down * down) / (far + 0.6);
+            sum += bulb.light * (Math.Saturate(Math.Dot(normal, along)) * (0.75 * tight + 0.25 * down * down * down) / (far + 0.6));
         }
     }
     return sum * 36;
 }
 
-// A lamp's pool: how much of its light leaves the ceiling at a place, the
-// lamp's own shape close under it and softer the further down it's seen from.
-float LampPool(float2 over, float soft, float phase)
+// A lamp's pool: how much of its light leaves its fitting at a place under it, the lamp's own shape close under
+// it and softer the further down it's seen from (`soft`, and `spread` more a meter down). Nothing over a lamp is
+// lit by it.
+float3 LampPool(Bulb bulb, float2 middle, float3 at, float soft, float spread)
 {
-    int2 cell = LampCell(over);
-    float2 from = Math.Abs(over - LampMiddle(cell)) - float2(0.6, 0.3);
+    if (at.y > bulb.high) return float3(0);
+    float2 from = Math.Abs(at.xz - middle) - float2(0.6, 0.3);
     float edge = Math.Max(from.x, from.y);
-    return (1 - Math.SmoothStep(-soft * 0.3, soft, edge)) * LampOn(cell, phase);
+    float blur = soft + (bulb.high - at.y) * spread;
+    return bulb.light * (1 - Math.SmoothStep(-blur * 0.3, blur, edge));
 }
 
-// What a lamp gives the whole of its bay, bounced about: most under it, none where the next bay starts.
-float LampWide(float2 over, float phase)
+// ...from the lamp of the cell a place is in.
+float3 LampOver(List<Bulb> bulbs, LampLayout layout, float3 at, float soft, float spread)
 {
-    int2 cell = LampCell(over);
-    float2 from = (over - LampMiddle(cell)) / float2(5, 3.25);
-    return (0.5 + 0.5 * Math.Cos(from.x * Math.TAU)) * (0.5 + 0.5 * Math.Cos(from.y * Math.TAU)) * LampOn(cell, phase);
+    int2 cell = LampCell(at.xz, layout);
+    return LampPool(BulbAt(bulbs, layout, cell), LampMiddle(cell, layout), at, soft, spread);
 }
 
-// The lamps' light at a place in the air, with what stands over it in the way.
-float LampAir(DepthTexture depth, float4x4 toSun, float3 at, float phase)
+// What a lamp gives the whole of its cell, bounced about: most under it, none where the next cell starts.
+float3 LampWide(List<Bulb> bulbs, LampLayout layout, float3 at)
 {
-    float up = Math.Max(LampPlane(at.y) - at.y, 0);
-    float3 way = SunWay();
-    return LampPool(at.xz + way.xz * (up / way.y), 0.05 + up * 0.26, phase) * SunThrough(depth, at, toSun) / (1 + up * 0.35);
+    int2 cell = LampCell(at.xz, layout);
+    Bulb bulb = BulbAt(bulbs, layout, cell);
+    if (at.y > bulb.high) return float3(0);
+    float2 from = (at.xz - LampMiddle(cell, layout)) / layout.step;
+    return bulb.light * ((0.5 + 0.5 * Math.Cos(from.x * Math.TAU)) * (0.5 + 0.5 * Math.Cos(from.y * Math.TAU)));
+}
+
+// The lamps' light at a place in the air, with what stands over it in the way: the haze is lit under a lamp that
+// burns, and nowhere else.
+float3 LampAir(DepthTexture depth, float4x4 toSun, List<Bulb> bulbs, LampLayout layout, float3 at)
+{
+    int2 cell = LampCell(at.xz, layout);
+    Bulb bulb = BulbAt(bulbs, layout, cell);
+    if (!Burning(bulb)) return float3(0);
+    float up = Math.Max(bulb.high - at.y, 0);
+    return LampPool(bulb, LampMiddle(cell, layout), at, 0.05, 0.26) * (SunThrough(depth, at, toSun) / (1 + up * 0.35));
 }
 
 // A torch's light on a surface: a cone that fades with its reach.
@@ -413,13 +450,13 @@ float FoldLight(DepthTexture depth, float4x4 toFold, float3 world, float3 normal
 }
 
 // The lamps' light the air throws towards the eye along a stretch of a ray.
-float3 Scatter(DepthTexture depth, float4x4 toSun, float3 from, float3 way, float reach, float2 pixel, float phase)
+float3 Scatter(DepthTexture depth, float4x4 toSun, List<Bulb> bulbs, LampLayout layout, float3 from, float3 way, float reach, float2 pixel)
 {
     float jitter = Math.Frac(52.9829189 * Math.Frac(Math.Dot(pixel, float2(0.06711056, 0.00583715))));
-    mut float lit = 0;
+    mut float3 lit = float3(0);
     for (int i = 0; i < 20; i++)
-        lit += LampAir(depth, toSun, from + way * (reach * (i + jitter) / 20), phase);
-    return LampTint() * (lit / 20 * reach * 0.02);
+        lit += LampAir(depth, toSun, bulbs, layout, from + way * (reach * (i + jitter) / 20));
+    return lit * (reach * 0.001);
 }
 
 // Where a pixel of a camera's image is in the world, from its depth there.
@@ -501,21 +538,64 @@ bool PastItsFold(float3 p, Sight sight)
     return PastFold(p, sight.foldAt[end] - sight.foldFace[end] * 0.55, sight.foldFace[end]);
 }
 
-// A surface's paint in every light there is: the dark, the ceiling's lamps
-// with their shadows, what they throw about their bay and up the walls, the
-// folds', the plates', the cube's and the exit's, and both operators' torches.
-float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, bool leaf, Sight sight, DepthTexture sun, float4x4 toSun,
-           DepthTexture fold0, DepthTexture fold1, DepthTexture fold2, DepthTexture fold3, float4x4[4] toFold)
+// Where a place is lit as, and which way it faces then: what's at a fold's other end is lit where the part it left
+// behind is.
+float3 LitPlace(float3 place, Sight sight)
 {
-    float3 p = sight.echoed ? Math.Mul(sight.back, float4(place, 1)).xyz : place;
-    float3 n = sight.echoed ? Math.Mul(sight.back, float4(normal, 0)).xyz : normal;
+    return sight.echoed ? Math.Mul(sight.back, float4(place, 1)).xyz : place;
+}
+
+float3 LitNormal(float3 normal, Sight sight)
+{
+    return sight.echoed ? Math.Mul(sight.back, float4(normal, 0)).xyz : normal;
+}
+
+// Whether a fold's light is worth looking for at a place: its fold is whole, and it's near enough.
+bool NearFold(float3 p, Sight sight, int end)
+{
+    return sight.foldOn[end] > 0.5 && Math.DistanceSq(p, sight.foldAt[end]) <= 42;
+}
+
+// How much of each fold's light gets to a place: each end's lamp's image of what stands in its way says.
+float[4] FoldReaches(float3 place, float3 normal, Sight sight, DepthTexture fold0, DepthTexture fold1, DepthTexture fold2, DepthTexture fold3,
+                     float4x4[4] toFold)
+{
+    mut float[4] reaches = [1, 1, 1, 1];
+    if (sight.held) return reaches;
+    float3 p = LitPlace(place, sight);
+    float3 n = LitNormal(normal, sight);
+    if (NearFold(p, sight, 0)) reaches[0] = FoldLight(fold0, toFold[0], p, n);
+    if (NearFold(p, sight, 1)) reaches[1] = FoldLight(fold1, toFold[1], p, n);
+    if (NearFold(p, sight, 2)) reaches[2] = FoldLight(fold2, toFold[2], p, n);
+    if (NearFold(p, sight, 3)) reaches[3] = FoldLight(fold3, toFold[3], p, n);
+    return reaches;
+}
+
+// ...or, for a body, which those images have no room for in its draw, only whether it's before the wall each end
+// is on.
+float[4] FoldSides(float3 place, Sight sight)
+{
+    mut float[4] reaches = [1, 1, 1, 1];
+    float3 p = LitPlace(place, sight);
+    for (int end = 0; end < 4; end++)
+        reaches[end] = Math.Step(-0.6, Math.Dot(p - sight.foldAt[end], sight.foldFace[end]));
+    return reaches;
+}
+
+// A surface's paint in every light there is: the dark, the place's lamps
+// with their shadows, what they throw about their cells and up the walls, the
+// folds' as much as `reaches` lets through, the cube's and the exit's, and
+// both operators' torches.
+float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, bool leaf, Sight sight, DepthTexture sun, float4x4 toSun, float texel,
+           List<Bulb> bulbs, LampLayout layout, float[4] reaches)
+{
+    float3 p = LitPlace(place, sight);
+    float3 n = LitNormal(normal, sight);
     // A fold's own glow is faint on what's passing through it, which is lit from one side and then the other
     float mouth = sight.fold > 0.5 ? 0.3 : 1.0;
     float3 sunWay = SunWay();
     // What's in the viewer's hand is lit where the viewer stands, so a wall it reaches into doesn't darken it.
     float3 at = sight.held ? sight.eye : p;
-    float up = Math.Max(LampPlane(at.y) - at.y, 0);
-    float2 over = at.xz + sunWay.xz * (up / sunWay.y);
     mut float facing = Math.Dot(n, sunWay);
     mut float shadow = 0;
     if (leaf)
@@ -524,49 +604,32 @@ float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, 
         facing = Math.Abs(facing) * 0.6 + 0.4;
     }
     else if (sight.held) shadow = SunThrough(sun, at, toSun);
-    else if (facing > 0.02) shadow = Sunlight(sun, p, n, toSun);
+    else if (facing > 0.02) shadow = Sunlight(sun, p, n, toSun, texel);
     facing = Math.Max(facing, 0);
 
-    mut float3 lamp = LampTint() * sight.lamps;
-    if (at.x > sight.dim.x && at.x < sight.dim.y && at.z > sight.dim.z && at.z < sight.dim.w) lamp *= sight.dimmed;
     mut float3 light = float3(0.030, 0.032, 0.028) * shade;
     // What's under something is in its shadow; a wall is lit whatever stands before it
     float under = Math.Lerp(1, shadow, Math.Saturate(n.y * 2));
-    light += lamp * (Lamps(at, leaf ? float3(0, 1, 0) : n, sight.phase) * (leaf ? 0.7 * shadow : under));
-    light += lamp * (LampWide(at.xz, sight.phase) * 0.13 * shade);
+    light += Lamps(bulbs, layout, at, leaf ? float3(0, 1, 0) : n) * (sight.lamps * (leaf ? 0.7 * shadow : under));
+    light += LampWide(bulbs, layout, at) * (sight.lamps * 0.13 * shade);
 
     // Each fold's light is stopped by what stands in its way.
     for (int end = 0; end < 4; end++)
-    {
-        if (sight.foldOn[end] < 0.5 || Math.DistanceSq(p, sight.foldAt[end]) > 42) continue;
-        mut float reaches = 1;
-        if (!sight.held)
-        {
-            if (end == 0) reaches = FoldLight(fold0, toFold[0], p, n);
-            else if (end == 1) reaches = FoldLight(fold1, toFold[1], p, n);
-            else if (end == 2) reaches = FoldLight(fold2, toFold[2], p, n);
-            else reaches = FoldLight(fold3, toFold[3], p, n);
-        }
-        light += Glow(p, n, sight.foldAt[end], FoldLamp(end) * 2.0 * mouth, 6.5) * reaches;
-    }
+        if (NearFold(p, sight, end)) light += Glow(p, n, sight.foldAt[end], FoldLamp(end) * 2.0 * mouth, 6.5) * reaches[end];
     // The smaller lamps are stopped by what moves: the cube and both operators. A little off the surface,
     // so that a thing isn't in its own way.
     float3 lifted = p + n * 0.2;
     float3 cubeLamp = sight.cube + float3(0, 0.25, 0);
-    if (sight.plates.x > 0 && Math.DistanceSq(p, sight.plateA) < 16)
-        light += Glow(p, n, sight.plateA, float3(1.0, 0.50, 0.13) * 2.4, 4) * (sight.held ? 1.0 : Unblocked(sight.plateA, lifted, sight, true));
-    if (sight.plates.y > 0 && Math.DistanceSq(p, sight.plateB) < 16)
-        light += Glow(p, n, sight.plateB, float3(0.10, 0.82, 0.90) * 2.4, 4) * (sight.held ? 1.0 : Unblocked(sight.plateB, lifted, sight, true));
     if (Math.DistanceSq(p, cubeLamp) < 5.8)
         light += Glow(p, n, cubeLamp, float3(0.2, 0.78, 0.72) * 0.7, 2.4) * (sight.held ? 1.0 : Unblocked(cubeLamp, lifted, sight, false));
-    if (p.z > 9)
-        light += Glow(p, n, float3(0, 3.2, 16.6), float3(0.25, 1.0, 0.45) * 2.6, 10) * (sight.held ? 1.0 : Unblocked(float3(0, 3.2, 16.6), lifted, sight, true));
+    if (Math.Dot(p - sight.exitLamp, sight.exitWay) < 7.6 && Math.DistanceSq(p, sight.exitLamp) < 100)
+        light += Glow(p, n, sight.exitLamp, float3(0.25, 1.0, 0.45) * 2.6, 10) * (sight.held ? 1.0 : Unblocked(sight.exitLamp, lifted, sight, true));
     if (!sight.held)
         light += Torch(p, n, sight.torchAt, sight.torchWay) + Torch(p, n, sight.otherAt, sight.otherWay);
 
     float3 view = Math.Normalize(sight.eye - p);
-    float shine = Math.Pow(Math.Max(Math.Dot(n, Math.Normalize(sunWay + view)), 0), 28) * gloss * LampPool(over, 0.06 + up * 0.2, sight.phase) * shadow;
-    return paint * light + lamp * shine;
+    float shine = Math.Pow(Math.Max(Math.Dot(n, Math.Normalize(sunWay + view)), 0), 28) * gloss * shadow * sight.lamps;
+    return paint * light + LampOver(bulbs, layout, at, 0.06, 0.2) * shine;
 }
 
 // Every solid thing: walls, floor and ceiling, machinery, leaves and the ceiling's lamps.
@@ -584,11 +647,10 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
 
     if (fixture.kind > 1.5)
     {
-        // A lamp: its tube's light where it burns, a grey sheet where it's dead.
-        mut float on = LampOn(LampCell(p.xz), sight.phase) * sight.lamps;
-        if (p.x > sight.dim.x && p.x < sight.dim.y && p.z > sight.dim.z && p.z < sight.dim.w) on *= sight.dimmed;
-        float3 tube = Math.Lerp(float3(0.05, 0.05, 0.045), LampTint() * 3.4, on);
-        color = Displayed(tube, sight.packed);
+        // A lamp: its tube's light where it burns, red for one that's red, a grey sheet where it's dead or out.
+        float3 light = BulbAt(day.bulbs, day.layout, LampCell(p.xz, day.layout)).light * sight.lamps;
+        float3 tube = float3(0.05, 0.05, 0.045) * (1 - Math.Saturate(Math.Max(light.x, Math.Max(light.y, light.z)))) + light * 3.4;
+        color = Displayed(Math.Lerp(tube, sight.fogColor, 1 - Math.Exp(-far * sight.fog)), sight.packed);
         return;
     }
 
@@ -616,12 +678,18 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
         float3 wave = Math.Normalize(float3((b + c * 0.6) * 0.16, 1, (a - c * 0.6) * 0.16));
         float3 look = Math.Normalize(p - sight.eye);
         float3 back = look - wave * (2 * Math.Dot(look, wave));
-        mut float glint = 0;
-        if (back.y > 0.02) glint = LampPool(p.xz + back.xz * ((LampPlane(p.y) - p.y) / back.y), 0.5, sight.phase) * sight.lamps;
+        // The lamp over it, mirrored: where the bounced ray reaches the height that lamp hangs at
+        mut float3 glint = float3(0);
+        float overhead = BulbAt(day.bulbs, day.layout, LampCell(p.xz, day.layout)).high;
+        if (back.y > 0.02 && overhead > p.y)
+        {
+            float3 seen = p + back * ((overhead - p.y) / back.y) - float3(0, 0.01, 0);
+            glint = LampOver(day.bulbs, day.layout, seen, 0.5, 0) * sight.lamps;
+        }
         mut float graze = 1 - Math.Saturate(-Math.Dot(look, wave));
         graze = 0.05 + graze * graze * graze * 0.85;
-        mut float3 wet = red * (0.25 + Lamps(p, float3(0, 1, 0), sight.phase) * sight.lamps * 1.4) + LampTint() * (glint * graze * 2.2);
-        wet = Math.Lerp(wet, float3(0.030, 0.034, 0.024), 1 - Math.Exp(-far * 0.028));
+        mut float3 wet = red * (float3(0.25) + Lamps(day.bulbs, day.layout, p, float3(0, 1, 0)) * (sight.lamps * 1.4)) + glint * (graze * 2.2);
+        wet = Math.Lerp(wet, sight.fogColor, 1 - Math.Exp(-far * sight.fog));
         color = Displayed(wet, sight.packed);
         return;
     }
@@ -656,10 +724,10 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
         shade *= 1 - underCube - underPartner - underSelf;
     }
 
-    mut float3 lit = Lit(paint, p, n, shade, fixture.gloss, fixture.kind > 0.5, sight, day.depth, day.toSun, day.foldDepth0, day.foldDepth1,
-                         day.foldDepth2, day.foldDepth3, day.toFold);
+    float[4] reaches = FoldReaches(p, n, sight, day.foldDepth0, day.foldDepth1, day.foldDepth2, day.foldDepth3, day.toFold);
+    mut float3 lit = Lit(paint, p, n, shade, fixture.gloss, fixture.kind > 0.5, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, reaches);
     lit = Math.Lerp(lit, paint * (0.5 + fixture.luminous * 2.3), Math.Saturate(fixture.luminous));
-    lit = Math.Lerp(lit, float3(0.030, 0.034, 0.024), 1 - Math.Exp(-far * 0.028));
+    lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-far * sight.fog));
     color = Displayed(lit, sight.packed);
 }
 
@@ -672,8 +740,8 @@ frag Figure(StoneVertex vertex, Texture skin, Instance instance, Sight sight, Da
     if (PastItsFold(p, sight)) this.Discard();
     Color seen = skin.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
     float3 n = instance.Normal(vertex.normal);
-    mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.foldDepth0, day.foldDepth1, day.foldDepth2, day.foldDepth3, day.toFold);
-    lit = Math.Lerp(lit, float3(0.030, 0.034, 0.024), 1 - Math.Exp(-Math.Distance(sight.eye, p) * 0.028));
+    mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight));
+    lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-Math.Distance(sight.eye, p) * sight.fog));
     color = Displayed(lit, sight.packed);
 }
 
@@ -682,9 +750,9 @@ frag Mote(StoneVertex vertex, Fixture fixture, Sight sight, Daylight day, out Co
 {
     if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < 0.025)
         this.Discard();
-    float lit = LampAir(day.depth, day.toSun, this.world, sight.phase) * sight.lamps;
+    float3 lit = LampAir(day.depth, day.toSun, day.bulbs, day.layout, this.world) * sight.lamps;
     float near = Math.Saturate(Math.Distance(this.world, sight.eye) * 0.6 - 0.3);
-    mut float3 c = Rgb(fixture.tint) * (lit * near * 1.2);
+    mut float3 c = Rgb(fixture.tint) * lit * (near * 1.2 * Math.Exp(-Math.Distance(this.world, sight.eye) * sight.fog));
     if (sight.packed) c *= 0.25;
     color = Color(c.x, c.y, c.z, 1);
 }
@@ -770,7 +838,7 @@ float3 Rimmed(float3 seen, Color tint, float2 at, float phase, float distance, f
 
 // The sunlit air beyond a fold: from where this pixel's ray leaves the far
 // opening to what the fold's camera sees there, `depth` away.
-float3 Beyond(DepthTexture sun, float4x4 toSun, Aperture aperture, float depth, float3 world, float2 uv, float2 pixel)
+float3 Beyond(DepthTexture sun, float4x4 toSun, List<Bulb> bulbs, LampLayout layout, Aperture aperture, float depth, float3 world, float2 uv, float2 pixel)
 {
     float3 to = Unprojected(aperture.fromClip, uv, depth) - aperture.farEye;
     float far = Math.Length(to);
@@ -778,7 +846,7 @@ float3 Beyond(DepthTexture sun, float4x4 toSun, Aperture aperture, float depth, 
     float3 way0 = world - aperture.eye;
     float near = Math.Length(way0) * (Math.Dot(aperture.wall - aperture.eye, aperture.face) / Math.Min(Math.Dot(way0, aperture.face), -0.00001)) * aperture.ratio;
     float3 way = to / Math.Max(far, 0.0001);
-    return Scatter(sun, toSun, aperture.farEye + way * near, way, Math.Clamp(far - near, 0, 36), pixel, aperture.phase) * aperture.lamps;
+    return Scatter(sun, toSun, bulbs, layout, aperture.farEye + way * near, way, Math.Clamp(far - near, 0, 36), pixel) * aperture.lamps;
 }
 
 // A fold as the viewer sees it, with the sunlit air beyond it.
@@ -793,7 +861,7 @@ frag ThroughAir(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, 
     if (aperture.end == 1) depth = lens.depth1.Sample(uv);
     else if (aperture.end == 2) depth = lens.depth2.Sample(uv);
     else if (aperture.end == 3) depth = lens.depth3.Sample(uv);
-    view += Beyond(day.depth, day.toSun, aperture, depth, this.world, uv, this.position);
+    view += Beyond(day.depth, day.toSun, day.bulbs, day.layout, aperture, depth, this.world, uv, this.position);
     if (aperture.submerged) view = float3(0.35, 0.001, 0.002) * (0.75 + Math.Simplex(at * 2 + float2(aperture.phase * .1)) * .1);
     color = Displayed(Rimmed(view, aperture.rim, at, aperture.phase, distance, aperture.size), aperture.packed);
 }
@@ -817,7 +885,7 @@ frag ThroughFar(Vertex3 vertex, Texture image, Aperture aperture, Daylight day, 
         if (aperture.end == 1) depth = lens.far1.Sample(uv);
         else if (aperture.end == 2) depth = lens.far2.Sample(uv);
         else if (aperture.end == 3) depth = lens.far3.Sample(uv);
-        view += Beyond(day.depth, day.toSun, aperture, depth, this.world, uv, this.position);
+        view += Beyond(day.depth, day.toSun, day.bulbs, day.layout, aperture, depth, this.world, uv, this.position);
     }
     if (aperture.submerged) view = float3(0.35, 0.001, 0.002) * (0.75 + Math.Simplex(at * 2 + float2(aperture.phase * .1)) * .1);
     color = Displayed(Rimmed(view, aperture.rim, at, aperture.phase, distance, aperture.size), aperture.packed);
@@ -861,7 +929,7 @@ frag Shafts(Vertex vertex, Texture source, Ray ray, Daylight day, Lens lens, out
 {
     float3 to = Unprojected(ray.fromClip, vertex.uv, lens.sceneDepth.Sample(vertex.uv)) - ray.eye;
     float far = Math.Length(to);
-    float3 lit = Scatter(day.depth, day.toSun, ray.eye, to / Math.Max(far, 0.0001), Math.Min(far, 36), this.position, lens.phase) * ray.lamps;
+    float3 lit = Scatter(day.depth, day.toSun, day.bulbs, day.layout, ray.eye, to / Math.Max(far, 0.0001), Math.Min(far, 36), this.position) * ray.lamps;
     color = Color(lit.x, lit.y, lit.z, 1);
 }
 
@@ -1120,6 +1188,7 @@ void MakeOptics(mut Optics optics, mut Daylight day, mut Lens lens)
                    Vertex3 { position = float3(.5, .5, 0), uv = float2(1, 0) },
                    Vertex3 { position = float3(-.5, .5, 0), uv = float2(0, 0) }];
     optics.cardTriangles = [0, 1, 2, 0, 2, 3];
+    FlayedEyes(optics.creatureEyes, optics.creatureEyeTriangles);
     optics.made = true;
 }
 
@@ -1150,235 +1219,100 @@ Fixture Faced(float3 position, quaternion rotation, float3 size, float cell, flo
     return Fixture { transform = float4x4.TRS(position, rotation, size), tint = tint, size = size, cell = cell, crop = crop };
 }
 
-// The sheet's squares.
-const float DOORS = 0;
-const float BRICK = 1;
-const float PANELS = 2;
-const float CONCRETE = 3;
-const float MARBLE = 4;
-const float PLANKS = 5;
-const float HAZARD = 6;
-const float RUST = 9;
-const float SHUTTER = 10;
-const float WALLPAPER = 12;
-const float CARPET = 13;
-const float CEILING_TILE = 14;
-const float PLASTER = 15;
-
 // What's hung in the rooms, beside the walls themselves, which are the
-// match's: lamps in the ceiling, doors to nowhere, the way out and its sign,
-// boards, and the chamber's number.
-// Whether a lamp's fitting hangs at a place: 0 for none, 1 under a roof, 2 on rods under a higher one.
-int Fitted(int level, float3 at)
+// match's: a fitting for each lamp of the place's grid, and the lifts' far
+// doors and the frames of their doorways.
+void Dress(mut Optics optics, Place place)
 {
-    if (level == UNDERTOW)
-    {
-        if (at.y > STOREY) return 0;
-        if (at.z < -12) return Math.Abs(at.x) < 7 && at.z > -22 ? 1 : 0;
-        if (at.z < 6) return Math.Abs(at.x) < 3 ? 1 : 0;
-        return Math.Abs(at.x) < 7 && at.z < 14 ? 1 : 0;
-    }
-    if (level == DARK)
-    {
-        if (at.y > STOREY) return 0;
-        if (at.z < -12) return Math.Abs(at.x) < 7 && at.z > -22 ? 1 : 0;
-        if (Math.Abs(at.x) < 4 && at.z < 6) return 1;
-        return at.x > 5 && at.x < 16 && at.z > 0 && at.z < 10 ? 1 : 0;
-    }
-    if (level == SIGHT)
-    {
-        if (at.y > STOREY) return Math.Abs(at.x) < 6 && at.z > -2 && at.z < 10 ? 1 : 0;
-        if (at.z > -2) return Math.Abs(at.x) < 6 && at.z < 7 ? 2 : 0;
-        return Math.Abs(at.x) < 6 && at.z > -22 ? 1 : 0;
-    }
-    if (level != SHAFT) return at.y < STOREY && Math.Abs(at.x) < 9.8 && Math.Abs(at.z) < 13 ? 1 : 0;
-    if (at.y < STOREY) return Math.Abs(at.x) < 8 && at.z > -10 && at.z < 1 ? 2 : 0;
-    if (Math.Abs(at.x) < 8 && at.z > -10 && at.z < 4) return 1;
-    return Math.Abs(at.x) < 9 && at.z > 10 && at.z < 24 ? 1 : 0;
-}
-
-void Dress(mut Optics optics, int level, int theme)
-{
-    Color wood = Color(.30, .22, .15);
     Color steel = Color(.16, .17, .17);
-    // The lamps' fittings: one over each bay there's a roof at that height for, and on rods from the roof where
-    // a room is taller than a storey
-    for (int row = -4; row < 13; row++)
+    // A lamp's fitting in each cell of the place's grid that has a lamp, just under the ceiling it hangs from:
+    // surfaces a few millimeters apart flicker. An office's is a panel; a red one, an emergency lamp in its cage.
+    for (int row = 0; row < place.lampsLong; row++)
     {
-        for (int column = -1; column < 6; column++)
+        for (int column = 0; column < place.lampsWide; column++)
         {
-            for (int storey = 0; storey < 2; storey++)
+            Lamp lamp = place.lamps[row * LAMPS_WIDE + column];
+            if (lamp.state == LampState.None) continue;
+            float3 at = float3(place.lampFrom.x + (column + .5) * place.lampStep.x, lamp.high - .04, place.lampFrom.y + (row + .5) * place.lampStep.y);
+            if (lamp.state == LampState.Red)
             {
-                // Each well clear of the ceiling and of its frame: surfaces a few millimeters apart flicker
-                float3 at = float3((column - 1.5) * 5, storey * STOREY + CEILING - .04, -13 + (row + .5) * 3.25);
-                int hung = Fitted(level, at);
-                if (hung == 0) continue;
-                optics.glass.Add(Fixture { transform = float4x4.TRS(at, quaternion.identity, float3(1.2, .08, .6)), size = float3(1.2, .08, .6), kind = 2 });
-                optics.glass.Add(Block(at + float3(0, .015, 0), float3(1.34, .05, .74), steel));
-                if (hung == 2)
-                {
-                    optics.glass.Add(Block(at + float3(-.5, 2.5, 0), float3(.03, 5, .03), steel));
-                    optics.glass.Add(Block(at + float3(.5, 2.5, 0), float3(.03, 5, .03), steel));
-                }
+                optics.glass.Add(Block(at + float3(0, .01, 0), float3(.5, .06, .34), steel));
+                optics.glass.Add(Fixture { transform = float4x4.TRS(at - float3(0, .1, 0), quaternion.identity, float3(.32, .16, .18)), size = float3(.32, .16, .18), kind = 2 });
+                for (int bar = -1; bar <= 1; bar++)
+                    optics.glass.Add(Block(at - float3(bar * .12, .1, 0), float3(.025, .2, .24), steel));
+                optics.glass.Add(Block(at - float3(0, .19, 0), float3(.38, .025, .24), steel));
+                continue;
             }
+            optics.glass.Add(Fixture { transform = float4x4.TRS(at, quaternion.identity, float3(1.2, .08, .6)), size = float3(1.2, .08, .6), kind = 2 });
+            optics.glass.Add(Block(at + float3(0, .015, 0), float3(1.34, .05, .74), steel));
         }
     }
-    // The lift's far door, which is shut here and opens on the next place; and in the lift they came by, the
-    // door they came in at, shut behind them. Each with a lamp over it.
+    // Each lift's far door, which is shut here: in the lift out, the one that opens on the next place, and in the
+    // lift come by, the one they came in at. Each with a lamp over it, and the frames of both its doorways: green
+    // over the way on, red over the way back. A lift that stops on the way is the place's only one.
     for (int lift = 0; lift < 2; lift++)
     {
-        float3 at = lift == 0 ? LiftAt(level) + float3(0, 2, 2.1) : ArrivalAt(level) + float3(0, 2, -2.1);
-        float out = lift == 0 ? -1 : 1;
-        optics.furnishings.Add(Faced(at, quaternion.identity, float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
+        if (lift == 0 && place.kind == PlaceKind.Vignette) continue;
+        float3 middle = lift == 0 ? place.exit : place.arrival;
+        float yaw = lift == 0 ? place.exitYaw : place.arrivalYaw;
+        optics.furnishings.Add(Faced(LiftPoint(middle, yaw, float3(0, 2, -2.1)), quaternion.Euler(0, yaw, 0), float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
         for (int rib = 0; rib < 4; rib++)
-            optics.furnishings.Add(Block(at + float3(0, -1.5 + rib, out * .14), float3(5.2, .07, .04), steel, 0, 0, .7));
-        optics.furnishings.Add(Block(at + float3(0, 2.12, out * .14), float3(.5, .12, .06), lift == 0 ? Color(.2, 1, .45) : Color(1, .2, .12), 0, 1.3));
-    }
-
-    for (int which = 0; which < 2; which++)
-    {
-        float3 lift = which == 0 ? LiftAt(level) : ArrivalAt(level);
+            optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, .5 + rib, -1.96)), TurnSize(float3(5.2, .07, .04), yaw), steel, 0, 0, .7));
+        optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, 4.12, -1.96)), TurnSize(float3(.5, .12, .06), yaw), lift == 0 ? Color(.2, 1, .45) : Color(1, .2, .12), 0, 1.3));
         for (int end = -1; end <= 1; end += 2)
         {
-            float3 doorway = lift + float3(0, 2, end * 2.1);
+            bool ahead = lift == 0 ? end < 0 : end > 0;
+            float inward = end * 2.1 - end * .16;
             for (int side = -1; side <= 1; side += 2)
-                optics.furnishings.Add(Block(doorway + float3(side * 3, 0, -end * .16), float3(.14, 4.08, .16), steel));
-            optics.furnishings.Add(Block(doorway + float3(0, 2.02, -end * .16), float3(6.14, .14, .16), steel));
-            optics.furnishings.Add(Block(doorway + float3(0, -1.97, 0), float3(6, .06, .6), steel));
-            optics.furnishings.Add(Block(doorway + float3(0, 2.12, -end * .16), float3(.5, .12, .06), end > 0 ? Color(.2, 1, .45) : Color(1, .2, .12), 0, 1.3));
+                optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(side * 3, 2, inward)), TurnSize(float3(.14, 4.08, .16), yaw), steel));
+            optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, 4.02, inward)), TurnSize(float3(6.14, .14, .16), yaw), steel));
+            optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, .03, end * 2.1)), TurnSize(float3(6, .06, .6), yaw), steel));
+            optics.furnishings.Add(Block(LiftPoint(middle, yaw, float3(0, 4.12, inward)), TurnSize(float3(.5, .12, .06), yaw), ahead ? Color(.2, 1, .45) : Color(1, .2, .12), 0, 1.3));
         }
-    }
-
-    // Doors that lead nowhere, each in its frame.
-    for (int door = 0; door < 9; door++)
-    {
-        mut float3 at = float3(-9.77, 1.05, -11.2);
-        mut float3 normal = float3(1, 0, 0);
-        if (door == 1) at.z = -1.6;
-        else if (door == 2) at.z = 6.3;
-        else if (door >= 3 && door < 6)
-        {
-            normal = float3(-1, 0, 0);
-            at = float3(9.77, 1.05, door == 3 ? -10.4 : door == 4 ? -2.2 : 5.8);
-        }
-        else if (door >= 6)
-        {
-            normal = float3(0, 0, 1);
-            at = float3(door == 6 ? -6.2 : door == 7 ? 1.4 : 7.1, 1.05, -12.97);
-        }
-        if (level != 0 || door == 8) continue;
-        if (door < 6 && Math.Abs(at.z) < 4.5) continue;
-        quaternion r = quaternion.LookRotation(normal, float3(0, 1, 0));
-        optics.furnishings.Add(Faced(at + normal * .03, r, float3(.95, 2.1, .06), DOORS, 2));
-        optics.furnishings.Add(Turned(at + float3(0, .03, 0) + normal * .012, r, float3(1.11, 2.2, .06), wood));
-    }
-    if (theme == 0 && level < SHAFT)
-    {
-        optics.furnishings.Add(Faced(float3(-3.4, .06, -12.1), quaternion.Euler(0, .3, 0), float3(2.2, .12, 1.1), PLANKS, 0));
-        optics.furnishings.Add(Faced(float3(-3.6, .18, -12.2), quaternion.Euler(0, -.15, 0), float3(2.2, .12, 1.1), PLANKS, 0));
-    }
-    int hazard = Hazard(level, theme);
-    float middle = PitMiddle(level);
-    if (theme == 1)
-    {
-        // A pool's things: rings on the walls, a rail down each slope, and the depth painted by the water
-        for (int ring = 0; ring < 4 && level < SHAFT; ring++)
-        {
-            float3 at = float3(ring < 2 ? -9.74 : 9.74, 1.6, ring % 2 == 0 ? -7.5 : 8.5);
-            for (int part = 0; part < 12; part++)
-            {
-                float a = part * (Math.TAU / 12);
-                optics.furnishings.Add(Turned(at + float3(0, Math.Sin(a) * .32, Math.Cos(a) * .32), quaternion.Euler(-a, 0, 0), float3(.1, .12, .19),
-                                              part % 3 == 0 ? Color(.9, .9, .86) : Color(.86, .16, .1)));
-            }
-        }
-        for (int rail = 0; rail < 4 && hazard == 2; rail++)
-        {
-            float side = rail < 2 ? -1 : 1;
-            float x = (PitFrom(level) + PitTo(level)) * .5 + (rail % 2 == 0 ? -.2 : .2) * (PitTo(level) - PitFrom(level));
-            Color chrome = Color(.7, .74, .76);
-            float edge = PitHalf(level);
-            optics.furnishings.Add(Block(float3(x, .45, middle + side * (edge + .1)), float3(.05, .9, .05), chrome, 0, 0, .9));
-            optics.furnishings.Add(Block(float3(x, -.5, middle + side * (edge - 1.5)), float3(.05, .9, .05), chrome, 0, 0, .9));
-            optics.furnishings.Add(Turned(float3(x, .42, middle + side * (edge - .7)), quaternion.Euler(-side * .57, 0, 0), float3(.05, .05, 1.95), chrome, 0, .9));
-        }
-        for (int mark = 0; mark < 6 && hazard == 2 && level < SHAFT; mark++)
-            optics.furnishings.Add(Block(float3(-7.5 + mark * 3, .012, middle - PitHalf(level) - .4), float3(.5, .02, .22), Color(.1, .2, .5)));
-    }
-    if (theme == 2)
-    {
-        // The concrete's: ducts under the roof on their hangers, boxes on the walls, and the trench's edges marked
-        Color rusted = Color(.36, .24, .17);
-        for (int duct = 0; duct < 3; duct++)
-        {
-            float x = duct == 0 ? -7.6 : duct == 1 ? -6.9 : 8.2;
-            optics.furnishings.Add(Block(float3(x, 4.02 - duct * .05, 0), float3(duct == 1 ? .2 : .34, duct == 1 ? .2 : .3, 25.6), duct == 1 ? Color(.6, .1, .08) : rusted, 0, 0, .4));
-            for (int hanger = 0; hanger < 7; hanger++)
-                optics.furnishings.Add(Block(float3(x, 4.2, -11 + hanger * 3.7), float3(.42, .32, .06), steel));
-        }
-        for (int box = 0; box < 4; box++)
-        {
-            float3 at = float3(box < 2 ? -9.7 : 9.7, 1.5, box % 2 == 0 ? -9.2 : 6.4);
-            optics.furnishings.Add(Block(at, float3(.2, .8, .6), Color(.3, .32, .3), 0, 0, .5));
-            optics.furnishings.Add(Block(at + float3(box < 2 ? .11 : -.11, .22, .16), float3(.03, .06, .06), Color(.2, 1, .3), 0, 1.4));
-            optics.furnishings.Add(Block(at + float3(0, 1.6, 0), float3(.06, 2.4, .06), steel));
-        }
-        for (int mark = 0; mark < 40 && hazard == 3; mark++)
-        {
-            for (int side = -1; side <= 1; side += 2)
-                optics.furnishings.Add(Block(float3(-9.5 + mark * .487, .011, middle + side * (PitHalf(level) + .25)), float3(.26, .02, .3), (mark & 1) == 0 ? Color(.95, .72, .08) : Color(.06, .06, .06)));
-        }
-    }
-
-    // The frames a fold's end takes its size from: painted round where the opening goes, lit a little.
-    for (int index = 0; index < MountCount(level); index++)
-    {
-        Mount mount = ChamberMount(level, index);
-        Color paint = mount.size < 1 ? Color(.95, .9, .5) : Color(.95, .5, .35);
-        float wide = FOLD_HALF_WIDE * mount.size + .07;
-        float high = FOLD_HALF_HIGH * mount.size + .07;
-        bool along = Math.Abs(mount.face.x) > .5;
-        float3 off = mount.at + mount.face * .015;
-        for (int side = -1; side <= 1; side += 2)
-        {
-            float3 post = off + (along ? float3(0, 0, side * wide) : float3(side * wide, 0, 0));
-            optics.furnishings.Add(Block(post, along ? float3(.03, high * 2 + .07, .07) : float3(.07, high * 2 + .07, .03), paint, 0, .6));
-        }
-        optics.furnishings.Add(Block(off + float3(0, high, 0), along ? float3(.03, .07, wide * 2) : float3(wide * 2, .07, .03), paint, 0, .6));
-        // A plate over it: a small square for the small one, a wide bar for the large
-        float3 sign = mount.size < 1 ? float3(.16, .16, .16) : float3(.9, .14, .9);
-        optics.furnishings.Add(Block(off + float3(0, high + .22, 0), along ? float3(.03, sign.y, sign.z) : float3(sign.x, sign.y, .03), paint, 0, 1.1));
-    }
-
-    // The chamber's number, by the gate. The stretch between has none.
-    if (!Between(level))
-    {
-        float3 sign = LiftAt(level) + float3(5.4, 3.1, -2.64);
-        int number = RoomNumber(level);
-        optics.furnishings.Add(Block(sign, float3(2.65, 1.5, .07), Color(.08, .1, .1), 0, 0, .4));
-        WallDigit(optics, number / 10, sign + float3(-.54, 0, -.045));
-        WallDigit(optics, number % 10, sign + float3(.54, 0, -.045));
     }
 }
 
-// A box of the room, as the match has it: a wall, a ceiling, a planter with what grows in it, or a crate.
-// What a wall is painted with, in a place's theme: paper and carpet above, a pool's tiles further down, and
-// bare concrete under that. The first number is the square of the sheet.
-float ThemeCell(float paint, int theme)
+// The place's lamps as the frags have them this frame: each cell's light by what its lamp does, a stuttering one
+// as it catches, one on a signal while that's on, and none in a group the place's script has put out.
+void Kindle(mut Daylight day, Place place, Arena arena, float phase)
 {
-    if (theme == 1) return paint == 12 ? 15.0 : paint == 13 ? 3.0 : paint;
-    if (theme == 2) return paint == 12 ? 8.0 : paint == 13 ? 2.0 : paint;
-    return paint;
+    day.layout = LampLayout { from = place.lampFrom, step = place.lampStep, wide = place.lampsWide, long = place.lampsLong };
+    day.bulbs.Clear();
+    for (int row = 0; row < place.lampsLong; row++)
+    {
+        for (int column = 0; column < place.lampsWide; column++)
+        {
+            Lamp lamp = place.lamps[row * LAMPS_WIDE + column];
+            mut float on = lamp.state == LampState.On || lamp.state == LampState.Red ? 1.0 : 0.0;
+            if (lamp.state == LampState.Stutter) on = Math.Step(0.2, Math.Sin(phase * 31 + column) * Math.Sin(phase * 7 + row) + 0.5) * 0.9;
+            if (lamp.state == LampState.Signal && (arena.signals & (1 << lamp.signal)) != 0) on = 1;
+            if ((arena.darkGroups & (1 << lamp.group)) != 0) on = 0;
+            day.bulbs.Add(Bulb { light = (lamp.state == LampState.Red ? float3(1.3, 0.12, 0.06) : LampTint()) * on, high = lamp.high });
+        }
+    }
 }
 
-Color ThemeTint(float paint, int theme)
+// A frame a fold's end takes its size from: painted round where the opening goes, lit a little, with a bar over
+// it as wide as it is, so that what's small reads as small and what's big as big from across the room.
+void DressFrame(mut Optics optics, FoldFrame frame)
 {
-    if (theme == 1) return paint == 12 ? Color(.95, 1, 1) : paint == 13 ? Color(.62, .95, 1) : Color(.9, 1, 1);
-    if (theme == 2) return paint == 12 ? Color(.8, .76, .7) : paint == 13 ? Color(.6, .58, .55) : Color(.9, .86, .8);
-    return Color.white;
+    Color paint = frame.size < 1 ? Color(.95, .9, .5) : Color(.95, .5, .35);
+    float wide = FOLD_HALF_WIDE * frame.size + .07;
+    float high = FOLD_HALF_HIGH * frame.size + .07;
+    bool along = Math.Abs(frame.face.x) > .5;
+    float3 off = frame.at + frame.face * .015;
+    for (int side = -1; side <= 1; side += 2)
+    {
+        float3 post = off + (along ? float3(0, 0, side * wide) : float3(side * wide, 0, 0));
+        optics.furnishings.Add(Block(post, along ? float3(.03, high * 2 + .07, .07) : float3(.07, high * 2 + .07, .03), paint, 0, .6));
+    }
+    optics.furnishings.Add(Block(off + float3(0, high, 0), along ? float3(.03, .07, wide * 2) : float3(wide * 2, .07, .03), paint, 0, .6));
+    optics.furnishings.Add(Block(off + float3(0, high + .22, 0), along ? float3(.03, .14, wide * 1.2) : float3(wide * 1.2, .14, .03), paint, 0, 1.1));
 }
 
-void DressWall(mut Optics optics, Wall wall, int number, int theme)
+// A box of the room, as the match has it: a wall, a ceiling, a planter with what grows in it, a lounger, a
+// barrier, or a crate. The first number is the square of the sheet.
+void DressWall(mut Optics optics, Wall wall, int number)
 {
     if (!wall.takes && wall.kind == 0 && wall.size.y >= 4 && wall.size.x <= 1 && wall.size.z <= 1)
     {
@@ -1388,7 +1322,7 @@ void DressWall(mut Optics optics, Wall wall, int number, int theme)
                                          float3(wall.size.x + .05, .12, wall.size.z + .05), Color(.13, .14, .13), 0, 0, .6));
     }
     if (wall.kind == 5) optics.architecture.Add(Block(wall.center, wall.size, Color(.28, .29, .27), 0, .03, .3));
-    else if (wall.kind == 2) optics.glass.Add(Clad(wall.center, wall.size, wall.paint, wall.tiles, ThemeTint(wall.paint, theme)));
+    else if (wall.kind == 2) optics.glass.Add(Clad(wall.center, wall.size, wall.paint, wall.tiles));
     else if (wall.kind == 3) optics.furnishings.Add(Faced(wall.center, quaternion.identity, wall.size, wall.paint, 0));
     else if (wall.kind == 4)
     {
@@ -1406,9 +1340,9 @@ void DressWall(mut Optics optics, Wall wall, int number, int theme)
             optics.furnishings.Add(Block(float3(wall.center.x, wall.center.y - wall.size.y * .5 + .06 + rail * (wall.size.y - .12) * .5, wall.center.z),
                                          along ? float3(.11, .1, run) : float3(run, .1, .11), iron, 0, 0, .5));
     }
-    else if (wall.kind == 1 && theme == 1)
+    else if (wall.kind == 6)
     {
-        // By a pool: a lounger, with a towel left on it
+        // A lounger, with a towel left on it
         float x = wall.center.x;
         float z = wall.center.z;
         Color slat = Color(.9, .92, .88);
@@ -1422,9 +1356,9 @@ void DressWall(mut Optics optics, Wall wall, int number, int theme)
         optics.furnishings.Add(Block(float3(x - .2, .08, z - 1.15), float3(.3, .04, .12), Color(.2, .5, .9)));
         optics.furnishings.Add(Block(float3(x + .14, .08, z - 1.1), float3(.3, .04, .12), Color(.2, .5, .9)));
     }
-    else if (wall.kind == 1 && theme == 2)
+    else if (wall.kind == 7)
     {
-        // In the concrete: a barrier, with its warning along the top
+        // A barrier, with its warning along the top
         optics.furnishings.Add(Clad(wall.center - float3(0, .1, 0), float3(wall.size.x, wall.size.y - .2, wall.size.z), 2, 1, Color(.7, .68, .64)));
         optics.furnishings.Add(Block(float3(wall.center.x, wall.size.y - .16, wall.center.z), float3(wall.size.x * .7, .12, wall.size.z), Color(.5, .48, .45)));
         for (int stripe = 0; stripe < 8; stripe++)
@@ -1450,27 +1384,7 @@ void DressWall(mut Optics optics, Wall wall, int number, int theme)
                                         tint = Color(.34 + shadeOf * .22, .44 + shadeOf * .12, .18 + shadeOf * .06), size = float3(1), kind = 1 });
         }
     }
-    else optics.architecture.Add(Clad(wall.center, wall.size, ThemeCell(wall.paint, theme), wall.tiles, ThemeTint(wall.paint, theme)));
-}
-
-void WallDigit(mut Optics optics, int digit, float3 position)
-{
-    int mask = digit == 0 ? 63 : digit == 1 ? 6 : digit == 2 ? 91 : digit == 3 ? 79 : digit == 4 ? 102 : digit == 5 ? 109 : digit == 6 ? 125 : digit == 7 ? 7
-             : digit == 8 ? 127 : 111;
-    for (int segment = 0; segment < 7; segment++)
-    {
-        if ((mask & (1 << segment)) == 0) continue;
-        mut float3 at = float3(0, .46, 0);
-        mut float3 size = float3(.5, .12, .06);
-        if (segment == 1 || segment == 2 || segment == 4 || segment == 5)
-        {
-            at = float3(segment < 3 ? .265 : -.265, segment == 1 || segment == 5 ? .23 : -.23, 0);
-            size = float3(.12, .46, .06);
-        }
-        else if (segment == 3) at.y = -.46;
-        else if (segment == 6) at.y = 0;
-        optics.furnishings.Add(Block(position + at, size, Color(.84, .96, .88), 0, .9));
-    }
+    else optics.architecture.Add(Clad(wall.center, wall.size, wall.paint, wall.tiles));
 }
 
 // An operator's pose: standing, or running as fast as they go, and where they stand as a matrix.
@@ -1517,14 +1431,16 @@ void Held(mut Optics optics, float scale, float3 eye, quaternion rotation, int m
     else optics.deviceTubes.Add(part);
 }
 
-void Handheld(mut Optics optics, float3 eye, quaternion rotation, float pace, float carrying, float scale)
+void Handheld(mut Optics optics, float3 eye, quaternion rotation, float pace, float carrying, float scale, float strained)
 {
     Color shell = Color(.80, .79, .75);
     Color dark = Color(.08, .11, .13);
     float bob = Math.Sin(optics.stride * 2) * .008 * pace;
     float kick = optics.fired * optics.fired * .07;
-    float3 hand = float3(.4 + Math.Sin(optics.stride) * .008 * pace, -.345 + bob - carrying * .14, .74 - kick);
-    quaternion aim = quaternion.Euler(-.17 - kick * 1.5, -.3, 0);
+    float effort = Math.Saturate(strained / .15);
+    float3 shake = float3(Math.Sin(optics.clock * 73), Math.Sin(optics.clock * 91), Math.Cos(optics.clock * 67)) * (.014 * effort);
+    float3 hand = float3(.4 + Math.Sin(optics.stride) * .008 * pace, -.345 + bob - carrying * .14, .74 - kick) + shake;
+    quaternion aim = quaternion.Euler(-.17 - kick * 1.5 - effort * .12, -.3, Math.Sin(optics.clock * 53) * .025 * effort);
     quaternion along = Math.Mul(aim, quaternion.Euler(90deg, 0, 0));
     Held(optics, scale, eye, rotation, 2, hand, along, float3(.1, .42, .1), shell, 0, .8);
     Held(optics, scale, eye, rotation, 1, hand + Math.Rotate(aim, float3(0, 0, -.21)), aim, float3(.1, .1, .12), shell, 0, .8);
@@ -1540,6 +1456,21 @@ void Handheld(mut Optics optics, float3 eye, quaternion rotation, float pace, fl
     }
     Held(optics, scale, eye, rotation, 0, hand + Math.Rotate(aim, float3(-.022, .0515, -.04)), aim, float3(.011, .006, .09), Color(1, .64, .24), .8);
     Held(optics, scale, eye, rotation, 0, hand + Math.Rotate(aim, float3(.022, .0515, -.04)), aim, float3(.011, .006, .09), Color(.2, .96, .88), .8);
+    if (strained > 0)
+    {
+        Color glove = Color(.42, .41, .38);
+        float3 reach = float3(-.26, -.32 + effort * .04, .62 + effort * .08) - shake;
+        quaternion wrist = quaternion.Euler(-.25, .2, Math.Sin(optics.clock * 61) * .04);
+        Held(optics, scale, eye, rotation, 0, reach + float3(0, -.12, -.16), wrist, float3(.12, .12, .3), dark, 0, .4);
+        Held(optics, scale, eye, rotation, 0, reach, wrist, float3(.15, .065, .18), glove, 0, .4);
+        for (int finger = 0; finger < 4; finger++)
+        {
+            float3 knuckle = reach + Math.Rotate(wrist, float3((finger - 1.5) * .038, .005, .1));
+            quaternion bent = Math.Mul(wrist, quaternion.Euler(-.7 - Math.Sin(optics.clock * 47 + finger) * .12, (finger - 1.5) * .08, 0));
+            Held(optics, scale, eye, rotation, 0, knuckle + Math.Rotate(bent, float3(0, 0, .04)), bent, float3(.03, .03, .1), glove, 0, .4);
+        }
+        Held(optics, scale, eye, rotation, 0, reach + Math.Rotate(wrist, float3(.1, 0, .03)), Math.Mul(wrist, quaternion.Euler(-.5, .9, 0)), float3(.035, .035, .11), glove, 0, .4);
+    }
 }
 
 // An arm out of the pit: from its root to a hand that closes towards a point beside it.
@@ -1577,11 +1508,11 @@ void Splash(mut Optics optics, float3 at, float big)
     optics.splashed += 1;
 }
 
-void Enter(mut Optics optics, int slot, float3 at, float big, float middle, float surface, float half)
+void Enter(mut Optics optics, int slot, float3 at, float big, Pit pit, float surface)
 {
     float was = optics.wasHigh[slot];
     optics.wasHigh[slot] = at.y;
-    if (was <= surface || at.y > surface || was - at.y > 3 || Math.Abs(at.z - middle) > half + .1) return;
+    if (was <= surface || at.y > surface || was - at.y > 3 || !InPit(pit, at, .1)) return;
     Splash(optics, float3(at.x, surface, at.z), big);
 }
 
@@ -1611,10 +1542,17 @@ void Pieces(mut Optics optics, Operator body)
     }
 }
 
-// What a place's pits are full of.
-Color Liquid(int theme)
+// What a pit is full of: a pool's water, or blood.
+Color Liquid(PitKind kind)
 {
-    return theme == 1 ? Color(.08, .42, .46) : Color(.46, .015, .02);
+    return kind == PitKind.Water ? Color(.08, .42, .46) : Color(.46, .015, .02);
+}
+
+// Whether a place is under the red of a blood pit, by the pit's corners (from x to x, from z to z) and where the
+// red lies.
+bool Submerged(float3 at, float4 pit, float surface)
+{
+    return at.y < surface && at.x >= pit.x - .1 && at.x <= pit.y + .1 && at.z >= pit.z - .1 && at.z <= pit.w + .1;
 }
 
 void Splashes(mut Optics optics, Color liquid, float surface)
@@ -1668,7 +1606,7 @@ void Taken(mut Optics optics, Operator body)
         float high = (.05 + (i * 7 % 11) / 10.0 * 1.45) * big;
         float clutch = Math.Sin(optics.clock * (9 + b * 6) + i) * .025;
         float3 root = feet + away * ((1.5 + b * 1.2) * big) - float3(0, 2.6 * big, 0);
-        float3 hand = feet + away * ((.36 + high * .2 / big + clutch) * big) + float3(0, Math.Lerp(-2.8 * big, high, up), 0);
+        float3 hand = feet + away * ((.36 + high * .2 / Math.Max(big, .01) + clutch) * big) + float3(0, Math.Lerp(-2.8 * big, high, up), 0);
         Arm(optics, root, hand, -away, big * 1.25, .35 + up * .5);
     }
 }
@@ -1709,9 +1647,34 @@ void Loose(mut Optics optics, Cube cube, bool crossing)
     }
 }
 
-void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator viewer, Operator partner)
+// A row of lamps for the signals a thing needs, one for each and in their order: a square, red while its signal is
+// off and green while it's on, in a dark housing. The row runs along `along` about `middle`, and is `deep` across
+// it: a row set into a wall that deep shows on both its faces.
+void SignalLamps(mut Optics optics, float3 middle, float3 along, float deep, int need, int signals)
+{
+    mut int count = 0;
+    for (int signal = 0; signal < 32; signal++)
+        if ((need & (1 << signal)) != 0) count += 1;
+    if (count == 0) return;
+    float3 way = float3(Math.Abs(along.x), 0, Math.Abs(along.z));
+    float3 across = float3(way.z, 0, way.x);
+    optics.wiring.Add(Block(middle, way * (count * .3 + .06) + float3(0, .28, 0) + across * deep, Color(.07, .075, .08), 0, 0, .6));
+    mut int index = 0;
+    for (int signal = 0; signal < 32; signal++)
+    {
+        if ((need & (1 << signal)) == 0) continue;
+        bool on = (signals & (1 << signal)) != 0;
+        optics.wiring.Add(Block(middle + along * ((index - (count - 1) * .5) * .3), way * .18 + float3(0, .18, 0) + across * (deep + .03),
+                                on ? Color(.3, 1, .4) : Color(1, .12, .05), 0, on ? 1.5 : .75));
+        index += 1;
+    }
+}
+
+// What's drawn again every frame: the lifts' doors and the gate's lamps, a shot's shards, a ping, and dust.
+void Furnish(mut Optics optics, Arena arena, Place place, Fold fold, float3 eye)
 {
     optics.dynamic.Clear();
+    optics.wiring.Clear();
     optics.cubeParts.Clear();
     optics.cubeEcho.Clear();
     optics.cubeRest.Clear();
@@ -1722,66 +1685,22 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
     Color amberTint = Color(1, .64, .24);
     Color cyanTint = Color(.2, .96, .88);
     Color steel = Color(.10, .14, .16);
-    for (int plate = 0; plate <= PlateCount(arena.level) + 1; plate++)
-    {
-        // The chamber's own, and after them the lobby's
-        float3 at = plate < PlateCount(arena.level) ? PlatePosition(arena.level, plate) : plate == PlateCount(arena.level) ? HoldPlate(arena.level) : ArrivalAt(arena.level) + float3(0, .04, .4);
-        bool pressed = plate > PlateCount(arena.level) ? false : plate == PlateCount(arena.level) ? arena.hold : plate == 0 ? arena.plateA : plate == 1 ? arena.plateB : plate == 2 ? arena.plateC : arena.plateD;
-        // The gate's two, a room's machinery's in green, and the lift's
-        Color tint = plate >= PlateCount(arena.level) ? Color(.75, 1, .8) : plate == 0 ? amberTint : plate == 1 ? cyanTint : Color(.45, 1, .3);
-        if (plate == 2 || plate == 3)
-        {
-            optics.dynamic.Add(Block(at + float3(0, .12, 0), float3(.16, .06, .52), Color(.45, 1, .3), 0, .7));
-            optics.dynamic.Add(Block(at + float3(0, .12, -.26), float3(.46, .06, .16), Color(.45, 1, .3), 0, .7));
-        }
-        float sunk = pressed ? .025 : 0;
-        optics.dynamic.Add(Block(at + float3(0, .03, 0), float3(1.62, .08, 1.62), steel, 0, 0, .6, .03));
-        optics.dynamic.Add(Block(at + float3(0, .085 - sunk, 0), float3(1.2, .06, 1.2), pressed ? tint : Color(.34, .40, .41), 0, pressed ? .8 : 0, .5, .02));
-        for (int edge = -1; edge <= 1; edge += 2)
-        {
-            optics.dynamic.Add(Block(at + float3(edge * .72, .074, 0), float3(.05, .012, 1.3), tint, 0, pressed ? 1.3 : .55));
-            optics.dynamic.Add(Block(at + float3(0, .074, edge * .72), float3(1.3, .012, .05), tint, 0, pressed ? 1.3 : .55));
-        }
-    }
-    if (!Between(arena.level))
-    {
-        float3 at = CubeStart(arena.level, 0);
-        optics.dynamic.Add(Block(at - float3(0, .43, 0), float3(1.05, .1, 1.05), steel));
-        for (int corner = 0; corner < 4; corner++)
-        {
-            float reach = arena.released ? .65 : .4;
-            float3 side = float3((corner & 1) == 0 ? -reach : reach, 0, (corner & 2) == 0 ? -reach : reach);
-            optics.dynamic.Add(Block(at + side - float3(0, .1, 0), float3(.12, arena.released ? .15 : .75, .12), steel));
-            optics.dynamic.Add(Block(at + side + float3(0, .3, 0), float3(.13, .07, .13), arena.released ? Color(.3, 1, .4) : Color(1, .12, .05), 0, .8));
-        }
-    }
     // The door of the lift they came by.
-    float3 came = ArrivalAt(arena.level) + float3(0, 2.0 + Math.Saturate((arena.arrive - 0.7) * 1.6) * 4.3, 2.1);
-    optics.dynamic.Add(Faced(came, quaternion.identity, float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
+    optics.dynamic.Add(Faced(LiftPoint(place.arrival, place.arrivalYaw, float3(0, 2.0 + arena.door * 4.3, 2.1)), quaternion.Euler(0, place.arrivalYaw, 0),
+                             float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
     for (int rib = 0; rib < 4; rib++)
-        optics.dynamic.Add(Block(came + float3(0, -1.5 + rib, .13), float3(5.4, .07, .04), steel, 0, 0, .7));
-    // The split gate physically retreats upwards as its two circuits latch.
-    float3 gate = LiftAt(arena.level) + float3(0, 2.0 + arena.gate * 4.3, -2.1);
-    optics.dynamic.Add(Faced(gate, quaternion.identity, float3(6.0, 4.0, .24), SHUTTER, 0, Color(.8, .8, .8)));
-    for (int rib = 0; rib < 4; rib++)
-        optics.dynamic.Add(Block(gate + float3(0, -1.5 + rib, -.13), float3(5.4, .07, .04), steel, 0, 0, .7));
-    optics.dynamic.Add(Block(gate + float3(-2.85, 0, -.14), float3(.05, 3.9, .04), amberTint, 0, arena.solved ? 1.4 : .5));
-    optics.dynamic.Add(Block(gate + float3(2.85, 0, -.14), float3(.05, 3.9, .04), amberTint, 0, arena.solved ? 1.4 : .5));
-    optics.dynamic.Add(Block(gate + float3(0, 0, -.135), float3(.04, 3.9, .05), Color(.36, .46, .47), 0, 0, .8));
-
-    // The pads: a plate tipped the way it throws, with the way marked on it
-    for (int pad = 0; pad < PadCount(arena.level); pad++)
+        optics.dynamic.Add(Block(LiftPoint(place.arrival, place.arrivalYaw, float3(0, .5 + rib + arena.door * 4.3, 2.23)), TurnSize(float3(5.4, .07, .04), place.arrivalYaw),
+                                 steel, 0, 0, .7));
+    // The gate of the lift out, which goes up while its circuit is closed, and over it a lamp for each signal it needs
+    if (place.kind != PlaceKind.Vignette)
     {
-        float3 at = PadAt(arena.level, pad);
-        float way = PadThrow(arena.level, pad).z > 0 ? 1 : -1;
-        optics.dynamic.Add(Block(at + float3(0, .04, 0), float3(1.5, .08, 1.5), steel, 0, 0, .7));
-        optics.dynamic.Add(Turned(at + float3(0, .16, 0), quaternion.Euler(-way * .22, 0, 0), float3(1.2, .06, 1.2), Color(.3, .32, .34), 0, .7));
-        for (int mark = 0; mark < 3; mark++)
-        {
-            float lit = Math.Frac(optics.clock * 1.5 - mark * .33) < .4 ? 1.8 : .5;
-            optics.dynamic.Add(Turned(at + float3(0, .2 + mark * .05 * way * (mark - 1), way * (mark - 1) * .34), quaternion.Euler(-way * .22, 0, 0), float3(.7 - mark * .16 * way * (way > 0 ? 1 : -1), .02, .1),
-                                      Color(1, .7, .15), lit));
-        }
+        float up = arena.gate * 4.3;
+        optics.dynamic.Add(Faced(LiftPoint(place.exit, place.exitYaw, float3(0, 2.0 + up, 2.1)), quaternion.Euler(0, place.exitYaw, 0), float3(6.0, 4.0, .24),
+                                 SHUTTER, 0, Color(.8, .8, .8)));
+        for (int rib = 0; rib < 4; rib++)
+            optics.dynamic.Add(Block(LiftPoint(place.exit, place.exitYaw, float3(0, .5 + rib + up, 2.23)), TurnSize(float3(5.4, .07, .04), place.exitYaw), steel, 0, 0, .7));
+        optics.dynamic.Add(Block(LiftPoint(place.exit, place.exitYaw, float3(0, 2.0 + up, 2.235)), TurnSize(float3(.04, 3.9, .05), place.exitYaw), Color(.36, .46, .47), 0, 0, .8));
+        SignalLamps(optics, LiftPoint(place.exit, place.exitYaw, float3(0, 4.2, 2.64)), TurnBy(float3(1, 0, 0), place.exitYaw), .08, place.exitNeed, arena.signals);
     }
 
     // A shot that found no place: shards of its color, flung off the spot and gone.
@@ -1808,14 +1727,208 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
         optics.dynamic.Add(Block(fold.ping - float3(0, .9, 0), float3(.014 * fade, 1.3, .014 * fade), tint, 0, .8));
     }
 
-    // The pit's hands: far down in the dark until someone falls, then up and round them.
-    int hazard = Hazard(arena.level, arena.theme);
-    float middle = PitMiddle(arena.level);
-    float half = PitHalf(arena.level);
-    Color steel2 = Color(.2, .2, .21);
-    if (hazard == 1)
+    // Dust adrift about the eye, wherever it is: a box of it that the eye is always in the middle of and that lies
+    // still as the eye goes, a speck leaving one side as it comes in at the other, too far off to be seen. It only
+    // shows where a lamp lights it.
+    for (int i = 0; i < 260; i++)
     {
-        // Blood with no bottom, and the hands in it: far down in the dark until someone falls, then round them
+        int roll = Math.Hash(i);
+        float a = (roll & 1023) / 1023.0;
+        float b = ((roll >> 10) & 1023) / 1023.0;
+        float c = ((roll >> 20) & 1023) / 1023.0;
+        float3 box = float3(18, 6.4, 18);
+        float3 from = float3(a, b, c) * box - eye;
+        mut float3 at = eye + float3(Math.Frac(from.x / box.x + .5) - .5, Math.Frac(from.y / box.y + .5) - .5, Math.Frac(from.z / box.z + .5) - .5) * box;
+        at += float3(Math.Sin(optics.phase + a * 40), Math.Sin(optics.phase * 2 + b * 40) * .5, Math.Cos(optics.phase + c * 40)) * .28;
+        float size = .007 + (roll & 7) * .0016;
+        optics.motes.Add(Fixture { transform = float4x4.TRS(at, quaternion.Euler(a * 6, b * 6, c * 6), float3(size)), tint = Color(1, .9, .72), size = float3(size) });
+    }
+}
+
+// A plate's rim: twelve lamps round its top, three a side, in order round it from the corner nearest -x and +z.
+// Green while it's down, dark red while it's up, and while its signal lingers after it's let up, amber, going out
+// one at a time as its time runs out.
+void PlateRim(mut Optics optics, Plate plate, float out)
+{
+    float lingered = plate.linger > 0 && !plate.down ? Math.Ceil(plate.left / plate.linger * 12) : 0.0;
+    for (int lamp = 0; lamp < 12; lamp++)
+    {
+        int side = lamp / 3;
+        float along = ((lamp % 3) - 1) * (out * 2 / 3);
+        float3 place = side == 0 ? float3(along, 0, out) : side == 1 ? float3(out, 0, -along) : side == 2 ? float3(-along, 0, -out) : float3(-out, 0, along);
+        float3 size = side % 2 == 0 ? float3(out * 2 / 3 - .06, .014, .07) : float3(.07, .014, out * 2 / 3 - .06);
+        Color shown = plate.down ? Color(.3, 1, .4) : lamp < lingered ? Color(1, .6, .1) : plate.left > 0 ? Color(.1, .08, .07) : Color(.55, .06, .04);
+        float glow = plate.down ? 1.3 : lamp < lingered ? 1.4 : plate.left > 0 ? 0.0 : .35;
+        optics.dynamic.Add(Block(plate.at + place + float3(0, plate.heavy ? .125 : .073, 0), size, shown, 0, glow));
+    }
+}
+
+// A plate: a steel frame round a top that sinks under what weighs on it, all the way under what's enough, with its
+// rim of lamps. A standard one is a plain square with ridges to stand on. A heavy one is broader and deeper, banded
+// in warning yellow and bolted at its corners, its top sinks part of the way under part of what it needs, and its
+// gauge stands beside it on the side `aside`: a column whose rings light, amber, as far up as what weighs on it
+// is of what it needs, and all of them green once it's enough. A plate that lingers has amber corners.
+void DrawPlate(mut Optics optics, Plate plate, float3 aside = float3(-1, 0, 0))
+{
+    Color steel = Color(.10, .14, .16);
+    float3 at = plate.at;
+    float2 half = plate.half;
+    float weighed = Math.Saturate(plate.load / Math.Max(plate.need, .001));
+    if (!plate.heavy)
+    {
+        float sunk = plate.down ? .03 : weighed * .008;
+        optics.dynamic.Add(Block(at + float3(0, .03, 0), float3(half.x * 2 + .42, .08, half.y * 2 + .42), steel, 0, 0, .6));
+        float3 top = at + float3(0, .085 - sunk, 0);
+        optics.dynamic.Add(Block(top, float3(half.x * 2, .06, half.y * 2), Color(.36, .40, .41), 0, 0, .5));
+        for (int ridge = 0; ridge < 4; ridge++)
+            optics.dynamic.Add(Block(top + float3(0, .034, (ridge - 1.5) * half.y * .45), float3(half.x * 1.7, .012, .06), Color(.24, .27, .28), 0, 0, .4));
+        PlateRim(optics, plate, half.x + .1);
+    }
+    else
+    {
+        float sunk = plate.down ? .06 : weighed * .04;
+        float out = half.x + .25;
+        optics.dynamic.Add(Block(at + float3(0, .05, 0), float3(out * 2, .14, half.y * 2 + .5), Color(.08, .09, .1), 0, 0, .5));
+        // The warning band round it, and a bolt at each corner
+        for (int side = 0; side < 4; side++)
+        {
+            for (int stripe = 0; stripe < 5; stripe++)
+            {
+                float along = (stripe - 2) * (out * 2 / 5);
+                float3 place = side == 0 ? float3(along, 0, out - .09) : side == 1 ? float3(out - .09, 0, -along) : side == 2 ? float3(-along, 0, -out + .09)
+                                                                                                                            : float3(-out + .09, 0, along);
+                optics.dynamic.Add(Block(at + place + float3(0, .123, 0), side % 2 == 0 ? float3(out * 2 / 10, .01, .14) : float3(.14, .01, out * 2 / 10),
+                                         Color(.95, .72, .08), 0, .1));
+            }
+            float3 corner = float3((side & 1) == 0 ? -out + .09 : out - .09, .14, (side & 2) == 0 ? -out + .09 : out - .09);
+            optics.dynamic.Add(Block(at + corner, float3(.12, .05, .12), Color(.2, .2, .19), 0, 0, .8));
+        }
+        float3 top = at + float3(0, .13 - sunk, 0);
+        mut Fixture slab = Block(top, float3(half.x * 2, .1, half.y * 2), Color(.62, .6, .56), 0, 0, .5);
+        slab.cell = MARBLE;
+        slab.tiles = .5;
+        optics.dynamic.Add(slab);
+        optics.dynamic.Add(Block(top + float3(0, .056, 0), float3(half.x * 1.8, .014, .1), Color(.2, .21, .21), 0, 0, .5));
+        optics.dynamic.Add(Block(top + float3(0, .056, 0), float3(.1, .014, half.y * 1.8), Color(.2, .21, .21), 0, 0, .5));
+        PlateRim(optics, plate, half.x + .1);
+        // The gauge: what weighs on it, of what it needs. Never full until it's enough
+        float3 post = at + aside * (out + .35);
+        optics.dynamic.Add(Block(post + float3(0, .7, 0), float3(.22, 1.4, .22), Color(.08, .09, .1), 0, 0, .6));
+        optics.dynamic.Add(Block(post + float3(0, 1.43, 0), float3(.3, .06, .3), Color(.2, .2, .19), 0, 0, .7));
+        optics.dynamic.Add(Block(post + float3(0, .03, 0), float3(.36, .06, .36), Color(.2, .2, .19), 0, 0, .7));
+        int lit = plate.down ? 8 : Math.Min(int(Math.Ceil(weighed * 8)), 7);
+        for (int ring = 0; ring < 8; ring++)
+        {
+            Color shown = ring >= lit ? Color(.1, .08, .07) : plate.down ? Color(.3, 1, .4) : Color(1, .6, .1);
+            optics.dynamic.Add(Block(post + float3(0, .24 + ring * .14, 0), float3(.28, .08, .28), shown, 0, ring < lit ? 1.4 : 0.0));
+        }
+    }
+    if (plate.linger > 0)
+    {
+        float out = half.x + .1;
+        for (int corner = 0; corner < 4; corner++)
+            optics.dynamic.Add(Block(at + float3((corner & 1) == 0 ? -out : out, plate.heavy ? .125 : .073, (corner & 2) == 0 ? -out : out), float3(.09, .016, .09),
+                                     Color(1, .6, .1), 0, .6));
+    }
+}
+
+// A wire: a thin dark line along floors and up walls, from a plate's rim to what it works. While its signal is on
+// it's lit, and pulses run along it from the plate, so which way it works reads from across the place.
+void DrawWire(mut Optics optics, Wire wire, int signals)
+{
+    bool on = (signals & (1 << wire.signal)) != 0;
+    // Where the first pulse is along it
+    float run = Math.Frac(optics.clock * PULSE_SPEED / PULSE_EVERY) * PULSE_EVERY;
+    mut float start = 0;
+    for (int index = 0; index + 1 < wire.count; index++)
+    {
+        float3 from = wire.points[index];
+        float3 to = wire.points[index + 1];
+        float long = Math.Distance(from, to);
+        if (long < .001) continue;
+        float3 way = (to - from) / long;
+        quaternion turn = quaternion.LookRotation(way, Math.Abs(way.y) > .9 ? float3(0, 0, 1) : float3(0, 1, 0));
+        optics.wiring.Add(Turned((from + to) * .5, turn, float3(WIRE, WIRE, long + WIRE), on ? Color(.22, .8, .32) : Color(.05, .05, .05), on ? .45 : 0.0, .3));
+        if (on)
+        {
+            // This stretch's pulses, each cut off where the stretch turns
+            for (int pulse = int(Math.Ceil((start - PULSE_LONG * .5 - run) / PULSE_EVERY)); run + pulse * PULSE_EVERY - PULSE_LONG * .5 < start + long; pulse++)
+            {
+                float middle = run + pulse * PULSE_EVERY;
+                float near = Math.Max(middle - PULSE_LONG * .5, start);
+                float far = Math.Min(middle + PULSE_LONG * .5, start + long);
+                if (far - near < .01) continue;
+                optics.wiring.Add(Turned(from + way * ((near + far) * .5 - start), turn, float3(WIRE * 1.6, WIRE * 1.6, far - near), Color(.5, 1, .6), 1.8));
+            }
+        }
+        start += long;
+    }
+}
+
+
+// A pad: a plate tipped the way it throws, with the way marked on it.
+void DrawPad(mut Optics optics, Pad pad)
+{
+    Color steel = Color(.10, .14, .16);
+    float yaw = Math.Atan2(pad.launch.x, pad.launch.z);
+    quaternion tipped = Math.Mul(quaternion.Euler(0, yaw, 0), quaternion.Euler(-.22, 0, 0));
+    float3 ahead = float3(Math.Sin(yaw), 0, Math.Cos(yaw));
+    optics.dynamic.Add(Block(pad.at + float3(0, .04, 0), float3(1.5, .08, 1.5), steel, 0, 0, .7));
+    optics.dynamic.Add(Turned(pad.at + float3(0, .16, 0), tipped, float3(1.2, .06, 1.2), Color(.3, .32, .34), 0, .7));
+    for (int mark = 0; mark < 3; mark++)
+    {
+        float lit = Math.Frac(optics.clock * 1.5 - mark * .33) < .4 ? 1.8 : .5;
+        optics.dynamic.Add(Turned(pad.at + float3(0, .2 + (mark - 1) * .05, 0) + ahead * ((mark - 1) * .34), tipped, float3(.7 - mark * .16, .02, .1), Color(1, .7, .15), lit));
+    }
+}
+
+// What a place moves: a door is a shutter with its signals' lamps over it, a deck a metal square with a warning
+// along its edges and a lamp under each corner.
+void DrawMover(mut Optics optics, Mover mover, int signals)
+{
+    float3 at = mover.at;
+    float3 size = mover.size;
+    bool door = size.y > 1;
+    bool wide = size.x >= size.z;
+    if (door)
+    {
+        optics.dynamic.Add(Faced(at, quaternion.identity, size, SHUTTER, 0, Color(.8, .8, .8)));
+        for (int edge = -1; edge <= 1; edge += 2)
+        {
+            float3 side = wide ? float3(edge * (size.x * .5 - .08), 0, 0) : float3(0, 0, edge * (size.z * .5 - .08));
+            optics.dynamic.Add(Block(at + side, wide ? float3(.06, size.y - .1, size.z + .04) : float3(size.x + .04, size.y - .1, .06), Color(.2, .21, .2), 0, 0, .6));
+        }
+    }
+    else
+    {
+        mut Fixture deck = Block(at, size, Color(.5, .52, .5), 0, 0, .5);
+        deck.cell = 4;
+        deck.tiles = .5;
+        optics.dynamic.Add(deck);
+        for (int edge = 0; edge < 4; edge++)
+        {
+            float3 side = edge == 0 ? float3(size.x * .5, 0, 0) : edge == 1 ? float3(-size.x * .5, 0, 0) : edge == 2 ? float3(0, 0, size.z * .5) : float3(0, 0, -size.z * .5);
+            optics.dynamic.Add(Block(at + side * .98 + float3(0, size.y * .5 + .01, 0), edge < 2 ? float3(.12, .03, size.z) : float3(size.x, .03, .12), Color(.95, .72, .08), 0, .3));
+            optics.dynamic.Add(Block(at + side * .8 - float3(0, size.y * .5 + .04, 0), float3(.14, .08, .14), Color(.3, 1, .4), 0, Math.Length(mover.velocity) > .05 ? 1.6 : .4));
+        }
+    }
+    float through = Math.Max(wide ? size.z + .12 : size.x + .12, 1.1);
+    SignalLamps(optics, mover.lamp, mover.lampAlong, door ? through : .16, mover.need, signals);
+}
+
+// A pit and what's in it: the hands in blood, far down until someone falls in, then up and round them; a pool's
+// or a trench's slopes; the liquid; what lurks in a pool, and the floats along it; a trench's drums, and what
+// they leave of whoever they had.
+void DrawPit(mut Optics optics, Pit pit, Operator viewer, Operator partner)
+{
+    float middle = (pit.low.y + pit.high.y) * .5;
+    float half = (pit.high.y - pit.low.y) * .5;
+    float across = (pit.low.x + pit.high.x) * .5;
+    float wide = pit.high.x - pit.low.x;
+    float surface = PitSurface(pit);
+    Color steel2 = Color(.2, .2, .21);
+    if (pit.kind == PitKind.Blood)
+    {
         for (int i = 0; i < 22; i++)
         {
             int roll = Math.Hash(i + 900);
@@ -1823,128 +1936,65 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
             float b = ((roll >> 10) & 1023) / 1023.0;
             float c = ((roll >> 20) & 1023) / 1023.0;
             // Out of the red to the wrist or the elbow, groping
-            float3 root = float3(PitFrom(arena.level) + .6 + a * (PitTo(arena.level) - PitFrom(arena.level) - 1.2), PIT_SURFACE - 1.4, middle - 2.1 + b * 4.2);
+            float3 root = float3(pit.low.x + .6 + a * (wide - 1.2), surface - 1.4, middle - half * .84 + b * half * 1.68);
             float3 sway = float3(Math.Sin(optics.phase + a * 30), 0, Math.Cos(optics.phase * 2 + b * 30)) * .28;
             float high = 1.55 + c * .75 + Math.Sin(optics.phase * 2 + c * 20) * .12;
             Arm(optics, root, root + float3(0, high, 0) + sway, float3(Math.Cos(c * 9), 0, Math.Sin(c * 9)), 1.15, .35 + Math.Sin(optics.phase * 3 + a * 20) * .3);
         }
-        Taken(optics, viewer);
-        if (partner.id != viewer.id) Taken(optics, partner);
+        if (InPit(pit, viewer.position, .5)) Taken(optics, viewer);
+        if (partner.id != viewer.id && InPit(pit, partner.position, .5)) Taken(optics, partner);
     }
-    if (hazard >= 2)
+    else
     {
         // A pool or a trench: the slopes down into it, which the match has as two tilted boxes
-        float deep = PitDeep(arena.level, hazard);
-        float run = PitRun(arena.level, hazard);
-        float slope = Math.Atan2(deep, run);
+        float slope = Math.Atan2(pit.deep, pit.run);
         for (int side = -1; side <= 1; side += 2)
         {
-            float3 top = float3(0, 0, middle + side * half);
-            float3 foot = float3(0, -deep, middle + side * (half - run));
+            float3 top = float3(across, pit.top, middle + side * half);
+            float3 foot = float3(across, pit.top - pit.deep, middle + side * (half - pit.run));
             float3 normal = float3(0, Math.Cos(slope), -side * Math.Sin(slope));
-            mut Fixture ramp = Turned((top + foot) * .5 - normal * .2 + float3((PitFrom(arena.level) + PitTo(arena.level)) * .5, 0, 0), quaternion.Euler(-side * slope, 0, 0),
-                                      float3(PitTo(arena.level) - PitFrom(arena.level), .4, Math.Sqrt(deep * deep + run * run)),
-                                      hazard == 2 ? Color(.62, .95, 1) : Color(.62, .6, .56));
-            ramp.cell = hazard == 2 ? 3 : 2;
+            mut Fixture ramp = Turned((top + foot) * .5 - normal * .2, quaternion.Euler(-side * slope, 0, 0), float3(wide, .4, Math.Sqrt(pit.deep * pit.deep + pit.run * pit.run)),
+                                      pit.kind == PitKind.Water ? Color(.62, .95, 1) : Color(.62, .6, .56));
+            ramp.cell = pit.kind == PitKind.Water ? CONCRETE : PANELS;
             optics.dynamic.Add(ramp);
         }
     }
-    if (hazard == 1 || hazard == 2)
+    if (pit.kind != PitKind.Trench)
     {
         // The liquid itself, which hides what's in it
-        float surface = hazard == 1 ? PIT_SURFACE : POOL_SURFACE;
-        float swell = Math.Sin(optics.phase) * .02;
-        mut Fixture liquid = Block(float3((PitFrom(arena.level) + PitTo(arena.level)) * .5, surface - .02 + swell, middle),
-                                   float3(PitTo(arena.level) - PitFrom(arena.level), .04, half * 2), Liquid(arena.theme), 0, .32, .95);
+        mut Fixture liquid = Block(float3(across, surface - .02 + Math.Sin(optics.phase) * .02, middle), float3(wide, .04, half * 2), Liquid(pit.kind), 0, .32, .95);
         liquid.kind = -1;
         optics.dynamic.Add(liquid);
-        Enter(optics, 0, fold.cube, fold.cubeScale * 1.2, middle, surface, half);
-        Enter(optics, 1, viewer.position + float3(0, .5 * viewer.scale, 0), viewer.scale * 1.5, middle, surface, half);
-        if (partner.id != viewer.id) Enter(optics, 2, partner.position + float3(0, .5 * partner.scale, 0), partner.scale * 1.5, middle, surface, half);
-        for (int index = 1; index < fold.count && index < 5; index++) Enter(optics, 2 + index, fold.spots[index], 1.1, middle, surface, half);
-        Splashes(optics, Liquid(arena.theme), surface);
     }
-    if (hazard == 2)
+    if (pit.kind == PitKind.Water)
     {
-        // What's in the pool: a back that breaks the water, longer than anything should be, and quick when it's
-        // after something, with its head up
-        float3 way = lurker.way;
-        float3 across = float3(way.z, 0, -way.x);
-        Color hide = Color(.05, .07, .08);
-        for (int part = 0; part < 10; part++)
+        // The floats along it, which ride the water
+        for (int buoy = 0; buoy < 40; buoy++)
         {
-            float wave = Math.Sin(optics.clock * (2.5 + lurker.rush * 6) - part * .8) * (.1 + part * .035);
-            float3 at = lurker.at - way * (part * .62) + across * wave;
-            float high = (part == 0 ? .3 : .24 - part * .018) + lurker.rush * (part < 2 ? .32 : .05) + Math.Sin(optics.clock * 3 - part) * .03;
-            optics.dynamic.Add(Turned(float3(at.x, POOL_SURFACE - .12 + high * .5, at.z), quaternion.LookRotation(way, float3(0, 1, 0)),
-                                      float3(.52 - part * .04, high, .68), hide, 0, .85));
-            if (part > 0 && part % 2 == 0)
-                optics.dynamic.Add(Turned(float3(at.x, POOL_SURFACE - .1 + high + .08, at.z), quaternion.LookRotation(way, float3(0, 1, 0)), float3(.05, .2, .3), hide, 0, .85));
-        }
-        if (lurker.rush > 0)
-        {
-            for (int eye = -1; eye <= 1; eye += 2)
-                optics.dynamic.Add(Block(lurker.at + way * .3 + across * (eye * .15) + float3(0, .36, 0), float3(.07, .07, .07), Color(.9, 1, .7), 0, 1.6));
-        }
-        // The lanes' floats, which ride the water
-        for (int float2 = 0; float2 < 40; float2++)
-        {
-            float x = PitFrom(arena.level) + .5 + float2 * .477;
-            if (x > PitTo(arena.level) - .4) continue;
-            // A room's two lanes; in the long pool a line each side of every shallow, which is how they're found
-            for (int lane = 0; lane < (arena.level == POOLWAY ? 6 : 2); lane++)
-            {
-                float z = arena.level == POOLWAY ? ShallowAt(lane / 2) + (lane % 2 == 0 ? -.8 : .8) : middle + (lane == 0 ? -.52 : .52);
-                optics.dynamic.Add(Block(float3(x, POOL_SURFACE + .03 + Math.Sin(optics.phase * 2 + float2 * .7 + lane) * .015, z), float3(.2, .1, .1),
-                                         float2 % 4 < 2 ? Color(.85, .1, .08) : Color(.92, .92, .88)));
-            }
-        }
-        // Submerged controls have a surface outline and a raised, two-sided C/D beacon.
-        for (int plate = 0; plate < PlateCount(arena.level); plate++)
-        {
-            float3 under = PlatePosition(arena.level, plate);
-            if (under.y >= POOL_SURFACE) continue;
-            bool pressed = plate == 0 ? arena.plateA : plate == 1 ? arena.plateB : plate == 2 ? arena.plateC : arena.plateD;
-            Color marker = Color(.45, 1, .3);
-            for (int corner = 0; corner < 4; corner++)
-                optics.dynamic.Add(Block(float3(under.x + ((corner & 1) == 0 ? -.75 : .75), POOL_SURFACE + .05 + Math.Sin(optics.phase * 2 + corner) * .02, under.z + ((corner & 2) == 0 ? -.75 : .75)),
-                                         float3(.3, .18, .3), marker, 0, pressed ? 1.6 : .9));
-            for (int side = -1; side <= 1; side += 2)
-            {
-                optics.dynamic.Add(Block(float3(under.x + side * .95, .35, under.z), float3(.08, 1.65, .08), steel));
-                optics.dynamic.Add(Block(float3(under.x + side * .75, POOL_SURFACE + .03, under.z), float3(.07, .06, 1.5), marker, 0, .9));
-                optics.dynamic.Add(Block(float3(under.x, POOL_SURFACE + .03, under.z + side * .75), float3(1.5, .06, .07), marker, 0, .9));
-            }
-            optics.dynamic.Add(Block(float3(under.x, .9, under.z), float3(1.9, .8, .12), steel));
-            for (int face = -1; face <= 1; face += 2)
-            {
-                float3 sign = float3(under.x, .95, under.z + face * .08);
-                optics.dynamic.Add(Block(sign + float3(face * .22, 0, 0), float3(.09, .48, .04), marker, 0, pressed ? 1.6 : .9));
-                optics.dynamic.Add(Block(sign + float3(0, .24, 0), float3(.5, .09, .04), marker, 0, .9));
-                optics.dynamic.Add(Block(sign + float3(0, -.24, 0), float3(.5, .09, .04), marker, 0, .9));
-                if (plate == 3) optics.dynamic.Add(Block(sign + float3(-face * .22, 0, 0), float3(.09, .48, .04), marker, 0, .9));
-                optics.dynamic.Add(Block(sign + float3(0, -.38, 0), float3(.08, .14, .04), marker, 0, .9));
-            }
+            float x = pit.low.x + .5 + buoy * .477;
+            if (x > pit.high.x - .4) continue;
+            for (int lane = 0; lane < 2; lane++)
+                optics.dynamic.Add(Block(float3(x, surface + .03 + Math.Sin(optics.phase * 2 + buoy * .7 + lane) * .015, middle + (lane == 0 ? -.52 : .52)), float3(.2, .1, .1),
+                                         buoy % 4 < 2 ? Color(.85, .1, .08) : Color(.92, .92, .88)));
         }
         // Someone it has: the water thrown about over them
-        if (viewer.taken > 0 && int(viewer.taken / .24) != int((viewer.taken - Math.Min(Frame.dt, .05)) / .24)) Splash(optics, float3(viewer.position.x, POOL_SURFACE, viewer.position.z), 1.3);
-        if (partner.id != viewer.id && partner.taken > 0 && int(partner.taken / .24) != int((partner.taken - Math.Min(Frame.dt, .05)) / .24))
-            Splash(optics, float3(partner.position.x, POOL_SURFACE, partner.position.z), 1.3);
+        if (viewer.taken > 0 && InPit(pit, viewer.position, .3) && int(viewer.taken / .24) != int((viewer.taken - Math.Min(Frame.dt, .05)) / .24))
+            Splash(optics, float3(viewer.position.x, surface, viewer.position.z), 1.3);
+        if (partner.id != viewer.id && partner.taken > 0 && InPit(pit, partner.position, .3) && int(partner.taken / .24) != int((partner.taken - Math.Min(Frame.dt, .05)) / .24))
+            Splash(optics, float3(partner.position.x, surface, partner.position.z), 1.3);
     }
-    if (hazard == 3)
+    if (pit.kind == PitKind.Trench)
     {
-        // The trench's two drums: each two square beams on one axle, turning as it rolls, between its end plates
-        // and on its rails, with what it grinds off the floor thrown out behind it
-        float deep = PitDeep(arena.level, hazard);
-        for (int which = 0; which < DrumCount(arena.level); which++)
+        // The drums: each two square beams on one axle, turning as it rolls, between its end plates and on its
+        // rails, with what it grinds off the floor thrown out behind it
+        for (int which = 0; which < pit.drums; which++)
         {
-            float x = DrumAt(arena.level, arena.drumTicks, which);
-            float lane = DrumLane(arena.level, which);
+            float x = DrumAt(pit, which);
+            float lane = pit.lanes[which];
             for (int rail = -1; rail <= 1; rail += 2)
-                optics.dynamic.Add(Block(float3((PitFrom(arena.level) + PitTo(arena.level)) * .5, -deep + .02, lane + rail * 1.14),
-                                         float3(PitTo(arena.level) - PitFrom(arena.level) - .2, .04, .09), steel2, 0, 0, .8));
+                optics.dynamic.Add(Block(float3(across, pit.top - pit.deep + .02, lane + rail * 1.14), float3(wide - .2, .04, .09), steel2, 0, 0, .8));
             float rolled = x / .7;
-            float3 axle = float3(x, -deep + .74, lane);
+            float3 axle = float3(x, pit.top - pit.deep + .74, lane);
             optics.dynamic.Add(Turned(axle, quaternion.Euler(0, 0, rolled), float3(1.0, 1.0, 2.1), Color(.3, .19, .13), 0, .5));
             optics.dynamic.Add(Turned(axle, quaternion.Euler(0, 0, rolled + 45deg), float3(1.0, 1.0, 2.1), Color(.38, .06, .05), 0, .6));
             for (int end = -1; end <= 1; end += 2)
@@ -1957,25 +2007,13 @@ void Furnish(mut Optics optics, Arena arena, Fold fold, Lurker lurker, Operator 
             for (int spark = 0; spark < 7; spark++)
             {
                 int roll = Math.Hash(int2(spark + which * 9, int(optics.clock * 30)));
-                float back = -DrumWay(arena.level, arena.drumTicks, which) * (.5 + (roll & 63) / 63.0 * .9);
-                optics.dynamic.Add(Block(float3(x + back, -deep + .05 + ((roll >> 6) & 63) / 63.0 * .5, lane - 1 + ((roll >> 12) & 63) / 63.0 * 2), float3(.03, .03, .03), Color(1, .8, .3), 0, 2.2));
+                float back = -DrumWay(pit, which) * (.5 + (roll & 63) / 63.0 * .9);
+                optics.dynamic.Add(Block(float3(x + back, pit.top - pit.deep + .05 + ((roll >> 6) & 63) / 63.0 * .5, lane - 1 + ((roll >> 12) & 63) / 63.0 * 2),
+                                         float3(.03, .03, .03), Color(1, .8, .3), 0, 2.2));
             }
         }
-        Pieces(optics, viewer);
-        if (partner.id != viewer.id) Pieces(optics, partner);
-    }
-
-    // Dust adrift where the roof lets the sun in.
-    for (int i = 0; i < 260; i++)
-    {
-        int roll = Math.Hash(i);
-        float a = (roll & 1023) / 1023.0;
-        float b = ((roll >> 10) & 1023) / 1023.0;
-        float c = ((roll >> 20) & 1023) / 1023.0;
-        mut float3 at = float3(-5 + a * 14.5, .3 + b * 6.4, -12.6 + c * 25.2);
-        at += float3(Math.Sin(optics.phase + a * 40), Math.Sin(optics.phase * 2 + b * 40) * .5, Math.Cos(optics.phase + c * 40)) * .28;
-        float size = .007 + (roll & 7) * .0016;
-        optics.motes.Add(Fixture { transform = float4x4.TRS(at, quaternion.Euler(a * 6, b * 6, c * 6), float3(size)), tint = Color(1, .9, .72), size = float3(size) });
+        if (InPit(pit, viewer.position, .5)) Pieces(optics, viewer);
+        if (partner.id != viewer.id && InPit(pit, partner.position, .5)) Pieces(optics, partner);
     }
 }
 
@@ -2053,13 +2091,17 @@ float4 OpeningOnScreen(Portal portal, float3 eye, quaternion rotation, float2 wi
 // Second crossings, their parents, then the room. Targets are disjoint and
 // portal cameras and all visible simulation objects update in this frame.
 view Render(Operator seenViewer, query (Operator body) operators, query (Wall wall) walls, query (Cube cube) cubes, query (Mover mover) movers, query (Ramp ramp) ramps,
-            Arena arena, Fold match, Watcher watcher, Stalker stalker, Lurker lurker, Control control, Interface ui, mut Optics optics, mut Daylight day,
-            mut Lens lens)
+            query (Plate plate) plates, query (Wire wire) wires, query (FoldFrame frame) frames, query (Pad pad) pads, query (Pit pit) pits, query (Prop prop) props, query (Beast beast) beasts, Arena arena, Place place,
+            Fold match, Watcher watcher, Stalker stalker, Shade shade, Lurker lurker, Control control, Interface ui, mut Optics optics, mut Daylight day, mut Lens lens)
 {
     if (seenViewer.id != control.active) return;
     mut var viewer = seenViewer;
+    // The first frame in the lift come by, before the match has moved them: where they'll stand in it
     if (viewer.chamber != arena.chamber && arena.rode == arena.chamber)
-        viewer.position += ArrivalAt(arena.level) - arena.left;
+    {
+        viewer.position = Arriving(place, arena.left, arena.leftWay, viewer.position);
+        viewer.yaw += place.arrivalYaw - arena.leftWay;
+    }
     if (!optics.made) MakeOptics(optics, day, lens);
     // The first frames, behind the menu, are drawn with two ends that aren't there and then with one: every
     // way a fold is drawn has been drawn once before the first real pair links, and nothing is made ready then.
@@ -2067,9 +2109,11 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
     bool warming = optics.warmed < 3;
     if (warming)
     {
+        quaternion turn = quaternion.Euler(0, place.viewTurn.y, 0);
         for (int end = 0; end < 4; end++)
-            fold.ends[end] = Portal { open = (end & 1) == 0 || optics.warmed < 2, at = float3((end & 1) == 0 ? -9.8 : 9.8, 1.3, end < 2 ? 3 : 9),
-                                      face = float3((end & 1) == 0 ? 1 : -1, 0, 0), size = 1 };
+            fold.ends[end] = Portal { open = (end & 1) == 0 || optics.warmed < 2,
+                                      at = place.view + Math.Rotate(turn, float3((end & 1) == 0 ? -3 : 3, 0, end < 2 ? 5 : 8)),
+                                      face = Math.Rotate(turn, float3((end & 1) == 0 ? 1 : -1, 0, 0)), size = 1 };
         optics.warmed += 1;
     }
     // The room's boxes are the match's walls: dressed again when the chamber or their number changes
@@ -2086,10 +2130,14 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         foreach (var row in walls)
         {
             if (row.wall.chamber != arena.chamber) continue;
-            DressWall(optics, row.wall, number, arena.theme);
+            DressWall(optics, row.wall, number);
             number += 1;
         }
-        Dress(optics, arena.level, arena.theme);
+        Dress(optics, place);
+        foreach (var row in props)
+            if (row.prop.chamber == arena.chamber) DressProp(optics, row.prop);
+        foreach (var row in frames)
+            if (row.frame.chamber == arena.chamber) DressFrame(optics, row.frame);
         optics.dressed = arena.chamber;
         optics.walls = standing;
     }
@@ -2115,49 +2163,39 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
     foreach (var row in operators)
         if (row.body.id != viewer.id) partner = row.body;
     if (partner.chamber != arena.chamber && arena.rode == arena.chamber)
-        partner.position += ArrivalAt(arena.level) - arena.left;
+    {
+        partner.position = Arriving(place, arena.left, arena.leftWay, partner.position);
+        partner.yaw += place.arrivalYaw - arena.leftWay;
+    }
     lens.lift = ui.open ? 0.0 : Math.Max(Math.Saturate((arena.ride - (RIDE - .25)) / .25),
         arena.rode == arena.chamber ? 1 - Math.Saturate((arena.arrive - .15) / .35) : 0.0);
     mut float3 eye = viewer.position + float3(0, 1.55 * viewer.scale, 0);
     // In the hands' grip the eye is shaken, and in a lift going down
     if (viewer.taken > 0) eye += float3(Math.Sin(optics.clock * 61), Math.Sin(optics.clock * 83), Math.Cos(optics.clock * 71)) * (.03 * Math.Saturate(viewer.taken * 4));
-    // ...and pulled under in a pool
-    int hazard = Hazard(arena.level, arena.theme);
-    if (hazard == 2 && viewer.taken > 0) eye.y -= Math.Saturate(viewer.taken * 1.3) * 1.25;
+    // ...and pulled under in a pool. Which pit the viewer is over, if any, and where its liquid lies
+    mut var under = PitKind.Trench;
+    mut float surface = -1000;
+    foreach (var row in pits)
+    {
+        if (row.pit.chamber != arena.chamber || !InPit(row.pit, viewer.position, .3) || row.pit.kind == PitKind.Trench) continue;
+        under = row.pit.kind;
+        surface = PitSurface(row.pit);
+    }
+    if (under == PitKind.Water && viewer.taken > 0) eye.y -= Math.Saturate(viewer.taken * 1.3) * 1.25;
     float riding = Math.Max(Math.Saturate(arena.ride * 3), arena.arrive < 0.6 && arena.rode == arena.chamber ? 1.0 : 0.0);
     eye += float3(Math.Sin(optics.clock * 47), Math.Sin(optics.clock * 39), 0) * (.012 * riding);
     mut quaternion rotation = quaternion.Euler(-viewer.pitch, viewer.yaw, 0);
     if (warming)
     {
-        eye = float3(0, 2, -8);
-        rotation = quaternion.identity;
+        eye = place.view;
+        rotation = quaternion.Euler(0, place.viewTurn.y, 0);
     }
     else if (ui.open)
     {
-        // Behind the menu the atrium is seen from a camera of its own, adrift.
-        eye = float3(-3.6 + Math.Sin(optics.phase) * .45, 2.5 + Math.Sin(optics.phase * 2) * .06, -12.2);
-        rotation = quaternion.Euler(-.05, .04 + Math.Cos(optics.phase) * .015, 0);
-        if (arena.level == UNDERTOW)
-        {
-            eye = float3(-2 + Math.Sin(optics.phase) * .3, 3, -14.5);
-            rotation = quaternion.Euler(.2, .12 + Math.Cos(optics.phase) * .015, 0);
-        }
-        if (arena.level == DARK)
-        {
-            eye = float3(-2.8 + Math.Sin(optics.phase) * .3, 3.2, -15);
-            rotation = quaternion.Euler(.12, .2 + Math.Cos(optics.phase) * .015, 0);
-        }
-        if (arena.level == SIGHT)
-        {
-            eye = float3(-4.5 + Math.Sin(optics.phase) * .3, 7.6, -1);
-            rotation = quaternion.Euler(.3, .45 + Math.Cos(optics.phase) * .015, 0);
-        }
-        if (arena.level == SHAFT)
-        {
-            // ...which in the shaft looks down its far room from over the near ledge
-            eye = float3(5.5 + Math.Sin(optics.phase) * .45, 8.2, 10.8);
-            rotation = quaternion.Euler(.42, -.32 + Math.Cos(optics.phase) * .015, 0);
-        }
+        // Behind the menu the place is seen from a camera of its own, adrift where the place puts it.
+        float3 drift = TurnBy(float3(Math.Sin(optics.phase) * .4, Math.Sin(optics.phase * 2) * .06, 0), place.viewTurn.y);
+        eye = place.view + drift;
+        rotation = quaternion.Euler(place.viewTurn.x, place.viewTurn.y + Math.Cos(optics.phase) * .015, 0);
     }
     // Each end's camera: the eye, as far past the end's other as it is before this one
     Portal e0 = fold.ends[0];
@@ -2167,8 +2205,35 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
     float3[4] eyes = [FoldPoint(e0, e1, eye), FoldPoint(e1, e0, eye), FoldPoint(e2, e3, eye), FoldPoint(e3, e2, eye)];
     quaternion[4] turns = [FoldedRotation(e0, e1, rotation), FoldedRotation(e1, e0, rotation), FoldedRotation(e2, e3, rotation), FoldedRotation(e3, e2, rotation)];
     float4x4[4] across = [Across(e0, e1), Across(e1, e0), Across(e2, e3), Across(e3, e2)];
-    Furnish(optics, arena, fold, lurker, viewer, partner);
-    if (!ui.open) Handheld(optics, eye, rotation, pace, fold.holding[viewer.id] > 0 ? 1.0 : 0.0, viewer.scale);
+    Furnish(optics, arena, place, fold, eye);
+    // A pose and crossing split per creature, reused in every light and fold camera.
+    mut List<BeastPicture> creatures = [];
+    foreach (var row in beasts)
+        if (row.beast.chamber == arena.chamber && row.beast.visible && creatures.count < 8) creatures.Add(BeastPictureOf(row.beast, fold));
+    LegacyBeastPictures(creatures, arena, watcher, stalker, shade, lurker, fold, optics.clock);
+    // What the place has: its plates and the wires from them, its pads, and its pits; the first pit with a liquid
+    // is the one things splash into
+    foreach (var row in plates)
+        if (row.plate.chamber == arena.chamber) DrawPlate(optics, row.plate);
+    foreach (var row in wires)
+        if (row.wire.chamber == arena.chamber) DrawWire(optics, row.wire, arena.signals);
+    foreach (var row in pads)
+        if (row.pad.chamber == arena.chamber) DrawPad(optics, row.pad);
+    mut bool splashing = false;
+    foreach (var row in pits)
+    {
+        if (row.pit.chamber != arena.chamber) continue;
+        DrawPit(optics, row.pit, viewer, partner);
+        if (row.pit.kind == PitKind.Trench || splashing) continue;
+        splashing = true;
+        float level = PitSurface(row.pit);
+        Enter(optics, 0, fold.cube, fold.cubeScale * 1.2, row.pit, level);
+        Enter(optics, 1, viewer.position + float3(0, .5 * viewer.scale, 0), viewer.scale * 1.5, row.pit, level);
+        if (partner.id != viewer.id) Enter(optics, 2, partner.position + float3(0, .5 * partner.scale, 0), partner.scale * 1.5, row.pit, level);
+        for (int index = 1; index < fold.count && index < 5; index++) Enter(optics, 2 + index, fold.spots[index], 1.1, row.pit, level);
+        Splashes(optics, Liquid(row.pit.kind), level);
+    }
+    if (!ui.open) Handheld(optics, eye, rotation, pace, fold.holding[viewer.id] > 0 ? 1.0 : 0.0, viewer.scale, fold.strained[viewer.id]);
     // Both operators as they stand or run, and each again at a fold's other end while part of the way through it.
     Pose partnerPose = FigurePose(partner, optics.clock);
     Pose selfPose = FigurePose(viewer, optics.clock + 1.7);
@@ -2176,32 +2241,9 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
     float4x4 selfPlace = FigurePlace(viewer);
     int partnerFold = Crossing(fold, partner.position + float3(0, .9 * partner.scale, 0), .55 * partner.scale);
     int selfFold = Crossing(fold, viewer.position + float3(0, .9 * viewer.scale, 0), .55 * viewer.scale);
-    // What the room moves: a deck with a warning along its edges and a lamp under each corner. And its slopes
+    // What the room moves, and its slopes
     foreach (var row in movers)
-    {
-        if (row.mover.chamber != arena.chamber) continue;
-        float3 at = row.mover.at;
-        float3 size = row.mover.size;
-        if (size.y > 1)
-        {
-            // A door: a shutter, with the color of its plate down its edges
-            optics.dynamic.Add(Faced(at, quaternion.identity, size, SHUTTER, 0, Color(.8, .8, .8)));
-            for (int edge = -1; edge <= 1; edge += 2)
-                optics.dynamic.Add(Block(at + float3(edge * (size.x * .5 - .08), 0, 0), float3(.06, size.y - .1, size.z + .04), Color(.45, 1, .3), 0, .8));
-            continue;
-        }
-        mut Fixture deck = Block(at, size, Color(.5, .52, .5), 0, 0, .5);
-        deck.cell = 4;
-        deck.tiles = .5;
-        optics.dynamic.Add(deck);
-        for (int edge = 0; edge < 4; edge++)
-        {
-            float3 side = edge == 0 ? float3(size.x * .5, 0, 0) : edge == 1 ? float3(-size.x * .5, 0, 0) : edge == 2 ? float3(0, 0, size.z * .5) : float3(0, 0, -size.z * .5);
-            optics.dynamic.Add(Block(at + side * .98 + float3(0, size.y * .5 + .01, 0), edge < 2 ? float3(.12, .03, size.z) : float3(size.x, .03, .12), Color(.95, .72, .08), 0, .3));
-            optics.dynamic.Add(Block(at + side * .8 - float3(0, size.y * .5 + .04, 0), float3(.14, .08, .14), Color(.3, 1, .4), 0,
-                                     Math.Length(row.mover.velocity) > .05 ? 1.6 : .4));
-        }
-    }
+        if (row.mover.chamber == arena.chamber) DrawMover(optics, row.mover, arena.signals);
     foreach (var row in ramps)
     {
         if (row.ramp.chamber != arena.chamber || row.ramp.paint < 0) continue;
@@ -2226,27 +2268,31 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         again.transform = Math.Mul(across[cubeFold - 1], again.transform);
         optics.cubeEcho.Add(again);
     }
-    // The watcher, where the match has it.
-    bool watched = watcher.state != Watching.Away;
-    // The lamps: out as a watcher comes, failing as the lift goes down, and few between the rooms
-    mut float lamps = watcher.blink > 0 ? 0.0 : 1.0;
+    // The lamps: as much as the place has, out as a watcher comes, failing as the lift goes down, and out with the
+    // torches for a moment every so often in a maze
+    bool mazed = stalker.chamber == arena.chamber;
+    mut float lamps = watcher.blink > 0 ? 0.0 : place.light;
     if (riding > 0) lamps *= Math.Sin(optics.clock * 31) + Math.Sin(optics.clock * 53) > 0.6 ? 0.7 : 0.04;
-    if (arena.level == BETWEEN) lamps *= stalker.dark ? 0.0 : 0.22;
-    else if (Between(arena.level)) lamps *= 0.45;
-    lens.grade = arena.theme == 1 ? float3(0.86, 1.0, 1.08) : arena.theme == 2 ? float3(0.95, 0.86, 0.8) : float3(1, 1, 1);
-    lens.murk = arena.theme == 1 ? float3(0.008, 0.11, 0.14) : float3(0.16, 0.006, 0.005);
-    float4x4 watcherPlace = float4x4.TRS(watcher.at, quaternion.Euler(0, watcher.yaw, 0), float3(FIGURE_SCALE * (arena.level == BETWEEN ? 1.5 : 1.12)));
-    // What's between the rooms doesn't so much as breathe
-    // ...and is caught mid-stride wherever it's seen, never as it was
-    Pose watcherPose = arena.level == BETWEEN ? FigurePose(Operator { position = watcher.at, grounded = true, velocity = float3(0, 0, 4.5) }, stalker.walked * 0.37)
-                                              : FigurePose(Operator { position = watcher.at, grounded = true }, optics.clock + 3.1);
+    if (mazed && stalker.dark) lamps = 0;
+    lens.grade = place.grade;
+    lens.murk = under == PitKind.Water ? float3(0.008, 0.11, 0.14) : float3(0.16, 0.006, 0.005);
     mut float caught = watcher.state == Watching.Lunging && watcher.victim == viewer.id && !ui.open ? 1 - Math.Saturate(watcher.timer / 0.75) * 0.6 : 0.0;
     if (arena.caught > 0 && !ui.open) caught = 1;
     float gripped = ui.open || viewer.taken <= 0 ? 0.0 : viewer.shredded ? 1.0 : Math.Saturate(viewer.taken / 0.3) * 0.75;
-    lens.sunk = !ui.open && viewer.taken > 0 && !viewer.shredded && eye.y < (hazard == 2 ? POOL_SURFACE : PIT_SURFACE) - .04 ? 1.0 : 0.0;
+    lens.sunk = !ui.open && viewer.taken > 0 && !viewer.shredded && eye.y < surface - .04 ? 1.0 : 0.0;
     lens.scare = Math.Max(Math.Max(caught, gripped), lens.scare - dt * 2.5);
     lens.under = ui.open ? 0.0 : Math.Max(Math.Saturate((viewer.taken - (viewer.shredded ? 0.25 : 1.1)) / ((viewer.shredded ? SHRED_FOR : TAKEN_FOR) - (viewer.shredded ? 0.4 : 1.15))),
                                           Math.Saturate((arena.caught - 0.35) / (CAUGHT - 0.45)));
+
+    // The first of the place's blood pits, for an end whose other is under its red
+    mut float4 submerge = float4(0, 0, 0, 0);
+    mut float submergeAt = -1000;
+    foreach (var row in pits)
+    {
+        if (row.pit.chamber != arena.chamber || row.pit.kind != PitKind.Blood || submergeAt > -1000) continue;
+        submerge = float4(row.pit.low.x, row.pit.high.x, row.pit.low.y, row.pit.high.y);
+        submergeAt = PitSurface(row.pit);
+    }
 
     float2 window = float2(Screen.width, Screen.height);
     // An end's camera only draws the part of the window its opening covers,
@@ -2275,23 +2321,19 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         }
     }
     // What every draw of the room is given: where things are, the lights, and all four ends
-    mut Sight base = Sight { eye = eye, cube = fold.cube, partner = partner.position, self = viewer.position, phase = optics.phase,
-                             plateA = PlatePosition(arena.level, 0) + float3(0, .35, 0), plateB = PlatePosition(arena.level, 1) + float3(0, .35, 0),
-                             plates = float2(arena.plateA ? 1 : 0, arena.plateB ? 1 : 0),
-                             grid = float2(lens.lines * Screen.width / Screen.height, lens.lines) * .5, lamps = lamps,
+    // The lift out's lamp; a lift that stops on the way has none
+    bool stopping = place.kind == PlaceKind.Vignette;
+    mut Sight base = Sight { eye = eye, cube = fold.count > 0 ? fold.cube : float3(0, -1000, 0), partner = partner.position, self = viewer.position, phase = optics.phase,
+                             exitLamp = stopping ? float3(0, -1000, 0) : LiftPoint(place.exit, place.exitYaw, float3(0, 3.2, -1)),
+                             exitWay = TurnBy(float3(0, 0, 1), place.exitYaw),
+                             grid = float2(lens.lines * Screen.width / Screen.height, lens.lines) * .5, lamps = lamps, fog = place.fog, fogColor = place.fogColor,
                              torchAt = viewer.position + float3(0, 1.35 * viewer.scale, 0), torchWay = LookDirection(viewer.yaw, viewer.pitch),
                              otherAt = partner.position + float3(0, 1.35 * partner.scale, 0), otherWay = LookDirection(partner.yaw, partner.pitch) };
     // With every light out the torches are out too
-    if (arena.level == BETWEEN && stalker.dark)
+    if (mazed && stalker.dark)
     {
         base.torchWay = float3(0, 0, 0);
         base.otherWay = float3(0, 0, 0);
-    }
-    // The dark passage's lamps are its plate's
-    if (arena.level == DARK)
-    {
-        base.dim = float4(-5, 5, -12, 7);
-        base.dimmed = arena.plateC ? 1.0 : 0.03;
     }
     for (int end = 0; end < 4; end++)
     {
@@ -2300,8 +2342,22 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         base.foldSize[end] = fold.ends[end].size;
         base.foldOn[end] = Linked(fold, end / 2) ? 1.0 : 0.0;
     }
-    // Everything that stops a light, drawn from where the light is: the sun's image of the whole atrium, and
-    // each end's lamp's of what's before its wall.
+    // Everything that stops a light, drawn from where the light is: the lamps' image of the whole of the place
+    // they hang over, a little past it, and each end's lamp's of what's before its wall.
+    Kindle(day, place, arena, optics.phase);
+    float2 lampsLow = place.lampFrom - float2(SUN_REACH);
+    float2 lampsHigh = place.lampFrom + place.lampStep * float2(place.lampsWide, place.lampsLong) + float2(SUN_REACH);
+    float2 lampsMiddle = (lampsLow + lampsHigh) * .5;
+    float2 lampsOver = Math.Max(lampsHigh - lampsLow, float2(SUN_REACH * 4));
+    day.sunTexel = Math.Max(lampsOver.x, lampsOver.y) / SUN_PIXELS;
+    mut float sunBottom = Math.Min(place.arrival.y, place.exit.y) - SUN_REACH;
+    mut float sunTop = Math.Max(place.arrival.y, place.exit.y) + SUN_REACH;
+    foreach (var row in walls)
+    {
+        if (row.wall.chamber != arena.chamber) continue;
+        sunBottom = Math.Min(sunBottom, row.wall.center.y - row.wall.size.y * .5 - SUN_REACH);
+        sunTop = Math.Max(sunTop, row.wall.center.y + row.wall.size.y * .5 + SUN_REACH);
+    }
     mut Sight held = Sight { phase = optics.phase };
     for (int lamp = 0; lamp < 5; lamp++)
     {
@@ -2309,8 +2365,8 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         if (lamp == 0)
         {
             map.Clear(Color.white);
-            map.SetCamera(float4x4.TRS(float3(0, 3.6, 3.2) + SunWay() * 45, quaternion.LookRotation(-SunWay(), float3(0, 0, 1)), float3(1)),
-                          float4x4.Ortho(SUN_WIDE, SUN_LONG, 0, 90));
+            map.SetCamera(float4x4.TRS(float3(lampsMiddle.x, sunTop, lampsMiddle.y), quaternion.LookRotation(-SunWay(), float3(0, 0, 1)), float3(1)),
+                          float4x4.Ortho(lampsOver.x, lampsOver.y, .01, Math.Max(sunTop - sunBottom, 1)));
             day.toSun = map.WorldToClip();
         }
         else
@@ -2330,7 +2386,7 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         map.Instanced(optics.box, optics.triangles, optics.cubeEcho);
         map.SkinnedMesh(figure, partnerPlace, partnerPose);
         map.SkinnedMesh(figure, selfPlace, selfPose);
-        if (watched) map.SkinnedMesh(figure, watcherPlace, watcherPose);
+        DrawBeastShadows(map, creatures);
         if (partnerFold > 0) map.SkinnedMesh(figure, partnerEcho, partnerPose);
         map.Cull(Cull.None)
         {
@@ -2391,7 +2447,7 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         }
         sight.eye = camera;
         target.Clear(Color(.02, .03, .04));
-        target.SetCamera(float4x4.TRS(camera, turned, float3(1)), float4x4.PerspectiveFov(75deg, Screen.width / Screen.height, pass == 8 ? .07 * viewer.scale : .07, 90));
+        target.SetCamera(float4x4.TRS(camera, turned, float3(1)), float4x4.PerspectiveFov(75deg, Screen.width / Screen.height, pass == 8 ? Math.Max(.07 * viewer.scale, .005) : .07, 90));
         if (pass >= 0 && pass < 4) optics.farViews[through] = target.WorldToClip();
         else if (pass < 8) optics.views[through] = target.WorldToClip();
         // The room has a hole where each fold is. What's part of the way through a fold stops at that wall's
@@ -2402,6 +2458,7 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         target.Instanced(optics.box, optics.triangles, optics.glass, kit, Snap, Surface, sight);
         target.Instanced(optics.box, optics.triangles, optics.furnishings, kit, Snap, Surface, room);
         target.Instanced(optics.box, optics.triangles, optics.dynamic, kit, Snap, Surface, sight);
+        target.Instanced(optics.box, optics.triangles, optics.wiring, kit, Snap, Surface, room);
         mut Sight here = sight;
         mut Sight there = sight;
         here.fold = cubeFold;
@@ -2445,7 +2502,25 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
             if (own) target.SkinnedMesh(figure, selfPlace, selfPose, skinB, Snap, Figure, here);
             if (ownAgain) target.SkinnedMesh(figure, selfEcho, selfPose, skinB, Snap, Figure, there);
         }
-        if (watched) target.SkinnedMesh(figure, watcherPlace, watcherPose, skinWatcher, Snap, Figure, sight);
+        foreach (var picture in creatures)
+        {
+            var model = BeastModel(picture.kind);
+            var skin = BeastTexture(picture.kind, picture.skin);
+            mut var creatureHere = sight;
+            creatureHere.fold = picture.fold;
+            creatureHere.cut = false;
+            creatureHere.echoed = false;
+            creatureHere.beastEyes = picture.kind == BeastKind.Spider && picture.eyes;
+            target.SkinnedMesh(model, picture.transform, picture.pose, skin, Snap, BeastSurface, creatureHere);
+            mut var creatureThere = creatureHere;
+            creatureThere.fold = picture.fold > 0 ? ((picture.fold - 1) ^ 1) + 1 : 0;
+            creatureThere.echoed = true;
+            creatureThere.back = picture.back;
+            if (picture.fold > 0) target.SkinnedMesh(model, picture.echo, picture.pose, skin, Snap, BeastSurface, creatureThere);
+            if (picture.kind != BeastKind.Flayed || !picture.eyes) continue;
+            target.Mesh(optics.creatureEyes, optics.creatureEyeTriangles, Math.Mul(picture.transform, picture.head), Snap, BeastGlint, creatureHere);
+            if (picture.fold > 0) target.Mesh(optics.creatureEyes, optics.creatureEyeTriangles, Math.Mul(picture.echo, picture.head), Snap, BeastGlint, creatureThere);
+        }
         if (pass == 8) held = sight;
 
         for (int opening = 0; opening < 4; opening++)
@@ -2463,9 +2538,7 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
                                                ratio = fold.ends[opening ^ 1].size / portal.size,
                                                wall = portal.at, face = normal, right = FoldRight(portal.face) };
             var destination = fold.ends[opening ^ 1];
-            aperture.submerged = Linked(fold, opening / 2) && hazard == 1 && destination.at.y < PIT_SURFACE
-                && destination.at.x >= PitFrom(arena.level) - .1 && destination.at.x <= PitTo(arena.level) + .1
-                && Math.Abs(destination.at.z - PitMiddle(arena.level)) <= PitHalf(arena.level) + .1;
+            aperture.submerged = Linked(fold, opening / 2) && Submerged(destination.at, submerge, submergeAt);
             // A camera sees through its own fold's ends again; another fold's ends it sees as light on a sheet
             bool deeper = pass == 8 || (pass >= 4 && opening / 2 == through / 2);
             int look = through * 2 + (opening & 1);

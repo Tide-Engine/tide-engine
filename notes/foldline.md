@@ -1,5 +1,9 @@
 # FOLDLINE prototype
 
+Current behavior is in [Campaign redesign (2026-10-15)](#campaign-redesign-2026-10-15).
+Earlier dated sections are implementation history; the redesign explicitly
+supersedes their route, size, clamp/release and hint guidance.
+
 Added on 2026-10-12 at the owner's request: an original 3D, first-person,
 Portal 2 cooperative puzzle inspiration with freedom to add a twist and an
 emphasis on appearance. The owner explicitly required portals to render the
@@ -1214,3 +1218,301 @@ No full repository suite, other platforms or CI were run.
 `Displayed`, because `Shown` names an engine availability event. This changes
 no rendering expression or match state. The visibility integration includes
 the prototype targets/tests in its full native and web validation.
+
+## Campaign redesign (2026-10-15)
+
+This is the current implementation contract. Earlier dated entries are history.
+It supersedes the old hall-based route and its repeating maze/pool/drum stops,
+the C/D cube clamps and HOLD handoff, the 0.5..1.5 body clamp, gun-selected
+sizes, H hints and explanatory HUD. The owner kept the two independent fold
+pairs, PSX picture, two bodies with Tab, walk-through lifts, observation horror
+and the blood hands. Their latest feedback asked for free size play, predictable
+plates, clearer physical teaching, distinct and harder layouts, more horror
+between puzzles and proper creature models.
+
+The work changes the Foldline prototype and its tests/art/documentation.
+It introduces no Tide language feature, engine/runtime API or Box3D change.
+`foldline-redesign.md` is the recovered campaign plan with implementation
+corrections; its original sketches are not additional approved requirements.
+The builders and the contracts here describe what is actually built.
+The README now documents the current game without giving puzzle solutions.
+
+### Route and place ownership
+
+`places.tide` owns IDs, `PlaceAt`, `DepthOf`, `PlaceLabel`, `BuildPlace`
+and the builder helpers. Each place has its own top-level `place_*.tide` file.
+Six puzzle places alternate with four survival passages and three short lift
+vignettes, followed by a terminal conclusion:
+
+| Order | Place | Built role |
+| --- | --- | --- |
+| 1 | Reception | Two bays of a records office; a partner opens the cube cupboard's sightline while the other makes a route through its grille |
+| 2 | Mailroom | A half-sized scout uses a low dogleg parcel duct, then makes an ordinary route for the whole cargo worker |
+| 3 | Lamps Out | Safe lift stop; corridor lamps fail and a watched figure remains still |
+| 4 | Showroom | Display aisles with a live observation stalker and inert mannequins; retained sight lets an idle body watch for the other |
+| 5 | Weighbridge | Giant loading terraces, whole-sized service gallery, a shutter and grown cargo on a heavy plate |
+| 6 | The Slot | Safe lift stop; a falling bolt plucks silk and draws the spider |
+| 7 | Crawlspace | Quarter-sized operators and parcels in a low S-shaped wall cavity; a spider answers silk contact |
+| 8 | Long Throw | An upper operator establishes a high launch route; a lower flyer brings cargo and builds the rescue route |
+| 9 | The Ward | Safe lift stop; a dropped bedpan draws the blind flayed creature |
+| 10 | Archive | Open carpeted floor, two metal strips and reusable impact decoys for a blind listener |
+| 11 | Exchange | Two shrink laps, a low maintenance duct and an optical shutter; establish the distant route before reclaiming the door's weight |
+| 12 | Red Stair | Descending landings around the blood well, two automatic decks and safe places for the idle body |
+| 13 | Atrium | Quarter-sized scouting and a role trade establish a fourfold cargo delivery to the central island |
+| 14 | Reception? | The familiar office with two figures; its lamps fail and the conclusion remains available |
+
+`BENCH` (0) and the small `LANDING` fixture (1) remain outside the campaign.
+The fourteen campaign IDs are 2..15. `PlaceAt` clamps at the final stop;
+`PlaceKind.Ending` opens the arrival door but does not start another ride,
+even if both bodies enter the old exit volume. R can rebuild that conclusion.
+There is no automatic campaign wrap.
+
+`Place` is match state: id/kind, arrival and exit floor middles and quarter-turn
+yaws, exit signal mask/all-or-any mode, dead-device flag, vignette stay time,
+lamp grid, light/fog/grade and menu camera. `Arena` owns the current signals,
+disabled lamp groups, depth, lift progress, catch/reset timing and operator/
+cargo handles. Place-authored monsters own additional ordinary components.
+Every spawned piece, body, plate, wire, frame, prop and beast carries the
+chamber generation. `ResetPlace` builds a fresh generation; `RetireRoom`
+and the corresponding component retirement systems remove the old one in the
+room-changing tick, before the next arriving physics step. This retains the
+earlier fix for stale colliders pushing riders in a new lift.
+
+### Folds, size and weight
+
+There are still exactly four ends. A owns 0/1, B owns 2/3; anyone can cross
+either linked pair. `PlaceEnd` can put an operator's ordinary owned end on a
+wall when the place is built, and `Carve` notices the changed linked-end count
+without needing a shot. A subsequent shot moves that operator's same end.
+Folds remain upright wall openings; floors and ceilings do not take them.
+
+A painted `FoldFrame` supplies an end's size; outside one, an end is ordinary.
+Crossing multiplies body/object scale and velocity by destination size divided
+by entry size. Repeating a route compounds, rather than clamping the result.
+There is no gameplay upper clamp: the mouth and destination space must fit.
+A result below `SMALLEST = 1/16` is refused at the entry with a bump, not
+clamped after mapping. Relative resize checks preserve very small changes.
+Speed, jump, eye height, reach and mass follow size; a carried cube and its
+operator can resize through the same route. The existing flung state survives
+a resize. A new place, a respawn after death, and R restore whole bodies.
+Lost loose things return to their place's home whole.
+
+Pickup refuses an object whose size exceeds 1.6 times the operator's current
+size. The match records strain and the view shows shaking hands; it does not
+allow a tiny operator to pull a huge object. `PutLoose` accepts an initial
+scale, updates the matching Box and Fold entries, and keeps the eight-object
+limit. This supplies the spare quarter-sized parcels inside Crawlspace.
+
+Plates are ordinary momentary weighted circuits. `WeighPlates` counts grounded
+operators and unheld, resting loose objects, including supported stacks, with
+mass proportional to scale cubed: operator 86, cube 48 and crate 24 kg at scale 1.
+A standard 1.2 m plate needs 20 kg; a half operator is 10.75 kg and cannot press
+it. Heavy plates use the same rule and a visible partial-load gauge; the
+default is 1.6 m and 200 kg, with place-specific thresholds where needed.
+Weighbridge uses 350 kg, above both whole operators plus cube (220), and a
+size 2 cube supplies 384. Atrium uses 2500 kg and a size 4 cube supplies 3072.
+Its 4.6 m weighing surface fits actual 2.96 m cargo and its settling offset.
+
+`Arena.signals` has 32 bits, recomputed from current plates. A signal is on
+while its plate is down or its explicit linger time remains, with the optional
+builder inversion applied. Linger/inversion stay available to the framework;
+the campaign does not introduce a hidden latch or inverse-switch lesson.
+`LayPlate`, `RunWire`, `Machine`, `HangDoor` and `HangDeck` connect
+these bits to devices. Wires are visible physical paths with travelling light.
+Each driven device and exit has one red/green indicator per input; all/any
+requirements are explicit builder data. There are no lettered C/D release
+controls or lift HOLD plates. The cube remains a useful final weight, freeing
+both living bodies to leave.
+
+### Geometry and lift contracts
+
+`Raise`/`Fill` make the boxes and physics from the same geometry.
+Receptive boxes are at least 0.6 m thick and papered; non-receptive wallpaper is
+drawn as concrete. Grilles are kind 4, pass shots and stop bodies/loose cargo.
+Receptiveness applies to every upright face of a receptive box, so hidden
+targets have real concrete side/reverse covers rather than per-place shot
+exceptions. `SetProp` is static visual dressing; `SetSolidProp` adds its
+one explicit collider without drawing a duplicate wall box. The prop kit
+covers furniture, shelving, pipes, pictograms, miniature houses and silk.
+
+A lift's frame is its floor middle plus NORTH/EAST/SOUTH/WEST yaw. Its shell
+is 6 m wide and 5.4 m deep; the 6 x 4 m doorway is at local z+2.1. Builders leave
+the actual matching gap, including jambs and threshold. A ride maps both
+riders' relative positions and yaw from the exit frame to the next arrival
+frame. The renderer maps the first arriving frame before the following tick,
+retaining the earlier dark handoff and forward-door continuity.
+
+`StoppingLift` is a `Vignette`: it opens onto a short protected scene.
+After its stay time it closes only when both bodies are back inside. A
+player outside keeps it open; the scene never requires leaving to progress.
+The three scenes use real grilles to bound the creature. Device placement is
+dead there, while existing ends remain usable in places that pre-place them.
+
+The input solves found and corrected concrete geometry errors:
+
+- Mailroom's duct has a full-height entrance header, stopping a cube/head
+  boost onto its low roof. Both a normal walk and jump are tested.
+- Weighbridge's ordinary source moved beside the lift onto the west wall.
+  An opaque 1.8 m rail across the full gallery width x -14..14 hides the
+  restricted upper target from ground/service eyes; 210 sampled negative
+  rays and the complete solve pass. The giant jumps it as a fourth riser.
+  Its shutter travels 7 m to clear the actual jump apex.
+- Long Throw's pad centre is 0.7 m before the entry wall, launching (0,7,14).
+  Activation begins before the centre, and the carried cube slows the flyer,
+  so the final receiving gap is 7 m, not the initial ideal 12 m. The input solve
+  reaches its leading edge with feet above 5.6 before landing on 5.4. The
+  return panel is the concrete-backed inside west face of the L corridor,
+  clear of the exit doorway.
+- Atrium has a roof-height gallery grille with a 0.55 m bottom gap and a
+  sealed north end. Whole bodies cannot jump onto the low bridge roof.
+  The role trade returns one scout to full size for cargo while the other
+  sets the fourfold pair; both ultimately leave through the established route.
+- Red Stair's ground return corridor originally intersected a south wall.
+  The wall is now at z -15..-14 and the ground route/floor is inside it;
+  the bottom landing no longer shares a solid wall volume. Its input solve
+  walks both bodies over both decks and down every stair to the next lift.
+
+A further real bypass was in `Shoot`: skipping an ignored collider by an
+arbitrary 0.9 m also skipped a closed shutter immediately behind a grille.
+`PastShape` now advances to the struck shape's far face, using its body frame
+and box/capsule bounds, plus a small clearance. Movers, arrival doors, exit
+gates and solid props stop the ray. Exchange's input test first attempts the
+same target shot through the closed shutter, then opens it with the other
+body and succeeds; the plate holder's own target shot also fails. This is
+game shot handling, not a new physics API.
+
+### Actual encounters and presentation
+
+`Beast` is ordinary match state: kind/skin, feet, yaw, scale, vertical stretch,
+clip name, animation time, loop, glowing eyes, visibility and chamber.
+`SpawnBeast` creates it; place systems move it and advance its clock.
+The five imported rigs are Flayed, Crawler, Spider, Figure and Drowned.
+Flayed has flesh/dark skins, Figure mannequin/shadow skins. Sources,
+conversion licences and retained preparation scripts are in
+`prototypes/foldline/art/CREDITS.md` and `art/monsters/tools/`.
+The drowned conversion's separately labelled CC-BY source is credited there;
+the note does not replace those licence details with a blanket CC0 claim.
+
+The renderer samples each pose once per frame and reuses it in room, shadows
+and all fold camera passes, with the same clipping, split crossing copies,
+PSX vertex snap, light and fog as other moving geometry. Spider eye texels and
+Flayed head-bone eye glints emit in darkness. The legacy observation/shadow/
+water state uses the same Beast picture path rather than the operator zombie
+skin. At most eight visible creatures are drawn by this path.
+
+- Showroom retains the stalker's both-body view/raycast rule, speed 4.5/9,
+  1.35 m contact catch and 6.5/.4 s blackouts. Its arrival(-9,0,-17.1)
+  gives a real 3 m landing outside the maze rectangle. All internal dividers
+  are physical grilles; outside walls remain opaque. Stalk advances sight
+  rays past grilles/operators with PastShape while opaque geometry blocks
+  them. The live start moved to cell 38, and right-side/c5 loops give players
+  space to relay sight without squeezing inside lethal reach. The full
+  two-body input route, idle-body observer, opaque/grille sight distinction
+  and both-away catch/restart now pass individually natively. These are
+  geometry/sight corrections; the creature's speed, catch and blackout
+  constants were not weakened.
+- Crawlspace is an authored low S tunnel, not a general navigation system.
+  Fixed ordinary-to-quarter ends shrink arrivals; quarter-to-ordinary ends
+  restore them before the exit. The spider follows a six-node silk track.
+  Body/object contact triggers a strand only on entry; resting on it does
+  not renew a lure. A parcel lure has priority over crossing bodies during
+  the five-second work interval. Refuge bounds are outside the catch track.
+  Two whole arrival parcels and two spare quarter parcels in the first
+  refuge support throws, retrieval and a second solo crossing.
+- Archive is the built open carpeted room with two metal strips at z -2..0
+  and 4..6, plus shelves at the perimeter. It is not the proposed shelf-aisle
+  graph, generic sound system or mass-based running detector. The blind
+  Flayed hears metal movement in 0.3 s step intervals, retaining that target
+  for 4 s. An unheld parcel's velocity change after a sufficiently fast
+  impact sets a fixed target for 12 s with priority over steps. It moves
+  straight through the open floor at 4.1 m/s and does not update its target
+  to follow a silent operator. Contact in the crossing region is dangerous;
+  the carpet banks and lifts are safe waiting places.
+- Red Stair uses the existing blood catch/drag/gore and permanent refuges
+  around two automatic deck crossings. It does not implement rising blood,
+  red-lamp immunity or mass immunity. A Drowned falls into the well and a
+  distant Crawler supplies atmosphere.
+- Lamps Out, The Slot and The Ward are bounded, nonlethal scripts teaching
+  anticipation, silk contact and noise response. Their bolt/bedpan are
+  actual moving boxes; creatures approach their visible landing points.
+  Weighbridge has one brief Crawler crossing. Reception? reuses Reception
+  with its cube already on the exit plate, two figures and lamps that fail
+  after seven seconds; it remains terminal.
+
+The lamp grid now drives the GPU's actual `Daylight` bulb list each frame,
+including absent/dead/stuttering/red/signal lamps, individual height, disabled
+groups and global place light. Fittings, surface light, haze and fold views
+follow it. Place fog density/colour and grade are rendered. `Place.ambience`
+remains stored but does not yet choose a separate ambient sound set.
+A place with no cargo uses a remote cube-light sentinel rather than the
+Fold default at the origin; this removes an unexplained cyan glow in empty
+passages. Strain has hand movement and sound; refused size crossings bump.
+
+`beast-sound.tide` supplies local creature presence/foot/attack cues;
+`machinery-sound.tide` supplies the nearest moving motor and individual
+stops/door thuds. They reuse generated clips. Archive's ordinary carpet-step
+sound is gated off on metal; `HearPassages` supplies its metal steps at a
+0.8 m cadence, preventing two overlapping footstep rhythms. Neither output nor a
+microphone decides simulation hearing: Archive reads deterministic match
+bodies. Agent runs remain hidden and silent, so balance and impact are
+unverified by listening.
+
+The HUD now contains the reticle, active operator and connected room code.
+Controls and the fourteen-stop selector are in the menu. There is no H hint,
+objective line, plate HUD, lettered release display or monster-rule overlay.
+Opening the menu gates this machine's input without pausing the match.
+
+### Validation at this integration point
+
+`test/helpers.h` holds shared helpers; the old core tests are in
+`test/core.c`, each place adds `test/place_*.c`, and `test/campaign.c`
+adds per-place snapshot/replay and packed-world comparisons.
+`foldline_test` accepts an optional test-name substring for focused diagnosis;
+the no-argument invocation still runs all checks.
+
+Native individual input-only solves have passed for Reception, Mailroom,
+Weighbridge, Long Throw, Exchange and Atrium: both bodies walk from their
+arrival lift, perform real shots/carrying/weight changes and enter the next
+lift. They never position a body, object or fold directly. Focused negatives
+cover actual closed shutters, lower/service sightlines, full-body duct and
+bridge walk/jump attempts, small-body pickup strain and insufficient plate
+weight. Archive and Crawlspace both-body traversals, Red Stair's two decks and
+corrected ground return, all three vignette sequences and the terminal/reset
+conclusion also pass their native individual tests. Archive and Crawlspace
+additionally test input-driven unbaited catches and restart for both bodies.
+Showroom's final grille-layout two-body relay, inactive observer interval,
+opaque/grille sight checks and both-away catch/restart also pass individually.
+
+The native GPU fixture passed with graphics validation, preserving the original
+portal/parallax/clipping and submerged-red assertions and checking all fourteen
+lift transitions into the terminal conclusion. The fixture now explicitly
+loads the embedded game pack before world/render initialization; all five
+actual rigs must draw a silhouette and deform under their real clips.
+Spider/Flayed eye emission, a creature live through a fold and its near-plane
+clipping are covered. Lamp/fog samples now look at known carpet below known
+On lamps rather than the central partition. Both named-group shutdown and
+fog changes affect 626/626 samples, retaining the original >100 requirement.
+Optional capture output uses the fixture's 1280 x 720 dimensions, matching
+the sampled draw instead of opening a different-sized 960 x 540 surface.
+
+Final integrated validation passes native debug 2/2 (Vulkan with validation)
+and web debug 3/3 (WASI, WebGL 2 and WebGPU with graphics validation), using
+Node 24.16.0. The supplemental native OpenGL GPU fixture also passes.
+Native and WASI both produce replay hash `4519119950475406368` and fourteen-stop
+campaign hash `18258979499744220870`; each includes snapshot replay and packed
+world round trips. The last local rebuild includes the Archive footstep fix
+and Crawlspace's unbaited silk catch/reset regression.
+
+Silent standard-host captures have been inspected across all fourteen stops,
+including giant/normal openings, tiny passages, the freight shaft, stair well,
+creature poses and the lit/dark conclusion. The menu and fourteen-stop selector
+fit 960 x 540 and were also inspected in the collaborative web preview.
+The refreshed Weighbridge opening comparison is the public catalog thumbnail.
+The staged self-contained web page is served locally for review; staging is
+not a public deployment.
+
+The full repository suites were not run for this prototype-only change.
+No CI was dispatched. Human first-time discoverability, live Internet co-op, audio
+balance and solve times remain untested; 45-75 minutes is a design target,
+not a measured playtime. Android, Linux, macOS, MinGW and sanitizers have not
+been run for this redesign on this Windows machine.

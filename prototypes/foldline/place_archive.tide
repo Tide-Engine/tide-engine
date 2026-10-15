@@ -1,0 +1,119 @@
+// Carpet swallows steps; the two bare metal crossings do not. A thrown parcel
+// keeps the blind listener occupied long enough for both bodies to cross.
+using Box3D;
+
+component ArchiveHunt
+{
+    bool ready;
+    float left;
+    bool decoy;
+    float3 target;
+    float3[8] velocity;
+    float[2] steps;
+}
+
+bool ArchiveMetal(float3 at)
+{
+    return (at.z > -2 && at.z < 0) || (at.z > 4 && at.z < 6);
+}
+
+void BuildArchive(mut Arena arena, mut Place place, mut Fold fold)
+{
+    place.kind = PlaceKind.Passage;
+    place.dead = true;
+    place.light = .22;
+    place.fog = .045;
+    place.grade = float3(.88, .95, 1.05);
+    ArrivalLift(arena, place, float3(-8, 0, -14.1), NORTH);
+    ExitLift(arena, place, float3(8, 0, 14.1), SOUTH);
+    Fill(arena, -12, 12, -1, 0, -12, -2, CARPET);
+    Fill(arena, -12, 12, -1, 0, -2, 0, RUST);
+    Fill(arena, -12, 12, -1, 0, 0, 4, CARPET);
+    Fill(arena, -12, 12, -1, 0, 4, 6, RUST);
+    Fill(arena, -12, 12, -1, 0, 6, 12, CARPET);
+    Fill(arena, -13, -12, -1, 4.4, -13, 13, CONCRETE);
+    Fill(arena, 12, 13, -1, 4.4, -13, 13, CONCRETE);
+    Fill(arena, -13, -11, -1, 4.4, -13, -12, PANELS);
+    Fill(arena, -5, 13, -1, 4.4, -13, -12, PANELS);
+    Fill(arena, -13, 5, -1, 4.4, 12, 13, PANELS);
+    Fill(arena, 11, 13, -1, 4.4, 12, 13, PANELS);
+    Fill(arena, -13, 13, 4.4, 5.4, -13, 13, CEILING_TILE, false, 2);
+    // The banks are quiet refuges, visibly carpeted all the way to the lifts.
+    PutLoose(arena, fold, float3(6, .4, -8), 1);
+    PutLoose(arena, fold, float3(-4, .4, 2), 1);
+    var listener = SpawnBeast(arena, BeastKind.Flayed, float3(0, 0, 2), SOUTH, skin: BeastSkin.Dark);
+    listener.Add(ArchiveHunt { target = float3(0, 0, 2) });
+    for (int row = 0; row < 6; row++)
+    {
+        for (int side = -1; side <= 1; side += 2)
+        {
+            SetSolidProp(arena, PropKind.Shelf, float3(side * 11.2, 0, -9 + row * 3.5), float3(1.5, 2, .55), float3(0, 1, 0), side < 0 ? EAST : WEST);
+            SetProp(arena, PropKind.Cardboard, float3(side * 11.1, 1.1, -9 + row * 3.5));
+        }
+    }
+    SetProp(arena, PropKind.Cone, float3(-10.5, 0, -2.6));
+    SetProp(arena, PropKind.ExitSign, float3(8, 3.5, 11.8), SOUTH);
+    LampGrid(place, float2(-12, -12), float2(4, 4), 6, 6);
+    OfficeLamps(place, 0, 5, 0, 5, 4.4, 27);
+    HangLamp(place, 0, 1, 4.4, LampState.Red);
+    HangLamp(place, 0, 3, 4.4, LampState.Red);
+    MenuView(place, float3(-9, 1.7, -7), .02, .7);
+}
+
+[After(CrossCube), Before(EvaluatePlace)]
+system HearArchive(mut Beast beast, mut ArchiveHunt hunt, mut Arena arena, Place place, query (Operator body) operators,
+                   query (Cube cube, Body body) objects, Fold fold, Time time)
+{
+    if (place.id != ARCHIVE || beast.chamber != arena.chamber || arena.caught > 0) return;
+    hunt.left = Math.Max(0, hunt.left - time.dt);
+    // An impact has priority over steps: it is the loud, sustained clatter the
+    // creature is investigating, rather than an invisible permanent distraction.
+    foreach (var row in objects)
+    {
+        var cube = row.cube;
+        if (cube.chamber != arena.chamber || fold.holding[0] == cube.index + 1 || fold.holding[1] == cube.index + 1) continue;
+        var velocity = row.body.velocity;
+        float impact = Math.Length(hunt.velocity[cube.index] - velocity);
+        if (hunt.ready && Math.Length(hunt.velocity[cube.index]) > 3.5 && impact > 3.5 && cube.at.y < 1.2)
+        {
+            hunt.left = 12;
+            hunt.decoy = true;
+            hunt.target = float3(Math.Clamp(cube.at.x, -10, 10), 0, Math.Clamp(cube.at.z, -10, 10));
+        }
+        hunt.velocity[cube.index] = velocity;
+    }
+    hunt.ready = true;
+    foreach (var row in operators)
+    {
+        var body = row.body;
+        if (body.taken > 0 || InLift(place.arrival, place.arrivalYaw, body.position) || InLift(place.exit, place.exitYaw, body.position)) continue;
+        hunt.steps[body.id] = Math.Max(0, hunt.steps[body.id] - time.dt);
+        if (ArchiveMetal(body.position) && Math.LengthSq(body.velocity.xz) > .5 && hunt.steps[body.id] <= 0)
+        {
+            hunt.steps[body.id] = .3;
+            if (!hunt.decoy || hunt.left <= 0)
+            {
+                hunt.left = 4;
+                hunt.decoy = false;
+                hunt.target = float3(body.position.x, 0, body.position.z);
+            }
+        }
+    }
+    float gap = Math.Distance(beast.at, hunt.target);
+    bool moving = hunt.left > 0 && gap > .12;
+    beast.clip = moving ? "Run" : hunt.left > 0 && hunt.decoy ? "Lunge" : "Idle";
+    beast.time += time.dt;
+    if (moving)
+    {
+        beast.yaw = Math.Atan2(hunt.target.x - beast.at.x, hunt.target.z - beast.at.z);
+        beast.at += (hunt.target - beast.at) / gap * Math.Min(gap, time.dt * 4.1);
+    }
+    // Touch is dangerous even while the creature is occupied, but the carpet
+    // banks do not become an unannounced global chase.
+    foreach (var row in operators)
+    {
+        var body = row.body;
+        if (body.position.z < -3 || body.position.z > 7) continue;
+        if (Math.Distance(body.position.xz, beast.at.xz) < 1.2 && arena.arrive > 4) arena.caught = .001;
+    }
+}
