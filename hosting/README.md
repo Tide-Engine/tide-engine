@@ -192,6 +192,8 @@ are in-memory (100 lines for at most 32 matches); incidents persist in SQLite.
 Configure `TIDE_STRIPE_SECRET`, `TIDE_STRIPE_WEBHOOK_SECRET` and
 `TIDE_HOSTING_TOPUPS` (comma-separated minor-unit amounts; 500–100000 each).
 Currency defaults to EUR (`TIDE_HOSTING_CURRENCY`). Use Stripe test mode first.
+API requests are pinned to `2026-09-30.endive`; use that version for the webhook
+endpoint too. Available payment methods come from the Stripe Dashboard settings.
 Register `/webhooks/stripe` for `checkout.session.completed`,
 `checkout.session.async_payment_succeeded`, `charge.refunded` and
 `charge.dispute.created`. Raw webhook signatures, provider state, exact amount,

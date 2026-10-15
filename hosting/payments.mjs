@@ -2,6 +2,9 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { identifier, requireValue } from './store.mjs';
 import { providerJson } from './http.mjs';
 
+// Keep API reads/writes on the same version as the configured webhook endpoint.
+const stripeVersion = '2026-09-30.endive';
+
 export class Payments {
     constructor(store, { origin, stripeSecret, stripeWebhookSecret, currency = 'eur', topups = [], fetcher = fetch }) {
         Object.assign(this, { store, origin, stripeSecret, stripeWebhookSecret, currency, topups, fetcher });
@@ -11,13 +14,14 @@ export class Payments {
         requireValue(Number.isSafeInteger(amount) && this.topups.includes(amount), 400, 'Choose an available credit amount.');
         const session = await providerJson(this.fetcher, 'https://api.stripe.com/v1/checkout/sessions', {
             method: 'POST', headers: { Authorization: `Bearer ${this.stripeSecret}`,
+                'Stripe-Version': stripeVersion,
                 'Content-Type': 'application/x-www-form-urlencoded', 'Idempotency-Key': `tide-credit-${identifier()}` },
             body: new URLSearchParams({ mode: 'payment', client_reference_id: account.id,
                 success_url: `${this.origin}/dashboard?payment=complete`, cancel_url: `${this.origin}/dashboard`,
                 'line_items[0][price_data][currency]': this.currency,
                 'line_items[0][price_data][unit_amount]': String(amount),
                 'line_items[0][price_data][product_data][name]': 'Tide hosting prepaid credit',
-                'line_items[0][quantity]': '1', 'payment_method_types[0]': 'card',
+                'line_items[0][quantity]': '1',
             }),
         });
         requireValue(typeof session.id === 'string' && session.id.startsWith('cs_')
@@ -50,7 +54,7 @@ export class Payments {
             // Fetch current provider state; a redirect or an old event is never
             // sufficient authority to credit the customer's balance.
             const session = await providerJson(this.fetcher, `https://api.stripe.com/v1/checkout/sessions/${id}`, {
-                headers: { Authorization: `Bearer ${this.stripeSecret}` },
+                headers: { Authorization: `Bearer ${this.stripeSecret}`, 'Stripe-Version': stripeVersion },
             });
             if (session.payment_status === 'paid') this.store.creditPayment(session);
         } else if (['charge.refunded', 'charge.dispute.created'].includes(event.type)) {

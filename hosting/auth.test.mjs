@@ -87,6 +87,8 @@ test('Stripe checkout uses operator amounts and verified provider state; webhook
     assert.equal(await payments.checkout(account, 1000), 'https://checkout.stripe.com/c/pay/test');
     assert.equal(requested.body.get('line_items[0][price_data][unit_amount]'), '1000');
     assert.equal(requested.body.get('success_url'), `${origin}/dashboard?payment=complete`);
+    assert.equal(requested.headers['Stripe-Version'], '2026-09-30.endive');
+    assert.ok(![...requested.body.keys()].some(key => key.startsWith('payment_method_types')));
     const event = Buffer.from(JSON.stringify({ id: 'evt_1', type: 'checkout.session.completed', livemode: false,
         data: { object: { id: session.id, amount_total: 999999 } } }));
     const timestamp = String(Math.floor(store.now() / 1000));
@@ -94,6 +96,7 @@ test('Stripe checkout uses operator amounts and verified provider state; webhook
     await assert.rejects(payments.webhook(event, signature.replace(/.$/, 'x')), /signature/);
     await payments.webhook(event, signature);
     await payments.webhook(event, signature);
+    assert.equal(requested.headers['Stripe-Version'], '2026-09-30.endive');
     assert.equal(store.account(account.id).balance, 1_000_000_000);
     assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM ledger').get().n, 1);
     advance(301000);
