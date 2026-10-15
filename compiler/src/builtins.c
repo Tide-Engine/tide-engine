@@ -668,6 +668,17 @@ static void build_signatures(void)
                 "way. Only 3D meshes' triangles have a back: the 2D draws draw whichever way they're wound.",
                 1, &T_CULL);
     add_unset("Draw", "SetCull", "tide_draw_unset_cull", "Back to `Cull.Back`, as each frame starts.");
+    add_setting("Draw", "FrustumCulling", "tide_draw_push_frustum_culling", "tide_draw_set_frustum_culling", NULL, "enabled",
+                "Skip 3D instances whose bounds are wholly outside this destination's camera. Enabled each frame. "
+                "Custom verts and skinned meshes need explicit Bounds; unknown bounds keep the draw. "
+                "This changes drawing only, never view execution or match simulation.", 1, &T_BOOL);
+    add_unset("Draw", "SetFrustumCulling", "tide_draw_unset_frustum_culling", "Enable frustum culling, as each frame starts.");
+    add_setting("Draw", "Bounds", "tide_draw_push_bounds", "tide_draw_set_bounds", NULL, "center, size",
+                "A conservative mesh-local box for frustum culling: center and full size, before the instance transform "
+                "and Draw.Transform. Include all skinning or custom vertex displacement. Invalid bounds keep the draw.",
+                2, &T_F3, &T_F3);
+    add_setting("Draw", "Bounds", "tide_draw_push_no_bounds", "tide_draw_unset_bounds", NULL, "",
+                "Use geometry bounds where known; custom verts and skinned meshes remain uncullable without bounds.", 0);
     // Levels of detail (docs/spec.md): a mesh asset marked [LOD] has simpler versions, which a draw picks among
     add_setting("Draw", "LOD", "tide_draw_push_lod", "tide_draw_set_lod", NULL, "level",
                 "Which level of detail the meshes marked `[LOD]` draw at, in place of the one each would pick by how "

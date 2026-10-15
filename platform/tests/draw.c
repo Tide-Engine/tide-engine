@@ -3078,6 +3078,46 @@ static void cull_settings(void)
 }
 
 // ---------------------------------------------------------------------------
+// Frustum rejection must preserve pixels while removing the offscreen runs.
+static void frustum_culling(void)
+{
+    enum { W = 64, H = 64 };
+    static uint32_t reference[W * H], culled[W * H];
+    const tide_vertex3 vertices[] = {
+        {{-0.5f, 0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+        {{0.5f, 0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+        {{0.5f, -0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+        {{-0.5f, -0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+    };
+    const uint32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_mesh mesh = {vertices, 4, indices, 6, 1};
+    uint32_t calls[2];
+    for (int enabled = 0; enabled < 2; enabled++) {
+        tide_draw_reset(&list);
+        tide_draw_screen_size(&list, screen);
+        tide_draw_clear(&list, background);
+        pixel_camera_3d();
+        tide_draw_set_cull(&list, TIDE_CULL_NONE);
+        tide_draw_set_frustum_culling(&list, enabled != 0);
+        tide_float4x4 inside = tide_identity_f4x4();
+        inside.c0.x = inside.c1.y = 32;
+        const tide_float2 center = at(32, 32);
+        inside.c3 = tide_f4(center.x, center.y, 5, 1);
+        tide_draw_mesh_3d(&list, &mesh, inside, NULL, TIDE_FILTER_POINT);
+        // Separate state makes the discarded draw observable in the draw-call count.
+        tide_draw_set_blend(&list, TIDE_BLEND_ADD);
+        tide_float4x4 outside = tide_identity_f4x4();
+        outside.c3.x = screen.x * 20;
+        tide_draw_mesh_3d(&list, &mesh, outside, NULL, TIDE_FILTER_POINT);
+        corner_pixels(enabled ? culled : reference, W, H);
+        calls[enabled] = tide_platform_draw_calls();
+    }
+    expect(memcmp(reference, culled, sizeof reference) == 0, "frustum culling preserves rendered pixels");
+    expect(near(culled[32 * W + 32], rgba(red), 0), "frustum reference contains visible geometry");
+    expect(calls[0] == calls[1] + 1u, "frustum culling removes an offscreen GPU draw");
+    // Later tests use the host's usual screen size; culling settings reset each frame.
+}
+
 // Levels of detail: a mesh whose levels are other triangles of its corners,
 // so a pixel says which was drawn. The full mesh is two squares side by side,
 // its first level the left one alone, and its second the top right half of
@@ -3973,6 +4013,7 @@ static int frame(void *user, const float seconds)
         settings();
         depth_settings();
         cull_settings();
+        frustum_culling();
         levels_of_detail();
 #ifdef DRAW_VULKAN
         // The renderer asked for the device as the checks drew: another was made, which they drew with
@@ -4000,6 +4041,7 @@ static int frame(void *user, const float seconds)
     settings();
     depth_settings();
     cull_settings();
+    frustum_culling();
     levels_of_detail();
     const int code = run_checks();
 #ifdef __wasm__

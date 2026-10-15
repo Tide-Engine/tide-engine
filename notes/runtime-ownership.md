@@ -1,5 +1,9 @@
 # Runtime written by Claude for now
 
+## Frustum culling (2026-10-15)
+
+The owner approved automatic culling plus developer bounds and disable controls. Generated settings call new agent-maintained draw functions: `tide_draw_set_frustum_culling`, `tide_draw_unset_frustum_culling`, `tide_draw_push_frustum_culling`, `tide_draw_set_bounds`, `tide_draw_unset_bounds`, `tide_draw_push_bounds` and `tide_draw_push_no_bounds`. They use the existing draw-list boundary. Place, mesh-cache, shader and draw-list C layouts grow with visual bounds/plane caches, so hosts/libraries/generated games rebuild together. No simulation layout or hash changes. Contracts, conservative fallbacks, append behavior and validation are in `notes/drawing.md`, Frustum culling.
+
 ## Dedicated hosting (2026-10-15)
 
 The owner approved multiple headless matches per process, match IDs, separate
