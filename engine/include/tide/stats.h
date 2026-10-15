@@ -58,6 +58,7 @@ typedef struct tide_stats_values {
     uint64_t gpu_memory;  // Bytes the renderer has on the GPU, by its own count; 0 for no line
     const char *renderer; // What draws, like "WebGPU"; NULL for no line
     uint32_t draw_calls;  // ...and in how many draw calls
+    uint64_t vertices;    // Submitted vertices, counting indices and instances in every pass
     // The match's, while there's one
     bool match;
     bool remote;          // Another machine runs it: its ping is worth a glance
@@ -70,7 +71,7 @@ typedef struct tide_stats_values {
 } tide_stats_values;
 
 // The line that's always there, and every line of the list above it.
-#define TIDE_STATS_LINES 15
+#define TIDE_STATS_LINES 16
 
 // A line of the list is a label on the left and a value on the right, in two
 // columns, so the eye finds a number by its row: `cpu` and `2.1 ms`, a

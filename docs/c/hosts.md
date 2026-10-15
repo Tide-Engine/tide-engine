@@ -25,6 +25,8 @@ tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>..
 
 ## The standard host
 
+A custom drawing host calls `tide_draw_screen_size(draw, window_size)` in logical pixels before recording views, so automatic mesh LOD and window [frustum culling](../game/3d.md#frustum-culling) use the current aspect ratio. Without a known destination size, culling keeps the draw. `tide_draw_append` copies a source list's already filtered draws; disable its culling with `tide_draw_set_frustum_culling(draw, false)` if one recorded list must serve several different camera aspects.
+
 `tide/run.h` is what a game without `HOST` uses:
 
 ```c

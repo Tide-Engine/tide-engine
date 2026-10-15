@@ -173,6 +173,7 @@ view Show(mut Art art)
     Draw.Mesh(named["assets/meshes/strip.gltf"], float4x4.identity, Paint);
     Draw.Mesh(Pick(0), float4x4.identity, Paint);
     Draw.Mesh(named["assets/meshes/nope.glb"], float4x4.identity, Paint); // No such key: an empty mesh, which draws nothing
+    art.target.SetFrustumCulling(false); // Inspect imported geometry even at the camera origin
     art.target.Mesh(inside, float4x4.identity, Paint);
     foreach (var mesh in one) Draw.Mesh(mesh, float4x4.identity, Paint);
     if (art.showDefaults)

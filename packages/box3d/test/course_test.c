@@ -473,7 +473,7 @@ static const tide_entity nobody = {0};
 // ---------------------------------------------------------------------------
 // Shapes on entities of their own
 
-#define PARTS_HASH UINT64_C(0xa40f4440d97ed24a)
+#define PARTS_HASH UINT64_C(0xc89aa45360fe6ccf)
 
 enum { PART_TICKS = 460, SAW = 200, CLEAR = 340 };
 
@@ -893,7 +893,7 @@ TIDE_TEST(box3d_the_world_is_tuned_by_its_fields)
 // ---------------------------------------------------------------------------
 // What code asks of the world
 
-#define ASKING_HASH UINT64_C(0x40a51f01bf73b1a7)
+#define ASKING_HASH UINT64_C(0x672ad128f4e39d75)
 #define ANSWERS_HASH UINT64_C(0xdc5da4ff7c55ceb8)
 
 enum { ASK_TICKS = 260, DOOM = 120 };

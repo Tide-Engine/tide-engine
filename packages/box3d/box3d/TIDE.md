@@ -11,6 +11,15 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
+Static mesh package integration (2026-10-15): `b3World_InternMesh` in
+`world_snapshot.c`/`box3d.h` retains and deduplicates a cooked mesh in the
+world's canonical geometry store. The package frees its temporary cook after
+interning and gives shapes the retained pointer. Lookup compares the hash
+and bytes through the existing buckets, without caching a temporary source
+address that can be reused. Interning marks the world conservatively for
+resident commits. The store owns its data through restore/destruction;
+geometry no live shape uses is retained, as box hulls already are.
+
 Each change is marked `Tide:` where it is. A match keeps Box3D's state through
 resident pages for local snapshots and rollback, and sends a canonical image
 and its geometry between players. The state a step computes and the image it

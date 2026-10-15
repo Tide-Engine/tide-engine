@@ -1053,6 +1053,7 @@ static inline int tide_run_frame(void *user, const float seconds)
             .gpu_memory = tide_platform_gpu_memory(),
             .renderer = tide_platform_renderer(),
             .draw_calls = tide_platform_draw_calls(),
+            .vertices = tide_platform_draw_vertices(),
             .match = match != NULL,
             .remote = match && !status.server,
             .ping_ms = status.client.ping_ms,

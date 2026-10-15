@@ -102,6 +102,7 @@ tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the genera
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it
 tide_e2e_test(draw_cull) # ...and which side of their triangles draws, with the instances a transform mirrors told apart
+tide_e2e_test(draw_frustum) # Conservative per-instance frustum culling, explicit bounds and operand effects
 tide_e2e_test(draw_stencil) # ...and stencil: Draw's, for 2D and 3D draws alike, said to a renderer once before the draws it's for
 tide_e2e_test(wrap) # What a uv past a texture's edges reads: a mesh draw's wrap after its filter, and a frag's at Sample
 tide_e2e_test(mipmaps) # Filter.Trilinear, wherever a filter is said: what a draw records, and how a frag reads between a texture's smaller images

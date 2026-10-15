@@ -18635,6 +18635,15 @@ static void gen_shaders(gen *g)
 
         sb_printf(o, "static const tide_shader tide_shader_%d = {\n    .name = ", s);
         gen_c_raw_literal(o, str_from(sh->name));
+        // A fragment shader cannot move vertices. Skinning and a user vert can,
+        // so only an undeformed 3D mesh advertises automatic geometry bounds.
+        if (sh->dims == 3 && !sh->vert && !sh->skinned) {
+            for (int i = 0; i < sh->vertex->fields.count; i++) {
+                const field *f = &sh->vertex->fields.items[i];
+                if (str_eq_c(f->name, "position"))
+                    sb_printf(o, ",\n    .bounds_position = 1 + offsetof(%s, %s)", vertex, field_cname(f));
+            }
+        }
         sb_printf(o, ",\n    .glsl_vertex = tide_shader_%d_vertex,\n    .glsl_fragment = tide_shader_%d_fragment,\n", s, s);
         sb_printf(o, "#ifdef __wasm__\n    .wgsl = tide_shader_%d_wgsl,\n#endif\n", s);
         sb_printf(o, "#ifdef TIDE_SPIRV\n    .spirv = tide_shader_%d_spirv,\n    .spirv_words = %d,\n#endif\n", s,

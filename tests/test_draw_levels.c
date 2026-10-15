@@ -49,6 +49,8 @@ static uint32_t plain_mesh(tide_draw_list *d)
 static void frame(tide_draw_list *d)
 {
     tide_draw_reset(d);
+    // These tests use offscreen x positions as ordering markers and inspect every submitted level.
+    tide_draw_set_frustum_culling(d, false);
     tide_draw_screen_size(d, tide_f2(800.0f, 600.0f));
     tide_draw_set_camera_3d(d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
 }
@@ -288,6 +290,7 @@ TIDE_TEST(draw_levels_are_picked_through_another_camera_when_told)
     // so the first level is within one from 0.866 units off
     const uint64_t small = tide_render_target_make(100.0f, 100.0f).id;
     tide_draw_to(&d, small, 100.0f, 100.0f);
+    tide_draw_set_frustum_culling(&d, false); // Inspect LOD submission even when this camera looks elsewhere
     tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 2.0f)) == 1);
     TIDE_CHECK(tide_draw_mesh_level(&d, mesh, at(0.0f, 9.0f)) == 1 && tide_draw_mesh_level(&d, mesh, at(0.0f, 10.0f)) == 2);
