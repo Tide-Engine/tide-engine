@@ -122,13 +122,21 @@ static int frame(void *user, const float seconds)
         f8("keyup");
         wait = 70; // More than a second: the host takes stock of what it timed
         break;
-    case 3:
+    case 3: {
         check(drew("cpu") && drew("Count"), "the list has what a frame's work takes, and the game's system by name");
         check(drew("render"), "rendering CPU time is shown separately from the frame's total work");
+        bool vertices_shown = false;
+        for (uint32_t i = 0; i < drawer->line_count; i++) {
+            const tide_stats_line *line = &drawer->lines[i];
+            if (strcmp(line->label, "vertices") == 0 && strcmp(line->value, "9") == 0) vertices_shown = true;
+        }
+        check(vertices_shown && tide_platform_draw_vertices() == 9,
+              "the vertex row counts the game's clear and key block, excluding the drawer's own geometry");
         check(!drew_gpu() || strcmp(tide_platform_renderer(), "WebGPU") == 0,
               "GPU time is shown only on a backend with a timer");
         mouse_event("mousedown", x, y);
         break;
+    }
     case 4:
         check(tide_stats_pressed(drawer) && drawer->open, "a press on the line is the drawer's");
         mouse_event("mouseup", x, y);

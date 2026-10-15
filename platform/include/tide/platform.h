@@ -223,7 +223,7 @@ void tide_platform_draw_overlay(const char *text);
 
 // Draws `list` over the frame tide_platform_draw drew, and leaves what that
 // frame left as it is: its camera (tide_platform_world_to_screen) and its
-// count of draw calls. For what a host shows over a game, like its stats
+// vertex and draw-call counts. For what a host shows over a game, like its stats
 // (tide/stats.h), which aren't the game's drawing.
 void tide_platform_draw_over(const tide_draw_list *list);
 
@@ -262,6 +262,13 @@ void tide_platform_name_game(const char *app_id);
 // tide_platform_draw_over): a run of shapes, of text, or of one mesh's
 // instances is one.
 uint32_t tide_platform_draw_calls(void);
+
+// Vertices submitted by the last list drawn, with the same scope as draw
+// calls above: all render-target passes, without the host's overlays. Each
+// index counts once per instance, including repeated indices; this isn't a
+// count of unique vertices or of GPU vertex-shader invocations after caching.
+// Includes shapes, text, blits and clear triangles, even if clipped or culled.
+uint64_t tide_platform_draw_vertices(void);
 
 // How much memory the program has, in bytes, as the system counts it: what it
 // keeps in RAM or, on the web, its WebAssembly memory, which only grows. 0
