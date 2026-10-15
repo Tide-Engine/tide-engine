@@ -1,6 +1,103 @@
 // A long descent around a blood well. The decks are visible for their whole
 // cycle; every stop has room for the body left behind while playing alone.
+// What fell into the well comes back once both are over the first gap: up the
+// face of the landing they stand on, out of the blood, and down after them. It
+// moves only while neither of them sees it, as what's in the showroom does, it's
+// quick in the dark, and where the way crosses the blood it goes under and climbs
+// out up the far side.
+using Box3D;
+
 component WellFall { }
+component Shy { float fled = -1; }
+
+component Descent
+{
+    int state;           // 0 in the well, 1 climbing out, 2 on the way down, 3 under the blood, 4 has someone
+    float along;         // How far along the way down it is, in metres
+    int dived;           // The stretch it went under the blood across
+    int lip;             // The point of the way at the edge it climbs out over...
+    int behind;          // ...coming from this one's side
+    float timer;         // Seconds in this state
+    float clock;         // Toward the next time every lamp fails
+    float walked;        // How far it has walked: how its stride is posed
+    bool seen;
+}
+
+const int DESCENT_POINTS = 16;
+const float DESCENT_SPEED = 3.2;
+const float DESCENT_DARK_SPEED = 7.0;
+const float DESCENT_UNDER_SPEED = 1.6;
+const float DESCENT_EVERY = 9.0;
+const float DESCENT_DARK = 0.6;
+
+// The way down, by the middle of each floor it crosses: the arrival landing, the west flights, the first gap, the
+// north landing and stair, the walkway, the second gap, the east platform, the last stair and the way out.
+float3 DescentPoint(int index)
+{
+    return index switch { 0 => float3(-10.5, 8, -9), 1 => float3(-10.5, 8, -6), 2 => float3(-10.5, 6, -2.75), 3 => float3(-10.5, 6, -1.5),
+                          4 => float3(-10.5, 6, 4.5), 5 => float3(-10.5, 6, 10), 6 => float3(-8, 6, 10), 7 => float3(-1.6, 3, 10),
+                          8 => float3(10.5, 3, 10), 9 => float3(10.5, 3, 3), 10 => float3(10.5, 3, -3), 11 => float3(10.5, 3, -10),
+                          12 => float3(9, 3, -10), 13 => float3(3, 0, -10), 14 => float3(3, 0, -12.8), _ => float3(6, 0, -12.8) };
+}
+
+// The stretches over a deck's gap, which it crosses under the blood.
+bool DescentUnder(int segment)
+{
+    return segment == 3 || segment == 9;
+}
+
+// How far along the way a point of it is.
+float DescentStart(int index)
+{
+    mut float along = 0;
+    for (int point = 0; point < index; point++) along += Math.Distance(DescentPoint(point), DescentPoint(point + 1));
+    return along;
+}
+
+// Where on the way down `along` is, and on which stretch.
+float3 DescentAt(float along, out int segment)
+{
+    mut float left = along;
+    for (int index = 0; index < DESCENT_POINTS - 1; index++)
+    {
+        float3 a = DescentPoint(index);
+        float3 b = DescentPoint(index + 1);
+        float span = Math.Distance(a, b);
+        if (left <= span || index == DESCENT_POINTS - 2)
+        {
+            segment = index;
+            return Math.Lerp(a, b, Math.Saturate(left / Math.Max(span, .001)));
+        }
+        left -= span;
+    }
+    segment = DESCENT_POINTS - 2;
+    return DescentPoint(DESCENT_POINTS - 1);
+}
+
+// How far along the way down someone standing at `feet` is, and how far off it: by the nearest point of it.
+float DescentAlong(float3 feet, out float off)
+{
+    off = 1000;
+    mut float best = 0;
+    mut float start = 0;
+    for (int index = 0; index < DESCENT_POINTS - 1; index++)
+    {
+        float3 a = DescentPoint(index);
+        float3 b = DescentPoint(index + 1);
+        float3 span = b - a;
+        float length = Math.Length(span);
+        float t = Math.Saturate(Math.Dot(feet - a, span) / Math.Max(length * length, .0001));
+        float3 point = a + span * t;
+        float away = Math.Distance(feet.xz, point.xz) + Math.Abs(feet.y - point.y) * 2;
+        if (away < off)
+        {
+            off = away;
+            best = start + t * length;
+        }
+        start += length;
+    }
+    return best;
+}
 
 void BuildRedStair(Arena arena, mut Place place)
 {
@@ -12,6 +109,13 @@ void BuildRedStair(Arena arena, mut Place place)
     place.fogColor = float3(.055, .014, .012);
     place.grade = float3(1.12, .86, .8);
     DigBloodPit(arena, -8, 8, -8, 8);
+    // Wherever there's no floor there's blood, the well's own: under the west flights, the walkway, the east
+    // platforms and the last stair. A fall anywhere is a fall in.
+    DigBloodPit(arena, -13.5, -8, -14, 15);
+    DigBloodPit(arena, -8, 2, -14, -8);
+    DigBloodPit(arena, 3, 13.5, -11.8, -8);
+    DigBloodPit(arena, 8, 13.5, -8, 15);
+    DigBloodPit(arena, -8, 8, 8, 15);
     Fill(arena, -13.5, -7.5, 7.4, 8, -10, -6, RUST);
     for (int step = 0; step < 5; step++)
     {
@@ -27,54 +131,251 @@ void BuildRedStair(Arena arena, mut Place place)
     }
     Fill(arena, -1.6, 13.5, 2.4, 3, 8, 12, RUST);
     Fill(arena, 9, 13.5, 2.4, 3, 3, 8, RUST);
-    Fill(arena, 9, 13.5, 2.4, 3, -8, -3, RUST);
+    Fill(arena, 9, 13.5, 2.4, 3, -11.8, -3, RUST);
     for (int step = 0; step < 8; step++)
     {
         float top = 3 - (step + 1) * .375;
-        Fill(arena, 9 - (step + 1) * .75, 9 - step * .75, top - .6, top, -12, -8, CONCRETE);
+        Fill(arena, 9 - (step + 1) * .75, 9 - step * .75, top - .6, top, -11.8, -8, CONCRETE);
     }
+    // The foot of the last stair, and the way out, in the south wall.
     Fill(arena, 2, 3, -1, 0, -14, -8, RUST);
-    Fill(arena, 3, 13.5, -1, 0, -14, -12, RUST);
-    Fill(arena, 9, 13.5, -1, 0, -12, 15, RUST);
-    Fill(arena, 7.5, 9, -1, 0, 12, 15, RUST);
-    // The south return corridor lies beyond the last stair, inside this
-    // outer wall. Neither its floor nor the bottom landing overlaps the wall.
+    Fill(arena, 3, 13.5, -1, 0, -14, -11.8, RUST);
     // Outer walls, with actual openings for the two lift shells.
     Fill(arena, -14.5, -13.5, -4, 8, -15, 16, CONCRETE);
     Fill(arena, -14.5, -13.5, 8, 12.4, -9.46, 16, CONCRETE);
     Fill(arena, -14.5, -13.5, 12.4, 14, -15, 16, CONCRETE);
-    Fill(arena, 13.5, 14.5, -4, 0, -15, 16, CONCRETE);
-    Fill(arena, 13.5, 14.5, 0, 4.4, -15, 14.46, CONCRETE);
-    Fill(arena, 13.5, 14.5, 4.4, 14, -15, 16, CONCRETE);
+    Fill(arena, 13.5, 14.5, -4, 14, -15, 16, CONCRETE);
     Fill(arena, -14.5, -6.5, -4, 8, -15, -14.32, CONCRETE);
     Fill(arena, -14.5, -6.5, -4, 7.9, -14.32, -14, CONCRETE);
     Fill(arena, -13.5, -6.5, 12.4, 14, -15, -14, CONCRETE);
-    Fill(arena, -6.5, 14.5, -4, 14, -15, -14, CONCRETE);
-    Fill(arena, -14.5, 6.5, -4, 14, 15, 16, CONCRETE);
-    Fill(arena, 6.5, 14.5, -4, -.1, 15, 16, CONCRETE);
-    Fill(arena, 6.5, 13.5, 4.4, 14, 15, 16, CONCRETE);
+    Fill(arena, -6.5, 2, -4, 14, -15, -14, CONCRETE);
+    Fill(arena, 10, 14.5, -4, 14, -15, -14, CONCRETE);
+    Fill(arena, 2, 10, -4, -1, -15, -14, CONCRETE);
+    // Over both lifts the walls go on to the roof, flush with their lintels: their doors rise into these.
+    Fill(arena, 2, 10, 4.4, 14, -15, -13.5, CONCRETE);
+    Fill(arena, -14.5, -6.5, 12.4, 14, -14, -9.5, CONCRETE);
+    Fill(arena, -14.5, 14.5, -4, 14, 15, 16, CONCRETE);
     Fill(arena, -14.5, 14.5, 14, 15, -15, 16, CONCRETE, false, 2);
     // Railings border the void, never a boarding edge.
     Raise(arena, float3(-8.15, 6.6, 6.5), float3(.12, 1.2, 2.8), RUST, false, 4);
-    Raise(arena, float3(3, 3.6, 8.15), float3(11.4, 1.2, .12), RUST, false, 4);
-    Raise(arena, float3(8.85, 3.6, 6), float3(.12, 1.2, 4), RUST, false, 4);
-    var falling = SpawnBeast(arena, BeastKind.Drowned, float3(0, 10, 0), clip: "Crawl");
+    Raise(arena, float3(3.76, 3.6, 8.15), float3(10.72, 1.2, .12), RUST, false, 4);
+    Raise(arena, float3(5.95, 3.6, 11.85), float3(15.1, 1.2, .12), RUST, false, 4);
+    Raise(arena, float3(9.06, 3.6, 6), float3(.12, 1.2, 4), RUST, false, 4);
+    // It falls in front of whoever looks out of the lift, and comes back for them later
+    var falling = SpawnBeast(arena, BeastKind.Drowned, float3(-6.5, 10, 1.5), clip: "Crawl");
     falling.Add(WellFall);
-    SpawnBeast(arena, BeastKind.Crawler, float3(12.5, 10, 4), WEST, .5, clip: "Idle");
+    var hunter = SpawnBeast(arena, BeastKind.Drowned, DescentPoint(3), clip: "Crawl", scale: 1.1);
+    hunter.Add(Descent { });
+    var small = SpawnBeast(arena, BeastKind.Crawler, float3(12.6, 3, 7.2), WEST, .5, clip: "Idle");
+    small.Add(Shy { });
+    // Conduits wall to wall under the roof, in lengths with their couplings
     for (int conduit = 0; conduit < 6; conduit++)
-        SetProp(arena, PropKind.Pipe, float3(-7.5 + conduit * 3, 14, 0), scale: float3(.15, .15, 4));
+        for (int length = 0; length < 4; length++)
+            SetProp(arena, PropKind.Pipe, float3(-7.5 + conduit * 3, 13.91, -10.3 + length * 7.2), scale: float3(1.2, 1.2, 3.6));
+    // The arrival lift stands on a pier out of the blood, not off the wall over nothing
+    Fill(arena, -13.5, -6.5, -1, 7, -14, -10, CONCRETE);
     LampGrid(place, float2(-14, -12), float2(4, 4), 7, 7);
     for (int row = 0; row < 7; row++)
         for (int col = 0; col < 7; col++)
-            if (col == 0 || col == 6 || row == 0 || row == 6) HangLamp(place, col, row, 13.8, LampState.Red);
+            if ((col == 0 || col == 6 || row == 0 || row == 6) && !(row == 0 && col <= 1)) HangLamp(place, col, row, 13.8, LampState.Red);
     MenuView(place, float3(-10.5, 9.55, -8), .18, .65);
 }
 
+// It falls as the arrival door opens, ahead of whoever looks out, and the hands have it.
 system IntoTheWell(mut Beast beast, with WellFall, Arena arena, Place place)
 {
     if (place.id != RED_STAIR || beast.chamber != arena.chamber) return;
-    float falling = Math.Max(0, arena.arrive - 2);
+    float falling = Math.Max(0, arena.arrive - 1.4);
     beast.at.y = 10 - 9 * falling * falling;
     beast.visible = beast.at.y > -1.6;
     beast.time = falling;
+}
+
+// Something small on the east platform, which runs from whoever comes near and drops over the rail into the well.
+system Skitter(mut Beast beast, mut Shy shy, Arena arena, Place place, query (Operator pilot) operators, Time time)
+{
+    if (place.id != RED_STAIR || beast.chamber != arena.chamber) return;
+    if (shy.fled < 0)
+    {
+        beast.time += time.dt;
+        foreach (var row in operators)
+            if (Math.Abs(row.pilot.position.y - 3) < 1 && Math.Distance(row.pilot.position.xz, beast.at.xz) < 4.5) shy.fled = 0;
+        return;
+    }
+    shy.fled += time.dt;
+    if (beast.clip != "Rush")
+    {
+        beast.clip = "Rush";
+        beast.time = 0;
+    }
+    beast.time += time.dt;
+    float3 rail = float3(9.4, 3, 5.6);
+    if (shy.fled < 0.6)
+    {
+        float3 way = rail - beast.at;
+        beast.yaw = Math.Atan2(way.x, way.z);
+        beast.at += way * Math.Saturate(time.dt / Math.Max(0.6 - shy.fled + time.dt, time.dt));
+        return;
+    }
+    // Over the rail and down
+    float down = shy.fled - 0.6;
+    beast.at = float3(9.4 - down * 2.4, 3.5 + down * 1.5 - 9 * down * down, 5.6);
+    beast.visible = beast.at.y > -1.2;
+}
+
+// It comes down the way after whoever is last on it, and only while neither of them sees it.
+[Before(EvaluatePlace)]
+system DescentFollows(mut Beast beast, mut Descent descent, mut Arena arena, Place place, query (Operator pilot) operators, Physics physics, World world,
+                      Time time)
+{
+    if (place.id != RED_STAIR || beast.chamber != arena.chamber) return;
+    descent.timer += time.dt;
+    if (descent.state == 4)
+    {
+        beast.time += time.dt;
+        return;
+    }
+    // Whoever is last on the way down, and whether both are over the first gap: the lift out is beyond its reach
+    mut float last = 1000;
+    mut float3 prey = beast.at;
+    mut bool past = true;
+    float gap = DescentStart(4);
+    foreach (var row in operators)
+    {
+        float3 feet = row.pilot.position;
+        if (InLift(place.exit, place.exitYaw, feet)) continue;
+        float along = DescentAlong(feet, out var off);
+        if (along < gap + 2 || off > 4 || arena.arrive < 2) past = false;
+        if (off > 4 || row.pilot.taken > 0) continue;
+        if (along < last)
+        {
+            last = along;
+            prey = feet;
+        }
+    }
+    if (descent.state == 0)
+    {
+        beast.visible = false;
+        if (!past) return;
+        // Both over the first gap: it's in the blood under it, coming
+        descent.state = 3;
+        descent.timer = 0;
+        descent.dived = 3;
+        descent.along = DescentStart(3) + .35;
+        descent.clock = 0;
+    }
+    // Every lamp and torch fails for a moment, every so often, now that it's out
+    descent.clock += time.dt;
+    if (descent.clock >= DESCENT_EVERY) descent.clock -= DESCENT_EVERY;
+    arena.blackout = descent.clock < DESCENT_DARK;
+    arena.warning = Math.Saturate((descent.clock - (DESCENT_EVERY - BLACKOUT_WARNING)) / BLACKOUT_WARNING);
+    // Whether either of them sees it: the showroom's rule, with a railing's bars no hiding place
+    float3 chest = beast.at + float3(0, 1.1, 0);
+    mut bool seen = false;
+    foreach (var row in operators)
+    {
+        float3 eye = row.pilot.position + float3(0, EYE_HIGH * row.pilot.scale, 0);
+        float3 to = chest - eye;
+        float away = Math.Length(to);
+        if (away > 30 || Math.Dot(to / Math.Max(away, .001), LookDirection(row.pilot.yaw, row.pilot.pitch)) < .5) continue;
+        if (!ShotStops(eye, chest, physics, world, out _)) seen = true;
+    }
+    if (arena.blackout || descent.state == 3) seen = false;
+    descent.seen = seen;
+    mut int segment = 0;
+    mut float3 on = DescentAt(descent.along, out segment);
+    if (descent.state == 1)
+    {
+        // Climbing out: the landings are slabs over the blood, so it comes up the outer wall beside the edge it
+        // makes for, belly to the wall, and over onto the floor and out along it in a scuttle
+        beast.visible = true;
+        if (beast.clip != "Crawl")
+        {
+            beast.clip = "Crawl";
+            beast.time = 0;
+        }
+        beast.time += time.dt;
+        float3 lip = DescentPoint(descent.lip);
+        float3 back = DescentPoint(descent.behind);
+        float3 way = Math.Normalize(float3(lip.x - back.x, 0, lip.z - back.z));
+        float side = lip.x < 0 ? -1.0 : 1.0;
+        float3 foot = float3(side * 13.42, lip.y - .4, lip.z - way.z * .35);
+        float climbing = .6 + lip.y / 3;
+        if (descent.timer < climbing)
+        {
+            beast.yaw = side < 0 ? WEST : EAST;
+            beast.pitch = -Math.PI * .5;
+            beast.at = float3(foot.x, Math.Lerp(-2, foot.y, descent.timer / climbing), foot.z);
+            return;
+        }
+        float over = Math.Saturate((descent.timer - climbing) / .9);
+        float3 ashore = lip + way * .6;
+        float across = Math.Saturate((over - .2) / .8);
+        beast.yaw = Math.Atan2(ashore.x - foot.x, ashore.z - foot.z);
+        beast.pitch = -Math.PI * .5 * (1 - Math.Saturate(over / .4));
+        beast.at = float3(Math.Lerp(foot.x, ashore.x, across), Math.Lerp(foot.y, ashore.y, Math.Saturate(over / .4)), Math.Lerp(foot.z, ashore.z, across));
+        if (over >= 1)
+        {
+            descent.state = 2;
+            descent.timer = 0;
+            descent.along = DescentStart(descent.lip) + (descent.lip > descent.behind ? .6 : -.6);
+            // Out and on its feet, the lamps hold a while: long enough to see that a look holds it too
+            descent.clock = DESCENT_DARK;
+        }
+        return;
+    }
+    if (last > 900) return;
+    // Along the way toward the last of them: under the blood slowly, seen not at all, in the dark quickly
+    float speed = descent.state == 3 ? DESCENT_UNDER_SPEED : seen ? 0.0 : arena.blackout ? DESCENT_DARK_SPEED : DESCENT_SPEED;
+    float step = Math.Min(speed * time.dt, Math.Abs(last - descent.along));
+    descent.along += last > descent.along ? step : -step;
+    on = DescentAt(descent.along, out segment);
+    if (descent.state == 2 && DescentUnder(segment) && descent.along > DescentStart(segment) + .3 &&
+        descent.along < DescentStart(segment + 1) - .3)
+    {
+        descent.state = 3;
+        descent.timer = 0;
+        descent.dived = segment;
+    }
+    if (descent.state == 3)
+    {
+        beast.visible = false;
+        beast.at = on - float3(0, 1.8, 0);
+        if (!DescentUnder(segment))
+        {
+            // Out of that stretch at either end: it climbs the edge it came to
+            bool ahead = descent.along >= DescentStart(descent.dived + 1) - .001;
+            descent.lip = ahead ? descent.dived + 1 : descent.dived;
+            descent.behind = ahead ? descent.dived : descent.dived + 1;
+            descent.state = 1;
+            descent.timer = 0;
+        }
+        return;
+    }
+    // Near its prey along the way, it closes on them across it too
+    float3 track = DescentAt(last, out _);
+    float closing = Math.Saturate(1 - Math.Abs(last - descent.along) / 4);
+    beast.at = on + float3(prey.x - track.x, 0, prey.z - track.z) * closing;
+    if (!seen && step > 0)
+    {
+        string clip = arena.blackout ? "Run" : "Walk";
+        if (beast.clip != clip) beast.clip = clip;
+        descent.walked += step;
+        beast.time = descent.walked * .55;
+        beast.yaw = Math.Atan2(prey.x - beast.at.x, prey.z - beast.at.z);
+    }
+    // Near enough to touch, it has them, seen or not
+    foreach (var row in operators)
+    {
+        if (row.pilot.taken > 0 || InLift(place.exit, place.exitYaw, row.pilot.position)) continue;
+        if (Math.Distance(row.pilot.position, beast.at) < 1.35)
+        {
+            arena.caught = .001;
+            descent.state = 4;
+            beast.clip = "Bite";
+            beast.time = 0;
+            beast.loop = false;
+            beast.yaw = Math.Atan2(row.pilot.position.x - beast.at.x, row.pilot.position.z - beast.at.z);
+        }
+    }
 }

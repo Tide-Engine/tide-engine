@@ -130,8 +130,13 @@ static void fold_preview_matches_firing(void)
     place(&world, 0, (tide_float3){10.8f, 0, 0}, NORTH, 0);
     ticks(&world, 3);
     shot = read_preview(&world, 0);
-    CHECK(shot.first.hit && !shot.first.valid && near(shot.first.point.z, 2.2f, .03f));
+    CHECK(shot.first.hit && !shot.first.valid && near(shot.first.point.z, 5.6f, .03f));
     fire_preview(&world, 0, 0, shot.first);
+    // At a jump's height, the ray through the bars' top meets the header flush behind them. Started inside the
+    // header, it once saw none of it, passed over the shutter and opened an end on the panel it covers.
+    place(&world, 0, (tide_float3){10.8f, 1.07f, -7.7f}, NORTH, atan2f(4.3f - 2.62f, 13.7f));
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.hit && !shot.first.valid);
     place(&world, 1, (tide_float3){-8, 0, 4}, NORTH, 0);
     ticks(&world, 150);
     shot = read_preview(&world, 0);

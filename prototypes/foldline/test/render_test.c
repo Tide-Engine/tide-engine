@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
@@ -21,6 +22,9 @@ static tide_draw_list draw;
 static tide_gui gui;
 static int failures;
 static bool scene_samples;
+// The tour's frames can be drawn between two ticks, as a player's are; the checks draw the current tick alone.
+static const tide_world *presented_previous;
+static float presented_alpha = 1;
 static void check(bool passed, const char *message);
 
 // Optional local evidence, using the same recorded scene as the assertions.
@@ -113,7 +117,7 @@ static void frame_for(const int active, const bool menu)
     tide_draw_reset(&draw);
     tide_draw_screen_size(&draw, screen);
     tide_gui_begin(&gui, &devices, screen, tide_platform_measure_text);
-    tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
+    tide_frame(&world, presented_previous, presented_alpha, NULL, NULL, 1, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 
@@ -204,6 +208,49 @@ static void body_at(tide_entity entity, tide_float3 feet)
     check(tide_set_Operator(&world, entity, body) && tide_set_Box3D_Body(&world, entity, rigid), "position lift riders");
 }
 
+// How many of the dressing's lift frames, far doors and lamp fittings, as they were kept from earlier frames,
+// differ from what the place dresses now.
+static int dressing_moves(void)
+{
+    enum { MOST = 4096 };
+    static Fixture kept[MOST];
+    const tide_list lists[] = {local.Optics.furnishings, local.Optics.glass};
+    int counts[2], total = 0;
+    for (int list = 0; list < 2; list++) {
+        counts[list] = tide_list_read_count(&local.heap, lists[list]);
+        for (int index = 0; index < counts[list] && total < MOST; index++)
+            kept[total++] = *(const Fixture *)tide_list_read(&local.heap, lists[list], index, sizeof(Fixture));
+    }
+    local.Optics.dressed = -1;
+    frame_for(0, false);
+    const tide_list fresh[] = {local.Optics.furnishings, local.Optics.glass};
+    // The lists are compared as sets: the entities they're made from may come in another order once the last
+    // place's are gone.
+    static bool matched[MOST];
+    int moved = 0, at = 0;
+    for (int list = 0; list < 2; list++) {
+        const int count = tide_list_read_count(&local.heap, fresh[list]);
+        moved += abs(count - counts[list]);
+        for (int index = 0; index < counts[list] && at + index < MOST; index++) matched[at + index] = false;
+        for (int index = 0; index < count; index++) {
+            const Fixture *now = tide_list_read(&local.heap, fresh[list], index, sizeof(Fixture));
+            const float *a = &now->transform.c0.x;
+            bool found = false;
+            for (int other = 0; other < counts[list] && at + other < MOST && !found; other++) {
+                if (matched[at + other]) continue;
+                const float *b = &kept[at + other].transform.c0.x;
+                bool same = true;
+                for (int cell = 0; cell < 16 && same; cell++) same = tide_abs_f(a[cell] - b[cell]) <= .001f;
+                if (same) found = matched[at + other] = true;
+            }
+            if (!found) moved++;
+        }
+        at += counts[list];
+    }
+    if (moved) fprintf(stderr, "Place %d: %d dressed fixtures moved when dressed again\n", world.Place.id, moved);
+    return moved;
+}
+
 // One ride down, from the lift out of the place it's in, with both standing in it a little off its middle.
 static void ride_checks(void)
 {
@@ -222,9 +269,19 @@ static void ride_checks(void)
     record(&before);
     const int chamber = world.Arena.chamber;
     world.Arena.ride = 1.3f - 1.0f / 60;
-    for (int step = 0; step < 3 && world.Arena.chamber == chamber; step++) tide_world_tick(&world);
+    static tide_world previous;
+    for (int step = 0; step < 3 && world.Arena.chamber == chamber; step++) {
+        tide_world_copy(&previous, &world);
+        tide_world_tick(&world);
+    }
     check(world.Arena.chamber == chamber + 1, "every lift advances to its next place");
-    record(&crossing); // Includes the first frame before the arriving bodies are updated.
+    // Includes the first frame before the arriving bodies are updated, drawn between the last tick of the place
+    // left and the first of the next, as a player's is.
+    presented_previous = &previous;
+    presented_alpha = .5f;
+    record(&crossing);
+    presented_previous = NULL;
+    presented_alpha = 1;
     int dark = 0;
     for (int i = 0; i < crossing.count; i++)
         if ((crossing.pixels[i] >> 8) == 0) dark++;
@@ -246,6 +303,9 @@ static void ride_checks(void)
     // The shutter is still closed, at the same local plane, throughout the reveal.
     check(world.Arena.arrive < .7f, "geometry comparison precedes the opening door");
     check(changed(&crossing, &after) > after.count / 2, "arrival reveals a rendered lift rather than remaining black");
+    // The lifts and lamps dressed on that first, blended frame are where the place has them: a blended Place once
+    // left the last place's lift frames and shutter standing in this one.
+    check(dressing_moves() == 0, "the first frame of a place dresses its lifts and lamps where they are");
 }
 
 // Every campaign lift, including rotated landings and the terminal coda.
@@ -389,6 +449,9 @@ static void lamp_and_fog_checks(void)
 static void portal_back_checks(void)
 {
     select_place(2);
+    // The cupboard's shutter covers its back while its plate is up: someone stands on it.
+    body_at(world.Arena.op1, (tide_float3){-8, 0, 4});
+    for (int tick = 0; tick < 150; tick++) tide_world_tick(&world);
     world.Arena.arrive = 2;
     world.Watcher.state = Watching_Away;
     for (int end = 0; end < 4; end++) world.Fold.ends.at[end] = (Portal){0};
@@ -639,7 +702,17 @@ static void reticle_checks(void)
         viewer.taken = gate == 2 ? .1f : 0;
         check(tide_set_Operator(&world, world.Arena.op0, viewer), "set the reticle's ordinary action gates");
         record_reticle(&disabled, 0, false);
-        for (int end = 0; end < 2; end++) reticle_ready(&disabled, end, false, &placed);
+        if (gate != 0)
+            for (int end = 0; end < 2; end++) reticle_ready(&disabled, end, false, &placed);
+        else
+            for (int end = 0; end < 2; end++) check(!disabled.valid[end], "a dead device previews nothing");
+        if (gate == 0) {
+            // Where the device is dead there are no marks at all, placed or not: only the reticle's middle
+            for (int end = 0; end < 2; end++)
+                check(color_distance(disabled.pixels[end][RETICLE_RIM], placed.pixels[end][RETICLE_RIM]) > 30,
+                      "a dead device shows no fold status marks");
+            continue;
+        }
         reticle_placed(&disabled, 0, true);
         reticle_placed(&disabled, 1, false);
     }
@@ -656,7 +729,61 @@ static void reticle_checks(void)
     select_place(0);
 }
 
+// How many of a coarse grid over the whole picture differ between two frames of the scene.
+static int whole_frame_changes(const bool a_visible, const tide_entity entity)
+{
+    enum { WIDE = 160, HIGH = 90 };
+    static tide_float2 points[WIDE * HIGH];
+    static uint32_t first[WIDE * HIGH], second[WIDE * HIGH];
+    for (int row = 0; row < HIGH; row++)
+        for (int column = 0; column < WIDE; column++)
+            points[row * WIDE + column] = (tide_float2){(column + .5f) * WIDTH / WIDE, (row + .5f) * HEIGHT / HIGH};
+    for (int pass = 0; pass < 2; pass++) {
+        Beast beast = tide_get_Beast(&world, entity);
+        beast.visible = pass == 0 ? a_visible : !a_visible;
+        check(tide_set_Beast(&world, entity, beast), "show or hide the folded figure");
+        frame_for(0, false);
+        tide_platform_read_pixels_as(&draw, WIDTH, HEIGHT, 1, points, WIDE * HIGH, pass == 0 ? first : second);
+    }
+    int count = 0;
+    for (int i = 0; i < WIDE * HIGH; i++)
+        if (color_distance(first[i], second[i]) > 14) count++;
+    return count;
+}
+
+// Reception's figure is seen through the fold open on arrival, and isn't there to a look through the bars at it.
+static void folded_figure_checks(void)
+{
+    select_place(2);
+    world.Arena.arrive = 10;
+    world.Watcher.state = Watching_Away;
+    tide_entity figure = {0};
+    for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+        const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+        if (tide_has_Beast(&world, entity) && tide_get_Beast(&world, entity).folded && tide_get_Beast(&world, entity).chamber == world.Arena.chamber)
+            figure = entity;
+    }
+    check(figure.index != 0, "Reception has a figure seen only through folds");
+    operator_at(world.Arena.op1, (tide_float3){-10, 0, 6}, 0);
+    operator_at(world.Arena.op0, (tide_float3){-6.5f, 0, -6.5f}, tide_atan2_f(-5.5f, 3.5f));
+    const int through = whole_frame_changes(true, figure);
+    capture_scene("folded-figure-through");
+    // Straight at its place, with the pair closed: through either end it's there, as it should be
+    operator_at(world.Arena.op0, (tide_float3){-2, 0, -5}, tide_atan2_f(11.5f, 4.2f));
+    const bool opened[2] = {world.Fold.ends.at[0].open, world.Fold.ends.at[1].open};
+    world.Fold.ends.at[0].open = world.Fold.ends.at[1].open = false;
+    const int direct = whole_frame_changes(true, figure);
+    capture_scene("folded-figure-direct");
+    world.Fold.ends.at[0].open = opened[0];
+    world.Fold.ends.at[1].open = opened[1];
+    printf("Folded figure: %d samples through the fold, %d looking straight at its place\n", through, direct);
+    check(through >= 6, "the figure is seen through the fold");
+    check(direct == 0, "the figure is not there to a direct look, nor in any shadow");
+    select_place(0);
+}
+
 #include "zfight_render.c"
+#include "tour_render.c"
 
 static int render_checks(void *user, float seconds)
 {
@@ -736,6 +863,7 @@ static int render_checks(void *user, float seconds)
     lamp_and_fog_checks();
     transition_checks();
     reticle_checks();
+    folded_figure_checks();
     zfight_render_checks();
 
     tide_draw_forget(&draw);
@@ -764,5 +892,8 @@ int main(void)
     else
 #endif
         tide_platform_open(&(tide_window_desc){.title = "FOLDLINE portal rendering", .width = WIDTH, .height = HEIGHT, .hidden = true});
+#ifndef __wasm__
+    if (getenv("FOLDLINE_TOUR") && getenv("FOLDLINE_CAPTURES")) tide_platform_run(tour, NULL);
+#endif
     tide_platform_run(render_checks, NULL);
 }

@@ -10,6 +10,7 @@ component Beast
     BeastSkin skin;
     [Position] float3 at;
     [Rotation] float yaw;
+    float pitch;         // Tipped forward over its feet, a quarter turn up a wall
     float scale = 1;
     float stretch = 1;
     string clip = "Idle";
@@ -17,14 +18,15 @@ component Beast
     bool loop = true;
     bool eyes;
     bool visible = true;
+    bool folded;         // Seen only through a fold: not there to a direct look, nor in any shadow
 }
 
 Entity SpawnBeast(Arena arena, BeastKind kind, float3 at, float yaw = 0, float scale = 1,
                   BeastSkin skin = BeastSkin.Default, string clip = "Idle", bool loop = true,
-                  float stretch = 1, bool eyes = false)
+                  float stretch = 1, bool eyes = false, bool folded = false)
 {
     return Spawn(Beast { chamber = arena.chamber, kind = kind, at = at, yaw = yaw, scale = scale, skin = skin,
-                         clip = clip, loop = loop, stretch = stretch, eyes = eyes });
+                         clip = clip, loop = loop, stretch = stretch, eyes = eyes, folded = folded });
 }
 
 [After(EvaluatePlace)]
@@ -69,6 +71,7 @@ struct BeastPicture
     BeastKind kind;
     BeastSkin skin;
     bool eyes;
+    bool folded;
     Pose pose;
     float4x4 transform;
     float4x4 echo;
@@ -83,8 +86,9 @@ BeastPicture BeastPictureOf(Beast beast, Fold fold)
     mut var pose = model.defaultPose;
     if (model.animations.TryGetByName(beast.clip, out var clip)) pose.Sample(clip, beast.time, beast.loop ? Playback.Loop : Playback.Clamp);
     else if (model.animations.TryGetByName("Idle", out var idle)) pose.Sample(idle, 0);
-    var transform = float4x4.TRS(beast.at, quaternion.Euler(0, beast.yaw, 0), float3(beast.scale, beast.scale * beast.stretch, beast.scale));
-    mut var picture = BeastPicture { kind = beast.kind, skin = beast.skin, eyes = beast.eyes, pose = pose, transform = transform };
+    var transform = float4x4.TRS(beast.at, Math.Mul(quaternion.Euler(0, beast.yaw, 0), quaternion.Euler(beast.pitch, 0, 0)),
+                                 float3(beast.scale, beast.scale * beast.stretch, beast.scale));
+    mut var picture = BeastPicture { kind = beast.kind, skin = beast.skin, eyes = beast.eyes, folded = beast.folded, pose = pose, transform = transform };
     // The same opening and light mapping as the operators, including the copy
     // beyond it. Low creatures use their belly; the others use their chest.
     float middle = beast.kind == BeastKind.Crawler || beast.kind == BeastKind.Spider ? 0.4 : 0.9;
@@ -99,6 +103,14 @@ BeastPicture BeastPictureOf(Beast beast, Fold fold)
     return picture;
 }
 
+// How high the flayed's lower toe tip is in a pose, in its own metres.
+float LowestToe(Pose pose)
+{
+    float left = Math.Mul(pose.Model(flayedModel.skeleton.bones.toes_end_L), float4(0, 0, 0, 1)).y;
+    float right = Math.Mul(pose.Model(flayedModel.skeleton.bones.toes_end_R), float4(0, 0, 0, 1)).y;
+    return Math.Min(left, right);
+}
+
 // Existing encounters keep their match AI, but use the same creature rendering
 // path as place-authored Beast entities. No presentation clock moves the stalker.
 void LegacyBeastPictures(mut List<BeastPicture> pictures, Arena arena, Watcher watcher, Stalker stalker,
@@ -108,13 +120,24 @@ void LegacyBeastPictures(mut List<BeastPicture> pictures, Arena arena, Watcher w
     {
         bool maze = stalker.chamber == arena.chamber;
         bool shadow = shade.chamber == arena.chamber;
-        var beast = Beast { chamber = arena.chamber, kind = maze ? BeastKind.Flayed : BeastKind.Figure,
-                            skin = maze ? BeastSkin.Dark : BeastSkin.Shadow, at = watcher.at, yaw = watcher.yaw,
-                            scale = maze ? 1.35 : 1, stretch = shadow ? 1.5 : 1.12,
-                            clip = maze ? "Run" : watcher.state == Watching.Lunging ? "Punch" : shadow && !shade.lit ? "Creep" : "Stand",
-                            time = maze ? stalker.walked * 0.37 : watcher.state == Watching.Lunging ? watcher.timer : clock,
-                            loop = watcher.state != Watching.Lunging, eyes = maze };
-        pictures.Add(BeastPictureOf(beast, fold));
+        mut var beast = Beast { chamber = arena.chamber, kind = maze ? BeastKind.Flayed : BeastKind.Figure,
+                                skin = maze ? BeastSkin.Dark : BeastSkin.Shadow, at = watcher.at, yaw = watcher.yaw,
+                                scale = maze ? 1.35 : 1, stretch = shadow ? 1.5 : 1.12,
+                                clip = maze ? "Run" : watcher.state == Watching.Lunging ? "Punch" : shadow && !shade.lit ? "Creep" : "Stand",
+                                time = maze ? stalker.walked * 0.37 : watcher.state == Watching.Lunging ? watcher.timer : clock,
+                                loop = watcher.state != Watching.Lunging, eyes = maze };
+        mut var picture = BeastPictureOf(beast, fold);
+        if (maze)
+        {
+            // Held mid-stride while it's watched, it stands on its lowest toe rather than hanging over the carpet
+            float lifted = LowestToe(picture.pose) - LowestToe(flayedModel.defaultPose);
+            if (lifted > 0)
+            {
+                beast.at.y -= lifted * beast.scale * beast.stretch;
+                picture = BeastPictureOf(beast, fold);
+            }
+        }
+        pictures.Add(picture);
     }
     if (lurker.chamber == arena.chamber && pictures.count < 8)
     {
@@ -178,6 +201,7 @@ void DrawBeastShadows(RenderTarget target, List<BeastPicture> creatures)
 {
     foreach (var picture in creatures)
     {
+        if (picture.folded) continue;
         var model = BeastModel(picture.kind);
         target.SkinnedMesh(model, picture.transform, picture.pose);
         if (picture.fold > 0) target.SkinnedMesh(model, picture.echo, picture.pose);

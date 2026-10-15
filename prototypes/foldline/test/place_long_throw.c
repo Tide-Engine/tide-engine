@@ -63,19 +63,38 @@ static void place_long_throw_tests(void)
     CHECK(world.Fold.ends.at[0].open && near(world.Fold.ends.at[0].at.z, 0, .02f));
     aim_at(&world, 0, (tide_float3){-6, 9.3f, 6});
     act(&world, 0, (PilotInput){.cyan = true});
-    CHECK(world.Fold.ends.at[1].open && near(world.Fold.ends.at[1].at.y, 9.3f, .06f));
-    // The rescue panel is the front of an inside corner, not a free shot from
-    // the upper operator's cage.
-    aim_at(&world, 0, (tide_float3){12, 6.7f, 13.5f});
-    // Keep A's launch pair intact; B supplies this negative shot after leaving
-    // the plate, from the near floor, before collecting the cube.
+    CHECK(world.Fold.ends.at[1].open && near(world.Fold.ends.at[1].at.y, 9.325f, .03f));
+    // A steps back onto the deck, and B lets the plate up: the deck brings A down and the launch wall's shutter
+    // closes over A's end.
+    walk_to(&world, 0, 0, -9);
     walk_to(&world, 1, -8, -7);
     CHECK((world.Arena.signals & 1) == 0);
+    for (int frame = 0; frame < 400 && pilot(&world, 0).position.y > .1f; frame++) tide_world_tick(&world);
+    CHECK(pilot(&world, 0).position.y < .1f && world.Fold.shut.at[0]);
+    // The rescue panel round the landing's corner is no free shot from the near floor.
     aim_at(&world, 1, (tide_float3){12, 6.7f, 13.5f});
     act(&world, 1, (PilotInput){.amber = true});
     CHECK(!world.Fold.ends.at[2].open || world.Fold.ends.at[2].at.x < 6);
     aim_at(&world, 1, (tide_float3){-9.5f, .4f, -7});
     act(&world, 1, (PilotInput){.carry = true});
+    CHECK(world.Fold.holding.at[1] == 1);
+    // With nobody on the plate the pad throws the flyer at the shutter, and nothing goes through.
+    const int before = world.Fold.traversals;
+    walk_to(&world, 1, -10, -3.1f);
+    aim_at(&world, 1, (tide_float3){-10, 1.3f, 0});
+    input(&world, 0, (PilotInput){.active = 1, .move = {0, 1}});
+    ticks(&world, 90);
+    input(&world, 0, (PilotInput){.active = 1});
+    ticks(&world, 60);
+    CHECK(world.Fold.traversals == before && pilot(&world, 1).position.z < 1 && pilot(&world, 1).position.y < .1f);
+    // A holds the plate: the shutter drops into the floor, and B flies with the cube.
+    walk_to(&world, 0, -3, -9);
+    ticks(&world, 40);
+    CHECK((world.Arena.signals & 1) != 0 && !world.Fold.shut.at[0]);
+    if (world.Fold.holding.at[1] != 1) {
+        aim_at(&world, 1, world.Fold.cube);
+        act(&world, 1, (PilotInput){.carry = true});
+    }
     CHECK(world.Fold.holding.at[1] == 1);
     walk_to(&world, 1, -10, -3.1f);
     aim_at(&world, 1, (tide_float3){-10, 1.3f, 0});
@@ -95,6 +114,15 @@ static void place_long_throw_tests(void)
     }
     input(&world, 0, (PilotInput){.active = 1});
     ticks(&world, 30);
+    if (!landed) {
+        for (uint32_t slot = 0; slot < world.entities.next_unused; slot++) {
+            const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+            if (!tide_has_Mover(&world, entity)) continue;
+            const Mover mover = tide_get_Mover(&world, entity);
+            if (mover.chamber == world.Arena.chamber) fprintf(stderr, "mover at %.3f %.3f %.3f\n", mover.at.x, mover.at.y, mover.at.z);
+        }
+        fprintf(stderr, "signals %d shut %d ends %d %d\n", world.Arena.signals, world.Fold.shut.at[0], world.Fold.ends.at[0].open, world.Fold.ends.at[1].open);
+    }
     if (!landed)
         fprintf(stderr, "long throw: landed %d crossed %d at %.3f %.3f %.3f velocity %.3f %.3f %.3f cube %.3f %.3f %.3f held %d\n",
                 landed, crossed, pilot(&world, 1).position.x, pilot(&world, 1).position.y, pilot(&world, 1).position.z,
@@ -109,6 +137,7 @@ static void place_long_throw_tests(void)
     act(&world, 1, (PilotInput){.carry = true});
     ticks(&world, 90);
     CHECK((world.Arena.signals & 2) != 0 && world.Arena.gate > .99f);
+    // The way back: an end round the landing's corner, and one on the near floor's paper, seen from the landing.
     walk_to(&world, 1, 15.3f, 11.7f);
     walk_to(&world, 1, 15.3f, 13.5f);
     walk_to(&world, 1, 14, 13.5f);
@@ -120,15 +149,19 @@ static void place_long_throw_tests(void)
     // Turn on the inside of the L; a diagonal here cuts across its open void.
     walk_to(&world, 1, 13, 10.5f);
     walk_to(&world, 1, 13, 7);
+    walk_to(&world, 1, 1.5f, 5.5f);
     CHECK(near(pilot(&world, 1).position.y, 5.4f, .1f) && pilot(&world, 1).taken == 0);
-    aim_at(&world, 1, (tide_float3){0, 9.3f, -12});
+    aim_at(&world, 1, (tide_float3){-12, 1.3f, -4.5f});
     act(&world, 1, (PilotInput){.cyan = true});
-    CHECK(world.Fold.ends.at[3].open && near(world.Fold.ends.at[3].at.z, -12, .02f));
-    walk_to(&world, 0, 0, -11.2f);
-    cross_fold(&world, 0, (tide_float3){0, 9.3f, -12}, 100);
+    CHECK(world.Fold.ends.at[3].open && near(world.Fold.ends.at[3].at.x, -12, .02f));
+    // A lets the plate up, and walks over.
+    walk_to(&world, 0, -9.5f, -4.5f);
+    CHECK((world.Arena.signals & 1) == 0);
+    cross_fold(&world, 0, (tide_float3){-12, 1.3f, -4.5f}, 120);
     CHECK(pilot(&world, 0).position.x > 12 && near(pilot(&world, 0).position.y, 5.4f, .15f));
     walk_to(&world, 0, 12.8f, 16.3f);
     walk_to(&world, 0, 11.8f, 18.1f);
+    walk_to(&world, 1, 13, 7);
     walk_to(&world, 1, 13, 10.5f);
     walk_to(&world, 1, 15.3f, 10.5f);
     CHECK(near(pilot(&world, 1).position.y, 5.4f, .1f) && pilot(&world, 1).taken == 0);

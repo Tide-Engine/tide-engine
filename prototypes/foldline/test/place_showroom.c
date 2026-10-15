@@ -45,15 +45,15 @@ void place_showroom_tests(void)
     const tide_float3 resting = world.Stalker.at;
     ticks(&world, 120);
     CHECK(near(world.Stalker.at.x, resting.x, .001f) && near(world.Stalker.at.z, resting.z, .001f));
-    // The opaque landing side still blocks sight; the neighbouring grille
-    // window passes it. Both positions are reached through ordinary input.
+    // The opaque landing side blocks sight, and from the landing's grille window it's too far off, through too many
+    // bars, to keep it still: whoever watches has to be in the aisles, where it hunts. Reached through ordinary input.
     choose(&world, 0, SHOWROOM);
     ticks(&world, 100);
     aim_at(&world, 1, (tide_float3){-9, 1, -50});
     showroom_walk(&world, 0, -6.4f, -14.5f);
     CHECK(!world.Stalker.seen);
     showroom_walk(&world, 0, -10.5f, -13.5f);
-    CHECK(world.Stalker.seen);
+    CHECK(!world.Stalker.seen);
     // Establish a real lookout beyond the first turn. Its retained yaw sees
     // through the display grilles while the moving partner crosses the aisles.
     choose(&world, 0, SHOWROOM);

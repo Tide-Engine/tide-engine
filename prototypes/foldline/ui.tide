@@ -254,8 +254,10 @@ view InterfaceHud(Operator seenViewer, query (FoldFrame frame) frames, Control c
     Ink(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - dot * 4 - 8, 30), 11, UI_INK, Anchor.MiddleRight);
     if (session.room != "") Ink($"WITH  {session.room}", float2(Screen.width - pad, 52), 10, UI_MUTED, Anchor.MiddleRight);
 
-    // The reticle's left/right sides match the two placement buttons.
+    // The reticle's left/right sides match the two placement buttons. Where the device is dead there's nothing to
+    // place, and nothing over what's out there in the dark but a point to look by.
     Draw.Rect(middle, float2(dot, dot), UI_INK);
+    if (place.dead) return;
     ReticleEnd(middle, dot, -1, control.active == 0 ? UI_AMBER : UI_ROSE, ui.shot0.valid, fold.ends[control.active * 2].open);
     ReticleEnd(middle, dot, 1, control.active == 0 ? UI_CYAN : UI_VIOLET, ui.shot1.valid, fold.ends[control.active * 2 + 1].open);
     Draw.Rect(middle - float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));

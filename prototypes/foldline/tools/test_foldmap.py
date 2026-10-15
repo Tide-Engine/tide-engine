@@ -28,6 +28,13 @@ class AssemblyTests(unittest.TestCase):
         self.assertIn("map_east", tide)
         self.assertIn("float3(10.8, 4.1, 1.965)", tide)
 
+    def test_exit_lamps_sit_beside_the_sign(self):
+        exit = next(l for l in self.map["lifts"] if l["role"] == "exit")
+        exit["socket_x"] = .3
+        self.reject("lift.socket_x: exit lamps must sit")
+        del exit["socket_x"]
+        self.reject("lift.socket_x: expected a finite number")
+
     def test_original_half_blocked_exit_is_rejected(self):
         cupboard = next(b for b in self.map["boxes"] if b["id"] == "cupboard_west")
         cupboard["min"][0], cupboard["max"][0] = 5.2, 5.8
@@ -148,7 +155,7 @@ class ActualBuiltSceneTests(unittest.TestCase):
         source = json.loads(RECEPTION.read_text(encoding="utf-8"))
         boxes, _ = foldmap.validate_map(source)
         self.room = {"id":2, "kind":0, "walls":list(boxes.values()), "solids":[], "wires":[], "frames":[], "ends":[],
-                     "exit":{"at":[6,0,10.1], "yaw":foldmap.math.pi, "need":2}, "props":[
+                     "exit":{"at":[6,0,10.1], "yaw":foldmap.math.pi, "need":2, "socket":1}, "props":[
                          {"kind_name":"ExitSign", "at":[6,4.2,7.45], "yaw":foldmap.math.pi, "scale":[1,1,1]}]}
         for lift in source["lifts"]:
             self.room["walls"].extend(foldmap.lift_boxes(lift))
@@ -174,6 +181,10 @@ class ActualBuiltSceneTests(unittest.TestCase):
     def test_missing_exit_sign_is_rejected(self):
         self.room["props"] = []
         self.assertIn("exactly one sign", self.errors())
+
+    def test_exit_signal_lamps_over_the_sign_are_rejected(self):
+        self.room["exit"]["socket"] = 0
+        self.assertIn("exit signal lamps cover its sign", self.errors())
 
     def test_actual_preplaced_fold_requires_a_receptive_backing(self):
         self.room["ends"] = [{"at":[-12,1.3,-3], "face":[1,0,0], "size":1,

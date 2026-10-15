@@ -360,7 +360,7 @@ def validate_map(data):
     assembly_boxes = list(boxes.values())
     for lift in data.get("lifts", []):
         role = lift.get("role")
-        allowed = ("id", "role", "at", "yaw") + (("need", "any") if role == "exit" else ("stay",) if role == "stop" else ())
+        allowed = ("id", "role", "at", "yaw") + (("need", "any", "socket_x") if role == "exit" else ("stay",) if role == "stop" else ())
         fields(lift, allowed, "lift", ("id", "role", "at", "yaw"))
         ident(lift.get("id"), "lift.id")
         require(lift.get("role") in ("arrival", "exit", "stop"), "lift.role: expected arrival, exit or stop")
@@ -370,6 +370,10 @@ def validate_map(data):
         flags(lift, ("any",), "lift")
         if role == "stop":
             require(number(lift.get("stay"), "lift.stay") > 0, "lift.stay: must be positive")
+        if role == "exit" and lift.get("need"):
+            # The signal lamps sit on the lintel beside the 0.95 m sign, never over it, and inside the doorway.
+            socket = number(lift.get("socket_x"), "lift.socket_x")
+            require(.9 <= abs(socket) <= 2.6, "lift.socket_x: exit lamps must sit 0.9 to 2.6 m along the lintel from its sign")
         assembly_boxes.extend(lift_boxes(lift))
         if boxes and complete_geometry:
             validate_lift(lift, assembly_boxes, lift["id"])
@@ -452,7 +456,7 @@ def validate_map(data):
                 require(wire["to"] in exits, f"{wire['id']}: unknown target")
                 target = exits[wire["to"]]
                 require(wire["signal"] in target.get("need", []), f"{wire['id']}: exit does not use this signal")
-                socket = lifted(target["at"], YAWS[target["yaw"]], (0, 4.2, 2.65))
+                socket = lifted(target["at"], YAWS[target["yaw"]], (target.get("socket_x", -1), 4.2, 2.65))
                 require(length(sub(points[-1], socket)) <= .12, f"{wire['id']}: cable misses exit socket")
     end_indices = set()
     for category in ("ends", "frames"):
@@ -517,7 +521,7 @@ def compile_map(data):
         elif lift["role"] == "stop":
             lines.append(f"    StoppingLift({args}, {scalar(lift['stay'])});")
         else:
-            lines.append(f"    ExitLift({args}, {mask(lift.get('need', []))}, {boolean(lift.get('any', False))});")
+            lines.append(f"    ExitLift({args}, {mask(lift.get('need', []))}, {boolean(lift.get('any', False))}, {scalar(lift.get('socket_x', -1))});")
     for door in data.get("doors", []):
         args = f"arena, {v3(door['at'])}, {v3(door['size'])}, {mask(door.get('need', []))}, {boolean(door.get('any', False))}, {speed(door.get('speed'))}"
         if "socket" in door:
@@ -757,6 +761,8 @@ def validate_scene(scene):
                     errors.append(f"{label}: exit sign faces away from its room approach")
                 if not supported_segment(sign["at"], sign["at"], boxes):
                     errors.append(f"{label}: exit sign is not mounted on a structural surface")
+        if "exit" in room and room["exit"].get("need", 0) and abs(room["exit"].get("socket", 0)) < .9:
+            errors.append(f"{label}: exit signal lamps cover its sign")
         for index, wire in enumerate(room.get("wires", [])):
             points = wire["points"]
             plates = [p for p in room.get("plates", []) if p["signal"] == wire["signal"]]
@@ -770,7 +776,7 @@ def validate_scene(scene):
                 errors.append(f"{label}: wire {index} misses its signal's source plate")
             sockets = [m["lamp"] for m in room.get("movers", []) if m["need"] & (1 << wire["signal"])]
             if "exit" in room and room["exit"].get("need", 0) & (1 << wire["signal"]):
-                sockets.append(lifted(room["exit"]["at"], room["exit"]["yaw"], (0, 4.2, 2.65)))
+                sockets.append(lifted(room["exit"]["at"], room["exit"]["yaw"], (room["exit"].get("socket", -1), 4.2, 2.65)))
             if not any(length(sub(points[-1], socket)) <= .12 for socket in sockets):
                 errors.append(f"{label}: wire {index} misses its signal's target socket")
         for index, portal in enumerate(room.get("ends", [])):

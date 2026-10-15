@@ -50,7 +50,8 @@ void TouchWeb(mut CrawlHunt hunt, int who, float3 at, bool object)
     {
         var node = web + 3;
         var point = WebNode(node);
-        bool touching = Math.Abs(at.x - point.x) < .16 && Math.Abs(at.z - point.z) < .78 && at.y < .55;
+        // Strung wall to wall: nothing gets past along a wall without touching it
+        bool touching = Math.Abs(at.x - point.x) < .16 && Math.Abs(at.z - point.z) < 1.0 && at.y < .55;
         int slot = who * 3 + web;
         if (touching && !hunt.touching[slot] && (object || !hunt.bait || hunt.working >= 5))
         {
@@ -116,10 +117,31 @@ void BuildCrawlspace(mut Arena arena, mut Place place, mut Fold fold)
     PutLoose(arena, fold, float3(2, .4, 1), 1);
     PutLoose(arena, fold, float3(1.35, .1, 14.3), 1, .25);
     PutLoose(arena, fold, float3(2.65, .1, 14.3), 1, .25);
-    var spider = SpawnBeast(arena, BeastKind.Spider, WebNode(0), scale: .45, eyes: true);
+    // As wide as the way it runs, legs to the walls; its reach is its legs'
+    var spider = SpawnBeast(arena, BeastKind.Spider, WebNode(0), scale: .8, eyes: true);
     spider.Add(CrawlHunt { });
     for (int web = 0; web < 3; web++) SetProp(arena, PropKind.Web, WebNode(web + 3));
-    for (int pipe = 0; pipe < 8; pipe++) SetProp(arena, PropKind.Pipe, float3(-6.65, .85, 9 + pipe * 2), scale: float3(.5));
+    // Its tracks, a dull thread along their middles: where it runs, and the recesses off them where it doesn't
+    for (int a = 0; a < 6; a++)
+    {
+        for (int b = a + 1; b < 6; b++)
+        {
+            if (!WebNeighbour(a, b)) continue;
+            float3 from = WebNode(a);
+            float3 to = WebNode(b);
+            float3 way = to - from;
+            SetProp(arena, PropKind.Silk, (from + to) * .5, Math.Atan2(way.x, way.z), float3(1, 1, Math.Length(way)));
+        }
+    }
+    // One flanged run along the wall, a metre a length, from the corner to the next
+    for (int pipe = 0; pipe < 7; pipe++) SetProp(arena, PropKind.Pipe, float3(-6.95, .85, 10.1 + pipe), scale: float3(.5));
+    // What was stored down here, before
+    SetProp(arena, PropKind.Pallet, float3(-3.2, 0, 2.5));
+    SetProp(arena, PropKind.Cardboard, float3(3.3, 0, 2.8), WEST, float3(.9));
+    SetProp(arena, PropKind.Cardboard, float3(3.25, .45, 2.75), WEST, float3(.7));
+    SetProp(arena, PropKind.Pallet, float3(22.8, 0, 26.2));
+    SetProp(arena, PropKind.Cardboard, float3(22.8, .19, 26.2), NORTH, float3(.9));
+    SetProp(arena, PropKind.Cardboard, float3(17, 0, 25.7), EAST);
     LampGrid(place, float2(-12, 6), float2(3, 3), 8, 9);
     for (int row = 0; row < 9; row++)
         for (int col = 0; col < 8; col++)
@@ -174,7 +196,7 @@ system SpiderAtWork(mut Beast beast, mut CrawlHunt hunt, mut Arena arena, Place 
     foreach (var row in operators)
     {
         var at = row.body.position;
-        if (at.y < .6 && at.z > 6 && at.z < 32 && !CrawlRefuge(at) && Math.Distance(at.xz, beast.at.xz) < .32)
+        if (at.y < .6 && at.z > 6 && at.z < 32 && !CrawlRefuge(at) && Math.Distance(at.xz, beast.at.xz) < 1.0)
             arena.caught = .001;
     }
 }

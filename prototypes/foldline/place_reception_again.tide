@@ -20,7 +20,15 @@ system TheOtherPair(mut Beast beast, with LastWitness, Arena arena, Place place)
     beast.yaw = arena.arrive < 4 ? EAST : WEST;
 }
 
-system LastLamps(mut Arena arena, Place place)
+// The lamps stutter and go, and what was left of the room's own light with them: only the torches, after.
+system LastLamps(mut Arena arena, mut Place place)
 {
-    if (place.id == RECEPTION_AGAIN && arena.arrive > 7) arena.darkGroups |= 1 << 1;
+    if (place.id != RECEPTION_AGAIN) return;
+    float stutter = arena.arrive - (7 - BLACKOUT_WARNING);
+    arena.warning = stutter > 0 && arena.arrive <= 7 ? Math.Saturate(stutter / BLACKOUT_WARNING) : 0.0;
+    // ...and for a moment the torches with them, all of it, before the hands find their own again
+    arena.blackout = arena.arrive > 7 && arena.arrive < 9;
+    if (arena.arrive <= 7) return;
+    arena.darkGroups |= 1 << 1;
+    place.light = .05;
 }

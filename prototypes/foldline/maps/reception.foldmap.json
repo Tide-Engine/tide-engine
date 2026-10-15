@@ -152,6 +152,34 @@
       "paint": "CONCRETE"
     },
     {
+      "id": "divider_collar_west",
+      "min": [
+        -0.48,
+        4.27,
+        1.42
+      ],
+      "max": [
+        -0.4,
+        4.4,
+        1.58
+      ],
+      "paint": "RUST"
+    },
+    {
+      "id": "divider_collar_east",
+      "min": [
+        0.4,
+        4.27,
+        1.42
+      ],
+      "max": [
+        0.48,
+        4.4,
+        1.58
+      ],
+      "paint": "RUST"
+    },
+    {
       "id": "cupboard_west",
       "min": [
         9.2,
@@ -161,7 +189,7 @@
       "max": [
         9.8,
         4.4,
-        6.6
+        6.8
       ],
       "paint": "PANELS"
     },
@@ -175,7 +203,7 @@
       "max": [
         12.4,
         4.4,
-        6.6
+        6.8
       ],
       "paint": "PANELS"
     },
@@ -222,6 +250,20 @@
         2.6
       ],
       "paint": "PANELS"
+    },
+    {
+      "id": "cupboard_rear",
+      "min": [
+        9.2,
+        0,
+        6.8
+      ],
+      "max": [
+        12,
+        4.4,
+        8
+      ],
+      "paint": "PANELS"
     }
   ],
   "lifts": [
@@ -246,7 +288,8 @@
       "yaw": "SOUTH",
       "need": [
         1
-      ]
+      ],
+      "socket_x": 1
     }
   ],
   "anchors": {
@@ -371,7 +414,7 @@
       "support": "scene",
       "face": "-z",
       "at": [
-        6,
+        5,
         4.2,
         7.475
       ]
@@ -382,12 +425,12 @@
       "id": "cupboard_door",
       "at": [
         10.8,
-        1.9,
-        2.35
+        2.2,
+        5.75
       ],
       "size": [
         2,
-        3.8,
+        4.4,
         0.3
       ],
       "need": [
