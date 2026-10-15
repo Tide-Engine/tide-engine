@@ -7,7 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "game.h"
+#ifndef BOX3D_JOIN_HEADER
+#define BOX3D_JOIN_HEADER "game.h"
+#endif
+#include BOX3D_JOIN_HEADER
 #include "tide/net.h"
 
 static tide_world world;

@@ -6,8 +6,10 @@ Entity/component visibility now uses optional `tide_game.client_state`,
 `load_client_state`, `client_hash` and `filter_client_inputs` callbacks. Generated
 games using visibility supply them; ordinary games keep the existing shared
 input/frame, physical-page hash and snapshot paths. Hosts and generated games
-must rebuild together for the extended `tide_game` ABI. The protocol remains 14;
-the generated header/build identity distinguishes the new game ABI.
+must rebuild together for the extended `tide_game` ABI. Integrated session
+protocol 15 carries `tide_game.simulation` for compatibility, independently of
+the layout/hot-reload `hash`; handwritten games with a zero Simulation ID use
+the hash fallback. Visibility requires no additional protocol-number bump.
 
 The server retains its complete authoritative world and hashes it every tick.
 Each recipient also gets a hash of its permitted projection every tick, together
@@ -112,6 +114,22 @@ send 33,835 and 33,551 bytes per client including the initial approximately 33 K
 projection; this excludes normal frame/input traffic. Generated
 visibility/group/projection/lifecycle fixtures exercise the language side. Final
 native/web validation is recorded with the integrated work.
+
+## Simulation compatibility and managed recovery (2026-10-15)
+
+Session protocol is now 15: HELLO carries the 32-byte generated Simulation ID
+and the receiver checks it independently of layout identity. Handwritten games
+with all-zero Simulation ID retain the legacy hash fallback. Generated-header
+ABI marker forces hosts to rebuild. Hosting envelope 2 checks simulation before
+allocation and returns WRONG_VERSION; standard hosts propagate update guidance.
+The intentional two-client local-events wire-byte pin increases by 64 bytes;
+world deterministic hashes are unchanged. Tests cover unequal simulation with
+equal layout, equal simulation with different layout, and checkpoint reconnect
+cookie/identity restoration. Host-only recovery metadata preserves pending player
+sets, identities/digests, seed, dt, closed and started state; it does not alter
+world snapshots/hashes. Managed exact-release save envelopes and validation are
+in managed-hosting.md. The original dedicated-host note below predates these
+explicitly requested protocol/ABI changes.
 
 ## Dedicated match admission (2026-10-15)
 

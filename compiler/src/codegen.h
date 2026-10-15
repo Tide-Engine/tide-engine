@@ -10,6 +10,7 @@ typedef struct game_info {
     bool bold;        // Its C names the bold weight's file (it says Font.Bold), which is in the platform layer's library
     bool microphone;  // It says Clip.Microphone: its Android app's manifest asks to record audio
     bool assets_affect_match; // Gameplay assets contribute to game identity; edits require a build, not only a new pack
+    char simulation[65]; // Generated compatibility identity, as lowercase SHA-256.
     // The files and folders its assets name (asset_files.h), for whoever
     // watches them: malloc'd, each path malloc'd, for the caller to free.
     char **asset_paths;
@@ -33,6 +34,7 @@ typedef struct codegen_options {
     const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL
     const char *const *defines; // The symbols the build defines for every file's #if (`--define FAST`, DEBUG), or NULL
     int define_count;
+    const uint8_t *external_identity; // Optional SHA-256 of game C/headers/libraries, independent of target.
     const char *editor_prefab; // Internal native-editor build: qualified prefab to instantiate without gameplay startup.
     bool editor_local;
     const char *editor_source, *editor_text; // Unsaved source overlay, retaining the original path and asset scope.

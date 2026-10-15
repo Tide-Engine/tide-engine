@@ -85,7 +85,8 @@ typedef struct tide_game {
     float max_rewind; // Finite seconds of collider history; 0 disables it.
     tide_view_time (*view_time)(const void *input);
     void (*set_view_time)(void *input, tide_view_time time);
-    uint64_t hash;            // Tells builds apart: servers only take players of the same game
+    uint64_t hash;            // Generated layout identity, also used by hot reload.
+    uint8_t simulation[32];   // Simulation compatibility; all zero for handwritten game tables using hash.
     uint32_t world_size;      // sizeof(tide_world): a world starts as that many zeros
     uint32_t input_size;      // sizeof(tide_input), or 0
     uint32_t max_input_bytes; // The most write_input or write_input_delta writes
@@ -337,6 +338,7 @@ typedef struct tide_server_desc {
     // Host migration: the digests of the players' cookies (as many as the game
     // takes players, 0 for none), which they come back with. NULL: none.
     const uint64_t *digests;
+    const uint8_t (*identities)[32]; // Trusted same-release recovery metadata, or NULL.
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
     // 64 bits nobody could guess, from the system, for the seed of the match
@@ -362,6 +364,18 @@ void tide_server_update(tide_server *s, double now);
 const void *tide_server_world(const tide_server *s);
 uint32_t tide_server_tick(const tide_server *s); // Ticks run so far
 uint32_t tide_server_player_count(const tide_server *s);
+// Host recovery metadata, separate from deterministic world bytes. Save together
+// with the world at an update boundary; transport connections are never persisted.
+typedef struct tide_server_recovery {
+    tide_player_set players, leaving;
+    uint64_t digests[TIDE_PLAYERS_MOST];
+    uint8_t identities[TIDE_PLAYERS_MOST][32];
+    uint32_t tick_rate;
+    uint32_t seed;
+    float dt;
+    bool closed, started;
+} tide_server_recovery;
+void tide_server_recovery_state(const tide_server *s, tide_server_recovery *out);
 // Trusted host metadata; false (and zero output) for anonymous/unknown players.
 bool tide_server_player_identity(const tide_server *s, tide_player_id player, uint8_t identity[32]);
 // Sends `player` away: they go offline with TIDE_DISCONNECT_KICKED and
@@ -605,6 +619,8 @@ void tide_session_leave(tide_session *s);
 // A session that couldn't start, or whose network gave out: leaves the match,
 // if it's in one, and reports Disconnected with the reason.
 void tide_session_fail(tide_session *s, tide_disconnect_reason reason);
+// The same, with bounded user-facing context in Disconnected.message.
+void tide_session_fail_message(tide_session *s, tide_disconnect_reason reason, const char *message);
 // Once per frame, with the host's time in seconds. When this machine runs the
 // server, a long gap since the last update is a pause (a breakpoint, a
 // browser that froze the page): the match goes on from where it stopped.

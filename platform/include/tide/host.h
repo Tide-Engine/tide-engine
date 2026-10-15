@@ -394,8 +394,9 @@ static inline bool tide_run_hosted_request(const tide_session_request *request)
                               && tide_platform_udp_open(0, &transport);
     tide_session_leave(tide_run_session);
     const uint64_t nonce = tide_platform_entropy();
-    const tide_hosting_client_desc d = {.transport = transport, .server = opened ? server : (tide_address){0},
+    tide_hosting_client_desc d = {.transport = transport, .server = opened ? server : (tide_address){0},
         .match = match, .nonce = nonce, .secure = room};
+    memcpy(d.simulation, tide_run_game->game->simulation, 32);
     tide_run_hosting = opened ? tide_hosting_client_create(&d, tide_run_now) : NULL;
     if (!tide_run_hosting) {
         if (opened) transport.close(transport.self);
@@ -909,9 +910,10 @@ static inline int tide_run_frame(void *user, const float seconds)
         } else if (result != TIDE_HOSTING_PENDING && result != TIDE_HOSTING_ACCEPTED) {
             const tide_disconnect_reason disconnected = tide_run_hosting_joined && result == TIDE_HOSTING_NOT_FOUND
                 ? TIDE_DISCONNECT_ENDED : result == TIDE_HOSTING_TIMED_OUT ? TIDE_DISCONNECT_TIMED_OUT
-                : result == TIDE_HOSTING_DENIED || result == TIDE_HOSTING_FULL ? TIDE_DISCONNECT_REFUSED
+                : result == TIDE_HOSTING_DENIED || result == TIDE_HOSTING_FULL || result == TIDE_HOSTING_WRONG_VERSION ? TIDE_DISCONNECT_REFUSED
                 : TIDE_DISCONNECT_FAILED;
             const char *reason = disconnected == TIDE_DISCONNECT_ENDED ? "match ended"
+                               : result == TIDE_HOSTING_WRONG_VERSION ? "different simulation; update the client to this game's release"
                                : result == TIDE_HOSTING_DENIED ? "permission denied"
                                : result == TIDE_HOSTING_FULL ? "server capacity reached; try again later"
                                : result == TIDE_HOSTING_NOT_FOUND ? "match ID not found; check the address"
@@ -919,7 +921,7 @@ static inline int tide_run_frame(void *user, const float seconds)
                                : "invalid admission request";
             fprintf(stderr, "tide: dedicated server: %s\n", reason);
             tide_run_hosting_leave();
-            tide_session_fail(s, disconnected);
+            tide_session_fail_message(s, disconnected, reason);
         }
     }
     const uint64_t update_began = measured_netcode ? tide_time_now_ns() : 0;

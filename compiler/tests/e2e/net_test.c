@@ -696,12 +696,57 @@ TIDE_TEST(net_the_server_turns_away_other_games)
 {
     start((tide_net_conditions){0}, 1);
     tide_game other = tide_game_api;
-    other.hash ^= 1u;
+    other.simulation[0] ^= 1u;
     const tide_client_desc desc = {.game = &other, .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1)};
     clients[0] = tide_client_create(&desc, now);
     run(0.5);
     const tide_client_status s = tide_client_status_of(clients[0]);
     TIDE_CHECK(s.state == TIDE_SESSION_OFFLINE && s.reason == TIDE_DISCONNECT_REFUSED);
+    TIDE_CHECK(strstr(s.message, "Different simulation") != NULL);
+    finish();
+}
+
+TIDE_TEST(net_equal_simulation_can_join_despite_a_different_local_layout_identity)
+{
+    start((tide_net_conditions){0}, 1);
+    tide_game other = tide_game_api;
+    other.hash ^= 1u;
+    const tide_client_desc desc = {.game = &other, .transport = tide_loopback_endpoint(net, 2), .server = tide_loopback_address(1)};
+    clients[0] = tide_client_create(&desc, now);
+    run(0.5);
+    TIDE_CHECK(tide_client_status_of(clients[0]).state == TIDE_SESSION_CONNECTED);
+    finish();
+}
+
+TIDE_TEST(net_recovery_restores_reconnect_cookie_metadata_outside_world_bytes)
+{
+    start((tide_net_conditions){0}, 1);
+    join(0);
+    run(0.5);
+    const tide_client_status before = tide_client_status_of(clients[0]);
+    TIDE_REQUIRE(before.state == TIDE_SESSION_CONNECTED);
+    tide_server_recovery recovery;
+    tide_server_recovery_state(server, &recovery);
+    TIDE_CHECK(tide_players_has(&recovery.players, before.player.id - 1u));
+    TIDE_CHECK(recovery.digests[before.player.id - 1u] != 0);
+    tide_world saved = {0};
+    tide_world_copy(&saved, tide_server_world(server));
+    const int32_t joined = saved.Players.joined;
+    tide_client_destroy(clients[0]); clients[0] = NULL;
+    tide_server_destroy(server);
+    const tide_server_desc restored = {.game = &tide_game_api, .world = &saved, .players = recovery.players,
+        .leaving = recovery.leaving, .digests = recovery.digests, .closed = true,
+        .identities = (const uint8_t (*)[32])recovery.identities, .tick_rate = recovery.tick_rate, .dt = recovery.dt,
+        .transports = {tide_loopback_endpoint(net, 1)}};
+    server = tide_server_create(&restored, now);
+    tide_world_free(&saved);
+    const tide_client_desc reconnect = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 2),
+        .server = tide_loopback_address(1), .cookie = before.cookie, .sample = sample, .user = &who[0], .lead = 2};
+    clients[0] = tide_client_create(&reconnect, now);
+    run(1.0);
+    const tide_client_status after = tide_client_status_of(clients[0]);
+    TIDE_CHECK(after.state == TIDE_SESSION_CONNECTED && after.player.id == before.player.id);
+    TIDE_CHECK(((const tide_world *)tide_server_world(server))->Players.joined == joined);
     finish();
 }
 

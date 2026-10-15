@@ -89,7 +89,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 14u
+#define PROTOCOL 15u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD };
@@ -1264,6 +1264,7 @@ static connection *find_connection(tide_server *s, const uint32_t transport, con
 static void on_hello(tide_server *s, const uint32_t transport, const tide_address from, tide_reader *r)
 {
     const uint64_t game = tide_read_u64(r);
+    const uint8_t *simulation = tide_read_bytes(r, 32);
     const uint32_t nonce = tide_read_u32(r);
     const uint16_t their_time = tide_read_u16(r);
     const uint64_t cookie = tide_read_u64(r);
@@ -1305,7 +1306,8 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     }
     connection *c = find_connection(s, transport, from);
     if (c && c->nonce == nonce) return; // It's being welcomed already
-    if (game != s->game->hash) {
+    if (memcmp(s->game->simulation, anonymous, 32) == 0
+        ? game != s->game->hash : memcmp(simulation, s->game->simulation, 32) != 0) {
         if (c) drop_connection(s, c);
         refuse(s, transport, from, REFUSE_OTHER_GAME);
         return;
@@ -2399,6 +2401,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     // A match's seed, in a game that has one: from the system where the host
     // has it to give, so no two matches go the same, or else the one the host
     // picked; 31 bits, as Time.seed is
+    s->seed = desc->seed & 0x7FFFFFFFu;
     if (!desc->world && g->seeded) {
         s->seed = desc->seed;
         if (desc->entropy) {
@@ -2424,6 +2427,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
             s->away_since[i] = now > 0.0 ? now : 1e-9;
         }
         if (desc->digests) s->digests[i] = desc->digests[i];
+        if (desc->identities) memcpy(s->identities[i], desc->identities[i], 32);
     }
     s->closed = desc->closed;
     s->now = now;
@@ -2592,6 +2596,30 @@ uint32_t tide_server_player_count(const tide_server *s)
     uint32_t n = 0;
     for (uint32_t i = 0; i < s->players; i++) n += s->connections[i].used ? 1u : 0u;
     return n;
+}
+
+void tide_server_recovery_state(const tide_server *s, tide_server_recovery *out)
+{
+    memset(out, 0, sizeof *out);
+    out->players = s->present;
+    out->closed = s->closed;
+    out->tick_rate = s->desc.tick_rate;
+    out->seed = s->seed;
+    out->started = s->started;
+    out->dt = s->dt;
+    for (uint32_t i = 0; i < s->players; i++) {
+        if (s->connections[i].used && s->connections[i].greeted) tide_players_add(&out->players, i);
+        out->digests[i] = s->digests[i];
+        memcpy(out->identities[i], s->identities[i], 32);
+    }
+    for (uint32_t i = s->event_count; i-- > 0;) {
+        const uint32_t player = s->events[i][1];
+        if (s->events[i][0] == EVENT_JOIN) tide_players_remove(&out->players, player);
+        else {
+            tide_players_add(&out->players, player);
+            tide_players_add(&out->leaving, player);
+        }
+    }
 }
 
 bool tide_server_player_identity(const tide_server *s, const tide_player_id player, uint8_t identity[32])
@@ -3490,7 +3518,14 @@ static void client_receive(tide_client *c)
         case MSG_DOWNLOAD: on_download(c, &r); break;
         case MSG_SERVER: on_server(c, &r); break;
         case MSG_HANDOVER: on_handover(c, &r); break;
-        case MSG_REFUSE: go_offline(c, TIDE_DISCONNECT_REFUSED); break;
+        case MSG_REFUSE: {
+            const uint8_t why = tide_read_u8(&r);
+            if (r.failed) break;
+            if (why == REFUSE_OTHER_GAME) copy_message(c->message,
+                "Different simulation; update the client to this game's release.", TIDE_MESSAGE_BYTES - 1u);
+            go_offline(c, TIDE_DISCONNECT_REFUSED);
+            break;
+        }
         case MSG_BYE: {
             const uint8_t why = tide_read_u8(&r);
             if (why == BYE_KICKED && !r.failed) {
@@ -4738,10 +4773,11 @@ static void adjust_delay(tide_client *c)
 
 static void send_hello(tide_client *c)
 {
-    uint8_t data[64];
+    uint8_t data[96];
     tide_writer w = {data, sizeof data, 0, false, false};
     header(&w, MSG_HELLO);
     tide_write_u64(&w, c->game->hash);
+    tide_write_bytes(&w, c->game->simulation, 32);
     tide_write_u32(&w, c->nonce);
     tide_write_u16(&w, said_time(c));
     tide_write_u64(&w, c->desc.cookie);
@@ -5298,8 +5334,15 @@ void tide_session_destroy(tide_session *s)
 
 void tide_session_fail(tide_session *s, const tide_disconnect_reason reason)
 {
+    tide_session_fail_message(s, reason, NULL);
+}
+
+void tide_session_fail_message(tide_session *s, const tide_disconnect_reason reason, const char *message)
+{
     tear_down(s);
-    push_event(s, (tide_session_event){.kind = TIDE_SESSION_DISCONNECTED_EVENT, .reason = reason});
+    tide_session_event event = {.kind = TIDE_SESSION_DISCONNECTED_EVENT, .reason = reason};
+    copy_message(event.message, message, TIDE_MESSAGE_BYTES - 1u);
+    push_event(s, event);
 }
 
 void tide_session_leave(tide_session *s)

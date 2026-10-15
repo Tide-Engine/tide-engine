@@ -9,7 +9,8 @@ exception. Generated code uses private specialized group/policy and canonical
 value codecs built on existing containers; it calls no new exported runtime
 function. Optional `tide_game` projection, input-filter, lifecycle-journal and
 availability callbacks extend the existing session boundary. Hosts and generated
-games rebuild together through the Session ABI identity marker.
+games rebuild together through the Session ABI identity marker. Protocol 15's
+simulation identity includes the recipient state and listener journal schemas.
 
 Entity metadata pages may be absent between visible global entity IDs. Dense
 tables keep their previous hash/pack/delta representation; sparse tables have an
@@ -17,10 +18,24 @@ explicit indexed-page representation. Generated local delivery reconciles
 Shown/Hidden against its last presented predicted and verified endpoints, with
 private COW snapshots and destruction-cause tracking. Rollback can restore a
 resource after canceled concealment without replaying unchanged availability.
-Contracts and validation are in
-ecs.md, netcode.md, memory-safety.md and verified-and-local-handlers.md. The Tide
-API spellings and conservative handling of opaque server state are documented
+Contracts and validation are in ecs.md, netcode.md, memory-safety.md and
+verified-and-local-handlers.md. The Tide API spellings and conservative handling
+of opaque server state are documented
 separately from agreed visibility semantics in docs/spec.md.
+
+## Managed hosting and simulation identity (2026-10-15)
+
+The owner requested implementation of local deployment, isolated WASM matches,
+prepaid billing and durable recovery. The existing temporary session/hosting
+exception includes `tide_game.simulation[32]`, protocol 15 HELLO negotiation,
+hosting envelope 2 and the handwritten managed reactor launcher. New host-only
+`tide_server_recovery`/getter and descriptor identities restore reconnect
+cookies/identities, pending players, seed, dt, start and admission metadata;
+`tide_session_fail_message` provides actionable host admission failures.
+Generated Tide calls no new runtime function. World packing/hashes and game
+save content remain separate from host metadata. Earlier statements below
+about unchanged protocol/ABI describe the original native-host increment.
+Full contracts, ownership, validation and launch gaps: managed-hosting.md.
 
 ## Frustum culling (2026-10-15)
 

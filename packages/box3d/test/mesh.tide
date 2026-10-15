@@ -1,0 +1,109 @@
+using Box3D;
+settings { maxRewind = 0.25; }
+component Floor { }
+component Ledge { }
+component Support { }
+component Falling { bool gap; }
+singleton Request { ViewTime time; bool removePart; bool removeBody; bool edit; }
+singleton Observed
+{
+    local bool current;
+    local bool gap;
+    local bool back;
+    local bool part;
+    local bool historicalPart;
+    local bool rotated;
+    local bool historicalRotated;
+    local Entity partEntity;
+    local float fraction;
+    local bool prepared;
+    local bool historical;
+    local bool historicalGap;
+    local bool historicalBack;
+    local float historicalFraction;
+    local bool boxCast;
+    local bool sphereCast;
+    local bool capsuleCast;
+    local bool boxOverlap;
+    local bool sphereOverlap;
+    local bool capsuleOverlap;
+    local bool initial;
+    local bool savedHit;
+    local Query saved;
+}
+MeshCollider Islands()
+{
+    return MeshCollider {
+        vertices = [float3(-3, 0, -2), float3(-3, 0, 2), float3(-1, 0, 2), float3(-1, 0, -2),
+                    float3(1, 0, -2), float3(1, 0, 2), float3(3, 0, 2), float3(3, 0, -2)],
+        indices = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]
+    };
+}
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    var islands = Islands();
+    Spawn(Body { type = BodyType.Static, rewind = true }, MeshCollider { vertices = islands.vertices, indices = islands.indices }, Floor);
+    Spawn(Body { type = BodyType.Static, position = float3(10, 0, 0) }, Support);
+    Spawn(Body { position = float3(-2, 3, 0) }, Sphere { radius = 0.25 }, Falling);
+    Spawn(Body { position = float3(0, 3, 0) }, Sphere { radius = 0.25 }, Falling { gap = true });
+    // Unsupported body types and malformed meshes make no shape.
+    Spawn(Body { position = float3(100, 0, 0) }, MeshCollider { vertices = islands.vertices, indices = islands.indices });
+    Spawn(Body { type = BodyType.Kinematic }, MeshCollider { vertices = islands.vertices, indices = islands.indices });
+    Spawn(Body { type = BodyType.Static }, MeshCollider { vertices = [float3(0), float3(1), float3(2)], indices = [-1, 1, 2] });
+    Spawn(Body { type = BodyType.Static }, MeshCollider { vertices = [float3(0), float3(1), float3(2)], indices = [0, 1, 3] });
+    Spawn(Body { type = BodyType.Static }, MeshCollider { vertices = [float3(0), float3(1), float3(2)], indices = [0, 1] });
+    Spawn(Body { type = BodyType.Static }, MeshCollider { vertices = [float3(0), float3(1), float3(2)], indices = [0, 1, 2] });
+    Spawn(Body { type = BodyType.Static }, MeshCollider);
+    mut var zero = Islands();
+    zero.scale.x = 0;
+    Spawn(Body { type = BodyType.Static }, MeshCollider { vertices = zero.vertices, indices = zero.indices, scale = zero.scale });
+}
+event(Spawned) AddLedge(with Support)
+{
+    mut var mesh = Islands();
+    mesh.scale = float3(-1, 2, 1);
+    mesh.offset = float3(0, 1, 0);
+    Spawn(MeshCollider { vertices = mesh.vertices, indices = mesh.indices, scale = mesh.scale, offset = mesh.offset }, Part { of = this }, Ledge);
+}
+system Remove(Request request, with Ledge) { if (request.removePart) this.Destroy(); }
+system RemoveSupport(Request request, with Support) { if (request.removeBody) this.Destroy(); }
+system Edit(Request request, mut MeshCollider mesh, with Floor)
+{
+    if (request.edit) { mesh.vertices = []; mesh.indices = []; }
+}
+view Probe(Physics physics, Request request, mut Observed observed)
+{
+    var from = float3(-2.5, 5, 1);
+    var to = float3(-2.5, -5, 1);
+    observed.current = physics.Raycast(from, to, out var hit);
+    observed.fraction = hit.fraction;
+    observed.gap = physics.Raycast(float3(0, 5, 1), float3(0, -5, 1), out _);
+    observed.back = physics.Raycast(to, from, out _);
+    observed.part = physics.Raycast(float3(12.5, 5, 1), float3(12.5, -5, 1), out var part);
+    observed.partEntity = part.part;
+    observed.savedHit = observed.saved.Raycast(from, to, out _);
+    observed.prepared = physics.Rewind(request.time, out var query);
+    observed.historicalPart = query.Raycast(float3(12.5, 5, 1), float3(12.5, -5, 1), out _);
+    observed.rotated = physics.Raycast(float3(5, 2.5, 1), float3(15, 2.5, 1), out _);
+    observed.historicalRotated = query.Raycast(float3(5, 2.5, 1), float3(15, 2.5, 1), out _);
+    observed.saved = query;
+    observed.historical = query.Raycast(from, to, out var old);
+    observed.historicalFraction = old.fraction;
+    observed.historicalGap = query.Raycast(float3(0, 5, 1), float3(0, -5, 1), out _);
+    observed.historicalBack = query.Raycast(to, from, out _);
+    observed.boxCast = query.Cast(Box { size = float3(0.2) }, from, quaternion.identity, to, out _) &&
+                       physics.Cast(Box { size = float3(0.2) }, from, quaternion.identity, to, out _);
+    observed.sphereCast = query.Cast(Sphere { radius = 0.1 }, from, quaternion.identity, to, out _) &&
+                          physics.Cast(Sphere { radius = 0.1 }, from, quaternion.identity, to, out _);
+    observed.capsuleCast = query.Cast(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out _) &&
+                           physics.Cast(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out _);
+    var surface = float3(-2.5, 0, 1);
+    observed.boxOverlap = query.Overlap(Box { size = float3(0.2) }, surface, quaternion.identity, out _) &&
+                          physics.Overlap(Box { size = float3(0.2) }, hit.point, quaternion.identity, out _);
+    observed.sphereOverlap = query.Overlap(Sphere { radius = 0.1 }, surface, quaternion.identity, out _) &&
+                             physics.Overlap(Sphere { radius = 0.1 }, hit.point, quaternion.identity, out _);
+    observed.capsuleOverlap = query.Overlap(Capsule { radius = 0.1, height = 0.4 }, surface, quaternion.identity, out _) &&
+                              physics.Overlap(Capsule { radius = 0.1, height = 0.4 }, hit.point, quaternion.identity, out _);
+    observed.initial = query.Cast(Sphere { radius = 0.1 }, surface, quaternion.identity, to, out var initial) && initial.fraction == 0;
+}

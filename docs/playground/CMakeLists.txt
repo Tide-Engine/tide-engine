@@ -32,7 +32,8 @@ target_include_directories(tidec_browser SYSTEM PRIVATE
     "${PROJECT_SOURCE_DIR}/compiler/third_party/stb_dxt")
 target_compile_options(tidec_browser PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/host.h")
 target_compile_options(tidec_browser PRIVATE -mexception-handling -mllvm -wasm-enable-sjlj)
-target_compile_definitions(tidec_browser PRIVATE _WASI_EMULATED_PROCESS_CLOCKS "TIDE_VERSION=\"${TIDE_VERSION}\"")
+target_compile_definitions(tidec_browser PRIVATE _WASI_EMULATED_PROCESS_CLOCKS "TIDE_VERSION=\"${TIDE_VERSION}\""
+    "TIDE_SIMULATION_RUNTIME=\"${TIDE_SIMULATION_RUNTIME}\"")
 target_link_libraries(tidec_browser PRIVATE tide tide_playground_importers wasi-emulated-process-clocks setjmp)
 
 # Staging and pinned third-party downloads are explicit, like docs_examples.

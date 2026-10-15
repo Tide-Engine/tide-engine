@@ -1,5 +1,369 @@
 # Inside Out
 
+## Current polish round (2026-10-15)
+
+Resumed the owner's interrupted Inside Out task: remove portal-like copies,
+polish sound and UI, add puzzles and provide a local two-tab build. The
+following sections supersede the earlier dated history below. These are
+prototype choices within that request, not new engine or language contracts.
+No website deployment or CI dispatch is part of this round.
+
+Every room now has exactly one box. The campaign has eighteen puzzles in five
+chapters (Boxes, Each other, Power, Itself, Everything), with eleven additions.
+Pressure plates and shutters use two level-wide channels and pre-move power.
+Self-containing rooms and two-room cycles replace copied entrances. The
+existing four foundation commits were recovered before completing their
+unfinished UI, audio, campaign, review fixes and local-play integration.
+
+Review fixes: a box in a closed doorway shutter cannot bypass that shutter
+by admitting another thing through its own doorway. Regression fixtures cover
+both robots and batteries, plus pre-move power on entry, exit and posting.
+Own-box entry emits a doorway cue even without a room/depth change; the view
+uses the actual command direction to distinguish a cycle exit from an entry.
+It animates and zooms through that entry. Undo has no stale direction hint.
+Signals under settled, arriving or departing boxes stay below their interior
+floors, with an outside band/shape. Occupied shutters keep shape marks, and
+battery departure keeps the collar until the rendered battery has cleared.
+Open/closed signals retain channel shapes, with coarse miniature marks.
+
+Local play: build web-release's inside_out_page, then run
+node prototypes/inside-out/serve.mjs. It serves only this game's staged HTML
+at http://127.0.0.1:8790/prototypes/inside-out/ and runs a loopback-only relay
+on port 8791. Two tabs can host/join without the website or production relay.
+The page is read afresh for reloads, has COOP/COEP and no-cache headers, and
+unrelated paths return 404. The server and its WebSocket endpoint were
+smoke-tested. This checkout's ignored build/tools/node/node.exe is official
+Node 24.16.0, verified against the release's SHA256 list; the machine's default
+Node is older and was not replaced.
+
+Native debug and web debug targets build warning-free and each game aggregate
+passes 40/40. The full two-browser WebGPU fixture passes in 592.68 seconds,
+including shared controls, occupied-box context, real self-entry/undo,
+three production solutions and phone touch. The corrected full WebGL fixture
+passes in 696.15 seconds with the same coverage. Its first run used the old
+30-second guard for the new 80-tick intro settling wait and timed out while
+verified ticks and packets continued; the proportional guard fixes that
+fixture failure without changing its assertions. No browser/runtime/graphics
+errors occur in either successful run. Physical phones, external NAT, gamepad hardware and human
+puzzle difficulty remain unmeasured. The local server is the review build;
+the public website retains its prior deployed version.
+
+The native configuration found no Vulkan validation layer: native captures
+verify rendering without claiming layer coverage. Browser fixtures enable
+Tide.checkGL and fail on runtime, shader, WebGL or WebGPU errors. The T3
+collaborative preview reported unavailable on both status and open; visual
+QA used the repository's muted browser fixtures and bounded native captures.
+
+Additional bounded native review at 1280x800 and 390x844 checked both seats
+with an occupied box on a shutter (Carry the current) and the recursive box
+on plate A (Trading places). Neither parent signal draws through the smaller
+interior floor; its band and shape remain outside the footprint. The native
+presentation rebuild is warning-free. Artifacts are under ignored
+build/inside-out-captures/ui/{signal-box-on-shutter,recursive-box-on-plate}-*.
+
+The browser fixture follows the new menu, code-field focus, chapter tabs,
+shared reset confirmation and phone-pad layout. HUD label crops lie wholly
+inside opaque chips. Scene comparisons wait out each 2.5-second intro card,
+so its disappearance cannot masquerade as a camera/undo difference; the
+verified-tick wait's wall-time budget scales for those longer settling waits.
+The retired copy puzzle is replaced with Beside itself, checking intermediate
+same-room entry poses, exact partner undo and its real production solution.
+
+## Inside Out audio recovery, 2026-10-15
+
+Recovered the final reviewed sound workflow outputs from the interrupted
+Claude task. The music scratch directory contains a later revision than
+the assets copied into its unfinished integration worktree. Shipping game
+music SHA-256 is `4b9037da1e479892ad9a7b8a478a96ae0e869d0af4c9b0b177ec3acdd95ade5a`;
+menu is `6b87bbe5820f0c936d4aa34b8ba22c18b511716c9682c4f34ffe9af550e712bd`.
+`sfx/SHA256SUMS` pins every installed asset. The generators are copied
+unchanged from that final scratch revision and retained under `sfx/generate`.
+
+`sound.tide` retains Mixer and UiSound's agreed UI contracts. Separate
+Music/Effects/Interface buses have maximum gains 0.12/0.3/0.3, following
+the final asset review; default sliders give 0.096/0.3/0.24. The master
+also respects Rooms.Lobby.volume. Sound voices live on transient local
+entities so overlapping cues route through real buses and volume/mute
+changes affect tails already playing. Their lifetime includes a 50 ms
+margin; no state enters the match and no runtime API was added.
+
+Menu/game loops crossfade over one second. Resume menus retain game music.
+All six UiCue values use distinct assets, with hover/slider throttles.
+Movement uses three step variants and two box/battery variants; remote
+steps are half volume. Doorway source/direction distinguishes enter from
+exit, including self-recursion with unchanged room identity. A voiced
+blocked-step cue plays at most twice per second per seat; intervening
+blocked steps use a short quiet thud. Undo/reset/solve retain command cues.
+
+An in-match view compares local prior presentation state with the current
+world: battery seating/unseating, first box docking, individual plate
+press/release, powered shutter transitions and partner arrival/departure.
+It coalesces each cue type per frame so networks of shutters do not stack
+identical samples. Initial state and serial changes establish a baseline;
+undo/reset/admission never replay a roomful of transitions. As requested,
+these diffs use presentation snapshots: simultaneous opposite changes
+between rendered frames can coalesce or be inaudible. Action events keep
+their existing once-per-event behavior.
+
+The recovered workflow had measured all PCM endpoints/peaks/spectra and
+engine Vorbis playback. Its final revision softened brass and doorway
+layers, removed ringing reverb, aligned the entrance tap with the passage,
+retuned the main chimes to F and removed the music's constant noise bed.
+Those historical measurements are recovery evidence, not newly performed
+tests of this integration. No device listening is claimed.
+
+### Local validation
+
+Both copied generators were rerun under this checkout's ignored
+`build/audio-repro/{music,sfx}`. All 32 installed files reproduced byte
+for byte against `SHA256SUMS` (2,129,691 bytes). The standard-library
+`check_assets.py` passed shipping and regenerated sets, including the
+29 PCM WAV formats, zero endpoints and peaks at or below -6 dBFS.
+The music generator also repeated its continuous-three-pass/seam checks.
+
+After the native presentation build, bounded device-free captures through
+the production host and settings verify:
+
+- Three-second title music correlates 0.99999943 with the final menu
+  source and has measured gain 0.095991, matching the default 0.8 * 0.12.
+- Clicking the actual mute setting produces exact-zero PCM for the
+  measured 1.3–2.4-second interval; unmuting resumes the existing track.
+- Setting the master slider near half gives source gain 0.048346 and
+  correlation 0.99999760, so the sound view preserves the master setting.
+- A nine-second two-player script executes the first production solution
+  and then undo. Both mixes are unclipped, with peaks -16.895/-16.113
+  dBFS. The solve source is present at measured gains 0.300445/0.298992;
+  its full tail remains audible in the PCM while the later undo overlaps.
+  Those correlations include the other deliberately overlapping cues and
+  therefore do not claim isolated-source equality.
+
+Scripts, captures, measurements and generated spectrograms are ignored
+under `build/audio-repro`. `git diff --check` passes for the sound scope.
+The root task owns native/web game validation and UI checks. Physical
+listening and browser audio hardware were not exercised.
+
+
+## Inside Out UI recovery, 2026-10-15
+
+Recovered the interrupted polish brief's UI work in the shared checkout.
+The UI is local presentation: match rules, level layouts and command payloads
+are unchanged by this part of the work.
+
+`ui.tide` supplies all four Rooms pages through game views, with empty package
+page overrides. It keeps Rooms' hosting, joining, copy, leave and settings
+flow. Warm walnut panels, cream text, brass focus/primary buttons, sage
+success marks, rounded corners, soft shadows and bold headings replace the
+factory controls. The title has a finite animated nested-square backdrop,
+four-paint mark, Host a room, Join a friend, How to play and Settings. Counts
+come from LEVEL_COUNT and CHAPTER_COUNT. Reduced motion holds the backdrop.
+
+The waiting card shows the room code and Copy code. The in-play Menu explicitly
+says the game keeps going for the partner; it offers Resume, Restart puzzle,
+Choose puzzle, How to play, Settings, copy and leave. Restart asks for shared
+confirmation. Puzzle selection has numbered chapter tabs, chapter names,
+named numbered cards, the current puzzle highlighted and drawn sage ticks for
+solved puzzles. Changing a puzzle after any moves asks for confirmation.
+Confirmed actions carry the current serial and the existing Reset/ChooseLevel
+commands; command authorization stays with the game.
+
+Settings expose master via Rooms.Lobby.volume, music/effects/interface via
+Mixer, mute, reduced motion, step preview and advice visibility. Preferences
+and this machine's completed bits are JSON in preferences.json under
+Application.persistentDataPath. The file is read once, volumes clamped, and
+written only when a setting or completed bits change. Default startup writes
+nothing; inaccessible files fail quietly. Saved solved bits are combined with
+the match's progress only for the shelf, never to modify match completion.
+
+Seven illustrated guide pages cover walking/rows, blocked-box entry, leaving,
+partner backstops, completion, power channels and true recursion. Paragraphs
+wrap to the phone width. Introduction cards last 2.5 seconds and fade near
+their end (static under reduced motion). Solved cards give shared moves,
+Next puzzle / Enter and Choose puzzle, with chapter-complete and ending text.
+Hints retain their real three tiers and fit their text.
+
+`paint.tide` changes are confined to the backdrop, Chip and HUD/header labels.
+Small chips are opaque for readability and stable label crops. The new header
+shows chapter, puzzle number/name, shared moves and Menu. The scene's context
+and both robots' location chips are above the action controls. `map.tide`'s
+UI framing uses SceneTop 122 on phones / 112 otherwise, SceneBottom 206 / 124.
+The focused camera remains independent of the partner.
+
+### Browser fixture coordinates
+
+All coordinates are logical pixels from the top left. Normal desktop is
+1280x800; phone is 390x844. Rect formulas remain the source of truth.
+
+- Menu: x=w-88, y=16, 72x42. Header chapter x=20/y=22; puzzle title x=20/y=47,
+  fitted bold text. Moves x=w-108/y=37 on desktop, x=w-20/y=68 on phone,
+  right-aligned. Advice starts x=16 and its toggle x=w-88/y=68 (phone 78).
+- Title card: width=min(w-32,510), height=560, centered. Buttons x=card.x+32,
+  width=card.width-64, height=48. Host y=card.y+212; Join +272; Guide +332;
+  Settings +392. Host enters the waiting/game HUD directly.
+- Join card: width=min(w-32,480), height=360, centered. Click the code field
+  at card.x+24/card.y+130 (width=card.width-48,height52) before typing. Enter
+  joins; Join is at +198, height46. Back is +294, height44.
+- In-play menu: width=min(w-32,500), height650, centered. Buttons x=card.x+24,
+  width=card.width-48. Resume y+122, Restart +180, Choose +238, Guide +296,
+  Settings +354, heights46. Code copy +464/height42; Leave +540/height44.
+- Puzzle select: width=min(w-32,740), height=min(h-40,650), centered. Five
+  numbered chapter tabs at card.y+114, x=card.x+24 + chapter*(card.width-48)/5.
+  Cards at card.y+204+row*57, height48, x=card.x+24,width=card.width-48.
+  Back is card.bottom-66. Only the active chapter's cards are drawn.
+- Confirmation: centered 480x300 (width capped w-32); primary action
+  x=card.x+24,y=card.y+166,width=card.width-48,height44. Back y+234.
+- Undo/Reset/Hint: x=24 on desktop,16 on phone; widths96/74, gaps8; y=h-92
+  desktop,h-144 phone; height44. Reset now opens confirmation.
+- Direction pad center: desktop(w-92,h-112), phone(w-68,h-104). Offsets are
+  Direction(d)*44 or *42, with 42/40-square controls. This clears the stats.
+- Solved: centered at(w/2,h/2), card width=min(w-32,480),height248. Next at
+  (w/2-122,h/2+14),244x44; Choose at(h/2+70),244x40. Enter continues.
+- Settings and Menu fit 1280x600: card heights clamp to h-32 and row offsets
+  scale with card height. Normal 800/844 coordinates above are unchanged.
+
+### Validation
+
+Presentation target built warning-free in native debug. Bounded native runs
+captured title, guide, settings, join, waiting, menu, intro, HUD, solved,
+chapter selection and confirmation at 1280x800 and 390x844. The two-seat run
+replayed puzzle 1's ten accepted moves and displayed Solved on both screens.
+All seven phone guide pages and 1280x600 title/settings/guide/menu were also
+captured and inspected. Artifacts/scripts are under ignored
+build/inside-out-captures/ui/. Root handles final web and simulation suites.
+
+Persistence was observed loading a master change made by the audio QA run
+and retaining completed:1 after the solved run. preferences.json did not
+exist before this recovery's tests. Its exact test-created file was removed;
+a fresh default three-frame title run left it absent. No other save files
+were removed. Real phone hardware and gamepad navigation were not exercised.
+
+
+## Inside Out campaign recovery, 2026-10-15
+
+The recovered seven-puzzle campaign now has eighteen puzzles in five chapters.
+The original seven layouts are unchanged. The extension adds two backstop
+puzzles, five plate/shutter puzzles, three real-recursion lessons and one
+combined capstone. This is fewer than the prior agent's provisional twenty-two:
+the owner asked for more puzzles with increasing difficulty, and distinct,
+verified ideas take precedence over filling a count.
+
+`levels.tide` owns the square text maps, names, lessons, three-tier hints and
+chapter boundaries. `game.tide` has `LEVEL_COUNT = 18`. There are no reference
+boxes or duplicate interiors. Self-containing puzzles have one canonical room
+and its one box inside itself; Return delivery has exactly two rooms, each
+box inside the other room. The three first recursion lessons have an all-wall
+table which play never reaches.
+
+| # | Puzzle | Chapter | Shortest moves | BFS positions explored |
+| --- | --- | --- | ---: | ---: |
+| 1 | A room outside | Boxes | 10 | 130 |
+| 2 | No handle inside | Boxes | 12 | 3,291 |
+| 3 | The other opening | Boxes | 20 | 16,840 |
+| 4 | A place to stand | Boxes | 15 | 67,283 |
+| 5 | All in a row | Boxes | 11 | 8,083 |
+| 6 | Hold it steady | Each other | 19 | 7,243 |
+| 7 | Posted | Each other | 15 | 2,430 |
+| 8 | Change ends | Each other | 20 | 12,973 |
+| 9 | Around the corner | Each other | 21 | 16,494 |
+| 10 | Hold the line | Power | 8 | 691 |
+| 11 | Long wire | Power | 11 | 1,215 |
+| 12 | Pass it on | Power | 15 | 3,068 |
+| 13 | Borrowed power | Power | 11 | 1,556 |
+| 14 | Carry the current | Power | 13 | 31,498 |
+| 15 | Beside itself | Itself | 6 | 41 |
+| 16 | Shift the exit | Itself | 11 | 251 |
+| 17 | Return delivery | Itself | 6 | 95 |
+| 18 | Trading places | Everything | 13 | 126 |
+
+`inside_out_solve all --limit 1000000` found every shortest solution in
+2.52 seconds. These searches stop on the first solution; they do not exhaust
+the reachable space. The checked-in witnesses all have the shortest length,
+although simultaneous independent actions can be interleaved differently.
+Every generated command is replayed through the production Move handler.
+This proves solvability and move minima, not human difficulty. Chapter
+introductions intentionally use compact layouts and shorter routes when a
+new concept appears. No human playtest of these eleven additions is recorded.
+
+The original fourth puzzle already had a fifteen-move solution rather than
+its thirty-one-move witness. Amber can leave west and push the home east
+before the battery leaves. Its witness, map comment and hints now describe
+that route; the prior advice to extract and store the battery first was
+unnecessary.
+
+New concepts, in order:
+
+- Change ends parks the box before the robots exchange which end is held.
+- Around the corner posts a battery through a held box, then turns it
+  towards a socket inside instead of pushing straight past the turn.
+- Hold the line separates the plate holder from the battery pusher.
+- Long wire places the controlling plate inside a different room.
+- Pass it on hands the same channel from a near plate to a far plate so
+  both robots can cross.
+- Borrowed power hands off between two independent circuits and crossings.
+- Carry the current transports a powered battery inside its occupied box;
+  the inside robot becomes the outside backstop so its partner can board.
+- Beside itself delivers a battery by leaving a self-containing room, then
+  uses the arriving partner's body to enter that same box from below.
+- Shift the exit moves a self-containing box to change its own exit's
+  landing, then pushes the delivered battery and box together into place.
+- Return delivery moves the receiving box in a second room before sending
+  the battery out, across a real two-room cycle.
+- Trading places combines a self-containing box, a battery delivery,
+  partner backstop, two circuits and a role exchange. The first robot holds
+  a plate while the other moves the self-containing box and enters again.
+
+### Co-operation evidence
+
+The campaign's exhaustive alone test now asks for every battery on a socket,
+every socket occupied and every box on its outline, ignoring robot goals.
+The other robot is placed off every grid. It normalizes facing and counters
+before hashing, inserts the initial state and fails if its 600,000-state
+limit is reached. Neither robot alone achieves this cargo-and-docks goal
+in any of the following puzzles; every listed search exhausted its space:
+
+| Puzzle | Seat 0 positions | Seat 1 positions |
+| --- | ---: | ---: |
+| 6 | 3,454 | 3,454 |
+| 7 | 13,966 | 13,966 |
+| 8 | 10,334 | 10,334 |
+| 9 | 16,919 | 16,919 |
+| 10 | 45 | 45 |
+| 11 | 49 | 49 |
+| 12 | 45 | 45 |
+| 13 | 45 | 45 |
+| 14 | 2,080 | 3,186 |
+| 16 | 51 | 46 |
+| 17 | 31 | 3 |
+| 18 | 10 | 15 |
+
+Counts for puzzles 6 and 7 differ from the older campaign checks because
+facing no longer multiplies otherwise equivalent positions. Puzzle 15's
+Teal can seat its cargo alone (27 canonical reachable states, versus ten
+for Amber). Its co-operation requirement is instead pinned by a direct
+counterfactual production-command test: after Teal delivers the battery,
+Amber enters the self-box while Teal stands above it; removing Teal makes
+the same command move the box and keeps Amber outside. No claim is made
+that every original Boxes chapter puzzle has a cargo-and-docks dependency
+on both robots.
+
+The campaign replay checks every room's square dimensions, doorway grammar,
+box placement and production completion; both seats act; undo, reset and
+exact replay retain canonical bytes; exchanged identities solve every puzzle.
+A separate fixture loads Return delivery, pins its two-box cycle and checks
+that its battery really ends in the other canonical room.
+
+Native debug `inside_out_tests` builds without warnings and passes 40/40,
+including all eighteen witnesses and the twenty-four exhaustive searches.
+Web and browser coverage is recorded by the integrating agent separately.
+
+### Rejected trial
+
+An unconstrained symmetric two-room cycle with two batteries was not kept.
+Its breadth-first search found no solution within ten million positions and
+32 moves (261.31 seconds); it hit the limit without exhausting the space.
+This is not an impossibility proof. Its absence of a verified witness was
+enough reason to remove it instead of shipping it.
+
+
 The owner requested a public online co-op puzzle prototype for two friends
 in separate browsers on 2026-10-11. The initial workshop, fixed player roles,
 isometric experiment, switch locks and fixed recursive entrances are
@@ -16,6 +380,181 @@ choices within the prototype request, not engine or language requirements.
 This section is the game's rules as they stand. Everything below it about
 movement, trails, copies, facing doorways, echoes and the twelve puzzles is
 history: read it for why, not for what the code does.
+
+No copies (2026-10-15, the polish round's decision D1: the lead agent's
+pick, provisional until the owner confirms). The owner called the copy in
+the last puzzle "fake recursion", "portals": a pale box led into a room
+whose own box stood elsewhere, so what went in could not be pushed back the
+way it came. Reference boxes are gone from the rules, the view and the
+tests. Every room has exactly one box, and a box's id is its room's: `BoxAt`
+returns a room, and `ValidBox`, `BoxDestination`, `BoxPlacement`,
+`EntryDestination`, `ReferenceLayout`, `LevelLayout.references` and
+`referenceCount`, `Puzzle.references`, `MAX_REFERENCES` and `MAX_BOXES` are
+removed. In the view, `BoxPaint`'s wash, `RoomSurround.reference`,
+`FloorNumber`'s prime mark, `SceneLens.box`, `RoomScene`'s instance and
+`PassageMaker`'s viewer-box test went with them, and `AncestorSurround` is
+a room's box and the room it stands in, with no trail lookup. Box-indexed
+arrays in `Picture` are `MAX_ROOMS` long. Recursion is only real: a box
+inside its own room (leaving puts you beside it, in the same room) or two
+boxes inside each other (leaving one puts you beside it, in the other).
+Puzzles 8 "The same corner" and 9 "The other way in" used copies and are
+removed with their lessons, hints and `WidenRooms` case; `LEVEL_COUNT` is 7
+and the title page reads it. Puzzles 1 to 7 load as before, less the
+copies' fields, and their witnesses replay unchanged.
+- Fixtures for real recursion (`test/simulation.c`): a room holding its own
+  box, left beside it by its east and south doors and entered from those
+  sides at the matching door cell, its west exit refused by the wall beside
+  the box; a battery pushed out of such a room lands beside the box, and is
+  refused when that cell is the pusher's own (the row comes round onto
+  itself); the box pushed east within itself, after which the partner and a
+  battery keep their cells (they are inside the box and go with it) and the
+  pusher, inside it too, has taken the one step of any push, then both bots
+  leave beside its new place; a two-room cycle left each way, round the
+  cycle and back, then entered with the partner as backstop, all undone
+  exactly. The two fixtures that built copies were converted: simultaneous
+  entries now race an entry and a walk onto one doorway cell, and the
+  snapshot fixture enters a room's own box standing inside it.
+  `inside_out_campaign_has_exactly_the_witnessed_puzzles` ties the test's
+  puzzle count to `LEVEL_COUNT`. 29 tests pass.
+- Not changed: `test/browser.mjs` still knows the removed puzzles; a later
+  stage of this round rewrites it. `Hands.portalTime` is the flash after any
+  doorway crossing, not a copy's, and stays.
+
+Plates and shutters (2026-10-15, the polish round's decision D2: the lead
+agent's pick, provisional until the owner confirms; no puzzle uses them yet,
+the campaign stage adds chapter 3). `Tile` gains `PlateA`, `ShutterA`,
+`PlateB` and `ShutterB` after the old four, so their values are unchanged.
+- Rules (`game.tide`). `Powered(layout, puzzle, channel)` is true while
+  anything stands on a plate of that channel in any room or on the table:
+  a bot, a battery, or a box on a plate of the room it stands in (it looks
+  where each thing stands rather than at every cell, which is the same
+  answer). `Power` is the two channels as bits. `Passable` is the one test
+  of a cell anything steps, is pushed or goes through a doorway into: never
+  a wall, a shutter only while its channel is powered; `StepFrom` (the step
+  inside a room and the step out beside the room's box) and `Gateway` (the
+  door cell) use it and take `power`, which `Shove` works out once from
+  the puzzle before the move. `IsSolved` is unchanged.
+- What a shutter closed on (my reading, to report as a pick). The brief
+  says a thing in a shutter when it closes "can leave or be pushed out",
+  and that a closed shutter holding something is still a wall for anything
+  else coming in. Under push-or-enter those two clash: pushing a thing out
+  of a cell is coming into it. So `Shove` lets the push through without the
+  pusher: where the next cell is a closed shutter with something in it
+  (`ClosedOnThing`), that something joins the row as if the shutter were
+  open, marked `through`, and when the row moves, everything before the
+  last such mark stays where it is. A bot there is a stop like any bot; a
+  box there that cannot move is entered by its doorway as any box is; a
+  doorway whose door cell closed on something has that something pushed on
+  into the room while whatever was going in stays outside. `Step` is Push
+  when the bot stayed. `MoveHand` now calls a move a doorway crossing only
+  when the bot itself moved, so such a push out of a doorway cues a push.
+- Look (`paint.tide`). Signal paints magenta (A) and lime (B), with a ring
+  for A and a diamond for B (`ChannelColor`, `ChannelMark`). A plate is a
+  low square pad in its paint, softened towards the plaster, in a dark
+  groove, the shape dark on it; pressed it sinks from 0.044 to 0.010 of a
+  tile and its shape and a line round the groove glow (the line shows past
+  a bot or a battery on it). A closed shutter is a block 0.80 of a tile
+  across and 0.22 high (a wall is a whole cell, 0.31), its top in the
+  paint with three dark slanting stripes, mirrored for B; open, its top is
+  flush with the floor inside a thin frame of the paint. Closed on
+  something, only a rim at the frame's edge rises, 0.55 of the way, round
+  what is in it. Below 6 pixels a tile each is one flat block of colour.
+  `Picture.cellRise` holds every plate's and shutter's height (49 cells of
+  the table, then of each room), eased towards its goal at 16 a second in
+  `Workbench`, about a fifth of a second, and set outright on a new puzzle,
+  undo, reset or reduced motion (`snap`). The guide has two lines on them
+  and the README a rule.
+- Fixtures (`test/simulation.c`): a plate pressed by a bot, a battery and
+  a box each opens its channel's shutter and not the other's; a plate in a
+  room opens a shutter on the table beside that room's box (the step out
+  of the doorway) and a table plate a shutter in the room; stepping off the
+  plate while pushing a battery into the shutter puts it in, the shutter
+  closes on it, it stays, a push takes it out while the pusher stays (cue
+  kind 1), nobody steps into the empty shutter, a bot it closed on stops a
+  row and steps out; a row of a bot and two batteries moves only the one
+  in the shutter, a box a shutter closed on that cannot move is entered,
+  and a push out of a doorway into a held shutter leaves the bot in its
+  room with a push cue; a doorway's shutter keeps a bot out of a box until
+  a plate is pressed, and when it closed on a battery the battery is pushed
+  in and the bot stays outside; a box carried with a pressed plate inside
+  it moves into a shutter, and without the battery on that plate is stopped
+  by it and entered. Each is undone to the exact start. 35 tests pass;
+  witnesses and the solo searches are unchanged.
+- Looked at: native captures at 1280x800 of a temporary puzzle (not
+  committed) with both channels in three nested rooms, from inside a 5x5
+  and a 7x7 room, closed, opening, open, closing, held, pressed by bots,
+  and the guide (`build/inside-out-captures/plates/`). The guide now just
+  fits a 720-high window. Not done: no sound for them (the sound stage's),
+  the browser fixture, and no puzzle.
+
+Levels as text, chapters and the mixer (2026-10-15, the polish round's
+decision D3 and the contracts between its parallel stages: the lead agent's
+picks, provisional until the owner confirms; the format is my pick).
+- `levels.tide` draws each puzzle in a function of its own (`ARoomOutside`,
+  `NoHandleInside`, `TheOtherOpening`, `APlaceToStand`, `AllInARow`,
+  `HoldItSteady`, `Posted`) as maps, `Room(draft, room, [rows])`, room -1
+  the table, at the size the match holds: a box 3 to 7 square, the table 1
+  to 7, a table not drawn 7 by 7 and all wall. A row is the tiles, spaces,
+  then what stands on them, the same width. Tiles: `#` wall, `.` floor, `o`
+  socket, `x` goal, `a`/`A` plate and shutter A, `b`/`B` plate and shutter
+  B, a digit floor with that box's outline. Things: `.` nothing, `@` Amber
+  (seat 0), `&` Teal (seat 1), `+` a battery, a digit that box (its room's
+  id; the game names it Box 1 to 4). The two halves are why any thing can
+  stand on any tile, and a box on its own outline (every box of puzzles 1
+  to 7 has an outline, most start on it) is its digit in both. An outline
+  is only on floor. A box stands where its digit is drawn, so a box in its
+  own room's map is inside itself and two in each other's are a cycle.
+  The legend is the comment at the top of the file.
+- Doorways come from the map: a room's edge is wall but for them, and an
+  open cell on a side (anything but `#`, which is wider than the brief's
+  floor or shutter), not at a corner, is that side's doorway; its offset is
+  -1 at the middle of the side and the cell's place otherwise, which is what
+  the old loader stored for every puzzle. Batteries are numbered in the
+  order drawn: maps in the order the puzzle draws them, rows top down.
+- `Debug.Assert` stops the game with what is wrong, naming the puzzle, room
+  and cell, for an unknown mark, a size out of range or rows of the wrong
+  width, an open corner, two doorways on a side, a thing in a wall, a robot
+  or a box drawn twice, a second outline, more than eight batteries, a room
+  drawn twice, rooms not 0 to n-1, or a drawn room whose box stands nowhere
+  (`struct Draft` carries the masks). Every puzzle is loaded by the
+  campaign test, so a bad map fails it; checked by giving puzzle 1's room
+  two east doorways, which stopped the test (exit 3) with "Puzzle 1, room
+  1: 2 doorways on the east side; a side has one at most".
+- Proof the conversion is exact: a temporary test printed every byte of
+  `LevelLayout` and `Puzzle` after `ChooseLevel` for each puzzle; built
+  once with the old `levels.tide` and once with the new, the outputs are
+  byte-identical (20,370 bytes of hex each), as were a text dump of every
+  map and FNV hashes. The temporary test is gone. Kept: the campaign test
+  now checks every room's doorways against its edge (corners wall, one open
+  cell a side at most, a doorway exactly where there is one, at the stored
+  offset), that each box stands on an open cell, and that the table is
+  square. `SquareRoom`, `WidenRooms` and every `Workshop*` builder are
+  removed; `LoadLevel(level, layout, puzzle)` is still the entry point and
+  still rebuilds both robots' trails.
+- Chapters: `CHAPTER_COUNT` 5, `ChapterName` 0 to 4 "Boxes", "Each other",
+  "Power", "Itself", "Everything", and `LevelChapter`: puzzles 1 to 5 are
+  chapter 0, 6 and 7 chapter 1 (and, until more are added, any later one).
+  Nothing shows them yet.
+- `sound.tide`: `local singleton Mixer { bool muted; float music = 0.8;
+  float effects = 1; float interface = 0.8; }`, which the settings write and
+  sound reads; `Hands.quiet` and `Hands.music` are gone into it. Music plays
+  while not muted and `music` is above 0, at 0.3375 times it (0.27, as
+  before, at the default); every puzzle cue is scaled by `effects`. `enum
+  UiCue { Hover, Click, Back, Open, Toggle, Slide }` and `void UiSound(UiCue
+  cue)`. A function sees no singleton it is not passed, so `UiSound` sends a
+  local event, `UiNoise`, which `PlayUiNoise(Mixer)` plays at the end of
+  the frame: any view, local handler or function they call can ask for a
+  sound with nothing to pass. For now Click and Toggle play the step clip at
+  0.12 times `interface`, pitch 1.4, and the rest nothing. The toolbar's
+  sound button toggles `muted` and asks for Toggle (heard on unmuting:
+  a two-player capture with `--capture-audio` is silent from the mute to the
+  unmute and peaks at 839 against the ambience's 265 at the unmute); the
+  guide's Ambience toggle became a Music slider.
+- Tests: 35 pass natively, witnesses (10, 12, 20, 31, 11, 19, 15) and the
+  solo searches (8,043 and 30,455) unchanged. `web-debug` configured here
+  (the first configure failed while it fetched the WASI sysroot; the second
+  succeeded) builds `inside_out_tests` and `inside_out` without warnings,
+  and `ctest --preset web-debug -R inside_out_tests` passes.
 
 The owner, after playing with a partner, sent six points, was shown my
 reading of each with two questions, and answered "once done push and
@@ -36,14 +575,14 @@ that is its outside, with no memory of how anything came in.
   it, back to the pusher. All goals are worked out from where things stood,
   then all move at once. `Step` says Walk, Push or Enter for the preview.
 - No ghosts, true recursion: a room is left beside its own box, by a bot or
-  anything pushed, however it was entered. A reference box (a copy) is a way
-  in only. A bot's trail is no longer history: `MovePuzzle` rebuilds it for
-  both bots after every move as the room's box, that box's room's, and so
-  on (`RebaseTrail` with depth 0), which is what the view's ancestry and
-  the status lines read. A bot is drawn solid in every drawing of its room;
-  the echo code is gone. A copy is drawn washed out (`BoxPaint`). A room
+  anything pushed, however it was entered. A bot's trail is no longer
+  history: `MovePuzzle` rebuilds it for both bots after every move as the
+  room's box, that box's room's, and so on (`RebaseTrail` with depth 0),
+  which is what the view's ancestry and the status lines read. A bot is
+  drawn solid in every drawing of its room; the echo code is gone. A room
   whose own box is inside it is left into itself, as before; no infinity
-  room was built.
+  room was built. (Copies, a way in only and drawn washed out, were removed
+  on 2026-10-15; see above.)
 - No doors between worlds: `DoorsMeet`, the drawn passage and the special
   cases for leaving one box into the next are gone. A bot leaving a box
   into a cell with a box in it pushes that box, and goes into it if the
@@ -53,7 +592,8 @@ that is its outside, with no memory of how anything came in.
   "robot" for "dummy". The owner also floated batteries that unlock things.
   That is a new mechanic and is not built.
 
-Campaign: nine puzzles (`LEVEL_COUNT`). Under the new rules the old
+Campaign: nine puzzles (`LEVEL_COUNT`), seven since 2026-10-15, when the
+two that used copies (8 and 9 below) were removed. Under the new rules the old
 witnesses of puzzles 1 to 4 and of "Hold it steady" replay unchanged; "The
 same corner" was re-solved by search (16 moves); the other six old puzzles
 are dropped: one searched to four million positions without a result, the
@@ -73,8 +613,8 @@ its south door leads).
 | 5 All in a row | 11 |
 | 6 Hold it steady | 19 |
 | 7 Posted | 15 |
-| 8 The same corner | 16 |
-| 9 The other way in | 26 |
+| 8 The same corner (removed) | 16 |
+| 9 The other way in (removed) | 26 |
 
 Witnesses 5 to 8 are the shortest (breadth-first through the Move handler);
 9 is my own route, its search having passed four million positions; 1 to 4
@@ -94,11 +634,13 @@ counters and the second puzzle's exhaustive check are gone with the rules
 they measured. Fixtures: a row of two boxes and a battery, then the first
 box into the second when the row meets the edge, then the bot into the
 box; a battery behind a box holds nothing and the partner does; in by a
-copy and out, battery and bot, beside the room's own box; facing and undo.
+copy and out, battery and bot, beside the room's own box (replaced on
+2026-10-15 by the real-recursion fixtures above); facing and undo.
 
 What is drawn: `EnteredBox` (`map.tide`) finds the box a bot went into by
-one step, so going in through a copy closes in on the copy, though the
-surroundings then switch to the room's own box's. Not looked at in motion.
+one step. With copies gone that is always the room the bot is now in; in a
+two-room cycle it tells entering a box from leaving into the same room.
+Not looked at in motion.
 
 ## Shared world and recursive boxes
 
@@ -302,7 +844,9 @@ Rules (`game.tide`).
 - Facing doorways (`DoorsMeet`) and the step preview stand as described
   below.
 
-Layouts (`levels.tide`). Every room is a square grid (`SquareRoom`), and
+Layouts (`levels.tide`; since 2026-10-15 text maps authored at this final
+size, with no packing or widening at load: see "Levels as text" above).
+Every room is a square grid (`SquareRoom`), and
 `WidenRooms` then opens cells of the doubled wall that squaring left into
 floor, puzzle by puzzle: the owner would not have the dark strip I first
 drew there ("sounds like the level needs a redesign"). Each cell was opened
@@ -551,7 +1095,7 @@ cause was not pinned down beyond removing the snap fixing both).
 WASD/arrows walk/push, Z/Backspace undo, R reset, H hints and Enter continues.
 Touch uses the same directional buttons. Held directions require release
 after serial changes. Hints grow/wrap to fit. Ambience, sound and reduced
-motion are local options; Rooms volume settings remain. Presentation and
+motion are local options (since 2026-10-15 the sound ones are `Mixer`'s); Rooms volume settings remain. Presentation and
 audio never enter the match hash.
 
 `sfx/make_sounds.py` reproduces original assets. The melody is replaced by
@@ -569,6 +1113,80 @@ Entry/exit/depth changes select kind 2 before push cues, including doorway
 travel that pushes a parcel.
 
 ## Solvability and verification contract
+
+Puzzle solver (2026-10-15, the polish round: the lead agent's brief asked
+for the tool and its five commands; what follows beyond that is my pick).
+`inside_out_solve` (`test/solve.c`, usage at its top) is a native tool for
+whoever draws puzzles, not a test: CTest does not run it, and it is not
+built for the web or Android.
+- Moves go through the generated Move command handler, sent and ticked as
+  `test/simulation.c` does. `MovePuzzle` is a `static inline` helper in the
+  generated C, out of a host's reach, so calling it directly was not an
+  option. The puzzle count, names, chapters and lessons come from
+  `test/solve.tide`, in this target alone: a `Describe` command whose
+  handler hands `LEVEL_COUNT` and `levels.tide`'s words to an `extern`
+  (`inside_out_solve_words`, defined in `solve.c`). It changes no state.
+- Build: `tide_add_game(inside_out_solve SOURCES game.tide levels.tide
+  test/solve.tide NAME game` with Rooms, `HOST test/solve.c)`, and
+  `target_compile_options(-O2)` on it, so the generated C and the solver
+  are optimized in every configuration. The command line is `-O0 ... -O2
+  ... -fno-fast-math -ffp-contract=off` (the engine's flags come from
+  `tide_flags` after the target's), and the generated C keeps its `#pragma
+  STDC FP_CONTRACT OFF`. The engine library is built as configured.
+- A position is a byte for each robot, box and battery: (room + 1) * 49 +
+  y * 7 + x, 254 for a robot off the board, 255 for an inactive battery.
+  Batteries are alike to the rule, so theirs are sorted; facing, trails
+  (rebuilt from the boxes after every move), moves and solved are left out.
+  The key is two 64-bit words in an open-addressing table of 32-bit indices
+  (linear probing, at most half full); a position's link packs the parent's
+  index over the 3-bit move, so `--limit` is under 2^29. The default limit
+  is 30,000,000: about 600 MB of keys and links and a 256 MB table at that
+  size. 30 million synthetic keys went in and back without a false
+  duplicate in 4 s. The match is started again before `Time.tick` (an int)
+  passes 2^30.
+- Shortest search: breadth first, stopping at the first position the
+  handler calls solved; the witness is replayed from a fresh match through
+  the handler before it is printed as solving. `--alone <seat>` takes the
+  other robot to the table at (-16, -16), off every grid (the campaign
+  test's `alone` uses the table's corner, which is wall in every puzzle so
+  far), explores everything and asks what `IsSolved` asks but the goals:
+  every active battery on a socket, every socket filled, every outline
+  taken. Put facing into the key and it counts 8,042 and 30,454 for
+  puzzles 6 and 7 against the campaign test's 8,043 and 30,455: that test
+  never puts its start in its table, so it counts the start twice once a
+  move comes back to it.
+- `--print` draws every map in `levels.tide`'s notation; for puzzles 1 to 7
+  its 144 rows are exactly the file's.
+- Speed (this machine, the debug preset, the target at -O2): 200,000 to
+  430,000 moves a second across runs on a shared machine, and from about
+  5 to 7 moves for each new position, as the share of moves that find known
+  positions grows: some 30,000 to 140,000 positions a second, so a search to
+  the default limit takes minutes. Measured once: a tick on its own
+  is 0.06 µs, a command refused for its serial 0.8 µs, a refused move 2.8
+  µs and a taken one 3.3 µs, so the handler is most of it. Generated C
+  passes read-only structs by value: `Authorized`, `Together` and `SeatOf`
+  are each handed the 38,368-byte `Workshop`, and `MovePuzzle`'s helpers
+  the 1,156-byte `LevelLayout`, which is the likely bulk (not measured
+  apart). That is the compiler's, and unchanged here.
+
+`inside_out_solve all`, and `--alone` for both seats, at the default limit:
+every shortest solution replayed, every alone search exhausted.
+
+| Puzzle | Shortest | Positions found before it | Amber alone | Teal alone |
+| --- | ---: | ---: | --- | --- |
+| 1 A room outside | 10 | 130 | 19, no | 29, yes |
+| 2 No handle inside | 12 | 3,291 | 489, no | 489, no |
+| 3 The other opening | 20 | 16,840 | 659, no | 1,159, no |
+| 4 A place to stand | 15 | 67,283 | 21,545, yes | 21,545, yes |
+| 5 All in a row | 11 | 8,083 | 182,875, yes | 182,875, yes |
+| 6 Hold it steady | 19 | 7,243 | 3,454, no | 3,454, no |
+| 7 Posted | 15 | 2,430 | 13,966, no | 13,966, no |
+
+"Alone" is how many positions that robot reaches and whether one of them
+has everything in place. The witnesses of puzzles 1 to 3 and 5 to 7 are
+shortest; puzzle 4's is 31 moves against 15. Puzzles 1, 4 and 5 can be put
+in place by one robot alone (puzzle 1 by Teal only), so they show no
+co-operation mechanically; 2, 3, 6 and 7 do.
 
 The authored replacement campaign has these production-command witnesses:
 

@@ -150,6 +150,46 @@ Cracked/Foldline native/web targets and tests also passed after the reserved-nam
 renames; final incoming integration validation follows below. Android, other
 operating systems and sanitizers were not run; no CI was dispatched.
 
+## Generated simulation identity (2026-10-15)
+
+`asset_usage.c` now also walks an ordered canonical simulation graph for SHA-256
+compatibility. Match schemas/defaults, transitive helpers/tasks, handlers, input
+Sanitize/Predict, scenes/prefabs, settings and simulation asset contents enter;
+local fields/views/presentation helpers do not. Repeated edges and ordering
+participate, with stable numeric node references rather than pointer bytes.
+Wire archetypes remain conservative inputs. Codegen fingerprints before server
+stripping and emits both `TIDE_SIMULATION_ID` and `tide_game.simulation` outside
+the old header-layout hash. CMake normalizes compiler/runtime sources into the
+toolchain identity; custom C/library identity is supplied by CLI. Simulation
+asset edits require regeneration while visual assets can still repack.
+
+Visibility activation, component automatic-presence classification and resolved
+visibility operation modes enter the same graph. An explicit recipient schema
+fingerprints the ordered public match singletons, input and per-archetype codec
+records, including every effective sparse column and its presence byte. Logical
+types have stable numbered records, with fields, container elements and fixed
+array lengths visited in wire order; host pointer padding does not enter this
+logical schema. A Set/Reset target in an otherwise unused helper still changes
+storage and therefore compatibility when it changes the emitted columns.
+
+Visibility games additionally fingerprint the local-listener wire contract:
+listener order/names, event and predicted/verified selection, required/excluded
+component filters, match payload types and ordered query bindings. Global
+listener order matters because it determines shared query-record IDs and the
+generated journal build identity. Local bodies, local singleton/field types,
+presentation helpers and read-versus-mut access to attached local fields stay
+outside this fingerprint when they do not change wire metadata. Games without
+visibility keep local listeners outside simulation identity entirely. This
+preserves local presentation changes while rejecting different recipient state
+or journal layouts before session admission.
+
+Seven compiler regression cases cover helper/view exclusion, ordered shared
+edges, simulation/visual asset bytes, listener payload/filter/query changes,
+global query-record order, ordinary local-listener exclusion and sparse columns
+introduced only by unused visibility helpers. The isolated scratch identity
+tests passed before integration; fresh merged validation follows the full builds.
+No syntax change; contracts, session tests and validation: managed-hosting.md.
+
 ## Frustum culling settings (2026-10-15)
 
 The approved rendering work adds `Draw.FrustumCulling(bool)` / `SetFrustumCulling(bool)` and `Draw.Bounds(float3 center, float3 size)` / `SetBounds` through `add_setting`, including reset forms. Target lookup, editor signatures/docs, block/Set diagnostics and early-exit pops use the existing machinery. No parser/checker, capability or evaluation-order rule changes. Generated fragment-only 3D shaders advertise their position offset for automatic bounds; user verts and skinning do not. `draw_frustum` E2E verifies rejected operands still run, and two error fixtures pin the setting forms. API choices are provisional in the spec; runtime and validation are in `notes/drawing.md`, Frustum culling.
