@@ -48,6 +48,7 @@ export async function createService(config, options = {}) {
         incidents: store.incidents(account.id), projects: store.projects(account.id).map(urls),
         releases: store.db.prepare('SELECT r.project,r.id,r.created,r.bytes FROM releases r JOIN projects p ON p.id=r.project WHERE p.account=? ORDER BY r.created DESC').all(account.id),
         credentials: store.db.prepare('SELECT s.hash,s.project,t.expires FROM service_tokens s JOIN tokens t ON t.hash=s.hash WHERE t.account=? AND t.expires>?').all(account.id, store.now()),
+        deployTokens: store.db.prepare('SELECT d.hash,d.project,d.name,t.expires FROM deploy_tokens d JOIN tokens t ON t.hash=d.hash WHERE t.account=? AND t.expires>?').all(account.id, store.now()),
         matches: store.matches(account.id).map(safeMatch),
         ledger: store.db.prepare('SELECT amount,reference,created FROM ledger WHERE account=? ORDER BY id DESC LIMIT 50').all(account.id) });
     const security = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -145,6 +146,16 @@ export async function createService(config, options = {}) {
                 return json(response, 200, result ? { ...result, complete: true } : { complete: false });
             }
             const account = auth.authenticate(request, !['GET', 'HEAD'].includes(method));
+            if (account.kind === 'deploy') {
+                requireValue(account.project && ((method === 'GET' && url.pathname === '/api/account')
+                    || (method === 'POST' && url.pathname === `/api/projects/${account.project}/releases`)
+                    || (method === 'POST' && url.pathname === '/api/logout')),
+                403, 'Deploy tokens may upload releases only for their own project.');
+                if (url.pathname === '/api/account') {
+                    const { id, name } = store.project(account.id, account.project);
+                    return json(response, 200, { region: config.region, projects: [{ id, name }] });
+                }
+            }
             if (account.kind === 'service') {
                 const create = /^\/api\/projects\/([a-f0-9]{32})\/matches$/.exec(url.pathname);
                 const control = /^\/api\/matches\/(\d{1,15})\/(suspend|end|resume|policy|logs|save)$/.exec(url.pathname);
@@ -185,6 +196,15 @@ export async function createService(config, options = {}) {
                 return json(response, 201, urls(project));
             }
             const releaseRoute = /^\/api\/projects\/([a-f0-9]{32})\/releases$/.exec(url.pathname);
+            const deployTokenRoute = /^\/api\/projects\/([a-f0-9]{32})\/deploy-tokens(?:\/([a-f0-9]{64}))?$/.exec(url.pathname);
+            if (deployTokenRoute) {
+                const [, project, hash] = deployTokenRoute;
+                store.project(account.id, project);
+                if (method === 'POST' && !hash) return json(response, 201, store.issueDeployToken(account.id, project, await body(request)));
+                requireValue(method === 'DELETE' && hash && store.db.prepare('SELECT 1 FROM deploy_tokens WHERE project=? AND hash=?').get(project, hash),
+                    404, 'Deploy token not found.');
+                store.revokeToken(hash); return json(response, 200, { ok: true });
+            }
             const credentialRoute = /^\/api\/projects\/([a-f0-9]{32})\/credentials(?:\/([a-f0-9]{64}))?$/.exec(url.pathname);
             if (credentialRoute) {
                 const [, project, hash] = credentialRoute;
