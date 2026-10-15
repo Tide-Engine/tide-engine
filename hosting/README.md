@@ -38,6 +38,8 @@ There is no public invitation, free-credit or infrastructure-provisioning API.
 The service tests use disposable databases and test payment responses. To run
 the installed-toolchain and real browser cases as well, set `TIDE_STAGED_CLI`
 to this checkout's staged `tide` executable and `TIDE_BROWSER` to Chrome/Edge.
+Set `TIDE_STAGED_NATIVE=1` when that stage also contains native platform libraries
+to compare native, client and server Simulation IDs together.
 `TIDE_HOSTING_EVIDENCE` optionally saves desktop/phone dashboard captures.
 The browser test passes `--mute-audio`, uses a disposable profile and terminates
 the browser. No real GitHub login, Stripe payment or Fly resource is needed.
@@ -65,6 +67,8 @@ Access lasts 30 days and is revocable. Credentials are bound to the service
 origin; Windows stores them encrypted with the current user's DPAPI, and POSIX
 uses a private folder/file. `TIDE_HOSTING_TOKEN` can supply a CLI token in CI.
 Do not put tokens in project files or command-line arguments.
+Runtime credentials have an explicit limit of twenty per account. Repeated
+browser/CLI sign-ins rotate their own sessions without revoking backend keys.
 
 The dashboard controls capacity, lifetime, empty grace, client-requested
 creation, match suspension/end/resume, save downloads, release deletion, logs,

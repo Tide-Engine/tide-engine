@@ -129,9 +129,12 @@ export class Store {
         requireValue(['browser', 'cli', 'service'].includes(kind) && lifetime > 0, 500, 'Invalid token policy.');
         const token = secret(), csrf = secret(), expires = this.now() + lifetime;
         this.db.prepare('DELETE FROM tokens WHERE expires<=?').run(this.now());
-        // Bound credentials even when a developer repeatedly signs in.
-        this.db.prepare(`DELETE FROM tokens WHERE hash IN
-            (SELECT hash FROM tokens WHERE account=? ORDER BY expires DESC LIMIT -1 OFFSET 19)`).run(account);
+        // Signing in must never silently revoke a trusted backend's runtime
+        // key. Bound those explicitly; browser/CLI sessions rotate separately.
+        if (kind === 'service') requireValue(this.db.prepare("SELECT COUNT(*) AS n FROM tokens WHERE account=? AND kind='service'").get(account).n < 20,
+            409, 'Runtime credential limit reached. Revoke an unused key first.');
+        else this.db.prepare(`DELETE FROM tokens WHERE hash IN
+            (SELECT hash FROM tokens WHERE account=? AND kind=? ORDER BY expires DESC,rowid DESC LIMIT -1 OFFSET 19)`).run(account, kind);
         this.db.prepare('INSERT INTO tokens VALUES (?,?,?,?,?)').run(digest(token), account, kind, csrf, expires);
         return { token, csrf, expires };
     }

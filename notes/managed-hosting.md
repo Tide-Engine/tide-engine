@@ -65,6 +65,8 @@ project while trusted runtime keys continue creating matches. Match IDs are
 routing identifiers, not authorization tokens. Managed player authentication is
 not implemented; supplied player credentials are rejected rather than trusted.
 Native dedicated authorization callbacks remain a separate supported path.
+Runtime keys have a twenty/account limit requiring explicit revocation; browser
+and CLI session rotation cannot silently revoke a backend's runtime key.
 
 Stripe hosted Checkout accepts operator-configured amounts/currency. Raw webhook
 HMAC/time checks precede provider-state verification; exact account/amount/
@@ -153,6 +155,9 @@ allocation switch. Frozen accounts stop. No postpaid credit or auto-top-up.
 Traffic/storage have hard included allowances, not surprise overage charges.
 Application egress counts are not physical provider traffic or an exact currency
 ceiling. Rates require measurement and explicit operator configuration.
+Admission replies, game datagrams, hosted clients and authenticated save/log
+downloads all reserve outgoing transfer; repeated version refusals cannot use
+an unmetered application-data path. HTTP/RTC protocol overhead remains separate.
 
 Inactive saves warn during the last day and expire after seven days; active
 saves are protected. Running/saved releases cannot be deleted. Unsaved ended
@@ -210,3 +215,17 @@ enabled. Desktop/mobile captures were inspected, with no horizontal overflow.
 The docs site and browser compiler build, Docker image builds, Linux RTC/HTTP
 smoke passes, and Fly configuration validates. Other native OS/Android and real
 provider/Fly connectivity coverage remain unrun; no CI dispatch.
+
+Integration validation after merging origin/dev at bf444057: both notes-only
+conflicts retain the hosting and incoming frustum records. Complete native debug
+2,305/2,305 and web debug 2,255/2,255 CTests pass. The full private-installation
+native/web cache, release stripping, parallel/failure invalidation, debug/release
+watch and dedicated-server integration script passes. All 31 hosting tests pass
+with native/web/server IDs and real Chrome/relay/guest execution enabled. Final
+policy regressions cover admission transfer reservations, save/log download
+limits, cross-project runtime-key refusal/revocation and preserving runtime keys
+through repeated developer sign-ins. Project cards show the allocated hourly
+rate. The merged docs site/browser compiler build and Linux Docker RTC/HTTP plus
+actual generated-WASM save/restore smoke pass; Fly configuration validates.
+Screenshots and the whitespace diff were checked. Provider/Fly launch checks and
+other-platform native coverage remain as listed above; no deployment or CI run.

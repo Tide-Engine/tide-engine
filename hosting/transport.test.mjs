@@ -57,6 +57,8 @@ test('real relay/WebRTC admission rejects mismatched simulation before allocatio
     const wrong = await connect(); wrong.send(admissionRequest(1n, 0, 'c'.repeat(64)));
     const refused = await until(() => wrong.inbox.find(p => p[5] === 2), 'No version refusal.');
     assert.equal(refused[16], Admission.version); assert.equal(store.activeMatches().length, 0);
+    assert.ok(store.db.prepare('SELECT SUM(bytes) AS n FROM transfer').get().n >= 65536,
+        'Admission replies reserve outgoing transfer even without allocating a match.');
     const one = await connect(), two = await connect();
     one.send(admissionRequest(2n, 0, 'b'.repeat(64))); two.send(admissionRequest(3n, 0, 'b'.repeat(64)));
     const a = await until(() => one.inbox.find(p => p[5] === 2 && p[16] === 1), 'First match was not admitted.');
@@ -78,4 +80,11 @@ test('real relay/WebRTC admission rejects mismatched simulation before allocatio
     const restricted = await connect(); restricted.send(admissionRequest(4n, 0, 'b'.repeat(64)));
     const denied = await until(() => restricted.inbox.find(p => p[5] === 2), 'No trusted-creation refusal.');
     assert.equal(denied[16], Admission.denied);
+    config.transferBytesPerDay = 1;
+    let sent = 0;
+    const bound = rooms.router.peers.get(message.peer);
+    bound.allowance = 0; bound.send = () => sent++;
+    rooms.router.reply(bound);
+    assert.equal(sent, 0);
+    assert.equal(store.match(message.match).desired, 'suspended');
 });
