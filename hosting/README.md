@@ -92,7 +92,22 @@ to a configured HTTPS origin, or a localhost origin for development.
 CLI approval uses a short-lived browser code and a secret one-time polling token.
 Access lasts 30 days and is revocable. Credentials are bound to the service
 origin; Windows stores them encrypted with the current user's DPAPI, and POSIX
-uses a private folder/file. `TIDE_HOSTING_TOKEN` can supply a CLI token in CI.
+uses a private folder/file. For CI, create a named deploy token in a project's
+**CI deploy tokens** panel and put it in a secret named `TIDE_HOSTING_TOKEN`.
+Run `tide deploy` with the committed `tide.deploy.json`, or pass
+`--project <project-id>`. Browser login is unnecessary. Deploy tokens can only
+upload releases for that existing project; they cannot create projects, control
+matches, access billing or manage credentials. They expire after 90 days by
+default, with 30/365-day choices, and are individually revocable. Only hashes
+are stored; the secret is shown once. Rotation keeps old tokens valid until
+explicit revocation or expiry. Twenty active deploy tokens per account are
+allowed, independently of runtime keys and developer sessions.
+`POST /api/projects/<id>/deploy-tokens` takes `{ "name": "GitHub Actions", "days": 90 }`
+and returns `{ token, expires, project }`. `DELETE /api/projects/<id>/deploy-tokens/<hash>`
+revokes it. Browser mutations require the existing Origin/CSRF checks; a normal
+CLI login can also manage these tokens. Deploy tokens get only
+`{ region, projects: [{ id, name }] }` from `GET /api/account`, never the full
+dashboard account data. `POST /api/logout` revokes the presented token.
 Do not put tokens in project files or command-line arguments.
 Runtime credentials have an explicit limit of twenty per account. Repeated
 browser/CLI sign-ins rotate their own sessions without revoking backend keys.

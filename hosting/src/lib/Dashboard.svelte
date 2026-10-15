@@ -4,6 +4,7 @@
     let account = $derived(data.account);
     let message = $derived(data.message);
     let busy = $state(false), logs = $state(null), approved = $state(false), dark = $state(false);
+    let deployToken = $state(null);
     const money = value => new Intl.NumberFormat('en', { style: 'currency', currency: account.currency }).format(value / 100_000_000);
     const time = stamp => new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(stamp) + ' UTC';
     const running = $derived(account?.matches.filter(m => ['starting', 'running', 'recovering', 'suspending'].includes(m.state)).length || 0);
@@ -60,6 +61,17 @@
         const key = await api(`/api/projects/${project.id}/credentials`, {});
         logs = `Runtime credential (shown once, expires ${time(key.expires)}):\n${key.token}`;
         message = 'Store this credential on your trusted backend. It can control this project’s matches and cannot deploy builds.';
+    }
+    async function createDeployToken(event, project) {
+        event.preventDefault(); const form = event.currentTarget, values = new FormData(form);
+        await run(async () => {
+            deployToken = await api(`/api/projects/${project.id}/deploy-tokens`, { name: values.get('name'), days: Number(values.get('days')) });
+            form.reset(); message = 'Deploy token created. Copy it now; it will only be shown once.';
+        });
+    }
+    async function revokeDeployToken(project, key) {
+        await api(`/api/projects/${project.id}/deploy-tokens/${key.hash}`, {}, 'DELETE');
+        if (deployToken?.project === project.id) deployToken = null;
     }
     async function startMatch(project) {
         const match = await api(`/api/projects/${project.id}/matches`, {});
@@ -133,6 +145,23 @@
                                     {@render action(`Revoke key ${key.hash.slice(0, 8)}`, () => api(`/api/projects/${project.id}/credentials/${key.hash}`, {}, 'DELETE'), true)}
                                 {/each}
                             </div>
+                            <details class="create"><summary>CI deploy tokens</summary>
+                                <p class="small muted">Upload builds for this project from CI. Save the token as a secret named <code>TIDE_HOSTING_TOKEN</code> and run <code>tide deploy --project {project.id}</code>.</p>
+                                <form aria-label="Create CI deploy token" onsubmit={event => createDeployToken(event, project)}>
+                                    <label>Token name<input name="name" placeholder="GitHub Actions" required maxlength="64" autocomplete="off"></label>
+                                    <label>Expires after<select name="days"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="365">1 year</option></select></label>
+                                    <button disabled={busy}>Create deploy token</button>
+                                </form>
+                                {#if deployToken?.project === project.id}
+                                    <p class="small">Shown once. Expires {time(deployToken.expires)}.</p>
+                                    <label>Deploy token<textarea readonly value={deployToken.token} spellcheck="false" rows="2"></textarea></label>
+                                    <button type="button" onclick={() => deployToken = null}>Hide token</button>
+                                {/if}
+                                {#each account.deployTokens.filter(k => k.project === project.id) as key (key.hash)}
+                                    <p class="small">{key.name} · expires {time(key.expires)} · {key.hash.slice(0, 8)}</p>
+                                    {@render action(`Revoke deploy token ${key.name}`, () => revokeDeployToken(project, key), true)}
+                                {/each}
+                            </details>
                             {#if project.release}<p>Release {project.release.slice(0,10)}</p><div class="actions">
                                 {#if project.hasClient && project.clientCreate}<a class="button" href={project.playUrl} target="_blank" rel="noopener">Open game ↗</a>{/if}
                                 {@render action('Start a match', () => startMatch(project))}

@@ -88,6 +88,24 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
         data: { name: 'test', region: 'fra', preset: 'small', maximum: 1, lifetime: 'explicit' } });
     assert.equal(created.status, 201);
     const project = created.data;
+    const deployPath = `/api/projects/${project.id}/deploy-tokens`;
+    assert.equal((await call(deployPath, { method: 'POST', headers: browser, data: { name: 'CI' } })).status, 403);
+    const deployedKey = await call(deployPath, { method: 'POST', headers: authenticated, data: { name: 'GitHub Actions', days: 90 } });
+    assert.equal(deployedKey.status, 201);
+    const deployHeaders = { Authorization: `Bearer ${deployedKey.data.token}` };
+    assert.deepEqual((await call('/api/account', { headers: deployHeaders })).data,
+        { region: config.region, projects: [{ id: project.id, name: project.name }] });
+    const tokenList = (await call('/api/account', { headers: browser })).data.deployTokens;
+    assert.equal(tokenList[0].name, 'GitHub Actions');
+    assert.ok(!JSON.stringify(tokenList).includes(deployedKey.data.token));
+    for (const path of ['/api/projects', '/api/billing/subscribe', '/api/billing/extra', '/api/checkout', '/api/device/approve',
+        deployPath, `/api/projects/${project.id}/credentials`, `/api/projects/${project.id}/matches`, `/api/projects/${project.id}/policy`, '/api/matches/1/end']) {
+        assert.equal((await call(path, { method: 'POST', headers: deployHeaders, data: {} })).status, 403, path);
+    }
+    assert.equal((await call(`${deployPath}/${tokenList[0].hash}`, { method: 'DELETE', headers: deployHeaders })).status, 403);
+    const tokenPage = await call('/dashboard', { headers: browser });
+    assert.match(tokenPage.text, /CI deploy tokens/);
+    assert.doesNotMatch(tokenPage.text, new RegExp(deployedKey.data.token));
     const runtime = await call(`/api/projects/${project.id}/credentials`, { method: 'POST', headers: authenticated, data: {} });
     assert.equal(runtime.status, 201);
     const runtimeHeaders = { Authorization: `Bearer ${runtime.data.token}` };
@@ -105,6 +123,7 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     const bundle = encodeBundle({ simulation: 'a'.repeat(64), tide: 'test' }, {
         'server.wasm': wasmFixture(), 'client.html': Buffer.from('<!doctype html><script>console.log("game")</script>'),
     });
+    assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: deployHeaders, data: bundle })).status, 201);
     assert.equal((await call(`/api/projects/${project.id}/releases`, { method: 'POST', headers: cli, data: bundle })).status, 201);
     assert.equal((await call(`/g/${project.id}/`, { host: '127.0.0.1:8081' })).status, 402);
     assert.equal((await call(`/api/projects/${project.id}/matches`, { method: 'POST', headers: cli, data: {} })).status, 402);
@@ -130,6 +149,10 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     assert.equal((await call(`/api/matches/${original.id}/save`, { headers: runtimeHeaders })).status, 429);
     assert.equal((await call(`/api/matches/${original.id}/logs`, { headers: runtimeHeaders })).status, 429);
     const another = service.store.createProject(account.id, { name: 'another', region: 'fra', preset: 'small', maximum: 1 }, config);
+    assert.equal((await call(`/api/projects/${another.id}/releases`, { method: 'POST', headers: deployHeaders, data: bundle })).status, 403);
+    assert.equal((await call(`/api/projects/${another.id}/deploy-tokens/${tokenList[0].hash}`, { method: 'DELETE', headers: authenticated })).status, 404);
+    assert.equal((await call(`${deployPath}/${tokenList[0].hash}`, { method: 'DELETE', headers: authenticated })).status, 200);
+    assert.equal((await call('/api/account', { headers: deployHeaders })).status, 401);
     assert.equal((await call(`/api/projects/${another.id}/matches`, { method: 'POST', headers: runtimeHeaders, data: {} })).status, 403);
     assert.equal((await call(`/api/projects/${project.id}/credentials/${service.store.authenticate(runtime.data.token, 'service').token_hash}`,
         { method: 'DELETE', headers: authenticated })).status, 200);
@@ -137,6 +160,7 @@ test('real HTTP API enforces origin/auth/CSRF/ownership and serves the uploaded 
     service.store.invite(2);
     const other = service.store.signIn({ id: 2, login: 'other' });
     const otherToken = service.store.issueToken(other.id, 'cli', 100000);
+    assert.equal((await call(deployPath, { method: 'POST', headers: { Authorization: `Bearer ${otherToken.token}` }, data: { name: 'stolen' } })).status, 404);
     const otherSession = service.store.issueToken(other.id, 'browser', 100000);
     const [ownerHtml, otherHtml] = await Promise.all([call('/dashboard', { headers: browser }),
         call('/dashboard', { headers: { Cookie: `tide-session=${otherSession.token}` } })]);

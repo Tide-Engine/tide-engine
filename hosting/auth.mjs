@@ -60,8 +60,10 @@ export class Auth {
         let account;
         if (header) {
             requireValue(/^Bearer [A-Za-z0-9_-]{43}$/.test(header), 401, 'Run tide login to authenticate.');
-            account = this.store.authenticate(header.slice(7), 'cli') || this.store.authenticate(header.slice(7), 'service');
+            account = this.store.authenticate(header.slice(7), 'cli') || this.store.authenticate(header.slice(7), 'service')
+                || this.store.authenticate(header.slice(7), 'deploy');
             if (account?.kind === 'service') account.project = this.store.db.prepare('SELECT project FROM service_tokens WHERE hash=?').get(account.token_hash)?.project;
+            if (account?.kind === 'deploy') account.project = this.store.db.prepare('SELECT project FROM deploy_tokens WHERE hash=?').get(account.token_hash)?.project;
         } else account = this.store.authenticate(cookie(request, this.sessionCookie), 'browser');
         requireValue(account, 401, 'Sign in to your hosting account.');
         if (mutating && account.kind === 'browser') {

@@ -94,6 +94,8 @@ export class Store {
                 count INTEGER NOT NULL, PRIMARY KEY(account,day));
             CREATE TABLE IF NOT EXISTS service_tokens (hash TEXT PRIMARY KEY REFERENCES tokens(hash) ON DELETE CASCADE,
                 project TEXT NOT NULL REFERENCES projects(id));
+            CREATE TABLE IF NOT EXISTS deploy_tokens (hash TEXT PRIMARY KEY REFERENCES tokens(hash) ON DELETE CASCADE,
+                project TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS ledger_account_created ON ledger(account,created);
             CREATE INDEX IF NOT EXISTS matches_state_updated ON matches(state,updated);
         `);
@@ -128,13 +130,13 @@ export class Store {
     }
     account(id) { return this.db.prepare('SELECT * FROM accounts WHERE id=?').get(id); }
     issueToken(account, kind, lifetime) {
-        requireValue(['browser', 'cli', 'service'].includes(kind) && lifetime > 0, 500, 'Invalid token policy.');
+        requireValue(['browser', 'cli', 'service', 'deploy'].includes(kind) && lifetime > 0, 500, 'Invalid token policy.');
         const token = secret(), csrf = secret(), expires = this.now() + lifetime;
         this.db.prepare('DELETE FROM tokens WHERE expires<=?').run(this.now());
         // Signing in must never silently revoke a trusted backend's runtime
         // key. Bound those explicitly; browser/CLI sessions rotate separately.
-        if (kind === 'service') requireValue(this.db.prepare("SELECT COUNT(*) AS n FROM tokens WHERE account=? AND kind='service'").get(account).n < 20,
-            409, 'Runtime credential limit reached. Revoke an unused key first.');
+        if (['service', 'deploy'].includes(kind)) requireValue(this.db.prepare('SELECT COUNT(*) AS n FROM tokens WHERE account=? AND kind=?').get(account, kind).n < 20,
+            409, `${kind === 'deploy' ? 'Deploy token' : 'Runtime credential'} limit reached. Revoke an unused key first.`);
         else this.db.prepare(`DELETE FROM tokens WHERE hash IN
             (SELECT hash FROM tokens WHERE account=? AND kind=? ORDER BY expires DESC,rowid DESC LIMIT -1 OFFSET 19)`).run(account, kind);
         this.db.prepare('INSERT INTO tokens VALUES (?,?,?,?,?)').run(digest(token), account, kind, csrf, expires);
@@ -152,6 +154,19 @@ export class Store {
         const credential = this.issueToken(account, 'service', 30 * 86400_000);
         this.db.prepare('INSERT INTO service_tokens VALUES (?,?)').run(digest(credential.token), project);
         return { token: credential.token, expires: credential.expires, project };
+    }
+    issueDeployToken(account, project, options = {}) {
+        this.project(account, project);
+        requireValue(options && typeof options === 'object' && !Array.isArray(options), 400, 'Send a deploy token name and lifetime.');
+        const { name, days = 90 } = options;
+        requireValue(typeof name === 'string' && name.trim().length >= 1 && name.length <= 64 && !/[\x00-\x1f\x7f]/.test(name),
+            400, 'Give this deploy token a name of 1–64 characters.');
+        requireValue([30, 90, 365].includes(days), 400, 'Choose a deploy token lifetime of 30, 90 or 365 days.');
+        return this.transaction(() => {
+            const credential = this.issueToken(account, 'deploy', days * 86400_000);
+            this.db.prepare('INSERT INTO deploy_tokens VALUES (?,?,?)').run(digest(credential.token), project, name.trim());
+            return { token: credential.token, expires: credential.expires, project };
+        });
     }
     createDevice() {
         this.db.prepare('DELETE FROM devices WHERE expires<=?').run(this.now());

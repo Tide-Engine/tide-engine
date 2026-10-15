@@ -50,6 +50,31 @@ project with custom settings before deploying.
 is documented in the repository's `hosting/README.md`. A normal developer CLI
 credential expires after 30 days and can be revoked with `tide logout`.
 
+## Deploy from CI
+
+In your console project's **CI deploy tokens**, create a named token and copy it
+when shown. Store it as a CI secret named `TIDE_HOSTING_TOKEN`. Tokens belong to
+one existing project, expire after 90 days by default (30 days or one year are
+also available), and can be revoked individually in the console. Only their
+hashes are stored by the service. Creating a new token leaves existing tokens
+working so you can rotate your CI secret before revoking the old token.
+
+With Tide installed and your game checked out, a GitHub Actions step can use:
+
+```yaml
+- name: Deploy game
+  env:
+    TIDE_HOSTING_TOKEN: ${{ secrets.TIDE_HOSTING_TOKEN }}
+  run: tide deploy path/to/game
+```
+
+Commit the game's `tide.deploy.json`, or pass `--project <project-id>` to select
+the token's project explicitly. No browser login is needed in CI. These tokens
+can upload releases and discover only their project's name and ID; they cannot
+create projects, change billing, manage credentials or control matches. Use
+runtime credentials separately for trusted match orchestration. Keep tokens out
+of project files, command arguments and logs.
+
 ## Matches and versions
 
 Each managed match owns a separate WASM instance, including its memory and C

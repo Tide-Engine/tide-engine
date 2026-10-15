@@ -1,5 +1,41 @@
 # Managed hosting and deployment
 
+## CI deploy credentials (2026-10-15)
+
+The owner requested private authentication for CI. Added named, project-scoped
+deploy tokens, issued/revoked in the console (or authenticated developer API).
+They use the CLI's existing TIDE_HOSTING_TOKEN environment variable, so no CLI
+or language change is needed. A committed target link or explicit project ID
+selects the existing project; deploy tokens cannot create projects.
+
+Secrets are random 256-bit base64url values, returned once and SHA-256 hashed at
+rest. Persistent deploy_tokens rows bind the hash to its project and display
+name. Expiry defaults to 90 days, with 30/365-day choices. Twenty/account requires
+explicit revocation, independently of runtime keys; browser/CLI session rotation
+does not revoke them. Existing database startup creates the new table in place.
+Account suspension and token expiry/revocation immediately reject authentication.
+
+The deploy-token request allowlist permits only its project's release upload,
+a minimal account response containing region and that project's ID/name for CLI
+target resolution, and self-logout. It blocks account/billing data, other
+projects, match controls, project creation, deletion and credential management.
+Runtime keys retain their separate match-only authority. Browser issuance and
+revocation use existing CSRF checks; secrets never enter SSR/account responses.
+The UI shows each token's name/expiry and an individual revoke action. Docs
+include a CI secret example. No actual owner token or CI secret was created.
+
+Validation: all 41 hosting tests pass with the installed native/web/managed CLI
+and muted Chrome, including an actual env-token deployment using the committed
+folder link, wrong-target/project-creation refusal and revocation. Store/HTTP
+checks cover hashes, expiry, caps, session rotation, CSRF, account isolation and
+the narrow API allowlist. The browser creates, reveals, hides and revokes a
+token through Svelte and verifies the backend rejects it afterward. Desktop and
+phone captures of the expanded panel were inspected without horizontal overflow.
+The test now reports browser evaluation exceptions and waits for the correct
+document after navigation, rather than accepting a previous page during reload.
+Svelte check reports zero errors/warnings; console/docs production builds pass.
+No engine/runtime/CLI source changes or CI workflow dispatch are involved.
+
 ## Status and agreed scope (2026-10-15)
 
 The owner approved a monthly minimum with included usage and opt-in prepaid
