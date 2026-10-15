@@ -180,6 +180,21 @@ class ActualBuiltSceneTests(unittest.TestCase):
                               "wall_center":[-12.5,1.2,0], "wall_size":[1,6.4,18], "wall_takes":False}]
         self.assertIn("requires a receptive wall", self.errors())
 
+    def test_visible_furniture_cannot_have_no_collider(self):
+        self.room["props"].append({"kind_name":"Cabinet", "at":[-11.65,0,2.8], "entity":100, "solid_parts":0})
+        self.assertIn("needs 1 attached solid parts, found 0", self.errors())
+
+    def test_compound_furniture_shapes_must_be_exported_for_clearance_checks(self):
+        self.room["props"].append({"kind_name":"Cabinet", "at":[-11.65,0,2.8], "entity":100, "solid_parts":1})
+        self.assertIn("missing its actual compound collision geometry", self.errors())
+        self.room["solids"].append({"kind":"prop", "owner":100, "center":[-11.65,.7,2.8], "size":[.62,1.4,.64]})
+        self.assertEqual(self.errors(), "")
+
+    def test_single_enclosing_box_cannot_substitute_for_a_chair_compound(self):
+        self.room["props"].append({"kind_name":"PlasticChair", "at":[-10.7,0,1], "entity":100, "solid_parts":1})
+        self.room["solids"].append({"kind":"prop", "owner":100, "center":[-10.7,.5,1], "size":[.52,1,.52]})
+        self.assertIn("needs 6 attached solid parts, found 1", self.errors())
+
     def test_entire_lift_approach_needs_floor_support(self):
         self.room["walls"] = [b for b in self.room["walls"] if b.get("id") != "floor"]
         self.assertIn("missing floor", self.errors())
@@ -290,6 +305,18 @@ class StrictSchemaTests(unittest.TestCase):
     def test_unknown_top_level_field_is_rejected(self):
         self.source["externel_geometry"] = True
         self.reject(self.source, "unknown fields externel_geometry")
+
+    def test_defined_tide_paints_are_accepted(self):
+        for paint in ("DOORS", "BRICK", "PANELS", "CONCRETE", "MARBLE", "PLANKS", "HAZARD", "RUST", "SHUTTER", "WALLPAPER", "CARPET", "CEILING_TILE", "PLASTER"):
+            with self.subTest(paint=paint):
+                self.source["boxes"][0]["paint"] = paint
+                foldmap.validate_map(self.source)
+
+    def test_unknown_paints_are_rejected(self):
+        for paint in ("TILES", "STONE", "METAL", "not_a_paint"):
+            with self.subTest(paint=paint):
+                self.source["boxes"][0]["paint"] = paint
+                self.reject(self.source, "unknown paint")
 
     def test_misspelled_fields_in_each_object_kind_are_rejected(self):
         for category, field in (("boxes","knd"),("lifts","neeed"),("doors","speeed"),("plates","hevy"),("wires","signel"),("ends","sze")):

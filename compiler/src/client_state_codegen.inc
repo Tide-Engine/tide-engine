@@ -47,7 +47,7 @@ static uint64_t client_codec_minbytes(const program *prog, const type t)
         uint64_t bytes = 0;
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && (t.decl->is_scene || t.decl == prog->visibility))) continue;
+            if (f->typed || (f->hidden && t.decl == prog->visibility)) continue;
             bytes += client_codec_minbytes(prog, f->type);
         }
         return bytes;
@@ -72,7 +72,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && (t.decl->is_scene || t.decl == g->prog->visibility))) continue;
+            if (f->typed || (f->hidden && t.decl == g->prog->visibility)) continue;
             sb_printf(o, "    tide_client_put%d(out, &v->%s, depth + 1u);\n", client_codec_id(codec, f->type), field_cname(f));
         }
         if (!t.decl->fields.count) sb_put(o, "    (void)out; (void)v;\n");
@@ -140,7 +140,7 @@ static void gen_client_codec_value(gen *g, const client_codec *codec, const int 
     } else if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_EVENT || t.kind == TY_RECORD) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->typed || (f->hidden && (t.decl->is_scene || t.decl == g->prog->visibility))) continue;
+            if (f->typed || (f->hidden && t.decl == g->prog->visibility)) continue;
             sb_printf(o, "    if (!tide_client_get%d(in, &v->%s, where, depth + 1u, budget)) return false;\n",
                       client_codec_id(codec, f->type), field_cname(f));
         }

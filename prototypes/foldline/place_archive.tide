@@ -32,10 +32,10 @@ void BuildArchive(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -12, 12, -1, 0, 6, 12, CARPET);
     Fill(arena, -13, -12, -1, 4.4, -13, 13, CONCRETE);
     Fill(arena, 12, 13, -1, 4.4, -13, 13, CONCRETE);
-    Fill(arena, -13, -11, -1, 4.4, -13, -12, PANELS);
-    Fill(arena, -5, 13, -1, 4.4, -13, -12, PANELS);
-    Fill(arena, -13, 5, -1, 4.4, 12, 13, PANELS);
-    Fill(arena, 11, 13, -1, 4.4, 12, 13, PANELS);
+    Fill(arena, -13, -12, -1, 4.4, -13, -12, PANELS);
+    Fill(arena, -4, 13, -1, 4.4, -13, -12, PANELS);
+    Fill(arena, -13, 4, -1, 4.4, 12, 13, PANELS);
+    Fill(arena, 12, 13, -1, 4.4, 12, 13, PANELS);
     Fill(arena, -13, 13, 4.4, 5.4, -13, 13, CEILING_TILE, false, 2);
     // The banks are quiet refuges, visibly carpeted all the way to the lifts.
     PutLoose(arena, fold, float3(6, .4, -8), 1);
@@ -46,8 +46,8 @@ void BuildArchive(mut Arena arena, mut Place place, mut Fold fold)
     {
         for (int side = -1; side <= 1; side += 2)
         {
-            SetSolidProp(arena, PropKind.Shelf, float3(side * 11.2, 0, -9 + row * 3.5), float3(1.5, 2, .55), float3(0, 1, 0), side < 0 ? EAST : WEST);
-            SetProp(arena, PropKind.Cardboard, float3(side * 11.1, 1.1, -9 + row * 3.5));
+            SetProp(arena, PropKind.Shelf, float3(side * 11.2, 0, -9 + row * 3.5), side < 0 ? EAST : WEST);
+            SetProp(arena, PropKind.Cardboard, float3(side * 11.1, 1.05, -9 + row * 3.5));
         }
     }
     SetProp(arena, PropKind.Cone, float3(-10.5, 0, -2.6));

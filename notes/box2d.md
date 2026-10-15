@@ -1,5 +1,11 @@
 # The Box2D package
 
+Scene visibility unification (2026-10-15): removal of generated scene audience
+fields changes only the complete-world and world-sequence pins in stack,
+sensors, kit and sleep. Native and WASI agree on all replacements. Body motion,
+query answers and Box2D's own image-byte pins stay unchanged; no package or
+vendored physics implementation changes. Validation is in notes/language.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases

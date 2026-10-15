@@ -25,6 +25,9 @@ export function configuration(env = process.env) {
         port: integer(env, 'PORT', 8081, 0, 65535),
         githubClientId: env.TIDE_GITHUB_CLIENT_ID, githubClientSecret: env.TIDE_GITHUB_CLIENT_SECRET,
         stripeSecret: env.TIDE_STRIPE_SECRET, stripeWebhookSecret: env.TIDE_STRIPE_WEBHOOK_SECRET,
+        stripePrice: env.TIDE_STRIPE_MONTHLY_PRICE, stripePortal: env.TIDE_STRIPE_PORTAL_CONFIG,
+        subscriptionRequired: Boolean(env.TIDE_STRIPE_MONTHLY_PRICE),
+        monthlyAmount: integer(env, 'TIDE_HOSTING_MONTHLY_AMOUNT', 2000, 500, 100000),
         relay: env.TIDE_RELAY || 'wss://relay.tide-engine.dev',
         rtcLocal: env.TIDE_RTC_LOCAL === '1',
         accepting: env.TIDE_HOSTING_ACCEPTING !== '0', hostMatches,
@@ -35,9 +38,11 @@ export function configuration(env = process.env) {
         projects: 3, hostProjects: 32, releases: 6, storageBytes: 64 << 20, hostStorageBytes: 512 << 20,
         bundleBytes: 32 << 20, moduleBytes: 8 << 20, memoryBytes: 128 << 20,
         presets: {
-            small: { label: 'Small', memoryBytes: 64 << 20, tickMs: 20, cpu: 0.25,
+            // Wall time includes cold JIT and shared-host scheduling. CPU usage
+            // is enforced separately; this watchdog interrupts stuck guests.
+            small: { label: 'Small', memoryBytes: 64 << 20, tickMs: 250, cpu: 0.25,
                 rate: integer(env, 'TIDE_HOSTING_SMALL_RATE', 0, 0, 1000000) },
-            standard: { label: 'Standard', memoryBytes: 128 << 20, tickMs: 40, cpu: 0.5,
+            standard: { label: 'Standard', memoryBytes: 128 << 20, tickMs: 500, cpu: 0.5,
                 rate: integer(env, 'TIDE_HOSTING_STANDARD_RATE', 0, 0, 1000000) },
         },
         startMs: 5000, tickMs: 40, outputBytes: 64 << 10, saveBytes: 8 << 20,

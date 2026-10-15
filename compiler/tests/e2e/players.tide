@@ -24,6 +24,8 @@ singleton Match
     int left;
     long pushes; // Every player's inputs, added up
     Entity table;
+    VisibilityGroup tableGroup;
+    Audience tableAudience;
 }
 
 scene Main { }
@@ -36,20 +38,23 @@ scene Table
 
 event(Spawned) Setup(with Main, mut Match match)
 {
-    match.table = Scene.Load(Table { }, SceneVisibility.Private);
+    match.tableGroup = Visibility.CreateGroup(Audience.None);
+    match.table = Scene.Load(Table, Visibility { group = match.tableGroup });
 }
 
 event(PlayerJoined joined) Join(mut Match match)
 {
     match.joined += 1;
     Spawn(Mover { }, Owner { player = joined.player });
-    Scene.AddPlayer(match.table, joined.player);
+    match.tableAudience.Add(joined.player);
+    Visibility.Set(match.tableGroup, match.tableAudience);
 }
 
 event(PlayerLeft left) Leave(mut Match match)
 {
     match.left += 1;
-    Scene.RemovePlayer(match.table, left.player);
+    match.tableAudience.Remove(left.player);
+    Visibility.Set(match.tableGroup, match.tableAudience);
 }
 
 system Count(mut Match match)

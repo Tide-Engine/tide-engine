@@ -1,5 +1,61 @@
 # Language features, as tidec builds them
 
+## One visibility mechanism for scenes, entities and components (2026-10-15)
+
+The owner approved replacing the separate private-scene API with ordinary
+Visibility groups. A loaded root's Visibility.group limits every entity owned
+by that scene, including later spawns. Its audience intersects the entity group
+and then the component restriction. An inner scope cannot widen its enclosing
+scope. Ordinary transform parenting still does not propagate visibility.
+Groups do not own scene lifetime; destroying a group conceals its members
+without unloading them. A scene with no restriction is public.
+
+Scene.Load(Scene { ... }, Component { ... }, ...) accepts ordinary positional
+root components before Spawned initialization. They use Spawn's component
+defaults, placement, ownership, duplicate checks and written evaluation order.
+A single named scene argument remains supported. Authored prefab Scene.Load
+uses its existing root overrides, including Visibility; its special named
+visibility argument is gone. Local scene loads accept local root components
+but reject Visibility through the ordinary placement diagnostic.
+
+SceneVisibility, Scene.AddPlayer/RemovePlayer, their command kind/payload and
+the generated tide_visibility/tide_players scene fields are removed, without
+aliases. Old membership calls point to Visibility.Set. Scene components now
+contain only authored fields, and the internal prefab scene marker is empty.
+The compiler extends Audience's words directly from maxPlayers. Recipient
+codecs, lifecycle sanitizers and simulation-schema traversal no longer have
+special cases for private fields of scenes. The ordinary private Visibility
+policy and group directory keep their existing treatment. No engine source,
+exported runtime function, tide_game ABI or session protocol changes.
+Generated game layout/build identities change; old world-hash fixture values
+that included the removed fields must be updated deliberately and agree on
+native and web. The older private-scene descriptions below are superseded.
+
+Regressions cover root components/defaults, sparse presence, owned text/list
+values, local placement and source-order side effects before initialization;
+live root/content/later-spawn audiences across multiple mask words, scene/entity/
+component intersection, projected absence, immutable snapshots and raw packing,
+fail-closed destroyed groups, and private root/child Spawned journals. The
+200-player membership fixture uses a shared group. Lifecycle query/payload tests
+vary private scene-root group policy rather than removed scene metadata.
+Removed methods, duplicate root components, extra scenes, wrong component types
+and local group writes have diagnostic fixtures. Editor/docs details and final
+validation are recorded in their notes and below.
+
+Validation: complete warning-free Windows debug builds and full CTest runs cover
+2,364 native tests and 2,276 WASI/web tests, including native Vulkan/OpenGL and
+WebGL/WebGPU. Their only failures were 30 complete-world/hash/serialization
+baseline cases affected by the intentionally removed fields. Native and WASI
+printed identical logical replacement values; all 30 pass on both after updating
+those pins. The eight scene/prefab/visibility/player targets pass again with the
+final privacy and root-policy removal regressions. All 33 affected optimized
+native targets pass too, including every changed physics/game/benchmark pin.
+The physics body/native-image/resident-digest/query-answer pins and runtime
+math/random/pose bit pins are unchanged. LSP 234/234, shared grammar 244/244 and
+the production docs build pass with clang 23.1.2 and local Node 24.21.0. The
+checkout's configured builds use that Node; the owner's installation is untouched.
+No CI, other OS, Android or sanitizer run was requested/performed.
+
 ## Entity/component visibility and shared audiences (2026-10-15)
 
 The owner approved client simulation culling for world chunks, individual
@@ -31,9 +87,9 @@ writable `Visibility` value and preserve normal helper/caller capabilities.
 These calls target match components, never fields, scenes, Visibility itself,
 or components whose values require local placement.
 
-Scene membership remains the enclosing audience limit. Entity group and
-component override audiences intersect it; a child override cannot reveal its
-parent. A loaded root's Visibility group also limits its scene's contents.
+Scene ownership defines the enclosing scope. Its root Visibility group limits
+the scene contents; entity groups and component override audiences intersect
+that limit. A child override cannot reveal its parent.
 Ordinary transform parenting does not implicitly create a visibility group.
 Static group mutations inherit match effects through helper chains and count
 as heap writes in scheduling; input/local/GPU code cannot mutate the directory.
@@ -47,7 +103,7 @@ These values participate in server snapshots, hashing, packing and generated
 reload layouts. Component override keys hash qualified type names, so source
 declaration reordering does not silently retarget retained policies; collisions
 are rejected. A renamed type intentionally has another key. Builtin types and
-state activate when visibility is named or a private-scene API is used.
+state activate when visibility is named.
 
 Only match component types targeted by Set/Reset gain automatic sparse presence
 storage. This avoids enumerating every component subset and reuses ordinary

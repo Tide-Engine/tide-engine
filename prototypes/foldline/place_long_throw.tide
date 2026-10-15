@@ -6,13 +6,18 @@ void BuildLongThrow(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -12, -6, -1, 0, -12, 2, PANELS);
     Fill(arena, -6, 2, -1, 0, -12, -6, PANELS);
     Fill(arena, -13, 17, 18, 19, -13, 17, CONCRETE, false, 2);
-    Fill(arena, -13, -12, -3, 18, -13, 17, PANELS);
-    Fill(arena, 16, 17, -3, 18, -13, 17, PANELS);
-    Fill(arena, -13, -12, -3, 18, -13, -12, PANELS);
-    Fill(arena, -6, 3, -3, 8, -13, -12, PANELS);
-    Fill(arena, -12, -6, 4, 18, -13, -12, PANELS);
-    Fill(arena, -13, 10, 0, 18, 16, 17, PANELS);
-    Fill(arena, 10, 16, 9.4, 18, 16, 17, PANELS);
+    // The room boundary steps around each entire cab, including its metre
+    // thick sides. Keeping the old inner-wall strip drew the same face twice.
+    Fill(arena, -13, -12, -3, 0, -13, 17, PANELS);
+    Fill(arena, -13, -12, 0, 4.4, -11.46, 17, PANELS);
+    Fill(arena, -13, -12, 4.4, 18, -13, 17, PANELS);
+    Fill(arena, 16, 17, -3, 5.4, -13, 17, PANELS);
+    Fill(arena, 16, 17, 5.4, 9.8, -13, 15.46, PANELS);
+    Fill(arena, 16, 17, 9.8, 18, -13, 17, PANELS);
+    Fill(arena, -5, 3, -3, 8, -13, -12, PANELS);
+    Fill(arena, -12, -5, 4.4, 18, -13, -12, PANELS);
+    Fill(arena, -13, 9, 0, 18, 16, 17, PANELS);
+    Fill(arena, 9, 16, 9.8, 18, 16, 17, PANELS);
     // The blood is the existing death drop, below the flight rather than a
     // puzzle-specific kill plane. Separate rectangles leave all real floors.
     DigBloodPit(arena, -6, 6, -6, 16);
@@ -20,23 +25,23 @@ void BuildLongThrow(mut Arena arena, mut Place place, mut Fold fold)
     DigBloodPit(arena, 6, 16, -6, 2);
     DigBloodPit(arena, 6, 12, 10, 16);
     Fill(arena, 1, 14, 4.4, 5.4, 2, 10, PANELS);
-    Fill(arena, 12, 16, 4.4, 5.4, 9, 16, PANELS);
+    Fill(arena, 12, 16, 4.4, 5.4, 10, 16, PANELS);
     // A full-width apron joins the six-metre lift rather than leaving its
     // western two metres over the blood beneath the narrower return corridor.
-    Fill(arena, 10, 16, 4.4, 5.4, 13.9, 16.1, PANELS);
+    Fill(arena, 10, 12, 4.4, 5.4, 13.9, 16, PANELS);
     Fill(arena, 6, 12, 5.4, 12, 9, 9.6, CONCRETE);
     Fill(arena, 14, 16, 5.4, 12, 1.5, 2, CONCRETE);
     // Return panel faces into the L corridor, its back invisible from the
     // launch and upper cage. Keeping it off z16 leaves the exit gate clear.
     Fill(arena, 11.2, 12, 5.4, 9.8, 12, 13.75, WALLPAPER, true);
     Fill(arena, 10.8, 11.2, 5.4, 10.2, 11.8, 13.9, CONCRETE);
-    Fill(arena, 11.15, 12.02, 5.4, 10.2, 11.6, 12, CONCRETE);
-    Fill(arena, 11.15, 12.02, 5.4, 10.2, 13.75, 13.9, CONCRETE);
+    Fill(arena, 11.2, 12.02, 5.4, 10.2, 11.6, 12, CONCRETE);
+    Fill(arena, 11.2, 12.02, 5.4, 10.2, 13.75, 13.9, CONCRETE);
     // The real pad's angle and its short run to the source are tested with a
     // carried cube. There is no demonstration-only extra fold or teleport.
     Fill(arena, -11.5, -8.5, 0, 4.4, 0, .8, WALLPAPER, true);
-    Fill(arena, -11.8, -11.5, 0, 4.4, 0, 1, CONCRETE);
-    Fill(arena, -8.5, -8.2, 0, 4.4, 0, 1, CONCRETE);
+    Fill(arena, -11.8, -11.5, 0, 4.4, 0, .8, CONCRETE);
+    Fill(arena, -8.5, -8.2, 0, 4.4, 0, .8, CONCRETE);
     Fill(arena, -11.8, -8.2, 0, 4.4, .8, 1.2, CONCRETE);
     SetPad(arena, float3(-10, 0, -.7), float3(0, 7, 14));
     Fill(arena, -6.8, -6, 8, 12.4, 4, 8, WALLPAPER, true);
@@ -60,9 +65,9 @@ void BuildLongThrow(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -2.2, 2.2, 7.8, 12.6, -13.2, -12.8, CONCRETE);
     PutLoose(arena, fold, float3(-9.5, .4, -7));
     // The recovery ferry stays several metres below the balcony.
-    SetProp(arena, PropKind.Arrow, float3(-10, .02, -3.5), NORTH, float3(1.5));
-    SetProp(arena, PropKind.Arrow, float3(6.6, 5.42, 6), EAST, float3(1.5));
-    SetProp(arena, PropKind.Pipe, float3(15.5, 0, -8), 0, float3(1, 4, 1));
+    SetProp(arena, PropKind.Arrow, float3(-11.2, 3.4, -.04875), SOUTH, float3(1.5));
+    SetProp(arena, PropKind.Arrow, float3(7, 6.8, 8.95125), SOUTH, float3(1.5));
+    SetProp(arena, PropKind.Pipe, float3(15.92, 0, -8), 0, float3(1, 4, 1));
     LampGrid(place, float2(-12, -12), float2(4, 4), 7, 7);
     HangLamps(place, 0, 6, 0, 6, 18);
     HangLamps(place, 0, 1, 0, 3, 4.4);

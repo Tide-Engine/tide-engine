@@ -1,5 +1,7 @@
 #include "helpers.h"
 #include "core.c"
+#include "prop_collision.c"
+#include "cube_presentation.c"
 #include "place_reception.c"
 #include "place_archive.c"
 #include "place_mailroom.c"
@@ -27,6 +29,9 @@ int main(int argc, char **argv)
 #define RUN(test) do { if (argc < 2 || strstr(#test, argv[1])) { test(); ran++; } } while (0)
     RUN(ownership_and_movement);
     RUN(folds_are_shot_and_crossed);
+    RUN(fold_preview_matches_firing);
+    RUN(cube_teleports_without_interpolating);
+    RUN(prop_collision_tests);
     RUN(ends_placed_at_building);
     RUN(sizes);
     RUN(carrying_and_throwing);

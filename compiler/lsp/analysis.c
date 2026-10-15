@@ -926,7 +926,7 @@ static void walk_value(const expr *e)
             o.kind = OCC_METHOD;
             if (e->call == CALL_TRANSFORM) o.component = e->type_decl;
             add_occ(o);
-        } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
+        } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
                                  .name = str_from("Scene")});
             o.kind = OCC_FUNCTION;
@@ -1838,15 +1838,13 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
 
 // Scene's functions.
 static const method_form scene_calls[] = {
-    {"Load", "Scene.Load(scene, SceneVisibility visibility = SceneVisibility.Public)",
-     "Loads a scene and returns its entity. Its `Spawned` handlers set it up at the end of the tick; it's public unless it's `SceneVisibility.Private`."},
+    {"Load", "Scene.Load(scene, components...)",
+     "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
-    {"AddPlayer", "Scene.AddPlayer(scene, PlayerID player)", "Lets a player see a private scene."},
-    {"RemovePlayer", "Scene.RemovePlayer(scene, PlayerID player)", "Stops a player seeing a private scene."},
 };
 
 #define AUDIENCE_DOC "A set of players permitted to receive state. All and None are values; Only(player) and From(players) select players."
-#define VISIBILITY_DOC "An entity's visibility policy. Its group supplies a shared audience; Set<T> restricts a whole component and Reset<T> restores inheritance. Parent visibility remains a limit."
+#define VISIBILITY_DOC "An entity's visibility policy. Its group supplies a shared audience; a scene root's group restricts all entities in that scene. Set<T> restricts a whole component and Reset<T> restores inheritance. Enclosing scene and entity audiences remain limits."
 #define VISIBILITY_GROUP_DOC "A shared visibility audience handle. Visibility.Set(group, audience) updates every member; groups don't own entities or their lifetime."
 
 static const method_form audience_static_calls[] = {
@@ -9759,7 +9757,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                              "fails", "in", "by", "offset", "void"};
     enum { DECL_WORDS = 14 };
     static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Visibility", "VisibilityGroup", "Audience", "Spawn", "Send", "Spawned",
-                                           "Destroyed", "Shown", "Hidden", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
+                                           "Destroyed", "Shown", "Hidden", "PlayerJoined", "PlayerLeft", "Scene", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
@@ -10375,7 +10373,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             if (str_eq_c(call->name, session_calls[i].name)) vec_push(list.labels, session_calls[i].form);
         }
         break;
-    case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER:
+    case CALL_LOAD: case CALL_UNLOAD:
         for (size_t i = 0; i < sizeof scene_calls / sizeof scene_calls[0]; i++) {
             if (str_eq_c(call->name, scene_calls[i].name)) vec_push(list.labels, scene_calls[i].form);
         }

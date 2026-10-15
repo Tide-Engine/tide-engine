@@ -1,4 +1,151 @@
 // Shared mechanics are exercised on the bench.
+typedef struct preview_pair { FoldShot first, second; } preview_pair;
+
+// Read the real HUD's result through an ordinary local frame. Nothing is
+// submitted to a GPU; hashing around the frame checks that aiming is read-only.
+static preview_pair read_preview(tide_world *world, int active)
+{
+    extern const unsigned char tide_game_pack[];
+    extern const size_t tide_game_pack_size;
+    static bool loaded;
+    if (!loaded) {
+        CHECK(tide_assets_load(tide_game_pack, tide_game_pack_size));
+        loaded = true;
+    }
+    const uint64_t before = tide_world_hash(world);
+    tide_local local = {0};
+    tide_draw_list draw = {0};
+    tide_gui gui = {0};
+    const tide_devices devices = {0};
+    const tide_float2 screen = {960, 540};
+    tide_local_init(&local);
+    tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(0), 0, true, false, "");
+    local.Interface.open = false;
+    local.Interface.introduced = true;
+    local.Control.active = active;
+    local.Control.started = true;
+    local.Optics.warmed = 3;
+    tide_draw_screen_size(&draw, screen);
+    tide_gui_begin(&gui, &devices, screen, NULL);
+    tide_frame(world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+    const preview_pair result = {local.Interface.shot0, local.Interface.shot1};
+    CHECK(tide_world_hash(world) == before);
+    tide_draw_forget(&draw);
+    tide_draw_free(&draw);
+    tide_draw_free(&gui.list);
+    tide_local_free(&local);
+    tide_render_targets_free();
+    return result;
+}
+
+static bool same_point(tide_float3 a, tide_float3 b)
+{
+    return near(a.x, b.x, .001f) && near(a.y, b.y, .001f) && near(a.z, b.z, .001f);
+}
+
+// The preview is observed before a real trigger tick, rather than calling the
+// same helper twice. Assert both the decision and its nudged/fizzle position.
+static void fire_preview(tide_world *world, int id, int side, FoldShot shot)
+{
+    const Portal previous = world->Fold.ends.at[id * 2 + side];
+    const Wall wall = shot.valid ? tide_get_Wall(world, shot.portal.wall) : (Wall){0};
+    PilotInput controls = {.active = id};
+    if (side == 0) controls.amber = true;
+    else controls.cyan = true;
+    input(world, 0, controls);
+    tide_world_tick(world);
+    input(world, 0, (PilotInput){.active = id});
+    const Portal actual = world->Fold.ends.at[id * 2 + side];
+    if (shot.valid) {
+        CHECK(actual.open && tide_entity_equal(actual.wall, shot.portal.wall));
+        CHECK(same_point(actual.at, shot.portal.at) && same_point(actual.face, shot.portal.face));
+        CHECK(actual.size == shot.portal.size);
+        CHECK(tide_get_Wall(world, actual.wall).version == wall.version + 1);
+    } else {
+        CHECK(memcmp(&actual, &previous, sizeof actual) == 0);
+        if (shot.hit) {
+            CHECK(world->Fold.fizzleTime > 0 && world->Fold.fizzleEnd == id * 2 + side);
+            CHECK(same_point(world->Fold.fizzleAt, shot.point) && same_point(world->Fold.fizzleFace, shot.face));
+        } else CHECK(world->Fold.fizzleTime == 0);
+    }
+}
+
+static void preview_pose(tide_world *world, tide_float3 at, float yaw, float pitch)
+{
+    choose(world, 0, BENCH);
+    ticks(world, 60);
+    place(world, 0, at, yaw, pitch);
+    ticks(world, 3);
+}
+
+static void fold_preview_matches_firing(void)
+{
+    tide_world world = {0};
+    start(&world);
+    // Ordinary receptive wall: the floor nudges eye-height aim down to its sill.
+    preview_pose(&world, (tide_float3){-5, 0, -7}, SOUTH, 0);
+    preview_pair shot = read_preview(&world, 0);
+    CHECK(shot.first.hit && shot.first.valid && shot.second.valid);
+    CHECK(near(shot.first.portal.at.y, 1.3f, .001f));
+    fire_preview(&world, 0, 0, shot.first);
+    tide_world_tick(&world); // Apply the replacement collider before aiming at it again.
+    // Replacing one's own end is valid; placing its other end over it is not.
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.valid && shot.second.hit && !shot.second.valid);
+    fire_preview(&world, 0, 1, shot.second);
+
+    // A shot by the wall's corner is moved sideways to clear the adjacent wall.
+    preview_pose(&world, (tide_float3){-9.7f, 0, -7}, SOUTH, 0);
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.valid && shot.first.portal.at.x > pilot(&world, 0).position.x + .2f);
+    fire_preview(&world, 0, 0, shot.first);
+
+    // The same shot into the half frame acquires its wall-owned size and centre.
+    preview_pose(&world, (tide_float3){-5, 0, -5}, WEST, 0);
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.valid && shot.first.portal.size == .5f);
+    CHECK(same_point(shot.first.portal.at, (tide_float3){-10, .65f, -5}));
+    fire_preview(&world, 0, 0, shot.first);
+
+    preview_pose(&world, (tide_float3){-5, 0, -7}, SOUTH, 0);
+    world.Fold.busy.at[0] = 3;
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.hit && !shot.first.valid && !shot.second.valid);
+    fire_preview(&world, 0, 0, shot.first);
+
+    // Bare concrete and a receptive-but-thin partition are distinct refusals.
+    preview_pose(&world, (tide_float3){5, 0, 8}, EAST, 0);
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.hit && !shot.first.valid);
+    fire_preview(&world, 0, 0, shot.first);
+    preview_pose(&world, (tide_float3){-1, 0, 2}, NORTH, 0);
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.hit && !shot.first.valid);
+    fire_preview(&world, 0, 0, shot.first);
+
+    // Through a grille, a closed shutter still blocks the real receptive wall.
+    choose(&world, 0, RECEPTION);
+    ticks(&world, 100);
+    place(&world, 0, (tide_float3){10.8f, 0, 0}, NORTH, 0);
+    ticks(&world, 3);
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.hit && !shot.first.valid && near(shot.first.point.z, 2.2f, .03f));
+    fire_preview(&world, 0, 0, shot.first);
+    place(&world, 1, (tide_float3){-8, 0, 4}, NORTH, 0);
+    ticks(&world, 150);
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.valid && near(shot.first.portal.at.z, 6, .001f));
+    fire_preview(&world, 0, 0, shot.first);
+
+    // No surface in range gives no candidate and retains the silent miss rule.
+    preview_pose(&world, (tide_float3){-5, 40, -7}, NORTH, 1.3f);
+    shot = read_preview(&world, 0);
+    CHECK(!shot.first.hit && !shot.first.valid && !shot.second.hit);
+    fire_preview(&world, 0, 0, shot.first);
+    tide_world_free(&world);
+}
+
 static void ownership_and_movement(void)
 {
     tide_world world = {0};
