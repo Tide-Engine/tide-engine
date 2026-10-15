@@ -138,7 +138,7 @@ TIDE_TEST(inside_out_rejects_stale_malformed_and_forged_actions)
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, -1));
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, INT32_MAX));
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, -1));
-    TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 1, 12));
+    TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 1, INT32_MAX));
     TIDE_CHECK(!inside_out_test_command(TIDE_COMMAND_ID_Move, 2, world.Workshop.serial, 1));
     tide_world_tick(&world);
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Next, 0, 0));
@@ -1006,5 +1006,86 @@ TIDE_TEST(inside_out_a_bot_faces_the_way_it_last_moved_and_undo_turns_it_back)
     blocked(0, 2); // A step not taken turns nothing.
     for (int step = 0; step < 2; step++) TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Undo, 0, 0));
     TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_a_closed_door_cannot_be_bypassed_by_a_box_in_its_shutter)
+{
+    for (int battery = 0; battery < 2; battery++) {
+        fixture(2);
+        tile(-1, 4, 3, Tile_Wall);
+        tile(0, 0, 2, Tile_ShutterA);
+        tile(0, 1, 2, Tile_Wall);
+        world.Workshop.puzzle.rooms.at[1] = (RoomShell){.room = 0, .position = {0, 2}};
+        actor(0, -1, battery ? 1 : 2, 3);
+        if (battery) crate(0, -1, 2, 3);
+        blocked(0, 1);
+        // With power, exactly the same row may enter the inner box.
+        tile(-1, 1, 5, Tile_PlateA);
+        const Puzzle initial = world.Workshop.puzzle;
+        move(0, 1);
+        if (battery) TIDE_CHECK(crate_at(0, 1, 0, 2));
+        else TIDE_CHECK(bot_at(0, 1, 0, 2));
+        undo_all(1);
+        TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+        tide_world_free(&world);
+    }
+}
+
+TIDE_TEST(inside_out_entering_its_own_box_emits_a_doorway_cue)
+{
+    fixture(1);
+    world.Workshop.puzzle.rooms.at[0] = (RoomShell){.room = 0, .position = {2, 2}};
+    tile(0, 1, 2, Tile_Wall);
+    actor(0, 0, 3, 2);
+    const Puzzle initial = world.Workshop.puzzle;
+    TIDE_CHECK(move_cue(0, 3) == 2);
+    TIDE_CHECK(bot_at(0, 0, 4, 2));
+    TIDE_CHECK(move_cue(0, 1) == 2);
+    TIDE_CHECK(bot_at(0, 0, 3, 2));
+    undo_all(2);
+    TIDE_CHECK(memcmp(&initial, &world.Workshop.puzzle, sizeof initial) == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_doorways_use_power_from_before_the_move)
+{
+    // Leaving the plate to enter a shutter doorway still uses its power.
+    fixture(1);
+    tile(-1, 4, 3, Tile_Wall);
+    tile(-1, 2, 3, Tile_PlateA);
+    tile(0, 0, 2, Tile_ShutterA);
+    actor(0, -1, 2, 3);
+    const Puzzle entry = world.Workshop.puzzle;
+    move(0, 1);
+    TIDE_CHECK(bot_at(0, 0, 0, 2));
+    undo_all(1);
+    TIDE_CHECK(memcmp(&entry, &world.Workshop.puzzle, sizeof entry) == 0);
+    tide_world_free(&world);
+
+    // The same holds at the outside end of an exit.
+    fixture(1);
+    tile(0, 4, 2, Tile_PlateA);
+    tile(-1, 4, 3, Tile_ShutterA);
+    actor(0, 0, 4, 2);
+    const Puzzle exit = world.Workshop.puzzle;
+    move(0, 1);
+    TIDE_CHECK(bot_at(0, -1, 4, 3));
+    undo_all(1);
+    TIDE_CHECK(memcmp(&exit, &world.Workshop.puzzle, sizeof exit) == 0);
+    tide_world_free(&world);
+
+    // A battery leaving its plate may be posted through a shutter too.
+    fixture(1);
+    tile(-1, 4, 3, Tile_Wall);
+    tile(-1, 2, 3, Tile_PlateA);
+    tile(0, 0, 2, Tile_ShutterA);
+    actor(0, -1, 1, 3);
+    crate(0, -1, 2, 3);
+    const Puzzle posted = world.Workshop.puzzle;
+    move(0, 1);
+    TIDE_CHECK(crate_at(0, 0, 0, 2));
+    undo_all(1);
+    TIDE_CHECK(memcmp(&posted, &world.Workshop.puzzle, sizeof posted) == 0);
     tide_world_free(&world);
 }

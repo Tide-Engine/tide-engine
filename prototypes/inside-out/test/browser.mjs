@@ -408,21 +408,13 @@ try {
     };
     // These rectangles follow Workbench's authored layout. They read public
     // presentation, not wasm memory or a test-only simulation export.
-    const playfield = client => {
-        const { width, height } = client.state.screen;
-        const narrow = width < 720;
-        const contentWidth = Math.min(width - 36, 1180);
-        const left = (width - contentWidth) / 2;
-        const top = width < 1050 ? 136 : 88;
-        return { x: left, y: top, width: contentWidth, height: Math.max(200, height - top - (narrow ? 200 : 110)) };
-    };
     const movesClip = client => {
-        const rect = playfield(client);
-        return { x: rect.x + rect.width - 110, y: rect.y + 9, width: 96, height: 25 };
+        const { width } = client.state.screen;
+        return { x: width - (width < 720 ? 116 : 204), y: width < 720 ? 55 : 24, width: 96, height: 25 };
     };
     const dimensionClip = client => {
-        const rect = playfield(client);
-        return { x: rect.x + 16, y: rect.y + 7, width: 240, height: 27 };
+        const { width, height } = client.state.screen;
+        return { x: width / 2 - 36, y: height - (width < 720 ? 230 : 153), width: 72, height: 16 };
     };
     // The scene fills the window below the heading. The focused room sits
     // in a square clear of the heading and the controls (SceneSide and
@@ -431,7 +423,7 @@ try {
     // more of the containing world on a wide screen.
     const sceneSquare = client => {
         const { width, height } = client.state.screen;
-        const top = width < 1050 ? 128 : 66, bottom = width < 720 ? 200 : 80;
+        const top = width < 720 ? 122 : 112, bottom = width < 720 ? 206 : 124;
         return { side: Math.max(200, Math.min(width - 24, height - top - bottom)), x: width / 2, y: top + (height - top - bottom) / 2 };
     };
     const cameraBody = client => {
@@ -458,7 +450,7 @@ try {
         // doorway. Each straddles geometry, so a uniform/blank crop fails.
         return [parcelClip(client), patch(-0.7, -1.68), patch(0.7, -1.68)];
     };
-    const titleClip = { x: 265, y: 24, width: 320, height: 25 };
+    const titleClip = { x: 20, y: 34, width: 470, height: 26 };
     const moveLabel = client => client.crop(movesClip(client));
     const dimensionLabel = client => client.crop(dimensionClip(client));
     const saveCrop = async (client, label, clip) => {
@@ -484,7 +476,8 @@ try {
     // Finish cold rendering before starting a live join. Click the actual
     // custom title's Join a friend button, then type into Rooms.JoinPage.
     await navigate(small);
-    await small.click(772, 460);
+    await small.click(640, (720 - 560) / 2 + 296);
+    await small.click(700, (720 - 360) / 2 + 156);
     for (const character of room) {
         await small.tapKey(`${/\d/.test(character) ? 'Digit' : 'Key'}${character}`, character, 2);
     }
@@ -500,7 +493,8 @@ try {
         const before = clients.map(client => client.state);
         await Promise.all(clients.map((client, index) => client.until(value =>
             connected(value) && value.verified >= before[index].verified + ticks && value.frames > before[index].frames &&
-            value.messages > before[index].messages && value.sent > before[index].sent, `${ticks} verified ticks and fresh match packets`)));
+            value.messages > before[index].messages && value.sent > before[index].sent, `${ticks} verified ticks and fresh match packets`,
+            Math.max(30_000, ticks * 1500))));
         for (const client of clients) assert.equal(client.state.visibility, 'visible', 'both player screens remain visible');
     };
     await advanceMatch(10);
@@ -521,14 +515,23 @@ try {
     const witness = async text => {
         for (const letter of text.replace(/\s/g, '')) await action(letter);
     };
-    const choose = async level => {
+    const choose = async (level, chapter = 0, row = level) => {
         await host.resize(1280, 800);
         await small.resize(1280, 800);
         await advanceMatch();
-        await host.click(1075, 36);
-        // Nine puzzles on the shelf.
-        await host.click(640, 301 + level * 33);
-        await advanceMatch(10);
+        await host.click(1228, 37);
+        await host.click(640, (800 - 650) / 2 + 261);
+        await host.click(363 + chapter * 138.4, (800 - 650) / 2 + 134);
+        await host.click(640, (800 - 650) / 2 + 228 + row * 57);
+        // Choosing another puzzle after any move asks before clearing the
+        // shared history. Confirm through the public interface.
+        await host.click(640, (800 - 300) / 2 + 188);
+        // Let the 2.5-second introduction finish before camera/scene crops.
+        await advanceMatch(80);
+    };
+    const reset = async client => {
+        await client.tapKey('KeyR', 'r');
+        await client.click(client.state.screen.width / 2, (client.state.screen.height - 300) / 2 + 188);
     };
 
     stage = 'nested outward travel, shared undo and reset';
@@ -545,7 +548,7 @@ try {
     assertImagesEqual(await moveLabel(host), zeroMoves, 'partner undo restores the previous nested puzzle');
     assertImagesEqual(await dimensionLabel(host), homeTitle, 'undo restores the home camera');
     await action('E');
-    await small.tapKey('KeyR', 'r');
+    await reset(small);
     await advanceMatch(10);
     assertImagesEqual(await moveLabel(host), zeroMoves, 'partner reset restores the initial move count');
     assertImagesEqual(await moveLabel(small), zeroMoves, 'reset reaches both screens');
@@ -553,7 +556,7 @@ try {
     stage = 'held movement cannot cross partner reset or undo';
     await host.key('KeyD', 'd', true);
     await advanceMatch();
-    await small.tapKey('KeyR', 'r');
+    await reset(small);
     await advanceMatch();
     assertImagesEqual(await moveLabel(host), zeroMoves, 'partner reset suppresses a held direction');
     await advanceMatch();
@@ -566,7 +569,7 @@ try {
     await host.key('KeyD', 'd', false);
     await action('E');
     assertImagesEqual(await moveLabel(host), oneMove, 'release and a new press allow movement again');
-    await host.tapKey('KeyR', 'r');
+    await reset(host);
     await advanceMatch(24);
 
     stage = 'one local view, actual nearby partner and continuous doorway passage';
@@ -627,7 +630,7 @@ try {
     assertImagesDiffer(exitMiddle, exitEarly, 'exit has an intermediate spatial pose');
     assertImagesDiffer(exitLate, exitSettled, 'exit reaches its endpoint gradually');
     assertImagesEqual(await dimensionLabel(host), containingTitle, 'leaving restores the containing room');
-    await small.tapKey('KeyR', 'r');
+    await reset(small);
     await advanceMatch(24);
 
     stage = 'production tutorial solution and outward progression';
@@ -676,22 +679,27 @@ try {
     await advanceMatch();
     assertImagesDiffer(await host.crop(titleClip), secondTitle, 'the occupied-box witness completes through production rules');
 
-    stage = 'a room that holds a copy of itself';
-    await choose(7);
+    stage = 'a room containing its own one real box';
+    await choose(14, 3, 0);
     const recursiveTitle = await host.crop(titleClip);
-    await witness('WS');
+    await witness('nnnn');
     await advanceMatch(24);
-    const copyBefore = await saveCrop(small, 'copy-before', cameraBody(small));
-    await action('s');
+    const beforeEntry = await saveCrop(host, 'self-entry-before', cameraBody(host));
+    await host.tapKey('KeyW', 'w');
+    const selfEarly = await saveCrop(host, 'self-entry-early', cameraBody(host));
+    await host.frames(5);
+    const selfMiddle = await saveCrop(host, 'self-entry-middle', cameraBody(host));
     await advanceMatch(24);
-    assertImagesDiffer(await saveCrop(small, 'copy-after', cameraBody(small)), copyBefore, 'a step changes the room and every drawing of it');
-    await host.tapKey('KeyZ', 'z');
+    const selfSettled = await saveCrop(host, 'self-entry-settled', cameraBody(host));
+    assertImagesDiffer(selfEarly, selfMiddle, 'same-room entry has an intermediate spatial passage');
+    assertImagesDiffer(selfMiddle, selfSettled, 'same-room entry reaches its endpoint gradually');
+    assertImagesDiffer(beforeEntry, selfSettled, 'entry changes the bot position in its one canonical room');
+    await small.tapKey('KeyZ', 'z');
     await advanceMatch(24);
-    // What a bot faces is the match's, so an undo turns it back too.
-    assertImagesEqual(await small.crop(cameraBody(small)), copyBefore, 'partner undo restores the exact scene');
-    await small.screenshot('desktop-self-copy-teal');
-    await host.screenshot('desktop-self-copy-amber');
-    await witness('ssssneNNSEensw');
+    assertImagesEqual(await host.crop(cameraBody(host)), beforeEntry, 'partner undo restores exact real-recursion state and facing');
+    await host.screenshot('desktop-self-recursion-amber');
+    await small.screenshot('desktop-self-recursion-teal');
+    await witness('NN');
     await small.tapKey('Enter', 'Enter');
     await advanceMatch();
     // The two pages draw the same title from glyphs they each cached in
@@ -712,8 +720,8 @@ try {
     await host.screenshot('phone-big-maker');
     await small.screenshot('phone-little-maker');
     // The cardinal D button moves right on the shared top-down scene.
-    const touchX = host.state.screen.width - 66 + 40 - 1.5;
-    const touchY = host.state.screen.height - 67 - 1.5;
+    const touchX = host.state.screen.width - 68 + 42;
+    const touchY = host.state.screen.height - 104;
     await host.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchX, y: touchY, id: 1 }] });
     await host.frames();
     await host.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
@@ -732,7 +740,7 @@ try {
         assert.equal(screen.canvasHeight, screen.height, `${client.name}: canvas fits phone height`);
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`Inside Out (${backend}): two real WebRTC players, minimum-two-player waiting, nested outward starts, blocked entry, progressive spatial entry/exit zoom and maker travel, partner-independent framing and off-screen movement, canonical interior parity, occupied-box context, actual primary self-nesting/extraction and same-room cycle exit, shared undo/reset and held-input recovery, three production solutions/progression, phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls and held-input recovery, three production solutions/progression and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
 } catch (error) {
     process.exitCode = 1;
     console.error(`Inside Out failed during ${stage}: ${error.stack ?? error}`);

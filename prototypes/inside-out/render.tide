@@ -78,7 +78,8 @@ bool SceneCovered(float3 world, float2 screen, float4 aperture, int side, float 
     var low = (((x ^ y) & 1) * 2 + (y & 1)) * 4;
     var high = (((x >> 1) ^ (y >> 1)) & 1) * 2 + ((y >> 1) & 1);
     var rank = low + high;
-    // Passage and canonical-alias alphas are complementary. Opposite Bayer
+    // The passage pose and other drawings of the bot have complementary
+    // alphas. Opposite Bayer
     // phases preserve full coverage when their poses coincide.
     var coverage = side >= 0 ? 15 - rank : rank;
     return alpha >= (coverage + 0.5) / 16;
