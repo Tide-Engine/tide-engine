@@ -51,6 +51,9 @@ fixture passes 3/3 on Windows and in a separate strict C17 Linux build. Full
 Windows native debug passes 2,360 CTests (119.33 seconds), and web debug passes
 2,272 (259.60 seconds), including WebGL/WebGPU. Node 24.16.0/Clang 23.1.2,
 Node syntax checks for the earlier fixture edits and git diff --check pass.
+Actual macOS confirmation: runs 38768886333 and 38772910822 pass all installed
+native/web/Android smoke, C++ and cache/watch checks. The former uses the same
+20261013.0424.1 image that exposed the mismatched CLT 27/Xcode 26.6 installation.
 
 ## Complete Windows installer preflight (2026-10-15)
 
@@ -62,6 +65,10 @@ cleanup. Cases retain their 30-second limits, assertions and fresh isolated
 module caches; preflight retains its 300-second cold-start guard and writes no
 user installation, PATH or registry state. Run 38768886333's phase evidence,
 one-time-delay/failure probes and validation are in releases-and-ci.md.
+Run 38772910822 passes the Windows native installer CTest in 22.83 seconds and
+all required release checks, publishing v0.4.0-nightly.3. Local POSIX coverage
+also passes all eight cases; Windows passes all nine. Individual case and
+preflight guards remain 30 and 300 seconds respectively.
 
 Folder deployment link (2026-10-15): `tide deploy` needs no dashboard setup.
 Its existing project auto-creation now normalizes the folder name and saves
