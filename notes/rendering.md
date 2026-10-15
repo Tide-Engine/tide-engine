@@ -10,9 +10,12 @@ beside `tide_platform_draw_calls`. The shared renderer counts at submission
 on every backend: non-indexed vertices or indices multiplied by instances,
 using each selected LOD's index count. Shapes, glyphs, 2D/3D/custom meshes,
 blits, explicit clear triangles and all render-target passes count. Repeated
-indices, clipped/culled triangles and repeated passes count again; backend
+indices, GPU-clipped/face-culled triangles and repeated passes count again; backend
 attachment clears, mipmap generation and host overlays do not. This measures
 submitted geometry, not unique corners or hardware vertex-shader invocations.
+Instances rejected during draw-list frustum culling never reach submission and
+do not count; the frustum pixel fixture also checks that six rejected indices
+disappear from the submitted total (`notes/drawing.md`, Frustum culling).
 An empty list resets the total; an overlay preserves the game's total.
 
 The existing draw fixture checks all submission paths, instance/LOD totals,

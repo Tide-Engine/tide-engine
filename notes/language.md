@@ -1,5 +1,9 @@
 # Language features, as tidec builds them
 
+## Frustum culling settings (2026-10-15)
+
+The approved rendering work adds `Draw.FrustumCulling(bool)` / `SetFrustumCulling(bool)` and `Draw.Bounds(float3 center, float3 size)` / `SetBounds` through `add_setting`, including reset forms. Target lookup, editor signatures/docs, block/Set diagnostics and early-exit pops use the existing machinery. No parser/checker, capability or evaluation-order rule changes. Generated fragment-only 3D shaders advertise their position offset for automatic bounds; user verts and skinning do not. `draw_frustum` E2E verifies rejected operands still run, and two error fixtures pin the setting forms. API choices are provisional in the spec; runtime and validation are in `notes/drawing.md`, Frustum culling.
+
 ## Dedicated server asset selection (2026-10-15)
 
 Server codegen preserves the ordinary client header/game identity before

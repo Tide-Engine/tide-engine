@@ -95,6 +95,7 @@ view Draws(Stage stage)
 {
     // Drawn into like any target, by its own methods
     stage.four.Clear(Color.black);
+    stage.four.SetFrustumCulling(false); // Inspect sample configuration on geometry at the camera origin
     stage.four.Mesh(stage.crate, stage.faces, float4x4.identity);
     stage.four.Rect(float2(4, 4), float2(8), Color.red);
     // ...and its color read like any target's

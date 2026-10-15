@@ -82,6 +82,7 @@ view Casters(mut Caster caster, Lamp lamp)
     // Into depth alone: a clear, a mesh with no frag, one through a frag, and a rect, whose color has nowhere to go
     lamp.map.Clear(Color.black);
     lamp.map.SetCamera(float4x4.identity, lamp.toLamp);
+    lamp.map.SetFrustumCulling(false); // Inspect depth bindings on geometry at z=0, before the near plane
     lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position));
     lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position), Seen);
     lamp.map.SetScreen();
