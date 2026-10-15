@@ -229,3 +229,71 @@ rate. The merged docs site/browser compiler build and Linux Docker RTC/HTTP plus
 actual generated-WASM save/restore smoke pass; Fly configuration validates.
 Screenshots and the whitespace diff were checked. Provider/Fly launch checks and
 other-platform native coverage remain as listed above; no deployment or CI run.
+
+## Stripe planner review and sandbox setup (2026-10-15)
+
+At the owner's request, installed stripe@openai-curated and registered the
+https://mcp.stripe.com server in user-level Codex configuration. The owner
+completed OAuth in their own browser. The existing running agent did not expose
+new MCP tools, so a fresh Codex app-server connection invoked the authenticated
+MCP directly, without running an additional agent/model turn or reading OAuth
+credentials. stripe_implementation_planner was called with Tide's existing
+prepaid architecture and its decision-tree selections were accepted. No skills
+fallback was needed. The authorized account is Tide Engine sandbox (test mode).
+
+The planner selects hosted one-time Checkout. Keep the synchronous prepaid
+allocation ledger and hard hosting limits. Recommended next steps, not newly
+approved product/pricing requirements: persistent Stripe Customer mapping and
+optional paid invoice documents for top-ups, with any later recurring/usage
+Billing package designed separately. Checkout post-payment invoice generation
+is priced separately; do not enable it or tax collection merely because the
+products were selected in onboarding. Invoice events must not double-credit
+purchases already fulfilled through Checkout. Tax treatment/registrations and
+net service credit versus total payment need resolution before live collection.
+
+Confirmed findings in hosting/payments.mjs:
+
+- The live/test check recognizes sk_live_ only. A correctly signed live event
+  is rejected with rk_live_, preventing fulfillment using a live restricted key.
+  Fix the mode check before live launch and test both restricted key modes.
+- A fresh idempotency key is generated per checkout request, with the payment
+  record inserted after Stripe returns. A simulated local persistence failure
+  followed by retry produces a second Checkout Session. Persist a purchase ID
+  before the external request and reuse its idempotency key/parameters on retry.
+  This reproduction establishes duplicate/orphan sessions; it does not establish
+  a real double charge or loss of a paid purchase in the normal response flow.
+- API requests do not pin Stripe-Version; webhook and API versions should be
+  tested and pinned together. Checkout currently hardcodes card-only methods;
+  use Dashboard-managed dynamic methods and test delayed settlement/reversal
+  behavior before offering additional methods. Customer mapping, invoice
+  generation/links and reconciliation of missed notifications remain unbuilt.
+
+A real sandbox API read found no webhook endpoints. Created and read back
+we_1UQpaeEOEguEtdxRUxRRVN8g for
+https://console.tide-engine.dev/webhooks/stripe, pinned to
+2026-09-30.endive (verified supported by Stripe's API schema), with only
+checkout.session.completed, checkout.session.async_payment_succeeded,
+charge.refunded and charge.dispute.created. Its signing secret is stored outside
+the checkout in the current user's LocalAppData/Tide/hosting-setup/stripe-webhook.env,
+with a user-only Windows ACL. No secret value was printed or committed. The
+endpoint is registered; public delivery is not validated because the hosting
+service is not deployed. No live objects, payments, subscriptions, tax settings,
+pricing changes or paid services were created.
+
+Stripe's API schema lists checkout_session_write for POST /v1/checkout/sessions.
+The current runtime uses only Checkout Session create/retrieve, so begin with a
+sandbox restricted key granting Checkout Sessions Write (which includes Read),
+then validate the actual runtime flows in the sandbox before provisioning the
+live equivalent. Customer/invoice API permissions can follow the implemented
+features. Runtime keys do not need webhook administration rights. Creating the
+runtime key remains an owner Dashboard/2FA step; the MCP API search did not expose
+a restricted-key creation operation. The owner will push secrets to Fly.
+
+Validation: 14 existing auth/payment/store tests pass; two isolated mock-provider
+reproductions confirm the key-mode and retry findings. Runtime code is unchanged
+by this review. Private setup helpers/results are under ignored build/; the
+webhook secret is outside the repository. Local references and whitespace diff
+checked. Official references: [restricted keys](https://docs.stripe.com/keys/restricted-api-keys),
+[idempotent requests](https://docs.stripe.com/api/idempotent_requests),
+[paid invoice receipts](https://docs.stripe.com/receipts) and
+[Stripe MCP](https://docs.stripe.com/mcp).
