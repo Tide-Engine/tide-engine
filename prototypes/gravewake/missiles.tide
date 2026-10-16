@@ -64,13 +64,13 @@ float SphereHit(float3 from, float3 to, float3 middle, float radius)
 }
 
 [Stage(Tick.Missiles)]
-system Fly(mut Missile missile, Ashwick ashwick, Time time, query (Zombie zombie) zombies)
+system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Time time)
 {
     var dt = time.dt;
     missile.age += dt;
     missile.life -= dt;
-    mut List<Body> bodies = [];
-    foreach (var row in zombies) bodies.Add(BodyOf(row.entity, row.zombie));
+    // The dead it could meet this tick, or catch in its burst
+    var bodies = Near(herd, missile.at, Math.Length(missile.velocity) * dt + Math.Max(missile.splash, 2) + 1);
     if (missile.stuck)
     {
         if (missile.life > 0) return;

@@ -272,19 +272,6 @@ view DrawFx(Fx fx, Lens lens)
 
 // ---- What the match's events leave ----
 
-// The pieces of one of the dead blown apart trail blood as they fly.
-[Stage(Layers.Gather, 3)]
-view Spray(Zombie zombie, mut Fx fx, Me me)
-{
-    if (!zombie.gibbed || zombie.gibAge > 1.2 || Math.Distance(zombie.at, me.eye) > 40) return;
-    for (var p = 0; p < zombie.shards.count; p++)
-    {
-        if (p == zombie.burst || fx.random.NextInt(3) != 0) continue;
-        Murk(fx, Mote { at = zombie.shards[p].at, velocity = zombie.shards[p].vel * 0.3 + Scatter(fx, 0.8), life = fx.random.NextFloat(0.4, 0.8),
-                        size = fx.random.NextFloat(0.03, 0.06), gravity = 9, color = float3(0.3, 0.015, 0.015), alpha = 0.95 });
-    }
-}
-
 local event(Struck struck) Bleed(mut Fx fx)
 {
     if (struck.blow == Blow.Shove) return;

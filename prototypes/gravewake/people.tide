@@ -1,15 +1,9 @@
-// The people: the dead, and the other survivors. Their bodies are Quaternius'
-// modular men and women (art/people), and every clip comes from one of two
-// catalogs, the men's skeleton's or the women's. Each frame a body's pose is
-// sampled once, into the entity's local fields, and drawn into the moon's
-// shadows and into the picture from there.
+// The survivors as others see them. Their bodies are Quaternius' modular men
+// and women (art/people), and every clip comes from one of two catalogs, the
+// men's skeleton's or the women's. Each frame a body's pose is sampled once,
+// into the entity's local fields, and drawn into the moon's shadows and into
+// the picture from there. (The dead are the horde's, crowd.tide.)
 
-[LOD] asset SkinnedMesh<Corner, Rig> zombieFarmer = "art/people/zombie_farmer.glb";
-[LOD] asset SkinnedMesh<Corner, Rig> zombieWorker = "art/people/zombie_worker.glb";
-[LOD] asset SkinnedMesh<Corner, Rig> zombieKing = "art/people/zombie_king.glb";
-[LOD] asset SkinnedMesh<Corner, Rig> zombieWanderer = "art/people/zombie_wanderer.glb";
-[LOD] asset SkinnedMesh<Corner, Rig> zombiePeasant = "art/people/zombie_peasant.glb";
-[LOD] asset SkinnedMesh<Corner, Rig> zombieMaid = "art/people/zombie_maid.glb";
 // The bones a body is asked for by name: the hand that holds a survivor's weapon, the head that comes off.
 struct Rig
 {
@@ -57,28 +51,9 @@ struct Skin
     float ghost;                // The dead's pale edge, kept through the fog, so they read against the forest
 }
 
-// A zombie's look: which body (0 to 5), and whether it's a woman's.
-bool WomanZombie(int look)
-{
-    return look == 4 || look == 5;
-}
-
 bool WomanHero(int seat)
 {
     return seat == 1 || seat == 3;
-}
-
-SkinnedMesh<Corner, Rig> ZombieBody(int look)
-{
-    switch (look)
-    {
-        case 0: return zombieFarmer;
-        case 1: return zombieWorker;
-        case 2: return zombieWanderer;
-        case 3: return zombieKing;
-        case 4: return zombiePeasant;
-    }
-    return zombieMaid;
 }
 
 SkinnedMesh<Corner, Rig> HeroBody(int seat)
@@ -187,306 +162,6 @@ frag Flesh(Corner corner, out Color color, Instance instance, Skin skin, Look lo
     color = Color(Hazed(lit, this.world, look) + float3(0.2, 0.3, 0.22) * edge * skin.ghost * through, 1);
 }
 
-// The dead's pose as their state has it, the same in the match (where blows and missiles find their head, chest and
-// hips: zombies.tide's Brace) and in the picture. `sink` is how far below its feet the body is (rising out of the
-// ground, sinking away).
-Pose ZombiePose(Zombie zombie, out float sink)
-{
-    var woman = WomanZombie(zombie.look);
-    var body = ZombieBody(zombie.look);
-    mut var pose = body.defaultPose;
-    sink = 0;
-    var t = zombie.timer;
-    switch (zombie.state)
-    {
-        case ZombieState.Rising:
-        {
-            var risen = Math.SmoothStep(0, 1, t / RISE_SECONDS);
-            pose.Sample(MoveOf(woman, Move.ZClimb), 0.15 + risen * 0.5);
-            sink = (1 - risen) * 1.9;
-            break;
-        }
-        case ZombieState.Fallen:
-        {
-            // Over backwards, lying there, then up
-            var up = t - KNOCK_SECONDS - zombie.downFor;
-            if (up < 0) pose.Sample(MoveOf(woman, Move.ZKnockback), Math.Min(t, 0.833));
-            else pose.Sample(MoveOf(woman, Move.ZGetUp), up);
-            break;
-        }
-        case ZombieState.Dying:
-        {
-            var fall = zombie.fall == 0 ? Move.Death : Move.DeathB;
-            var length = zombie.fall == 0 ? 1.067 : 2.4;
-            // Where it lay, or thrown over by the blow
-            if (zombie.fall >= 2) pose.Sample(MoveOf(woman, Move.ZKnockback), zombie.fall == 2 ? 0.833 : Math.Min(t, 0.833));
-            else pose.Sample(MoveOf(woman, fall), Math.Min(t * 1.15, length));
-            if (t > DEATH_SECONDS - 1.4) sink = (t - (DEATH_SECONDS - 1.4)) * 0.6;
-            break;
-        }
-        default:
-        {
-            // Hunting: walking, running or sprinting by how fast; swinging; reeling
-            var speed = zombie.speed;
-            if (zombie.gait == Gait.Shamble) pose.Sample(MoveOf(woman, Move.ZWalk), zombie.stride / 1.361 * 1.333, Playback.Loop);
-            else pose.Sample(MoveOf(woman, Move.Run), zombie.stride / 2.305 * 0.833, Playback.Loop);
-            // Frozen: held stiff mid-step, no idle sway
-            if (speed < 0.3 && zombie.frozen <= 0)
-            {
-                mut var idle = body.defaultPose;
-                idle.Sample(MoveOf(woman, Move.ZIdle), t + zombie.pace * 10, Playback.Loop);
-                pose.Blend(idle, Math.Saturate(1 - speed / 0.3));
-            }
-            if (zombie.swing > 0)
-            {
-                mut var strike = body.defaultPose;
-                var into = zombie.swing / ATTACK_SECONDS;
-                strike.Sample(MoveOf(woman, Move.ZScratch), into * 1.8);
-                pose.Blend(strike, Math.Saturate(Math.Min(into * 6, (1 - into) * 6)));
-            }
-            if (zombie.flinch > 0)
-            {
-                mut var reel = body.defaultPose;
-                reel.Sample(MoveOf(woman, Move.HitChest), (0.45 - zombie.flinch) * 0.9);
-                pose.Blend(reel, Math.Saturate(zombie.flinch * 4));
-            }
-            break;
-        }
-    }
-    return pose;
-}
-
-// Where one of the dead is drawn: at its feet (less its sink), turned its way, the plague king a little bigger.
-float4x4 ZombiePlace(Zombie zombie, float sink)
-{
-    var scale = zombie.look == 3 ? 1.08 : 1.0;
-    return float4x4.TRS(zombie.at - float3(0, sink, 0), quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), float3(scale));
-}
-
-// The dead, as this frame has them.
-[Stage(Layers.Gather)]
-// The far dead are posed every other frame (past 22 m) or every fourth (past 45 m): a horde's poses are much of a
-// frame's cost, and at that distance nobody sees the steps between. Each is placed every frame.
-view PoseZombie(mut Zombie zombie, Me me)
-{
-    zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
-    if (zombie.gibbed)
-    {
-        Tumble(zombie, Math.Min(Frame.dt, 0.05));
-        return;
-    }
-    var far = Math.Distance(zombie.at, me.eye);
-    var every = far > 45 ? 4 : far > 22 ? 2 : 1;
-    zombie.frames += 1;
-    if (zombie.frames >= every || zombie.state == ZombieState.Dying)
-    {
-        zombie.frames = 0;
-        zombie.pose = ZombiePose(zombie, out var sink);
-        zombie.sink = sink;
-    }
-    zombie.place = ZombiePlace(zombie, zombie.sink);
-}
-
-local event(Struck struck) FlashStruck(mut Zombie zombie)
-{
-    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Shove) return;
-    zombie.flash = struck.killed ? 0.0 : 0.35;
-    if (struck.killed) Gib(zombie, struck.from, struck.head, struck.blow == Blow.Burst);
-}
-
-// The pieces one of the dead comes apart into.
-enum Part { Head, Torso, ArmL, ArmR, LegL, LegR }
-
-// A piece in flight: its middle when it came away, and where it is now, how fast, its turn and spin.
-struct Shard
-{
-    float3 from;
-    float3 at;
-    float3 vel;
-    quaternion turn = quaternion.identity;
-    float3 spin;
-}
-
-const int PART_COUNT = 6;
-
-// Killed by a blow, one of the dead blows apart: the piece struck (its head, or else its trunk) bursts, and the rest
-// fly off from the blow, tumbling, and fall, and lie there till it's gone.
-void Gib(mut Zombie zombie, float3 from, bool head, bool burst)
-{
-    var body = ZombieBody(zombie.look);
-    var rig = body.skeleton.bones;
-    zombie.gibbed = true;
-    zombie.burst = head ? int(Part.Head) : int(Part.Torso);
-    zombie.deathPose = zombie.pose;
-    zombie.deathPlace = zombie.place;
-    zombie.gibAge = 0;
-    var blast = burst ? 2.0 : 1.0;
-    zombie.shards.Clear();
-    for (var p = 0; p < PART_COUNT; p++)
-    {
-        var middle = Math.Transform(Math.Mul(zombie.place, zombie.pose.Model(PartBone(body, Part(p)))), float3(0));
-        var h = Math.Hash(int3(int(middle.x * 97), int(middle.z * 89), p));
-        var r = float3((h & 255) / 255.0 - 0.5, ((h >> 8) & 255) / 255.0, ((h >> 16) & 255) / 255.0 - 0.5);
-        mut var away = middle - from;
-        away.y = 0;
-        var out = Math.Length(away) > 0.01 ? Math.Normalize(away) : float3(0, 0, 1);
-        // Out from the trunk too, so the limbs part from each other
-        mut var apart = middle - Math.Transform(Math.Mul(zombie.place, zombie.pose.Model(rig.torso)), float3(0));
-        apart.y = 0;
-        zombie.shards.Add(Shard { from = middle, at = middle, vel = (out * (2.2 + r.x * 1.5) + apart * 6 + float3(r.x, 1.5 + r.y * 2.5, r.z) * 1.2) * blast,
-                                  spin = float3(r.z * 14, r.x * 10, r.y * 12 - 6) * blast });
-    }
-}
-
-// The bone each piece turns about (and is found by).
-Bone PartBone(SkinnedMesh<Corner, Rig> body, Part part)
-{
-    var rig = body.skeleton.bones;
-    switch (part)
-    {
-        case Part.Head: return rig.head;
-        case Part.Torso: return rig.torso;
-        case Part.ArmL: return rig.lowerArmL;
-        case Part.ArmR: return rig.lowerArmR;
-        case Part.LegL: return rig.lowerLegL;
-    }
-    return rig.lowerLegR;
-}
-
-// A bone given a place in the model (a transform that may scale) under its parent as the pose now has it.
-void PlaceBone(mut Pose pose, Bone bone, Bone parent, float4x4 model)
-{
-    var local = Math.Mul(Math.Inverse(pose.Model(parent)), model);
-    var x = local.c0.xyz;
-    var y = local.c1.xyz;
-    var z = local.c2.xyz;
-    var sx = Math.Length(x);
-    pose[bone].position = local.c3.xyz;
-    pose[bone].scale = float3(sx, Math.Length(y), Math.Length(z));
-    pose[bone].rotation = Math.Normalize(quaternion(float3x3(x / Math.Max(sx, 0.000001), y / Math.Max(Math.Length(y), 0.000001), z / Math.Max(Math.Length(z), 0.000001))));
-}
-
-// A model transform squeezed to nothing about its own origin.
-float4x4 Squeezed(float4x4 m)
-{
-    var e = 0.001;
-    return float4x4(float4(m.c0.xyz * e, 0), float4(m.c1.xyz * e, 0), float4(m.c2.xyz * e, 0), m.c3);
-}
-
-// The pose that draws one piece alone: every other bone squeezed to nothing about its joint, so the piece's own skin
-// ends in a stump where it tore away.
-Pose PartPose(SkinnedMesh<Corner, Rig> body, Pose whole, Part part)
-{
-    var rig = body.skeleton.bones;
-    mut var pose = whole;
-    switch (part)
-    {
-        case Part.Head:
-            pose[rig.hips].scale = float3(0.001);
-            PlaceBone(pose, rig.chest, rig.torso, Squeezed(whole.Model(rig.chest)));
-            PlaceBone(pose, rig.neck, rig.chest, whole.Model(rig.neck));
-            break;
-        case Part.Torso:
-            pose[rig.neck].scale = float3(0.001);
-            pose[rig.upperArmL].scale = float3(0.001);
-            pose[rig.upperArmR].scale = float3(0.001);
-            pose[rig.upperLegL].scale = float3(0.001);
-            pose[rig.upperLegR].scale = float3(0.001);
-            break;
-        case Part.ArmL:
-            pose[rig.hips].scale = float3(0.001);
-            PlaceBone(pose, rig.shoulderL, rig.chest, Squeezed(whole.Model(rig.shoulderL)));
-            PlaceBone(pose, rig.upperArmL, rig.shoulderL, whole.Model(rig.upperArmL));
-            break;
-        case Part.ArmR:
-            pose[rig.hips].scale = float3(0.001);
-            PlaceBone(pose, rig.shoulderR, rig.chest, Squeezed(whole.Model(rig.shoulderR)));
-            PlaceBone(pose, rig.upperArmR, rig.shoulderR, whole.Model(rig.upperArmR));
-            break;
-        case Part.LegL:
-            pose[rig.hips].scale = float3(0.001);
-            PlaceBone(pose, rig.upperLegL, rig.hips, whole.Model(rig.upperLegL));
-            break;
-        case Part.LegR:
-            pose[rig.hips].scale = float3(0.001);
-            PlaceBone(pose, rig.upperLegR, rig.hips, whole.Model(rig.upperLegR));
-            break;
-    }
-    return pose;
-}
-
-// Where a piece is drawn: carried from where it was in the body to where it's flown, turned as it's tumbled, sinking
-// away at the end.
-float4x4 PartPlace(Zombie zombie, int p)
-{
-    var sink = Math.Max(0, zombie.gibAge - (DEATH_SECONDS - 1.4)) * 0.4;
-    var shard = zombie.shards[p];
-    var to = float4x4.TRS(shard.at - float3(0, sink, 0), shard.turn, float3(1));
-    return Math.Mul(Math.Mul(to, float4x4.Translate(-shard.from)), zombie.deathPlace);
-}
-
-// A frame of a flying piece: falling, tumbling, bouncing off the ground and coming to rest on it.
-void Tumble(mut Zombie zombie, float dt)
-{
-    zombie.gibAge += dt;
-    for (var p = 0; p < zombie.shards.count; p++)
-    {
-        if (p == zombie.burst) continue;
-        mut var shard = zombie.shards[p];
-        mut var v = shard.vel;
-        v.y -= 14 * dt;
-        mut var at = shard.at + v * dt;
-        mut var spin = shard.spin;
-        var rest = Ground(at.x, at.z) + (p == int(Part.Torso) ? 0.2 : 0.1);
-        if (at.y < rest)
-        {
-            at.y = rest;
-            v = float3(v.x * 0.55, Math.Abs(v.y) * 0.25, v.z * 0.55);
-            spin *= 0.55;
-            if (Math.Abs(v.y) < 0.4) v.y = 0;
-        }
-        var turn = Math.Length(spin);
-        if (turn > 0.01) shard.turn = Math.Normalize(Math.Mul(quaternion.AxisAngle(spin / turn, turn * dt), shard.turn));
-        shard.vel = v;
-        shard.at = at;
-        shard.spin = spin;
-        zombie.shards[p] = shard;
-    }
-}
-
-[Stage(Layers.Shadows, 1)]
-view ShadowZombie(Zombie zombie, Lens lens)
-{
-    if (!lens.made) return;
-    var body = ZombieBody(zombie.look);
-    if (!zombie.gibbed)
-    {
-        lens.moon.SkinnedMesh(body, zombie.place, zombie.pose);
-        return;
-    }
-    for (var p = 0; p < zombie.shards.count; p++)
-        if (p != zombie.burst) lens.moon.SkinnedMesh(body, PartPlace(zombie, p), PartPose(body, zombie.deathPose, Part(p)));
-}
-
-[Stage(Layers.Scene, 2)]
-view DrawZombie(Zombie zombie, Lens lens, Look look)
-{
-    if (!lens.made || Math.Distance(zombie.at, look.eye) > 70) return;
-    var eyes = zombie.state == ZombieState.Dying ? Math.Saturate(1 - zombie.timer * 1.5) : 1.0;
-    var burning = zombie.burn > 0 ? 1.0 : 0.0;
-    var skin = Skin { burn = burning, frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0, flash = zombie.flash, eyes = eyes, grime = 0.55, ghost = 1.0 };
-    var body = ZombieBody(zombie.look);
-    lens.scene.Bounds(float3(0, 1, 0), float3(3, 3.5, 3))
-    {
-        if (!zombie.gibbed) lens.scene.SkinnedMesh(body, zombie.place, zombie.pose, Flesh, skin);
-        else
-        {
-            for (var p = 0; p < zombie.shards.count; p++)
-                if (p != zombie.burst) lens.scene.SkinnedMesh(body, PartPlace(zombie, p), PartPose(body, zombie.deathPose, Part(p)), Flesh, skin);
-        }
-    }
-}
-
 // The other survivors (and this machine's own, for its shadow).
 [Stage(Layers.Gather)]
 view PoseSurvivor(mut Survivor survivor, Look look)
@@ -543,4 +218,11 @@ view DrawSurvivor(Survivor survivor, Lens lens, Me me)
     {
         lens.scene.SkinnedMesh(HeroBody(survivor.seat), survivor.place, survivor.pose, Flesh, Skin { eyes = 0.0, grime = 0.15 });
     }
+}
+
+// A blow's flash on one of the dead.
+local event(Struck struck) FlashStruck(mut Zombie zombie)
+{
+    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Shove) return;
+    zombie.flash = struck.killed ? 0.0 : 0.35;
 }

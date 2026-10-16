@@ -118,6 +118,7 @@ local singleton Ears
     Weapon lastWeapon;
     float boonWait;
     bool wasInstakill;
+    float voices;             // The dead's voices that may start now, coming back at eight a second
     float lastPoints;
 }
 
@@ -198,6 +199,7 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     ears.brazier.pitch = 0.8;
     ears.brazier.bus = Bus.Ambience;
     ears.brazier.playing = brazierFar < 25;
+    ears.voices = Math.Min(4, ears.voices + dt * 8);
     // Death's Touch wearing off
     if (ears.wasInstakill && match.instakill <= 0) Audio.Play(puEnd, 0.6);
     ears.wasInstakill = match.instakill > 0;
@@ -213,7 +215,11 @@ view Groan(mut Zombie zombie, mut Ears ears, Me me)
     var far = Math.Distance(zombie.at, me.eye);
     if (far > 30) return;
     var head = zombie.at + float3(0, 1.6, 0);
-    var pitch = ears.random.NextFloat(0.85, 1.12) * (WomanZombie(zombie.look) ? 1.15 : 1.0);
+    // A horde would drown everything: a few voices a second at most, the nearest first come
+    if (ears.voices < 1) return;
+    ears.voices -= 1;
+    var woman = MeshOf(zombie.look) == 1 || MeshOf(zombie.look) == 2;
+    var pitch = ears.random.NextFloat(0.85, 1.12) * (woman ? 1.15 : 1.0);
     if (zombie.gait != Gait.Shamble && zombie.state == ZombieState.Hunting && ears.random.NextInt(3) == 0)
         Audio.Play(screams[ears.random.NextInt(screams.count)], head, 0.9, pitch);
     else

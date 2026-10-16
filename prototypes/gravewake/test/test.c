@@ -376,6 +376,11 @@ int main(void)
         if (row < 0) { tick_safe(1); continue; }
         const Zombie z = TIDE_AT(&world, arch4_Zombie, Zombie, row);
         put(0, (tide_float3){z.at.x + 5, z.at.y, z.at.z}, (tide_float3){z.at.x, z.at.y + 1.2f, z.at.z});
+        tick_safe(6);
+        // Settled on the ground there: aimed again, at its chest as it stands now
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch4_Zombie, row);
+        const Zombie now = tide_get_Zombie(&world, e);
+        put(0, get(0).feet, now.chestAt);
         tick_safe(1);
         held[0].attack = true;
         tick_safe(1);

@@ -39,13 +39,11 @@ component Zombie
     float chill;                // Seconds left slowed by frost
     float frozen;               // Seconds left frozen solid
     float stun;                 // Seconds left dazed
-    float3 headAt;              // Where its head, chest and hips are this tick (Brace)...
+    float3 headAt;              // Where its head, chest and hips are this tick (Muster), from its state
     float3 chestAt;
     float3 hipsAt;
-    float3 headLocal;           // ...as its pose last had them, about its feet in its own turn
-    float3 chestLocal;
-    float3 hipsLocal;
-    int phase;                  // Which of the ticks it's posed on, when nobody's near
+    int phase;                  // Its own offset in its idle, and a little of its looks
+    int slot = -1;              // Where it is in the Herd this tick
     float downFor;              // Knocked down: how long it lies before getting up
     float3 shove;               // Knocked back, metres a second
     int killer = -1;            // The seat that killed it
@@ -53,18 +51,90 @@ component Zombie
     int fall;                   // Which way it falls
     int burner = -1;            // Who set it alight
     int bleeder = -1;           // Who opened the wound
-    local Pose pose;            // This machine's: the frame's pose, sampled once
-    local float4x4 place = float4x4.identity;
-    local float sink;           // How far under the ground it was posed
-    local int frames;           // Frames since it was posed
     local float flash;          // The flash of a fresh blow
     local float voice = 1;      // Seconds till it groans
-    local bool gibbed;          // Blown apart by the blow that killed it (people.tide's Gib): its pieces fly
-    local int burst;            // The piece that blew apart (a Part), not drawn
-    local Pose deathPose;       // The pose it died in, which every piece keeps
-    local float4x4 deathPlace = float4x4.identity;
-    local List<Shard> shards;   // Its pieces in flight, a Part each
-    local float gibAge;
+}
+
+// Every one of the dead the match can strike, this tick, in a grid of 2 m cells: blows, kicks, missiles, bursts and
+// the dead's own crowding look in the cells near them, not through the whole horde. Made again each tick after the dead
+// move (Muster), so what's struck is where it stood when the tick began.
+const float HERD_CELL = 2;
+const int HERD_W = 56;                  // From NAV_X0, NAV_Z0: 112 m each way
+
+singleton Herd
+{
+    List<Body> bodies;          // By slot
+    List<float3> feet;          // By slot: where it stands, or (lying) far below, for the dead's own crowding
+    List<int> next;             // By slot: the next in its cell, or -1
+    List<int> first;            // By cell: the first slot in it, or -1
+}
+
+int HerdCell(float3 at)
+{
+    var cx = Math.Clamp(int(Math.Floor((at.x - NAV_X0) / HERD_CELL)), 0, HERD_W - 1);
+    var cz = Math.Clamp(int(Math.Floor((at.z - NAV_Z0) / HERD_CELL)), 0, HERD_W - 1);
+    return cz * HERD_W + cx;
+}
+
+// The dead whose feet are within `reach` of a place (a little more: whole cells), nearest cells first.
+List<Body> Near(Herd herd, float3 at, float reach)
+{
+    mut List<Body> found = [];
+    if (herd.first.count == 0) return found;
+    var cx = int(Math.Floor((at.x - NAV_X0) / HERD_CELL));
+    var cz = int(Math.Floor((at.z - NAV_Z0) / HERD_CELL));
+    var cells = int(Math.Ceil(reach / HERD_CELL));
+    for (var z = Math.Max(0, cz - cells); z <= Math.Min(HERD_W - 1, cz + cells); z++)
+    {
+        for (var x = Math.Max(0, cx - cells); x <= Math.Min(HERD_W - 1, cx + cells); x++)
+        {
+            mut var slot = herd.first[z * HERD_W + x];
+            while (slot >= 0)
+            {
+                var body = herd.bodies[slot];
+                if (Math.Length((body.at - at).xz) <= reach + 0.5) found.Add(body);
+                slot = herd.next[slot];
+            }
+        }
+    }
+    return found;
+}
+
+[Stage(Tick.Zombies, 1)]
+system HerdClear(mut Herd herd)
+{
+    herd.bodies.Clear();
+    herd.feet.Clear();
+    herd.next.Clear();
+    if (herd.first.count != HERD_W * HERD_W) herd.first.Resize(HERD_W * HERD_W);
+    for (var c = 0; c < HERD_W * HERD_W; c++) herd.first[c] = -1;
+}
+
+// Each tick, where each of the dead's head, chest and hips are (from its state: hunched on its feet, flat on its back,
+// half out of the ground), and its place in the herd.
+[Stage(Tick.Zombies, 2)]
+system Muster(mut Zombie zombie, mut Herd herd)
+{
+    var turn = quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw);
+    var lying = LyingOf(zombie);
+    var risen = zombie.state == ZombieState.Rising ? Math.SmoothStep(0, 1, zombie.timer / RISE_SECONDS) : 1.0;
+    var low = (1 - risen) * 1.9;
+    var big = zombie.look == 3 ? 1.06 : 1.0;
+    zombie.headAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.5, 0.2), float3(0, 0.25, -1.35), lying) * big) - float3(0, low, 0);
+    zombie.chestAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.15, 0.12), float3(0, 0.25, -0.85), lying) * big) - float3(0, low, 0);
+    zombie.hipsAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 0.92, 0), float3(0, 0.2, -0.3), lying) * big) - float3(0, low, 0);
+    if (zombie.state == ZombieState.Dying)
+    {
+        zombie.slot = -1;
+        return;
+    }
+    zombie.slot = herd.bodies.count;
+    var cell = HerdCell(zombie.at);
+    var body = BodyOf(this, zombie);
+    herd.bodies.Add(body);
+    herd.feet.Add(body.down || body.risen < 1 ? float3(0, -1000, 0) : zombie.at);
+    herd.next.Add(herd.first[cell]);
+    herd.first[cell] = zombie.slot;
 }
 
 // One of the dead as a blow or a missile sees them: where, how far out of the ground, and whether they can be hit.
@@ -84,7 +154,7 @@ struct Body
 Body BodyOf(Entity entity, Zombie zombie)
 {
     var risen = zombie.state == ZombieState.Rising ? Math.SmoothStep(0, 1, zombie.timer / RISE_SECONDS) : 1.0;
-    var placed = Math.Length(zombie.headLocal) > 0;
+    var placed = Math.Length(zombie.headAt) > 0;
     var up = float3(0, 1, 0);
     return Body { entity = entity, at = zombie.at, yaw = zombie.yaw, risen = risen,
                   hittable = zombie.state != ZombieState.Dying,
@@ -92,38 +162,6 @@ Body BodyOf(Entity entity, Zombie zombie)
                   chest = placed ? zombie.chestAt : zombie.at + up * 1.15,
                   hips = placed ? zombie.hipsAt : zombie.at + up * 0.6,
                   down = LyingOf(zombie) > 0.5 };
-}
-
-// Each tick, where each of the dead's head, chest and hips are, from its pose (people.tide's ZombiePose, which the
-// picture draws): blows and missiles strike what's seen. The head's middle is a little up its bone from the neck.
-// Posing is most of a tick's cost with a horde, so one within reach of a survivor (a blade, a kick, a stamp) is posed
-// every other tick, and the rest every sixth, a sixth of them each tick, keeping their points about their feet between.
-const int BRACE_EVERY = 6;
-const float BRACE_NEAR = 3.5;
-
-[Stage(Tick.Zombies, 1)]
-system Brace(mut Zombie zombie, Time time, query (Survivor survivor) survivors)
-{
-    var turn = quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw);
-    mut var due = Math.Length(zombie.headLocal) == 0 || (time.tick + zombie.phase) % BRACE_EVERY == 0;
-    if ((time.tick + zombie.phase) % 2 == 0)
-    {
-        foreach (var row in survivors)
-            if (row.survivor.ready && row.survivor.life != Life.Gone && Math.Distance(row.survivor.feet, zombie.at) < BRACE_NEAR) due = true;
-    }
-    if (due)
-    {
-        var pose = ZombiePose(zombie, out var sink);
-        var rig = ZombieBody(zombie.look).skeleton.bones;
-        var place = ZombiePlace(zombie, sink);
-        var back = Math.Inverse(turn);
-        zombie.headLocal = Math.Rotate(back, Math.Transform(Math.Mul(place, pose.Model(rig.head)), float3(0, 0.1, 0)) - zombie.at);
-        zombie.chestLocal = Math.Rotate(back, Math.Transform(Math.Mul(place, pose.Model(rig.chest)), float3(0, 0.05, 0)) - zombie.at);
-        zombie.hipsLocal = Math.Rotate(back, Math.Transform(Math.Mul(place, pose.Model(rig.hips)), float3(0)) - zombie.at);
-    }
-    zombie.headAt = zombie.at + Math.Rotate(turn, zombie.headLocal);
-    zombie.chestAt = zombie.at + Math.Rotate(turn, zombie.chestLocal);
-    zombie.hipsAt = zombie.at + Math.Rotate(turn, zombie.hipsLocal);
 }
 
 // How far over one of the dead is: 0 on its feet, 1 flat on its back (it falls away from the blow).
@@ -192,7 +230,7 @@ float GaitSpeed(Gait gait)
 }
 
 [Stage(Tick.Zombies)]
-system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Time time, query (Survivor survivor) survivors, query (Zombie zombie) others)
+system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time time, query (Survivor survivor) survivors)
 {
     var dt = time.dt;
     if (match.culling)
@@ -245,11 +283,11 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Time time, query (S
             var flung = Math.Length(zombie.shove);
             if (zombie.timer < 0.45 && flung > 2.5)
             {
-                foreach (var row in others)
+                foreach (var o in Near(herd, zombie.at, 0.65))
                 {
-                    if (row.entity == this || row.zombie.state != ZombieState.Hunting) continue;
-                    if (Math.Length((row.zombie.at - zombie.at).xz) < 0.65)
-                        row.entity.Send(Wound { seat = -1, from = zombie.at, knock = flung * 0.6, down = true, blow = Blow.Shove });
+                    if (o.entity == this || o.down || o.risen < 1) continue;
+                    if (Math.Length((o.at - zombie.at).xz) < 0.65)
+                        o.entity.Send(Wound { seat = -1, from = zombie.at, knock = flung * 0.6, down = true, blow = Blow.Shove });
                 }
             }
             if (zombie.timer >= KNOCK_SECONDS + zombie.downFor + GETUP_SECONDS) Become(zombie, ZombieState.Hunting);
@@ -285,14 +323,37 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Time time, query (S
         else wish = Downhill(ashwick, zombie.at, false);
     }
     // Room among the others
-    foreach (var row in others)
+    // (straight from the herd's cells, a dozen at most, of two dozen looked at: in a crowd of thousands, more change
+    // nothing but the cost)
+    if (herd.first.count > 0)
     {
-        var o = row.zombie;
-        if (row.entity == this || o.state == ZombieState.Dying || o.state == ZombieState.Fallen) continue;
-        var off = zombie.at.xz - o.at.xz;
-        var far = Math.Length(off);
-        if (far > 0.75 || far < 0.0001) continue;
-        wish += float3(off.x, 0, off.y) / far * (0.75 - far) * 2.2;
+        var cx = Math.Clamp(int(Math.Floor((zombie.at.x - NAV_X0) / HERD_CELL)), 1, HERD_W - 2);
+        var cz = Math.Clamp(int(Math.Floor((zombie.at.z - NAV_Z0) / HERD_CELL)), 1, HERD_W - 2);
+        mut var seen = 0;
+        mut var looked = 0;
+        for (var z = cz - 1; z <= cz + 1; z++)
+        {
+            for (var x = cx - 1; x <= cx + 1; x++)
+            {
+                mut var slot = herd.first[z * HERD_W + x];
+                while (slot >= 0 && seen < 12 && looked < 24)
+                {
+                    looked += 1;
+                    var other = herd.feet[slot];
+                    if (slot != zombie.slot)
+                    {
+                        var off = zombie.at.xz - other.xz;
+                        var far = Math.Length(off);
+                        if (far < 0.75 && far > 0.0001)
+                        {
+                            wish += float3(off.x, 0, off.y) / far * (0.75 - far) * 2.2;
+                            seen += 1;
+                        }
+                    }
+                    slot = herd.next[slot];
+                }
+            }
+        }
     }
     // The blow
     if (zombie.swing > 0)
