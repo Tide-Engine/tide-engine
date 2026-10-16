@@ -199,7 +199,7 @@ view ShadowHorde(Horde horde, Lens lens)
 }
 
 // A corner where its clip has it: its place and normal at the two frames, blended.
-vert Shamble(mut Corner corner, Shambler one, Horde horde)
+vert Shamble(mut Corner corner, out float4 clip, Shambler one, Horde horde, Instance instance, Look look)
 {
     var u = corner.uv2.y;
     var a = crowdAnim.Sample(float2(u, one.row));
@@ -210,6 +210,8 @@ vert Shamble(mut Corner corner, Shambler one, Horde horde)
     var pb = horde.lo + float3(b.r, b.g, b.b) * horde.span;
     corner.position = Math.Lerp(pa, pb, one.blend);
     corner.normal = Math.Lerp(float3(na.r, na.g, na.b), float3(nb.r, nb.g, nb.b), one.blend) * 2 - float3(1);
+    // On the low picture's pixels, as the world is (look.tide's Wobble)
+    clip = Snapped(Math.Mul(look.toClip, Math.Mul(instance.transform, float4(corner.position, 1))), look);
 }
 
 // The dead's skin: grime and old blood, eyes that burn, fire, frost, a blow's flash, and the pale edge that keeps them

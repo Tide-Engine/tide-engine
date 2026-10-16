@@ -37,7 +37,7 @@ struct Placed
 
 [LOD] asset List<Mesh<Corner>> parts = "art/kit/*.glb";
 asset string partsJson = "art/kit/parts.json";
-[Filter(Filter.Trilinear), Wrap(Wrap.Repeat)] asset Map<string, Texture> textures = "art/tex/*.png";
+[Filter(Filter.Point), Wrap(Wrap.Repeat)] asset Map<string, Texture> textures = "art/tex/*.png";
 
 local singleton Kit
 {
