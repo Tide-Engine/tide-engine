@@ -1,8 +1,8 @@
 // GRAVEWAKE: Ashwick is burned, and up to four survivors hold a clearing in
-// the wood outside it, round its fire, wave after wave of the dead, taking a
-// card after each: a new weapon, a brew, something that lasts. This file is
-// who plays: the survivors, what a player's hands send, joining and leaving,
-// and starting over.
+// the wood outside it, round its fire, against wave after wave of the dead in
+// their thousands, with guns, skills and items that stack, taking one after
+// each wave. This file is who plays: the survivors, what a player's hands
+// send, joining and leaving, and starting over.
 using Rooms;
 
 settings
@@ -18,7 +18,7 @@ scene Main { }
 enum Life { Standing, Downed, Gone }
 
 // What a survivor's hands are busy with.
-enum Act { Idle, Raise, Swing, Heavy, Stab, Loose, Draw, Reload, Drink, Throw, Lower, Kick }
+enum Act { Idle, Raise, Fire, Reload, Throw, Kick }
 
 // A survivor: one of the four, walking, fighting and choosing. `seat` is which: 0 Wat, 1 Maud, 2 Godric, 3 Agnes.
 component Survivor
@@ -35,49 +35,35 @@ component Survivor
     float bleed;                     // Seconds left before a downed survivor is gone
     float revive;                    // How far someone's got raising them, 0 to 1
     int reviver = -1;                // Whose hands are on them
-    int selfRevives;                 // Second Wind's, alone: one a wave
+    int selfRevives;                 // Second Winds not yet used
     int points;                      // The score: what the dead have paid
-    Weapon[3] weapons;               // One carried, two with Packmule; the third is the last stand's (LastStand)
-    int[3] mag;
-    int[3] ammo;
-    bool[3] forged;
-    int slot;
+    // The kit (kits.tide): the gun in hand (the role's, or the pistol while down) and the skills' cooldowns
+    Role role;                       // None till it's picked, before the first wave
+    Weapon gun;
+    int mag;                         // The gun's rounds loaded
+    int stowed;                      // The gun's rounds, kept while the pistol's in hand (down)
+    float shotWait;                  // Seconds till the gun fires again
+    float[3] cooldowns;              // Seconds till each skill comes back: secondary, utility, special
     Act act;
     float actTime;                   // Seconds into what the hands do
     float actLength;
-    bool landed;                     // This swing's blow has been dealt
-    int swings;                      // Swings so far: they go one way then the other
-    float charge;                    // A bow's draw, 0 to 1
-    int brews;                       // A bit per Brew
-    float stamina = 1;
-    int aimed = -1;                  // The friend down within reach, a seat, for the prompt
-    // The class and the ability on Q (abilities.tide)
-    Role role;                       // None till it's picked, before the first wave
-    Ability ability;
-    float cooldown;                  // Seconds till it can be used again
-    int honed;
+    bool landed;                     // This throw or kick has been dealt
+    Skill throwing;                  // What's thrown
+    float steady;                    // Seconds since the last shot, for the spread's bloom and the run
+    int airJumps;                    // Jumps taken in the air since the ground (Spring Boots)
     bool leaping;                    // In the air from a leap: it slams down where it lands
-    float dash;                      // Seconds left of a dash, and which way
+    float dash;                      // Seconds left of a slide, and which way
     float3 dashWay;
-    float mana;                      // A staff's next charge coming back, 0 to 1
-    // The cards (cards.tide): the three on offer after a wave while `choosing`, each one's weapon or brew
-    Card[3] cards;
-    int[3] cardItems;
+    int aimed = -1;                  // The friend down within reach, a seat, for the prompt
+    // The items (items.tide): stacks of each, the three on offer after a wave while `choosing`
+    int[16] items;
+    Item[3] offers;
     bool choosing;
-    int dealt;                       // The wave whose cards were dealt
+    int dealt;                       // The wave whose offer was made
     int picks;
-    int edge;                        // Whetstones, broadheads or focus: a fifth more damage each
-    int vigor;                       // Hearts of oak
-    int boots;                       // Hobnailed boots
-    int fleet;                       // Fleet feet
-    int quiver;                      // A Ranger's deep quivers
-    int cleave;                      // A Warrior's wide swings
-    int thirst;                      // ...and bloodthirst
-    int fletch;                      // A Ranger's bodkin heads
-    int volley;                      // ...volleys
-    int steady;                      // ...and steady hands
-    int split;                       // A Mage's split spells
-    int flow;                        // ...and wellsprings
+    int level = 1;                   // The party's, as it reached this survivor
+    float droneWait;
+    float emberWait;
     int kills;
     int headshots;
     int downs;
@@ -94,18 +80,15 @@ input Hands
 {
     [Clamp(-1, 1)] float2 move;
     [Clamp(-0.5, 0.5)] float2 look;
-    bool attack;
-    bool aim;
+    bool attack;                     // The gun
+    bool secondary;                  // The skills: right mouse, Shift, Q
+    bool utility;
+    bool special;
     bool use;
     bool reload;
     bool jump;
-    bool sprint;
-    bool stab;
-    bool kick;
-    bool ability;
-    bool next;
-    bool pick1;                      // A card, or the first weapon
-    bool pick2;                      // ...or the second
+    bool pick1;                      // An item, or a survivor before the first wave
+    bool pick2;
     bool pick3;
     [Absolute] bool ready;
 
@@ -121,15 +104,12 @@ input Hands
         if (Cursor.locked) look = devices.mouse.delta * feel.sensitivity;
         look += pad.rightStick * float2(0.055, 0.045);
         attack = devices.mouse.left.pressed || pad.rightTrigger > 0.4;
-        aim = devices.mouse.right.pressed || pad.leftTrigger > 0.4;
+        secondary = devices.mouse.right.pressed || pad.leftTrigger > 0.4;
+        utility = keys.leftShift.pressed || pad.leftShoulder.pressed;
+        special = keys.q.pressed || pad.rightShoulder.pressed;
         use = keys.e.pressed || pad.buttonWest.pressed;
         reload = keys.r.pressed || pad.buttonWest.pressed;
         jump = keys.space.pressed || pad.buttonSouth.pressed;
-        sprint = keys.leftShift.pressed || pad.leftStickButton.pressed;
-        stab = keys.v.pressed || keys.c.pressed || pad.rightStickButton.pressed;
-        kick = keys.f.pressed || pad.buttonEast.pressed;
-        ability = keys.q.pressed || pad.leftShoulder.pressed;
-        next = devices.mouse.scroll.y != 0 || pad.buttonNorth.pressed;
         pick1 = keys.digit1.pressed || pad.dpad.left.pressed;
         pick2 = keys.digit2.pressed || pad.dpad.up.pressed;
         pick3 = keys.digit3.pressed || pad.dpad.right.pressed;
@@ -158,8 +138,8 @@ const float BODY_RADIUS = 0.32;
 const float BODY_HIGH = 1.8;
 const float EYE_HIGH = 1.62;
 const float DOWNED_EYE = 0.55;
-const float WALK_SPEED = 4.2;
-const float SPRINT_SPEED = 6.2;
+const float WALK_SPEED = 4.6;
+const float SPRINT_SPEED = 6.8;     // Running: whenever a survivor goes forward and hasn't fired for a moment
 const float STEP_UP = 0.45;
 const float GRAVITY = 20;
 const float JUMP_SPEED = 6.2;
@@ -200,40 +180,10 @@ float3 EyeOf(Survivor s)
     return s.feet + float3(0, EyeHeight(s), 0);
 }
 
-bool HasBrew(Survivor s, Brew brew)
-{
-    return (s.brews & (1 << int(brew))) != 0;
-}
-
-int BrewCount(Survivor s)
-{
-    mut var count = 0;
-    for (var i = 0; i < BREW_COUNT; i++)
-        if ((s.brews & (1 << i)) != 0) count += 1;
-    return count;
-}
-
-// How many weapons a survivor carries: one, two with Packmule Stout. The stab and the kick are always to hand.
-int Slots(Survivor s)
-{
-    return HasBrew(s, Brew.Packmule) ? 2 : 1;
-}
-
-float MaxHealth(Survivor s)
-{
-    return (HasBrew(s, Brew.Ironhide) ? 250 : 100) + 40 * s.vigor;
-}
-
-// A survivor as they start: the hand crossbow, two fire pots (and always the stab and the kick).
+// A survivor as they start: no kit till one's picked, nothing taken.
 Survivor Outfitted(int seat, float3 at, float yaw)
 {
-    mut var s = Survivor { seat = seat, feet = at, yaw = yaw, placed = true };
-    s.weapons[0] = Weapon.HandCrossbow;
-    s.mag[0] = Info(Weapon.HandCrossbow).mag;
-    s.ammo[0] = Info(Weapon.HandCrossbow).reserve;
-    s.act = Act.Raise;
-    s.actLength = 0.5;
-    return s;
+    return Survivor { seat = seat, feet = at, yaw = yaw, placed = true, act = Act.Raise, actLength = 0.5 };
 }
 
 event(Spawned) Begin(with Main, mut Ashwick ashwick, mut Match match)
@@ -253,18 +203,8 @@ event(PlayerJoined joined) TakeSeat(mut Party party, Ashwick ashwick)
         party.players[seat] = joined.player;
         party.joined += 1;
         var start = ashwick.starts[seat];
-        party.survivors[seat] = Spawn(Survivor
-        {
-            seat = seat,
-            feet = start,
-            yaw = YawTo(float3(0), start),
-            placed = true,
-            weapons = [Weapon.HandCrossbow, Weapon.None, Weapon.None],
-            mag = [1, 0, 0],
-            ammo = [40, 0, 0],
-            act = Act.Raise,
-            actLength = 0.5,
-        }, Owner { player = joined.player });
+        party.survivors[seat] = Spawn(Survivor { seat = seat, feet = start, yaw = YawTo(float3(0), start), placed = true, act = Act.Raise, actLength = 0.5 },
+                                      Owner { player = joined.player });
         return;
     }
 }
@@ -308,6 +248,12 @@ system ClearDrop(with Drop, Match match)
 }
 
 [Stage(Tick.Restart)]
+system ClearTurret(with Turret, Match match)
+{
+    if (match.restarting) this.Destroy();
+}
+
+[Stage(Tick.Restart)]
 system RestartSurvivor(mut Survivor survivor, Match match, Ashwick ashwick)
 {
     if (!match.restarting) return;
@@ -325,7 +271,7 @@ system Restarting(mut Match match)
 }
 
 // Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, the wave's end (and so
-// the cards), the next weapon, a walk to a place.
+// the offer), an item, a walk to a place.
 command Cheat
 {
     int what;
@@ -349,7 +295,7 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
             match.culling = true;
             return;
         case 5:
-            party.survivors[seat].Send(Rearmed { });
+            party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
             return;
     }
     if (cheat.what >= 10) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
@@ -377,14 +323,17 @@ event Moved
     float4 to;
 }
 
-// The development key's next weapon in hand.
-event Rearmed { }
-
-event(Rearmed rearmed) TakeRearmed(mut Survivor survivor)
+// The development key's item.
+event Given
 {
-    mut var next = (int(survivor.weapons[survivor.slot]) + 1) % WEAPON_COUNT;
-    if (next == 0) next = 1;
-    Give(survivor, Weapon(next), false);
+    Item item;
+}
+
+event(Given given) TakeGiven(mut Survivor survivor)
+{
+    if (survivor.role == Role.None) return;
+    Take(survivor, given.item);
+    Send(Picked { seat = survivor.seat, item = given.item });
 }
 
 event(Moved moved) TakeMoved(mut Survivor survivor)

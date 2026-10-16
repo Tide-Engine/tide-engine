@@ -18,7 +18,6 @@ local singleton Me
     float dip;                  // A landing's dip
     float kick;                 // Recoil, radians up
     float shake;                // A blast's or a blow's, 0 to 1
-    float zoom;                 // Aiming in, 0 to 1
     float hurt;                 // The red of a fresh blow
     bool wasGrounded = true;
     float3 last;                // Last frame's feet, for footfalls
@@ -92,9 +91,6 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         me.settle += (mine.feet.y + height - me.settle) * Math.Min(1, me.dt * (mine.life == Life.Downed ? 4.0 : 18.0));
         if (Math.Abs(mine.feet.y + height - me.settle) > 1.2 || mine.placed) me.settle = mine.feet.y + height;
         eye = float3(mine.feet.x, me.settle + bob - me.dip, mine.feet.z);
-        var aimHeld = devices.mouse.right.pressed || devices.gamepad.leftTrigger > 0.4;
-        var aiming = Info(mine.weapons[mine.slot]).kind != Kind.Melee && aimHeld && mine.life == Life.Standing;
-        me.zoom += ((aiming ? 1.0 : 0.0) - me.zoom) * Math.Min(1, me.dt * 10);
         var wobble = me.shake * 0.04;
         var shakeYaw = (Math.Perlin(float2(me.clock * 23, 1.7)) * wobble);
         var shakePitch = (Math.Perlin(float2(me.clock * 21, 7.1)) * wobble);
@@ -105,7 +101,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         look.downed = mine.life == Life.Downed ? 1.0 : 0.0;
         var low = 1 - Math.Saturate(mine.health / MaxHealth(mine));
         look.hurt = Math.Max(me.hurt, mine.life == Life.Standing ? low * low * 0.9 : 0.6);
-        look.fov = 74 - me.zoom * 22;
+        look.fov = 74 + 4 * Math.Saturate((Math.Length(mine.velocity.xz) - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED));
     }
     else
     {
@@ -163,8 +159,8 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     }
     foreach (var row in missiles)
     {
-        if (row.missile.kind != Shot.Fireball) continue;
-        AddLight(lights, eye, Light { at = row.missile.at, color = float3(1.0, 0.5, 0.15) * 5, reach = 9 });
+        if (row.missile.kind != Shot.Pot) continue;
+        AddLight(lights, eye, Light { at = row.missile.at, color = float3(1.0, 0.5, 0.15) * 3, reach = 7 });
     }
 }
 
@@ -195,7 +191,7 @@ void AddLight(mut Lights lights, float3 eye, Light light)
     if (far < worstFar) lights.list[worst] = light;
 }
 
-// Kicks to the eye from what happens: a blow taken, a blast near, a bow loosed.
+// Kicks to the eye from what happens: a blow taken, a blast near, a shot.
 local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
 {
     if (survivor.seat != me.seat) return;
@@ -211,8 +207,7 @@ local event(Blast blast) FeelBlast(mut Me me)
 
 local event(Loosed loosed) FeelLoosed(mut Me me)
 {
-    if (loosed.seat != me.seat) return;
-    var kind = Info(loosed.weapon).kind;
-    me.kick += kind == Kind.Gun ? 0.06 : kind == Kind.Crossbow ? 0.022 : kind == Kind.Staff ? 0.03 : 0.012;
-    if (kind == Kind.Gun) me.shake = Math.Max(me.shake, 0.35);
+    if (loosed.seat != me.seat || loosed.source == Source.Turret || loosed.source == Source.Drone) return;
+    me.kick += loosed.source == Source.Phase ? 0.05 : Info(loosed.weapon).kick;
+    if (loosed.weapon == Weapon.Shotgun || loosed.source == Source.Phase) me.shake = Math.Max(me.shake, 0.3);
 }

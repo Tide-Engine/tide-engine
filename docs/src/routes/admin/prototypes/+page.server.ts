@@ -7,7 +7,7 @@ export const prerender = false;
 const prototypes = [
     {
         id: 'gravewake', title: 'GRAVEWAKE', kind: 'First-person cooperative survival · Roguelike', players: '1–4 players',
-        description: 'Ashwick burned. Pick a Warrior, a Ranger or a Mage and hold the fire in a wide, hilly clearing in the wood against endless, growing hordes of the dead. After every wave take one of three cards: a new weapon or upgrade for your class, a brew or a boon for yourself, or a new or honed ability (a leap, a dash, a frost nova, a blink and more). Up to four together.',
+        description: 'Ashwick burned. Pick a Gunner, a Breacher or an Engineer, each a gun and three skills, and hold the fire in a hilly clearing against hordes of the dead in their thousands, drawn like a 1990s console game. After every wave take one of three stacking items: rounds that arc lightning, kills that burst, a drone at your shoulder and more. Up to four together.',
         image: '/prototypes/gravewake/thumbnail.png',
     },
     {

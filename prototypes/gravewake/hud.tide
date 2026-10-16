@@ -1,9 +1,9 @@
-// What's written over the picture, after Black Ops 2's zombies: the wave in
-// blood-red chalk in the bottom left, everyone's score over it (with what each
-// blow earns floating off it), the brews drunk and keepsakes taken, the weapon
-// and its arrows in the bottom right, the crosshair and the mark of a blow
-// landing, the power-ups running, a friend down, the cards after a wave, and
-// the end.
+// What's written over the picture: the wave in blood-red chalk in the bottom
+// left, everyone's score over it (with what each hit earns floating off it),
+// the items taken, the party's level, the gun and its magazine and the three
+// skills in the bottom right, the crosshair and the mark of a hit landing,
+// the power-ups running, a friend down, the items offered after a wave, the
+// survivors to pick from, and the end.
 using Rooms;
 
 local singleton Feed
@@ -12,15 +12,16 @@ local singleton Feed
     float marker;                // Seconds left of the hit marker
     bool markerKill;
     bool markerHead;             // On the head: gold, or red and bigger for a kill
+    bool markerCrit;             // A Lucky Shot's double: yellow
     float headshot;              // Seconds left of HEADSHOT over the crosshair
     float roundFlash;            // Seconds since the round changed
     int roundShown;
-    string banner;               // A power-up's name, or the card just taken, big in the middle
+    string banner;               // A power-up's name, the item just taken, a level, big in the middle
     float bannerLeft;
     Color bannerColor = Color.white;
     float played;                // Seconds played, for the controls' reminder
     float gameOver;
-    float dealt;                 // Seconds the cards have been showing, for their rise
+    float dealt;                 // Seconds the offer has been showing, for its rise
     List<string> news;           // What the others took, a line each...
     List<float> newsAge;         // ...and how long ago
 }
@@ -77,25 +78,11 @@ Color HeroColor(int seat)
     return Color(0.93, 0.76, 0.3);
 }
 
-Color BrewColor(Brew brew)
-{
-    switch (brew)
-    {
-        case Brew.Ironhide: return Color(0.85, 0.2, 0.15);
-        case Brew.Quickhand: return Color(0.3, 0.8, 0.35);
-        case Brew.SecondWind: return Color(0.35, 0.6, 0.95);
-        case Brew.Twinstrike: return Color(0.95, 0.75, 0.2);
-        case Brew.Fleetfoot: return Color(0.9, 0.9, 0.85);
-        case Brew.Packmule: return Color(0.6, 0.35, 0.85);
-    }
-    return Color.white;
-}
-
 string BoonName(Boon kind)
 {
     switch (kind)
     {
-        case Boon.MaxAmmo: return "FULL QUIVERS";
+        case Boon.Recharge: return "RECHARGE";
         case Boon.InstaKill: return "DEATH'S TOUCH";
     }
     return "HOLY FIRE";
@@ -131,17 +118,6 @@ void DrawRound(int round, float2 at, float u, float flash)
         var off = float2(((pass * 37) % 5 - 2) * 0.6, ((pass * 53) % 5 - 2) * 0.6) * u;
         Draw.Text(text, at + float2(0, -26 * u) + off, size, Color(red.r, red.g, red.b, 0.55), Anchor.MiddleLeft, Font.Bold);
     }
-}
-
-// A brew's mark: a little bottle in its colour.
-void DrawBrew(Brew brew, float2 at, float u)
-{
-    var color = BrewColor(brew);
-    Draw.RoundRect(at, float2(26 * u, 30 * u), 6 * u, Color(0.05, 0.04, 0.03, 0.75));
-    Draw.Circle(at + float2(0, 3 * u), 9 * u, color);
-    Draw.Rect(at + float2(0, -8 * u), float2(6 * u, 7 * u), color);
-    Draw.Rect(at + float2(0, -12 * u), float2(8 * u, 3 * u), Color(0.45, 0.3, 0.15));
-    Draw.Circle(at + float2(-3 * u, 1 * u), 2.5 * u, Color(1, 1, 1, 0.5));
 }
 
 [Stage(Layers.Hud)]
@@ -209,83 +185,73 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         else feed.gains[i] = gain;
     }
 
-    // ---- Brews drunk, and the keepsakes taken ----
-    mut var brewAt = 0;
-    var shelf = h - 128 * u - line * 30 * u - 14 * u;
-    for (var b = 0; b < BREW_COUNT; b++)
+    // ---- The items taken, over the scores ----
+    var shelf = h - 128 * u - line * 30 * u - 16 * u;
+    mut var slot = 0;
+    for (var i = 0; i < ITEM_COUNT; i++)
     {
-        if ((mine.brews & (1 << b)) == 0) continue;
-        DrawBrew(Brew(b), float2(40 * u + brewAt * 32 * u, shelf), u);
-        brewAt += 1;
+        var count = mine.items[i];
+        if (count <= 0) continue;
+        var at = float2(40 * u + (slot % 12) * 30 * u, shelf - (slot / 12) * 30 * u);
+        DrawItemMark(Item(i), at, 26 * u, 1);
+        if (count > 1) Write($"{count}", at + float2(12 * u, 10 * u), 11 * u, BONE, Anchor.MiddleRight);
+        slot += 1;
     }
-    var kept = Keepsakes(mine);
-    if (kept != "") Write(kept, float2(30 * u, shelf - (brewAt > 0 ? 28 : 6) * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, 0.85), Anchor.MiddleLeft);
 
-    // ---- The weapon, bottom right ----
-    var weapon = mine.weapons[mine.slot];
-    var forged = mine.forged[mine.slot];
-    var info = InfoOf(weapon, forged);
-    var name = forged ? Info(weapon).upName : info.name;
+    // ---- The party's level, bottom middle ----
+    var barAt = float2(w * 0.5, h - 18 * u);
+    var span = LevelSpan(match.level);
+    Draw.Rect(barAt, float2(240 * u, 5 * u), Color(0, 0, 0, 0.55));
+    Draw.Rect(barAt - float2(120 * u * (1 - Math.Saturate(match.xp / span)), 0), float2(240 * u * Math.Saturate(match.xp / span), 5 * u), Color(0.55, 0.8, 1.0, 0.9));
+    Write($"LV {match.level}", barAt + float2(-128 * u, 0), 13 * u, Color(0.65, 0.85, 1.0), Anchor.MiddleRight);
+
+    // ---- The gun, bottom right ----
+    var info = Info(mine.gun);
     var right = w - 34 * u;
-    if (weapon != Weapon.None)
+    if (mine.gun != Weapon.None)
     {
-        Write(name, float2(right, h - 92 * u), 17 * u, forged ? Color(0.65, 0.75, 1.0) : BONE, Anchor.MiddleRight);
-        if (info.kind != Kind.Melee)
+        Write(info.name, float2(right, h - 92 * u), 17 * u, BONE, Anchor.MiddleRight);
+        var low = mine.mag == 0 ? Color(0.9, 0.3, 0.2) : BONE;
+        var loading = mine.act == Act.Reload;
+        WriteBold(loading && !info.shells ? "..." : $"{mine.mag}", float2(right - 42 * u, h - 52 * u), 40 * u, low, Anchor.MiddleRight);
+        Write($"/ {MagOf(mine, mine.gun)}", float2(right, h - 50 * u), 18 * u, ASH, Anchor.MiddleRight);
+    }
+    // The three skills: each a key in a ring that fills as it comes back
+    if (mine.role != Role.None && mine.life == Life.Standing)
+    {
+        for (var k = 0; k < 3; k++)
         {
-            var spare = $"{mine.ammo[mine.slot]}";
-            var loaded = $"{mine.mag[mine.slot]}";
-            var spareWidth = Draw.MeasureText(spare, 22 * u).x;
-            Write(spare, float2(right, h - 50 * u), 22 * u, ASH, Anchor.MiddleRight);
-            Write("/", float2(right - spareWidth - 8 * u, h - 50 * u), 22 * u, ASH, Anchor.MiddleRight);
-            var low = mine.mag[mine.slot] == 0 ? Color(0.9, 0.3, 0.2) : BONE;
-            WriteBold(loaded, float2(right - spareWidth - 26 * u, h - 52 * u), 40 * u, low, Anchor.MiddleRight);
+            var skill = SkillOf(mine.role, k);
+            var at = float2(right - 20 * u - (2 - k) * 58 * u, h - 146 * u);
+            var full = Cooldown(mine, skill);
+            var ready = mine.cooldowns[k] <= 0;
+            Draw.Circle(at, 22 * u, Color(0.05, 0.04, 0.05, 0.78));
+            Draw.Arc(at, 22 * u, -Math.PI * 0.5, Math.TAU * (1 - Math.Saturate(mine.cooldowns[k] / Math.Max(0.01, full))), 3 * u,
+                     ready ? Color(0.95, 0.75, 0.35, 0.95) : Color(0.5, 0.42, 0.3, 0.8));
+            var key = k == 0 ? "RMB" : k == 1 ? "SHIFT" : "Q";
+            WriteBold(key, at, (k == 1 ? 10 : 13) * u, ready ? BONE : Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.MiddleCenter);
+            if (!ready) Write($"{int(Math.Ceil(mine.cooldowns[k]))}", at + float2(0, 13 * u), 10 * u, ASH, Anchor.MiddleCenter);
+            Write(SkillName(skill), at + float2(0, 32 * u), 11 * u, ready ? BONE : ASH, Anchor.MiddleCenter);
         }
-    }
-    // The fire pots and bells, as small marks
-    // The ability on Q: its name, and a ring that fills as it comes back
-    if (mine.ability != Ability.None)
-    {
-        var at = float2(right - 20 * u, h - 140 * u);
-        var full = Cooldown(mine.ability, mine.honed);
-        var ready = mine.cooldown <= 0;
-        Draw.Circle(at, 19 * u, Color(0.05, 0.04, 0.05, 0.75));
-        Draw.Arc(at, 19 * u, -Math.PI * 0.5, Math.TAU * (1 - Math.Saturate(mine.cooldown / Math.Max(0.01, full))), 3 * u, ready ? Color(0.7, 0.6, 1.0, 0.95) : Color(0.45, 0.4, 0.6, 0.8));
-        WriteBold("Q", at, 15 * u, ready ? BONE : Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.MiddleCenter);
-        Write(AbilityName(mine.ability), float2(at.x - 28 * u, at.y), 14 * u, ready ? BONE : ASH, Anchor.MiddleRight);
-    }
-    // The other slots, small
-    for (var i = 0; i < Slots(mine); i++)
-    {
-        if (i == mine.slot || mine.weapons[i] == Weapon.None) continue;
-        var other = mine.forged[i] ? Info(mine.weapons[i]).upName : Info(mine.weapons[i]).name;
-        Write($"{i + 1}  {other}", float2(right, h - 118 * u - (i > mine.slot ? 0 : 0) - (i == 2 ? 18 * u : 0) - 18 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.MiddleRight);
     }
 
     // ---- The crosshair and the hit marker ----
     var middle = float2(w * 0.5, h * 0.5);
-    if (mine.life == Life.Standing && mine.act != Act.Drink)
+    if (mine.life != Life.Gone && mine.role != Role.None)
     {
-        if (info.kind == Kind.Melee)
-        {
-            Draw.Circle(middle, 2.2 * u, Color(1, 1, 1, 0.65));
-        }
-        else
-        {
-            var gap = (6 + info.spread * 900) * u * (1 - me.zoom * 0.6);
-            var tick = 7 * u;
-            var c = Color(1, 1, 1, 0.75 - me.zoom * 0.35);
-            Draw.Line(middle + float2(gap, 0), middle + float2(gap + tick, 0), 2 * u, c);
-            Draw.Line(middle - float2(gap, 0), middle - float2(gap + tick, 0), 2 * u, c);
-            Draw.Line(middle + float2(0, gap), middle + float2(0, gap + tick), 2 * u, c);
-            Draw.Line(middle - float2(0, gap), middle - float2(0, gap + tick), 2 * u, c);
-            if (mine.act == Act.Draw) Draw.Arc(middle, 18 * u, -Math.PI * 0.5, Math.TAU * mine.charge, 2.5 * u, Color(1, 0.85, 0.5, 0.85));
-        }
+        var gap = (5 + info.spread * h * 0.6) * u / Unit();
+        var tick = 7 * u;
+        var c = Color(1, 1, 1, 0.75);
+        Draw.Line(middle + float2(gap, 0), middle + float2(gap + tick, 0), 2 * u, c);
+        Draw.Line(middle - float2(gap, 0), middle - float2(gap + tick, 0), 2 * u, c);
+        Draw.Line(middle + float2(0, gap), middle + float2(0, gap + tick), 2 * u, c);
+        Draw.Line(middle - float2(0, gap), middle - float2(0, gap + tick), 2 * u, c);
     }
     feed.marker = Math.Max(0, feed.marker - dt);
     if (feed.marker > 0)
     {
         var a = Math.Saturate(feed.marker * 5);
-        var c = feed.markerHead ? (feed.markerKill ? Color(1.0, 0.18, 0.1, a) : Color(1.0, 0.78, 0.25, a))
+        var c = feed.markerCrit ? Color(1.0, 0.95, 0.35, a) : feed.markerHead ? (feed.markerKill ? Color(1.0, 0.18, 0.1, a) : Color(1.0, 0.78, 0.25, a))
               : feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
         var s = (feed.markerHead ? (feed.markerKill ? 15 : 11) : feed.markerKill ? 11 : 8) * u;
         var thick = (feed.markerHead ? 3.5 : 2.5) * u;
@@ -368,20 +334,16 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
             Write("Being raised...", float2(w * 0.5, h * 0.62), 18 * u, BONE, Anchor.MiddleCenter);
             Draw.Rect(float2(w * 0.5, h * 0.62 + 22 * u), float2(200 * u * Math.Saturate(mine.revive), 5 * u), GOLD);
         }
-        else if (mine.selfRevives > 0)
-        {
-            Write("Second Wind will raise you", float2(w * 0.5, h * 0.62), 16 * u, ASH, Anchor.MiddleCenter);
-        }
     }
     if (mine.life == Life.Gone && match.phase != Phase.Over)
         WriteBold("You bled out. You'll be back when the wave is done.", float2(w * 0.5, h * 0.4), 24 * u, BONE, Anchor.MiddleCenter);
 
     // ---- How to play, for the first minute ----
-    if (feed.played < 45 && match.phase != Phase.Over)
+    if (feed.played < 45 && match.phase != Phase.Over && mine.role != Role.None && !mine.choosing)
     {
         var fade = Math.Saturate((45 - feed.played) * 0.2);
-        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   F kick   V stab   R reload   Q ability   E revive",
-              float2(w * 0.5, h - 14 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
+        Write("WASD move (forward runs)   Space jump   Mouse fire   RMB / Shift / Q skills   R reload   E revive",
+              float2(w * 0.5, h - 30 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)
         Write("Alone. Host a room from the menu to fight with friends.", float2(w - 22 * u, 22 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.UpperRight);
@@ -430,8 +392,8 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
     }
 }
 
-// Development keys, not in play's interface: F4 a horde of two thousand more, F5 the wave's end (and the cards), F6 a
-// walk to the next place, F10 the next weapon in hand.
+// Development keys, not in play's interface: F4 a horde of two thousand more, F5 the wave's end (and the offer), F6 a
+// walk to the next place, F10 an item.
 local singleton DevWalk
 {
     int next;
@@ -486,11 +448,11 @@ view TitleCard(Lobby lobby)
     Draw.Text("GRAVEWAKE", float2(left + 1.5 * u, h * 0.3 - 1.5 * u), 96 * u, Color(0.78, 0.1, 0.07, 0.45), Anchor.MiddleLeft, Font.Bold);
     Draw.Text("Ashwick burned. Hold the fire in the wood, wave after wave.", float2(left + 4 * u, h * 0.3 + 64 * u), 20 * u, Color(0.85, 0.8, 0.72),
               Anchor.MiddleLeft);
-    Draw.Text("Warrior, Ranger or Mage, hordes of the dead, and a card after every wave  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u,
+    Draw.Text("Three survivors, guns and skills, thousands of the dead, and an item after every wave  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u,
               Color(0.6, 0.57, 0.52), Anchor.MiddleLeft);
     if (lobby.message != "") Draw.Text(lobby.message, float2(left + 4 * u, h * 0.86), 15 * u, Color(0.9, 0.5, 0.4), Anchor.MiddleLeft);
     // The licence the first-person arms come under asks for their maker's name
-    Draw.Text("First-person arms by CoinCoin (CC BY 4.0). Forest, ruins, people and weapons by Quaternius (CC0).", float2(w - 14 * u, h - 12 * u), 11 * u,
+    Draw.Text("First-person arms by CoinCoin (CC BY 4.0). Forest, ruins, people and guns by Quaternius (CC0).", float2(w - 14 * u, h - 12 * u), 11 * u,
               Color(0.6, 0.57, 0.52, 0.7), Anchor.LowerRight);
 }
 
@@ -543,6 +505,7 @@ local event(Struck struck) ShowMarker(mut Feed feed, Me me)
     feed.marker = struck.head ? 0.35 : 0.25;
     feed.markerKill = struck.killed;
     feed.markerHead = struck.head;
+    feed.markerCrit = struck.crit;
     if (struck.head && struck.killed) feed.headshot = 0.9;
 }
 
@@ -553,57 +516,59 @@ local event(Boons boons) ShowBoon(mut Feed feed)
     feed.bannerColor = Color(0.6, 1.0, 0.55);
 }
 
-// A card taken: this machine's own as a banner, the others' as a line in the corner.
+// An item taken: this machine's own as a banner, the others' as a line in the corner.
 local event(Picked picked) ShowPicked(mut Feed feed, Me me)
 {
-    var title = CardTitle(picked.card, picked.item, picked.role);
+    var title = ItemName(picked.item);
     if (picked.seat == me.seat)
     {
         feed.banner = title.ToUpper();
         feed.bannerLeft = 2.4;
-        feed.bannerColor = CardColor(picked.card);
+        feed.bannerColor = RarityColor(RarityOf(picked.item));
         return;
     }
     feed.news.Add($"{HeroName(picked.seat)} took {title}");
     feed.newsAge.Add(0);
 }
 
-// What a survivor has taken besides brews, in a line: "Whetstone 2  Boots 1".
-string Keepsakes(Survivor s)
+local event(Levelled levelled) ShowLevel(mut Feed feed)
 {
-    mut var line = "";
-    if (s.edge > 0) line += $"{CardTitle(Card.Edge, 0, s.role)} {s.edge}   ";
-    if (s.cleave > 0) line += $"Wide Swings {s.cleave}   ";
-    if (s.thirst > 0) line += $"Bloodthirst {s.thirst}   ";
-    if (s.quiver > 0) line += $"Quiver {s.quiver}   ";
-    if (s.fletch > 0) line += $"Bodkins {s.fletch}   ";
-    if (s.volley > 0) line += $"Volley {s.volley}   ";
-    if (s.steady > 0) line += $"Steady {s.steady}   ";
-    if (s.split > 0) line += $"Split {s.split}   ";
-    if (s.flow > 0) line += $"Wellspring {s.flow}   ";
-    if (s.vigor > 0) line += $"Heart of Oak {s.vigor}   ";
-    if (s.boots > 0) line += $"Boots {s.boots}   ";
-    if (s.fleet > 0) line += $"Fleet {s.fleet}   ";
-    if (s.honed > 0) line += $"Honed {s.honed}";
-    return line.Trim();
+    if (feed.bannerLeft > 1) return;
+    feed.banner = $"LEVEL {levelled.level}";
+    feed.bannerLeft = 1.8;
+    feed.bannerColor = Color(0.6, 0.85, 1.0);
 }
 
-Color CardColor(Card card)
+Color RarityColor(Rarity rarity)
 {
-    switch (card)
+    switch (rarity)
     {
-        case Card.Weapon: return Color(0.86, 0.84, 0.8);
-        case Card.Brew: return Color(0.55, 0.85, 0.5);
-        case Card.Runeforge: return Color(0.55, 0.7, 1.0);
-        case Card.NewAbility:
-        case Card.Hone:
-            return Color(0.72, 0.6, 1.0);
-        case Card.Vigor:
-        case Card.Boots:
-        case Card.Fleet:
-            return Color(0.9, 0.62, 0.45);
+        case Rarity.Uncommon: return Color(0.45, 0.9, 0.45);
+        case Rarity.Rare: return Color(0.95, 0.35, 0.3);
     }
-    return GOLD;
+    return Color(0.9, 0.88, 0.84);
+}
+
+string RarityName(Rarity rarity)
+{
+    switch (rarity)
+    {
+        case Rarity.Uncommon: return "Uncommon";
+        case Rarity.Rare: return "Rare";
+    }
+    return "Common";
+}
+
+// An item's mark: a rounded square in its rarity's colour, with two letters of its name.
+void DrawItemMark(Item item, float2 at, float size, float a)
+{
+    var tint = RarityColor(RarityOf(item));
+    Draw.RoundRect(at, float2(size, size), size * 0.2, Color(0.06, 0.05, 0.05, 0.85 * a));
+    Draw.WireRoundRect(at, float2(size, size) * 0.92, size * 0.18, Math.Max(1, size * 0.06), Color(tint.r, tint.g, tint.b, 0.9 * a));
+    var name = ItemName(item);
+    var words = name.Split(" ");
+    var letters = words.count > 1 ? $"{words[0].Substring(0, 1)}{words[1].Substring(0, 1)}" : name.Substring(0, 2);
+    WriteBold(letters, at, size * 0.42, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
 }
 
 // Text in lines no wider than `width`, broken between words, its first line's middle at `at`.
@@ -629,10 +594,10 @@ void WriteWrapped(string text, float2 at, float width, float size, Color tint)
     if (line != "") Write(line, float2(at.x, y), size, tint, Anchor.MiddleCenter);
 }
 
-// The cards after a wave: three across the middle, each with its key, what it is and what it does; then who's still
+// The items after a wave: three across the middle, each with its key, what it is and what it does; then who's still
 // choosing, and the next wave's count.
 [Stage(Layers.Hud, 2)]
-view Cards(Me me, Match match, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
+view Offers(Me me, Match match, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
 {
     if (lobby.page != Page.Playing || match.phase != Phase.Break || match.round <= 0) return;
     Draw.SetScreen();
@@ -661,33 +626,31 @@ view Cards(Me me, Match match, Lobby lobby, mut Feed feed, query (Survivor survi
     {
         feed.dealt += Math.Min(Frame.dt, 0.05);
         Write("Take one", float2(w * 0.5, h * 0.14 + 34 * u), 16 * u, ASH, Anchor.MiddleCenter);
-        var size = float2(232, 300) * u;
+        var size = float2(232, 280) * u;
         for (var k = 0; k < 3; k++)
         {
             var rise = Math.SmoothStep(0, 1, Math.Saturate(feed.dealt * 4 - k * 0.35));
             var middle = float2(w * 0.5 + (k - 1) * (size.x + 26 * u), h * 0.5 + (1 - rise) * 40 * u);
-            var card = mine.cards[k];
-            var item = mine.cardItems[k];
-            var tint = CardColor(card);
+            var item = mine.offers[k];
+            var rarity = RarityOf(item);
+            var tint = RarityColor(rarity);
             var a = rise;
             Draw.RoundRect(middle + float2(4, 6) * u, size, 10 * u, Color(0, 0, 0, 0.5 * a));
             Draw.RoundRect(middle, size, 10 * u, Color(0.07, 0.05, 0.045, 0.92 * a));
-            Draw.WireRoundRect(middle, size - float2(10, 10) * u, 7 * u, 1.5 * u, Color(tint.r * 0.6, tint.g * 0.6, tint.b * 0.6, 0.7 * a));
+            Draw.WireRoundRect(middle, size - float2(10, 10) * u, 7 * u, 1.5 * u, Color(tint.r * 0.7, tint.g * 0.7, tint.b * 0.7, 0.8 * a));
             // Its key, at the top
             var key = middle + float2(0, -size.y * 0.5 + 34 * u);
             Draw.Circle(key, 17 * u, Color(CHALK.r, CHALK.g, CHALK.b, 0.9 * a));
             WriteBold($"{k + 1}", key, 20 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
-            // A brew's bottle, the forge's runes, or a mark for the rest
-            var mark = middle + float2(0, -46 * u);
-            if (card == Card.Brew) DrawBrew(Brew(item), mark, u * 1.6);
-            else DrawCardMark(card, item, mark, u, a);
-            Write(CardKind(card, item).ToUpper(), middle + float2(0, 6 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
-            var title = CardTitle(card, item, mine.role);
-            var titleSize = Draw.MeasureText(title, 21 * u).x > size.x - 24 * u ? 17 * u : 21 * u;
-            WriteBold(title, middle + float2(0, 32 * u), titleSize, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
-            WriteWrapped(CardLine(card, item, mine), middle + float2(0, 66 * u), size.x - 34 * u, 13 * u, Color(BONE.r, BONE.g, BONE.b, 0.85 * a));
+            DrawItemMark(item, middle + float2(0, -40 * u), 54 * u, a);
+            var have = mine.items[int(item)];
+            Write(have > 0 ? $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}" : RarityName(rarity).ToUpper(), middle + float2(0, 6 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a),
+                  Anchor.MiddleCenter);
+            var title = ItemName(item);
+            WriteBold(title, middle + float2(0, 32 * u), 21 * u, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
+            WriteWrapped(ItemLine(item), middle + float2(0, 64 * u), size.x - 34 * u, 13 * u, Color(BONE.r, BONE.g, BONE.b, 0.85 * a));
         }
-        Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.5 + 180 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
+        Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.5 + 170 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
         return;
     }
     feed.dealt = 0;
@@ -697,7 +660,7 @@ view Cards(Me me, Match match, Lobby lobby, mut Feed feed, query (Survivor survi
         Write($"Wave {match.round + 1} in {int(Math.Ceil(Math.Max(0, BREAK_SECONDS - match.timer)))}", float2(w * 0.5, h * 0.14 + 34 * u), 18 * u, BONE, Anchor.MiddleCenter);
 }
 
-// Before the first wave (or on joining), the three classes: 1, 2 or 3.
+// Before the first wave (or on joining), the three survivors: 1, 2 or 3.
 [Stage(Layers.Hud, 3)]
 view Callings(Me me, Lobby lobby, query (Survivor survivor) survivors)
 {
@@ -716,88 +679,29 @@ view Callings(Me me, Lobby lobby, query (Survivor survivor) survivors)
     var h = Screen.height;
     var u = Unit();
     Draw.Rect(float2(w * 0.5, h * 0.5), float2(w, h), Color(0, 0, 0, 0.45));
-    WriteBold("CHOOSE YOUR CLASS", float2(w * 0.5, h * 0.16), 36 * u, Color(CHALK.r * 1.5, CHALK.g * 1.5, CHALK.b, 1), Anchor.MiddleCenter);
-    Write("You keep it till the end; every card after a wave is for it, or for you, or for your ability on Q", float2(w * 0.5, h * 0.16 + 34 * u), 15 * u, ASH,
-          Anchor.MiddleCenter);
-    var size = float2(250, 320) * u;
+    WriteBold("CHOOSE YOUR SURVIVOR", float2(w * 0.5, h * 0.14), 36 * u, Color(CHALK.r * 1.5, CHALK.g * 1.5, CHALK.b, 1), Anchor.MiddleCenter);
+    Write("A gun you aim, and three skills: right mouse, Shift and Q", float2(w * 0.5, h * 0.14 + 34 * u), 15 * u, ASH, Anchor.MiddleCenter);
+    var size = float2(270, 360) * u;
     for (var k = 0; k < 3; k++)
     {
         var role = Role(k + 1);
-        var middle = float2(w * 0.5 + (k - 1) * (size.x + 26 * u), h * 0.53);
-        var tint = k == 0 ? Color(0.9, 0.45, 0.35) : k == 1 ? Color(0.55, 0.85, 0.5) : Color(0.6, 0.65, 1.0);
+        var middle = float2(w * 0.5 + (k - 1) * (size.x + 22 * u), h * 0.55);
+        var tint = k == 0 ? Color(0.95, 0.75, 0.35) : k == 1 ? Color(0.9, 0.45, 0.35) : Color(0.5, 0.8, 0.95);
         Draw.RoundRect(middle + float2(4, 6) * u, size, 10 * u, Color(0, 0, 0, 0.5));
         Draw.RoundRect(middle, size, 10 * u, Color(0.07, 0.05, 0.045, 0.94));
         Draw.WireRoundRect(middle, size - float2(10, 10) * u, 7 * u, 1.5 * u, Color(tint.r * 0.7, tint.g * 0.7, tint.b * 0.7, 0.8));
-        var key = middle + float2(0, -size.y * 0.5 + 34 * u);
+        var top = middle.y - size.y * 0.5;
+        var key = float2(middle.x, top + 32 * u);
         Draw.Circle(key, 17 * u, Color(CHALK.r, CHALK.g, CHALK.b, 0.9));
         WriteBold($"{k + 1}", key, 20 * u, BONE, Anchor.MiddleCenter);
-        DrawCardMark(Card.Weapon, int(RoleWeapon(role)), middle + float2(0, -50 * u), u, 1);
-        WriteBold(RoleName(role).ToUpper(), middle + float2(0, 6 * u), 26 * u, tint, Anchor.MiddleCenter);
-        Write($"{Info(RoleWeapon(role)).name}  +  {AbilityName(RoleAbility(role))}", middle + float2(0, 34 * u), 13 * u, GOLD, Anchor.MiddleCenter);
-        WriteWrapped(RoleLine(role), middle + float2(0, 64 * u), size.x - 36 * u, 13 * u, Color(BONE.r, BONE.g, BONE.b, 0.85));
-    }
-    Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.53 + 190 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
-}
-
-// A card's mark: what a weapon card's weapon is, a rune for the Runeforge, a simple sign for the rest.
-void DrawCardMark(Card card, int item, float2 at, float u, float a)
-{
-    var tint = CardColor(card);
-    var c = Color(tint.r, tint.g, tint.b, a);
-    switch (card)
-    {
-        case Card.Weapon:
+        WriteBold(RoleName(role).ToUpper(), float2(middle.x, top + 76 * u), 26 * u, tint, Anchor.MiddleCenter);
+        Write(Info(RoleWeapon(role)).name, float2(middle.x, top + 104 * u), 15 * u, GOLD, Anchor.MiddleCenter);
+        for (var s = 0; s < 3; s++)
         {
-            var info = Info(Weapon(item % FORGED_CARD));
-            if (info.kind == Kind.Bow)
-            {
-                Draw.Arc(at + float2(-14 * u, 0), 30 * u, -1.1, 2.2, 3 * u, c);
-                Draw.Line(at + float2(-1.5 * u, -26 * u), at + float2(-1.5 * u, 26 * u), 1.2 * u, c);
-                Draw.Line(at + float2(-18 * u, 0), at + float2(26 * u, 0), 2 * u, c);
-            }
-            else if (info.kind == Kind.Crossbow || info.kind == Kind.Gun)
-            {
-                Draw.Line(at + float2(-28 * u, 4 * u), at + float2(28 * u, 4 * u), 4 * u, c);
-                Draw.Line(at + float2(-16 * u, 4 * u), at + float2(-22 * u, 22 * u), 4 * u, c);
-                if (info.kind == Kind.Crossbow) Draw.Line(at + float2(18 * u, -18 * u), at + float2(18 * u, 26 * u), 3 * u, c);
-            }
-            else if (info.kind == Kind.Staff)
-            {
-                Draw.Line(at + float2(-18 * u, 26 * u), at + float2(14 * u, -20 * u), 3.5 * u, c);
-                Draw.Circle(at + float2(16 * u, -23 * u), 6 * u, c);
-            }
-            else
-            {
-                // A blade, point up, and its cross
-                Draw.Line(at + float2(0, 28 * u), at + float2(0, -28 * u), 4 * u, c);
-                Draw.Line(at + float2(-12 * u, 14 * u), at + float2(12 * u, 14 * u), 3.5 * u, c);
-            }
-            return;
+            var key2 = s == 0 ? "RMB" : s == 1 ? "Shift" : "Q";
+            Write($"{key2}  {SkillName(SkillOf(role, s))}", float2(middle.x, top + 132 * u + s * 20 * u), 13 * u, BONE, Anchor.MiddleCenter);
         }
-        case Card.Runeforge:
-            Draw.WireCircle(at, 26 * u, 2 * u, c);
-            for (var k = 0; k < 6; k++)
-            {
-                var turn = k * Math.TAU / 6;
-                Draw.Line(at + float2(Math.Cos(turn), Math.Sin(turn)) * 13 * u, at + float2(Math.Cos(turn), Math.Sin(turn)) * 22 * u, 2 * u, c);
-            }
-            return;
-        case Card.Vigor:
-            Draw.Circle(at + float2(-9 * u, -6 * u), 11 * u, c);
-            Draw.Circle(at + float2(9 * u, -6 * u), 11 * u, c);
-            List<Vertex> point = [Vertex { position = at + float2(-19 * u, -1 * u), color = c }, Vertex { position = at + float2(19 * u, -1 * u), color = c },
-                                  Vertex { position = at + float2(0, 22 * u), color = c }];
-            List<int> faces = [0, 1, 2];
-            Draw.Mesh(point, faces);
-            return;
-        case Card.NewAbility:
-        case Card.Hone:
-            // A bolt
-            Draw.Line(at + float2(6 * u, -26 * u), at + float2(-8 * u, 2 * u), 4 * u, c);
-            Draw.Line(at + float2(-8 * u, 2 * u), at + float2(8 * u, 2 * u), 4 * u, c);
-            Draw.Line(at + float2(8 * u, 2 * u), at + float2(-6 * u, 26 * u), 4 * u, c);
-            return;
+        WriteWrapped(RoleLine(role), float2(middle.x, top + 214 * u), size.x - 36 * u, 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.95));
     }
-    // A whetstone's bar, a boot's sole, a quiver's arrows: a few strokes
-    for (var k = 0; k < 3; k++) Draw.Line(at + float2(-22 * u, (k - 1) * 12 * u), at + float2(22 * u, (k - 1) * 12 * u - 8 * u), 3 * u, c);
+    Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.55 + size.y * 0.5 + 24 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
 }

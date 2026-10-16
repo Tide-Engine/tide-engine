@@ -1,8 +1,8 @@
 // What the match keeps of the plan: the boxes, the risers and the starts, and
 // a grid of metre cells over the clearing that says where the dead can walk
 // (not through boxes, not up or down the cliffs, not past the edge). Every few ticks the dead's way is worked out over that grid:
-// how far each cell is from the nearest survivor on their feet (or from a
-// ringing lure bell), and each zombie walks downhill.
+// how far each cell is from the nearest survivor on their feet, and each
+// zombie walks downhill.
 
 // The tick, in order.
 enum Tick { Restart, Survivors, Hands, Missiles, Zombies, Field, Rounds, Late }
@@ -26,7 +26,6 @@ singleton Ashwick
     List<float3> starts;
     List<byte> cells;             // 0 open, 1 a wall (a box, a cliff, or the forest past the clearing's edge)
     List<byte> field;             // Cells to the nearest survivor, UNREACHED where none can be reached
-    List<byte> lureField;         // ...or to a ringing bell
     bool made;
 }
 
@@ -104,12 +103,7 @@ void BuildAshwick(mut Ashwick ashwick)
         if (!InClearing(middle) || Steepness(middle.x, middle.z) > STEEP) ashwick.cells[c] = 1;
     }
     ashwick.field.Resize(NAV_W * NAV_H);
-    ashwick.lureField.Resize(NAV_W * NAV_H);
-    for (var c = 0; c < NAV_W * NAV_H; c++)
-    {
-        ashwick.field[c] = byte(UNREACHED);
-        ashwick.lureField[c] = byte(UNREACHED);
-    }
+    for (var c = 0; c < NAV_W * NAV_H; c++) ashwick.field[c] = byte(UNREACHED);
     ashwick.made = true;
 }
 
@@ -258,6 +252,25 @@ float RayHit(Ashwick ashwick, float3 from, float3 to, out float3 normal)
     return hit ? best : 2.0;
 }
 
+// RayHit along a line of any length: a few metres at a time, as RayHit looks for the boxes near each piece's middle.
+float LongRay(Ashwick ashwick, float3 from, float3 to, out float3 normal)
+{
+    normal = float3(0, 1, 0);
+    var steps = Math.Max(1, int(Math.Ceil(Math.Distance(from, to) / 2)));
+    for (var i = 0; i < steps; i++)
+    {
+        var a = Math.Lerp(from, to, float(i) / steps);
+        var b = Math.Lerp(from, to, float(i + 1) / steps);
+        var t = RayHit(ashwick, a, b, out var n);
+        if (t <= 1)
+        {
+            normal = n;
+            return (i + t) / steps;
+        }
+    }
+    return 2;
+}
+
 // Whether the line between two places at the height of a body's middle crosses no wall cell.
 bool ClearPath(Ashwick ashwick, float3 a, float3 b)
 {
@@ -274,9 +287,9 @@ bool ClearPath(Ashwick ashwick, float3 a, float3 b)
 
 // ---- The dead's way ----
 
-// Every few ticks: how far each walkable cell is from the nearest standing survivor, and from a ringing bell.
+// Every few ticks: how far each walkable cell is from the nearest standing survivor.
 [Stage(Tick.Field)]
-system Wayfinding(mut Ashwick ashwick, Time time, query (Survivor survivor) survivors, query (Missile missile) missiles)
+system Wayfinding(mut Ashwick ashwick, Time time, query (Survivor survivor) survivors)
 {
     if (!ashwick.made || time.tick % 6 != 0) return;
     mut List<int> sources = [];
@@ -296,31 +309,18 @@ system Wayfinding(mut Ashwick ashwick, Time time, query (Survivor survivor) surv
             if (cell >= 0) sources.Add(cell);
         }
     }
-    Spread(ashwick, sources, false);
-    mut List<int> bells = [];
-    foreach (var row in missiles)
-    {
-        if (row.missile.kind != Shot.Bell || !row.missile.stuck) continue;
-        var cell = CellOf(row.missile.at);
-        if (cell >= 0) bells.Add(cell);
-    }
-    Spread(ashwick, bells, true);
+    Spread(ashwick, sources);
 }
 
 // A breadth-first walk out from the sources over walkable cells, counting steps.
-void Spread(mut Ashwick ashwick, List<int> sources, bool lure)
+void Spread(mut Ashwick ashwick, List<int> sources)
 {
     var total = NAV_W * NAV_H;
-    for (var c = 0; c < total; c++)
-    {
-        if (lure) ashwick.lureField[c] = byte(UNREACHED);
-        else ashwick.field[c] = byte(UNREACHED);
-    }
+    for (var c = 0; c < total; c++) ashwick.field[c] = byte(UNREACHED);
     mut List<int> queue = [];
     foreach (var cell in sources)
     {
-        if (lure) ashwick.lureField[cell] = 0;
-        else ashwick.field[cell] = 0;
+        ashwick.field[cell] = 0;
         queue.Add(cell);
     }
     mut var head = 0;
@@ -328,7 +328,7 @@ void Spread(mut Ashwick ashwick, List<int> sources, bool lure)
     {
         var cell = queue[head];
         head += 1;
-        var here = lure ? int(ashwick.lureField[cell]) : int(ashwick.field[cell]);
+        var here = int(ashwick.field[cell]);
         if (here >= UNREACHED - 1) continue;
         var cx = cell % NAV_W;
         var cz = cell / NAV_W;
@@ -338,23 +338,21 @@ void Spread(mut Ashwick ashwick, List<int> sources, bool lure)
             var nz = cz + (n == 2 ? 1 : n == 3 ? -1 : 0);
             if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_H) continue;
             var next = nz * NAV_W + nx;
-            var there = lure ? int(ashwick.lureField[next]) : int(ashwick.field[next]);
-            if (there != UNREACHED || !Walkable(ashwick, next)) continue;
-            if (lure) ashwick.lureField[next] = byte(here + 1);
-            else ashwick.field[next] = byte(here + 1);
+            if (int(ashwick.field[next]) != UNREACHED || !Walkable(ashwick, next)) continue;
+            ashwick.field[next] = byte(here + 1);
             queue.Add(next);
         }
     }
 }
 
 // Which way is downhill from a place: toward the neighbouring cell nearest what draws the dead.
-float3 Downhill(Ashwick ashwick, float3 at, bool lure)
+float3 Downhill(Ashwick ashwick, float3 at)
 {
     var cell = CellOf(at);
     if (cell < 0) return float3(0);
     var cx = cell % NAV_W;
     var cz = cell / NAV_W;
-    var here = lure ? int(ashwick.lureField[cell]) : int(ashwick.field[cell]);
+    var here = int(ashwick.field[cell]);
     mut var best = here;
     mut var way = float3(0);
     for (var dz = -1; dz <= 1; dz++)
@@ -372,7 +370,7 @@ float3 Downhill(Ashwick ashwick, float3 at, bool lure)
             {
                 if (!Walkable(ashwick, cz * NAV_W + nx) || !Walkable(ashwick, nz * NAV_W + cx)) continue;
             }
-            var there = lure ? int(ashwick.lureField[next]) : int(ashwick.field[next]);
+            var there = int(ashwick.field[next]);
             if (there < best || (there == best && there < here))
             {
                 best = there;
@@ -384,9 +382,9 @@ float3 Downhill(Ashwick ashwick, float3 at, bool lure)
     return Math.Normalize(way);
 }
 
-int FieldAt(Ashwick ashwick, float3 at, bool lure)
+int FieldAt(Ashwick ashwick, float3 at)
 {
     var cell = CellOf(at);
     if (cell < 0) return UNREACHED;
-    return lure ? int(ashwick.lureField[cell]) : int(ashwick.field[cell]);
+    return int(ashwick.field[cell]);
 }

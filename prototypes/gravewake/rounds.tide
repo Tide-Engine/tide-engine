@@ -1,8 +1,7 @@
 // Waves: a few seconds' breath, then the bell, and the dead come, more of
 // them each wave, tougher and faster, until every one of the wave is down.
-// Then each survivor is dealt three cards and takes one: a new weapon, a
-// brew, or something that makes them harder to kill. There's no end but the
-// last of them falling; how far they got is the score.
+// Then each survivor is offered three items and takes one. There's no end but
+// the last of them falling; how far they got is the score.
 
 enum Phase { Waiting, Break, Fighting, Over }
 
@@ -16,7 +15,10 @@ singleton Match
     int killed;                  // This wave's, for the wave's end
     float spawnWait;
     int rush;                    // Of the dead still to come, how many come six a tick (the development key's horde)
-    float choosing;              // Seconds the survivors have had to choose their cards
+    float choosing;              // Seconds the survivors have had to choose their items
+    // The party's experience (items.tide)
+    int level;
+    float xp;                    // Toward the next level
     // Power-ups
     float instakill;             // Seconds left
     int drops;                   // This wave's
@@ -28,7 +30,7 @@ singleton Match
 }
 
 const int MAX_ALIVE = 3000;      // Up at once: the most the tick and the frame afford (notes/gravewake.md)
-const float BREAK_SECONDS = 5;   // The countdown to the next wave, once everyone has taken a card
+const float BREAK_SECONDS = 5;   // The countdown to the next wave, once everyone has taken an item
 const float CHOICE_MOST = 45;    // How long the others wait for one who hasn't
 
 void ResetMatch(mut Match match)
@@ -42,6 +44,8 @@ void ResetMatch(mut Match match)
     match.spawnWait = 0;
     match.rush = 0;
     match.choosing = 0;
+    match.level = 1;
+    match.xp = 0;
     match.instakill = 0;
     match.drops = 0;
     match.dropTurn = 0;
@@ -87,12 +91,12 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
         ready += 1;
         if (s.choosing) choosing += 1;
         if (s.role == Role.None) unpicked += 1;
-        if (s.life == Life.Standing || (s.life == Life.Downed && s.selfRevives > 0 && party.joined == 1)) hope += 1;
+        if (s.life == Life.Standing) hope += 1;
     }
     switch (match.phase)
     {
         case Phase.Waiting:
-            // Everyone's class picked first
+            // Everyone's survivor picked first
             if (ready > 0 && unpicked == 0)
             {
                 match.phase = Phase.Break;
@@ -105,8 +109,8 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
                 match.phase = Phase.Waiting;
                 return;
             }
-            // The countdown starts once every card is taken (or the one who hasn't has had long enough), and every class
-            // is picked
+            // The countdown starts once every item is taken (or the one who hasn't has had long enough), and every
+            // survivor is picked
             if ((choosing > 0 || unpicked > 0) && match.choosing < CHOICE_MOST)
             {
                 match.choosing += time.dt;
@@ -224,10 +228,10 @@ Gait GaitFor(int round)
     return Random.NextFloat() < sprinters ? Gait.Sprint : Gait.Run;
 }
 
-// A wave's end: who's down gets up, who bled out comes back to the fire with what they had, everyone's arrows and pots
-// are filled, and each is dealt their cards. A card not taken by the next wave is lost.
+// A wave's end: who's down gets up, who bled out comes back to the fire with what they had, everyone's gun is loaded
+// and their skills ready, and each is offered three items. An offer not taken by the next wave is lost.
 [Stage(Tick.Rounds, 2)]
-system Regroup(mut Survivor survivor, Match match, Ashwick ashwick, Party party)
+system Regroup(mut Survivor survivor, Match match, Ashwick ashwick)
 {
     if (match.phase == Phase.Fighting && survivor.choosing) survivor.choosing = false;
     if (match.phase != Phase.Break || match.round <= 0 || !survivor.ready || survivor.role == Role.None || survivor.dealt == match.round) return;
@@ -250,8 +254,7 @@ system Regroup(mut Survivor survivor, Match match, Ashwick ashwick, Party party)
     }
     survivor.health = MaxHealth(survivor);
     Refill(survivor);
-    if (HasBrew(survivor, Brew.SecondWind) && party.joined <= 1) survivor.selfRevives = 1;
-    Deal(survivor, match.round);
+    Offer(survivor, match.round);
 }
 
 event RoundBegan

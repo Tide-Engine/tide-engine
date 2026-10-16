@@ -1,0 +1,343 @@
+// The survivors' kits, after Risk of Rain 2's: each picked before the first
+// wave and kept to the end, a gun to aim and three skills on cooldowns: a
+// secondary on the right mouse button, a utility on Shift, a special on Q.
+// The Gunner carries a carbine, a piercing round, a slide and frag grenades;
+// the Breacher a pump shotgun, a boot, a leap that slams down and a firebomb;
+// the Engineer an SMG, mines, a blink and a turret.
+
+enum Role { None, Gunner, Breacher, Engineer }
+
+enum Skill { None, PhaseRound, Slide, Frag, Boot, Leap, Firebomb, Mine, Blink, Turret }
+
+const int ROLE_COUNT = 3;
+
+string RoleName(Role role)
+{
+    switch (role)
+    {
+        case Role.Gunner: return "Gunner";
+        case Role.Breacher: return "Breacher";
+        case Role.Engineer: return "Engineer";
+    }
+    return "";
+}
+
+string RoleLine(Role role)
+{
+    switch (role)
+    {
+        case Role.Gunner: return "A carbine for any range. Rounds through a whole line of the dead, a slide out of trouble, grenades into the thick of them.";
+        case Role.Breacher: return "A pump shotgun up close. Kicks them flat, leaps in and slams down, sets the ground alight.";
+        case Role.Engineer: return "An SMG and the machines: mines where they walk, a turret that fires on its own, a blink to get clear.";
+    }
+    return "";
+}
+
+Weapon RoleWeapon(Role role)
+{
+    switch (role)
+    {
+        case Role.Gunner: return Weapon.Rifle;
+        case Role.Breacher: return Weapon.Shotgun;
+        case Role.Engineer: return Weapon.Smg;
+    }
+    return Weapon.Pistol;
+}
+
+// A kit's skills: 0 the secondary (right mouse), 1 the utility (Shift), 2 the special (Q).
+Skill SkillOf(Role role, int slot)
+{
+    switch (role)
+    {
+        case Role.Gunner: return slot == 0 ? Skill.PhaseRound : slot == 1 ? Skill.Slide : Skill.Frag;
+        case Role.Breacher: return slot == 0 ? Skill.Boot : slot == 1 ? Skill.Leap : Skill.Firebomb;
+        case Role.Engineer: return slot == 0 ? Skill.Mine : slot == 1 ? Skill.Blink : Skill.Turret;
+    }
+    return Skill.None;
+}
+
+string SkillName(Skill skill)
+{
+    switch (skill)
+    {
+        case Skill.PhaseRound: return "Phase Round";
+        case Skill.Slide: return "Slide";
+        case Skill.Frag: return "Frag Grenade";
+        case Skill.Boot: return "Boot";
+        case Skill.Leap: return "Leap";
+        case Skill.Firebomb: return "Firebomb";
+        case Skill.Mine: return "Mine";
+        case Skill.Blink: return "Blink";
+        case Skill.Turret: return "Turret";
+    }
+    return "";
+}
+
+string SkillLine(Skill skill)
+{
+    switch (skill)
+    {
+        case Skill.PhaseRound: return "A heavy round through every one of the dead in its line";
+        case Skill.Slide: return "A burst of speed the way you're going";
+        case Skill.Frag: return "A grenade that bursts on the dead or after a moment";
+        case Skill.Boot: return "Kick the dead in front off their feet; one down is stamped on";
+        case Skill.Leap: return "Leap high and far, and knock down the dead where you land";
+        case Skill.Firebomb: return "Throw a pot of burning fuel";
+        case Skill.Mine: return "Lay a mine that bursts when the dead come near";
+        case Skill.Blink: return "Step through the air to where you look";
+        case Skill.Turret: return "Set down a turret that fires at the dead on its own a while";
+    }
+    return "";
+}
+
+// Seconds between uses, before the Field Batteries.
+float BaseCooldown(Skill skill)
+{
+    switch (skill)
+    {
+        case Skill.PhaseRound: return 3;
+        case Skill.Slide: return 4;
+        case Skill.Frag: return 7;
+        case Skill.Boot: return 3.5;
+        case Skill.Leap: return 7;
+        case Skill.Firebomb: return 9;
+        case Skill.Mine: return 5;
+        case Skill.Blink: return 5;
+        case Skill.Turret: return 18;
+    }
+    return 5;
+}
+
+float Cooldown(Survivor survivor, Skill skill)
+{
+    return BaseCooldown(skill) * Math.Pow(0.85, survivor.items[int(Item.Battery)]);
+}
+
+const float DASH_SECONDS = 0.22;
+const float DASH_SPEED = 17;
+const float SLAM_REACH = 3.5;
+const float KICK_REACH = 2.6;
+const float TURRET_SECONDS = 15;
+const float TURRET_REACH = 24;
+const float TURRET_HIGH = 0.95;          // Where its gun turns, above its feet
+
+// A skill, if it's ready and the hands are free for it. `slot` is which of the three.
+void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Herd herd)
+{
+    var skill = SkillOf(survivor.role, slot);
+    if (skill == Skill.None || survivor.cooldowns[slot] > 0) return;
+    var busy = survivor.act == Act.Throw || survivor.act == Act.Kick;
+    switch (skill)
+    {
+        case Skill.PhaseRound:
+        {
+            if (busy) return;
+            var eye = EyeOf(survivor);
+            var look = LookDirection(survivor.yaw, survivor.pitch);
+            Shoot(survivor, eye, look, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1);
+            Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = eye, way = look, source = Source.Phase });
+            survivor.act = Act.Fire;
+            survivor.actTime = 0;
+            survivor.actLength = 0.3;
+            break;
+        }
+        case Skill.Slide:
+        {
+            mut var way = Flat(survivor.yaw) * move.y + Flat(survivor.yaw + Math.PI * 0.5) * move.x;
+            if (Math.Length(way) < 0.1) way = Flat(survivor.yaw);
+            survivor.dashWay = Math.Normalize(way);
+            survivor.dash = DASH_SECONDS;
+            break;
+        }
+        case Skill.Frag:
+        case Skill.Firebomb:
+            if (busy) return;
+            StartAct(survivor, Act.Throw, 0.55);
+            survivor.throwing = skill;
+            break;
+        case Skill.Boot:
+            if (busy) return;
+            StartAct(survivor, Act.Kick, 0.5);
+            break;
+        case Skill.Leap:
+        {
+            if (!survivor.grounded) return;
+            survivor.velocity = Flat(survivor.yaw) * 8 + float3(0, 9.5, 0);
+            survivor.grounded = false;
+            survivor.leaping = true;
+            break;
+        }
+        case Skill.Mine:
+        {
+            var ahead = survivor.feet + Flat(survivor.yaw) * 1.2;
+            mut var at = On(ahead.x, ahead.z);
+            if (Math.Distance(PushOut(ashwick, at, 0.2, 0.3), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
+            Spawn(Missile { kind = Shot.Mine, at = at + float3(0, 0.03, 0), damage = 220 * Might(survivor), splash = 4.5, seat = survivor.seat, life = 40 });
+            Send(Cue { sound = Sfx.Mine, at = at });
+            break;
+        }
+        case Skill.Blink:
+        {
+            // As far as 10 m the way they look, but not through anything nor off the clearing
+            var way = Flat(survivor.yaw);
+            mut var to = survivor.feet;
+            for (var k = 1; k <= 40; k++)
+            {
+                var step = survivor.feet + way * (k * 0.25);
+                var ground = Ground(step.x, step.z);
+                var at = float3(step.x, Math.Max(ground, survivor.feet.y), step.z);
+                if (!InClearing(at) || Math.Distance(PushOut(ashwick, at, BODY_RADIUS, BODY_HIGH), at) > 0.001 || ground > survivor.feet.y + 1.5) break;
+                to = at;
+            }
+            if (Math.Distance(to, survivor.feet) < 1) return;
+            Send(Unleashed { seat = survivor.seat, skill = skill, at = survivor.feet, to = to });
+            survivor.feet = float3(to.x, Ground(to.x, to.z), to.z);
+            survivor.velocity = float3(0);
+            survivor.cooldowns[slot] = Cooldown(survivor, skill);
+            return;
+        }
+        case Skill.Turret:
+        {
+            var ahead = survivor.feet + Flat(survivor.yaw) * 1.5;
+            mut var at = On(ahead.x, ahead.z);
+            if (Math.Distance(PushOut(ashwick, at, 0.4, 1.2), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
+            Spawn(Turret { seat = survivor.seat, at = at, yaw = survivor.yaw, life = TURRET_SECONDS, might = Might(survivor), crit = CritChance(survivor) });
+            break;
+        }
+    }
+    survivor.cooldowns[slot] = Cooldown(survivor, skill);
+    Send(Unleashed { seat = survivor.seat, skill = skill, at = survivor.feet, to = survivor.feet });
+}
+
+// A leap come down: what's near goes over.
+void Slam(Survivor survivor, List<Body> bodies)
+{
+    foreach (var z in bodies)
+    {
+        if (!z.hittable || Math.Distance(z.at, survivor.feet) > SLAM_REACH) continue;
+        z.entity.Send(Wound { damage = 70 * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = 6, down = true, blow = Blow.Blunt });
+    }
+    Send(Unleashed { seat = survivor.seat, skill = Skill.Leap, at = survivor.feet, to = survivor.feet, landed = true });
+}
+
+// The boot: the dead in front, within a stride, go over backwards (six at most); one already down is stamped on, on
+// the head.
+void Kick(Entity self, Survivor survivor, List<Body> bodies)
+{
+    mut var hits = 0;
+    mut var stamped = false;
+    var might = Might(survivor);
+    foreach (var z in bodies)
+    {
+        if (!z.hittable) continue;
+        var to = (z.down ? z.head : z.chest) - survivor.feet;
+        var far = Math.Length(to.xz);
+        if (far > KICK_REACH + ZOMBIE_RADIUS) continue;
+        var angle = Math.Abs(TurnBetween(survivor.yaw, Math.Atan2(to.x, to.z)));
+        if (angle > 0.9 && far > 0.6) continue;
+        if (z.down)
+        {
+            if (stamped) continue;
+            stamped = true;
+            z.entity.Send(Wound { damage = 160 * might, seat = survivor.seat, head = true, from = survivor.feet, blow = Blow.Blunt });
+        }
+        else if (hits < 6)
+        {
+            hits += 1;
+            z.entity.Send(Wound { damage = 45 * might, seat = survivor.seat, from = survivor.feet, knock = 7, down = true, blow = Blow.Blunt });
+        }
+    }
+    self.Send(Kicked { seat = survivor.seat, hits = hits + (stamped ? 1 : 0), stamp = stamped });
+}
+
+// A grenade or a firebomb, thrown.
+void Throw(Survivor survivor, Skill skill)
+{
+    var eye = EyeOf(survivor);
+    var look = LookDirection(survivor.yaw, survivor.pitch + 0.15);
+    var right = Flat(survivor.yaw + Math.PI * 0.5);
+    if (skill == Skill.Frag)
+        Spawn(Missile { kind = Shot.Grenade, at = eye + right * 0.2, velocity = look * 17, gravity = 14, damage = 180 * Might(survivor), splash = 5.5, element = Element.Blast,
+                        seat = survivor.seat, life = 1.6 });
+    else
+        Spawn(Missile { kind = Shot.Pot, at = eye + right * 0.2, velocity = look * 15, gravity = 14, damage = 90 * Might(survivor), splash = 4.8, element = Element.Fire,
+                        seat = survivor.seat, life = 5 });
+    Send(Cue { sound = Sfx.Throw, at = eye });
+}
+
+// ---- The Engineer's turret ----
+
+// A turret where it was set down: it turns to the nearest of the dead it can see and fires, till its time is up.
+component Turret
+{
+    int seat;
+    [Position] float3 at;
+    float yaw;
+    float pitch;
+    float life;
+    float wait;
+    float might;            // Its maker's, when it was set down
+    float crit;
+}
+
+[Stage(Tick.Missiles, 1)]
+system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Time time)
+{
+    turret.life -= time.dt;
+    if (turret.life <= 0)
+    {
+        this.Destroy();
+        return;
+    }
+    turret.wait -= time.dt;
+    if (turret.wait > 0) return;
+    var gun = turret.at + float3(0, TURRET_HIGH, 0);
+    // The nearest it can see, of a few nearest
+    mut Body best = default;
+    mut var bestFar = TURRET_REACH;
+    foreach (var z in Near(herd, turret.at, TURRET_REACH))
+    {
+        if (!z.hittable || z.risen < 0.6) continue;
+        var far = Math.Distance(z.chest, gun);
+        if (far >= bestFar) continue;
+        bestFar = far;
+        best = z;
+    }
+    if (best.entity == default)
+    {
+        turret.wait = 0.25;
+        return;
+    }
+    var to = best.chest - gun;
+    var way = to / Math.Max(Math.Length(to), 0.001);
+    if (LongRay(ashwick, gun, best.chest, out _) <= 1)
+    {
+        turret.wait = 0.2;
+        return;
+    }
+    turret.yaw = Math.Atan2(way.x, way.z);
+    turret.pitch = Math.Asin(Math.Clamp(way.y, -1, 1));
+    turret.wait = 0.09;
+    var crit = Random.NextFloat() < turret.crit;
+    best.entity.Send(Wound { damage = 11 * turret.might * (crit ? 2.0 : 1.0), seat = turret.seat, from = gun, knock = 0.6, blow = Blow.Missile, echo = true });
+    var muzzle = gun + way * 0.45;
+    Send(Traced { seat = turret.seat, from = muzzle, to = best.chest, kind = Trace.Turret });
+    Send(Loosed { seat = turret.seat, weapon = Weapon.Smg, at = muzzle, way = way, source = Source.Turret });
+}
+
+// A skill used, for what's seen and heard: where from and to (a blink's two ends), a leap's landing.
+event Unleashed
+{
+    int seat;
+    Skill skill;
+    float3 at;
+    float3 to;
+    bool landed;
+}
+
+event Kicked
+{
+    int seat;
+    int hits;
+    bool stamp;
+}

@@ -5,6 +5,10 @@ formerly named `Shown` are named `Displayed` to avoid the new engine event.
 Their GLSL/WGSL goldens change only that function spelling and its labels;
 no shader expression, binding or expected GPU value changes.
 
+## A view's grown parameters and its queries (2026-10-16)
+
+`bind_views` (codegen) appends a parameter to a view for each component or singleton its frags and verts read that the view doesn't take (`tide_bound<i>`). That can grow `view->params` into a new arena copy after checking, so pointers taken during checking (`stmt.query`, an expression's `param`) point at the old copy, which stays valid and unchanged. Only `gen_query_foreach` compared addresses, to find a query's index among the view's parameters: with the copy moved it never found it and spun forever (GRAVEWAKE's `DrawHands`: eight parameters, one a query, and `Steel` reading `Lights`). It now finds the query by name. `tidec_e2e_view_bound_query` is a view of exactly eight parameters with a query whose frag reads a local singleton the view doesn't take: one instance per row.
+
 ## Frustum bounds metadata (2026-10-15)
 
 Generated `tide_shader.bounds_position` is `1 + offsetof(V, position)` only for 3D shaders with neither a user vert nor skinning. Fragment-only custom vertex layouts get automatic culling; a user vert (even one currently leaving position alone), explicit clip output and every skinned shader require explicit conservative `Draw.Bounds` or remain drawn. GLSL/WGSL/SPIR-V are unchanged. The C shader struct grows, so hosts/libraries/games rebuild. `draw_frustum` checks offsets, rejection and opt-in; `skinned_rest` pins zero automatic metadata. Contracts and GPU validation are in `notes/drawing.md`, Frustum culling.
