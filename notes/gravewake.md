@@ -153,7 +153,7 @@ patterns or something". The picks below are mine (Provisional).
   second (as many as six a tick), each with `40 × danger^1.35` health,
   runners from danger 1.4 and sprinters from 3.5. The HUD shows the run's
   time and the danger in Risk of Rain 2's words (Easy to Impossible, then
-  HAHAHAHA). Bleeding out, a survivor is back at their place by the fire
+  HAHAHAHA). Nothing sounds when it starts (the siren that did is gone). Bleeding out, a survivor is back at their place by the fire
   `RETURN_SECONDS` (30) later with everything (`Return`). The game is over
   when nobody's standing; the score is how long it lasted. Power-ups are at
   most four a minute. `Phase.Break`, the waves' counts and the regrouping
@@ -180,8 +180,8 @@ patterns or something". The picks below are mine (Provisional).
   throw to anyone it meets, the dead flung aside, stopped by walls). A
   survivor is thrown by `Shoved`. Felled (`BossFelled`): every survivor owes
   a pick, the one who felled it gets 1000 points, the party 25 experience.
-  The HUD has its health across the top; it's heard roaring as it comes, at
-  each roar and charge, and dying.
+  The HUD has its health across the top; it's heard roaring as it comes (its
+  own scream, two-fifths the pitch), at each roar and charge, and dying.
 - **Tests**: `gravewake_test` plays the run, not waves: a minute and a half
   of it, a level's offer taken mid-fight, the bled-out survivor back at the
   fire after 30 s, a Brute that slams, charges and roars and, felled, owes
@@ -221,9 +221,10 @@ distance." Asked, they chose pixels finer with distance, and for the sounds:
     and a shotgun's pump.
   - Hits: qubodup's meat impacts and Independent.nu's wet ones; Kenney's
     interface click for the hit marker.
-  - Waves: a town's flood siren in a storm (TinyWorlds' recording) starts
-    one; a breath of Paul Wortmann's Dark Cavern Ambient ends one, and a
-    longer one is the game's end.
+  - Waves: a town's flood siren in a storm (TinyWorlds' recording) started
+    one, till the owner heard it as "a toilet flush" (2026-10-17): it's gone,
+    and the run starts with no cue; a breath of Paul Wortmann's Dark Cavern
+    Ambient is a Brute's fall, and a longer one the game's end.
   - Music: two minutes of Juhani Junkala's Post Apocalyptic Wastelands under
     early waves, two of Ruskerdax's Ancient Grudge when the horde is big,
     each crossfaded round on itself.

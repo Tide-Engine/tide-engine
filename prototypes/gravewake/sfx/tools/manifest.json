@@ -1309,16 +1309,6 @@
   ],
   "seconds": 6.769
  },
- "round_start": {
-  "bytes": 112334,
-  "file": "round_start.ogg",
-  "kind": "music",
-  "layers": false,
-  "packs": [
-   "oga_storm_siren"
-  ],
-  "seconds": 12.751
- },
  "scream_1": {
   "bytes": 13015,
   "file": "scream_1.ogg",

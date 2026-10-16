@@ -136,8 +136,6 @@ PACKS = {
                                file=OGF + 'ruskerdax_-_ancient_grudge.mp3', root='.'),
     'oga_dark_cavern': dict(name='Dark Cavern Ambient', author='Paul Wortmann', licence='CC0 1.0', page=OGA + 'dark-cavern-ambient',
                             file=OGF + 'dark_cavern_ambient_002.ogg', root='.'),
-    'oga_storm_siren': dict(name='Storm & Siren', author='TinyWorlds', licence='CC0 1.0', page=OGA + 'storm-siren',
-                            file=OGF + 'storm_3_siren.mp3', root='.'),
     'oga_reload_springy': dict(name='Gun reload sounds', author='SpringySpringo', licence='CC0 1.0', page=OGA + 'gun-reload-sounds',
                                file=OGF + 'assaultriflereload1_0.wav, gunreload1.wav, shotguncock_0.wav', root='.'),
     'oga_impact_qubodup': dict(name='Impact', author='qubodup', licence='CC0 1.0', page=OGA + 'impact',
@@ -1822,16 +1820,6 @@ def ring_reverb(out, rt60, wet, damp=0.6):
         seg = w[k:k + n]
         ring[:len(seg)] += seg
     return out + wet * ring
-
-
-@sound('round_start', kind='music', lufs=-17)
-def round_start(rng):
-    # A wave coming: a town's flood siren wailing through a storm, far off (TinyWorlds' recording, the storm's low
-    # rumble taken down)
-    x = S('oga_storm_siren', 'storm_3_siren.mp3', 54.0, 67.0)
-    x = shelf(highpass(x, 180), 'lowshelf', 400, -6)
-    x = fade(x, 1.2, 3.0)
-    return trim(x, -55, fade_out=0.5)
 
 
 @sound('round_end', kind='music', lufs=-20)
