@@ -1,0 +1,446 @@
+// The slice's script: Friday evening on the road, supper at the Hales',
+// the night in their guest room, and Saturday morning in the barn.
+
+const int L_START = 1;
+const int L_PORCH = 2;
+const int L_SUPPER = 3;
+const int L_UPSTAIRS = 4;
+const int L_NIGHT = 5;
+const int L_MORNING = 6;
+const int L_BARN = 7;
+const int L_GREET_B = 10;
+const int L_GREET_DONE = 11;
+const int L_STAY_B = 12;
+const int L_STAY_DONE = 13;
+const int L_WHERE_B = 14;
+const int L_WHERE_DONE = 15;
+const int L_SLEPT_B = 16;
+const int L_SLEPT_DONE = 17;
+
+Step Mark(int label) { return Step { op = Op.Mark, a = label }; }
+Step Jump(int label) { return Step { op = Op.Jump, a = label }; }
+Step Say(int who, string text) { return Step { op = Op.Say, who = who, text = text }; }
+Step SayFor(int who, string text, float seconds) { return Step { op = Op.Say, who = who, text = text, t = seconds }; }
+Step Choose(string options) { return Step { op = Op.Choose, text = options }; }
+Step Branch(int choice, int label) { return Step { op = Op.Branch, who = choice, a = label }; }
+Step WalkTo(int who, float3 at) { return Step { op = Op.Walk, who = who, at = at }; }
+Step GoTo(int who, float3 at) { return Step { op = Op.Go, who = who, at = at }; }
+Step PlaceAt(int who, float3 at, float yaw) { return Step { op = Op.Place, who = who, at = at, t = yaw }; }
+Step FaceTo(int who, float3 at) { return Step { op = Op.Face, who = who, at = at }; }
+Step LookAt(int who, int target) { return Step { op = Op.Look, who = who, a = target }; }
+Step LookPlace(int who, float3 at) { return Step { op = Op.Look, who = who, a = 3, at = at }; }
+Step PoseAs(int who, Stance pose) { return Step { op = Op.Pose, who = who, a = int(pose) }; }
+Step ShowNpc(int who, bool shown) { return Step { op = Op.Show, who = who, a = shown ? 1 : 0 }; }
+Step DoorTo(DoorId door, int mode) { return Step { op = Op.DoorOp, who = int(door), a = mode }; }
+Step Wait(float seconds) { return Step { op = Op.Wait, t = seconds }; }
+Step Until(Cond cond) { return Step { op = Op.Until, a = int(cond) }; }
+Step UntilNear(Cond cond, float3 at, float within) { return Step { op = Op.Until, a = int(cond), at = at, t = within }; }
+Step UntilUsed(Spot spot) { return Step { op = Op.Until, a = int(Cond.Used), who = int(spot) }; }
+Step Objective(string text) { return Step { op = Op.Objective, text = text }; }
+Step Card(string text, float seconds) { return Step { op = Op.Card, text = text, t = seconds }; }
+Step FadeOut(float seconds) { return Step { op = Op.Fade, a = 1, t = seconds }; }
+Step FadeIn(float seconds) { return Step { op = Op.Fade, a = 0, t = seconds }; }
+Step SkyTo(float daylight, bool now) { return Step { op = Op.Sky, t = daylight, a = now ? 1 : 0 }; }
+Step LightsOn(int lamps) { return Step { op = Op.Lights, a = lamps }; }
+Step Allow(Spot spot, bool on) { return Step { op = Op.Enable, a = int(spot), who = on ? 1 : 0 }; }
+Step CueAt(Sfx sound, float3 at) { return Step { op = Op.Cue, a = int(sound), at = at }; }
+Step Freeze(bool frozen) { return Step { op = Op.Freeze, a = frozen ? 1 : 0 }; }
+Step PutInBeds() { return Step { op = Op.Put, a = 0 }; }
+Step StandUp() { return Step { op = Op.Stand }; }
+Step Watch(int state) { return Step { op = Op.Watch, a = state }; }
+Step End() { return Step { op = Op.End }; }
+
+// Where the Hales and the travellers sit at supper, and stand and lie in the house.
+float3 ChairOf(int chair)
+{
+    switch (chair)
+    {
+        case 0: return House(1.85, F1, 7.35);
+        case 1: return House(3.05, F1, 7.35);
+    }
+    return House(2.45, F1, 9.3);
+}
+
+float ChairFacing(int chair)
+{
+    return 0;
+}
+
+float3 StandFrom(int chair)
+{
+    return ChairOf(chair) + float3(0, 0, -0.55);
+}
+
+float3 BedOf(int seat)
+{
+    return seat == 0 ? House(1.0, F2 + 0.55, 2.75) : House(2.95, F2 + 0.55, 1.0);
+}
+
+// Which way someone lying in the bed has their head: along the pillow's side.
+float BedFacing(int seat)
+{
+    return seat == 0 ? Math.PI * 0.5 : 0.0;
+}
+
+float3 BesideBed(int seat)
+{
+    return seat == 0 ? House(1.0, F2, 3.65) : House(2.0, F2, 1.0);
+}
+
+void WriteScript(mut Script script)
+{
+    var doorway = House(0.7, F1, 5.6);
+    var hall = House(1.6, F1, 6.0);
+    var kitchen = House(1.65, F1, 7.0);
+    var phone = House(5.5, F1, 7.25);
+    var waltSeat = House(4.3, F1, 8.3);
+    var ruthSeat = House(2.45, F1, 9.6);
+    var daleSeat = House(0.6, F1, 8.3);
+    var table = House(2.45, F1 + 0.8, 8.3);
+    var stairFoot = House(2.9, F1, 5.0);
+    var stairHead = House(7.55, F2, 5.0);
+    var landing = House(7.55, F2, 6.05);
+    var upHall = House(1.9, F2, 6.05);
+    var guestRoom = House(2.0, F2, 2.9);
+    var barnInside = float3(BARN_X + 2.2, 0, BARN_Z + 7.0);
+
+    mut List<Step> s = [];
+    // Friday, on the road
+    s.Add(Mark(L_START));
+    s.Add(SkyTo(0.24, true));
+    s.Add(LightsOn(LAMP_KITCHEN | LAMP_LIVING | LAMP_FIRE));
+    s.Add(Until(Cond.Ready));
+    s.Add(Card("FRIDAY\nRoute 9, Kansas.  October 1998", 6));
+    s.Add(FadeIn(3));
+    s.Add(Wait(2.5));
+    s.Add(Say(NOBODY, "The car coughed twice and died. It won't turn over."));
+    s.Add(Objective("Find a phone"));
+    s.Add(Watch(1));
+    s.Add(Wait(4));
+    s.Add(Say(NOBODY, "No signal out here. There's a light, up the road."));
+    s.Add(UntilNear(Cond.NearAny, float3(3, 0, 38), 9));
+    s.Add(Objective("Knock on the door"));
+    s.Add(Allow(Spot.FrontDoor, true));
+    s.Add(Mark(L_PORCH));
+    s.Add(UntilUsed(Spot.FrontDoor));
+    s.Add(Allow(Spot.FrontDoor, false));
+    s.Add(Objective(""));
+    s.Add(PlaceAt(RUTH, House(4.6, F1, 6.0), -Math.PI * 0.5));
+    s.Add(Wait(2.2));
+    s.Add(GoTo(RUTH, doorway));
+    s.Add(LightsOn(LAMP_PORCH | LAMP_KITCHEN | LAMP_LIVING | LAMP_HALL | LAMP_FIRE));
+    s.Add(CueAt(Sfx.Unlock, House(0, F1 + 1.0, 5.6)));
+    s.Add(Wait(0.6));
+    s.Add(DoorTo(DoorId.Front, 3));
+    s.Add(DoorTo(DoorId.Front, 1));
+    s.Add(CueAt(Sfx.DoorOpen, House(0, F1 + 1.0, 5.6)));
+    s.Add(LookAt(RUTH, 2));
+    s.Add(Wait(1.2));
+    s.Add(Say(RUTH, "Oh! Goodness. You gave me a fright."));
+    s.Add(Say(RUTH, "We don't get folks knocking. Not after dark."));
+    s.Add(Choose("Sorry, ma'am. Our car broke down up the road.|Do you have a phone we could use?"));
+    s.Add(Branch(2, L_GREET_B));
+    s.Add(Say(RUTH, "Broke down? Out here? Well, aren't you two unlucky."));
+    s.Add(Jump(L_GREET_DONE));
+    s.Add(Mark(L_GREET_B));
+    s.Add(Say(RUTH, "A phone? Oh, we have a phone. Walt can call for you."));
+    s.Add(Mark(L_GREET_DONE));
+    s.Add(Say(RUTH, "Don't stand there in the cold. Come in, come in."));
+    s.Add(GoTo(RUTH, kitchen));
+    s.Add(Objective("Go inside"));
+    s.Add(UntilNear(Cond.NearAll, House(1.4, F1, 6.0), 2.2));
+    s.Add(Objective(""));
+    s.Add(DoorTo(DoorId.Front, 0));
+    s.Add(CueAt(Sfx.DoorShut, House(0, F1 + 1.0, 5.6)));
+    s.Add(Wait(0.4));
+    s.Add(DoorTo(DoorId.Front, 2));
+    s.Add(CueAt(Sfx.Lock, House(0, F1 + 1.0, 5.6)));
+    s.Add(Watch(0));
+    s.Add(LookAt(WALT, 2));
+    s.Add(Say(WALT, "Who's this, Ruth?"));
+    s.Add(Say(RUTH, "Travellers, Walt. Their car gave out on Route 9."));
+    s.Add(Say(WALT, "Hm. Thought I heard an engine quit."));
+    s.Add(Say(NOBODY, "The road is two miles off."));
+    s.Add(PoseAs(WALT, Stance.Stand));
+    s.Add(Say(WALT, "Phone's in the kitchen. I'll call Earl. He does the towing."));
+    s.Add(GoTo(WALT, phone));
+    s.Add(FaceTo(WALT, House(5.5, F1 + 1.4, 6.6)));
+    s.Add(PoseAs(WALT, Stance.Phone));
+    s.Add(CueAt(Sfx.Pickup, House(5.5, F1 + 1.4, 6.7)));
+    s.Add(Wait(1.6));
+    s.Add(SayFor(WALT, "Earl. It's Walt Hale.", 3));
+    s.Add(Wait(1.4));
+    s.Add(SayFor(WALT, "Got a car on Route 9. By the Miller section.", 3.5));
+    s.Add(Wait(1.8));
+    s.Add(SayFor(WALT, "Mm. No. No, they're fine. They're with us.", 3.5));
+    s.Add(Wait(1.2));
+    s.Add(SayFor(WALT, "Monday, then.", 2.4));
+    s.Add(CueAt(Sfx.Hangup, House(5.5, F1 + 1.4, 6.7)));
+    s.Add(PoseAs(WALT, Stance.Stand));
+    s.Add(LookAt(WALT, 2));
+    s.Add(FaceTo(WALT, kitchen));
+    s.Add(Say(WALT, "Earl's boy has the truck at a wedding in Salina. Monday's the soonest."));
+    s.Add(Say(RUTH, "Then you'll stay with us. We've got the room."));
+    s.Add(Choose("We couldn't impose.|Thank you. Really."));
+    s.Add(Branch(2, L_STAY_B));
+    s.Add(Say(RUTH, "Nonsense. Nobody's sleeping in a car on my account."));
+    s.Add(Jump(L_STAY_DONE));
+    s.Add(Mark(L_STAY_B));
+    s.Add(Say(RUTH, "It's no trouble at all. It's nice, having people."));
+    s.Add(Mark(L_STAY_DONE));
+    s.Add(Say(RUTH, "Supper's just on. Sit, sit."));
+    s.Add(WalkTo(WALT, waltSeat));
+    s.Add(GoTo(RUTH, ruthSeat));
+    s.Add(Allow(Spot.SeatSam, true));
+    s.Add(Allow(Spot.SeatJo, true));
+    s.Add(Objective("Sit down at the table"));
+
+    // Supper
+    s.Add(Mark(L_SUPPER));
+    s.Add(Until(Cond.Seated));
+    s.Add(Objective(""));
+    s.Add(Allow(Spot.SeatSam, false));
+    s.Add(Allow(Spot.SeatJo, false));
+    s.Add(Freeze(true));
+    s.Add(PlaceAt(WALT, waltSeat, -Math.PI * 0.5));
+    s.Add(PlaceAt(RUTH, ruthSeat, Math.PI));
+    s.Add(PoseAs(WALT, Stance.Sit));
+    s.Add(PoseAs(RUTH, Stance.Sit));
+    s.Add(Wait(1.0));
+    s.Add(Say(WALT, "Let us pray."));
+    s.Add(PoseAs(WALT, Stance.Bow));
+    s.Add(PoseAs(RUTH, Stance.Bow));
+    s.Add(LookAt(WALT, -1));
+    s.Add(LookAt(RUTH, -1));
+    s.Add(SayFor(WALT, "Bless this food, and the hands that made it.", 4));
+    s.Add(SayFor(WALT, "Bless the ones who come to our table. And keep them.", 4.5));
+    s.Add(SayFor(WALT, "Amen.", 2));
+    s.Add(SayFor(RUTH, "Amen.", 2));
+    s.Add(PoseAs(WALT, Stance.Sit));
+    s.Add(PoseAs(RUTH, Stance.Sit));
+    s.Add(CueAt(Sfx.Clink, table));
+    s.Add(LookAt(RUTH, 2));
+    s.Add(Say(RUTH, "So where were you two headed?"));
+    s.Add(Choose("Denver. One of us has a new job.|West. Just driving."));
+    s.Add(Branch(2, L_WHERE_B));
+    s.Add(Say(RUTH, "Denver. My. Isn't that nice."));
+    s.Add(Jump(L_WHERE_DONE));
+    s.Add(Mark(L_WHERE_B));
+    s.Add(Say(RUTH, "Just driving. Nobody waiting on you, then."));
+    s.Add(Mark(L_WHERE_DONE));
+    s.Add(LookAt(WALT, 2));
+    s.Add(Say(WALT, "Nobody comes this way much. Not since they put the interstate through."));
+    s.Add(CueAt(Sfx.Clink, table));
+    s.Add(Wait(2));
+    // Dale comes in by the back door
+    s.Add(PlaceAt(DALE, House(8.8, 0, 9.1), -Math.PI * 0.5));
+    s.Add(ShowNpc(DALE, true));
+    s.Add(DoorTo(DoorId.Back, 3));
+    s.Add(DoorTo(DoorId.Back, 1));
+    s.Add(CueAt(Sfx.DoorOpen, House(8, F1 + 1, 9.1)));
+    s.Add(GoTo(DALE, House(6.4, F1, 8.9)));
+    s.Add(DoorTo(DoorId.Back, 0));
+    s.Add(CueAt(Sfx.DoorShut, House(8, F1 + 1, 9.1)));
+    s.Add(LookAt(DALE, 2));
+    s.Add(PoseAs(DALE, Stance.Stare));
+    s.Add(Wait(2.5));
+    s.Add(LookAt(RUTH, 3));
+    s.Add(Say(RUTH, "Dale. We have guests."));
+    s.Add(Wait(2));
+    s.Add(Say(DALE, "...They're staying?"));
+    s.Add(Say(WALT, "Till Monday."));
+    s.Add(GoTo(DALE, House(1.1, F1, 9.0)));
+    s.Add(PlaceAt(DALE, daleSeat, Math.PI * 0.5));
+    s.Add(PoseAs(DALE, Stance.Sit));
+    s.Add(LookAt(DALE, 0));
+    s.Add(Wait(1.5));
+    s.Add(Say(RUTH, "Dale's shy. Eat up, now."));
+    s.Add(CueAt(Sfx.Clink, table));
+    s.Add(Wait(3));
+    s.Add(LookAt(DALE, 1));
+    s.Add(Wait(2));
+    s.Add(Say(WALT, "One thing. We keep early hours here. Doors get locked at nine."));
+    s.Add(Say(RUTH, "And don't go wandering past the fence after dark. Coyotes."));
+    s.Add(Say(WALT, "Coyotes."));
+    s.Add(CueAt(Sfx.Chime, House(0.12, F1 + 2.2, 8.3)));
+    s.Add(Wait(3.5));
+    s.Add(Say(RUTH, "Would you look at the time. Come on, I'll show you up."));
+    s.Add(Freeze(false));
+    s.Add(StandUp());
+    s.Add(PoseAs(RUTH, Stance.Stand));
+
+    // Upstairs
+    s.Add(Mark(L_UPSTAIRS));
+    s.Add(Objective("Follow Ruth"));
+    s.Add(GoTo(RUTH, hall));
+    s.Add(GoTo(RUTH, stairFoot));
+    s.Add(GoTo(RUTH, stairHead));
+    s.Add(GoTo(RUTH, landing));
+    s.Add(GoTo(RUTH, upHall));
+    s.Add(DoorTo(DoorId.Guest, 1));
+    s.Add(CueAt(Sfx.DoorOpen, House(1.85, F2 + 1, 4.5)));
+    s.Add(GoTo(RUTH, House(1.85, F2, 5.9)));
+    s.Add(LookAt(RUTH, 2));
+    s.Add(Say(RUTH, "Here we are. The bath's across the hall."));
+    s.Add(Objective("Go into the guest room"));
+    s.Add(UntilNear(Cond.NearAll, guestRoom, 2.2));
+    s.Add(Objective(""));
+    s.Add(Say(RUTH, "Sleep well, now."));
+    s.Add(DoorTo(DoorId.Guest, 0));
+    s.Add(CueAt(Sfx.DoorShut, House(1.85, F2 + 1, 4.5)));
+    s.Add(PlaceAt(RUTH, HOME_RUTH, Math.PI));
+    s.Add(ShowNpc(RUTH, false));
+    s.Add(Wait(1.2));
+    s.Add(DoorTo(DoorId.Guest, 2));
+    s.Add(CueAt(Sfx.Lock, House(1.85, F2 + 1, 4.5)));
+    s.Add(Wait(2));
+    s.Add(Say(NOBODY, "...Did she just lock the door?"));
+    s.Add(ShowNpc(WALT, false));
+    s.Add(ShowNpc(DALE, false));
+    s.Add(LightsOn(LAMP_GUEST | LAMP_KITCHEN));
+    s.Add(Allow(Spot.Drawer, true));
+    s.Add(Allow(Spot.GuestWindow, true));
+    s.Add(Objective("Get some sleep"));
+
+    // The night
+    s.Add(Mark(L_NIGHT));
+    s.Add(SkyTo(0.02, false));
+    s.Add(Wait(16));
+    s.Add(CueAt(Sfx.Dog, float3(-80, 0, 60)));
+    s.Add(Wait(6));
+    s.Add(LightsOn(LAMP_GUEST));
+    s.Add(PlaceAt(WALT, House(8.8, 0, 9.1), Math.PI));
+    s.Add(PoseAs(WALT, Stance.Lantern));
+    s.Add(ShowNpc(WALT, true));
+    s.Add(CueAt(Sfx.DoorShut, House(8, F1 + 1, 9.1)));
+    s.Add(Say(NOBODY, "A door, downstairs. Then quiet."));
+    s.Add(GoTo(WALT, float3(38.6, 0, 33.0)));
+    s.Add(GoTo(WALT, float3(41.5, 0, 26.0)));
+    s.Add(GoTo(WALT, float3(41.6, 0, 21.0)));
+    s.Add(LookPlace(WALT, House(2.1, F2 + 1.4, 0)));
+    s.Add(Wait(3.5));
+    s.Add(LookAt(WALT, -1));
+    s.Add(GoTo(WALT, float3(46, 0, 10)));
+    s.Add(GoTo(WALT, float3(60, 0, -4)));
+    s.Add(GoTo(WALT, float3(72, 0, -12)));
+    s.Add(ShowNpc(WALT, false));
+    s.Add(Wait(9));
+    s.Add(CueAt(Sfx.Coyote, float3(80, 0, -20)));
+    s.Add(Wait(7));
+    s.Add(CueAt(Sfx.Steps, House(4.5, F2 + 0.2, 6.0)));
+    s.Add(Wait(3.5));
+    s.Add(CueAt(Sfx.Steps, House(2.3, F2 + 0.2, 5.4)));
+    s.Add(Wait(2.5));
+    s.Add(CueAt(Sfx.Knob, House(1.85, F2 + 1, 4.5)));
+    s.Add(Wait(4));
+    s.Add(CueAt(Sfx.Knob, House(1.85, F2 + 1, 4.5)));
+    s.Add(Wait(3));
+    s.Add(CueAt(Sfx.Creak, House(2.3, F2 + 0.2, 5.4)));
+    s.Add(Wait(2));
+    s.Add(CueAt(Sfx.Steps, House(6.0, F2 + 0.2, 6.0)));
+    s.Add(Wait(4));
+    s.Add(Allow(Spot.BedSam, true));
+    s.Add(Allow(Spot.BedJo, true));
+    s.Add(Objective("Get into bed"));
+    s.Add(Until(Cond.InBed));
+    s.Add(Objective(""));
+    s.Add(Freeze(true));
+    s.Add(FadeOut(4));
+    s.Add(Wait(5));
+    s.Add(LightsOn(0));
+    s.Add(Allow(Spot.Drawer, false));
+    s.Add(Allow(Spot.GuestWindow, false));
+    s.Add(Allow(Spot.BedSam, false));
+    s.Add(Allow(Spot.BedJo, false));
+    s.Add(PutInBeds());
+
+    // Saturday morning
+    s.Add(Mark(L_MORNING));
+    s.Add(SkyTo(0.85, true));
+    s.Add(Card("SATURDAY", 5));
+    s.Add(Wait(2));
+    s.Add(CueAt(Sfx.Rooster, float3(BARN_X, 2, BARN_Z + 6)));
+    s.Add(FadeIn(4));
+    s.Add(Wait(3));
+    s.Add(CueAt(Sfx.Unlock, House(1.85, F2 + 1, 4.5)));
+    s.Add(DoorTo(DoorId.Guest, 3));
+    s.Add(Wait(1));
+    s.Add(CueAt(Sfx.Knock, House(1.85, F2 + 1.2, 4.5)));
+    s.Add(Say(RUTH, "Breakfast's on the table, you two!"));
+    s.Add(Freeze(false));
+    s.Add(StandUp());
+    s.Add(PlaceAt(RUTH, House(6.2, F1, 7.6), -Math.PI * 0.5));
+    s.Add(ShowNpc(RUTH, true));
+    s.Add(PoseAs(RUTH, Stance.Interact));
+    s.Add(LightsOn(LAMP_KITCHEN));
+    s.Add(Objective("Go downstairs"));
+    s.Add(Allow(Spot.Phone, true));
+    s.Add(UntilNear(Cond.NearAny, House(3.0, F1, 7.6), 2.6));
+    s.Add(Objective(""));
+    s.Add(PoseAs(RUTH, Stance.Stand));
+    s.Add(LookAt(RUTH, 2));
+    s.Add(FaceTo(RUTH, House(2.5, F1, 7.6)));
+    s.Add(Say(RUTH, "Morning! Sleep alright?"));
+    s.Add(Choose("Our door was locked.|Fine, thanks."));
+    s.Add(Branch(2, L_SLEPT_B));
+    s.Add(Say(RUTH, "Was it? That old latch sticks. I'll have Walt look at it."));
+    s.Add(Wait(1));
+    s.Add(Say(RUTH, "He's out with the animals."));
+    s.Add(Jump(L_SLEPT_DONE));
+    s.Add(Mark(L_SLEPT_B));
+    s.Add(Say(RUTH, "Good. The country air does that."));
+    s.Add(Mark(L_SLEPT_DONE));
+    s.Add(Say(RUTH, "Dale could use a hand in the barn, if you're up to it. It'd be a kindness."));
+    s.Add(DoorTo(DoorId.Back, 3));
+    s.Add(DoorTo(DoorId.Back, 1));
+    s.Add(PoseAs(RUTH, Stance.Interact));
+    s.Add(PlaceAt(DALE, barnInside, -Math.PI * 0.5));
+    s.Add(PoseAs(DALE, Stance.Stand));
+    s.Add(ShowNpc(DALE, true));
+    s.Add(LookAt(DALE, 2));
+    s.Add(Objective("Help Dale in the barn"));
+
+    // The barn
+    s.Add(Mark(L_BARN));
+    s.Add(UntilNear(Cond.NearAll, float3(BARN_X + 1.5, 0, BARN_Z + 7.0), 4.5));
+    s.Add(Objective(""));
+    s.Add(Say(DALE, "Feed sacks. They go in the bin."));
+    s.Add(Say(DALE, "They're heavy. Takes two."));
+    s.Add(Allow(Spot.Sack0, true));
+    s.Add(Allow(Spot.Sack1, true));
+    s.Add(Allow(Spot.Sack2, true));
+    s.Add(Objective("Carry the sacks to the bin, together"));
+    s.Add(Until(Cond.Sacks));
+    s.Add(Objective(""));
+    s.Add(Allow(Spot.Sack0, false));
+    s.Add(Allow(Spot.Sack1, false));
+    s.Add(Allow(Spot.Sack2, false));
+    s.Add(Say(DALE, "...Thanks."));
+    s.Add(GoTo(DALE, float3(BARN_X - 3, 0, BARN_Z + 7.0)));
+    s.Add(GoTo(DALE, float3(BARN_X - 8, 0, BARN_Z + 15.0)));
+    s.Add(ShowNpc(DALE, false));
+    s.Add(Allow(Spot.Tarp, true));
+    s.Add(Wait(4));
+    s.Add(Say(NOBODY, "Something big under that tarp, by the hay."));
+    s.Add(Until(Cond.Pulled));
+    s.Add(CueAt(Sfx.Sting, float3(BARN_X + 5, 1, BARN_Z + 10.4)));
+    s.Add(Allow(Spot.Tarp, false));
+    s.Add(Wait(2.5));
+    s.Add(Say(NOBODY, "A car. Ohio plates. A child's backpack on the back seat."));
+    s.Add(Wait(1.5));
+    s.Add(Say(NOBODY, "Ruth said nobody comes this way."));
+    s.Add(Wait(2));
+    s.Add(PlaceAt(DALE, float3(BARN_X - 0.6, 0, BARN_Z + 7.0), Math.PI * 0.5));
+    s.Add(PoseAs(DALE, Stance.Stare));
+    s.Add(LookAt(DALE, 2));
+    s.Add(ShowNpc(DALE, true));
+    s.Add(Wait(2.5));
+    s.Add(Say(DALE, "Pa said not to touch that."));
+    s.Add(Wait(1.5));
+    s.Add(Freeze(true));
+    s.Add(FadeOut(3));
+    s.Add(Wait(3.5));
+    s.Add(Card("SUNDAY SUPPER\nThe rest of the weekend is still being written.", 30));
+    s.Add(End());
+    script.steps = s;
+}

@@ -1,0 +1,212 @@
+// SUNDAY SUPPER: two travellers, a car that died on a back road, and the
+// farm with the only light for miles. This file is what the match is made
+// of: who walks where, what they hold, and what they press. The farm's
+// shape is farm.tide's, the story story.tide's, the Hales cast.tide's.
+using Rooms;
+
+settings
+{
+    title = "SUNDAY SUPPER";
+    tickRate = 60;
+    maxPlayers = 2;
+    hostMigration = true;
+}
+
+scene Main { }
+
+// A traveller: a body that walks the farm, looks about, sits and lies down,
+// and carries a light. `seat` is which of the two: 0 is Sam, 1 is Jo.
+component Walker
+{
+    int seat;
+    [Position] float3 feet;
+    [Rotation] float yaw;          // 0 looks along +z, a quarter turn right is +x
+    float pitch;
+    float3 velocity;
+    bool grounded;
+    bool torch;                    // The phone's light is on
+    int sitting = -1;              // The chair they're in, -1 standing
+    int lying = -1;                // The bed they're in, -1 up
+    float walked;                  // Metres walked, for the feet's sounds
+    int holding = -1;              // The sack they have a hold of, -1 none
+    bool ready;                    // The player's hands are on the game: past the menu
+    int aimed = -1;                // The spot they're looking at, -1 none
+    bool jumped;                   // Put somewhere at once: views don't slide them there
+}
+
+input Hands
+{
+    [Clamp(-1, 1)] float2 move;
+    [Clamp(-0.5, 0.5)] float2 look;
+    bool use;
+    bool run;
+    bool light;
+    bool pick1;
+    bool pick2;
+    bool pick3;
+    [Absolute] bool ready;
+
+    Sample(Devices devices, Lobby lobby, Feel feel)
+    {
+        ready = lobby.playing;
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        move.x = (keys.d.pressed ? 1 : 0) - (keys.a.pressed ? 1 : 0);
+        move.y = (keys.w.pressed ? 1 : 0) - (keys.s.pressed ? 1 : 0);
+        move += devices.gamepad.leftStick;
+        if (Cursor.locked) look = devices.mouse.delta * feel.sensitivity;
+        look += devices.gamepad.rightStick * float2(0.05, 0.04);
+        use = keys.e.pressed || devices.mouse.left.pressed || devices.gamepad.buttonSouth.pressed;
+        run = keys.leftShift.pressed || devices.gamepad.leftStickButton.pressed;
+        light = keys.f.pressed || devices.gamepad.buttonNorth.pressed;
+        pick1 = keys.digit1.pressed || devices.gamepad.dpad.left.pressed;
+        pick2 = keys.digit2.pressed || devices.gamepad.dpad.up.pressed;
+        pick3 = keys.digit3.pressed || devices.gamepad.dpad.right.pressed;
+    }
+}
+
+// This machine's feel for the controls.
+local singleton Feel
+{
+    float sensitivity = 0.0024;
+}
+
+// Who plays whom: the first to join is Sam, the second Jo. A third waits outside.
+singleton Party
+{
+    Entity sam;
+    Entity jo;
+    PlayerID first;
+    PlayerID second;
+    int joined;
+}
+
+// Start over from the road, from a menu's New game or Play.
+command Restart { }
+
+const float BODY_RADIUS = 0.27;
+const float BODY_HIGH = 1.72;
+const float EYE_HIGH = 1.6;
+const float WALK_SPEED = 1.9;
+const float RUN_SPEED = 3.4;
+const float STEP_UP = 0.36;
+const float GRAVITY = 18;
+const float REACH = 2.1;
+
+float3 LookDirection(float yaw, float pitch)
+{
+    var flat = Math.Cos(pitch);
+    return float3(Math.Sin(yaw) * flat, Math.Sin(pitch), Math.Cos(yaw) * flat);
+}
+
+float3 Flat(float yaw)
+{
+    return float3(Math.Sin(yaw), 0, Math.Cos(yaw));
+}
+
+// The yaw that looks from one place toward another.
+float YawTo(float3 from, float3 to)
+{
+    return Math.Atan2(to.x - from.x, to.z - from.z);
+}
+
+// The shortest turn from one yaw to another, from -PI to PI.
+float TurnBetween(float from, float to)
+{
+    mut var turn = to - from;
+    while (turn > Math.PI) turn -= Math.TAU;
+    while (turn < -Math.PI) turn += Math.TAU;
+    return turn;
+}
+
+event(Spawned) Begin(with Main, mut Farm farm, mut Story story, mut Script script, mut Party party, mut Cast cast)
+{
+    BuildFarm(farm);
+    WriteScript(script);
+    ResetStory(story, farm);
+    story.Snap();
+    farm.Snap();
+    party.sam = Spawn(Walker { seat = 0, feet = StartOf(0), yaw = 0 }, Owner);
+    party.jo = Spawn(Walker { seat = 1, feet = StartOf(1), yaw = 0 }, Owner);
+    cast.walt = Spawn(Npc { who = WALT, at = HOME_WALT, goal = HOME_WALT, yaw = -Math.PI * 0.5, faceGoal = -Math.PI * 0.5, pose = Stance.Sit });
+    cast.ruth = Spawn(Npc { who = RUTH, at = HOME_RUTH, goal = HOME_RUTH, yaw = Math.PI, faceGoal = Math.PI });
+    cast.dale = Spawn(Npc { who = DALE, at = HOME_DALE, goal = HOME_DALE, shown = false });
+}
+
+// Where each traveller stands as the slice starts: beside the car, looking up the road.
+float3 StartOf(int seat)
+{
+    return seat == 0 ? CAR_AT + float3(-1.6, 0, 0.6) : CAR_AT + float3(-1.4, 0, -1.4);
+}
+
+event(PlayerJoined joined) TakeSeat(mut Party party, mut World world)
+{
+    if (joined.player == party.first || joined.player == party.second) return;
+    if (party.joined == 0)
+    {
+        party.first = joined.player;
+        party.joined = 1;
+        world.Set<Owner>(party.sam, Owner { player = joined.player });
+    }
+    else if (party.joined == 1)
+    {
+        party.second = joined.player;
+        party.joined = 2;
+        world.Set<Owner>(party.jo, Owner { player = joined.player });
+    }
+}
+
+event(PlayerLeft left) LeaveSeat(mut Party party, mut World world)
+{
+    if (left.player == party.first)
+    {
+        party.first = party.second;
+        party.second = default;
+        world.Set<Owner>(party.sam, Owner { player = party.first });
+        world.Set<Owner>(party.jo, Owner { });
+    }
+    else if (left.player == party.second)
+    {
+        party.second = default;
+        world.Set<Owner>(party.jo, Owner { });
+    }
+    else
+    {
+        return;
+    }
+    party.joined = Math.Max(0, party.joined - 1);
+}
+
+// Whether a traveller is played: someone has them, and they're past the menu.
+bool Present(Walker walker, Party party)
+{
+    return walker.seat == 0 ? party.joined > 0 : party.joined > 1;
+}
+
+command(Restart restart, PlayerID sender) StartOver(Party party, mut Story story, mut Farm farm, Cast cast, mut World world)
+{
+    if (sender != party.first && sender != party.second) return;
+    BuildFarm(farm);
+    ResetStory(story, farm);
+    story.Snap();
+    farm.Snap();
+    ResetCast(world, cast);
+    cast.walt.Snap();
+    cast.ruth.Snap();
+    cast.dale.Snap();
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var entity = seat == 0 ? party.sam : party.jo;
+        mut var walker = world.Get<Walker>(entity);
+        walker.feet = StartOf(seat);
+        walker.yaw = 0;
+        walker.pitch = 0;
+        walker.velocity = float3(0);
+        walker.sitting = -1;
+        walker.lying = -1;
+        walker.holding = -1;
+        walker.torch = false;
+        world.Set<Walker>(entity, walker);
+        entity.Snap();
+    }
+}

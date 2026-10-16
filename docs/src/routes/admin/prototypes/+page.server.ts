@@ -6,6 +6,11 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
+        id: 'sunday-supper', title: 'SUNDAY SUPPER', kind: 'First-person cooperative horror · Story', players: '1–2 players',
+        description: 'Your car dies on a back road in Kansas, and the only light for miles is the Hale farm. Walt and Ruth take you in for the weekend. A first playable slice: the road, supper with the Hales, a night in their guest room and Saturday morning in the barn. Best with a friend.',
+        image: '/prototypes/sunday-supper/thumbnail.png',
+    },
+    {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',
         description: 'Fold space together in a sunlit research atrium. Place linked portals, look through them into the other side, and carry a resonance cube across the divide. Play both operators alone or solve the chambers with a partner.',
         image: '/prototypes/foldline/thumbnail.png',

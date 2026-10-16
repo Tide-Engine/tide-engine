@@ -1,0 +1,410 @@
+// What runs the script (story.tide's steps) a tick at a time.
+
+// What the script needs to know of a traveller.
+struct Traveller
+{
+    bool present;
+    bool ready;
+    float3 feet;
+    bool sitting;
+    bool lying;
+}
+
+Entity NpcOf(Cast cast, int who)
+{
+    return who == WALT ? cast.walt : who == RUTH ? cast.ruth : cast.dale;
+}
+
+Entity WalkerOf(Party party, int seat)
+{
+    return seat == 0 ? party.sam : party.jo;
+}
+
+system Direct(mut Story story, Script script, mut Farm farm, Party party, Cast cast, Time time, query (Walker walker) walkers, mut World world)
+{
+    story.clock += time.dt;
+    story.cardLeft = Math.Max(0, story.cardLeft - time.dt);
+    story.lineLeft = Math.Max(0, story.lineLeft - time.dt);
+    for (var seat = 0; seat < 2; seat++) story.remarkLeft[seat] = Math.Max(0, story.remarkLeft[seat] - time.dt);
+    if (story.fade < story.fadeGoal) story.fade = Math.Min(story.fadeGoal, story.fade + time.dt * story.fadeSpeed);
+    if (story.fade > story.fadeGoal) story.fade = Math.Max(story.fadeGoal, story.fade - time.dt * story.fadeSpeed);
+    story.daylight += (story.daylightGoal - story.daylight) * Math.Min(1, time.dt * 0.35);
+    if (story.ended) return;
+    mut Traveller[2] party2 = [Traveller { }, Traveller { }];
+    foreach (var row in walkers)
+    {
+        var w = row.walker;
+        party2[w.seat] = Traveller { present = Present(w, party), ready = w.ready, feet = w.feet, sitting = w.sitting >= 0, lying = w.lying >= 0 };
+    }
+    for (var guard = 0; guard < 48; guard++)
+    {
+        if (story.step >= script.steps.count)
+        {
+            story.ended = true;
+            return;
+        }
+        var step = script.steps[story.step];
+        if (!Perform(story, script, step, farm, party, cast, party2, world, time.dt)) return;
+        story.step += 1;
+        story.held = 0;
+        story.used = 0;
+    }
+}
+
+// Does a step, and says whether it's done.
+bool Perform(mut Story story, Script script, Step step, mut Farm farm, Party party, Cast cast, Traveller[2] travellers, mut World world, float dt)
+{
+    var first = story.held == 0;
+    story.held += dt;
+    switch (step.op)
+    {
+        case Op.Mark:
+            return true;
+        case Op.Jump:
+            story.step = FindMark(script, step.a);
+            return true;
+        case Op.Say:
+            if (first)
+            {
+                story.speaker = step.who;
+                story.line = step.text;
+                story.lineLeft = step.t > 0 ? step.t : ReadingTime(step.text);
+            }
+            return story.lineLeft <= 0;
+        case Op.Choose:
+            if (first)
+            {
+                story.options = step.text;
+                story.optionCount = step.text.Split('|').count;
+                story.choice = 0;
+            }
+            if (story.choice == 0) return false;
+            story.options = "";
+            story.speaker = story.chooser == 0 ? SAM : JO;
+            story.line = OptionText(step.text, story.choice - 1);
+            story.lineLeft = ReadingTime(story.line);
+            return true;
+        case Op.Branch:
+            if (story.choice == step.who) story.step = FindMark(script, step.a);
+            return true;
+        case Op.Walk:
+        case Op.Go:
+        {
+            var entity = NpcOf(cast, step.who);
+            if (first)
+            {
+                mut var npc = world.Get<Npc>(entity);
+                npc.goal = step.at;
+                npc.walking = true;
+                npc.pose = Stance.Stand;
+                world.Set<Npc>(entity, npc);
+                return step.op == Op.Walk;
+            }
+            return !world.Get<Npc>(entity).walking;
+        }
+        case Op.Place:
+        {
+            var entity = NpcOf(cast, step.who);
+            mut var npc = world.Get<Npc>(entity);
+            npc.at = step.at;
+            npc.goal = step.at;
+            npc.walking = false;
+            npc.yaw = step.t;
+            npc.faceGoal = step.t;
+            npc.jumped = true;
+            world.Set<Npc>(entity, npc);
+            return true;
+        }
+        case Op.Face:
+        {
+            var entity = NpcOf(cast, step.who);
+            mut var npc = world.Get<Npc>(entity);
+            npc.faceGoal = YawTo(npc.at, step.at);
+            npc.facing = true;
+            world.Set<Npc>(entity, npc);
+            return true;
+        }
+        case Op.Look:
+        {
+            var entity = NpcOf(cast, step.who);
+            mut var npc = world.Get<Npc>(entity);
+            npc.look = step.a;
+            npc.lookAt = step.at;
+            world.Set<Npc>(entity, npc);
+            return true;
+        }
+        case Op.Pose:
+        {
+            var entity = NpcOf(cast, step.who);
+            mut var npc = world.Get<Npc>(entity);
+            npc.pose = Stance(step.a);
+            npc.clock = 0;
+            world.Set<Npc>(entity, npc);
+            return true;
+        }
+        case Op.Show:
+        {
+            var entity = NpcOf(cast, step.who);
+            mut var npc = world.Get<Npc>(entity);
+            npc.shown = step.a != 0;
+            world.Set<Npc>(entity, npc);
+            return true;
+        }
+        case Op.DoorOp:
+        {
+            mut var door = farm.doors[step.who];
+            if (step.a == 0) door.goal = 0;
+            if (step.a == 1) door.goal = 1;
+            if (step.a == 2) door.locked = true;
+            if (step.a == 3) door.locked = false;
+            farm.doors[step.who] = door;
+            return true;
+        }
+        case Op.Wait:
+            return story.held >= step.t;
+        case Op.Until:
+            return Holds(story, Cond(step.a), step, travellers);
+        case Op.Objective:
+            story.objective = step.text;
+            return true;
+        case Op.Card:
+            story.card = step.text;
+            story.cardLeft = step.t;
+            return true;
+        case Op.Fade:
+            story.fadeGoal = step.a;
+            story.fadeSpeed = 1 / Math.Max(step.t, 0.05);
+            return true;
+        case Op.Sky:
+            story.daylightGoal = step.t;
+            if (step.a == 1) story.daylight = step.t;
+            return true;
+        case Op.Lights:
+            story.lights = step.a;
+            return true;
+        case Op.Enable:
+            if (step.who != 0) story.enabled |= 1L << step.a;
+            else story.enabled &= ~(1L << step.a);
+            return true;
+        case Op.Cue:
+            Send(Cue { sound = step.a, at = step.at });
+            return true;
+        case Op.Freeze:
+            story.frozen = step.a != 0;
+            return true;
+        case Op.Put:
+            for (var seat = 0; seat < 2; seat++)
+            {
+                var entity = WalkerOf(party, seat);
+                mut var walker = world.Get<Walker>(entity);
+                walker.sitting = -1;
+                walker.holding = -1;
+                walker.velocity = float3(0);
+                if (step.a == 0)
+                {
+                    walker.lying = seat;
+                    walker.feet = BedOf(seat);
+                }
+                else
+                {
+                    walker.lying = -1;
+                    walker.feet = BesideBed(seat);
+                }
+                walker.jumped = true;
+                world.Set<Walker>(entity, walker);
+            }
+            return true;
+        case Op.Stand:
+            for (var seat = 0; seat < 2; seat++)
+            {
+                var entity = WalkerOf(party, seat);
+                mut var walker = world.Get<Walker>(entity);
+                if (walker.sitting >= 0)
+                {
+                    walker.feet = StandFrom(walker.sitting);
+                    walker.sitting = -1;
+                }
+                if (walker.lying >= 0)
+                {
+                    walker.feet = BesideBed(walker.lying);
+                    walker.lying = -1;
+                }
+                world.Set<Walker>(entity, walker);
+            }
+            return true;
+        case Op.Watch:
+            story.watch = step.a;
+            story.watched = 0;
+            if (step.a == 0)
+            {
+                mut var dale = world.Get<Npc>(cast.dale);
+                dale.shown = false;
+                dale.walking = false;
+                world.Set<Npc>(cast.dale, dale);
+            }
+            return true;
+        case Op.Flag:
+            story.flags |= 1 << step.a;
+            return true;
+        case Op.End:
+            story.ended = true;
+            return false;
+    }
+    return true;
+}
+
+bool Holds(Story story, Cond cond, Step step, Traveller[2] travellers)
+{
+    mut var any = false;
+    mut var all = true;
+    mut var seated = true;
+    mut var lying = true;
+    mut var someone = false;
+    mut var ready = false;
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var t = travellers[seat];
+        if (!t.present) continue;
+        someone = true;
+        ready = ready || t.ready;
+        var near = Math.Distance(t.feet, step.at) <= step.t;
+        any = any || near;
+        all = all && near;
+        seated = seated && t.sitting;
+        lying = lying && t.lying;
+    }
+    switch (cond)
+    {
+        case Cond.Ready: return ready;
+        case Cond.NearAny: return any;
+        case Cond.NearAll: return someone && all;
+        case Cond.Used: return (story.used & (1L << step.who)) != 0;
+        case Cond.Seated: return someone && seated;
+        case Cond.InBed: return someone && lying;
+        case Cond.Sacks: return story.binned[0] && story.binned[1] && story.binned[2];
+        case Cond.Pulled: return story.pulled;
+        case Cond.Flagged: return (story.flags & (1 << step.who)) != 0;
+    }
+    return true;
+}
+
+// Something the script wants heard: a knock, a lock, a chime. Each machine plays it (sound.tide).
+event Cue
+{
+    int sound;
+    float3 at;
+}
+
+// A development shortcut, not in play's interface: F2 to F6 jump the story to the porch, supper, the night,
+// the morning and the barn, with the travellers and the Hales where that part starts.
+command Skip
+{
+    int label;
+}
+
+command(Skip skip, PlayerID sender) SkipTo(mut Story story, Script script, mut Farm farm, Party party, Cast cast, mut World world)
+{
+    if (sender != party.first && sender != party.second) return;
+    story.step = FindMark(script, skip.label);
+    story.held = 0;
+    story.used = 0;
+    story.fade = 0;
+    story.fadeGoal = 0;
+    story.frozen = false;
+    story.watch = 0;
+    story.options = "";
+    story.lineLeft = 0;
+    story.cardLeft = 0;
+    mut var walt = world.Get<Npc>(cast.walt);
+    mut var ruth = world.Get<Npc>(cast.ruth);
+    mut var dale = world.Get<Npc>(cast.dale);
+    dale.shown = false;
+    mut float3 sam = House(-1.4, F1, 5.4);
+    mut float3 jo = House(-1.4, F1, 6.2);
+    mut float yaw = Math.PI * 0.5;
+    if (skip.label == L_PORCH)
+    {
+        story.enabled |= SpotBit(Spot.FrontDoor);
+        story.lights = LAMP_KITCHEN | LAMP_LIVING | LAMP_FIRE;
+        story.daylight = 0.24;
+        story.daylightGoal = 0.24;
+    }
+    if (skip.label == L_SUPPER)
+    {
+        story.lights = LAMP_PORCH | LAMP_KITCHEN | LAMP_LIVING | LAMP_HALL | LAMP_FIRE;
+        story.daylight = 0.2;
+        story.daylightGoal = 0.2;
+        sam = House(1.85, F1, 6.8);
+        jo = House(3.05, F1, 6.8);
+        yaw = 0;
+        walt.at = House(4.3, F1, 8.3);
+        ruth.at = House(2.45, F1, 9.6);
+        story.enabled |= SpotBit(Spot.SeatSam) | SpotBit(Spot.SeatJo);
+        mut var front = farm.doors[int(DoorId.Front)];
+        front.locked = true;
+        front.goal = 0;
+        front.open = 0;
+        farm.doors[int(DoorId.Front)] = front;
+    }
+    if (skip.label == L_NIGHT)
+    {
+        story.lights = LAMP_GUEST | LAMP_KITCHEN;
+        story.daylight = 0.08;
+        story.daylightGoal = 0.08;
+        sam = House(1.8, F2, 2.4);
+        jo = House(2.6, F2, 3.2);
+        yaw = Math.PI;
+        walt.shown = false;
+        ruth.shown = false;
+        mut var guest = farm.doors[int(DoorId.Guest)];
+        guest.locked = true;
+        guest.goal = 0;
+        guest.open = 0;
+        farm.doors[int(DoorId.Guest)] = guest;
+        story.enabled |= SpotBit(Spot.Drawer) | SpotBit(Spot.GuestWindow);
+    }
+    if (skip.label == L_MORNING)
+    {
+        story.lights = 0;
+        story.daylight = 0.85;
+        story.daylightGoal = 0.85;
+        sam = House(1.8, F2, 2.4);
+        jo = House(2.6, F2, 3.2);
+        yaw = Math.PI;
+        walt.shown = false;
+        ruth.shown = false;
+    }
+    if (skip.label == L_BARN)
+    {
+        story.lights = 0;
+        story.daylight = 0.85;
+        story.daylightGoal = 0.85;
+        sam = float3(BARN_X - 4, 0, BARN_Z + 6.5);
+        jo = float3(BARN_X - 4, 0, BARN_Z + 7.5);
+        walt.shown = false;
+        ruth.shown = false;
+        dale = Npc { who = DALE, at = float3(BARN_X + 2.2, 0, BARN_Z + 7.0), goal = float3(BARN_X + 2.2, 0, BARN_Z + 7.0), yaw = -Math.PI * 0.5,
+                     faceGoal = -Math.PI * 0.5, shown = true, look = 2 };
+    }
+    walt.goal = walt.at;
+    walt.walking = false;
+    walt.jumped = true;
+    ruth.goal = ruth.at;
+    ruth.walking = false;
+    ruth.jumped = true;
+    world.Set<Npc>(cast.walt, walt);
+    world.Set<Npc>(cast.ruth, ruth);
+    world.Set<Npc>(cast.dale, dale);
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var entity = WalkerOf(party, seat);
+        mut var walker = world.Get<Walker>(entity);
+        walker.feet = seat == 0 ? sam : jo;
+        walker.yaw = yaw;
+        walker.pitch = 0;
+        walker.sitting = -1;
+        walker.lying = -1;
+        walker.jumped = true;
+        world.Set<Walker>(entity, walker);
+    }
+}

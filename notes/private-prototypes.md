@@ -101,6 +101,14 @@ check pass, including 404s for its removed page and thumbnail. No CI/deployment.
   host is `foldline_test`, separate from CLI game discovery under `test/`.
   Rules, rendering contracts and validation belong in `notes/foldline.md`.
 
+- SUNDAY SUPPER (`sunday-supper`): `prototypes/sunday-supper/`, a first-person
+  cooperative horror story for one or two, requested on 2026-10-16 as a first
+  playable slice (Friday evening to Saturday morning at the Hale farm). Its
+  people are Quaternius' and its props Kenney's (CC0). It uses the same opt-in
+  option; `private_games` collects `sunday_supper_page` or `sunday_supper`,
+  staging `/prototypes/sunday-supper/` beside its gameplay thumbnail. Its
+  story, contracts, tests and validation are in `notes/sunday-supper.md`.
+
 - Two Forks (`two-forks`): `examples/samples/two-forks/`. `sample_games`
   builds it with the samples and `sample_two_forks_page` stages it under the
   prototype root alone; `private_games` depends on that target. Its contract

@@ -8,7 +8,7 @@ import test from 'node:test';
 import { createAnalytics } from '../analytics.js';
 import { createAdmin } from '../admin.js';
 
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'sunday-supper'];
 
 async function site(t, options = {}) {
     const folder = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-'));
