@@ -148,8 +148,8 @@ static void prepare(float camera_x)
 {
     operator_at(world.Arena.op0, (tide_float3){camera_x, 0, -1.5f}, 0);
     operator_at(world.Arena.op1, (tide_float3){4, 0, -8}, 0);
-    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-5, 1.55f, 2.4f}, .face = {0, 0, -1}, .size = 1};
-    world.Fold.ends.at[1] = (Portal){.open = true, .at = {-10, 1.55f, 10}, .face = {1, 0, 0}, .size = 1};
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-5, 1.55f, 2.4f}, .face = {0, 0, -1}, .up = {0, 1, 0}, .size = 1};
+    world.Fold.ends.at[1] = (Portal){.open = true, .at = {-10, 1.55f, 10}, .face = {1, 0, 0}, .up = {0, 1, 0}, .size = 1};
     cube_at((tide_float3){-3, 0.5f, -8});
     world.Fold.cubeTurn = (tide_quaternion){0, 0, 0, 1};
     world.Fold.carried = -1;
@@ -458,8 +458,8 @@ static void portal_back_checks(void)
     operator_at(world.Arena.op1, (tide_float3){-10, 0, -6}, 0);
     operator_at(world.Arena.op0, (tide_float3){10.8f, 0, 7.6f}, TIDE_PI_F);
     cube_at((tide_float3){-5, .5f, -6});
-    world.Fold.ends.at[0] = (Portal){.open = true, .at = {10.8f, 1.55f, 6}, .face = {0, 0, -1}, .size = 1};
-    world.Fold.ends.at[1] = (Portal){.at = {-12, 1.55f, -3}, .face = {1, 0, 0}, .size = 1};
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {10.8f, 1.55f, 6}, .face = {0, 0, -1}, .up = {0, 1, 0}, .size = 1};
+    world.Fold.ends.at[1] = (Portal){.at = {-12, 1.55f, -3}, .face = {1, 0, 0}, .up = {0, 1, 0}, .size = 1};
     scene_samples = true;
     image solid, rear, front, cargo;
     record(&solid);
@@ -647,7 +647,7 @@ static void reticle_checks(void)
     // A preplaced end counts too. Its off-camera position does not alter the
     // aimed surface, so readiness and stored placement can be checked apart.
     const tide_entity rear = reticle_rear_wall();
-    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-10, 1.3f, 8}, .face = {1, 0, 0}, .wall = rear, .size = 1};
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-10, 1.3f, 8}, .face = {1, 0, 0}, .up = {0, 1, 0}, .wall = rear, .size = 1};
     record_reticle(&placed, 0, false);
     capture_scene("reticle-one-placed");
     reticle_placed(&placed, 0, true);
@@ -682,9 +682,9 @@ static void reticle_checks(void)
 
     // Deliberately asymmetric ownership catches reading A's state while B is
     // active, independently of the palette changing to rose and violet.
-    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-10, 1.3f, 8}, .face = {1, 0, 0}, .wall = rear, .size = 1};
+    world.Fold.ends.at[0] = (Portal){.open = true, .at = {-10, 1.3f, 8}, .face = {1, 0, 0}, .up = {0, 1, 0}, .wall = rear, .size = 1};
     world.Fold.ends.at[1] = (Portal){0};
-    world.Fold.ends.at[3] = (Portal){.open = true, .at = {-10, 1.3f, 4}, .face = {1, 0, 0}, .wall = rear, .size = 1};
+    world.Fold.ends.at[3] = (Portal){.open = true, .at = {-10, 1.3f, 4}, .face = {1, 0, 0}, .up = {0, 1, 0}, .wall = rear, .size = 1};
     record_reticle(&other, 1, false);
     capture_scene("reticle-operator-b");
     reticle_placed(&other, 0, false);
@@ -847,13 +847,13 @@ static int render_checks(void *user, float seconds)
     // A destination below the blood is opaque red, both directly and inside the other pair: the bench's strip of
     // blood runs from x 2 to 10 and z -3 to -1.
     prepare(-5);
-    world.Fold.ends.at[1] = (Portal){.open = true, .at = {6, -2, -2}, .face = {-1, 0, 0}, .size = 1};
+    world.Fold.ends.at[1] = (Portal){.open = true, .at = {6, -2, -2}, .face = {-1, 0, 0}, .up = {0, 1, 0}, .size = 1};
     record(&occupied);
     printf("Submerged portal interior red samples: %d\n", red_interior(&occupied));
     check(red_interior(&occupied) > 90, "a submerged destination shows opaque red instead of dry geometry");
     prepare(-5);
-    world.Fold.ends.at[2] = (Portal){.open=true, .at={-7.5f,1.55f,10}, .face={-1,0,0}, .size=1};
-    world.Fold.ends.at[3] = (Portal){.open=true, .at={6,-2,-2}, .face={-1,0,0}, .size=1};
+    world.Fold.ends.at[2] = (Portal){.open=true, .at={-7.5f,1.55f,10}, .face={-1,0,0}, .up = {0, 1, 0}, .size=1};
+    world.Fold.ends.at[3] = (Portal){.open=true, .at={6,-2,-2}, .face={-1,0,0}, .up = {0, 1, 0}, .size=1};
     record(&occupied);
     printf("Nested submerged portal interior red samples: %d\n", red_interior(&occupied));
     check(red_interior(&occupied) > 55, "a submerged destination remains red through the other operator's fold");

@@ -322,7 +322,7 @@ static void ends_placed_at_building(void)
     const Portal west = world.Fold.ends.at[0];
     CHECK(south.open && west.open && south.face.z > 0.99f && west.face.x > 0.99f);
     // Given to operator B as a builder gives them: the walls' pieces are cut for them by how many there are
-    world.Fold.ends.at[0] = (Portal){.face = {0, 0, 1}, .size = 1};
+    world.Fold.ends.at[0] = (Portal){.face = {0, 0, 1}, .up = {0, 1, 0}, .size = 1};
     world.Fold.ends.at[2] = south;
     world.Fold.ends.at[3] = west;
     ticks(&world, 2);

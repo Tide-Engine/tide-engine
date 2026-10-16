@@ -24,8 +24,11 @@ looking in the direction you left it. The puzzles and passages use both bodies.
 | R | Rebuild the current place |
 | Escape | Open the menu |
 
-Wallpaper takes folds. Bare concrete, metal, machinery, floors and ceilings
-refuse them. Shots pass between grille bars; bodies and loose objects do not.
+Wallpaper takes folds, on a wall, a floor or a ceiling. Bare concrete, metal and
+machinery refuse them. An end on a floor or a ceiling lies the way you shot it.
+What goes into one end comes out of the other with its speed turned: fall into a
+floor's end and you are thrown out of a wall's; walk into a wall's end and you
+come up out of a floor's. You always come out upright. Shots pass between grille bars; bodies and loose objects do not.
 Closed shutters and moving platforms stop shots, and so does an open fold: you
 cannot shoot through one. An end opens only where you can see the middle of its
 opening: a shot that grazes the edge of a face cannot put one round the far side

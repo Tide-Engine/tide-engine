@@ -87,13 +87,15 @@ singleton Place
     float2 viewTurn;
 }
 
-// One end of the fold: an opening on a wall's face. `at` is its middle, and
-// `size` how many times the usual 1.36 by 2.6 meters it is.
+// One end of the fold: an opening on a wall's face, or a floor's or a ceiling's. `at` is its middle, `up` the way
+// its length goes along the face (upright on a wall, a level way on a floor or a ceiling), and `size` how many
+// times the usual 1.36 by 2.6 meters it is.
 struct Portal
 {
     bool open;
     float3 at;
     float3 face = float3(0, 0, 1);
+    float3 up = float3(0, 1, 0);
     Entity wall;
     float size = 1;
 }
@@ -436,6 +438,7 @@ const float STANDARD_NEED = 20;
 const float HEAVY_NEED = 200;
 // The smallest a fold makes anything: an end that would make a body smaller is a wall to it
 const float SMALLEST = 1.0 / 16;
+const float FASTEST = 24;       // What comes out of a fold is no faster than this, meters a second
 const float BLOOD_DEPTH = 0.8;  // Where the red of a pit lies, under its floor
 const float TAKEN_UNDER = 0.25; // A body's middle this far under it, a meter of the body's size, is chin deep, in the hands' reach
 const float TAKEN_FOR = 1.9;    // How long they drag it down before it's gone
@@ -598,18 +601,31 @@ float3 FoldRight(float3 face)
     return Math.Cross(float3(0, 1, 0), face);
 }
 
+// An end's right, as it's looked at from before it, whichever way its face is.
+float3 EndRight(Portal portal)
+{
+    return Math.Cross(portal.up, portal.face);
+}
+
+// Whether an end is on a floor or a ceiling: its length is level.
+bool Lying(Portal portal)
+{
+    return Math.Abs(portal.up.y) < 0.5;
+}
+
 bool Linked(Fold fold, int pair)
 {
     return fold.ends[pair * 2].open && fold.ends[pair * 2 + 1].open;
 }
 
-// What a fold does to a direction: into one wall is out of the other, turned
-// about the vertical.
+// What a fold does to a direction: into one end is out of the other, turned half about its length. Between two
+// walls that's a turn about the vertical; a floor's turns a fall into a throw.
 float3 FoldDirection(Portal from, Portal to, float3 direction)
 {
-    var x = Math.Dot(direction, FoldRight(from.face));
+    var x = Math.Dot(direction, EndRight(from));
+    var y = Math.Dot(direction, from.up);
     var z = Math.Dot(direction, from.face);
-    return -FoldRight(to.face) * x + float3(0, direction.y, 0) - to.face * z;
+    return -EndRight(to) * x + to.up * y - to.face * z;
 }
 
 // ...and to a place: as far from the other end's middle, by that end's size.
@@ -622,15 +638,18 @@ float3 FoldPoint(Portal from, Portal to, float3 point)
 bool InMouth(Portal portal, float3 point, float margin)
 {
     var offset = point - portal.at;
-    return Math.Abs(Math.Dot(offset, FoldRight(portal.face))) < FOLD_HALF_WIDE * portal.size + margin
-        && Math.Abs(offset.y) < FOLD_HALF_HIGH * portal.size + margin;
+    return Math.Abs(Math.Dot(offset, EndRight(portal))) < FOLD_HALF_WIDE * portal.size + margin
+        && Math.Abs(Math.Dot(offset, portal.up)) < FOLD_HALF_HIGH * portal.size + margin;
 }
 
 // Crossing a fold: a body of a size whose middle went from before a wall's face to past it is as far past the
-// other face, with its speed turned and scaled. Says by how much the body's size changes, 0 for no crossing.
-// One the far end would make smaller than SMALLEST isn't let through, nor anything at all while machinery is shut
-// over the far end's mouth: it's put back before the face, its speed into the wall gone, and that's -1.
-float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 velocity, mut float yaw, float scale, out int through)
+// other face, with its speed turned and scaled, and its look with it. Says by how much the body's size changes, 0
+// for no crossing. One the far end would make smaller than SMALLEST isn't let through, nor anything at all while
+// machinery is shut over the far end's mouth: it's put back before the face, its speed into the wall gone, and
+// that's -1. A body stands upright whatever end it comes out of: `radius` is how far it reaches across, `half`
+// how far up and down from its middle.
+float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 velocity, mut float yaw, mut float pitch, float scale, float radius, float half,
+               out int through)
 {
     through = -1;
     for (var end = 0; end < 4; end++)
@@ -652,8 +671,37 @@ float Traverse(mut Fold fold, float3 before, mut float3 center, mut float3 veloc
         }
         center = FoldPoint(from, to, center);
         velocity = FoldDirection(from, to, velocity) * ratio;
-        var facing = FoldDirection(from, to, LookDirection(yaw, 0));
-        yaw = Math.Atan2(facing.x, facing.z);
+        // A floor's end under a ceiling's is a fall that never ends: it gets no faster than this
+        if (Math.Length(velocity) > FASTEST) velocity = Math.Normalize(velocity) * FASTEST;
+        if (Lying(from) != Lying(to))
+        {
+            // Lying in a floor's end and standing out of a wall's, or the other way: it's put where it fits the
+            // opening it comes out of, across it by its reach and along it by its height on a wall
+            var right = EndRight(to);
+            var off = center - to.at;
+            var across = Math.Max(FOLD_HALF_WIDE * to.size - radius * ratio - 0.02, 0);
+            var lengthwise = Math.Max(FOLD_HALF_HIGH * to.size - (Lying(to) ? radius : half) * ratio - 0.02, 0);
+            center = to.at + right * Math.Clamp(Math.Dot(off, right), -across, across) + to.up * Math.Clamp(Math.Dot(off, to.up), -lengthwise, lengthwise)
+                   + to.face * Math.Dot(off, to.face);
+        }
+        if (!Lying(from) && !Lying(to))
+        {
+            var facing = FoldDirection(from, to, LookDirection(yaw, 0));
+            yaw = Math.Atan2(facing.x, facing.z);
+        }
+        else
+        {
+            // Through a floor or a ceiling the look is turned whole, and stood up again: where it points is where
+            // it looks, and looking straight up or down, ahead is the way the top of the view points
+            var look = FoldDirection(from, to, LookDirection(yaw, pitch));
+            if (Math.Length(look.xz) > 0.15) yaw = Math.Atan2(look.x, look.z);
+            else
+            {
+                var top = FoldDirection(from, to, LookDirection(yaw, pitch + Math.PI * 0.5));
+                yaw = look.y > 0 ? Math.Atan2(-top.x, -top.z) : Math.Atan2(top.x, top.z);
+            }
+            pitch = Math.Clamp(Math.Asin(Math.Clamp(look.y, -1, 1)), -1.4, 1.4);
+        }
         fold.traversals += 1;
         through = end;
         return ratio;
@@ -829,6 +877,12 @@ void Fizzle(mut Fold fold, int end, float3 at, float3 face)
     fold.fizzleEnd = end;
 }
 
+// How far an end's opening reaches along one of its box's ways, whichever way it lies.
+float HoleReach(Portal portal, float3 way)
+{
+    return Math.Abs(Math.Dot(EndRight(portal), way)) * FOLD_HALF_WIDE * portal.size + Math.Abs(Math.Dot(portal.up, way)) * FOLD_HALF_HIGH * portal.size;
+}
+
 // A frame as a shot sees it.
 struct Mount
 {
@@ -910,13 +964,21 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
 {
     if (!ShotStops(origin, origin + way * 60, physics, world, out var hit)) return FoldShot { };
     mut var shot = FoldShot { hit = true, point = hit.point, face = hit.normal };
-    mut var face = float3(0, 1, 0);
-    if (Math.Abs(hit.normal.y) < 0.3)
-        face = Math.Abs(hit.normal.x) > Math.Abs(hit.normal.z) ? float3(Math.Sign(hit.normal.x), 0, 0) : float3(0, 0, Math.Sign(hit.normal.z));
-    if (fold.busy[end / 2] > 0 || face.y > 0.5 || !world.TryGet<Piece>(hit.entity, out var piece) || !world.TryGet<Wall>(piece.wall, out var wall) || !wall.takes)
+    if (fold.busy[end / 2] > 0 || Math.Abs(hit.normal.y) > 0.3 && Math.Abs(hit.normal.y) < 0.7 || !world.TryGet<Piece>(hit.entity, out var piece)
+        || !world.TryGet<Wall>(piece.wall, out var wall) || !wall.takes)
         return shot;
+    // Which face it is, square to the room: a wall's, whose length is upright, or a floor's or a ceiling's, whose
+    // length is the way the shot went, a quarter turn at a time
+    var level = Math.Abs(hit.normal.y) >= 0.7;
+    mut var face = float3(0, Math.Sign(hit.normal.y), 0);
+    mut var up = Math.Abs(way.x) > Math.Abs(way.z) ? float3(Math.Sign(way.x), 0, 0) : float3(0, 0, Math.Sign(way.z));
+    if (!level)
+    {
+        face = Math.Abs(hit.normal.x) > Math.Abs(hit.normal.z) ? float3(Math.Sign(hit.normal.x), 0, 0) : float3(0, 0, Math.Sign(hit.normal.z));
+        up = float3(0, 1, 0);
+    }
     shot.face = face;
-    var right = FoldRight(face);
+    var right = Math.Cross(up, face);
     // A shot in a frame, or by it, goes into it at the frame's size
     mut var size = 1.0;
     mut var aim = hit.point;
@@ -925,15 +987,15 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
         var mount = mounts[index];
         var off = hit.point - mount.at;
         if (Math.Dot(mount.face, face) < 0.9 || Math.Abs(Math.Dot(off, face)) > 0.3) continue;
-        if (Math.Abs(Math.Dot(off, right)) > FOLD_HALF_WIDE * mount.size + 0.35 || Math.Abs(off.y) > FOLD_HALF_HIGH * mount.size + 0.35) continue;
+        if (Math.Abs(Math.Dot(off, right)) > FOLD_HALF_WIDE * mount.size + 0.35 || Math.Abs(Math.Dot(off, up)) > FOLD_HALF_HIGH * mount.size + 0.35) continue;
         size = mount.size;
         aim = mount.at;
     }
     var halfWide = FOLD_HALF_WIDE * size;
     var halfHigh = FOLD_HALF_HIGH * size;
-    var along = Math.Abs(face.x) > 0.5;
-    var thick = along ? wall.size.x : wall.size.z;
-    var wide = along ? wall.size.z : wall.size.x;
+    var thick = Math.Abs(Math.Dot(wall.size, face));
+    var wide = Math.Abs(Math.Dot(wall.size, right));
+    var tall = Math.Abs(Math.Dot(wall.size, up));
     // Another end on this wall's other pair of faces would need holes two ways through it
     mut var crossed = false;
     for (var k = 0; k < 4; k++)
@@ -941,27 +1003,30 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
     if (thick < 0.6 || wide < halfWide * 2 || crossed)
         return shot;
     var plane = wall.center + face * (thick * 0.5);
+    // Where it is on the face, from the box's middle: across it, and along its length
     mut var u = Math.Dot(aim - wall.center, right);
-    mut var v = aim.y;
+    mut var v = Math.Dot(aim - wall.center, up);
     mut var lowU = -wide * 0.5 + halfWide;
     mut var highU = wide * 0.5 - halfWide;
-    mut var lowV = wall.center.y - wall.size.y * 0.5 + halfHigh;
-    mut var highV = wall.center.y + wall.size.y * 0.5 - halfHigh;
-    // What's around the place, a hand's width off the wall: the floor, the ceiling and what stands either side
-    var probe = float3(plane.x + right.x * u, v, plane.z + right.z * u) + face * 0.2;
+    mut var lowV = -tall * 0.5 + halfHigh;
+    mut var highV = tall * 0.5 - halfHigh;
+    // What's around the place, a hand's width off its face: on a wall, the floor, the ceiling and what stands either
+    // side; on a floor or a ceiling, the walls that stand on it, every way
+    var probe = plane + right * u + up * v + face * 0.2;
+    var reach = level ? 3.0 : 8.0;
     mut var floor = lowV - halfHigh;
-    if (physics.Raycast(probe, probe - float3(0, 8, 0), out var under)) floor = under.point.y;
+    if (physics.Raycast(probe, probe - up * reach, out var under)) floor = Math.Dot(under.point - wall.center, up);
     lowV = Math.Max(lowV, floor + halfHigh);
-    if (physics.Raycast(probe, probe + float3(0, 8, 0), out var over)) highV = Math.Min(highV, over.point.y - halfHigh);
+    if (physics.Raycast(probe, probe + up * reach, out var over)) highV = Math.Min(highV, Math.Dot(over.point - wall.center, up) - halfHigh);
     if (physics.Raycast(probe, probe - right * 3, out var before)) lowU = Math.Max(lowU, Math.Dot(before.point - wall.center, right) + halfWide);
     if (physics.Raycast(probe, probe + right * 3, out var after)) highU = Math.Min(highU, Math.Dot(after.point - wall.center, right) - halfWide);
     if (lowU > highU || lowV > highV)
         return shot;
     u = Math.Clamp(u, lowU, highU);
     v = Math.Clamp(v, lowV, highV);
-    // Near the floor it stands on it, to be walked into
-    if (v - halfHigh - floor < 1.0) v = lowV;
-    var at = float3(plane.x + right.x * u, v, plane.z + right.z * u);
+    // Near the floor a wall's stands on it, to be walked into
+    if (!level && v - halfHigh - floor < 1.0) v = lowV;
+    var at = plane + right * u + up * v;
     shot.point = at;
     // ...where its middle is in sight of whoever shoots it: a shot that only grazes the edge of a face can't put a
     // fold on the part of it they can't see
@@ -973,10 +1038,12 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
     for (var k = 0; k < 4; k++)
     {
         var there = fold.ends[k];
-        if (k == end || !there.open) continue;
-        if (Math.Dot(there.face, face) > 0.9 && Math.Abs(Math.Dot(there.at - at, face)) < 0.2
-            && Math.Abs(Math.Dot(there.at - at, right)) < halfWide + FOLD_HALF_WIDE * there.size + 0.1
-            && Math.Abs(there.at.y - at.y) < halfHigh + FOLD_HALF_HIGH * there.size + 0.1)
+        if (k == end || !there.open || Math.Dot(there.face, face) < 0.9 || Math.Abs(Math.Dot(there.at - at, face)) > 0.2) continue;
+        // How far it reaches across this one and along its length: on a floor, the two may lie crosswise
+        var thereRight = EndRight(there);
+        var acrossThere = Math.Abs(Math.Dot(thereRight, right)) * FOLD_HALF_WIDE * there.size + Math.Abs(Math.Dot(there.up, right)) * FOLD_HALF_HIGH * there.size;
+        var alongThere = Math.Abs(Math.Dot(thereRight, up)) * FOLD_HALF_WIDE * there.size + Math.Abs(Math.Dot(there.up, up)) * FOLD_HALF_HIGH * there.size;
+        if (Math.Abs(Math.Dot(there.at - at, right)) < halfWide + acrossThere + 0.1 && Math.Abs(Math.Dot(there.at - at, up)) < halfHigh + alongThere + 0.1)
         {
             displaces |= 1 << k;
             if (fold.busy[k / 2] > 0) overlaps = true;
@@ -985,7 +1052,7 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
     // ...and nothing of the room stands in the opening's way
     mut var blocked = false;
     if (physics.Overlap(Box { size = float3(halfWide * 2 - 0.12, halfHigh * 2 - 0.12, 0.3) }, at + face * 0.3,
-                        quaternion.LookRotation(face, float3(0, 1, 0)), out var found))
+                        quaternion.LookRotation(face, up), out var found))
     {
         foreach (var entity in found)
             if (world.Has<Piece>(entity) || world.Has<Prop>(entity) || world.Has<Mover>(entity)
@@ -994,7 +1061,7 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
     if (overlaps || blocked)
         return shot;
     shot.valid = true;
-    shot.portal = Portal { open = true, at = at, face = face, wall = piece.wall, size = size };
+    shot.portal = Portal { open = true, at = at, face = face, up = up, wall = piece.wall, size = size };
     shot.displaces = displaces;
     return shot;
 }
@@ -1432,7 +1499,7 @@ system ShutEnds(mut Fold fold, Physics physics, World world)
         var portal = fold.ends[end];
         if (!portal.open) continue;
         if (!physics.Overlap(Box { size = float3(FOLD_HALF_WIDE * portal.size * 2 - 0.12, FOLD_HALF_HIGH * portal.size * 2 - 0.12, 0.3) },
-                             portal.at + portal.face * 0.3, quaternion.LookRotation(portal.face, float3(0, 1, 0)), out var found)) continue;
+                             portal.at + portal.face * 0.3, quaternion.LookRotation(portal.face, portal.up), out var found)) continue;
         foreach (var entity in found)
             if (world.Has<Mover>(entity) || world.Has<Gate>(entity) || world.Has<Door>(entity)) fold.shut[end] = true;
     }
@@ -1445,7 +1512,7 @@ system CrossOperators(mut Operator pilot, mut Body body, Owner owner, mut Fold f
 {
     mut var center = body.position;
     mut var velocity = body.velocity;
-    var ratio = Traverse(fold, pilot.last, center, velocity, pilot.yaw, pilot.scale, out _);
+    var ratio = Traverse(fold, pilot.last, center, velocity, pilot.yaw, pilot.pitch, pilot.scale, BODY_RADIUS * pilot.scale, BODY_HIGH * 0.5 * pilot.scale, out _);
     if (ratio != 0)
     {
         body.position = center;
@@ -1506,8 +1573,10 @@ system CrossCube(mut Cube cube, mut Body body, mut Fold fold, mut Arena arena, q
 {
     mut var center = body.position;
     mut var velocity = body.velocity;
-    mut var unused = 0.0;
-    var ratio = Traverse(fold, cube.last, center, velocity, unused, cube.scale, out var through);
+    mut var unusedYaw = 0.0;
+    mut var unusedPitch = 0.0;
+    var ratio = Traverse(fold, cube.last, center, velocity, unusedYaw, unusedPitch, cube.scale, CUBE_SIDE * 0.6 * cube.scale, CUBE_SIDE * 0.6 * cube.scale,
+                         out var through);
     mut var scale = cube.scale;
     if (ratio < 0)
     {
@@ -1610,23 +1679,27 @@ system Carve(mut Wall wall, Fold fold, Arena arena)
         Spawn(Piece { wall = this, version = wall.version }, Body { type = BodyType.Static, position = wall.center }, Box { size = wall.size });
         return;
     }
-    var along = Math.Abs(face.x) > 0.5;
-    var axis = along ? float3(1, 0, 0) : float3(0, 0, 1);
-    var across = along ? float3(0, 0, 1) : float3(1, 0, 0);
-    var thick = along ? wall.size.x : wall.size.z;
-    var wide = along ? wall.size.z : wall.size.x;
+    // The way through it, and its two others: along a wall and up it, or a floor's two level ways
+    var axis = Math.Abs(face.x) > 0.5 ? float3(1, 0, 0) : Math.Abs(face.y) > 0.5 ? float3(0, 1, 0) : float3(0, 0, 1);
+    var across = Math.Abs(face.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0);
+    var upright = Math.Abs(face.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+    var thick = Math.Dot(wall.size, axis);
+    var wide = Math.Dot(wall.size, across);
+    var tall = Math.Dot(wall.size, upright);
     mut List<float> us = [-wide * 0.5, wide * 0.5];
-    mut List<float> vs = [-wall.size.y * 0.5, wall.size.y * 0.5];
+    mut List<float> vs = [-tall * 0.5, tall * 0.5];
     for (var end = 0; end < 4; end++)
     {
         var portal = fold.ends[end];
         if (!Linked(fold, end / 2) || portal.wall != this) continue;
         var u = Math.Dot(portal.at - wall.center, across);
-        var v = portal.at.y - wall.center.y;
-        us.Add(Math.Clamp(u - FOLD_HALF_WIDE * portal.size, -wide * 0.5, wide * 0.5));
-        us.Add(Math.Clamp(u + FOLD_HALF_WIDE * portal.size, -wide * 0.5, wide * 0.5));
-        vs.Add(Math.Clamp(v - FOLD_HALF_HIGH * portal.size, -wall.size.y * 0.5, wall.size.y * 0.5));
-        vs.Add(Math.Clamp(v + FOLD_HALF_HIGH * portal.size, -wall.size.y * 0.5, wall.size.y * 0.5));
+        var v = Math.Dot(portal.at - wall.center, upright);
+        var halfU = HoleReach(portal, across);
+        var halfV = HoleReach(portal, upright);
+        us.Add(Math.Clamp(u - halfU, -wide * 0.5, wide * 0.5));
+        us.Add(Math.Clamp(u + halfU, -wide * 0.5, wide * 0.5));
+        vs.Add(Math.Clamp(v - halfV, -tall * 0.5, tall * 0.5));
+        vs.Add(Math.Clamp(v + halfV, -tall * 0.5, tall * 0.5));
     }
     us.Sort(a, b) { return a < b; }
     vs.Sort(a, b) { return a < b; }
@@ -1646,15 +1719,17 @@ system Carve(mut Wall wall, Fold fold, Arena arena)
             {
                 var portal = fold.ends[end];
                 if (!Linked(fold, end / 2) || portal.wall != this) continue;
-                if (Math.Abs(u - Math.Dot(portal.at - wall.center, across)) > FOLD_HALF_WIDE * portal.size) continue;
-                if (Math.Abs(v - (portal.at.y - wall.center.y)) > FOLD_HALF_HIGH * portal.size) continue;
-                var deep = Math.Min(thick - 0.1, 0.95 * portal.size);
+                if (Math.Abs(u - Math.Dot(portal.at - wall.center, across)) > HoleReach(portal, across)) continue;
+                if (Math.Abs(v - Math.Dot(portal.at - wall.center, upright)) > HoleReach(portal, upright)) continue;
+                // A wall's hole has a back; a floor's or a ceiling's goes right through, so what falls in is through
+                // before anything under it stops it
+                var deep = Lying(portal) ? thick : Math.Min(thick - 0.1, 0.95 * portal.size);
                 if (Math.Dot(portal.face, axis) > 0) high = Math.Min(high, thick * 0.5 - deep);
                 else low = Math.Max(low, -thick * 0.5 + deep);
             }
             if (high - low < 0.02) continue;
-            var middle = wall.center + across * u + float3(0, v, 0) + axis * ((low + high) * 0.5);
-            var size = across * wideHere + float3(0, highHere, 0) + axis * (high - low);
+            var middle = wall.center + across * u + upright * v + axis * ((low + high) * 0.5);
+            var size = across * wideHere + upright * highHere + axis * (high - low);
             Spawn(Piece { wall = this, version = wall.version }, Body { type = BodyType.Static, position = middle }, Box { size = size });
         }
     }
