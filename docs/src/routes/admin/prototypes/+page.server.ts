@@ -6,8 +6,8 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
-        id: 'gravewake', title: 'GRAVEWAKE', kind: 'First-person cooperative survival · Zombies', players: '1–4 players',
-        description: 'The dead rise in Ashwick, round after round. Hold the village with swords, axes, hammers, bows, crossbows and magic staffs off the walls and out of the Pilgrim’s Chest; board up the windows, open the way through the tavern, the smithy, the chapel and the graveyard, light the beacon, drink the alchemist’s brews and runeforge your weapon. Up to four together.',
+        id: 'gravewake', title: 'GRAVEWAKE', kind: 'First-person cooperative survival · Roguelike', players: '1–4 players',
+        description: 'Ashwick burned. Hold the fire in a clearing in the wood, wave after endless wave of the dead, with swords, axes, hammers, bows, crossbows and magic staffs. After every wave each survivor takes one of three cards: a new weapon, an alchemist’s brew, or a keepsake like the Runeforge or hobnailed boots for kicking the dead over. Up to four together.',
         image: '/prototypes/gravewake/thumbnail.png',
     },
     {

@@ -1,0 +1,87 @@
+// What the dead drop: full quivers, a skull that kills at a touch, holy fire.
+// And the cues the match sends for what's heard.
+
+enum Boon { MaxAmmo, InstaKill, Nuke }
+
+const float BOON_SECONDS = 30;
+const int DROPS_MOST = 4;
+
+// A power-up, floating where one of the dead fell.
+component Drop
+{
+    float3 at;
+    Boon kind;
+    float life = 27;
+    local Sound hum;
+}
+
+// What's heard, where: the match says, each machine plays it.
+enum Sfx { Rise, Snarl, Drink, Revive, Downed, Hurt, Empty, Throw, Bell }
+
+event Cue
+{
+    Sfx sound;
+    float3 at;
+}
+
+// A power-up taken.
+event Boons
+{
+    Boon kind;
+    float3 at;
+}
+
+// Every arrow, bolt and charge back, and the fire pots.
+event Restock { }
+
+event(Restock restock) TakeRestock(mut Survivor survivor)
+{
+    Refill(survivor);
+}
+
+// Now and then one of the dead drops something, a few a wave at most.
+void MaybeDrop(mut Match match, float3 at)
+{
+    if (match.drops >= DROPS_MOST || Random.NextInt(1000) >= 28) return;
+    match.drops += 1;
+    var order = match.dropTurn % 5;
+    match.dropTurn += 1 + Random.NextInt(2);
+    var kind = order == 0 ? Boon.MaxAmmo : order == 1 ? Boon.InstaKill : order == 2 ? Boon.MaxAmmo : order == 3 ? Boon.Nuke : Boon.InstaKill;
+    Spawn(Drop { at = float3(at.x, 0, at.z), kind = kind });
+}
+
+// A power-up floats a while, blinking at the end, and goes to the first survivor to walk into it.
+[Stage(Tick.Late)]
+system Pickup(mut Drop drop, mut Match match, Party party, Time time, query (Survivor survivor) survivors, query (Zombie zombie) zombies)
+{
+    drop.life -= time.dt;
+    if (drop.life <= 0)
+    {
+        this.Destroy();
+        return;
+    }
+    mut var taken = false;
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (!s.ready || s.life != Life.Standing) continue;
+        if (Math.Length((s.feet - drop.at).xz) < 1.3) taken = true;
+    }
+    if (!taken) return;
+    switch (drop.kind)
+    {
+        case Boon.InstaKill:
+            match.instakill = BOON_SECONDS;
+            break;
+        case Boon.MaxAmmo:
+            for (var seat = 0; seat < 4; seat++)
+                if (party.taken[seat]) party.survivors[seat].Send(Restock { });
+            break;
+        case Boon.Nuke:
+            foreach (var row in zombies)
+                if (row.zombie.state != ZombieState.Dying) row.entity.Send(Wound { damage = 1000000, seat = -1, element = Element.Fire, from = drop.at, blow = Blow.Burst });
+            break;
+    }
+    Send(Boons { kind = drop.kind, at = drop.at });
+    this.Destroy();
+}

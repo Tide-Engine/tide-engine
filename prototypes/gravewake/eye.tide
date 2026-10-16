@@ -1,7 +1,6 @@
 // Where this machine looks from, and what it gathers for the frame: the
-// village's pieces once (again while a door swings), the ones near enough each
-// frame, and the lamps: torches and candles, the beacon's braziers once the
-// power is on, the dead that burn, fireballs and the chest's light.
+// clearing's pieces once, the ones near enough each frame, and the lamps:
+// the torches on the ruin, the fires, the dead that burn and fireballs.
 using Rooms;
 
 // Which survivor this machine plays, and how its eye moves.
@@ -23,13 +22,12 @@ local singleton Me
     float hurt;                 // The red of a fresh blow
     bool wasGrounded = true;
     float3 last;                // Last frame's feet, for footfalls
-    int overhead;               // Development: 1 looks down on the whole village (F9), 2 from a corner
+    int overhead;               // Development: 1 looks down on the whole clearing (F9), 2 from over the trees
 }
 
 local singleton Village
 {
     Plan plan;
-    float[16] shown;            // Each gate as drawn: 0 shut, 1 open
     bool made;
 }
 
@@ -45,7 +43,7 @@ view Mine(Survivor survivor, mut Me me, with ownership)
     me.seat = survivor.seat;
 }
 
-// The eye: this machine's survivor's, or a slow flight over the square behind the title.
+// The eye: this machine's survivor's, or a slow circle round the fire behind the title.
 [Stage(Layers.Prepare)]
 view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit kit, mut Shapes shapes, mut Village village, Match match,
              Lobby lobby, Devices devices, query (Survivor survivor) survivors, query (Zombie zombie) zombies, query (Missile missile) missiles)
@@ -58,7 +56,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     if (!kit.made)
     {
         LoadKit(kit);
-        PlaceKit(kit, village.plan, village.shown);
+        PlaceKit(kit, village.plan);
         kit.made = true;
     }
     if (!shapes.made) MakeShapes(shapes);
@@ -66,18 +64,6 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     me.clock += me.dt;
     if (me.clock > 3600) me.clock -= 3600;
     Focus(lens, look);
-
-    // Doors swing, bars rise and rubble falls away as they're bought
-    mut var moved = false;
-    for (var g = 0; g < village.plan.gates.count; g++)
-    {
-        var goal = GateOpen(match.gatesOpen, g) ? 1.0 : 0.0;
-        var now = village.shown[g];
-        if (now == goal) continue;
-        village.shown[g] = goal > now ? Math.Min(goal, now + me.dt * 1.2) : goal;
-        moved = true;
-    }
-    if (moved) PlaceKit(kit, village.plan, village.shown);
 
     // Whose eyes
     var seat = me.seat;
@@ -123,11 +109,11 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     }
     else
     {
-        // Behind the title: a slow drift round the square, clear of the market's cart and stall
+        // Behind the title: a slow drift round the fire, looking past it into the trees
         var drift = me.clock * 0.035;
-        eye = float3(-1 + Math.Sin(drift) * 6, 2.4 + Math.Sin(me.clock * 0.13) * 0.3, -1 + Math.Cos(drift) * 6);
-        me.yaw = YawTo(eye, float3(0, 1, 4)) + Math.Sin(me.clock * 0.07) * 0.2;
-        me.pitch = 0.04;
+        eye = float3(Math.Sin(drift) * 6.5, 2.2 + Math.Sin(me.clock * 0.13) * 0.3, Math.Cos(drift) * 6.5);
+        me.yaw = YawTo(eye, float3(0)) + 0.35 + Math.Sin(me.clock * 0.07) * 0.15;
+        me.pitch = -0.02;
         me.turn = quaternion.Euler(-me.pitch, me.yaw, 0);
         look.downed = 0;
         look.hurt = 0;
@@ -136,20 +122,19 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     if (devices.keyboard.f9.down) me.overhead = (me.overhead + 1) % 3;
     if (me.overhead == 1)
     {
-        eye = float3(-2, 95, 2);
+        eye = float3(0, 70, 0);
         me.turn = quaternion.Euler(Math.PI * 0.5, 0, 0);
         look.fov = 62;
     }
     else if (me.overhead == 2)
     {
-        eye = float3(30, 38, -40);
-        me.turn = quaternion.Euler(0.62, -0.62, 0);
+        eye = float3(26, 30, -26);
+        me.turn = quaternion.Euler(0.68, -0.785, 0);
         look.fov = 62;
     }
     me.eye = eye;
     look.eye = eye;
     look.time = me.clock;
-    look.power = match.power ? 1.0 : 0.0;
     look.fade = match.phase == Phase.Over ? Math.Saturate(match.timer * 0.25) * 0.55 : 0.0;
     lens.scene.SetCamera(float4x4.TRS(eye, me.turn, float3(1)), float4x4.PerspectiveFov(Math.Radians(look.fov), lens.size.x / Math.Max(1, lens.size.y), NEAR, FAR));
     look.toClip = lens.scene.WorldToClip();
@@ -166,28 +151,10 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         var flicker = 0.8 + Math.Perlin(float2(me.clock * 6.1 + at.x, at.z)) * 0.3;
         AddLight(lights, eye, Light { at = at, color = float3(1.0, 0.5, 0.18) * 3.2 * flicker, reach = 10 });
     }
-    foreach (var at in plan.braziers)
+    foreach (var at in plan.fires)
     {
-        var lit = match.power ? 1.0 : 0.0;
-        if (lit <= 0) continue;
         var flicker = 0.85 + Math.Perlin(float2(me.clock * 4.3 + at.x, at.z)) * 0.25;
-        AddLight(lights, eye, Light { at = at + float3(0, 1.8, 0), color = float3(1.0, 0.45, 0.12) * 6 * flicker, reach = 16 });
-    }
-    if (match.power)
-    {
-        // The Runeforge's glow, once there's fire in it
-        foreach (var stall in plan.stalls)
-        {
-            if (stall.sale != Sale.Forge) continue;
-            var working = match.forge == ForgeState.Working ? 1.6 : 1.0;
-            AddLight(lights, eye, Light { at = stall.at + float3(0, 0.6, 0), color = float3(0.3, 0.5, 1.0) * 3 * working, reach = 8 });
-        }
-    }
-    // The chest's beam
-    if (match.chest != ChestState.Gone && match.chest != ChestState.Fleeing)
-    {
-        var index = ChestStallOf(plan, match.chestSpot);
-        if (index >= 0) AddLight(lights, eye, Light { at = plan.stalls[index].at + float3(0, 1.4, 0), color = float3(0.6, 0.75, 1.0) * 2.2, reach = 7 });
+        AddLight(lights, eye, Light { at = at + float3(0, 1.8, 0), color = float3(1.0, 0.45, 0.12) * 6 * flicker, reach = 18 });
     }
     foreach (var row in zombies)
     {
@@ -226,18 +193,6 @@ void AddLight(mut Lights lights, float3 eye, Light light)
         }
     }
     if (far < worstFar) lights.list[worst] = light;
-}
-
-int ChestStallOf(Plan plan, int spot)
-{
-    mut var n = 0;
-    for (var i = 0; i < plan.stalls.count; i++)
-    {
-        if (plan.stalls[i].sale != Sale.Chest) continue;
-        if (n == spot) return i;
-        n += 1;
-    }
-    return -1;
 }
 
 // Kicks to the eye from what happens: a blow taken, a blast near, a bow loosed.

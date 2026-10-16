@@ -64,7 +64,7 @@ float SphereHit(float3 from, float3 to, float3 middle, float radius)
 }
 
 [Stage(Tick.Missiles)]
-system Fly(mut Missile missile, Ashwick ashwick, Match match, Time time, query (Zombie zombie) zombies)
+system Fly(mut Missile missile, Ashwick ashwick, Time time, query (Zombie zombie) zombies)
 {
     var dt = time.dt;
     missile.age += dt;
@@ -89,7 +89,7 @@ system Fly(mut Missile missile, Ashwick ashwick, Match match, Time time, query (
     var from = missile.at;
     missile.velocity.y -= missile.gravity * dt;
     var to = from + missile.velocity * dt;
-    var wall = RayHit(ashwick, match.gatesOpen, from, to, out var normal);
+    var wall = RayHit(ashwick, from, to, out var normal);
     // The dead on the way, nearest first
     mut List<Entity> struck = [];
     mut List<float> when = [];

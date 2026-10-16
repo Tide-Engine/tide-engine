@@ -1,0 +1,283 @@
+// The cards after a wave: three for each survivor, one taken with 1, 2 or 3
+// (the pad's d-pad left, up and right). The first is always a weapon, the
+// second a brew not yet drunk, the third something else that lasts: the
+// Runeforge for the weapon in hand, a whetstone, a heart of oak, hobnailed
+// boots, a deeper quiver, a satchel for fire pots, grave bells. What's taken
+// is kept through going down and bleeding out, till the game's over.
+
+enum Card { Weapon, Brew, Runeforge, Whetstone, Vigor, Boots, Quiver, Pyre, Bells }
+
+const int FORGED_CARD = 100;      // Added to a weapon card's item: it comes runeforged
+
+// Three cards for a survivor, after wave `round`.
+void Deal(mut Survivor survivor, int round)
+{
+    survivor.cards[0] = Card.Weapon;
+    survivor.cardItems[0] = WeaponCard(survivor, round);
+    var brew = BrewCard(survivor);
+    if (brew >= 0)
+    {
+        survivor.cards[1] = Card.Brew;
+        survivor.cardItems[1] = brew;
+    }
+    else
+    {
+        survivor.cards[1] = UpgradeCard(survivor, round, Card.Brew);
+        survivor.cardItems[1] = 0;
+    }
+    survivor.cards[2] = UpgradeCard(survivor, round, survivor.cards[1]);
+    survivor.cardItems[2] = 0;
+    survivor.choosing = true;
+}
+
+// A weapon they don't carry, from the newest of what the night has reached (Tier): a few waves in, some come forged.
+int WeaponCard(Survivor survivor, int round)
+{
+    var reached = Math.Min(4, 1 + round / 3);
+    mut var weapon = Weapon.Longsword;
+    for (var tries = 0; tries < 60; tries++)
+    {
+        var pick = Weapon(1 + Random.NextInt(WEAPON_COUNT - 1));
+        var tier = Tier(pick);
+        if (tier == 0 || tier > reached || tier < reached - 1 || Has(survivor, pick)) continue;
+        weapon = pick;
+        break;
+    }
+    var forged = round >= 10 && Random.NextFloat() < Math.Min(0.6, (round - 9) * 0.1);
+    return int(weapon) + (forged ? FORGED_CARD : 0);
+}
+
+// A brew not yet drunk, or -1.
+int BrewCard(Survivor survivor)
+{
+    mut List<int> left = [];
+    for (var b = 0; b < BREW_COUNT; b++)
+        if (!HasBrew(survivor, Brew(b))) left.Add(b);
+    if (left.count == 0) return -1;
+    return left[Random.NextInt(left.count)];
+}
+
+// Something else that lasts, not `besides`: the Runeforge more likely while the weapon in hand isn't forged.
+Card UpgradeCard(Survivor survivor, int round, Card besides)
+{
+    var weapon = survivor.weapons[survivor.slot];
+    var forgeable = round >= 2 && weapon != Weapon.None && !survivor.forged[survivor.slot];
+    mut List<Card> pool = [];
+    if (forgeable)
+    {
+        pool.Add(Card.Runeforge);
+        pool.Add(Card.Runeforge);
+        pool.Add(Card.Runeforge);
+    }
+    pool.Add(Card.Whetstone);
+    pool.Add(Card.Whetstone);
+    pool.Add(Card.Vigor);
+    pool.Add(Card.Vigor);
+    pool.Add(Card.Boots);
+    pool.Add(Card.Quiver);
+    pool.Add(Card.Pyre);
+    pool.Add(Card.Bells);
+    for (var tries = 0; tries < 20; tries++)
+    {
+        var card = pool[Random.NextInt(pool.count)];
+        if (card != besides) return card;
+    }
+    return besides == Card.Vigor ? Card.Whetstone : Card.Vigor;
+}
+
+// Taking a card: 1, 2 or 3 while there are cards to take.
+[Stage(Tick.Survivors, 1)]
+system Choose(Hands hands, mut Survivor survivor)
+{
+    if (!survivor.choosing || !survivor.ready) return;
+    mut var pick = -1;
+    if (hands.pick1.down) pick = 0;
+    if (hands.pick2.down) pick = 1;
+    if (hands.pick3.down) pick = 2;
+    if (pick < 0) return;
+    var card = survivor.cards[pick];
+    var item = survivor.cardItems[pick];
+    survivor.choosing = false;
+    survivor.picks += 1;
+    Take(survivor, card, item);
+    Send(Picked { seat = survivor.seat, card = card, item = item });
+}
+
+void Take(mut Survivor survivor, Card card, int item)
+{
+    switch (card)
+    {
+        case Card.Weapon:
+            Give(survivor, Weapon(item % FORGED_CARD), item >= FORGED_CARD);
+            return;
+        case Card.Brew:
+            // Drunk there and then
+            survivor.act = Act.Drink;
+            survivor.actTime = 0;
+            survivor.actLength = 2.2;
+            survivor.charge = float(item);
+            Send(Cue { sound = Sfx.Drink, at = survivor.feet });
+            return;
+        case Card.Runeforge:
+        {
+            var slot = survivor.slot;
+            survivor.forged[slot] = true;
+            var info = InfoOf(survivor.weapons[slot], true);
+            survivor.mag[slot] = info.mag;
+            survivor.ammo[slot] = Reserve(survivor, info);
+            survivor.act = Act.Raise;
+            survivor.actTime = 0;
+            survivor.actLength = 0.55;
+            return;
+        }
+        case Card.Whetstone:
+            survivor.edge += 1;
+            return;
+        case Card.Vigor:
+            survivor.vigor += 1;
+            survivor.health = MaxHealth(survivor);
+            return;
+        case Card.Boots:
+            survivor.boots += 1;
+            return;
+        case Card.Quiver:
+            survivor.quiver += 1;
+            Refill(survivor);
+            return;
+        case Card.Pyre:
+            survivor.pyre += 1;
+            survivor.firePots = PotsMost(survivor);
+            return;
+        case Card.Bells:
+            survivor.lures += 2;
+            return;
+    }
+}
+
+// Every arrow, bolt and charge back, and the fire pots.
+void Refill(mut Survivor survivor)
+{
+    for (var i = 0; i < 3; i++)
+    {
+        if (survivor.weapons[i] == Weapon.None) continue;
+        var info = InfoOf(survivor.weapons[i], survivor.forged[i]);
+        survivor.ammo[i] = Reserve(survivor, info);
+        survivor.mag[i] = info.mag;
+    }
+    survivor.firePots = Math.Max(survivor.firePots, PotsMost(survivor));
+}
+
+// What a survivor carries of a weapon's arrows, bolts or charges besides what's loaded: more with deeper quivers.
+int Reserve(Survivor survivor, WeaponInfo info)
+{
+    return int(info.reserve * (1 + 0.5 * survivor.quiver));
+}
+
+// How hard a survivor's blows and missiles land: Twinstrike's quarter more, and a fifth more for each whetstone.
+float Might(Survivor survivor)
+{
+    return (HasBrew(survivor, Brew.Twinstrike) ? 1.25 : 1.0) * (1 + 0.2 * survivor.edge);
+}
+
+int PotsMost(Survivor survivor)
+{
+    return 2 + 2 * survivor.pyre;
+}
+
+string CardTitle(Card card, int item)
+{
+    switch (card)
+    {
+        case Card.Weapon:
+        {
+            var weapon = Weapon(item % FORGED_CARD);
+            return item >= FORGED_CARD ? Info(weapon).upName : Info(weapon).name;
+        }
+        case Card.Brew: return BrewName(Brew(item));
+        case Card.Runeforge: return "The Runeforge";
+        case Card.Whetstone: return "Whetstone";
+        case Card.Vigor: return "Heart of Oak";
+        case Card.Boots: return "Hobnailed Boots";
+        case Card.Quiver: return "Deep Quiver";
+        case Card.Pyre: return "Pyre Satchel";
+        case Card.Bells: return "Grave Bells";
+    }
+    return "";
+}
+
+string CardKind(Card card, int item)
+{
+    switch (card)
+    {
+        case Card.Weapon:
+        {
+            var info = Info(Weapon(item % FORGED_CARD));
+            var kind = info.kind == Kind.Melee ? (info.twoHanded ? "Two-handed" : "One-handed") : info.kind == Kind.Bow ? "Bow" : info.kind == Kind.Crossbow ? "Crossbow"
+                     : info.kind == Kind.Gun ? "Black powder" : info.kind == Kind.Staff ? "Staff" : "Thrown";
+            return item >= FORGED_CARD ? $"{kind}, runeforged" : kind;
+        }
+        case Card.Brew: return "Brew";
+    }
+    return "Keepsake";
+}
+
+// What a card does, in a line or two.
+string CardLine(Card card, int item, Survivor survivor)
+{
+    switch (card)
+    {
+        case Card.Weapon:
+            return Slots(survivor) > 1 && survivor.weapons[1] == Weapon.None ? "Into your second hand" : $"In place of the {HeldName(survivor)}";
+        case Card.Brew: return BrewLine(Brew(item));
+        case Card.Runeforge: return $"Forge the {HeldName(survivor)} into {Info(survivor.weapons[survivor.slot]).upName}";
+        case Card.Whetstone: return "Every blow and shot lands a fifth harder";
+        case Card.Vigor: return "40 more health";
+        case Card.Boots: return "Kicks hit harder, reach further, tire you less";
+        case Card.Quiver: return "Half again the arrows and bolts; filled now";
+        case Card.Pyre: return "Carry two more fire pots; filled now";
+        case Card.Bells: return "Two grave bells: Q rings one";
+    }
+    return "";
+}
+
+string HeldName(Survivor survivor)
+{
+    var weapon = survivor.weapons[survivor.slot];
+    return survivor.forged[survivor.slot] ? Info(weapon).upName : Info(weapon).name;
+}
+
+string BrewName(Brew brew)
+{
+    switch (brew)
+    {
+        case Brew.Ironhide: return "Ironhide Ale";
+        case Brew.Quickhand: return "Quickhand Mead";
+        case Brew.SecondWind: return "Second Wind Cider";
+        case Brew.Twinstrike: return "Twinstrike Brew";
+        case Brew.Fleetfoot: return "Fleetfoot Tonic";
+        case Brew.Packmule: return "Packmule Stout";
+    }
+    return "";
+}
+
+string BrewLine(Brew brew)
+{
+    switch (brew)
+    {
+        case Brew.Ironhide: return "Take more blows";
+        case Brew.Quickhand: return "Reload, draw and switch faster";
+        case Brew.SecondWind: return "Revive faster; alone, rise again once a wave";
+        case Brew.Twinstrike: return "Strike faster and harder";
+        case Brew.Fleetfoot: return "Run faster and longer";
+        case Brew.Packmule: return "Carry a second weapon";
+    }
+    return "";
+}
+
+// A card taken, for what's seen and heard.
+event Picked
+{
+    int seat;
+    Card card;
+    int item;
+}

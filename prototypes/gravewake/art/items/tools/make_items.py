@@ -514,15 +514,15 @@ def well():
     centre_parts(bottom=True, only_y=True)
 
 
+# What the game draws. The village's chest, beacon lever, window planks, coin and hammer power-ups and well are still
+# made by the functions above (add them back here); the forest has none of them.
 ITEMS = [
-    ("chest_closed", chest_closed), ("chest_open_base", chest_open_base), ("chest_lid", chest_lid),
-    ("pu_max_ammo", pu_max_ammo), ("pu_instakill", pu_instakill), ("pu_double", pu_double), ("pu_nuke", pu_nuke),
-    ("pu_carpenter", pu_carpenter), ("pu_firesale", pu_firesale),
+    ("pu_max_ammo", pu_max_ammo), ("pu_instakill", pu_instakill), ("pu_nuke", pu_nuke),
     ("potion_red", potion_red), ("potion_blue", potion_blue), ("potion_green", potion_green),
     ("potion_amber", potion_amber), ("potion_violet", potion_violet), ("potion_white", potion_white),
-    ("lever", lever), ("lever_base", lever_base), ("brazier", brazier), ("plank", plank),
+    ("brazier", brazier),
     ("gravestone_a", gravestone_a), ("gravestone_b", gravestone_b), ("gravestone_c", gravestone_c),
-    ("grave_mound", grave_mound), ("well", well),
+    ("grave_mound", grave_mound),
 ]
 
 

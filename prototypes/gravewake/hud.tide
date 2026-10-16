@@ -1,8 +1,9 @@
-// What's written over the picture, after Black Ops 2's zombies: the round in
-// blood-red chalk in the bottom left, everyone's gold over it (with what each
-// blow earns floating off it), the brews drunk, the weapon and its arrows in
-// the bottom right, the crosshair and the mark of a blow landing, what use
-// would do, the power-ups running, a friend down, and the end.
+// What's written over the picture, after Black Ops 2's zombies: the wave in
+// blood-red chalk in the bottom left, everyone's score over it (with what each
+// blow earns floating off it), the brews drunk and keepsakes taken, the weapon
+// and its arrows in the bottom right, the crosshair and the mark of a blow
+// landing, the power-ups running, a friend down, the cards after a wave, and
+// the end.
 using Rooms;
 
 local singleton Feed
@@ -14,11 +15,14 @@ local singleton Feed
     float headshot;              // Seconds left of HEADSHOT over the crosshair
     float roundFlash;            // Seconds since the round changed
     int roundShown;
-    string banner;               // A power-up's name, or what just happened, big in the middle
+    string banner;               // A power-up's name, or the card just taken, big in the middle
     float bannerLeft;
     Color bannerColor = Color.white;
     float played;                // Seconds played, for the controls' reminder
     float gameOver;
+    float dealt;                 // Seconds the cards have been showing, for their rise
+    List<string> news;           // What the others took, a line each...
+    List<float> newsAge;         // ...and how long ago
 }
 
 struct Gain
@@ -93,10 +97,8 @@ string BoonName(Boon kind)
     {
         case Boon.MaxAmmo: return "FULL QUIVERS";
         case Boon.InstaKill: return "DEATH'S TOUCH";
-        case Boon.DoublePoints: return "DOUBLE GOLD";
-        case Boon.Nuke: return "HOLY FIRE";
     }
-    return "CARPENTER";
+    return "HOLY FIRE";
 }
 
 // The round, as chalk: strokes for the first five, numerals after.
@@ -142,90 +144,8 @@ void DrawBrew(Brew brew, float2 at, float u)
     Draw.Circle(at + float2(-3 * u, 1 * u), 2.5 * u, Color(1, 1, 1, 0.5));
 }
 
-string PromptOf(Survivor me, Ashwick ashwick, Match match, Party party, out bool held)
-{
-    held = false;
-    if (me.aimed < 0) return "";
-    var kind = AimKind(me.aimed);
-    var index = AimIndex(me.aimed);
-    switch (kind)
-    {
-        case Target.Friend:
-            held = true;
-            return $"Hold E to revive {HeroName(index)}";
-        case Target.Window:
-            held = true;
-            return "Hold E to board up the window";
-        case Target.Gate:
-        {
-            var gate = ashwick.gates[index];
-            var what = gate.look == GateLook.Rubble ? "clear the way" : gate.look == GateLook.Bars ? "raise the gate" : "open the door";
-            return $"Press E to {what} [{gate.cost}]";
-        }
-        case Target.ChestPrize:
-            return $"Press E for the {Info(match.chestWeapon).name}";
-        case Target.ForgePrize:
-            return $"Press E for {Info(match.forgeWeapon).upName}";
-    }
-    var stall = ashwick.stalls[index];
-    switch (stall.sale)
-    {
-        case Sale.Weapon:
-        {
-            var weapon = Weapon(stall.item);
-            var info = Info(weapon);
-            for (var i = 0; i < 3; i++)
-            {
-                if (me.weapons[i] != weapon) continue;
-                if (!UsesAmmo(weapon)) return $"You carry the {info.name}";
-                return $"Press E for {(info.kind == Kind.Bow ? "arrows" : "bolts")} [{(me.forged[i] ? 4500 : AmmoCost(weapon))}]";
-            }
-            return $"Press E for the {info.name} [{info.cost}]";
-        }
-        case Sale.FirePots:
-            return $"Press E for fire pots [{FIREPOT_COST}]";
-        case Sale.Bells:
-            if (me.lures >= BELLS_MOST) return "You carry two grave bells";
-            return $"Press E for grave bells [{BELL_COST}]: Q rings one";
-        case Sale.Brew:
-        {
-            var brew = Brew(stall.item);
-            if (HasBrew(me, brew)) return $"You've drunk the {BrewName(brew)}";
-            if (!match.power && brew != Brew.SecondWind) return "The alchemist's fire is out: light the beacon";
-            return $"Press E for {BrewName(brew)} [{BrewCost(brew, Players(party))}]";
-        }
-        case Sale.Chest:
-            if (match.chest == ChestState.Shut) return $"Press E for the Pilgrim's Chest [{CHEST_COST}]";
-            return "";
-        case Sale.Forge:
-            if (!match.power) return "The Runeforge is cold: light the beacon";
-            if (match.forge == ForgeState.Working) return "The Runeforge is working";
-            if (match.forge == ForgeState.Offering) return "Not yours to take";
-            if (me.forged[me.slot]) return "That weapon bears the runes already";
-            return $"Press E to runeforge your weapon [{FORGE_COST}]";
-        case Sale.Beacon:
-            if (match.power) return "";
-            return "Press E to light the beacon";
-    }
-    return "";
-}
-
-string BrewLine(Brew brew)
-{
-    switch (brew)
-    {
-        case Brew.Ironhide: return "Take more blows";
-        case Brew.Quickhand: return "Reload, draw and switch faster";
-        case Brew.SecondWind: return "Revive faster; alone, rise again";
-        case Brew.Twinstrike: return "Strike faster and harder";
-        case Brew.Fleetfoot: return "Run faster and longer";
-        case Brew.Packmule: return "Carry a second weapon";
-    }
-    return "";
-}
-
 [Stage(Layers.Hud)]
-view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
+view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
 {
     if (lobby.page != Page.Playing) return;
     Cursor.Lock();
@@ -245,7 +165,7 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
     }
     if (!found) return;
 
-    // ---- The round, bottom left ----
+    // ---- The wave, bottom left ----
     if (match.round != feed.roundShown)
     {
         feed.roundShown = match.round;
@@ -254,7 +174,7 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
     feed.roundFlash += dt;
     DrawRound(match.round, float2(34 * u, h - 30 * u), u, feed.roundFlash);
 
-    // ---- Everyone's gold, over the round ----
+    // ---- Everyone's score, over the wave ----
     mut var line = 0;
     foreach (var row in survivors)
     {
@@ -289,14 +209,17 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
         else feed.gains[i] = gain;
     }
 
-    // ---- Brews drunk ----
+    // ---- Brews drunk, and the keepsakes taken ----
     mut var brewAt = 0;
+    var shelf = h - 128 * u - line * 30 * u - 14 * u;
     for (var b = 0; b < BREW_COUNT; b++)
     {
         if ((mine.brews & (1 << b)) == 0) continue;
-        DrawBrew(Brew(b), float2(40 * u + brewAt * 32 * u, h - 128 * u - line * 30 * u - 14 * u), u);
+        DrawBrew(Brew(b), float2(40 * u + brewAt * 32 * u, shelf), u);
         brewAt += 1;
     }
+    var kept = Keepsakes(mine);
+    if (kept != "") Write(kept, float2(30 * u, shelf - (brewAt > 0 ? 28 : 6) * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, 0.85), Anchor.MiddleLeft);
 
     // ---- The weapon, bottom right ----
     var weapon = mine.weapons[mine.slot];
@@ -370,48 +293,37 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
         WriteBold("HEADSHOT", middle + float2(0, -46 * u - rise), 17 * u, Color(1.0, 0.25, 0.12, a), Anchor.MiddleCenter);
     }
 
-    // ---- What use would do ----
-    var prompt = PromptOf(mine, ashwick, match, party, out var held);
-    if (prompt != "" && mine.life == Life.Standing)
-    {
-        Write(prompt, float2(w * 0.5, h * 0.64), 18 * u, BONE, Anchor.MiddleCenter);
-        if (mine.aimed >= 0 && AimKind(mine.aimed) == Target.Stall && ashwick.stalls[AimIndex(mine.aimed)].sale == Sale.Brew)
-            Write(BrewLine(Brew(ashwick.stalls[AimIndex(mine.aimed)].item)), float2(w * 0.5, h * 0.64 + 24 * u), 14 * u, ASH, Anchor.MiddleCenter);
-        if (held && mine.using >= 0 && AimKind(mine.using) == Target.Window)
-            Draw.Rect(float2(w * 0.5, h * 0.64 + 22 * u), float2(160 * u * Math.Saturate(mine.useTime / (BOARD_SECONDS * Haste(mine))), 4 * u), GOLD);
-    }
+    // ---- A friend to raise ----
+    if (mine.aimed >= 0 && mine.life == Life.Standing) Write($"Hold E to revive {HeroName(mine.aimed)}", float2(w * 0.5, h * 0.64), 18 * u, BONE, Anchor.MiddleCenter);
 
-    // ---- Power-ups running, bottom middle ----
-    mut var boons = 0;
-    if (match.instakill > 0) boons += 1;
-    if (match.doubled > 0) boons += 1;
-    mut var slot = 0;
-    for (var k = 0; k < 2; k++)
+    // ---- Death's Touch running, bottom middle: a skull ----
+    var left = match.instakill;
+    if (left > 0 && (left > 5 || Math.Frac(left * 3) > 0.35))
     {
-        var left = k == 0 ? match.instakill : match.doubled;
-        if (left <= 0) continue;
-        var blink = left > 5 || Math.Frac(left * 3) > 0.35;
-        var at = float2(w * 0.5 + (slot - (boons - 1) * 0.5) * 70 * u, h - 52 * u);
-        slot += 1;
-        if (!blink) continue;
+        var at = float2(w * 0.5, h - 52 * u);
         Draw.Circle(at, 24 * u, Color(0.05, 0.08, 0.05, 0.75));
         Draw.WireCircle(at, 24 * u, 2 * u, Color(0.4, 1.0, 0.45, 0.9));
-        if (k == 0)
-        {
-            // A skull
-            var bone = Color(0.6, 1.0, 0.55);
-            Draw.Circle(at + float2(0, -3 * u), 11 * u, bone);
-            Draw.Rect(at + float2(0, 8 * u), float2(12 * u, 8 * u), bone);
-            Draw.Circle(at + float2(-4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
-            Draw.Circle(at + float2(4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
-        }
-        else
-        {
-            WriteBold("x2", at, 22 * u, Color(0.6, 1.0, 0.55), Anchor.MiddleCenter);
-        }
+        var bone = Color(0.6, 1.0, 0.55);
+        Draw.Circle(at + float2(0, -3 * u), 11 * u, bone);
+        Draw.Rect(at + float2(0, 8 * u), float2(12 * u, 8 * u), bone);
+        Draw.Circle(at + float2(-4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
+        Draw.Circle(at + float2(4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
     }
 
-    // ---- The banner: a power-up's name, the beacon lit ----
+    // ---- What the others took ----
+    for (var i = feed.news.count - 1; i >= 0; i--)
+    {
+        feed.newsAge[i] = feed.newsAge[i] + dt;
+        if (feed.newsAge[i] > 6)
+        {
+            feed.news.RemoveAt(i);
+            feed.newsAge.RemoveAt(i);
+        }
+    }
+    for (var i = 0; i < feed.news.count; i++)
+        Write(feed.news[i], float2(w - 22 * u, 60 * u + i * 20 * u), 14 * u, Color(BONE.r, BONE.g, BONE.b, Math.Saturate(6 - feed.newsAge[i])), Anchor.MiddleRight);
+
+    // ---- The banner: a power-up's name, the card taken ----
     feed.bannerLeft = Math.Max(0, feed.bannerLeft - dt);
     if (feed.bannerLeft > 0 && feed.banner != "")
     {
@@ -453,20 +365,20 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
         }
     }
     if (mine.life == Life.Gone && match.phase != Phase.Over)
-        WriteBold("You bled out. You'll be back next round.", float2(w * 0.5, h * 0.4), 24 * u, BONE, Anchor.MiddleCenter);
+        WriteBold("You bled out. You'll be back when the wave is done.", float2(w * 0.5, h * 0.4), 24 * u, BONE, Anchor.MiddleCenter);
 
     // ---- How to play, for the first minute ----
     if (feed.played < 45 && match.phase != Phase.Over)
     {
         var fade = Math.Saturate((45 - feed.played) * 0.2);
-        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   E use   F kick   V stab   R reload   G fire pot   Q bell",
+        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   F kick   V stab   R reload   G fire pot   Q bell   E revive",
               float2(w * 0.5, h - 14 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)
         Write("Alone. Host a room from the menu to fight with friends.", float2(w - 22 * u, 22 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.UpperRight);
 }
 
-// The end: the round they fell in, and what each did.
+// The end: the wave they fell in, and what each did.
 [Stage(Layers.Hud, 5)]
 view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Survivor survivor) survivors)
 {
@@ -479,10 +391,11 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
     var a = Math.Saturate(match.timer * 0.8);
     Draw.Rect(float2(w * 0.5, h * 0.5), float2(w, h), Color(0.02, 0, 0, 0.55 * a));
     WriteBold("GAME OVER", float2(w * 0.5, h * 0.24), 64 * u, Color(CHALK.r * 1.4, CHALK.g, CHALK.b, a), Anchor.MiddleCenter);
-    var rounds = match.lastRound == 1 ? "You survived 1 round" : $"You survived {match.lastRound} rounds";
+    var rounds = match.lastRound <= 1 ? "The dead took you in the first wave" : $"You held out to wave {match.lastRound}";
     Write(rounds, float2(w * 0.5, h * 0.33), 24 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
     var top = h * 0.43;
     var columns = float4(-90, 40, 140, 240) * u;
+    Write("Score", float2(w * 0.5 - 170 * u, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
     Write("Kills", float2(w * 0.5 + columns.x, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
     Write("Heads", float2(w * 0.5 + columns.y, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
     Write("Downs", float2(w * 0.5 + columns.z, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
@@ -494,6 +407,7 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
         if (!s.ready) continue;
         var y = top + row * 32 * u;
         Write(HeroName(s.seat), float2(w * 0.5 - 300 * u, y), 18 * u, Color(HeroColor(s.seat).r, HeroColor(s.seat).g, HeroColor(s.seat).b, a), Anchor.MiddleLeft);
+        Write($"{s.points}", float2(w * 0.5 - 170 * u, y), 18 * u, Color(GOLD.r, GOLD.g, GOLD.b, a), Anchor.MiddleCenter);
         Write($"{s.kills}", float2(w * 0.5 + columns.x, y), 18 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
         Write($"{s.headshots}", float2(w * 0.5 + columns.y, y), 18 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
         Write($"{s.downs}", float2(w * 0.5 + columns.z, y), 18 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
@@ -507,8 +421,8 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
     }
 }
 
-// Development keys, not in play's interface: F2 gold, F3 the beacon, F4 every door, F5 the round's end, F6 a walk to the
-// next area, F10 the next weapon in hand.
+// Development keys, not in play's interface: F5 the wave's end (and the cards), F6 a walk to the next place, F10 the
+// next weapon in hand.
 local singleton DevWalk
 {
     int next;
@@ -519,9 +433,6 @@ view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
 {
     if (!lobby.playing) return;
     var keys = devices.keyboard;
-    if (keys.f2.down) Send(Cheat { what = 1 });
-    if (keys.f3.down) Send(Cheat { what = 2 });
-    if (keys.f4.down) Send(Cheat { what = 3 });
     if (keys.f5.down) Send(Cheat { what = 4 });
     if (keys.f10.down) Send(Cheat { what = 5 });
     if (keys.f6.down)
@@ -531,7 +442,7 @@ view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
     }
 }
 
-// A new game from the menu starts over at round one.
+// A new game from the menu starts over at the first wave.
 [Stage(Layers.Hud, 20)]
 view Menus(Lobby lobby)
 {
@@ -563,16 +474,17 @@ view TitleCard(Lobby lobby)
     Draw.Text("GRAVEWAKE", float2(left + 4 * u, h * 0.3 + 5 * u), 96 * u, Color(0, 0, 0, 0.85), Anchor.MiddleLeft, Font.Bold);
     Draw.Text("GRAVEWAKE", float2(left, h * 0.3), 96 * u, Color(0.62, 0.05, 0.04), Anchor.MiddleLeft, Font.Bold);
     Draw.Text("GRAVEWAKE", float2(left + 1.5 * u, h * 0.3 - 1.5 * u), 96 * u, Color(0.78, 0.1, 0.07, 0.45), Anchor.MiddleLeft, Font.Bold);
-    Draw.Text("The dead rise in Ashwick. Hold the village, round after round.", float2(left + 4 * u, h * 0.3 + 64 * u), 20 * u, Color(0.85, 0.8, 0.72),
+    Draw.Text("Ashwick burned. Hold the fire in the wood, wave after wave.", float2(left + 4 * u, h * 0.3 + 64 * u), 20 * u, Color(0.85, 0.8, 0.72),
               Anchor.MiddleLeft);
-    Draw.Text("Swords, axes, bows and crossbows  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u, Color(0.6, 0.57, 0.52), Anchor.MiddleLeft);
+    Draw.Text("Swords, axes, bows and crossbows, and a card after every wave  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u,
+              Color(0.6, 0.57, 0.52), Anchor.MiddleLeft);
     if (lobby.message != "") Draw.Text(lobby.message, float2(left + 4 * u, h * 0.86), 15 * u, Color(0.9, 0.5, 0.4), Anchor.MiddleLeft);
     // The licence the first-person arms come under asks for their maker's name
-    Draw.Text("First-person arms by CoinCoin (CC BY 4.0). Village, people and weapons by Quaternius (CC0).", float2(w - 14 * u, h - 12 * u), 11 * u,
+    Draw.Text("First-person arms by CoinCoin (CC BY 4.0). Forest, ruins, people and weapons by Quaternius (CC0).", float2(w - 14 * u, h - 12 * u), 11 * u,
               Color(0.6, 0.57, 0.52, 0.7), Anchor.LowerRight);
 }
 
-// The title: GRAVEWAKE in blood over the village at night, and the way in.
+// The title: GRAVEWAKE in blood over the clearing at night, and the way in.
 override void Rooms.TitlePage(Session session, mut Lobby lobby)
 {
     var connected = session.state == SessionState.Connected;
@@ -602,15 +514,15 @@ override void Rooms.TitlePage(Session session, mut Lobby lobby)
 
 override string Rooms.Tagline()
 {
-    return "The dead rise in Ashwick. Hold the village, round after round.";
+    return "Ashwick burned. Hold the fire in the wood, wave after wave.";
 }
 
 // ---- What the feed hears ----
 
-local event(Earned earned) ShowEarned(Survivor survivor, mut Feed feed, Me me, Match match)
+local event(Earned earned) ShowEarned(Survivor survivor, mut Feed feed, Me me)
 {
     if (survivor.seat != me.seat) return;
-    feed.gains.Add(Gain { points = earned.points * (match.doubled > 0 ? 2 : 1), lane = float(feed.gains.count % 3) });
+    feed.gains.Add(Gain { points = earned.points, lane = float(feed.gains.count % 3) });
 }
 
 local event(Struck struck) ShowMarker(mut Feed feed, Me me)
@@ -631,9 +543,192 @@ local event(Boons boons) ShowBoon(mut Feed feed)
     feed.bannerColor = Color(0.6, 1.0, 0.55);
 }
 
-local event(PowerOn power) ShowPower(mut Feed feed)
+// A card taken: this machine's own as a banner, the others' as a line in the corner.
+local event(Picked picked) ShowPicked(mut Feed feed, Me me)
 {
-    feed.banner = "THE BEACON IS LIT";
-    feed.bannerLeft = 3.2;
-    feed.bannerColor = Color(1.0, 0.65, 0.3);
+    var title = CardTitle(picked.card, picked.item);
+    if (picked.seat == me.seat)
+    {
+        feed.banner = title.ToUpper();
+        feed.bannerLeft = 2.4;
+        feed.bannerColor = CardColor(picked.card);
+        return;
+    }
+    feed.news.Add($"{HeroName(picked.seat)} took {title}");
+    feed.newsAge.Add(0);
+}
+
+// What a survivor has taken besides brews, in a line: "Whetstone 2  Boots 1".
+string Keepsakes(Survivor s)
+{
+    mut var line = "";
+    if (s.edge > 0) line += $"Whetstone {s.edge}   ";
+    if (s.vigor > 0) line += $"Heart of Oak {s.vigor}   ";
+    if (s.boots > 0) line += $"Boots {s.boots}   ";
+    if (s.quiver > 0) line += $"Quiver {s.quiver}   ";
+    if (s.pyre > 0) line += $"Pyre {s.pyre}";
+    return line.Trim();
+}
+
+Color CardColor(Card card)
+{
+    switch (card)
+    {
+        case Card.Weapon: return Color(0.86, 0.84, 0.8);
+        case Card.Brew: return Color(0.55, 0.85, 0.5);
+        case Card.Runeforge: return Color(0.55, 0.7, 1.0);
+    }
+    return GOLD;
+}
+
+// Text in lines no wider than `width`, broken between words, its first line's middle at `at`.
+void WriteWrapped(string text, float2 at, float width, float size, Color tint)
+{
+    var words = text.Split(" ");
+    mut var line = "";
+    mut var y = at.y;
+    foreach (var word in words)
+    {
+        var tried = line == "" ? word : $"{line} {word}";
+        if (line != "" && Draw.MeasureText(tried, size).x > width)
+        {
+            Write(line, float2(at.x, y), size, tint, Anchor.MiddleCenter);
+            y += size * 1.3;
+            line = word;
+        }
+        else
+        {
+            line = tried;
+        }
+    }
+    if (line != "") Write(line, float2(at.x, y), size, tint, Anchor.MiddleCenter);
+}
+
+// The cards after a wave: three across the middle, each with its key, what it is and what it does; then who's still
+// choosing, and the next wave's count.
+[Stage(Layers.Hud, 2)]
+view Cards(Me me, Match match, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
+{
+    if (lobby.page != Page.Playing || match.phase != Phase.Break || match.round <= 0) return;
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    mut var mine = Survivor { };
+    mut var found = false;
+    mut var waiting = "";
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (s.seat == me.seat)
+        {
+            mine = s;
+            found = true;
+        }
+        else if (s.ready && s.choosing)
+        {
+            waiting = waiting == "" ? HeroName(s.seat) : $"{waiting}, {HeroName(s.seat)}";
+        }
+    }
+    if (!found) return;
+    WriteBold($"WAVE {match.round} HELD", float2(w * 0.5, h * 0.14), 34 * u, Color(CHALK.r * 1.5, CHALK.g * 1.5, CHALK.b, 1), Anchor.MiddleCenter);
+    if (mine.choosing)
+    {
+        feed.dealt += Math.Min(Frame.dt, 0.05);
+        Write("Take one", float2(w * 0.5, h * 0.14 + 34 * u), 16 * u, ASH, Anchor.MiddleCenter);
+        var size = float2(232, 300) * u;
+        for (var k = 0; k < 3; k++)
+        {
+            var rise = Math.SmoothStep(0, 1, Math.Saturate(feed.dealt * 4 - k * 0.35));
+            var middle = float2(w * 0.5 + (k - 1) * (size.x + 26 * u), h * 0.5 + (1 - rise) * 40 * u);
+            var card = mine.cards[k];
+            var item = mine.cardItems[k];
+            var tint = CardColor(card);
+            var a = rise;
+            Draw.RoundRect(middle + float2(4, 6) * u, size, 10 * u, Color(0, 0, 0, 0.5 * a));
+            Draw.RoundRect(middle, size, 10 * u, Color(0.07, 0.05, 0.045, 0.92 * a));
+            Draw.WireRoundRect(middle, size - float2(10, 10) * u, 7 * u, 1.5 * u, Color(tint.r * 0.6, tint.g * 0.6, tint.b * 0.6, 0.7 * a));
+            // Its key, at the top
+            var key = middle + float2(0, -size.y * 0.5 + 34 * u);
+            Draw.Circle(key, 17 * u, Color(CHALK.r, CHALK.g, CHALK.b, 0.9 * a));
+            WriteBold($"{k + 1}", key, 20 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+            // A brew's bottle, the forge's runes, or a mark for the rest
+            var mark = middle + float2(0, -46 * u);
+            if (card == Card.Brew) DrawBrew(Brew(item), mark, u * 1.6);
+            else DrawCardMark(card, item, mark, u, a);
+            Write(CardKind(card, item).ToUpper(), middle + float2(0, 6 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
+            var title = CardTitle(card, item);
+            var titleSize = Draw.MeasureText(title, 21 * u).x > size.x - 24 * u ? 17 * u : 21 * u;
+            WriteBold(title, middle + float2(0, 32 * u), titleSize, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
+            WriteWrapped(CardLine(card, item, mine), middle + float2(0, 66 * u), size.x - 34 * u, 13 * u, Color(BONE.r, BONE.g, BONE.b, 0.85 * a));
+        }
+        Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.5 + 180 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
+        return;
+    }
+    feed.dealt = 0;
+    if (waiting != "" && match.choosing < CHOICE_MOST)
+        Write($"Waiting for {waiting} to choose", float2(w * 0.5, h * 0.14 + 34 * u), 16 * u, ASH, Anchor.MiddleCenter);
+    else
+        Write($"Wave {match.round + 1} in {int(Math.Ceil(Math.Max(0, BREAK_SECONDS - match.timer)))}", float2(w * 0.5, h * 0.14 + 34 * u), 18 * u, BONE, Anchor.MiddleCenter);
+}
+
+// A card's mark: what a weapon card's weapon is, a rune for the Runeforge, a simple sign for the rest.
+void DrawCardMark(Card card, int item, float2 at, float u, float a)
+{
+    var tint = CardColor(card);
+    var c = Color(tint.r, tint.g, tint.b, a);
+    switch (card)
+    {
+        case Card.Weapon:
+        {
+            var info = Info(Weapon(item % FORGED_CARD));
+            if (info.kind == Kind.Bow)
+            {
+                Draw.Arc(at + float2(-14 * u, 0), 30 * u, -1.1, 2.2, 3 * u, c);
+                Draw.Line(at + float2(-1.5 * u, -26 * u), at + float2(-1.5 * u, 26 * u), 1.2 * u, c);
+                Draw.Line(at + float2(-18 * u, 0), at + float2(26 * u, 0), 2 * u, c);
+            }
+            else if (info.kind == Kind.Crossbow || info.kind == Kind.Gun)
+            {
+                Draw.Line(at + float2(-28 * u, 4 * u), at + float2(28 * u, 4 * u), 4 * u, c);
+                Draw.Line(at + float2(-16 * u, 4 * u), at + float2(-22 * u, 22 * u), 4 * u, c);
+                if (info.kind == Kind.Crossbow) Draw.Line(at + float2(18 * u, -18 * u), at + float2(18 * u, 26 * u), 3 * u, c);
+            }
+            else if (info.kind == Kind.Staff)
+            {
+                Draw.Line(at + float2(-18 * u, 26 * u), at + float2(14 * u, -20 * u), 3.5 * u, c);
+                Draw.Circle(at + float2(16 * u, -23 * u), 6 * u, c);
+            }
+            else
+            {
+                // A blade, point up, and its cross
+                Draw.Line(at + float2(0, 28 * u), at + float2(0, -28 * u), 4 * u, c);
+                Draw.Line(at + float2(-12 * u, 14 * u), at + float2(12 * u, 14 * u), 3.5 * u, c);
+            }
+            return;
+        }
+        case Card.Runeforge:
+            Draw.WireCircle(at, 26 * u, 2 * u, c);
+            for (var k = 0; k < 6; k++)
+            {
+                var turn = k * Math.TAU / 6;
+                Draw.Line(at + float2(Math.Cos(turn), Math.Sin(turn)) * 13 * u, at + float2(Math.Cos(turn), Math.Sin(turn)) * 22 * u, 2 * u, c);
+            }
+            return;
+        case Card.Vigor:
+            Draw.Circle(at + float2(-9 * u, -6 * u), 11 * u, c);
+            Draw.Circle(at + float2(9 * u, -6 * u), 11 * u, c);
+            List<Vertex> point = [Vertex { position = at + float2(-19 * u, -1 * u), color = c }, Vertex { position = at + float2(19 * u, -1 * u), color = c },
+                                  Vertex { position = at + float2(0, 22 * u), color = c }];
+            List<int> faces = [0, 1, 2];
+            Draw.Mesh(point, faces);
+            return;
+        case Card.Pyre:
+        case Card.Bells:
+            Draw.Circle(at + float2(0, 6 * u), 16 * u, c);
+            Draw.Rect(at + float2(0, -14 * u), float2(10 * u, 10 * u), c);
+            return;
+    }
+    // A whetstone's bar, a boot's sole, a quiver's arrows: a few strokes
+    for (var k = 0; k < 3; k++) Draw.Line(at + float2(-22 * u, (k - 1) * 12 * u), at + float2(22 * u, (k - 1) * 12 * u - 8 * u), 3 * u, c);
 }

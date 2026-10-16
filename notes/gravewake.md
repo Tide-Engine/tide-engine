@@ -12,128 +12,173 @@ zombies but swords, bows, crossbows, etc. We should include A LOT of them and
 it should be 3D first person. It should be a polished game." Later: software
 renderers being slow is fine; the owner tests performance on their machine.
 
-Everything else is Claude's pick and Provisional: the name, the village of
-Ashwick and its layout, the economy and every number, the four survivors, the
-weapon list, the brews, the art direction and the controls.
+Then, the same day: "i think this could work better as a roguelike in maybe a
+forest or something where after each wave we can choose some upgrade or
+another weapon or something like that". Asked, the owner chose all three of
+the recommended answers: the forest **replaces the village** (one clearing;
+the doors, windows, walls to buy from, the chest, the Runeforge's anvil and
+the beacon go); after each wave everyone **picks one of three cards, with no
+gold** (a weapon, a brew, an upgrade; points stay as a score); the run is
+**endless and escalating** (how far they got is the score).
+
+Everything else is Claude's pick and Provisional: the name, Ashwick Wood and
+its layout, the cards and every number, the four survivors, the weapon list,
+the brews, the art direction and the controls.
 
 ## How it plays
 
-Round-based survival in the Black Ops 2 mould, with medieval things in place
-of guns and perks:
+Endless waves in a forest clearing, a card after each, with medieval things
+in place of guns and perks:
 
-- **Points.** 10 a hit, 20 a hit to the head, 50 a kill, 100 a kill to the
-  head; burning and bleeding give none. Nailing boards back pays 10 a board, 400 a round at most. Going down
-  costs 5%. Points buy the doors, rubble and iron bars between Ashwick's seven
-  areas (750 to 1250), weapons off the walls (500 to 2000, ammunition half
-  that, 4500 for a forged one's), the Pilgrim's Chest (950), the Runeforge
-  (5000), six brews (500 to 4000, four at most, only once the keep's beacon is
-  lit, Second Wind always), fire pots (250 for four) and grave bells (1000 for
-  two).
-- **Rounds.** 6, 8, 13, 18 of the dead, then `24 * (0.6 + round / 10)`, each
+- **Waves.** 6, 8, 13, 18 of the dead, then `24 * (0.6 + wave / 10)`, each
   times `1 + 0.6` per extra player; at most 24 up at once. Health 150, +100 a
-  round to round nine, then ×1.1 a round. A spawn every
-  `max(0.35, 2 * 0.95^(round-1)) / (1 + 0.3 per extra player)` seconds, at one
-  of the four open spawn points nearest a random standing survivor. Runners
-  from round three (12% more a round, 92% at most), sprinters among them from
-  round nine. Nine seconds between rounds.
-- **The dead** rise out of graves and the ground (1.8 s) or come to a
-  window, tear off its six boards (1.1 s each) and climb in (1.5 s). Hunting,
-  they walk a flow field to the nearest standing survivor and claw (50 a
-  hit, 1.1 s between). Heads take more. Elements: fire burns for 3 s, frost
-  slows for 3 s and a second frost blow while slowed freezes solid for 1.2 s,
-  lightning stuns for 0.6 s (the Staff of Storms chains), bleeding ticks for
-  3 s, a blast bursts round the hit; burning and bleeding pay no points and
-  show no hit marker until they kill.
+  wave to wave nine, then ×1.1 a wave. A spawn every
+  `max(0.35, 2 * 0.95^(wave-1)) / (1 + 0.3 per extra player)` seconds, at one
+  of the five risers nearest a random standing survivor, but none within 7 m
+  of them. Runners from wave three (12% more a wave, 92% at most), sprinters
+  among them from wave nine.
+- **Between waves** (`rounds.tide`'s `Regroup`, `cards.tide`): whoever is
+  down stands up, whoever bled out comes back at their place by the fire,
+  everyone is healed and their arrows, bolts, charges and pots filled, Second
+  Wind alone gives back its rising, and each survivor is dealt three cards.
+  The next wave starts five seconds after the last card is taken, or after
+  45 s for one who hasn't taken one (whose cards are then lost). Late joiners
+  start with the hand crossbow and are dealt at the next wave's end.
+- **The cards.** Taken with 1, 2 or 3 (the pad's d-pad left, up, right).
+  The first is always a weapon not carried, from the two newest tiers the
+  night has reached (`weapons.tide`'s `Tier`: 1 from the first wave, 2 from
+  the third, 3 from the sixth, 4 from the ninth; from the tenth wave a growing
+  share come runeforged). The second is a brew not yet drunk (drunk there and
+  then) or, once all six are, another keepsake. The third is a keepsake: the
+  Runeforge for the weapon in hand (three times as likely while it isn't
+  forged, from the second wave), a whetstone (+20% damage to every blow,
+  missile and spell, stacking), a heart of oak (+40 health), hobnailed boots
+  (kick reach +0.3 m, one more knocked over, damage ×(1 + boots) and stamps
+  ×(1 + 0.4 boots), less stamina), a deep quiver (+50% reserve), a pyre
+  satchel (two more fire pots carried) or two grave bells. Everything taken
+  stays through downs and bleeding out, until the game's over; there's no cap
+  on brews.
+- **Points** are only a score now: 10 a hit, 20 a hit to the head, 50 a
+  kill, 100 a kill to the head; burning and bleeding give none. They show
+  over the wave's tally and on the game-over table.
+- **The dead** rise out of eight graves on the clearing's west side and from
+  among the roots at fourteen places round its edge (1.8 s), then walk a
+  flow field to the nearest standing survivor and claw (50 a hit, 1.1 s
+  between). Heads take more. Elements: fire burns for 3 s, frost slows for
+  3 s and a second frost blow while slowed freezes solid for 1.2 s, lightning
+  stuns for 0.6 s (the Staff of Storms chains), bleeding ticks for 3 s, a
+  blast bursts round the hit; burning and bleeding pay no points and show no
+  hit marker until they kill.
 - **Melee, after Dying Light** (the owner, 2026-10-16: "maybe we can get
   inspired by dying light's melee combat, including the kicking and them
   tumbling over"). F kicks (0.55 s, a fifth of the stamina bar): up to three
   of the dead within 1.9 m in front go over backwards (25 damage, thrown back
   at 6 m/s); one already down is stamped on, on the head, for
-  `220 + 0.4 × the round's health`. A heavy blow from something blunt, swept
+  `220 + 0.4 × the wave's health`. A heavy blow from something blunt, swept
   wide or two-handed also takes them off their feet. One thrown back knocks
   over the next it falls into. Down (`ZombieState.Fallen`), one goes over
   with the knockback clip (0.83 s), lies 1.3 to 2.5 s and gets up with UAL2's
   `LayToIdle` (1.53 s); lying, it takes half as much again from every blow,
   and its head, chest and hips (`Body`) are where the lying body has them, for
   blows and missiles alike. Killed while down it stays down; killed by a
-  blow that knocks down, it's thrown over as it dies. One tearing at a window
-  is knocked back from it instead, and starts on the board again.
+  blow that knocks down, it's thrown over as it dies.
 - **Headshots** are their own thing: a gold hit marker (red and bigger for a
   kill), a crack every time, a higher tick to the one who hit, HEADSHOT over
-  the crosshair for a kill, and the head comes off (the head bone scaled to
-  nothing, a burst of blood and bone, the neck spraying a moment).
+  the crosshair for a kill, and the head comes off.
 - **Down and out.** At 0 health a survivor is downed for 30 s and fights on
   from the ground: with the weapon in hand if it shoots, or a last stand's
   hand crossbow of 12 bolts if it doesn't (`LastStand`, in the third slot,
-  put away again by `StandUp`). They're raised by a friend holding use for 3 s.
-  Going down with Packmule loses the second weapon (the one not in hand). Alone, down
-  is the end unless they drank Second Wind Cider (a self-revive, 500 alone,
-  1500 with others). Who bleeds out comes back at the next round with what
-  they started with and the points they had. When nobody is left standing,
-  the game is over; use (or the menu's New game) starts again from round one.
+  put away again by `StandUp`). They're raised by a friend holding E for 3 s.
+  Alone, down is the end unless they drank Second Wind Cider (a rising a
+  wave). Who bleeds out comes back at the wave's end. When nobody is left
+  standing, the game is over; use (or the menu's New game) starts again from
+  the first wave, with nothing kept.
 - **Weapons.** 33 and bare hands (`weapons.tide`): 18 melee (slash, chop,
   thrust, or a wide sweep; a heavy blow on right mouse), four bows (hold to
   draw, let go to loose), four crossbows, a handgonne, three staffs and two
   thrown. A survivor carries one (two with Packmule Stout) and starts with
-  the hand crossbow; a weapon bought or taken replaces the one in hand. The
-  stab and the kick are always to hand (the owner, 2026-10-16: "maybe we just
-  have one weapon and we need to pick between melee or not? we already have a
-  stab and the kick so we dont need another melee"). 11 are on walls; the
-  chest gives any but the hand crossbow (the rusty sword is its dud). After three uses the chest may show a skull and fly to another of its
-  five places. The Runeforge renames a weapon and multiplies its damage (×3
-  melee, ×2 staffs, ×2.5 the rest), its magazine (×1.5) and reserve (×1.6),
-  and gives it an element. V stabs with a dagger whatever's in hand; G throws
-  a fire pot; Q rings a grave bell, which draws the dead within 35 m of path
-  for 7 s and then bursts.
-- **Power-ups**, at most four a round (2.8% a kill), in a fixed rotation with
+  the hand crossbow; a weapon card replaces the one in hand. The stab and the
+  kick are always to hand (the owner, 2026-10-16: "maybe we just have one
+  weapon and we need to pick between melee or not? we already have a stab and
+  the kick so we dont need another melee"). The Runeforge multiplies a
+  weapon's damage (×3 melee, ×2 staffs, ×2.5 the rest), its magazine (×1.5)
+  and reserve (×1.6), and gives it an element. V stabs with a dagger
+  whatever's in hand; G throws a fire pot; Q rings a grave bell, which draws
+  the dead within 35 m of path for 7 s and then bursts.
+- **Power-ups**, at most four a wave (2.8% a kill), in a fixed rotation with
   random skips: Full Quivers (ammunition), Death's Touch (one-hit kills,
-  30 s), Double Gold (30 s), Holy Fire (every one of the dead, +400 each), the
-  carpenter (every board back, +200 each).
+  30 s), Holy Fire (every one of the dead). Double Gold and the carpenter
+  went with the village.
 
 ## Contracts
 
-- **The match** (`game.tide`, `rounds.tide`, `zombies.tide`, `hands.tide`,
-  `missiles.tide`, `shrines.tide`, `ashwick.tide`) is deterministic and
-  ordered by `enum Tick { Restart, Survivors, Hands, Missiles, Zombies, Field,
-  Rounds, Late }`. `Random` is the match's; views roll their own local
-  `Random` (`Fx.random`).
-- **Ashwick is one function**, `MakePlan()` (`plan.tide`): the match keeps its
-  solids, gates, windows, risers, stalls, areas and starts (`Ashwick`, built
-  at `Spawned`), and each machine calls it again for what it draws
-  (`Village`, a local singleton, because local handlers can't read the
-  match's lists). Change one and both follow.
+- **The match** (`game.tide`, `rounds.tide`, `cards.tide`, `zombies.tide`,
+  `hands.tide`, `missiles.tide`, `drops.tide`, `ashwick.tide`) is
+  deterministic and ordered by `enum Tick { Restart, Survivors, Hands,
+  Missiles, Zombies, Field, Rounds, Late }`. `Random` is the match's (the
+  cards are dealt from it); views roll their own local `Random`
+  (`Fx.random`).
+- **Ashwick Wood is one function**, `MakePlan()` (`plan.tide`): the match
+  keeps its solids, risers and starts (`Ashwick`, built at `Spawned`), and
+  each machine calls it again for what it draws (`Village`, a local
+  singleton, because local handlers can't read the match's lists). Change one
+  and both follow. The clearing's edge is `Reach(angle)`, about 16 to 24 m
+  from the fire; the forest past it is drawn but nobody's ground.
 - **Collision** is boxes in 8 m buckets: circles pushed out, standing on the
-  highest top within 0.45 m. A gate's box is gone once it's bought.
-- **Navigation**: a 0.5 m grid, 168 × 160 cells from (-42, -38). Every six
-  ticks `Wayfinding` spreads a breadth-first field from the standing
-  survivors' cells, and another from stuck bells, through open zones only;
-  each zombie steps downhill, or straight at its target when the path is
-  clear. The soak test checks that every spawn point reaches the survivors
-  with every gate open (no one of the dead hunts for two minutes).
+  highest top within 0.45 m. Props, tree trunks, the ruin's walls, the fence,
+  the boulders and the gravestones have boxes.
+- **Navigation**: a 0.5 m grid, 168 × 160 cells from (-42, -38); cells past
+  the clearing's edge are walls. Every six ticks `Wayfinding` spreads a
+  breadth-first field from the standing survivors' cells, and another from
+  stuck bells; each zombie steps downhill, or straight at its target when the
+  path is clear. The soak test checks that every one of the dead reaches the
+  survivors (none hunts for two minutes).
 - **Seats**: `Party` holds four seats (0 Wat, 1 Maud, 2 Godric, 3 Agnes).
-  A joiner takes the first free seat, with `500 + round * 250` points after
-  round one; a leaver's survivor is destroyed.
+  A joiner takes the first free seat; a leaver's survivor is destroyed.
+- **Cards**: `Survivor.cards`, `cardItems` and `choosing`; `dealt` is the
+  wave they were dealt for, so a survivor is dealt once a break. A weapon
+  card's item is the `Weapon`, plus `FORGED_CARD` (100) when it comes forged.
+  `Choose` (at `Tick.Survivors`) takes one on `pick1`..`pick3` and sends
+  `Picked` for what's seen and heard; `RunRounds` holds the countdown while
+  any ready survivor is `choosing`. While choosing, 1 and 2 take cards, not
+  weapons.
 - **Commands**: `Restart` (Rooms' New game, Play, or use on the game-over
   screen) sets `Match.restarting`; the `Tick.Restart` systems clear the dead,
   missiles and drops, re-outfit the survivors and reset the match (command
-  handlers can't query). `Cheat` is the development keys (F2 gold, F3 the
-  beacon, F4 every gate, F5 the round's end, F6 the areas in turn).
+  handlers can't query). `Cheat` is the development keys (F5 the wave's end,
+  F6 the places in turn, F10 the next weapon).
 - **Inputs**: `ready` is `[Absolute]`; the rest are held bools read with
   `.down`, look is clamped to half a radian a tick. Mouse look is read only
   while the cursor is locked.
-- **What's local**: the camera (`Me`), the plan's copy and gate animations
-  (`Village`), the kit's placements (`Kit`), poses (`local Pose pose` on
-  survivors and zombies, sampled once a frame), walk clocks, hit flashes,
-  voices and drop hums (`local` fields), the feed, effects and sounds.
-  Hits, kills, blows, missiles and cues reach views through local handlers.
+- **What's local**: the camera (`Me`), the plan's copy (`Village`), the kit's
+  placements (`Kit`), poses (`local Pose pose` on survivors and zombies,
+  sampled once a frame), walk clocks, hit flashes, voices, gibs and drop hums
+  (`local` fields), the feed (with the others' picks), effects and sounds.
+  Hits, kills, blows, missiles, picks and cues reach views through local
+  handlers.
 
 ## Art
 
-- The village is Quaternius' Medieval Village, Fantasy Props and Stylized
-  Nature MegaKits (CC0), split by texture into 113 parts of 63 pieces
-  (`art/kit/tools/split_kit.py`, heavy pieces decimated) with 14 textures
-  shrunk for the web and darkened by the kits' occlusion (`make_textures.py`).
-  Each part draws instanced with its texture.
+- Ashwick Wood is Quaternius' Stylized Nature, Medieval Village and Fantasy
+  Props MegaKits (CC0), split by texture into 63 parts of 40 pieces
+  (`art/kit/tools/split_kit.py`, `pieces.txt`; trees and bushes decimated)
+  with 19 textures shrunk for the web and darkened by the kits' occlusion
+  (`make_textures.py`). Each part draws instanced with its texture. The
+  nature kit's vertex colours are wind weights, not colour (its trees had
+  come out red), so `split_kit.py` drops them for its textures; the twisted
+  trees' leaves (the kit's red variant) are its white mask tinted an autumn
+  olive. Placed by `MakePlan`: 96 trees close round the edge and 110 more out
+  to 60 m in the fog, bushes, ferns and plants along the edge, grass and
+  mushrooms over the clearing, the ruin's stone walls (`StoneWall`, with
+  fallen segments) and floor, the graveyard's iron fence, the camp's props.
+  The ground is the `Earth` frag: loam, moss, drifts of fallen leaves
+  thickening toward the trees, trodden bare round the fire.
+- The village (2026-10-16, replaced the same day by the forest): the notes
+  below on its doors, windows and well are its history. The items it alone
+  used (the chest, the beacon's lever, the window planks, the coin and hammer
+  power-ups, the well) are no longer made or packed (`art/items/README.md`);
+  `sfx/` still has the door, board, chest, coin and forge sounds, which the
+  game no longer declares, so they aren't packed.
 - People: six of the dead and four survivors from Ultimate Modular Men and
   Women, recoloured in Blender (`art/people/tools/make_bodies.py`); clips from
   the men's pack and Universal Animation Library 1 and 2, retargeted onto
@@ -155,8 +200,8 @@ of guns and perks:
   (mirrored into the left hand), arrow, draw, hold, loose and nock; the
   kit's knife stab for V. A weapon model sits on the rig's `weapon` bone
   (`Seat`). Blows land when the clip's do (`StrikeTime` maps the act's hit
-  time onto each clip's impact). Aiming a crossbow raises the arms
-  (`AimShift`) instead of a clip. The old procedural fists, forearms and
+  time onto each clip's impact). Aiming a crossbow brings its line
+  under the eye (held.tide, below) instead of a clip. The old procedural fists, forearms and
   swing keyframes are gone. A survey of free first-person packs found nothing
   better that may be redistributed (Fab/Unity/Mixamo licences, itch.io behind
   a challenge); the kit is semi-stylized, a little more detailed than
@@ -257,6 +302,16 @@ of guns and perks:
   shut and open from both sides, the eight areas in four directions, the
   well, the bell stall, the kick, a two-player fight with knockdowns.
 
+- The roguelike's validation (2026-10-16): native debug `gravewake_test`
+  (36 s) and the web debug WASI test (48 s) pass, and the web debug page
+  builds. The browser tests weren't run (the owner asked to stop running them
+  for this game); `test/browser.mjs` was brought up to date (the cards, the
+  walk round the clearing) and checked to parse. Looked at in standard-host
+  captures: the title's circle round the fire, the clearing from eight
+  places, overhead, the cards, the first wave, and every weapon in hand
+  idle, mid-attack and aimed or heavy (unchanged from the last round). The
+  thumbnail is a one-player run looking north across the fire, frame 800.
+
 ## Rendering
 
 - The scene draws into a multisampled `Rgba16f` window target and `Develop`
@@ -264,34 +319,38 @@ of guns and perks:
   blur), the hurt and downed reds and the game-over fade.
 - Light: a moon with a 2048-texel orthographic shadow map following the
   camera (snapped to its texels), a sky dome, fog, and up to 28 point lamps
-  nearest the camera: torches on brackets (`WallTorch`), the tavern's
-  chandelier, the chapel's candles, the beacon's braziers once lit, the
-  Runeforge at work, the chest's beam, fireballs and burning dead.
+  nearest the camera: the ruin's two torches (`WallTorch`), the two fires'
+  braziers (always burning), fireballs and burning dead.
 - Kit placements are culled by distance each frame. The first-person arms
   draw after a depth clear, hung from the eye (`FpEye`: 0.15 m lower for the
   made clips, eased between), with sway, bob, a lowered raise, a sprint carry
   and a shot's recoil on top of the clips.
-- Behind the title, the camera circles the square at 6 m round (-1, -1),
-  clear of the market's cart (it used to pass through its canopy).
+- Behind the title, the camera circles the fire at 6.5 m, looking past it
+  into the trees.
 
 ## Tests and validation
 
 - `gravewake_test` (native and WASI, `test/test.c`): two players through the
-  real input: round one held with swords (kills, points, torn boards), the
-  tavern's door, a wall weapon, the chest, the keep's bars and the beacon,
-  Ironhide, the smithy and the Runeforge, a downed friend raised, a crossbow
-  bolt into the dead, the chapel's rubble and grave bells (bought, one rung,
-  the lure field reaching it), a bleeding wound wearing one down, a forged
-  Falchion's first blow slowing and its second freezing, then both holding the
-  square with every gate
-  open for three rounds (every one of the dead reaches them within two
-  minutes), then the match from a snapshot and through its packed bytes
-  hashes the same.
+  real input: the risers and starts clear of every box and on walkable
+  ground; the first wave held with a sword (kills, a score); the cards dealt
+  (a weapon not carried, a brew, a keepsake), one taken by each, the
+  countdown held while one is still choosing, a brew drunk; every keepsake
+  taken through the input (the Runeforge, the quiver's reserve, the heart's
+  health, the whetstone, boots, the pyre's pots, bells, Packmule's second
+  hand, a forged weapon card); a sword-carrier downed into the last stand
+  with every brew kept and raised by the other; one bleeding out and back at
+  the wave's end with everything; a crossbow bolt into the dead; a grave bell
+  rung and the lure field reaching it; a bleeding wound, a forged Falchion's
+  slow and freeze; a kick, a stamp, getting up, a maul's knockdown; then
+  both holding the fire for four waves, taking the third card after each
+  (every one of the dead reaches them within two minutes), then the match
+  from a snapshot and through its packed bytes hashes the same.
 - `gravewake_play_webgl` / `_webgpu` (`test/browser.mjs`, label
   `private-prototype`, `webgpu`, run serially): the page in headless Chrome
-  with frame control and `checkGL`: the title, Play, a swing, the development
-  keys, the crossbow, then a walk through all six other areas, each a
-  different picture, with no runtime, shader or GPU errors. Software WebGL is
+  with frame control and `checkGL`: the title, Play, the first wave, a swing,
+  a crossbow shot, the wave ended by F5 and a card taken, then a walk round
+  six places in the clearing, each a different picture, with no runtime,
+  shader or GPU errors. Not run since the owner asked to stop (2026-10-16). Software WebGL is
   slow on this page, so the test's frames have per-frame deadlines and a
   900 s limit.
 - The browser test replaces `requestPointerLock` with a promise that never
@@ -311,10 +370,14 @@ of guns and perks:
 
 ## Gaps and engine notes
 
-- No touch controls: a phone can open the page but not play.
-- Not measured: frame cost on a real GPU in a browser (the owner is testing
-  it), live play over the Internet with four, gamepad feel, host migration
-  mid-round, balance past round ten.
+- No touch controls: a phone can open the page but not play; cards are taken
+  with keys or the d-pad only (the cursor is locked in play).
+- Not measured: frame cost on a real GPU in a browser with the forest's
+  trees (the owner is testing it), live play over the Internet with four,
+  gamepad feel, host migration mid-wave, balance past wave ten, how the
+  cards' numbers stack deep into a run.
+- Late joiners start with the hand crossbow and nothing taken, a few waves
+  behind the others.
 - What the engine made awkward, worked round in the game:
   - tidec emits an unused `const int32_t` temporary for an int literal given
     to a float field of a frag's values struct (`Skin { eyes = 0 }`), which
@@ -340,6 +403,10 @@ of guns and perks:
   - The Rooms package's views draw before the game's `Develop`, so the
     title's words are drawn by the game's own `TitleCard` view on the HUD
     layer instead of in `TitlePage`.
+  - Local fields can't be fixed arrays (`List<Shard>` holds the gibs'
+    pieces), can't be read through a query's rows (the gibs' blood is a
+    per-entity view), events can't be passed to functions (their fields
+    are), and there's no `float4x4.Scale` (`TRS` with a scale).
   - The web pack carries each texture raw and block-compressed, and globs
     pack whole folders, so the page is about 21 MB after pruning the kit,
     decimating trees, Ogg sounds and three 256-texel textures.
