@@ -39,6 +39,66 @@ Everything else is Claude's pick and Provisional: the name, Ashwick Wood and
 its layout, the classes' kits, the abilities, the cards and every number, the four survivors, the weapon list,
 the brews, the art direction and the controls.
 
+## The pivot (2026-10-16, in progress)
+
+The owner, after the classes and hordes: "PSX low poly style, lets switch to
+more modern fire arms. lets get inspired by games like Megabonk and The Spell
+Brigade or Vampire Survivors much more but keep the manual shooting aspect to a
+degree. I want to control my main weapon but be able to have passive abilities
+that do damage too ... I think Risk of Rain 2 is closer to what I want.
+Essentially a roguelike but zombies with guns and a shit ton of enemies, 150
+wont cut it." Asked, the owner chose: Risk of Rain 2 stages (gold from kills,
+chests of stacking items, a teleporter-like event and a boss, then the next
+stage, difficulty climbing with time); RoR2-style survivor kits, three to
+start (a gun you aim, a secondary, a movement skill, a special); 2000 and more
+of the dead, "push it"; and several PSX biomes.
+
+The work is in phases, each merged when it plays: 1, the horde's technology
+(done, below); 2, the PSX look and modern guns on a first survivor kit; 3, the
+RoR2 loop (gold, chests and items, the teleporter, bosses, scaling); 4, more
+survivors, then the biomes. Until 2 and 3 land, the game is the classes,
+cards and waves below with a much bigger horde.
+
+### Phase 1: the horde (built 2026-10-16)
+
+- **Drawn without skeletons** (`crowd.tide`): the six zombie bodies are cut to
+  about 700 triangles each by `art/crowd/tools/make_crowd.py` (Blender: seams
+  welded first, then decimated, which had torn the packs' split meshes to
+  shreds; Blender 4.4's actions need their slot chosen or nothing plays) and
+  their ten clips (walk, run, sprint, idle, claw, fall, get up, two deaths,
+  rise) baked into one `[Raw]` texture, `art/crowd/anim.png` (546 by 1248, a
+  column per corner, two rows per frame: the corner's place, a byte an axis
+  across the bake's box, and its normal). A vert, `Shamble`, reads two frames
+  and blends; each body is one `Draw.Instanced` of a `Shambler` list
+  (transform, frame rows, blend, flash, burn, frost, tint), gathered each frame
+  by a per-zombie view (`GatherZombie`) and drawn into the picture and the
+  moon's shadows. What a zombie shows comes from its state (`ShowState`): the
+  same clip choices the skinned poses made. The byte positions jitter a little
+  between frames, which suits the look the owner asked for next.
+- **Struck without skeletons**: a zombie's head, chest and hips come from its
+  state (`Muster`: hunched on its feet, flat on its back as it lies, half in
+  the ground rising). `Brace`, the per-zombie pose sampling in the match, and
+  the gibs (pieces that were the whole skinned body drawn with bones
+  squeezed) are gone; a kill bursts blood instead.
+- **The `Herd`** (`zombies.tide`): every one of the dead not dying, rebuilt each
+  tick after the dead move (`HerdClear`, `Muster`) into a grid of 2 m cells
+  (first and next slot lists). Blows, kicks, abilities, spells, missiles and
+  bursts gather only the dead near them, only when something lands (`Near`);
+  the dead's crowding walks the cells directly, a dozen close neighbours of
+  two dozen looked at.
+- **Numbers** (`gravewake_perf`, release, this Windows machine, the horde
+  crowding two survivors): 500 of the dead 0.35 ms a tick, 1000 0.63 ms, 2000
+  1.19 ms, 2500 1.47 ms, 3000 1.82 ms (10.9% of a 60 Hz frame). Before the
+  herd's grid and the lazy gathering: 2000 cost 11 ms. A release run of the
+  game with 2030 entities: the whole frame's CPU 3.0 ms, the GPU 1.0 ms in 121
+  draw calls. `MAX_ALIVE` is 3000. Waves are now `(40 + 30w + 4w²)` (74 the
+  first, 740 the tenth, 2,240 the twentieth for one), health `40 + 25(w-1)`;
+  F4 (development) brings 2000 more, six a tick (`Match.rush`).
+- **Not measured**: a browser frame with thousands on screen, rollback's
+  re-simulation with several players (each tick re-run costs as above), and
+  the match's world hash and snapshot at a megabyte of state.
+- The dead's voices are held to a few a second (`Ears.voices`).
+
 ## How it plays
 
 Endless waves in a forest clearing, a card after each, with medieval things
@@ -486,6 +546,8 @@ in place of guns and perks:
     layer instead of in `TitlePage`.
   - An input can't be passed to a function (`Unleash` takes the move as a
     `float2`).
+  - No instanced skinned draw (`Draw.SkinnedInstanced` is a listed future
+    API): the horde bakes its clips into a texture a vert reads instead.
   - Local fields can't be fixed arrays (`List<Shard>` holds the gibs'
     pieces), can't be read through a query's rows (the gibs' blood is a
     per-entity view), events can't be passed to functions (their fields

@@ -25,7 +25,7 @@ static void tick(void)
         tide_entity e = world.Party.survivors.at[seat];
         Survivor s = tide_get_Survivor(&world, e);
         if (s.life == Life_Standing) {
-            s.health = 100;
+            s.health = 1e9f;      // Not to be downed by hundreds of claws in a tick
             tide_set_Survivor(&world, e, s);
         }
         tide_world_set_input(&world, tide_player_from_index(seat), held[seat]);
@@ -45,6 +45,10 @@ int main(int argc, char **argv)
     tide_world_player_joined(&world, tide_player_from_index(0));
     tide_world_player_joined(&world, tide_player_from_index(1));
     held[0].ready = held[1].ready = true;
+    tick();
+    held[0].pick1 = held[1].pick1 = true;      // A class each, or nothing starts
+    tick();
+    held[0].pick1 = held[1].pick1 = false;
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick();
     // A wave that doesn't end, of the dead that don't die, coming one a tick
     world.Match.round = 12;
@@ -54,6 +58,9 @@ int main(int argc, char **argv)
         tick();
     }
     world.Match.spawnWait = 1e9f;
+    int states[8] = {0};
+    for (uint32_t r = 0; r < world.arch4_Zombie.count; r++) states[TIDE_AT(&world, arch4_Zombie, Zombie, r).state & 7]++;
+    printf("spawned: rising %d hunting %d dying %d fallen %d; to spawn %d, phase %d\n", states[0], states[1], states[2], states[3], world.Match.toSpawn, (int)world.Match.phase);
     for (int i = 0; i < 240; i++) tick();
     const double start = now();
     for (int i = 0; i < ticks; i++) tick();

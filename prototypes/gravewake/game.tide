@@ -324,8 +324,8 @@ system Restarting(mut Match match)
     ResetMatch(match);
 }
 
-// Development shortcuts, not in play's interface (hud.tide's DevKeys): the wave's end (and so the cards), the next
-// weapon, a walk to a place.
+// Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, the wave's end (and so
+// the cards), the next weapon, a walk to a place.
 command Cheat
 {
     int what;
@@ -339,6 +339,11 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
     if (seat < 0) return;
     switch (cheat.what)
     {
+        case 3:
+            // A horde: two thousand more of the dead in this wave, one a tick
+            match.toSpawn += 2000;
+            match.rush += 2000;
+            return;
         case 4:
             match.toSpawn = 0;
             match.culling = true;

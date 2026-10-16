@@ -60,8 +60,8 @@ out. The next wave starts five seconds after everyone has chosen; its end
 fills everyone's ammunition, raises whoever's down and brings back whoever
 bled out.
 
-The dead come in hordes, more each wave (26, then 38, 53, ... over 200 by the
-tenth), weaker each than a single one used to be, up to 150 at once. They
+The dead come in hordes, more each wave (74, then 128, 190, ... 740 by the
+tenth), weaker each than a single one used to be, up to 3000 at once. They
 claw up out of the old graves and from among the roots round the edge, and
 come for whoever's nearest, up the ramps to the cliff-top ruin and the rocky
 shelf. Kick them over and they lie a while before getting up; kick one that's
@@ -73,7 +73,8 @@ Down, you fight on from the ground: with what you hold if it shoots, or a
 hand crossbow of a dozen bolts if it doesn't. A friend holding E for three
 seconds raises you; alone you're done unless you drank Second Wind Cider.
 
-Development keys, not in play's interface: F5 the wave's end (and the cards),
+Development keys, not in play's interface: F4 two thousand more of the dead,
+F5 the wave's end (and the cards),
 F6 walk to the next part of the clearing, F9 a camera over the clearing, F10
 the next weapon in hand.
 
@@ -126,6 +127,7 @@ this folder.
 | `hands.tide` | Walking, fighting, kicking, raising friends |
 | `missiles.tide` | Arrows, bolts, shot, javelins, axes, fireballs, fire pots, bells |
 | `drops.tide` | Power-ups, and the cues for what's heard |
+| `crowd.tide` | The horde drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
 | `kit.tide`, `look.tide`, `eye.tide` | The clearing's meshes; light, shadows, fog, bloom; the camera |
 | `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide` | The dead and the survivors; the weapon in hand; the graves and braziers; flames, blood, sparks |
 | `hud.tide`, `sound.tide` | What's written over the picture (the cards too), the title; what's heard |

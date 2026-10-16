@@ -282,7 +282,7 @@ void SwitchTo(mut Survivor survivor, int slot)
 
 // The weapon in hand: swinging, drawing, loosing, loading; and the stab, the pots and the bell.
 [Stage(Tick.Hands)]
-system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, Time time, query (Zombie zombie) zombies)
+system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, Herd herd, Time time)
 {
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over || survivor.role == Role.None) return;
     var dt = time.dt;
@@ -300,8 +300,6 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, T
     var weapon = survivor.weapons[survivor.slot];
     var info = InfoOf(weapon, survivor.forged[survivor.slot]);
     survivor.actTime += dt;
-    mut List<Body> bodies = [];
-    foreach (var row in zombies) bodies.Add(BodyOf(row.entity, row.zombie));
 
     // A staff's charges come back on their own, quicker with each wellspring
     if (info.kind == Kind.Staff && survivor.ammo[survivor.slot] < Reserve(survivor, info))
@@ -314,11 +312,12 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, T
         }
     }
     // The ability on Q; and a leap come down
-    if (hands.ability.down && !downed) Unleash(survivor, hands.move, ashwick, bodies, match.round);
+    // (The dead are gathered from the herd only when something lands: a horde's worth each tick would be most of one.)
+    if (hands.ability.down && !downed) Unleash(survivor, hands.move, ashwick, Near(herd, survivor.feet, 6), match.round);
     if (survivor.leaping && survivor.grounded)
     {
         survivor.leaping = false;
-        Slam(survivor, bodies, match.round);
+        Slam(survivor, Near(herd, survivor.feet, SLAM_REACH + 0.5), match.round);
     }
 
     // Finishing what the hands were doing
@@ -345,7 +344,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, T
             {
                 survivor.landed = true;
                 var blow = stab ? Info(Weapon.Dagger) : info;
-                Strike(this, survivor, blow, heavy, stab, bodies);
+                Strike(this, survivor, blow, heavy, stab, Near(herd, survivor.feet, blow.reach + 1.2));
             }
             if (survivor.actTime >= survivor.actLength) survivor.act = Act.Idle;
             break;
@@ -354,7 +353,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, T
             if (!survivor.landed && survivor.actTime >= 0.16)
             {
                 survivor.landed = true;
-                Kick(this, survivor, bodies, match.round);
+                Kick(this, survivor, Near(herd, survivor.feet, KICK_REACH + 0.3 * survivor.boots + 1.2), match.round);
             }
             if (survivor.actTime >= survivor.actLength) survivor.act = Act.Idle;
             break;
@@ -479,7 +478,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, T
             // A repeater fires while held; the rest once a press
             if (!hands.attack.down && weapon != Weapon.Repeater) return;
             survivor.mag[survivor.slot] -= 1;
-            if (info.kind == Kind.Staff) Cast(survivor, info, bodies);
+            if (info.kind == Kind.Staff) Cast(survivor, info, Near(herd, survivor.feet, weapon == Weapon.StaffStorm ? info.reach + 7 * (info.cleave + 2 * survivor.split) : info.reach + 1));
             else Loose(survivor, info, hands.aim, 1);
             survivor.act = Act.Loose;
             survivor.actTime = 0;

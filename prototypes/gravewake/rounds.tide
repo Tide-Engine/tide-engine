@@ -15,6 +15,7 @@ singleton Match
     int alive;                   // Up now, counted each tick
     int killed;                  // This wave's, for the wave's end
     float spawnWait;
+    int rush;                    // Of the dead still to come, how many come six a tick (the development key's horde)
     float choosing;              // Seconds the survivors have had to choose their cards
     // Power-ups
     float instakill;             // Seconds left
@@ -26,7 +27,7 @@ singleton Match
     bool culling;                // Development: the wave's dead all go
 }
 
-const int MAX_ALIVE = 150;       // Up at once: the most the tick and the frame afford (notes/gravewake.md)
+const int MAX_ALIVE = 3000;      // Up at once: the most the tick and the frame afford (notes/gravewake.md)
 const float BREAK_SECONDS = 5;   // The countdown to the next wave, once everyone has taken a card
 const float CHOICE_MOST = 45;    // How long the others wait for one who hasn't
 
@@ -39,6 +40,7 @@ void ResetMatch(mut Match match)
     match.alive = 0;
     match.killed = 0;
     match.spawnWait = 0;
+    match.rush = 0;
     match.choosing = 0;
     match.instakill = 0;
     match.drops = 0;
@@ -48,24 +50,24 @@ void ResetMatch(mut Match match)
     match.culling = false;
 }
 
-// How many dead a wave brings, for so many survivors: a horde, growing faster each wave (26, 38, 53, 88 by the fifth,
-// 216 by the tenth for one).
+// How many dead a wave brings, for so many survivors: a horde, growing faster each wave (74, 128, 190, 290 by the
+// fifth, 740 by the tenth, 2,240 by the twentieth for one).
 int RoundCount(int round, int players)
 {
     var crowd = 1 + 0.6 * (players - 1);
-    return int(Math.Round((16 + 9 * round + 1.1 * round * round) * crowd));
+    return int(Math.Round((40 + 30 * round + 4 * round * round) * crowd));
 }
 
 // How much a wave's dead can take: little each, with so many.
 float RoundHealth(int round)
 {
-    if (round < 10) return 60 + 40 * (round - 1);
-    return 380 * Math.Pow(1.09, round - 9);
+    if (round < 10) return 40 + 25 * (round - 1);
+    return 265 * Math.Pow(1.08, round - 9);
 }
 
 float SpawnGap(int round, int players)
 {
-    return Math.Max(0.07, 0.75 * Math.Pow(0.9, round - 1)) / (1 + 0.3 * (players - 1));
+    return Math.Max(0.017, 0.4 * Math.Pow(0.88, round - 1)) / (1 + 0.3 * (players - 1));
 }
 
 // Waiting for someone, the cards and the breath between waves, the wave, and the end.
@@ -155,41 +157,54 @@ system CountDead(mut Match match, query (Zombie zombie) zombies)
     match.alive = alive;
 }
 
-// The dead come in a trickle, out of the graves and the roots at the clearing's edge nearest the survivors.
+// The dead come in a trickle, out of the graves and the roots at the clearing's edge nearest the survivors; a rush
+// (the development key's horde) six a tick.
 [Stage(Tick.Rounds, 1)]
 system SpawnDead(mut Match match, Ashwick ashwick, Time time, Party party, query (Survivor survivor) survivors)
 {
     if (match.phase != Phase.Fighting || match.toSpawn <= 0 || match.alive >= MAX_ALIVE) return;
-    match.spawnWait -= time.dt;
-    if (match.spawnWait > 0) return;
-    match.spawnWait = SpawnGap(match.round, Players(party));
+    mut var count = 1;
+    if (match.rush > 0)
+    {
+        count = Math.Min(6, match.rush);
+        match.rush -= count;
+    }
+    else
+    {
+        match.spawnWait -= time.dt;
+        if (match.spawnWait > 0) return;
+        match.spawnWait = SpawnGap(match.round, Players(party));
+    }
     // Whom they come for: a survivor on their feet, any of them
     mut List<float3> near = [];
     foreach (var row in survivors)
         if (row.survivor.ready && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
     if (near.count == 0) return;
-    var focus = near[Random.NextInt(near.count)];
-    // The places they can come from, nearest that survivor first, but not at their feet
-    mut List<int> picks = [];
-    mut List<float> distances = [];
-    for (var i = 0; i < ashwick.risers.count; i++)
+    for (var k = 0; k < count && match.toSpawn > 0; k++)
     {
-        var far = Math.Distance(ashwick.risers[i].at, focus);
-        if (far < 7) continue;
-        Insert(picks, distances, i, far);
+        var focus = near[Random.NextInt(near.count)];
+        // The places they can come from, nearest that survivor first, but not at their feet
+        mut List<int> picks = [];
+        mut List<float> distances = [];
+        for (var i = 0; i < ashwick.risers.count; i++)
+        {
+            var far = Math.Distance(ashwick.risers[i].at, focus);
+            if (far < 7) continue;
+            Insert(picks, distances, i, far);
+        }
+        if (picks.count == 0) return;
+        var riser = ashwick.risers[picks[Random.NextInt(Math.Min(count > 1 ? 12 : 5, picks.count))]];
+        var gait = GaitFor(match.round);
+        var health = RoundHealth(match.round);
+        var look = Random.NextInt(ZOMBIE_LOOKS);
+        mut var at = riser.at + float3(Random.NextFloat(-0.5, 0.5), 0, Random.NextFloat(-0.5, 0.5));
+        if (!Walkable(ashwick, CellOf(at))) at = riser.at;
+        at.y = Ground(at.x, at.z);
+        Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = health, gait = gait, look = look, state = ZombieState.Rising, pace = Random.NextFloat(0.9, 1.1),
+                       phase = Random.NextInt(64) });
+        if (k == 0) Send(Cue { sound = Sfx.Rise, at = at });
+        match.toSpawn -= 1;
     }
-    if (picks.count == 0) return;
-    var riser = ashwick.risers[picks[Random.NextInt(Math.Min(5, picks.count))]];
-    var gait = GaitFor(match.round);
-    var health = RoundHealth(match.round);
-    var look = Random.NextInt(ZOMBIE_LOOKS);
-    mut var at = riser.at + float3(Random.NextFloat(-0.5, 0.5), 0, Random.NextFloat(-0.5, 0.5));
-    if (!Walkable(ashwick, CellOf(at))) at = riser.at;
-    at.y = Ground(at.x, at.z);
-    Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = health, gait = gait, look = look, state = ZombieState.Rising, pace = Random.NextFloat(0.9, 1.1),
-                   phase = Random.NextInt(BRACE_EVERY) });
-    Send(Cue { sound = Sfx.Rise, at = at });
-    match.toSpawn -= 1;
 }
 
 // Into a list kept nearest first.
