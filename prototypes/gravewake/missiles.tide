@@ -1,0 +1,182 @@
+// What flies: arrows and bolts, the handgonne's shot, javelins and axes,
+// fireballs, fire pots and the lure bell. Each tick a missile moves, drops a
+// little, and hits what's on its way: the dead (on the head, or the body)
+// before the walls. Some go through a few; some burst.
+
+enum Shot { Arrow, Bolt, Ball, Javelin, Axe, Fireball, Pot, Bell }
+
+component Missile
+{
+    Shot kind;
+    float3 at;
+    float3 velocity;
+    float gravity;
+    float damage;
+    float head = 2;
+    int pierce = 1;              // How many of the dead it goes through
+    Element element;
+    float splash;                // Bursts this wide, metres
+    int seat = -1;
+    Weapon weapon;
+    bool forged;
+    float life;                  // Seconds left
+    float age;
+    bool stuck;                  // In a wall, or on the ground
+    float3 normal;               // ...facing out of what it's in
+    Entity[6] hit;               // The dead it's been through already
+    int hits;
+}
+
+// A burst of fire, frost or the wraith's light.
+event Blast
+{
+    float3 at;
+    float reach;
+    Element element;
+    Shot kind;
+}
+
+// A missile meeting a wall or the ground.
+event Thud
+{
+    float3 at;
+    float3 normal;
+    Shot kind;
+}
+
+const float HEAD_HEIGHT = 1.62;
+const float HEAD_RADIUS = 0.26;
+
+// Where a segment first comes within `radius` of a point, as a fraction of it (2 for never).
+float SphereHit(float3 from, float3 to, float3 middle, float radius)
+{
+    var way = to - from;
+    var a = Math.Dot(way, way);
+    if (a < 0.0000001) return 2;
+    var off = from - middle;
+    var b = Math.Dot(off, way);
+    var c = Math.Dot(off, off) - radius * radius;
+    if (c <= 0) return 0;
+    var d = b * b - a * c;
+    if (d < 0) return 2;
+    var t = (-b - Math.Sqrt(d)) / a;
+    return t >= 0 && t <= 1 ? t : 2;
+}
+
+[Stage(Tick.Missiles)]
+system Fly(mut Missile missile, Ashwick ashwick, Match match, Time time, query (Zombie zombie) zombies)
+{
+    var dt = time.dt;
+    missile.age += dt;
+    missile.life -= dt;
+    mut List<Body> bodies = [];
+    foreach (var row in zombies) bodies.Add(BodyOf(row.entity, row.zombie));
+    if (missile.stuck)
+    {
+        if (missile.life > 0) return;
+        if (missile.kind == Shot.Bell)
+        {
+            Burst(missile, missile.at, bodies);
+        }
+        this.Destroy();
+        return;
+    }
+    if (missile.life <= 0)
+    {
+        this.Destroy();
+        return;
+    }
+    var from = missile.at;
+    missile.velocity.y -= missile.gravity * dt;
+    var to = from + missile.velocity * dt;
+    var wall = RayHit(ashwick, match.gatesOpen, from, to, out var normal);
+    // The dead on the way, nearest first
+    mut List<Entity> struck = [];
+    mut List<float> when = [];
+    mut List<bool> heads = [];
+    foreach (var z in bodies)
+    {
+        if (!z.hittable) continue;
+        if (Math.Length((z.at - from).xz) > Math.Length(to - from) + 2) continue;
+        mut var already = false;
+        for (var i = 0; i < 6; i++)
+            if (missile.hit[i] == z.entity) already = true;
+        if (already) continue;
+        var sink = (1 - z.risen) * 1.8;
+        var head = SphereHit(from, to, z.at + float3(0, HEAD_HEIGHT - sink, 0), HEAD_RADIUS);
+        var chest = SphereHit(from, to, z.at + float3(0, 1.15 - sink, 0), 0.36);
+        var hips = SphereHit(from, to, z.at + float3(0, 0.6 - sink, 0), 0.33);
+        var first = Math.Min(head, Math.Min(chest, hips));
+        if (first > 1 || first > wall) continue;
+        mut var at = struck.count;
+        while (at > 0 && when[at - 1] > first) at -= 1;
+        struck.Insert(at, z.entity);
+        when.Insert(at, first);
+        heads.Insert(at, head <= first + 0.0001 && head <= 1);
+    }
+    var bursts = missile.kind == Shot.Fireball || missile.kind == Shot.Pot || (missile.splash > 0 && missile.kind != Shot.Bell);
+    for (var i = 0; i < struck.count; i++)
+    {
+        var where = Math.Lerp(from, to, when[i]);
+        if (bursts)
+        {
+            Burst(missile, where, bodies);
+            this.Destroy();
+            return;
+        }
+        if (missile.kind == Shot.Bell) break;
+        var damage = heads[i] ? missile.damage * missile.head : missile.damage;
+        struck[i].Send(Wound { damage = damage, seat = missile.seat, head = heads[i], element = missile.element, from = from,
+                               knock = missile.kind == Shot.Ball || missile.kind == Shot.Javelin ? 3.0 : 0.6, blow = Blow.Missile });
+        if (missile.hits < 6) missile.hit[missile.hits] = struck[i];
+        missile.hits += 1;
+        missile.pierce -= 1;
+        if (missile.pierce <= 0)
+        {
+            this.Destroy();
+            return;
+        }
+    }
+    if (wall <= 1)
+    {
+        var where = Math.Lerp(from, to, wall);
+        if (bursts)
+        {
+            Burst(missile, where, bodies);
+            this.Destroy();
+            return;
+        }
+        Send(Thud { at = where, normal = normal, kind = missile.kind });
+        if (missile.kind == Shot.Ball)
+        {
+            this.Destroy();
+            return;
+        }
+        // Stuck where it struck, a while; a bell rings where it lands
+        missile.at = where + normal * 0.02;
+        missile.stuck = true;
+        missile.normal = normal;
+        missile.life = missile.kind == Shot.Bell ? 7.0 : 6.0;
+        if (missile.kind == Shot.Bell)
+        {
+            missile.at = float3(where.x, 0.02, where.z);
+            Send(Cue { sound = Sfx.Bell, at = missile.at });
+        }
+        return;
+    }
+    missile.at = to;
+}
+
+// A burst: everything near enough is wounded, the nearer the more.
+void Burst(Missile missile, float3 at, List<Body> bodies)
+{
+    foreach (var z in bodies)
+    {
+        if (!z.hittable) continue;
+        var far = Math.Distance(z.at + float3(0, 1, 0), at);
+        if (far > missile.splash) continue;
+        var share = Math.Sqrt(1 - far / missile.splash);
+        z.entity.Send(Wound { damage = missile.damage * (0.35 + 0.65 * share), seat = missile.seat, element = missile.element, from = at, knock = 5 * share, blow = Blow.Burst });
+    }
+    Send(Blast { at = at, reach = missile.splash, element = missile.element, kind = missile.kind });
+}

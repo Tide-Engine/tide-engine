@@ -1,0 +1,143 @@
+// The village's models: Quaternius' Medieval Village, Fantasy Props and
+// Stylized Nature kits (CC0), each piece cut into a part per texture by
+// art/kit/tools/split_kit.py. parts.json says which piece and texture each
+// part is, in the order the glob below gives them. This machine gathers,
+// once, where every part stands, from the plan, and draws each part's
+// placements in one instanced draw with its texture.
+
+// A corner of anything drawn: the kits' parts, the people, the weapons, and
+// what the game makes itself. `uv2.x` over a half marks what glows (eyes,
+// potions, coals).
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    float2 uv2;
+    Color color = Color.white;
+}
+
+struct PartInfo
+{
+    string file;
+    string piece;
+    string tex;
+    bool cutout;
+    bool glass;
+    int tris;
+}
+
+// One placement of a part: where, and how much of the moon's sky it sees (0 under a roof).
+struct Placed
+{
+    float4x4 transform = float4x4.identity;
+    float open = 1;
+    float tint = 1;
+}
+
+asset List<Mesh<Corner>> parts = "art/kit/*.glb";
+asset string partsJson = "art/kit/parts.json";
+[Filter(Filter.Trilinear), Wrap(Wrap.Repeat)] asset Map<string, Texture> textures = "art/tex/*.png";
+
+local singleton Kit
+{
+    List<PartInfo> info;
+    List<List<int>> partsOf;        // By Piece: the parts it's made of
+    List<List<Placed>> placed;      // By part: every placement of it
+    List<List<Placed>> near;        // By part: the placements near enough to draw this frame
+    List<float3> lo;                // By part: its bounds, in its own space
+    List<float3> hi;
+    List<float> reach;              // By part: how far off it's still drawn
+    bool made;
+}
+
+// Which parts make each piece, and every part's bounds.
+void LoadKit(mut Kit kit)
+{
+    kit.info = Json.Read<List<PartInfo>>(partsJson) ?? [];
+    mut Map<string, int> pieceOf = default;
+    for (var p = 0; p < PIECE_COUNT; p++) pieceOf[$"{Piece(p)}"] = p;
+    kit.partsOf.Clear();
+    for (var p = 0; p < PIECE_COUNT; p++)
+    {
+        List<int> none = [];
+        kit.partsOf.Add(none);
+    }
+    kit.placed.Clear();
+    kit.near.Clear();
+    kit.lo.Clear();
+    kit.hi.Clear();
+    kit.reach.Clear();
+    for (var i = 0; i < kit.info.count; i++)
+    {
+        var info = kit.info[i];
+        if (pieceOf.TryGet(info.piece, out var piece)) kit.partsOf[piece].Add(i);
+        List<Placed> none = [];
+        kit.placed.Add(none);
+        kit.near.Add(none);
+        mut var lo = float3(1000);
+        mut var hi = float3(-1000);
+        var mesh = parts[i];
+        for (var v = 0; v < mesh.vertices.count; v++)
+        {
+            lo = Math.Min(lo, mesh.vertices[v].position);
+            hi = Math.Max(hi, mesh.vertices[v].position);
+        }
+        kit.lo.Add(lo);
+        kit.hi.Add(hi);
+        var size = Math.Length(hi - lo);
+        kit.reach.Add(Math.Clamp(size * 30, 25, 140));
+    }
+}
+
+// Every placement in the plan, into each of its parts' lists; a gate's as far open as `shown` says (doors swing on their
+// hinges, bars rise, rubble sinks away).
+void PlaceKit(mut Kit kit, Plan plan, float[16] shown)
+{
+    for (var i = 0; i < kit.placed.count; i++) kit.placed[i].Clear();
+    foreach (var put in plan.placements)
+    {
+        mut var at = put.at;
+        mut var yaw = put.yaw;
+        if (put.gate >= 0)
+        {
+            var open = shown[put.gate];
+            var look = plan.gates[put.gate].look;
+            if (look == GateLook.Door) yaw += Math.SmoothStep(0, 1, open) * 1.75;
+            if (look == GateLook.Bars) at.y += Math.SmoothStep(0, 1, open) * 3.3;
+            if (look == GateLook.Rubble)
+            {
+                if (open >= 1) continue;
+                at.y -= open * open * 2.2;
+            }
+        }
+        var transform = float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), yaw), put.scale);
+        var list = kit.partsOf[int(put.piece)];
+        for (var k = 0; k < list.count; k++)
+        {
+            kit.placed[list[k]].Add(Placed { transform = transform, open = put.open, tint = put.tint });
+        }
+    }
+}
+
+// Which placements are near enough to draw this frame: frustum culling skips the rest, but not their cost to gather.
+void CullKit(mut Kit kit, float3 eye)
+{
+    for (var i = 0; i < kit.placed.count; i++)
+    {
+        kit.near[i].Clear();
+        var reach = kit.reach[i];
+        var count = kit.placed[i].count;
+        for (var k = 0; k < count; k++)
+        {
+            var at = kit.placed[i][k].transform.c3.xyz;
+            if (Math.Distance(at.xz, eye.xz) > reach) continue;
+            kit.near[i].Add(kit.placed[i][k]);
+        }
+    }
+}
+
+Texture TextureOf(string tex)
+{
+    return textures[$"art/tex/{tex}.png"];
+}
