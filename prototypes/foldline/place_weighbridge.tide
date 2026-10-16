@@ -79,8 +79,8 @@ void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
     Fill(arena, -3.2, -3, 10.4, 12.6, 12.1, 14, RUST);
     Fill(arena, 3, 3.2, 10.4, 12.6, 12.1, 14, RUST);
     LampGrid(place, float2(-14, -14), float2(4, 4), 7, 7);
-    OfficeLamps(place, 0, 6, 0, 6, 12.6, 61, dead: 3);
-    HangLamps(place, 5, 6, 2, 3, 6);
+    OfficeLamps(place, 0, 6, 0, 6, 12.6, 61);
+    OfficeLamps(place, 5, 6, 2, 3, 6, 62, dead: 5);
     HangLamp(place, 6, 6, 12.6, LampState.Stutter);
     place.light = .7;
     place.grade = float3(1.1, .84, .67);

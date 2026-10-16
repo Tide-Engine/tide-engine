@@ -663,19 +663,19 @@ static void reticle_checks(void)
     check(color_distance(placed.pixels[0][RETICLE_PIP], blocked.pixels[0][RETICLE_PIP]) < 8,
           "a planted square stays filled when the current aim becomes invalid");
 
-    // One unlinked end leaves its wall solid. Replacing itself is valid;
-    // putting the other button there would overlap it and must be refused.
+    // One unlinked end leaves its wall solid. Replacing itself is valid, and
+    // so is putting the other button there, which replaces it.
     operator_at(world.Arena.op0, (tide_float3){-6, 0, -7}, TIDE_PI_F);
     world.Fold.ends.at[0] = target;
     record_reticle(&overlap, 0, false);
     reticle_ready(&overlap, 0, true, &ready);
-    reticle_ready(&overlap, 1, false, &ready);
+    reticle_ready(&overlap, 1, true, &ready);
     reticle_placed(&overlap, 0, true);
     reticle_placed(&overlap, 1, false);
     world.Fold.ends.at[0] = (Portal){0};
     world.Fold.ends.at[1] = target;
     record_reticle(&opposite, 0, false);
-    reticle_ready(&opposite, 0, false, &ready);
+    reticle_ready(&opposite, 0, true, &ready);
     reticle_ready(&opposite, 1, true, &ready);
     reticle_placed(&opposite, 0, false);
     reticle_placed(&opposite, 1, true);

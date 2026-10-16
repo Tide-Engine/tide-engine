@@ -156,7 +156,8 @@ frag BeastSurface(StoneVertex vertex, Texture skin, Instance instance, Sight sig
     if (PastItsFold(p, sight)) this.Discard();
     Color seen = skin.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
     float3 n = instance.Normal(vertex.normal);
-    mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight));
+    float4 beams = TorchBeams(p, n, sight, day.torchDepth, day.toTorch);
+    mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight), beams);
     if (sight.beastEyes && vertex.uv.x >= 0.875 && vertex.uv.y < 0.125) lit = Rgb(seen) * 4;
     lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-Math.Distance(p, sight.eye) * sight.fog));
     color = Displayed(lit, sight.packed);
