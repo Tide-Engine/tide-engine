@@ -197,6 +197,17 @@ of guns and perks:
   arm is kept down (`TurnBone`), as the kit's swings flung it across the
   picture. The kick's boot comes up higher and nearer, 15% bigger. The
   fireball's smoke starts once it's 3 m from the eye.
+- Kills blow the dead apart (the owner: "lets maybe make it explode; i like
+  the head exploding, so maybe if I kill it lets make the piece of it that im
+  shooting do the same making the other pieces sort of separate and
+  ragdoll"): a kill by anything but fire or bleeding bursts the piece struck
+  (the head on a head hit, else the trunk) in a cloud of blood and bits, and
+  the other pieces (of head, trunk, two arms, two legs) fly off from the blow
+  and from each other, tumble, bounce and lie till the body's gone (people.tide
+  `Gib`, `Tumble`, local only). Each piece is the whole skinned body drawn with
+  its death pose and every other bone squeezed to nothing about its joint
+  (`PartPose`, `PlaceBone`), so it ends in a stump; no extra meshes. A blast
+  throws them twice as hard.
 - Validation of the arms (2026-10-16): native debug `gravewake_test` and the
   web debug WASI test pass; the web page builds. Every weapon was looked at in
   standard-host captures (idle, mid-attack, aimed or heavy). The browser tests

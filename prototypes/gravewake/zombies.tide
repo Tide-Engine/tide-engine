@@ -57,8 +57,12 @@ component Zombie
     local float4x4 place = float4x4.identity;
     local float flash;          // The flash of a fresh blow
     local float voice = 1;      // Seconds till it groans
-    local bool headless;        // Its head taken off by the blow that killed it
-    local float gush;           // Seconds left of the neck's spray
+    local bool gibbed;          // Blown apart by the blow that killed it (people.tide's Gib): its pieces fly
+    local int burst;            // The piece that blew apart (a Part), not drawn
+    local Pose deathPose;       // The pose it died in, which every piece keeps
+    local float4x4 deathPlace = float4x4.identity;
+    local List<Shard> shards;   // Its pieces in flight, a Part each
+    local float gibAge;
 }
 
 // One of the dead as a blow or a missile sees them: where, how far out of the ground, and whether they can be hit.
@@ -149,6 +153,7 @@ event Hurt
 event Struck
 {
     float3 at;
+    float3 from;                // Where the blow came from
     bool head;
     bool killed;
     Element element;
@@ -471,7 +476,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     if (wound.seat >= 0 && wound.seat < 4 && points > 0 && party.taken[wound.seat])
         party.survivors[wound.seat].Send(Earned { points = points, kill = killed, head = killed && wound.head });
     var body = BodyOf(this, zombie);
-    this.Send(Struck { at = wound.head ? body.head : body.chest, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
+    this.Send(Struck { at = wound.head ? body.head : body.chest, from = wound.from, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
                   points = points * (match.doubled > 0 ? 2 : 1), blow = wound.blow });
 }
 

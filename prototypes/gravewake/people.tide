@@ -15,8 +15,20 @@ struct Rig
 {
     [Name("Wrist.R")] Bone wristR;
     [Name("Head")] Bone head;
+    [Name("Neck")] Bone neck;
     [Name("Chest")] Bone chest;
+    [Name("Torso")] Bone torso;
     [Name("Body")] Bone hips;
+    [Name("Shoulder.L")] Bone shoulderL;
+    [Name("Shoulder.R")] Bone shoulderR;
+    [Name("UpperArm.L")] Bone upperArmL;
+    [Name("UpperArm.R")] Bone upperArmR;
+    [Name("LowerArm.L")] Bone lowerArmL;
+    [Name("LowerArm.R")] Bone lowerArmR;
+    [Name("UpperLeg.L")] Bone upperLegL;
+    [Name("UpperLeg.R")] Bone upperLegR;
+    [Name("LowerLeg.L")] Bone lowerLegL;
+    [Name("LowerLeg.R")] Bone lowerLegR;
 }
 
 asset SkinnedMesh<Corner, Rig> heroRanger = "art/people/hero_ranger.glb";
@@ -260,23 +272,181 @@ float4x4 ZombiePlace(Zombie zombie, float sink)
 [Stage(Layers.Gather)]
 view PoseZombie(mut Zombie zombie)
 {
-    mut var pose = ZombiePose(zombie, out var sink);
-    if (zombie.headless) pose[ZombieBody(zombie.look).skeleton.bones.head].scale = float3(0.001);
-    zombie.gush = Math.Max(0, zombie.gush - Math.Min(Frame.dt, 0.05));
+    zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
+    if (zombie.gibbed)
+    {
+        Tumble(zombie, Math.Min(Frame.dt, 0.05));
+        return;
+    }
+    var pose = ZombiePose(zombie, out var sink);
     zombie.pose = pose;
     zombie.place = ZombiePlace(zombie, sink);
-    zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
 }
 
 local event(Struck struck) FlashStruck(mut Zombie zombie)
 {
     if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Shove) return;
     zombie.flash = struck.killed ? 0.0 : 0.35;
-    // A head taken off by the blow that kills
-    if (struck.killed && struck.head)
+    if (struck.killed) Gib(zombie, struck.from, struck.head, struck.blow == Blow.Burst);
+}
+
+// The pieces one of the dead comes apart into.
+enum Part { Head, Torso, ArmL, ArmR, LegL, LegR }
+
+// A piece in flight: its middle when it came away, and where it is now, how fast, its turn and spin.
+struct Shard
+{
+    float3 from;
+    float3 at;
+    float3 vel;
+    quaternion turn = quaternion.identity;
+    float3 spin;
+}
+
+const int PART_COUNT = 6;
+
+// Killed by a blow, one of the dead blows apart: the piece struck (its head, or else its trunk) bursts, and the rest
+// fly off from the blow, tumbling, and fall, and lie there till it's gone.
+void Gib(mut Zombie zombie, float3 from, bool head, bool burst)
+{
+    var body = ZombieBody(zombie.look);
+    var rig = body.skeleton.bones;
+    zombie.gibbed = true;
+    zombie.burst = head ? int(Part.Head) : int(Part.Torso);
+    zombie.deathPose = zombie.pose;
+    zombie.deathPlace = zombie.place;
+    zombie.gibAge = 0;
+    var blast = burst ? 2.0 : 1.0;
+    zombie.shards.Clear();
+    for (var p = 0; p < PART_COUNT; p++)
     {
-        zombie.headless = true;
-        zombie.gush = 1.4;
+        var middle = Math.Transform(Math.Mul(zombie.place, zombie.pose.Model(PartBone(body, Part(p)))), float3(0));
+        var h = Math.Hash(int3(int(middle.x * 97), int(middle.z * 89), p));
+        var r = float3((h & 255) / 255.0 - 0.5, ((h >> 8) & 255) / 255.0, ((h >> 16) & 255) / 255.0 - 0.5);
+        mut var away = middle - from;
+        away.y = 0;
+        var out = Math.Length(away) > 0.01 ? Math.Normalize(away) : float3(0, 0, 1);
+        // Out from the trunk too, so the limbs part from each other
+        mut var apart = middle - Math.Transform(Math.Mul(zombie.place, zombie.pose.Model(rig.torso)), float3(0));
+        apart.y = 0;
+        zombie.shards.Add(Shard { from = middle, at = middle, vel = (out * (2.2 + r.x * 1.5) + apart * 6 + float3(r.x, 1.5 + r.y * 2.5, r.z) * 1.2) * blast,
+                                  spin = float3(r.z * 14, r.x * 10, r.y * 12 - 6) * blast });
+    }
+}
+
+// The bone each piece turns about (and is found by).
+Bone PartBone(SkinnedMesh<Corner, Rig> body, Part part)
+{
+    var rig = body.skeleton.bones;
+    switch (part)
+    {
+        case Part.Head: return rig.head;
+        case Part.Torso: return rig.torso;
+        case Part.ArmL: return rig.lowerArmL;
+        case Part.ArmR: return rig.lowerArmR;
+        case Part.LegL: return rig.lowerLegL;
+    }
+    return rig.lowerLegR;
+}
+
+// A bone given a place in the model (a transform that may scale) under its parent as the pose now has it.
+void PlaceBone(mut Pose pose, Bone bone, Bone parent, float4x4 model)
+{
+    var local = Math.Mul(Math.Inverse(pose.Model(parent)), model);
+    var x = local.c0.xyz;
+    var y = local.c1.xyz;
+    var z = local.c2.xyz;
+    var sx = Math.Length(x);
+    pose[bone].position = local.c3.xyz;
+    pose[bone].scale = float3(sx, Math.Length(y), Math.Length(z));
+    pose[bone].rotation = Math.Normalize(quaternion(float3x3(x / Math.Max(sx, 0.000001), y / Math.Max(Math.Length(y), 0.000001), z / Math.Max(Math.Length(z), 0.000001))));
+}
+
+// A model transform squeezed to nothing about its own origin.
+float4x4 Squeezed(float4x4 m)
+{
+    var e = 0.001;
+    return float4x4(float4(m.c0.xyz * e, 0), float4(m.c1.xyz * e, 0), float4(m.c2.xyz * e, 0), m.c3);
+}
+
+// The pose that draws one piece alone: every other bone squeezed to nothing about its joint, so the piece's own skin
+// ends in a stump where it tore away.
+Pose PartPose(SkinnedMesh<Corner, Rig> body, Pose whole, Part part)
+{
+    var rig = body.skeleton.bones;
+    mut var pose = whole;
+    switch (part)
+    {
+        case Part.Head:
+            pose[rig.hips].scale = float3(0.001);
+            PlaceBone(pose, rig.chest, rig.torso, Squeezed(whole.Model(rig.chest)));
+            PlaceBone(pose, rig.neck, rig.chest, whole.Model(rig.neck));
+            break;
+        case Part.Torso:
+            pose[rig.neck].scale = float3(0.001);
+            pose[rig.upperArmL].scale = float3(0.001);
+            pose[rig.upperArmR].scale = float3(0.001);
+            pose[rig.upperLegL].scale = float3(0.001);
+            pose[rig.upperLegR].scale = float3(0.001);
+            break;
+        case Part.ArmL:
+            pose[rig.hips].scale = float3(0.001);
+            PlaceBone(pose, rig.shoulderL, rig.chest, Squeezed(whole.Model(rig.shoulderL)));
+            PlaceBone(pose, rig.upperArmL, rig.shoulderL, whole.Model(rig.upperArmL));
+            break;
+        case Part.ArmR:
+            pose[rig.hips].scale = float3(0.001);
+            PlaceBone(pose, rig.shoulderR, rig.chest, Squeezed(whole.Model(rig.shoulderR)));
+            PlaceBone(pose, rig.upperArmR, rig.shoulderR, whole.Model(rig.upperArmR));
+            break;
+        case Part.LegL:
+            pose[rig.hips].scale = float3(0.001);
+            PlaceBone(pose, rig.upperLegL, rig.hips, whole.Model(rig.upperLegL));
+            break;
+        case Part.LegR:
+            pose[rig.hips].scale = float3(0.001);
+            PlaceBone(pose, rig.upperLegR, rig.hips, whole.Model(rig.upperLegR));
+            break;
+    }
+    return pose;
+}
+
+// Where a piece is drawn: carried from where it was in the body to where it's flown, turned as it's tumbled, sinking
+// away at the end.
+float4x4 PartPlace(Zombie zombie, int p)
+{
+    var sink = Math.Max(0, zombie.gibAge - (DEATH_SECONDS - 1.4)) * 0.4;
+    var shard = zombie.shards[p];
+    var to = float4x4.TRS(shard.at - float3(0, sink, 0), shard.turn, float3(1));
+    return Math.Mul(Math.Mul(to, float4x4.Translate(-shard.from)), zombie.deathPlace);
+}
+
+// A frame of a flying piece: falling, tumbling, bouncing off the ground and coming to rest on it.
+void Tumble(mut Zombie zombie, float dt)
+{
+    zombie.gibAge += dt;
+    for (var p = 0; p < zombie.shards.count; p++)
+    {
+        if (p == zombie.burst) continue;
+        mut var shard = zombie.shards[p];
+        mut var v = shard.vel;
+        v.y -= 14 * dt;
+        mut var at = shard.at + v * dt;
+        mut var spin = shard.spin;
+        var rest = p == int(Part.Torso) ? 0.2 : 0.1;
+        if (at.y < rest)
+        {
+            at.y = rest;
+            v = float3(v.x * 0.55, Math.Abs(v.y) * 0.25, v.z * 0.55);
+            spin *= 0.55;
+            if (Math.Abs(v.y) < 0.4) v.y = 0;
+        }
+        var turn = Math.Length(spin);
+        if (turn > 0.01) shard.turn = Math.Normalize(Math.Mul(quaternion.AxisAngle(spin / turn, turn * dt), shard.turn));
+        shard.vel = v;
+        shard.at = at;
+        shard.spin = spin;
+        zombie.shards[p] = shard;
     }
 }
 
@@ -284,7 +454,14 @@ local event(Struck struck) FlashStruck(mut Zombie zombie)
 view ShadowZombie(Zombie zombie, Lens lens)
 {
     if (!lens.made) return;
-    lens.moon.SkinnedMesh(ZombieBody(zombie.look), zombie.place, zombie.pose);
+    var body = ZombieBody(zombie.look);
+    if (!zombie.gibbed)
+    {
+        lens.moon.SkinnedMesh(body, zombie.place, zombie.pose);
+        return;
+    }
+    for (var p = 0; p < zombie.shards.count; p++)
+        if (p != zombie.burst) lens.moon.SkinnedMesh(body, PartPlace(zombie, p), PartPose(body, zombie.deathPose, Part(p)));
 }
 
 [Stage(Layers.Scene, 2)]
@@ -293,10 +470,16 @@ view DrawZombie(Zombie zombie, Lens lens, Look look)
     if (!lens.made || Math.Distance(zombie.at, look.eye) > 70) return;
     var eyes = zombie.state == ZombieState.Dying ? Math.Saturate(1 - zombie.timer * 1.5) : 1.0;
     var burning = zombie.burn > 0 ? 1.0 : 0.0;
+    var skin = Skin { burn = burning, frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0, flash = zombie.flash, eyes = eyes, grime = 0.55 };
+    var body = ZombieBody(zombie.look);
     lens.scene.Bounds(float3(0, 1, 0), float3(3, 3.5, 3))
     {
-        lens.scene.SkinnedMesh(ZombieBody(zombie.look), zombie.place, zombie.pose, Flesh,
-                               Skin { burn = burning, frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0, flash = zombie.flash, eyes = eyes, grime = 0.55 });
+        if (!zombie.gibbed) lens.scene.SkinnedMesh(body, zombie.place, zombie.pose, Flesh, skin);
+        else
+        {
+            for (var p = 0; p < zombie.shards.count; p++)
+                if (p != zombie.burst) lens.scene.SkinnedMesh(body, PartPlace(zombie, p), PartPose(body, zombie.deathPose, Part(p)), Flesh, skin);
+        }
     }
 }
 
