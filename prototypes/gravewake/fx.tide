@@ -137,7 +137,7 @@ void MakeQuad(mut Fx fx)
 // Each frame: what burns gives off flames, and every mote moves on.
 [Stage(Layers.Gather, 2)]
 view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, query (Missile missile) missiles, query (Drop drop) drops,
-             query (Survivor survivor) survivors)
+             query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
     if (!fx.made) MakeQuad(fx);
     var dt = me.dt;
@@ -198,6 +198,35 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
         if (m.kind == Shot.Mine && m.age >= MINE_ARMS && Math.Frac(me.clock * 2) < 0.2)
             Glow(fx, Mote { at = m.at + float3(0, 0.1, 0), life = 0.05, size = 0.12, color = float3(1.0, 0.15, 0.1), alpha = 3 });
     }
+    // A Brute's warnings: a ring of red where a slam comes down, filling in as it comes; a line where a charge runs
+    foreach (var row in bosses)
+    {
+        var b = row.boss;
+        if (b.move == BossMove.SlamWindup)
+        {
+            var fill = Math.Saturate(b.timer / SLAM_WINDUP);
+            for (var k = 0; k < 10; k++)
+            {
+                var turn = fx.random.NextFloat(Math.TAU);
+                var r = SLAM_RADIUS * (k < 6 ? 1.0 : fx.random.NextFloat(0, fill));
+                var at = b.aim + float3(Math.Cos(turn) * r, 0, Math.Sin(turn) * r);
+                Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.08, 0), life = 0.12, size = 0.18, color = float3(1.0, 0.12, 0.05), alpha = 2.5 });
+            }
+        }
+        if (b.move == BossMove.ChargeWindup)
+        {
+            for (var k = 0; k < 8; k++)
+            {
+                var along = fx.random.NextFloat(1, CHARGE_SPEED * CHARGE_SECONDS);
+                var at = b.at + b.aim * along;
+                Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.08, 0), life = 0.12, size = 0.2, color = float3(1.0, 0.2, 0.05), alpha = 2.5 });
+            }
+        }
+        if (b.move == BossMove.Charge)
+            Murk(fx, Mote { at = b.at + float3(fx.random.NextFloat(-1, 1), 0.2, fx.random.NextFloat(-1, 1)), velocity = Scatter(fx, 1.5) + float3(0, 1, 0), life = 0.8,
+                            size = 0.5, grow = 0.8, color = float3(0.17, 0.14, 0.11), alpha = 0.6, drag = 2 });
+    }
+
     // Moving on
     for (var i = fx.glow.count - 1; i >= 0; i--)
     {
@@ -321,6 +350,18 @@ local event(Struck struck) Bleed(mut Fx fx)
 
 local event(Blast blast) Explode(mut Fx fx)
 {
+    if (blast.kind == Shot.Quake)
+    {
+        // A slam: earth thrown up in a ring as wide as it reaches
+        for (var i = 0; i < 70; i++)
+        {
+            var turn = i * Math.TAU / 70;
+            var way = float3(Math.Cos(turn), 0, Math.Sin(turn));
+            Murk(fx, Mote { at = blast.at + way * fx.random.NextFloat(0.5, blast.reach) + float3(0, 0.2, 0), velocity = way * fx.random.NextFloat(2, 6) + float3(0, fx.random.NextFloat(1, 4), 0),
+                            life = 1.4, size = fx.random.NextFloat(0.3, 0.7), grow = 0.7, color = float3(0.17, 0.14, 0.11), alpha = 0.75, drag = 2, gravity = 3 });
+        }
+        return;
+    }
     var hot = blast.element == Element.Frost ? float3(0.5, 0.75, 1.0) : blast.element == Element.Fire ? float3(1.0, 0.42, 0.08) : float3(1.0, 0.62, 0.25);
     for (var i = 0; i < 40; i++)
         Glow(fx, Mote { at = blast.at, velocity = Scatter(fx, blast.reach * 3), life = fx.random.NextFloat(0.3, 0.7), size = fx.random.NextFloat(0.15, 0.5), grow = -0.4,

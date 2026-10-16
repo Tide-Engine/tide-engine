@@ -323,9 +323,9 @@ void Shoot(Survivor survivor, float3 from, float3 way, float range, float damage
     foreach (var z in Along(herd, from, stop))
     {
         if (!z.hittable) continue;
-        var onHead = SphereHit(from, to, z.head, HEAD_RADIUS);
-        var chest = SphereHit(from, to, z.chest, 0.36);
-        var hips = SphereHit(from, to, z.hips, 0.33);
+        var onHead = SphereHit(from, to, z.head, HEAD_RADIUS * z.size);
+        var chest = SphereHit(from, to, z.chest, 0.36 * z.size);
+        var hips = SphereHit(from, to, z.hips, 0.33 * z.size);
         var first = Math.Min(onHead, Math.Min(chest, hips));
         if (first > 1 || first > wall) continue;
         mut var at = struck.count;

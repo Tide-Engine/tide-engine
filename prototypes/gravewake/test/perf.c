@@ -52,11 +52,10 @@ int main(int argc, char **argv)
     tick();
     held[0].pick1 = held[1].pick1 = false;
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick();
-    // A wave that doesn't end, of the dead that don't die, coming one a tick
-    world.Match.round = 12;
-    world.Match.toSpawn = 100000;
+    // The dead that don't die, coming one a tick till there are `count` of them, then no more (and no Brute)
+    world.Match.bossNext = 1e9f;
     for (int i = 0; i < count * 4 && (int)world.arch5_Zombie.count < count; i++) {
-        world.Match.spawnWait = 0;
+        world.Match.spawnWait = 1.0f / 60;
         tick();
     }
     world.Match.spawnWait = 1e9f;
@@ -78,7 +77,7 @@ int main(int argc, char **argv)
     }
     int states[8] = {0};
     for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) states[TIDE_AT(&world, arch5_Zombie, Zombie, r).state & 7]++;
-    printf("spawned: rising %d hunting %d dying %d fallen %d; to spawn %d, phase %d\n", states[0], states[1], states[2], states[3], world.Match.toSpawn, (int)world.Match.phase);
+    printf("spawned: rising %d hunting %d dying %d fallen %d; phase %d\n", states[0], states[1], states[2], states[3], (int)world.Match.phase);
     for (int i = 0; i < 240; i++) tick();
     const double start = now();
     for (int i = 0; i < ticks; i++) tick();

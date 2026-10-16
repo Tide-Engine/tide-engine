@@ -1868,40 +1868,6 @@ def item_rare(rng):
     return trim(y, -50, fade_out=0.05)
 
 
-@sound('ambient_loop', kind='loop', layers=True, lufs=-28)
-def ambient_loop(rng):
-    # Night in the wood, 30 s: wind gusting, thunder rolling far off, very far-off moaning
-    sec = 30.0
-    n = n_of(sec)
-    gust = np.clip(0.5 + 0.5 * periodic_lfo(sec, rng, 0.22, 0.8), 0, 1)
-    gust2 = np.clip(0.5 + 0.5 * periodic_lfo(sec, rng, 0.35, 1.0), 0, 1)
-    at = lambda arr, tm: arr[min(len(arr) - 1, int(tm * R))]
-    base = periodic_noise(sec, rng, lambda f: (np.maximum(f, 20) / 200) ** -0.5)
-    body = circular_stft_filter(base, lambda tm, f: (0.25 + at(gust, tm)) * band_gain(f, 220 * 2 ** (1.6 * at(gust, tm)), 1.1)
-                                + 0.12 * band_gain(f, 70, 1.0))
-    howl = circular_stft_filter(periodic_noise(sec, rng, lambda f: 1.0),
-                                lambda tm, f: at(gust2, tm) ** 3 * band_gain(f, 900 * 2 ** (0.8 * at(gust2, tm)), 0.18))
-    out = unit(body) * 0.5 + unit(howl) * 0.07
-
-    def thunder(seconds):
-        # A far roll: low noise in a few swells, the high end long gone
-        x = lowpass(colored(seconds, rng, -4), 260)
-        swells = np.zeros(n_of(seconds))
-        for k in range(4):
-            c = rng.uniform(0.1, 0.7) * seconds
-            w = rng.uniform(0.3, 0.9)
-            swells += rng.uniform(0.4, 1.0) * np.exp(-((t(seconds) - c) / w) ** 2)
-        return x * swells * env_points([(0, 0), (0.4, 1), (seconds - 1.5, 0.7), (seconds, 0)], seconds)
-    events = [(unit(thunder(6.0)), 4.0, -10), (unit(thunder(7.5)), 19.0, -13)]
-    far = lambda x: unit(reverb(lowpass(highpass(x, 120), 700), 3.5, wet=0.7, damp=0.8))
-    events += [(far(S('oga_zombie_moans_ds', 'darsycho__zombie-moans_0.ogg', 0.25, 2.75)), 11.5, -18),
-               (far(S('oga_hungry_ghoul', 'hungry-ghoul_0.ogg', 28.3, 30.6)), 15.0, -20),
-               (far(pitch(S('oga_zombie_moans_ep', 'ZombieMoans - Track 5 - ZombieMoan1.wav'), -3)), 26.0, -19)]
-    for x, at_, g in events:
-        place(out, x, at_, db(g), wrap=True)
-    return out[:n]
-
-
 def music_loop(key, rel, t0, seconds, xfade=4.0):
     """A stretch of a track made to go round: its end crossfaded into its start."""
     x = S(key, rel, t0, t0 + seconds + xfade)

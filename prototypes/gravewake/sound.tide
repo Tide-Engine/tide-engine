@@ -9,7 +9,6 @@ using Rooms;
 [Bus]
 enum Bus { Master, Effects, Music, Ambience }
 
-asset Clip ambientClip = "sfx/ambient_loop.ogg";
 asset Clip musicLow = "sfx/music_low.ogg";
 asset Clip musicHigh = "sfx/music_high.ogg";
 asset Clip roundStart = "sfx/round_start.ogg";
@@ -90,7 +89,6 @@ audio Limit(mut Samples samples, mut Squeeze squeeze)
 
 local singleton Ears
 {
-    Sound ambient;
     Sound low;
     Sound high;
     Sound heart;
@@ -115,15 +113,10 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     Audio.SetEffect(Bus.Master, Limit());
     var dt = me.dt;
     var playing = lobby.playing;
-    ears.ambient.clip = ambientClip;
-    ears.ambient.loop = true;
-    ears.ambient.volume = 0.55;
-    ears.ambient.bus = Bus.Ambience;
-    ears.ambient.playing = true;
     // The dread: low through the early rounds, the high one later or when the dead are many
     var fighting = match.phase == Phase.Fighting;
-    var tense = fighting && (match.round >= 6 || match.alive >= 150) ? 1.0 : 0.0;
-    var under = fighting ? 1.0 : match.phase == Phase.Break ? 0.35 : 0.15;
+    var tense = fighting && (match.danger >= 3.5 || match.alive >= 150) ? 1.0 : 0.0;
+    var under = fighting ? 1.0 : 0.15;
     ears.low.clip = musicLow;
     ears.low.loop = true;
     ears.low.bus = Bus.Music;
@@ -351,6 +344,7 @@ local event(Thud thud) HearThud(mut Ears ears, Village village, Me me)
 local event(Blast blast) HearBlast(mut Ears ears)
 {
     if (blast.kind == Shot.Pot || blast.kind == Shot.Keg) Audio.Play(fireBurst, blast.at, blast.kind == Shot.Keg ? 0.6 : 1.0, ears.random.NextFloat(0.9, 1.1));
+    else if (blast.kind == Shot.Quake) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, 0.55);
     else Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.1));
 }
 
@@ -371,6 +365,12 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
         case Sfx.Throw: PlayAt(throwClip, cue.at, near, 0.7, 1.0); return;
         case Sfx.Mine: Audio.Play(emptyClip, cue.at, 0.8, 0.7); return;
         case Sfx.Shell: PlayAt(shellLoad, cue.at, near, 0.7, ears.random.NextFloat(0.95, 1.05)); return;
+        case Sfx.BossRoar: Audio.Play(screams[ears.random.NextInt(screams.count)], cue.at, 1.0, 0.42); return;
+        case Sfx.BossCharge: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, 0.5); return;
+        case Sfx.BossDeath:
+            Audio.Play(deaths[ears.random.NextInt(deaths.count)], cue.at, 1.0, 0.45);
+            Audio.Play(roundEnd, 0.9);
+            return;
     }
 }
 
@@ -426,14 +426,16 @@ local event(Spawned spawned) HearDrop(Drop drop)
     Audio.Play(powerupSpawn, drop.at + float3(0, 1, 0), 0.9, 1.0);
 }
 
-local event(RoundBegan began) HearRound()
+local event(RunBegan began) HearRound()
 {
     Audio.Play(roundStart, 1.0);
 }
 
-local event(RoundEnded ended) HearRoundEnd()
+// A Brute: its roar coming up out of the ground, and its fall.
+local event(BossCame came) HearBoss(mut Ears ears)
 {
-    Audio.Play(roundEnd, 0.9);
+    Audio.Play(roundStart, 0.9);
+    Audio.Play(screams[ears.random.NextInt(screams.count)], came.at + float3(0, 4, 0), 1.0, 0.45);
 }
 
 local event(GameOver over) HearGameOver()

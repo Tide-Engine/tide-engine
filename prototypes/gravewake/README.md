@@ -3,11 +3,13 @@
 Ashwick burned. Up to four survivors hold a wide, hilly clearing in the wood
 outside it, round their fire, against endless and growing hordes of the dead,
 thousands at once. It plays like Risk of Rain 2 in a PSX-era picture: each
-picks a survivor before the first wave (a Gunner, a Breacher or an Engineer),
-a gun to aim and three skills on cooldowns, and after every wave takes one of
-three items that stack, most of which fight on their own. Every kill is
-experience for the party, and every level makes them all a little stronger.
-There is no end but the last of them falling; how far they got is the score.
+picks a survivor (a Gunner, a Breacher or an Engineer), a gun to aim and three
+skills on cooldowns, and then the dead never stop coming, more and tougher the
+longer it goes. Every kill is experience for the party, and at every level
+each takes one of three items that stack, most of which fight on their own.
+Every few minutes a Brute comes: a giant of the dead that slams, charges and
+roars up more. There is no end but the last of them falling; how long they
+held out is the score.
 
 Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 **Host a room** and send the code to fight with friends, up to four.
@@ -41,7 +43,9 @@ run out; only their magazines do.
 
 ### The items
 
-After each wave, three to choose from; each stacks.
+At every level, and for every Brute felled, three to choose from (1, 2 or 3,
+shown along the bottom of the screen); each stacks. Nothing stops while you
+choose.
 
 | Rarity | Items |
 | --- | --- |
@@ -49,23 +53,28 @@ After each wave, three to choose from; each stacks.
 | Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst), Gun Drone (shoots the nearest dead), Ember Ring (burns the dead near you), Frostbite (hits freeze), Spring Boots (jumps in the air) |
 | Rare | Mortar Beacon (hits call a shell down), Second Wind (going down, straight back up, used up) |
 
-Uncommon and rare items turn up more as the waves go on. What you take is
-yours till the game's over, through going down and bleeding out. The next
-wave starts five seconds after everyone has chosen; its end loads every gun,
-readies every skill, raises whoever's down and brings back whoever bled out.
+Uncommon and rare items turn up more as the run goes on. What you take is
+yours till the game's over, through going down and bleeding out.
 
-The dead come in hordes, more each wave (74, then 128, 190, ... 740 by the
-tenth), weaker each than a single one used to be, up to 3000 at once. They
-claw up out of the old graves and from among the roots round the edge, and
-come for whoever's nearest, up the ramps to the cliff-top ruin and the rocky
-shelf. A head hit is gold on the crosshair, a Lucky Shot's double yellow.
+The dead claw up out of the ground all round you, from every side, a couple a
+second at first and many more as the danger climbs (Easy, Medium, Hard, Very
+Hard, Insane, Impossible: one more step every minute and a half, sooner with
+more of you), tougher and quicker too, up to 3000 at once. A head hit is gold
+on the crosshair, a Lucky Shot's double yellow.
+
+Every three minutes a Brute claws up, three times the size of the rest, its
+health across the top of the screen. It comes for the nearest of you, and
+every couple of seconds it slams (a red ring on the ground is where it comes
+down), charges (a line on the ground is where it'll run) or, every third
+time, roars up the dead round it. Felled, it gives everyone an item to pick.
 
 Down, you fight on from the ground with a pistol. A friend holding E for three
-seconds raises you, the gun back in hand as loaded as it was.
+seconds raises you, the gun back in hand as loaded as it was. Bleed out and
+you're back at the fire half a minute later, with everything you had.
 
-Development keys, not in play's interface: F4 two thousand more of the dead,
-F5 the wave's end (and the offer), F6 walk to the next part of the clearing,
-F9 a camera over the clearing, F10 a random item.
+Development keys, not in play's interface: F3 a Brute, F4 two thousand more of
+the dead, F5 a level (and so an offer), F6 walk to the next part of the
+clearing, F9 a camera over the clearing, F10 a random item.
 
 ## Ashwick Wood
 
@@ -110,9 +119,10 @@ this folder.
 | `game.tide` | The survivors, the input, joining and leaving, starting over, the development walks |
 | `plan.tide`, `pieces.tide` | Ashwick Wood as one plan: the ground's heights (`Ground`), the clearing's edge, the ruin, the graves, the camp, the forest |
 | `ashwick.tide` | The plan made solid: collision, the ground under feet, the lines rounds and grenades follow, the way to the survivors |
-| `rounds.tide` | Waves, how many come and how tough, where they rise, the regrouping after each |
+| `rounds.tide` | The run: the danger with time, how many of the dead come and how tough, where they rise, coming back after bleeding out |
+| `boss.tide` | The Brutes: when they come, their slam, charge and roar, drawn three times the size |
 | `kits.tide` | The survivors' kits: each skill's use and cooldown, the Engineer's turret |
-| `items.tide` | The items: what each does, the offer after a wave, what a hit or a kill sets off, the drone and the ember ring, levels |
+| `items.tide` | The items: what each does, the offer at a level, what a hit or a kill sets off, the drone and the ember ring, levels |
 | `zombies.tide` | The dead: rising, hunting, wounds, burning, freezing, going over |
 | `weapons.tide` | The guns' numbers |
 | `hands.tide` | Running and jumping, firing (each round a ray through the dead), loading, raising friends, going down |
@@ -125,4 +135,4 @@ this folder.
 | `fp.tide` | The first-person arms: which clips move them for each gun |
 | `art/` | The forest, ruin, people, guns, items and first-person arms, with how each was made: see `art/CREDITS.md` (the arms are CC BY 4.0, by CoinCoin) |
 | `sfx/` | The sounds, made by `sfx/tools/make_sfx.py`: see `sfx/CREDITS.md` |
-| `test/` | Waves played with no window (`test.c`), a tick's cost with a horde (`perf.c`, `gravewake_perf`, not a test), and the browser test |
+| `test/` | The run played with no window (`test.c`), a tick's cost with a horde (`perf.c`, `gravewake_perf`, not a test), and the browser test |

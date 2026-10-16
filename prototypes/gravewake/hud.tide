@@ -1,8 +1,9 @@
-// What's written over the picture: the wave in blood-red chalk in the bottom
-// left, everyone's score over it (with what each hit earns floating off it),
-// the items taken, the party's level, the gun and its magazine and the three
-// skills in the bottom right, the crosshair and the mark of a hit landing,
-// the power-ups running, a friend down, the items offered after a wave, the
+// What's written over the picture: how long the run has gone and how
+// dangerous it's got in the bottom left, everyone's score over it (with what
+// each hit earns floating off it), the items taken, the party's level, the
+// gun and its magazine and the three skills in the bottom right, the
+// crosshair and the mark of a hit landing, the power-ups running, a friend
+// down, a Brute's health across the top, the items offered at a level, the
 // survivors to pick from, and the end.
 using Rooms;
 
@@ -14,8 +15,8 @@ local singleton Feed
     bool markerHead;             // On the head: gold, or red and bigger for a kill
     bool markerCrit;             // A Lucky Shot's double: yellow
     float headshot;              // Seconds left of HEADSHOT over the crosshair
-    float roundFlash;            // Seconds since the round changed
-    int roundShown;
+    float dangerFlash;           // Seconds since the danger's words changed
+    string dangerShown;
     string banner;               // A power-up's name, the item just taken, a level, big in the middle
     float bannerLeft;
     Color bannerColor = Color.white;
@@ -88,36 +89,18 @@ string BoonName(Boon kind)
     return "HOLY FIRE";
 }
 
-// The round, as chalk: strokes for the first five, numerals after.
-void DrawRound(int round, float2 at, float u, float flash)
+// Minutes and seconds.
+string Clock(float seconds)
 {
-    var red = Math.Lerp(CHALK, Color(1, 0.95, 0.85), Math.Saturate(1 - flash * 0.7));
-    if (round <= 0) return;
-    if (round <= 5)
-    {
-        for (var i = 0; i < Math.Min(round, 4); i++)
-        {
-            var x = at.x + i * 16 * u;
-            var lean = (Math.Hash(int2(i, round)) & 7) * 0.6 - 2;
-            Draw.Line(float2(x + 3 * u + 1, at.y - 58 * u + 1), float2(x + lean * u + 1, at.y + 1), 7 * u, Color(0, 0, 0, 0.6));
-            Draw.Line(float2(x + 3 * u, at.y - 58 * u), float2(x + lean * u, at.y), 7 * u, red);
-        }
-        if (round == 5)
-        {
-            Draw.Line(float2(at.x - 8 * u + 1, at.y - 12 * u + 1), float2(at.x + 62 * u + 1, at.y - 46 * u + 1), 7 * u, Color(0, 0, 0, 0.6));
-            Draw.Line(float2(at.x - 8 * u, at.y - 12 * u), float2(at.x + 62 * u, at.y - 46 * u), 7 * u, red);
-        }
-        return;
-    }
-    var text = $"{round}";
-    var size = 78 * u;
-    Draw.Text(text, at + float2(3, -26 * u + 3) * float2(1, 1), size, Color(0, 0, 0, 0.6), Anchor.MiddleLeft, Font.Bold);
-    // Chalk: a few passes, a little off each other
-    for (var pass = 0; pass < 3; pass++)
-    {
-        var off = float2(((pass * 37) % 5 - 2) * 0.6, ((pass * 53) % 5 - 2) * 0.6) * u;
-        Draw.Text(text, at + float2(0, -26 * u) + off, size, Color(red.r, red.g, red.b, 0.55), Anchor.MiddleLeft, Font.Bold);
-    }
+    var whole = int(Math.Floor(seconds));
+    var s = whole % 60;
+    return s < 10 ? $"{whole / 60}:0{s}" : $"{whole / 60}:{s}";
+}
+
+// How far the danger's got, red the higher: its colour for its words.
+Color DangerColor(float danger)
+{
+    return Math.Lerp(Color(0.95, 0.85, 0.55), Color(0.95, 0.12, 0.08), Math.Saturate((danger - 1) / 7));
 }
 
 [Stage(Layers.Hud)]
@@ -141,14 +124,21 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     }
     if (!found) return;
 
-    // ---- The wave, bottom left ----
-    if (match.round != feed.roundShown)
+    // ---- How long the run has gone, and how dangerous it's got: bottom left ----
+    var words = DangerName(match.danger);
+    if (words != feed.dangerShown)
     {
-        feed.roundShown = match.round;
-        feed.roundFlash = 0;
+        feed.dangerShown = words;
+        feed.dangerFlash = 0;
     }
-    feed.roundFlash += dt;
-    DrawRound(match.round, float2(34 * u, h - 30 * u), u, feed.roundFlash);
+    feed.dangerFlash += dt;
+    if (match.phase != Phase.Waiting)
+    {
+        WriteBold(Clock(match.phase == Phase.Over ? match.lasted : match.clock), float2(34 * u, h - 62 * u), 44 * u, BONE, Anchor.MiddleLeft);
+        var flash = Math.Saturate(1 - feed.dangerFlash * 0.7);
+        var c = DangerColor(match.danger);
+        WriteBold(words.ToUpper(), float2(34 * u, h - 28 * u), (18 + flash * 8) * u, Color(c.r, c.g, c.b, 1), Anchor.MiddleLeft);
+    }
 
     // ---- Everyone's score, over the wave ----
     mut var line = 0;
@@ -362,8 +352,8 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
     var a = Math.Saturate(match.timer * 0.8);
     Draw.Rect(float2(w * 0.5, h * 0.5), float2(w, h), Color(0.02, 0, 0, 0.55 * a));
     WriteBold("GAME OVER", float2(w * 0.5, h * 0.24), 64 * u, Color(CHALK.r * 1.4, CHALK.g, CHALK.b, a), Anchor.MiddleCenter);
-    var rounds = match.lastRound <= 1 ? "The dead took you in the first wave" : $"You held out to wave {match.lastRound}";
-    Write(rounds, float2(w * 0.5, h * 0.33), 24 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+    Write($"You held out {Clock(match.lasted)}, at {DangerName(match.danger)}", float2(w * 0.5, h * 0.33), 24 * u, Color(BONE.r, BONE.g, BONE.b, a),
+          Anchor.MiddleCenter);
     var top = h * 0.43;
     var columns = float4(-90, 40, 140, 240) * u;
     Write("Score", float2(w * 0.5 - 170 * u, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
@@ -392,8 +382,8 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
     }
 }
 
-// Development keys, not in play's interface: F4 a horde of two thousand more, F5 the wave's end (and the offer), F6 a
-// walk to the next place, F10 an item.
+// Development keys, not in play's interface: F3 a Brute, F4 a horde of two thousand more, F5 a level (and so an offer),
+// F6 a walk to the next place, F10 an item.
 local singleton DevWalk
 {
     int next;
@@ -404,6 +394,7 @@ view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
 {
     if (!lobby.playing) return;
     var keys = devices.keyboard;
+    if (keys.f3.down) Send(Cheat { what = 6 });
     if (keys.f4.down) Send(Cheat { what = 3 });
     if (keys.f5.down) Send(Cheat { what = 4 });
     if (keys.f10.down) Send(Cheat { what = 5 });
@@ -594,75 +585,105 @@ void WriteWrapped(string text, float2 at, float width, float size, Color tint)
     if (line != "") Write(line, float2(at.x, y), size, tint, Anchor.MiddleCenter);
 }
 
-// The items after a wave: three across the middle, each with its key, what it is and what it does; then who's still
-// choosing, and the next wave's count.
+// The items at a level: three small cards low in the middle, taken with 1, 2 or 3 while the fighting goes on (nothing
+// stops for it), and how many more picks are owed.
 [Stage(Layers.Hud, 2)]
-view Offers(Me me, Match match, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
+view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor survivor) survivors)
 {
-    if (lobby.page != Page.Playing || match.phase != Phase.Break || match.round <= 0) return;
+    if (lobby.page != Page.Playing || match.phase == Phase.Over) return;
+    mut var mine = Survivor { };
+    mut var found = false;
+    foreach (var row in survivors)
+    {
+        if (row.survivor.seat != me.seat) continue;
+        mine = row.survivor;
+        found = true;
+    }
+    if (!found || !mine.choosing)
+    {
+        feed.dealt = 0;
+        return;
+    }
     Draw.SetScreen();
     var w = Screen.width;
     var h = Screen.height;
     var u = Unit();
-    mut var mine = Survivor { };
-    mut var found = false;
-    mut var waiting = "";
-    foreach (var row in survivors)
+    feed.dealt += Math.Min(Frame.dt, 0.05);
+    var size = float2(196, 112) * u;
+    var top = h - 104 * u;
+    var more = mine.pending > 0 ? $"   ({mine.pending} more)" : "";
+    WriteBold($"LEVEL UP - TAKE ONE{more}", float2(w * 0.5, top - size.y * 0.5 - 18 * u), 15 * u, Color(0.65, 0.85, 1.0), Anchor.MiddleCenter);
+    for (var k = 0; k < 3; k++)
     {
-        var s = row.survivor;
-        if (s.seat == me.seat)
+        var rise = Math.SmoothStep(0, 1, Math.Saturate(feed.dealt * 5 - k * 0.3));
+        var middle = float2(w * 0.5 + (k - 1) * (size.x + 14 * u), top + (1 - rise) * 30 * u);
+        var item = mine.offers[k];
+        var rarity = RarityOf(item);
+        var tint = RarityColor(rarity);
+        var a = rise * 0.95;
+        Draw.RoundRect(middle, size, 8 * u, Color(0.06, 0.045, 0.04, 0.85 * a));
+        Draw.WireRoundRect(middle, size - float2(6, 6) * u, 6 * u, 1.5 * u, Color(tint.r * 0.7, tint.g * 0.7, tint.b * 0.7, 0.8 * a));
+        var key = middle + float2(-size.x * 0.5 + 20 * u, -size.y * 0.5 + 20 * u);
+        Draw.Circle(key, 12 * u, Color(CHALK.r, CHALK.g, CHALK.b, 0.9 * a));
+        WriteBold($"{k + 1}", key, 14 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+        DrawItemMark(item, middle + float2(size.x * 0.5 - 24 * u, -size.y * 0.5 + 24 * u), 30 * u, a);
+        var have = mine.items[int(item)];
+        WriteBold(ItemName(item), middle + float2(0, -8 * u), 15 * u, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
+        if (have > 0) Write($"you have {have}", middle + float2(0, 8 * u), 10 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
+        WriteWrapped(ItemLine(item), middle + float2(0, 26 * u), size.x - 20 * u, 10 * u, Color(BONE.r, BONE.g, BONE.b, 0.85 * a));
+    }
+}
+
+// A Brute's health across the top: the nearest of them, if any is about.
+[Stage(Layers.Hud, 4)]
+view BossBar(Lobby lobby, Look look, query (Boss boss) bosses)
+{
+    if (lobby.page != Page.Playing) return;
+    mut var found = false;
+    mut var nearest = 1000.0;
+    mut var shown = Boss { };
+    foreach (var row in bosses)
+    {
+        var b = row.boss;
+        if (b.move == BossMove.Dying) continue;
+        var far = Math.Distance(b.at, look.eye);
+        if (far < nearest)
         {
-            mine = s;
+            nearest = far;
+            shown = b;
             found = true;
-        }
-        else if (s.ready && s.choosing)
-        {
-            waiting = waiting == "" ? HeroName(s.seat) : $"{waiting}, {HeroName(s.seat)}";
         }
     }
     if (!found) return;
-    WriteBold($"WAVE {match.round} HELD", float2(w * 0.5, h * 0.14), 34 * u, Color(CHALK.r * 1.5, CHALK.g * 1.5, CHALK.b, 1), Anchor.MiddleCenter);
-    if (mine.choosing)
-    {
-        feed.dealt += Math.Min(Frame.dt, 0.05);
-        Write("Take one", float2(w * 0.5, h * 0.14 + 34 * u), 16 * u, ASH, Anchor.MiddleCenter);
-        var size = float2(232, 280) * u;
-        for (var k = 0; k < 3; k++)
-        {
-            var rise = Math.SmoothStep(0, 1, Math.Saturate(feed.dealt * 4 - k * 0.35));
-            var middle = float2(w * 0.5 + (k - 1) * (size.x + 26 * u), h * 0.5 + (1 - rise) * 40 * u);
-            var item = mine.offers[k];
-            var rarity = RarityOf(item);
-            var tint = RarityColor(rarity);
-            var a = rise;
-            Draw.RoundRect(middle + float2(4, 6) * u, size, 10 * u, Color(0, 0, 0, 0.5 * a));
-            Draw.RoundRect(middle, size, 10 * u, Color(0.07, 0.05, 0.045, 0.92 * a));
-            Draw.WireRoundRect(middle, size - float2(10, 10) * u, 7 * u, 1.5 * u, Color(tint.r * 0.7, tint.g * 0.7, tint.b * 0.7, 0.8 * a));
-            // Its key, at the top
-            var key = middle + float2(0, -size.y * 0.5 + 34 * u);
-            Draw.Circle(key, 17 * u, Color(CHALK.r, CHALK.g, CHALK.b, 0.9 * a));
-            WriteBold($"{k + 1}", key, 20 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
-            DrawItemMark(item, middle + float2(0, -40 * u), 54 * u, a);
-            var have = mine.items[int(item)];
-            Write(have > 0 ? $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}" : RarityName(rarity).ToUpper(), middle + float2(0, 6 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a),
-                  Anchor.MiddleCenter);
-            var title = ItemName(item);
-            WriteBold(title, middle + float2(0, 32 * u), 21 * u, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
-            WriteWrapped(ItemLine(item), middle + float2(0, 64 * u), size.x - 34 * u, 13 * u, Color(BONE.r, BONE.g, BONE.b, 0.85 * a));
-        }
-        Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.5 + 170 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
-        return;
-    }
-    feed.dealt = 0;
-    if (waiting != "" && match.choosing < CHOICE_MOST)
-        Write($"Waiting for {waiting} to choose", float2(w * 0.5, h * 0.14 + 34 * u), 16 * u, ASH, Anchor.MiddleCenter);
-    else
-        Write($"Wave {match.round + 1} in {int(Math.Ceil(Math.Max(0, BREAK_SECONDS - match.timer)))}", float2(w * 0.5, h * 0.14 + 34 * u), 18 * u, BONE, Anchor.MiddleCenter);
+    Draw.SetScreen();
+    var w = Screen.width;
+    var u = Unit();
+    var at = float2(w * 0.5, 64 * u);
+    var width = 520 * u;
+    var share = Math.Saturate(shown.health / Math.Max(1, shown.healthMost));
+    WriteBold(shown.number > 1 ? $"THE BRUTE  {shown.number}" : "THE BRUTE", at - float2(0, 22 * u), 18 * u, Color(0.95, 0.3, 0.2), Anchor.MiddleCenter);
+    Draw.Rect(at, float2(width + 6 * u, 14 * u), Color(0, 0, 0, 0.7));
+    Draw.Rect(at - float2(width * 0.5 * (1 - share), 0), float2(width * share, 10 * u), Color(0.75, 0.1, 0.07));
+}
+
+local event(BossCame came) ShowBoss(mut Feed feed)
+{
+    feed.banner = "A BRUTE CLAWS UP";
+    feed.bannerLeft = 3;
+    feed.bannerColor = Color(0.95, 0.3, 0.2);
+}
+
+local event(BossFelled felled) ShowFelled(mut Feed feed)
+{
+    if (feed.bannerLeft > 2) return;
+    feed.banner = "THE BRUTE FALLS";
+    feed.bannerLeft = 2.6;
+    feed.bannerColor = Color(0.95, 0.82, 0.45);
 }
 
 // Before the first wave (or on joining), the three survivors: 1, 2 or 3.
 [Stage(Layers.Hud, 3)]
-view Callings(Me me, Lobby lobby, query (Survivor survivor) survivors)
+view Callings(Me me, Lobby lobby, Match match, query (Survivor survivor) survivors)
 {
     if (lobby.page != Page.Playing) return;
     mut var mine = Survivor { };
@@ -673,7 +694,17 @@ view Callings(Me me, Lobby lobby, query (Survivor survivor) survivors)
         mine = row.survivor;
         found = true;
     }
-    if (!found || !mine.ready || mine.role != Role.None) return;
+    if (!found || !mine.ready) return;
+    if (mine.role != Role.None)
+    {
+        // Picked: the breath before the dead come
+        if (match.phase != Phase.Waiting) return;
+        Draw.SetScreen();
+        var left = START_SECONDS - match.timer;
+        WriteBold(left > START_SECONDS - 0.05 ? "Waiting for the others to pick" : $"The dead come in {int(Math.Ceil(Math.Max(0, left)))}", float2(Screen.width * 0.5, Screen.height * 0.3),
+                  26 * Unit(), BONE, Anchor.MiddleCenter);
+        return;
+    }
     Draw.SetScreen();
     var w = Screen.width;
     var h = Screen.height;

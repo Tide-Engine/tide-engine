@@ -59,8 +59,9 @@ component Survivor
     int[16] items;
     Item[3] offers;
     bool choosing;
-    int dealt;                       // The wave whose offer was made
+    int pending;                     // Picks owed: a level's, a Brute's, after the one on offer
     int picks;
+    float gone;                      // Seconds since bleeding out: they're back at the fire after RETURN_SECONDS
     int level = 1;                   // The party's, as it reached this survivor
     float droneWait;
     float emberWait;
@@ -254,6 +255,12 @@ system ClearTurret(with Turret, Match match)
 }
 
 [Stage(Tick.Restart)]
+system ClearBoss(with Boss, Match match)
+{
+    if (match.restarting) this.Destroy();
+}
+
+[Stage(Tick.Restart)]
 system RestartSurvivor(mut Survivor survivor, Match match, Ashwick ashwick)
 {
     if (!match.restarting) return;
@@ -270,8 +277,8 @@ system Restarting(mut Match match)
     ResetMatch(match);
 }
 
-// Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, the wave's end (and so
-// the offer), an item, a walk to a place.
+// Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, a level (and so an
+// offer), an item, a Brute, a walk to a place.
 command Cheat
 {
     int what;
@@ -286,13 +293,16 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
     switch (cheat.what)
     {
         case 3:
-            // A horde: two thousand more of the dead in this wave, one a tick
-            match.toSpawn += 2000;
+            // A horde: two thousand more of the dead, six a tick
             match.rush += 2000;
             return;
         case 4:
-            match.toSpawn = 0;
-            match.culling = true;
+            match.level += 1;
+            match.xp = 0;
+            Send(Levelled { level = match.level });
+            return;
+        case 6:
+            match.bossNext = match.clock;
             return;
         case 5:
             party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
