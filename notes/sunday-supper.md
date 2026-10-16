@@ -46,7 +46,8 @@ real. The rest of the weekend, the escape and the endings are to be written.
 ## How it plays
 
 - First person, walking, running, looking; `E` uses what's under the dot, `F`
-  is the phone's light, `Tab` shows the phone (always NO SERVICE), `1`-`3`
+  is the phone's light, `Q` held shows the phone (always NO SERVICE; Tab is the
+  GUI's focus key, which the game never sees), `1`-`3`
   answer a choice. Either traveller answers; the first to press speaks, and
   the line shows as theirs.
 - Dialogue is subtitles; nobody is voiced. A look at something (the hood, the
