@@ -1,22 +1,19 @@
 // Drawing on the puzzle, to show the other player something: hold the left
-// mouse button and draw, or click to point. On a touchscreen the Draw button
+// mouse button and draw. On a touchscreen the Draw button
 // turns swipes into drawing. A line is kept in the cells of the room it was
 // drawn in, so both screens show it on the same spot of that room wherever
-// it is drawn, in the drawer's paint, and it fades after a few seconds. Ink
+// it is drawn, in the drawer's paint, and it fades within half a second. Ink
 // is no part of the puzzle: undo leaves it, and a restart or a new puzzle
 // clears it.
 
 enum InkChannel { Ink }
 
-const int INK_MARKS = 128;
-// How long a line and a point stay, in ticks at 30 Hz; the last
-// INK_FADE_TICKS of either fade out.
-const int INK_TICKS = 210;
-const int POINT_TICKS = 72;
-const int INK_FADE_TICKS = 45;
+const int INK_MARKS = 256;
+// A short cursor trail, fading throughout its half-second life at 30 Hz.
+const int INK_TICKS = 15;
+const int INK_FADE_TICKS = 15;
 
-// A line from one point of a room's floor to another, in its cells, or a
-// point where the two are the same.
+// A line from one point of a room's floor to another, in its cells.
 struct InkMark { int seat = -1; int room = -2; float2 from; float2 to; int tick; }
 singleton Sketchbook { InkMark[INK_MARKS] marks; int next; }
 
@@ -31,6 +28,7 @@ command(Scribble mark, PlayerID sender) KeepInk(Workshop workshop, Time time, mu
     var seat = SeatOf(workshop, sender);
     if (seat < 0 || mark.level != workshop.level || !OnPaper(mark.from) || !OnPaper(mark.to)) return;
     if (mark.room < -1 || mark.room >= Math.Min(MAX_ROOMS, workshop.layout.roomCount)) return;
+    if (mark.from.x == mark.to.x && mark.from.y == mark.to.y) return;
     book.marks[book.next] = InkMark { seat = seat, room = mark.room, from = mark.from, to = mark.to, tick = time.tick };
     book.next = (book.next + 1) % INK_MARKS;
 }
@@ -52,15 +50,12 @@ local singleton Pen
     int room = -2;
     float2 sent;
     float2 tail;
-    // Seconds before the next piece of the line may be sent.
-    float wait;
+    float tailTime;
     OwnInk[INK_MARKS] own;
     int next;
     float clock;
     int level = -1;
     int openedTick = -1;
-    // The newest of the partner's points this screen has heard.
-    int heard = -1;
 }
 
 Color InkColor(int seat)
@@ -118,9 +113,6 @@ bool InkPlace(LevelLayout layout, Sculpture sculpture, float2 at, out int room, 
     return true;
 }
 
-// A point is sent as a line from a place to the same place.
-bool InkPoint(float2 from, float2 to) { return from.x == to.x && from.y == to.y; }
-
 void SendInk(mut Pen pen, int level, float2 from, float2 to)
 {
     Send(Scribble { level = level, room = pen.room, from = from, to = to });
@@ -130,11 +122,10 @@ void SendInk(mut Pen pen, int level, float2 from, float2 to)
 
 [Stage(ArtStage.Controls)]
 [After(WorkshopControls)]
-view InkControls(Workshop workshop, Sketchbook book, Devices devices, Rooms.Lobby lobby, Hands hands, Sculpture sculpture, Mixer mixer, mut Pen pen)
+view InkControls(Workshop workshop, Devices devices, Rooms.Lobby lobby, Hands hands, Sculpture sculpture, mut Pen pen)
 {
     var dt = Math.Min(Frame.dt, .1);
     pen.clock += dt;
-    pen.wait = Math.Max(0, pen.wait - dt);
     if (pen.level != workshop.level || pen.openedTick != workshop.openedTick)
     {
         // A restart or a new puzzle: the old ink belongs to rooms as they were.
@@ -143,19 +134,6 @@ view InkControls(Workshop workshop, Sketchbook book, Devices devices, Rooms.Lobb
         for (var i = 0; i < INK_MARKS; i++) pen.own[i] = OwnInk { };
         pen.down = false;
     }
-    // A point from the partner is heard once, as it arrives.
-    mut var newest = pen.heard;
-    mut var pointed = false;
-    for (var i = 0; i < INK_MARKS; i++)
-    {
-        var mark = book.marks[i];
-        if (mark.seat < 0 || mark.tick <= pen.heard) continue;
-        newest = Math.Max(newest, mark.tick);
-        if (mark.seat != hands.seat && mark.tick >= workshop.openedTick && InkPoint(mark.from, mark.to)) pointed = true;
-    }
-    if (pointed && pen.heard >= 0 && !mixer.muted && mixer.interface > 0) PlayCue(uiToggle, 0.085, MixBus.Interface, .9);
-    pen.heard = Math.Max(newest, 0);
-
     var playing = lobby.page == Rooms.Page.Playing && lobby.playing && Together(workshop) && hands.seat >= 0;
     var mouse = devices.mouse;
     var touch = devices.touchscreen.primaryTouch;
@@ -174,7 +152,7 @@ view InkControls(Workshop workshop, Sketchbook book, Devices devices, Rooms.Lobb
             pen.room = room;
             pen.sent = cell;
             pen.tail = cell;
-            pen.wait = 0;
+            pen.tailTime = pen.clock;
         }
     }
     if (!pen.down) return;
@@ -185,96 +163,69 @@ view InkControls(Workshop workshop, Sketchbook book, Devices devices, Rooms.Lobb
         return;
     }
     var pointer = Screen.Flip(pen.source == 0 ? mouse.position : touch.position);
-    pen.tail = (pointer - lens.origin) / lens.tile;
+    var tail = (pointer - lens.origin) / lens.tile;
+    if (tail.x != pen.tail.x || tail.y != pen.tail.y) pen.tailTime = pen.clock;
+    pen.tail = tail;
     var far = Math.Length(pen.tail - pen.sent) * lens.tile;
-    if (far >= 10) pen.drawn = true;
-    if (pen.drawn && far >= 6 && pen.wait <= 0 || !held && pen.drawn && far >= 1.5)
+    if (far >= 3) pen.drawn = true;
+    // Keep each frame's point, including fast turns; coalescing for 35 ms
+    // used to cut across the path before either player could see it.
+    if (pen.drawn && far >= 1 || !held && pen.drawn && far >= .25)
     {
         SendInk(pen, workshop.level, pen.sent, pen.tail);
         pen.sent = pen.tail;
-        pen.wait = .035;
     }
     if (held) return;
-    if (!pen.drawn) SendInk(pen, workshop.level, pen.sent, pen.sent);
     pen.down = false;
 }
 
 // How much of a mark is left to see, 0 once it has gone.
-float InkLeft(float age, float life)
+float InkLeft(float age)
 {
     var fade = INK_FADE_TICKS / 30.0;
-    return Math.Saturate((life - age) / fade);
+    return Math.Saturate((INK_TICKS / 30.0 - age) / fade);
 }
 
-void InkShade(float2 from, float2 to, float alpha)
-{
-    var shade = Color(.04, .03, .02, .42 * alpha);
-    Draw.Line(from, to, 9, shade);
-    Draw.Circle(from, 4.5, shade);
-    Draw.Circle(to, 4.5, shade);
-}
 void InkLine(float2 from, float2 to, Color tone, float alpha)
 {
     var ink = Color(tone.r, tone.g, tone.b, alpha);
+    // Thick lines already have round ends. Extra endpoint circles made
+    // every segment join brighter, especially once the stroke faded.
     Draw.Line(from, to, 4.5, ink);
-    Draw.Circle(from, 2.25, ink);
-    Draw.Circle(to, 2.25, ink);
 }
-// A point: a dot, and rings running out from it.
-void InkDot(float2 at, Color tone, float age, float alpha)
-{
-    Draw.Circle(at, 7, Color(.04, .03, .02, .42 * alpha));
-    Draw.Circle(at, 4.5, Color(tone.r, tone.g, tone.b, alpha));
-    for (var ring = 0; ring < 2; ring++)
-    {
-        var run = age * 1.5 - ring * .5;
-        if (run < 0) continue;
-        var phase = run - Math.Floor(run);
-        var fade = (1 - phase) * alpha;
-        Draw.WireCircle(at, 8 + phase * 30, 5, Color(.04, .03, .02, .30 * fade));
-        Draw.WireCircle(at, 8 + phase * 30, 2.5, Color(tone.r, tone.g, tone.b, fade));
-    }
-}
-
 // Every mark of a room, on its drawing.
-void InkRoom(Workshop workshop, int now, Sketchbook book, Pen pen, int seat, int room, MapLens lens, bool shade)
+void InkRoom(Workshop workshop, int now, Sketchbook book, Pen pen, int seat, int room, MapLens lens)
 {
     for (var i = 0; i < INK_MARKS; i++)
     {
         var mark = book.marks[i];
         if (mark.seat < 0 || mark.seat == seat || mark.room != room || mark.tick < workshop.openedTick) continue;
-        var point = InkPoint(mark.from, mark.to);
         var age = (now - mark.tick) / 30.0;
-        var left = InkLeft(age, (point ? POINT_TICKS : INK_TICKS) / 30.0);
+        var left = InkLeft(age);
         if (left <= 0) continue;
         var from = MapPoint(mark.from, lens);
         var to = MapPoint(mark.to, lens);
-        if (point) { if (!shade) InkDot(from, InkColor(mark.seat), age, left); }
-        else if (shade) InkShade(from, to, left);
-        else InkLine(from, to, InkColor(mark.seat), left);
+        InkLine(from, to, InkColor(mark.seat), left);
     }
     var mine = InkColor(seat);
     for (var i = 0; i < INK_MARKS; i++)
     {
         var mark = pen.own[i];
         if (mark.room != room) continue;
-        var point = InkPoint(mark.from, mark.to);
         var age = pen.clock - mark.time;
-        var left = InkLeft(age, (point ? POINT_TICKS : INK_TICKS) / 30.0);
+        var left = InkLeft(age);
         if (left <= 0) continue;
         var from = MapPoint(mark.from, lens);
         var to = MapPoint(mark.to, lens);
-        if (point) { if (!shade) InkDot(from, mine, age, left); }
-        else if (shade) InkShade(from, to, left);
-        else InkLine(from, to, mine, left);
+        InkLine(from, to, mine, left);
     }
     // The piece still being drawn, from the last point sent to the pointer.
-    if (pen.down && pen.drawn && pen.room == room)
+    if (pen.down && pen.drawn && pen.room == room && (pen.tail.x != pen.sent.x || pen.tail.y != pen.sent.y))
     {
         var from = MapPoint(pen.sent, lens);
         var to = MapPoint(pen.tail, lens);
-        if (shade) InkShade(from, to, 1);
-        else InkLine(from, to, mine, 1);
+        var left = InkLeft(pen.clock - pen.tailTime);
+        InkLine(from, to, mine, left);
     }
 }
 
@@ -289,10 +240,8 @@ view InkMarks(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands, Scul
     var seat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
     Draw.Clip(Rect(0, top, screen.x, screen.y - top))
     {
-        // Every shadow first, so where lines cross the ink lies on top.
-        for (var pass = 0; pass < 2; pass++)
-            for (var room = -1; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
-                if (InkLens(sculpture, room, out var lens) && lens.tile >= 3)
-                    InkRoom(workshop, time.tick, book, pen, seat, room, lens, pass == 0);
+        for (var room = -1; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
+            if (InkLens(sculpture, room, out var lens) && lens.tile >= 3)
+                InkRoom(workshop, time.tick, book, pen, seat, room, lens);
     }
 }

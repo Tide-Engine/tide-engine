@@ -45,7 +45,6 @@ keeps the grid and movement directions familiar; there is no camera rotation.
 | Enter a room | Walk into its doorway when the room cannot be pushed |
 | Leave a room | Walk outward through an edge doorway |
 | Draw, to show your partner something | Hold the left mouse button and draw |
-| Point at something | Click it |
 | Undo the last shared move | Z or Backspace |
 | Reset this puzzle | R |
 | Open / close the menu | Escape |
@@ -61,10 +60,10 @@ it: a yellow bar against a box you would push, a green arrow into a doorway
 you would enter. There is no directional button overlay.
 
 Drawing appears on both screens, in your robot's colour, on the same spot of
-the room you drew on, wherever that room is in your partner's view. A click
-leaves a pulsing point there instead of a line. Lines fade after about seven
-seconds and points after two and a half. Undo leaves them; restarting or
-changing the puzzle clears them. Drawing never moves anything in the puzzle.
+the room you drew on, wherever that room is in your partner's view. Each
+segment fades away within half a second, like a short cursor trail. A click
+without dragging leaves no mark or sound. Undo leaves the trail; restarting
+or changing the puzzle clears it. Drawing never moves anything in the puzzle.
 
 The menu's chapter selector can revisit or skip any puzzle. A sage tick beside a
 title marks one you have completed. The game teaches through its puzzles;
