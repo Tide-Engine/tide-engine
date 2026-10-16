@@ -1,0 +1,189 @@
+// Where the kits' models stand: the plan's furniture and trees, and what's
+// sown by hash, the corn in its rows and the tufts on the verges. Far
+// models aren't drawn: the fog has them by then.
+
+// A model's own turn, for kits whose front isn't the way the plan means.
+float KitTurn(Model model)
+{
+    switch (model)
+    {
+        case Model.Sedan: return 0;
+        case Model.Hatchback: return 0;
+    }
+    return 0;
+}
+
+// How far off each kind is still drawn.
+float KitReach(Model model)
+{
+    switch (model)
+    {
+        case Model.Corn:
+        case Model.CornYoung:
+            return 42;
+        case Model.Tuft:
+        case Model.Bush:
+        case Model.Rock:
+            return 30;
+        case Model.Oak:
+        case Model.DarkTree:
+        case Model.Birch:
+        case Model.Pine:
+        case Model.PineDark:
+            return 150;
+        case Model.Fence:
+        case Model.Gate:
+        case Model.Sedan:
+            return 90;
+    }
+    return 60;
+}
+
+Placed PlaceModel(Kit kit, Model model, float3 at, float yaw, float scale, bool inside)
+{
+    var offset = kit.offsets[int(model)];
+    var turn = quaternion.AxisAngle(float3(0, 1, 0), yaw + KitTurn(model));
+    var transform = Math.Mul(float4x4.TRS(at, turn, float3(scale)), float4x4.Translate(-offset));
+    return Placed { transform = transform, inside = inside ? 1.0 : 0.0 };
+}
+
+void MakeKit(mut Kit kit, Scenery scenery)
+{
+    kit.placed.Clear();
+    kit.near.Clear();
+    kit.offsets.Clear();
+    for (var model = 0; model <= int(Model.Hatchback); model++)
+    {
+        var corners = VerticesOf(Model(model));
+        mut var lo = float3(1000);
+        mut var hi = float3(-1000);
+        foreach (var corner in corners)
+        {
+            lo = Math.Min(lo, corner.position);
+            hi = Math.Max(hi, corner.position);
+        }
+        kit.offsets.Add(float3((lo.x + hi.x) * 0.5, lo.y, (lo.z + hi.z) * 0.5));
+        List<Placed> none = [];
+        kit.placed.Add(none);
+        kit.near.Add(none);
+    }
+    foreach (var prop in scenery.props)
+    {
+        mut var list = kit.placed[int(prop.model)];
+        list.Add(PlaceModel(kit, prop.model, prop.at, prop.yaw, prop.scale, prop.inside));
+        kit.placed[int(prop.model)] = list;
+    }
+    // Corn in rows: south of the yard, and the long field west of the road
+    mut var corn = kit.placed[int(Model.Corn)];
+    mut var young = kit.placed[int(Model.CornYoung)];
+    SowCorn(kit, corn, young, float2(9, -39), float2(61, 23));
+    SowCorn(kit, corn, young, float2(-41, -199), float2(-5, 29));
+    kit.placed[int(Model.Corn)] = corn;
+    kit.placed[int(Model.CornYoung)] = young;
+    // Tufts and bushes along the verges and round the yard
+    mut var tufts = kit.placed[int(Model.Tuft)];
+    mut var bushes = kit.placed[int(Model.Bush)];
+    for (var i = 0; i < 420; i++)
+    {
+        var h = Math.Hash(int2(i, 503));
+        var side = (h & 1) == 0 ? -1.0 : 1.0;
+        var z = -230 + ((h >> 1) & 4095) / 4095.0 * 300;
+        var x = side * (2.9 + ((h >> 13) & 255) / 255.0 * 2.5);
+        if (x > 0 && z > 35 && z < 43) continue;
+        tufts.Add(PlaceModel(kit, Model.Tuft, float3(x, 0, z), ((h >> 21) & 63) * 0.1, 2.2 + ((h >> 27) & 3) * 0.3, false));
+    }
+    for (var i = 0; i < 90; i++)
+    {
+        var h = Math.Hash(int2(i, 911));
+        var x = 24.5 + ((h >> 1) & 1023) / 1023.0 * 39;
+        var z = (h & 1) == 0 ? 24.6 + ((h >> 12) & 7) * 0.1 : 53.4 - ((h >> 12) & 7) * 0.1;
+        bushes.Add(PlaceModel(kit, Model.Bush, float3(x, 0, z), ((h >> 20) & 63) * 0.1, 2.5 + ((h >> 26) & 3) * 0.4, false));
+    }
+    kit.placed[int(Model.Tuft)] = tufts;
+    kit.placed[int(Model.Bush)] = bushes;
+    MakeBox(kit);
+    MakeDome(kit);
+    kit.made = true;
+}
+
+void SowCorn(Kit kit, mut List<Placed> corn, mut List<Placed> young, float2 from, float2 to)
+{
+    var rows = int((to.x - from.x) / 1.15);
+    var plants = int((to.y - from.y) / 0.85);
+    for (var row = 0; row < rows; row++)
+    {
+        for (var plant = 0; plant < plants; plant++)
+        {
+            var h = Math.Hash(int3(row, plant, int(from.x)));
+            if ((h & 15) == 0) continue;      // A gap where one never came up
+            var x = from.x + row * 1.15 + ((h >> 4) & 15) / 15.0 * 0.25;
+            var z = from.y + plant * 0.85 + ((h >> 8) & 15) / 15.0 * 0.3;
+            var place = PlaceModel(kit, (h >> 12) % 5 == 0 ? Model.CornYoung : Model.Corn, float3(x, 0, z), ((h >> 16) & 63) * 0.1, 1.75 + ((h >> 22) & 7) * 0.05, false);
+            if ((h >> 12) % 5 == 0) young.Add(place);
+            else corn.Add(place);
+        }
+    }
+}
+
+// A unit box with its foot at the origin: x and z from -0.5 to 0.5... but z from 0 to 1, for a door's width.
+void MakeBox(mut Kit kit)
+{
+    kit.box.Clear();
+    kit.boxFaces.Clear();
+    var piece = Piece { center = float3(0, 0.5, 0.5), size = float3(1), front = Stuff.Plain, back = Stuff.Plain, edge = Stuff.Plain };
+    PutPiece(kit.box, kit.boxFaces, piece);
+}
+
+// A ball round the eye, for the sky, its faces looking in.
+void MakeDome(mut Kit kit)
+{
+    kit.dome.Clear();
+    kit.domeFaces.Clear();
+    var rings = 12;
+    var around = 20;
+    for (var ring = 0; ring <= rings; ring++)
+    {
+        var tilt = ring * Math.PI / rings;
+        for (var step = 0; step <= around; step++)
+        {
+            var turn = step * Math.TAU / around;
+            var way = float3(Math.Sin(tilt) * Math.Cos(turn), -Math.Cos(tilt), Math.Sin(tilt) * Math.Sin(turn));
+            kit.dome.Add(Corner { position = way * 200, normal = way * -1.0 });
+            if (ring == rings || step == around) continue;
+            var corner = ring * (around + 1) + step;
+            kit.domeFaces.Add(corner);
+            kit.domeFaces.Add(corner + around + 1);
+            kit.domeFaces.Add(corner + 1);
+            kit.domeFaces.Add(corner + 1);
+            kit.domeFaces.Add(corner + around + 1);
+            kit.domeFaces.Add(corner + around + 2);
+        }
+    }
+}
+
+// Which models are near enough to draw this frame, and in front of the eye.
+[Stage(Layers.Gather, 1)]
+view Cull(mut Kit kit, Me me)
+{
+    var eye = me.eye;
+    var ahead = Math.Mul(me.turn, float3(0, 0, 1));
+    var flat = Math.Normalize(float3(ahead.x, 0, ahead.z));
+    for (var model = 0; model < kit.placed.count; model++)
+    {
+        var reach = KitReach(Model(model));
+        mut var near = kit.near[model];
+        near.Clear();
+        var count = kit.placed[model].count;
+        for (var i = 0; i < count; i++)
+        {
+            var placed = kit.placed[model][i];
+            var at = placed.transform.c3.xyz;
+            var off = at - eye;
+            var far = Math.Length(off.xz);
+            if (far > reach) continue;
+            if (far > 8 && Math.Dot(off.xz, flat.xz) < -far * 0.35) continue;
+            near.Add(placed);
+        }
+        kit.near[model] = near;
+    }
+}
