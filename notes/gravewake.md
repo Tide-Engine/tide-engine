@@ -185,6 +185,18 @@ of guns and perks:
     up and 0.35 m ahead of its feet, where the fixed point had been 1.62 m
     straight up; a fallen one's is on the ground. The pose is sampled from the
     game's assets, so the C test now loads the pack.
+- Aiming, after the owner's next notes ("the weapons that shoot dont really look
+  like they are aiming towards the center of the screen, specially when aiming
+  down sights"; "the foot (kick) animation, it needs to come further out the
+  screen"): a crossbow's or the handgonne's barrel line is turned each frame
+  onto the point 30 m down the crosshair, and when aimed brought under the eye
+  on the eye's way (held.tide, before sway and bob are added). A drawn bow's
+  arrow (the game's arrow model, on the kit's `fleche` bone) is laid from the
+  cheek onto the crosshair the same way. Blades are seated turned and tipped
+  away from the eye (`BladeSeat`), staffs too; a one-handed weapon's empty left
+  arm is kept down (`TurnBone`), as the kit's swings flung it across the
+  picture. The kick's boot comes up higher and nearer, 15% bigger. The
+  fireball's smoke starts once it's 3 m from the eye.
 - Validation of the arms (2026-10-16): native debug `gravewake_test` and the
   web debug WASI test pass; the web page builds. Every weapon was looked at in
   standard-host captures (idle, mid-attack, aimed or heavy). The browser tests

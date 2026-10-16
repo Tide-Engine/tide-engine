@@ -10,7 +10,6 @@
 # Writes into --out:
 #   arms.glb   the two arms, skinned
 #   bow.glb    the kit's bow and its string, one skinned mesh on the same skeleton (the limbs flex, the string draws)
-#   arrow.glb  the nocked arrow, skinned to the same skeleton (drawn only while one is on the string)
 #   moves.glb  the clips, on the same skeleton, no meshes
 # The skeleton is the bow file's armature with two bones added: `weapon` (the tomahawk file's weapon bone) and
 # `knife` (the knife file's). The three files' 42 shared bones have identical rests. A weapon rides `weapon`: its
@@ -452,11 +451,11 @@ MADE.update({
 })
 # Staffs, javelins, a pot or a bell tossed, a brew drunk
 IDLES = ((0.22, -0.20, 0.32), (-0.12, 0.97, 0.15), (0.0, 0.0, 1.0))
-IDLEJ = ((0.24, 0.04, 0.10), (-0.05, 0.22, 1.0), (0.0, 1.0, 0.0))
+IDLEJ = ((0.24, -0.07, 0.12), (-0.06, 0.12, 1.0), (0.0, 1.0, 0.0))
 MADE.update({
     "Staff_Idle": made([(0.0,) + IDLES, (1.0, (0.22, -0.21, 0.32), (-0.12, 0.97, 0.16), (0.0, 0.0, 1.0)), (2.0,) + IDLES], 2.0),
     "Staff_Cast": made([(0.0,) + IDLES, (0.25, (0.12, -0.10, 0.45), (-0.10, 0.55, 0.83), (0.0, -0.83, 0.55)), (0.60,) + IDLES], 0.6),
-    "Jav_Idle": made([(0.0,) + IDLEJ, (1.0, (0.24, 0.03, 0.10), (-0.05, 0.23, 1.0), (0.0, 1.0, 0.0)), (2.0,) + IDLEJ], 2.0),
+    "Jav_Idle": made([(0.0,) + IDLEJ, (1.0, (0.24, -0.08, 0.12), (-0.06, 0.13, 1.0), (0.0, 1.0, 0.0)), (2.0,) + IDLEJ], 2.0),
     "Jav_Throw": made([(0.0,) + IDLEJ,
                        (0.25, (0.30, 0.04, -0.08), (0.0, 0.25, 1.0), (0.0, 1.0, 0.0)),
                        (0.40, (0.12, -0.02, 0.42), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)),
@@ -630,7 +629,6 @@ meshes["arc"].select_set(True)
 bpy.context.view_layer.objects.active = meshes["arc"]
 bpy.ops.object.join()
 export(os.path.join(OUT, "bow.glb"), [arm, meshes["arc"]])
-export(os.path.join(OUT, "arrow.glb"), [arm, meshes["fleche"]])
 # The clips: the armature alone in the scene, with every action (its animation data kept: without it the exporter
 # finds none)
 for o in [o for o in bpy.data.objects if o.type == "MESH"]:

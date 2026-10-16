@@ -181,8 +181,10 @@ view Flicker(mut Fx fx, Me me, Village village, Match match, query (Zombie zombi
         var m = row.missile;
         if (m.kind == Shot.Fireball)
         {
-            Glow(fx, Mote { at = m.at, velocity = Scatter(fx, 0.6), life = 0.35, size = 0.4, grow = -0.8, color = float3(1.0, 0.45, 0.1), alpha = 3 });
-            Murk(fx, Mote { at = m.at, velocity = float3(0, 0.6, 0), life = 0.9, size = 0.2, grow = 0.5, color = float3(0.12, 0.1, 0.09), alpha = 0.5 });
+            // Its flame, and its smoke once it's clear of whoever cast it (in the face, the smoke fills the picture)
+            var near = Math.Distance(m.at, me.eye) < 3;
+            Glow(fx, Mote { at = m.at, velocity = Scatter(fx, 0.6), life = 0.35, size = near ? 0.15 : 0.4, grow = -0.8, color = float3(1.0, 0.45, 0.1), alpha = 3 });
+            if (!near) Murk(fx, Mote { at = m.at, velocity = float3(0, 0.6, 0), life = 0.9, size = 0.2, grow = 0.5, color = float3(0.12, 0.1, 0.09), alpha = 0.5 });
         }
         if (m.kind == Shot.Pot && !m.stuck) Glow(fx, Mote { at = m.at + float3(0, 0.12, 0), life = 0.15, size = 0.1, color = float3(1.0, 0.5, 0.15), alpha = 3 });
         if (m.forged && !m.stuck && m.kind != Shot.Fireball) Glow(fx, Mote { at = m.at, life = 0.25, size = 0.06, color = float3(0.45, 0.6, 1.0), alpha = 3 });

@@ -1,5 +1,5 @@
 // The first-person arms (art/fp): CoinCoin's rigged arms (CC-BY 4.0), the kit's bow and arrow, and their clips,
-// all on one skeleton; the clips the kit has none for (two-handed weapons, polearms, crossbows, staffs, throwing,
+// all on one skeleton (the nocked arrow is the game's own arrow on the kit's arrow bone); the clips the kit has none for (two-handed weapons, polearms, crossbows, staffs, throwing,
 // drinking) were made for it by art/fp/tools/make_fp.py. What's in the hand rides the skeleton's `weapon` bone (a
 // stab's dagger the `knife` bone), its grip at the bone.
 
@@ -7,11 +7,13 @@ struct FpRig
 {
     [Name("weapon")] Bone weapon;
     [Name("knife")] Bone knife;
+    [Name("fleche")] Bone arrow;            // The nocked arrow: its nock at the bone, its point up the bone's +z
+    [Name("Shoulder_L")] Bone shoulderL;
+    [Name("UpperArm_L")] Bone upperArmL;
 }
 
 asset SkinnedMesh<Corner, FpRig> fpArms = "art/fp/arms.glb";
 asset SkinnedMesh<Corner, FpRig> fpBow = "art/fp/bow.glb";
-asset SkinnedMesh<Corner, FpRig> fpArrow = "art/fp/arrow.glb";
 asset AnimationCatalog fpMoves = "art/fp/moves.glb";
 
 // How a weapon is held, and so which clips move the arms.
@@ -167,7 +169,20 @@ Pose FpPose(SkinnedMesh<Corner, FpRig> body, Survivor mine, WeaponInfo info, Gra
         weight = Math.Saturate((0.75 - sinceLoose) * 8);
     }
     if (weight > 0) pose.Blend(act, weight);
+    // A one-handed weapon's open left hand, held out in the kit's guard and flung across the picture in its swings,
+    // kept down out of the way
+    if (grasp == Grasp.One)
+        TurnBone(pose, body.skeleton.bones.upperArmL, body.skeleton.bones.shoulderL, quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(70)));
     return pose;
+}
+
+// A bone turned in the model's axes (about its own joint), its children with it.
+void TurnBone(mut Pose pose, Bone bone, Bone parent, quaternion turn)
+{
+    var p = Unscaled(pose.Model(parent));
+    var q = Math.Normalize(quaternion(float3x3(p.c0.xyz, p.c1.xyz, p.c2.xyz)));
+    var local = pose[bone].rotation;
+    pose[bone].rotation = Math.Mul(Math.Inverse(q), Math.Mul(turn, Math.Mul(q, local)));
 }
 
 // A bone's place with the kit's scale taken out: its axes made a unit long.
@@ -185,12 +200,13 @@ quaternion Seat()
     return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 0, 1));
 }
 
-// A long blade tipped forward in the fist (about the edge's line), so it reaches away from the eye rather than up
-// across the picture.
+// A long blade turned in the fist so its edge leads (about the edge's line), and tipped away from the eye (about the
+// flat), so it reaches out into the picture rather than standing up across it.
 quaternion BladeSeat(Grasp grasp)
 {
-    var tip = grasp == Grasp.One ? 38.0 : grasp == Grasp.Two ? 28.0 : 0.0;
-    return Math.Mul(quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(tip)), Seat());
+    var roll = grasp == Grasp.One ? 52.0 : grasp == Grasp.Two ? 40.0 : 0.0;
+    var tip = grasp == Grasp.One || grasp == Grasp.Two ? -45.0 : grasp == Grasp.Staff ? -30.0 : 0.0;
+    return Math.Mul(Math.Mul(quaternion.AxisAngle(float3(0, 1, 0), Math.Radians(tip)), quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(roll))), Seat());
 }
 
 // The stab's dagger on the knife bone: its blade up the bone (+z), its edge the bone's -y.
@@ -199,20 +215,13 @@ quaternion KnifeSeat()
     return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
 }
 
-// Aimed, a crossbow, the handgonne or the hand crossbow comes up toward the eye's line (the arms with it).
-float3 AimShift(Grasp grasp)
-{
-    if (grasp == Grasp.Cross) return float3(-0.06, 0.08, 0.04);
-    if (grasp == Grasp.Pistol) return float3(-0.1, 0.07, 0.0);
-    return float3(0);
-}
-
 // Where the arms are held for each grasp, beyond where the clips have them: a one-handed weapon lower and further
 // to the right than the kit holds its tomahawk, so its blade stands up at the screen's side rather than across it.
 float3 GraspShift(Grasp grasp)
 {
-    if (grasp == Grasp.One) return float3(0.07, -0.11, 0.02);
-    if (grasp == Grasp.Two) return float3(0.12, -0.08, 0.0);
+    if (grasp == Grasp.One) return float3(0.08, -0.06, 0.04);
+    if (grasp == Grasp.Two) return float3(0.17, -0.08, 0.02);
+    if (grasp == Grasp.Staff) return float3(0.1, -0.1, 0.04);
     if (grasp == Grasp.Bow) return float3(0.04, -0.06, 0.0);
     return float3(0);
 }
