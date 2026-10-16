@@ -567,6 +567,9 @@ view TitleCard(Lobby lobby)
               Anchor.MiddleLeft);
     Draw.Text("Swords, axes, bows and crossbows  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u, Color(0.6, 0.57, 0.52), Anchor.MiddleLeft);
     if (lobby.message != "") Draw.Text(lobby.message, float2(left + 4 * u, h * 0.86), 15 * u, Color(0.9, 0.5, 0.4), Anchor.MiddleLeft);
+    // The licence the first-person arms come under asks for their maker's name
+    Draw.Text("First-person arms by CoinCoin (CC BY 4.0). Village, people and weapons by Quaternius (CC0).", float2(w - 14 * u, h - 12 * u), 11 * u,
+              Color(0.6, 0.57, 0.52, 0.7), Anchor.LowerRight);
 }
 
 // The title: GRAVEWAKE in blood over the village at night, and the way in.

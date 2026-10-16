@@ -99,6 +99,7 @@ this folder.
 | `kit.tide`, `look.tide`, `eye.tide` | The village's meshes; light, shadows, fog, bloom; the camera |
 | `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide` | The dead and the survivors; the weapon in hand; what's on walls; flames, blood, sparks |
 | `hud.tide`, `sound.tide` | What's written over the picture, the title; what's heard |
-| `art/` | The village, people, weapons and items, with how each was made: see `art/CREDITS.md` |
+| `fp.tide` | The first-person arms: which clips move them for each weapon, how a weapon sits in the hand |
+| `art/` | The village, people, weapons, items and first-person arms, with how each was made: see `art/CREDITS.md` (the arms are CC BY 4.0, by CoinCoin) |
 | `sfx/` | The sounds, made by `sfx/tools/make_sfx.py`: see `sfx/CREDITS.md` |
 | `test/` | Rounds played with no window (`test.c`), and the browser test |
