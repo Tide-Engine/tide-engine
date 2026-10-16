@@ -1,5 +1,201 @@
 # Inside Out
 
+## Drawing, take-in, outlines, order and clamps (2026-10-16)
+
+The owner's playtest sent five points: drawing on the puzzle to show the
+other player things; "pushing room into a box should put it in (when
+pushing 2 at once against a blocking cell)"; make outlines clearer, since a
+box on its outline hid it; puzzle 11 was good but should come later; and a
+mechanic to freeze rooms for later puzzles.
+
+The second point took three rounds. Offered three readings, the owner first
+picked "enter B from any side", built as a box entering a stopped box
+through a wall with no doorway. Seeing that described, they said a thing
+with no way in should not get in, and explained: pushing a chamber at
+something blocked, "I would expect the box to enter the chamber if there is
+a way in on that side, the same way it does when I push the box into the
+chamber". That is the **take-in rule** below (owner's decision, 2026-10-16);
+the any-side entry was removed. Everything else below is the agent's pick,
+provisional until the owner confirms. No engine, compiler or Rooms change
+was needed.
+
+### Rules (`game.tide`)
+
+- **Take-in (owner's decision).** In `Shove`'s resolution, for each
+  stopped thing and the thing behind it, from the front: first, as before,
+  the thing behind goes into the stopped thing if that is a box with a
+  doorway facing it. Failing that, if the thing behind is a box with a
+  doorway on the side facing the stopped thing, the stopped thing goes in
+  by that doorway (`DoorCell`, which must be `Passable`) and the box takes
+  its cell. Picks: a bot or a clamped box is never taken in, nor a thing the
+  row has come round to; entering wins over take-in; whatever stands in that
+  doorway is pushed on further in, back along the row's way (rows now keep
+  a way per thing, `ways`), and if that cannot be, take-in fails and the
+  pair behind is asked as before (`taken` marks a tried take-in so it is
+  not repeated). A box with no doorway either way never admits anything.
+  `BeginTransit` draws a thing taken in shrinking into that doorway as the
+  box comes over it.
+- **Clamps (pick for "freeze").** `Tile.Clamp`, appended after `ShutterB`,
+  `*` in maps. A box on a clamp of the room it stands in (`Clamped`) never
+  steps, so it stops a row like a wall: it is entered by a facing doorway
+  (or takes in what is pushed at it, by its doorway on that side), and
+  anything pushed at it otherwise stops. A box pushed
+  onto a clamp is held there for good. It still goes with its room when that
+  room's box moves. Robots and batteries cross a clamp as floor. Reading the
+  tile under each box keeps the match unchanged: no new match state.
+- Fixtures: `inside_out_a_stopped_thing_goes_into_the_box_pushed_at_it`
+  (a battery against a wall is taken in by the pushed box's east doorway;
+  one in that doorway is pushed on; a wall behind it or no east doorway
+  sends the robot into the box instead; a bot is never taken; a box is
+  taken in where it cannot be entered, a clamped one is not),
+  `inside_out_a_box_goes_into_a_stopped_box_only_by_a_facing_doorway`, and
+  `inside_out_a_clamp_holds_its_box_and_the_room_carries_it` (pushed onto a
+  clamp, then entered from both sides with no backstop; batteries need a
+  doorway; a clamped box inside a moving room keeps its cell and is entered
+  by the passenger). Each undoes to the exact start.
+
+`inside_out_a_row_of_any_length_is_pushed_and_only_a_wall_stops_it`
+changed with the rule: a row of two boxes and a parcel at the table's edge
+now has the second box take the parcel in, where the first box used to go
+into the second; that now happens one push later.
+
+Campaign effect: all twenty witnesses replay unchanged and every solo
+search still exhausts without cargo and outlines. With
+`inside_out_solve all --limit 3000000`, every minimum is unchanged except
+Long way home, 46 to 42 (441,249 positions): it still exports the battery
+north and imports it east, but takes it in by moving the room onto it
+rather than posting it, saving four moves. Its 46-move witness remains.
+Puzzle 9's 26 is now a found minimum (2,625,484 positions).
+
+### Drawing (`ink.tide`)
+
+- The left mouse button draws; a click with no drag is a point. On a
+  touchscreen, a **Draw** toggle (shown only when one is connected, beside
+  Undo/Restart, `Hands.pen`) turns the primary touch from swiping to drawing.
+  Presses on GUI widgets never reach it.
+- A line is kept in the cells of the room it starts on: the played room, or
+  the smallest room around it under the pointer (`Sculpture.layers`), else
+  the outermost. Ink over a miniature box is kept in the room that box
+  stands in, where it covers the same spot of it.
+- A room inside itself, or in a cycle, is drawn at several sizes. Its ink
+  lives on exactly one drawing (`InkLens`): the innermost of the played
+  room and the rooms around it that is this room, else its largest drawing
+  (`Sculpture.shown`, recorded by `RoomScene`); drawings under 3 pixels a
+  tile show none. A line begun on a further-out copy of the played room is
+  kept in the played room's cells beyond its walls, which are the same
+  pixels. A first version drew every drawing and followed a stroke on the
+  largest one, which in a self-containing room would move a line and repeat
+  it huge and tiny; a capture in Still point now shows each line once,
+  where it was drawn, on the partner's screen.
+- Ink is a 2D overlay above the scene and below the header labels, a
+  constant 4.5-pixel line in the drawer's paint lightened 18%, with a dark
+  under-stroke.
+- Sending: `Scribble { level, room, from, to }` in channel
+  `InkChannel.Ink`, so ink never holds up a move. One segment goes when the
+  pointer has moved 6 pixels and 35 ms have passed, plus a final one on
+  release. `KeepInk` takes it from a present seat for the current level,
+  room -1 to roomCount-1, both points within 32 cells, into the 128-entry
+  ring `singleton Sketchbook`. Nothing in the puzzle reads it; undo leaves
+  it. Marks older than `Workshop.openedTick` are not drawn, so a restart or a
+  new puzzle clears them.
+- Lines last `INK_TICKS` 210 ticks (7 s), points `POINT_TICKS` 72 (2.4 s),
+  fading over the last 45. The drawer's own marks are drawn from local
+  `Pen.own` at once and timed by its own clock; the partner's come from the
+  match. A partner's new point plays `ui_toggle` on the Interface bus.
+- Validation: native and browser captures below; the browser fixture's new
+  stage draws a line on Amber's page, finds it on Teal's at the same pixels
+  with both move counts unchanged, and finds it gone from both after a
+  restart.
+
+### Outlines
+
+`DockMark` (`paint.tide`) replaces the thin outline: an empty outline is a
+pad in its box's paint (lerped 55% to plaster) inside the existing outline
+and number. A box on an outline hides the pad; then four corner brackets just
+outside the cell (0.57 tile; stroke 0.045 tile, clamped to 0.8–4 pixels)
+show it. They are the dock's
+paint lightened 35% for another box, and glow green (a seated socket's
+colour) once the outline's own box has settled there (`BoxDocked` and no
+transit). Captures showed empty-outline brackets in wall paint read as wall
+stubs at containing scale, so an empty outline has none. Docking keeps its
+existing sound.
+
+The first WebGL play run failed "the actual home miniature grows
+continuously" (13249, 13338, 12200, 41851): its sage classifier also matched
+the glowing brackets round Box 2 on the table, then 15-pixel bars, which
+left the crop as the camera zoomed. Lit sage walls in those crops never
+exceed green 162; the brackets' cores are 251–255. `homeWallArea` now skips
+pixels above green 200 as self-lit marks, not wall (on the failed run's own
+crops: 4546, 4701, 11488, 39387), and the stroke cap keeps the brackets thin
+at containing scale.
+
+### Campaign order and the Held chapter
+
+Long way home moved from puzzle 11 to 14, the end of Power. A new chapter 5,
+**Held**, holds two clamp puzzles, and Trading places is puzzle 20 in
+Everything. `LEVEL_COUNT` 20, `CHAPTER_COUNT` 6; the puzzle selector's tabs
+are a sixth of its width (the browser fixture computes them from that).
+Preferences version 4 renumbers ticks (`RenumberVersion3`); from all old
+ticks, v3 gives 655359, v2 121343 and v1 4159. Actual native runs with those
+saves and a custom music level produced exactly those values, kept the
+music setting, and wrote version 4 after a mute toggle; the test-created
+file was removed, restoring its original absence.
+
+| # | Name | Decision | Shortest (BFS) |
+|---|---|---|---:|
+| 18 | Held fast | The partner braces the cargo room for its rider, then pushes the occupied room at the clamped room: it goes in by the clamped room's north doorway, and one more push carries it onto its outline. The rider pushes the battery out onto the socket beside it; the partner then holds plate A for the rider's way out through the shutter. | 35 (1,597,997 positions) |
+| 19 | Still point | The room's own box is clamped inside it. One battery must be pushed down into the box to come out at the top doorway's socket, which only a robot already waiting in that corridor can do; the other is pushed out of the side doorway and comes back in beside the box, onto its socket. | 34 (39,770) |
+
+Held fast was first drawn for the any-side entry, with the cargo room going
+through a solid wall; when that rule went, the clamped room got its north
+doorway (33 moves became 35). Both solo searches exhaust without cargo and
+outlines: 3,423/3,423 and 598/598 positions. Counterfactuals with the clamp
+replaced by floor: under the any-side rule Held fast stayed solvable in 41
+moves, so there the clamp shortened the route rather than being necessary.
+For the final map, the no-clamp search found no solution within 30,000,000
+positions (31 moves deep, 715 s): a limit, not a proof, short of the clamped
+puzzle's 35-move minimum. Still point becomes a
+different 18-move puzzle, as its box can then be pushed. Witnesses are the
+solver's shortest routes. No human has played either.
+
+All twenty witnesses replay; the solo searches cover puzzles 6–20. Fresh
+`inside_out_solve all --limit 3000000` minima in the new order:
+`10,12,20,15,11,19,16,-,26,17,12,12,13,42,20,21,25,35,34,-` (8 and 20 reach
+the limit, as before). Solo counts in the test, seats 0/1, puzzles 6–20:
+3,454/3,454, 876,520/489,062, 21,252/7,726, 464,922 each, 80 each, 89/264,
+22/1, 2,080/3,186, 860/1,833, 457/3,413, 3,770/10,867, 79,735/77,041,
+3,423 each, 598 each, 217/7,530.
+
+### Validation
+
+Native debug (`inside_out`, tests, invite, solver) and web debug builds are
+warning-free on the final code. Native: 50/50 game tests and all four
+Inside Out CTest entries, including `inside_out_materials_native`, whose
+clicks now open Borrowed power (12 / 20, checked in its capture). WASM: the
+aggregate passes (74.0 s) and all twelve invite/preview entries pass.
+Bounded native captures under ignored `build/inside-out-captures/round-3/`
+show ink on both screens and a partner's point, a line drawn on the further
+copy of a self-containing room shown once where drawn, the empty outline
+pad, green brackets on docked boxes (thin at containing scale), both Held
+puzzles' clamps (jaws at miniature and at containing scale), Held fast's
+occupied room shrinking in by the clamped room's north doorway and on to
+its outline, and Long way home's room box moving onto its stuck battery
+while the battery shrinks in by its east doorway (`takein-zoom.png`).
+Native Vulkan validation layers are unavailable here.
+
+Browser coverage is incomplete. On the intermediate any-side build, after
+the bracket fix, `inside_out_play_webgl` (1170.2 s, including the new ink
+stage), `inside_out_materials_webgl` (195.3 s) and
+`inside_out_shutters_webgl` (441.4 s) passed. The WebGPU runs were cut off
+twice: once when Windows slept (01:27 to 08:58), and once when the rule
+changed and the run was stopped. On the final take-in build, the WebGL play
+fixture lost its browser ("DevTools pipe closed") at 438.8 s, during the
+doorway-passage stage, after its ink, entry and exit captures. Another
+checkout's headless browser tests were running at the same time; the cause
+is not established. The owner then asked to stop testing and merge. So
+none of the six browser fixtures has passed on the final code, and no
+WebGPU fixture has passed in this round.
+
 ## Physical occupied shutters (2026-10-15)
 
 This rule supersedes every earlier description of a shutter closing on an

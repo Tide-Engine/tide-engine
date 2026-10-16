@@ -14,11 +14,11 @@ assert.ok(executable && directory, 'Usage: materials-native.mjs <inside_out exec
 assert.ok(process.env.TIDE_HIDDEN && process.env.TIDE_HIDDEN !== '0', 'Native capture requires TIDE_HIDDEN=1');
 const output = path.resolve(directory);
 await mkdir(output, { recursive: true });
-// Puzzle 13 contains a nested room, a battery, both signal channels and the
+// Puzzle 12 contains a nested room, a battery, both signal channels and the
 // containing table. Preserve its authored starting state for every look.
 const originalFrame = 62 + MANUAL_SETTLE_TICKS * 2 + 62;
-const lines = ['50 key escape', '53 mouse 640 366', '54 button left', '57 mouse 640 209',
-    '58 button left', '61 mouse 640 474', '62 button left', `${originalFrame} player 1 capture original.png`];
+const lines = ['50 key escape', '53 mouse 640 366', '54 button left', '57 mouse 579 209',
+    '58 button left', '61 mouse 640 417', '62 button left', `${originalFrame} player 1 capture original.png`];
 const names = ['original', 'look-0', 'look-1', 'look-2', 'look-3', 'look-4', 'restored'];
 // A bounded host that stops before a capture must not reuse a prior pass.
 await Promise.all(names.map(name => rm(path.join(output, `${name}-1.png`), { force: true })));

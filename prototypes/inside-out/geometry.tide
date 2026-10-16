@@ -24,6 +24,10 @@ local singleton Sculpture
     float shadowLow;
     float shadowHigh;
     Rect bounds;
+    // Where each room is drawn this frame: `layers` the played room and the
+    // rooms around it, innermost first, and `shown` every drawing of a room.
+    List<SceneLens> layers;
+    List<SceneLens> shown;
 }
 
 void CubeFace(mut Sculpture sculpture, float3 normal, float3 a, float3 b, float3 c, float3 d)
@@ -66,6 +70,8 @@ void BeginSculpture(mut Sculpture sculpture, float tile, Rect bounds)
     sculpture.shadowLow = 0;
     sculpture.shadowHigh = 0;
     sculpture.bounds = bounds;
+    sculpture.layers.Clear();
+    sculpture.shown.Clear();
 }
 
 float3 SculptureFoot(float2 at, float floor)

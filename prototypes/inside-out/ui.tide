@@ -67,6 +67,8 @@ local singleton Hands
     float[2] blockTime;
     float portalTime;
     Step[4] ahead;
+    // On a touchscreen, a finger draws (ink.tide) rather than swipes a step.
+    bool pen;
 }
 
 void Label(string text, float2 at, float size = 16, Color color = INK, Anchor anchor = Anchor.MiddleLeft)
@@ -290,6 +292,9 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
         lobby.resume = true;
         UiSound(UiCue.Open);
     }
+    // The mouse always draws; a finger draws while this is on.
+    if (devices.touchscreen.connected && PaperButton(hands.pen ? "Drawing" : "Draw", Rect(left + 180, bottom, 82, 40), true, hands.pen))
+        hands.pen = !hands.pen;
     hands.repeat -= Math.Min(Frame.dt, .1);
     var direction = KeyDirection(devices, false);
     var edge = KeyDirection(devices, true);
@@ -311,7 +316,7 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
     // One deliberate swipe is one step. No persistent directional overlay
     // occupies either the desktop or a phone's board.
     var touch = devices.touchscreen.primaryTouch;
-    if (playing && !revealing && !workshop.puzzle.solved)
+    if (playing && !revealing && !workshop.puzzle.solved && !hands.pen)
     {
         if (touch.press.down)
         {
@@ -381,9 +386,22 @@ bool MenuBack(Rect card)
     return back;
 }
 
+// Version 4 moves Long way home from puzzle 11 to 14, so 12–14 become 11–13,
+// and puts the two Held puzzles, 18 and 19, before Trading places, now 20.
+// A solved tick follows its puzzle to its new number.
+int RenumberVersion3(int completed)
+{
+    mut var moved = completed & ((1 << 10) - 1);
+    if ((completed & (1 << 10)) != 0) moved |= 1 << 13;
+    moved |= ((completed >> 11) & 7) << 10;
+    moved |= completed & (7 << 14);
+    if ((completed & (1 << 17)) != 0) moved |= 1 << 19;
+    return moved;
+}
+
 struct Preferences
 {
-    int version = 3;
+    int version = 4;
     float master = 1;
     float music = .8;
     float effects = 1;
@@ -429,6 +447,7 @@ view ReadPreferences(mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
             if (saved.version < 2) completed &= ((1 << 6) - 1) | (1 << 13);
             // The physical shutter rule changes solutions 10–12 and 18.
             if (saved.version < 3) completed &= ~((1 << 9) | (1 << 10) | (1 << 11) | (1 << 17));
+            if (saved.version < 4) completed = RenumberVersion3(completed);
             hands.completed = completed;
         }
     }

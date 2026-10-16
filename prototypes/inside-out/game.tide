@@ -12,7 +12,7 @@ settings
 const int MAX_ROOMS = 4;
 const int MAX_CRATES = 8;
 const int MAX_DEPTH = 8;
-const int LEVEL_COUNT = 18;
+const int LEVEL_COUNT = 20;
 const int UNDO_LIMIT = 128;
 const int CLOSE_TICKS = 36;
 const int NAME_FADE_TICKS = 12;
@@ -21,8 +21,10 @@ const int INTRO_TICKS = NAME_FADE_TICKS * 2 + NAME_HOLD_TICKS;
 const int SOLVE_TICKS = CLOSE_TICKS + INTRO_TICKS;
 const int REVEAL_TICKS = 36;
 
-// A plate and a shutter for each of two channels, A and B.
-enum Tile { Floor, Wall, Target, Exit, PlateA, ShutterA, PlateB, ShutterB }
+// A plate and a shutter for each of two channels, A and B. A clamp holds the
+// box standing on it where it is: it never moves again, but it goes with
+// the room it is in, and anything can still walk or be pushed over the clamp.
+enum Tile { Floor, Wall, Target, Exit, PlateA, ShutterA, PlateB, ShutterB, Clamp }
 struct RoomLayout
 {
     Tile[49] tiles;
@@ -247,6 +249,11 @@ bool StepFrom(LevelLayout layout, Puzzle puzzle, int power, int room, int2 from,
     return Passable(layout, puzzle, nextRoom, next, power);
 }
 
+// Whether a box stands on a clamp of the room it is in, which holds it there.
+bool Clamped(LevelLayout layout, Puzzle puzzle, int box)
+{
+    return ValidRoom(layout, box) && TileAt(layout, puzzle.rooms[box].room, puzzle.rooms[box].position) == Tile.Clamp;
+}
 // The doorway of the box at a cell that faces something coming at it, and the
 // cell inside that it leads to: the box's room's door cell on that side. Where
 // there is such a doorway, `entry` is set even when it cannot be entered; it
@@ -363,11 +370,15 @@ enum Step { Blocked, Walk, Push, Enter }
 // - A thing steps to the next cell. If something stands there, that is
 //   pushed the same way first, and whatever is beyond it, however long the
 //   row: nothing in a row holds it back.
-// - Only a wall (a closed shutter is one) or a bot stops a row. The thing
-//   against the stop cannot move; the thing behind it, if the stopped thing
-//   is a box with a doorway facing it, goes into that box instead, pushing on
-//   whatever stands in the doorway. If it cannot, it is stopped too, and the
-//   same is asked of the thing behind it, back to the bot that pushed.
+// - Only a wall (a closed shutter is one), a bot or a clamped box stops a
+//   row. The thing against the stop cannot move. The thing behind it goes
+//   into it instead, if the stopped thing is a box with a doorway facing it,
+//   pushing on whatever stands in that doorway. Failing that, if the thing
+//   behind is a box with a doorway facing the stopped thing, the stopped
+//   thing goes into it, unless it is a bot or clamped: in by that doorway,
+//   pushing on whatever stands there further in, while the box takes its
+//   place. If neither can be, it is stopped too, and the same is asked of
+//   the thing behind it, back to the bot that pushed.
 // - A shutter stays lowered while powered or occupied. A row follows
 //   normally across it; it rises only after its last occupant leaves.
 // So a bot gets into a box only when the box cannot be pushed, and the one
@@ -380,10 +391,17 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
     var power = Power(layout, puzzle);
     mut Thing[20] row = default;
     mut Spot[20] goals = default;
+    // The way each moves: a thing taken into the box behind it goes back
+    // along the row, and pushes what is inside that way.
+    mut int[20] ways = default;
     row[0] = Thing { kind = 0, index = seat };
+    ways[0] = direction;
     mut var count = 1;
     mut var entered = false;
     mut var decided = false; // The last of the row already has its goal: a doorway
+    // A bit for each place in the row where the box there took in the thing
+    // ahead of it, so that is not tried again once it has led nowhere.
+    mut var taken = 0;
     for (var guard = 0; guard < 96; guard++)
     {
         var last = count - 1;
@@ -391,7 +409,8 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
         if (!decided)
         {
             var from = SpotOf(puzzle, row[last]);
-            free = StepFrom(layout, puzzle, power, from.room, from.cell, direction, out var room, out var cell);
+            free = StepFrom(layout, puzzle, power, from.room, from.cell, ways[last], out var room, out var cell) &&
+                !(row[last].kind == 1 && Clamped(layout, puzzle, row[last].index));
             goals[last] = Spot { room = room, cell = cell };
         }
         decided = false;
@@ -410,6 +429,7 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             if (!stopped)
             {
                 row[count] = ahead;
+                ways[count] = ways[last];
                 count += 1;
                 continue;
             }
@@ -418,25 +438,54 @@ bool Shove(LevelLayout layout, mut Puzzle puzzle, int seat, int direction, out S
             if (count < 20)
             {
                 row[count] = ahead;
+                ways[count] = ways[last];
                 count += 1;
             }
         }
         // The last of the row cannot move. Whatever is behind it goes into
-        // it, if it is a box with a doorway this way. A doorway closed by a
-        // shutter is a wall only when it is empty and unpowered.
+        // it, if it is a box with a doorway this way; else it goes into what
+        // is behind it, if that is a box with a doorway facing it. A doorway
+        // closed by a shutter is a wall only when it is empty and unpowered.
         mut var found = false;
         while (count >= 2 && !found)
         {
             var into = row[count - 1];
             count -= 1;
-            if (into.kind != 1) continue;
-            var at = SpotOf(puzzle, into);
-            var open = Gateway(layout, puzzle, power, at.room, at.cell, direction, out var destination, out var entry);
-            if (!open) continue;
-            goals[count - 1] = Spot { room = destination, cell = entry };
+            var behind = row[count - 1];
+            var way = ways[count - 1];
+            if (into.kind == 1)
+            {
+                var at = SpotOf(puzzle, into);
+                if (Gateway(layout, puzzle, power, at.room, at.cell, way, out var destination, out var entry))
+                {
+                    goals[count - 1] = Spot { room = destination, cell = entry };
+                    decided = true;
+                    found = true;
+                    if (count == 1) entered = true;
+                    continue;
+                }
+            }
+            var place = 1 << (count - 1);
+            if ((taken & place) != 0)
+            {
+                taken &= ~place;
+                continue;
+            }
+            mut var again = false;
+            for (var earlier = 0; earlier < count - 1; earlier++)
+                if (row[earlier].kind == into.kind && row[earlier].index == into.index) again = true;
+            if (behind.kind != 1 || into.kind == 0 || again || into.kind == 1 && Clamped(layout, puzzle, into.index)) continue;
+            var door = DoorCell(layout, behind.index, way);
+            if ((layout.rooms[behind.index].doors & (1 << way)) == 0 || !Passable(layout, puzzle, behind.index, door, power)) continue;
+            // The box behind takes the stopped thing in, and its own step
+            // is to where that stood.
+            row[count] = into;
+            goals[count] = Spot { room = behind.index, cell = door };
+            ways[count] = (way + 2) % 4;
+            taken |= place;
+            count += 1;
             decided = true;
             found = true;
-            if (count == 1) entered = true;
         }
         if (!found) return false;
     }
