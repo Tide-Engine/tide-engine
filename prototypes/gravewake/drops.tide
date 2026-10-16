@@ -63,6 +63,7 @@ void MaybeDrop(mut Match match, float3 at)
 [Stage(Tick.Late)]
 system Pickup(mut Drop drop, mut Match match, Party party, Time time, query (Survivor survivor) survivors, query (Zombie zombie) zombies)
 {
+    if (match.paused) return;
     drop.life -= time.dt;
     if (drop.life <= 0)
     {

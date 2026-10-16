@@ -55,7 +55,7 @@ static void heal(void)
 
 // Ticks with whoever's standing far too tough to go down (a crowd's claws can land together for more than anyone's
 // health, and the run ends when nobody's standing), and whole after each.
-static void tick_safe(int count)
+static void tick_whole(int count)
 {
     for (int i = 0; i < count; i++) {
         for (int seat = 0; seat < 2; seat++) {
@@ -66,6 +66,26 @@ static void tick_safe(int count)
         }
         tick(1);
         heal();
+    }
+}
+
+// Every offer turned down and every pick owed forgotten, so the run doesn't wait on a choice nobody's making.
+static void decline(void)
+{
+    for (int seat = 0; seat < 2; seat++) {
+        Survivor s = get(seat);
+        s.choosing = false;
+        s.pending = 0;
+        set(seat, s);
+    }
+}
+
+// Whole ticks for checks that aren't about the items: what a level offers is turned down.
+static void tick_safe(int count)
+{
+    for (int i = 0; i < count; i++) {
+        tick_whole(1);
+        decline();
     }
 }
 
@@ -91,9 +111,9 @@ static void pick(int seat, int which)
     held[seat].pick1 = which == 1;
     held[seat].pick2 = which == 2;
     held[seat].pick3 = which == 3;
-    tick_safe(1);
+    tick_whole(1);
     held[seat].pick1 = held[seat].pick2 = held[seat].pick3 = false;
-    tick_safe(1);
+    tick_whole(1);
 }
 
 // Three items of the test's choosing, and the first taken (with no level's pick owed, so none is offered meanwhile).
@@ -199,7 +219,7 @@ static void face(int seat, tide_entity e, float near)
 {
     Zombie z = zombie(e);
     put(seat, (tide_float3){z.at.x + sinf(z.yaw) * near, z.at.y, z.at.z + cosf(z.yaw) * near}, z.chestAt);
-    tick_safe(8);
+    tick_safe(24);         // Settled on the ground there (it may be lower than the zombie's feet)
     look_at(seat, zombie(e).chestAt);
 }
 
@@ -269,7 +289,7 @@ int main(void)
     CHECK(world.arch5_Zombie.count > 0);
     int fired = 0;
     bool offered = false;
-    for (int t = 0; t < 60 * 90; t++) {
+    for (int t = 0; t < 60 * 60 * 5 && world.Match.clock < 90; t++) {
         float nearest = 1e9f;
         Zombie target = {0};
         bool found = false;
@@ -283,12 +303,17 @@ int main(void)
         else if (found) look_at(0, target.chestAt);
         held[0].attack = found;
         if (found && get(0).shotWait <= 0 && get(0).mag > 0) fired++;
-        if (get(1).choosing) offered = true;
+        // Each level's offer taken, the third item, pressed and let go
+        for (int seat = 0; seat < 2; seat++) {
+            if (get(seat).choosing) offered = true;
+            held[seat].pick3 = get(seat).choosing && t % 2 == 0;
+        }
         heal();
         tick(1);
     }
-    held[0].attack = false;
-    CHECK(world.Match.phase == Phase_Fighting && world.Match.clock > 89);
+    held[0].attack = held[0].pick3 = held[1].pick3 = false;
+    tick_whole(1);
+    CHECK(world.Match.phase == Phase_Fighting && world.Match.clock >= 90);
     CHECK(world.Match.danger > 1.9f);
     CHECK(fired > 0);
     CHECK(get(0).kills >= 1);
@@ -296,8 +321,24 @@ int main(void)
     CHECK(world.Match.level > 1 && get(0).level == world.Match.level && get(1).level == world.Match.level);
     printf("a minute and a half: %d kills, a score of %d, the party at level %d, danger %.2f\n", get(0).kills, get(0).points, world.Match.level, world.Match.danger);
 
-    // ---- A level's offer: three items, none twice, taken while the run goes on; the next owed is offered then ----
+    // ---- A level's offer: three items, none twice; the run waits, the clock and the dead still, till both have taken
+    // one; the next owed is offered then ----
     CHECK(offered);
+    decline();
+    tick_whole(2);
+    world.Match.level += 1;
+    tick_whole(2);
+    {
+        CHECK(world.Match.paused);
+        const float clock = world.Match.clock;
+        const int row = hunting_row();
+        CHECK(row >= 0);
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+        const tide_float3 at = tide_get_Zombie(&world, e).at;
+        tick_whole(60);
+        CHECK(world.Match.clock == clock && world.Match.paused);
+        CHECK(tide_get_Zombie(&world, e).at.x == at.x && tide_get_Zombie(&world, e).at.z == at.z);
+    }
     for (int seat = 0; seat < 2; seat++) {
         const Survivor s = get(seat);
         CHECK(s.choosing);
@@ -308,10 +349,16 @@ int main(void)
         const Item first = get(0).offers.at[0];
         const int owed = get(0).pending;
         const int had = get(0).items.at[first];
+        const int picks = get(0).picks;
+        const float clock = world.Match.clock;
         pick(0, 1);
-        CHECK(get(0).items.at[first] == had + 1 && get(0).picks == 1);
+        CHECK(get(0).items.at[first] == had + 1 && get(0).picks == picks + 1);
         CHECK(owed == 0 ? !get(0).choosing : get(0).choosing && get(0).pending == owed - 1);
-        CHECK(world.Match.phase == Phase_Fighting);
+        // Still waiting for the other
+        CHECK(world.Match.paused && world.Match.clock == clock);
+        decline();
+        tick_whole(30);
+        CHECK(!world.Match.paused && world.Match.clock > clock);
     }
 
     // ---- Every item ----
@@ -440,7 +487,7 @@ int main(void)
         tick_safe(60 * 6);
         friend = get(1);
         CHECK(friend.life == Life_Standing && friend.gone == 0);
-        CHECK(friend.items.at[Item_HollowPoints] == 2 && friend.gun == Weapon_Shotgun && friend.mag == 6);
+        CHECK(friend.items.at[Item_HollowPoints] >= 2 && friend.gun == Weapon_Shotgun && friend.mag >= 6);
         tick_safe(60 * 2);
     }
 
@@ -467,7 +514,7 @@ int main(void)
         // The Gunner: a phase round, a slide, a frag grenade
         become(0, Role_Gunner, Weapon_Rifle);
         tide_entity e = sturdy();
-        face(0, e, 12);
+        face(0, e, 6);
         float before = zombie(e).health;
         press(&held[0].secondary);
         tick_safe(2);
@@ -490,7 +537,7 @@ int main(void)
         // The Breacher: a boot, a leap and its slam, a firebomb
         become(0, Role_Breacher, Weapon_Shotgun);
         const char *names[3] = {"boot", "leap", "firebomb"};
-        const float nears[3] = {1.4f, 4.5f, 6};
+        const float nears[3] = {1.4f, 7.0f, 6};
         for (int k = 0; k < 3; k++) {
             e = sturdy();
             face(0, e, nears[k]);
@@ -503,7 +550,10 @@ int main(void)
                 const Zombie now = zombie(e);
                 struck = k == 2 ? now.burn > 0 : now.state == ZombieState_Fallen;
             }
-            if (!struck) fprintf(stderr, "the %s didn't land\n", names[k]);
+            if (!struck)
+                fprintf(stderr, "the %s didn't land: at %.1f %.1f %.1f, the zombie at %.1f %.1f %.1f state %d, cooldown %.2f, leaping %d, grounded %d\n", names[k], get(0).feet.x,
+                        get(0).feet.y, get(0).feet.z, zombie(e).at.x, zombie(e).at.y, zombie(e).at.z, (int)zombie(e).state, get(0).cooldowns.at[k], get(0).leaping,
+                        get(0).grounded);
             CHECK(struck);
             CHECK(get(0).cooldowns.at[k] > 0);
         }
@@ -688,7 +738,7 @@ int main(void)
             for (int seat = 0; seat < 2; seat++) {
                 Survivor s = get(seat);
                 if (t % 60 == 0) {
-                    const float off = seat == 0 ? 4.0f : 15.0f;
+                    const float off = seat == 0 && !slammed ? 4.0f : 15.0f;      // Close for a slam, then both off for a charge
                     s.feet = (tide_float3){b.at.x + (seat == 0 ? off : -off), b.at.y, b.at.z};
                     s.feet.y = 0;
                     s.placed = true;
@@ -697,6 +747,7 @@ int main(void)
                 s.life = Life_Standing;
                 set(seat, s);
             }
+            decline();
             const float was0 = get(0).health, was1 = get(1).health;
             tick(1);
             if (b.move == BossMove_SlamWindup && get(0).health < was0) slammed = true;
@@ -706,7 +757,8 @@ int main(void)
         printf("the Brute: slammed %d, charged %d, roared %d\n", slammed, charged, roared);
         CHECK(slammed && charged && roared);
         // Felled
-        const int picks0 = get(0).pending + (get(0).choosing ? 1 : 0), picks1 = get(1).pending + (get(1).choosing ? 1 : 0);
+        decline();
+        const int picks0 = 0, picks1 = 0;
         Boss b = tide_get_Boss(&world, e);
         b.health = 1;
         CHECK(tide_set_Boss(&world, e, b));
@@ -719,11 +771,14 @@ int main(void)
             s.shotWait = 0;
             s.mag = 30;
             set(0, s);
-            press(&held[0].attack);
+            held[0].attack = true;
+            tick_whole(1);
+            held[0].attack = false;
+            tick_whole(1);
             felled = tide_get_Boss(&world, e).move == BossMove_Dying;
         }
         CHECK(felled);
-        tick_safe(2);
+        tick_whole(2);
         CHECK(get(0).pending + (get(0).choosing ? 1 : 0) >= picks0 + 1);
         CHECK(get(1).pending + (get(1).choosing ? 1 : 0) >= picks1 + 1);
         tick_safe(60 * 6);

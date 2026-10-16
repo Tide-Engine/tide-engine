@@ -2,8 +2,8 @@
 // you: rounds that arc lightning, kills that burst, a drone at your shoulder,
 // a ring of embers, shells called down on what you hit. At each level (and
 // for each Brute felled) every survivor is offered three and takes one with
-// 1, 2 or 3 (the pad's d-pad left, up and right), fighting on meanwhile:
-// nothing stops for it. Rarer ones turn up more as the night goes on. What's
+// 1, 2 or 3 (the pad's d-pad left, up and right); the run waits for everyone
+// to choose (rounds.tide's Pause). Rarer ones turn up more as the night goes on. What's
 // taken is kept through going down and bleeding out, till the game's over.
 //
 // And levels: every kill by anyone is experience for the whole party, and each
@@ -261,6 +261,7 @@ event(Earned earned) Earn(mut Survivor survivor, Herd herd)
 [Stage(Tick.Hands, 2)]
 system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, Time time)
 {
+    if (match.paused) return;
     if (!survivor.ready || survivor.life != Life.Standing || match.phase == Phase.Over) return;
     var drones = Has(survivor, Item.GunDrone);
     if (drones > 0)

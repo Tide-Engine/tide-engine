@@ -11,6 +11,7 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
 {
     survivor.placed = false;
     survivor.ready = hands.ready;
+    if (match.paused) return;
     var dt = time.dt;
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over) return;
     survivor.yaw += hands.look.x;
@@ -161,6 +162,7 @@ int FindAim(Survivor survivor, Party party, World world)
 [Stage(Tick.Survivors, 1)]
 system Use(mut Survivor survivor, Match match, Party party, World world)
 {
+    if (match.paused) return;
     survivor.aimed = -1;
     if (!survivor.ready || survivor.life != Life.Standing || match.phase == Phase.Over) return;
     survivor.aimed = FindAim(survivor, party, world);
@@ -168,8 +170,9 @@ system Use(mut Survivor survivor, Match match, Party party, World world)
 
 // Raising a friend: hold use on them.
 [Stage(Tick.Survivors, 2)]
-system Raise(Hands hands, Survivor survivor, Party party, Time time)
+system Raise(Hands hands, Survivor survivor, Party party, Match match, Time time)
 {
+    if (match.paused) return;
     if (!survivor.ready || survivor.life != Life.Standing || !hands.use || survivor.aimed < 0) return;
     var seat = survivor.aimed;
     // Twice the tick's share: Steer lets it fall back on any tick nobody holds them
@@ -203,6 +206,7 @@ event Helped
 [Stage(Tick.Hands)]
 system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, Herd herd, Time time)
 {
+    if (match.paused) return;
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over || survivor.role == Role.None) return;
     var dt = time.dt;
     var downed = survivor.life == Life.Downed;
