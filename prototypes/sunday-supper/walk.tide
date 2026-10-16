@@ -161,7 +161,8 @@ system Steer(Hands hands, mut Walker walker, mut Farm farm, mut Story story, Par
     walker.ready = hands.ready;
     if (!Present(walker, party)) return;
     walker.yaw += hands.look.x;
-    walker.pitch = Math.Clamp(walker.pitch - hands.look.y, -1.45, 1.45);
+    // The mouse's and the stick's y are up, as a raised pitch is
+    walker.pitch = Math.Clamp(walker.pitch + hands.look.y, -1.45, 1.45);
     if (hands.light.down) walker.torch = !walker.torch;
 
     // A choice: either traveller picks
