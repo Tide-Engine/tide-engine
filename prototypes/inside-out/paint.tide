@@ -274,6 +274,28 @@ void ShutterTile(mut Sculpture sculpture, int channel, float2 at, float size, fl
     ChannelMark(sculpture, channel, at, size * .32, Math.Lerp(tone, DECAL, .80), mark, size, Math.Min(.6, size * .055));
 }
 
+// A clamp: a steel plate let into the floor, and at each corner a raised jaw
+// that stands just outside the cell and above a box's walls, so it shows
+// round the box it holds.
+void ClampTile(mut Sculpture sculpture, float2 at, float size, float floor)
+{
+    var steel = Color(.38, .41, .46);
+    var edge = Color(.64, .68, .74);
+    Cuboid(sculpture, at, float2(size * .84), size * .004, Color(.27, .29, .33), floor, size);
+    FloorOutline(sculpture, at, float2(size * .72), Math.Max(.5, size * .02), Color(.50, .54, .60), floor + size * .004, size);
+    var tall = size * .09;
+    for (var corner = 0; corner < 4; corner++)
+    {
+        var side = float2(corner % 2 == 0 ? -1 : 1, corner < 2 ? -1 : 1);
+        var point = at + side * size * .52;
+        var along = point - float2(side.x * size * .10, 0);
+        var across = point - float2(0, side.y * size * .10);
+        Cuboid(sculpture, along, float2(size * .27, size * .08), tall, steel, floor, size);
+        Cuboid(sculpture, across, float2(size * .08, size * .27), tall, steel, floor, size);
+        Cuboid(sculpture, point, float2(size * .08), size * .012, edge, floor + tall, size);
+    }
+}
+
 // The rise of a plate or a shutter cell, eased by Workbench.
 int RiseIndex(LevelLayout layout, int room, int2 at)
 {
@@ -335,6 +357,7 @@ void TilePaint(mut Sculpture sculpture, Tile tile, float2 at, float size, bool o
     if (PlateChannel(tile) >= 0) PlateTile(sculpture, PlateChannel(tile), at, size, rise, floor + thickness * .25);
     else if (ShutterChannel(tile) >= 0) ShutterTile(sculpture, ShutterChannel(tile), at, size, rise, floor + thickness * .25);
     else if (tile == Tile.Target) GoldTarget(sculpture, at, size, occupied, floor + thickness * .25);
+    else if (tile == Tile.Clamp) ClampTile(sculpture, at, size, floor + thickness * .25);
     else if (tile == Tile.Exit)
     {
         var top = floor + size * .006;
@@ -432,8 +455,9 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
     {
         var layout = workshop.layout.rooms[shell];
         if (layout.dockRoom != room || layout.dock.x < 0) continue;
-        // Any box standing on an outline hides it: none of it shows through
-        // that box's doorways.
+        // A box standing on an outline, or passing over it, hides its pad:
+        // none of it shows through that box's doorways. The brackets round
+        // it stay outside the box, and glow once its own box has settled.
         mut var covered = BoxAt(workshop.layout, workshop.puzzle, room, layout.dock) >= 0;
         for (var instance = 0; instance < workshop.layout.roomCount && !covered; instance++)
         {
@@ -441,11 +465,42 @@ void DimensionFloor(mut Sculpture sculpture, Workshop workshop, int room, MapLen
             if (ShownRoom(picture.boxTransit[instance], picture.boxParent[instance]) == room &&
                 Math.Abs(shown.x) < .98 && Math.Abs(shown.y) < .98) covered = true;
         }
-        if (covered) continue;
+        var settled = picture.boxTransit[shell].via == -2 && Math.Length(picture.boxes[shell] - float2(layout.dock)) < .02;
+        var home = BoxDocked(workshop.layout, workshop.puzzle, shell) && settled;
         var here = MapPoint(float2(layout.dock), lens);
-        FloorOutline(sculpture, here, float2(lens.tile * .91), FloorStroke(lens.tile), RoomColor(shell), lens.floor + lens.tile * .014, lens.tile);
-        if (lens.tile > 18) FloorNumber(sculpture, shell + 1, here + float2(lens.tile * .31, -lens.tile * .30), lens.tile * .17, RUBBER, lens.floor + lens.tile * .014, lens.tile);
+        DockMark(sculpture, here, lens.tile, RoomColor(shell), shell, covered, home, lens.floor);
     }
+}
+
+// Where a box has to end: a pad in its paint with its number. A box standing
+// on it hides the pad, so then brackets at its corners, just outside the
+// cell, say whose place it is; with its own box settled there they glow
+// green, as a socket does with its battery seated.
+void DockMark(mut Sculpture sculpture, float2 at, float tile, Color tone, int box, bool covered, bool home, float floor)
+{
+    var top = floor + tile * .014;
+    if (!covered)
+    {
+        Cuboid(sculpture, at, float2(tile * .84), tile * .006, Math.Lerp(tone, PLASTER, .55), floor + tile * .004, tile);
+        FloorOutline(sculpture, at, float2(tile * .91), FloorStroke(tile), tone, top, tile);
+        if (tile > 18) FloorNumber(sculpture, box + 1, at + float2(tile * .31, -tile * .30), tile * .17, RUBBER, top, tile);
+        return;
+    }
+    var paint = home ? Color(.52, .90, .56) : Math.Lerp(tone, Color.white, .35);
+    // Thin at any size: at a containing room's scale a share of the tile
+    // would be a broad glowing bar.
+    var stroke = Math.Clamp(tile * .045, .8, 4);
+    var reach = tile * .57;
+    var arm = tile * .22;
+    sculpture.glow = home ? 1 : 0;
+    for (var corner = 0; corner < 4; corner++)
+    {
+        var side = float2(corner % 2 == 0 ? -1 : 1, corner < 2 ? -1 : 1);
+        var point = at + side * reach;
+        MarkLine(sculpture, point, point - float2(side.x * arm, 0), stroke, stroke * .5, paint, top, tile);
+        MarkLine(sculpture, point, point - float2(0, side.y * arm), stroke, stroke * .5, paint, top, tile);
+    }
+    sculpture.glow = 0;
 }
 
 void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLens lens, Picture picture, Hands hands)
@@ -642,6 +697,7 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
         var dims = RoomDimensions(workshop.layout, item.room);
         var center = MapPoint(RoomCenter(workshop.layout, item.room), item.lens);
         if (!InPlayfield(center, Math.Max(dims.x, dims.y) * item.lens.tile, lens)) continue;
+        sculpture.shown.Add(item);
         sculpture.ground = item.lens.floor;
         // Procedural finishes use the canonical room's coordinates, shared
         // by every tile and carried with its miniature through a doorway.
@@ -962,6 +1018,8 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview p
             contextCount++;
         }
         sculpture.shadowFloor = contexts[contextCount - 1].floor;
+        for (var layer = 0; layer < contextCount; layer++)
+            sculpture.layers.Add(SceneLens { room = dimensions[layer], lens = contexts[layer], depth = layer });
         for (var layer = contextCount - 1; layer >= 0; layer--)
         {
             var hiddenBox = layer > 0 ? ancestors[layer - 1].box : -1;

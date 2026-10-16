@@ -12,7 +12,7 @@
 #define world inside_out_test_world
 // LEVEL_COUNT in game.tide; inside_out_campaign_has_exactly_the_witnessed_puzzles
 // fails if the two disagree.
-#define PUZZLES 18
+#define PUZZLES 20
 _Static_assert(sizeof inside_out_solutions / sizeof inside_out_solutions[0] == PUZZLES, "one witness per puzzle");
 static bool same_cell(tide_int2 a, tide_int2 b) { return a.x == b.x && a.y == b.y; }
 static Tile tile_at(const LevelLayout *const layout, const int room, const tide_int2 at)
@@ -342,7 +342,7 @@ TIDE_TEST(inside_out_a_box_is_entered_only_with_the_partner_behind_it)
     // Every puzzle about the partner as a backstop, and every power puzzle,
     // requires both robots even with the player goals ignored. The later
     // movement/recursion puzzles retain that stronger dependency too.
-    const int levels[] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
+    const int levels[] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
     for (size_t index = 0; index < sizeof levels / sizeof levels[0]; index++)
         for (int seat = 0; seat < 2; seat++) {
             const int level = levels[index];

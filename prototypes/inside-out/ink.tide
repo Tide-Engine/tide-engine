@@ -1,0 +1,298 @@
+// Drawing on the puzzle, to show the other player something: hold the left
+// mouse button and draw, or click to point. On a touchscreen the Draw button
+// turns swipes into drawing. A line is kept in the cells of the room it was
+// drawn in, so both screens show it on the same spot of that room wherever
+// it is drawn, in the drawer's paint, and it fades after a few seconds. Ink
+// is no part of the puzzle: undo leaves it, and a restart or a new puzzle
+// clears it.
+
+enum InkChannel { Ink }
+
+const int INK_MARKS = 128;
+// How long a line and a point stay, in ticks at 30 Hz; the last
+// INK_FADE_TICKS of either fade out.
+const int INK_TICKS = 210;
+const int POINT_TICKS = 72;
+const int INK_FADE_TICKS = 45;
+
+// A line from one point of a room's floor to another, in its cells, or a
+// point where the two are the same.
+struct InkMark { int seat = -1; int room = -2; float2 from; float2 to; int tick; }
+singleton Sketchbook { InkMark[INK_MARKS] marks; int next; }
+
+// Ink has a channel of its own, so a drawing never holds up a move.
+[Channel(InkChannel.Ink)]
+command Scribble { int level; int room; float2 from; float2 to; }
+
+bool OnPaper(float2 at) { return Math.Abs(at.x) <= 32 && Math.Abs(at.y) <= 32; }
+
+command(Scribble mark, PlayerID sender) KeepInk(Workshop workshop, Time time, mut Sketchbook book)
+{
+    var seat = SeatOf(workshop, sender);
+    if (seat < 0 || mark.level != workshop.level || !OnPaper(mark.from) || !OnPaper(mark.to)) return;
+    if (mark.room < -1 || mark.room >= Math.Min(MAX_ROOMS, workshop.layout.roomCount)) return;
+    book.marks[book.next] = InkMark { seat = seat, room = mark.room, from = mark.from, to = mark.to, tick = time.tick };
+    book.next = (book.next + 1) % INK_MARKS;
+}
+
+// This screen's own marks, shown as they are drawn rather than a round trip
+// later, timed by this screen's clock.
+struct OwnInk { int room = -2; float2 from; float2 to; float time = -100; }
+local singleton Pen
+{
+    bool down;
+    // Whether the line has gone far enough from where it began to be a
+    // line, not a point.
+    bool drawn;
+    // 0 the mouse, 1 a finger.
+    int source;
+    int touchId = -1;
+    // The room the line is drawn in, the last point sent and where the
+    // pointer is now, in its cells.
+    int room = -2;
+    float2 sent;
+    float2 tail;
+    // Seconds before the next piece of the line may be sent.
+    float wait;
+    OwnInk[INK_MARKS] own;
+    int next;
+    float clock;
+    int level = -1;
+    int openedTick = -1;
+    // The newest of the partner's points this screen has heard.
+    int heard = -1;
+}
+
+Color InkColor(int seat)
+{
+    var tone = seat == 0 ? BOT_AMBER : BOT_TEAL;
+    return Math.Lerp(tone, Color.white, .18);
+}
+
+// The one drawing of a room that its ink is kept in and shown on: the
+// innermost of the played room and the rooms around it that is this room,
+// else its largest drawing. A room inside itself, or in a cycle, is drawn at
+// several sizes; its ink is in one of them, where it was drawn.
+bool InkLens(Sculpture sculpture, int room, out MapLens lens)
+{
+    lens = MapLens { };
+    for (var layer = 0; layer < sculpture.layers.count; layer++)
+        if (sculpture.layers[layer].room == room)
+        {
+            lens = sculpture.layers[layer].lens;
+            return lens.tile > .001;
+        }
+    mut var found = false;
+    for (var i = 0; i < sculpture.shown.count; i++)
+    {
+        var item = sculpture.shown[i];
+        if (item.room != room || found && item.lens.tile <= lens.tile) continue;
+        lens = item.lens;
+        found = true;
+    }
+    return found && lens.tile > .001;
+}
+
+// The room under a point of the screen, at its full size, and where in its
+// cells the point is: the played room, else the smallest room around it that
+// the point is on, else the outermost. Ink over a miniature box is kept in
+// the room that box stands in, where it covers the same spot of it.
+bool InkPlace(LevelLayout layout, Sculpture sculpture, float2 at, out int room, out float2 cell)
+{
+    room = -2;
+    cell = float2(0);
+    if (sculpture.layers.count == 0) return false;
+    mut var chosen = sculpture.layers.count - 1;
+    for (var layer = sculpture.layers.count - 1; layer >= 0; layer--)
+    {
+        var item = sculpture.layers[layer];
+        var local = (at - item.lens.origin) / item.lens.tile;
+        var size = RoomDimensions(layout, item.room);
+        if (local.x >= -.5 && local.y >= -.5 && local.x <= size.x - .5 && local.y <= size.y - .5) chosen = layer;
+    }
+    room = sculpture.layers[chosen].room;
+    // A room seen again further out is kept in its innermost drawing, in
+    // cells beyond its walls there, which are the same pixels.
+    if (!InkLens(sculpture, room, out var lens)) return false;
+    cell = (at - lens.origin) / lens.tile;
+    return true;
+}
+
+// A point is sent as a line from a place to the same place.
+bool InkPoint(float2 from, float2 to) { return from.x == to.x && from.y == to.y; }
+
+void SendInk(mut Pen pen, int level, float2 from, float2 to)
+{
+    Send(Scribble { level = level, room = pen.room, from = from, to = to });
+    pen.own[pen.next] = OwnInk { room = pen.room, from = from, to = to, time = pen.clock };
+    pen.next = (pen.next + 1) % INK_MARKS;
+}
+
+[Stage(ArtStage.Controls)]
+[After(WorkshopControls)]
+view InkControls(Workshop workshop, Sketchbook book, Devices devices, Rooms.Lobby lobby, Hands hands, Sculpture sculpture, Mixer mixer, mut Pen pen)
+{
+    var dt = Math.Min(Frame.dt, .1);
+    pen.clock += dt;
+    pen.wait = Math.Max(0, pen.wait - dt);
+    if (pen.level != workshop.level || pen.openedTick != workshop.openedTick)
+    {
+        // A restart or a new puzzle: the old ink belongs to rooms as they were.
+        pen.level = workshop.level;
+        pen.openedTick = workshop.openedTick;
+        for (var i = 0; i < INK_MARKS; i++) pen.own[i] = OwnInk { };
+        pen.down = false;
+    }
+    // A point from the partner is heard once, as it arrives.
+    mut var newest = pen.heard;
+    mut var pointed = false;
+    for (var i = 0; i < INK_MARKS; i++)
+    {
+        var mark = book.marks[i];
+        if (mark.seat < 0 || mark.tick <= pen.heard) continue;
+        newest = Math.Max(newest, mark.tick);
+        if (mark.seat != hands.seat && mark.tick >= workshop.openedTick && InkPoint(mark.from, mark.to)) pointed = true;
+    }
+    if (pointed && pen.heard >= 0 && !mixer.muted && mixer.interface > 0) PlayCue(uiToggle, 0.085, MixBus.Interface, .9);
+    pen.heard = Math.Max(newest, 0);
+
+    var playing = lobby.page == Rooms.Page.Playing && lobby.playing && Together(workshop) && hands.seat >= 0;
+    var mouse = devices.mouse;
+    var touch = devices.touchscreen.primaryTouch;
+    var screen = float2(Screen.width, Screen.height);
+    if (!pen.down && playing)
+    {
+        var mouseStart = mouse.left.down;
+        var touchStart = hands.pen && touch.press.down;
+        var at = Screen.Flip(mouseStart ? mouse.position : touch.position);
+        if ((mouseStart || touchStart) && at.y > SceneTop(screen) && InkPlace(workshop.layout, sculpture, at, out var room, out var cell))
+        {
+            pen.down = true;
+            pen.drawn = false;
+            pen.source = mouseStart ? 0 : 1;
+            pen.touchId = touch.id;
+            pen.room = room;
+            pen.sent = cell;
+            pen.tail = cell;
+            pen.wait = 0;
+        }
+    }
+    if (!pen.down) return;
+    var held = pen.source == 0 ? mouse.left.pressed : touch.press.pressed && touch.id == pen.touchId;
+    if (!playing || !InkLens(sculpture, pen.room, out var lens))
+    {
+        pen.down = false;
+        return;
+    }
+    var pointer = Screen.Flip(pen.source == 0 ? mouse.position : touch.position);
+    pen.tail = (pointer - lens.origin) / lens.tile;
+    var far = Math.Length(pen.tail - pen.sent) * lens.tile;
+    if (far >= 10) pen.drawn = true;
+    if (pen.drawn && far >= 6 && pen.wait <= 0 || !held && pen.drawn && far >= 1.5)
+    {
+        SendInk(pen, workshop.level, pen.sent, pen.tail);
+        pen.sent = pen.tail;
+        pen.wait = .035;
+    }
+    if (held) return;
+    if (!pen.drawn) SendInk(pen, workshop.level, pen.sent, pen.sent);
+    pen.down = false;
+}
+
+// How much of a mark is left to see, 0 once it has gone.
+float InkLeft(float age, float life)
+{
+    var fade = INK_FADE_TICKS / 30.0;
+    return Math.Saturate((life - age) / fade);
+}
+
+void InkShade(float2 from, float2 to, float alpha)
+{
+    var shade = Color(.04, .03, .02, .42 * alpha);
+    Draw.Line(from, to, 9, shade);
+    Draw.Circle(from, 4.5, shade);
+    Draw.Circle(to, 4.5, shade);
+}
+void InkLine(float2 from, float2 to, Color tone, float alpha)
+{
+    var ink = Color(tone.r, tone.g, tone.b, alpha);
+    Draw.Line(from, to, 4.5, ink);
+    Draw.Circle(from, 2.25, ink);
+    Draw.Circle(to, 2.25, ink);
+}
+// A point: a dot, and rings running out from it.
+void InkDot(float2 at, Color tone, float age, float alpha)
+{
+    Draw.Circle(at, 7, Color(.04, .03, .02, .42 * alpha));
+    Draw.Circle(at, 4.5, Color(tone.r, tone.g, tone.b, alpha));
+    for (var ring = 0; ring < 2; ring++)
+    {
+        var run = age * 1.5 - ring * .5;
+        if (run < 0) continue;
+        var phase = run - Math.Floor(run);
+        var fade = (1 - phase) * alpha;
+        Draw.WireCircle(at, 8 + phase * 30, 5, Color(.04, .03, .02, .30 * fade));
+        Draw.WireCircle(at, 8 + phase * 30, 2.5, Color(tone.r, tone.g, tone.b, fade));
+    }
+}
+
+// Every mark of a room, on its drawing.
+void InkRoom(Workshop workshop, int now, Sketchbook book, Pen pen, int seat, int room, MapLens lens, bool shade)
+{
+    for (var i = 0; i < INK_MARKS; i++)
+    {
+        var mark = book.marks[i];
+        if (mark.seat < 0 || mark.seat == seat || mark.room != room || mark.tick < workshop.openedTick) continue;
+        var point = InkPoint(mark.from, mark.to);
+        var age = (now - mark.tick) / 30.0;
+        var left = InkLeft(age, (point ? POINT_TICKS : INK_TICKS) / 30.0);
+        if (left <= 0) continue;
+        var from = MapPoint(mark.from, lens);
+        var to = MapPoint(mark.to, lens);
+        if (point) { if (!shade) InkDot(from, InkColor(mark.seat), age, left); }
+        else if (shade) InkShade(from, to, left);
+        else InkLine(from, to, InkColor(mark.seat), left);
+    }
+    var mine = InkColor(seat);
+    for (var i = 0; i < INK_MARKS; i++)
+    {
+        var mark = pen.own[i];
+        if (mark.room != room) continue;
+        var point = InkPoint(mark.from, mark.to);
+        var age = pen.clock - mark.time;
+        var left = InkLeft(age, (point ? POINT_TICKS : INK_TICKS) / 30.0);
+        if (left <= 0) continue;
+        var from = MapPoint(mark.from, lens);
+        var to = MapPoint(mark.to, lens);
+        if (point) { if (!shade) InkDot(from, mine, age, left); }
+        else if (shade) InkShade(from, to, left);
+        else InkLine(from, to, mine, left);
+    }
+    // The piece still being drawn, from the last point sent to the pointer.
+    if (pen.down && pen.drawn && pen.room == room)
+    {
+        var from = MapPoint(pen.sent, lens);
+        var to = MapPoint(pen.tail, lens);
+        if (shade) InkShade(from, to, 1);
+        else InkLine(from, to, mine, 1);
+    }
+}
+
+[Stage(ArtStage.Board, 2)]
+[Before(WorkbenchLabels)]
+view InkMarks(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands, Sculpture sculpture, Sketchbook book, Pen pen)
+{
+    if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    var top = SceneTop(screen);
+    var seat = hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0;
+    Draw.Clip(Rect(0, top, screen.x, screen.y - top))
+    {
+        // Every shadow first, so where lines cross the ink lies on top.
+        for (var pass = 0; pass < 2; pass++)
+            for (var room = -1; room < Math.Min(MAX_ROOMS, workshop.layout.roomCount); room++)
+                if (InkLens(sculpture, room, out var lens) && lens.tile >= 3)
+                    InkRoom(workshop, time.tick, book, pen, seat, room, lens, pass == 0);
+    }
+}

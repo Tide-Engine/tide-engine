@@ -44,11 +44,14 @@ keeps the grid and movement directions familiar; there is no camera rotation.
 | Walk and push a battery or room | WASD or arrow keys |
 | Enter a room | Walk into its doorway when the room cannot be pushed |
 | Leave a room | Walk outward through an edge doorway |
+| Draw, to show your partner something | Hold the left mouse button and draw |
+| Point at something | Click it |
 | Undo the last shared move | Z or Backspace |
 | Reset this puzzle | R |
 | Open / close the menu | Escape |
 
-On touchscreens, swipe in a direction to take one step. Rooms move first; when a wall
+On touchscreens, swipe in a direction to take one step, or turn on **Draw**
+beside Undo and Restart to draw with your finger instead. Rooms move first; when a wall
 or your partner stops a row, walking into a stopped box's open doorway
 enters it. Directions match the screen: W is up, D right, S down and A left.
 After undo or reset, release a held direction before pressing it again.
@@ -56,6 +59,12 @@ After undo or reset, release a held direction before pressing it again.
 Beside a box, the game shows what your next step will do before you take
 it: a yellow bar against a box you would push, a green arrow into a doorway
 you would enter. There is no directional button overlay.
+
+Drawing appears on both screens, in your robot's colour, on the same spot of
+the room you drew on, wherever that room is in your partner's view. A click
+leaves a pulsing point there instead of a line. Lines fade after about seven
+seconds and points after two and a half. Undo leaves them; restarting or
+changing the puzzle clears them. Drawing never moves anything in the puzzle.
 
 The menu's chapter selector can revisit or skip any puzzle. A sage tick beside a
 title marks one you have completed. The game teaches through its puzzles;
@@ -67,9 +76,11 @@ your partner's match keeps running. Reset and changing an active puzzle ask
 before clearing the shared moves.
 
 If your save predates the campaign rebuild, completion ticks for puzzles
-7–13 and 15–18 are cleared. This occupied-shutter update clears earlier
+7–13 and 15–18 are cleared. The occupied-shutter update clears earlier
 ticks for puzzles 10–12 and 18, whose solutions change with normal
-push-following. Personal settings and other completion ticks carry over.
+push-following. When **Long way home** moved from puzzle 11 to 14 and the
+**Held** chapter arrived, ticks moved with their puzzles. Personal settings
+and other completion ticks carry over.
 
 The review build includes five proposed chapter materials. Press **F6** or
 choose **Settings → Appearance preview** to compare painted wood, enamel and
@@ -85,12 +96,24 @@ One rule moves everything: robots, batteries and boxes.
 
 - Whatever you walk into is pushed, and whatever is beyond it is pushed too.
   A row of any length moves as one. Nothing can be pulled.
-- A wall, a raised shutter or the other robot stops a row. A robot is never pushed.
+- A wall, a raised shutter, the other robot or a clamped box stops a row. A
+  robot is never pushed.
 - When a row is stopped, the thing against the stop stays put, and the thing
   behind it goes into it instead, if it is a box with a doorway facing that
   way. So you get into a box only when it cannot be pushed, and so does a
   battery or a box you push at it. The one stop you can put in place and
   take away again is your partner.
+- The other way round works too: push a box at a battery or another box that
+  cannot move, and if your box has a doorway on that side, the stuck thing
+  goes into your box through it while your box moves onto its cell.
+  Whatever stands in that doorway is pushed further in. A robot or a clamped
+  box is never taken in this way. When both could happen, your box going
+  into the other wins.
+- A clamp, a steel plate with a jaw at each corner, holds the box standing on
+  it: that box never moves again, so you can always walk into it by a
+  doorway facing you, and anything pushed at it stops. A box pushed onto a clamp is held
+  there for good. A clamped box still goes with the room it stands in, and
+  robots and batteries cross a clamp like floor.
 - A moving box carries everything inside it.
 - A room has one box that is its outside. Walk out through an edge door and
   you come out beside that box; so does anything you push out.
@@ -111,8 +134,9 @@ One rule moves everything: robots, batteries and boxes.
   Plates and shutters are not goals.
 - Every room is a square grid, so a box always fills the cell it stands in.
 - Seat every battery in a socket, park each box on its numbered outline, and
-  put both robots on goals. A seated battery can be moved again while you
-  arrange things.
+  put both robots on goals. An outline is a pad in its box's paint; a box on
+  it hides the pad, and green brackets glow at its corners once it is the
+  right box. A seated battery can be moved again while you arrange things.
 
 Shared undo takes back the last successful action, whoever made it, and
 retains 128 actions. Reset restores the complete starting arrangement.
@@ -160,6 +184,8 @@ match rules are in `game.tide`; the puzzles, drawn as text maps (their
 legend is at the top of the file), with their chapter grouping,
 are in `levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
 handles lighting, shadow mapping and screen-space ambient occlusion.
+`ink.tide` has the drawing: its marks are kept in the match so both
+players see them, and nothing in the puzzle reads them.
 Presentation, controls and original audio are local state.
 There are no new engine or runtime APIs.
 
