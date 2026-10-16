@@ -1,5 +1,55 @@
 # Inside Out
 
+## Short drawing trail, no click ping (2026-10-16)
+
+The owner requested removing the click ping and keeping drawing as a very
+short-lived pointing trail. This supersedes the point/line lifetimes and
+partner-point sound in the drawing section below.
+
+`ink.tide` no longer sends a mark for a click/tap without dragging, draws
+pulsing dots/rings, or cues a partner's point. `KeepInk` also rejects
+zero-length segments. Holding the left mouse button or using the existing
+touch Draw toggle still draws for both players in the same room coordinates.
+Every segment fades throughout 15 ticks (0.5 seconds), including the local
+unfinished preview when the pointer stops while held. The separate command
+channel, room placement and reset behavior remain. The README describes the
+new controls and lifetime.
+
+The owner's follow-up asked for better fidelity during fast motion and less
+visible segment intersections, and explicitly stopped repeated full-suite
+validation for this drawing tweak. Sampling now keeps each frame's point
+after one pixel of travel, without the old 35 ms / six-pixel batching; a
+three-pixel drag starts drawing instead of ten. The ring holds 256 segments
+for the denser shared trail. The dark under-stroke is removed. Each segment
+is just the built-in antialiased round-ended line: the extra endpoint discs
+that multiplied opacity and made joins into beads are removed too.
+
+The existing browser drawing stage now checks clicks leave no marker, a
+drag appears on both screens without moving the puzzle, both trails expire
+without restarting, and a stationary held stroke leaves no persistent tail.
+
+Before the fidelity follow-up, native and web debug game/aggregate/invite targets and
+the native solver build warning-free. All four native Inside Out CTest
+entries pass (57.38 seconds), including the 50-case aggregate and the
+native material fixture. The WASM aggregate and twelve invite/preview
+entries pass (64.28 seconds for the aggregate). A bounded two-player native
+capture under ignored `build/inside-out-trail/` shows the line on both
+screens; clicks, held clicks, expired held strokes and expired released
+strokes restore the original complete PNG bytes on both seats. The first
+WebGL ink check exposed its obsolete full-bright colour mask: fading ink
+had 58 classified pixels despite a visible line. The revised check compares
+the static wall's pixels instead, with exact restoration after expiry.
+The complete WebGL material and shutter fixtures pass (178.08 and 478.55
+seconds); the latter repeats every new click/trail/expiry assertion before
+its physical shutter and undo checks.
+WebGPU also passed the drawing stage before the owner stopped the running
+suite during its later gameplay checks; no full WebGPU pass is claimed.
+After the fidelity follow-up, only the native/web game targets were rebuilt
+(warning-free) and a bounded native two-player fast-turn/crossing capture
+was inspected under the same ignored folder (`fast-trail-{1,2}.png`). No
+suite was restarted. Native Vulkan validation layers were not available in
+this checkout's configuration. No CI or deployment was requested.
+
 ## Drawing, take-in, outlines, order and clamps (2026-10-16)
 
 The owner's playtest sent five points: drawing on the puzzle to show the

@@ -622,20 +622,18 @@ try {
     });
     assert.ok(oldChipDark < 100, 'the old bottom location chip no longer covers the initial floor');
 
-    stage = 'a line drawn by one player reaches the other and moves nothing';
+    stage = 'silent clicks and a short shared drawing trail';
     {
         // Both screens frame the same starting room, so the line Amber draws
         // over the containing room's wall lies on the same pixels for Teal.
         const inkClip = { x: 300, y: 565, width: 180, height: 50 };
-        const amberInk = (r, g, b) => r > 200 && g > 110 && g < 190 && b < 130;
-        const countInk = png => {
-            let count = 0;
-            screenshotPixels(png, (r, g, b) => { if (amberInk(r, g, b)) count++; });
-            return count;
-        };
-        const inkBefore = countInk(await small.crop(inkClip));
-        const ownBefore = countInk(await host.crop(inkClip));
+        const inkBefore = await small.crop(inkClip);
+        const ownBefore = await host.crop(inkClip);
         const movesBefore = await moveLabel(host);
+        await host.click(390, 590);
+        await advanceMatch(2);
+        assertImagesEqual(await host.crop(inkClip), ownBefore, 'a click leaves no mark for the drawer');
+        assertImagesEqual(await small.crop(inkClip), inkBefore, 'a click leaves no ping for the partner');
         await host.command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 310, y: 590, button: 'left', clickCount: 1 });
         await host.frames();
         for (let x = 325; x <= 470; x += 15) {
@@ -644,15 +642,30 @@ try {
         }
         await host.command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 470, y: 590, button: 'left', clickCount: 1 });
         await host.frames();
-        await advanceMatch(8);
-        const inkAfter = countInk(await saveCrop(small, 'ink-on-partner', inkClip));
-        assert.ok(inkAfter - inkBefore > 200, `the partner sees Amber's line (${inkBefore} then ${inkAfter} ink pixels)`);
+        await advanceMatch(2);
+        // A fading trail no longer keeps its full-bright amber RGB range.
+        // Compare this otherwise static wall with its exact unmarked pixels.
+        const inkAfter = await saveCrop(small, 'ink-on-partner', inkClip);
+        assert.ok(pixelsApart(inkAfter, inkBefore) > 100, 'the partner sees Amber\'s fading trail');
+        assert.ok(pixelsApart(await host.crop(inkClip), ownBefore) > 100, 'the drawer sees the trail immediately');
         assertImagesEqual(await moveLabel(host), movesBefore, 'drawing moves nothing in the puzzle');
         assertImagesEqual(await moveLabel(small), movesBefore, 'drawing moves nothing on the partner\'s screen');
-        // Restarting clears the ink, so later exact scene comparisons see none.
-        await reset(host);
-        assert.equal(countInk(await small.crop(inkClip)), inkBefore, 'a restart clears the partner\'s view of the line');
-        assert.equal(countInk(await host.crop(inkClip)), ownBefore, 'a restart clears the drawer\'s own line');
+        await advanceMatch(20);
+        assertImagesEqual(await small.crop(inkClip), inkBefore, 'the partner\'s trail expires without a restart');
+        assertImagesEqual(await host.crop(inkClip), ownBefore, 'the drawer\'s trail expires without a restart');
+        // Pause with a small unsent tail while still holding the button: that
+        // preview must fade too, rather than leaving a permanent cursor dot.
+        await host.command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 310, y: 590, button: 'left', clickCount: 1 });
+        await host.frames();
+        for (const x of [340, 340.5]) {
+            await host.command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: 590, button: 'left', buttons: 1 });
+            await host.frames();
+        }
+        await advanceMatch(20);
+        assertImagesEqual(await host.crop(inkClip), ownBefore, 'a stationary held pointer leaves no persistent tail');
+        assertImagesEqual(await small.crop(inkClip), inkBefore, 'the partner sees no persistent held trail');
+        await host.command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 340.5, y: 590, button: 'left', clickCount: 1 });
+        await advanceMatch(20);
     }
 
     const atTick = async (target, label, frameMilliseconds = ANIMATED_FRAME_MS) => {
@@ -1104,7 +1117,7 @@ try {
         assert.equal(client.state.aborted, '');
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, a line drawn for the partner and cleared by restart, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, click without a ping, a shared drawing trail that expires while released or held, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
     }
     }
 } catch (error) {
