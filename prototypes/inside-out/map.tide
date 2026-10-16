@@ -386,6 +386,13 @@ struct Transit
 Transit BeginTransit(LevelLayout layout, Puzzle puzzle, int oldRoom, float2 old, int newRoom, int2 now)
 {
     var cell = int2(int(Math.Round(old.x)), int(Math.Round(old.y)));
+    // Taken into a box that moved onto where it stood: in by that box's
+    // doorway, shrinking as the box comes over it.
+    if (ValidRoom(layout, newRoom) && puzzle.rooms[newRoom].room == oldRoom && CellEqual(puzzle.rooms[newRoom].position, cell))
+        for (var side = 0; side < 4; side++)
+            if (CellEqual(DoorCell(layout, newRoom, side), now))
+                return Transit { via = oldRoom, at = old, goal = float2(cell) + float2(Direction(side)) * .30,
+                    from = 1, to = RoomScale(layout, newRoom), scale = 1, distance = .30, targetInside = true };
     for (var direction = 0; direction < 4; direction++)
     {
         var gate = BoxAt(layout, puzzle, oldRoom, cell + Direction(direction));

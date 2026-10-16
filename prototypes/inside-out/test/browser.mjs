@@ -182,8 +182,10 @@ const homeWallArea = png => {
     let total = 0;
     screenshotPixels(png, (r, g, b) => {
         // Box 1's solid material; exclude the green player goals visible
-        // farther outside during the early miniature-scale frames.
-        if (sagePaint(r, g, b)) total++;
+        // farther outside during the early miniature-scale frames. Lit sage
+        // walls stay below green 170; the self-lit green brackets of an
+        // outline with its box home are far brighter, and are not wall.
+        if (sagePaint(r, g, b) && g <= 200) total++;
     });
     return total;
 };
@@ -592,7 +594,8 @@ try {
         await advanceMatch();
         await host.click(1228, 37);
         await host.click(640, (800 - 590) / 2 + 261);
-        await host.click(363 + chapter * 138.4, (800 - 650) / 2 + 134);
+        const tab = (740 - 48) / 6; // Six chapters share the selector width.
+        await host.click(270 + 24 + chapter * tab + (tab - 6) / 2, (800 - 650) / 2 + 134);
         await host.click(640, (800 - 650) / 2 + 228 + row * 57);
         // Choosing another puzzle after any move asks before clearing the
         // shared history. Confirm through the public interface.
@@ -618,6 +621,40 @@ try {
         if (r + g + b < 160) oldChipDark++;
     });
     assert.ok(oldChipDark < 100, 'the old bottom location chip no longer covers the initial floor');
+
+    stage = 'a line drawn by one player reaches the other and moves nothing';
+    {
+        // Both screens frame the same starting room, so the line Amber draws
+        // over the containing room's wall lies on the same pixels for Teal.
+        const inkClip = { x: 300, y: 565, width: 180, height: 50 };
+        const amberInk = (r, g, b) => r > 200 && g > 110 && g < 190 && b < 130;
+        const countInk = png => {
+            let count = 0;
+            screenshotPixels(png, (r, g, b) => { if (amberInk(r, g, b)) count++; });
+            return count;
+        };
+        const inkBefore = countInk(await small.crop(inkClip));
+        const ownBefore = countInk(await host.crop(inkClip));
+        const movesBefore = await moveLabel(host);
+        await host.command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 310, y: 590, button: 'left', clickCount: 1 });
+        await host.frames();
+        for (let x = 325; x <= 470; x += 15) {
+            await host.command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: 590, button: 'left', buttons: 1 });
+            await host.frames();
+        }
+        await host.command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 470, y: 590, button: 'left', clickCount: 1 });
+        await host.frames();
+        await advanceMatch(8);
+        const inkAfter = countInk(await saveCrop(small, 'ink-on-partner', inkClip));
+        assert.ok(inkAfter - inkBefore > 200, `the partner sees Amber's line (${inkBefore} then ${inkAfter} ink pixels)`);
+        assertImagesEqual(await moveLabel(host), movesBefore, 'drawing moves nothing in the puzzle');
+        assertImagesEqual(await moveLabel(small), movesBefore, 'drawing moves nothing on the partner\'s screen');
+        // Restarting clears the ink, so later exact scene comparisons see none.
+        await reset(host);
+        assert.equal(countInk(await small.crop(inkClip)), inkBefore, 'a restart clears the partner\'s view of the line');
+        assert.equal(countInk(await host.crop(inkClip)), ownBefore, 'a restart clears the drawer\'s own line');
+    }
+
     const atTick = async (target, label, frameMilliseconds = ANIMATED_FRAME_MS) => {
         await Promise.all(clients.map(client => client.until(value => connected(value) && value.verified >= target,
             label, Math.max(30_000, (target - client.state.verified) * 2500), frameMilliseconds)));
@@ -776,7 +813,7 @@ try {
         await host.screenshot('shutter-robot-restored');
 
         stage = 'an occupied room box also holds an unpowered shutter down';
-        await choose(11, 2, 2);
+        await choose(10, 2, 1);
         const lowBoxGate = await sample('shutter-box-gate-powered-low', small, 4, 3);
         await witness('ee');
         await advanceMatch(24);
@@ -1067,7 +1104,7 @@ try {
         assert.equal(client.state.aborted, '');
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, a line drawn for the partner and cleared by restart, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
     }
     }
 } catch (error) {

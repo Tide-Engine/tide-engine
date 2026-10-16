@@ -61,7 +61,7 @@ enum {
     SPENT = 255,     // A battery that is not active
 };
 static const char *const MOVE_MARKS = "NESWnesw";
-static const char *const TILE_MARKS = ".#oxaAbB"; // In Tile's order
+static const char *const TILE_MARKS = ".#oxaAbB*"; // In Tile's order
 static const char *const SIDES[4] = {"north", "east", "south", "west"};
 static const char *const ROBOTS[2] = {"Amber", "Teal"};
 
