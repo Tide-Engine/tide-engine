@@ -281,8 +281,9 @@ component Turret
 }
 
 [Stage(Tick.Missiles, 1)]
-system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Time time)
+system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time time)
 {
+    if (match.paused) return;
     turret.life -= time.dt;
     if (turret.life <= 0)
     {

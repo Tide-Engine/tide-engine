@@ -59,8 +59,9 @@ float SphereHit(float3 from, float3 to, float3 middle, float radius)
 }
 
 [Stage(Tick.Missiles)]
-system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Time time)
+system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time time)
 {
+    if (match.paused) return;
     var dt = time.dt;
     missile.age += dt;
     missile.life -= dt;

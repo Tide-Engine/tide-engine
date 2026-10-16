@@ -51,6 +51,7 @@ float BossHealth(float danger, int number)
 [Stage(Tick.Rounds, 3)]
 system BossCome(mut Match match, Ashwick ashwick, query (Survivor survivor) survivors)
 {
+    if (match.paused) return;
     if (match.phase != Phase.Fighting || match.clock < match.bossNext) return;
     mut List<float3> near = [];
     foreach (var row in survivors)
@@ -69,6 +70,7 @@ system BossCome(mut Match match, Ashwick ashwick, query (Survivor survivor) surv
 [Stage(Tick.Zombies)]
 system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time time, query (Survivor survivor) survivors)
 {
+    if (match.paused) return;
     var dt = time.dt;
     boss.timer += dt;
     boss.cooldown = Math.Max(0, boss.cooldown - dt);

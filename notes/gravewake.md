@@ -160,10 +160,17 @@ patterns or something". The picks below are mine (Provisional).
   are gone.
 - **Items at levels** (`items.tide`'s `Experience`): each level the party
   gains is a pick owed to every survivor (`Survivor.pending`); the next owed
-  is offered as soon as the last is taken. Picking is 1, 2 or 3 while the
-  fighting goes on (no pause: the engine has none, and it's every player's
-  match); the cards sit small along the bottom (`Offers`). Offers grow rarer
-  with the run's minutes.
+  is offered as soon as the last is taken. Offers grow rarer with the run's
+  minutes. The owner, playing it: "the upgrade screen should pause the game,
+  in multiplayer it should wait for all". So while any ready survivor is
+  choosing, `Match.paused` (set by `Pause`, first thing each tick) has every
+  system of the run wait: the clock and the danger, spawning, the dead, the
+  Brutes, what flies, turrets, drones and the ember ring, the survivors'
+  moving, guns, skills, reviving and returning, power-ups. Choosing and the
+  offers go on. The engine has no pause of its own; this is the game's, in
+  the match, so every machine waits alike. The cards are big across the
+  middle, the picture dimmed (`Offers`); one who has chosen sees who it's
+  waiting for.
 - **The Brute** (`boss.tide`): every three minutes from the third
   (`BOSS_FIRST`, `BOSS_EVERY`), 22 to 34 m from a survivor, rising 2.5 s. The
   plague king's body three times the size (`BOSS_SIZE`), dark red, drawn in

@@ -238,6 +238,7 @@ float GaitSpeed(Gait gait)
 [Stage(Tick.Zombies)]
 system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time time, query (Survivor survivor) survivors)
 {
+    if (match.paused) return;
     var dt = time.dt;
     if (match.culling)
     {

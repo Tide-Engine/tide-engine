@@ -12,6 +12,7 @@ singleton Match
     float timer;                 // Seconds into the phase (the countdown, while waiting)
     float clock;                 // Seconds the run has gone
     float danger;                // How dangerous the night has got (Danger), each tick
+    bool paused;                 // Someone has items to choose: everything waits for them (Pause)
     int alive;                   // Up now, counted each tick
     int killed;
     float spawnWait;
@@ -45,6 +46,7 @@ void ResetMatch(mut Match match)
     match.timer = 0;
     match.clock = 0;
     match.danger = 1;
+    match.paused = false;
     match.alive = 0;
     match.killed = 0;
     match.spawnWait = 0;
@@ -97,6 +99,7 @@ string DangerName(float danger)
 [Stage(Tick.Rounds)]
 system RunRounds(mut Match match, Time time, Party party, query (Survivor survivor) survivors)
 {
+    if (match.paused) return;
     match.timer += time.dt;
     match.instakill = Math.Max(0, match.instakill - time.dt);
     mut var ready = 0;
@@ -151,6 +154,18 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
     }
 }
 
+// While anyone has items to choose, everything waits: the clock, the dead, the Brutes, what flies, the guns and the
+// skills; the next tick's choosing is this one's (the owner: "the upgrade screen should pause the game, in
+// multiplayer it should wait for all").
+[Stage(Tick.Restart, 2)]
+system Pause(mut Match match, query (Survivor survivor) survivors)
+{
+    mut var waiting = false;
+    foreach (var row in survivors)
+        if (row.survivor.ready && row.survivor.role != Role.None && row.survivor.choosing) waiting = true;
+    match.paused = waiting && match.phase == Phase.Fighting;
+}
+
 // Count who's up, each tick, before the run looks.
 [Stage(Tick.Rounds, -1)]
 system CountDead(mut Match match, query (Zombie zombie) zombies)
@@ -167,6 +182,7 @@ system CountDead(mut Match match, query (Zombie zombie) zombies)
 [Stage(Tick.Rounds, 1)]
 system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor survivor) survivors)
 {
+    if (match.paused) return;
     if (match.phase != Phase.Fighting || match.alive >= MAX_ALIVE || match.culling) return;
     var danger = match.danger;
     mut var count = 0;
@@ -237,6 +253,7 @@ Gait GaitFor(float danger)
 [Stage(Tick.Rounds, 2)]
 system Return(mut Survivor survivor, Match match, Ashwick ashwick, Time time)
 {
+    if (match.paused) return;
     if (match.phase != Phase.Fighting || survivor.life != Life.Gone) return;
     survivor.gone += time.dt;
     if (survivor.gone < RETURN_SECONDS) return;

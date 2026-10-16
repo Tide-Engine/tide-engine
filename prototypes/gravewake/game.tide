@@ -1,7 +1,7 @@
 // GRAVEWAKE: Ashwick is burned, and up to four survivors hold a clearing in
-// the wood outside it, round its fire, against wave after wave of the dead in
-// their thousands, with guns, skills and items that stack, taking one after
-// each wave. This file is who plays: the survivors, what a player's hands
+// the wood outside it, round its fire, against the dead without end, in
+// their thousands, with guns, skills and items that stack, taking one at
+// each level. This file is who plays: the survivors, what a player's hands
 // send, joining and leaving, and starting over.
 using Rooms;
 
