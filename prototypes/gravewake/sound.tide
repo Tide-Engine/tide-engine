@@ -35,7 +35,6 @@ asset List<Clip> explosions = "sfx/explode_*.ogg";
 asset List<Clip> stepsStone = "sfx/step_stone_*.ogg";
 asset List<Clip> stepsDirt = "sfx/step_dirt_*.ogg";
 asset List<Clip> hurts = "sfx/hurt_*.ogg";
-asset List<Clip> jingles = "sfx/jingle_*.ogg";
 asset Clip emptyClip = "sfx/empty.ogg";
 asset Clip rifleFire = "sfx/rifle_fire.ogg";
 asset Clip smgFire = "sfx/smg_fire.ogg";
@@ -54,7 +53,9 @@ asset Clip riseClip = "sfx/rise.ogg";
 asset Clip landClip = "sfx/land.ogg";
 asset Clip downedClip = "sfx/downed.ogg";
 asset Clip reviveClip = "sfx/revive.ogg";
-asset Clip levelClip = "sfx/power_on.ogg";
+asset Clip levelClip = "sfx/level_up.ogg";
+asset Clip itemUncommon = "sfx/item_uncommon.ogg";
+asset Clip itemRare = "sfx/item_rare.ogg";
 asset Clip powerupSpawn = "sfx/powerup_spawn.ogg";
 asset Clip powerupGrab = "sfx/powerup_grab.ogg";
 asset Clip puMaxAmmo = "sfx/pu_max_ammo.ogg";
@@ -120,7 +121,7 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     ears.ambient.playing = true;
     // The dread: low through the early rounds, the high one later or when the dead are many
     var fighting = match.phase == Phase.Fighting;
-    var tense = fighting && (match.round >= 8 || match.alive >= 14) ? 1.0 : 0.0;
+    var tense = fighting && (match.round >= 6 || match.alive >= 150) ? 1.0 : 0.0;
     var under = fighting ? 1.0 : match.phase == Phase.Break ? 0.35 : 0.15;
     ears.low.clip = musicLow;
     ears.low.loop = true;
@@ -302,7 +303,7 @@ local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
 {
     var mine = loosed.seat == me.seat;
     mut Clip clip = rifleFire;
-    mut var volume = 0.85;
+    mut var volume = 1.0;
     mut var pitch = ears.random.NextFloat(0.96, 1.04);
     switch (loosed.source)
     {
@@ -324,7 +325,7 @@ local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
             if (loosed.weapon == Weapon.Shotgun) clip = shotgunFire;
             else if (loosed.weapon == Weapon.Smg) clip = smgFire;
             else if (loosed.weapon == Weapon.Pistol) clip = pistolFire;
-            if (!mine) volume = 0.7;
+            if (!mine) volume = 0.75;
             break;
     }
     var near = mine && loosed.source != Source.Turret;
@@ -377,7 +378,7 @@ local event(Picked picked) HearPicked(Me me)
     if (picked.seat != me.seat) return;
     var rarity = RarityOf(picked.item);
     if (rarity == Rarity.Common) Audio.Play(powerupGrab, 0.8);
-    else Audio.Play(jingles[rarity == Rarity.Rare ? 5 % jingles.count : int(picked.item) % 4], 0.85);
+    else Audio.Play(rarity == Rarity.Rare ? itemRare : itemUncommon, 0.85);
 }
 
 // A skill used: a slide's rush, a leap's and its landing, a blink's snap, an air jump.
@@ -404,7 +405,7 @@ local event(Chosen chosen) HearChosen(Me me)
 
 local event(Levelled levelled) HearLevel()
 {
-    Audio.Play(levelClip, 0.7);
+    Audio.Play(levelClip, 0.6);
 }
 
 local event(Boons boons) HearBoon()

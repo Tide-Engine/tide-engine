@@ -102,6 +102,41 @@ kits, the items, the numbers.
   the match's world hash and snapshot at a megabyte of state.
 - The dead's voices are held to a few a second (`Ears.voices`).
 
+### After the first playtest (2026-10-17)
+
+The owner, playing it: "the map sucks (first one) / the zombies spawn only
+close to me i think? they just come from one direction / sounds need a
+rework". Asked, the map's faults were a boring layout and that it looked bad;
+the sounds', weak guns and the wrong mood.
+
+- **Spawns** (`rounds.tide`'s `SpawnDead`): each of the dead claws up at a
+  random place in a ring 16 to 32 m round a random standing survivor, any
+  direction, where the ground is open, walkable and on the survivors' way
+  field (eight tries, then any riser 7 m or more off). They had come from the
+  five risers nearest a survivor, so a horde poured out of one corner.
+- **The map** (`plan.tide`): a new layout at 44 m (`CLEARING`): the chapel's
+  rise (6 m, the ruin on it, a ramp each side), the beacon's spire (a 4 m
+  tier, a 9 m top with the beacon, a ramp to each), the graveyard sunk deeper
+  with a brazier, a ravine across the south (3 m, banks under 0.5 a metre so
+  the dead cross it), standing stones, big stones for cover, trees in six
+  groves instead of scattered, grass in tufts round them (fewer, smaller,
+  darker). `Ground` is built in layers: rolling ground, the hollow and the
+  ditch, then each tier (`Mesa`) and its ramp (`RampTo`, which meets the
+  ground at its foot whatever its height there). `Earth` paints worn paths
+  from the fire to each ramp, the graveyard and the ravine, and higher ground
+  paler. The night is clearer: a brighter moon and sky, fog 0.009 (was
+  0.015). F6's walks visit the new places.
+- **Sounds** (`sfx/tools/make_sfx.py`): every gunshot is layered (the
+  recording's crack, a low thump at the gun's own pitch, a bright snap, a
+  shotgun's wall of low noise), driven and compressed hard, and played at
+  full volume for this machine's own. The church bells, choirs and lutes are
+  gone: the waves start with a rising synth and a deep impact and end on a
+  minor-to-major chord; game over is an impact and a drone sliding down; the
+  beds are a dark synth pad with a heartbeat pulse under early waves and a
+  120 bpm track (kick, saw bass, snare, hats, arpeggio) when the horde is big
+  (150 up, or from wave six); levels and uncommon and rare items have synth
+  arpeggios; the night has thunder in place of crows and owls.
+
 ### Phase 2: the PSX look, guns, kits and items (built 2026-10-16)
 
 - **The look** is under Rendering.
@@ -202,12 +237,13 @@ Endless waves in a forest clearing, an item after each:
   keeps its solids, risers and starts (`Ashwick`, built at `Spawned`), and
   each machine calls it again for what it draws (`Village`, a local
   singleton, because local handlers can't read the match's lists). Change one
-  and both follow. The clearing's edge is `Reach(angle)`, about 34 to 46 m
+  and both follow. The clearing's edge is `Reach(angle)`, about 38 to 50 m
   from the fire; the forest past it is drawn but nobody's ground.
 - **The ground is one function too**, `Ground(x, z)` (`plan.tide`): Perlin
-  rolling ground laid flat round the fire, a hill, a hollow and a ridge
-  (`Bump`), a cliff-top and a shelf (`Mesa`, short sides) each with a ramp
-  (`Ramp`), and a rise into the trees past the edge. Nothing of it is stored:
+  rolling ground laid flat round the fire, the graveyard's hollow (`Bump`),
+  the ravine (`Ditch`), the chapel's rise and the spire's two tiers (`Mesa`,
+  short sides) with their ramps (`RampTo`), and a rise into the trees past
+  the edge. Nothing of it is stored:
   the match asks it where feet, the dead, drops, rounds and grenades meet the
   ground, and the picture draws it as a 193 × 193 heightfield at 1.25 m
   (`MakeShapes`), with rock where it's steep, casting the moon's shadows.
