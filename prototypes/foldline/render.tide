@@ -59,6 +59,9 @@ struct Sight
     float3 torchWay;
     float3 otherAt;
     float3 otherWay;
+    float3[2] throughAt;  // Each torch again where a fold puts it, while it shines into one: where, which way,
+    float3[2] throughWay; // and which end it comes out of, one more than which (0 for none)
+    float[2] throughEnd;
     float lamps;      // How much of the lamps' light there is: none for the moment a watcher comes or goes
     bool cut;         // The piece is the room's: a fold opens a hole in it
     float fold;       // The piece is part of the way through an end: one more than which, and it stops at that wall's face
@@ -95,6 +98,10 @@ struct Ray
     float4x4 fromClip;
     float3 eye;
     float lamps;
+    float3 torchAt;   // Both torches, whose beams the air shows
+    float3 torchWay;
+    float3 otherAt;
+    float3 otherWay;
 }
 
 struct BlurStep
@@ -149,6 +156,8 @@ local singleton Optics
     List<Fixture> cubeParts;
     List<Fixture> cubeEcho;
     List<Fixture> cubeRest;
+    List<Fixture> cubeHeld0;  // What each operator carries, which that operator's own torch doesn't see as in its way
+    List<Fixture> cubeHeld1;
     List<Fixture> device;
     List<Fixture> deviceBalls;
     List<Fixture> deviceTubes;
@@ -209,6 +218,10 @@ local singleton Daylight
     DepthTexture foldDepth2;
     DepthTexture foldDepth3;
     float4x4[4] toFold;
+    // What each torch sees of what's in its way, side by side in one image: the viewer's, then the partner's
+    RenderTarget torches;
+    DepthTexture torchDepth;
+    float4x4[2] toTorch;
     bool made;
 }
 
@@ -264,6 +277,10 @@ const float FOLD_DROP = 0;
 const float FOLD_ROUND = 0.6;
 const float FOLD_DEEP = 0.3;
 const float FOLD_SOFT = 1.2 / FOLD_PIXELS;
+const int TORCH_PIXELS = 1024;
+const float2 TORCH_SOFT = float2(0.5 / TORCH_PIXELS, 1.0 / TORCH_PIXELS);
+const float TORCH_REACH = 30;  // How far a torch's and a fold's image of what's in the way reach
+const float GLOOM = 0.12;      // How much light the dark itself has: what nothing lights
 const float FIGURE_SCALE = 0.45;
 const float WIRE = 0.055;
 const float PULSE_SPEED = 2.6;
@@ -377,7 +394,7 @@ float3 Lamps(List<Bulb> bulbs, LampLayout layout, float3 at, float3 normal)
             mut float tight = down * down * down * down;
             tight *= tight;
             tight *= tight;
-            sum += bulb.light * (Math.Saturate(Math.Dot(normal, along)) * (0.75 * tight + 0.25 * down * down * down) / (far + 0.6));
+            sum += bulb.light * (Math.Saturate(Math.Dot(normal, along)) * (0.75 * tight + 0.12 * down * down * down) / (far + 0.6));
         }
     }
     return sum * 36;
@@ -423,16 +440,91 @@ float3 LampAir(DepthTexture depth, float4x4 toSun, List<Bulb> bulbs, LampLayout 
     return LampPool(bulb, LampMiddle(cell, layout), at, 0.05, 0.26) * (SunThrough(depth, at, toSun) / (1 + up * 0.35));
 }
 
-// A torch's light on a surface: a cone that fades with its reach.
+// How much of a torch's light leaves it in a direction: a hot middle, the beam, and a little spill round it.
+float TorchCone(float aim)
+{
+    return Math.SmoothStep(0.975, 0.996, aim) * 0.4 + Math.SmoothStep(0.86, 0.935, aim) + Math.SmoothStep(0.55, 0.86, aim) * 0.05;
+}
+
+// A torch's light on a surface, falling off with distance.
 float3 Torch(float3 at, float3 normal, float3 from, float3 way)
 {
     float3 to = at - from;
     float far = Math.Dot(to, to);
     float3 along = to / Math.Sqrt(far + 0.0001);
-    float cone = Math.SmoothStep(0.84, 0.97, Math.Dot(along, way));
     // Dim on what's held up before it, so a carried cube isn't a white glare
-    float reach = Math.SmoothStep(0.6, 3.5, Math.Sqrt(far));
-    return float3(1.0, 0.93, 0.78) * (cone * Math.Saturate(-Math.Dot(normal, along) * 0.8 + 0.2) * (0.5 + 2.7 * reach) / (1 + far * 0.1));
+    float reach = Math.SmoothStep(0.3, 2.2, Math.Sqrt(far)) * 0.8 + 0.2;
+    return float3(1.0, 0.92, 0.76) * (TorchCone(Math.Dot(along, way)) * Math.Saturate(-Math.Dot(normal, along) * 0.85 + 0.15) * reach * 3.2 / (1 + far * 0.28));
+}
+
+// How much of a torch's light gets to a place: its half of the torches' image of what stands in their way says
+// (`side` is its middle across, -0.5 or 0.5). Nothing outside it is lit.
+float TorchShadow(DepthTexture depth, float4x4 toTorch, float side, float3 world, float3 normal, float far)
+{
+    float4 clip = Math.Mul(toTorch, float4(world + normal * (0.015 + far * 0.004), 1));
+    if (clip.w < 0.05) return 0;
+    float3 at = clip.xyz / clip.w;
+    if (Math.Abs(at.x - side) > 0.497 || Math.Abs(at.y) > 0.995) return 0;
+    float2 uv = float2(at.x * 0.5 + 0.5, 0.5 - at.y * 0.5);
+    float deep = at.z * 0.5 + 0.5 - 0.00015;
+    float2 cross = float2(TORCH_SOFT.x, -TORCH_SOFT.y);
+    return (depth.Compare(uv - TORCH_SOFT, deep) + depth.Compare(uv + cross, deep) + depth.Compare(uv - cross, deep) + depth.Compare(uv + TORCH_SOFT, deep)) * 0.25;
+}
+
+// Whether a torch shone into a fold lights a place out of its other end: the place is before that end's wall, and
+// the line to it from where the fold puts the torch passes through the opening.
+bool ThroughOpening(float3 p, float3 from, Sight sight, int end)
+{
+    float3 face = sight.foldFace[end];
+    float3 wall = sight.foldAt[end] - face * 0.55;
+    float before = Math.Dot(from - wall, face);
+    float after = Math.Dot(p - wall, face);
+    if (after <= 0.02 || before >= 0) return false;
+    float3 crossing = from + (p - from) * (before / (before - after));
+    float3 right = float3(face.z, 0, -face.x);
+    float size = sight.foldSize[end];
+    return Math.Abs(Math.Dot(crossing - wall, right)) < FOLD_WIDE * size && Math.Abs(crossing.y - wall.y) < FOLD_HIGH * size;
+}
+
+// ...for a body, whose draw has no room for the folds' images: through a fold, whether the opening lets it.
+float4 TorchBeams(float3 place, float3 normal, Sight sight, DepthTexture torches, float4x4[2] toTorch)
+{
+    if (sight.held) return float4(0);
+    float3 p = LitPlace(place, sight);
+    float3 n = LitNormal(normal, sight);
+    mut float4 beams = float4(TorchShadow(torches, toTorch[0], -0.5, p, n, Math.Distance(p, sight.torchAt)),
+                              TorchShadow(torches, toTorch[1], 0.5, p, n, Math.Distance(p, sight.otherAt)), 0, 0);
+    if (sight.throughEnd[0] > 0.5 && ThroughOpening(p, sight.throughAt[0], sight, int(sight.throughEnd[0]) - 1)) beams.z = 1;
+    if (sight.throughEnd[1] > 0.5 && ThroughOpening(p, sight.throughAt[1], sight, int(sight.throughEnd[1]) - 1)) beams.w = 1;
+    return beams;
+}
+
+// How much of a torch's light comes out of the end of a fold it shines into, as far as that end's lamp's image of
+// what's before it says. Written out for each torch, not looped over them: a loop that can stop early has the
+// GPU's derivatives undefined, and the browser says so.
+float ThroughReach(float3 p, float3 n, Sight sight, int torch, DepthTexture fold0, DepthTexture fold1, DepthTexture fold2, DepthTexture fold3,
+                   float4x4[4] toFold)
+{
+    if (sight.throughEnd[torch] < 0.5) return 0;
+    int end = int(sight.throughEnd[torch]) - 1;
+    if (!ThroughOpening(p, sight.throughAt[torch], sight, end)) return 0;
+    if (end == 0) return FoldLight(fold0, toFold[0], p, n);
+    if (end == 1) return FoldLight(fold1, toFold[1], p, n);
+    if (end == 2) return FoldLight(fold2, toFold[2], p, n);
+    return FoldLight(fold3, toFold[3], p, n);
+}
+
+// How much of each torch's light gets to a place: the viewer's and the partner's straight, then each again out of
+// the end of a fold it shines into, as far as that end's lamp's image of what's before it says.
+float4 TorchReaches(float3 place, float3 normal, Sight sight, DepthTexture torches, float4x4[2] toTorch,
+                    DepthTexture fold0, DepthTexture fold1, DepthTexture fold2, DepthTexture fold3, float4x4[4] toFold)
+{
+    if (sight.held) return float4(0);
+    float3 p = LitPlace(place, sight);
+    float3 n = LitNormal(normal, sight);
+    return float4(TorchShadow(torches, toTorch[0], -0.5, p, n, Math.Distance(p, sight.torchAt)),
+                  TorchShadow(torches, toTorch[1], 0.5, p, n, Math.Distance(p, sight.otherAt)),
+                  ThroughReach(p, n, sight, 0, fold0, fold1, fold2, fold3, toFold), ThroughReach(p, n, sight, 1, fold0, fold1, fold2, fold3, toFold));
 }
 
 // How much of a fold's light gets to a place: its lamp looks out of the wall
@@ -593,7 +685,7 @@ float[4] FoldSides(float3 place, Sight sight)
 // folds' as much as `reaches` lets through, the cube's and the exit's, and
 // both operators' torches.
 float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, bool leaf, Sight sight, DepthTexture sun, float4x4 toSun, float texel,
-           List<Bulb> bulbs, LampLayout layout, float[4] reaches)
+           List<Bulb> bulbs, LampLayout layout, float[4] reaches, float4 beams)
 {
     float3 p = LitPlace(place, sight);
     float3 n = LitNormal(normal, sight);
@@ -614,11 +706,11 @@ float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, 
     else if (facing > 0.02) shadow = Sunlight(sun, p, n, toSun, texel);
     facing = Math.Max(facing, 0);
 
-    mut float3 light = float3(0.030, 0.032, 0.028) * shade;
+    mut float3 light = float3(0.030, 0.032, 0.028) * (shade * GLOOM * 0.5);
     // What's under something is in its shadow; a wall is lit whatever stands before it
     float under = Math.Lerp(1, shadow, Math.Saturate(n.y * 2));
     light += Lamps(bulbs, layout, at, leaf ? float3(0, 1, 0) : n) * (sight.lamps * (leaf ? 0.7 * shadow : under));
-    light += LampWide(bulbs, layout, at) * (sight.lamps * 0.13 * shade);
+    light += LampWide(bulbs, layout, at) * (sight.lamps * 0.05 * shade);
 
     // Each fold's light is stopped by what stands in its way.
     for (int end = 0; end < 4; end++)
@@ -637,7 +729,11 @@ float3 Lit(float3 paint, float3 place, float3 normal, float shade, float gloss, 
     if (Math.Dot(p - sight.exitLamp, sight.exitWay) < 7.6 && Math.DistanceSq(p, sight.exitLamp) < 100)
         light += Glow(p, n, sight.exitLamp, float3(0.25, 1.0, 0.45) * 2.6, 10) * (sight.held ? 1.0 : Unblocked(sight.exitLamp, lifted, sight, true));
     if (!sight.held)
-        light += Torch(p, n, sight.torchAt, sight.torchWay) + Torch(p, n, sight.otherAt, sight.otherWay);
+    {
+        light += Torch(p, n, sight.torchAt, sight.torchWay) * beams.x + Torch(p, n, sight.otherAt, sight.otherWay) * beams.y;
+        if (beams.z > 0) light += Torch(p, n, sight.throughAt[0], sight.throughWay[0]) * beams.z;
+        if (beams.w > 0) light += Torch(p, n, sight.throughAt[1], sight.throughWay[1]) * beams.w;
+    }
 
     float3 view = Math.Normalize(sight.eye - p);
     float shine = Math.Pow(Math.Max(Math.Dot(n, Math.Normalize(sunWay + view)), 0), 28) * gloss * shadow * sight.lamps;
@@ -737,7 +833,8 @@ frag Surface(StoneVertex vertex, Texture sheet, Instance instance, Fixture fixtu
     }
 
     float[4] reaches = FoldReaches(p, n, sight, day.foldDepth0, day.foldDepth1, day.foldDepth2, day.foldDepth3, day.toFold);
-    mut float3 lit = Lit(paint, p, n, shade, fixture.gloss, fixture.kind > 0.5, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, reaches);
+    float4 beams = TorchReaches(p, n, sight, day.torchDepth, day.toTorch, day.foldDepth0, day.foldDepth1, day.foldDepth2, day.foldDepth3, day.toFold);
+    mut float3 lit = Lit(paint, p, n, shade, fixture.gloss, fixture.kind > 0.5, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, reaches, beams);
     lit = Math.Lerp(lit, paint * (0.5 + fixture.luminous * 2.3), Math.Saturate(fixture.luminous));
     lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-far * sight.fog));
     color = Displayed(lit, sight.packed);
@@ -752,7 +849,8 @@ frag Figure(StoneVertex vertex, Texture skin, Instance instance, Sight sight, Da
     if (PastItsFold(p, sight)) this.Discard();
     Color seen = skin.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
     float3 n = instance.Normal(vertex.normal);
-    mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight));
+    float4 beams = TorchBeams(p, n, sight, day.torchDepth, day.toTorch);
+    mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight), beams);
     lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-Math.Distance(sight.eye, p) * sight.fog));
     color = Displayed(lit, sight.packed);
 }
@@ -940,12 +1038,39 @@ frag Halo(Vertex3 vertex, Aperture aperture, out Color color)
     color = Color(c.x, c.y, c.z, 1);
 }
 
-// The sun's light caught by the air between the eye and what it sees.
+// A torch's beam in the haze at a place in the air: its cone, as far as nothing stands between.
+float3 TorchAir(DepthTexture depth, float4x4 toTorch, float side, float3 from, float3 way, float3 at)
+{
+    float3 to = at - from;
+    float far = Math.Length(to);
+    float aim = Math.Dot(to / Math.Max(far, 0.0001), way);
+    if (aim < 0.8) return float3(0);
+    float4 clip = Math.Mul(toTorch, float4(at, 1));
+    if (clip.w < 0.05) return float3(0);
+    float3 seen = clip.xyz / clip.w;
+    if (Math.Abs(seen.x - side) > 0.497) return float3(0);
+    float lit = depth.Compare(float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5), seen.z * 0.5 + 0.5);
+    float beam = Math.SmoothStep(0.86, 0.935, aim) + Math.SmoothStep(0.975, 0.996, aim) * 0.6;
+    return float3(1.0, 0.92, 0.76) * (beam * lit * Math.SmoothStep(0.4, 2.5, far) / (1 + far * far * 0.2));
+}
+
+// The sun's light caught by the air between the eye and what it sees, and both torches' beams.
 frag Shafts(Vertex vertex, Texture source, Ray ray, Daylight day, Lens lens, out Color color)
 {
     float3 to = Unprojected(ray.fromClip, vertex.uv, lens.sceneDepth.Sample(vertex.uv)) - ray.eye;
     float far = Math.Length(to);
-    float3 lit = Scatter(day.depth, day.toSun, day.bulbs, day.layout, ray.eye, to / Math.Max(far, 0.0001), Math.Min(far, 36), this.position) * ray.lamps;
+    float3 way = to / Math.Max(far, 0.0001);
+    float reach = Math.Min(far, 36);
+    mut float3 lit = Scatter(day.depth, day.toSun, day.bulbs, day.layout, ray.eye, way, reach, this.position) * ray.lamps;
+    float jitter = Math.Frac(52.9829189 * Math.Frac(Math.Dot(this.position, float2(0.06711056, 0.00583715))));
+    float span = Math.Min(reach, 24);
+    mut float3 beams = float3(0);
+    for (int i = 0; i < 16; i++)
+    {
+        float3 at = ray.eye + way * (span * (i + jitter) / 16);
+        beams += TorchAir(day.torchDepth, day.toTorch[0], -0.5, ray.torchAt, ray.torchWay, at) + TorchAir(day.torchDepth, day.toTorch[1], 0.5, ray.otherAt, ray.otherWay, at);
+    }
+    lit += beams * (span / 16 * 0.02);
     color = Color(lit.x, lit.y, lit.z, 1);
 }
 
@@ -1170,6 +1295,8 @@ void MakeOptics(mut Optics optics, mut Daylight day, mut Lens lens)
     day.foldDepth1 = day.fold1.depth;
     day.foldDepth2 = day.fold2.depth;
     day.foldDepth3 = day.fold3.depth;
+    day.torches = RenderTarget(TORCH_PIXELS * 2, TORCH_PIXELS, 1, Format.Depth);
+    day.torchDepth = day.torches.depth;
     day.made = true;
     lens.sceneDepth = optics.scene.depth;
     lens.depth0 = optics.first0.depth;
@@ -1652,6 +1779,8 @@ void Loose(mut Optics optics, Cube cube, bool crossing)
     {
         Fixture crate = Faced(cube.at, cube.turn, float3(.74 * big), PLANKS, 0, cube.holder >= 0 ? Color(1.15, 1.1, 1) : Color.white);
         if (crossing) optics.cubeParts.Add(crate);
+        else if (cube.holder == 0) optics.cubeHeld0.Add(crate);
+        else if (cube.holder == 1) optics.cubeHeld1.Add(crate);
         else optics.cubeRest.Add(crate);
         return;
     }
@@ -1675,6 +1804,8 @@ void Loose(mut Optics optics, Cube cube, bool crossing)
                            cube.holder >= 0 ? 1.5 : 1.0);
         }
         if (crossing) optics.cubeParts.Add(piece);
+        else if (cube.holder == 0) optics.cubeHeld0.Add(piece);
+        else if (cube.holder == 1) optics.cubeHeld1.Add(piece);
         else optics.cubeRest.Add(piece);
     }
 }
@@ -1710,6 +1841,8 @@ void Furnish(mut Optics optics, Arena arena, Place place, Fold fold, float3 eye)
     optics.cubeParts.Clear();
     optics.cubeEcho.Clear();
     optics.cubeRest.Clear();
+    optics.cubeHeld0.Clear();
+    optics.cubeHeld1.Clear();
     optics.device.Clear();
     optics.deviceBalls.Clear();
     optics.deviceTubes.Clear();
@@ -2171,6 +2304,44 @@ float4 OpeningOnScreen(Portal portal, float3 eye, quaternion rotation, float2 wi
     return float4(low.x, low.y, high.x - low.x, high.y - low.y);
 }
 
+// Where an operator's torch is: the device's lamp, low and to the right of the eye.
+float3 TorchFrom(float3 eye, float yaw, float pitch, float scale)
+{
+    return eye + Math.Rotate(quaternion.Euler(-pitch, yaw, 0), float3(.3, -.27, .8) * scale);
+}
+
+// ...and which way it points: at what the eye looks at a few meters off.
+float3 TorchWay(float3 eye, float3 from, float yaw, float pitch, float scale)
+{
+    return Math.Normalize(eye + LookDirection(yaw, pitch) * (7 * scale) - from);
+}
+
+// The end a torch shines into, if any: the nearest whole end before it whose opening its beam takes in.
+int ShoneInto(Fold fold, float3 from, float3 way)
+{
+    mut int best = -1;
+    mut float nearest = TORCH_REACH;
+    for (int end = 0; end < 4; end++)
+    {
+        if (!Linked(fold, end / 2)) continue;
+        Portal portal = fold.ends[end];
+        float before = Math.Dot(from - portal.at, portal.face);
+        float facing = -Math.Dot(way, portal.face);
+        if (before <= 0 || facing < 0.05) continue;
+        float far = before / facing;
+        float3 off = from + way * far - portal.at;
+        // The beam is wide: an opening a little off its middle still takes most of it
+        float slack = 0.3 + far * 0.4;
+        if (far < nearest && Math.Abs(Math.Dot(off, FoldRight(portal.face))) < FOLD_WIDE * portal.size + slack
+            && Math.Abs(off.y) < FOLD_HIGH * portal.size + slack)
+        {
+            best = end;
+            nearest = far;
+        }
+    }
+    return best;
+}
+
 // Second crossings, their parents, then the room. Targets are disjoint and
 // portal cameras and all visible simulation objects update in this frame.
 view Render(Operator seenViewer, query (Operator body) operators, query (Wall wall) walls, query (Cube cube) cubes, query (Mover mover) movers, query (Ramp ramp) ramps,
@@ -2416,14 +2587,27 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
     mut Sight base = Sight { eye = eye, cube = fold.count > 0 ? fold.cube : float3(0, -1000, 0), partner = partner.position, self = viewer.position, phase = optics.phase,
                              exitLamp = stopping ? float3(0, -1000, 0) : LiftPoint(place.exit, place.exitYaw, float3(0, 3.2, -1)),
                              exitWay = TurnBy(float3(0, 0, 1), place.exitYaw),
-                             grid = float2(lens.lines * Screen.width / Screen.height, lens.lines) * .5, lamps = lamps, fog = place.fog, fogColor = place.fogColor,
-                             torchAt = viewer.position + float3(0, 1.35 * viewer.scale, 0), torchWay = LookDirection(viewer.yaw, viewer.pitch),
-                             otherAt = partner.position + float3(0, 1.35 * partner.scale, 0), otherWay = LookDirection(partner.yaw, partner.pitch) };
+                             grid = float2(lens.lines * Screen.width / Screen.height, lens.lines) * .5, lamps = lamps, fog = place.fog, fogColor = place.fogColor * GLOOM,
+                             torchAt = TorchFrom(viewer.position + float3(0, 1.55 * viewer.scale, 0), viewer.yaw, viewer.pitch, viewer.scale),
+                             otherAt = TorchFrom(partner.position + float3(0, 1.55 * partner.scale, 0), partner.yaw, partner.pitch, partner.scale) };
+    base.torchWay = TorchWay(viewer.position + float3(0, 1.55 * viewer.scale, 0), base.torchAt, viewer.yaw, viewer.pitch, viewer.scale);
+    base.otherWay = TorchWay(partner.position + float3(0, 1.55 * partner.scale, 0), base.otherAt, partner.yaw, partner.pitch, partner.scale);
     // With every light out the torches are out too
     if (arena.blackout)
     {
         base.torchWay = float3(0, 0, 0);
         base.otherWay = float3(0, 0, 0);
+    }
+    // A torch shone into a fold comes out of its other end
+    for (int torch = 0; torch < 2; torch++)
+    {
+        float3 from = torch == 0 ? base.torchAt : base.otherAt;
+        float3 way = torch == 0 ? base.torchWay : base.otherWay;
+        int into = ShoneInto(fold, from, way);
+        if (into < 0) continue;
+        base.throughEnd[torch] = (into ^ 1) + 1;
+        base.throughAt[torch] = FoldPoint(fold.ends[into], fold.ends[into ^ 1], from);
+        base.throughWay[torch] = Math.Normalize(FoldDirection(fold.ends[into], fold.ends[into ^ 1], way));
     }
     for (int end = 0; end < 4; end++)
     {
@@ -2449,9 +2633,10 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         sunTop = Math.Max(sunTop, row.wall.center.y + row.wall.size.y * .5 + SUN_REACH);
     }
     mut Sight held = Sight { phase = optics.phase };
-    for (int lamp = 0; lamp < 5; lamp++)
+    for (int lamp = 0; lamp < 7; lamp++)
     {
-        var map = lamp == 0 ? day.map : lamp == 1 ? day.fold0 : lamp == 2 ? day.fold1 : lamp == 3 ? day.fold2 : day.fold3;
+        var map = lamp == 0 ? day.map : lamp == 1 ? day.fold0 : lamp == 2 ? day.fold1 : lamp == 3 ? day.fold2 : lamp == 4 ? day.fold3
+                : day.torches;
         if (lamp == 0)
         {
             map.Clear(Color.white);
@@ -2459,14 +2644,30 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
                           float4x4.Ortho(lampsOver.x, lampsOver.y, .01, Math.Max(sunTop - sunBottom, 1)));
             day.toSun = map.WorldToClip();
         }
-        else
+        else if (lamp < 5)
         {
             Portal portal = fold.ends[lamp - 1];
             if (!Linked(fold, (lamp - 1) / 2)) continue;
             map.Clear(Color.white);
             map.SetCamera(float4x4.TRS(portal.at + portal.face * .55, quaternion.LookRotation(portal.face, float3(0, 1, 0)), float3(1)),
-                          float4x4.PerspectiveFov(140deg, 1, .12, 9));
+                          float4x4.PerspectiveFov(140deg, 1, .12, TORCH_REACH));
             day.toFold[lamp - 1] = map.WorldToClip();
+        }
+        else
+        {
+            // A torch: from the device's lamp, along its beam and a little wider than its spill
+            // A torch: from the device's lamp, along its beam and a little wider than its spill, squeezed into its own
+            // half of the torches' image
+            float3 from = lamp == 5 ? base.torchAt : base.otherAt;
+            float3 way = lamp == 5 ? base.torchWay : base.otherWay;
+            if (Math.Dot(way, way) < 0.5) continue;
+            map.SetScreen();
+            map.SetClip(Rect((lamp - 5) * TORCH_PIXELS, 0, TORCH_PIXELS, TORCH_PIXELS));
+            map.Clear(Color.white);
+            map.SetCamera(float4x4.TRS(from, quaternion.LookRotation(way, Math.Abs(way.y) > 0.95 ? float3(0, 0, 1) : float3(0, 1, 0)), float3(1)),
+                          Math.Mul(float4x4.TRS(float3(lamp == 5 ? -.5 : .5, 0, 0), quaternion.identity, float3(.5, 1, 1)),
+                                   float4x4.PerspectiveFov(100deg, 1, .1, TORCH_REACH)));
+            day.toTorch[lamp - 5] = map.WorldToClip();
         }
         map.Instanced(optics.box, optics.triangles, optics.architecture);
         map.Instanced(optics.box, optics.triangles, optics.furnishings);
@@ -2474,8 +2675,13 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         map.Instanced(optics.box, optics.triangles, optics.cubeParts);
         map.Instanced(optics.box, optics.triangles, optics.cubeRest);
         map.Instanced(optics.box, optics.triangles, optics.cubeEcho);
-        map.SkinnedMesh(figure, partnerPlace, partnerPose);
-        map.SkinnedMesh(figure, selfPlace, selfPose);
+        // A torch isn't in the way of its own light: its holder's body, and what they carry
+        bool selfTorch = lamp == 5;
+        bool partnerTorch = lamp == 6;
+        if (!(selfTorch && viewer.id == 0) && !(partnerTorch && partner.id == 0)) map.Instanced(optics.box, optics.triangles, optics.cubeHeld0);
+        if (!(selfTorch && viewer.id == 1) && !(partnerTorch && partner.id == 1)) map.Instanced(optics.box, optics.triangles, optics.cubeHeld1);
+        if (!partnerTorch) map.SkinnedMesh(figure, partnerPlace, partnerPose);
+        if (!selfTorch) map.SkinnedMesh(figure, selfPlace, selfPose);
         DrawBeastShadows(map, creatures);
         if (partnerFold > 0) map.SkinnedMesh(figure, partnerEcho, partnerPose);
         map.Cull(Cull.None)
@@ -2557,6 +2763,8 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
         there.echoed = true;
         there.back = across[(Math.Max(cubeFold, 1) - 1) ^ 1];
         target.Instanced(optics.box, optics.triangles, optics.cubeRest, kit, Snap, Surface, sight);
+        target.Instanced(optics.box, optics.triangles, optics.cubeHeld0, kit, Snap, Surface, sight);
+        target.Instanced(optics.box, optics.triangles, optics.cubeHeld1, kit, Snap, Surface, sight);
         target.Instanced(optics.box, optics.triangles, optics.cubeParts, kit, Snap, Surface, here);
         if (cubeFold > 0) target.Instanced(optics.box, optics.triangles, optics.cubeEcho, kit, Snap, Surface, there);
         target.Cull(Cull.None)
@@ -2717,7 +2925,8 @@ view Render(Operator seenViewer, query (Operator body) operators, query (Wall wa
     // The air is lit by the room's depth, before depth is set back for what's in the hand.
     lens.pixel = float2(1 / Screen.width, 1 / Screen.height);
     lens.phase = optics.phase;
-    Draw.Blit(optics.scene.color, lens.air, Shafts, Ray { fromClip = Math.Inverse(optics.scene.WorldToClip()), eye = eye, lamps = lamps });
+    Draw.Blit(optics.scene.color, lens.air, Shafts, Ray { fromClip = Math.Inverse(optics.scene.WorldToClip()), eye = eye, lamps = lamps,
+                                                          torchAt = base.torchAt, torchWay = base.torchWay, otherAt = base.otherAt, otherWay = base.otherWay });
     Draw.Blit(optics.scene.color, lens.reach, HowFar, Ray { fromClip = Math.Inverse(optics.scene.WorldToClip()), eye = eye, lamps = lamps });
     lens.far = lens.reach.color;
     if (!ui.open)

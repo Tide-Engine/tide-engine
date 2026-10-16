@@ -405,10 +405,9 @@ void HangLamps(mut Place place, int column0, int column1, int row0, int row1, fl
             HangLamp(place, column, row, high, state, group);
 }
 
-// An office's lamps over those cells: most burn, about two in nine are dead and one in nine stutters, which
-// ones by the seed, so that no two places have the same.
-// `dead` of every nine are out and one of the nine stutters.
-void OfficeLamps(mut Place place, int column0, int column1, int row0, int row1, float high, int seed, int group = 0, int dead = 2)
+// An office's lamps over those cells, the building's power failing: of every nine about `dead` are out and one
+// stutters, which ones by the seed, so that no two places have the same.
+void OfficeLamps(mut Place place, int column0, int column1, int row0, int row1, float high, int seed, int group = 0, int dead = 7)
 {
     for (var row = row0; row <= row1; row++)
     {

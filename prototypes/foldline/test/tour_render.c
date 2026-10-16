@@ -13,6 +13,7 @@
 //   eye <x> <y> <z> <yaw> <pitch> <name>   stand A there, look, and write <name>.png; prints whether A's first
 //                                          end could be placed where the reticle is (name "-" writes no picture)
 //   look <x> <y> <z> <tx> <ty> <tz> <name> stand A at feet x y z looking at a point
+//   shoot <0|1> <x> <y> <z> <yaw> <pitch>  stand A there and fire its first or second end, as a player's click does
 //   lift <right> <up> <forward> <turn> <pitch> <name>  stand A in the arrival lift's own frame (forward is out of
 //                                                      its doorway, which is 2.1 m ahead of its middle) and look
 #ifndef __wasm__
@@ -100,6 +101,23 @@ static int tour(void *user, float seconds)
             printf("%s: eye at %.2f %.2f %.2f yaw %.0f\n", name, feet.x, feet.y, feet.z,
                    (world.Place.arrivalYaw + v[3] * TIDE_DEG2RAD_F) * TIDE_RAD2DEG_F);
             if (strcmp(name, "-")) capture_scene(name);
+        } else if (!strcmp(word, "shoot") && sscanf(line, "%*s %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6) {
+            // The match shoots from the physical body, so that's what's moved
+            body_at(world.Arena.op0, (tide_float3){v[1], v[2], v[3]});
+            Operator shooter = tide_get_Operator(&world, world.Arena.op0);
+            shooter.yaw = v[4] * TIDE_DEG2RAD_F;
+            shooter.pitch = v[5] * TIDE_DEG2RAD_F;
+            check(tide_set_Operator(&world, world.Arena.op0, shooter), "stand the tour's shooter");
+            tide_world_tick(&world);
+            const PilotInput fire = {.amber = v[0] == 0, .cyan = v[0] != 0};
+            tide_world_set_input(&world, tide_player_from_index(0), fire);
+            tide_world_set_server_input(&world, fire);
+            tide_world_tick(&world);
+            tide_world_set_input(&world, tide_player_from_index(0), (PilotInput){0});
+            tide_world_set_server_input(&world, (PilotInput){0});
+            for (int tick = 0; tick < 3; tick++) tide_world_tick(&world);
+            const Portal end = world.Fold.ends.at[(int)v[0]];
+            printf("  shot: end %d %s at %.2f %.2f %.2f\n", (int)v[0], end.open ? "open" : "not open", end.at.x, end.at.y, end.at.z);
         } else if (!strcmp(word, "look") && sscanf(line, "%*s %f %f %f %f %f %f %127s", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], name) == 7) {
             const float dx = v[3] - v[0], dz = v[5] - v[2];
             tour_eye((tide_float3){v[0], v[1], v[2]}, tide_atan2_f(dx, dz),

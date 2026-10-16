@@ -59,7 +59,7 @@ void BuildMailroom(mut Arena arena, mut Place place, mut Fold fold)
     RaisePillar(arena, -2, 8.5);
     LampGrid(place, float2(-13, -11), float2(4, 4), 7, 6);
     OfficeLamps(place, 0, 3, 0, 5, 4.4, 23);
-    HangLamps(place, 5, 6, 4, 5, 4.4);
+    OfficeLamps(place, 5, 6, 4, 5, 4.4, 24, dead: 5);
     HangLamp(place, 3, 4, 4.4, LampState.Stutter);
     place.light = .72;
     MenuView(place, float3(-11, 2.5, -7), .1, .45);
