@@ -269,10 +269,12 @@ Entity PaintFrame(Arena arena, float3 foot, float3 face, float size)
 // An end of a fold open as the place is built, as if its operator had just shot it there, standing at `foot` on
 // the face of `wall` that faces `face`: ends 0 and 1 are operator A's, 2 and 3 operator B's. It's theirs: their
 // next shot of it moves it. The place gives where it goes exactly; nothing nudges it to fit. Its wall's hole is
-// cut the next tick.
-void PlaceEnd(mut Fold fold, int end, Entity wall, float3 foot, float3 face, float size = 1)
+// cut the next tick. On a floor or a ceiling `foot` is its middle, and `up` the level way its length goes.
+void PlaceEnd(mut Fold fold, int end, Entity wall, float3 foot, float3 face, float size = 1, float3 up = float3(0, 0, 1))
 {
-    fold.ends[end] = Portal { open = true, at = foot + float3(0, FOLD_HALF_HIGH * size, 0), face = face, wall = wall, size = size };
+    var lying = Math.Abs(face.y) > 0.5;
+    fold.ends[end] = Portal { open = true, at = lying ? foot : foot + float3(0, FOLD_HALF_HIGH * size, 0), face = face,
+                              up = lying ? up : float3(0, 1, 0), wall = wall, size = size };
 }
 
 // A loose thing of the place: the first is the cube, and a crate is lighter. Eight at most.

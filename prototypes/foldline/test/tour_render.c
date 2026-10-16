@@ -14,6 +14,7 @@
 //                                          end could be placed where the reticle is (name "-" writes no picture)
 //   look <x> <y> <z> <tx> <ty> <tz> <name> stand A at feet x y z looking at a point
 //   shoot <0|1> <x> <y> <z> <yaw> <pitch>  stand A there and fire its first or second end, as a player's click does
+//   paper <x> <y> <z>           make the box of the room that holds that point take folds, a floor's or a ceiling's too
 //   lift <right> <up> <forward> <turn> <pitch> <name>  stand A in the arrival lift's own frame (forward is out of
 //                                                      its doorway, which is 2.1 m ahead of its middle) and look
 #ifndef __wasm__
@@ -101,6 +102,18 @@ static int tour(void *user, float seconds)
             printf("%s: eye at %.2f %.2f %.2f yaw %.0f\n", name, feet.x, feet.y, feet.z,
                    (world.Place.arrivalYaw + v[3] * TIDE_DEG2RAD_F) * TIDE_RAD2DEG_F);
             if (strcmp(name, "-")) capture_scene(name);
+        } else if (!strcmp(word, "paper") && sscanf(line, "%*s %f %f %f", &v[0], &v[1], &v[2]) == 3) {
+            bool found = false;
+            for (uint32_t slot = 0; slot < world.entities.next_unused && !found; slot++) {
+                const tide_entity entity = tide_entity_in_slot(&world.entities, slot);
+                if (!tide_has_Wall(&world, entity)) continue;
+                Wall wall = tide_get_Wall(&world, entity);
+                if (wall.chamber != world.Arena.chamber || tide_abs_f(v[0] - wall.center.x) > wall.size.x * .5f
+                    || tide_abs_f(v[1] - wall.center.y) > wall.size.y * .5f || tide_abs_f(v[2] - wall.center.z) > wall.size.z * .5f) continue;
+                wall.takes = true;
+                found = tide_set_Wall(&world, entity, wall);
+            }
+            check(found, "the tour's box to paper is there");
         } else if (!strcmp(word, "shoot") && sscanf(line, "%*s %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6) {
             // The match shoots from the physical body, so that's what's moved
             body_at(world.Arena.op0, (tide_float3){v[1], v[2], v[3]});

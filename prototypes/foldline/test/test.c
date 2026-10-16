@@ -2,6 +2,7 @@
 #include "core.c"
 #include "prop_collision.c"
 #include "cube_presentation.c"
+#include "floor_folds.c"
 #include "place_reception.c"
 #include "place_archive.c"
 #include "place_mailroom.c"
@@ -33,6 +34,7 @@ int main(int argc, char **argv)
     RUN(cube_teleports_without_interpolating);
     RUN(prop_collision_tests);
     RUN(ends_placed_at_building);
+    RUN(floor_folds);
     RUN(sizes);
     RUN(carrying_and_throwing);
     RUN(plates_by_mass);

@@ -2131,3 +2131,76 @@ built in release and loaded in headless Chrome on WebGL (ANGLE D3D11) and on
 WebGPU (SwiftShader), both with no console warning; screenshots of nine places
 were inspected. Nobody has played it in the dark yet, and what the two extra
 depth draws cost on a slow GPU isn't measured.
+
+### Ends on floors and ceilings (2026-10-16)
+
+Agreed by the owner in place of size ("Folds on floors and ceilings and the
+light beams are good"), and agreed in principle on 2026-10-13 as "throwing
+oneself through a fold with a fall's speed", for which pads stood in.
+
+- **`Portal.up`** is the way an end's length goes along its face: (0, 1, 0) on
+  a wall, a level axis on a floor or a ceiling. Its default keeps every wall end
+  as it was; ends a C test builds by hand must set it (`render_test.c` and
+  `core.c` do). `EndRight` is `up` crossed with `face`; `Lying` says an end is
+  on a floor or a ceiling. `FoldDirection` is general: right, up and face into
+  one end are minus right, up and minus face out of the other, which between two
+  walls is the old turn about the vertical (the render fixture's projections are
+  the same to the tenth of a pixel). `Across` is the same turn as a quaternion,
+  `LookRotation(to) * half a turn about y * LookRotation(from)⁻¹`.
+- **Shots.** A face whose normal is within 0.3 of level is a wall's, within 0.7
+  of upright a floor's or a ceiling's; between, it's refused. A floor's or a
+  ceiling's end lies along the shot's level way, a quarter turn at a time, so its
+  length runs away from the shooter. Its fit is the wall's in the face's own
+  coordinates: rays 3 m along both its ways from 0.2 m off the face find the walls
+  that stand on a floor (8 m up and down for a wall's floor and ceiling, as
+  before), and only a wall's end is stood on the floor. Overlap with another end
+  measures each one's reach along the other's ways, as two on a floor may lie
+  crosswise.
+- **Holes.** `Carve` cuts along the face's own axis and its two others
+  (`HoleReach`). A floor's or a ceiling's hole goes right through the slab: a body
+  falls until its middle crosses the face, which happens while its feet are still
+  in a 1 m slab; a wall's keeps its back.
+- **Coming out.** A body stands upright out of any end. Through a floor or a
+  ceiling the look is turned whole (`Traverse` maps yaw and pitch; looking
+  straight up or down, ahead is where the top of the view points) and pitch is
+  kept within ±1.4; between two walls the old yaw-only turn is kept, so a wall
+  crossing changes nothing it didn't. Turned from lying to standing or back, the
+  body is moved to where it fits the opening it comes out of: across by its
+  radius, along by half its height on a wall or its radius on a floor
+  (`radius`/`half` for operators are the capsule's, for loose things 0.6 of a
+  side). Nothing comes out faster than `FASTEST`, 24 m/s, so a floor's end under
+  a ceiling's is a fall that never ends but never speeds up past it. A fast exit
+  sets `flung` as before.
+- **The renderer** takes each end's `up` (`Sight.foldUp`, `Aperture.up`) for the
+  hole (`InFold`), where a ray meets the opening (`OnWall`), the halo, the box the
+  far view is drawn in, the opening on screen, the fold lamp's camera, what's
+  part of the way through (`Crossing`), the torch through a fold and which end it
+  shines into. An end lying on a floor has its rim all round (`Aperture.lying`):
+  a wall's leaves its foot off.
+- `PlaceEnd` takes `up` for a floor's or a ceiling's end, whose `foot` is then
+  its middle. No place puts one yet, and the map tool's backing check has never
+  seen one.
+
+Tests: `floor_folds.c` puts A's ends on the bench's floor and west wall and drops
+A onto the floor's: it falls through and is thrown out of the wall at over
+6.5 m/s, flung, facing out (yaw east) and looking up 0.37, and lands out in the
+room; walked into the wall's end, it comes up out of the floor's going up; the
+cube dropped on the floor's comes out of the wall's. A floor's end under a
+ceiling's 7 m off: what falls in comes down out of the ceiling's and lands; right
+under it, it falls on for 600 ticks, at most 27 m/s (24 out, plus the drop).
+With the floor and a ceiling made to take folds, a shot down lies along the
+shot's way in front of the shooter, a shot east lies east, a shot up puts one on
+the ceiling, and the floor's drops its walker out of the ceiling's. Every wall
+fold test and campaign solve passes unchanged, and the render fixture's numbers
+are the same. Captured with `tour_render.c` (new `paper x y z`, which makes the
+box at a point take folds): a floor's end seen ahead and straight down into, a
+ceiling's from below with a body's legs out of it while it's half into the
+floor's, and the wall's end it throws out of.
+
+Validation: native debug 4/4 Foldline tests and web debug 5/5 (Node 24.21.0).
+Native and WASI replay hash `12132724296285812943`, campaign hash
+`9655470944479967408`: `Portal` has a field more.
+
+Not done: no room uses one yet; a body that comes up out of a floor's end too
+slowly falls back in and goes round again, as Portal's do; the torch through a
+floor's end is the same opening test, unseen in a capture.
