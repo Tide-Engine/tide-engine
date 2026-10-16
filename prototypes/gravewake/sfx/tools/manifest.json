@@ -1,16 +1,4 @@
 {
- "ambient_loop": {
-  "bytes": 137204,
-  "file": "ambient_loop.ogg",
-  "kind": "loop",
-  "layers": true,
-  "packs": [
-   "oga_hungry_ghoul",
-   "oga_zombie_moans_ds",
-   "oga_zombie_moans_ep"
-  ],
-  "seconds": 30.0
- },
  "arbalest_fire": {
   "bytes": 50050,
   "file": "arbalest_fire.wav",

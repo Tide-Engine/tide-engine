@@ -4,8 +4,8 @@
 // near; the Mortar Beacon's shells. Each tick one moves, drops, and meets the
 // dead before the walls.
 
-// What a missile is. A Keg is no missile: it's a Powder Keg's burst, for what's seen and heard of it.
-enum Shot { Grenade, Pot, Mine, Shell, Keg }
+// What a missile is. A Keg and a Quake are none: a Powder Keg's burst and a Brute's slam, for what's seen and heard.
+enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake }
 
 component Missile
 {
@@ -98,7 +98,7 @@ system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Time time)
         foreach (var z in Near(herd, from, Math.Length(to - from) + 1.5))
         {
             if (!z.hittable) continue;
-            var first = Math.Min(SphereHit(from, to, z.head, HEAD_RADIUS + 0.1), Math.Min(SphereHit(from, to, z.chest, 0.45), SphereHit(from, to, z.hips, 0.4)));
+            var first = Math.Min(SphereHit(from, to, z.head, (HEAD_RADIUS + 0.1) * z.size), Math.Min(SphereHit(from, to, z.chest, 0.45 * z.size), SphereHit(from, to, z.hips, 0.4 * z.size)));
             if (first > 1 || first > wall) continue;
             var where = Math.Lerp(from, to, first);
             Burst(missile, where, Near(herd, where, missile.splash + 1));

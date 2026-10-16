@@ -137,6 +137,60 @@ the sounds', weak guns and the wrong mood.
   (150 up, or from wave six); levels and uncommon and rare items have synth
   arpeggios; the night has thunder in place of crows and owls.
 
+### No waves, levels and the Brute (2026-10-17)
+
+The owner, after the second playtest: "ambient sound might need to go away /
+lets maybe remove the rounds system and just give upgrades based on leveling
+up / also did we add "bosses"? i envison them as big monsters with maybe attack
+patterns or something". The picks below are mine (Provisional).
+
+- **The ambient bed is gone** (wind, thunder, far moans); the fires, torches,
+  music and the dead's own voices are what's heard between fights.
+- **The run** (`rounds.tide`): once every ready survivor has picked, a
+  breath (`START_SECONDS`, 4), the siren, and the dead come without end.
+  `Match.danger`, worked out each tick, is `(1 + minutes / 1.5) × (1 + 0.25
+  per survivor past the first)`; the dead come at `1.4 × danger^1.25` a
+  second (as many as six a tick), each with `40 × danger^1.35` health,
+  runners from danger 1.4 and sprinters from 3.5. The HUD shows the run's
+  time and the danger in Risk of Rain 2's words (Easy to Impossible, then
+  HAHAHAHA). Bleeding out, a survivor is back at their place by the fire
+  `RETURN_SECONDS` (30) later with everything (`Return`). The game is over
+  when nobody's standing; the score is how long it lasted. Power-ups are at
+  most four a minute. `Phase.Break`, the waves' counts and the regrouping
+  are gone.
+- **Items at levels** (`items.tide`'s `Experience`): each level the party
+  gains is a pick owed to every survivor (`Survivor.pending`); the next owed
+  is offered as soon as the last is taken. Picking is 1, 2 or 3 while the
+  fighting goes on (no pause: the engine has none, and it's every player's
+  match); the cards sit small along the bottom (`Offers`). Offers grow rarer
+  with the run's minutes.
+- **The Brute** (`boss.tide`): every three minutes from the third
+  (`BOSS_FIRST`, `BOSS_EVERY`), 22 to 34 m from a survivor, rising 2.5 s. The
+  plague king's body three times the size (`BOSS_SIZE`), dark red, drawn in
+  the horde's own instanced draws; in the herd as one body three times as big
+  (`Body.size` scales every hit sphere and the boot's reach), health `2500 ×
+  danger × (1 + 0.5 per Brute before)`, never knocked over or frozen; Death's
+  Touch takes a twentieth a hit. It walks at the nearest standing survivor
+  (2.3 m/s) and, after each move's cooldown (2 to 2.5 s): every third time a
+  roar (1.6 s; at 0.6 s, `14 + 6n` of the dead claw up 3 to 11 m round it);
+  else within 7 m a slam (1.1 s with its arms up and a ring of red sparks on
+  the ground 6.5 m across, then 45 damage and a throw to everyone in it, the
+  dead in it knocked over), else within 26 m a charge (0.9 s lining up, a
+  line of sparks where it'll run, then 15 m/s for 1.3 s: 35 damage and a
+  throw to anyone it meets, the dead flung aside, stopped by walls). A
+  survivor is thrown by `Shoved`. Felled (`BossFelled`): every survivor owes
+  a pick, the one who felled it gets 1000 points, the party 25 experience.
+  The HUD has its health across the top; it's heard roaring as it comes, at
+  each roar and charge, and dying.
+- **Tests**: `gravewake_test` plays the run, not waves: a minute and a half
+  of it, a level's offer taken mid-fight, the bled-out survivor back at the
+  fire after 30 s, a Brute that slams, charges and roars and, felled, owes
+  each a pick, then three minutes holding the fire. `tick_safe` now keeps the
+  standing survivors whole through each tick (in a run that only gets worse,
+  a crowd's claws can land together for more than anyone's health, and the
+  run ends when nobody's standing); single-target checks thin the dead to a
+  few with no more coming (`few`), and the checks that want a crowd have one.
+
 ### After the second playtest (2026-10-17)
 
 The owner: "The sounds still suck. It sounds like a Roblox game. For the PSX
@@ -231,22 +285,17 @@ distance." Asked, they chose pixels finer with distance, and for the sounds:
 
 ## How it plays
 
-Endless waves in a forest clearing, an item after each:
+An endless run in a forest clearing, an item at each level:
 
-- **Survivors** (`kits.tide`), picked with 1, 2 or 3 before the first wave
-  (nothing starts till every ready survivor has one, and a joiner picks on
-  joining). Each a gun and three skills, above.
-- **Waves.** A horde: `(40 + 30w + 4w²) × (1 + 0.6 per extra player)` of the
-  dead, at most 3000 up at once. Health `40 + 25(w-1)` to wave nine, then
-  ×1.08 a wave; a claw does 30. A spawn every
-  `max(0.017, 0.4 × 0.88^(w-1)) / (1 + 0.3 per extra player)` seconds, at one
-  of the five risers nearest a random standing survivor, but none within 7 m
-  of them. Runners from wave three, sprinters among them from wave nine.
-- **Between waves** (`rounds.tide`'s `Regroup`): whoever is down stands up,
-  whoever bled out comes back at their place by the fire, everyone is healed,
-  their gun loaded and their skills ready, and each is offered three items.
-  The next wave starts five seconds after the last is taken, or after 45 s
-  for one who hasn't (whose offer is then lost).
+- **Survivors** (`kits.tide`), picked with 1, 2 or 3 before the run (nothing
+  starts till every ready survivor has one, and a joiner picks on joining).
+  Each a gun and three skills, above.
+- **The run** (`rounds.tide`): the dead come all the time, more and tougher
+  as the danger climbs with the minutes (above, No waves), at most 3000 up at
+  once, clawing up 16 to 32 m round a random standing survivor; a claw does
+  30. A Brute every three minutes (`boss.tide`).
+- **Levels** (`items.tide`): every kill is the party's experience; each level
+  is an item to pick for every survivor, taken while the fight goes on.
 - **Points** are only a score: 10 a hit, 20 a hit to the head, 50 a kill,
   100 a kill to the head; burning and bleeding give none.
 - **The dead** rise out of the graves and from among the roots round the edge
@@ -260,9 +309,9 @@ Endless waves in a forest clearing, an item after each:
   HEADSHOT over the crosshair for a kill; a crit's marker is yellow.
 - **Down and out.** At 0 health a survivor goes down for 30 s and fights on
   with the pistol, unless a Second Wind puts them straight back up (one used
-  up). Raised by a friend holding E for 3 s. Who bleeds out comes back at the
-  wave's end. When nobody is left standing, the game is over.
-- **Power-ups**, at most four a wave: Recharge (every gun loaded, every skill
+  up). Raised by a friend holding E for 3 s. Who bleeds out is back at the
+  fire 30 s later. When nobody is left standing, the game is over.
+- **Power-ups**, at most four a minute: Recharge (every gun loaded, every skill
   ready), Death's Touch (one-hit kills, 30 s), Holy Fire (every one of the
   dead).
 

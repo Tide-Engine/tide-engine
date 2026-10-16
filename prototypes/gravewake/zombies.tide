@@ -149,6 +149,7 @@ struct Body
     float3 chest;
     float3 hips;
     bool down;                  // On its back
+    float size = 1;             // How much bigger than one of the dead (a Brute's)
 }
 
 Body BodyOf(Entity entity, Zombie zombie)
@@ -258,14 +259,14 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     {
         zombie.burn -= dt;
         if (Math.Floor((zombie.burn + dt) * 4) != Math.Floor(zombie.burn * 4))
-            this.Send(Wound { damage = 40 + RoundHealth(match.round) * 0.06, seat = zombie.burner, element = Element.None, from = zombie.at, blow = Blow.Burning, knock = -1 });
+            this.Send(Wound { damage = 40 + ZombieHealth(match.danger) * 0.06, seat = zombie.burner, element = Element.None, from = zombie.at, blow = Blow.Burning, knock = -1 });
     }
     // Bleeding: the same
     if (zombie.bleed > 0)
     {
         zombie.bleed -= dt;
         if (Math.Floor((zombie.bleed + dt) * 2) != Math.Floor(zombie.bleed * 2))
-            this.Send(Wound { damage = 30 + RoundHealth(match.round) * 0.05, seat = zombie.bleeder, element = Element.None, from = zombie.at, blow = Blow.Bleeding, knock = -1 });
+            this.Send(Wound { damage = 30 + ZombieHealth(match.danger) * 0.05, seat = zombie.bleeder, element = Element.None, from = zombie.at, blow = Blow.Bleeding, knock = -1 });
     }
     switch (zombie.state)
     {

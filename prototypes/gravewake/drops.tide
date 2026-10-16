@@ -17,7 +17,7 @@ component Drop
 }
 
 // What's heard, where: the match says, each machine plays it.
-enum Sfx { Rise, Snarl, Revive, Downed, Hurt, Empty, Throw, Mine, Shell }
+enum Sfx { Rise, Snarl, Revive, Downed, Hurt, Empty, Throw, Mine, Shell, BossRoar, BossCharge, BossDeath }
 
 event Cue
 {
@@ -48,7 +48,7 @@ void Refill(mut Survivor survivor)
     for (var i = 0; i < 3; i++) survivor.cooldowns[i] = 0;
 }
 
-// Now and then one of the dead drops something, a few a wave at most.
+// Now and then one of the dead drops something, a few a minute at most.
 void MaybeDrop(mut Match match, float3 at)
 {
     if (match.drops >= DROPS_MOST || Random.NextInt(1000) >= 28) return;

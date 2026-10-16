@@ -62,7 +62,6 @@ No attribution is required for any of it; it is given here anyway.
 
 | File | Seconds | Source |
 |---|---|---|
-| ambient_loop.ogg | 30.00 | Hungry Ghoul by Darsycho (CC0 1.0, https://opengameart.org/content/hungry-ghoul), Zombie Moans by Darsycho (CC0 1.0, https://opengameart.org/content/zombie-moans), Zombie Moans 01 by Emopreben (CC0 1.0, https://opengameart.org/content/zombie-moans-01-by-emopreben) + synthesized layers |
 | arbalest_fire.ogg | 0.57 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Medieval Sound Effects: Weapon Textures (part 1 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | arbalest_reload.ogg | 2.15 | RPG Audio by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/rpg-audio), Medieval Sound Effects: Weapon Textures (part 1 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) |
 | arrow_hit_flesh_1.ogg | 0.25 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 8 Wet Squish, Slurp Impacts by Independent.nu (posted by qubodup) (CC0 1.0, https://opengameart.org/content/8-wet-squish-slurp-impacts) + synthesized layers |

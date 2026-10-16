@@ -232,7 +232,7 @@ void Kick(Entity self, Survivor survivor, List<Body> bodies)
         if (!z.hittable) continue;
         var to = (z.down ? z.head : z.chest) - survivor.feet;
         var far = Math.Length(to.xz);
-        if (far > KICK_REACH + ZOMBIE_RADIUS) continue;
+        if (far > KICK_REACH + ZOMBIE_RADIUS * z.size) continue;
         var angle = Math.Abs(TurnBetween(survivor.yaw, Math.Atan2(to.x, to.z)));
         if (angle > 0.9 && far > 0.6) continue;
         if (z.down)

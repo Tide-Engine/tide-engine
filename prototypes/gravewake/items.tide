@@ -1,8 +1,9 @@
 // Items, after Risk of Rain 2's: each stacks, and most of them fight for
 // you: rounds that arc lightning, kills that burst, a drone at your shoulder,
-// a ring of embers, shells called down on what you hit. After each wave every
-// survivor is offered three and takes one with 1, 2 or 3 (the pad's d-pad
-// left, up and right); rarer ones turn up more as the night goes on. What's
+// a ring of embers, shells called down on what you hit. At each level (and
+// for each Brute felled) every survivor is offered three and takes one with
+// 1, 2 or 3 (the pad's d-pad left, up and right), fighting on meanwhile:
+// nothing stops for it. Rarer ones turn up more as the night goes on. What's
 // taken is kept through going down and bleeding out, till the game's over.
 //
 // And levels: every kill by anyone is experience for the whole party, and each
@@ -120,9 +121,9 @@ int MagOf(Survivor s, Weapon weapon)
 
 // ---- The offer after a wave ----
 
-// Three items for a survivor, after wave `round`, no two the same: mostly common, uncommon more often as the waves go
-// on, now and then a rare.
-void Offer(mut Survivor survivor, int round)
+// Three items for a survivor, `minute` minutes into the run, no two the same: mostly common, uncommon more often as the
+// run goes on, now and then a rare.
+void Offer(mut Survivor survivor, int minute)
 {
     for (var k = 0; k < 3; k++)
     {
@@ -130,8 +131,8 @@ void Offer(mut Survivor survivor, int round)
         for (var tries = 0; tries < 20; tries++)
         {
             var roll = Random.NextFloat();
-            var rare = Math.Min(0.12, 0.02 + 0.01 * round);
-            var uncommon = Math.Min(0.45, 0.18 + 0.03 * round);
+            var rare = Math.Min(0.12, 0.02 + 0.01 * minute);
+            var uncommon = Math.Min(0.45, 0.18 + 0.03 * minute);
             var first = roll < rare ? int(Item.Mortar) : roll < rare + uncommon ? int(Item.LiveWire) : 0;
             var last = roll < rare ? ITEM_COUNT : roll < rare + uncommon ? int(Item.Mortar) : int(Item.LiveWire);
             item = Item(first + Random.NextInt(last - first));
@@ -320,15 +321,25 @@ float LevelSpan(int level)
     return 12 * Math.Pow(1.22, level - 1);
 }
 
-// Every kill is the party's: each survivor's level climbs together (Match.xp).
+// Every kill is the party's: each survivor's level climbs together (Match.xp), each level a pick of three items; the
+// next is offered as soon as the last is taken.
 [Stage(Tick.Late, 1)]
 system Experience(mut Survivor survivor, Match match)
 {
-    if (!survivor.ready || survivor.level >= match.level) return;
-    var gained = match.level - survivor.level;
-    survivor.level = match.level;
-    // A level's health comes with it
-    survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 15 * gained);
+    if (!survivor.ready || survivor.role == Role.None) return;
+    if (survivor.level < match.level)
+    {
+        var gained = match.level - survivor.level;
+        survivor.level = match.level;
+        survivor.pending += gained;
+        // A level's health comes with it
+        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 15 * gained);
+    }
+    if (!survivor.choosing && survivor.pending > 0)
+    {
+        survivor.pending -= 1;
+        Offer(survivor, 1 + int(match.clock / 60));
+    }
 }
 
 // A survivor's item taken, for what's seen and heard.
