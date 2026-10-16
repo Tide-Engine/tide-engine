@@ -134,7 +134,33 @@ of guns and perks:
 - Weapons and items: Quaternius' Medieval Weapons and Ultimate RPG where they
   have one, the rest modelled from primitives by `make_weapons.py` and
   `make_items.py` in the same flat-coloured style. `weapons.json` holds each
-  model's grip, tip and length; first-person hands are a fist and forearm.
+  model's grip, tip and length.
+- First-person arms (`art/fp`, `fp.tide`; the owner, 2026-10-16: "the weapons,
+  maybe we try to find some proper animated FP weapons? your job is meh"):
+  CoinCoin's first-person kit from OpenGameArt (CC BY 4.0, credited in
+  `art/CREDITS.md` and on the title screen), its bow, tomahawk and knife files
+  joined on one skeleton by `art/fp/tools/make_fp.py`, recoloured flat, with
+  clips made on the same rig for what the kit lacks. Every weapon goes
+  through it (`Grasp`): one-handed blades, axes, maces and thrown axes on the
+  kit's tomahawk clips; two-handed ones on the same paths with the left hand
+  added; polearms, crossbows, the handgonne, the hand crossbow, staffs,
+  javelins, a pot tossed and a brew drunk on made clips; the kit's own bow
+  (mirrored into the left hand), arrow, draw, hold, loose and nock; the
+  kit's knife stab for V. A weapon model sits on the rig's `weapon` bone
+  (`Seat`). Blows land when the clip's do (`StrikeTime` maps the act's hit
+  time onto each clip's impact). Aiming a crossbow raises the arms
+  (`AimShift`) instead of a clip. The old procedural fists, forearms and
+  swing keyframes are gone. A survey of free first-person packs found nothing
+  better that may be redistributed (Fab/Unity/Mixamo licences, itch.io behind
+  a challenge); the kit is semi-stylized, a little more detailed than
+  Quaternius' style.
+- The bow, after the owner's note ("the bow gets in your face too, its hard
+  to aim with it since you cant see anything"): the kit's bow is held to the
+  left and drawn to the cheek, the crosshair clear at full draw.
+- Validation of the arms (2026-10-16): native debug `gravewake_test` and the
+  web debug WASI test pass; the web page builds. Every weapon was looked at in
+  standard-host captures (idle, mid-attack, aimed or heavy). The browser tests
+  weren't run: the owner asked to stop running them for this game.
 - Sounds: 144 Ogg Vorbis files from CC0 recordings (Kenney, OpenGameArt) and
   synthesis, cut and mixed by `sfx/tools/make_sfx.py`; sources in
   `sfx/CREDITS.md`. Buses Effects, Music and Ambience under a master limiter
@@ -190,8 +216,10 @@ of guns and perks:
   nearest the camera: torches on brackets (`WallTorch`), the tavern's
   chandelier, the chapel's candles, the beacon's braziers once lit, the
   Runeforge at work, the chest's beam, fireballs and burning dead.
-- Kit placements are culled by distance each frame. The viewmodel draws after
-  a depth clear, with its own sway, aim, sprint and swing keyframes.
+- Kit placements are culled by distance each frame. The first-person arms
+  draw after a depth clear, hung from the eye (`FpEye`: 0.15 m lower for the
+  made clips, eased between), with sway, bob, a lowered raise, a sprint carry
+  and a shot's recoil on top of the clips.
 - Behind the title, the camera circles the square at 6 m round (-1, -1),
   clear of the market's cart (it used to pass through its canopy).
 

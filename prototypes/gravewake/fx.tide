@@ -361,9 +361,10 @@ local event(Spell spell) Conjure(mut Fx fx)
 local event(Loosed loosed) Flash(mut Fx fx)
 {
     if (loosed.weapon != Weapon.Handgonne) return;
-    for (var i = 0; i < 18; i++)
-        Murk(fx, Mote { at = loosed.at + Scatter(fx, 0.3), velocity = Scatter(fx, 1.2) + float3(0, 0.6, 0), life = 2, size = 0.25, grow = 0.5,
-                        color = float3(0.3, 0.29, 0.28), alpha = 0.5, drag = 1.5 });
+    for (var i = 0; i < 12; i++)
+        Murk(fx, Mote { at = loosed.at + loosed.way * fx.random.NextFloat(1.2, 2.4) + Scatter(fx, 0.3), velocity = loosed.way * 1.5 + Scatter(fx, 1.2) + float3(0, 0.6, 0),
+                        life = 2, size = 0.25, grow = 0.5,
+                        color = float3(0.3, 0.29, 0.28), alpha = 0.3, drag = 1.5 });
 }
 
 local event(Cue cue) Dust(mut Fx fx)

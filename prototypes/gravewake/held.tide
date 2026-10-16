@@ -1,11 +1,11 @@
 using Rooms;
 
-// What's held, and what flies: the weapon in this machine's survivor's
-// gauntleted hands, drawn over the world (swinging, drawing a bow, spanning a
+// What's held, and what flies: this machine's survivor's arms (fp.tide) and
+// the weapon in them, drawn over the world (swinging, drawing a bow, spanning a
 // crossbow, casting, throwing, drinking), every survivor's weapon in their
 // hand, and the arrows, bolts, javelins, axes and pots on their way. The
 // models are art/weapons, each with its grip at the origin (weapons.json says
-// where the other hand goes, where a bow's string is tied, where a bolt lies).
+// where a bow's string is tied, where a bolt lies).
 
 asset Map<string, Mesh<Corner>> arms = "art/weapons/*.glb";
 asset Map<string, Mesh<Corner>> items = "art/items/*.glb";
@@ -28,13 +28,6 @@ struct ArmsData
     float[3] boltTail;
     float[3] boltTip;
     float[3] muzzle;
-}
-
-// A place and a turn, in the eye's space (x right, y up, z ahead) or a model's.
-struct Hold
-{
-    float3 at;
-    quaternion turn = quaternion.identity;
 }
 
 // How a flat-coloured model is drawn: its runes, if the Runeforge has had it; what glows on it.
@@ -63,11 +56,10 @@ local singleton Grip
     float lastPitch;
     float sprint;
     float aim;
-    int shownSlot = -1;
-    Weapon shown;
-    float nock;                  // A bow's next arrow coming up, 0 to 1
     float3 lastTip;              // Where the blade's tip was last frame, for its trail
     bool trailing;
+    float sinceLoose = 9;        // Seconds since a bow's last shot, for the next arrow's nocking
+    float low;                   // How far the arms hang below the kit's eye (fp.tide's LowFor), eased
 }
 
 string ModelName(Weapon weapon)
@@ -215,92 +207,14 @@ float EaseOut(float t)
     return 1 - (1 - s) * (1 - s);
 }
 
-Hold Mix(Hold a, Hold b, float t)
-{
-    return Hold { at = Math.Lerp(a.at, b.at, t), turn = Math.Slerp(a.turn, b.turn, t) };
-}
-
 quaternion Degrees(float x, float y, float z)
 {
     return quaternion.Euler(Math.Radians(x), Math.Radians(y), Math.Radians(z));
 }
 
-Hold At(float x, float y, float z, float ax, float ay, float az)
-{
-    return Hold { at = float3(x, y, z), turn = Degrees(ax, ay, az) };
-}
-
-bool Polearm(Weapon weapon)
-{
-    return weapon == Weapon.Spear || weapon == Weapon.Halberd || weapon == Weapon.Scythe || weapon == Weapon.Pitchfork;
-}
-
-// Where a weapon rests in hand, by what it is.
-Hold RestOf(Weapon weapon, WeaponInfo info)
-{
-    if (info.kind == Kind.Bow) return At(-0.09, -0.11, 0.5, 0, -4, 10);
-    if (info.kind == Kind.Crossbow || info.kind == Kind.Gun)
-        return weapon == Weapon.HandCrossbow ? At(0.17, -0.19, 0.36, 0, -3, 0) : At(0.15, -0.21, 0.3, 0, -3, -2);
-    if (info.kind == Kind.Staff) return At(0.25, -0.33, 0.48, 18, -6, -10);
-    if (weapon == Weapon.Javelins) return At(0.27, -0.1, 0.22, 92, -4, 0);
-    if (weapon == Weapon.ThrowingAxes) return At(0.27, -0.24, 0.42, 30, -10, 25);
-    if (info.swing == Swing.Thrust) return Polearm(weapon) ? At(0.2, -0.3, 0.2, 78, -5, -4) : At(0.24, -0.27, 0.38, 70, -8, -6);
-    if (Polearm(weapon)) return At(0.2, -0.36, 0.3, 40, -18, 30);
-    if (info.twoHanded) return At(0.2, -0.33, 0.38, 38, -14, 28);
-    return At(0.27, -0.3, 0.5, 40, -10, 16);
-}
-
-// A melee swing, from the rest through the wind-up and the blow and back: `t` from 0 to 1 over the swing. Swings
-// alternate: the forehand cuts from upper right to lower left, the backhand back from the left.
-Hold SwingOf(Hold rest, Swing swing, float t, float hitAt, bool heavy, bool back)
-{
-    mut var windup = back ? At(-0.2, -0.04, 0.5, 18, 22, 68) : At(0.33, 0.0, 0.46, 12, -22, -68);
-    mut var blow = back ? At(0.36, -0.3, 0.56, 72, -28, -78) : At(-0.28, -0.3, 0.58, 72, 28, 78);
-    if (swing == Swing.Chop)
-    {
-        windup = At(0.2, 0.1, 0.4, -38, -6, 10);
-        blow = At(0.03, -0.42, 0.62, 115, 0, 6);
-    }
-    else if (swing == Swing.Thrust)
-    {
-        windup = Hold { at = rest.at + float3(0.03, 0.02, -0.2), turn = rest.turn };
-        blow = Hold { at = float3(0.06, -0.17, rest.at.z + 0.5), turn = Degrees(88, 0, 0) };
-    }
-    else if (swing == Swing.Sweep)
-    {
-        windup = back ? At(-0.28, -0.2, 0.46, 72, 38, 90) : At(0.42, -0.2, 0.42, 72, -40, -90);
-        blow = back ? At(0.44, -0.26, 0.48, 76, -36, -92) : At(-0.38, -0.26, 0.5, 76, 36, 92);
-    }
-    if (heavy) windup = Hold { at = windup.at + float3(0, 0.07, -0.06), turn = Math.Mul(windup.turn, Degrees(-12, 0, 0)) };
-    var a = hitAt * 0.62;
-    var b = Math.Min(0.95, hitAt + 0.14);
-    if (t < a) return Mix(rest, windup, EaseOut(t / a));
-    if (t < b) return Mix(windup, blow, Ease((t - a) / (b - a)));
-    return Mix(blow, rest, Ease((t - b) / (1 - b)));
-}
-
-float4x4 InEye(float4x4 eye, Hold hold)
-{
-    return Math.Mul(eye, float4x4.TRS(hold.at, hold.turn, float3(1)));
-}
-
 float3 Point(float4x4 m, float3 local)
 {
     return Math.Transform(m, local);
-}
-
-// A fist round a grip, and its forearm reaching back to an elbow below the eye.
-void Arm(mut List<float4x4> fists, mut List<float4x4> forearms, float4x4 grip, float4x4 eye, bool left)
-{
-    fists.Add(grip);
-    var wrist = Point(grip, float3(left ? -0.034 : 0.034, 0, -0.07));
-    var elbow = Point(eye, float3(left ? -0.3 : 0.36, -0.58, 0.06));
-    // Toward an elbow below the eye, a little the way the fist's cuff points
-    var back = Math.Normalize(Point(grip, float3(0, 0, -1)) - Point(grip, float3(0)));
-    var down = Math.Normalize(Math.Normalize(elbow - wrist) * 0.8 + back * 0.2);
-    // The forearm's model runs down -y from the wrist: turn -y onto the way to the elbow
-    var turn = FromTo(float3(0, -1, 0), down);
-    forearms.Add(float4x4.TRS(wrist, turn, float3(0.85, 1.35, 0.85)));
 }
 
 // A string or a strand: the stick from one place to another.
@@ -330,6 +244,7 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
     var weapon = mine.weapons[mine.slot];
     var info = InfoOf(weapon, mine.forged[mine.slot]);
     var data = DataOf(armory, ModelName(weapon));
+    var grasp = GraspOf(weapon, info);
     var eye = float4x4.TRS(me.eye, me.turn, float3(1));
 
     // How the hands lag a turn, and bob with each step
@@ -344,107 +259,91 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
     grip.sprint += ((sprinting ? 1.0 : 0.0) - grip.sprint) * Math.Min(1, dt * 8);
     var aiming = (devices.mouse.right.pressed || devices.gamepad.leftTrigger > 0.4) && info.kind != Kind.Melee && mine.life == Life.Standing;
     grip.aim += ((aiming ? 1.0 : 0.0) - grip.aim) * Math.Min(1, dt * 10);
+    grip.sinceLoose = mine.act == Act.Loose ? 0.0 : grip.sinceLoose + dt;
+    grip.low += (LowFor(grasp, mine.act) - grip.low) * Math.Min(1, dt * 14);
     var stepping = Math.Saturate(speed / 4) * (mine.grounded ? 1.0 : 0.3);
     var bob = float3(Math.Sin(me.bob) * 0.014, -Math.Abs(Math.Cos(me.bob)) * 0.018, 0) * stepping * (1 + grip.sprint);
     var breathe = float3(0, Math.Sin(me.clock * 1.6) * 0.004, 0);
 
-    // The hold: at rest, and what the hands are doing
-    var rest = RestOf(weapon, info);
-    mut var hold = rest;
+    // The arms taken down out of the way (raising a weapon, a javelin thrown and the next taken up), a kick's
+    // shrug, a shot's kick
     var t = mine.actTime / Math.Max(0.01, mine.actLength);
-    mut var lowered = 0.0;           // The weapon taken down out of the way, 0 to 1
+    mut var lowered = 0.0;
+    mut var recoil = 0.0;
     switch (mine.act)
     {
         case Act.Raise:
             lowered = 1 - EaseOut(t);
             break;
-        case Act.Swing:
-        case Act.Heavy:
-            if (info.kind == Kind.Melee) hold = SwingOf(rest, info.swing, t, mine.act == Act.Heavy ? Math.Min(0.6, info.hitAt + 0.12) : info.hitAt, mine.act == Act.Heavy, mine.swings % 2 == 0);
-            break;
-        case Act.Stab:
-        case Act.Drink:
-        case Act.Throw:
-            lowered = Math.Saturate(Math.Min(t * 5, (1 - t) * 5));
-            break;
         case Act.Kick:
             lowered = Math.Saturate(Math.Min(t * 4, (1 - t) * 4)) * 0.4;
             break;
         case Act.Loose:
-        {
-            var kick = Math.Saturate(1 - t * 3);
-            if (info.kind == Kind.Staff) hold = Mix(rest, Hold { at = rest.at + float3(-0.08, 0.08, 0.18), turn = Math.Mul(rest.turn, Degrees(-25, 0, 0)) }, Math.Sin(Math.Saturate(t) * Math.PI));
-            else if (info.kind == Kind.Thrown) lowered = t < 0.5 ? EaseOut(t * 2) : 1;
-            else hold = Hold { at = rest.at + float3(0, 0.01, -0.06 * (info.kind == Kind.Gun ? 2.5 : 1)) * kick, turn = Math.Mul(rest.turn, Degrees(-8 * kick * (info.kind == Kind.Gun ? 2.5 : 1), 0, 0)) };
+            recoil = grasp == Grasp.Cross || grasp == Grasp.Pistol ? Math.Saturate(1 - t * 3) * (info.kind == Kind.Gun ? 2.5 : 1.0) : 0.0;
             break;
-        }
         case Act.Reload:
-        {
-            var s = Math.Sin(Math.Saturate(t) * Math.PI);
             if (info.kind == Kind.Thrown) lowered = 1 - EaseOut((t - 0.4) / 0.6);
-            else hold = Hold { at = rest.at + float3(-0.04, -0.09, -0.04) * s, turn = Math.Mul(rest.turn, Degrees(32 * s, 0, -20 * s)) };
+            if (grasp == Grasp.Staff) lowered = Math.Sin(Math.Saturate(t) * Math.PI) * 0.5;
             break;
-        }
     }
-    if (mine.life == Life.Downed) hold = Hold { at = hold.at + float3(0.02, -0.06, 0), turn = Math.Mul(hold.turn, Degrees(8, 0, 0)) };
-    // Aimed: the sights to the middle
-    if (grip.aim > 0)
-    {
-        var sights = info.kind == Kind.Bow ? At(-0.02, -0.06, 0.42, 0, 0, 4) : At(0.0, -0.105 - (weapon == Weapon.HandCrossbow ? 0.02 : 0.0), 0.26, 0, 0, 0);
-        hold = Mix(hold, sights, grip.aim * (mine.act == Act.Reload ? 0.3 : 1.0));
-    }
-    // Sprinting: carried low and across
-    if (grip.sprint > 0.01 && info.kind != Kind.Bow)
-        hold = Mix(hold, Hold { at = hold.at + float3(0.06, -0.1, -0.06), turn = Math.Mul(hold.turn, Degrees(-22, -28, -18)) }, grip.sprint);
-    hold.at += bob + breathe + float3(grip.sway.x, grip.sway.y, 0) * 0.6 + float3(0, -me.dip * 0.5, 0);
-    hold = Hold { at = hold.at + float3(0.05, -0.55, -0.1) * lowered, turn = Math.Mul(hold.turn, Degrees(55 * lowered, 0, 0)) };
+    if (weapon == Weapon.None) lowered = 1;
 
-    mut List<float4x4> fists = [];
-    mut List<float4x4> forearms = [];
-    mut List<float4x4> leftFists = [];
-    mut List<float4x4> strings = [];
+    // Where the arms hang: from the eye, swaying, bobbing, carried at a run, low when down; a bow mirrored, in the
+    // left hand
+    var bow = grasp == Grasp.Bow;
+    var wobble = bob + breathe + float3(grip.sway.x, grip.sway.y, 0) * 0.6 + float3(0, -me.dip * 0.5, 0);
+    var carried = float3(0.04, -0.06, -0.04) * grip.sprint + (mine.life == Life.Downed ? float3(0.02, -0.06, 0) : float3(0));
+    var sink = float3(0.05, -0.55, -0.1) * lowered + float3(0, 0.01, -0.05) * recoil + AimShift(grasp) * grip.aim * (mine.act == Act.Reload ? 0.3 : 1.0);
+    var tilt = Degrees(55 * lowered + 10 * grip.sprint - 6 * recoil, -8 * grip.sprint + 5 * grip.aim * (grasp == Grasp.Cross ? 1.0 : 0.0), -6 * grip.sprint);
+    mut var place = Math.Mul(eye, float4x4.TRS(wobble + carried + sink, tilt, float3(1)));
+    place = Math.Mul(place, float4x4.TRS(-FpEye(grasp, grip.low), quaternion.identity, float3(bow ? -1.0 : 1.0, 1, 1)));
+    var pose = FpPose(fpArms, mine, info, grasp, t, me.clock, speed, grip.sinceLoose);
+    var onBone = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(grasp), float3(1)));
+    var drinking = mine.act == Act.Drink;
+    var tossing = mine.act == Act.Throw && t < 0.45;
+    var stabbing = mine.act == Act.Stab;
     var finish = Finish { runes = mine.forged[mine.slot] ? 1.0 : 0.0 };
+    mut List<float4x4> strings = [];
     lens.scene.ClearDepth();
     lens.scene.Cull(Cull.None)
     {
-        if (weapon != Weapon.None && lowered < 0.98)
+        if (lowered < 0.98)
         {
-            if (info.kind == Kind.Bow)
+            lens.scene.SkinnedMesh(fpArms, place, pose, Steel, Finish { });
+            if (drinking)
             {
-                // The bow in the left hand; the right draws the string, an arrow on it
-                var bow = InEye(eye, hold);
-                lens.scene.Mesh(ArmsMesh(data.name), bow, Steel, finish);
-                Arm(leftFists, forearms, bow, eye, true);
-                var top = V3(data.stringTop);
-                var bottom = V3(data.stringBottom);
-                var drawn = mine.act == Act.Draw ? EaseOut(mine.charge) : 0.0;
-                var shake = mine.act == Act.Draw && mine.charge >= 1 ? Math.Sin(me.clock * 40) * 0.002 : 0.0;
-                var nock = float3(shake, 0.0, top.z - drawn * 0.52);
-                strings.Add(Math.Mul(bow, Strand(top, nock, 0.004)));
-                strings.Add(Math.Mul(bow, Strand(nock, bottom, 0.004)));
-                var loaded = mine.mag[mine.slot] > 0 && mine.act != Act.Loose;
-                if (loaded)
+                // A brew to the lips, held round its middle
+                var bottle = Math.Mul(Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(Grasp.One), float3(1))), float4x4.Translate(float3(0, -0.07, 0)));
+                lens.scene.Mesh(ItemMesh(PotionModel(Brew(int(mine.charge)))), bottle, Steel, Finish { glow = 1.5 });
+            }
+            else if (mine.act == Act.Throw)
+            {
+                // A fire pot or a bell, gone from the hand once thrown
+                var pot = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(Grasp.One), float3(1)));
+                if (tossing) lens.scene.Mesh(ArmsMesh(mine.charge > 0.5 ? "lure_bell" : "fire_pot"), pot, Steel, Finish { });
+            }
+            else if (bow)
+            {
+                lens.scene.SkinnedMesh(fpBow, place, FpPose(fpBow, mine, info, grasp, t, me.clock, speed, grip.sinceLoose), Steel, Finish { runes = finish.runes, tint = BowTint(weapon) });
+                var nocked = mine.mag[mine.slot] > 0 && mine.act != Act.Loose && grip.sinceLoose > 0.3;
+                if (nocked) lens.scene.SkinnedMesh(fpArrow, place, FpPose(fpArrow, mine, info, grasp, t, me.clock, speed, grip.sinceLoose), Steel, Finish { runes = finish.runes });
+            }
+            else if (weapon != Weapon.None)
+            {
+                // The weapon in the hand, or the stab's dagger in its stead
+                if (stabbing)
                 {
-                    grip.nock = Math.Min(1, grip.nock + dt * 5);
-                    var rise = (1 - EaseOut(grip.nock)) * -0.15;
-                    var arrow = Math.Mul(bow, float4x4.TRS(nock + float3(-0.012, rise, 0), quaternion.identity, float3(1)));
-                    lens.scene.Mesh(ArmsMesh("arrow"), arrow, Steel, Finish { runes = finish.runes });
+                    var knife = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.knife))), float4x4.TRS(float3(0), KnifeSeat(), float3(1)));
+                    lens.scene.Mesh(ArmsMesh("dagger"), knife, Steel, Finish { });
                 }
                 else
                 {
-                    grip.nock = 0;
+                    var thrown = info.kind == Kind.Thrown && (mine.act == Act.Loose && t > 0.45 || mine.mag[mine.slot] <= 0 && mine.act != Act.Reload);
+                    if (!thrown) lens.scene.Mesh(ArmsMesh(data.name), onBone, Steel, finish);
                 }
-                var pull = Math.Mul(bow, float4x4.TRS(nock + float3(0.035, 0, -0.03), Degrees(0, 0, 0), float3(1)));
-                Arm(fists, forearms, pull, eye, false);
-            }
-            else
-            {
-                var held = InEye(eye, hold);
-                lens.scene.Mesh(ArmsMesh(data.name), held, Steel, finish);
-                Arm(fists, forearms, held, eye, false);
                 // The blade's trail through the blow
                 var striking = (mine.act == Act.Swing || mine.act == Act.Heavy) && info.kind == Kind.Melee && t > info.hitAt * 0.55 && t < info.hitAt + 0.2;
-                var tip = Point(held, V3(data.tip) * 0.92);
+                var tip = Point(onBone, V3(data.tip) * 0.92);
                 if (striking && grip.trailing)
                 {
                     var glow = mine.forged[mine.slot] ? float3(0.45, 0.6, 1.4) : float3(0.55, 0.55, 0.6);
@@ -452,9 +351,7 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
                 }
                 grip.trailing = striking;
                 grip.lastTip = tip;
-                var off = V3(data.offhand);
-                if (Math.Length(off) > 0.001 && weapon != Weapon.HandCrossbow) Arm(leftFists, forearms, Math.Mul(held, float4x4.Translate(off)), eye, true);
-                if (info.kind == Kind.Crossbow)
+                if (info.kind == Kind.Crossbow && !stabbing)
                 {
                     // The string: drawn back to the nut when spanned, straight across the prod when not; the bolt when loaded
                     var spanned = mine.mag[mine.slot] > 0 || (mine.act == Act.Reload && t > 0.55);
@@ -462,10 +359,10 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
                     var left = V3(data.stringLeft);
                     var right = V3(data.stringRight);
                     var middle = Math.Lerp((left + right) * 0.5, V3(data.nock), span);
-                    strings.Add(Math.Mul(held, Strand(left, middle, 0.005)));
-                    strings.Add(Math.Mul(held, Strand(middle, right, 0.005)));
+                    strings.Add(Math.Mul(onBone, Strand(left, middle, 0.005)));
+                    strings.Add(Math.Mul(onBone, Strand(middle, right, 0.005)));
                     var bolted = mine.mag[mine.slot] > 0 || (mine.act == Act.Reload && t > 0.7);
-                    if (bolted) lens.scene.Mesh(ArmsMesh("bolt"), Math.Mul(held, float4x4.Translate(V3(data.boltTail))), Steel, Finish { runes = finish.runes });
+                    if (bolted) lens.scene.Mesh(ArmsMesh("bolt"), Math.Mul(onBone, float4x4.Translate(V3(data.boltTail))), Steel, Finish { runes = finish.runes });
                 }
             }
         }
@@ -474,40 +371,10 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
         {
             var out = t < 0.3 ? EaseOut(t / 0.3) : t < 0.42 ? 1.0 : 1 - Ease((t - 0.42) / 0.58);
             var knee = Math.Lerp(float3(0.2, -1.1, 0.0), float3(0.13, -0.5, 0.14), out);
-            var leg = InEye(eye, Hold { at = knee, turn = Degrees(Math.Lerp(-10, -100, out), Math.Lerp(-20, -28, out), Math.Lerp(14, -6, out)) });
+            var leg = Math.Mul(eye, float4x4.TRS(knee, Degrees(Math.Lerp(-10, -100, out), Math.Lerp(-20, -28, out), Math.Lerp(14, -6, out)), float3(1)));
             lens.scene.Mesh(ArmsMesh("kick_leg"), leg, Steel, Finish { });
         }
-        // What's in the hand besides: the stab's dagger, a brew, a fire pot or a bell
-        if (mine.act == Act.Stab)
-        {
-            var stab = SwingOf(At(0.3, -0.36, 0.3, 70, -10, -10), Swing.Thrust, t, 0.4, false, false);
-            var dagger = InEye(eye, stab);
-            lens.scene.Mesh(ArmsMesh("dagger"), dagger, Steel, Finish { });
-            Arm(fists, forearms, dagger, eye, false);
-        }
-        if (mine.act == Act.Drink)
-        {
-            var up = Ease(t / 0.3) * (1 - Ease((t - 0.8) / 0.2));
-            var tilt = Ease((t - 0.25) / 0.3) * (1 - Ease((t - 0.75) / 0.2));
-            var sip = Mix(At(0.22, -0.5, 0.32, 0, 0, 0), At(0.05, -0.12, 0.2, -95 * tilt, 0, -10), up);
-            var brew = Brew(int(mine.charge));
-            var bottle = InEye(eye, sip);
-            lens.scene.Mesh(ItemMesh(PotionModel(brew)), bottle, Steel, Finish { glow = 1.5 });
-            Arm(fists, forearms, Math.Mul(bottle, float4x4.Translate(float3(0, 0.08, 0))), eye, false);
-        }
-        if (mine.act == Act.Throw && t < 0.5)
-        {
-            var wind = t < 0.3 ? EaseOut(t / 0.3) : 1 - Ease((t - 0.3) / 0.2);
-            var toss = Mix(At(0.28, -0.4, 0.35, 0, 0, 0), At(0.32, 0.05, 0.05, -40, 0, 0), wind);
-            var pot = InEye(eye, toss);
-            lens.scene.Mesh(ArmsMesh(mine.charge > 0.5 ? "lure_bell" : "fire_pot"), pot, Steel, Finish { });
-            Arm(fists, forearms, pot, eye, false);
-        }
-        var bare = Finish { };
-        foreach (var m in fists) lens.scene.Mesh(ArmsMesh("fist_r"), m, Steel, bare);
-        foreach (var m in leftFists) lens.scene.Mesh(ArmsMesh("fist_l"), m, Steel, bare);
-        foreach (var m in forearms) lens.scene.Mesh(ArmsMesh("forearm"), m, Steel, bare);
-        foreach (var m in strings) lens.scene.Mesh(armory.stick, armory.stickFaces, m, Steel, bare);
+        foreach (var m in strings) lens.scene.Mesh(armory.stick, armory.stickFaces, m, Steel, Finish { });
     }
 }
 

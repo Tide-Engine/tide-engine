@@ -880,7 +880,7 @@ void Loose(Survivor survivor, WeaponInfo info, bool aimed, float charge)
             life = 4,
         });
     }
-    Send(Loosed { seat = survivor.seat, weapon = weapon, at = eye });
+    Send(Loosed { seat = survivor.seat, weapon = weapon, at = eye, way = LookDirection(survivor.yaw, survivor.pitch) });
 }
 
 // A fire pot or a bell, thrown.
@@ -903,7 +903,7 @@ void Cast(Survivor survivor, WeaponInfo info, List<Body> bodies)
     {
         Spawn(Missile { kind = Shot.Fireball, at = eye + look * 0.6, velocity = look * info.speed, gravity = 0, damage = info.damage, splash = info.splash,
                         element = Element.Fire, seat = survivor.seat, weapon = weapon, forged = survivor.forged[survivor.slot], life = 3 });
-        Send(Loosed { seat = survivor.seat, weapon = weapon, at = eye });
+        Send(Loosed { seat = survivor.seat, weapon = weapon, at = eye, way = look });
         return;
     }
     if (weapon == Weapon.StaffFrost)
@@ -1022,6 +1022,7 @@ event Loosed
     int seat;
     Weapon weapon;
     float3 at;
+    float3 way;                 // The way it was aimed
 }
 
 event Spell
