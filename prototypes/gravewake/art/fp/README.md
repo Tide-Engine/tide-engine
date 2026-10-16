@@ -11,7 +11,6 @@ The arms the player sees, the bow and arrow in them, and every first-person clip
 |---|---|
 | `arms.glb` | the two arms, skinned, flat colours (gloves, bracers, sleeves) |
 | `bow.glb` | the kit's bow and its string, one skinned mesh: the limbs flex and the string draws with the clips |
-| `arrow.glb` | the nocked arrow, skinned |
 | `moves.glb` | the clips, no meshes |
 
 The skeleton is the kit bow file's, with the tomahawk file's weapon bone added as `weapon` and the
