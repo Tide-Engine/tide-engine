@@ -1,4 +1,4 @@
-// The village's models: Quaternius' Medieval Village, Fantasy Props and
+// The clearing's models: Quaternius' Medieval Village, Fantasy Props and
 // Stylized Nature kits (CC0), each piece cut into a part per texture by
 // art/kit/tools/split_kit.py. parts.json says which piece and texture each
 // part is, in the order the glob below gives them. This machine gathers,
@@ -33,7 +33,6 @@ struct Placed
     float4x4 transform = float4x4.identity;
     float open = 1;
     float tint = 1;
-    float glow;
 }
 
 asset List<Mesh<Corner>> parts = "art/kit/*.glb";
@@ -91,31 +90,17 @@ void LoadKit(mut Kit kit)
     }
 }
 
-// Every placement in the plan, into each of its parts' lists; a gate's as far open as `shown` says (doors swing on their
-// hinges, bars rise, rubble sinks away).
-void PlaceKit(mut Kit kit, Plan plan, float[16] shown)
+// Every placement in the plan, into each of its parts' lists.
+void PlaceKit(mut Kit kit, Plan plan)
 {
     for (var i = 0; i < kit.placed.count; i++) kit.placed[i].Clear();
     foreach (var put in plan.placements)
     {
-        mut var at = put.at;
-        mut var yaw = put.yaw;
-        if (put.gate >= 0)
-        {
-            var open = shown[put.gate];
-            var look = plan.gates[put.gate].look;
-            if (look == GateLook.Door || look == GateLook.Bars) yaw += Math.SmoothStep(0, 1, open) * put.swing;
-            if (look == GateLook.Rubble)
-            {
-                if (open >= 1) continue;
-                at.y -= open * open * 2.2;
-            }
-        }
-        var transform = Math.Mul(float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), yaw), put.scale), float4x4.Translate(put.pivot));
+        var transform = float4x4.TRS(put.at, quaternion.AxisAngle(float3(0, 1, 0), put.yaw), put.scale);
         var list = kit.partsOf[int(put.piece)];
         for (var k = 0; k < list.count; k++)
         {
-            kit.placed[list[k]].Add(Placed { transform = transform, open = put.open, tint = put.tint, glow = put.glow });
+            kit.placed[list[k]].Add(Placed { transform = transform, open = put.open, tint = put.tint });
         }
     }
 }

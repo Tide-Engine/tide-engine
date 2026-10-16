@@ -1,6 +1,6 @@
-// What the match keeps of the plan: the boxes, the doors, windows, risers and
-// stalls, and a grid of half-metre cells over the village that says where the
-// dead can walk. Every few ticks the dead's way is worked out over that grid:
+// What the match keeps of the plan: the boxes, the risers and the starts, and
+// a grid of half-metre cells over the clearing that says where the dead can
+// walk. Every few ticks the dead's way is worked out over that grid:
 // how far each cell is from the nearest survivor on their feet (or from a
 // ringing lure bell), and each zombie walks downhill.
 
@@ -21,14 +21,9 @@ singleton Ashwick
 {
     List<Solid> solids;
     List<List<int>> buckets;      // The solids near each 8 m square, by bucket
-    List<Gate> gates;
-    List<Window> windows;
     List<Riser> risers;
-    List<Stall> stalls;
-    List<Area> areas;
     List<float3> starts;
-    List<byte> cells;             // 0 open, 1 a wall, 2 a gate's (open when its gate is)
-    List<int> cellGate;
+    List<byte> cells;             // 0 open, 1 a wall (a box, or the forest past the clearing's edge)
     List<byte> field;             // Cells to the nearest survivor, UNREACHED where none can be reached
     List<byte> lureField;         // ...or to a ringing bell
     bool made;
@@ -60,11 +55,7 @@ void BuildAshwick(mut Ashwick ashwick)
 {
     var plan = MakePlan();
     ashwick.solids = plan.solids;
-    ashwick.gates = plan.gates;
-    ashwick.windows = plan.windows;
     ashwick.risers = plan.risers;
-    ashwick.stalls = plan.stalls;
-    ashwick.areas = plan.areas;
     ashwick.starts = plan.starts;
     ashwick.buckets.Clear();
     for (var b = 0; b < BUCKETS_W * BUCKETS_H; b++)
@@ -87,12 +78,7 @@ void BuildAshwick(mut Ashwick ashwick)
     }
     // The cells: a wall where a box stands taller than a step, within a zombie's breadth of the cell's middle
     ashwick.cells.Resize(NAV_W * NAV_H);
-    ashwick.cellGate.Resize(NAV_W * NAV_H);
-    for (var c = 0; c < NAV_W * NAV_H; c++)
-    {
-        ashwick.cells[c] = 0;
-        ashwick.cellGate[c] = -1;
-    }
+    for (var c = 0; c < NAV_W * NAV_H; c++) ashwick.cells[c] = 0;
     foreach (var solid in ashwick.solids)
     {
         if (solid.center.y + solid.half.y < 0.6) continue;
@@ -109,29 +95,13 @@ void BuildAshwick(mut Ashwick ashwick)
             {
                 var middle = float2(NAV_X0 + (cx + 0.5) * CELL, NAV_Z0 + (cz + 0.5) * CELL);
                 if (middle.x < lo.x || middle.x > hi.x || middle.y < lo.z || middle.y > hi.z) continue;
-                var cell = cz * NAV_W + cx;
-                if (solid.gate >= 0)
-                {
-                    if (ashwick.cells[cell] == 0)
-                    {
-                        ashwick.cells[cell] = 2;
-                        ashwick.cellGate[cell] = solid.gate;
-                    }
-                }
-                else
-                {
-                    ashwick.cells[cell] = 1;
-                    ashwick.cellGate[cell] = -1;
-                }
+                ashwick.cells[cz * NAV_W + cx] = 1;
             }
         }
     }
-    // Outside every area is nobody's ground: walls there too, so the field stays inside the village
+    // Past the clearing's edge is nobody's ground: walls there too, so the field stays in the clearing
     for (var c = 0; c < NAV_W * NAV_H; c++)
-    {
-        if (ashwick.cells[c] != 0) continue;
-        if (ZoneOfAreas(ashwick.areas, CellMiddle(c)) == Zone.Outside) ashwick.cells[c] = 1;
-    }
+        if (!InClearing(CellMiddle(c))) ashwick.cells[c] = 1;
     ashwick.field.Resize(NAV_W * NAV_H);
     ashwick.lureField.Resize(NAV_W * NAV_H);
     for (var c = 0; c < NAV_W * NAV_H; c++)
@@ -142,49 +112,16 @@ void BuildAshwick(mut Ashwick ashwick)
     ashwick.made = true;
 }
 
-Zone ZoneOfAreas(List<Area> areas, float3 at)
+// Whether a cell can be walked.
+bool Walkable(Ashwick ashwick, int cell)
 {
-    foreach (var area in areas)
-    {
-        if (at.x >= area.lo.x && at.x <= area.hi.x && at.z >= area.lo.y && at.z <= area.hi.y) return area.zone;
-    }
-    return Zone.Outside;
-}
-
-Zone ZoneAt(Ashwick ashwick, float3 at)
-{
-    return ZoneOfAreas(ashwick.areas, at);
-}
-
-bool GateOpen(int gatesOpen, int gate)
-{
-    return gate < 0 || (gatesOpen & (1 << gate)) != 0;
-}
-
-// Whether a cell can be walked: open, or a gate's that's open.
-bool Walkable(Ashwick ashwick, int gatesOpen, int cell)
-{
-    if (cell < 0) return false;
-    var kind = ashwick.cells[cell];
-    if (kind == 0) return true;
-    if (kind == 2) return GateOpen(gatesOpen, ashwick.cellGate[cell]);
-    return false;
-}
-
-bool ZoneOpen(int zonesOpen, Zone zone)
-{
-    return (zonesOpen & (1 << int(zone))) != 0;
+    return cell >= 0 && ashwick.cells[cell] == 0;
 }
 
 // ---- Bodies against the boxes ----
 
-bool SolidThere(Solid solid, int gatesOpen)
-{
-    return solid.gate < 0 || (gatesOpen & (1 << solid.gate)) == 0;
-}
-
 // The highest floor under a circle, no more than a step above `current`.
-float GroundUnder(Ashwick ashwick, int gatesOpen, float3 feet, float radius, float current)
+float GroundUnder(Ashwick ashwick, float3 feet, float radius, float current)
 {
     mut var ground = 0.0;
     var bucket = BucketOf(feet.x, feet.z);
@@ -192,7 +129,6 @@ float GroundUnder(Ashwick ashwick, int gatesOpen, float3 feet, float radius, flo
     for (var k = 0; k < count; k++)
     {
         var solid = ashwick.solids[ashwick.buckets[bucket][k]];
-        if (!SolidThere(solid, gatesOpen)) continue;
         var top = solid.center.y + solid.half.y;
         if (top > current + STEP_UP + 0.001 || top <= ground) continue;
         if (Math.Abs(feet.x - solid.center.x) > solid.half.x + radius || Math.Abs(feet.z - solid.center.z) > solid.half.z + radius) continue;
@@ -202,7 +138,7 @@ float GroundUnder(Ashwick ashwick, int gatesOpen, float3 feet, float radius, flo
 }
 
 // A circle pushed out of every box its height meets, a few times over.
-float3 PushOut(Ashwick ashwick, int gatesOpen, float3 feet, float radius, float high)
+float3 PushOut(Ashwick ashwick, float3 feet, float radius, float high)
 {
     mut var at = feet;
     var bucket = BucketOf(feet.x, feet.z);
@@ -212,8 +148,7 @@ float3 PushOut(Ashwick ashwick, int gatesOpen, float3 feet, float radius, float 
         for (var k = 0; k < count; k++)
         {
             var solid = ashwick.solids[ashwick.buckets[bucket][k]];
-            if (!SolidThere(solid, gatesOpen)) continue;
-            var bottom = solid.center.y - solid.half.y;
+                var bottom = solid.center.y - solid.half.y;
             var top = solid.center.y + solid.half.y;
             if (top <= at.y + STEP_UP || bottom >= at.y + high) continue;
             var lo = solid.center.xz - solid.half.xz;
@@ -246,7 +181,7 @@ float3 PushOut(Ashwick ashwick, int gatesOpen, float3 feet, float radius, float 
 
 // Where a line from `from` first meets a box or the ground, as a fraction of the way to `to` (2 for nothing on the way),
 // and that box's face.
-float RayHit(Ashwick ashwick, int gatesOpen, float3 from, float3 to, out float3 normal)
+float RayHit(Ashwick ashwick, float3 from, float3 to, out float3 normal)
 {
     normal = float3(0, 1, 0);
     var way = to - from;
@@ -265,7 +200,6 @@ float RayHit(Ashwick ashwick, int gatesOpen, float3 from, float3 to, out float3 
     for (var k = 0; k < count; k++)
     {
         var solid = ashwick.solids[ashwick.buckets[bucket][k]];
-        if (!SolidThere(solid, gatesOpen)) continue;
         mut var enter = 0.0;
         mut var leave = best;
         mut var missed = false;
@@ -304,7 +238,7 @@ float RayHit(Ashwick ashwick, int gatesOpen, float3 from, float3 to, out float3 
 }
 
 // Whether the line between two places at the height of a body's middle crosses no wall cell.
-bool ClearPath(Ashwick ashwick, int gatesOpen, float3 a, float3 b)
+bool ClearPath(Ashwick ashwick, float3 a, float3 b)
 {
     var way = b - a;
     var far = Math.Length(way.xz);
@@ -312,7 +246,7 @@ bool ClearPath(Ashwick ashwick, int gatesOpen, float3 a, float3 b)
     for (var i = 1; i < steps; i++)
     {
         var at = a + way * (float(i) / steps);
-        if (!Walkable(ashwick, gatesOpen, CellOf(at))) return false;
+        if (!Walkable(ashwick, CellOf(at))) return false;
     }
     return true;
 }
@@ -321,7 +255,7 @@ bool ClearPath(Ashwick ashwick, int gatesOpen, float3 a, float3 b)
 
 // Every few ticks: how far each walkable cell is from the nearest standing survivor, and from a ringing bell.
 [Stage(Tick.Field)]
-system Wayfinding(mut Ashwick ashwick, Match match, Time time, query (Survivor survivor) survivors, query (Missile missile) missiles)
+system Wayfinding(mut Ashwick ashwick, Time time, query (Survivor survivor) survivors, query (Missile missile) missiles)
 {
     if (!ashwick.made || time.tick % 6 != 0) return;
     mut List<int> sources = [];
@@ -341,7 +275,7 @@ system Wayfinding(mut Ashwick ashwick, Match match, Time time, query (Survivor s
             if (cell >= 0) sources.Add(cell);
         }
     }
-    Spread(ashwick, match.gatesOpen, sources, false);
+    Spread(ashwick, sources, false);
     mut List<int> bells = [];
     foreach (var row in missiles)
     {
@@ -349,11 +283,11 @@ system Wayfinding(mut Ashwick ashwick, Match match, Time time, query (Survivor s
         var cell = CellOf(row.missile.at);
         if (cell >= 0) bells.Add(cell);
     }
-    Spread(ashwick, match.gatesOpen, bells, true);
+    Spread(ashwick, bells, true);
 }
 
 // A breadth-first walk out from the sources over walkable cells, counting steps.
-void Spread(mut Ashwick ashwick, int gatesOpen, List<int> sources, bool lure)
+void Spread(mut Ashwick ashwick, List<int> sources, bool lure)
 {
     var total = NAV_W * NAV_H;
     for (var c = 0; c < total; c++)
@@ -384,7 +318,7 @@ void Spread(mut Ashwick ashwick, int gatesOpen, List<int> sources, bool lure)
             if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_H) continue;
             var next = nz * NAV_W + nx;
             var there = lure ? int(ashwick.lureField[next]) : int(ashwick.field[next]);
-            if (there != UNREACHED || !Walkable(ashwick, gatesOpen, next)) continue;
+            if (there != UNREACHED || !Walkable(ashwick, next)) continue;
             if (lure) ashwick.lureField[next] = byte(here + 1);
             else ashwick.field[next] = byte(here + 1);
             queue.Add(next);
@@ -393,7 +327,7 @@ void Spread(mut Ashwick ashwick, int gatesOpen, List<int> sources, bool lure)
 }
 
 // Which way is downhill from a place: toward the neighbouring cell nearest what draws the dead.
-float3 Downhill(Ashwick ashwick, int gatesOpen, float3 at, bool lure)
+float3 Downhill(Ashwick ashwick, float3 at, bool lure)
 {
     var cell = CellOf(at);
     if (cell < 0) return float3(0);
@@ -411,11 +345,11 @@ float3 Downhill(Ashwick ashwick, int gatesOpen, float3 at, bool lure)
             var nz = cz + dz;
             if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_H) continue;
             var next = nz * NAV_W + nx;
-            if (!Walkable(ashwick, gatesOpen, next)) continue;
+            if (!Walkable(ashwick, next)) continue;
             // A diagonal step needs both of its sides open, not to cut a corner
             if (dx != 0 && dz != 0)
             {
-                if (!Walkable(ashwick, gatesOpen, cz * NAV_W + nx) || !Walkable(ashwick, gatesOpen, nz * NAV_W + cx)) continue;
+                if (!Walkable(ashwick, cz * NAV_W + nx) || !Walkable(ashwick, nz * NAV_W + cx)) continue;
             }
             var there = lure ? int(ashwick.lureField[next]) : int(ashwick.field[next]);
             if (there < best || (there == best && there < here))

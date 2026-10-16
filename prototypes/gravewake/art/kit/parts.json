@@ -1,75 +1,43 @@
 [
  {
-  "file": "Anvil~metal.glb",
-  "piece": "Anvil",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 750
- },
- {
-  "file": "Banner_1~cloth.glb",
-  "piece": "Banner_1",
-  "tex": "cloth",
-  "cutout": false,
-  "glass": false,
-  "tris": 62
- },
- {
-  "file": "Banner_1~furniture.glb",
-  "piece": "Banner_1",
+  "file": "Anvil_Log~furniture.glb",
+  "piece": "Anvil_Log",
   "tex": "furniture",
   "cutout": false,
   "glass": false,
-  "tris": 144
+  "tris": 92
  },
  {
-  "file": "Banner_1~metal.glb",
-  "piece": "Banner_1",
+  "file": "Anvil_Log~metal.glb",
+  "piece": "Anvil_Log",
   "tex": "metal",
   "cutout": false,
   "glass": false,
-  "tris": 242
+  "tris": 1446
  },
  {
-  "file": "Barrel_Apples~furniture.glb",
-  "piece": "Barrel_Apples",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 392
- },
- {
-  "file": "Barrel_Apples~metal.glb",
-  "piece": "Barrel_Apples",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 432
- },
- {
-  "file": "Barrel_Apples~props.glb",
-  "piece": "Barrel_Apples",
+  "file": "Anvil_Log~props.glb",
+  "piece": "Anvil_Log",
   "tex": "props",
   "cutout": false,
   "glass": false,
-  "tris": 1656
+  "tris": 2270
  },
  {
-  "file": "Barrel_Holder~furniture.glb",
-  "piece": "Barrel_Holder",
+  "file": "Bag~cloth.glb",
+  "piece": "Bag",
+  "tex": "cloth",
+  "cutout": false,
+  "glass": false,
+  "tris": 570
+ },
+ {
+  "file": "Bag~furniture.glb",
+  "piece": "Bag",
   "tex": "furniture",
   "cutout": false,
   "glass": false,
-  "tris": 1344
- },
- {
-  "file": "Barrel_Holder~metal.glb",
-  "piece": "Barrel_Holder",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 1332
+  "tris": 288
  },
  {
   "file": "Barrel~furniture.glb",
@@ -120,68 +88,84 @@
   "tris": 332
  },
  {
-  "file": "CandleStick_Stand~metal.glb",
-  "piece": "CandleStick_Stand",
+  "file": "Bush_Common~twistedleaves.glb",
+  "piece": "Bush_Common",
+  "tex": "twistedleaves",
+  "cutout": true,
+  "glass": false,
+  "tris": 450
+ },
+ {
+  "file": "Cauldron~metal.glb",
+  "piece": "Cauldron",
   "tex": "metal",
   "cutout": false,
   "glass": false,
-  "tris": 1875
+  "tris": 2020
  },
  {
-  "file": "CandleStick_Stand~props.glb",
-  "piece": "CandleStick_Stand",
-  "tex": "props",
-  "cutout": false,
-  "glass": false,
-  "tris": 994
- },
- {
-  "file": "Chain_Coil~metal.glb",
-  "piece": "Chain_Coil",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 1123
- },
- {
-  "file": "Chair_1~furniture.glb",
-  "piece": "Chair_1",
+  "file": "Chest_Wood~furniture.glb",
+  "piece": "Chest_Wood",
   "tex": "furniture",
   "cutout": false,
   "glass": false,
-  "tris": 364
+  "tris": 368
  },
  {
-  "file": "Chair_1~metal.glb",
-  "piece": "Chair_1",
+  "file": "Chest_Wood~metal.glb",
+  "piece": "Chest_Wood",
   "tex": "metal",
   "cutout": false,
   "glass": false,
-  "tris": 132
+  "tris": 2178
  },
  {
-  "file": "Chandelier~furniture.glb",
-  "piece": "Chandelier",
-  "tex": "furniture",
-  "cutout": false,
+  "file": "CommonTree_1~bark.glb",
+  "piece": "CommonTree_1",
+  "tex": "bark",
+  "cutout": true,
   "glass": false,
-  "tris": 161
+  "tris": 909
  },
  {
-  "file": "Chandelier~metal.glb",
-  "piece": "Chandelier",
-  "tex": "metal",
-  "cutout": false,
+  "file": "CommonTree_1~leaves.glb",
+  "piece": "CommonTree_1",
+  "tex": "leaves",
+  "cutout": true,
   "glass": false,
-  "tris": 2092
+  "tris": 1910
  },
  {
-  "file": "Chandelier~props.glb",
-  "piece": "Chandelier",
-  "tex": "props",
-  "cutout": false,
+  "file": "CommonTree_3~bark.glb",
+  "piece": "CommonTree_3",
+  "tex": "bark",
+  "cutout": true,
   "glass": false,
-  "tris": 587
+  "tris": 389
+ },
+ {
+  "file": "CommonTree_3~leaves.glb",
+  "piece": "CommonTree_3",
+  "tex": "leaves",
+  "cutout": true,
+  "glass": false,
+  "tris": 1188
+ },
+ {
+  "file": "CommonTree_5~bark.glb",
+  "piece": "CommonTree_5",
+  "tex": "bark",
+  "cutout": true,
+  "glass": false,
+  "tris": 430
+ },
+ {
+  "file": "CommonTree_5~leaves.glb",
+  "piece": "CommonTree_5",
+  "tex": "leaves",
+  "cutout": true,
+  "glass": false,
+  "tris": 1001
  },
  {
   "file": "Corner_ExteriorWide_Brick~rocktrim.glb",
@@ -190,38 +174,6 @@
   "cutout": false,
   "glass": false,
   "tris": 2882
- },
- {
-  "file": "Corner_Exterior_Brick~rocktrim.glb",
-  "piece": "Corner_Exterior_Brick",
-  "tex": "rocktrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 3102
- },
- {
-  "file": "Corner_Exterior_Wood~woodtrim.glb",
-  "piece": "Corner_Exterior_Wood",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 12
- },
- {
-  "file": "Crate_Metal~furniture.glb",
-  "piece": "Crate_Metal",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 124
- },
- {
-  "file": "Crate_Metal~metal.glb",
-  "piece": "Crate_Metal",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 2614
  },
  {
   "file": "Crate_Wooden~furniture.glb",
@@ -264,76 +216,12 @@
   "tris": 1740
  },
  {
-  "file": "Door_4_Round~ornaments.glb",
-  "piece": "Door_4_Round",
-  "tex": "ornaments",
-  "cutout": false,
+  "file": "Fern_1~leaves2.glb",
+  "piece": "Fern_1",
+  "tex": "leaves2",
+  "cutout": true,
   "glass": false,
-  "tris": 668
- },
- {
-  "file": "Door_4_Round~woodtrim.glb",
-  "piece": "Door_4_Round",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 560
- },
- {
-  "file": "FarmCrate_Apple~furniture.glb",
-  "piece": "FarmCrate_Apple",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 536
- },
- {
-  "file": "FarmCrate_Apple~metal.glb",
-  "piece": "FarmCrate_Apple",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 456
- },
- {
-  "file": "FarmCrate_Apple~props.glb",
-  "piece": "FarmCrate_Apple",
-  "tex": "props",
-  "cutout": false,
-  "glass": false,
-  "tris": 3036
- },
- {
-  "file": "FarmCrate_Carrot~furniture.glb",
-  "piece": "FarmCrate_Carrot",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 536
- },
- {
-  "file": "FarmCrate_Carrot~metal.glb",
-  "piece": "FarmCrate_Carrot",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 456
- },
- {
-  "file": "FarmCrate_Carrot~props.glb",
-  "piece": "FarmCrate_Carrot",
-  "tex": "props",
-  "cutout": false,
-  "glass": false,
-  "tris": 4270
- },
- {
-  "file": "Floor_Brick~brick.glb",
-  "piece": "Floor_Brick",
-  "tex": "brick",
-  "cutout": false,
-  "glass": false,
-  "tris": 4
+  "tris": 288
  },
  {
   "file": "Floor_UnevenBrick~unevenbrick.glb",
@@ -344,28 +232,92 @@
   "tris": 4
  },
  {
-  "file": "Floor_WoodDark~woodtrim.glb",
-  "piece": "Floor_WoodDark",
-  "tex": "woodtrim",
+  "file": "Grass_Common_Tall~grass.glb",
+  "piece": "Grass_Common_Tall",
+  "tex": "grass",
   "cutout": false,
   "glass": false,
-  "tris": 32
+  "tris": 326
  },
  {
-  "file": "Mug~furniture.glb",
-  "piece": "Mug",
-  "tex": "furniture",
+  "file": "Mushroom_Common~mushrooms.glb",
+  "piece": "Mushroom_Common",
+  "tex": "mushrooms",
   "cutout": false,
   "glass": false,
-  "tris": 146
+  "tris": 880
  },
  {
-  "file": "Mug~metal.glb",
-  "piece": "Mug",
-  "tex": "metal",
+  "file": "Pine_1~bark.glb",
+  "piece": "Pine_1",
+  "tex": "bark",
+  "cutout": true,
+  "glass": false,
+  "tris": 1636
+ },
+ {
+  "file": "Pine_1~pine.glb",
+  "piece": "Pine_1",
+  "tex": "pine",
+  "cutout": true,
+  "glass": false,
+  "tris": 732
+ },
+ {
+  "file": "Pine_3~bark.glb",
+  "piece": "Pine_3",
+  "tex": "bark",
+  "cutout": true,
+  "glass": false,
+  "tris": 2532
+ },
+ {
+  "file": "Pine_3~pine.glb",
+  "piece": "Pine_3",
+  "tex": "pine",
+  "cutout": true,
+  "glass": false,
+  "tris": 446
+ },
+ {
+  "file": "Pine_5~bark.glb",
+  "piece": "Pine_5",
+  "tex": "bark",
+  "cutout": true,
+  "glass": false,
+  "tris": 175
+ },
+ {
+  "file": "Pine_5~pine.glb",
+  "piece": "Pine_5",
+  "tex": "pine",
+  "cutout": true,
+  "glass": false,
+  "tris": 812
+ },
+ {
+  "file": "Plant_1_Big~leaves2.glb",
+  "piece": "Plant_1_Big",
+  "tex": "leaves2",
+  "cutout": true,
+  "glass": false,
+  "tris": 360
+ },
+ {
+  "file": "Prop_Brick1~rocktrim.glb",
+  "piece": "Prop_Brick1",
+  "tex": "rocktrim",
   "cutout": false,
   "glass": false,
-  "tris": 122
+  "tris": 108
+ },
+ {
+  "file": "Prop_Brick3~rocktrim.glb",
+  "piece": "Prop_Brick3",
+  "tex": "rocktrim",
+  "cutout": false,
+  "glass": false,
+  "tris": 126
  },
  {
   "file": "Prop_MetalFence_Ornament~ornaments.glb",
@@ -384,164 +336,44 @@
   "tris": 1672
  },
  {
-  "file": "Roof_Front_Brick4~plaster.glb",
-  "piece": "Roof_Front_Brick4",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 12
- },
- {
-  "file": "Roof_Front_Brick4~woodtrim.glb",
-  "piece": "Roof_Front_Brick4",
+  "file": "Prop_WoodenFence_Extension1~woodtrim.glb",
+  "piece": "Prop_WoodenFence_Extension1",
   "tex": "woodtrim",
   "cutout": false,
   "glass": false,
-  "tris": 240
+  "tris": 32
  },
  {
-  "file": "Roof_Front_Brick6~plaster.glb",
-  "piece": "Roof_Front_Brick6",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 16
- },
- {
-  "file": "Roof_Front_Brick6~woodtrim.glb",
-  "piece": "Roof_Front_Brick6",
+  "file": "Prop_WoodenFence_Single~woodtrim.glb",
+  "piece": "Prop_WoodenFence_Single",
   "tex": "woodtrim",
   "cutout": false,
   "glass": false,
-  "tris": 312
+  "tris": 40
  },
  {
-  "file": "Roof_Front_Brick8~plaster.glb",
-  "piece": "Roof_Front_Brick8",
-  "tex": "plaster",
+  "file": "Rock_Medium_1~rocks.glb",
+  "piece": "Rock_Medium_1",
+  "tex": "rocks",
   "cutout": false,
   "glass": false,
-  "tris": 12
+  "tris": 342
  },
  {
-  "file": "Roof_Front_Brick8~woodtrim.glb",
-  "piece": "Roof_Front_Brick8",
-  "tex": "woodtrim",
+  "file": "Rock_Medium_2~rocks.glb",
+  "piece": "Rock_Medium_2",
+  "tex": "rocks",
   "cutout": false,
   "glass": false,
-  "tris": 352
+  "tris": 244
  },
  {
-  "file": "Roof_RoundTiles_4x4~roundtiles.glb",
-  "piece": "Roof_RoundTiles_4x4",
-  "tex": "roundtiles",
+  "file": "Rock_Medium_3~rocks.glb",
+  "piece": "Rock_Medium_3",
+  "tex": "rocks",
   "cutout": false,
   "glass": false,
-  "tris": 1276
- },
- {
-  "file": "Roof_RoundTiles_4x4~woodtrim.glb",
-  "piece": "Roof_RoundTiles_4x4",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 720
- },
- {
-  "file": "Roof_RoundTiles_6x10~roundtiles.glb",
-  "piece": "Roof_RoundTiles_6x10",
-  "tex": "roundtiles",
-  "cutout": false,
-  "glass": false,
-  "tris": 3396
- },
- {
-  "file": "Roof_RoundTiles_6x10~woodtrim.glb",
-  "piece": "Roof_RoundTiles_6x10",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 904
- },
- {
-  "file": "Roof_RoundTiles_6x6~roundtiles.glb",
-  "piece": "Roof_RoundTiles_6x6",
-  "tex": "roundtiles",
-  "cutout": false,
-  "glass": false,
-  "tris": 2228
- },
- {
-  "file": "Roof_RoundTiles_6x6~woodtrim.glb",
-  "piece": "Roof_RoundTiles_6x6",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 1016
- },
- {
-  "file": "Roof_RoundTiles_6x8~roundtiles.glb",
-  "piece": "Roof_RoundTiles_6x8",
-  "tex": "roundtiles",
-  "cutout": false,
-  "glass": false,
-  "tris": 2780
- },
- {
-  "file": "Roof_RoundTiles_6x8~woodtrim.glb",
-  "piece": "Roof_RoundTiles_6x8",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 1016
- },
- {
-  "file": "Roof_RoundTiles_8x10~roundtiles.glb",
-  "piece": "Roof_RoundTiles_8x10",
-  "tex": "roundtiles",
-  "cutout": false,
-  "glass": false,
-  "tris": 3576
- },
- {
-  "file": "Roof_RoundTiles_8x10~woodtrim.glb",
-  "piece": "Roof_RoundTiles_8x10",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 904
- },
- {
-  "file": "Roof_RoundTiles_8x14~roundtiles.glb",
-  "piece": "Roof_RoundTiles_8x14",
-  "tex": "roundtiles",
-  "cutout": false,
-  "glass": false,
-  "tris": 4580
- },
- {
-  "file": "Roof_RoundTiles_8x14~woodtrim.glb",
-  "piece": "Roof_RoundTiles_8x14",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 904
- },
- {
-  "file": "Roof_RoundTiles_8x8~roundtiles.glb",
-  "piece": "Roof_RoundTiles_8x8",
-  "tex": "roundtiles",
-  "cutout": false,
-  "glass": false,
-  "tris": 2992
- },
- {
-  "file": "Roof_RoundTiles_8x8~woodtrim.glb",
-  "piece": "Roof_RoundTiles_8x8",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 896
+  "tris": 522
  },
  {
   "file": "Rope_1~furniture.glb",
@@ -550,30 +382,6 @@
   "cutout": false,
   "glass": false,
   "tris": 1748
- },
- {
-  "file": "Shelf_Small_Bottles~furniture.glb",
-  "piece": "Shelf_Small_Bottles",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 206
- },
- {
-  "file": "Shelf_Small_Bottles~metal.glb",
-  "piece": "Shelf_Small_Bottles",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 720
- },
- {
-  "file": "Shelf_Small_Bottles~props.glb",
-  "piece": "Shelf_Small_Bottles",
-  "tex": "props",
-  "cutout": false,
-  "glass": false,
-  "tris": 4308
  },
  {
   "file": "Stall_Cart_Empty~cloth.glb",
@@ -600,46 +408,6 @@
   "tris": 2218
  },
  {
-  "file": "Stall_Empty~cloth.glb",
-  "piece": "Stall_Empty",
-  "tex": "cloth",
-  "cutout": false,
-  "glass": false,
-  "tris": 644
- },
- {
-  "file": "Stall_Empty~furniture.glb",
-  "piece": "Stall_Empty",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 308
- },
- {
-  "file": "Stall_Empty~metal.glb",
-  "piece": "Stall_Empty",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 544
- },
- {
-  "file": "Table_Large~furniture.glb",
-  "piece": "Table_Large",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 946
- },
- {
-  "file": "Table_Large~metal.glb",
-  "piece": "Table_Large",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 40
- },
- {
   "file": "Torch_Metal~metal.glb",
   "piece": "Torch_Metal",
   "tex": "metal",
@@ -662,118 +430,6 @@
   "cutout": true,
   "glass": false,
   "tris": 1445
- },
- {
-  "file": "Wall_BottomCover~woodtrim.glb",
-  "piece": "Wall_BottomCover",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 36
- },
- {
-  "file": "Wall_Plaster_Door_Round~plaster.glb",
-  "piece": "Wall_Plaster_Door_Round",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 65
- },
- {
-  "file": "Wall_Plaster_Door_Round~rocktrim.glb",
-  "piece": "Wall_Plaster_Door_Round",
-  "tex": "rocktrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 4
- },
- {
-  "file": "Wall_Plaster_Door_Round~woodtrim.glb",
-  "piece": "Wall_Plaster_Door_Round",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 68
- },
- {
-  "file": "Wall_Plaster_Straight~plaster.glb",
-  "piece": "Wall_Plaster_Straight",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 6
- },
- {
-  "file": "Wall_Plaster_Straight~woodtrim.glb",
-  "piece": "Wall_Plaster_Straight",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 80
- },
- {
-  "file": "Wall_Plaster_Window_Thin_Round~brick.glb",
-  "piece": "Wall_Plaster_Window_Thin_Round",
-  "tex": "brick",
-  "cutout": false,
-  "glass": false,
-  "tris": 20
- },
- {
-  "file": "Wall_Plaster_Window_Thin_Round~plaster.glb",
-  "piece": "Wall_Plaster_Window_Thin_Round",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 88
- },
- {
-  "file": "Wall_Plaster_Window_Thin_Round~woodtrim.glb",
-  "piece": "Wall_Plaster_Window_Thin_Round",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 58
- },
- {
-  "file": "Wall_Plaster_Window_Wide_Round~brick.glb",
-  "piece": "Wall_Plaster_Window_Wide_Round",
-  "tex": "brick",
-  "cutout": false,
-  "glass": false,
-  "tris": 6
- },
- {
-  "file": "Wall_Plaster_Window_Wide_Round~plaster.glb",
-  "piece": "Wall_Plaster_Window_Wide_Round",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 60
- },
- {
-  "file": "Wall_Plaster_Window_Wide_Round~woodtrim.glb",
-  "piece": "Wall_Plaster_Window_Wide_Round",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 58
- },
- {
-  "file": "Wall_Plaster_WoodGrid~plaster.glb",
-  "piece": "Wall_Plaster_WoodGrid",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 4
- },
- {
-  "file": "Wall_Plaster_WoodGrid~woodtrim.glb",
-  "piece": "Wall_Plaster_WoodGrid",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 244
  },
  {
   "file": "Wall_UnevenBrick_Door_Round~plaster.glb",
@@ -824,30 +480,6 @@
   "tris": 50
  },
  {
-  "file": "Wall_UnevenBrick_Window_Thin_Round~plaster.glb",
-  "piece": "Wall_UnevenBrick_Window_Thin_Round",
-  "tex": "plaster",
-  "cutout": false,
-  "glass": false,
-  "tris": 44
- },
- {
-  "file": "Wall_UnevenBrick_Window_Thin_Round~unevenbrick.glb",
-  "piece": "Wall_UnevenBrick_Window_Thin_Round",
-  "tex": "unevenbrick",
-  "cutout": false,
-  "glass": false,
-  "tris": 64
- },
- {
-  "file": "Wall_UnevenBrick_Window_Thin_Round~woodtrim.glb",
-  "piece": "Wall_UnevenBrick_Window_Thin_Round",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 50
- },
- {
   "file": "Wall_UnevenBrick_Window_Wide_Round~plaster.glb",
   "piece": "Wall_UnevenBrick_Window_Wide_Round",
   "tex": "plaster",
@@ -870,85 +502,5 @@
   "cutout": false,
   "glass": false,
   "tris": 50
- },
- {
-  "file": "WeaponStand~furniture.glb",
-  "piece": "WeaponStand",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 956
- },
- {
-  "file": "WeaponStand~metal.glb",
-  "piece": "WeaponStand",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 1128
- },
- {
-  "file": "WindowShutters_Thin_Round_Closed~woodtrim.glb",
-  "piece": "WindowShutters_Thin_Round_Closed",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 112
- },
- {
-  "file": "WindowShutters_Wide_Round_Closed~woodtrim.glb",
-  "piece": "WindowShutters_Wide_Round_Closed",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 136
- },
- {
-  "file": "Window_Thin_Round1~flat.glb",
-  "piece": "Window_Thin_Round1",
-  "tex": "flat",
-  "cutout": false,
-  "glass": true,
-  "tris": 118
- },
- {
-  "file": "Window_Thin_Round1~woodtrim.glb",
-  "piece": "Window_Thin_Round1",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 300
- },
- {
-  "file": "Window_Wide_Round1~flat.glb",
-  "piece": "Window_Wide_Round1",
-  "tex": "flat",
-  "cutout": false,
-  "glass": true,
-  "tris": 78
- },
- {
-  "file": "Window_Wide_Round1~woodtrim.glb",
-  "piece": "Window_Wide_Round1",
-  "tex": "woodtrim",
-  "cutout": false,
-  "glass": false,
-  "tris": 276
- },
- {
-  "file": "Workbench~furniture.glb",
-  "piece": "Workbench",
-  "tex": "furniture",
-  "cutout": false,
-  "glass": false,
-  "tris": 164
- },
- {
-  "file": "Workbench~metal.glb",
-  "piece": "Workbench",
-  "tex": "metal",
-  "cutout": false,
-  "glass": false,
-  "tris": 1204
  }
 ]

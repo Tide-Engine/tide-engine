@@ -12,7 +12,8 @@
 # the short name TEXTURES gives the material's base colour image ("flat" for a
 # material with none, whose colour stays in the material). The materials'
 # base colour factors and the pieces' vertex colours are kept; images are not
-# exported; the heaviest pieces (DECIMATE) are cut down first. parts.json lists every part written, in the order a glob of
+# exported (but the nature kit's: its vertex colours are wind weights, not
+# colour); the heaviest pieces (DECIMATE) are cut down first. parts.json lists every part written, in the order a glob of
 # <out dir>/*.glb gives them (byte order of their names), with its piece,
 # texture and whether its texture cuts holes (alpha MASK) or is see-through.
 import sys, os, json
@@ -54,10 +55,17 @@ TEXTURES = {
 }
 
 
+# Textures of the nature kit, whose vertex colours drive its wind and aren't a colour at all.
+NATURE = {"bark", "leaves", "leaves2", "pine", "grass", "flowers", "mushrooms", "rocks", "pathrocks", "deadbark", "twistedbark", "twistedleaves"}
+
+
 # Pieces with more triangles than they need here, and how much of them to keep: the trees stand in the fog.
 DECIMATE = {
     "DeadTree_": 0.3,
     "TwistedTree_": 0.3,
+    "CommonTree_": 0.45,
+    "Pine_": 0.6,
+    "Bush_": 0.5,
     "Chain_Coil": 0.3,
     "Chandelier": 0.5,
     "CandleStick_Stand": 0.5,
@@ -134,6 +142,9 @@ for src in SOURCES:
         if len(mesh.polygons) == 0:
             bpy.data.objects.remove(part)
             continue
+        if key in NATURE:
+            for attribute in list(mesh.color_attributes):
+                mesh.color_attributes.remove(attribute)
         name = f"{piece}~{key}"
         part.select_set(True)
         bpy.context.view_layer.objects.active = part

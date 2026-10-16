@@ -20,10 +20,10 @@ game's title screen.
 
 | Folder | What | Sources |
 | --- | --- | --- |
-| `kit/`, `tex/` | The village: walls, roofs, floors, doors, furniture, props, trees; their textures | Medieval Village MegaKit, Fantasy Props MegaKit, Stylized Nature MegaKit (the Standard downloads), cut into one GLB per piece and texture by `kit/tools/split_kit.py`, textures shrunk and shaded by `kit/tools/make_textures.py` |
+| `kit/`, `tex/` | The clearing: trees, rocks, ferns, grass, the ruin's walls and floor, the iron fence, the cart and camp props; their textures | Medieval Village MegaKit, Fantasy Props MegaKit, Stylized Nature MegaKit (the Standard downloads), cut into one GLB per piece and texture by `kit/tools/split_kit.py`, textures shrunk and shaded by `kit/tools/make_textures.py` |
 | `people/` | Six of the dead, four survivors, and their clips | Ultimate Modular Men, Ultimate Modular Women (bodies); the men's pack's clips and Universal Animation Library 1 and 2 (motions), retargeted by `people/tools/make_moves.py` |
 | `weapons/` | Weapons, missiles and first-person hands | Medieval Weapons, Ultimate RPG (staff crystals); the maces, polearms, crossbows, handgonne, staffs, thrown weapons, bolt, bell and hands modelled by `weapons/tools/make_weapons.py` |
-| `items/` | The chest, power-ups, potions, the beacon's lever, brazier, planks, graves, the well | Ultimate RPG (skull, coins, chalice, potions), Medieval Weapons (arrows, hammer); the rest modelled by `items/tools/make_items.py` |
+| `items/` | Power-ups, potions, the brazier, graves | Ultimate RPG (skull, coins, chalice, potions), Medieval Weapons (arrows, hammer); the rest modelled by `items/tools/make_items.py` |
 | `fp/` | The first-person arms, the bow and arrow in them, and every first-person clip | CoinCoin's first-person kit (CC BY 4.0, above); clips for two-handed weapons, polearms, crossbows, staffs, throwing and drinking made by `fp/tools/make_fp.py` |
 
 The packs' pages:

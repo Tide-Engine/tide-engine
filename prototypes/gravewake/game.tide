@@ -1,7 +1,8 @@
-// GRAVEWAKE: the dead rise in Ashwick, and up to four survivors hold the
-// village round after round, with the blades, bows and crossbows they can
-// buy. This file is who plays: the survivors, what a player's hands send,
-// joining and leaving, and starting over.
+// GRAVEWAKE: Ashwick is burned, and up to four survivors hold a clearing in
+// the wood outside it, round its fire, wave after wave of the dead, taking a
+// card after each: a new weapon, a brew, something that lasts. This file is
+// who plays: the survivors, what a player's hands send, joining and leaving,
+// and starting over.
 using Rooms;
 
 settings
@@ -19,7 +20,7 @@ enum Life { Standing, Downed, Gone }
 // What a survivor's hands are busy with.
 enum Act { Idle, Raise, Swing, Heavy, Stab, Loose, Draw, Reload, Drink, Throw, Lower, Kick }
 
-// A survivor: one of the four, walking, fighting and buying. `seat` is which: 0 Wat, 1 Maud, 2 Godric, 3 Agnes.
+// A survivor: one of the four, walking, fighting and choosing. `seat` is which: 0 Wat, 1 Maud, 2 Godric, 3 Agnes.
 component Survivor
 {
     int seat;
@@ -34,8 +35,8 @@ component Survivor
     float bleed;                     // Seconds left before a downed survivor is gone
     float revive;                    // How far someone's got raising them, 0 to 1
     int reviver = -1;                // Whose hands are on them
-    int selfRevives;                 // Second Wind's, alone
-    int points = 500;
+    int selfRevives;                 // Second Wind's, alone: one a wave
+    int points;                      // The score: what the dead have paid
     Weapon[3] weapons;               // One carried, two with Packmule; the third is the last stand's (LastStand)
     int[3] mag;
     int[3] ammo;
@@ -51,9 +52,18 @@ component Survivor
     int lures;
     int brews;                       // A bit per Brew
     float stamina = 1;
-    int using = -1;                  // What use is held on (a Target), and for how long
-    float useTime;
-    int aimed = -1;                  // What's in reach under the crosshair (a Target), for the prompt
+    int aimed = -1;                  // The friend down within reach, a seat, for the prompt
+    // The cards (cards.tide): the three on offer after a wave while `choosing`, each one's weapon or brew
+    Card[3] cards;
+    int[3] cardItems;
+    bool choosing;
+    int dealt;                       // The wave whose cards were dealt
+    int picks;
+    int edge;                        // Whetstones taken
+    int vigor;                       // Hearts of oak
+    int boots;                       // Hobnailed boots
+    int quiver;                      // Deep quivers
+    int pyre;                        // Pyre satchels
     int kills;
     int headshots;
     int downs;
@@ -81,8 +91,9 @@ input Hands
     bool pot;
     bool lure;
     bool next;
-    bool slot1;
-    bool slot2;
+    bool pick1;                      // A card, or the first weapon
+    bool pick2;                      // ...or the second
+    bool pick3;
     [Absolute] bool ready;
 
     Sample(Devices devices, Lobby lobby, Feel feel)
@@ -107,8 +118,9 @@ input Hands
         pot = keys.g.pressed || pad.rightShoulder.pressed;
         lure = keys.q.pressed || pad.leftShoulder.pressed;
         next = devices.mouse.scroll.y != 0 || pad.buttonNorth.pressed;
-        slot1 = keys.digit1.pressed;
-        slot2 = keys.digit2.pressed;
+        pick1 = keys.digit1.pressed || pad.dpad.left.pressed;
+        pick2 = keys.digit2.pressed || pad.dpad.up.pressed;
+        pick3 = keys.digit3.pressed || pad.dpad.right.pressed;
     }
 }
 
@@ -197,7 +209,7 @@ int Slots(Survivor s)
 
 float MaxHealth(Survivor s)
 {
-    return HasBrew(s, Brew.Ironhide) ? 250 : 100;
+    return (HasBrew(s, Brew.Ironhide) ? 250 : 100) + 40 * s.vigor;
 }
 
 // A survivor as they start: the hand crossbow, two fire pots (and always the stab and the kick).
@@ -215,10 +227,10 @@ Survivor Outfitted(int seat, float3 at, float yaw)
 event(Spawned) Begin(with Main, mut Ashwick ashwick, mut Match match)
 {
     BuildAshwick(ashwick);
-    ResetMatch(match, ashwick);
+    ResetMatch(match);
 }
 
-event(PlayerJoined joined) TakeSeat(mut Party party, Ashwick ashwick, Match match)
+event(PlayerJoined joined) TakeSeat(mut Party party, Ashwick ashwick)
 {
     for (var seat = 0; seat < 4; seat++)
         if (party.taken[seat] && party.players[seat] == joined.player) return;
@@ -229,15 +241,12 @@ event(PlayerJoined joined) TakeSeat(mut Party party, Ashwick ashwick, Match matc
         party.players[seat] = joined.player;
         party.joined += 1;
         var start = ashwick.starts[seat];
-        // Late to the fight: what the others have earned, near enough
-        var points = match.round > 1 ? 500 + match.round * 250 : 500;
         party.survivors[seat] = Spawn(Survivor
         {
             seat = seat,
             feet = start,
-            yaw = YawTo(start, float3(0, 0, 4)),
+            yaw = YawTo(float3(0), start),
             placed = true,
-            points = points,
             weapons = [Weapon.HandCrossbow, Weapon.None, Weapon.None],
             mag = [1, 0, 0],
             ammo = [40, 0, 0],
@@ -292,25 +301,25 @@ system RestartSurvivor(mut Survivor survivor, Match match, Ashwick ashwick)
     if (!match.restarting) return;
     var start = ashwick.starts[survivor.seat];
     var ready = survivor.ready;
-    survivor = Outfitted(survivor.seat, start, YawTo(start, float3(0, 0, 4)));
+    survivor = Outfitted(survivor.seat, start, YawTo(float3(0), start));
     survivor.ready = ready;
 }
 
 [Stage(Tick.Restart, 1)]
-system Restarting(mut Match match, Ashwick ashwick)
+system Restarting(mut Match match)
 {
     if (!match.restarting) return;
-    ResetMatch(match, ashwick);
+    ResetMatch(match);
 }
 
-// Development shortcuts, not in play's interface (hud.tide's DevKeys): gold, the beacon, every door, the round's end, a
-// walk to an area.
+// Development shortcuts, not in play's interface (hud.tide's DevKeys): the wave's end (and so the cards), the next
+// weapon, a walk to a place.
 command Cheat
 {
     int what;
 }
 
-command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party, Ashwick ashwick)
+command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
 {
     mut var seat = -1;
     for (var s = 0; s < 4; s++)
@@ -318,20 +327,6 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party, Ash
     if (seat < 0) return;
     switch (cheat.what)
     {
-        case 1:
-            party.survivors[seat].Send(Refund { points = 10000 });
-            return;
-        case 2:
-            if (!match.power)
-            {
-                match.power = true;
-                Send(PowerOn { });
-            }
-            return;
-        case 3:
-            match.gatesOpen = (1 << ashwick.gates.count) - 1;
-            match.zonesOpen = (1 << ZONE_COUNT) - 1;
-            return;
         case 4:
             match.toSpawn = 0;
             match.culling = true;
@@ -343,19 +338,19 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party, Ash
     if (cheat.what >= 10) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
 }
 
-// Where each area is seen from, for the development walks.
-float4 Showplace(int area)
+// Where each part of the clearing is seen from, for the development walks.
+float4 Showplace(int place)
 {
-    switch (area)
+    switch (place)
     {
-        case 0: return float4(0, 0, -4, 0);
-        case 1: return float4(14, 0, 2, Math.PI * 0.5);
-        case 2: return float4(16, 0, -14, 2.4);
-        case 3: return float4(0, 0, -17, Math.PI);
-        case 4: return float4(0, 0, 20, 0);
-        case 5: return float4(-10, 0, 20, -1.9);
-        case 6: return float4(-20, 0, -2, -0.6);
-        case 7: return float4(-6.5, 0, -5, -Math.PI * 0.5);
+        case 0: return float4(0, 0, -5, 0);
+        case 1: return float4(0, 0, 6.5, 0);
+        case 2: return float4(-5, 0, 0.5, -Math.PI * 0.5);
+        case 3: return float4(5.5, 0, 0.5, Math.PI * 0.5);
+        case 4: return float4(0, 0, -5, Math.PI);
+        case 5: return float4(11, 0, 11, 0.8);
+        case 6: return float4(-9, 0, -9, -2.3);
+        case 7: return float4(-3, 0, 4, 2.6);
     }
     return float4(0, 0, 0, 0);
 }

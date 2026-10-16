@@ -202,15 +202,6 @@ Pose ZombiePose(Zombie zombie, out float sink)
             sink = (1 - risen) * 1.9;
             break;
         }
-        case ZombieState.Outside:
-            pose.Sample(MoveOf(woman, Move.ZWalk), zombie.stride / 1.361 * 1.333, Playback.Loop);
-            break;
-        case ZombieState.Tearing:
-            pose.Sample(MoveOf(woman, Move.ZScratch), (zombie.rip / RIP_SECONDS) * 1.8, Playback.Loop);
-            break;
-        case ZombieState.Climbing:
-            pose.Sample(MoveOf(woman, Move.ZClimb), Math.Saturate(t / CLIMB_SECONDS) * 0.667);
-            break;
         case ZombieState.Fallen:
         {
             // Over backwards, lying there, then up

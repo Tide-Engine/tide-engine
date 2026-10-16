@@ -1,18 +1,14 @@
-// What the survivors deal with in Ashwick, drawn as the match has it: the
-// boards across each window, the weapons chalked up on the walls, the brews
-// floating over their barrels, the Pilgrim's Chest in its pillar of light (and
-// what it gives), the Runeforge's circle, the beacon's lever and braziers, the
-// gravestones, and the power-ups the dead drop.
+// The game's own items set about the clearing (the braziers, the graves'
+// mounds and stones), and the power-ups the dead drop.
 
 local singleton Dressing
 {
-    List<string> names;          // Each item that dresses the village...
+    List<string> names;          // Each item that dresses the clearing...
     List<List<Placed>> placed;   // ...and where
-    List<Sprite> chalk;          // The chalk round the wall weapons, as streaks
     bool made;
 }
 
-void MakeDressing(mut Dressing dressing, Plan plan, Armory armory)
+void MakeDressing(mut Dressing dressing, Plan plan)
 {
     dressing.names.Clear();
     dressing.placed.Clear();
@@ -28,250 +24,15 @@ void MakeDressing(mut Dressing dressing, Plan plan, Armory armory)
         }
         dressing.placed[index].Add(Placed { transform = float4x4.TRS(put.at, quaternion.AxisAngle(float3(0, 1, 0), put.yaw), float3(put.scale)) });
     }
-    // Chalk: a box round each weapon on a wall, as Black Ops drew theirs
-    dressing.chalk.Clear();
-    foreach (var stall in plan.stalls)
-    {
-        if (stall.sale != Sale.Weapon && stall.sale != Sale.FirePots && stall.sale != Sale.Bells) continue;
-        var out = float3(Math.Sin(stall.yaw), 0, Math.Cos(stall.yaw));
-        var along = float3(out.z, 0, -out.x);
-        var middle = stall.at + out * 0.03;
-        var data = stall.sale == Sale.Weapon ? DataOf(armory, ModelName(Weapon(stall.item))) : ArmsData { length = 0.6 };
-        var kind = stall.sale == Sale.Weapon ? Info(Weapon(stall.item)).kind : Kind.Thrown;
-        var w = kind == Kind.Bow ? 0.3 : data.length * 0.5 + 0.12;
-        var h = kind == Kind.Bow ? data.length * 0.5 + 0.1 : kind == Kind.Crossbow ? 0.36 : 0.26;
-        List<float3> corners = [middle - along * w - float3(0, h, 0), middle + along * w - float3(0, h, 0), middle + along * w + float3(0, h, 0), middle - along * w + float3(0, h, 0)];
-        for (var i = 0; i < 4; i++)
-        {
-            var a = corners[i];
-            var b = corners[(i + 1) % 4];
-            var h1 = Math.Hash(int2(int(stall.at.x * 10) + i, int(stall.at.z * 10)));
-            var wobble = float3(0, ((h1 & 15) - 7) * 0.004, 0);
-            dressing.chalk.Add(Sprite { at = a + wobble, to = b - wobble, size = 0.012, color = float4(0.85, 0.82, 0.75, 0.35) });
-        }
-    }
     dressing.made = true;
 }
 
-float4x4 OnWall(Stall stall, Weapon weapon, ArmsData data, WeaponInfo info)
-{
-    var out = float3(Math.Sin(stall.yaw), 0, Math.Cos(stall.yaw));
-    var along = float3(-out.z, 0, out.x);
-    // Hung flat: the model's +x out of the wall (its broad side seen), its +y along the wall; a bow hangs upright, a
-    // crossbow lies with its prod spread on the wall
-    mut var turn = quaternion.LookRotation(Math.Cross(out, along), along);
-    mut var middle = float3(0, V3(data.tip).y - data.length * 0.5, 0);
-    if (info.kind == Kind.Bow)
-    {
-        turn = quaternion.LookRotation(Math.Cross(out, float3(0, 1, 0)), float3(0, 1, 0));
-        middle = float3(0);
-    }
-    if (info.kind == Kind.Crossbow || info.kind == Kind.Gun)
-    {
-        turn = quaternion.LookRotation(along, out);
-        middle = float3(0, 0, V3(data.tip).z - data.length * 0.5);
-    }
-    var place = float4x4.TRS(stall.at + out * 0.1, turn, float3(1));
-    return Math.Mul(place, float4x4.Translate(-middle));
-}
-
 [Stage(Layers.Scene, 4)]
-view DrawSetPieces(mut Dressing dressing, Village village, Armory armory, Lens lens, Look look, Match match)
+view DrawSetPieces(mut Dressing dressing, Village village, Lens lens)
 {
-    if (!lens.made || !armory.made || !village.made) return;
-    if (!dressing.made) MakeDressing(dressing, village.plan, armory);
-    var plan = village.plan;
-    // The village's items
-    for (var i = 0; i < dressing.names.count; i++)
-    {
-        var name = dressing.names[i];
-        var glow = name == "brazier" ? (match.power ? 1.0 : 0.0) : 1.0;
-        lens.scene.Instanced(ItemMesh(name), dressing.placed[i], Steel, Finish { glow = glow });
-    }
-    // The boards across the windows
-    for (var w = 0; w < plan.windows.count && w < match.boards.count; w++)
-    {
-        var window = plan.windows[w];
-        if (Math.Distance(window.at, look.eye) > 45) continue;
-        var boards = match.boards[w];
-        var inward = float3(Math.Sin(window.yaw), 0, Math.Cos(window.yaw));
-        for (var b = 0; b < boards; b++)
-        {
-            var h = Math.Hash(int2(w, b));
-            var tilt = ((h & 15) - 7) * 0.035 + (b % 2 == 0 ? 0.12 : -0.12);
-            var at = window.at + float3(0, 0.12 + b * 0.22, 0) + inward * (-0.18 + (b % 2) * 0.03);
-            var turn = Math.Mul(quaternion.AxisAngle(float3(0, 1, 0), window.yaw), quaternion.AxisAngle(float3(0, 0, 1), tilt));
-            lens.scene.Mesh(ItemMesh("plank"), float4x4.TRS(at, turn, float3(1.15, 1, 1)), Steel, Finish { });
-        }
-    }
-    // What's for sale on the walls, and the brews
-    foreach (var stall in plan.stalls)
-    {
-        if (Math.Distance(stall.at, look.eye) > 40) continue;
-        switch (stall.sale)
-        {
-            case Sale.Weapon:
-            {
-                var weapon = Weapon(stall.item);
-                var data = DataOf(armory, ModelName(weapon));
-                lens.scene.Mesh(ArmsMesh(data.name), OnWall(stall, weapon, data, Info(weapon)), Steel, Finish { });
-                break;
-            }
-            case Sale.FirePots:
-            {
-                var out = float3(Math.Sin(stall.yaw), 0, Math.Cos(stall.yaw));
-                var along = float3(out.z, 0, -out.x);
-                lens.scene.Mesh(ArmsMesh("fire_pot"), float4x4.TRS(stall.at + out * 0.12 + along * 0.18 - float3(0, 0.15, 0), quaternion.identity, float3(1)), Steel, Finish { });
-                lens.scene.Mesh(ArmsMesh("fire_pot"), float4x4.TRS(stall.at + out * 0.12 - along * 0.18 - float3(0, 0.15, 0), quaternion.identity, float3(1)), Steel, Finish { });
-                break;
-            }
-            case Sale.Bells:
-            {
-                // Two hand bells hung mouth down
-                var out = float3(Math.Sin(stall.yaw), 0, Math.Cos(stall.yaw));
-                var along = float3(out.z, 0, -out.x);
-                var hung = quaternion.AxisAngle(along, Math.PI);
-                lens.scene.Mesh(ArmsMesh("lure_bell"), float4x4.TRS(stall.at + out * 0.14 + along * 0.2 - float3(0, 0.05, 0), hung, float3(1.6)), Steel, Finish { });
-                lens.scene.Mesh(ArmsMesh("lure_bell"), float4x4.TRS(stall.at + out * 0.14 - along * 0.2 - float3(0, 0.05, 0), hung, float3(1.6)), Steel, Finish { });
-                break;
-            }
-            case Sale.Brew:
-            {
-                var brew = Brew(stall.item);
-                var out = float3(Math.Sin(stall.yaw), 0, Math.Cos(stall.yaw));
-                var bob = Math.Sin(look.time * 1.7 + stall.at.x) * 0.04;
-                var at = float3(stall.at.x, 1.12 + bob, stall.at.z) + out * 0.15;
-                var lit = match.power || brew == Brew.SecondWind ? 2.2 : 0.35;
-                lens.scene.Mesh(ItemMesh(PotionModel(brew)), float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), look.time * 0.8), float3(1.6)), Steel, Finish { glow = lit });
-                break;
-            }
-            case Sale.Beacon:
-            {
-                var turn = quaternion.AxisAngle(float3(0, 1, 0), stall.yaw);
-                var pull = match.power ? -1.9 : -0.35;
-                lens.scene.Mesh(ItemMesh("lever_base"), float4x4.TRS(stall.at, turn, float3(1)), Steel, Finish { });
-                lens.scene.Mesh(ItemMesh("lever"), float4x4.TRS(stall.at, Math.Mul(turn, quaternion.AxisAngle(float3(1, 0, 0), pull)), float3(1)), Steel, Finish { });
-                break;
-            }
-        }
-    }
-}
-
-// The Pilgrim's Chest where it is: its lid, what it's showing, the skull, its flight.
-[Stage(Layers.Scene, 5)]
-view DrawChest(Village village, Armory armory, Lens lens, Look look, Match match)
-{
-    if (!lens.made || !armory.made || match.chest == ChestState.Gone) return;
-    var index = ChestStallOf(village.plan, match.chestSpot);
-    if (index < 0) return;
-    var stall = village.plan.stalls[index];
-    mut var turn = quaternion.AxisAngle(float3(0, 1, 0), stall.yaw + Math.PI);
-    mut var at = stall.at;
-    if (match.chest == ChestState.Fleeing)
-    {
-        var up = Math.Saturate((match.chestTime - 1.2) / 2.8);
-        at += float3(0, up * up * 14, 0);
-        turn = Math.Mul(turn, quaternion.AxisAngle(float3(0, 1, 0), up * up * 12));
-    }
-    var base = float4x4.TRS(at, turn, float3(1));
-    lens.scene.Mesh(ItemMesh("chest_open_base"), base, Steel, Finish { });
-    var open = match.chest == ChestState.Spinning ? Math.Saturate(match.chestTime * 2.5) : match.chest == ChestState.Offering ? 1.0 : match.chest == ChestState.Fleeing ? Math.Saturate(1 - match.chestTime) : 0.0;
-    var lid = Math.Mul(base, float4x4.TRS(float3(0, 0.4, -0.3), quaternion.AxisAngle(float3(1, 0, 0), -open * 1.9), float3(1)));
-    lens.scene.Mesh(ItemMesh("chest_lid"), lid, Steel, Finish { });
-    // What rises out of it: a weapon after another, slowing, then the one it gives, or the skull
-    if (match.chest == ChestState.Spinning || match.chest == ChestState.Offering || (match.chest == ChestState.Fleeing && match.chestTime < 1.2))
-    {
-        var rise = match.chest == ChestState.Spinning ? Math.Saturate(match.chestTime / CHEST_SPIN) : 1.0;
-        var spinning = match.chest == ChestState.Spinning && match.chestTime < CHEST_SPIN - 0.35;
-        mut var shown = match.chestWeapon;
-        if (spinning)
-        {
-            // Faster at first, slower toward the end
-            var tick = int(Math.Pow(match.chestTime, 0.6) * 9);
-            shown = Weapon(1 + Math.Hash(int2(tick, match.chestUses)) % (WEAPON_COUNT - 1));
-        }
-        var lift = at + float3(0, 0.35 + rise * 0.55, 0);
-        var spin = quaternion.AxisAngle(float3(0, 1, 0), stall.yaw + Math.PI * 0.5 + (match.chest == ChestState.Offering ? Math.Sin(look.time * 1.4) * 0.3 : 0.0));
-        if (match.chestSkull && !spinning)
-        {
-            lens.scene.Mesh(ItemMesh("pu_instakill"), float4x4.TRS(lift + float3(0, 0.2, 0), spin, float3(1.4)), Steel, Finish { tint = float3(1.3, 0.5, 0.4) });
-        }
-        else if (shown != Weapon.None)
-        {
-            var data = DataOf(armory, ModelName(shown));
-            var middle = V3(data.tip) * 0.5;
-            var place = Math.Mul(float4x4.TRS(lift, Math.Mul(spin, quaternion.AxisAngle(float3(0, 0, 1), -Math.PI * 0.5)), float3(1)), float4x4.Translate(-middle));
-            lens.scene.Mesh(ArmsMesh(data.name), place, Steel, Finish { tint = float3(1.15, 1.2, 1.4) });
-        }
-    }
-}
-
-// The Runeforge: once there's fire in it, a circle of runes; the weapon on the anvil while it works, and what it gives.
-[Stage(Layers.Scene, 5)]
-view DrawForge(Village village, Armory armory, Lens lens, Look look, Match match, mut Fx fx)
-{
-    if (!lens.made || !armory.made) return;
-    foreach (var stall in village.plan.stalls)
-    {
-        if (stall.sale != Sale.Forge) continue;
-        if (match.power && Math.Distance(stall.at, look.eye) < 40)
-        {
-            // The ring, a few streaks a frame, slowly turning
-            for (var k = 0; k < 24; k++)
-            {
-                var a0 = k * Math.TAU / 24 + look.time * 0.2;
-                var a1 = a0 + Math.TAU / 24;
-                var r = 1.5;
-                fx.streaks.Add(Streak { from = float3(stall.at.x + Math.Cos(a0) * r, 0.04, stall.at.z + Math.Sin(a0) * r),
-                                        to = float3(stall.at.x + Math.Cos(a1) * r, 0.04, stall.at.z + Math.Sin(a1) * r),
-                                        life = 0.02, width = 0.03, color = float3(0.25, 0.4, 1.0) });
-                if (k % 3 == 0)
-                    fx.streaks.Add(Streak { from = float3(stall.at.x + Math.Cos(a0) * 1.25, 0.04, stall.at.z + Math.Sin(a0) * 1.25),
-                                            to = float3(stall.at.x + Math.Cos(a0 + 0.1) * 1.4, 0.04, stall.at.z + Math.Sin(a0 + 0.1) * 1.4),
-                                            life = 0.02, width = 0.025, color = float3(0.35, 0.5, 1.0) });
-            }
-        }
-        if (match.forge == ForgeState.Cold) continue;
-        var data = DataOf(armory, ModelName(match.forgeWeapon));
-        var hover = stall.at + float3(0, 0.55 + Math.Sin(look.time * 2) * 0.05, 0);
-        var turn = Math.Mul(quaternion.AxisAngle(float3(0, 1, 0), look.time * (match.forge == ForgeState.Offering ? 1.0 : 3.0)), quaternion.AxisAngle(float3(0, 0, 1), -Math.PI * 0.5));
-        var place = Math.Mul(float4x4.TRS(hover, turn, float3(1)), float4x4.Translate(-V3(data.tip) * 0.5));
-        var runes = match.forge == ForgeState.Offering ? 1.0 : Math.Saturate(match.forgeTime / FORGE_WORK);
-        lens.scene.Mesh(ArmsMesh(data.name), place, Steel, Finish { runes = runes });
-        if (match.forge == ForgeState.Working && Math.Frac(look.time * 2.2) < 0.08)
-            for (var k = 0; k < 4; k++) Glow(fx, Mote { at = hover, velocity = Scatter(fx, 4) + float3(0, 2, 0), life = 0.4, size = 0.025, gravity = 9, color = float3(1.0, 0.7, 0.3), alpha = 5 });
-    }
-}
-
-// The chest's pillar of light, seen from across the village.
-[Stage(Layers.Glass, 2)]
-view DrawBeam(Village village, Lens lens, Match match, Look look, Fx fx)
-{
-    if (!lens.made || !fx.made || match.chest == ChestState.Gone || match.chest == ChestState.Fleeing) return;
-    var index = ChestStallOf(village.plan, match.chestSpot);
-    if (index < 0) return;
-    var at = village.plan.stalls[index].at;
-    var pulse = 0.7 + Math.Sin(look.time * 1.3) * 0.15;
-    List<Sprite> beam = [Sprite { at = at + float3(0, 0.3, 0), to = at + float3(0, 40, 0), size = 0.55, color = float4(0.35, 0.5, 0.9, 0.35 * pulse) },
-                         Sprite { at = at + float3(0, 0.3, 0), to = at + float3(0, 40, 0), size = 0.18, color = float4(0.6, 0.75, 1.0, 0.6 * pulse) }];
-    lens.scene.Depth(Depth.Read),
-    lens.scene.Cull(Cull.None),
-    lens.scene.Blend(Blend.Add)
-    {
-        lens.scene.Instanced(fx.quad, fx.quadFaces, beam, Face, StreakLight);
-    }
-}
-
-[Stage(Layers.Glass, 3)]
-view DrawChalk(Dressing dressing, Lens lens, Fx fx)
-{
-    if (!lens.made || !fx.made || !dressing.made || dressing.chalk.count == 0) return;
-    lens.scene.Depth(Depth.Read),
-    lens.scene.Cull(Cull.None),
-    lens.scene.Blend(Blend.Add)
-    {
-        lens.scene.Instanced(fx.quad, fx.quadFaces, dressing.chalk, Face, StreakLight);
-    }
+    if (!lens.made || !village.made) return;
+    if (!dressing.made) MakeDressing(dressing, village.plan);
+    for (var i = 0; i < dressing.names.count; i++) lens.scene.Instanced(ItemMesh(dressing.names[i]), dressing.placed[i], Steel, Finish { glow = 1 });
 }
 
 // A power-up: bobbing, turning, glowing green; blinking as it's about to go.
@@ -280,8 +41,7 @@ view DrawDrop(Drop drop, Lens lens, Look look)
 {
     if (!lens.made) return;
     if (drop.life < 6 && Math.Frac(drop.life * (drop.life < 3 ? 4 : 2)) < 0.4) return;
-    var name = drop.kind == Boon.MaxAmmo ? "pu_max_ammo" : drop.kind == Boon.InstaKill ? "pu_instakill" : drop.kind == Boon.DoublePoints ? "pu_double"
-             : drop.kind == Boon.Nuke ? "pu_nuke" : "pu_carpenter";
+    var name = drop.kind == Boon.MaxAmmo ? "pu_max_ammo" : drop.kind == Boon.InstaKill ? "pu_instakill" : "pu_nuke";
     var at = drop.at + float3(0, 0.95 + Math.Sin(look.time * 2.4) * 0.12, 0);
     lens.scene.Mesh(ItemMesh(name), float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), look.time * 1.6), float3(1.3)), Steel, Finish { tint = float3(0.9, 1.6, 0.9), glow = 2 });
 }

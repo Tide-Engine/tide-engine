@@ -1,10 +1,10 @@
 using Rooms;
 
-// What this machine hears: the night over Ashwick and a low dread under it
-// that rises with the rounds, the bell that starts each one, the dead groaning
-// where they are, feet on cobbles, boards and earth, every weapon's swing,
-// draw, loose and load, what each blow sounds like, the boards, the doors,
-// the chest, the forge, the brews' tunes near their stands, the power-ups.
+// What this machine hears: the night in Ashwick Wood and a low dread under
+// it that rises with the waves, the bell that starts each one, the dead
+// groaning where they are, feet on earth and the ruin's stones, the fires,
+// every weapon's swing, draw, loose and load, what each blow sounds like, the
+// cards taken, the power-ups.
 
 [Bus]
 enum Bus { Master, Effects, Music, Ambience }
@@ -36,10 +36,7 @@ asset List<Clip> arrowsWood = "sfx/arrow_hit_wood_*.ogg";
 asset List<Clip> arrowsStone = "sfx/arrow_hit_stone_*.ogg";
 asset List<Clip> bowReleases = "sfx/bow_release_*.ogg";
 asset List<Clip> explosions = "sfx/explode_*.ogg";
-asset List<Clip> boardRips = "sfx/board_rip_*.ogg";
-asset List<Clip> boardPlaces = "sfx/board_place_*.ogg";
 asset List<Clip> stepsStone = "sfx/step_stone_*.ogg";
-asset List<Clip> stepsWood = "sfx/step_wood_*.ogg";
 asset List<Clip> stepsDirt = "sfx/step_dirt_*.ogg";
 asset List<Clip> hurts = "sfx/hurt_*.ogg";
 asset List<Clip> jingles = "sfx/jingle_*.ogg";
@@ -69,27 +66,14 @@ asset Clip riseClip = "sfx/rise.ogg";
 asset Clip landClip = "sfx/land.ogg";
 asset Clip downedClip = "sfx/downed.ogg";
 asset Clip reviveClip = "sfx/revive.ogg";
-asset Clip coinsClip = "sfx/coins.ogg";
-asset Clip denyClip = "sfx/deny.ogg";
-asset Clip doorOpen = "sfx/door_open.ogg";
-asset Clip debrisClear = "sfx/debris_clear.ogg";
-asset Clip powerOn = "sfx/power_on.ogg";
-asset Clip chestOpen = "sfx/chest_open.ogg";
-asset Clip chestSpin = "sfx/chest_spin.ogg";
-asset Clip chestClose = "sfx/chest_close.ogg";
-asset Clip chestFlee = "sfx/chest_flee.ogg";
-asset Clip chestLand = "sfx/chest_land.ogg";
 asset Clip drinkClip = "sfx/drink.ogg";
 asset Clip bottleSmash = "sfx/bottle_smash.ogg";
-asset Clip forgeClip = "sfx/forge.ogg";
 asset Clip forgeReady = "sfx/forge_ready.ogg";
 asset Clip powerupSpawn = "sfx/powerup_spawn.ogg";
 asset Clip powerupGrab = "sfx/powerup_grab.ogg";
 asset Clip puMaxAmmo = "sfx/pu_max_ammo.ogg";
 asset Clip puInstakill = "sfx/pu_instakill.ogg";
-asset Clip puDouble = "sfx/pu_double.ogg";
 asset Clip puNuke = "sfx/pu_nuke.ogg";
-asset Clip puCarpenter = "sfx/pu_carpenter.ogg";
 asset Clip puEnd = "sfx/pu_end.ogg";
 asset Clip hitmarkerClip = "sfx/hitmarker.ogg";
 asset Clip pointsTick = "sfx/points_tick.ogg";
@@ -132,10 +116,8 @@ local singleton Ears
     Act lastAct;
     int lastSlot = -1;
     Weapon lastWeapon;
-    float jingleWait = 25;
     float boonWait;
     bool wasInstakill;
-    bool wasDoubled;
     float lastPoints;
 }
 
@@ -178,7 +160,7 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     ears.breath.loop = true;
     ears.breath.volume = Math.Saturate(0.6 - mine.stamina) * 0.6;
     ears.breath.playing = playing && mine.stamina < 0.5;
-    // The nearest fire: the braziers once lit, or a torch
+    // The nearest torch, and the nearest fire
     mut var nearest = 1000.0;
     mut var at = float3(0);
     foreach (var t in village.plan.torches)
@@ -199,7 +181,7 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     ears.torch.playing = nearest < 12;
     mut var brazierFar = 1000.0;
     mut var brazierAt = float3(0);
-    foreach (var b in village.plan.braziers)
+    foreach (var b in village.plan.fires)
     {
         var far = Math.Distance(b, me.eye);
         if (far < brazierFar)
@@ -215,25 +197,10 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     ears.brazier.volume = 1.0;
     ears.brazier.pitch = 0.8;
     ears.brazier.bus = Bus.Ambience;
-    ears.brazier.playing = match.power && brazierFar < 25;
-    // A brew's tune now and then, near its stand
-    ears.jingleWait -= dt;
-    if (ears.jingleWait <= 0 && playing)
-    {
-        ears.jingleWait = ears.random.NextFloat(35, 70);
-        foreach (var stall in village.plan.stalls)
-        {
-            if (stall.sale != Sale.Brew || Math.Distance(stall.at, me.eye) > 14) continue;
-            if (!match.power && Brew(stall.item) != Brew.SecondWind) continue;
-            Audio.Play(jingles[stall.item % jingles.count], stall.at, 0.8, 1.0);
-            break;
-        }
-    }
-    // The power-ups wearing off
+    ears.brazier.playing = brazierFar < 25;
+    // Death's Touch wearing off
     if (ears.wasInstakill && match.instakill <= 0) Audio.Play(puEnd, 0.6);
-    if (ears.wasDoubled && match.doubled <= 0) Audio.Play(puEnd, 0.6);
     ears.wasInstakill = match.instakill > 0;
-    ears.wasDoubled = match.doubled > 0;
 }
 
 // The dead's voices: a groan now and then from each, a scream from the fast ones.
@@ -273,11 +240,8 @@ view Footfalls(Survivor survivor, mut Ears ears, Me me, Village village)
     }
     if (mine) ears.stepped = walked;
     else ears.othersStepped[s.seat] = walked;
-    var zone = ZoneAt(village.plan, s.feet);
-    var paved = Math.Abs(s.feet.x) < 12 && s.feet.z > -16 && s.feet.z < 18;
     mut Clip clip = stepsDirt[ears.random.NextInt(stepsDirt.count)];
-    if (zone == Zone.Tavern) clip = stepsWood[ears.random.NextInt(stepsWood.count)];
-    else if (zone == Zone.Chapel || paved) clip = stepsStone[ears.random.NextInt(stepsStone.count)];
+    if (Paved(village.plan, s.feet)) clip = stepsStone[ears.random.NextInt(stepsStone.count)];
     var pitch = ears.random.NextFloat(0.92, 1.08);
     if (mine) Audio.Play(clip, 0.42, pitch);
     else Audio.Play(clip, s.feet, 0.7, pitch);
@@ -384,10 +348,11 @@ local event(Spell spell) HearSpell(mut Ears ears)
     if (spell.weapon == Weapon.StaffFrost) Audio.Play(staffFrost, spell.from, 0.8, 1.0);
 }
 
-local event(Thud thud) HearThud(mut Ears ears)
+local event(Thud thud) HearThud(mut Ears ears, Village village)
 {
     if (thud.kind == Shot.Pot || thud.kind == Shot.Bell) return;
-    var stone = thud.normal.y > 0.5 || Math.Abs(thud.at.x) < 12;
+    // Into the ruin's walls or floor, or the boulders south of the fire: stone; into earth and wood, not
+    var stone = Paved(village.plan, thud.at) || (thud.normal.y < 0.5 && (thud.at.z > 7 || thud.at.z < -8));
     Audio.Play(stone ? arrowsStone[ears.random.NextInt(arrowsStone.count)] : arrowsWood[ears.random.NextInt(arrowsWood.count)], thud.at, 0.7,
                ears.random.NextFloat(0.9, 1.1));
 }
@@ -405,17 +370,6 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
     {
         case Sfx.Rise: Audio.Play(riseClip, cue.at, 0.9, ears.random.NextFloat(0.9, 1.1)); return;
         case Sfx.Snarl: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 0.85, ears.random.NextFloat(0.85, 1.15)); return;
-        case Sfx.Deny: PlayAt(denyClip, cue.at, near, 0.7, 1.0); return;
-        case Sfx.Coins: PlayAt(coinsClip, cue.at, near, 0.7, 1.0); return;
-        case Sfx.ChestOpen:
-            Audio.Play(chestOpen, cue.at, 0.9, 1.0);
-            Audio.Play(chestSpin, cue.at, 0.9, 1.0);
-            return;
-        case Sfx.ChestClose: Audio.Play(chestClose, cue.at, 0.8, 1.0); return;
-        case Sfx.ChestFlee: Audio.Play(chestFlee, cue.at, 1.0, 1.0); return;
-        case Sfx.ChestLand: Audio.Play(chestLand, cue.at, 1.0, 1.0); return;
-        case Sfx.Forge: Audio.Play(forgeClip, cue.at, 1.0, 1.0); return;
-        case Sfx.ForgeReady: Audio.Play(forgeReady, cue.at, 0.9, 1.0); return;
         case Sfx.Drink:
             PlayAt(drinkClip, cue.at, near, 0.8, 1.0);
             return;
@@ -431,25 +385,17 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
     }
 }
 
-local event(BoardTorn torn) HearTorn(mut Ears ears, Village village)
+// A card taken: this machine's own, heard as what it is (a brew's tune, the forge, a blade drawn).
+local event(Picked picked) HearPicked(Me me)
 {
-    Audio.Play(boardRips[ears.random.NextInt(boardRips.count)], village.plan.windows[torn.window].at, 0.9, ears.random.NextFloat(0.9, 1.1));
-}
-
-local event(BoardNailed nailed) HearNailed(mut Ears ears, Village village)
-{
-    Audio.Play(boardPlaces[ears.random.NextInt(boardPlaces.count)], village.plan.windows[nailed.window].at, 0.8, ears.random.NextFloat(0.95, 1.05));
-}
-
-local event(GateOpened opened) HearGate(Village village)
-{
-    var gate = village.plan.gates[opened.gate];
-    Audio.Play(gate.look == GateLook.Rubble ? debrisClear : doorOpen, gate.at + float3(0, 1.2, 0), 1.0, gate.look == GateLook.Bars ? 0.8 : 1.0);
-}
-
-local event(PowerOn power) HearPower()
-{
-    Audio.Play(powerOn, 1.0);
+    if (picked.seat != me.seat) return;
+    switch (picked.card)
+    {
+        case Card.Weapon: Audio.Play(drawBlade, 0.8); return;
+        case Card.Brew: Audio.Play(jingles[picked.item % jingles.count], 0.8); return;
+        case Card.Runeforge: Audio.Play(forgeReady, 0.9); return;
+    }
+    Audio.Play(powerupGrab, 0.8);
 }
 
 local event(Boons boons) HearBoon()
@@ -459,9 +405,7 @@ local event(Boons boons) HearBoon()
     {
         case Boon.MaxAmmo: Audio.Play(puMaxAmmo, 1.0); return;
         case Boon.InstaKill: Audio.Play(puInstakill, 1.0); return;
-        case Boon.DoublePoints: Audio.Play(puDouble, 1.0); return;
         case Boon.Nuke: Audio.Play(puNuke, 1.0); return;
-        case Boon.Carpenter: Audio.Play(puCarpenter, 1.0); return;
     }
 }
 

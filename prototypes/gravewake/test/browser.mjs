@@ -1,8 +1,8 @@
 // The real game in a real browser, one player: the title, Play, the first
-// round coming in the square, then the beacon lit and every door open by the
-// development keys, and a walk to each area by them (the tavern, the stables,
-// the smithy, the chapel, the graveyard, the keep), a picture of each, with a
-// swing and a crossbow shot on the way. Frames and match time advance under
+// wave coming to the fire, a swing and a crossbow shot, the wave ended by the
+// development keys and its cards (one taken), and a walk round the clearing
+// by them (the ruin, the graveyard, the camp, the boulders, two edges), a
+// picture of each. Frames and match time advance under
 // the runner's control, so nothing waits on a clock, and no sound reaches a
 // device, and the page never gets the pointer lock it asks for: headless Chrome
 // on Windows would take the machine's real cursor. Any shader, WebGL/WebGPU
@@ -173,27 +173,30 @@ try {
     await click(229, 379);
     await until(value => value.state === 2, 'a match behind the title');
 
-    stage = 'round one in the square';
+    stage = 'the first wave';
     await frames(150);
-    const square = await screenshot('square');
+    const fire = await screenshot('fire');
     stage = 'a swing';
     await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 640, y: 360, button: 'left', clickCount: 1 });
     await frames(10);
     await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 360, button: 'left', clickCount: 1 });
     await frames(6);
     await screenshot('swing');
-    stage = 'the beacon and the doors';
-    await tap('F2', 'F2');
-    await tap('F3', 'F3');
-    await tap('F4', 'F4');
-    await frames(10);
     stage = 'a crossbow';
-    await tap('Digit2', '2');
+    await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 640, y: 360, button: 'left', clickCount: 1 });
+    await frames(4);
+    await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 360, button: 'left', clickCount: 1 });
     await frames(30);
     await screenshot('crossbow');
-    // F6 walks to each area in turn: the tavern, the stables, the smithy, the chapel, the graveyard, the keep
-    const walks = ['tavern', 'stables', 'smithy', 'chapel', 'graveyard', 'keep'];
-    let last = square;
+    stage = 'the cards';
+    await tap('F5', 'F5');
+    await frames(40);
+    await screenshot('cards');
+    await tap('Digit3', '3');
+    await frames(10);
+    // F6 walks round the clearing: the ruin, the graveyard, the camp, the boulders, two edges
+    const walks = ['ruin', 'graveyard', 'camp', 'boulders', 'north-east', 'south-west'];
+    let last = fire;
     for (const place of walks) {
         stage = place;
         await tap('F6', 'F6');
@@ -205,7 +208,7 @@ try {
     assert.equal(state.aborted, '');
     assert.equal(state.screen.canvasWidth, state.screen.width);
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`GRAVEWAKE (${backend}): the title, round one, a swing, a crossbow and every area drew with no errors in ${((performance.now() - began) / 1000).toFixed(1)}s (${state.frames} frames). Captures: ${output}`);
+    console.log(`GRAVEWAKE (${backend}): the title, the first wave, a swing, a crossbow, the cards and the clearing drew with no errors in ${((performance.now() - began) / 1000).toFixed(1)}s (${state.frames} frames). Captures: ${output}`);
 } catch (error) {
     process.exitCode = 1;
     console.error(`GRAVEWAKE failed during ${stage}: ${error.stack ?? error}`);
