@@ -448,9 +448,20 @@ in place of guns and perks:
 
 ## Rendering
 
-- The scene draws into a multisampled `Rgba16f` window target and `Develop`
-  brings it to the window with ACES, bloom (quarter-size bright pass and
-  blur), the hurt and downed reds and the game-over fade.
+- **The PSX look** (2026-10-16, the owner's "PSX low poly style"): the scene
+  draws into an `Rgba16f` target 270 lines high (`LINES`), its width the
+  window's shape, no multisampling, and `Develop` reads it back with
+  `Filter.Point` so its pixels stay sharp. Every world draw (the ground, kit,
+  dressing, survivors, first-person arms and weapons) has the `Wobble` vert:
+  each corner's clip position snapped to the low picture's pixel grid
+  (`Snapped`, `look.low`), so still things shimmer a little as the eye moves
+  and moving ones wobble. The horde's `Shamble` snaps the same way. `Develop`
+  ends with a 4 by 4 ordered (Bayer) dither in the low picture's pixels and
+  32 steps a channel. The kit's textures are `Filter.Point` (no mips). The
+  bloom works at half the low picture. The HUD stays at the window's size.
+- `Develop` brings the scene to the window with ACES, bloom (a half-size
+  bright pass of the low picture and blur), the hurt and downed reds and the
+  game-over fade.
 - Light: a moon with a 2048-texel orthographic shadow map following the
   camera (snapped to its texels), a sky dome, fog, and up to 28 point lamps
   nearest the camera: the ruin's two torches (`WallTorch`), the two fires'

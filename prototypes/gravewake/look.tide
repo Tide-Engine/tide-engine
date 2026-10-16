@@ -1,5 +1,8 @@
-// How Ashwick Wood looks at night: the moon and the sky, the fires and the
-// ruin's torches, fog in the trees. The picture is lit in light (linear), into a float
+// How Ashwick Wood looks at night, as a console of the nineties would have
+// drawn it: the picture made at 270 lines and blown up with its pixels sharp,
+// every corner put on one of them (so things wobble), its colours cut to 32
+// steps a channel and dithered, its textures read without blending. The moon
+// and the sky, the fires and the ruin's torches, fog in the trees. The picture is lit in light (linear), into a float
 // target with smooth edges, the moon's shadows from a map of what it sees,
 // and brought to the window by Develop: its bright parts bloom, then it's
 // toned down under one, graded, and the corners darkened.
@@ -9,6 +12,7 @@ enum Layers { Prepare, Gather, Shadows, Scene, Glass, Hands, Develop, Hud }
 const float NEAR = 0.05;
 const float FAR = 400;
 const int MOON_PIXELS = 2048;
+const float LINES = 270;           // The picture's height in pixels, whatever the window's
 const float MOON_REACH = 46;       // Half the width the moon's shadow map covers, round the eye
 
 // A lamp: a torch, a brazier, a candle, a lantern. Light falls off to nothing at `reach`.
@@ -34,6 +38,7 @@ local singleton Look
     float4x4 toMoon;
     float4x4 toClip;                              // The eye's camera, world to clip, for what's marked on the screen
     float2 pixel;                                 // One pixel of the window, in uv
+    float2 low;                                   // The picture's size in its own (low) pixels
     float exposure = 1.6;
     float hurt;                                   // The red of being hit, 0 to 1
     float downed;                                 // Grey of being down
@@ -47,7 +52,7 @@ local singleton Lights
 
 local singleton Lens
 {
-    RenderTarget scene;
+    RenderTarget scene;                // At LINES high, its width the window's shape (look.low)
     RenderTarget moon;
     DepthTexture moonDepth;
     RenderTarget bright;
@@ -245,7 +250,7 @@ frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step)
 // the corners darker, and what being hurt or down does to it.
 frag Develop(Vertex vertex, out Color color, Texture source, Lens lens, Look look)
 {
-    var seen = Rgb(source.Sample(vertex.uv)) + Rgb(lens.glow.Sample(vertex.uv)) * 0.6;
+    var seen = Rgb(source.Sample(vertex.uv, Filter.Point)) + Rgb(lens.glow.Sample(vertex.uv)) * 0.6;
     var exposed = seen * look.exposure;
     // A filmic curve (Narkowicz's fit of ACES)
     var a = exposed * (exposed * 2.51 + float3(0.03));
@@ -259,9 +264,51 @@ frag Develop(Vertex vertex, out Color color, Texture source, Lens lens, Look loo
     shown *= 1 - Math.Saturate(corner * 1.25 - 0.05);
     var red = Math.Saturate(corner * 3.2 - 0.1) * look.hurt;
     shown = Math.Lerp(shown, float3(0.45, 0.02, 0.02), red);
-    shown += float3((Random.NextFloat() - 0.5) * 0.025);
     shown *= 1 - look.fade;
-    color = Color(shown, 1);
+    // 32 steps a channel, dithered in the low picture's own pixels by the 4 by 4 ordered pattern
+    var px = Math.Floor(vertex.uv * look.low);
+    var step = (Bayer(int(px.x) & 3, int(px.y) & 3) + 0.5) / 16 - 0.5;
+    shown = float3(Math.Floor(shown.x * 31 + 0.5 + step), Math.Floor(shown.y * 31 + 0.5 + step), Math.Floor(shown.z * 31 + 0.5 + step)) / 31;
+    color = Color(Math.Saturate(shown), 1);
+}
+
+// The 4 by 4 ordered dither's threshold at a pixel, 0 to 15.
+float Bayer(int x, int y)
+{
+    switch (y * 4 + x)
+    {
+        case 0: return 0;
+        case 1: return 8;
+        case 2: return 2;
+        case 3: return 10;
+        case 4: return 12;
+        case 5: return 4;
+        case 6: return 14;
+        case 7: return 6;
+        case 8: return 3;
+        case 9: return 11;
+        case 10: return 1;
+        case 11: return 9;
+        case 12: return 15;
+        case 13: return 7;
+        case 14: return 13;
+    }
+    return 5;
+}
+
+// Each corner onto the nearest pixel of the low picture, as a console of the nineties put them: what's still shimmers a
+// little as the eye moves, and what moves wobbles.
+vert Wobble(mut Corner corner, out float4 clip, Look look)
+{
+    var at = this.clip;
+    clip = Snapped(at, look);
+}
+
+float4 Snapped(float4 at, Look look)
+{
+    if (at.w <= 0.0001) return at;
+    var half = look.low * 0.5;
+    return float4(Math.Round(at.xy / at.w * half) / half * at.w, at.z, at.w);
 }
 
 // ---- Views ----
@@ -320,21 +367,24 @@ void MakeShapes(mut Shapes shapes)
 void Focus(mut Lens lens, mut Look look)
 {
     var size = float2(Screen.width, Screen.height);
+    var low = float2(Math.Max(1, Math.Round(LINES * size.x / Math.Max(1, size.y))), LINES);
     if (!lens.made)
     {
         lens.made = true;
-        lens.scene = RenderTarget.Window(Format.Rgba16f, samples: 4);
+        lens.scene = RenderTarget(int(low.x), int(low.y), 1, Format.Rgba16f);
         lens.moon = RenderTarget(MOON_PIXELS, MOON_PIXELS, 1, Format.Depth);
         lens.moonDepth = lens.moon.depth;
-        lens.bright = RenderTarget(int(Math.Max(1, size.x / 4)), int(Math.Max(1, size.y / 4)), 1, Format.Rgba16f);
-        lens.blur = RenderTarget(int(Math.Max(1, size.x / 4)), int(Math.Max(1, size.y / 4)), 1, Format.Rgba16f);
+        lens.bright = RenderTarget(int(Math.Max(1, low.x / 2)), int(Math.Max(1, low.y / 2)), 1, Format.Rgba16f);
+        lens.blur = RenderTarget(int(Math.Max(1, low.x / 2)), int(Math.Max(1, low.y / 2)), 1, Format.Rgba16f);
         lens.glow = lens.bright.color;
     }
-    else if (size.x != lens.size.x || size.y != lens.size.y)
+    else if (low.x != look.low.x)
     {
-        lens.bright.Resize(int(Math.Max(1, size.x / 4)), int(Math.Max(1, size.y / 4)));
-        lens.blur.Resize(int(Math.Max(1, size.x / 4)), int(Math.Max(1, size.y / 4)));
+        lens.scene.Resize(int(low.x), int(low.y));
+        lens.bright.Resize(int(Math.Max(1, low.x / 2)), int(Math.Max(1, low.y / 2)));
+        lens.blur.Resize(int(Math.Max(1, low.x / 2)), int(Math.Max(1, low.y / 2)));
     }
+    look.low = low;
     lens.size = size;
     look.pixel = float2(1 / Math.Max(1, size.x), 1 / Math.Max(1, size.y));
 }
@@ -382,7 +432,7 @@ view DrawScene(Lens lens, Kit kit, Shapes shapes, Look look)
     {
         lens.scene.Mesh(shapes.dome, shapes.domeFaces, float4x4.Translate(look.eye), SkyDome);
     }
-    lens.scene.Mesh(shapes.ground, shapes.groundFaces, float4x4.identity, Earth);
+    lens.scene.Mesh(shapes.ground, shapes.groundFaces, float4x4.identity, Wobble, Earth);
     for (var i = 0; i < kit.near.count; i++)
     {
         if (kit.near[i].count == 0 || kit.info[i].glass) continue;
@@ -390,12 +440,12 @@ view DrawScene(Lens lens, Kit kit, Shapes shapes, Look look)
         {
             lens.scene.Cull(Cull.None)
             {
-                lens.scene.Instanced(parts[i], kit.near[i], TextureOf(kit.info[i].tex), KitCutout);
+                lens.scene.Instanced(parts[i], kit.near[i], TextureOf(kit.info[i].tex), Wobble, KitCutout);
             }
         }
         else
         {
-            lens.scene.Instanced(parts[i], kit.near[i], TextureOf(kit.info[i].tex), KitLit);
+            lens.scene.Instanced(parts[i], kit.near[i], TextureOf(kit.info[i].tex), Wobble, KitLit);
         }
     }
 }
@@ -405,7 +455,7 @@ view Show(Lens lens, Look look)
 {
     if (!lens.made) return;
     Draw.Blit(lens.scene.color, lens.bright, Bright);
-    Draw.Blit(lens.bright.color, lens.blur, Blur, BlurStep { along = float2(look.pixel.x * 4, 0) });
-    Draw.Blit(lens.blur.color, lens.bright, Blur, BlurStep { along = float2(0, look.pixel.y * 4) });
+    Draw.Blit(lens.bright.color, lens.blur, Blur, BlurStep { along = float2(2 / look.low.x, 0) });
+    Draw.Blit(lens.blur.color, lens.bright, Blur, BlurStep { along = float2(0, 2 / look.low.y) });
     Draw.Blit(lens.scene.color, Draw.window, Develop);
 }

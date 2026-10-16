@@ -32,7 +32,7 @@ view DrawSetPieces(mut Dressing dressing, Village village, Lens lens)
 {
     if (!lens.made || !village.made) return;
     if (!dressing.made) MakeDressing(dressing, village.plan);
-    for (var i = 0; i < dressing.names.count; i++) lens.scene.Instanced(ItemMesh(dressing.names[i]), dressing.placed[i], Steel, Finish { glow = 1 });
+    for (var i = 0; i < dressing.names.count; i++) lens.scene.Instanced(ItemMesh(dressing.names[i]), dressing.placed[i], Wobble, Steel, Finish { glow = 1 });
 }
 
 // A power-up: bobbing, turning, glowing green; blinking as it's about to go.

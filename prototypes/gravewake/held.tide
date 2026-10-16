@@ -348,7 +348,7 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
     {
         if (lowered < 0.98)
         {
-            lens.scene.SkinnedMesh(fpArms, place, pose, Steel, Finish { });
+            lens.scene.SkinnedMesh(fpArms, place, pose, Wobble, Steel, Finish { });
             if (drinking)
             {
                 // A brew to the lips, held round its middle
@@ -378,7 +378,7 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
                 else
                 {
                     var thrown = info.kind == Kind.Thrown && (mine.act == Act.Loose && t > 0.45 || mine.mag[mine.slot] <= 0 && mine.act != Act.Reload);
-                    if (!thrown) lens.scene.Mesh(ArmsMesh(data.name), onBone, Steel, finish);
+                    if (!thrown) lens.scene.Mesh(ArmsMesh(data.name), onBone, Wobble, Steel, finish);
                 }
                 // The blade's trail through the blow
                 var striking = (mine.act == Act.Swing || mine.act == Act.Heavy) && info.kind == Kind.Melee && t > info.hitAt * 0.55 && t < info.hitAt + 0.2;
