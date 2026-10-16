@@ -161,8 +161,9 @@ system CountDead(mut Match match, query (Zombie zombie) zombies)
     match.alive = alive;
 }
 
-// The dead come in a trickle, out of the graves and the roots at the clearing's edge nearest the survivors; a rush
-// (the development key's horde) six a tick.
+// The dead come in a trickle, clawing up out of the ground all round a survivor, 16 to 32 m off and from every side,
+// wherever the ground is open and their way to the survivors is clear; a rush (the development key's horde) six a
+// tick. Where no such ground is found, out of a grave or the roots at the clearing's edge.
 [Stage(Tick.Rounds, 1)]
 system SpawnDead(mut Match match, Ashwick ashwick, Time time, Party party, query (Survivor survivor) survivors)
 {
@@ -187,37 +188,36 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, Party party, query
     for (var k = 0; k < count && match.toSpawn > 0; k++)
     {
         var focus = near[Random.NextInt(near.count)];
-        // The places they can come from, nearest that survivor first, but not at their feet
-        mut List<int> picks = [];
-        mut List<float> distances = [];
-        for (var i = 0; i < ashwick.risers.count; i++)
+        mut var at = float3(0);
+        mut var found = false;
+        for (var tries = 0; tries < 8 && !found; tries++)
         {
-            var far = Math.Distance(ashwick.risers[i].at, focus);
-            if (far < 7) continue;
-            Insert(picks, distances, i, far);
+            var turn = Random.NextFloat(Math.TAU);
+            var far = Random.NextFloat(16, 32);
+            var there = focus + float3(Math.Sin(turn), 0, Math.Cos(turn)) * far;
+            var cell = CellOf(there);
+            if (cell < 0 || !InClearing(there) || !Walkable(ashwick, cell) || FieldAt(ashwick, there) >= UNREACHED) continue;
+            at = there;
+            found = true;
         }
-        if (picks.count == 0) return;
-        var riser = ashwick.risers[picks[Random.NextInt(Math.Min(count > 1 ? 12 : 5, picks.count))]];
+        if (!found)
+        {
+            // A riser, any of them not at the survivor's feet
+            mut List<int> picks = [];
+            for (var i = 0; i < ashwick.risers.count; i++)
+                if (Math.Distance(ashwick.risers[i].at, focus) >= 7) picks.Add(i);
+            if (picks.count == 0) return;
+            at = ashwick.risers[picks[Random.NextInt(picks.count)]].at;
+        }
         var gait = GaitFor(match.round);
         var health = RoundHealth(match.round);
         var look = Random.NextInt(ZOMBIE_LOOKS);
-        mut var at = riser.at + float3(Random.NextFloat(-0.5, 0.5), 0, Random.NextFloat(-0.5, 0.5));
-        if (!Walkable(ashwick, CellOf(at))) at = riser.at;
         at.y = Ground(at.x, at.z);
         Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = health, gait = gait, look = look, state = ZombieState.Rising, pace = Random.NextFloat(0.9, 1.1),
                        phase = Random.NextInt(64) });
         if (k == 0) Send(Cue { sound = Sfx.Rise, at = at });
         match.toSpawn -= 1;
     }
-}
-
-// Into a list kept nearest first.
-void Insert(mut List<int> picks, mut List<float> distances, int pick, float distance)
-{
-    mut var at = picks.count;
-    while (at > 0 && distances[at - 1] > distance) at -= 1;
-    picks.Insert(at, pick);
-    distances.Insert(at, distance);
 }
 
 Gait GaitFor(int round)

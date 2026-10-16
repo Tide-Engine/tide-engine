@@ -1,13 +1,10 @@
 {
  "ambient_loop": {
-  "bytes": 156798,
+  "bytes": 137204,
   "file": "ambient_loop.ogg",
   "kind": "loop",
   "layers": true,
   "packs": [
-   "oga_crow",
-   "oga_crow_caw",
-   "oga_crows",
    "oga_hungry_ghoul",
    "oga_zombie_moans_ds",
    "oga_zombie_moans_ep"
@@ -549,12 +546,12 @@
   "seconds": 1.909
  },
  "game_over": {
-  "bytes": 43118,
+  "bytes": 62339,
   "file": "game_over.ogg",
   "kind": "music",
   "layers": false,
   "packs": [],
-  "seconds": 9.647
+  "seconds": 11.238
  },
  "gore_1": {
   "bytes": 67970,
@@ -901,6 +898,22 @@
   ],
   "seconds": 0.433
  },
+ "item_rare": {
+  "bytes": 21461,
+  "file": "item_rare.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 1.77
+ },
+ "item_uncommon": {
+  "bytes": 17986,
+  "file": "item_uncommon.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 1.477
+ },
  "jingle_1": {
   "bytes": 105349,
   "file": "jingle_1.ogg",
@@ -960,6 +973,14 @@
   ],
   "seconds": 0.423
  },
+ "level_up": {
+  "bytes": 15284,
+  "file": "level_up.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 1.388
+ },
  "mag_reload": {
   "bytes": 7838,
   "file": "mag_reload.ogg",
@@ -971,7 +992,7 @@
   "seconds": 1.186
  },
  "music_high": {
-  "bytes": 297449,
+  "bytes": 307739,
   "file": "music_high.ogg",
   "kind": "loop",
   "layers": false,
@@ -979,7 +1000,7 @@
   "seconds": 32.0
  },
  "music_low": {
-  "bytes": 118552,
+  "bytes": 240367,
   "file": "music_low.ogg",
   "kind": "loop",
   "layers": false,
@@ -1017,14 +1038,14 @@
   "seconds": 0.455
  },
  "pistol_fire": {
-  "bytes": 83202,
-  "file": "pistol_fire.wav",
+  "bytes": 13145,
+  "file": "pistol_fire.ogg",
   "kind": "sfx",
   "layers": true,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 0.943
+  "seconds": 1.291
  },
  "points_tick": {
   "bytes": 4454,
@@ -1166,14 +1187,14 @@
   "seconds": 2.858
  },
  "rifle_fire": {
-  "bytes": 12333,
+  "bytes": 13663,
   "file": "rifle_fire.ogg",
   "kind": "sfx",
   "layers": true,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 1.113
+  "seconds": 1.368
  },
  "rise": {
   "bytes": 19032,
@@ -1187,20 +1208,20 @@
   "seconds": 1.683
  },
  "round_end": {
-  "bytes": 33311,
+  "bytes": 45268,
   "file": "round_end.ogg",
   "kind": "music",
   "layers": false,
   "packs": [],
-  "seconds": 7.5
+  "seconds": 6.0
  },
  "round_start": {
-  "bytes": 44698,
+  "bytes": 50805,
   "file": "round_start.ogg",
   "kind": "music",
   "layers": false,
   "packs": [],
-  "seconds": 8.0
+  "seconds": 6.5
  },
  "scream_1": {
   "bytes": 13015,
@@ -1253,24 +1274,24 @@
   "seconds": 0.15
  },
  "shotgun_fire": {
-  "bytes": 13651,
+  "bytes": 15327,
   "file": "shotgun_fire.ogg",
   "kind": "sfx",
   "layers": true,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 1.233
+  "seconds": 1.477
  },
  "smg_fire": {
-  "bytes": 13196,
+  "bytes": 13793,
   "file": "smg_fire.ogg",
   "kind": "sfx",
   "layers": true,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 1.047
+  "seconds": 1.172
  },
  "snarl_1": {
   "bytes": 61586,
@@ -1555,13 +1576,13 @@
   "seconds": 0.426
  },
  "turret_fire": {
-  "bytes": 56194,
+  "bytes": 59010,
   "file": "turret_fire.wav",
   "kind": "sfx",
   "layers": true,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 0.637
+  "seconds": 0.669
  }
 }

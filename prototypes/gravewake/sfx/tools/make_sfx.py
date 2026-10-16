@@ -586,45 +586,55 @@ def handgonne_reload(rng):
 FA = 'oga_firearms'
 
 
-def gunshot(rel, t0, seconds, rng, low_db=0.0, air=0.25):
-    """One shot of a recording: from just before its crack, its echo cut short to `seconds` (a horde's worth of
-    shots can't each ring for three), a little of the wood's reverb in its place."""
-    x = at_onset(S(FA, rel, max(0.0, t0 - 0.05), t0 + seconds + 0.3), pre=0.001)
-    x = fade(x[:n_of(seconds)], 0.0, seconds * 0.6)
-    if low_db:
-        x = shelf(x, 'lowshelf', 180, low_db)
-    x = reverb(x, rt60=1.2, wet=air, predelay=0.03, damp=0.6)
-    return limit(unit(x) * db(4), -1)
+def gunshot(rel, t0, seconds, rng, thump_hz=60.0, thump_decay=25.0, thump_db=-2.0, snap_db=-8.0, blast_db=None, drive=1.6, air=0.25):
+    """One shot with weight: the recording's crack, from just before it, its echo cut short to `seconds` (a horde's
+    worth of shots can't each ring for three); under it a low thump, the punch the recording lacks; over it a short
+    bright snap of the action; for a shotgun a blast of low noise; driven a little, compressed hard, and a little of
+    the wood's reverb."""
+    crack = at_onset(S(FA, rel, max(0.0, t0 - 0.05), t0 + seconds + 0.3), pre=0.001)
+    crack = fade(crack[:n_of(seconds)], 0.0, seconds * 0.6)
+    thump = body_thump(min(seconds, 0.45), rng, thump_hz, thump_decay)
+    snap = highpass(white(0.03, rng), 3000) * np.exp(-t(0.03) * 160)
+    layers = [(unit(crack), 0, 0), (unit(thump), 0, thump_db), (unit(snap), 0, snap_db)]
+    if blast_db is not None:
+        blast = lowpass(colored(0.35, rng, -3), 900) * np.exp(-t(0.35) * 9) * np.minimum(1, t(0.35) / 0.002)
+        layers.append((unit(blast), 0, blast_db))
+    y = mix(*layers)
+    y = saturate(unit(y), drive, 0.6)
+    y = compress(y, -20, 4.0, 0.001, 0.08, makeup_db=6)
+    y = reverb(y, rt60=1.2, wet=air, predelay=0.03, damp=0.6)
+    return limit(unit(y) * db(5), -1)
 
 
 @sound('rifle_fire', layers=True)
 def rifle_fire(rng):
-    # An AR-15's shot, its echo short for automatic fire
-    return trim(gunshot('AR-15/D_24P.wav', 0.547, 0.55, rng, low_db=2), -50, fade_out=0.08)
+    # An AR-15's shot: a hard crack with a punch under it, its echo short for automatic fire
+    return trim(gunshot('AR-15/D_24P.wav', 0.547, 0.55, rng, thump_hz=58, thump_decay=22, thump_db=-1), -50, fade_out=0.08)
 
 
 @sound('smg_fire', layers=True)
 def smg_fire(rng):
-    # A PPSh's single shot, shorter still: it's fired fourteen a second
-    return trim(gunshot('PPSh/P_22P.wav', 1.143, 0.32, rng, air=0.15), -50, fade_out=0.05)
+    # A PPSh's single shot: lighter and quicker, fired fourteen a second
+    return trim(gunshot('PPSh/P_22P.wav', 1.143, 0.3, rng, thump_hz=75, thump_decay=34, thump_db=-4, snap_db=-6, air=0.15), -50, fade_out=0.05)
 
 
 @sound('shotgun_fire', layers=True)
 def shotgun_fire(rng):
-    # A Mossberg's blast, the full boom and some of its echo
-    return trim(gunshot('Mossberg/N_26P.wav', 0.785, 1.1, rng, low_db=4, air=0.3), -50, fade_out=0.15)
+    # A Mossberg's blast: the biggest boom, a wall of low noise, some of its echo
+    return trim(gunshot('Mossberg/N_26P.wav', 0.785, 1.1, rng, thump_hz=44, thump_decay=10, thump_db=0, snap_db=-10, blast_db=-4, drive=2.2, air=0.3),
+                -50, fade_out=0.15)
 
 
 @sound('pistol_fire', layers=True)
 def pistol_fire(rng):
-    # A 1911's shot
-    return trim(gunshot('1911/A_42P.wav', 0.939, 0.5, rng), -50, fade_out=0.08)
+    # A 1911's shot: sharp, a short thump
+    return trim(gunshot('1911/A_42P.wav', 0.939, 0.5, rng, thump_hz=68, thump_decay=28, thump_db=-3, snap_db=-7), -50, fade_out=0.08)
 
 
 @sound('turret_fire', layers=True)
 def turret_fire(rng):
     # The Engineer's turret: the SMG's shot, higher and thinner, a machine's
-    x = gunshot('PPSh/P_22P.wav', 1.143, 0.22, rng, air=0.1)
+    x = gunshot('PPSh/P_22P.wav', 1.143, 0.22, rng, thump_hz=90, thump_decay=40, thump_db=-8, air=0.1)
     return trim(highpass(pitch(x, 4), 400), -50, fade_out=0.04)
 
 
@@ -1729,71 +1739,34 @@ def jingle_6(rng):
 
 # ================================================================ MUSIC: cues and beds
 
-def church_toll(rng, prime_hz, seconds, strike=1.0, decay=1.0):
-    # the bell's nominal is an octave above the note it seems to sound (the prime)
-    return bell(prime_hz * 2, seconds, rng, 'church', strike=strike, decay=decay, beat=0.5)
+def kick(rng, v=1.0, f0=52.0):
+    """An electronic kick: a falling sine and a click."""
+    body = body_thump(0.4, rng, f0, 9.0)
+    cl = highpass(white(0.008, rng), 2500) * np.exp(-t(0.008) * 400)
+    out = unit(body)
+    out[:len(cl)] += 0.25 * unit(cl)
+    return out * v
 
 
-def drone(freqs, seconds, rng, bright=0.25, attack=1.5, release=2.0):
-    """A low, dark sustained tone: organ-like partials with a slow breath in their brightness."""
+def snare(rng, v=1.0):
+    """A dry electronic snare: a tone and a burst of noise."""
+    tone = sine(185.0, 0.12) * np.exp(-t(0.12) * 30)
+    noise = bandpass(white(0.22, rng), 1200, 7000) * np.exp(-t(0.22) * 18)
+    return mix((unit(tone), 0, -6), (unit(noise), 0, 0)) * v
+
+
+def hat(rng, v=1.0, open_=False):
+    sec = 0.18 if open_ else 0.05
+    return highpass(white(sec, rng), 7000) * np.exp(-t(sec) * (14 if open_ else 80)) * v
+
+
+def supersaw(f, seconds, voices=3, detune=0.008, phase_rng=None):
+    """A few saws a little apart, for a thick synth tone."""
     out = zeros(seconds)
-    tt = t(seconds)
-    for f in freqs:
-        stops = [1.0, 0.45, 0.3 * bright * 4, 0.2 * bright * 4, 0.0, 0.1 * bright * 4]
-        x = organ(f, seconds, rng, stops=stops, attack=attack, release=release, chorus=0.0012)
-        out += x * (0.9 + 0.1 * np.sin(2 * np.pi * rng.uniform(0.05, 0.12) * tt + rng.uniform(0, 6)))
-    return out
-
-
-@sound('round_start', kind='music', lufs=-17)
-def round_start(rng):
-    # A new round: a great church bell tolls three times over a low drone and a dark, swelling choir
-    sec = 8.0
-    out = zeros(sec + 3)
-    for k, at in enumerate([0.0, 2.1, 4.2]):
-        place(out, unit(church_toll(rng, hz('D3'), 6.0, strike=1.2)) * (1.0 - 0.06 * k), at)
-    dr = drone([hz('D1'), hz('D2'), hz('A2')], sec, rng, attack=1.2, release=2.5)
-    ch = choir([hz('D3'), hz('F3'), hz('A3'), hz('D4'), hz('E4')], sec - 0.6, rng, 'oh', voices_per=3, attack=2.2, release=2.0, vib=0.007)
-    y = mix((out, 0, 0), (unit(dr), 0, -8), (unit(ch), 0.6, -6))
-    y = reverb(y, 3.2, wet=0.3, damp=0.55, predelay=0.03)
-    return cap(trim(y, -55, fade_out=1.0), 8.0, 1.5)
-
-
-@sound('round_end', kind='music', lufs=-17)
-def round_end(rng):
-    # A round survived: an eerie choir chord sinking downward, and one distant bell
-    sec = 7.5
-    tt = t(sec)
-    glide = 2 ** (-4 / 12 * np.clip((tt - 1.2) / 4.5, 0, 1) ** 1.3)
-    out = zeros(sec)
-    for f, vow in [(hz('A3'), 'oo'), (hz('C4'), 'oo'), (hz('E4'), 'oo'), (hz('A4'), 'oo'), (hz('Eb4') * 1.003, 'oo')]:
-        for v in range(3):
-            c = rng.uniform(-8, 8)
-            x = voice(f * 2 ** (c / 1200), sec, rng, vowel=vow, attack=1.0, release=2.2, vib=0.009)
-            # the pitch sinks: read the voice through a falling speed
-            x = varispeed(np.concatenate([x, zeros(2)]), lambda u: np.interp(u, np.linspace(0, 1, len(glide)), glide))[:len(out)]
-            out[:len(x)] += x
-    far = church_toll(rng, hz('G2'), 6.0, strike=0.8)
-    far = lowpass(far, 1800)
-    dr = drone([hz('A1'), hz('E2')], sec, rng, attack=1.0, release=3.0)
-    y = mix((unit(out), 0, 0), (unit(far), 1.4, -9), (unit(dr), 0, -12))
-    y = reverb(y, 3.8, wet=0.38, damp=0.5, predelay=0.04)
-    return cap(trim(y, -55, fade_out=1.0), 7.5, 2.0)
-
-
-@sound('game_over', kind='music', lufs=-18)
-def game_over(rng):
-    # Everyone's dead: a long, slow funeral bell over a low drone that fades into nothing
-    sec = 10.0
-    out = zeros(sec + 3)
-    for at, g in [(0.0, 1.0), (4.6, 0.8)]:
-        place(out, unit(church_toll(rng, hz('A2'), 7.0, strike=1.1, decay=0.8)) * g, at)
-    dr = drone([hz('D1'), hz('A1'), hz('D2')], sec, rng, bright=0.2, attack=1.0, release=5.0)
-    hum = choir([hz('D3'), hz('F3'), hz('A3')], sec - 1.0, rng, 'mm', voices_per=2, attack=2.0, release=4.0)
-    y = mix((out, 0, 0), (unit(dr), 0, -7), (unit(hum), 0.8, -13))
-    y = reverb(y, 4.0, wet=0.3, damp=0.6, predelay=0.03)
-    y = y[:n_of(sec)] * env_points([(0, 1), (5.5, 1), (sec, 0)], sec) ** 1.5
-    return trim(y, -60, fade_out=0.5)
+    for k in range(voices):
+        d = 1 + detune * (k - (voices - 1) / 2)
+        out += saw_blep(f * d, seconds, phase0=phase_rng.uniform(0, 1) if phase_rng is not None else 0.0)
+    return out / voices
 
 
 def periodic_noise(seconds, rng, gain_of_f):
@@ -1825,24 +1798,110 @@ def circular_stft_filter(x, gain_fn):
     return y[n:2 * n]
 
 
-def owl_call(rng, f0=380.0):
-    """A tawny owl's hoot: a breathy 'hoo', a pause, then a wavering 'hoo-oo-oo'."""
-    def hoot(sec, f, wav=0.0):
-        tt = t(sec)
-        fr = f * (1 - 0.06 * tt / sec) * (1 + wav * np.sin(2 * np.pi * 9 * tt))
-        x = sine(fr, sec) + 0.15 * sine(fr * 2, sec)
-        br = bandpass(white(sec, rng), f * 0.8, f * 3) * 0.2
-        return (x + br) * env_points([(0, 0), (0.06, 1), (sec * 0.6, 0.8), (sec, 0)], sec)
-    return mix((hoot(0.45, f0), 0, 0), (hoot(0.18, f0 * 0.95), 1.1, -4), (hoot(0.9, f0 * 0.97, 0.02), 1.4, 0))
+def ring_reverb(out, rt60, wet, damp=0.6):
+    """A loop's reverb, its tail folded back round to the start so the echoes carry over the seam."""
+    n = len(out)
+    w = reverb(out, rt60, wet=1.0, dry=0.0, damp=damp)
+    ring = np.zeros(n)
+    for k in range(0, len(w), n):
+        seg = w[k:k + n]
+        ring[:len(seg)] += seg
+    return out + wet * ring
+
+
+@sound('round_start', kind='music', lufs=-16)
+def round_start(rng):
+    # A wave coming: a siren-like synth rising over two seconds and a noise riser, then a huge low impact and a dark
+    # distorted chord that rings off
+    sec = 6.5
+    rise = 2.0
+    tt = t(rise)
+    f = 70 * 2 ** (2.5 * (tt / rise) ** 1.6)
+    siren = lowpass(supersaw(f, rise, 4, 0.012, rng), 2400) * (tt / rise) ** 1.5
+    riser = bandpass(white(rise, rng), 500, 6000) * (tt / rise) ** 2.5
+    boom = body_thump(3.0, rng, 38, 1.6)
+    crash = lowpass(colored(2.5, rng, -1.5), 5000) * np.exp(-t(2.5) * 2.2)
+    stab = zeros(4.0)
+    for n_ in ['D2', 'A2', 'D3', 'F3']:
+        stab += supersaw(hz(n_), 4.0, 3, 0.01, rng)
+    stab = saturate(lowpass(stab, 1400), 2.5, 1.0) * np.exp(-t(4.0) * 0.9)
+    y = mix((unit(siren), 0, -6), (unit(riser), 0, -10), (unit(boom), rise, 0), (unit(crash), rise, -9), (unit(stab), rise, -5))
+    y = reverb(y, 2.6, wet=0.28, damp=0.5, predelay=0.02)
+    return cap(trim(y, -55, fade_out=0.8), sec, 1.2)
+
+
+@sound('round_end', kind='music', lufs=-17)
+def round_end(rng):
+    # A wave held: a soft low hit, then a dark minor chord opening into a major one, a breath of relief
+    sec = 6.0
+    out = zeros(sec)
+    for at, notes, d in [(0.0, ['G2', 'D3', 'Bb3', 'D4'], 2.6), (2.2, ['D2', 'A2', 'F#3', 'A3', 'D4'], 3.8)]:
+        pad = zeros(d)
+        for n_ in notes:
+            pad += supersaw(hz(n_), d, 3, 0.009, rng)
+        sw = env_points([(0, 0), (0.5, 1), (d - 1.2, 0.8), (d, 0)], d)
+        place(out, lowpass(pad, 1800) * sw, at)
+    hit = body_thump(1.2, rng, 45, 3.0)
+    y = mix((unit(out), 0, 0), (unit(hit), 0, -6))
+    y = reverb(y, 3.0, wet=0.35, damp=0.55, predelay=0.03)
+    return cap(trim(y, -55, fade_out=1.0), sec, 1.5)
+
+
+@sound('game_over', kind='music', lufs=-18)
+def game_over(rng):
+    # Everyone's down: a deep impact, then a detuned drone sliding down into nothing
+    sec = 9.0
+    tt = t(sec)
+    slide = 2 ** (-7 / 12 * np.clip((tt - 0.5) / 7.0, 0, 1) ** 1.2)
+    drone_ = zeros(sec)
+    for n_ in ['D2', 'A2', 'D3', 'F3']:
+        drone_ += supersaw(hz(n_) * slide, sec, 3, 0.015, rng)
+    drone_ = lowpass(drone_, 900) * env_points([(0, 0), (0.6, 1), (5.5, 0.8), (sec, 0)], sec) ** 1.3
+    boom = body_thump(4.0, rng, 34, 1.2)
+    y = mix((unit(drone_), 0, -3), (unit(boom), 0, 0))
+    y = reverb(y, 4.0, wet=0.35, damp=0.6, predelay=0.03)
+    return trim(y, -60, fade_out=0.5)
+
+
+@sound('level_up', layers=True)
+def level_up(rng):
+    # A level for the party: a quick rising synth arpeggio and a shimmer
+    out = zeros(1.6)
+    for k, n_ in enumerate(['D4', 'F4', 'A4', 'D5', 'F5']):
+        note = supersaw(hz(n_), 0.35, 3, 0.006, rng) * np.exp(-t(0.35) * 8)
+        place(out, lowpass(note, 5000), 0.055 * k, 0.6 + 0.1 * k)
+    shim = sine(hz('A6'), 1.0) * np.exp(-t(1.0) * 4) * (0.7 + 0.3 * np.sin(2 * np.pi * 9 * t(1.0)))
+    y = mix((unit(out), 0, 0), (unit(shim), 0.28, -12))
+    return trim(reverb(y, 1.4, wet=0.3, damp=0.4), -50, fade_out=0.2)
+
+
+def item_arp(rng, notes, step, bright, shimmer_db):
+    out = zeros(2.0)
+    for k, n_ in enumerate(notes):
+        note = square_blep(hz(n_), 0.3) * np.exp(-t(0.3) * 9) * 0.6 + supersaw(hz(n_), 0.3, 2, 0.005, rng) * np.exp(-t(0.3) * 7) * 0.4
+        place(out, lowpass(note, bright), step * k)
+    shim = sparkle(0.8, rng, 25, 5000, 12000)
+    y = mix((unit(out), 0, 0), (unit(shim), step * len(notes), shimmer_db))
+    return trim(reverb(y, 1.6, wet=0.3, damp=0.35), -50, fade_out=0.25)
+
+
+@sound('item_uncommon', layers=True)
+def item_uncommon(rng):
+    # An uncommon item taken: three notes up
+    return item_arp(rng, ['A4', 'C#5', 'E5'], 0.07, 4500, -14)
+
+
+@sound('item_rare', layers=True)
+def item_rare(rng):
+    # A rare item: a longer, brighter run and more shimmer
+    return item_arp(rng, ['D5', 'F#5', 'A5', 'D6', 'F#6'], 0.06, 7000, -8)
 
 
 @sound('ambient_loop', kind='loop', layers=True, lufs=-28)
 def ambient_loop(rng):
-    # Night over the village, 30 s: wind gusting, distant crows, an owl, very far-off moaning
+    # Night in the wood, 30 s: wind gusting, thunder rolling far off, very far-off moaning
     sec = 30.0
     n = n_of(sec)
-    # wind: gusts that rise in loudness and pitch together, a thin whistle in the strongest,
-    # all on loop-locked wobbles and filtered round the circle so nothing jumps at the seam
     gust = np.clip(0.5 + 0.5 * periodic_lfo(sec, rng, 0.22, 0.8), 0, 1)
     gust2 = np.clip(0.5 + 0.5 * periodic_lfo(sec, rng, 0.35, 1.0), 0, 1)
     at = lambda arr, tm: arr[min(len(arr) - 1, int(tm * R))]
@@ -1852,117 +1911,103 @@ def ambient_loop(rng):
     howl = circular_stft_filter(periodic_noise(sec, rng, lambda f: 1.0),
                                 lambda tm, f: at(gust2, tm) ** 3 * band_gain(f, 900 * 2 ** (0.8 * at(gust2, tm)), 0.18))
     out = unit(body) * 0.5 + unit(howl) * 0.07
-    # crows and the owl far away; moans further still. Placed round the circle, so tails wrap to the start
-    crow = lambda x: unit(reverb(lowpass(highpass(x, 400), 5000), 2.5, wet=0.5, damp=0.6))
-    events = [(crow(S('oga_crow', 'crow.ogg')), 3.2, -11), (crow(S('oga_crow_caw', 'crow_caw.wav')), 12.8, -14),
-              (crow(S('oga_crows', 'Crows.ogg', 2.0, 4.6)), 21.5, -16), (crow(pitch(S('oga_crow', 'crow.ogg'), -1.5)), 27.6, -15)]
-    owl = unit(reverb(owl_call(rng, 370), 2.2, wet=0.45, damp=0.6))
-    events += [(owl, 8.0, -12), (unit(reverb(owl_call(rng, 355), 2.2, wet=0.5, damp=0.6)), 17.4, -15)]
+
+    def thunder(seconds):
+        # A far roll: low noise in a few swells, the high end long gone
+        x = lowpass(colored(seconds, rng, -4), 260)
+        swells = np.zeros(n_of(seconds))
+        for k in range(4):
+            c = rng.uniform(0.1, 0.7) * seconds
+            w = rng.uniform(0.3, 0.9)
+            swells += rng.uniform(0.4, 1.0) * np.exp(-((t(seconds) - c) / w) ** 2)
+        return x * swells * env_points([(0, 0), (0.4, 1), (seconds - 1.5, 0.7), (seconds, 0)], seconds)
+    events = [(unit(thunder(6.0)), 4.0, -10), (unit(thunder(7.5)), 19.0, -13)]
     far = lambda x: unit(reverb(lowpass(highpass(x, 120), 700), 3.5, wet=0.7, damp=0.8))
-    events += [(far(S('oga_zombie_moans_ds', 'darsycho__zombie-moans_0.ogg', 0.25, 2.75)), 5.5, -18),
+    events += [(far(S('oga_zombie_moans_ds', 'darsycho__zombie-moans_0.ogg', 0.25, 2.75)), 11.5, -18),
                (far(S('oga_hungry_ghoul', 'hungry-ghoul_0.ogg', 28.3, 30.6)), 15.0, -20),
-               (far(pitch(S('oga_zombie_moans_ep', 'ZombieMoans - Track 5 - ZombieMoan1.wav'), -3)), 24.0, -19)]
-    for x, at, g in events:
-        place(out, x, at, db(g), wrap=True)
+               (far(pitch(S('oga_zombie_moans_ep', 'ZombieMoans - Track 5 - ZombieMoan1.wav'), -3)), 26.0, -19)]
+    for x, at_, g in events:
+        place(out, x, at_, db(g), wrap=True)
     return out[:n]
 
 
-def circle_voice_chord(out, notes, at, seconds, rng, vowel='oo', gain=1.0, attack=1.5, release=2.5, per=3):
-    for f in notes:
-        for v in range(per):
-            c = rng.uniform(-7, 7)
-            x = voice(f * 2 ** (c / 1200), seconds, rng, vowel=vowel, attack=attack, release=release, vib=0.007)
-            place(out, x * gain, at + rng.uniform(0, 0.15), 1.0, wrap=True)
+# The beds' chords, 8 s each round a 32 s loop: D minor, B flat, G minor, A
+BED_CHORDS = [['D2', 'A2', 'D3', 'F3', 'A3'], ['Bb1', 'F2', 'Bb2', 'D3', 'F3'], ['G1', 'D2', 'G2', 'Bb2', 'D3'], ['A1', 'E2', 'A2', 'C#3', 'E3']]
 
 
 @sound('music_low', kind='loop', lufs=-24)
 def music_low(rng):
-    # Under early rounds, 32 s: a dark drone, a slow choir progression, a distant low pulse, high glints
+    # Under early waves, 32 s: a dark synth pad through a slowly breathing filter, a low heartbeat pulse, faint ticking
     sec = 32.0
     n = n_of(sec)
-    tt = np.arange(n) / R
-    q = lambda f: round(f * sec) / sec  # whole cycles per loop
     out = np.zeros(n)
-    # the drone: partials on D, each breathing on its own loop-locked wobble
-    for f, a in [(q(hz('D1')), 0.8), (q(hz('D2')), 1.0), (q(hz('A2')), 0.55), (q(hz('D3')), 0.25), (q(hz('F3')) * 1.0, 0.08)]:
-        for h, ha in [(1, 1.0), (2, 0.35), (3, 0.18), (4, 0.08)]:
-            w = 0.6 + 0.4 * periodic_lfo(sec, rng, 0.12)
-            out += a * ha * w * np.sin(2 * np.pi * f * h * tt + rng.uniform(0, 6.3))
-    out = unit(out) * 0.5
+    for k, chord in enumerate(BED_CHORDS):
+        d = 9.0
+        pad = zeros(d)
+        for n_ in chord:
+            pad += supersaw(hz(n_), d, 3, 0.01, rng)
+        sw = env_points([(0, 0), (1.5, 1), (d - 1.5, 1), (d, 0)], d)
+        place(out, pad * sw, 8.0 * k - 0.5, 1.0, wrap=True)
+    cut = 500 + 450 * (0.5 + 0.5 * periodic_lfo(sec, rng, 0.08))
+    out = svf(np.concatenate([out[-n_of(0.5):], out]), np.concatenate([cut[-n_of(0.5):], cut]), q=0.9)[n_of(0.5):]
+    out = unit(out) * 0.6
+    # the heartbeat: two low thumps each 1.5 s
+    beats = np.zeros(n)
+    for k in range(int(sec / 1.5)):
+        place(beats, kick(rng, 1.0, 46), 1.5 * k, 1.0, wrap=True)
+        place(beats, kick(rng, 0.6, 44), 1.5 * k + 0.32, 1.0, wrap=True)
+    out += unit(lowpass(beats, 220)) * 0.28
+    ticks = np.zeros(n)
+    for k in range(int(sec / 0.375)):
+        place(ticks, hat(rng, 0.5 if k % 2 else 0.8), 0.375 * k, 1.0, wrap=True)
+    out += unit(ticks) * 0.035
     air = periodic_noise(sec, rng, lambda f: band_gain(f, 300, 1.0)) * (0.5 + 0.5 * periodic_lfo(sec, rng, 0.1))
-    out += unit(air) * 0.06
-    pad = np.zeros(n)
-    chords = [['D3', 'F3', 'A3', 'C4'], ['Bb2', 'D3', 'F3', 'A3'], ['G2', 'D3', 'G3', 'Bb3'], ['A2', 'E3', 'G3', 'C#4']]
-    for k, ch in enumerate(chords):
-        circle_voice_chord(pad, [hz(c) for c in ch], 8.0 * k - 0.6, 9.4, rng, 'oo', 1.0, attack=2.5, release=3.0)
-    out += unit(pad) * 0.42
-    # a low, slow pulse like a far drum, every 2 s, the fourth softer
-    for k in range(16):
-        d = drum_boom(rng, 1.0, 46)
-        place(out, unit(lowpass(d, 300)) * (0.22 if k % 4 != 3 else 0.12), 2.0 * k, 1.0, wrap=True)
-    # glints: a few high, cold tones with a slow tremolo
-    for at, f in [(5.0, hz('A5')), (13.5, hz('Bb5')), (21.0, hz('E6')), (28.5, hz('C#6'))]:
-        g = sine(f, 3.0) * env_points([(0, 0), (1.2, 1), (3.0, 0)], 3.0) * (0.7 + 0.3 * np.sin(2 * np.pi * 6 * t(3.0)))
-        place(out, g * 0.05, at, 1.0, wrap=True)
-    wet = reverb(out, 3.5, wet=1.0, dry=0.0, damp=0.6)
-    # fold the reverb's tail back round to the start so the loop's echoes carry over the seam
-    ring = np.zeros(n)
-    for k in range(0, len(wet), n):
-        seg = wet[k:k + n]
-        ring[:len(seg)] += seg
-    return out + 0.25 * ring
+    out += unit(air) * 0.05
+    return ring_reverb(out, 3.0, 0.25)
 
 
 @sound('music_high', kind='loop', lufs=-19)
 def music_high(rng):
-    # Later rounds, 32 s at 120 bpm: driving low-string ostinato, big drums, choir stabs, a bell call
+    # Later waves, 32 s at 120 bpm: four on the floor, a driving filtered saw bass in eighths, snare on two and four,
+    # sixteenth hats, the pad, and an arpeggio in the second half
     sec = 32.0
     n = n_of(sec)
-    bpm = 120
     spb = 0.5
-    out = np.zeros(n)
-    prog = [('D2', 'D3+F3+A3'), ('D2', 'D3+F3+A3'), ('Bb1', 'Bb2+D3+F3'), ('C2', 'C3+E3+G3'),
-            ('D2', 'D3+F3+A3'), ('D2', 'D3+F3+A3'), ('G1', 'G2+Bb2+D3'), ('A1', 'A2+C#3+E3')] * 2
-    # ostinato: eighth notes in a 3+3+2 accent, bowed and dark
-    accent = [1.0, 0.55, 0.6, 1.0, 0.55, 0.6, 0.9, 0.6]
-    for bar, (root, chord) in enumerate(prog):
-        f = hz(root) * 2
-        for k in range(8):
-            v = accent[k]
-            x = bowed(f * (2 if k in (3, 6) and bar % 4 == 3 else 1), 0.24, rng, bright=0.35 + 0.3 * v, attack=0.008, release=0.05, vib=0.0)
-            place(out, x * v * 0.9, (bar * 4 + k * 0.5) * spb, 1.0, wrap=True)
-        # sustained low strings an octave down
-        place(out, bowed(hz(root), 4 * spb + 0.1, rng, bright=0.25, attack=0.05, release=0.12) * 0.55, bar * 4 * spb, 1.0, wrap=True)
-    strings = unit(out)
     drums = np.zeros(n)
+    bass = np.zeros(n)
+    arp = np.zeros(n)
     for bar in range(16):
-        b0 = bar * 4
-        pattern = [(0, 'B', 1.0), (1.5, 'B', 0.6), (2, 'T', 0.9), (2.75, 'B', 0.5), (3, 'B', 0.8), (3.5, 'T', 0.5)]
-        if bar % 4 == 3:
-            pattern = [(0, 'B', 1.0), (1, 'B', 0.8), (2, 'B', 0.9), (2.5, 'T', 0.6), (3, 'T', 0.8), (3.25, 'T', 0.6), (3.5, 'T', 0.8), (3.75, 'T', 0.9)]
-        for b, kind, v in pattern:
-            x = frame_drum(0.9, rng, 52, slap=0.4, decay=6.0) * v if kind == 'B' else drum_tak(rng, v) * 0.55
-            place(drums, x, (b0 + b) * spb, 1.0, wrap=True)
+        chord = BED_CHORDS[(bar // 4) % 4]
+        b0 = bar * 4 * spb
+        for beat in range(4):
+            place(drums, kick(rng, 1.0), b0 + beat * spb, 1.0, wrap=True)
+            if beat in (1, 3):
+                place(drums, snare(rng, 0.8), b0 + beat * spb, 1.0, wrap=True)
         for k in range(16):
-            sh = bandpass(white(0.05, rng), 4000, 11000) * np.exp(-t(0.05) * 90) * (0.5 if k % 2 else 0.8)
-            place(drums, sh * 0.12, (b0 + k * 0.25) * spb, 1.0, wrap=True)
-    choir_ = np.zeros(n)
-    for bar in range(0, 16, 2):
-        root, chord = prog[bar]
-        notes = [hz(c) * 2 for c in chord.split('+')]
-        circle_voice_chord(choir_, notes, bar * 4 * spb, 1.6, rng, 'ah', 1.0, attack=0.04, release=0.9, per=2)
-    bells = np.zeros(n)
-    for bar, ns in [(3, ['A5', 'G5', 'F5', 'E5']), (11, ['A5', 'Bb5', 'A5', 'C#6'])]:
-        for k, nn in enumerate(ns):
-            place(bells, bell(hz(nn), 2.0, rng, 'chime', strike=0.3), (bar * 4 + k) * spb, 1.0, wrap=True)
-    mixd = unit(strings) * 0.55 + unit(drums) * 0.75 + unit(choir_) * 0.32 + unit(bells) * 0.12
-    wet = reverb(mixd, 2.2, wet=1.0, dry=0.0, damp=0.55)
-    ring = np.zeros(n)
-    for k in range(0, len(wet), n):
-        seg = wet[k:k + n]
-        ring[:len(seg)] += seg
-    y = mixd + 0.18 * ring
-    return compress(y, -14, 2.0, 0.01, 0.2)
+            place(drums, hat(rng, 0.7 if k % 2 else 0.45, open_=(k % 8 == 6)), b0 + k * spb / 4, 1.0, wrap=True)
+        root = hz(chord[0]) * 2
+        for k in range(8):
+            f = root * (2 if k in (3, 6) else 1)
+            note = supersaw(f, spb / 2, 2, 0.006, rng)
+            env = np.exp(-t(spb / 2) * 10)
+            note = lowpass(note * (0.3 + 0.7 * env), 300 + 900 * (0.6 if k % 2 else 1.0))
+            place(bass, note * (1.0 if k % 2 == 0 else 0.7), b0 + k * spb / 2, 1.0, wrap=True)
+        if bar >= 8:
+            tones = [hz(c) * 4 for c in chord[1:]]
+            for k in range(16):
+                f = tones[k % len(tones)]
+                note = square_blep(f, spb / 4) * np.exp(-t(spb / 4) * 18)
+                place(arp, lowpass(note, 3500), b0 + k * spb / 4, 1.0, wrap=True)
+    pad = np.zeros(n)
+    for k, chord in enumerate(BED_CHORDS):
+        d = 8.4
+        p = zeros(d)
+        for n_ in chord[1:]:
+            p += supersaw(hz(n_), d, 3, 0.01, rng)
+        place(pad, lowpass(p, 1100) * env_points([(0, 0), (0.3, 1), (d - 0.4, 1), (d, 0)], d), 8.0 * k, 1.0, wrap=True)
+    y = unit(drums) * 0.75 + unit(saturate(unit(bass), 1.8, 1.0)) * 0.6 + unit(pad) * 0.3 + unit(arp) * 0.16
+    y = ring_reverb(y, 1.8, 0.15)
+    return compress(y, -14, 2.5, 0.005, 0.15)
 
 
 # ================================================================ building

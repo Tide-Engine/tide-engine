@@ -304,16 +304,16 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
 // Where each part of the clearing is seen from, for the development walks: x, z and the way to look.
 float4 Showplace(int place)
 {
-    mut var at = float3(0, -6, 0);                          // South of the fire, looking north to the ruin
+    mut var at = float3(0, -6, 0);                          // South of the fire, looking north to the chapel's rise
     switch (place)
     {
-        case 1: at = float3(0, 22, Math.PI); break;          // On the ruin's cliff, looking out over the clearing
-        case 2: at = float3(-14, 2, -Math.PI * 0.5); break;   // The graveyard in its hollow
-        case 3: at = float3(26, -2, -Math.PI * 0.5); break;   // The hill's top, back toward the fire
-        case 4: at = float3(-18, -20, 0.9); break;           // The shelf
-        case 5: at = float3(-16, 5, 0.8); break;             // The foot of the ruin's ramp
-        case 6: at = float3(10, -26, Math.PI); break;         // South, toward the edge
-        case 7: at = float3(14, 14, 0.7); break;             // North-east
+        case 1: at = float3(0, 27, Math.PI); break;          // On the chapel's rise, looking out over the clearing
+        case 2: at = float3(-15, 2, -Math.PI * 0.5); break;   // Above the sunken graveyard
+        case 3: at = float3(34, 0, -Math.PI * 0.5); break;    // The beacon's top, back toward the fire
+        case 4: at = float3(26, -6, -Math.PI * 0.6); break;   // The spire's lower tier
+        case 5: at = float3(-19, 10, 0.8); break;            // The foot of the chapel's west ramp
+        case 6: at = float3(0, -25, Math.PI * 0.5); break;    // In the ravine, along it
+        case 7: at = float3(-17, 17, -0.9); break;           // By the standing stones
     }
     return float4(On(at.x, at.y), at.z);
 }

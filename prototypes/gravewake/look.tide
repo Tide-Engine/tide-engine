@@ -30,11 +30,11 @@ local singleton Look
     float time;
     float fov = 70;
     float3 moonWay = float3(0.35, 0.8, 0.45);    // Toward the moon
-    float3 moonColor = float3(0.2, 0.25, 0.38);
-    float3 skyLight = float3(0.035, 0.045, 0.075);
+    float3 moonColor = float3(0.32, 0.36, 0.5);
+    float3 skyLight = float3(0.06, 0.07, 0.1);
     float3 groundLight = float3(0.02, 0.018, 0.02);
     float3 fogColor = float3(0.045, 0.05, 0.07);
-    float fog = 0.015;
+    float fog = 0.009;
     float4x4 toMoon;
     float4x4 toClip;                              // The eye's camera, world to clip, for what's marked on the screen
     float2 pixel;                                 // One pixel of the window, in uv
@@ -191,13 +191,28 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens)
     var fallen = Math.SmoothStep(0.25 - under * 0.35, 0.45 - under * 0.35, drift);
     paint = Math.Lerp(paint, Math.Lerp(float3(0.2, 0.15, 0.06), float3(0.24, 0.11, 0.045), rust) * (0.75 + fine * 0.25), fallen * 0.55);
     if (Math.Perlin(at * 0.07 + float2(13, 7)) > 0.3) paint = Math.Lerp(paint, float3(0.08, 0.07, 0.05), 0.5);
-    // Bare and trodden round the fire
+    // Bare and trodden round the fire, and paths worn from it to the ramps, the graveyard and the ravine
     paint = Math.Lerp(paint, float3(0.17, 0.14, 0.11) * (0.85 + fine * 0.15), Math.Saturate(1.4 - Math.Length(at) * 0.28) * 0.8);
+    var wobble = float2(Math.Perlin(at * 0.21), Math.Perlin(at * 0.21 + float2(7, 3))) * 1.4;
+    var path = Math.Min(Math.Min(Lane(at + wobble, float2(0), WEST_RAMP_B), Lane(at + wobble, float2(0), EAST_RAMP_B)),
+                        Math.Min(Math.Min(Lane(at + wobble, float2(0), SPIRE_RAMP_B), Lane(at + wobble, float2(0), float2(-17, 2))),
+                                 Lane(at + wobble, float2(0), float2(-2, -20))));
+    paint = Math.Lerp(paint, float3(0.19, 0.155, 0.11) * (0.8 + fine * 0.25), Math.SmoothStep(1.9, 0.9, path + fine * 0.5) * 0.85);
+    // Higher ground drier and paler
+    paint *= 1 + Math.Saturate(this.world.y / SPIRE_TOP) * float3(0.35, 0.3, 0.15);
     // Cliffs and steep banks are bare rock and earth
     var normal = Math.Normalize(corner.normal);
     paint = Math.Lerp(paint, float3(0.16, 0.15, 0.14) * (0.8 + fine * 0.3), Math.SmoothStep(0.8, 0.55, normal.y));
     var lit = Shade(Linear(paint), this.world, normal, 1, look, lights.list, lens.moonDepth);
     color = Color(Hazed(lit, this.world, look), 1);
+}
+
+// How far a place is from the line between two others.
+float Lane(float2 at, float2 a, float2 b)
+{
+    var ab = b - a;
+    var along = Math.Saturate(Math.Dot(at - a, ab) / Math.Dot(ab, ab));
+    return Math.Distance(at, a + ab * along);
 }
 
 // The sky: a dome round the eye, from the haze at the horizon up to the night, the moon and its halo, stars and cloud.

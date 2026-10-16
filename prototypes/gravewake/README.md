@@ -69,16 +69,18 @@ F9 a camera over the clearing, F10 a random item.
 
 ## Ashwick Wood
 
-About 80 m across, its ground rising into the trees at its edge.
+About 90 m across, its ground rising into the trees at its edge. The dead claw
+up out of the ground all round you, 16 to 32 m off, from every side.
 
 | Where | What's there |
 | --- | --- |
-| The middle | The camp's fire, where everyone starts |
-| North | The chapel's ruin on a cliff 4.5 m up, reached by one ramp from the south-west |
-| West | The old graveyard in a hollow, behind a broken iron fence: ten graves the dead rise from |
-| East | A hill 4 m high with a beacon fire on top; a cart and a wagon at its foot, a third fire |
-| South-west | A rocky shelf 3 m up, its ramp coming down to the east, boulders round its foot |
-| The edge | Roots the dead claw up from, and the trees, close and endless |
+| The middle | The camp's fire, where everyone starts; worn paths out to each landmark |
+| North | The chapel's rise, 6 m up, the ruin on it, a ramp down each side |
+| East | The beacon's spire: a lower tier 4 m up, its top 9 m up with the beacon burning, a ramp to each |
+| West | The old graveyard, sunk in its hollow behind a broken iron fence: ten graves the dead rise from |
+| North-west | A ring of standing stones |
+| South | The ravine, cut across the clearing, boulders on its banks |
+| About the clearing | Groves of trees and big stones to stand behind |
 
 ## Build and run
 
