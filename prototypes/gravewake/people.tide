@@ -4,13 +4,13 @@
 // sampled once, into the entity's local fields, and drawn into the moon's
 // shadows and into the picture from there.
 
-asset SkinnedMesh<Corner> zombieFarmer = "art/people/zombie_farmer.glb";
-asset SkinnedMesh<Corner> zombieWorker = "art/people/zombie_worker.glb";
-asset SkinnedMesh<Corner> zombieKing = "art/people/zombie_king.glb";
-asset SkinnedMesh<Corner> zombieWanderer = "art/people/zombie_wanderer.glb";
-asset SkinnedMesh<Corner> zombiePeasant = "art/people/zombie_peasant.glb";
-asset SkinnedMesh<Corner> zombieMaid = "art/people/zombie_maid.glb";
-// The bones a survivor's body is asked for by name: the hand that holds their weapon.
+asset SkinnedMesh<Corner, Rig> zombieFarmer = "art/people/zombie_farmer.glb";
+asset SkinnedMesh<Corner, Rig> zombieWorker = "art/people/zombie_worker.glb";
+asset SkinnedMesh<Corner, Rig> zombieKing = "art/people/zombie_king.glb";
+asset SkinnedMesh<Corner, Rig> zombieWanderer = "art/people/zombie_wanderer.glb";
+asset SkinnedMesh<Corner, Rig> zombiePeasant = "art/people/zombie_peasant.glb";
+asset SkinnedMesh<Corner, Rig> zombieMaid = "art/people/zombie_maid.glb";
+// The bones a body is asked for by name: the hand that holds a survivor's weapon, the head that comes off.
 struct Rig
 {
     [Name("Wrist.R")] Bone wristR;
@@ -28,7 +28,7 @@ asset AnimationCatalog womenMoves = "art/people/moves_women.glb";
 enum Move
 {
     Idle, Walk, Run, IdleSword, SwordSlash, IdleGun, GunShoot, PunchRight, PunchLeft, HitRecieve, HitRecieve2, Death, Interact,
-    ZIdle, ZWalk, ZScratch, ZKnockback, ZClimb, Sprint, DeathB, HitHead, HitChest, CrouchIdle, CrouchWalk
+    ZIdle, ZWalk, ZScratch, ZKnockback, ZClimb, Sprint, DeathB, HitHead, HitChest, CrouchIdle, CrouchWalk, ZGetUp
 }
 
 // How each body draws: the dead's grey skin glows at the eyes, burns, frosts, flashes when struck.
@@ -53,7 +53,7 @@ bool WomanHero(int seat)
     return seat == 1 || seat == 3;
 }
 
-SkinnedMesh<Corner> ZombieBody(int look)
+SkinnedMesh<Corner, Rig> ZombieBody(int look)
 {
     switch (look)
     {
@@ -101,6 +101,7 @@ Animation MoveOf(bool woman, Move move)
             case Move.ZScratch: return womenMoves.z_Scratch;
             case Move.ZKnockback: return womenMoves.z_Knockback;
             case Move.ZClimb: return womenMoves.z_Climb;
+            case Move.ZGetUp: return womenMoves.z_GetUp;
             case Move.Sprint: return womenMoves.sprint;
             case Move.DeathB: return womenMoves.death_B;
             case Move.HitHead: return womenMoves.hit_Head;
@@ -129,6 +130,7 @@ Animation MoveOf(bool woman, Move move)
         case Move.ZScratch: return menMoves.z_Scratch;
         case Move.ZKnockback: return menMoves.z_Knockback;
         case Move.ZClimb: return menMoves.z_Climb;
+        case Move.ZGetUp: return menMoves.z_GetUp;
         case Move.Sprint: return menMoves.sprint;
         case Move.DeathB: return menMoves.death_B;
         case Move.HitHead: return menMoves.hit_Head;
@@ -194,11 +196,21 @@ view PoseZombie(mut Zombie zombie, Look look)
         case ZombieState.Climbing:
             pose.Sample(MoveOf(woman, Move.ZClimb), Math.Saturate(t / CLIMB_SECONDS) * 0.667);
             break;
+        case ZombieState.Fallen:
+        {
+            // Over backwards, lying there, then up
+            var up = t - KNOCK_SECONDS - zombie.downFor;
+            if (up < 0) pose.Sample(MoveOf(woman, Move.ZKnockback), Math.Min(t, 0.833));
+            else pose.Sample(MoveOf(woman, Move.ZGetUp), up);
+            break;
+        }
         case ZombieState.Dying:
         {
             var fall = zombie.fall == 0 ? Move.Death : Move.DeathB;
             var length = zombie.fall == 0 ? 1.067 : 2.4;
-            pose.Sample(MoveOf(woman, fall), Math.Min(t * 1.15, length));
+            // Where it lay, or thrown over by the blow
+            if (zombie.fall >= 2) pose.Sample(MoveOf(woman, Move.ZKnockback), zombie.fall == 2 ? 0.833 : Math.Min(t, 0.833));
+            else pose.Sample(MoveOf(woman, fall), Math.Min(t * 1.15, length));
             if (t > DEATH_SECONDS - 1.4) at.y -= (t - (DEATH_SECONDS - 1.4)) * 0.6;
             break;
         }
@@ -231,6 +243,8 @@ view PoseZombie(mut Zombie zombie, Look look)
             break;
         }
     }
+    if (zombie.headless) pose[body.skeleton.bones.head].scale = float3(0.001);
+    zombie.gush = Math.Max(0, zombie.gush - Math.Min(Frame.dt, 0.05));
     zombie.pose = pose;
     var scale = zombie.look == 3 ? 1.08 : 1.0;
     zombie.place = float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), float3(scale));
@@ -239,8 +253,14 @@ view PoseZombie(mut Zombie zombie, Look look)
 
 local event(Struck struck) FlashStruck(mut Zombie zombie)
 {
-    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding) return;
+    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Shove) return;
     zombie.flash = struck.killed ? 0.0 : 0.35;
+    // A head taken off by the blow that kills
+    if (struck.killed && struck.head)
+    {
+        zombie.headless = true;
+        zombie.gush = 1.4;
+    }
 }
 
 [Stage(Layers.Shadows, 1)]

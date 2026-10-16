@@ -63,7 +63,11 @@ enum Piece
     Wall_UnevenBrick_Window_Thin_Round,
     Wall_UnevenBrick_Window_Wide_Round,
     WeaponStand,
+    WindowShutters_Thin_Round_Closed,
+    WindowShutters_Wide_Round_Closed,
+    Window_Thin_Round1,
+    Window_Wide_Round1,
     Workbench
 }
 
-const int PIECE_COUNT = 63;
+const int PIECE_COUNT = 67;

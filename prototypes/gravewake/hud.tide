@@ -10,6 +10,8 @@ local singleton Feed
     List<Gain> gains;            // Points earned, floating off this machine's tally
     float marker;                // Seconds left of the hit marker
     bool markerKill;
+    bool markerHead;             // On the head: gold, or red and bigger for a kill
+    float headshot;              // Seconds left of HEADSHOT over the crosshair
     float roundFlash;            // Seconds since the round changed
     int roundShown;
     string banner;               // A power-up's name, or what just happened, big in the middle
@@ -351,12 +353,21 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
     if (feed.marker > 0)
     {
         var a = Math.Saturate(feed.marker * 5);
-        var c = feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
-        var s = (feed.markerKill ? 11 : 8) * u;
-        Draw.Line(middle + float2(-s, -s), middle + float2(-s * 0.4, -s * 0.4), 2.5 * u, c);
-        Draw.Line(middle + float2(s, -s), middle + float2(s * 0.4, -s * 0.4), 2.5 * u, c);
-        Draw.Line(middle + float2(-s, s), middle + float2(-s * 0.4, s * 0.4), 2.5 * u, c);
-        Draw.Line(middle + float2(s, s), middle + float2(s * 0.4, s * 0.4), 2.5 * u, c);
+        var c = feed.markerHead ? (feed.markerKill ? Color(1.0, 0.18, 0.1, a) : Color(1.0, 0.78, 0.25, a))
+              : feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
+        var s = (feed.markerHead ? (feed.markerKill ? 15 : 11) : feed.markerKill ? 11 : 8) * u;
+        var thick = (feed.markerHead ? 3.5 : 2.5) * u;
+        Draw.Line(middle + float2(-s, -s), middle + float2(-s * 0.4, -s * 0.4), thick, c);
+        Draw.Line(middle + float2(s, -s), middle + float2(s * 0.4, -s * 0.4), thick, c);
+        Draw.Line(middle + float2(-s, s), middle + float2(-s * 0.4, s * 0.4), thick, c);
+        Draw.Line(middle + float2(s, s), middle + float2(s * 0.4, s * 0.4), thick, c);
+    }
+    feed.headshot = Math.Max(0, feed.headshot - dt);
+    if (feed.headshot > 0)
+    {
+        var a = Math.Saturate(feed.headshot * 3);
+        var rise = (0.9 - feed.headshot) * 14 * u;
+        WriteBold("HEADSHOT", middle + float2(0, -46 * u - rise), 17 * u, Color(1.0, 0.25, 0.12, a), Anchor.MiddleCenter);
     }
 
     // ---- What use would do ----
@@ -448,7 +459,7 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
     if (feed.played < 45 && match.phase != Phase.Over)
     {
         var fade = Math.Saturate((45 - feed.played) * 0.2);
-        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   E use   R reload   V stab   G fire pot   1-3 weapons",
+        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   E use   F kick   R reload   V stab   G fire pot   1-3 weapons",
               float2(w * 0.5, h - 14 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)
@@ -497,7 +508,7 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
 }
 
 // Development keys, not in play's interface: F2 gold, F3 the beacon, F4 every door, F5 the round's end, F6 a walk to the
-// next area.
+// next area, F10 the next weapon in hand.
 local singleton DevWalk
 {
     int next;
@@ -512,6 +523,7 @@ view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
     if (keys.f3.down) Send(Cheat { what = 2 });
     if (keys.f4.down) Send(Cheat { what = 3 });
     if (keys.f5.down) Send(Cheat { what = 4 });
+    if (keys.f10.down) Send(Cheat { what = 5 });
     if (keys.f6.down)
     {
         walk.next = (walk.next + 1) % 8;
@@ -600,11 +612,13 @@ local event(Earned earned) ShowEarned(Survivor survivor, mut Feed feed, Me me, M
 
 local event(Struck struck) ShowMarker(mut Feed feed, Me me)
 {
-    if (struck.seat != me.seat || struck.seat < 0) return;
+    if (struck.seat != me.seat || struck.seat < 0 || struck.blow == Blow.Shove) return;
     // Fire and bleeding wear them down quietly; only the kill shows
     if (!struck.killed && (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding)) return;
-    feed.marker = 0.25;
+    feed.marker = struck.head ? 0.35 : 0.25;
     feed.markerKill = struck.killed;
+    feed.markerHead = struck.head;
+    if (struck.head && struck.killed) feed.headshot = 0.9;
 }
 
 local event(Boons boons) ShowBoon(mut Feed feed)

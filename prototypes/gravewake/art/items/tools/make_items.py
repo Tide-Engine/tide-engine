@@ -1,6 +1,6 @@
 # GRAVEWAKE's items: the mystery chest (closed, and its open base and lid apart), the power-up icons,
-# the six perk potions, the power lever, the brazier, a board for the windows, gravestones and a
-# grave mound. One .glb each, flat-coloured through material base colours.
+# the six perk potions, the power lever, the brazier, a board for the windows, gravestones, a
+# grave mound and the square's well. One .glb each, flat-coloured through material base colours.
 #
 # The skull, coins, chalice and potions are Quaternius' Ultimate RPG pack (CC0,
 # https://quaternius.com/packs/ultimaterpg.html); the quiver's arrows and the carpenter hammer his
@@ -51,6 +51,7 @@ PAL = {
     "board": (0.200, 0.125, 0.075), "board_dark": (0.110, 0.068, 0.040),
     "stone": (0.300, 0.300, 0.290), "stone_dark": (0.150, 0.150, 0.150), "moss": (0.090, 0.130, 0.045),
     "dirt": (0.100, 0.060, 0.035), "dirt_dark": (0.060, 0.036, 0.022),
+    "stone_light": (0.420, 0.410, 0.380), "water": (0.008, 0.012, 0.016), "rope": (0.330, 0.240, 0.120),
 }
 RPG_MATS = {"Bone": "bone", "Gold": "rpg_gold"}
 
@@ -461,6 +462,58 @@ def grave_mound():
         ico((x, yy, z), rnd.uniform(0.04, 0.08), "dirt_dark", sub=1, scale=(1, 0.6, 1), jitter=0.01, seed=20 + i)
 
 
+# ---------------------------------------------------------------- the well (bottom centre)
+
+def well():
+    """The square's well: a ring of fitted stones round dark water, two posts, a winch with its rope and
+    bucket, and a little plank roof. About 2.1 x 2.6 x 1.9 m, the winch's axle along X."""
+    rnd = random.Random(5)
+    # The ring: an outer and inner face, a capstone course on top, stones standing out of the outside
+    lathe([(0.66, 0.0), (0.86, 0.0), (0.86, 0.78), (0.66, 0.78)], "stone", sides=16, smooth=False, closed=True)
+    lathe([(0.60, 0.78), (0.93, 0.78), (0.93, 0.90), (0.60, 0.90)], "stone_light", sides=16, smooth=False,
+          closed=True, phase=math.pi / 16)
+    for row in range(4):
+        y = 0.10 + row * 0.19
+        for k in range(11):
+            a = 2 * math.pi * (k + (row % 2) * 0.5) / 11 + rnd.uniform(-0.05, 0.05)
+            d = Vector((math.cos(a), 0, math.sin(a)))
+            box(tuple(d * 0.865 + Vector((0, y, 0))), (0.40, 0.15, 0.06),
+                "stone_light" if (row + k) % 3 == 0 else "stone", bevel=0.02,
+                M=Matrix.Rotation(-a + math.pi / 2, 4, 'Y'))
+    lathe([(0.0, 0.30), (0.67, 0.30), (0.0, 0.30001)], "water", sides=16, smooth=False)
+    for i in range(6):
+        a = rnd.uniform(0, 2 * math.pi)
+        ico((math.cos(a) * 0.9, 0.06, math.sin(a) * 0.9), rnd.uniform(0.05, 0.09), "moss", sub=1,
+            scale=(1.4, 0.5, 1.4), jitter=0.01, seed=40 + i)
+    # The posts, their braces and the winch
+    for x in (-0.80, 0.80):
+        box((x, 1.40, 0), (0.13, 1.96, 0.13), "wood", bevel=0.012)
+        for z in (-1, 1):
+            cyl((x, 0.92, z * 0.30), (x, 1.32, 0.0), 0.035, mat="wood_dark", sides=5, smooth=False)
+    cyl((-0.93, 1.98, 0), (0.93, 1.98, 0), 0.05, mat="wood_dark", sides=8, smooth=True)
+    cyl((-0.30, 1.98, 0), (0.30, 1.98, 0), 0.085, mat="rope", sides=10, smooth=True)
+    for x in (-0.31, 0.31):
+        torus((x, 1.98, 0), 0.09, 0.012, "iron", seg=10, sides=4, M=R('Z', 90))
+    box((1.00, 1.86, 0), (0.05, 0.30, 0.06), "iron", bevel=0.008)
+    cyl((1.00, 1.73, 0), (1.14, 1.73, 0), 0.025, mat="wood_dark", sides=6, smooth=False)
+    # The rope down to the bucket, hanging over the water
+    cyl((0.0, 1.90, 0.0), (0.0, 1.27, 0.0), 0.014, mat="rope", sides=5, smooth=False)
+    lathe([(0.0, 0.98), (0.13, 0.98), (0.16, 1.22), (0.145, 1.22), (0.118, 1.005), (0.0, 1.005)], "wood",
+          sides=10, smooth=False)
+    torus((0, 1.02, 0), 0.135, 0.010, "iron", seg=10, sides=4)
+    torus((0, 1.18, 0), 0.155, 0.010, "iron", seg=10, sides=4)
+    tube([(-0.15, 1.21, 0), (-0.09, 1.30, 0), (0.0, 1.27, 0), (0.09, 1.30, 0), (0.15, 1.21, 0)], 0.008, "iron",
+         sides=4, smooth=False)
+    # The roof: a ridge beam and two sides of planks
+    box((0, 2.57, 0), (2.16, 0.09, 0.09), "wood_dark", bevel=0.01)
+    for z in (-1, 1):
+        for k in range(5):
+            x = -0.84 + k * 0.42
+            box((x, 2.39, z * 0.44), (0.40, 0.04, 0.96), "board" if k % 2 else "board_dark", bevel=0.006,
+                M=R('X', z * 23))
+    centre_parts(bottom=True, only_y=True)
+
+
 ITEMS = [
     ("chest_closed", chest_closed), ("chest_open_base", chest_open_base), ("chest_lid", chest_lid),
     ("pu_max_ammo", pu_max_ammo), ("pu_instakill", pu_instakill), ("pu_double", pu_double), ("pu_nuke", pu_nuke),
@@ -469,7 +522,7 @@ ITEMS = [
     ("potion_amber", potion_amber), ("potion_violet", potion_violet), ("potion_white", potion_white),
     ("lever", lever), ("lever_base", lever_base), ("brazier", brazier), ("plank", plank),
     ("gravestone_a", gravestone_a), ("gravestone_b", gravestone_b), ("gravestone_c", gravestone_c),
-    ("grave_mound", grave_mound),
+    ("grave_mound", grave_mound), ("well", well),
 ]
 
 

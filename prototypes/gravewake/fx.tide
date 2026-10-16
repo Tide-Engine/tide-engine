@@ -269,10 +269,31 @@ view DrawFx(Fx fx, Lens lens)
 
 // ---- What the match's events leave ----
 
+// A neck with no head on it, spraying a moment after the blow.
+[Stage(Layers.Gather, 3)]
+view Spray(Zombie zombie, mut Fx fx, Me me)
+{
+    if (zombie.gush <= 0 || Math.Distance(zombie.at, me.eye) > 40) return;
+    var head = Math.Mul(zombie.place, zombie.pose.Model(ZombieBody(zombie.look).skeleton.bones.head));
+    var neck = Math.Transform(head, float3(0));
+    var up = Math.Transform(head, float3(0, 0.3, 0)) - neck;
+    Murk(fx, Mote { at = neck, velocity = up * (5 + 4 * zombie.gush) + Scatter(fx, 0.7), life = fx.random.NextFloat(0.4, 0.8),
+                    size = fx.random.NextFloat(0.03, 0.06), gravity = 9, color = float3(0.3, 0.015, 0.015), alpha = 0.95 });
+}
+
 local event(Struck struck) Bleed(mut Fx fx)
 {
+    if (struck.blow == Blow.Shove) return;
     mut var count = struck.killed ? 16 : 7;
     if (struck.head) count += 8;
+    // A head coming off: a burst, and bits of it
+    if (struck.head && struck.killed)
+    {
+        count += 26;
+        for (var i = 0; i < 9; i++)
+            Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 4.5) + float3(0, 2.5, 0), life = fx.random.NextFloat(0.6, 1.1),
+                            size = fx.random.NextFloat(0.025, 0.05), gravity = 9, color = float3(0.42, 0.36, 0.3), alpha = 1 });
+    }
     for (var i = 0; i < count; i++)
     {
         Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, struck.head ? 3.5 : 2.4) + float3(0, 1.2, 0), life = fx.random.NextFloat(0.5, 1.0),

@@ -4,7 +4,7 @@
 // them when nothing's between. Close enough, they swing. Hit, they reel;
 // killed, they fall, and lie a while before they sink away.
 
-enum ZombieState { Rising, Outside, Tearing, Climbing, Hunting, Dying }
+enum ZombieState { Rising, Outside, Tearing, Climbing, Hunting, Dying, Fallen }
 
 enum Gait { Shamble, Run, Sprint }
 
@@ -14,6 +14,8 @@ const float RISE_SECONDS = 1.8;
 const float CLIMB_SECONDS = 1.5;
 const float RIP_SECONDS = 1.1;
 const float DEATH_SECONDS = 4.5;
+const float KNOCK_SECONDS = 0.83;  // Going over backwards (the knockback clip)
+const float GETUP_SECONDS = 1.53;  // Getting up again
 const float ATTACK_SECONDS = 1.1;
 const float ATTACK_LANDS = 0.5;
 const float ATTACK_REACH = 1.35;
@@ -40,6 +42,7 @@ component Zombie
     float chill;                // Seconds left slowed by frost
     float frozen;               // Seconds left frozen solid
     float stun;                 // Seconds left dazed
+    float downFor;              // Knocked down: how long it lies before getting up
     float3 shove;               // Knocked back, metres a second
     int killer = -1;            // The seat that killed it
     bool head;                  // Killed by a blow to the head
@@ -51,6 +54,8 @@ component Zombie
     local float4x4 place = float4x4.identity;
     local float flash;          // The flash of a fresh blow
     local float voice = 1;      // Seconds till it groans
+    local bool headless;        // Its head taken off by the blow that killed it
+    local float gush;           // Seconds left of the neck's spray
 }
 
 // One of the dead as a blow or a missile sees them: where, how far out of the ground, and whether they can be hit.
@@ -61,13 +66,37 @@ struct Body
     float yaw;
     float risen = 1;
     bool hittable;
+    float3 head;                // Where its head is, its chest and its hips: low when it's down
+    float3 chest;
+    float3 hips;
+    bool down;                  // On its back
 }
 
 Body BodyOf(Entity entity, Zombie zombie)
 {
     var risen = zombie.state == ZombieState.Rising ? Math.SmoothStep(0, 1, zombie.timer / RISE_SECONDS) : 1.0;
+    var sink = (1 - risen) * 1.8;
+    var lying = LyingOf(zombie);
+    var back = -Flat(zombie.yaw);
+    var up = float3(0, 1, 0);
     return Body { entity = entity, at = zombie.at, yaw = zombie.yaw, risen = risen,
-                  hittable = zombie.state != ZombieState.Dying && zombie.state != ZombieState.Outside };
+                  hittable = zombie.state != ZombieState.Dying && zombie.state != ZombieState.Outside,
+                  head = Math.Lerp(zombie.at + up * (1.62 - sink), zombie.at + back * 0.95 + up * 0.2, lying),
+                  chest = Math.Lerp(zombie.at + up * (1.15 - sink), zombie.at + back * 0.55 + up * 0.25, lying),
+                  hips = Math.Lerp(zombie.at + up * (0.6 - sink), zombie.at + back * 0.13 + up * 0.2, lying),
+                  down = lying > 0.5 };
+}
+
+// How far over one of the dead is: 0 on its feet, 1 flat on its back (it falls away from the blow).
+float LyingOf(Zombie zombie)
+{
+    if (zombie.state == ZombieState.Dying) return zombie.fall >= 2 ? 1.0 : 0.0;
+    if (zombie.state != ZombieState.Fallen) return 0;
+    var t = zombie.timer;
+    if (t < KNOCK_SECONDS) return Math.SmoothStep(0.1, 0.6, t);
+    var up = t - KNOCK_SECONDS - zombie.downFor;
+    if (up <= 0) return 1;
+    return 1 - Math.SmoothStep(0.3, 1.2, up);
 }
 
 // A blow to one of the dead.
@@ -81,10 +110,11 @@ event Wound
     float knock;                // How hard it pushes, metres a second
     int bonus;                  // Points for a kill over the usual (the dagger's, the knife's in BO)
     Blow blow;                  // What dealt it, for what's heard and seen
+    bool down;                  // Knocks it off its feet
 }
 
 // What dealt a blow.
-enum Blow { Blade, Blunt, Missile, Burst, Burning, Bleeding }
+enum Blow { Blade, Blunt, Missile, Burst, Burning, Bleeding, Shove }
 
 // Points to a survivor.
 event Earned
@@ -188,7 +218,7 @@ system Hunt(mut Zombie zombie, mut Match match, Ashwick ashwick, Time time, quer
                 Send(Cue { sound = Sfx.Snarl, at = window.at });
                 return;
             }
-            if (zombie.stun > 0 || zombie.frozen > 0) return;
+            if (zombie.stun > 0 || zombie.frozen > 0 || zombie.flinch > 0) return;
             zombie.rip += dt;
             if (zombie.rip >= RIP_SECONDS)
             {
@@ -212,6 +242,32 @@ system Hunt(mut Zombie zombie, mut Match match, Ashwick ashwick, Time time, quer
                 zombie.at = window.inside;
                 Become(zombie, ZombieState.Hunting);
             }
+            return;
+        }
+        case ZombieState.Fallen:
+        {
+            // Thrown back as it goes over, then still a while, then up again
+            zombie.speed = 0;
+            zombie.swing = 0;
+            var before = zombie.at;
+            mut var at = zombie.at + zombie.shove * dt;
+            zombie.shove *= Math.Max(0, 1 - dt * 5);
+            at = PushOut(ashwick, match.gatesOpen, at, ZOMBIE_RADIUS, 1.7);
+            if (!Walkable(ashwick, match.gatesOpen, CellOf(at))) at = before;
+            at.y = 0;
+            zombie.at = at;
+            // What it's thrown into goes over too
+            var flung = Math.Length(zombie.shove);
+            if (zombie.timer < 0.45 && flung > 2.5)
+            {
+                foreach (var row in others)
+                {
+                    if (row.entity == this || row.zombie.state != ZombieState.Hunting) continue;
+                    if (Math.Length((row.zombie.at - zombie.at).xz) < 0.65)
+                        row.entity.Send(Wound { seat = -1, from = zombie.at, knock = flung * 0.6, down = true, blow = Blow.Shove });
+                }
+            }
+            if (zombie.timer >= KNOCK_SECONDS + zombie.downFor + GETUP_SECONDS) Become(zombie, ZombieState.Hunting);
             return;
         }
     }
@@ -247,7 +303,7 @@ system Hunt(mut Zombie zombie, mut Match match, Ashwick ashwick, Time time, quer
     foreach (var row in others)
     {
         var o = row.zombie;
-        if (row.entity == this || o.state == ZombieState.Dying || o.state == ZombieState.Outside || o.state == ZombieState.Tearing) continue;
+        if (row.entity == this || o.state == ZombieState.Dying || o.state == ZombieState.Outside || o.state == ZombieState.Tearing || o.state == ZombieState.Fallen) continue;
         var off = zombie.at.xz - o.at.xz;
         var far = Math.Length(off);
         if (far > 0.75 || far < 0.0001) continue;
@@ -327,7 +383,9 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
 {
     if (zombie.state == ZombieState.Dying) return;
     var insta = match.instakill > 0 && wound.seat >= 0;
-    var damage = insta ? zombie.health + 1 : wound.damage;
+    // On its back it's open: blows land harder
+    var over = zombie.state == ZombieState.Fallen && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding;
+    var damage = insta ? zombie.health + 1 : wound.damage * (over ? 1.5 : 1.0);
     zombie.health -= damage;
     var killed = zombie.health <= 0;
     // What the element does besides
@@ -357,11 +415,19 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     mut var points = 0;
     if (killed)
     {
+        var wasDown = zombie.state == ZombieState.Fallen;
         zombie.state = ZombieState.Dying;
         zombie.timer = 0;
         zombie.killer = wound.seat;
         zombie.head = wound.head;
         zombie.fall = Random.NextInt(2);
+        // Dying where it lies, or thrown off its feet by the blow that kills it
+        if (wasDown) zombie.fall = 2;
+        else if (wound.down)
+        {
+            zombie.fall = 3;
+            zombie.yaw = YawTo(zombie.at, wound.from);
+        }
         zombie.swing = 0;
         match.killed += 1;
         points = (wound.head ? 100 : 50) + wound.bonus;
@@ -369,12 +435,29 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     }
     else
     {
-        points = wound.seat >= 0 && wound.damage >= 1 && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding ? 10 : 0;
-        if (wound.damage >= 1 && zombie.state == ZombieState.Hunting && wound.knock >= 0) zombie.flinch = Math.Max(zombie.flinch, wound.head ? 0.45 : 0.3);
+        var paid = wound.seat >= 0 && wound.damage >= 1 && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding && wound.blow != Blow.Shove;
+        points = paid ? (wound.head ? 20 : 10) : 0;
+        if (wound.down && zombie.state == ZombieState.Hunting)
+        {
+            // Off its feet, falling away from the blow
+            Become(zombie, ZombieState.Fallen);
+            zombie.downFor = 1.3 + Random.NextFloat() * 1.2;
+            zombie.yaw = YawTo(zombie.at, wound.from);
+            zombie.swing = 0;
+            zombie.flinch = 0;
+        }
+        else if (wound.down && zombie.state == ZombieState.Tearing)
+        {
+            // Knocked back from the window: it starts on the board again
+            zombie.rip = 0;
+            zombie.flinch = 0.7;
+        }
+        else if (wound.damage >= 1 && zombie.state == ZombieState.Hunting && wound.knock >= 0) zombie.flinch = Math.Max(zombie.flinch, wound.head ? 0.45 : 0.3);
     }
     if (wound.seat >= 0 && wound.seat < 4 && points > 0 && party.taken[wound.seat])
         party.survivors[wound.seat].Send(Earned { points = points, kill = killed, head = killed && wound.head });
-    this.Send(Struck { at = zombie.at + float3(0, wound.head ? 1.65 : 1.15, 0), head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
+    var body = BodyOf(this, zombie);
+    this.Send(Struck { at = wound.head ? body.head : body.chest, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
                   points = points * (match.doubled > 0 ? 2 : 1), blow = wound.blow });
 }
 

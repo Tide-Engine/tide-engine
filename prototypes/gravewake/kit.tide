@@ -33,6 +33,7 @@ struct Placed
     float4x4 transform = float4x4.identity;
     float open = 1;
     float tint = 1;
+    float glow;
 }
 
 asset List<Mesh<Corner>> parts = "art/kit/*.glb";
@@ -103,19 +104,18 @@ void PlaceKit(mut Kit kit, Plan plan, float[16] shown)
         {
             var open = shown[put.gate];
             var look = plan.gates[put.gate].look;
-            if (look == GateLook.Door) yaw += Math.SmoothStep(0, 1, open) * 1.75;
-            if (look == GateLook.Bars) at.y += Math.SmoothStep(0, 1, open) * 3.3;
+            if (look == GateLook.Door || look == GateLook.Bars) yaw += Math.SmoothStep(0, 1, open) * put.swing;
             if (look == GateLook.Rubble)
             {
                 if (open >= 1) continue;
                 at.y -= open * open * 2.2;
             }
         }
-        var transform = float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), yaw), put.scale);
+        var transform = Math.Mul(float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), yaw), put.scale), float4x4.Translate(put.pivot));
         var list = kit.partsOf[int(put.piece)];
         for (var k = 0; k < list.count; k++)
         {
-            kit.placed[list[k]].Add(Placed { transform = transform, open = put.open, tint = put.tint });
+            kit.placed[list[k]].Add(Placed { transform = transform, open = put.open, tint = put.tint, glow = put.glow });
         }
     }
 }

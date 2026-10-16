@@ -53,6 +53,7 @@ PAL = {
     "worn": (0.125, 0.078, 0.050), "worn_dark": (0.072, 0.046, 0.030),
     "clay": (0.360, 0.125, 0.050), "clay_dark": (0.200, 0.072, 0.032), "rag": (0.440, 0.370, 0.250),
     "ember": (1.000, 0.300, 0.035), "frost": (0.500, 0.820, 1.000), "storm": (0.480, 0.160, 1.000),
+    "trouser": (0.070, 0.060, 0.050),
 }
 def pack_weapon(src, length, roty, hand, grip, offhand=None, head=None, recolour=None, align=False, tip=None):
     """A pack weapon scaled to length (along +Y), turned roty about Y so its edge faces +Z, its grip at the origin.
@@ -737,6 +738,24 @@ def forearm():
     return {"tip": Vector((0, -0.28, 0)), "elbow": Vector((0, -0.28, 0))}
 
 
+def kick_leg():
+    """A booted shin for the first-person kick: the knee at the origin, the shin down -Y, the toe toward +Z and
+    the sole at the bottom, toward -Y."""
+    lathe([(0.0, 0.05), (0.064, 0.05), (0.073, 0.0), (0.067, -0.12), (0.058, -0.22), (0.0, -0.22)], "trouser",
+          sides=10, smooth=True, angle=40)
+    lathe([(0.0, -0.17), (0.063, -0.17), (0.068, -0.19), (0.061, -0.30), (0.056, -0.42), (0.0, -0.42)], "leather",
+          sides=10, smooth=True, angle=40)
+    torus((0, -0.18, 0), 0.066, 0.013, "leather_light", seg=10, sides=5)
+    for y in (-0.25, -0.31, -0.37):
+        box((0, y, 0.058), (0.05, 0.008, 0.012), "worn_dark", bevel=0.002)
+    # the foot: the instep and toe, the heel, the sole
+    box((0, -0.452, 0.045), (0.104, 0.076, 0.23), "leather", bevel=0.03)
+    ball((0, -0.462, 0.152), 0.054, "leather", seg=8, rings=5, scale=(1.0, 0.75, 1.1))
+    box((0, -0.502, 0.05), (0.112, 0.022, 0.29), "black", bevel=0.006)
+    box((0, -0.487, -0.06), (0.10, 0.04, 0.07), "black", bevel=0.006)
+    return {"tip": Vector((0, -0.5, 0.2))}
+
+
 # ---------------------------------------------------------------- the list
 
 WEAPONS = [
@@ -755,7 +774,7 @@ WEAPONS = [
     ("javelin", "thrown", javelin), ("throwing_axe", "thrown", throwing_axe), ("fire_pot", "thrown", fire_pot),
     ("lure_bell", "thrown", lure_bell),
     ("arrow", "projectile", arrow), ("bolt", "projectile", bolt), ("cannonball", "projectile", cannonball),
-    ("fist_r", "hand", fist_r), ("fist_l", "hand", fist_l), ("forearm", "hand", forearm),
+    ("fist_r", "hand", fist_r), ("fist_l", "hand", fist_l), ("forearm", "hand", forearm), ("kick_leg", "hand", kick_leg),
 ]
 
 

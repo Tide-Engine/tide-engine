@@ -94,6 +94,31 @@ int main(void)
     CHECK(world.Ashwick.made);
     CHECK(get(0).weapons.at[0] == Weapon_RustySword && get(0).weapons.at[1] == Weapon_HandCrossbow);
 
+    // Where the dead come in is clear of everything solid: where one lands climbing through a window, and where one
+    // rises out of the ground
+    for (int w = 0; w < tide_list_read_count(&world.heap, world.Ashwick.windows); w++) {
+        const Window window = *(const Window *)tide_list_read(&world.heap, world.Ashwick.windows, w, sizeof(Window));
+        for (int k = 0; k < tide_list_read_count(&world.heap, world.Ashwick.solids); k++) {
+            const Solid solid = *(const Solid *)tide_list_read(&world.heap, world.Ashwick.solids, k, sizeof(Solid));
+            if (solid.gate >= 0) continue;
+            const bool inside = fabsf(window.inside.x - solid.center.x) < solid.half.x + 0.3f &&
+                                fabsf(window.inside.z - solid.center.z) < solid.half.z + 0.3f;
+            if (inside) fprintf(stderr, "window %d lands at %.2f %.2f, in solid %d\n", w, window.inside.x, window.inside.z, k);
+            CHECK(!inside);
+        }
+    }
+    for (int r = 0; r < tide_list_read_count(&world.heap, world.Ashwick.risers); r++) {
+        const Riser riser = *(const Riser *)tide_list_read(&world.heap, world.Ashwick.risers, r, sizeof(Riser));
+        for (int k = 0; k < tide_list_read_count(&world.heap, world.Ashwick.solids); k++) {
+            const Solid solid = *(const Solid *)tide_list_read(&world.heap, world.Ashwick.solids, k, sizeof(Solid));
+            if (solid.gate >= 0) continue;
+            const bool inside = fabsf(riser.at.x - solid.center.x) < solid.half.x + 0.3f &&
+                                fabsf(riser.at.z - solid.center.z) < solid.half.z + 0.3f;
+            if (inside) fprintf(stderr, "riser %d at %.2f %.2f, in solid %d\n", r, riser.at.x, riser.at.z, k);
+            CHECK(!inside);
+        }
+    }
+
     // ---- Round one: the dead come, from the windows and the ground ----
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick(1);
     CHECK(world.Match.phase == Phase_Fighting && world.Match.round == 1);
@@ -323,6 +348,72 @@ int main(void)
     CHECK(bled);
     CHECK(slowed);
     CHECK(froze);
+
+    // ---- A kick: one of the dead goes over backwards, is stamped on as it lies, and gets up again; a heavy blow from
+    // a maul takes another off its feet ----
+    {
+        int row = -1;
+        for (int t = 0; t < 60 * 60 && row < 0; t++) {
+            for (uint32_t r = 0; r < world.arch4_Zombie.count; r++)
+                if (TIDE_AT(&world, arch4_Zombie, Zombie, r).state == ZombieState_Hunting) { row = (int)r; break; }
+            if (row < 0) tick_safe(1);
+        }
+        CHECK(row >= 0);
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch4_Zombie, row);
+        Zombie z = tide_get_Zombie(&world, e);
+        z.health = 100000;
+        CHECK(tide_set_Zombie(&world, e, z));
+        put(0, (tide_float3){z.at.x + sinf(z.yaw) * 1.2f, 0, z.at.z + cosf(z.yaw) * 1.2f}, (tide_float3){z.at.x, 1.2f, z.at.z});
+        s = get(0);
+        s.stamina = 1;
+        s.act = Act_Idle;
+        set(0, s);
+        held[0].kick = true;
+        tick_safe(1);
+        held[0].kick = false;
+        tick_safe(20);
+        z = tide_get_Zombie(&world, e);
+        CHECK(z.state == ZombieState_Fallen);
+        // Stamped on as it lies: standing at its hips, its head is under the kick
+        tick_safe(40);
+        z = tide_get_Zombie(&world, e);
+        CHECK(z.state == ZombieState_Fallen);
+        const float headX = z.at.x - sinf(z.yaw) * 0.95f, headZ = z.at.z - cosf(z.yaw) * 0.95f;
+        put(0, (tide_float3){z.at.x, 0, z.at.z}, (tide_float3){headX, 0.2f, headZ});
+        const float before = z.health;
+        held[0].kick = true;
+        tick_safe(1);
+        held[0].kick = false;
+        tick_safe(20);
+        z = tide_get_Zombie(&world, e);
+        CHECK(z.health < before - 300);
+        // Up again, a few seconds later
+        for (int t = 0; t < 60 * 8 && tide_get_Zombie(&world, e).state == ZombieState_Fallen; t++) tick_safe(1);
+        CHECK(tide_get_Zombie(&world, e).state == ZombieState_Hunting);
+
+        // A heavy blow from a maul
+        s = get(0);
+        s.weapons.at[0] = Weapon_Maul;
+        s.forged.at[0] = false;
+        s.slot = 0;
+        s.act = Act_Idle;
+        set(0, s);
+        z = tide_get_Zombie(&world, e);
+        z.health = 100000;
+        CHECK(tide_set_Zombie(&world, e, z));
+        put(0, (tide_float3){z.at.x + sinf(z.yaw) * 1.4f, 0, z.at.z + cosf(z.yaw) * 1.4f}, (tide_float3){z.at.x, 1.2f, z.at.z});
+        held[0].aim = true;
+        held[0].attack = true;
+        tick_safe(1);
+        held[0].attack = false;
+        bool over = false;
+        for (int t = 0; t < 150 && !over; t++) {
+            tick_safe(1);
+            over = tide_get_Zombie(&world, e).state == ZombieState_Fallen;
+        }
+        held[0].aim = false;
+        CHECK(over);
+    }
 
     // ---- Holding the square: with every door open the dead come from every window and grave, and every one of them
     // has to find its way to the survivors, or a round would never end. Both stand by the well and swing at what's near.

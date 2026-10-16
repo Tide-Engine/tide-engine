@@ -367,6 +367,9 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
         case Act.Throw:
             lowered = Math.Saturate(Math.Min(t * 5, (1 - t) * 5));
             break;
+        case Act.Kick:
+            lowered = Math.Saturate(Math.Min(t * 4, (1 - t) * 4)) * 0.4;
+            break;
         case Act.Loose:
         {
             var kick = Math.Saturate(1 - t * 3);
@@ -465,6 +468,14 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
                     if (bolted) lens.scene.Mesh(ArmsMesh("bolt"), Math.Mul(held, float4x4.Translate(V3(data.boltTail))), Steel, Finish { runes = finish.runes });
                 }
             }
+        }
+        // The kick: a boot comes up from below and out at the dead, its sole first
+        if (mine.act == Act.Kick)
+        {
+            var out = t < 0.3 ? EaseOut(t / 0.3) : t < 0.42 ? 1.0 : 1 - Ease((t - 0.42) / 0.58);
+            var knee = Math.Lerp(float3(0.2, -1.1, 0.0), float3(0.13, -0.5, 0.14), out);
+            var leg = InEye(eye, Hold { at = knee, turn = Degrees(Math.Lerp(-10, -100, out), Math.Lerp(-20, -28, out), Math.Lerp(14, -6, out)) });
+            lens.scene.Mesh(ArmsMesh("kick_leg"), leg, Steel, Finish { });
         }
         // What's in the hand besides: the stab's dagger, a brew, a fire pot or a bell
         if (mine.act == Act.Stab)

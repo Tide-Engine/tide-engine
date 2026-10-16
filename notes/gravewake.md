@@ -21,8 +21,8 @@ weapon list, the brews, the art direction and the controls.
 Round-based survival in the Black Ops 2 mould, with medieval things in place
 of guns and perks:
 
-- **Points.** 10 a hit, 50 a kill, 100 a kill to the head; burning gives
-  none. Nailing boards back pays 10 a board, 400 a round at most. Going down
+- **Points.** 10 a hit, 20 a hit to the head, 50 a kill, 100 a kill to the
+  head; burning and bleeding give none. Nailing boards back pays 10 a board, 400 a round at most. Going down
   costs 5%. Points buy the doors, rubble and iron bars between Ashwick's seven
   areas (750 to 1250), weapons off the walls (500 to 2000, ammunition half
   that, 4500 for a forged one's), the Pilgrim's Chest (950), the Runeforge
@@ -44,6 +44,24 @@ of guns and perks:
   lightning stuns for 0.6 s (the Staff of Storms chains), bleeding ticks for
   3 s, a blast bursts round the hit; burning and bleeding pay no points and
   show no hit marker until they kill.
+- **Melee, after Dying Light** (the owner, 2026-10-16: "maybe we can get
+  inspired by dying light's melee combat, including the kicking and them
+  tumbling over"). F kicks (0.55 s, a fifth of the stamina bar): up to three
+  of the dead within 1.9 m in front go over backwards (25 damage, thrown back
+  at 6 m/s); one already down is stamped on, on the head, for
+  `220 + 0.4 × the round's health`. A heavy blow from something blunt, swept
+  wide or two-handed also takes them off their feet. One thrown back knocks
+  over the next it falls into. Down (`ZombieState.Fallen`), one goes over
+  with the knockback clip (0.83 s), lies 1.3 to 2.5 s and gets up with UAL2's
+  `LayToIdle` (1.53 s); lying, it takes half as much again from every blow,
+  and its head, chest and hips (`Body`) are where the lying body has them, for
+  blows and missiles alike. Killed while down it stays down; killed by a
+  blow that knocks down, it's thrown over as it dies. One tearing at a window
+  is knocked back from it instead, and starts on the board again.
+- **Headshots** are their own thing: a gold hit marker (red and bigger for a
+  kill), a crack every time, a higher tick to the one who hit, HEADSHOT over
+  the crosshair for a kill, and the head comes off (the head bone scaled to
+  nothing, a burst of blood and bone, the neck spraying a moment).
 - **Down and out.** At 0 health a survivor is downed for 30 s, can still use a
   bow or crossbow, and is raised by a friend holding use for 3 s. Alone, down
   is the end unless they drank Second Wind Cider (a self-revive, 500 alone,
@@ -128,6 +146,39 @@ of guns and perks:
   nothing gave one), and the Runeforge's bleed and a second frost blow's
   freeze do something (bleed did nothing beyond damage; nothing set
   `frozen`).
+- The map, after the owner's first play (2026-10-16: "doors are rotated weird
+  or sections have holes that make no sense"):
+  - The kit's door (`Door_4_Round`) is hinged at its origin and spans 1.1 m
+    to its left (the importer mirrors x), so a gate's leaf goes at
+    `gate.at + along * 0.55`; it had sat beside its arch, half over the wall,
+    and from the far side the arch looked empty. Doors and iron gates turn
+    about a hinge as they open (`Put.swing`, `Put.pivot`), into the gate's far
+    side; the iron gates had risen 3.3 m and hung in the air.
+  - House doorways that aren't gates have a shut door (`ShutDoor`), and every
+    window that isn't a barricade has the kit's frame and glass (a quarter of
+    them lit warm, `Put.glow` read by `KitGlass`) or closed shutters: they had
+    been dark holes into the houses' empty insides.
+  - Free-standing walls (`StoneWall`) had their two pieces back to front, so
+    both faces showed plaster; both now show stone.
+  - Two real holes, on the smithy's north side: (-12..-10, -14) led out of the
+    village, and (10..12, -14) round the stable door into the stables. Walls
+    close both, and the pocket behind the second.
+- F10 (development) puts the next weapon in hand, to look at each in turn.
+- The owner's next notes (2026-10-16): an invisible collider in the middle of
+  the square (the well had a box and no model: the square now has a modelled
+  well, `art/items` `well`), and props you walked through (stalls, the cart,
+  barrels, crates, benches, chairs, the anvil and the weapon stand now have
+  boxes from their kit footprints, `PlaceSolid`). The test also found the
+  tavern's north-east window landing the dead in the bar's barrels, where
+  they stuck for good; the barrels moved, and the test now checks every
+  window's landing and every grave against the solids.
+- Validation of these (2026-10-16): native debug `gravewake_test` and the
+  web debug WASI test pass, with the new checks (window landings and graves
+  clear of solids; a kick knocks one down, a stamp lands, it gets up; a
+  maul's heavy blow knocks one down); `gravewake_play_webgl` (330 s) and
+  `_webgpu` (273 s) pass. Looked at in standard-host captures: every gate
+  shut and open from both sides, the eight areas in four directions, the
+  well, the bell stall, the kick, a two-player fight with knockdowns.
 
 ## Rendering
 

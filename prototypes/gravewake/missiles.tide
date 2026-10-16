@@ -102,10 +102,9 @@ system Fly(mut Missile missile, Ashwick ashwick, Match match, Time time, query (
         for (var i = 0; i < 6; i++)
             if (missile.hit[i] == z.entity) already = true;
         if (already) continue;
-        var sink = (1 - z.risen) * 1.8;
-        var head = SphereHit(from, to, z.at + float3(0, HEAD_HEIGHT - sink, 0), HEAD_RADIUS);
-        var chest = SphereHit(from, to, z.at + float3(0, 1.15 - sink, 0), 0.36);
-        var hips = SphereHit(from, to, z.at + float3(0, 0.6 - sink, 0), 0.33);
+        var head = SphereHit(from, to, z.head, HEAD_RADIUS);
+        var chest = SphereHit(from, to, z.chest, 0.36);
+        var hips = SphereHit(from, to, z.hips, 0.33);
         var first = Math.Min(head, Math.Min(chest, hips));
         if (first > 1 || first > wall) continue;
         mut var at = struck.count;

@@ -55,6 +55,7 @@ Sizes are the model's box, X by Y by Z, in metres.
 | gravestone_b | 0.62 x 1.30 x 0.36 | 404 | bottom centre | celtic cross on a stepped base |
 | gravestone_c | 0.62 x 0.92 x 0.29 | 192 | bottom centre | old pointed slab, leaning back, a corner broken off |
 | grave_mound | 1.00 x 0.30 x 1.95 | 318 | bottom centre | a low heap of dirt, long along Z |
+| well | 2.22 x 2.62 x 1.87 | 3560 | bottom centre | the square's well: a ring of fitted stones round dark water, two posts, a winch (its axle along X) with rope and bucket, a plank roof |
 
 ## Sources
 

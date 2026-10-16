@@ -329,6 +329,11 @@ local event(Swung swung) HearSwing(mut Ears ears, Me me, Survivor survivor)
 {
     var info = Info(survivor.weapons[survivor.slot]);
     var mine = swung.seat == me.seat;
+    if (swung.kick)
+    {
+        PlayAt(swingsLight[ears.random.NextInt(swingsLight.count)], survivor.feet + float3(0, 0.8, 0), mine, 0.55, ears.random.NextFloat(0.7, 0.8));
+        return;
+    }
     var heavy = swung.heavy || info.slow < 0.95 || info.twoHanded;
     mut Clip clip = heavy ? swingsHeavy[ears.random.NextInt(swingsHeavy.count)] : swingsLight[ears.random.NextInt(swingsLight.count)];
     if (swung.stab) clip = stabClip;
@@ -343,16 +348,18 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
         if (struck.killed) Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.8, ears.random.NextFloat(0.9, 1.1));
         return;
     }
+    if (struck.blow == Blow.Shove) return;
     mut Clip clip = hitsBlade[ears.random.NextInt(hitsBlade.count)];
     if (struck.blow == Blow.Blunt) clip = hitsBlunt[ears.random.NextInt(hitsBlunt.count)];
     if (struck.blow == Blow.Missile) clip = arrowsFlesh[ears.random.NextInt(arrowsFlesh.count)];
     if (struck.blow != Blow.Burst) Audio.Play(clip, struck.at, 0.9, ears.random.NextFloat(0.92, 1.08));
-    if (struck.head && struck.killed) Audio.Play(headshots[ears.random.NextInt(headshots.count)], struck.at, 0.9, 1.0);
-    else if (struck.killed) Audio.Play(gores[ears.random.NextInt(gores.count)], struck.at, 0.7, ears.random.NextFloat(0.9, 1.1));
+    // On the head: its own crack, every time, louder for the one that takes it off
+    if (struck.head) Audio.Play(headshots[ears.random.NextInt(headshots.count)], struck.at, struck.killed ? 1.0 : 0.55, struck.killed ? 1.0 : 1.12);
+    if (struck.killed) Audio.Play(gores[ears.random.NextInt(gores.count)], struck.at, struck.head ? 0.9 : 0.7, ears.random.NextFloat(0.9, 1.1));
     if (struck.killed) Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.75, ears.random.NextFloat(0.88, 1.12));
     else if (ears.random.NextInt(3) == 0) Audio.Play(pains[ears.random.NextInt(pains.count)], struck.at, 0.6, ears.random.NextFloat(0.85, 1.1));
     if (struck.element == Element.Frost && struck.killed) Audio.Play(freezeClip, struck.at, 0.6, 1.0);
-    if (mine) Audio.Play(hitmarkerClip, struck.killed ? 0.5 : 0.35, struck.killed ? 0.8 : 1.0);
+    if (mine) Audio.Play(hitmarkerClip, struck.head ? 0.6 : struck.killed ? 0.5 : 0.35, struck.head ? 1.45 : struck.killed ? 0.8 : 1.0);
 }
 
 local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
