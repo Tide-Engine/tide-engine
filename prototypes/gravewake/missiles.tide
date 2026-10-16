@@ -158,7 +158,7 @@ system Fly(mut Missile missile, Ashwick ashwick, Time time, query (Zombie zombie
         missile.life = missile.kind == Shot.Bell ? 7.0 : 6.0;
         if (missile.kind == Shot.Bell)
         {
-            missile.at = float3(where.x, 0.02, where.z);
+            missile.at = On(where.x, where.z) + float3(0, 0.02, 0);
             Send(Cue { sound = Sfx.Bell, at = missile.at });
         }
         return;

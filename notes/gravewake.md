@@ -21,8 +21,22 @@ the beacon go); after each wave everyone **picks one of three cards, with no
 gold** (a weapon, a brew, an upgrade; points stay as a score); the run is
 **endless and escalating** (how far they got is the score).
 
+Then, after playing it: "i think we should have classes that we are forced to
+pick at the start. so at the start you pick one (melee, range or magic or
+whatever we have in here) and then you upgrade that and yourself"; "could be
+fun also having one slot for some other attack or movement upgrade? ... I
+really liked The Spell Brigade"; "we dont have enough space to move around nor
+enough zombies"; "the contrast between the environment and the zombies makes
+it hard to read whats on screen"; "We should also have some verticality; I
+think something like Mega Bonk for the terrain could be fun". Asked, the owner
+chose Warrior, Ranger and Mage; one ability on Q with a cooldown (fire pots
+and bells becoming abilities); hordes "as many as performance allows (150+)";
+and a big hilly forest arena about 80 m across. Also fixed then: the fire pot
+throw (its arms were placed with the held crossbow's aim and spun), and "the
+tiny one handed crossbow doesnt need a floating left hand".
+
 Everything else is Claude's pick and Provisional: the name, Ashwick Wood and
-its layout, the cards and every number, the four survivors, the weapon list,
+its layout, the classes' kits, the abilities, the cards and every number, the four survivors, the weapon list,
 the brews, the art direction and the controls.
 
 ## How it plays
@@ -30,13 +44,28 @@ the brews, the art direction and the controls.
 Endless waves in a forest clearing, a card after each, with medieval things
 in place of guns and perks:
 
-- **Waves.** 6, 8, 13, 18 of the dead, then `24 * (0.6 + wave / 10)`, each
-  times `1 + 0.6` per extra player; at most 24 up at once. Health 150, +100 a
-  wave to wave nine, then ×1.1 a wave. A spawn every
-  `max(0.35, 2 * 0.95^(wave-1)) / (1 + 0.3 per extra player)` seconds, at one
-  of the five risers nearest a random standing survivor, but none within 7 m
-  of them. Runners from wave three (12% more a wave, 92% at most), sprinters
-  among them from wave nine.
+- **Classes** (`abilities.tide`), picked with 1, 2 or 3 before the first
+  wave (nothing starts till every ready survivor has one, and a joiner picks
+  on joining): the Warrior (Arming Sword and Leap; melee weapons), the Ranger
+  (Hunting Bow and Dash; bows, crossbows, thrown, the handgonne; twice the
+  reserve), the Mage (Staff of Embers and Frost Nova; the three staffs, whose
+  charges come back on their own, 0.7 a second, more with Wellspring). A
+  class's weapon cards are only its own weapons (`OfRole`); staffs are tiers
+  1 to 3.
+- **The ability on Q**, one at a time, on a cooldown a fifth shorter (and a
+  quarter stronger) for each honing: Leap (8 s; up at 9.5 m/s and ahead at
+  7.5, slamming down everything within 3.2 m where it lands), Dash (3.5 s;
+  19 m/s for 0.18 s the way they press), Frost Nova (9 s; freezes everything
+  within 5.5 m for 2.2 s), Fire Pot (7 s), Grave Bell (25 s), War Cry (10 s;
+  throws down everything within 4.5 m), Blink (6 s; up to 9 m ahead, not
+  through anything). Fire pots and bells are no longer counted items.
+- **Waves.** A horde: `(16 + 9w + 1.1w²) × (1 + 0.6 per extra player)` of
+  the dead (26, 38, 53 ... 88 by the fifth, 216 by the tenth), at most 150 up
+  at once. Health `60 + 40(w-1)` to wave nine, then ×1.09 a wave; a claw does
+  30. A spawn every `max(0.07, 0.75 × 0.9^(w-1)) / (1 + 0.3 per extra player)`
+  seconds, at one of the five risers nearest a random standing survivor, but
+  none within 7 m of them. Runners from wave three (12% more a wave, 92% at
+  most), sprinters among them from wave nine.
 - **Between waves** (`rounds.tide`'s `Regroup`, `cards.tide`): whoever is
   down stands up, whoever bled out comes back at their place by the fire,
   everyone is healed and their arrows, bolts, charges and pots filled, Second
@@ -45,19 +74,24 @@ in place of guns and perks:
   45 s for one who hasn't taken one (whose cards are then lost). Late joiners
   start with the hand crossbow and are dealt at the next wave's end.
 - **The cards.** Taken with 1, 2 or 3 (the pad's d-pad left, up, right).
-  The first is always a weapon not carried, from the two newest tiers the
-  night has reached (`weapons.tide`'s `Tier`: 1 from the first wave, 2 from
-  the third, 3 from the sixth, 4 from the ninth; from the tenth wave a growing
-  share come runeforged). The second is a brew not yet drunk (drunk there and
-  then) or, once all six are, another keepsake. The third is a keepsake: the
-  Runeforge for the weapon in hand (three times as likely while it isn't
-  forged, from the second wave), a whetstone (+20% damage to every blow,
-  missile and spell, stacking), a heart of oak (+40 health), hobnailed boots
-  (kick reach +0.3 m, one more knocked over, damage ×(1 + boots) and stamps
-  ×(1 + 0.4 boots), less stamina), a deep quiver (+50% reserve), a pyre
-  satchel (two more fire pots carried) or two grave bells. Everything taken
-  stays through downs and bleeding out, until the game's over; there's no cap
-  on brews.
+  The first is for the class: a weapon of it not carried, from the two newest
+  tiers the night has reached (`weapons.tide`'s `Tier`: 1 from the first
+  wave, 2 from the third, 3 from the sixth, 4 from the ninth; from the tenth
+  wave a growing share come runeforged), always after the first wave and 45%
+  after; otherwise a class upgrade: the Runeforge (from the second wave, while
+  the weapon in hand isn't forged), an edge (whetstone, broadheads, focus:
+  +20% to every blow, missile and spell), and the class's own: Wide Swings
+  (+1 cleave, +0.12 rad arc), Bloodthirst (4 health a kill), Deep Quiver
+  (+50% reserve), Bodkin Heads (+1 pierce), Volley (+1 missile fanned 0.07
+  rad), Steady Hands (draw and reload ×0.85), Split Spell (+1 fireball fanned
+  0.09 rad, frost +2 struck and +0.05 rad, storm +2 in the chain), Wellspring
+  (+50% charges and reserve, faster coming back, reloads ×0.8). The second is
+  for themselves: a brew not yet drunk (55%, drunk there and then), or a heart
+  of oak (+40 health), hobnailed boots (kick reach +0.3 m, one more knocked
+  over, damage ×(1 + boots), stamps ×(1 + 0.4 boots), less stamina) or a
+  fleet foot (+10% speed, +25% sprint). The third is for the ability: another
+  in its place, or the one they have honed (at most four honings). Everything
+  taken stays through downs and bleeding out, until the game's over.
 - **Points** are only a score now: 10 a hit, 20 a hit to the head, 50 a
   kill, 100 a kill to the head; burning and bleeding give none. They show
   over the wave's tally and on the game-over table.
@@ -122,13 +156,27 @@ in place of guns and perks:
   keeps its solids, risers and starts (`Ashwick`, built at `Spawned`), and
   each machine calls it again for what it draws (`Village`, a local
   singleton, because local handlers can't read the match's lists). Change one
-  and both follow. The clearing's edge is `Reach(angle)`, about 16 to 24 m
+  and both follow. The clearing's edge is `Reach(angle)`, about 34 to 46 m
   from the fire; the forest past it is drawn but nobody's ground.
-- **Collision** is boxes in 8 m buckets: circles pushed out, standing on the
-  highest top within 0.45 m. Props, tree trunks, the ruin's walls, the fence,
-  the boulders and the gravestones have boxes.
-- **Navigation**: a 0.5 m grid, 168 × 160 cells from (-42, -38); cells past
-  the clearing's edge are walls. Every six ticks `Wayfinding` spreads a
+- **The ground is one function too**, `Ground(x, z)` (`plan.tide`): Perlin
+  rolling ground laid flat round the fire, a hill, a hollow and a ridge
+  (`Bump`), a cliff-top and a shelf (`Mesa`, short sides) each with a ramp
+  (`Ramp`), and a rise into the trees past the edge. Nothing of it is stored:
+  the match asks it where feet, the dead, drops, bells and missiles meet the
+  ground, and the picture draws it as a 193 × 193 heightfield at 1.25 m
+  (`MakeShapes`), with rock where it's steep, casting the moon's shadows.
+  Survivors can't walk up more than 0.75 m a metre (`Passable`), so cliffs
+  are climbed by ramp, Leap or not at all; jumping down is fine.
+- **Collision** is boxes in 8 m buckets, on the ground: circles pushed out,
+  standing on the highest top within 0.45 m (the ground's or a box's). Props,
+  tree trunks, the ruin's walls, the fence, the boulders and the gravestones
+  have boxes.
+- **Navigation**: a 1 m grid, 112 × 112 cells from (-56, -56) (a byte field
+  reaches 254 m of path); cells past the clearing's edge, where the ground
+  climbs more than 0.6 a metre (`STEEP`, the cliffs), and every cell a box
+  taller than a step overlaps (a fence thinner than a cell too) are walls.
+  One of the dead already in a wall's cell (risen or thrown there) may walk
+  out of it. Every six ticks `Wayfinding` spreads a
   breadth-first field from the standing survivors' cells, and another from
   stuck bells; each zombie steps downhill, or straight at its target when the
   path is clear. The soak test checks that every one of the dead reaches the
@@ -137,7 +185,19 @@ in place of guns and perks:
   A joiner takes the first free seat; a leaver's survivor is destroyed.
 - **Cards**: `Survivor.cards`, `cardItems` and `choosing`; `dealt` is the
   wave they were dealt for, so a survivor is dealt once a break. A weapon
-  card's item is the `Weapon`, plus `FORGED_CARD` (100) when it comes forged.
+  card's item is the `Weapon`, plus `FORGED_CARD` (100) when it comes forged;
+  an ability card's is the `Ability`. `Survivor.role` is `None` till a class
+  is picked; `Fight` does nothing until then.
+- **The horde's cost** (measured with `gravewake_perf`, release, this
+  Windows machine): posing each of the dead in the match (`Brace`, for the
+  head, chest and hips blows and missiles strike) was 92% of a tick; 150 of
+  them cost 1.69 ms a tick. Now one within 3.5 m of a survivor is posed every
+  other tick and the rest every sixth, staggered (`Zombie.phase`), keeping
+  their points about their feet between: 0.71 ms for 150 crowding two
+  survivors (4.2% of a 60 Hz frame), 0.98 ms for 200. The picture poses the
+  dead past 22 m every other frame and past 45 m every fourth, and the dead,
+  survivors and kit draw with `[LOD]` (shadows picked through the player's
+  camera). Not measured: a browser frame with 150 on screen.
   `Choose` (at `Tick.Survivors`) takes one on `pick1`..`pick3` and sends
   `Picked` for what's seen and heard; `RunRounds` holds the countdown while
   any ready survivor is `choosing`. While choosing, 1 and 2 take cards, not
@@ -310,7 +370,21 @@ in place of guns and perks:
   captures: the title's circle round the fire, the clearing from eight
   places, overhead, the cards, the first wave, and every weapon in hand
   idle, mid-attack and aimed or heavy (unchanged from the last round). The
-  thumbnail is a one-player run looking north across the fire, frame 800.
+  thumbnail is a one-player run looking north across the fire, frame 800
+  (since retaken on the hilly clearing: a Warrior south of the fire, the
+  ruin's cliff behind it, frame 1400 of the fourth wave).
+
+- Readability (the owner: "the contrast between the environment and the
+  zombies makes it hard to read"): the dead have a pale green-white rim
+  (`Skin.ghost`) added after the fog, dimmed only slowly with distance, so a
+  shape among the trees reads as one of them; the moon is a little brighter
+  and the fog thinner (0.015) for the wider clearing.
+- Validation of the classes, terrain and hordes (2026-10-16): native debug
+  `gravewake_test` (40 s) and the web debug WASI test pass; release
+  `gravewake_perf` as above. Looked at in standard-host captures: the class
+  screen, a leap, the cards, the ruin's cliff and ramp, the hill, the hollow,
+  a fifth-wave horde. The browser tests weren't run, as the owner asked;
+  `test/browser.mjs` was updated and checked to parse.
 
 ## Rendering
 
@@ -332,19 +406,26 @@ in place of guns and perks:
 
 - `gravewake_test` (native and WASI, `test/test.c`): two players through the
   real input: the risers and starts clear of every box and on walkable
-  ground; the first wave held with a sword (kills, a score); the cards dealt
-  (a weapon not carried, a brew, a keepsake), one taken by each, the
-  countdown held while one is still choosing, a brew drunk; every keepsake
-  taken through the input (the Runeforge, the quiver's reserve, the heart's
-  health, the whetstone, boots, the pyre's pots, bells, Packmule's second
+  cells; nothing starting till both have picked a class (a Warrior with the
+  arming sword and Leap, a Ranger with the hunting bow, twice its arrows and
+  Dash); the first wave held with the sword (kills, a score); the cards dealt
+  (a weapon of the class not carried, a card for themselves, one for the
+  ability), one taken by each, the countdown held while one is still
+  choosing; every kind of card taken through the input (the Runeforge, the
+  quiver's reserve, the heart's health, an edge, boots, fleet, wide swings,
+  bloodthirst, a honing, a new ability, Ironhide's health, Packmule's second
   hand, a forged weapon card); a sword-carrier downed into the last stand
   with every brew kept and raised by the other; one bleeding out and back at
-  the wave's end with everything; a crossbow bolt into the dead; a grave bell
+  the wave's end with everything; a staff's charges coming back; a dash and a
+  blink moving them, a leap's slam, a frost nova, a war cry and a fire pot
+  landing on one of the dead; a crossbow bolt into the dead; a grave bell
   rung and the lure field reaching it; a bleeding wound, a forged Falchion's
-  slow and freeze; a kick, a stamp, getting up, a maul's knockdown; then
-  both holding the fire for four waves, taking the third card after each
-  (every one of the dead reaches them within two minutes), then the match
-  from a snapshot and through its packed bytes hashes the same.
+  slow and freeze; a kick, a stamp, getting up, a maul's knockdown; then both
+  holding the fire for three waves, taking the third card after each (every
+  one of the dead reaches them within three minutes: the clearing is wide),
+  then the match from a snapshot and through its packed bytes hashes the
+  same. The soak once found one of the dead stuck at the camp's fence (1 m
+  cells missed a thin box) and one risen into a gravestone's cell.
 - `gravewake_play_webgl` / `_webgpu` (`test/browser.mjs`, label
   `private-prototype`, `webgpu`, run serially): the page in headless Chrome
   with frame control and `checkGL`: the title, Play, the first wave, a swing,
@@ -403,6 +484,8 @@ in place of guns and perks:
   - The Rooms package's views draw before the game's `Develop`, so the
     title's words are drawn by the game's own `TitleCard` view on the HUD
     layer instead of in `TitlePage`.
+  - An input can't be passed to a function (`Unleash` takes the move as a
+    `float2`).
   - Local fields can't be fixed arrays (`List<Shard>` holds the gibs'
     pieces), can't be read through a query's rows (the gibs' blood is a
     per-entity view), events can't be passed to functions (their fields

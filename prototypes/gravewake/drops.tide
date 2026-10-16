@@ -47,7 +47,7 @@ void MaybeDrop(mut Match match, float3 at)
     var order = match.dropTurn % 5;
     match.dropTurn += 1 + Random.NextInt(2);
     var kind = order == 0 ? Boon.MaxAmmo : order == 1 ? Boon.InstaKill : order == 2 ? Boon.MaxAmmo : order == 3 ? Boon.Nuke : Boon.InstaKill;
-    Spawn(Drop { at = float3(at.x, 0, at.z), kind = kind });
+    Spawn(Drop { at = On(at.x, at.z), kind = kind });
 }
 
 // A power-up floats a while, blinking at the end, and goes to the first survivor to walk into it.

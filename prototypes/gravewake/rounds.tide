@@ -26,7 +26,7 @@ singleton Match
     bool culling;                // Development: the wave's dead all go
 }
 
-const int MAX_ALIVE = 24;
+const int MAX_ALIVE = 150;       // Up at once: the most the tick and the frame afford (notes/gravewake.md)
 const float BREAK_SECONDS = 5;   // The countdown to the next wave, once everyone has taken a card
 const float CHOICE_MOST = 45;    // How long the others wait for one who hasn't
 
@@ -48,28 +48,24 @@ void ResetMatch(mut Match match)
     match.culling = false;
 }
 
-// How many dead a wave brings, for so many survivors.
+// How many dead a wave brings, for so many survivors: a horde, growing faster each wave (26, 38, 53, 88 by the fifth,
+// 216 by the tenth for one).
 int RoundCount(int round, int players)
 {
     var crowd = 1 + 0.6 * (players - 1);
-    if (round <= 4)
-    {
-        var early = round == 1 ? 6 : round == 2 ? 8 : round == 3 ? 13 : 18;
-        return int(Math.Round(early * crowd));
-    }
-    return int(Math.Round(24 * crowd * (0.6 + round * 0.1)));
+    return int(Math.Round((16 + 9 * round + 1.1 * round * round) * crowd));
 }
 
-// How much a wave's dead can take.
+// How much a wave's dead can take: little each, with so many.
 float RoundHealth(int round)
 {
-    if (round < 10) return 150 + 100 * (round - 1);
-    return 950 * Math.Pow(1.1, round - 9);
+    if (round < 10) return 60 + 40 * (round - 1);
+    return 380 * Math.Pow(1.09, round - 9);
 }
 
 float SpawnGap(int round, int players)
 {
-    return Math.Max(0.35, 2.0 * Math.Pow(0.95, round - 1)) / (1 + 0.3 * (players - 1));
+    return Math.Max(0.07, 0.75 * Math.Pow(0.9, round - 1)) / (1 + 0.3 * (players - 1));
 }
 
 // Waiting for someone, the cards and the breath between waves, the wave, and the end.
@@ -81,18 +77,21 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
     mut var ready = 0;
     mut var hope = 0;
     mut var choosing = 0;
+    mut var unpicked = 0;
     foreach (var row in survivors)
     {
         var s = row.survivor;
         if (!s.ready) continue;
         ready += 1;
         if (s.choosing) choosing += 1;
+        if (s.role == Role.None) unpicked += 1;
         if (s.life == Life.Standing || (s.life == Life.Downed && s.selfRevives > 0 && party.joined == 1)) hope += 1;
     }
     switch (match.phase)
     {
         case Phase.Waiting:
-            if (ready > 0)
+            // Everyone's class picked first
+            if (ready > 0 && unpicked == 0)
             {
                 match.phase = Phase.Break;
                 match.timer = BREAK_SECONDS - 3;
@@ -104,8 +103,9 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
                 match.phase = Phase.Waiting;
                 return;
             }
-            // The countdown starts once every card is taken (or the one who hasn't has had long enough)
-            if (choosing > 0 && match.choosing < CHOICE_MOST)
+            // The countdown starts once every card is taken (or the one who hasn't has had long enough), and every class
+            // is picked
+            if ((choosing > 0 || unpicked > 0) && match.choosing < CHOICE_MOST)
             {
                 match.choosing += time.dt;
                 match.timer = 0;
@@ -183,8 +183,11 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, Party party, query
     var gait = GaitFor(match.round);
     var health = RoundHealth(match.round);
     var look = Random.NextInt(ZOMBIE_LOOKS);
-    var at = riser.at + float3(Random.NextFloat(-0.5, 0.5), 0, Random.NextFloat(-0.5, 0.5));
-    Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = health, gait = gait, look = look, state = ZombieState.Rising, pace = Random.NextFloat(0.9, 1.1) });
+    mut var at = riser.at + float3(Random.NextFloat(-0.5, 0.5), 0, Random.NextFloat(-0.5, 0.5));
+    if (!Walkable(ashwick, CellOf(at))) at = riser.at;
+    at.y = Ground(at.x, at.z);
+    Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = health, gait = gait, look = look, state = ZombieState.Rising, pace = Random.NextFloat(0.9, 1.1),
+                   phase = Random.NextInt(BRACE_EVERY) });
     Send(Cue { sound = Sfx.Rise, at = at });
     match.toSpawn -= 1;
 }
@@ -212,7 +215,7 @@ Gait GaitFor(int round)
 system Regroup(mut Survivor survivor, Match match, Ashwick ashwick, Party party)
 {
     if (match.phase == Phase.Fighting && survivor.choosing) survivor.choosing = false;
-    if (match.phase != Phase.Break || match.round <= 0 || !survivor.ready || survivor.dealt == match.round) return;
+    if (match.phase != Phase.Break || match.round <= 0 || !survivor.ready || survivor.role == Role.None || survivor.dealt == match.round) return;
     survivor.dealt = match.round;
     if (survivor.life == Life.Gone)
     {

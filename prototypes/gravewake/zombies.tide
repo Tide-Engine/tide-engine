@@ -17,7 +17,7 @@ const float GETUP_SECONDS = 1.53;  // Getting up again
 const float ATTACK_SECONDS = 1.1;
 const float ATTACK_LANDS = 0.5;
 const float ATTACK_REACH = 1.35;
-const float ZOMBIE_HIT = 50;
+const float ZOMBIE_HIT = 30;
 
 component Zombie
 {
@@ -39,9 +39,13 @@ component Zombie
     float chill;                // Seconds left slowed by frost
     float frozen;               // Seconds left frozen solid
     float stun;                 // Seconds left dazed
-    float3 headAt;              // Where its head, chest and hips are, as its pose has them this tick (Brace)
+    float3 headAt;              // Where its head, chest and hips are this tick (Brace)...
     float3 chestAt;
     float3 hipsAt;
+    float3 headLocal;           // ...as its pose last had them, about its feet in its own turn
+    float3 chestLocal;
+    float3 hipsLocal;
+    int phase;                  // Which of the ticks it's posed on, when nobody's near
     float downFor;              // Knocked down: how long it lies before getting up
     float3 shove;               // Knocked back, metres a second
     int killer = -1;            // The seat that killed it
@@ -51,6 +55,8 @@ component Zombie
     int bleeder = -1;           // Who opened the wound
     local Pose pose;            // This machine's: the frame's pose, sampled once
     local float4x4 place = float4x4.identity;
+    local float sink;           // How far under the ground it was posed
+    local int frames;           // Frames since it was posed
     local float flash;          // The flash of a fresh blow
     local float voice = 1;      // Seconds till it groans
     local bool gibbed;          // Blown apart by the blow that killed it (people.tide's Gib): its pieces fly
@@ -78,7 +84,7 @@ struct Body
 Body BodyOf(Entity entity, Zombie zombie)
 {
     var risen = zombie.state == ZombieState.Rising ? Math.SmoothStep(0, 1, zombie.timer / RISE_SECONDS) : 1.0;
-    var placed = Math.Length(zombie.headAt) > 0;
+    var placed = Math.Length(zombie.headLocal) > 0;
     var up = float3(0, 1, 0);
     return Body { entity = entity, at = zombie.at, yaw = zombie.yaw, risen = risen,
                   hittable = zombie.state != ZombieState.Dying,
@@ -90,15 +96,34 @@ Body BodyOf(Entity entity, Zombie zombie)
 
 // Each tick, where each of the dead's head, chest and hips are, from its pose (people.tide's ZombiePose, which the
 // picture draws): blows and missiles strike what's seen. The head's middle is a little up its bone from the neck.
+// Posing is most of a tick's cost with a horde, so one within reach of a survivor (a blade, a kick, a stamp) is posed
+// every other tick, and the rest every sixth, a sixth of them each tick, keeping their points about their feet between.
+const int BRACE_EVERY = 6;
+const float BRACE_NEAR = 3.5;
+
 [Stage(Tick.Zombies, 1)]
-system Brace(mut Zombie zombie)
+system Brace(mut Zombie zombie, Time time, query (Survivor survivor) survivors)
 {
-    var pose = ZombiePose(zombie, out var sink);
-    var rig = ZombieBody(zombie.look).skeleton.bones;
-    var place = ZombiePlace(zombie, sink);
-    zombie.headAt = Math.Transform(Math.Mul(place, pose.Model(rig.head)), float3(0, 0.1, 0));
-    zombie.chestAt = Math.Transform(Math.Mul(place, pose.Model(rig.chest)), float3(0, 0.05, 0));
-    zombie.hipsAt = Math.Transform(Math.Mul(place, pose.Model(rig.hips)), float3(0));
+    var turn = quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw);
+    mut var due = Math.Length(zombie.headLocal) == 0 || (time.tick + zombie.phase) % BRACE_EVERY == 0;
+    if ((time.tick + zombie.phase) % 2 == 0)
+    {
+        foreach (var row in survivors)
+            if (row.survivor.ready && row.survivor.life != Life.Gone && Math.Distance(row.survivor.feet, zombie.at) < BRACE_NEAR) due = true;
+    }
+    if (due)
+    {
+        var pose = ZombiePose(zombie, out var sink);
+        var rig = ZombieBody(zombie.look).skeleton.bones;
+        var place = ZombiePlace(zombie, sink);
+        var back = Math.Inverse(turn);
+        zombie.headLocal = Math.Rotate(back, Math.Transform(Math.Mul(place, pose.Model(rig.head)), float3(0, 0.1, 0)) - zombie.at);
+        zombie.chestLocal = Math.Rotate(back, Math.Transform(Math.Mul(place, pose.Model(rig.chest)), float3(0, 0.05, 0)) - zombie.at);
+        zombie.hipsLocal = Math.Rotate(back, Math.Transform(Math.Mul(place, pose.Model(rig.hips)), float3(0)) - zombie.at);
+    }
+    zombie.headAt = zombie.at + Math.Rotate(turn, zombie.headLocal);
+    zombie.chestAt = zombie.at + Math.Rotate(turn, zombie.chestLocal);
+    zombie.hipsAt = zombie.at + Math.Rotate(turn, zombie.hipsLocal);
 }
 
 // How far over one of the dead is: 0 on its feet, 1 flat on its back (it falls away from the blow).
@@ -125,6 +150,7 @@ event Wound
     int bonus;                  // Points for a kill over the usual (the dagger's, the knife's in BO)
     Blow blow;                  // What dealt it, for what's heard and seen
     bool down;                  // Knocks it off its feet
+    float freeze;               // Freezes it solid, so many seconds
 }
 
 // What dealt a blow.
@@ -212,8 +238,8 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Time time, query (S
             mut var at = zombie.at + zombie.shove * dt;
             zombie.shove *= Math.Max(0, 1 - dt * 5);
             at = PushOut(ashwick, at, ZOMBIE_RADIUS, 1.7);
-            if (!Walkable(ashwick, CellOf(at))) at = before;
-            at.y = 0;
+            if (!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before))) at = before;
+            at.y = Ground(at.x, at.z);
             zombie.at = at;
             // What it's thrown into goes over too
             var flung = Math.Length(zombie.shove);
@@ -317,8 +343,9 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Time time, query (S
     mut var at = zombie.at + forward * zombie.speed * dt + zombie.shove * dt;
     zombie.shove *= Math.Max(0, 1 - dt * 7);
     at = PushOut(ashwick, at, ZOMBIE_RADIUS, 1.7);
-    // Keep to cells the dead can walk; a step into a wall slides along it
-    if (!Walkable(ashwick, CellOf(at)))
+    // Keep to cells the dead can walk; a step into a wall slides along it (one already in a wall's cell, risen or
+    // thrown there, walks out)
+    if (!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before)))
     {
         var alongX = float3(at.x, at.y, before.z);
         var alongZ = float3(before.x, at.y, at.z);
@@ -326,7 +353,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Time time, query (S
         else if (Walkable(ashwick, CellOf(alongZ))) at = alongZ;
         else at = before;
     }
-    at.y = 0;
+    at.y = Ground(at.x, at.z);
     zombie.stride += Math.Length((at - before).xz);
     zombie.at = at;
 }
@@ -365,6 +392,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         zombie.chill = 3;
     }
     if (wound.element == Element.Shock) zombie.stun = Math.Max(zombie.stun, 0.6);
+    if (wound.freeze > 0) zombie.frozen = Math.Max(zombie.frozen, wound.freeze);
     if (wound.knock > 0)
     {
         mut var away = zombie.at - wound.from;
@@ -417,6 +445,8 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
 event(Earned earned) Earn(mut Survivor survivor)
 {
     survivor.points += earned.points;
+    // Bloodthirst: each kill heals
+    if (earned.kill && survivor.thirst > 0 && survivor.life == Life.Standing) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 4 * survivor.thirst);
     if (earned.kill) survivor.kills += 1;
     if (earned.head) survivor.headshots += 1;
 }

@@ -398,6 +398,27 @@ local event(Picked picked) HearPicked(Me me)
     Audio.Play(powerupGrab, 0.8);
 }
 
+// An ability used: a leap's rush and its landing, a dash's rush, frost cracking, a war cry, a blink's snap.
+local event(Unleashed used) HearUnleashed(mut Ears ears)
+{
+    switch (used.ability)
+    {
+        case Ability.Leap:
+            if (used.landed) Audio.Play(explosions[0], used.at, 1.0, 0.65);
+            else Audio.Play(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, 0.9, 0.8);
+            return;
+        case Ability.Dash: Audio.Play(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, 0.9, 1.3); return;
+        case Ability.Nova: Audio.Play(freezeClip, used.at, 1.0, 0.85); return;
+        case Ability.WarCry: Audio.Play(screams[ears.random.NextInt(screams.count)], used.at, 1.0, 0.65); return;
+        case Ability.Blink: Audio.Play(chainZap, used.to, 0.8, 1.5); return;
+    }
+}
+
+local event(Chosen chosen) HearChosen(Me me)
+{
+    if (chosen.seat == me.seat) Audio.Play(drawBlade, 0.9);
+}
+
 local event(Boons boons) HearBoon()
 {
     Audio.Play(powerupGrab, 0.8);

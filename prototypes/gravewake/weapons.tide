@@ -197,6 +197,7 @@ int Tier(Weapon weapon)
         case Weapon.HuntingBow:
         case Weapon.ThrowingAxes:
         case Weapon.HandCrossbow:
+        case Weapon.StaffFire:
             return 1;
         case Weapon.Falchion:
         case Weapon.Mace:
@@ -205,6 +206,7 @@ int Tier(Weapon weapon)
         case Weapon.LightCrossbow:
         case Weapon.Javelins:
         case Weapon.Handgonne:
+        case Weapon.StaffFrost:
             return 2;
         case Weapon.Longsword:
         case Weapon.WarHammer:
@@ -215,15 +217,13 @@ int Tier(Weapon weapon)
         case Weapon.Greataxe:
         case Weapon.Longbow:
         case Weapon.Repeater:
+        case Weapon.StaffStorm:
             return 3;
         case Weapon.Claymore:
         case Weapon.Maul:
         case Weapon.Arbalest:
         case Weapon.SunBow:
         case Weapon.WraithBow:
-        case Weapon.StaffFire:
-        case Weapon.StaffFrost:
-        case Weapon.StaffStorm:
             return 4;
     }
     return 0;

@@ -214,10 +214,14 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
         m.velocity.y -= m.gravity * dt;
         m.velocity *= Math.Max(0, 1 - m.drag * dt);
         m.at += m.velocity * dt;
-        if (m.at.y < 0.02)
+        if (m.gravity > 0)
         {
-            m.at.y = 0.02;
-            m.velocity = float3(0);
+            var floor = Ground(m.at.x, m.at.z) + 0.02;
+            if (m.at.y < floor)
+            {
+                m.at.y = floor;
+                m.velocity = float3(0);
+            }
         }
         m.size = Math.Max(0.002, m.size + m.grow * dt);
         fx.murk[i] = m;
@@ -307,7 +311,7 @@ local event(Struck struck) Bleed(mut Fx fx)
     }
     // A pool where they fall
     if (struck.killed)
-        Murk(fx, Mote { at = float3(struck.at.x, 0.02, struck.at.z), life = 14, size = 0.1, grow = 0.08, color = float3(0.16, 0.01, 0.01), alpha = 0.8 });
+        Murk(fx, Mote { at = On(struck.at.x, struck.at.z) + float3(0, 0.02, 0), life = 14, size = 0.1, grow = 0.08, color = float3(0.16, 0.01, 0.01), alpha = 0.8 });
     if (struck.element == Element.Fire)
         for (var i = 0; i < 8; i++) Glow(fx, Mote { at = struck.at, velocity = Scatter(fx, 2.5), life = 0.4, size = 0.09, color = float3(1.0, 0.45, 0.1), alpha = 2.5 });
     if (struck.element == Element.Frost)
@@ -379,6 +383,54 @@ local event(Cue cue) Dust(mut Fx fx)
     for (var i = 0; i < 22; i++)
         Murk(fx, Mote { at = cue.at + float3(fx.random.NextFloat(-0.4, 0.4), 0.05, fx.random.NextFloat(-0.4, 0.4)), velocity = float3(0, fx.random.NextFloat(1, 3), 0) + Scatter(fx, 1),
                         life = 1.2, size = fx.random.NextFloat(0.03, 0.09), gravity = 7, color = float3(0.18, 0.14, 0.1), alpha = 1 });
+}
+
+// An ability used: a leap's landing throws up a ring of earth, frost bursts out in a ring, a war cry's breath of dust,
+// a dash's streak, a blink's light at both ends.
+local event(Unleashed used) Flourish(mut Fx fx)
+{
+    switch (used.ability)
+    {
+        case Ability.Leap:
+            if (!used.landed) return;
+            for (var i = 0; i < 40; i++)
+            {
+                var turn = i * Math.TAU / 40;
+                var way = float3(Math.Cos(turn), 0, Math.Sin(turn));
+                Murk(fx, Mote { at = used.at + way * 0.4 + float3(0, 0.1, 0), velocity = way * fx.random.NextFloat(3, 6) + float3(0, fx.random.NextFloat(0.5, 2), 0), life = 1.1,
+                                size = fx.random.NextFloat(0.2, 0.4), grow = 0.6, color = float3(0.17, 0.14, 0.11), alpha = 0.7, drag = 2.5 });
+            }
+            return;
+        case Ability.Nova:
+            for (var i = 0; i < 56; i++)
+            {
+                var turn = i * Math.TAU / 56;
+                var way = float3(Math.Cos(turn), 0, Math.Sin(turn));
+                Glow(fx, Mote { at = used.at + float3(0, 0.6, 0), velocity = way * 11 + float3(0, fx.random.NextFloat(-0.5, 1.5), 0), life = 0.5, size = 0.28, grow = -0.3,
+                                color = float3(0.55, 0.8, 1.0), alpha = 2.5, drag = 2.2 });
+            }
+            return;
+        case Ability.WarCry:
+            for (var i = 0; i < 30; i++)
+            {
+                var turn = i * Math.TAU / 30;
+                var way = float3(Math.Cos(turn), 0, Math.Sin(turn));
+                Murk(fx, Mote { at = used.at + float3(0, 0.3, 0), velocity = way * 7, life = 0.8, size = 0.3, grow = 0.8, color = float3(0.2, 0.17, 0.14), alpha = 0.5, drag = 3 });
+            }
+            return;
+        case Ability.Dash:
+            for (var i = 0; i < 12; i++)
+                Murk(fx, Mote { at = used.at + float3(0, fx.random.NextFloat(0.1, 1.4), 0), velocity = Scatter(fx, 1), life = 0.5, size = 0.18, grow = 0.4,
+                                color = float3(0.18, 0.16, 0.14), alpha = 0.5, drag = 2 });
+            return;
+        case Ability.Blink:
+            for (var i = 0; i < 24; i++)
+            {
+                Glow(fx, Mote { at = used.at + float3(0, 1, 0), velocity = Scatter(fx, 3), life = 0.4, size = 0.12, color = float3(0.7, 0.55, 1.0), alpha = 3, drag = 3 });
+                Glow(fx, Mote { at = used.to + float3(0, 1, 0), velocity = Scatter(fx, 3), life = 0.5, size = 0.12, color = float3(0.7, 0.55, 1.0), alpha = 3, drag = 3 });
+            }
+            return;
+    }
 }
 
 local event(Boons boons) Sparkle(mut Fx fx)

@@ -7,6 +7,8 @@ set(GRAVEWAKE_ROOMS PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.t
 tide_add_game(gravewake_test SOURCES ${GRAVEWAKE_SOURCES} ${GRAVEWAKE_ROOMS} HOST test/test.c)
 add_test(NAME gravewake_test COMMAND gravewake_test)
 set_tests_properties(gravewake_test PROPERTIES TIMEOUT 300 LABELS "private-prototype")
+# A tick's cost with a horde, to run from a release build: not a test.
+tide_add_game(gravewake_perf SOURCES ${GRAVEWAKE_SOURCES} ${GRAVEWAKE_ROOMS} HOST test/perf.c)
 
 if(NOT TARGET tide_platform)
     return()
