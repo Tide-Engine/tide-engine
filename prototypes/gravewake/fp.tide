@@ -170,8 +170,10 @@ Pose FpPose(SkinnedMesh<Corner, FpRig> body, Survivor mine, WeaponInfo info, Gra
     }
     if (weight > 0) pose.Blend(act, weight);
     // A one-handed weapon's open left hand, held out in the kit's guard and flung across the picture in its swings,
-    // kept down out of the way
-    if (grasp == Grasp.One)
+    // kept down out of the way; and the hand crossbow's, which is held in the right hand alone (the left only spans it
+    // when it's reloaded, and throws, drinks and stabs have their own use for it)
+    var ownLeft = mine.act == Act.Reload || mine.act == Act.Throw || mine.act == Act.Drink || mine.act == Act.Stab;
+    if (grasp == Grasp.One || (grasp == Grasp.Pistol && !ownLeft))
         TurnBone(pose, body.skeleton.bones.upperArmL, body.skeleton.bones.shoulderL, quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(70)));
     return pose;
 }

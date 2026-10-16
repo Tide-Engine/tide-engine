@@ -296,13 +296,16 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
     var carried = float3(0.04, -0.06, -0.04) * grip.sprint + (mine.life == Life.Downed ? float3(0.02, -0.06, 0) : float3(0));
     var sink = float3(0.05, -0.55, -0.1) * lowered + float3(0, 0.01, -0.05) * recoil;
     var tilt = Degrees(55 * lowered + 10 * grip.sprint - 6 * recoil, -8 * grip.sprint, -6 * grip.sprint);
-    // The arms where their clips hold them
-    mut var place = Math.Mul(eye, float4x4.TRS(GraspShift(grasp), GraspTurn(grasp), float3(1)));
-    place = Math.Mul(place, float4x4.TRS(-FpEye(grasp, grip.low), quaternion.identity, float3(1)));
+    // The arms where their clips hold them. A pot thrown, a brew drunk or the knife's stab are their own clips, held as
+    // the kit holds them, whatever weapon is put away meanwhile: not the weapon's shift, nor laid on the crosshair.
+    var own = mine.act == Act.Throw || mine.act == Act.Drink || mine.act == Act.Stab;
+    var hold = own ? Grasp.Thrown : grasp;
+    mut var place = Math.Mul(eye, float4x4.TRS(GraspShift(hold), GraspTurn(hold), float3(1)));
+    place = Math.Mul(place, float4x4.TRS(-FpEye(hold, grip.low), quaternion.identity, float3(1)));
     var pose = FpPose(fpArms, mine, info, grasp, t, me.clock, speed, grip.sinceLoose);
     // A weapon that shoots laid along the crosshair's line: at the hip its line turned onto the point 30 m ahead of the
     // eye; aimed, its line brought under the eye, on the eye's way. A bow's arrow, only while it's drawn.
-    if (grasp == Grasp.Cross || grasp == Grasp.Pistol || bow)
+    if (!own && (grasp == Grasp.Cross || grasp == Grasp.Pistol || bow))
     {
         mut var lineAt = float3(0);
         mut var lineWay = float3(0, 0, 1);
@@ -336,7 +339,7 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
     place = Math.Mul(Math.Mul(Math.Mul(eye, float4x4.TRS(wobble + carried + sink, tilt, float3(1))), Math.Inverse(eye)), place);
     var onBone = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), BladeSeat(grasp), float3(1)));
     var drinking = mine.act == Act.Drink;
-    var tossing = mine.act == Act.Throw && t < 0.45;
+    var tossing = mine.act == Act.Throw && t > 0.06 && t < 0.45;
     var stabbing = mine.act == Act.Stab;
     var finish = Finish { runes = mine.forged[mine.slot] ? 1.0 : 0.0 };
     mut List<float4x4> strings = [];
