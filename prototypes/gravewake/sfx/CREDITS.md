@@ -39,7 +39,6 @@ No attribution is required for any of it; it is given here anyway.
 | `oga_rpg_ad` | RPG Sound Pack | artisticdude | CC0 1.0 | https://opengameart.org/content/rpg-sound-pack |
 | `oga_smith_hammer` | Blacksmith's hammer | vishwajai | CC0 1.0 | https://opengameart.org/content/blacksmiths-hammer |
 | `oga_splatter` | 2 Wooden Squish/Splatter Sequences | Independent.nu (posted by qubodup) | CC0 1.0 | https://opengameart.org/content/2-wooden-squish-splatter-sequences |
-| `oga_storm_siren` | Storm & Siren | TinyWorlds | CC0 1.0 | https://opengameart.org/content/storm-siren |
 | `oga_swishes` | Swishes Sound Pack | artisticdude | CC0 1.0 | https://opengameart.org/content/swishes-sound-pack |
 | `oga_undead_moans` | Undead Moans | AntumDeluge | CC0 1.0 | https://opengameart.org/content/undead-moans |
 | `oga_voice_fx` | Voice Effects: Zombie, Skeleton, Monster, Human Male | ArcadeParty | CC0 1.0 | https://opengameart.org/content/zombie-skeleton-monster-voice-effects |
@@ -189,7 +188,6 @@ No attribution is required for any of it; it is given here anyway.
 | rifle_fire_3.ogg | 0.84 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
 | rise.ogg | 1.68 | 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx), 25 CC0 mud SFX by rubberduck (CC0 1.0, https://opengameart.org/content/25-cc0-mud-sfx) + synthesized layers |
 | round_end.ogg | 6.77 | Dark Cavern Ambient by Paul Wortmann (CC0 1.0, https://opengameart.org/content/dark-cavern-ambient) |
-| round_start.ogg | 12.75 | Storm & Siren by TinyWorlds (CC0 1.0, https://opengameart.org/content/storm-siren) |
 | scream_1.ogg | 1.03 | 80 CC0 creature SFX by rubberduck (CC0 1.0, https://opengameart.org/content/80-cc0-creature-sfx) |
 | scream_2.ogg | 0.94 | 80 CC0 creature SFX by rubberduck (CC0 1.0, https://opengameart.org/content/80-cc0-creature-sfx) |
 | scream_3.ogg | 0.96 | 80 CC0 creature SFX #2 by rubberduck (CC0 1.0, https://opengameart.org/content/80-cc0-creture-sfx-2) |

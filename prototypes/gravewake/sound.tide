@@ -11,7 +11,6 @@ enum Bus { Master, Effects, Music, Ambience }
 
 asset Clip musicLow = "sfx/music_low.ogg";
 asset Clip musicHigh = "sfx/music_high.ogg";
-asset Clip roundStart = "sfx/round_start.ogg";
 asset Clip roundEnd = "sfx/round_end.ogg";
 asset Clip gameOverClip = "sfx/game_over.ogg";
 asset Clip fireLoop = "sfx/fire_loop.ogg";
@@ -426,15 +425,9 @@ local event(Spawned spawned) HearDrop(Drop drop)
     Audio.Play(powerupSpawn, drop.at + float3(0, 1, 0), 0.9, 1.0);
 }
 
-local event(RunBegan began) HearRound()
-{
-    Audio.Play(roundStart, 1.0);
-}
-
 // A Brute: its roar coming up out of the ground, and its fall.
 local event(BossCame came) HearBoss(mut Ears ears)
 {
-    Audio.Play(roundStart, 0.9);
     Audio.Play(screams[ears.random.NextInt(screams.count)], came.at + float3(0, 4, 0), 1.0, 0.45);
 }
 
