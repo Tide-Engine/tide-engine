@@ -901,6 +901,7 @@ struct FoldShot
     Portal portal;
     float3 point;
     float3 face;
+    int displaces;   // Bits of the open ends, anyone's, that the new end goes over: they close as it opens
 }
 
 // Find an end's landing without changing the fold or its wall. The candidate
@@ -966,15 +967,20 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
     // fold on the part of it they can't see
     if (ShotStops(origin, at + face * 0.05, physics, world, out _))
         return shot;
-    // ...clear of every other end, whoever's it is
+    // ...over any other end, whoever's it is, which it replaces: but not one whose fold has something in its mouth
     mut var overlaps = false;
+    mut var displaces = 0;
     for (var k = 0; k < 4; k++)
     {
         var there = fold.ends[k];
         if (k == end || !there.open) continue;
         if (Math.Dot(there.face, face) > 0.9 && Math.Abs(Math.Dot(there.at - at, face)) < 0.2
             && Math.Abs(Math.Dot(there.at - at, right)) < halfWide + FOLD_HALF_WIDE * there.size + 0.1
-            && Math.Abs(there.at.y - at.y) < halfHigh + FOLD_HALF_HIGH * there.size + 0.1) overlaps = true;
+            && Math.Abs(there.at.y - at.y) < halfHigh + FOLD_HALF_HIGH * there.size + 0.1)
+        {
+            displaces |= 1 << k;
+            if (fold.busy[k / 2] > 0) overlaps = true;
+        }
     }
     // ...and nothing of the room stands in the opening's way
     mut var blocked = false;
@@ -989,7 +995,15 @@ FoldShot PreviewFold(Fold fold, int end, float3 origin, float3 way, Mount[16] mo
         return shot;
     shot.valid = true;
     shot.portal = Portal { open = true, at = at, face = face, wall = piece.wall, size = size };
+    shot.displaces = displaces;
     return shot;
+}
+
+void Once(mut List<Entity> walls, Entity wall)
+{
+    foreach (var seen in walls)
+        if (seen == wall) return;
+    walls.Add(wall);
 }
 
 // The trigger alone mutates the fold and rebuilds the affected walls.
@@ -1001,13 +1015,18 @@ bool Shoot(mut Fold fold, int end, float3 origin, float3 way, Mount[16] mounts, 
         if (shot.hit) Fizzle(fold, end, shot.point, shot.face);
         return false;
     }
-    var mine = fold.ends[end];
-    var other = fold.ends[end ^ 1];
+    // Every wall an end was or is on, once each: a hole is only there while both ends are. The ends the new one
+    // goes over close, and so do the holes their others had
     var placed = shot.portal;
-    // Every wall an end was or is on: a hole is only there while both ends are
-    if (mine.open && mine.wall != placed.wall) Rework(world, mine.wall);
-    if (other.open && other.wall != placed.wall && !(mine.open && other.wall == mine.wall)) Rework(world, other.wall);
-    Rework(world, placed.wall);
+    mut List<Entity> walls = [placed.wall];
+    for (var k = 0; k < 4; k++)
+    {
+        var touched = k == end || k == (end ^ 1) || (shot.displaces & (1 << k)) != 0 || (shot.displaces & (1 << (k ^ 1))) != 0;
+        if (touched && fold.ends[k].open) Once(walls, fold.ends[k].wall);
+    }
+    for (var k = 0; k < 4; k++)
+        if ((shot.displaces & (1 << k)) != 0) fold.ends[k] = Portal { };
+    foreach (var wall in walls) Rework(world, wall);
     fold.ends[end] = placed;
     return true;
 }

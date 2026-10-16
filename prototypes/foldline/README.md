@@ -26,13 +26,19 @@ looking in the direction you left it. The puzzles and passages use both bodies.
 
 Wallpaper takes folds. Bare concrete, metal, machinery, floors and ceilings
 refuse them. Shots pass between grille bars; bodies and loose objects do not.
-Closed shutters and moving platforms stop shots. An end opens only where you can
-see the middle of its opening: a shot that grazes the edge of a face cannot put
-one round the far side of it. A shutter, gate or door closed over an open end
+Closed shutters and moving platforms stop shots, and so does an open fold: you
+cannot shoot through one. An end opens only where you can see the middle of its
+opening: a shot that grazes the edge of a face cannot put one round the far side
+of it. A shot over an open end replaces it, yours or your partner's: that end
+closes and yours opens there, unless something is standing in that fold's mouth. A shutter, gate or door closed over an open end
 seals that fold; anything entering its other end bumps back until it moves away.
 Some pairs are already open when you arrive; they still belong to their operator
 and can be moved normally. In certain passages the device cannot place new
 ends, while existing ends work; there the reticle shows only its middle dot.
+
+The building is mostly dark. Each operator's device carries a torch whose beam
+casts shadows, shows in the haze and shines through a fold: point it into one
+end and it lights what is past the other. A fold's ends glow in their colours.
 
 Chairs, cabinets, desks, shelves and other rigid furniture stop bodies and
 objects. Their actual legs, boards and panels provide the collision, so small

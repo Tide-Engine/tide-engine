@@ -56,7 +56,7 @@ void BuildExchange(mut Arena arena, mut Place place, mut Fold fold)
     HangLamp(place, 5, 0, 4.4);
     HangLamp(place, 5, 2, 4.4);
     HangLamp(place, 5, 1, 4.4, LampState.Signal, 0, 1);
-    OfficeLamps(place, 6, 7, 4, 5, 4.4, 43, dead: 3);
+    OfficeLamps(place, 6, 7, 4, 5, 4.4, 43);
     var dweller = SpawnBeast(arena, BeastKind.Crawler, float3(6.3, 0, 7.6), SOUTH, .3, clip: "Idle");
     dweller.Add(Shy { });
     place.light = .64;
