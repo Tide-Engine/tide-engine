@@ -133,6 +133,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     look.time = me.clock;
     look.fade = match.phase == Phase.Over ? Math.Saturate(match.timer * 0.25) * 0.55 : 0.0;
     lens.scene.SetCamera(float4x4.TRS(eye, me.turn, float3(1)), float4x4.PerspectiveFov(Math.Radians(look.fov), lens.size.x / Math.Max(1, lens.size.y), NEAR, FAR));
+    lens.hands.SetCamera(float4x4.TRS(eye, me.turn, float3(1)), float4x4.PerspectiveFov(Math.Radians(look.fov), lens.size.x / Math.Max(1, lens.size.y), NEAR, FAR));
     look.toClip = lens.scene.WorldToClip();
     AimMoon(lens, look);
     CullKit(kit, eye);

@@ -129,6 +129,21 @@ PACKS = {
                            page=OGA + 'ice-spells', file=OGF + 'icespells.zip', root='x'),
     'oga_firearms': dict(name='The Free Firearm Sound Library', author='The Free Firearm Sound Library project (posted by EFlynn)', licence='CC0 1.0',
                          page=OGA + 'the-free-firearm-sound-library', file=OGF + 'Prepared%20SFX%20Library.7z', root='x/Prepared SFX Library'),
+    'oga_junkala_wastelands': dict(name='Post Apocalyptic Wastelands [Loop Ready] (posted as Horror Atmosphere)', author='Juhani Junkala (posted by SubspaceAudio)',
+                                   licence='CC0 1.0', page=OGA + 'horror-atmosphere',
+                                   file=OGF + 'Juhani%20Junkala%20-%20Post%20Apocalyptic%20Wastelands%20%5BLoop%20Ready%5D.ogg', root='.'),
+    'oga_ancient_grudge': dict(name='Ancient Grudge', author='Ruskerdax', licence='CC0 1.0', page=OGA + 'ancient-grudge',
+                               file=OGF + 'ruskerdax_-_ancient_grudge.mp3', root='.'),
+    'oga_dark_cavern': dict(name='Dark Cavern Ambient', author='Paul Wortmann', licence='CC0 1.0', page=OGA + 'dark-cavern-ambient',
+                            file=OGF + 'dark_cavern_ambient_002.ogg', root='.'),
+    'oga_storm_siren': dict(name='Storm & Siren', author='TinyWorlds', licence='CC0 1.0', page=OGA + 'storm-siren',
+                            file=OGF + 'storm_3_siren.mp3', root='.'),
+    'oga_reload_springy': dict(name='Gun reload sounds', author='SpringySpringo', licence='CC0 1.0', page=OGA + 'gun-reload-sounds',
+                               file=OGF + 'assaultriflereload1_0.wav, gunreload1.wav, shotguncock_0.wav', root='.'),
+    'oga_impact_qubodup': dict(name='Impact', author='qubodup', licence='CC0 1.0', page=OGA + 'impact',
+                               file=OGF + 'qubodupImpact.7z', root='x/qubodupImpact'),
+    'kenney_interface': dict(name='Interface Sounds', author='Kenney (kenney.nl)', licence='CC0 1.0', page='https://kenney.nl/assets/interface-sounds',
+                             file='https://kenney.nl/assets/interface-sounds', root='x/Audio'),
     'oga_fireball': dict(name='Fireball 1 (JM FX Fireball 01)', author='Julien Matthey (posted by diligentcircle)', licence='CC0 1.0',
                          page=OGA + 'fireball-1', file=OGF + '105016__julien-matthey__jm-fx-fireball-01.wav', root='.'),
 }
@@ -586,72 +601,61 @@ def handgonne_reload(rng):
 FA = 'oga_firearms'
 
 
-def gunshot(rel, t0, seconds, rng, thump_hz=60.0, thump_decay=25.0, thump_db=-2.0, snap_db=-8.0, blast_db=None, drive=1.6, air=0.25):
-    """One shot with weight: the recording's crack, from just before it, its echo cut short to `seconds` (a horde's
-    worth of shots can't each ring for three); under it a low thump, the punch the recording lacks; over it a short
-    bright snap of the action; for a shotgun a blast of low noise; driven a little, compressed hard, and a little of
-    the wood's reverb."""
-    crack = at_onset(S(FA, rel, max(0.0, t0 - 0.05), t0 + seconds + 0.3), pre=0.001)
-    crack = fade(crack[:n_of(seconds)], 0.0, seconds * 0.6)
-    thump = body_thump(min(seconds, 0.45), rng, thump_hz, thump_decay)
-    snap = highpass(white(0.03, rng), 3000) * np.exp(-t(0.03) * 160)
-    layers = [(unit(crack), 0, 0), (unit(thump), 0, thump_db), (unit(snap), 0, snap_db)]
-    if blast_db is not None:
-        blast = lowpass(colored(0.35, rng, -3), 900) * np.exp(-t(0.35) * 9) * np.minimum(1, t(0.35) / 0.002)
-        layers.append((unit(blast), 0, blast_db))
-    y = mix(*layers)
-    y = saturate(unit(y), drive, 0.6)
-    y = compress(y, -20, 4.0, 0.001, 0.08, makeup_db=6)
-    y = reverb(y, rt60=1.2, wet=air, predelay=0.03, damp=0.6)
-    return limit(unit(y) * db(5), -1)
+def gunshot(rel, t0, seconds, rng):
+    """One shot of a recording as it was made, outdoors: from just before its crack, its own echo let ring for
+    `seconds` and faded out; only the rumble under 40 Hz taken off."""
+    x = at_onset(S(FA, rel, max(0.0, t0 - 0.05), t0 + seconds + 0.3), pre=0.001)
+    x = fade(x[:n_of(seconds)], 0.0, seconds * 0.5)
+    return limit(unit(highpass(x, 40)) * db(2), -1)
 
 
-@sound('rifle_fire', layers=True)
-def rifle_fire(rng):
-    # An AR-15's shot: a hard crack with a punch under it, its echo short for automatic fire
-    return trim(gunshot('AR-15/D_24P.wav', 0.547, 0.55, rng, thump_hz=58, thump_decay=22, thump_db=-1), -50, fade_out=0.08)
+# Each gun's takes: the library's file and when each shot's crack comes
+RIFLE_TAKES = [('AR-15/D_24P.wav', 0.547), ('AR-15/D_24P.wav', 3.908), ('AR-15/D_32P.wav', 0.703)]
+SMG_TAKES = [('PPSh/P_22P.wav', 1.143), ('PPSh/P_34P.wav', 0.723), ('PPSh/P_32P.wav', 0.803)]
+SHOTGUN_TAKES = [('Mossberg/N_26P.wav', 0.785), ('Mossberg/N_30P.wav', 1.694), ('Mossberg/N_26P.wav', 4.573)]
+PISTOL_TAKES = [('1911/A_42P.wav', 0.939), ('1911/A_34P.wav', 1.541), ('1911/A_42P.wav', 4.999)]
 
 
-@sound('smg_fire', layers=True)
-def smg_fire(rng):
-    # A PPSh's single shot: lighter and quicker, fired fourteen a second
-    return trim(gunshot('PPSh/P_22P.wav', 1.143, 0.3, rng, thump_hz=75, thump_decay=34, thump_db=-4, snap_db=-6, air=0.15), -50, fade_out=0.05)
+@series('rifle_fire', 3, layers=False)
+def rifle_fire(rng, i):
+    # An AR-15's shot and its echo off the trees
+    return trim(gunshot(*RIFLE_TAKES[i - 1], 1.2, rng), -55, fade_out=0.1)
 
 
-@sound('shotgun_fire', layers=True)
-def shotgun_fire(rng):
-    # A Mossberg's blast: the biggest boom, a wall of low noise, some of its echo
-    return trim(gunshot('Mossberg/N_26P.wav', 0.785, 1.1, rng, thump_hz=44, thump_decay=10, thump_db=0, snap_db=-10, blast_db=-4, drive=2.2, air=0.3),
-                -50, fade_out=0.15)
+@series('smg_fire', 3, layers=False)
+def smg_fire(rng, i):
+    # A PPSh's shot, its echo shorter: it's fired fourteen a second
+    return trim(gunshot(*SMG_TAKES[i - 1], 0.7, rng), -55, fade_out=0.08)
 
 
-@sound('pistol_fire', layers=True)
-def pistol_fire(rng):
-    # A 1911's shot: sharp, a short thump
-    return trim(gunshot('1911/A_42P.wav', 0.939, 0.5, rng, thump_hz=68, thump_decay=28, thump_db=-3, snap_db=-7), -50, fade_out=0.08)
+@series('shotgun_fire', 3, layers=False)
+def shotgun_fire(rng, i):
+    # A Mossberg's blast and its long echo
+    return trim(gunshot(*SHOTGUN_TAKES[i - 1], 1.8, rng), -55, fade_out=0.2)
 
 
-@sound('turret_fire', layers=True)
+@series('pistol_fire', 3, layers=False)
+def pistol_fire(rng, i):
+    # A 1911's shot
+    return trim(gunshot(*PISTOL_TAKES[i - 1], 1.0, rng), -55, fade_out=0.1)
+
+
+@sound('turret_fire', layers=False)
 def turret_fire(rng):
-    # The Engineer's turret: the SMG's shot, higher and thinner, a machine's
-    x = gunshot('PPSh/P_22P.wav', 1.143, 0.22, rng, thump_hz=90, thump_decay=40, thump_db=-8, air=0.1)
-    return trim(highpass(pitch(x, 4), 400), -50, fade_out=0.04)
+    # The Engineer's turret: the SMG's shot, a little higher and drier, a machine's
+    x = gunshot('PPSh/P_22P.wav', 1.143, 0.35, rng)
+    return trim(pitch(x, 2), -55, fade_out=0.05)
 
 
 def click(rel, seconds=0.15, lp=6000):
     return fade(lowpass(at_onset(S(KI, rel)), lp)[:n_of(seconds)], 0.0, seconds * 0.5)
 
 
-@sound('mag_reload', layers=True)
+@sound('mag_reload')
 def mag_reload(rng):
-    # A box magazine's change, about 1.3 s: the old one out, the new one seated, the bolt let go
-    out = click('impactMetal_light_002.ogg', 0.12, 4500)
-    seat = click('impactMetal_medium_001.ogg', 0.18, 5000)
-    bolt1 = click('impactMetal_light_004.ogg', 0.1, 8000)
-    bolt2 = click('impactMetal_heavy_000.ogg', 0.16, 7000)
-    slide = bandpass(colored(0.18, rng, -1.0), 1500, 7000) * env_points([(0, 0), (0.03, 1), (0.18, 0)], 0.18)
-    y = mix((unit(out), 0.1, -4), (unit(slide), 0.55, -14), (unit(seat), 0.7, 0), (unit(bolt1), 1.05, -3), (unit(bolt2), 1.17, -1))
-    return trim(highpass(y, 120), -45, fade_out=0.05)
+    # A rifle's magazine changed and its bolt let go: a recording of the real handling (an airsoft rifle)
+    x = at_onset(S('oga_reload_springy', 'assaultriflereload1_0.wav'), pre=0.01, thr_db=-30)
+    return trim(highpass(x, 60), -50, fade_out=0.05)
 
 
 @sound('shell_load', layers=True)
@@ -663,13 +667,29 @@ def shell_load(rng):
     return trim(highpass(y, 150), -45, fade_out=0.03)
 
 
-@sound('pump', layers=True)
+@sound('pump')
 def pump(rng):
-    # A shotgun's pump, back and forward
-    back = click('impactMetal_medium_003.ogg', 0.14, 5500)
-    fore = click('impactMetal_heavy_002.ogg', 0.16, 6000)
-    y = mix((unit(back), 0.0, -2), (unit(fore), 0.17, 0))
-    return trim(highpass(y, 100), -45, fade_out=0.05)
+    # A shotgun racked, back and forward: a recording
+    x = at_onset(S('oga_reload_springy', 'shotguncock_0.wav'), pre=0.01, thr_db=-30)
+    return trim(highpass(x, 60), -50, fade_out=0.05)
+
+
+@sound('pistol_reload')
+def pistol_reload(rng):
+    # A pistol's magazine out and in, the slide racked: a recording
+    x = at_onset(S('oga_reload_springy', 'gunreload1.wav'), pre=0.01, thr_db=-30)
+    return trim(highpass(x, 60), -50, fade_out=0.05)
+
+
+@series('bullet_flesh', 4, layers=False)
+def bullet_flesh(rng, i):
+    # A round into one of the dead: qubodup's meat impacts and Independent.nu's wet ones, short and tight
+    if i <= 2:
+        x = at_onset(S('oga_impact_qubodup', f'qubodupImpactMeat0{i}.flac'))
+    else:
+        x = at_onset(S('oga_wetsquish', ['impactsplat01.mp3.flac', 'impactsplat04.mp3.flac'][i - 3]))
+    x = fade(x[:n_of(0.35)], 0.0, 0.15)
+    return trim(highpass(x, 120), -50, fade_out=0.05)
 
 
 # ---------------------------------------------------------------- magic
@@ -1467,13 +1487,8 @@ def points_tick(rng):
 
 @sound('hitmarker')
 def hitmarker(rng):
-    # A tiny, crisp tick when a hit lands
-    sec = 0.07
-    tt = t(sec)
-    click = bandpass(white(sec, rng), 2500, 9000) * np.exp(-tt * 450)
-    ping = sine(1650, sec) * np.exp(-tt * 75) + 0.5 * sine(3300 * 1.01, sec) * np.exp(-tt * 110)
-    y = mix((unit(click), 0, 0), (unit(ping), 0.0, -4))
-    return fade(y, 0.0003, 0.015)
+    # A small dry tick when a hit lands: Kenney's interface click
+    return trim(highpass(at_onset(S('kenney_interface', 'click_002.ogg')), 800), -50, fade_out=0.01)
 
 
 # ================================================================ MUSIC: perk jingles
@@ -1809,92 +1824,48 @@ def ring_reverb(out, rt60, wet, damp=0.6):
     return out + wet * ring
 
 
-@sound('round_start', kind='music', lufs=-16)
+@sound('round_start', kind='music', lufs=-17)
 def round_start(rng):
-    # A wave coming: a siren-like synth rising over two seconds and a noise riser, then a huge low impact and a dark
-    # distorted chord that rings off
-    sec = 6.5
-    rise = 2.0
-    tt = t(rise)
-    f = 70 * 2 ** (2.5 * (tt / rise) ** 1.6)
-    siren = lowpass(supersaw(f, rise, 4, 0.012, rng), 2400) * (tt / rise) ** 1.5
-    riser = bandpass(white(rise, rng), 500, 6000) * (tt / rise) ** 2.5
-    boom = body_thump(3.0, rng, 38, 1.6)
-    crash = lowpass(colored(2.5, rng, -1.5), 5000) * np.exp(-t(2.5) * 2.2)
-    stab = zeros(4.0)
-    for n_ in ['D2', 'A2', 'D3', 'F3']:
-        stab += supersaw(hz(n_), 4.0, 3, 0.01, rng)
-    stab = saturate(lowpass(stab, 1400), 2.5, 1.0) * np.exp(-t(4.0) * 0.9)
-    y = mix((unit(siren), 0, -6), (unit(riser), 0, -10), (unit(boom), rise, 0), (unit(crash), rise, -9), (unit(stab), rise, -5))
-    y = reverb(y, 2.6, wet=0.28, damp=0.5, predelay=0.02)
-    return cap(trim(y, -55, fade_out=0.8), sec, 1.2)
+    # A wave coming: a town's flood siren wailing through a storm, far off (TinyWorlds' recording, the storm's low
+    # rumble taken down)
+    x = S('oga_storm_siren', 'storm_3_siren.mp3', 54.0, 67.0)
+    x = shelf(highpass(x, 180), 'lowshelf', 400, -6)
+    x = fade(x, 1.2, 3.0)
+    return trim(x, -55, fade_out=0.5)
 
 
-@sound('round_end', kind='music', lufs=-17)
+@sound('round_end', kind='music', lufs=-20)
 def round_end(rng):
-    # A wave held: a soft low hit, then a dark minor chord opening into a major one, a breath of relief
-    sec = 6.0
-    out = zeros(sec)
-    for at, notes, d in [(0.0, ['G2', 'D3', 'Bb3', 'D4'], 2.6), (2.2, ['D2', 'A2', 'F#3', 'A3', 'D4'], 3.8)]:
-        pad = zeros(d)
-        for n_ in notes:
-            pad += supersaw(hz(n_), d, 3, 0.009, rng)
-        sw = env_points([(0, 0), (0.5, 1), (d - 1.2, 0.8), (d, 0)], d)
-        place(out, lowpass(pad, 1800) * sw, at)
-    hit = body_thump(1.2, rng, 45, 3.0)
-    y = mix((unit(out), 0, 0), (unit(hit), 0, -6))
-    y = reverb(y, 3.0, wet=0.35, damp=0.55, predelay=0.03)
-    return cap(trim(y, -55, fade_out=1.0), sec, 1.5)
+    # A wave held: a breath of the cavern's dark ambience, swelling and gone (Paul Wortmann)
+    x = S('oga_dark_cavern', 'dark_cavern_ambient_002.ogg', 30.0, 37.0)
+    return trim(fade(x, 1.5, 3.5), -55, fade_out=0.5)
 
 
-@sound('game_over', kind='music', lufs=-18)
+@sound('game_over', kind='music', lufs=-19)
 def game_over(rng):
-    # Everyone's down: a deep impact, then a detuned drone sliding down into nothing
-    sec = 9.0
-    tt = t(sec)
-    slide = 2 ** (-7 / 12 * np.clip((tt - 0.5) / 7.0, 0, 1) ** 1.2)
-    drone_ = zeros(sec)
-    for n_ in ['D2', 'A2', 'D3', 'F3']:
-        drone_ += supersaw(hz(n_) * slide, sec, 3, 0.015, rng)
-    drone_ = lowpass(drone_, 900) * env_points([(0, 0), (0.6, 1), (5.5, 0.8), (sec, 0)], sec) ** 1.3
-    boom = body_thump(4.0, rng, 34, 1.2)
-    y = mix((unit(drone_), 0, -3), (unit(boom), 0, 0))
-    y = reverb(y, 4.0, wet=0.35, damp=0.6, predelay=0.03)
-    return trim(y, -60, fade_out=0.5)
+    # Everyone's down: the cavern's deepest stretch, slowly gone
+    x = S('oga_dark_cavern', 'dark_cavern_ambient_002.ogg', 60.0, 72.0)
+    return trim(fade(x, 0.5, 6.0), -60, fade_out=0.5)
 
 
-@sound('level_up', layers=True)
+@sound('level_up')
 def level_up(rng):
-    # A level for the party: a quick rising synth arpeggio and a shimmer
-    out = zeros(1.6)
-    for k, n_ in enumerate(['D4', 'F4', 'A4', 'D5', 'F5']):
-        note = supersaw(hz(n_), 0.35, 3, 0.006, rng) * np.exp(-t(0.35) * 8)
-        place(out, lowpass(note, 5000), 0.055 * k, 0.6 + 0.1 * k)
-    shim = sine(hz('A6'), 1.0) * np.exp(-t(1.0) * 4) * (0.7 + 0.3 * np.sin(2 * np.pi * 9 * t(1.0)))
-    y = mix((unit(out), 0, 0), (unit(shim), 0.28, -12))
-    return trim(reverb(y, 1.4, wet=0.3, damp=0.4), -50, fade_out=0.2)
+    # A level for the party: Kenney's confirmation chime
+    return trim(S('kenney_interface', 'confirmation_002.ogg'), -50, fade_out=0.05)
 
 
-def item_arp(rng, notes, step, bright, shimmer_db):
-    out = zeros(2.0)
-    for k, n_ in enumerate(notes):
-        note = square_blep(hz(n_), 0.3) * np.exp(-t(0.3) * 9) * 0.6 + supersaw(hz(n_), 0.3, 2, 0.005, rng) * np.exp(-t(0.3) * 7) * 0.4
-        place(out, lowpass(note, bright), step * k)
-    shim = sparkle(0.8, rng, 25, 5000, 12000)
-    y = mix((unit(out), 0, 0), (unit(shim), step * len(notes), shimmer_db))
-    return trim(reverb(y, 1.6, wet=0.3, damp=0.35), -50, fade_out=0.25)
-
-
-@sound('item_uncommon', layers=True)
+@sound('item_uncommon')
 def item_uncommon(rng):
-    # An uncommon item taken: three notes up
-    return item_arp(rng, ['A4', 'C#5', 'E5'], 0.07, 4500, -14)
+    # Gear taken up: a latch and the leather of a pouch (Kenney's RPG sounds)
+    y = mix((unit(at_onset(S(KR, 'metalLatch.ogg'))), 0, 0), (unit(at_onset(S(KR, 'handleSmallLeather.ogg'))), 0.12, -4))
+    return trim(y, -50, fade_out=0.05)
 
 
-@sound('item_rare', layers=True)
+@sound('item_rare')
 def item_rare(rng):
-    # A rare item: a longer, brighter run and more shimmer
-    return item_arp(rng, ['D5', 'F#5', 'A5', 'D6', 'F#6'], 0.06, 7000, -8)
+    # Something rare: the latch, and coins
+    y = mix((unit(at_onset(S(KR, 'metalLatch.ogg'))), 0, 0), (unit(at_onset(S(KR, 'handleCoins.ogg'))), 0.1, -2))
+    return trim(y, -50, fade_out=0.05)
 
 
 @sound('ambient_loop', kind='loop', layers=True, lufs=-28)
@@ -1931,83 +1902,22 @@ def ambient_loop(rng):
     return out[:n]
 
 
-# The beds' chords, 8 s each round a 32 s loop: D minor, B flat, G minor, A
-BED_CHORDS = [['D2', 'A2', 'D3', 'F3', 'A3'], ['Bb1', 'F2', 'Bb2', 'D3', 'F3'], ['G1', 'D2', 'G2', 'Bb2', 'D3'], ['A1', 'E2', 'A2', 'C#3', 'E3']]
+def music_loop(key, rel, t0, seconds, xfade=4.0):
+    """A stretch of a track made to go round: its end crossfaded into its start."""
+    x = S(key, rel, t0, t0 + seconds + xfade)
+    return loopify(x, xfade)
 
 
 @sound('music_low', kind='loop', lufs=-24)
 def music_low(rng):
-    # Under early waves, 32 s: a dark synth pad through a slowly breathing filter, a low heartbeat pulse, faint ticking
-    sec = 32.0
-    n = n_of(sec)
-    out = np.zeros(n)
-    for k, chord in enumerate(BED_CHORDS):
-        d = 9.0
-        pad = zeros(d)
-        for n_ in chord:
-            pad += supersaw(hz(n_), d, 3, 0.01, rng)
-        sw = env_points([(0, 0), (1.5, 1), (d - 1.5, 1), (d, 0)], d)
-        place(out, pad * sw, 8.0 * k - 0.5, 1.0, wrap=True)
-    cut = 500 + 450 * (0.5 + 0.5 * periodic_lfo(sec, rng, 0.08))
-    out = svf(np.concatenate([out[-n_of(0.5):], out]), np.concatenate([cut[-n_of(0.5):], cut]), q=0.9)[n_of(0.5):]
-    out = unit(out) * 0.6
-    # the heartbeat: two low thumps each 1.5 s
-    beats = np.zeros(n)
-    for k in range(int(sec / 1.5)):
-        place(beats, kick(rng, 1.0, 46), 1.5 * k, 1.0, wrap=True)
-        place(beats, kick(rng, 0.6, 44), 1.5 * k + 0.32, 1.0, wrap=True)
-    out += unit(lowpass(beats, 220)) * 0.28
-    ticks = np.zeros(n)
-    for k in range(int(sec / 0.375)):
-        place(ticks, hat(rng, 0.5 if k % 2 else 0.8), 0.375 * k, 1.0, wrap=True)
-    out += unit(ticks) * 0.035
-    air = periodic_noise(sec, rng, lambda f: band_gain(f, 300, 1.0)) * (0.5 + 0.5 * periodic_lfo(sec, rng, 0.1))
-    out += unit(air) * 0.05
-    return ring_reverb(out, 3.0, 0.25)
+    # Under early waves, two minutes of Juhani Junkala's Post Apocalyptic Wastelands
+    return music_loop('oga_junkala_wastelands', 'wastelands.ogg', 20.0, 120.0)
 
 
-@sound('music_high', kind='loop', lufs=-19)
+@sound('music_high', kind='loop', lufs=-20)
 def music_high(rng):
-    # Later waves, 32 s at 120 bpm: four on the floor, a driving filtered saw bass in eighths, snare on two and four,
-    # sixteenth hats, the pad, and an arpeggio in the second half
-    sec = 32.0
-    n = n_of(sec)
-    spb = 0.5
-    drums = np.zeros(n)
-    bass = np.zeros(n)
-    arp = np.zeros(n)
-    for bar in range(16):
-        chord = BED_CHORDS[(bar // 4) % 4]
-        b0 = bar * 4 * spb
-        for beat in range(4):
-            place(drums, kick(rng, 1.0), b0 + beat * spb, 1.0, wrap=True)
-            if beat in (1, 3):
-                place(drums, snare(rng, 0.8), b0 + beat * spb, 1.0, wrap=True)
-        for k in range(16):
-            place(drums, hat(rng, 0.7 if k % 2 else 0.45, open_=(k % 8 == 6)), b0 + k * spb / 4, 1.0, wrap=True)
-        root = hz(chord[0]) * 2
-        for k in range(8):
-            f = root * (2 if k in (3, 6) else 1)
-            note = supersaw(f, spb / 2, 2, 0.006, rng)
-            env = np.exp(-t(spb / 2) * 10)
-            note = lowpass(note * (0.3 + 0.7 * env), 300 + 900 * (0.6 if k % 2 else 1.0))
-            place(bass, note * (1.0 if k % 2 == 0 else 0.7), b0 + k * spb / 2, 1.0, wrap=True)
-        if bar >= 8:
-            tones = [hz(c) * 4 for c in chord[1:]]
-            for k in range(16):
-                f = tones[k % len(tones)]
-                note = square_blep(f, spb / 4) * np.exp(-t(spb / 4) * 18)
-                place(arp, lowpass(note, 3500), b0 + k * spb / 4, 1.0, wrap=True)
-    pad = np.zeros(n)
-    for k, chord in enumerate(BED_CHORDS):
-        d = 8.4
-        p = zeros(d)
-        for n_ in chord[1:]:
-            p += supersaw(hz(n_), d, 3, 0.01, rng)
-        place(pad, lowpass(p, 1100) * env_points([(0, 0), (0.3, 1), (d - 0.4, 1), (d, 0)], d), 8.0 * k, 1.0, wrap=True)
-    y = unit(drums) * 0.75 + unit(saturate(unit(bass), 1.8, 1.0)) * 0.6 + unit(pad) * 0.3 + unit(arp) * 0.16
-    y = ring_reverb(y, 1.8, 0.15)
-    return compress(y, -14, 2.5, 0.005, 0.15)
+    # When the horde is big, two minutes of Ruskerdax's Ancient Grudge
+    return music_loop('oga_ancient_grudge', 'ancient_grudge.mp3', 15.0, 120.0)
 
 
 # ================================================================ building
