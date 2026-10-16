@@ -20,7 +20,7 @@ Play at <https://tide-engine.dev/prototypes/sunday-supper/>. **Play** is alone;
 | Run | Shift | Left stick press |
 | Use what you look at | E or left click | South button |
 | Phone light on and off | F | North button |
-| Look at the phone | Tab (held) | West button |
+| Look at the phone | Q (held) | West button |
 | Answer when a choice is offered | 1, 2, 3 | D-pad left, up, right |
 | The room's menu | Escape, or **Menu** | |
 

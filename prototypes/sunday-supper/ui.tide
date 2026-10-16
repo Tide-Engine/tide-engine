@@ -87,7 +87,7 @@ view Overlay(Story story, Me me, Farm farm, query (Walker walker) walkers, Lobby
     foreach (var row in walkers)
         if (row.walker.seat == seat) mine = row.walker;
     hud.played += me.dt;
-    hud.phone = devices.keyboard.tab.pressed || devices.gamepad.buttonWest.pressed;
+    hud.phone = devices.keyboard.q.pressed || devices.gamepad.buttonWest.pressed;
 
     // The title over the picture
     if (story.cardLeft > 0 && story.card != "")
@@ -147,7 +147,7 @@ view Overlay(Story story, Me me, Farm farm, query (Walker walker) walkers, Lobby
     if (hud.played < 50 && story.fade < 0.5)
     {
         var fade = Math.Saturate((50 - hud.played) * 0.2);
-        Write("WASD walk   Mouse look   E use   F phone light   Shift run   Tab phone   1 2 3 answer", float2(w * 0.5, h - 14 * u), 12 * u,
+        Write("WASD walk   Mouse look   E use   F phone light   Shift run   Q phone   1 2 3 answer", float2(w * 0.5, h - 14 * u), 12 * u,
               Color(DIM.r, DIM.g, DIM.b, fade), Anchor.LowerCenter);
     }
 
