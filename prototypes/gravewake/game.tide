@@ -17,7 +17,7 @@ scene Main { }
 enum Life { Standing, Downed, Gone }
 
 // What a survivor's hands are busy with.
-enum Act { Idle, Raise, Swing, Heavy, Stab, Loose, Draw, Reload, Drink, Throw, Lower }
+enum Act { Idle, Raise, Swing, Heavy, Stab, Loose, Draw, Reload, Drink, Throw, Lower, Kick }
 
 // A survivor: one of the four, walking, fighting and buying. `seat` is which: 0 Wat, 1 Maud, 2 Godric, 3 Agnes.
 component Survivor
@@ -77,6 +77,7 @@ input Hands
     bool jump;
     bool sprint;
     bool stab;
+    bool kick;
     bool pot;
     bool lure;
     bool next;
@@ -98,11 +99,12 @@ input Hands
         look += pad.rightStick * float2(0.055, 0.045);
         attack = devices.mouse.left.pressed || pad.rightTrigger > 0.4;
         aim = devices.mouse.right.pressed || pad.leftTrigger > 0.4;
-        use = keys.e.pressed || keys.f.pressed || pad.buttonWest.pressed;
+        use = keys.e.pressed || pad.buttonWest.pressed;
         reload = keys.r.pressed || pad.buttonWest.pressed;
         jump = keys.space.pressed || pad.buttonSouth.pressed;
         sprint = keys.leftShift.pressed || pad.leftStickButton.pressed;
-        stab = keys.v.pressed || keys.c.pressed || pad.buttonEast.pressed || pad.rightStickButton.pressed;
+        stab = keys.v.pressed || keys.c.pressed || pad.rightStickButton.pressed;
+        kick = keys.f.pressed || pad.buttonEast.pressed;
         pot = keys.g.pressed || pad.rightShoulder.pressed;
         lure = keys.q.pressed || pad.leftShoulder.pressed;
         next = devices.mouse.scroll.y != 0 || pad.buttonNorth.pressed;
@@ -336,6 +338,9 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party, Ash
             match.toSpawn = 0;
             match.culling = true;
             return;
+        case 5:
+            party.survivors[seat].Send(Rearmed { });
+            return;
     }
     if (cheat.what >= 10) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
 }
@@ -360,6 +365,16 @@ float4 Showplace(int area)
 event Moved
 {
     float4 to;
+}
+
+// The development key's next weapon in hand.
+event Rearmed { }
+
+event(Rearmed rearmed) TakeRearmed(mut Survivor survivor)
+{
+    mut var next = (int(survivor.weapons[survivor.slot]) + 1) % WEAPON_COUNT;
+    if (next == 0) next = 1;
+    Give(survivor, Weapon(next), false);
 }
 
 event(Moved moved) TakeMoved(mut Survivor survivor)

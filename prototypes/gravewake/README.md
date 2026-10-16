@@ -19,9 +19,10 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Jump | Space | South button |
 | Attack; draw a bow (hold, let go to loose) | Left mouse | Right trigger |
 | Heavy blow (melee), aim (bows, crossbows) | Right mouse | Left trigger |
-| Use: buy, open, rebuild boards, raise a friend (hold) | E or F | West button |
+| Use: buy, open, rebuild boards, raise a friend (hold) | E | West button |
+| Kick: knock the dead over; stamp on one that's down | F | East button |
 | Reload | R | West button |
-| Quick stab | V or C | East button, right stick press |
+| Quick stab | V or C | Right stick press |
 | Throw a fire pot | G | Right shoulder |
 | Ring a grave bell (the dead go to it) | Q | Left shoulder |
 | Next weapon; a weapon by its slot | Wheel; 1, 2, 3 | North button |
@@ -29,13 +30,19 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 
 Everyone starts in the square with a rusty shortsword, a hand crossbow,
 two fire pots and 500 gold. Hold E at a broken window to nail its boards back.
+Kick the dead over and they lie a while before getting up; kick one that's
+down and you stamp on its head. Heavy blows from hammers, maces, axes swung
+wide and anything two-handed knock them over too, and the fallen take more
+from every blow. A head hit is gold on the crosshair; a head kill takes the
+head off.
+
 Down, you can still shoot a bow or crossbow; a friend holding E for three
 seconds raises you, and alone you're done unless you drank Second Wind Cider.
 Who bleeds out comes back at the next round.
 
 Development keys, not in play's interface: F2 10,000 gold, F3 the beacon, F4
 every door, F5 the round's end, F6 walk to the next area, F9 a camera over the
-village.
+village, F10 the next weapon in hand.
 
 ## Ashwick
 

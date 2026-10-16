@@ -30,6 +30,7 @@ const int BREW_MOST = 4;
 const int CHEST_COST = 950;
 const int FORGE_COST = 5000;
 const int FIREPOT_COST = 250;
+const float KICK_REACH = 1.9;
 const int FIREPOTS_MOST = 4;
 const int BELL_COST = 1000;
 const int BELLS_MOST = 2;
@@ -613,6 +614,14 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (
             if (survivor.actTime >= survivor.actLength) survivor.act = Act.Idle;
             break;
         }
+        case Act.Kick:
+            if (!survivor.landed && survivor.actTime >= 0.16)
+            {
+                survivor.landed = true;
+                Kick(this, survivor, bodies, match.round);
+            }
+            if (survivor.actTime >= survivor.actLength) survivor.act = Act.Idle;
+            break;
         case Act.Reload:
             if (survivor.actTime >= survivor.actLength)
             {
@@ -676,7 +685,13 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (
         if (other != survivor.slot) SwitchTo(survivor, other);
         return;
     }
-    // The stab, the pots, the bell, whatever's in hand
+    // The kick, the stab, the pots, the bell, whatever's in hand
+    if (hands.kick.down && !downed && survivor.stamina > 0.15)
+    {
+        survivor.stamina = Math.Max(0, survivor.stamina - 0.2);
+        StartAct(survivor, Act.Kick, 0.55);
+        return;
+    }
     if (hands.stab.down && !downed)
     {
         StartAct(survivor, Act.Stab, 0.42 * Rate(survivor));
@@ -774,14 +789,13 @@ void Strike(Entity self, Survivor survivor, WeaponInfo info, bool heavy, bool st
     foreach (var z in bodies)
     {
         if (!z.hittable) continue;
-        var body = z.at + float3(0, 1.1 - (1 - z.risen) * 1.5, 0);
-        var to = body - eye;
+        var to = z.chest - eye;
         var far = Math.Length(to.xz);
         if (far > reach + ZOMBIE_RADIUS || Math.Abs(to.y) > 1.8) continue;
         var angle = Math.Abs(TurnBetween(survivor.yaw, Math.Atan2(to.x, to.z)));
         if (angle > arc && far > 0.7) continue;
         // On the head: the aim passes near it
-        var headAt = z.at + float3(0, 1.62, 0) - eye;
+        var headAt = z.head - eye;
         var along = Math.Dot(headAt, look);
         var head = along > 0 && Math.Length(headAt - look * along) < 0.32;
         mut var at = hit.count;
@@ -791,15 +805,46 @@ void Strike(Entity self, Survivor survivor, WeaponInfo info, bool heavy, bool st
         heads.Insert(at, head);
     }
     var bonus = stab ? 80 : 0;
-    var knock = info.element == Element.Shock || heavy ? 3.5 : 1.2;
     var blunt = !stab && (info.swing == Swing.Chop && info.head < 2.9 || info.element == Element.Shock);
+    // A heavy blow from something blunt, or swept wide, or swung two-handed takes them off their feet
+    var down = heavy && !stab && (blunt || info.swing == Swing.Sweep || info.twoHanded);
+    var knock = down ? 4.5 : info.element == Element.Shock || heavy ? 3.5 : 1.2;
     for (var i = 0; i < Math.Min(cleave, hit.count); i++)
     {
         var blow = heads[i] ? damage * info.head : damage;
         hit[i].Send(Wound { damage = blow * (i == 0 ? 1.0 : 0.75), seat = survivor.seat, head = heads[i], element = info.element, from = survivor.feet, knock = knock,
-                            bonus = bonus, blow = blunt ? Blow.Blunt : Blow.Blade });
+                            bonus = bonus, blow = blunt ? Blow.Blunt : Blow.Blade, down = down });
     }
     self.Send(Swung { seat = survivor.seat, hits = Math.Min(cleave, hit.count), heavy = heavy, stab = stab });
+}
+
+// A kick: the dead in front, within a stride, go over backwards (three at most); one already down is stamped on,
+// on the head.
+void Kick(Entity self, Survivor survivor, List<Body> bodies, int round)
+{
+    mut var hits = 0;
+    mut var stamped = false;
+    foreach (var z in bodies)
+    {
+        if (!z.hittable) continue;
+        var to = (z.down ? z.head : z.chest) - survivor.feet;
+        var far = Math.Length(to.xz);
+        if (far > KICK_REACH + ZOMBIE_RADIUS) continue;
+        var angle = Math.Abs(TurnBetween(survivor.yaw, Math.Atan2(to.x, to.z)));
+        if (angle > 0.8 && far > 0.6) continue;
+        if (z.down)
+        {
+            if (stamped) continue;
+            stamped = true;
+            z.entity.Send(Wound { damage = 220 + RoundHealth(round) * 0.4, seat = survivor.seat, head = true, from = survivor.feet, blow = Blow.Blunt });
+        }
+        else if (hits < 3)
+        {
+            hits += 1;
+            z.entity.Send(Wound { damage = 25, seat = survivor.seat, from = survivor.feet, knock = 6, down = true, blow = Blow.Blunt });
+        }
+    }
+    self.Send(Swung { seat = survivor.seat, hits = hits + (stamped ? 1 : 0), kick = true, stamp = stamped });
 }
 
 // A missile on its way: arrows, bolts, shot, javelins, axes, fireballs.
@@ -968,6 +1013,8 @@ event Swung
     int hits;
     bool heavy;
     bool stab;
+    bool kick;
+    bool stamp;
 }
 
 event Loosed

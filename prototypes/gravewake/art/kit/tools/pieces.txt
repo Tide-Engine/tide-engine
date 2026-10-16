@@ -56,4 +56,8 @@ village Wall_UnevenBrick_Straight
 village Wall_UnevenBrick_Window_Thin_Round
 village Wall_UnevenBrick_Window_Wide_Round
 props WeaponStand
+village WindowShutters_Thin_Round_Closed
+village WindowShutters_Wide_Round_Closed
+village Window_Thin_Round1
+village Window_Wide_Round1
 props Workbench

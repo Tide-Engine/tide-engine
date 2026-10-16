@@ -69,6 +69,7 @@ CLIPS = [
     ("Z_Scratch", "ual2", "Zombie_Scratch", False),
     ("Z_Knockback", "ual2", "Hit_Knockback", False),
     ("Z_Climb", "ual2", "ClimbUp_1m_RM", False),
+    ("Z_GetUp", "ual2", "LayToIdle", False),
     ("Sprint", "ual1", "Sprint_Loop", True),
     ("Death_B", "ual1", "Death01", False),
     ("Hit_Head", "ual1", "Hit_Head", False),

@@ -111,6 +111,7 @@ is in place. Loops end on their first pose, so they loop on their duration.
 | Z_Scratch | UAL2 Zombie_Scratch | 1.800 | | | | wind-up with a raised arm, then a lunging downward swipe |
 | Z_Knockback | UAL2 Hit_Knockback | 0.833 | | | | starts hunched, knocked off its feet onto its back, ends lying: hips 0.12 m back, 0.51 m down (women 0.13, 0.55) |
 | Z_Climb | UAL2 ClimbUp_1m_RM | 0.667 | | | | a running climb onto a 1 m ledge; the source's root moved 1.676 m forward and 1.000 m up, evenly over the clip (0.0838 m and 0.05 m per 1/30 s) |
+| Z_GetUp | UAL2 LayToIdle | 1.533 | | | | from lying on its back (as Z_Knockback ends) to standing: hips end 0.25 m forward and 0.90 m up of where they start |
 | Sprint | UAL1 Sprint_Loop | 0.667 | yes | 5.900 / 8.849 | 6.406 / 9.609 | source 5.548 |
 | Death_B | UAL1 Death01 | 2.400 | | | | staggers, falls on its back: hips end 0.54 m back and 0.81 m down (women 0.59, 0.87) |
 | Hit_Head | UAL1 Hit_Head | 0.433 | | | | |

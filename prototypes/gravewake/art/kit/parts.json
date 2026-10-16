@@ -888,6 +888,54 @@
   "tris": 1128
  },
  {
+  "file": "WindowShutters_Thin_Round_Closed~woodtrim.glb",
+  "piece": "WindowShutters_Thin_Round_Closed",
+  "tex": "woodtrim",
+  "cutout": false,
+  "glass": false,
+  "tris": 112
+ },
+ {
+  "file": "WindowShutters_Wide_Round_Closed~woodtrim.glb",
+  "piece": "WindowShutters_Wide_Round_Closed",
+  "tex": "woodtrim",
+  "cutout": false,
+  "glass": false,
+  "tris": 136
+ },
+ {
+  "file": "Window_Thin_Round1~flat.glb",
+  "piece": "Window_Thin_Round1",
+  "tex": "flat",
+  "cutout": false,
+  "glass": true,
+  "tris": 118
+ },
+ {
+  "file": "Window_Thin_Round1~woodtrim.glb",
+  "piece": "Window_Thin_Round1",
+  "tex": "woodtrim",
+  "cutout": false,
+  "glass": false,
+  "tris": 300
+ },
+ {
+  "file": "Window_Wide_Round1~flat.glb",
+  "piece": "Window_Wide_Round1",
+  "tex": "flat",
+  "cutout": false,
+  "glass": true,
+  "tris": 78
+ },
+ {
+  "file": "Window_Wide_Round1~woodtrim.glb",
+  "piece": "Window_Wide_Round1",
+  "tex": "woodtrim",
+  "cutout": false,
+  "glass": false,
+  "tris": 276
+ },
+ {
   "file": "Workbench~furniture.glb",
   "piece": "Workbench",
   "tex": "furniture",

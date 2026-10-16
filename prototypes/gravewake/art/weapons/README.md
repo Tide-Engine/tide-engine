@@ -122,6 +122,7 @@ An array, one object per file, in the order below.
 | fist_r | hand | 0.11 tall | 1100 | modelled |
 | fist_l | hand | 0.11 tall | 1100 | modelled (fist_r mirrored) |
 | forearm | hand | 0.28 | 540 | modelled |
+| kick_leg | hand | 0.56 | 588 | modelled: a booted shin for the first-person kick, the knee at the origin, the shin down -Y, the toe toward +Z, the sole at the bottom |
 
 "Source" names are files from Quaternius' **Medieval Weapons** pack
 (https://quaternius.com/packs/medievalweapons.html) and **Ultimate RPG** pack
