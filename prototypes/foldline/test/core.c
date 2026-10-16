@@ -90,10 +90,29 @@ static void fold_preview_matches_firing(void)
     CHECK(near(shot.first.portal.at.y, 1.3f, .001f));
     fire_preview(&world, 0, 0, shot.first);
     tide_world_tick(&world); // Apply the replacement collider before aiming at it again.
-    // Replacing one's own end is valid; placing its other end over it is not.
+    // Replacing one's own end is valid, and so is placing its other end over it, which closes the first.
     shot = read_preview(&world, 0);
-    CHECK(shot.first.valid && shot.second.hit && !shot.second.valid);
+    CHECK(shot.first.valid && shot.second.valid && shot.second.displaces == 1);
     fire_preview(&world, 0, 1, shot.second);
+    CHECK(!world.Fold.ends.at[0].open);
+    tide_world_tick(&world);
+    // Over the partner's end too, which closes theirs
+    world.Fold.ends.at[2] = world.Fold.ends.at[1];
+    world.Fold.ends.at[1] = (Portal){0};
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.valid && shot.first.displaces == 4);
+    fire_preview(&world, 0, 0, shot.first);
+    CHECK(!world.Fold.ends.at[2].open);
+    tide_world_tick(&world);
+    // ...but not while something is in the mouth of the fold it would close
+    world.Fold.ends.at[2] = world.Fold.ends.at[0];
+    world.Fold.ends.at[0] = (Portal){0};
+    world.Fold.busy.at[1] = 3;
+    shot = read_preview(&world, 0);
+    CHECK(shot.first.hit && !shot.first.valid);
+    fire_preview(&world, 0, 0, shot.first);
+    world.Fold.ends.at[2] = (Portal){0};
+    world.Fold.busy.at[1] = 0;
 
     // A shot by the wall's corner is moved sideways to clear the adjacent wall.
     preview_pose(&world, (tide_float3){-9.7f, 0, -7}, SOUTH, 0);
@@ -229,9 +248,18 @@ static void folds_are_shot_and_crossed(void)
     press(&world, (PilotInput){.cyan = true});
     CHECK(world.Fold.ends.at[1].open && world.Fold.ends.at[1].face.x > 0.99f && world.Fold.ends.at[1].size == 1);
     CHECK(near(world.Fold.ends.at[1].at.x, -10, 0.001f) && near(world.Fold.ends.at[1].at.z, -2.5f, 0.01f));
-    // An end can't go where it would overlap the other
+    // An end shot over another replaces it, and the other closes
     press(&world, (PilotInput){.amber = true});
-    CHECK(near(world.Fold.ends.at[0].at.z, -10, 0.001f) && world.Fold.fizzleTime > 0);
+    CHECK(world.Fold.ends.at[0].open && world.Fold.ends.at[0].face.x > 0.99f && near(world.Fold.ends.at[0].at.z, -2.5f, 0.01f));
+    CHECK(!world.Fold.ends.at[1].open);
+    // ...and both go back where they were
+    place(&world, 0, (tide_float3){-5, 0, -7}, SOUTH, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.amber = true});
+    place(&world, 0, (tide_float3){-5, 0, -2.5f}, WEST, 0);
+    ticks(&world, 3);
+    press(&world, (PilotInput){.cyan = true});
+    CHECK(near(world.Fold.ends.at[0].at.z, -10, 0.001f) && world.Fold.ends.at[1].open && near(world.Fold.ends.at[1].at.x, -10, 0.001f));
     ticks(&world, 3);
     // Walking into one comes out of the other, turned, with its speed, and never behind a wall's face
     place(&world, 0, (tide_float3){-5, 0, -8}, SOUTH, 0);

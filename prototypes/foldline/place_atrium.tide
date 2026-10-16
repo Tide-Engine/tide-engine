@@ -74,9 +74,9 @@ void BuildCargoAtrium(mut Arena arena, mut Place place, mut Fold fold)
             SetProp(arena, PropKind.Desk, float3(17, 6.4 + floor * 5, -10 + desk * 6), WEST);
     }
     LampGrid(place, float2(-20, -18), float2(4, 4), 10, 10);
-    HangLamps(place, 0, 1, 0, 5, 8);
-    HangLamps(place, 3, 6, 4, 8, 16);
-    HangLamps(place, 8, 9, 0, 8, 22);
+    OfficeLamps(place, 0, 1, 0, 5, 8, 81);
+    OfficeLamps(place, 3, 6, 4, 8, 16, 82);
+    OfficeLamps(place, 8, 9, 0, 8, 22, 83);
     HangLamp(place, 5, 8, 16, LampState.Signal, 0, 0);
     place.light = .68;
     place.fog = .018;

@@ -1,8 +1,9 @@
 # FOLDLINE prototype
 
-Current behavior is in [Campaign redesign (2026-10-15)](#campaign-redesign-2026-10-15).
-Earlier dated sections are implementation history; the redesign explicitly
-supersedes their route, size, clamp/release and hint guidance.
+Current behavior is in [Campaign redesign (2026-10-15)](#campaign-redesign-2026-10-15),
+as changed by [Horror revamp (2026-10-16)](#horror-revamp-2026-10-16), which wins
+where they differ. Earlier dated sections are implementation history; the
+redesign explicitly supersedes their route, size, clamp/release and hint guidance.
 
 Added on 2026-10-12 at the owner's request: an original 3D, first-person,
 Portal 2 cooperative puzzle inspiration with freedom to add a twist and an
@@ -2027,3 +2028,106 @@ No full repository suite, other platform or CI run was needed for this
 prototype-only work. Sound was not listened to (agent runs are silent), and
 whether the harder puzzles are fun, and how long they take, still needs the
 owner's own play.
+
+## Horror revamp (2026-10-16)
+
+The owner, after playing the 10-15 campaign: "the horror aspect was shit; we
+werent really portaling a lot through later levels", the way the monsters were
+introduced took away the mystery ("part of horror is mystery"), and "we need to
+lean on horror MORE and make sure puzzles are more portal focused". Then: the
+size portals "feel goofy... they take the horror away"; the original intent was
+horror *between* puzzle levels (a level won, then your fears to face), puzzles
+mostly left to think through with a jump scare now and then such as the corner
+peeker; "maybe the levels are barely lit and visible and we have to use our
+flashlights to discover it". A shot should replace an end ("anyone's end", of
+the options put to them) and nothing is shot through a fold. Then the owner
+agreed: floor and ceiling folds and light beams in place of size, a flashlight
+switch on F introduced on screen when it is first needed, and the rest of the
+plan: Lamps Out, The Slot and The Ward cut, a flashlight-only passage after each
+puzzle whose creature is met cold, size frames out of the campaign and the rooms
+that rested on them rebuilt. This section records that work as it lands.
+
+Counted before it started: the device was dead in 8 of the 14 stops, and past
+Weighbridge only Long Throw, Exchange and Atrium could be shot in. Lamps Out, The
+Slot and The Ward each showed a creature's rule behind bars before a passage
+tested it.
+
+### Replacing ends
+
+`PreviewFold` no longer refuses an end that overlaps another open end. It
+records the ends it goes over in `FoldShot.displaces` (a bit an end, anyone's,
+the shooter's own other end included) and refuses only when one of those ends'
+folds has something in its mouth (`Fold.busy`), as its own fold's busy already
+refused. `Shoot` closes each displaced end, then rebuilds every wall an end was
+or is on once each (`Once`), the displaced ends' others included, so a hole
+closes with the fold it belonged to. The crosshair's brackets follow, since
+they read the same preview. Shots still stop at an open fold's hole, which is
+the owner's "no shooting through portals": nothing maps a shot to a fold's far
+end.
+
+Tests: `core.c` shoots amber over cyan (cyan closes, amber is on the west wall),
+then both back; the preview case replaces its own other end, then the partner's
+(`displaces` 4), and is refused while the partner's fold is busy.
+`render_test.c`'s reticle images expect both buttons ready over a lone end.
+
+### The torch
+
+Each operator's torch is the device's lamp, 0.3 m right, 0.27 m down and 0.8 m
+ahead of the eye (`TorchFrom`), aimed at what the eye looks at 7 m off
+(`TorchWay`), so its shadows show from the eye. `TorchCone` is a hot middle, the
+beam and a faint spill; `Torch` falls off with distance and is dimmed close up.
+
+- **Shadows.** Both torches draw into one depth target twice as wide as it is
+  high (`Daylight.torches`, 1,024 px a torch), each into its own half: a camera
+  given by matrices isn't fitted to its target's shape, so its projection is
+  halved across and moved to its half, and a clip keeps it there (a clear honors
+  the clip). `TorchShadow` checks a place against its half. One target, because
+  a draw takes 8 textures and `Surface` already had 7: the kit, the lamps' image,
+  four fold lamps and the bulbs' list. A torch's holder and what they carry
+  (`cubeHeld0`/`cubeHeld1`, split from `cubeRest`) aren't in its own image. The
+  old torch lit through walls.
+- **Through a fold.** `ShoneInto` picks, for each torch, the nearest linked end
+  in front of it whose opening its beam takes in, generously; the torch is then
+  also where the fold puts it (`Sight.throughAt`/`throughWay`/`throughEnd`). That
+  light reaches a place only before the far end's wall and along a line through
+  its opening (`ThroughOpening`), as far as the far end's own lamp image says
+  (`ThroughReach`, `FoldLight`; those images now reach `TORCH_REACH`, 30 m, where
+  they reached 9). Bodies, whose draws have no room for the fold images, get the
+  opening test unshadowed (`TorchBeams`). `ThroughReach` is written once a torch,
+  not looped: the loop, which could stop early, made ANGLE's D3D shader compiler
+  warn of undefined derivatives in four of WebGL's programs (X3595), which
+  SwiftShader's GL doesn't show; HEAD's page had no warning.
+- **In the air.** `Shafts` marches 16 more steps for the two beams (`TorchAir`,
+  against the torches' image), so a partner's beam is seen from across a room.
+- A blackout puts the torches out, as before.
+
+### Darkness
+
+`OfficeLamps` now leaves about seven in nine dead (`dead` defaults to 7, where it
+was 2), and Long Throw, Weighbridge, Exchange, Atrium and Mailroom's all-burning
+`HangLamps` became `OfficeLamps` (Exchange's and Weighbridge's explicit `dead: 3`
+are gone). Lamps that burn are at full strength: dimming every lamp made the
+rooms look weakly lit, not dark. Their pools are tighter (a lamp's light all
+around is 0.12 of its beam, was 0.25; `LampWide`'s bounce 0.05, was 0.13). What
+nothing lights is `GLOOM` (0.12) of the old ambient half over, and the fog's
+color is darkened by the same factor, so far off is black rather than grey.
+Lamp states are match state, so the hashes changed. This is a first pass for
+every place; the rebuilt rooms will place their own working lamps.
+
+### Tools
+
+`tour_render.c` gains `shoot <0|1> x y z yaw pitch`: A's physical body is put
+there, aimed, and fires that button for a tick, as a click does.
+
+### Validation at this point
+
+Native debug: all four Foldline tests (Vulkan with validation). Web debug: all
+five (WASI, WebGL 2 and WebGPU with graphics validation), under Node 24.21.0
+(`TIDE_NODE`; the machine's own Node is 24.15, under what `notes/testing.md`
+asks for on Windows). Native and WASI replay hash `6303827389351472843`, campaign hash
+`11209254630215753053` (lamp states changed on purpose). The render fixture's
+thresholds, its lamp-group and fog checks included, pass unchanged. The page was
+built in release and loaded in headless Chrome on WebGL (ANGLE D3D11) and on
+WebGPU (SwiftShader), both with no console warning; screenshots of nine places
+were inspected. Nobody has played it in the dark yet, and what the two extra
+depth draws cost on a slow GPU isn't measured.

@@ -84,10 +84,10 @@ void BuildLongThrow(mut Arena arena, mut Place place, mut Fold fold)
     PutLoose(arena, fold, float3(-9.5, .4, -7));
     // Lamps 1 m in from the walls on a 4 m grid: under the shaft's roof, over the near floor, in the cage's roof.
     LampGrid(place, float2(-13, -12), float2(4, 4), 7, 7);
-    OfficeLamps(place, 0, 6, 0, 6, 18, 71, dead: 3);
-    HangLamps(place, 0, 1, 0, 3, 4.4);
-    HangLamps(place, 3, 3, 0, 2, 12.4);
-    HangLamps(place, 5, 6, 4, 6, 12);
+    OfficeLamps(place, 0, 6, 0, 6, 18, 71);
+    OfficeLamps(place, 0, 1, 0, 3, 4.4, 72, dead: 5);
+    OfficeLamps(place, 3, 3, 0, 2, 12.4, 73, dead: 5);
+    OfficeLamps(place, 5, 6, 4, 6, 12, 74, dead: 5);
     place.light = .76;
     place.fog = .018;
     place.grade = float3(.88, .95, 1.03);
