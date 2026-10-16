@@ -137,6 +137,47 @@ the sounds', weak guns and the wrong mood.
   (150 up, or from wave six); levels and uncommon and rare items have synth
   arpeggios; the night has thunder in place of crows and owls.
 
+### After the second playtest (2026-10-17)
+
+The owner: "The sounds still suck. It sounds like a Roblox game. For the PSX
+thing, it's a shame that we can't see in the distance because of the
+pixelization. I wonder if there's a way to make pixels denser based on
+distance." Asked, they chose pixels finer with distance, and for the sounds:
+"maybe use existing sounds from people".
+
+- **Pixels by distance** (`look.tide`): the scene is drawn at the window's
+  size (`lens.scene`, with its depth kept as `lens.sceneDepth`), and
+  `Develop` cuts it into pixels whose size is the scene's distance there:
+  the nearest about 270 up the window (`look.block` of the window's pixels
+  across, `look.low` of them), half that past 14 m, a quarter past 30 m, an
+  eighth past 55 m, never under one (`Fineness`). The distance is read once
+  for the nearest-size pixel round each pixel (`NEAR / (1 - depth)`), so a
+  pixel is one size throughout. The first-person arms and gun draw into their
+  own target (`lens.hands`, cleared see-through each frame, with the scene's
+  camera) in place of clearing the scene's depth, which would have made the
+  whole scene read as far; `Develop` lays them over at the nearest size. The
+  dither is in each pixel's own size, and `Snapped` puts corners on the grid
+  of the pixels at their own distance.
+- **Sounds by people** (`sfx/tools/make_sfx.py`, `sfx/CREDITS.md`): my
+  synthesis is out of everything the owner hears most.
+  - Guns: The Free Firearm Sound Library's recordings as they were made,
+    each shot's own echo off the trees left ringing (0.7 to 1.8 s), three
+    takes a gun picked at random each shot. No added thump, snap or drive.
+  - Handling: SpringySpringo's real (airsoft) reloads, a rifle's, a pistol's
+    and a shotgun's pump.
+  - Hits: qubodup's meat impacts and Independent.nu's wet ones; Kenney's
+    interface click for the hit marker.
+  - Waves: a town's flood siren in a storm (TinyWorlds' recording) starts
+    one; a breath of Paul Wortmann's Dark Cavern Ambient ends one, and a
+    longer one is the game's end.
+  - Music: two minutes of Juhani Junkala's Post Apocalyptic Wastelands under
+    early waves, two of Ruskerdax's Ancient Grudge when the horde is big,
+    each crossfaded round on itself.
+  - Items and levels: Kenney's RPG sounds (a latch, a pouch, coins) and an
+    interface chime.
+  - Not yet replaced: the dead's voices (recordings already), footsteps,
+    explosions, the power-ups' sounds.
+
 ### Phase 2: the PSX look, guns, kits and items (built 2026-10-16)
 
 - **The look** is under Rendering.
@@ -459,10 +500,10 @@ Endless waves in a forest clearing, an item after each:
 
 ## Rendering
 
-- **The PSX look** (2026-10-16, the owner's "PSX low poly style"): the scene
-  draws into an `Rgba16f` target 270 lines high (`LINES`), its width the
-  window's shape, no multisampling, and `Develop` reads it back with
-  `Filter.Point` so its pixels stay sharp. Every world draw (the ground, kit,
+- **The PSX look** (2026-10-16, the owner's "PSX low poly style"; pixels by
+  distance since 2026-10-17, above): the scene drew into an `Rgba16f` target
+  270 lines high (`LINES`), its width the window's shape, no multisampling,
+  and `Develop` read it back with `Filter.Point` so its pixels stayed sharp. Every world draw (the ground, kit,
   dressing, survivors, first-person arms and weapons) has the `Wobble` vert:
   each corner's clip position snapped to the low picture's pixel grid
   (`Snapped`, `look.low`), so still things shimmer a little as the eye moves

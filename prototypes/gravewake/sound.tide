@@ -28,7 +28,7 @@ asset List<Clip> swingsHeavy = "sfx/swing_heavy_*.ogg";
 asset List<Clip> hitsBlunt = "sfx/hit_blunt_*.ogg";
 asset List<Clip> gores = "sfx/gore_*.ogg";
 asset List<Clip> headshots = "sfx/headshot_*.ogg";
-asset List<Clip> fleshHits = "sfx/arrow_hit_flesh_*.ogg";
+asset List<Clip> fleshHits = "sfx/bullet_flesh_*.ogg";
 asset List<Clip> woodHits = "sfx/arrow_hit_wood_*.ogg";
 asset List<Clip> stoneHits = "sfx/arrow_hit_stone_*.ogg";
 asset List<Clip> explosions = "sfx/explode_*.ogg";
@@ -36,10 +36,11 @@ asset List<Clip> stepsStone = "sfx/step_stone_*.ogg";
 asset List<Clip> stepsDirt = "sfx/step_dirt_*.ogg";
 asset List<Clip> hurts = "sfx/hurt_*.ogg";
 asset Clip emptyClip = "sfx/empty.ogg";
-asset Clip rifleFire = "sfx/rifle_fire.ogg";
-asset Clip smgFire = "sfx/smg_fire.ogg";
-asset Clip shotgunFire = "sfx/shotgun_fire.ogg";
-asset Clip pistolFire = "sfx/pistol_fire.ogg";
+asset List<Clip> rifleShots = "sfx/rifle_fire_*.ogg";
+asset List<Clip> smgShots = "sfx/smg_fire_*.ogg";
+asset List<Clip> shotgunShots = "sfx/shotgun_fire_*.ogg";
+asset List<Clip> pistolShots = "sfx/pistol_fire_*.ogg";
+asset Clip pistolReload = "sfx/pistol_reload.ogg";
 asset Clip turretFire = "sfx/turret_fire.ogg";
 asset Clip magReload = "sfx/mag_reload.ogg";
 asset Clip shellLoad = "sfx/shell_load.ogg";
@@ -247,7 +248,8 @@ view Handling(mut Ears ears, Me me, query (Survivor survivor) survivors)
         var s = row.survivor;
         if (s.seat != me.seat) continue;
         var info = Info(s.gun);
-        if (s.act == Act.Reload && ears.lastAct != Act.Reload && !info.shells) Audio.Play(magReload, 0.8, 1.2 / Math.Max(0.4, s.actLength));
+        if (s.act == Act.Reload && ears.lastAct != Act.Reload && !info.shells)
+            Audio.Play(s.gun == Weapon.Pistol ? pistolReload : magReload, 0.8, (s.gun == Weapon.Pistol ? 1.5 : 1.4) / Math.Max(0.4, s.actLength));
         // The pump, a moment after the shot
         if (s.gun == Weapon.Shotgun && s.act == Act.Fire && s.actTime >= 0.28 && (ears.lastActTime < 0.28 || ears.lastAct != Act.Fire)) Audio.Play(pumpClip, 0.75);
         ears.lastAct = s.act;
@@ -302,13 +304,13 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
 local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
 {
     var mine = loosed.seat == me.seat;
-    mut Clip clip = rifleFire;
+    mut Clip clip = rifleShots[ears.random.NextInt(rifleShots.count)];
     mut var volume = 1.0;
     mut var pitch = ears.random.NextFloat(0.96, 1.04);
     switch (loosed.source)
     {
         case Source.Phase:
-            clip = shotgunFire;
+            clip = shotgunShots[ears.random.NextInt(shotgunShots.count)];
             pitch *= 0.75;
             volume = 1;
             break;
@@ -322,9 +324,9 @@ local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
             pitch *= 1.3;
             break;
         default:
-            if (loosed.weapon == Weapon.Shotgun) clip = shotgunFire;
-            else if (loosed.weapon == Weapon.Smg) clip = smgFire;
-            else if (loosed.weapon == Weapon.Pistol) clip = pistolFire;
+            if (loosed.weapon == Weapon.Shotgun) clip = shotgunShots[ears.random.NextInt(shotgunShots.count)];
+            else if (loosed.weapon == Weapon.Smg) clip = smgShots[ears.random.NextInt(smgShots.count)];
+            else if (loosed.weapon == Weapon.Pistol) clip = pistolShots[ears.random.NextInt(pistolShots.count)];
             if (!mine) volume = 0.75;
             break;
     }

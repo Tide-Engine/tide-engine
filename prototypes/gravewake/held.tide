@@ -229,24 +229,23 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, Lens lens, Look look, Ma
     place = Math.Mul(Math.Mul(Math.Mul(eye, float4x4.TRS(wobble + carried + sink, tilt, float3(1))), Math.Inverse(eye)), place);
     var onBone = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(), float3(1)));
     grip.muzzle = Point(onBone, V3(data.muzzle));
-    lens.scene.ClearDepth();
-    lens.scene.Cull(Cull.None)
+    lens.hands.Cull(Cull.None)
     {
         if (lowered < 0.98)
         {
-            lens.scene.SkinnedMesh(fpArms, place, pose, Wobble, Steel, Finish { });
+            lens.hands.SkinnedMesh(fpArms, place, pose, Wobble, Steel, Finish { });
             if (mine.act == Act.Throw)
             {
                 // The grenade or the firebomb, gone from the hand once thrown
                 if (t > 0.06 && t < 0.38)
                 {
-                    if (mine.throwing == Skill.Frag) lens.scene.Mesh(ballMesh, Math.Mul(onBone, float4x4.TRS(float3(0), quaternion.identity, float3(0.32))), Wobble, Steel, Finish { tint = float3(0.45, 0.5, 0.35) });
-                    else lens.scene.Mesh(potMesh, onBone, Wobble, Steel, Finish { });
+                    if (mine.throwing == Skill.Frag) lens.hands.Mesh(ballMesh, Math.Mul(onBone, float4x4.TRS(float3(0), quaternion.identity, float3(0.32))), Wobble, Steel, Finish { tint = float3(0.45, 0.5, 0.35) });
+                    else lens.hands.Mesh(potMesh, onBone, Wobble, Steel, Finish { });
                 }
             }
             else
             {
-                lens.scene.Mesh(GunMesh(weapon), onBone, Wobble, Steel, Finish { });
+                lens.hands.Mesh(GunMesh(weapon), onBone, Wobble, Steel, Finish { });
             }
         }
         // The boot: it comes up from below and out at the dead, its sole first
@@ -255,7 +254,7 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, Lens lens, Look look, Ma
             var out = t < 0.3 ? EaseOut(t / 0.3) : t < 0.42 ? 1.0 : 1 - Ease((t - 0.42) / 0.58);
             var knee = Math.Lerp(float3(0.2, -1.1, 0.0), float3(0.1, -0.36, 0.26), out);
             var leg = Math.Mul(eye, float4x4.TRS(knee, Degrees(Math.Lerp(-10, -104, out), Math.Lerp(-20, -18, out), Math.Lerp(14, -4, out)), float3(1.15)));
-            lens.scene.Mesh(legMesh, leg, Wobble, Steel, Finish { });
+            lens.hands.Mesh(legMesh, leg, Wobble, Steel, Finish { });
         }
     }
 }
