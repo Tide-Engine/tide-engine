@@ -288,17 +288,16 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
     }
     if (weapon == Weapon.None) lowered = 1;
 
-    // Where the arms hang: from the eye, swaying, bobbing, carried at a run, low when down; a bow mirrored, in the
-    // left hand
+    // Where the arms hang: from the eye, swaying, bobbing, carried at a run, low when down
     var bow = grasp == Grasp.Bow;
     var wobble = bob + breathe + float3(grip.sway.x, grip.sway.y, 0) * 0.6 + float3(0, -me.dip * 0.5, 0);
     var carried = float3(0.04, -0.06, -0.04) * grip.sprint + (mine.life == Life.Downed ? float3(0.02, -0.06, 0) : float3(0));
     var sink = float3(0.05, -0.55, -0.1) * lowered + float3(0, 0.01, -0.05) * recoil + AimShift(grasp) * grip.aim * (mine.act == Act.Reload ? 0.3 : 1.0);
     var tilt = Degrees(55 * lowered + 10 * grip.sprint - 6 * recoil, -8 * grip.sprint + 5 * grip.aim * (grasp == Grasp.Cross ? 1.0 : 0.0), -6 * grip.sprint);
-    mut var place = Math.Mul(eye, float4x4.TRS(wobble + carried + sink, tilt, float3(1)));
-    place = Math.Mul(place, float4x4.TRS(-FpEye(grasp, grip.low), quaternion.identity, float3(bow ? -1.0 : 1.0, 1, 1)));
+    mut var place = Math.Mul(eye, float4x4.TRS(wobble + carried + sink + GraspShift(grasp), Math.Mul(tilt, GraspTurn(grasp)), float3(1)));
+    place = Math.Mul(place, float4x4.TRS(-FpEye(grasp, grip.low), quaternion.identity, float3(1)));
     var pose = FpPose(fpArms, mine, info, grasp, t, me.clock, speed, grip.sinceLoose);
-    var onBone = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(grasp), float3(1)));
+    var onBone = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), BladeSeat(grasp), float3(1)));
     var drinking = mine.act == Act.Drink;
     var tossing = mine.act == Act.Throw && t < 0.45;
     var stabbing = mine.act == Act.Stab;
@@ -313,13 +312,13 @@ view DrawHands(Me me, mut Grip grip, mut Armory armory, mut Fx fx, Lens lens, Lo
             if (drinking)
             {
                 // A brew to the lips, held round its middle
-                var bottle = Math.Mul(Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(Grasp.One), float3(1))), float4x4.Translate(float3(0, -0.07, 0)));
+                var bottle = Math.Mul(Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(), float3(1))), float4x4.Translate(float3(0, -0.07, 0)));
                 lens.scene.Mesh(ItemMesh(PotionModel(Brew(int(mine.charge)))), bottle, Steel, Finish { glow = 1.5 });
             }
             else if (mine.act == Act.Throw)
             {
                 // A fire pot or a bell, gone from the hand once thrown
-                var pot = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(Grasp.One), float3(1)));
+                var pot = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(), float3(1)));
                 if (tossing) lens.scene.Mesh(ArmsMesh(mine.charge > 0.5 ? "lure_bell" : "fire_pot"), pot, Steel, Finish { });
             }
             else if (bow)

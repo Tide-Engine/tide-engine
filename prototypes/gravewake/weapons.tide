@@ -184,10 +184,10 @@ bool UsesAmmo(Weapon weapon)
     return Info(weapon).kind != Kind.Melee;
 }
 
-// What the chest can give: everything but the starting kit.
+// What the chest can give: everything but the starting crossbow (the rusty sword is its dud).
 bool InChest(Weapon weapon)
 {
-    return weapon != Weapon.None && weapon != Weapon.RustySword && weapon != Weapon.HandCrossbow;
+    return weapon != Weapon.None && weapon != Weapon.HandCrossbow;
 }
 
 // A price on a wall: the weapon's, and its ammunition's at half that.

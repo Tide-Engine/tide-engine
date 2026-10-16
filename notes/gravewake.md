@@ -62,8 +62,11 @@ of guns and perks:
   kill), a crack every time, a higher tick to the one who hit, HEADSHOT over
   the crosshair for a kill, and the head comes off (the head bone scaled to
   nothing, a burst of blood and bone, the neck spraying a moment).
-- **Down and out.** At 0 health a survivor is downed for 30 s, can still use a
-  bow or crossbow, and is raised by a friend holding use for 3 s. Alone, down
+- **Down and out.** At 0 health a survivor is downed for 30 s and fights on
+  from the ground: with the weapon in hand if it shoots, or a last stand's
+  hand crossbow of 12 bolts if it doesn't (`LastStand`, in the third slot,
+  put away again by `StandUp`). They're raised by a friend holding use for 3 s.
+  Going down with Packmule loses the second weapon (the one not in hand). Alone, down
   is the end unless they drank Second Wind Cider (a self-revive, 500 alone,
   1500 with others). Who bleeds out comes back at the next round with what
   they started with and the points they had. When nobody is left standing,
@@ -71,8 +74,12 @@ of guns and perks:
 - **Weapons.** 33 and bare hands (`weapons.tide`): 18 melee (slash, chop,
   thrust, or a wide sweep; a heavy blow on right mouse), four bows (hold to
   draw, let go to loose), four crossbows, a handgonne, three staffs and two
-  thrown. 11 are on walls; the chest gives any of 31 (all but the starting
-  two). After three uses the chest may show a skull and fly to another of its
+  thrown. A survivor carries one (two with Packmule Stout) and starts with
+  the hand crossbow; a weapon bought or taken replaces the one in hand. The
+  stab and the kick are always to hand (the owner, 2026-10-16: "maybe we just
+  have one weapon and we need to pick between melee or not? we already have a
+  stab and the kick so we dont need another melee"). 11 are on walls; the
+  chest gives any but the hand crossbow (the rusty sword is its dud). After three uses the chest may show a skull and fly to another of its
   five places. The Runeforge renames a weapon and multiplies its damage (×3
   melee, ×2 staffs, ×2.5 the rest), its magazine (×1.5) and reserve (×1.6),
   and gives it an element. V stabs with a dagger whatever's in hand; G throws
@@ -157,6 +164,27 @@ of guns and perks:
 - The bow, after the owner's note ("the bow gets in your face too, its hard
   to aim with it since you cant see anything"): the kit's bow is held to the
   left and drawn to the cheek, the crosshair clear at full draw.
+- The owner's notes on the arms (2026-10-16, with screenshots: "the sword is way
+  up, it should be lower"; "the crossbow is a better example, yet i dont
+  understand how we are holding it"; "why did the bow become left handed"):
+  - A one-handed weapon is held lower and further right than the kit's
+    tomahawk, leaned out (`GraspShift`, `GraspTurn`), and a long blade is
+    tipped forward in the fist (`BladeSeat`, 38 degrees; two-handed 28) so it
+    reaches away from the eye instead of up across the picture.
+  - The bow is no longer mirrored: it's in the right hand, as the kit has it,
+    on the right of the screen.
+  - Crossbows and the handgonne are held by the stock as a pistol is, the fist
+    round the grip, the barrel ahead (`make_fp.py`'s X and H clips), the left
+    hand under the barrel. The importer mirrors x, so the weapon bone's ahead
+    is its -x (`Seat`); the barrels had pointed back at the eye.
+  - Head hits follow the animation (the owner: "headshots dont follow the
+    animation"): `Brace` (a match system, `Tick.Zombies` + 1) poses each of
+    the dead as the picture does (`ZombiePose`, shared with `PoseZombie`) and
+    keeps its head, chest and hips (`Zombie.headAt`, `chestAt`, `hipsAt`), which
+    `BodyOf` gives blows and missiles. A hunched walker's head is about 1.4 m
+    up and 0.35 m ahead of its feet, where the fixed point had been 1.62 m
+    straight up; a fallen one's is on the ground. The pose is sampled from the
+    game's assets, so the C test now loads the pack.
 - Validation of the arms (2026-10-16): native debug `gravewake_test` and the
   web debug WASI test pass; the web page builds. Every weapon was looked at in
   standard-host captures (idle, mid-attack, aimed or heavy). The browser tests

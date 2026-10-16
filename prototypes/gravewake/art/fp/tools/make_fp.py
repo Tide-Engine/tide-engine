@@ -327,6 +327,13 @@ def shoulder_forward():
     bpy.context.view_layer.update()
 
 
+def left_grip(w, along):
+    """Where the left hand takes the weapon: `along` (metres up a handle, or a vector in the weapon's own axes: +Z up
+    a handle, +X ahead along a crossbow's barrel), round it from the right hand's other side."""
+    offset = Vector((0, 0, along)) if isinstance(along, (int, float)) else Vector(along)
+    return w @ Matrix.Translation(offset) @ TURN_LEFT
+
+
 def within_reach(w, both, along):
     """The weapon's place moved in toward the shoulders until the hands' wrists can get there."""
     for _ in range(12):
@@ -336,7 +343,7 @@ def within_reach(w, both, along):
         if over > 0:
             moves.append((SHOULDER_R - wrist_r).normalized() * over)
         if both:
-            grip_l = w @ Matrix.Translation((0, 0, along)) @ TURN_LEFT
+            grip_l = left_grip(w, along)
             wrist_l = (grip_l @ (MIRROR @ HAND_TO_WEAPON @ MIRROR).inverted() @ LEFT_FROM_MIRROR).translation
             over = (wrist_l - SHOULDER_L2).length - REACH_L
             if over > 0:
@@ -369,8 +376,8 @@ def made(keys, length, both=False, reach=0.17, eye=EYE_LOW):
         reach_hand("R", want_r)
         want_l = None
         if both:
-            # The other hand further along the handle (toward the blade), round it from the right's other side
-            grip_l = w @ Matrix.Translation((0, 0, reach)) @ TURN_LEFT
+            # The other hand further along the handle (toward the blade), or under a crossbow's barrel
+            grip_l = left_grip(w, reach)
             want_l = grip_l @ (MIRROR @ HAND_TO_WEAPON @ MIRROR).inverted() @ LEFT_FROM_MIRROR
             reach_hand("L", want_l)
         if f == 0 and PREVIEW:
@@ -417,29 +424,31 @@ MADE.update({
                          (0.70,) + IDLEP], 0.7, both=True, reach=0.26),
     "Pole_Sweep": two_handed("One_Swing2", 0.3, (-0.16, -0.04, 0.0)),
 })
-# Crossbows and the handgonne (the barrel along the blade's way, the edge down): held at the hip, raised to the
-# eye, a kick, a reload with the nose down
-IDLEX = ((0.12, -0.20, 0.16), (-0.10, 0.04, 1.0), (0.0, -1.0, 0.0))
-AIMX = ((0.05, -0.08, 0.24), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
+# Crossbows and the handgonne, held by the stock as a pistol is: the right fist round the grip behind the trigger
+# (the weapon bone's +Z up the grip, +X ahead along the barrel), the left hand under the barrel further on; a kick;
+# a reload with the nose down
+UP = (0.0, 0.97, -0.25)
+AHEAD = (0.0, 0.25, 0.97)
+IDLEX = ((0.13, -0.15, 0.26), UP, (-0.08, 0.25, 0.96))
+UNDER = (0.13, 0.0, -0.02)
 MADE.update({
-    "X_Idle": made([(0.0,) + IDLEX, (1.0, (0.12, -0.21, 0.16), (-0.10, 0.05, 1.0), (0.0, -1.0, 0.0)), (2.0,) + IDLEX],
-                   2.0, both=True, reach=0.18),
-    "X_Aim": made([(0.0,) + AIMX, (1.0,) + AIMX], 1.0, both=True, reach=0.18),
-    "X_Fire": made([(0.0,) + AIMX, (0.05, (0.05, -0.06, 0.19), (0.0, 0.15, 1.0), (0.0, -1.0, 0.15)), (0.40,) + AIMX],
-                   0.4, both=True, reach=0.18),
+    "X_Idle": made([(0.0,) + IDLEX, (1.0, (0.13, -0.16, 0.26), UP, (-0.08, 0.26, 0.96)), (2.0,) + IDLEX],
+                   2.0, both=True, reach=UNDER),
+    "X_Fire": made([(0.0,) + IDLEX, (0.05, (0.13, -0.13, 0.21), (0.0, 0.9, -0.43), (-0.08, 0.43, 0.9)), (0.40,) + IDLEX],
+                   0.4, both=True, reach=UNDER),
     "X_Reload": made([(0.0,) + IDLEX,
-                      (0.30, (0.12, -0.30, 0.30), (0.0, -0.60, 0.80), (0.0, -0.80, -0.60)),
-                      (0.75, (0.12, -0.32, 0.29), (0.05, -0.62, 0.78), (0.0, -0.78, -0.62)),
-                      (1.20, (0.12, -0.30, 0.30), (0.0, -0.60, 0.80), (0.0, -0.80, -0.60)),
-                      (1.50,) + IDLEX], 1.5, both=True, reach=0.18),
+                      (0.30, (0.12, -0.24, 0.26), (0.0, 0.8, 0.6), (0.0, -0.6, 0.8)),
+                      (0.75, (0.12, -0.25, 0.25), (0.05, 0.78, 0.62), (0.0, -0.62, 0.78)),
+                      (1.20, (0.12, -0.24, 0.26), (0.0, 0.8, 0.6), (0.0, -0.6, 0.8)),
+                      (1.50,) + IDLEX], 1.5, both=True, reach=UNDER),
 })
-# The hand crossbow, in one hand
-IDLEH = ((0.20, -0.14, 0.32), (0.0, 0.03, 1.0), (0.0, -1.0, 0.0))
+# The hand crossbow, in one hand, the same way
+IDLEH = ((0.19, -0.17, 0.30), UP, AHEAD)
 MADE.update({
-    "H_Idle": made([(0.0,) + IDLEH, (1.0, (0.20, -0.15, 0.32), (0.0, 0.04, 1.0), (0.0, -1.0, 0.0)), (2.0,) + IDLEH], 2.0),
-    "H_Fire": made([(0.0,) + IDLEH, (0.05, (0.20, -0.12, 0.27), (0.0, 0.25, 1.0), (0.0, -1.0, 0.25)), (0.35,) + IDLEH], 0.35),
-    "H_Reload": made([(0.0,) + IDLEH, (0.30, (0.14, -0.08, 0.26), (0.0, 0.70, 0.70), (0.0, -0.7, 0.7)),
-                      (0.75, (0.14, -0.08, 0.26), (0.0, 0.70, 0.70), (0.0, -0.7, 0.7)), (1.0,) + IDLEH], 1.0),
+    "H_Idle": made([(0.0,) + IDLEH, (1.0, (0.19, -0.18, 0.30), UP, (0.0, 0.26, 0.97)), (2.0,) + IDLEH], 2.0),
+    "H_Fire": made([(0.0,) + IDLEH, (0.05, (0.19, -0.15, 0.25), (0.0, 0.9, -0.43), (0.0, 0.43, 0.9)), (0.35,) + IDLEH], 0.35),
+    "H_Reload": made([(0.0,) + IDLEH, (0.30, (0.14, -0.14, 0.26), (0.0, 0.7, -0.7), (0.0, 0.7, 0.7)),
+                      (0.75, (0.14, -0.14, 0.26), (0.0, 0.7, -0.7), (0.0, 0.7, 0.7)), (1.0,) + IDLEH], 1.0),
 })
 # Staffs, javelins, a pot or a bell tossed, a brew drunk
 IDLES = ((0.22, -0.20, 0.32), (-0.12, 0.97, 0.15), (0.0, 0.0, 1.0))

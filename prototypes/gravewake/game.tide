@@ -36,7 +36,7 @@ component Survivor
     int reviver = -1;                // Whose hands are on them
     int selfRevives;                 // Second Wind's, alone
     int points = 500;
-    Weapon[3] weapons;
+    Weapon[3] weapons;               // One carried, two with Packmule; the third is the last stand's (LastStand)
     int[3] mag;
     int[3] ammo;
     bool[3] forged;
@@ -83,7 +83,6 @@ input Hands
     bool next;
     bool slot1;
     bool slot2;
-    bool slot3;
     [Absolute] bool ready;
 
     Sample(Devices devices, Lobby lobby, Feel feel)
@@ -110,7 +109,6 @@ input Hands
         next = devices.mouse.scroll.y != 0 || pad.buttonNorth.pressed;
         slot1 = keys.digit1.pressed;
         slot2 = keys.digit2.pressed;
-        slot3 = keys.digit3.pressed;
     }
 }
 
@@ -191,9 +189,10 @@ int BrewCount(Survivor s)
     return count;
 }
 
+// How many weapons a survivor carries: one, two with Packmule Stout. The stab and the kick are always to hand.
 int Slots(Survivor s)
 {
-    return HasBrew(s, Brew.Packmule) ? 3 : 2;
+    return HasBrew(s, Brew.Packmule) ? 2 : 1;
 }
 
 float MaxHealth(Survivor s)
@@ -201,14 +200,13 @@ float MaxHealth(Survivor s)
     return HasBrew(s, Brew.Ironhide) ? 250 : 100;
 }
 
-// A survivor as they start: the rusty sword, the hand crossbow, two fire pots.
+// A survivor as they start: the hand crossbow, two fire pots (and always the stab and the kick).
 Survivor Outfitted(int seat, float3 at, float yaw)
 {
     mut var s = Survivor { seat = seat, feet = at, yaw = yaw, placed = true };
-    s.weapons[0] = Weapon.RustySword;
-    s.weapons[1] = Weapon.HandCrossbow;
-    s.mag[1] = Info(Weapon.HandCrossbow).mag;
-    s.ammo[1] = Info(Weapon.HandCrossbow).reserve;
+    s.weapons[0] = Weapon.HandCrossbow;
+    s.mag[0] = Info(Weapon.HandCrossbow).mag;
+    s.ammo[0] = Info(Weapon.HandCrossbow).reserve;
     s.act = Act.Raise;
     s.actLength = 0.5;
     return s;
@@ -240,9 +238,9 @@ event(PlayerJoined joined) TakeSeat(mut Party party, Ashwick ashwick, Match matc
             yaw = YawTo(start, float3(0, 0, 4)),
             placed = true,
             points = points,
-            weapons = [Weapon.RustySword, Weapon.HandCrossbow, Weapon.None],
-            mag = [0, 1, 0],
-            ammo = [0, 40, 0],
+            weapons = [Weapon.HandCrossbow, Weapon.None, Weapon.None],
+            mag = [1, 0, 0],
+            ammo = [40, 0, 0],
             act = Act.Raise,
             actLength = 0.5,
         }, Owner { player = joined.player });
