@@ -42,6 +42,9 @@ component Zombie
     float chill;                // Seconds left slowed by frost
     float frozen;               // Seconds left frozen solid
     float stun;                 // Seconds left dazed
+    float3 headAt;              // Where its head, chest and hips are, as its pose has them this tick (Brace)
+    float3 chestAt;
+    float3 hipsAt;
     float downFor;              // Knocked down: how long it lies before getting up
     float3 shove;               // Knocked back, metres a second
     int killer = -1;            // The seat that killed it
@@ -75,16 +78,27 @@ struct Body
 Body BodyOf(Entity entity, Zombie zombie)
 {
     var risen = zombie.state == ZombieState.Rising ? Math.SmoothStep(0, 1, zombie.timer / RISE_SECONDS) : 1.0;
-    var sink = (1 - risen) * 1.8;
-    var lying = LyingOf(zombie);
-    var back = -Flat(zombie.yaw);
+    var placed = Math.Length(zombie.headAt) > 0;
     var up = float3(0, 1, 0);
     return Body { entity = entity, at = zombie.at, yaw = zombie.yaw, risen = risen,
                   hittable = zombie.state != ZombieState.Dying && zombie.state != ZombieState.Outside,
-                  head = Math.Lerp(zombie.at + up * (1.62 - sink), zombie.at + back * 0.95 + up * 0.2, lying),
-                  chest = Math.Lerp(zombie.at + up * (1.15 - sink), zombie.at + back * 0.55 + up * 0.25, lying),
-                  hips = Math.Lerp(zombie.at + up * (0.6 - sink), zombie.at + back * 0.13 + up * 0.2, lying),
-                  down = lying > 0.5 };
+                  head = placed ? zombie.headAt : zombie.at + up * 1.62,
+                  chest = placed ? zombie.chestAt : zombie.at + up * 1.15,
+                  hips = placed ? zombie.hipsAt : zombie.at + up * 0.6,
+                  down = LyingOf(zombie) > 0.5 };
+}
+
+// Each tick, where each of the dead's head, chest and hips are, from its pose (people.tide's ZombiePose, which the
+// picture draws): blows and missiles strike what's seen. The head's middle is a little up its bone from the neck.
+[Stage(Tick.Zombies, 1)]
+system Brace(mut Zombie zombie)
+{
+    var pose = ZombiePose(zombie, out var sink);
+    var rig = ZombieBody(zombie.look).skeleton.bones;
+    var place = ZombiePlace(zombie, sink);
+    zombie.headAt = Math.Transform(Math.Mul(place, pose.Model(rig.head)), float3(0, 0.1, 0));
+    zombie.chestAt = Math.Transform(Math.Mul(place, pose.Model(rig.chest)), float3(0, 0.05, 0));
+    zombie.hipsAt = Math.Transform(Math.Mul(place, pose.Model(rig.hips)), float3(0));
 }
 
 // How far over one of the dead is: 0 on its feet, 1 flat on its back (it falls away from the blow).

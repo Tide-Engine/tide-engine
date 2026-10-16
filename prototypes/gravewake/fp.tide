@@ -176,13 +176,21 @@ float4x4 Unscaled(float4x4 m)
     return float4x4(float4(Math.Normalize(m.c0.xyz), 0), float4(Math.Normalize(m.c1.xyz), 0), float4(Math.Normalize(m.c2.xyz), 0), m.c3);
 }
 
-// How a model sits on the weapon bone, whose +z is a blade's way and +x its edge (as the kit's tomahawk lies on
-// it). A blade, a haft, a staff, a javelin or a bottle: its +y up the bone, its edge (+z) the bone's edge. A
-// crossbow or the handgonne: its barrel (+z) up the bone, its top (+y) away from the bone's edge (the edge is down).
-quaternion Seat(Grasp grasp)
+// How a model sits on the weapon bone, whose +z runs up what the fist holds and -x is ahead of it (a blade's edge,
+// as the kit's tomahawk lies on it; the importer mirrors x). A blade, a haft, a staff, a javelin or a bottle: its +y
+// up the bone, its edge (+z) ahead. A crossbow or the handgonne, held by its stock as a pistol is: its top (+y) up
+// the bone, its barrel (+z) ahead. Both are the same turn.
+quaternion Seat()
 {
-    if (grasp == Grasp.Cross || grasp == Grasp.Pistol) return quaternion.LookRotation(float3(0, 0, 1), float3(-1, 0, 0));
-    return quaternion.LookRotation(float3(1, 0, 0), float3(0, 0, 1));
+    return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 0, 1));
+}
+
+// A long blade tipped forward in the fist (about the edge's line), so it reaches away from the eye rather than up
+// across the picture.
+quaternion BladeSeat(Grasp grasp)
+{
+    var tip = grasp == Grasp.One ? 38.0 : grasp == Grasp.Two ? 28.0 : 0.0;
+    return Math.Mul(quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(tip)), Seat());
 }
 
 // The stab's dagger on the knife bone: its blade up the bone (+z), its edge the bone's -y.
@@ -191,13 +199,29 @@ quaternion KnifeSeat()
     return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
 }
 
-// Aimed, a crossbow, the handgonne or the hand crossbow comes up under the eye (the arms with it): how far, and the
-// turn that lines its barrel up with the eye's way.
+// Aimed, a crossbow, the handgonne or the hand crossbow comes up toward the eye's line (the arms with it).
 float3 AimShift(Grasp grasp)
 {
-    if (grasp == Grasp.Cross) return float3(-0.06, 0.07, 0.04);
-    if (grasp == Grasp.Pistol) return float3(-0.1, 0.05, 0.0);
+    if (grasp == Grasp.Cross) return float3(-0.06, 0.08, 0.04);
+    if (grasp == Grasp.Pistol) return float3(-0.1, 0.07, 0.0);
     return float3(0);
+}
+
+// Where the arms are held for each grasp, beyond where the clips have them: a one-handed weapon lower and further
+// to the right than the kit holds its tomahawk, so its blade stands up at the screen's side rather than across it.
+float3 GraspShift(Grasp grasp)
+{
+    if (grasp == Grasp.One) return float3(0.07, -0.11, 0.02);
+    if (grasp == Grasp.Two) return float3(0.12, -0.08, 0.0);
+    if (grasp == Grasp.Bow) return float3(0.04, -0.06, 0.0);
+    return float3(0);
+}
+
+// ...and turned: a one-handed blade leaned out to the right.
+quaternion GraspTurn(Grasp grasp)
+{
+    if (grasp == Grasp.One) return quaternion.Euler(Math.Radians(4), Math.Radians(-6), Math.Radians(-14));
+    return quaternion.identity;
 }
 
 // Each bow is the kit's, coloured its own way.

@@ -219,7 +219,7 @@ string BrewLine(Brew brew)
         case Brew.SecondWind: return "Revive faster; alone, rise again";
         case Brew.Twinstrike: return "Strike faster and harder";
         case Brew.Fleetfoot: return "Run faster and longer";
-        case Brew.Packmule: return "Carry a third weapon";
+        case Brew.Packmule: return "Carry a second weapon";
     }
     return "";
 }
@@ -459,7 +459,7 @@ view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby 
     if (feed.played < 45 && match.phase != Phase.Over)
     {
         var fade = Math.Saturate((45 - feed.played) * 0.2);
-        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   E use   F kick   R reload   V stab   G fire pot   1-3 weapons",
+        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   E use   F kick   V stab   R reload   G fire pot   Q bell",
               float2(w * 0.5, h - 14 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)

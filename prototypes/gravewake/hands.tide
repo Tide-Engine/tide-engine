@@ -174,6 +174,15 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
 
 void StandUp(mut Survivor survivor)
 {
+    // The last stand's crossbow put away, and what was in hand taken up again
+    if (survivor.weapons[2] != Weapon.None)
+    {
+        survivor.weapons[2] = Weapon.None;
+        survivor.mag[2] = 0;
+        survivor.ammo[2] = 0;
+        survivor.forged[2] = false;
+        if (survivor.slot == 2) survivor.slot = 0;
+    }
     survivor.life = Life.Standing;
     survivor.health = MaxHealth(survivor);
     survivor.bleed = 0;
@@ -542,6 +551,19 @@ event Helped
     int by;
 }
 
+// Down with nothing to shoot, a survivor fights on from the ground with a hand crossbow of a dozen bolts, put away
+// again when they're up (StandUp). It's the third slot's, which no one carries otherwise.
+void LastStand(mut Survivor survivor)
+{
+    var kind = Info(survivor.weapons[survivor.slot]).kind;
+    if (kind != Kind.Melee && kind != Kind.Staff) return;
+    survivor.weapons[2] = Weapon.HandCrossbow;
+    survivor.mag[2] = 1;
+    survivor.ammo[2] = 12;
+    survivor.forged[2] = false;
+    survivor.slot = 2;
+}
+
 int NextSlot(Survivor s, int from)
 {
     var slots = Slots(s);
@@ -672,7 +694,6 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (
     mut var pick = -1;
     if (hands.slot1.down) pick = 0;
     if (hands.slot2.down) pick = 1;
-    if (hands.slot3.down && Slots(survivor) > 2) pick = 2;
     if (hands.next.down) pick = NextSlot(survivor, survivor.slot);
     if (pick >= 0 && pick != survivor.slot && survivor.weapons[pick] != Weapon.None && !downed)
     {
@@ -977,9 +998,26 @@ event(Hurt hurt) TakeHurt(mut Survivor survivor, Party party, Match match)
     survivor.points = int(survivor.points * 0.95);
     survivor.revive = 0;
     survivor.reviver = -1;
-    // Down, the brews are lost, but Second Wind's own rising
+    // Down, the brews are lost, but Second Wind's own rising; with Packmule, the second weapon goes too (the one not in
+    // hand)
     var keep = party.joined <= 1 && HasBrew(survivor, Brew.SecondWind);
+    if (HasBrew(survivor, Brew.Packmule) && survivor.weapons[1] != Weapon.None)
+    {
+        if (survivor.slot == 1)
+        {
+            survivor.weapons[0] = survivor.weapons[1];
+            survivor.mag[0] = survivor.mag[1];
+            survivor.ammo[0] = survivor.ammo[1];
+            survivor.forged[0] = survivor.forged[1];
+            survivor.slot = 0;
+        }
+        survivor.weapons[1] = Weapon.None;
+        survivor.mag[1] = 0;
+        survivor.ammo[1] = 0;
+        survivor.forged[1] = false;
+    }
     survivor.brews = 0;
+    LastStand(survivor);
     if (!keep) survivor.selfRevives = 0;
     survivor.act = Act.Idle;
     survivor.charge = 0;

@@ -15,6 +15,8 @@ struct Rig
 {
     [Name("Wrist.R")] Bone wristR;
     [Name("Head")] Bone head;
+    [Name("Chest")] Bone chest;
+    [Name("Body")] Bone hips;
 }
 
 asset SkinnedMesh<Corner, Rig> heroRanger = "art/people/hero_ranger.glb";
@@ -169,14 +171,15 @@ frag Flesh(Corner corner, out Color color, Instance instance, Skin skin, Look lo
     color = Color(Hazed(lit, this.world, look), 1);
 }
 
-// The dead, as this frame has them.
-[Stage(Layers.Gather)]
-view PoseZombie(mut Zombie zombie, Look look)
+// The dead's pose as their state has it, the same in the match (where blows and missiles find their head, chest and
+// hips: zombies.tide's Brace) and in the picture. `sink` is how far below its feet the body is (rising out of the
+// ground, sinking away).
+Pose ZombiePose(Zombie zombie, out float sink)
 {
     var woman = WomanZombie(zombie.look);
     var body = ZombieBody(zombie.look);
     mut var pose = body.defaultPose;
-    mut var at = zombie.at;
+    sink = 0;
     var t = zombie.timer;
     switch (zombie.state)
     {
@@ -184,7 +187,7 @@ view PoseZombie(mut Zombie zombie, Look look)
         {
             var risen = Math.SmoothStep(0, 1, t / RISE_SECONDS);
             pose.Sample(MoveOf(woman, Move.ZClimb), 0.15 + risen * 0.5);
-            at.y -= (1 - risen) * 1.9;
+            sink = (1 - risen) * 1.9;
             break;
         }
         case ZombieState.Outside:
@@ -211,7 +214,7 @@ view PoseZombie(mut Zombie zombie, Look look)
             // Where it lay, or thrown over by the blow
             if (zombie.fall >= 2) pose.Sample(MoveOf(woman, Move.ZKnockback), zombie.fall == 2 ? 0.833 : Math.Min(t, 0.833));
             else pose.Sample(MoveOf(woman, fall), Math.Min(t * 1.15, length));
-            if (t > DEATH_SECONDS - 1.4) at.y -= (t - (DEATH_SECONDS - 1.4)) * 0.6;
+            if (t > DEATH_SECONDS - 1.4) sink = (t - (DEATH_SECONDS - 1.4)) * 0.6;
             break;
         }
         default:
@@ -224,7 +227,7 @@ view PoseZombie(mut Zombie zombie, Look look)
             if (speed < 0.3 && zombie.frozen <= 0)
             {
                 mut var idle = body.defaultPose;
-                idle.Sample(MoveOf(woman, Move.ZIdle), look.time + zombie.pace * 10, Playback.Loop);
+                idle.Sample(MoveOf(woman, Move.ZIdle), t + zombie.pace * 10, Playback.Loop);
                 pose.Blend(idle, Math.Saturate(1 - speed / 0.3));
             }
             if (zombie.swing > 0)
@@ -243,11 +246,25 @@ view PoseZombie(mut Zombie zombie, Look look)
             break;
         }
     }
-    if (zombie.headless) pose[body.skeleton.bones.head].scale = float3(0.001);
+    return pose;
+}
+
+// Where one of the dead is drawn: at its feet (less its sink), turned its way, the plague king a little bigger.
+float4x4 ZombiePlace(Zombie zombie, float sink)
+{
+    var scale = zombie.look == 3 ? 1.08 : 1.0;
+    return float4x4.TRS(zombie.at - float3(0, sink, 0), quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), float3(scale));
+}
+
+// The dead, as this frame has them.
+[Stage(Layers.Gather)]
+view PoseZombie(mut Zombie zombie)
+{
+    mut var pose = ZombiePose(zombie, out var sink);
+    if (zombie.headless) pose[ZombieBody(zombie.look).skeleton.bones.head].scale = float3(0.001);
     zombie.gush = Math.Max(0, zombie.gush - Math.Min(Frame.dt, 0.05));
     zombie.pose = pose;
-    var scale = zombie.look == 3 ? 1.08 : 1.0;
-    zombie.place = float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), float3(scale));
+    zombie.place = ZombiePlace(zombie, sink);
     zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
 }
 

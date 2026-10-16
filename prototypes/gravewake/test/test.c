@@ -85,6 +85,10 @@ static bool has_weapon(Survivor s, Weapon w)
 
 int main(void)
 {
+    // The game's assets: the dead's poses place their heads, which blows and missiles strike
+    extern const unsigned char tide_game_pack[];
+    extern const size_t tide_game_pack_size;
+    CHECK(tide_assets_load(tide_game_pack, tide_game_pack_size));
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_player_joined(&world, tide_player_from_index(0));
     tide_world_player_joined(&world, tide_player_from_index(1));
@@ -92,7 +96,7 @@ int main(void)
     tick(2);
     CHECK(world.Party.joined == 2);
     CHECK(world.Ashwick.made);
-    CHECK(get(0).weapons.at[0] == Weapon_RustySword && get(0).weapons.at[1] == Weapon_HandCrossbow);
+    CHECK(get(0).weapons.at[0] == Weapon_HandCrossbow && get(0).weapons.at[1] == Weapon_None);
 
     // Where the dead come in is clear of everything solid: where one lands climbing through a window, and where one
     // rises out of the ground
@@ -124,6 +128,13 @@ int main(void)
     CHECK(world.Match.phase == Phase_Fighting && world.Match.round == 1);
     tick_safe(60 * 6);
     CHECK(count_zombies() > 0);
+    // A sword for round one (bought in play; the test hands it over)
+    Survivor armed = get(0);
+    armed.weapons.at[0] = Weapon_RustySword;
+    armed.mag.at[0] = armed.ammo.at[0] = 0;
+    armed.slot = 0;
+    armed.act = Act_Idle;
+    set(0, armed);
 
     // Survivor 0 goes to each of them in turn and swings until round two comes
     int least_boards = 6, swung = 0;
@@ -227,11 +238,33 @@ int main(void)
     s = get(0);
     CHECK(s.weapons.at[s.slot] == forging && s.forged.at[s.slot]);
 
-    // ---- Down, and raised ----
+    // ---- Down, and raised: one of the dead puts a sword-carrier down, who fights on with the last stand's crossbow ----
     Survivor friend = get(1);
-    friend.life = Life_Downed;
-    friend.bleed = 30;
-    friend.health = 0;
+    friend.weapons.at[0] = Weapon_Longsword;
+    friend.mag.at[0] = friend.ammo.at[0] = 0;
+    friend.slot = 0;
+    friend.act = Act_Idle;
+    set(1, friend);
+    put(0, (tide_float3){-30, 0, 4}, (tide_float3){-30, 1.6f, 8});
+    for (int t = 0; t < 60 * 60 && get(1).life == Life_Standing; t++) {
+        for (uint32_t row = 0; row < world.arch4_Zombie.count; row++) {
+            const Zombie z = TIDE_AT(&world, arch4_Zombie, Zombie, row);
+            if (z.state != ZombieState_Hunting) continue;
+            friend = get(1);
+            friend.health = 1;
+            friend.feet = (tide_float3){z.at.x + sinf(z.yaw) * 0.8f, 0, z.at.z + cosf(z.yaw) * 0.8f};
+            friend.placed = true;
+            set(1, friend);
+            break;
+        }
+        Survivor me = get(0);
+        me.health = 250;
+        set(0, me);
+        tick(1);
+    }
+    friend = get(1);
+    CHECK(friend.life == Life_Downed);
+    CHECK(friend.slot == 2 && friend.weapons.at[2] == Weapon_HandCrossbow && friend.mag.at[2] == 1);
     friend.feet = (tide_float3){-1, 0, 0};
     friend.placed = true;
     set(1, friend);
@@ -248,11 +281,16 @@ int main(void)
     held[0].use = false;
     CHECK(get(1).life == Life_Standing);
     CHECK(get(0).revives == 1);
+    CHECK(get(1).slot == 0 && get(1).weapons.at[0] == Weapon_Longsword && get(1).weapons.at[2] == Weapon_None);
 
     // ---- A crossbow bolt into one of the dead ----
     s = get(0);
-    for (int i = 0; i < 3; i++)
-        if (s.weapons.at[i] == Weapon_HandCrossbow) { s.slot = i; s.act = Act_Idle; s.mag.at[i] = 1; }
+    s.weapons.at[0] = Weapon_HandCrossbow;
+    s.forged.at[0] = false;
+    s.mag.at[0] = 1;
+    s.ammo.at[0] = 40;
+    s.slot = 0;
+    s.act = Act_Idle;
     set(0, s);
     const int kills_before = get(0).kills;
     const int hits_before = get(0).points;
@@ -363,6 +401,12 @@ int main(void)
         Zombie z = tide_get_Zombie(&world, e);
         z.health = 100000;
         CHECK(tide_set_Zombie(&world, e, z));
+        // Its head is where its pose has it: up on its shoulders while it hunts
+        tick_safe(1);
+        z = tide_get_Zombie(&world, e);
+        printf("a hunting head %.2f m up, %.2f m out from its feet\n", z.headAt.y - z.at.y, hypotf(z.headAt.x - z.at.x, z.headAt.z - z.at.z));
+        CHECK(z.headAt.y - z.at.y > 1.2f && z.headAt.y - z.at.y < 1.95f);
+        CHECK(hypotf(z.headAt.x - z.at.x, z.headAt.z - z.at.z) < 0.6f);
         put(0, (tide_float3){z.at.x + sinf(z.yaw) * 1.2f, 0, z.at.z + cosf(z.yaw) * 1.2f}, (tide_float3){z.at.x, 1.2f, z.at.z});
         s = get(0);
         s.stamina = 1;
@@ -378,8 +422,10 @@ int main(void)
         tick_safe(40);
         z = tide_get_Zombie(&world, e);
         CHECK(z.state == ZombieState_Fallen);
-        const float headX = z.at.x - sinf(z.yaw) * 0.95f, headZ = z.at.z - cosf(z.yaw) * 0.95f;
-        put(0, (tide_float3){z.at.x, 0, z.at.z}, (tide_float3){headX, 0.2f, headZ});
+        // Down, its head is on the ground
+        printf("a fallen head %.2f m up\n", z.headAt.y - z.at.y);
+        CHECK(z.headAt.y - z.at.y < 0.6f);
+        put(0, (tide_float3){z.at.x, 0, z.at.z}, (tide_float3){z.headAt.x, z.headAt.y, z.headAt.z});
         const float before = z.health;
         held[0].kick = true;
         tick_safe(1);

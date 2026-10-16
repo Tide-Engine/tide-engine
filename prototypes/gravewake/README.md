@@ -25,18 +25,22 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Quick stab | V or C | Right stick press |
 | Throw a fire pot | G | Right shoulder |
 | Ring a grave bell (the dead go to it) | Q | Left shoulder |
-| Next weapon; a weapon by its slot | Wheel; 1, 2, 3 | North button |
+| The other weapon (with Packmule Stout) | Wheel; 1, 2 | North button |
 | The room's menu | Escape, or **Menu** | |
 
-Everyone starts in the square with a rusty shortsword, a hand crossbow,
-two fire pots and 500 gold. Hold E at a broken window to nail its boards back.
+Everyone starts in the square with a hand crossbow, two fire pots and 500
+gold. You carry one weapon (two with Packmule Stout): a weapon off a wall or
+out of the chest replaces the one in hand. The stab (V) and the kick (F) are
+always to hand, whatever you carry. Hold E at a broken window to nail its
+boards back.
 Kick the dead over and they lie a while before getting up; kick one that's
 down and you stamp on its head. Heavy blows from hammers, maces, axes swung
 wide and anything two-handed knock them over too, and the fallen take more
 from every blow. A head hit is gold on the crosshair; a head kill takes the
 head off.
 
-Down, you can still shoot a bow or crossbow; a friend holding E for three
+Down, you fight on from the ground: with what you hold if it shoots, or a
+hand crossbow of a dozen bolts if it doesn't. A friend holding E for three
 seconds raises you, and alone you're done unless you drank Second Wind Cider.
 Who bleeds out comes back at the next round.
 
@@ -57,7 +61,7 @@ village, F10 the next weapon in hand.
 | The keep | the iron bars in the west alley, 1250; the graveyard's gate, 1250 | the beacon, Arbalest, Twinstrike Brew, Packmule Stout |
 
 Brews only pour once the beacon is lit (Second Wind always). The Pilgrim's
-Chest (950) gives any of the 31 weapons beyond the starting two; after a few
+Chest (950) gives any weapon but the hand crossbow (the rusty sword is its dud); after a few
 uses it may show a skull and fly to another of its five places. The Runeforge
 (5000) remakes the weapon in hand: more damage and ammunition, and fire,
 frost, lightning, bleeding or a blast in every hit.
