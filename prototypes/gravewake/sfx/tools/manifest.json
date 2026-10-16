@@ -960,6 +960,16 @@
   ],
   "seconds": 0.423
  },
+ "mag_reload": {
+  "bytes": 7838,
+  "file": "mag_reload.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 1.186
+ },
  "music_high": {
   "bytes": 297449,
   "file": "music_high.ogg",
@@ -1005,6 +1015,16 @@
    "rd_creature"
   ],
   "seconds": 0.455
+ },
+ "pistol_fire": {
+  "bytes": 83202,
+  "file": "pistol_fire.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.943
  },
  "points_tick": {
   "bytes": 4454,
@@ -1105,6 +1125,16 @@
   ],
   "seconds": 4.8
  },
+ "pump": {
+  "bytes": 23298,
+  "file": "pump.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.264
+ },
  "repeater_fire": {
   "bytes": 23426,
   "file": "repeater_fire.wav",
@@ -1134,6 +1164,16 @@
   "layers": false,
   "packs": [],
   "seconds": 2.858
+ },
+ "rifle_fire": {
+  "bytes": 12333,
+  "file": "rifle_fire.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 1.113
  },
  "rise": {
   "bytes": 19032,
@@ -1201,6 +1241,36 @@
    "oga_voice_fx"
   ],
   "seconds": 0.548
+ },
+ "shell_load": {
+  "bytes": 13274,
+  "file": "shell_load.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.15
+ },
+ "shotgun_fire": {
+  "bytes": 13651,
+  "file": "shotgun_fire.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 1.233
+ },
+ "smg_fire": {
+  "bytes": 13196,
+  "file": "smg_fire.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 1.047
  },
  "snarl_1": {
   "bytes": 61586,
@@ -1483,5 +1553,15 @@
    "oga_swishes"
   ],
   "seconds": 0.426
+ },
+ "turret_fire": {
+  "bytes": 56194,
+  "file": "turret_fire.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.637
  }
 }

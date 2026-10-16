@@ -1,7 +1,7 @@
-// The real game in a real browser, one player: the title, Play, the class
-// screen and a Ranger picked, the first wave coming to the fire, a shot and
-// the ability on Q, the wave ended by the development keys and its cards (one
-// taken), and a walk round the clearing by them (the ruin's cliff, the
+// The real game in a real browser, one player: the title, Play, the survivor
+// screen and a Breacher picked, the first wave coming to the fire, the
+// firebomb on Q, a shotgun blast and the boot, the wave ended by the
+// development keys and its items (one taken), and a walk round the clearing by them (the ruin's cliff, the
 // graveyard, the hill, the shelf, the ramp, the south), a picture of each. Frames and match time advance under
 // the runner's control, so nothing waits on a clock, and no sound reaches a
 // device, and the page never gets the pointer lock it asks for: headless Chrome
@@ -173,31 +173,31 @@ try {
     await click(229, 379);
     await until(value => value.state === 2, 'a match behind the title');
 
-    stage = 'the classes';
+    stage = 'the survivors';
     await frames(30);
-    await screenshot('classes');
+    await screenshot('survivors');
     await tap('Digit2', '2');
     stage = 'the first wave';
     await frames(150);
     const fire = await screenshot('fire');
     await tap('KeyQ', 'q');
     await frames(20);
-    stage = 'a swing';
-    await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 640, y: 360, button: 'left', clickCount: 1 });
-    await frames(10);
-    await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 360, button: 'left', clickCount: 1 });
-    await frames(6);
-    await screenshot('swing');
-    stage = 'a crossbow';
+    stage = 'a blast';
     await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 640, y: 360, button: 'left', clickCount: 1 });
     await frames(4);
     await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 360, button: 'left', clickCount: 1 });
-    await frames(30);
-    await screenshot('crossbow');
-    stage = 'the cards';
+    await frames(4);
+    await screenshot('blast');
+    stage = 'the boot';
+    await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 640, y: 360, button: 'right', clickCount: 1 });
+    await frames(10);
+    await command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 360, button: 'right', clickCount: 1 });
+    await frames(20);
+    await screenshot('boot');
+    stage = 'the items';
     await tap('F5', 'F5');
     await frames(40);
-    await screenshot('cards');
+    await screenshot('items');
     await tap('Digit3', '3');
     await frames(10);
     // F6 walks round the clearing: the ruin's cliff, the graveyard, the hill, the shelf, the ramp, the south
@@ -214,7 +214,7 @@ try {
     assert.equal(state.aborted, '');
     assert.equal(state.screen.canvasWidth, state.screen.width);
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`GRAVEWAKE (${backend}): the title, the classes, the first wave, a swing, a shot, the cards and the clearing drew with no errors in ${((performance.now() - began) / 1000).toFixed(1)}s (${state.frames} frames). Captures: ${output}`);
+    console.log(`GRAVEWAKE (${backend}): the title, the survivors, the first wave, a blast, the boot, the items and the clearing drew with no errors in ${((performance.now() - began) / 1000).toFixed(1)}s (${state.frames} frames). Captures: ${output}`);
 } catch (error) {
     process.exitCode = 1;
     console.error(`GRAVEWAKE failed during ${stage}: ${error.stack ?? error}`);

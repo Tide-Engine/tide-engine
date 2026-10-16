@@ -1,7 +1,8 @@
-// What the dead drop: full quivers, a skull that kills at a touch, holy fire.
-// And the cues the match sends for what's heard.
+// What the dead drop: a recharge (every gun loaded, every skill ready), a
+// skull that kills at a touch, holy fire. And the cues the match sends for
+// what's heard.
 
-enum Boon { MaxAmmo, InstaKill, Nuke }
+enum Boon { Recharge, InstaKill, Nuke }
 
 const float BOON_SECONDS = 30;
 const int DROPS_MOST = 4;
@@ -16,7 +17,7 @@ component Drop
 }
 
 // What's heard, where: the match says, each machine plays it.
-enum Sfx { Rise, Snarl, Drink, Revive, Downed, Hurt, Empty, Throw, Bell }
+enum Sfx { Rise, Snarl, Revive, Downed, Hurt, Empty, Throw, Mine, Shell }
 
 event Cue
 {
@@ -31,12 +32,20 @@ event Boons
     float3 at;
 }
 
-// Every arrow, bolt and charge back, and the fire pots.
+// Every gun loaded and every skill ready.
 event Restock { }
 
 event(Restock restock) TakeRestock(mut Survivor survivor)
 {
     Refill(survivor);
+}
+
+void Refill(mut Survivor survivor)
+{
+    if (survivor.role == Role.None) return;
+    if (survivor.gun == Weapon.Pistol) survivor.stowed = MagOf(survivor, RoleWeapon(survivor.role));
+    survivor.mag = MagOf(survivor, survivor.gun);
+    for (var i = 0; i < 3; i++) survivor.cooldowns[i] = 0;
 }
 
 // Now and then one of the dead drops something, a few a wave at most.
@@ -46,7 +55,7 @@ void MaybeDrop(mut Match match, float3 at)
     match.drops += 1;
     var order = match.dropTurn % 5;
     match.dropTurn += 1 + Random.NextInt(2);
-    var kind = order == 0 ? Boon.MaxAmmo : order == 1 ? Boon.InstaKill : order == 2 ? Boon.MaxAmmo : order == 3 ? Boon.Nuke : Boon.InstaKill;
+    var kind = order == 0 ? Boon.Recharge : order == 1 ? Boon.InstaKill : order == 2 ? Boon.Recharge : order == 3 ? Boon.Nuke : Boon.InstaKill;
     Spawn(Drop { at = On(at.x, at.z), kind = kind });
 }
 
@@ -73,7 +82,7 @@ system Pickup(mut Drop drop, mut Match match, Party party, Time time, query (Sur
         case Boon.InstaKill:
             match.instakill = BOON_SECONDS;
             break;
-        case Boon.MaxAmmo:
+        case Boon.Recharge:
             for (var seat = 0; seat < 4; seat++)
                 if (party.taken[seat]) party.survivors[seat].Send(Restock { });
             break;

@@ -2,7 +2,7 @@
 // at the clearing's edge; then they hunt the nearest survivor on their feet,
 // downhill on the way the field gives, straight at them when nothing's
 // between. Close enough, they swing. Hit, they reel; kicked, they go over;
-// killed, they come apart, and the pieces lie a while before they sink away.
+// killed, they burst.
 
 enum ZombieState { Rising, Hunting, Dying, Fallen }
 
@@ -189,6 +189,8 @@ event Wound
     Blow blow;                  // What dealt it, for what's heard and seen
     bool down;                  // Knocks it off its feet
     float freeze;               // Freezes it solid, so many seconds
+    bool crit;                  // Lucky Shot's double
+    bool echo;                  // Set off by an item: a kill sets off nothing more
 }
 
 // What dealt a blow.
@@ -200,6 +202,8 @@ event Earned
     int points;
     bool kill;
     bool head;
+    float3 at;                  // Where it died
+    bool echo;                  // Killed by what an item set off
 }
 
 // A blow to a survivor.
@@ -220,6 +224,7 @@ event Struck
     int seat;
     int points;
     Blow blow;
+    bool crit;
 }
 
 float GaitSpeed(Gait gait)
@@ -255,7 +260,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
         if (Math.Floor((zombie.burn + dt) * 4) != Math.Floor(zombie.burn * 4))
             this.Send(Wound { damage = 40 + RoundHealth(match.round) * 0.06, seat = zombie.burner, element = Element.None, from = zombie.at, blow = Blow.Burning, knock = -1 });
     }
-    // Bleeding: the same, from a forged blade's wound
+    // Bleeding: the same
     if (zombie.bleed > 0)
     {
         zombie.bleed -= dt;
@@ -309,18 +314,13 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
         target = row.entity;
         targetAt = s.feet;
     }
-    var lured = FieldAt(ashwick, zombie.at, true) < 70;
     mut var wish = float3(0);
-    if (lured)
-    {
-        wish = Downhill(ashwick, zombie.at, true);
-    }
-    else if (target != default)
+    if (target != default)
     {
         var to = targetAt - zombie.at;
         var straight = Math.Length(to.xz);
         if (straight < 14 && ClearPath(ashwick, zombie.at, targetAt)) wish = Math.Normalize(float3(to.x, 0, to.z));
-        else wish = Downhill(ashwick, zombie.at, false);
+        else wish = Downhill(ashwick, zombie.at);
     }
     // Room among the others
     // (straight from the herd's cells, a dozen at most, of two dozen looked at: in a crowd of thousands, more change
@@ -372,7 +372,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
         }
         if (zombie.swing >= ATTACK_SECONDS) zombie.swing = 0;
     }
-    else if (target != default && !lured && nearest < ATTACK_REACH && zombie.flinch <= 0 && zombie.stun <= 0 && zombie.frozen <= 0)
+    else if (target != default && nearest < ATTACK_REACH && zombie.flinch <= 0 && zombie.stun <= 0 && zombie.frozen <= 0)
     {
         zombie.swing = 0.0001;
         zombie.struck = false;
@@ -385,7 +385,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     if (zombie.flinch > 0) speed *= 0.3;
     if (zombie.swing > 0) speed *= zombie.gait == Gait.Shamble ? 0.2 : 0.45;
     if (zombie.frozen > 0 || zombie.stun > 0) speed = 0;
-    if (target != default && !lured && nearest < ATTACK_REACH * 0.8) speed *= 0.1;
+    if (target != default && nearest < ATTACK_REACH * 0.8) speed *= 0.1;
     var wanted = Math.Length(wish) > 0.001 ? Math.Normalize(wish) : float3(0);
     if (Math.Length(wanted) > 0.5)
     {
@@ -480,6 +480,14 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         match.killed += 1;
         points = (wound.head ? 100 : 50) + wound.bonus;
         MaybeDrop(match, zombie.at);
+        // The party's experience, and a level when there's enough
+        match.xp += 1;
+        if (match.xp >= LevelSpan(match.level))
+        {
+            match.xp -= LevelSpan(match.level);
+            match.level += 1;
+            Send(Levelled { level = match.level });
+        }
     }
     else
     {
@@ -497,17 +505,8 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         else if (wound.damage >= 1 && zombie.state == ZombieState.Hunting && wound.knock >= 0) zombie.flinch = Math.Max(zombie.flinch, wound.head ? 0.45 : 0.3);
     }
     if (wound.seat >= 0 && wound.seat < 4 && points > 0 && party.taken[wound.seat])
-        party.survivors[wound.seat].Send(Earned { points = points, kill = killed, head = killed && wound.head });
+        party.survivors[wound.seat].Send(Earned { points = points, kill = killed, head = killed && wound.head, at = zombie.at, echo = wound.echo });
     var body = BodyOf(this, zombie);
     this.Send(Struck { at = wound.head ? body.head : body.chest, from = wound.from, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
-                  points = points, blow = wound.blow });
-}
-
-event(Earned earned) Earn(mut Survivor survivor)
-{
-    survivor.points += earned.points;
-    // Bloodthirst: each kill heals
-    if (earned.kill && survivor.thirst > 0 && survivor.life == Life.Standing) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 4 * survivor.thirst);
-    if (earned.kill) survivor.kills += 1;
-    if (earned.head) survivor.headshots += 1;
+                  points = points, blow = wound.blow, crit = wound.crit });
 }

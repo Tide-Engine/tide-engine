@@ -11866,8 +11866,11 @@ static void gen_query_foreach(gen *g, const stmt *s)
     const char *end = made_up(g, "query_end");
     bool end_used = false;
     if (q->query_rows) { // The rows it was handed: tide_q<i>, tide_q<i>n of them
+        // Found by name: bind_views may have grown the view's parameters since `q` was taken, leaving it pointing at
+        // the old copy
         int qi = 0;
-        while (&g->code->params.items[qi] != q) qi++;
+        while (qi < g->code->params.count && !str_eq(g->code->params.items[qi].name, q->name)) qi++;
+        if (qi == g->code->params.count) abort();
         line(g, o, "for (uint32_t tide_qi = 0; tide_qi < tide_q%dn; tide_qi++) {", qi);
         g->indent++;
         line(g, o, "const %s %s = tide_q%d[tide_qi];", query_row_type(g->code, qi), name, qi);

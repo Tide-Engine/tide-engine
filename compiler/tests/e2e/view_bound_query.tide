@@ -1,0 +1,55 @@
+// A view that takes exactly eight parameters, one of them a query, draws
+// through a frag that reads a singleton the view doesn't take. The compiler
+// hands the view that singleton as a ninth parameter after checking it, which
+// grows its parameter list into a new copy; the query's loop is still found.
+
+struct Corner
+{
+    float3 position;
+}
+
+component Pane
+{
+    float3 position;
+}
+
+singleton A { int value = 1; }
+singleton B { int value = 2; }
+singleton C { int value = 3; }
+singleton D { int value = 4; }
+singleton E { int value = 5; }
+singleton F { int value = 6; }
+
+// Read by the frag alone
+local singleton Shade
+{
+    float strength = 0.5;
+}
+
+local singleton Look
+{
+    List<Corner> corners = [Corner { }, Corner { position = float3(1, 0, 0) }, Corner { position = float3(0, 1, 0) }];
+    List<int> faces = [0, 1, 2];
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Pane { position = float3(0, 0, 5) });
+    Spawn(Pane { position = float3(1, 0, 5) });
+    Spawn(Pane { position = float3(2, 0, 5) });
+}
+
+frag Tinted(Corner corner, out Color color, Shade shade)
+{
+    color = Color(shade.strength, 0, 0, 1);
+}
+
+// One mesh for each pane the query goes through
+view Panes(Look look, A a, B b, C c, D d, E e, F f, query (Pane pane) panes)
+{
+    var all = a.value + b.value + c.value + d.value + e.value + f.value;
+    if (all != 21) return;
+    foreach (var row in panes) Draw.Mesh(look.corners, look.faces, float4x4.Translate(row.pane.position), Tinted);
+}

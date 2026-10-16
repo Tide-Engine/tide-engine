@@ -3,8 +3,8 @@ using Rooms;
 // What this machine hears: the night in Ashwick Wood and a low dread under
 // it that rises with the waves, the bell that starts each one, the dead
 // groaning where they are, feet on earth and the ruin's stones, the fires,
-// every weapon's swing, draw, loose and load, what each blow sounds like, the
-// cards taken, the power-ups.
+// every gun's shot and load, the skills, what each hit sounds like, the items
+// taken, the levels, the power-ups.
 
 [Bus]
 enum Bus { Master, Effects, Music, Ambience }
@@ -22,53 +22,39 @@ asset Clip powerupLoop = "sfx/powerup_loop.ogg";
 asset List<Clip> groans = "sfx/groan_*.ogg";
 asset List<Clip> screams = "sfx/scream_*.ogg";
 asset List<Clip> snarls = "sfx/snarl_*.ogg";
-asset List<Clip> pains = "sfx/pain_*.ogg";
 asset List<Clip> deaths = "sfx/death_*.ogg";
 asset List<Clip> swingsLight = "sfx/swing_light_*.ogg";
 asset List<Clip> swingsHeavy = "sfx/swing_heavy_*.ogg";
-asset List<Clip> hitsBlade = "sfx/hit_blade_*.ogg";
 asset List<Clip> hitsBlunt = "sfx/hit_blunt_*.ogg";
-asset List<Clip> hitsStone = "sfx/hit_stone_*.ogg";
 asset List<Clip> gores = "sfx/gore_*.ogg";
 asset List<Clip> headshots = "sfx/headshot_*.ogg";
-asset List<Clip> arrowsFlesh = "sfx/arrow_hit_flesh_*.ogg";
-asset List<Clip> arrowsWood = "sfx/arrow_hit_wood_*.ogg";
-asset List<Clip> arrowsStone = "sfx/arrow_hit_stone_*.ogg";
-asset List<Clip> bowReleases = "sfx/bow_release_*.ogg";
+asset List<Clip> fleshHits = "sfx/arrow_hit_flesh_*.ogg";
+asset List<Clip> woodHits = "sfx/arrow_hit_wood_*.ogg";
+asset List<Clip> stoneHits = "sfx/arrow_hit_stone_*.ogg";
 asset List<Clip> explosions = "sfx/explode_*.ogg";
 asset List<Clip> stepsStone = "sfx/step_stone_*.ogg";
 asset List<Clip> stepsDirt = "sfx/step_dirt_*.ogg";
 asset List<Clip> hurts = "sfx/hurt_*.ogg";
 asset List<Clip> jingles = "sfx/jingle_*.ogg";
-asset Clip stabClip = "sfx/stab.ogg";
-asset Clip drawBlade = "sfx/draw_blade.ogg";
-asset Clip drawWood = "sfx/draw_wood.ogg";
 asset Clip emptyClip = "sfx/empty.ogg";
-asset Clip bowDraw = "sfx/bow_draw.ogg";
-asset Clip crossbowFire = "sfx/crossbow_fire.ogg";
-asset Clip crossbowReload = "sfx/crossbow_reload.ogg";
-asset Clip arbalestFire = "sfx/arbalest_fire.ogg";
-asset Clip arbalestReload = "sfx/arbalest_reload.ogg";
-asset Clip repeaterFire = "sfx/repeater_fire.ogg";
-asset Clip repeaterReload = "sfx/repeater_reload.ogg";
-asset Clip handgonneFire = "sfx/handgonne_fire.ogg";
-asset Clip handgonneReload = "sfx/handgonne_reload.ogg";
-asset Clip staffFire = "sfx/staff_fire.ogg";
-asset Clip staffFrost = "sfx/staff_frost.ogg";
-asset Clip staffStorm = "sfx/staff_storm.ogg";
+asset Clip rifleFire = "sfx/rifle_fire.ogg";
+asset Clip smgFire = "sfx/smg_fire.ogg";
+asset Clip shotgunFire = "sfx/shotgun_fire.ogg";
+asset Clip pistolFire = "sfx/pistol_fire.ogg";
+asset Clip turretFire = "sfx/turret_fire.ogg";
+asset Clip magReload = "sfx/mag_reload.ogg";
+asset Clip shellLoad = "sfx/shell_load.ogg";
+asset Clip pumpClip = "sfx/pump.ogg";
 asset Clip fireBurst = "sfx/fire_burst.ogg";
 asset Clip freezeClip = "sfx/freeze.ogg";
 asset Clip chainZap = "sfx/chain_zap.ogg";
 asset Clip throwClip = "sfx/throw.ogg";
-asset Clip bellClip = "sfx/bell_lure.ogg";
 asset Clip biteClip = "sfx/bite.ogg";
 asset Clip riseClip = "sfx/rise.ogg";
 asset Clip landClip = "sfx/land.ogg";
 asset Clip downedClip = "sfx/downed.ogg";
 asset Clip reviveClip = "sfx/revive.ogg";
-asset Clip drinkClip = "sfx/drink.ogg";
-asset Clip bottleSmash = "sfx/bottle_smash.ogg";
-asset Clip forgeReady = "sfx/forge_ready.ogg";
+asset Clip levelClip = "sfx/power_on.ogg";
 asset Clip powerupSpawn = "sfx/powerup_spawn.ogg";
 asset Clip powerupGrab = "sfx/powerup_grab.ogg";
 asset Clip puMaxAmmo = "sfx/pu_max_ammo.ogg";
@@ -76,7 +62,6 @@ asset Clip puInstakill = "sfx/pu_instakill.ogg";
 asset Clip puNuke = "sfx/pu_nuke.ogg";
 asset Clip puEnd = "sfx/pu_end.ogg";
 asset Clip hitmarkerClip = "sfx/hitmarker.ogg";
-asset Clip pointsTick = "sfx/points_tick.ogg";
 
 // The master's limiter: whatever piles up (a bell over two dozen groans) is held under full scale, at once, and let back
 // up over a tenth of a second.
@@ -114,8 +99,7 @@ local singleton Ears
     float stepped;            // Metres walked at this machine's last footfall
     float[4] othersStepped;
     Act lastAct;
-    int lastSlot = -1;
-    Weapon lastWeapon;
+    float lastActTime;
     float boonWait;
     bool wasInstakill;
     float voices;             // The dead's voices that may start now, coming back at eight a second
@@ -159,8 +143,8 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     ears.heart.playing = playing && (low || mine.life == Life.Downed);
     ears.breath.clip = breathClip;
     ears.breath.loop = true;
-    ears.breath.volume = Math.Saturate(0.6 - mine.stamina) * 0.6;
-    ears.breath.playing = playing && mine.stamina < 0.5;
+    ears.breath.volume = 0.5;
+    ears.breath.playing = playing && mine.life == Life.Downed;
     // The nearest torch, and the nearest fire
     mut var nearest = 1000.0;
     mut var at = float3(0);
@@ -253,7 +237,7 @@ view Footfalls(Survivor survivor, mut Ears ears, Me me, Village village)
     else Audio.Play(clip, s.feet, 0.7, pitch);
 }
 
-// What this machine's own hands do that the match sends no event for: drawing a bow, loading, taking up a weapon.
+// What this machine's own hands do that the match sends no event for: a magazine changed, a shotgun pumped.
 [Stage(Layers.Hud, 33)]
 view Handling(mut Ears ears, Me me, query (Survivor survivor) survivors)
 {
@@ -261,24 +245,12 @@ view Handling(mut Ears ears, Me me, query (Survivor survivor) survivors)
     {
         var s = row.survivor;
         if (s.seat != me.seat) continue;
-        var weapon = s.weapons[s.slot];
-        var info = Info(weapon);
-        if (s.act != ears.lastAct)
-        {
-            if (s.act == Act.Draw) Audio.Play(bowDraw, 0.6, 1.0 / Math.Max(0.4, info.draw * 1.25));
-            if (s.act == Act.Reload)
-            {
-                if (weapon == Weapon.Arbalest) Audio.Play(arbalestReload, 0.8);
-                else if (weapon == Weapon.Repeater) Audio.Play(repeaterReload, 0.8);
-                else if (weapon == Weapon.Handgonne) Audio.Play(handgonneReload, 0.8);
-                else if (info.kind == Kind.Crossbow) Audio.Play(crossbowReload, 0.9, 0.85 / Math.Max(0.3, s.actLength));
-            }
-            if (s.act == Act.Raise && (weapon != ears.lastWeapon || s.slot != ears.lastSlot))
-                Audio.Play(info.kind == Kind.Melee && weapon != Weapon.SpikedClub && weapon != Weapon.Pitchfork ? drawBlade : drawWood, 0.5);
-        }
+        var info = Info(s.gun);
+        if (s.act == Act.Reload && ears.lastAct != Act.Reload && !info.shells) Audio.Play(magReload, 0.8, 1.2 / Math.Max(0.4, s.actLength));
+        // The pump, a moment after the shot
+        if (s.gun == Weapon.Shotgun && s.act == Act.Fire && s.actTime >= 0.28 && (ears.lastActTime < 0.28 || ears.lastAct != Act.Fire)) Audio.Play(pumpClip, 0.75);
         ears.lastAct = s.act;
-        ears.lastSlot = s.slot;
-        ears.lastWeapon = weapon;
+        ears.lastActTime = s.actTime;
     }
 }
 
@@ -295,19 +267,9 @@ void PlayAt(Clip clip, float3 at, bool mine, float volume, float pitch)
     else Audio.Play(clip, at, volume, pitch);
 }
 
-local event(Swung swung) HearSwing(mut Ears ears, Me me, Survivor survivor)
+local event(Kicked kicked) HearKick(mut Ears ears, Me me, Survivor survivor)
 {
-    var info = Info(survivor.weapons[survivor.slot]);
-    var mine = swung.seat == me.seat;
-    if (swung.kick)
-    {
-        PlayAt(swingsLight[ears.random.NextInt(swingsLight.count)], survivor.feet + float3(0, 0.8, 0), mine, 0.55, ears.random.NextFloat(0.7, 0.8));
-        return;
-    }
-    var heavy = swung.heavy || info.slow < 0.95 || info.twoHanded;
-    mut Clip clip = heavy ? swingsHeavy[ears.random.NextInt(swingsHeavy.count)] : swingsLight[ears.random.NextInt(swingsLight.count)];
-    if (swung.stab) clip = stabClip;
-    PlayAt(clip, survivor.feet + float3(0, 1.4, 0), mine, 0.7, ears.random.NextFloat(0.92, 1.08));
+    PlayAt(swingsLight[ears.random.NextInt(swingsLight.count)], survivor.feet + float3(0, 0.8, 0), kicked.seat == me.seat, 0.55, ears.random.NextFloat(0.7, 0.8));
 }
 
 local event(Struck struck) HearStruck(mut Ears ears, Me me)
@@ -319,53 +281,73 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
         return;
     }
     if (struck.blow == Blow.Shove) return;
-    mut Clip clip = hitsBlade[ears.random.NextInt(hitsBlade.count)];
+    // A horde's worth of hits at once would be noise: the kills, the heads and this machine's own
+    if (!struck.killed && !struck.head && !mine) return;
+    mut Clip clip = fleshHits[ears.random.NextInt(fleshHits.count)];
     if (struck.blow == Blow.Blunt) clip = hitsBlunt[ears.random.NextInt(hitsBlunt.count)];
-    if (struck.blow == Blow.Missile) clip = arrowsFlesh[ears.random.NextInt(arrowsFlesh.count)];
-    if (struck.blow != Blow.Burst) Audio.Play(clip, struck.at, 0.9, ears.random.NextFloat(0.92, 1.08));
+    if (struck.blow != Blow.Burst) Audio.Play(clip, struck.at, 0.8, ears.random.NextFloat(0.92, 1.08));
     // On the head: its own crack, every time, louder for the one that takes it off
     if (struck.head) Audio.Play(headshots[ears.random.NextInt(headshots.count)], struck.at, struck.killed ? 1.0 : 0.55, struck.killed ? 1.0 : 1.12);
     if (struck.killed) Audio.Play(gores[ears.random.NextInt(gores.count)], struck.at, struck.head ? 0.9 : 0.7, ears.random.NextFloat(0.9, 1.1));
-    if (struck.killed) Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.75, ears.random.NextFloat(0.88, 1.12));
-    else if (ears.random.NextInt(3) == 0) Audio.Play(pains[ears.random.NextInt(pains.count)], struck.at, 0.6, ears.random.NextFloat(0.85, 1.1));
-    if (struck.element == Element.Frost && struck.killed) Audio.Play(freezeClip, struck.at, 0.6, 1.0);
-    if (mine) Audio.Play(hitmarkerClip, struck.head ? 0.6 : struck.killed ? 0.5 : 0.35, struck.head ? 1.45 : struck.killed ? 0.8 : 1.0);
+    if (struck.killed && ears.voices >= 1)
+    {
+        ears.voices -= 1;
+        Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.75, ears.random.NextFloat(0.88, 1.12));
+    }
+    if (struck.element == Element.Frost) Audio.Play(freezeClip, struck.at, 0.6, 1.0);
+    if (mine) Audio.Play(hitmarkerClip, struck.head ? 0.6 : struck.killed ? 0.5 : 0.3, struck.crit ? 1.7 : struck.head ? 1.45 : struck.killed ? 0.8 : 1.0);
 }
 
 local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
 {
     var mine = loosed.seat == me.seat;
-    var info = Info(loosed.weapon);
-    mut Clip clip = crossbowFire;
-    if (info.kind == Kind.Bow) clip = bowReleases[ears.random.NextInt(bowReleases.count)];
-    else if (loosed.weapon == Weapon.Arbalest) clip = arbalestFire;
-    else if (loosed.weapon == Weapon.Repeater) clip = repeaterFire;
-    else if (loosed.weapon == Weapon.Handgonne) clip = handgonneFire;
-    else if (loosed.weapon == Weapon.StaffFire) clip = staffFire;
-    else if (loosed.weapon == Weapon.StaffFrost) clip = staffFrost;
-    else if (loosed.weapon == Weapon.StaffStorm) clip = staffStorm;
-    else if (info.kind == Kind.Thrown) clip = throwClip;
-    PlayAt(clip, loosed.at, mine, 0.85, ears.random.NextFloat(0.95, 1.05));
+    mut Clip clip = rifleFire;
+    mut var volume = 0.85;
+    mut var pitch = ears.random.NextFloat(0.96, 1.04);
+    switch (loosed.source)
+    {
+        case Source.Phase:
+            clip = shotgunFire;
+            pitch *= 0.75;
+            volume = 1;
+            break;
+        case Source.Turret:
+            clip = turretFire;
+            volume = 0.5;
+            break;
+        case Source.Drone:
+            clip = turretFire;
+            volume = 0.4;
+            pitch *= 1.3;
+            break;
+        default:
+            if (loosed.weapon == Weapon.Shotgun) clip = shotgunFire;
+            else if (loosed.weapon == Weapon.Smg) clip = smgFire;
+            else if (loosed.weapon == Weapon.Pistol) clip = pistolFire;
+            if (!mine) volume = 0.7;
+            break;
+    }
+    var near = mine && loosed.source != Source.Turret;
+    PlayAt(clip, loosed.at, near, volume, pitch);
 }
 
 local event(Spell spell) HearSpell(mut Ears ears)
 {
-    if (spell.weapon == Weapon.StaffStorm) Audio.Play(chainZap, spell.to, 0.7, ears.random.NextFloat(0.9, 1.1));
-    if (spell.weapon == Weapon.StaffFrost) Audio.Play(staffFrost, spell.from, 0.8, 1.0);
+    Audio.Play(chainZap, spell.to, 0.55, ears.random.NextFloat(0.9, 1.2));
 }
 
-local event(Thud thud) HearThud(mut Ears ears, Village village)
+local event(Thud thud) HearThud(mut Ears ears, Village village, Me me)
 {
-    if (thud.kind == Shot.Pot || thud.kind == Shot.Bell) return;
+    if (Math.Distance(thud.at, me.eye) > 30 || ears.voices < 0.5) return;
+    ears.voices -= 0.25;
     // Into the ruin's walls or floor, or the boulders south of the fire: stone; into earth and wood, not
     var stone = Paved(village.plan, thud.at) || (thud.normal.y < 0.5 && (thud.at.z > 7 || thud.at.z < -8));
-    Audio.Play(stone ? arrowsStone[ears.random.NextInt(arrowsStone.count)] : arrowsWood[ears.random.NextInt(arrowsWood.count)], thud.at, 0.7,
-               ears.random.NextFloat(0.9, 1.1));
+    Audio.Play(stone ? stoneHits[ears.random.NextInt(stoneHits.count)] : woodHits[ears.random.NextInt(woodHits.count)], thud.at, 0.5, ears.random.NextFloat(1.1, 1.4));
 }
 
 local event(Blast blast) HearBlast(mut Ears ears)
 {
-    if (blast.kind == Shot.Fireball) Audio.Play(fireBurst, blast.at, 1.0, ears.random.NextFloat(0.9, 1.1));
+    if (blast.kind == Shot.Pot || blast.kind == Shot.Keg) Audio.Play(fireBurst, blast.at, blast.kind == Shot.Keg ? 0.6 : 1.0, ears.random.NextFloat(0.9, 1.1));
     else Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.1));
 }
 
@@ -376,9 +358,6 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
     {
         case Sfx.Rise: Audio.Play(riseClip, cue.at, 0.9, ears.random.NextFloat(0.9, 1.1)); return;
         case Sfx.Snarl: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 0.85, ears.random.NextFloat(0.85, 1.15)); return;
-        case Sfx.Drink:
-            PlayAt(drinkClip, cue.at, near, 0.8, 1.0);
-            return;
         case Sfx.Revive: Audio.Play(reviveClip, cue.at, 0.9, 1.0); return;
         case Sfx.Downed: PlayAt(downedClip, cue.at, near, 0.9, 1.0); return;
         case Sfx.Hurt:
@@ -387,42 +366,45 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
             return;
         case Sfx.Empty: PlayAt(emptyClip, cue.at, near, 0.6, 1.0); return;
         case Sfx.Throw: PlayAt(throwClip, cue.at, near, 0.7, 1.0); return;
-        case Sfx.Bell: Audio.Play(bellClip, cue.at, 1.0, 1.0); return;
+        case Sfx.Mine: Audio.Play(emptyClip, cue.at, 0.8, 0.7); return;
+        case Sfx.Shell: PlayAt(shellLoad, cue.at, near, 0.7, ears.random.NextFloat(0.95, 1.05)); return;
     }
 }
 
-// A card taken: this machine's own, heard as what it is (a brew's tune, the forge, a blade drawn).
+// An item taken: this machine's own, a tune by its rarity.
 local event(Picked picked) HearPicked(Me me)
 {
     if (picked.seat != me.seat) return;
-    switch (picked.card)
-    {
-        case Card.Weapon: Audio.Play(drawBlade, 0.8); return;
-        case Card.Brew: Audio.Play(jingles[picked.item % jingles.count], 0.8); return;
-        case Card.Runeforge: Audio.Play(forgeReady, 0.9); return;
-    }
-    Audio.Play(powerupGrab, 0.8);
+    var rarity = RarityOf(picked.item);
+    if (rarity == Rarity.Common) Audio.Play(powerupGrab, 0.8);
+    else Audio.Play(jingles[rarity == Rarity.Rare ? 5 % jingles.count : int(picked.item) % 4], 0.85);
 }
 
-// An ability used: a leap's rush and its landing, a dash's rush, frost cracking, a war cry, a blink's snap.
-local event(Unleashed used) HearUnleashed(mut Ears ears)
+// A skill used: a slide's rush, a leap's and its landing, a blink's snap, an air jump.
+local event(Unleashed used) HearUnleashed(mut Ears ears, Me me)
 {
-    switch (used.ability)
+    var mine = used.seat == me.seat;
+    switch (used.skill)
     {
-        case Ability.Leap:
+        case Skill.None: PlayAt(swingsLight[ears.random.NextInt(swingsLight.count)], used.at, mine, 0.4, 1.4); return;
+        case Skill.Leap:
             if (used.landed) Audio.Play(explosions[0], used.at, 1.0, 0.65);
-            else Audio.Play(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, 0.9, 0.8);
+            else PlayAt(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, mine, 0.9, 0.8);
             return;
-        case Ability.Dash: Audio.Play(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, 0.9, 1.3); return;
-        case Ability.Nova: Audio.Play(freezeClip, used.at, 1.0, 0.85); return;
-        case Ability.WarCry: Audio.Play(screams[ears.random.NextInt(screams.count)], used.at, 1.0, 0.65); return;
-        case Ability.Blink: Audio.Play(chainZap, used.to, 0.8, 1.5); return;
+        case Skill.Slide: PlayAt(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, mine, 0.9, 1.3); return;
+        case Skill.Blink: Audio.Play(chainZap, used.to, 0.8, 1.5); return;
+        case Skill.Turret: Audio.Play(pumpClip, used.at, 0.9, 0.7); return;
     }
 }
 
 local event(Chosen chosen) HearChosen(Me me)
 {
-    if (chosen.seat == me.seat) Audio.Play(drawBlade, 0.9);
+    if (chosen.seat == me.seat) Audio.Play(pumpClip, 0.9);
+}
+
+local event(Levelled levelled) HearLevel()
+{
+    Audio.Play(levelClip, 0.7);
 }
 
 local event(Boons boons) HearBoon()
@@ -430,7 +412,7 @@ local event(Boons boons) HearBoon()
     Audio.Play(powerupGrab, 0.8);
     switch (boons.kind)
     {
-        case Boon.MaxAmmo: Audio.Play(puMaxAmmo, 1.0); return;
+        case Boon.Recharge: Audio.Play(puMaxAmmo, 1.0); return;
         case Boon.InstaKill: Audio.Play(puInstakill, 1.0); return;
         case Boon.Nuke: Audio.Play(puNuke, 1.0); return;
     }

@@ -1,180 +1,79 @@
-// The first-person arms (art/fp): CoinCoin's rigged arms (CC-BY 4.0), the kit's bow and arrow, and their clips,
-// all on one skeleton (the nocked arrow is the game's own arrow on the kit's arrow bone); the clips the kit has none for (two-handed weapons, polearms, crossbows, staffs, throwing,
-// drinking) were made for it by art/fp/tools/make_fp.py. What's in the hand rides the skeleton's `weapon` bone (a
-// stab's dagger the `knife` bone), its grip at the bone.
+// The first-person arms (art/fp): CoinCoin's rigged arms (CC-BY 4.0) and their clips, with clips the kit has none
+// for made for it by art/fp/tools/make_fp.py: a long gun held to the shoulder by its stock (the crossbow's clips),
+// a pistol in the right hand alone (the hand crossbow's), a throw. What's in the hand rides the skeleton's `weapon`
+// bone, its grip at the bone.
 
 struct FpRig
 {
     [Name("weapon")] Bone weapon;
-    [Name("knife")] Bone knife;
-    [Name("fleche")] Bone arrow;            // The nocked arrow: its nock at the bone, its point up the bone's +z
     [Name("Shoulder_L")] Bone shoulderL;
     [Name("UpperArm_L")] Bone upperArmL;
 }
 
 asset SkinnedMesh<Corner, FpRig> fpArms = "art/fp/arms.glb";
-asset SkinnedMesh<Corner, FpRig> fpBow = "art/fp/bow.glb";
 asset AnimationCatalog fpMoves = "art/fp/moves.glb";
 
-// How a weapon is held, and so which clips move the arms.
-enum Grasp { One, Two, Pole, Bow, Cross, Pistol, Staff, Thrown }
+// How a gun is held, and so which clips move the arms.
+enum Grasp { Long, Pistol, Thrown }
 
-// When each clip's blow lands, in seconds into it
-const float SWING1_HIT = 0.5;
-const float SWING2_HIT = 0.73;
-const float THRUST_HIT = 0.3;
-const float STAB_HIT = 0.16;
-
-Grasp GraspOf(Weapon weapon, WeaponInfo info)
+Grasp GraspOf(Weapon weapon)
 {
-    switch (info.kind)
-    {
-        case Kind.Bow: return Grasp.Bow;
-        case Kind.Crossbow: return weapon == Weapon.HandCrossbow ? Grasp.Pistol : Grasp.Cross;
-        case Kind.Gun: return Grasp.Cross;
-        case Kind.Staff: return Grasp.Staff;
-        case Kind.Thrown: return weapon == Weapon.ThrowingAxes ? Grasp.One : Grasp.Thrown;
-    }
-    if (Polearm(weapon)) return Grasp.Pole;
-    return info.twoHanded ? Grasp.Two : Grasp.One;
+    return weapon == Weapon.Pistol ? Grasp.Pistol : Grasp.Long;
 }
 
-bool Polearm(Weapon weapon)
+// Where the eye is in the kit's space (x right, y up, z ahead): the arms hang from there. The kit's own clips (a
+// throw) have the eye where the kit has it; make_fp.py's have it higher, `low` of the way.
+float3 FpEye(float low)
 {
-    return weapon == Weapon.Spear || weapon == Weapon.Halberd || weapon == Weapon.Scythe || weapon == Weapon.Pitchfork;
-}
-
-// Where the eye is in the kit's space (x right, y up, z ahead): the arms hang from there. What's held in one hand
-// as the kit holds its tomahawk (and the kit's own clips) has the eye where the kit has it; the rest (made by
-// make_fp.py with both hands, or low) has it higher, `low` of the way; a bow sits a little further off.
-float3 FpEye(Grasp grasp, float low)
-{
-    if (grasp == Grasp.Bow) return float3(0.02, 0.6, -0.1);
     return float3(-0.02, 0.52 + 0.15 * low, -0.04);
 }
 
-// Which eye a grasp's clips were made for, and an act's that has clips of its own: 1 the high one, 0 the kit's.
-float LowFor(Grasp grasp, Act act)
+// Where the arms are held for each grasp, beyond where the clips have them: a long gun down, right and out from the
+// eye, so its stock is at the shoulder and not in the face.
+float3 GraspShift(Grasp grasp)
 {
-    if (act == Act.Stab || act == Act.Drink || act == Act.Throw) return 0;
-    return grasp == Grasp.One || grasp == Grasp.Bow ? 0.0 : 1.0;
+    if (grasp == Grasp.Long) return float3(0.1, -0.09, 0.16);
+    if (grasp == Grasp.Pistol) return float3(0.05, -0.05, 0.1);
+    return float3(0);
 }
 
-Animation IdleOf(Grasp grasp, bool loaded)
+// Which eye a grasp's clips were made for: 1 the high one, 0 the kit's.
+float LowFor(Act act)
 {
-    switch (grasp)
-    {
-        case Grasp.Two: return fpMoves.two_Idle;
-        case Grasp.Pole: return fpMoves.pole_Idle;
-        case Grasp.Bow: return loaded ? fpMoves.bow_Idle : fpMoves.bow_Empty;
-        case Grasp.Cross: return fpMoves.x_Idle;
-        case Grasp.Pistol: return fpMoves.h_Idle;
-        case Grasp.Staff: return fpMoves.staff_Idle;
-        case Grasp.Thrown: return fpMoves.jav_Idle;
-    }
-    return fpMoves.one_Idle;
+    return act == Act.Throw ? 0.0 : 1.0;
 }
 
-// A clip's time through a blow: its windup over the act's start to the blow, then its follow-through.
-float StrikeTime(float t, float hitAt, float impact, float follow)
+// The arms' pose this frame, for what the survivor's hands are doing.
+Pose FpPose(Survivor mine, Grasp grasp, float t, float clock)
 {
-    if (t < hitAt) return t / Math.Max(hitAt, 0.01) * impact;
-    return impact + (t - hitAt) / Math.Max(1 - hitAt, 0.01) * follow;
-}
-
-// The arms' pose this frame (on `body`'s skeleton: the arms', the bow's or the arrow's), for what the survivor's
-// hands are doing.
-Pose FpPose(SkinnedMesh<Corner, FpRig> body, Survivor mine, WeaponInfo info, Grasp grasp, float t, float clock, float speed, float sinceLoose)
-{
-    var loaded = mine.mag[mine.slot] > 0;
-    mut var pose = body.defaultPose;
-    pose.Sample(IdleOf(grasp, loaded), clock, Playback.Loop);
-    // Walking and running, where the kit has the clips
-    var walking = Math.Saturate(speed / 3);
-    if (walking > 0.05 && (grasp == Grasp.One || grasp == Grasp.Bow))
-    {
-        mut var walk = body.defaultPose;
-        var running = speed > WALK_SPEED * 1.1;
-        if (grasp == Grasp.Bow) walk.Sample(running ? fpMoves.bow_Run : fpMoves.bow_Walk, clock, Playback.Loop);
-        else walk.Sample(running ? fpMoves.one_Run : fpMoves.one_Walk, clock, Playback.Loop);
-        pose.Blend(walk, walking);
-    }
-    // ...and what the hands are about
-    mut var act = body.defaultPose;
+    mut var pose = fpArms.defaultPose;
+    pose.Sample(grasp == Grasp.Pistol ? fpMoves.h_Idle : fpMoves.x_Idle, clock, Playback.Loop);
+    mut var act = fpArms.defaultPose;
     mut var weight = 0.0;
     var fade = Math.Saturate(Math.Min(t * 8, (1 - t) * 6));
     switch (mine.act)
     {
-        case Act.Swing:
-        case Act.Heavy:
-        {
-            var hitAt = mine.act == Act.Heavy ? Math.Min(0.6, info.hitAt + 0.12) : info.hitAt;
-            var forehand = mine.swings % 2 == 1;
-            switch (grasp)
+        case Act.Fire:
+            if (grasp == Grasp.Pistol)
             {
-                case Grasp.Two:
-                    if (forehand) act.Sample(fpMoves.two_Swing1, StrikeTime(t, hitAt, SWING1_HIT, 0.55));
-                    else act.Sample(fpMoves.two_Swing2, StrikeTime(t, hitAt, SWING2_HIT, 0.5));
-                    break;
-                case Grasp.Pole:
-                    if (info.swing == Swing.Thrust) act.Sample(fpMoves.pole_Thrust, StrikeTime(t, hitAt, THRUST_HIT, 0.4));
-                    else act.Sample(fpMoves.pole_Sweep, StrikeTime(t, hitAt, SWING2_HIT, 0.5));
-                    break;
-                default:
-                    if (forehand) act.Sample(fpMoves.one_Swing1, StrikeTime(t, hitAt, SWING1_HIT, 0.55));
-                    else act.Sample(fpMoves.one_Swing2, StrikeTime(t, hitAt, SWING2_HIT, 0.5));
-                    break;
+                act.Sample(fpMoves.h_Fire, t * 0.33);
+                weight = 1;
             }
-            weight = Math.Saturate((1 - t) * 6);
-            break;
-        }
-        case Act.Stab:
-            act.Sample(fpMoves.stab, StrikeTime(t, 0.4, STAB_HIT, 0.45));
-            weight = fade;
-            break;
-        case Act.Draw:
-            if (mine.charge < 1) act.Sample(fpMoves.bow_Draw, mine.charge * 0.16);
-            else act.Sample(fpMoves.bow_Hold, clock, Playback.Loop);
-            weight = 1;
-            break;
-        case Act.Loose:
-            switch (grasp)
-            {
-                case Grasp.Bow: act.Sample(fpMoves.bow_Loose, t * 0.55); break;
-                case Grasp.Pistol: act.Sample(fpMoves.h_Fire, t * 0.33); break;
-                case Grasp.Staff: act.Sample(fpMoves.staff_Cast, t * 0.6); break;
-                case Grasp.Thrown: act.Sample(fpMoves.jav_Throw, t * 0.9); break;
-                case Grasp.One: act.Sample(fpMoves.one_Swing1, StrikeTime(t, 0.45, SWING1_HIT, 0.55)); break;
-            }
-            weight = grasp == Grasp.Cross ? 0.0 : 1.0;
             break;
         case Act.Reload:
-            if (grasp == Grasp.Cross) act.Sample(fpMoves.x_Reload, t * 1.5);
             if (grasp == Grasp.Pistol) act.Sample(fpMoves.h_Reload, t * 1.0);
-            weight = grasp == Grasp.Cross || grasp == Grasp.Pistol ? fade : 0.0;
-            break;
-        case Act.Drink:
-            act.Sample(fpMoves.drink, t * 1.2);
-            weight = Math.Saturate(Math.Min(t * 10, (1 - t) * 8));
+            else act.Sample(fpMoves.x_Reload, Info(mine.gun).shells ? 0.5 + t * 0.6 : t * 1.5);
+            weight = fade;
             break;
         case Act.Throw:
             act.Sample(fpMoves.toss, t * 0.65);
             weight = Math.Saturate(Math.Min(t * 10, (1 - t) * 8));
             break;
     }
-    // After a shot, the next arrow from the quiver to the string
-    if (weight == 0 && grasp == Grasp.Bow && sinceLoose < 0.75 && loaded)
-    {
-        act.Sample(fpMoves.bow_Nock, sinceLoose * 1.5);
-        weight = Math.Saturate((0.75 - sinceLoose) * 8);
-    }
     if (weight > 0) pose.Blend(act, weight);
-    // A one-handed weapon's open left hand, held out in the kit's guard and flung across the picture in its swings,
-    // kept down out of the way; and the hand crossbow's, which is held in the right hand alone (the left only spans it
-    // when it's reloaded, and throws, drinks and stabs have their own use for it)
-    var ownLeft = mine.act == Act.Reload || mine.act == Act.Throw || mine.act == Act.Drink || mine.act == Act.Stab;
-    if (grasp == Grasp.One || (grasp == Grasp.Pistol && !ownLeft))
-        TurnBone(pose, body.skeleton.bones.upperArmL, body.skeleton.bones.shoulderL, quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(70)));
+    // The pistol's held in the right hand alone: the left only loads it, and throws
+    if (grasp == Grasp.Pistol && mine.act != Act.Reload && mine.act != Act.Throw)
+        TurnBone(pose, fpArms.skeleton.bones.upperArmL, fpArms.skeleton.bones.shoulderL, quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(70)));
     return pose;
 }
 
@@ -193,56 +92,9 @@ float4x4 Unscaled(float4x4 m)
     return float4x4(float4(Math.Normalize(m.c0.xyz), 0), float4(Math.Normalize(m.c1.xyz), 0), float4(Math.Normalize(m.c2.xyz), 0), m.c3);
 }
 
-// How a model sits on the weapon bone, whose +z runs up what the fist holds and -x is ahead of it (a blade's edge,
-// as the kit's tomahawk lies on it; the importer mirrors x). A blade, a haft, a staff, a javelin or a bottle: its +y
-// up the bone, its edge (+z) ahead. A crossbow or the handgonne, held by its stock as a pistol is: its top (+y) up
-// the bone, its barrel (+z) ahead. Both are the same turn.
+// How a gun sits on the weapon bone, whose +z runs up what the fist holds and -x is ahead of it (the importer mirrors
+// x): held by its grip as a pistol is, its top (+y) up the bone, its barrel (+z) ahead. A thrown pot or grenade the same.
 quaternion Seat()
 {
     return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 0, 1));
-}
-
-// A long blade turned in the fist so its edge leads (about the edge's line), and tipped away from the eye (about the
-// flat), so it reaches out into the picture rather than standing up across it.
-quaternion BladeSeat(Grasp grasp)
-{
-    var roll = grasp == Grasp.One ? 52.0 : grasp == Grasp.Two ? 40.0 : 0.0;
-    var tip = grasp == Grasp.One || grasp == Grasp.Two ? -45.0 : grasp == Grasp.Staff ? -30.0 : 0.0;
-    return Math.Mul(Math.Mul(quaternion.AxisAngle(float3(0, 1, 0), Math.Radians(tip)), quaternion.AxisAngle(float3(1, 0, 0), Math.Radians(roll))), Seat());
-}
-
-// The stab's dagger on the knife bone: its blade up the bone (+z), its edge the bone's -y.
-quaternion KnifeSeat()
-{
-    return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
-}
-
-// Where the arms are held for each grasp, beyond where the clips have them: a one-handed weapon lower and further
-// to the right than the kit holds its tomahawk, so its blade stands up at the screen's side rather than across it.
-float3 GraspShift(Grasp grasp)
-{
-    if (grasp == Grasp.One) return float3(0.08, -0.06, 0.04);
-    if (grasp == Grasp.Two) return float3(0.17, -0.08, 0.02);
-    if (grasp == Grasp.Staff) return float3(0.1, -0.1, 0.04);
-    if (grasp == Grasp.Bow) return float3(0.04, -0.06, 0.0);
-    return float3(0);
-}
-
-// ...and turned: a one-handed blade leaned out to the right.
-quaternion GraspTurn(Grasp grasp)
-{
-    if (grasp == Grasp.One) return quaternion.Euler(Math.Radians(4), Math.Radians(-6), Math.Radians(-14));
-    return quaternion.identity;
-}
-
-// Each bow is the kit's, coloured its own way.
-float3 BowTint(Weapon weapon)
-{
-    switch (weapon)
-    {
-        case Weapon.Longbow: return float3(0.75, 0.6, 0.5);
-        case Weapon.SunBow: return float3(1.6, 1.25, 0.45);
-        case Weapon.WraithBow: return float3(0.45, 0.35, 0.7);
-    }
-    return float3(1);
 }

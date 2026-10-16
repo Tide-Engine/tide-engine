@@ -54,10 +54,13 @@ start (a gun you aim, a secondary, a movement skill, a special); 2000 and more
 of the dead, "push it"; and several PSX biomes.
 
 The work is in phases, each merged when it plays: 1, the horde's technology
-(done, below); 2, the PSX look and modern guns on a first survivor kit; 3, the
-RoR2 loop (gold, chests and items, the teleporter, bosses, scaling); 4, more
-survivors, then the biomes. Until 2 and 3 land, the game is the classes,
-cards and waves below with a much bigger horde.
+(done, below); 2, the PSX look, modern guns, the three survivor kits and
+stacking items with levels (done, below; the items are offered three at a
+time after each wave until chests come); 3, the RoR2 loop proper (gold from
+kills, chests that sell the items, a teleporter-like event and a boss, elites,
+difficulty with time, stage after stage in place of waves); 4, the biomes,
+and more survivors. All the picks in phase 2 are mine (Provisional): the
+kits, the items, the numbers.
 
 ### Phase 1: the horde (built 2026-10-16)
 
@@ -99,118 +102,101 @@ cards and waves below with a much bigger horde.
   the match's world hash and snapshot at a megabyte of state.
 - The dead's voices are held to a few a second (`Ears.voices`).
 
+### Phase 2: the PSX look, guns, kits and items (built 2026-10-16)
+
+- **The look** is under Rendering.
+- **The guns** (`weapons.tide`, `art/guns`): Quaternius' Ultimate Gun Pack
+  (CC0), four of its forty cut to GLBs by `art/guns/tools/make_guns.py`
+  (recoloured to a palette as the pack's preview shows them, scaled, the grip
+  at the origin, `guns.json` giving each muzzle), plus the pack's tripod for
+  the turret. Every round is a ray (`Shoot`): the walls and ground by
+  `LongRay` (RayHit two metres at a time, as RayHit looks only in the bucket
+  at a segment's middle), the dead by `Along` (the herd's cells within a
+  lying body's length of the segment, row by row), nearest first, through as
+  many as the gun pierces. Magazines only: there's always more ammunition.
+  The shotgun loads a shell at a time and a shot cuts its loading short.
+  Down, a survivor fights on with a 12-round pistol; their gun's rounds are
+  kept (`stowed`) for when they're up.
+- **The kits** (`kits.tide`), picked before the first wave: the Gunner
+  (carbine; Phase Round, Slide, Frag Grenade), the Breacher (pump shotgun;
+  Boot, Leap, Firebomb), the Engineer (SMG; Mine, Blink, Turret). Skills are
+  on right mouse, Shift and Q (the pad's left trigger and shoulders), fire as
+  soon as they're ready while held, and have their own cooldowns (3 to 18 s).
+  Sprinting went: a survivor runs whenever they go forward and haven't fired
+  for 0.35 s, as RoR2 can. ADS, the stab and the kick key went; the Boot is
+  the Breacher's.
+- **The items** (`items.tide`): sixteen, stacking, in three rarities; three
+  offered after each wave (uncommon and rare more often as waves go on).
+  Damage, fire rate, health, speed, leech, cooldowns, magazine, crits; Live
+  Wire (hits arc), Powder Keg (kills burst), Gun Drone, Ember Ring, Frostbite,
+  Spring Boots; Mortar Beacon (shells called down), Second Wind. A hit's
+  items roll in `Land`, at the shooter, scaled by the gun's proc coefficient
+  (a shotgun pellet 0.3); what an item sets off is marked `echo` on its
+  Wound and sets off nothing more, so kegs don't chain.
+- **Levels**: every kill is the party's experience (`Match.xp`, `level`; 12
+  for the second level, ×1.22 each after); each level is +12% damage and +15
+  health for every survivor (`Experience` copies the level to each).
+- **Numbers** (`gravewake_perf`, release, this machine; it now has both
+  survivors Gunners firing into the horde with two drones, an ember ring and
+  Live Wire each, the dead never dying): 1000 of the dead 0.62 ms a tick,
+  2000 1.19 ms, 3000 1.82 ms: the guns and items cost next to nothing over
+  the horde itself.
+- **Sounds**: the guns' shots are cut from The Free Firearm Sound Library
+  (CC0; AR-15, Mossberg, PPSh, 1911), their echoes short and a little of the
+  wood's reverb in their place; reloads, shells and the pump are Kenney's
+  metal impacts (`sfx/tools/make_sfx.py`'s guns section). Hits are heard for
+  kills, heads and this machine's own only; deaths come out of the dead's
+  voice budget.
+- **Gone with the medieval game**: the 33 medieval weapons, the cards, the
+  brews, the Runeforge, the classes, abilities, the lure bell and its field,
+  staffs and spells, bows and missiles that fly. `art/weapons` keeps its
+  files; the game loads only the fire pot, the kick's leg and the cannonball
+  from it now.
+
 ## How it plays
 
-Endless waves in a forest clearing, a card after each, with medieval things
-in place of guns and perks:
+Endless waves in a forest clearing, an item after each:
 
-- **Classes** (`abilities.tide`), picked with 1, 2 or 3 before the first
-  wave (nothing starts till every ready survivor has one, and a joiner picks
-  on joining): the Warrior (Arming Sword and Leap; melee weapons), the Ranger
-  (Hunting Bow and Dash; bows, crossbows, thrown, the handgonne; twice the
-  reserve), the Mage (Staff of Embers and Frost Nova; the three staffs, whose
-  charges come back on their own, 0.7 a second, more with Wellspring). A
-  class's weapon cards are only its own weapons (`OfRole`); staffs are tiers
-  1 to 3.
-- **The ability on Q**, one at a time, on a cooldown a fifth shorter (and a
-  quarter stronger) for each honing: Leap (8 s; up at 9.5 m/s and ahead at
-  7.5, slamming down everything within 3.2 m where it lands), Dash (3.5 s;
-  19 m/s for 0.18 s the way they press), Frost Nova (9 s; freezes everything
-  within 5.5 m for 2.2 s), Fire Pot (7 s), Grave Bell (25 s), War Cry (10 s;
-  throws down everything within 4.5 m), Blink (6 s; up to 9 m ahead, not
-  through anything). Fire pots and bells are no longer counted items.
-- **Waves.** A horde: `(16 + 9w + 1.1w²) × (1 + 0.6 per extra player)` of
-  the dead (26, 38, 53 ... 88 by the fifth, 216 by the tenth), at most 150 up
-  at once. Health `60 + 40(w-1)` to wave nine, then ×1.09 a wave; a claw does
-  30. A spawn every `max(0.07, 0.75 × 0.9^(w-1)) / (1 + 0.3 per extra player)`
-  seconds, at one of the five risers nearest a random standing survivor, but
-  none within 7 m of them. Runners from wave three (12% more a wave, 92% at
-  most), sprinters among them from wave nine.
-- **Between waves** (`rounds.tide`'s `Regroup`, `cards.tide`): whoever is
-  down stands up, whoever bled out comes back at their place by the fire,
-  everyone is healed and their arrows, bolts, charges and pots filled, Second
-  Wind alone gives back its rising, and each survivor is dealt three cards.
-  The next wave starts five seconds after the last card is taken, or after
-  45 s for one who hasn't taken one (whose cards are then lost). Late joiners
-  start with the hand crossbow and are dealt at the next wave's end.
-- **The cards.** Taken with 1, 2 or 3 (the pad's d-pad left, up, right).
-  The first is for the class: a weapon of it not carried, from the two newest
-  tiers the night has reached (`weapons.tide`'s `Tier`: 1 from the first
-  wave, 2 from the third, 3 from the sixth, 4 from the ninth; from the tenth
-  wave a growing share come runeforged), always after the first wave and 45%
-  after; otherwise a class upgrade: the Runeforge (from the second wave, while
-  the weapon in hand isn't forged), an edge (whetstone, broadheads, focus:
-  +20% to every blow, missile and spell), and the class's own: Wide Swings
-  (+1 cleave, +0.12 rad arc), Bloodthirst (4 health a kill), Deep Quiver
-  (+50% reserve), Bodkin Heads (+1 pierce), Volley (+1 missile fanned 0.07
-  rad), Steady Hands (draw and reload ×0.85), Split Spell (+1 fireball fanned
-  0.09 rad, frost +2 struck and +0.05 rad, storm +2 in the chain), Wellspring
-  (+50% charges and reserve, faster coming back, reloads ×0.8). The second is
-  for themselves: a brew not yet drunk (55%, drunk there and then), or a heart
-  of oak (+40 health), hobnailed boots (kick reach +0.3 m, one more knocked
-  over, damage ×(1 + boots), stamps ×(1 + 0.4 boots), less stamina) or a
-  fleet foot (+10% speed, +25% sprint). The third is for the ability: another
-  in its place, or the one they have honed (at most four honings). Everything
-  taken stays through downs and bleeding out, until the game's over.
-- **Points** are only a score now: 10 a hit, 20 a hit to the head, 50 a
-  kill, 100 a kill to the head; burning and bleeding give none. They show
-  over the wave's tally and on the game-over table.
-- **The dead** rise out of eight graves on the clearing's west side and from
-  among the roots at fourteen places round its edge (1.8 s), then walk a
-  flow field to the nearest standing survivor and claw (50 a hit, 1.1 s
-  between). Heads take more. Elements: fire burns for 3 s, frost slows for
-  3 s and a second frost blow while slowed freezes solid for 1.2 s, lightning
-  stuns for 0.6 s (the Staff of Storms chains), bleeding ticks for 3 s, a
-  blast bursts round the hit; burning and bleeding pay no points and show no
-  hit marker until they kill.
-- **Melee, after Dying Light** (the owner, 2026-10-16: "maybe we can get
-  inspired by dying light's melee combat, including the kicking and them
-  tumbling over"). F kicks (0.55 s, a fifth of the stamina bar): up to three
-  of the dead within 1.9 m in front go over backwards (25 damage, thrown back
-  at 6 m/s); one already down is stamped on, on the head, for
-  `220 + 0.4 × the wave's health`. A heavy blow from something blunt, swept
-  wide or two-handed also takes them off their feet. One thrown back knocks
-  over the next it falls into. Down (`ZombieState.Fallen`), one goes over
-  with the knockback clip (0.83 s), lies 1.3 to 2.5 s and gets up with UAL2's
-  `LayToIdle` (1.53 s); lying, it takes half as much again from every blow,
-  and its head, chest and hips (`Body`) are where the lying body has them, for
-  blows and missiles alike. Killed while down it stays down; killed by a
-  blow that knocks down, it's thrown over as it dies.
-- **Headshots** are their own thing: a gold hit marker (red and bigger for a
-  kill), a crack every time, a higher tick to the one who hit, HEADSHOT over
-  the crosshair for a kill, and the head comes off.
-- **Down and out.** At 0 health a survivor is downed for 30 s and fights on
-  from the ground: with the weapon in hand if it shoots, or a last stand's
-  hand crossbow of 12 bolts if it doesn't (`LastStand`, in the third slot,
-  put away again by `StandUp`). They're raised by a friend holding E for 3 s.
-  Alone, down is the end unless they drank Second Wind Cider (a rising a
-  wave). Who bleeds out comes back at the wave's end. When nobody is left
-  standing, the game is over; use (or the menu's New game) starts again from
-  the first wave, with nothing kept.
-- **Weapons.** 33 and bare hands (`weapons.tide`): 18 melee (slash, chop,
-  thrust, or a wide sweep; a heavy blow on right mouse), four bows (hold to
-  draw, let go to loose), four crossbows, a handgonne, three staffs and two
-  thrown. A survivor carries one (two with Packmule Stout) and starts with
-  the hand crossbow; a weapon card replaces the one in hand. The stab and the
-  kick are always to hand (the owner, 2026-10-16: "maybe we just have one
-  weapon and we need to pick between melee or not? we already have a stab and
-  the kick so we dont need another melee"). The Runeforge multiplies a
-  weapon's damage (×3 melee, ×2 staffs, ×2.5 the rest), its magazine (×1.5)
-  and reserve (×1.6), and gives it an element. V stabs with a dagger
-  whatever's in hand; G throws a fire pot; Q rings a grave bell, which draws
-  the dead within 35 m of path for 7 s and then bursts.
-- **Power-ups**, at most four a wave (2.8% a kill), in a fixed rotation with
-  random skips: Full Quivers (ammunition), Death's Touch (one-hit kills,
-  30 s), Holy Fire (every one of the dead). Double Gold and the carpenter
-  went with the village.
+- **Survivors** (`kits.tide`), picked with 1, 2 or 3 before the first wave
+  (nothing starts till every ready survivor has one, and a joiner picks on
+  joining). Each a gun and three skills, above.
+- **Waves.** A horde: `(40 + 30w + 4w²) × (1 + 0.6 per extra player)` of the
+  dead, at most 3000 up at once. Health `40 + 25(w-1)` to wave nine, then
+  ×1.08 a wave; a claw does 30. A spawn every
+  `max(0.017, 0.4 × 0.88^(w-1)) / (1 + 0.3 per extra player)` seconds, at one
+  of the five risers nearest a random standing survivor, but none within 7 m
+  of them. Runners from wave three, sprinters among them from wave nine.
+- **Between waves** (`rounds.tide`'s `Regroup`): whoever is down stands up,
+  whoever bled out comes back at their place by the fire, everyone is healed,
+  their gun loaded and their skills ready, and each is offered three items.
+  The next wave starts five seconds after the last is taken, or after 45 s
+  for one who hasn't (whose offer is then lost).
+- **Points** are only a score: 10 a hit, 20 a hit to the head, 50 a kill,
+  100 a kill to the head; burning and bleeding give none.
+- **The dead** rise out of the graves and from among the roots round the edge
+  (1.8 s), then walk a flow field to the nearest standing survivor and claw.
+  Heads take double (a shotgun's pellet half again). Fire burns for 3 s,
+  frost slows for 3 s and a second frost while slowed freezes solid (and
+  Frostbite freezes outright), shock stuns for 0.6 s, a blast throws. A boot,
+  a slam and a grenade's middle knock them over; one lying takes half as much
+  again and is stamped on by the boot.
+- **Headshots**: a gold hit marker (red and bigger for a kill), a crack,
+  HEADSHOT over the crosshair for a kill; a crit's marker is yellow.
+- **Down and out.** At 0 health a survivor goes down for 30 s and fights on
+  with the pistol, unless a Second Wind puts them straight back up (one used
+  up). Raised by a friend holding E for 3 s. Who bleeds out comes back at the
+  wave's end. When nobody is left standing, the game is over.
+- **Power-ups**, at most four a wave: Recharge (every gun loaded, every skill
+  ready), Death's Touch (one-hit kills, 30 s), Holy Fire (every one of the
+  dead).
 
 ## Contracts
 
-- **The match** (`game.tide`, `rounds.tide`, `cards.tide`, `zombies.tide`,
-  `hands.tide`, `missiles.tide`, `drops.tide`, `ashwick.tide`) is
+- **The match** (`game.tide`, `rounds.tide`, `kits.tide`, `items.tide`,
+  `zombies.tide`, `hands.tide`, `missiles.tide`, `drops.tide`, `ashwick.tide`) is
   deterministic and ordered by `enum Tick { Restart, Survivors, Hands,
   Missiles, Zombies, Field, Rounds, Late }`. `Random` is the match's (the
-  cards are dealt from it); views roll their own local `Random`
+  items' procs and offers roll it); views roll their own local `Random`
   (`Fx.random`).
 - **Ashwick Wood is one function**, `MakePlan()` (`plan.tide`): the match
   keeps its solids, risers and starts (`Ashwick`, built at `Spawned`), and
@@ -222,7 +208,7 @@ in place of guns and perks:
   rolling ground laid flat round the fire, a hill, a hollow and a ridge
   (`Bump`), a cliff-top and a shelf (`Mesa`, short sides) each with a ramp
   (`Ramp`), and a rise into the trees past the edge. Nothing of it is stored:
-  the match asks it where feet, the dead, drops, bells and missiles meet the
+  the match asks it where feet, the dead, drops, rounds and grenades meet the
   ground, and the picture draws it as a 193 × 193 heightfield at 1.25 m
   (`MakeShapes`), with rock where it's steep, casting the moon's shadows.
   Survivors can't walk up more than 0.75 m a metre (`Passable`), so cliffs
@@ -237,45 +223,34 @@ in place of guns and perks:
   taller than a step overlaps (a fence thinner than a cell too) are walls.
   One of the dead already in a wall's cell (risen or thrown there) may walk
   out of it. Every six ticks `Wayfinding` spreads a
-  breadth-first field from the standing survivors' cells, and another from
-  stuck bells; each zombie steps downhill, or straight at its target when the
+  breadth-first field from the standing survivors' cells; each zombie steps
+  downhill, or straight at its target when the
   path is clear. The soak test checks that every one of the dead reaches the
   survivors (none hunts for two minutes).
 - **Seats**: `Party` holds four seats (0 Wat, 1 Maud, 2 Godric, 3 Agnes).
   A joiner takes the first free seat; a leaver's survivor is destroyed.
-- **Cards**: `Survivor.cards`, `cardItems` and `choosing`; `dealt` is the
-  wave they were dealt for, so a survivor is dealt once a break. A weapon
-  card's item is the `Weapon`, plus `FORGED_CARD` (100) when it comes forged;
-  an ability card's is the `Ability`. `Survivor.role` is `None` till a class
-  is picked; `Fight` does nothing until then.
-- **The horde's cost** (measured with `gravewake_perf`, release, this
-  Windows machine): posing each of the dead in the match (`Brace`, for the
-  head, chest and hips blows and missiles strike) was 92% of a tick; 150 of
-  them cost 1.69 ms a tick. Now one within 3.5 m of a survivor is posed every
-  other tick and the rest every sixth, staggered (`Zombie.phase`), keeping
-  their points about their feet between: 0.71 ms for 150 crowding two
-  survivors (4.2% of a 60 Hz frame), 0.98 ms for 200. The picture poses the
-  dead past 22 m every other frame and past 45 m every fourth, and the dead,
-  survivors and kit draw with `[LOD]` (shadows picked through the player's
-  camera). Not measured: a browser frame with 150 on screen.
-  `Choose` (at `Tick.Survivors`) takes one on `pick1`..`pick3` and sends
-  `Picked` for what's seen and heard; `RunRounds` holds the countdown while
-  any ready survivor is `choosing`. While choosing, 1 and 2 take cards, not
-  weapons.
+- **Items**: `Survivor.items` (a count of each), `offers` and `choosing`;
+  `dealt` is the wave they were offered for. `Survivor.role` is `None` till a
+  survivor is picked; `Fight` does nothing until then. `Choose` (at
+  `Tick.Survivors`) takes one on `pick1`..`pick3` and sends `Picked`;
+  `RunRounds` holds the countdown while any ready survivor is `choosing`.
+- **Skills**: `Survivor.cooldowns` (secondary, utility, special); `UseSkill`
+  in `Fight`, before the gun. A throw and the boot are acts (`Act.Throw`,
+  `Act.Kick`) that land part way in; the gun waits for them.
 - **Commands**: `Restart` (Rooms' New game, Play, or use on the game-over
   screen) sets `Match.restarting`; the `Tick.Restart` systems clear the dead,
   missiles and drops, re-outfit the survivors and reset the match (command
-  handlers can't query). `Cheat` is the development keys (F5 the wave's end,
-  F6 the places in turn, F10 the next weapon).
+  handlers can't query). `Cheat` is the development keys (F4 a horde, F5 the
+  wave's end, F6 the places in turn, F10 a random item).
 - **Inputs**: `ready` is `[Absolute]`; the rest are held bools read with
   `.down`, look is clamped to half a radian a tick. Mouse look is read only
   while the cursor is locked.
 - **What's local**: the camera (`Me`), the plan's copy (`Village`), the kit's
   placements (`Kit`), poses (`local Pose pose` on survivors and zombies,
-  sampled once a frame), walk clocks, hit flashes, voices, gibs and drop hums
+  sampled once a frame), walk clocks, hit flashes, voices and drop hums
   (`local` fields), the feed (with the others' picks), effects and sounds.
-  Hits, kills, blows, missiles, picks and cues reach views through local
-  handlers.
+  Hits, kills, shots (`Loosed`, and a `Traced` line for each round), skills,
+  picks and cues reach views through local handlers.
 
 ## Art
 
@@ -477,30 +452,33 @@ in place of guns and perks:
 
 - `gravewake_test` (native and WASI, `test/test.c`): two players through the
   real input: the risers and starts clear of every box and on walkable
-  cells; nothing starting till both have picked a class (a Warrior with the
-  arming sword and Leap, a Ranger with the hunting bow, twice its arrows and
-  Dash); the first wave held with the sword (kills, a score); the cards dealt
-  (a weapon of the class not carried, a card for themselves, one for the
-  ability), one taken by each, the countdown held while one is still
-  choosing; every kind of card taken through the input (the Runeforge, the
-  quiver's reserve, the heart's health, an edge, boots, fleet, wide swings,
-  bloodthirst, a honing, a new ability, Ironhide's health, Packmule's second
-  hand, a forged weapon card); a sword-carrier downed into the last stand
-  with every brew kept and raised by the other; one bleeding out and back at
-  the wave's end with everything; a staff's charges coming back; a dash and a
-  blink moving them, a leap's slam, a frost nova, a war cry and a fire pot
-  landing on one of the dead; a crossbow bolt into the dead; a grave bell
-  rung and the lure field reaching it; a bleeding wound, a forged Falchion's
-  slow and freeze; a kick, a stamp, getting up, a maul's knockdown; then both
-  holding the fire for three waves, taking the third card after each (every
-  one of the dead reaches them within three minutes: the clearing is wide),
-  then the match from a snapshot and through its packed bytes hashes the
-  same. The soak once found one of the dead stuck at the camp's fence (1 m
-  cells missed a thin box) and one risen into a gravestone's cell.
+  cells; nothing starting till both have picked a survivor (a Gunner with the
+  carbine's 30 rounds, a Breacher with the shotgun's 6); the first wave shot
+  down with the carbine (kills, a score, the party's level climbing for
+  both); three items offered each, none twice, one taken by each, the
+  countdown held while one is still choosing; items taken through the input
+  (Kevlar's health, an extended magazine loaded at once, a Second Wind, and
+  every other), a Field Battery's shorter cooldown, a Spring Boots jump in
+  the air; a Second Wind putting one straight back up; the Breacher downed,
+  the pistol firing from the ground with the shotgun's rounds kept, items
+  kept, raised by the other with the shotgun back as loaded as it was; one
+  bleeding out and back at the wave's end with everything; a carbine round
+  and a shotgun blast into one of the dead; every skill (a phase round, a
+  slide, a frag; a boot, a leap's slam, a firebomb's burn, the boot's stamp;
+  a mine laid and set off by the dead, a blink, a turret that fires and then
+  goes); Frostbite freezing and the Mortar Beacon calling a shell, Live Wire
+  arcing to another of the dead, a Powder Keg kill burning the one beside
+  it, the drone and the ember ring wounding without a shot; then both
+  holding the fire for three fresh waves, shooting the nearest, taking the
+  third item after each (every one of the dead reaches them: the longest any
+  hunted was 11 s), then the match from a snapshot and through its packed
+  bytes hashes the same. In the soak a crowd's claws can land together for
+  more than anyone's health, so it keeps them whole.
 - `gravewake_play_webgl` / `_webgpu` (`test/browser.mjs`, label
   `private-prototype`, `webgpu`, run serially): the page in headless Chrome
-  with frame control and `checkGL`: the title, Play, the first wave, a swing,
-  a crossbow shot, the wave ended by F5 and a card taken, then a walk round
+  with frame control and `checkGL`: the title, Play, a Breacher, the first
+  wave, a firebomb, a blast and the boot, the wave ended by F5 and an item
+  taken, then a walk round
   six places in the clearing, each a different picture, with no runtime,
   shader or GPU errors. Not run since the owner asked to stop (2026-10-16). Software WebGL is
   slow on this page, so the test's frames have per-frame deadlines and a
@@ -555,8 +533,17 @@ in place of guns and perks:
   - The Rooms package's views draw before the game's `Develop`, so the
     title's words are drawn by the game's own `TitleCard` view on the HUD
     layer instead of in `TitlePage`.
-  - An input can't be passed to a function (`Unleash` takes the move as a
+  - An input can't be passed to a function (`UseSkill` takes the move as a
     `float2`).
+  - `Spawn` takes component literals only, not a value of the component's
+    type (`TakeSeat` spells the new survivor out rather than spawning
+    `Outfitted(...)`).
+  - A view of exactly eight parameters with a query, whose frag read a
+    singleton the view didn't take, hung tidec in codegen (fixed in this
+    work, `notes/shaders.md`).
+  - Generated archetype names (`arch5_Zombie`) move when a component is
+    added, so the C tests name them again; token-pasting macros won't
+    stand in for them.
   - No instanced skinned draw (`Draw.SkinnedInstanced` is a listed future
     API): the horde bakes its clips into a texture a vert reads instead.
   - Local fields can't be fixed arrays (`List<Shard>` holds the gibs'

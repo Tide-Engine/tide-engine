@@ -171,8 +171,6 @@ view PoseSurvivor(mut Survivor survivor, Look look)
     mut var pose = body.defaultPose;
     var speed = Math.Length(survivor.velocity.xz);
     survivor.stride += speed * Math.Min(Frame.dt, 0.05);
-    var info = Info(survivor.weapons[survivor.slot]);
-    var melee = info.kind == Kind.Melee;
     if (survivor.life == Life.Downed)
     {
         pose.Sample(MoveOf(woman, speed > 0.2 ? Move.CrouchWalk : Move.CrouchIdle), speed > 0.2 ? survivor.stride / 1.4 * 2.0 : look.time, Playback.Loop);
@@ -184,19 +182,12 @@ view PoseSurvivor(mut Survivor survivor, Look look)
     }
     else
     {
-        pose.Sample(MoveOf(woman, melee ? Move.IdleSword : Move.IdleGun), look.time, Playback.Loop);
+        pose.Sample(MoveOf(woman, Move.IdleGun), look.time, Playback.Loop);
     }
-    if (survivor.act == Act.Swing || survivor.act == Act.Heavy || survivor.act == Act.Stab)
-    {
-        mut var slash = body.defaultPose;
-        var into = survivor.actTime / Math.Max(0.05, survivor.actLength);
-        slash.Sample(MoveOf(woman, Move.SwordSlash), 0.25 + into * 0.6);
-        pose.Blend(slash, Math.Saturate(Math.Min(into * 5, (1 - into) * 5)) * 0.85);
-    }
-    else if (!melee && survivor.life == Life.Standing)
+    if (survivor.life == Life.Standing && survivor.role != Role.None && survivor.act != Act.Throw && survivor.act != Act.Kick)
     {
         mut var hold = body.defaultPose;
-        hold.Sample(MoveOf(woman, Move.GunShoot), survivor.act == Act.Loose ? Math.Min(survivor.actTime, 0.5) : 0.05);
+        hold.Sample(MoveOf(woman, Move.GunShoot), survivor.act == Act.Fire ? Math.Min(survivor.actTime, 0.5) : 0.05);
         pose.Blend(hold, 0.7);
     }
     survivor.pose = pose;

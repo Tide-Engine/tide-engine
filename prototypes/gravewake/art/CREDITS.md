@@ -24,6 +24,7 @@ game's title screen.
 | `people/` | Six of the dead, four survivors, and their clips | Ultimate Modular Men, Ultimate Modular Women (bodies); the men's pack's clips and Universal Animation Library 1 and 2 (motions), retargeted by `people/tools/make_moves.py` |
 | `weapons/` | Weapons, missiles and first-person hands | Medieval Weapons, Ultimate RPG (staff crystals); the maces, polearms, crossbows, handgonne, staffs, thrown weapons, bolt, bell and hands modelled by `weapons/tools/make_weapons.py` |
 | `items/` | Power-ups, potions, the brazier, graves | Ultimate RPG (skull, coins, chalice, potions), Medieval Weapons (arrows, hammer); the rest modelled by `items/tools/make_items.py` |
+| `guns/` | The survivors' guns and the turret's tripod | Ultimate Gun Pack, cut to one GLB each, recoloured and scaled by `guns/tools/make_guns.py` |
 | `crowd/` | The horde: the six zombie bodies cut to about 700 triangles and their clips baked into `anim.png` | Made from `people/` by `crowd/tools/make_crowd.py` |
 | `fp/` | The first-person arms, the bow and arrow in them, and every first-person clip | CoinCoin's first-person kit (CC BY 4.0, above); clips for two-handed weapons, polearms, crossbows, staffs, throwing and drinking made by `fp/tools/make_fp.py` |
 
@@ -38,5 +39,6 @@ The packs' pages:
 - <https://quaternius.com/packs/universalanimationlibrary2.html>
 - <https://quaternius.com/packs/medievalweapons.html>
 - <https://quaternius.com/packs/ultimaterpg.html>
+- <https://opengameart.org/content/low-poly-guns-pack> (the Ultimate Gun Pack, CC0)
 
 The sounds' sources are in `../sfx/CREDITS.md`.

@@ -20,10 +20,6 @@
 //
 // Beyond its edge the ground climbs into the trees, and it's nobody's.
 
-enum Brew { Ironhide, Quickhand, SecondWind, Twinstrike, Fleetfoot, Packmule }
-
-const int BREW_COUNT = 6;
-
 // One kit piece, placed: turned `yaw` about up, then moved to `at`.
 struct Put
 {

@@ -127,6 +127,8 @@ PACKS = {
                        page=OGA + 'freeze-spell-0', file=OGF + 'freeze.wav', root='.'),
     'oga_ice_spells': dict(name='Ice spells', author='Bart Kelsey (bart)', licence='CC0 1.0',
                            page=OGA + 'ice-spells', file=OGF + 'icespells.zip', root='x'),
+    'oga_firearms': dict(name='The Free Firearm Sound Library', author='The Free Firearm Sound Library project (posted by EFlynn)', licence='CC0 1.0',
+                         page=OGA + 'the-free-firearm-sound-library', file=OGF + 'Prepared%20SFX%20Library.7z', root='x/Prepared SFX Library'),
     'oga_fireball': dict(name='Fireball 1 (JM FX Fireball 01)', author='Julien Matthey (posted by diligentcircle)', licence='CC0 1.0',
                          page=OGA + 'fireball-1', file=OGF + '105016__julien-matthey__jm-fx-fireball-01.wav', root='.'),
 }
@@ -577,6 +579,87 @@ def handgonne_reload(rng):
     y = mix((unit(pour), 0.0, -10), (unit(scrape1), 0.7, -4), (unit(tamp1), 1.15, -6), (unit(thud), 1.15, -8),
             (unit(tamp2), 1.45, -7), (unit(thud), 1.45, -10), (unit(fade(reverse(scrape1), 0.05, 0.02)), 1.6, -8))
     return trim(highpass(y, 80), -45, fade_out=0.08)
+
+
+# ---------------------------------------------------------------- guns
+
+FA = 'oga_firearms'
+
+
+def gunshot(rel, t0, seconds, rng, low_db=0.0, air=0.25):
+    """One shot of a recording: from just before its crack, its echo cut short to `seconds` (a horde's worth of
+    shots can't each ring for three), a little of the wood's reverb in its place."""
+    x = at_onset(S(FA, rel, max(0.0, t0 - 0.05), t0 + seconds + 0.3), pre=0.001)
+    x = fade(x[:n_of(seconds)], 0.0, seconds * 0.6)
+    if low_db:
+        x = shelf(x, 'lowshelf', 180, low_db)
+    x = reverb(x, rt60=1.2, wet=air, predelay=0.03, damp=0.6)
+    return limit(unit(x) * db(4), -1)
+
+
+@sound('rifle_fire', layers=True)
+def rifle_fire(rng):
+    # An AR-15's shot, its echo short for automatic fire
+    return trim(gunshot('AR-15/D_24P.wav', 0.547, 0.55, rng, low_db=2), -50, fade_out=0.08)
+
+
+@sound('smg_fire', layers=True)
+def smg_fire(rng):
+    # A PPSh's single shot, shorter still: it's fired fourteen a second
+    return trim(gunshot('PPSh/P_22P.wav', 1.143, 0.32, rng, air=0.15), -50, fade_out=0.05)
+
+
+@sound('shotgun_fire', layers=True)
+def shotgun_fire(rng):
+    # A Mossberg's blast, the full boom and some of its echo
+    return trim(gunshot('Mossberg/N_26P.wav', 0.785, 1.1, rng, low_db=4, air=0.3), -50, fade_out=0.15)
+
+
+@sound('pistol_fire', layers=True)
+def pistol_fire(rng):
+    # A 1911's shot
+    return trim(gunshot('1911/A_42P.wav', 0.939, 0.5, rng), -50, fade_out=0.08)
+
+
+@sound('turret_fire', layers=True)
+def turret_fire(rng):
+    # The Engineer's turret: the SMG's shot, higher and thinner, a machine's
+    x = gunshot('PPSh/P_22P.wav', 1.143, 0.22, rng, air=0.1)
+    return trim(highpass(pitch(x, 4), 400), -50, fade_out=0.04)
+
+
+def click(rel, seconds=0.15, lp=6000):
+    return fade(lowpass(at_onset(S(KI, rel)), lp)[:n_of(seconds)], 0.0, seconds * 0.5)
+
+
+@sound('mag_reload', layers=True)
+def mag_reload(rng):
+    # A box magazine's change, about 1.3 s: the old one out, the new one seated, the bolt let go
+    out = click('impactMetal_light_002.ogg', 0.12, 4500)
+    seat = click('impactMetal_medium_001.ogg', 0.18, 5000)
+    bolt1 = click('impactMetal_light_004.ogg', 0.1, 8000)
+    bolt2 = click('impactMetal_heavy_000.ogg', 0.16, 7000)
+    slide = bandpass(colored(0.18, rng, -1.0), 1500, 7000) * env_points([(0, 0), (0.03, 1), (0.18, 0)], 0.18)
+    y = mix((unit(out), 0.1, -4), (unit(slide), 0.55, -14), (unit(seat), 0.7, 0), (unit(bolt1), 1.05, -3), (unit(bolt2), 1.17, -1))
+    return trim(highpass(y, 120), -45, fade_out=0.05)
+
+
+@sound('shell_load', layers=True)
+def shell_load(rng):
+    # A shell pushed into a shotgun's tube
+    push = click('impactMetal_light_000.ogg', 0.1, 5000)
+    rub = bandpass(colored(0.08, rng, -1.0), 2000, 8000) * env_points([(0, 0), (0.02, 1), (0.08, 0)], 0.08)
+    y = mix((unit(rub), 0.0, -12), (unit(push), 0.05, 0))
+    return trim(highpass(y, 150), -45, fade_out=0.03)
+
+
+@sound('pump', layers=True)
+def pump(rng):
+    # A shotgun's pump, back and forward
+    back = click('impactMetal_medium_003.ogg', 0.14, 5500)
+    fore = click('impactMetal_heavy_002.ogg', 0.16, 6000)
+    y = mix((unit(back), 0.0, -2), (unit(fore), 0.17, 0))
+    return trim(highpass(y, 100), -45, fade_out=0.05)
 
 
 # ---------------------------------------------------------------- magic

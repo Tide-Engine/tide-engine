@@ -22,6 +22,7 @@ No attribution is required for any of it; it is given here anyway.
 | `oga_evil_cackle` | Evil Cackle Laugh 1 | NocturnalVanguard | CC0 1.0 | https://opengameart.org/content/evil-cackle-laugh-1 |
 | `oga_fantozzi_steps` | Fantozzi's Footsteps (Grass/Sand & Stone) | Fantozzi (posted by qubodup) | CC0 1.0 | https://opengameart.org/content/fantozzis-footsteps-grasssand-stone |
 | `oga_fire_crackling` | Fire crackling | AntumDeluge | CC0 1.0 | https://opengameart.org/content/fire-crackling |
+| `oga_firearms` | The Free Firearm Sound Library | The Free Firearm Sound Library project (posted by EFlynn) | CC0 1.0 | https://opengameart.org/content/the-free-firearm-sound-library |
 | `oga_fireball` | Fireball 1 (JM FX Fireball 01) | Julien Matthey (posted by diligentcircle) | CC0 1.0 | https://opengameart.org/content/fireball-1 |
 | `oga_freeze` | Freeze spell | artisticdude | CC0 1.0 | https://opengameart.org/content/freeze-spell-0 |
 | `oga_heartbeat_slow` | Heartbeat sounds (slow) | Bart Kelsey (bart) | CC0 1.0 | https://opengameart.org/content/heartbeat-sounds |
@@ -147,11 +148,13 @@ No attribution is required for any of it; it is given here anyway.
 | jingle_5.ogg | 9.35 | synthesized |
 | jingle_6.ogg | 10.00 | synthesized |
 | land.ogg | 0.42 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), RPG Audio by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/rpg-audio) |
+| mag_reload.ogg | 1.19 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) + synthesized layers |
 | music_high.ogg | 32.00 | synthesized |
 | music_low.ogg | 32.00 | synthesized |
 | pain_1.ogg | 0.35 | Zombies Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/zombies-sound-pack) |
 | pain_2.ogg | 0.31 | Voice Effects: Zombie, Skeleton, Monster, Human Male by ArcadeParty (CC0 1.0, https://opengameart.org/content/zombie-skeleton-monster-voice-effects) |
 | pain_3.ogg | 0.46 | 80 CC0 creature SFX by rubberduck (CC0 1.0, https://opengameart.org/content/80-cc0-creature-sfx) |
+| pistol_fire.ogg | 0.94 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |
 | points_tick.ogg | 0.05 | synthesized |
 | power_on.ogg | 4.50 | Fire crackling by AntumDeluge (CC0 1.0, https://opengameart.org/content/fire-crackling), 80 CC0 RPG SFX by rubberduck (CC0 1.0, https://opengameart.org/content/80-cc0-rpg-sfx) + synthesized layers |
 | powerup_grab.ogg | 1.84 | synthesized |
@@ -163,9 +166,11 @@ No attribution is required for any of it; it is given here anyway.
 | pu_instakill.ogg | 3.20 | synthesized |
 | pu_max_ammo.ogg | 2.46 | Fantasy Weapons and Apparel SFX Library by Jan Schupke (vehicle) (CC0 1.0, https://opengameart.org/content/fantasy-weapons-and-apparel-sfx-library) + synthesized layers |
 | pu_nuke.ogg | 4.80 | 100 CC0 SFX #2 by rubberduck (CC0 1.0, https://opengameart.org/content/100-cc0-sfx-2) + synthesized layers |
+| pump.ogg | 0.26 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) + synthesized layers |
 | repeater_fire.ogg | 0.27 | Medieval Sound Effects: Weapon Textures (part 1 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | repeater_reload.ogg | 1.71 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Medieval Sound Effects: Weapon Textures (part 1 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures), Fantasy Weapons and Apparel SFX Library by Jan Schupke (vehicle) (CC0 1.0, https://opengameart.org/content/fantasy-weapons-and-apparel-sfx-library) |
 | revive.ogg | 2.86 | synthesized |
+| rifle_fire.ogg | 1.11 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |
 | rise.ogg | 1.68 | 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx), 25 CC0 mud SFX by rubberduck (CC0 1.0, https://opengameart.org/content/25-cc0-mud-sfx) + synthesized layers |
 | round_end.ogg | 7.50 | synthesized |
 | round_start.ogg | 8.00 | synthesized |
@@ -173,6 +178,9 @@ No attribution is required for any of it; it is given here anyway.
 | scream_2.ogg | 0.94 | 80 CC0 creature SFX by rubberduck (CC0 1.0, https://opengameart.org/content/80-cc0-creature-sfx) |
 | scream_3.ogg | 0.96 | 80 CC0 creature SFX #2 by rubberduck (CC0 1.0, https://opengameart.org/content/80-cc0-creture-sfx-2) |
 | scream_4.ogg | 0.55 | Voice Effects: Zombie, Skeleton, Monster, Human Male by ArcadeParty (CC0 1.0, https://opengameart.org/content/zombie-skeleton-monster-voice-effects) |
+| shell_load.ogg | 0.15 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) + synthesized layers |
+| shotgun_fire.ogg | 1.23 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |
+| smg_fire.ogg | 1.05 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |
 | snarl_1.ogg | 0.70 | Zombies Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/zombies-sound-pack) |
 | snarl_2.ogg | 0.86 | 16 Monster Growls by StarNinjas (CC0 1.0, https://opengameart.org/content/16-monster-growls) |
 | snarl_3.ogg | 0.70 | Zombies Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/zombies-sound-pack) |
@@ -200,3 +208,4 @@ No attribution is required for any of it; it is given here anyway.
 | swing_light_2.ogg | 0.46 | Medieval Sound Effects: Weapon Textures (part 1 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | swing_light_3.ogg | 0.45 | Medieval Sound Effects: Weapon Textures (part 2 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | throw.ogg | 0.43 | Swishes Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/swishes-sound-pack) + synthesized layers |
+| turret_fire.ogg | 0.64 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |

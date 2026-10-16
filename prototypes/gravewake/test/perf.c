@@ -1,8 +1,10 @@
-// How long a GRAVEWAKE tick takes with a horde: two survivors stand by the fire
+// How long a GRAVEWAKE tick takes with a horde: two Gunners stand by the fire
 // while the dead rise one a tick until there are `count` of them (150 unless
-// the first argument says), then the ticks are timed while they crowd in,
-// along with a copy of the world (what a rollback's snapshot costs) and its
-// packed size. Not a test: run it from a release build to measure.
+// the first argument says), then the ticks are timed while they crowd in and
+// the Gunners fire into them, with a gun drone, an ember ring and Live Wire
+// each, along with a copy of the world (what a rollback's snapshot costs) and
+// its packed size. The dead don't die. Not a test: run it from a release build
+// to measure.
 //   gravewake_perf [count] [ticks]
 #include "gravewake_perf.h"
 #include <stdio.h>
@@ -46,20 +48,36 @@ int main(int argc, char **argv)
     tide_world_player_joined(&world, tide_player_from_index(1));
     held[0].ready = held[1].ready = true;
     tick();
-    held[0].pick1 = held[1].pick1 = true;      // A class each, or nothing starts
+    held[0].pick1 = held[1].pick1 = true;      // A survivor each, or nothing starts
     tick();
     held[0].pick1 = held[1].pick1 = false;
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick();
     // A wave that doesn't end, of the dead that don't die, coming one a tick
     world.Match.round = 12;
     world.Match.toSpawn = 100000;
-    for (int i = 0; i < count * 4 && (int)world.arch4_Zombie.count < count; i++) {
+    for (int i = 0; i < count * 4 && (int)world.arch5_Zombie.count < count; i++) {
         world.Match.spawnWait = 0;
         tick();
     }
     world.Match.spawnWait = 1e9f;
+    for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) {
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch5_Zombie, r);
+        Zombie z = tide_get_Zombie(&world, e);
+        z.health = 1e12f;
+        tide_set_Zombie(&world, e, z);
+    }
+    for (int seat = 0; seat < 2; seat++) {
+        const tide_entity e = world.Party.survivors.at[seat];
+        Survivor s = tide_get_Survivor(&world, e);
+        s.items.at[Item_GunDrone] = 2;
+        s.items.at[Item_EmberRing] = 1;
+        s.items.at[Item_LiveWire] = 1;
+        s.pitch = -0.1f;
+        tide_set_Survivor(&world, e, s);
+        held[seat].attack = true;
+    }
     int states[8] = {0};
-    for (uint32_t r = 0; r < world.arch4_Zombie.count; r++) states[TIDE_AT(&world, arch4_Zombie, Zombie, r).state & 7]++;
+    for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) states[TIDE_AT(&world, arch5_Zombie, Zombie, r).state & 7]++;
     printf("spawned: rising %d hunting %d dying %d fallen %d; to spawn %d, phase %d\n", states[0], states[1], states[2], states[3], world.Match.toSpawn, (int)world.Match.phase);
     for (int i = 0; i < 240; i++) tick();
     const double start = now();
@@ -70,7 +88,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < 20; i++) tide_world_copy(&copy, &world);
     const double perCopy = (now() - copied) / 20;
     const uint32_t size = tide_world_pack(&world, NULL, 0);
-    printf("%d of the dead: %.3f ms a tick (%.1f%% of 60 Hz), a world copy %.3f ms, packed %u bytes\n", (int)world.arch4_Zombie.count,
+    printf("%d of the dead: %.3f ms a tick (%.1f%% of 60 Hz), a world copy %.3f ms, packed %u bytes\n", (int)world.arch5_Zombie.count,
            per * 1000, per * 60 * 100, perCopy * 1000, size);
     tide_world_free(&copy);
     tide_world_free(&world);
