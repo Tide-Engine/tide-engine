@@ -26,11 +26,11 @@ local singleton Look
     float time;
     float fov = 70;
     float3 moonWay = float3(0.35, 0.8, 0.45);    // Toward the moon
-    float3 moonColor = float3(0.16, 0.2, 0.32);
+    float3 moonColor = float3(0.2, 0.25, 0.38);
     float3 skyLight = float3(0.035, 0.045, 0.075);
     float3 groundLight = float3(0.02, 0.018, 0.02);
     float3 fogColor = float3(0.045, 0.05, 0.07);
-    float fog = 0.022;
+    float fog = 0.015;
     float4x4 toMoon;
     float4x4 toClip;                              // The eye's camera, world to clip, for what's marked on the screen
     float2 pixel;                                 // One pixel of the window, in uv
@@ -188,7 +188,10 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens)
     if (Math.Perlin(at * 0.07 + float2(13, 7)) > 0.3) paint = Math.Lerp(paint, float3(0.08, 0.07, 0.05), 0.5);
     // Bare and trodden round the fire
     paint = Math.Lerp(paint, float3(0.17, 0.14, 0.11) * (0.85 + fine * 0.15), Math.Saturate(1.4 - Math.Length(at) * 0.28) * 0.8);
-    var lit = Shade(Linear(paint), this.world, float3(0, 1, 0), 1, look, lights.list, lens.moonDepth);
+    // Cliffs and steep banks are bare rock and earth
+    var normal = Math.Normalize(corner.normal);
+    paint = Math.Lerp(paint, float3(0.16, 0.15, 0.14) * (0.8 + fine * 0.3), Math.SmoothStep(0.8, 0.55, normal.y));
+    var lit = Shade(Linear(paint), this.world, normal, 1, look, lights.list, lens.moonDepth);
     color = Color(Hazed(lit, this.world, look), 1);
 }
 
@@ -287,16 +290,19 @@ void MakeShapes(mut Shapes shapes)
             shapes.domeFaces.Add(corner + around + 2);
         }
     }
-    // The ground, in squares so the fog and the light have corners to work with
+    // The ground: its heights (plan.tide's Ground) on a grid of 1.25 m out to 120 m, its normals from its slopes
     shapes.ground.Clear();
     shapes.groundFaces.Clear();
-    var cells = 24;
-    var size = 300.0 / cells;
+    var cells = 192;
+    var size = 240.0 / cells;
     for (var z = 0; z <= cells; z++)
     {
         for (var x = 0; x <= cells; x++)
         {
-            shapes.ground.Add(Corner { position = float3(-150 + x * size, 0, -150 + z * size), normal = float3(0, 1, 0) });
+            var px = -120 + x * size;
+            var pz = -120 + z * size;
+            var normal = Math.Normalize(float3(Ground(px - 0.5, pz) - Ground(px + 0.5, pz), 1, Ground(px, pz - 0.5) - Ground(px, pz + 0.5)));
+            shapes.ground.Add(Corner { position = float3(px, Ground(px, pz), pz), normal = normal });
             if (x == cells || z == cells) continue;
             var c = z * (cells + 1) + x;
             shapes.groundFaces.Add(c);
@@ -351,10 +357,13 @@ void AimMoon(mut Lens lens, mut Look look)
 }
 
 [Stage(Layers.Shadows)]
-view MoonShadows(Lens lens, Kit kit)
+view MoonShadows(Lens lens, Kit kit, Shapes shapes, Me me, Look look)
 {
-    if (!lens.made || !kit.made) return;
+    if (!lens.made || !kit.made || !shapes.made) return;
     lens.moon.Clear(Color.white);
+    // Each mesh's shadow at the level the player sees it at
+    lens.moon.SetLODCamera(float4x4.TRS(me.eye, me.turn, float3(1)), float4x4.PerspectiveFov(Math.Radians(look.fov), lens.size.x / Math.Max(1, lens.size.y), NEAR, FAR));
+    lens.moon.Mesh(shapes.ground, shapes.groundFaces, float4x4.identity);
     for (var i = 0; i < kit.near.count; i++)
     {
         if (kit.near[i].count == 0 || kit.info[i].glass) continue;

@@ -59,9 +59,9 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
     var fleet = HasBrew(survivor, Brew.Fleetfoot);
     var aiming = hands.aim && info.kind != Kind.Melee;
     var sprinting = hands.sprint && hands.move.y > 0.3 && !downed && survivor.stamina > 0.05 && survivor.act != Act.Draw && !aiming;
-    if (sprinting) survivor.stamina = Math.Max(0, survivor.stamina - dt / (fleet ? 9.0 : 4.5));
+    if (sprinting) survivor.stamina = Math.Max(0, survivor.stamina - dt / ((fleet ? 9.0 : 4.5) * (1 + 0.25 * survivor.fleet)));
     else survivor.stamina = Math.Min(1, survivor.stamina + dt * 0.3);
-    mut var speed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * info.slow * (fleet ? 1.12 : 1.0);
+    mut var speed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * info.slow * (fleet ? 1.12 : 1.0) * (1 + 0.1 * survivor.fleet);
     if (aiming || survivor.act == Act.Draw) speed *= 0.55;
     if (survivor.act == Act.Drink) speed *= 0.5;
     if (downed) speed = 0.6;
@@ -72,6 +72,13 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
     var blend = Math.Min(1, dt * grip);
     survivor.velocity.x += (target.x - survivor.velocity.x) * blend;
     survivor.velocity.z += (target.z - survivor.velocity.z) * blend;
+    // A dash carries them along whatever they press
+    if (survivor.dash > 0)
+    {
+        survivor.dash -= dt;
+        survivor.velocity.x = survivor.dashWay.x * DASH_SPEED;
+        survivor.velocity.z = survivor.dashWay.z * DASH_SPEED;
+    }
     if (hands.jump.down && survivor.grounded && !downed)
     {
         survivor.velocity.y = JUMP_SPEED;
@@ -89,13 +96,14 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
         var far = Math.Length(off);
         if (far < BODY_RADIUS * 2 && far > 0.0001) feet = float3(other.feet.x + off.x / far * BODY_RADIUS * 2, feet.y, other.feet.z + off.y / far * BODY_RADIUS * 2);
     }
-    // Never past the village's edge, whatever the boxes miss
-    if (!Walkable(ashwick, CellOf(feet)) && Walkable(ashwick, CellOf(before)))
+    // Never past the clearing's edge, and not up a cliff: the ground may climb as a ramp does and no more, unless
+    // they're above it (jumping, leaping, falling)
+    if (!Passable(feet, before, survivor.feet.y))
     {
         var alongX = float3(feet.x, feet.y, before.z);
         var alongZ = float3(before.x, feet.y, feet.z);
-        if (Walkable(ashwick, CellOf(alongX))) feet = alongX;
-        else if (Walkable(ashwick, CellOf(alongZ))) feet = alongZ;
+        if (Passable(alongX, before, survivor.feet.y)) feet = alongX;
+        else if (Passable(alongZ, before, survivor.feet.y)) feet = alongZ;
         else feet = before;
     }
     var ground = GroundUnder(ashwick, feet, BODY_RADIUS * 0.6, survivor.feet.y);
@@ -111,6 +119,15 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
         survivor.grounded = feet.y - ground < 0.05;
     }
     survivor.feet = feet;
+}
+
+// Whether a survivor whose feet are `height` up can step from `before` to `at`: in the clearing, and not climbing
+// steeper than a ramp.
+bool Passable(float3 at, float3 before, float height)
+{
+    if (!InClearing(at) && InClearing(before)) return false;
+    var rise = Ground(at.x, at.z) - height;
+    return rise <= 0.75 * Math.Length((at - before).xz) + 0.03;
 }
 
 void StandUp(mut Survivor survivor)
@@ -177,7 +194,7 @@ void Give(mut Survivor survivor, Weapon weapon, bool forged)
     }
     survivor.weapons[slot] = weapon;
     survivor.forged[slot] = forged;
-    survivor.mag[slot] = info.mag;
+    survivor.mag[slot] = MagOf(survivor, info);
     survivor.ammo[slot] = Reserve(survivor, info);
     survivor.slot = slot;
     survivor.act = Act.Raise;
@@ -265,11 +282,12 @@ void SwitchTo(mut Survivor survivor, int slot)
 
 // The weapon in hand: swinging, drawing, loosing, loading; and the stab, the pots and the bell.
 [Stage(Tick.Hands)]
-system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (Zombie zombie) zombies)
+system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, Time time, query (Zombie zombie) zombies)
 {
-    if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over) return;
+    if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over || survivor.role == Role.None) return;
     var dt = time.dt;
     var downed = survivor.life == Life.Downed;
+    survivor.cooldown = Math.Max(0, survivor.cooldown - dt);
     // Down, only a crossbow or a bow is any use
     if (downed && Info(survivor.weapons[survivor.slot]).kind == Kind.Melee)
     {
@@ -284,6 +302,24 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (
     survivor.actTime += dt;
     mut List<Body> bodies = [];
     foreach (var row in zombies) bodies.Add(BodyOf(row.entity, row.zombie));
+
+    // A staff's charges come back on their own, quicker with each wellspring
+    if (info.kind == Kind.Staff && survivor.ammo[survivor.slot] < Reserve(survivor, info))
+    {
+        survivor.mana += dt * (0.7 + 0.45 * survivor.flow);
+        if (survivor.mana >= 1)
+        {
+            survivor.mana -= 1;
+            survivor.ammo[survivor.slot] += 1;
+        }
+    }
+    // The ability on Q; and a leap come down
+    if (hands.ability.down && !downed) Unleash(survivor, hands.move, ashwick, bodies, match.round);
+    if (survivor.leaping && survivor.grounded)
+    {
+        survivor.leaping = false;
+        Slam(survivor, bodies, match.round);
+    }
 
     // Finishing what the hands were doing
     switch (survivor.act)
@@ -325,7 +361,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (
         case Act.Reload:
             if (survivor.actTime >= survivor.actLength)
             {
-                var want = info.mag - survivor.mag[survivor.slot];
+                var want = MagOf(survivor, info) - survivor.mag[survivor.slot];
                 var take = Math.Min(want, survivor.ammo[survivor.slot]);
                 survivor.mag[survivor.slot] += take;
                 survivor.ammo[survivor.slot] -= take;
@@ -346,7 +382,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (
             }
             return;
         case Act.Draw:
-            survivor.charge = Math.Min(1, survivor.charge + dt / Math.Max(0.05, info.draw * Haste(survivor) * (HasBrew(survivor, Brew.Twinstrike) ? 0.8 : 1.0)));
+            survivor.charge = Math.Min(1, survivor.charge + dt / Math.Max(0.05, info.draw * Haste(survivor) * Steadiness(survivor) * (HasBrew(survivor, Brew.Twinstrike) ? 0.8 : 1.0)));
             if (!hands.attack)
             {
                 // Loosed
@@ -396,32 +432,19 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Time time, query (
         StartAct(survivor, Act.Stab, 0.42 * Rate(survivor));
         return;
     }
-    if (hands.pot.down && survivor.firePots > 0 && !downed)
-    {
-        survivor.firePots -= 1;
-        StartAct(survivor, Act.Throw, 0.65);
-        survivor.charge = 0;
-        return;
-    }
-    if (hands.lure.down && survivor.lures > 0 && !downed)
-    {
-        survivor.lures -= 1;
-        StartAct(survivor, Act.Throw, 0.65);
-        survivor.charge = 1;
-        return;
-    }
     // Loading, by choice or when empty
     var loaded = survivor.mag[survivor.slot];
     var spare = survivor.ammo[survivor.slot];
-    if (info.kind != Kind.Melee && info.mag > 1 && loaded < info.mag && spare > 0 && (hands.reload.down || (loaded == 0 && hands.attack)))
+    var holds = MagOf(survivor, info);
+    if (info.kind != Kind.Melee && holds > 1 && loaded < holds && spare > 0 && (hands.reload.down || (loaded == 0 && hands.attack)))
     {
-        StartAct(survivor, Act.Reload, info.reload * Haste(survivor));
+        StartAct(survivor, Act.Reload, info.reload * Haste(survivor) * Steadiness(survivor) * (info.kind == Kind.Staff ? Math.Pow(0.8, survivor.flow) : 1.0));
         return;
     }
-    if (info.kind != Kind.Melee && info.mag == 1 && loaded == 0 && spare > 0 && info.kind != Kind.Bow)
+    if (info.kind != Kind.Melee && holds == 1 && loaded == 0 && spare > 0 && info.kind != Kind.Bow)
     {
         // A crossbow spanned, a javelin taken up, the gonne loaded: after every shot
-        StartAct(survivor, Act.Reload, info.reload * Haste(survivor));
+        StartAct(survivor, Act.Reload, info.reload * Haste(survivor) * Steadiness(survivor));
         return;
     }
     if (info.kind == Kind.Bow && loaded == 0 && spare > 0)
@@ -479,8 +502,8 @@ void Strike(Entity self, Survivor survivor, WeaponInfo info, bool heavy, bool st
     var eye = EyeOf(survivor);
     var look = LookDirection(survivor.yaw, survivor.pitch);
     var reach = info.reach + (heavy ? 0.2 : 0);
-    var arc = info.arc + (heavy ? 0.2 : 0);
-    var cleave = stab ? 1 : info.cleave + (heavy ? 2 : 0);
+    var arc = info.arc + (heavy ? 0.2 : 0) + (stab ? 0.0 : 0.12 * survivor.cleave);
+    var cleave = stab ? 1 : info.cleave + (heavy ? 2 : 0) + survivor.cleave;
     var damage = (stab ? 150 : info.damage * (heavy ? 1.8 : 1.0)) * Might(survivor);
     mut List<Entity> hit = [];
     mut List<float> distances = [];
@@ -558,11 +581,14 @@ void Loose(Survivor survivor, WeaponInfo info, bool aimed, float charge)
     var shot = info.kind == Kind.Bow ? Shot.Arrow : info.kind == Kind.Crossbow ? Shot.Bolt : info.kind == Kind.Gun ? Shot.Ball
              : info.kind == Kind.Staff ? Shot.Fireball : weapon == Weapon.Javelins ? Shot.Javelin : Shot.Axe;
     var power = info.kind == Kind.Bow ? 0.35 + charge * 0.65 : 1.0;
-    for (var p = 0; p < info.pellets; p++)
+    // A volley looses more beside the first, fanned out a little each side
+    var extra = info.kind == Kind.Gun ? 0 : survivor.volley;
+    for (var p = 0; p < info.pellets + extra; p++)
     {
         var off = Random.NextFloat2Direction() * Random.NextFloat(spread);
         var up = Math.Cross(right, look);
-        var way = Math.Normalize(look + right * off.x + up * off.y);
+        var fan = p < info.pellets ? 0.0 : ((p - info.pellets) / 2 + 1) * ((p - info.pellets) % 2 == 0 ? 0.07 : -0.07);
+        var way = Math.Normalize(look + right * (off.x + fan) + up * off.y);
         Spawn(Missile
         {
             kind = shot,
@@ -571,7 +597,7 @@ void Loose(Survivor survivor, WeaponInfo info, bool aimed, float charge)
             gravity = info.gravity,
             damage = info.damage * power * Might(survivor),
             head = info.head,
-            pierce = info.cleave,
+            pierce = info.cleave + survivor.fletch,
             element = info.element,
             splash = info.splash,
             seat = survivor.seat,
@@ -601,8 +627,15 @@ void Cast(Survivor survivor, WeaponInfo info, List<Body> bodies)
     var look = LookDirection(survivor.yaw, survivor.pitch);
     if (weapon == Weapon.StaffFire)
     {
-        Spawn(Missile { kind = Shot.Fireball, at = eye + look * 0.6, velocity = look * info.speed, gravity = 0, damage = info.damage * Might(survivor), splash = info.splash,
-                        element = Element.Fire, seat = survivor.seat, weapon = weapon, forged = survivor.forged[survivor.slot], life = 3 });
+        // One ember, and one more fanned out each side for each split
+        var right = Flat(survivor.yaw + Math.PI * 0.5);
+        for (var k = 0; k <= survivor.split; k++)
+        {
+            var fan = ((k + 1) / 2) * (k % 2 == 1 ? 0.09 : -0.09);
+            var way = Math.Normalize(look + right * fan);
+            Spawn(Missile { kind = Shot.Fireball, at = eye + way * 0.6, velocity = way * info.speed, gravity = 0, damage = info.damage * Might(survivor), splash = info.splash,
+                            element = Element.Fire, seat = survivor.seat, weapon = weapon, forged = survivor.forged[survivor.slot], life = 3 });
+        }
         Send(Loosed { seat = survivor.seat, weapon = weapon, at = eye, way = look });
         return;
     }
@@ -612,11 +645,11 @@ void Cast(Survivor survivor, WeaponInfo info, List<Body> bodies)
         mut var count = 0;
         foreach (var z in bodies)
         {
-            if (!z.hittable || count >= info.cleave) continue;
+            if (!z.hittable || count >= info.cleave + 2 * survivor.split) continue;
             var to = z.at + float3(0, 1.1, 0) - eye;
             var far = Math.Length(to);
             if (far > info.reach) continue;
-            if (Math.Dot(to / far, look) < Math.Cos(info.arc)) continue;
+            if (Math.Dot(to / far, look) < Math.Cos(info.arc + 0.05 * survivor.split)) continue;
             z.entity.Send(Wound { damage = info.damage * Might(survivor), seat = survivor.seat, element = Element.Frost, from = survivor.feet, knock = 2, blow = Blow.Burst });
             count += 1;
         }
@@ -626,7 +659,7 @@ void Cast(Survivor survivor, WeaponInfo info, List<Body> bodies)
     // Storm: the nearest in the aim, then from each to the next nearest
     mut var from = eye;
     mut List<Entity> struck = [];
-    for (var jump = 0; jump < info.cleave; jump++)
+    for (var jump = 0; jump < info.cleave + 2 * survivor.split; jump++)
     {
         mut Entity best = default;
         mut var bestAt = float3(0);

@@ -48,22 +48,36 @@ component Survivor
     bool landed;                     // This swing's blow has been dealt
     int swings;                      // Swings so far: they go one way then the other
     float charge;                    // A bow's draw, 0 to 1
-    int firePots = 2;
-    int lures;
     int brews;                       // A bit per Brew
     float stamina = 1;
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
+    // The class and the ability on Q (abilities.tide)
+    Role role;                       // None till it's picked, before the first wave
+    Ability ability;
+    float cooldown;                  // Seconds till it can be used again
+    int honed;
+    bool leaping;                    // In the air from a leap: it slams down where it lands
+    float dash;                      // Seconds left of a dash, and which way
+    float3 dashWay;
+    float mana;                      // A staff's next charge coming back, 0 to 1
     // The cards (cards.tide): the three on offer after a wave while `choosing`, each one's weapon or brew
     Card[3] cards;
     int[3] cardItems;
     bool choosing;
     int dealt;                       // The wave whose cards were dealt
     int picks;
-    int edge;                        // Whetstones taken
+    int edge;                        // Whetstones, broadheads or focus: a fifth more damage each
     int vigor;                       // Hearts of oak
     int boots;                       // Hobnailed boots
-    int quiver;                      // Deep quivers
-    int pyre;                        // Pyre satchels
+    int fleet;                       // Fleet feet
+    int quiver;                      // A Ranger's deep quivers
+    int cleave;                      // A Warrior's wide swings
+    int thirst;                      // ...and bloodthirst
+    int fletch;                      // A Ranger's bodkin heads
+    int volley;                      // ...volleys
+    int steady;                      // ...and steady hands
+    int split;                       // A Mage's split spells
+    int flow;                        // ...and wellsprings
     int kills;
     int headshots;
     int downs;
@@ -88,8 +102,7 @@ input Hands
     bool sprint;
     bool stab;
     bool kick;
-    bool pot;
-    bool lure;
+    bool ability;
     bool next;
     bool pick1;                      // A card, or the first weapon
     bool pick2;                      // ...or the second
@@ -115,8 +128,7 @@ input Hands
         sprint = keys.leftShift.pressed || pad.leftStickButton.pressed;
         stab = keys.v.pressed || keys.c.pressed || pad.rightStickButton.pressed;
         kick = keys.f.pressed || pad.buttonEast.pressed;
-        pot = keys.g.pressed || pad.rightShoulder.pressed;
-        lure = keys.q.pressed || pad.leftShoulder.pressed;
+        ability = keys.q.pressed || pad.leftShoulder.pressed;
         next = devices.mouse.scroll.y != 0 || pad.buttonNorth.pressed;
         pick1 = keys.digit1.pressed || pad.dpad.left.pressed;
         pick2 = keys.digit2.pressed || pad.dpad.up.pressed;
@@ -338,21 +350,21 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
     if (cheat.what >= 10) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
 }
 
-// Where each part of the clearing is seen from, for the development walks.
+// Where each part of the clearing is seen from, for the development walks: x, z and the way to look.
 float4 Showplace(int place)
 {
+    mut var at = float3(0, -6, 0);                          // South of the fire, looking north to the ruin
     switch (place)
     {
-        case 0: return float4(0, 0, -5, 0);
-        case 1: return float4(0, 0, 6.5, 0);
-        case 2: return float4(-5, 0, 0.5, -Math.PI * 0.5);
-        case 3: return float4(5.5, 0, 0.5, Math.PI * 0.5);
-        case 4: return float4(0, 0, -5, Math.PI);
-        case 5: return float4(11, 0, 11, 0.8);
-        case 6: return float4(-9, 0, -9, -2.3);
-        case 7: return float4(-3, 0, 4, 2.6);
+        case 1: at = float3(0, 22, Math.PI); break;          // On the ruin's cliff, looking out over the clearing
+        case 2: at = float3(-14, 2, -Math.PI * 0.5); break;   // The graveyard in its hollow
+        case 3: at = float3(26, -2, -Math.PI * 0.5); break;   // The hill's top, back toward the fire
+        case 4: at = float3(-18, -20, 0.9); break;           // The shelf
+        case 5: at = float3(-16, 5, 0.8); break;             // The foot of the ruin's ramp
+        case 6: at = float3(10, -26, Math.PI); break;         // South, toward the edge
+        case 7: at = float3(14, 14, 0.7); break;             // North-east
     }
-    return float4(0, 0, 0, 0);
+    return float4(On(at.x, at.y), at.z);
 }
 
 event Moved

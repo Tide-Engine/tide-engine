@@ -1,8 +1,8 @@
-// The real game in a real browser, one player: the title, Play, the first
-// wave coming to the fire, a swing and a crossbow shot, the wave ended by the
-// development keys and its cards (one taken), and a walk round the clearing
-// by them (the ruin, the graveyard, the camp, the boulders, two edges), a
-// picture of each. Frames and match time advance under
+// The real game in a real browser, one player: the title, Play, the class
+// screen and a Ranger picked, the first wave coming to the fire, a shot and
+// the ability on Q, the wave ended by the development keys and its cards (one
+// taken), and a walk round the clearing by them (the ruin's cliff, the
+// graveyard, the hill, the shelf, the ramp, the south), a picture of each. Frames and match time advance under
 // the runner's control, so nothing waits on a clock, and no sound reaches a
 // device, and the page never gets the pointer lock it asks for: headless Chrome
 // on Windows would take the machine's real cursor. Any shader, WebGL/WebGPU
@@ -173,9 +173,15 @@ try {
     await click(229, 379);
     await until(value => value.state === 2, 'a match behind the title');
 
+    stage = 'the classes';
+    await frames(30);
+    await screenshot('classes');
+    await tap('Digit2', '2');
     stage = 'the first wave';
     await frames(150);
     const fire = await screenshot('fire');
+    await tap('KeyQ', 'q');
+    await frames(20);
     stage = 'a swing';
     await command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 640, y: 360, button: 'left', clickCount: 1 });
     await frames(10);
@@ -194,8 +200,8 @@ try {
     await screenshot('cards');
     await tap('Digit3', '3');
     await frames(10);
-    // F6 walks round the clearing: the ruin, the graveyard, the camp, the boulders, two edges
-    const walks = ['ruin', 'graveyard', 'camp', 'boulders', 'north-east', 'south-west'];
+    // F6 walks round the clearing: the ruin's cliff, the graveyard, the hill, the shelf, the ramp, the south
+    const walks = ['ruin', 'graveyard', 'hill', 'shelf', 'ramp', 'south'];
     let last = fire;
     for (const place of walks) {
         stage = place;
@@ -208,7 +214,7 @@ try {
     assert.equal(state.aborted, '');
     assert.equal(state.screen.canvasWidth, state.screen.width);
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`GRAVEWAKE (${backend}): the title, the first wave, a swing, a crossbow, the cards and the clearing drew with no errors in ${((performance.now() - began) / 1000).toFixed(1)}s (${state.frames} frames). Captures: ${output}`);
+    console.log(`GRAVEWAKE (${backend}): the title, the classes, the first wave, a swing, a shot, the cards and the clearing drew with no errors in ${((performance.now() - began) / 1000).toFixed(1)}s (${state.frames} frames). Captures: ${output}`);
 } catch (error) {
     process.exitCode = 1;
     console.error(`GRAVEWAKE failed during ${stage}: ${error.stack ?? error}`);

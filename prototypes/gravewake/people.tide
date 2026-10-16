@@ -4,12 +4,12 @@
 // sampled once, into the entity's local fields, and drawn into the moon's
 // shadows and into the picture from there.
 
-asset SkinnedMesh<Corner, Rig> zombieFarmer = "art/people/zombie_farmer.glb";
-asset SkinnedMesh<Corner, Rig> zombieWorker = "art/people/zombie_worker.glb";
-asset SkinnedMesh<Corner, Rig> zombieKing = "art/people/zombie_king.glb";
-asset SkinnedMesh<Corner, Rig> zombieWanderer = "art/people/zombie_wanderer.glb";
-asset SkinnedMesh<Corner, Rig> zombiePeasant = "art/people/zombie_peasant.glb";
-asset SkinnedMesh<Corner, Rig> zombieMaid = "art/people/zombie_maid.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> zombieFarmer = "art/people/zombie_farmer.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> zombieWorker = "art/people/zombie_worker.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> zombieKing = "art/people/zombie_king.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> zombieWanderer = "art/people/zombie_wanderer.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> zombiePeasant = "art/people/zombie_peasant.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> zombieMaid = "art/people/zombie_maid.glb";
 // The bones a body is asked for by name: the hand that holds a survivor's weapon, the head that comes off.
 struct Rig
 {
@@ -31,10 +31,10 @@ struct Rig
     [Name("LowerLeg.R")] Bone lowerLegR;
 }
 
-asset SkinnedMesh<Corner, Rig> heroRanger = "art/people/hero_ranger.glb";
-asset SkinnedMesh<Corner, Rig> heroHuntress = "art/people/hero_huntress.glb";
-asset SkinnedMesh<Corner, Rig> heroSmith = "art/people/hero_smith.glb";
-asset SkinnedMesh<Corner, Rig> heroWitch = "art/people/hero_witch.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> heroRanger = "art/people/hero_ranger.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> heroHuntress = "art/people/hero_huntress.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> heroSmith = "art/people/hero_smith.glb";
+[LOD] asset SkinnedMesh<Corner, Rig> heroWitch = "art/people/hero_witch.glb";
 asset AnimationCatalog menMoves = "art/people/moves.glb";
 asset AnimationCatalog womenMoves = "art/people/moves_women.glb";
 
@@ -54,6 +54,7 @@ struct Skin
     float eyes = 1;
     float grime = 0.4;
     float inside;
+    float ghost;                // The dead's pale edge, kept through the fog, so they read against the forest
 }
 
 // A zombie's look: which body (0 to 5), and whether it's a woman's.
@@ -180,7 +181,10 @@ frag Flesh(Corner corner, out Color color, Instance instance, Skin skin, Look lo
         lit += float3(1.6, 0.5, 0.08) * flame * skin.burn;
     }
     lit += float3(1.4, 1.2, 1.0) * skin.flash;
-    color = Color(Hazed(lit, this.world, look), 1);
+    // The dead's own edge: a sickly pale rim that the fog dims only slowly, so a shape among the trees is one of them
+    var edge = Math.Pow(1 - Math.Saturate(Math.Dot(normal, toEye)), 2.2);
+    var through = Math.Exp(-Math.Distance(look.eye, this.world) * 0.012);
+    color = Color(Hazed(lit, this.world, look) + float3(0.2, 0.3, 0.22) * edge * skin.ghost * through, 1);
 }
 
 // The dead's pose as their state has it, the same in the match (where blows and missiles find their head, chest and
@@ -261,7 +265,9 @@ float4x4 ZombiePlace(Zombie zombie, float sink)
 
 // The dead, as this frame has them.
 [Stage(Layers.Gather)]
-view PoseZombie(mut Zombie zombie)
+// The far dead are posed every other frame (past 22 m) or every fourth (past 45 m): a horde's poses are much of a
+// frame's cost, and at that distance nobody sees the steps between. Each is placed every frame.
+view PoseZombie(mut Zombie zombie, Me me)
 {
     zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
     if (zombie.gibbed)
@@ -269,9 +275,16 @@ view PoseZombie(mut Zombie zombie)
         Tumble(zombie, Math.Min(Frame.dt, 0.05));
         return;
     }
-    var pose = ZombiePose(zombie, out var sink);
-    zombie.pose = pose;
-    zombie.place = ZombiePlace(zombie, sink);
+    var far = Math.Distance(zombie.at, me.eye);
+    var every = far > 45 ? 4 : far > 22 ? 2 : 1;
+    zombie.frames += 1;
+    if (zombie.frames >= every || zombie.state == ZombieState.Dying)
+    {
+        zombie.frames = 0;
+        zombie.pose = ZombiePose(zombie, out var sink);
+        zombie.sink = sink;
+    }
+    zombie.place = ZombiePlace(zombie, zombie.sink);
 }
 
 local event(Struck struck) FlashStruck(mut Zombie zombie)
@@ -424,7 +437,7 @@ void Tumble(mut Zombie zombie, float dt)
         v.y -= 14 * dt;
         mut var at = shard.at + v * dt;
         mut var spin = shard.spin;
-        var rest = p == int(Part.Torso) ? 0.2 : 0.1;
+        var rest = Ground(at.x, at.z) + (p == int(Part.Torso) ? 0.2 : 0.1);
         if (at.y < rest)
         {
             at.y = rest;
@@ -461,7 +474,7 @@ view DrawZombie(Zombie zombie, Lens lens, Look look)
     if (!lens.made || Math.Distance(zombie.at, look.eye) > 70) return;
     var eyes = zombie.state == ZombieState.Dying ? Math.Saturate(1 - zombie.timer * 1.5) : 1.0;
     var burning = zombie.burn > 0 ? 1.0 : 0.0;
-    var skin = Skin { burn = burning, frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0, flash = zombie.flash, eyes = eyes, grime = 0.55 };
+    var skin = Skin { burn = burning, frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0, flash = zombie.flash, eyes = eyes, grime = 0.55, ghost = 1.0 };
     var body = ZombieBody(zombie.look);
     lens.scene.Bounds(float3(0, 1, 0), float3(3, 3.5, 3))
     {

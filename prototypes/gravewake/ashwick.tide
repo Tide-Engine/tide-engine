@@ -1,20 +1,21 @@
 // What the match keeps of the plan: the boxes, the risers and the starts, and
-// a grid of half-metre cells over the clearing that says where the dead can
-// walk. Every few ticks the dead's way is worked out over that grid:
+// a grid of metre cells over the clearing that says where the dead can walk
+// (not through boxes, not up or down the cliffs, not past the edge). Every few ticks the dead's way is worked out over that grid:
 // how far each cell is from the nearest survivor on their feet (or from a
 // ringing lure bell), and each zombie walks downhill.
 
 // The tick, in order.
 enum Tick { Restart, Survivors, Hands, Missiles, Zombies, Field, Rounds, Late }
 
-const float CELL = 0.5;
-const float NAV_X0 = -42;
-const float NAV_Z0 = -38;
-const int NAV_W = 168;            // To x 42
-const int NAV_H = 160;            // To z 42
+const float CELL = 1;
+const float NAV_X0 = -56;
+const float NAV_Z0 = -56;
+const int NAV_W = 112;            // To x 56
+const int NAV_H = 112;            // To z 56
 const float BUCKET = 8;
-const int BUCKETS_W = 11;
-const int BUCKETS_H = 11;
+const int BUCKETS_W = 14;
+const int BUCKETS_H = 14;
+const float STEEP = 0.6;          // Ground that climbs more than this a metre is a cliff: the dead go round
 const int UNREACHED = 255;        // A cell nothing reaches
 
 singleton Ashwick
@@ -23,7 +24,7 @@ singleton Ashwick
     List<List<int>> buckets;      // The solids near each 8 m square, by bucket
     List<Riser> risers;
     List<float3> starts;
-    List<byte> cells;             // 0 open, 1 a wall (a box, or the forest past the clearing's edge)
+    List<byte> cells;             // 0 open, 1 a wall (a box, a cliff, or the forest past the clearing's edge)
     List<byte> field;             // Cells to the nearest survivor, UNREACHED where none can be reached
     List<byte> lureField;         // ...or to a ringing bell
     bool made;
@@ -76,13 +77,14 @@ void BuildAshwick(mut Ashwick ashwick)
             for (var bx = b0x; bx <= b1x; bx++)
                 ashwick.buckets[bz * BUCKETS_W + bx].Add(i);
     }
-    // The cells: a wall where a box stands taller than a step, within a zombie's breadth of the cell's middle
+    // The cells: a wall where a box stands taller than a step above the ground
     ashwick.cells.Resize(NAV_W * NAV_H);
     for (var c = 0; c < NAV_W * NAV_H; c++) ashwick.cells[c] = 0;
     foreach (var solid in ashwick.solids)
     {
-        if (solid.center.y + solid.half.y < 0.6) continue;
-        var grow = 0.28;
+        if (solid.center.y + solid.half.y - Ground(solid.center.x, solid.center.z) < 0.6) continue;
+        // Every cell the box (and a little round it) overlaps: a fence thinner than a cell walls its cells too
+        var grow = 0.12;
         var lo = solid.center - solid.half - float3(grow, 0, grow);
         var hi = solid.center + solid.half + float3(grow, 0, grow);
         var c0x = Math.Max(0, int(Math.Floor((lo.x - NAV_X0) / CELL)));
@@ -91,17 +93,16 @@ void BuildAshwick(mut Ashwick ashwick)
         var c1z = Math.Min(NAV_H - 1, int(Math.Floor((hi.z - NAV_Z0) / CELL)));
         for (var cz = c0z; cz <= c1z; cz++)
         {
-            for (var cx = c0x; cx <= c1x; cx++)
-            {
-                var middle = float2(NAV_X0 + (cx + 0.5) * CELL, NAV_Z0 + (cz + 0.5) * CELL);
-                if (middle.x < lo.x || middle.x > hi.x || middle.y < lo.z || middle.y > hi.z) continue;
-                ashwick.cells[cz * NAV_W + cx] = 1;
-            }
+            for (var cx = c0x; cx <= c1x; cx++) ashwick.cells[cz * NAV_W + cx] = 1;
         }
     }
-    // Past the clearing's edge is nobody's ground: walls there too, so the field stays in the clearing
+    // Past the clearing's edge is nobody's ground, and a cliff nobody walks: walls there too, so the field stays in
+    // the clearing and goes round by the ramps
     for (var c = 0; c < NAV_W * NAV_H; c++)
-        if (!InClearing(CellMiddle(c))) ashwick.cells[c] = 1;
+    {
+        var middle = CellMiddle(c);
+        if (!InClearing(middle) || Steepness(middle.x, middle.z) > STEEP) ashwick.cells[c] = 1;
+    }
     ashwick.field.Resize(NAV_W * NAV_H);
     ashwick.lureField.Resize(NAV_W * NAV_H);
     for (var c = 0; c < NAV_W * NAV_H; c++)
@@ -120,10 +121,10 @@ bool Walkable(Ashwick ashwick, int cell)
 
 // ---- Bodies against the boxes ----
 
-// The highest floor under a circle, no more than a step above `current`.
+// The highest floor under a circle, no more than a step above `current`: the ground, or a box on it.
 float GroundUnder(Ashwick ashwick, float3 feet, float radius, float current)
 {
-    mut var ground = 0.0;
+    mut var ground = Ground(feet.x, feet.z);
     var bucket = BucketOf(feet.x, feet.z);
     var count = ashwick.buckets[bucket].count;
     for (var k = 0; k < count; k++)
@@ -187,12 +188,32 @@ float RayHit(Ashwick ashwick, float3 from, float3 to, out float3 normal)
     var way = to - from;
     mut var best = 1.0;
     mut var hit = false;
-    // The ground
-    if (to.y < 0 && from.y >= 0)
+    // The ground: the first of a few points along the line that's under it, then halved down to where it goes in
+    mut var above = 0.0;
+    for (var step = 1; step <= 4; step++)
     {
-        best = from.y / Math.Max(from.y - to.y, 0.0001);
-        normal = float3(0, 1, 0);
+        var t = step / 4.0;
+        var at = from + way * t;
+        if (at.y >= Ground(at.x, at.z))
+        {
+            above = t;
+            continue;
+        }
+        mut var lo = above;
+        mut var hi = t;
+        for (var k = 0; k < 6; k++)
+        {
+            var mid = (lo + hi) * 0.5;
+            var there = from + way * mid;
+            if (there.y >= Ground(there.x, there.z)) lo = mid;
+            else hi = mid;
+        }
+        best = hi;
+        var where = from + way * hi;
+        normal = Math.Normalize(float3(Ground(where.x - 0.25, where.z) - Ground(where.x + 0.25, where.z), 0.5,
+                                       Ground(where.x, where.z - 0.25) - Ground(where.x, where.z + 0.25)));
         hit = true;
+        break;
     }
     var middle = (from + to) * 0.5;
     var bucket = BucketOf(middle.x, middle.z);
