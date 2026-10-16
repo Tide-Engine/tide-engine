@@ -9,7 +9,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'sunday-supper'];
+const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'sunday-supper', 'gravewake'];
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -210,9 +210,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out|underfoot|foldline|sunday-supper|copper-coil|prototypes\/elsewhere|deadweight|DEADWEIGHT|hot-swap|swindle|night-route/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out|underfoot|foldline|sunday-supper|gravewake|copper-coil|prototypes\/elsewhere|deadweight|DEADWEIGHT|hot-swap|swindle|night-route/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out|Underfoot|underfoot|FOLDLINE|foldline|SUNDAY SUPPER|sunday-supper|copper-coil|prototypes\/elsewhere|deadweight|DEADWEIGHT|HOT SWAP|hot-swap|SWINDLE|swindle|NIGHT ROUTE|night-route/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out|Underfoot|underfoot|FOLDLINE|foldline|SUNDAY SUPPER|sunday-supper|GRAVEWAKE|gravewake|copper-coil|prototypes\/elsewhere|deadweight|DEADWEIGHT|HOT SWAP|hot-swap|SWINDLE|swindle|NIGHT ROUTE|night-route/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);

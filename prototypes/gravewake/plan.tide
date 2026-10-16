@@ -1,0 +1,761 @@
+// Ashwick as one plan: every kit piece and where it stands, the boxes nobody
+// walks through, and what the match plays with: the areas, the doors that
+// open between them, the windows the dead come in by, where they rise from
+// the ground, what's for sale on the walls, the brews, the chest's places,
+// the Runeforge and the beacon. MakePlan() is deterministic: the match keeps
+// what it needs (Ashwick, made at the start), and each machine makes it
+// again for what it draws. Change one, and both follow.
+//
+// The village, metres, x east and z north:
+//
+//            -34        -10   -5  0  5      12        26   34
+//        36  +------------------------------+
+//            |  GRAVEYARD        | CHAPEL  |
+//        14  +--gate----+ W2    |  (nave) |
+//            |  KEEP    |------+-street-----+--------+
+//            |  (beacon)| alley  SQUARE      |TAVERN |
+//            |          |------+              |       |
+//        -8  +----------+ W1  +--alley------+-lane--+
+//                        |   SMITHY   | door | STABLES |
+//       -32              +------------+------+---------+
+
+enum Zone { Square, Tavern, Stables, Smithy, Chapel, Graveyard, Keep, Outside }
+
+const int ZONE_COUNT = 7;
+
+// What a wall or a stand sells.
+enum Sale { Weapon, Brew, Chest, Forge, Beacon, FirePots, Bells }
+
+enum Brew { Ironhide, Quickhand, SecondWind, Twinstrike, Fleetfoot, Packmule }
+
+const int BREW_COUNT = 6;
+
+// How a door between two areas looks: a door that swings, a gate of iron bars, or a heap of rubbish in the way.
+enum GateLook { Door, Bars, Rubble }
+
+// One kit piece, placed: turned `yaw` about up, then moved to `at`.
+struct Put
+{
+    Piece piece;
+    float3 at;
+    float yaw;
+    float3 scale = float3(1);
+    float open = 1;          // How much sky it sees: 0 indoors
+    float tint = 1;
+    int gate = -1;           // The door it is, or belongs to: drawn by the door's state, not with the village
+}
+
+// A box nobody walks through, in the world's axes.
+struct Solid
+{
+    float3 center;
+    float3 half;
+    int gate = -1;           // The door it belongs to, or -1: an open door's box isn't there
+}
+
+// A door, gate or heap between two areas, opened by paying.
+struct Gate
+{
+    int cost;
+    Zone a;
+    Zone b;
+    GateLook look;
+    float3 at;               // The middle of its opening, on the ground
+    float yaw;               // Which way it faces (from a to b)
+    float width = 1.2;
+}
+
+// A window the dead come in by: boards across it, a place outside where they come from and one inside they land.
+struct Window
+{
+    Zone zone;
+    float3 at;               // The middle of the opening, on the sill
+    float yaw;               // Facing into the zone
+    float3 outside;          // Where a zombie stands to tear the boards
+    float3 inside;           // Where it lands, climbed in
+    float3 spawn;            // Where it comes from, out of sight
+}
+
+// A place in the ground the dead rise from.
+struct Riser
+{
+    Zone zone;
+    float3 at;
+}
+
+// Something for sale: on a wall (a weapon, the fire pots), a brew's stand, a place the chest may be, the Runeforge, the beacon.
+struct Stall
+{
+    Sale sale;
+    int item;                // The Weapon, the Brew
+    float3 at;               // Where it's used from: the middle of what's for sale
+    float yaw;               // Facing out to whoever buys
+    Zone zone;
+}
+
+// One of the items (art/items) set about the village: a gravestone, a mound, a brazier.
+struct ItemPut
+{
+    string item;
+    float3 at;
+    float yaw;
+    float scale = 1;
+}
+
+// An area's ground, for picking where it is.
+struct Area
+{
+    Zone zone;
+    float2 lo;
+    float2 hi;
+}
+
+struct Plan
+{
+    List<Put> placements;
+    List<Solid> solids;
+    List<Gate> gates;
+    List<Window> windows;
+    List<Riser> risers;
+    List<Stall> stalls;
+    List<Area> areas;
+    List<float3> starts;
+    List<float3> torches;    // Where a torch burns: on a wall, a post, a brazier
+    List<float3> braziers;   // The beacon's braziers, lit with the power
+    List<ItemPut> dressing;
+}
+
+const float STOREY = 3.12;    // A kit wall's height
+const float WALL_OUT = 0.1;   // How far a kit wall's outside face is past the line it's put on
+const float WALL_IN = 0.31;   // How far its inside face is within
+
+// The turn that has a piece's +z face the way `side` says: 0 north (+z), 1 east (+x), 2 south (-z), 3 west (-x).
+float SideYaw(int side)
+{
+    return side * Math.PI * 0.5;
+}
+
+float2 SideWay(int side)
+{
+    if (side == 0) return float2(0, 1);
+    if (side == 1) return float2(1, 0);
+    if (side == 2) return float2(0, -1);
+    return float2(-1, 0);
+}
+
+float3 Flat3(float2 at)
+{
+    return float3(at.x, 0, at.y);
+}
+
+void Place(mut Plan plan, Piece piece, float3 at, float yaw)
+{
+    plan.placements.Add(Put { piece = piece, at = at, yaw = yaw });
+}
+
+void PlaceIn(mut Plan plan, Piece piece, float3 at, float yaw)
+{
+    plan.placements.Add(Put { piece = piece, at = at, yaw = yaw, open = 0 });
+}
+
+// A torch in its bracket on a wall: the bracket's plate at `at`, on the wall's face, the torch leaning out toward `side`
+// (see SideYaw). Its flame burns over the torch's head.
+void WallTorch(mut Plan plan, float3 at, int side)
+{
+    Place(plan, Piece.Torch_Metal, at, SideYaw(side));
+    var way = SideWay(side);
+    plan.torches.Add(at + float3(way.x * 0.27, 0.42, way.y * 0.27));
+}
+
+void PlaceScaled(mut Plan plan, Piece piece, float3 at, float yaw, float3 scale)
+{
+    plan.placements.Add(Put { piece = piece, at = at, yaw = yaw, scale = scale });
+}
+
+void Block(mut Plan plan, float3 lo, float3 hi, int gate)
+{
+    plan.solids.Add(Solid { center = (lo + hi) * 0.5, half = (hi - lo) * 0.5, gate = gate });
+}
+
+// The box of a wall from `a` to `b` along a building's edge (the line the pieces stand on), with its outside toward `side`.
+void WallBox(mut Plan plan, float2 a, float2 b, int side, float high, int gate)
+{
+    var way = SideWay(side);
+    var inward = -way * ((WALL_IN - WALL_OUT) * 0.5);
+    var thick = (WALL_IN + WALL_OUT) * 0.5;
+    var lo = Math.Min(a, b) + inward - float2(Math.Abs(way.x), Math.Abs(way.y)) * thick;
+    var hi = Math.Max(a, b) + inward + float2(Math.Abs(way.x), Math.Abs(way.y)) * thick;
+    Block(plan, float3(lo.x, 0, lo.y), float3(hi.x, high, hi.y), gate);
+}
+
+// How a building looks: its ground floor's pieces and its upper floors'.
+struct Style
+{
+    Piece plain = Piece.Wall_UnevenBrick_Straight;
+    Piece window = Piece.Wall_UnevenBrick_Window_Wide_Round;
+    Piece door = Piece.Wall_UnevenBrick_Door_Round;
+    Piece upper = Piece.Wall_Plaster_WoodGrid;
+    Piece upperWindow = Piece.Wall_Plaster_Window_Wide_Round;
+    Piece corner = Piece.Corner_Exterior_Brick;
+    Piece upperCorner = Piece.Corner_Exterior_Wood;
+    float roofScale = 1;     // Across the ridge: a building wider than the kit's roofs stretches one
+}
+
+Style Stone()
+{
+    return Style { };
+}
+
+Style Timber()
+{
+    return Style { plain = Piece.Wall_Plaster_Straight, window = Piece.Wall_Plaster_Window_Wide_Round, door = Piece.Wall_Plaster_Door_Round,
+                   upper = Piece.Wall_Plaster_WoodGrid, upperWindow = Piece.Wall_Plaster_Window_Thin_Round, corner = Piece.Corner_Exterior_Wood };
+}
+
+Style Chapelstone()
+{
+    return Style { plain = Piece.Wall_UnevenBrick_Straight, window = Piece.Wall_UnevenBrick_Window_Thin_Round, door = Piece.Wall_UnevenBrick_Door_Round,
+                   upper = Piece.Wall_UnevenBrick_Straight, upperWindow = Piece.Wall_UnevenBrick_Window_Thin_Round, upperCorner = Piece.Corner_Exterior_Brick };
+}
+
+// Where segment `s` of a building's ground floor is, and which way it faces. Segments go round from the south-west
+// corner: the south side west to east, the east side south to north, the north side east to west, the west side north
+// to south.
+float2 SegmentAt(float x0, float z0, int w, int d, int s, out int side)
+{
+    if (s < w)
+    {
+        side = 2;
+        return float2(x0 + 1 + s * 2, z0);
+    }
+    if (s < w + d)
+    {
+        side = 1;
+        return float2(x0 + w * 2, z0 + 1 + (s - w) * 2);
+    }
+    if (s < w + d + w)
+    {
+        side = 0;
+        return float2(x0 + w * 2 - 1 - (s - w - d) * 2, z0 + d * 2);
+    }
+    side = 3;
+    return float2(x0, z0 + d * 2 - 1 - (s - w - d - w) * 2);
+}
+
+// A closed building, x0..x0+2w by z0..z0+2d, `storeys` high, its roof's ridge along z (or along x when `ridgeX`).
+// Bits of `doors` and `windows` pick ground floor segments (see SegmentAt); `gateSegment` is a door that opens for a
+// price, gate `gate`, and is left open in the wall's box. `inside` lights its pieces as indoors.
+void House(mut Plan plan, Style style, float x0, float z0, int w, int d, int storeys, bool ridgeX, long doors, long windows, int gateSegment = -1, int gate = -1,
+           int gateSegment2 = -1, int gate2 = -1)
+{
+    var segments = w + d + w + d;
+    for (var s = 0; s < segments; s++)
+    {
+        var at = SegmentAt(x0, z0, w, d, s, out var side);
+        var bit = 1L << s;
+        var ground = s == gateSegment || s == gateSegment2 || (doors & bit) != 0 ? style.door : (windows & bit) != 0 ? style.window : style.plain;
+        Place(plan, ground, float3(at.x, 0, at.y), SideYaw(side));
+        for (var floor = 1; floor < storeys; floor++)
+        {
+            var upper = ((s + floor) % 3 == 1) ? style.upperWindow : style.upper;
+            Place(plan, upper, float3(at.x, STOREY * floor, at.y), SideYaw(side));
+            Place(plan, Piece.Wall_BottomCover, float3(at.x, STOREY * floor, at.y), SideYaw(side));
+        }
+    }
+    // A box for each side, but where a door that opens is
+    var high = STOREY * storeys;
+    for (var side = 0; side < 4; side++)
+    {
+        var first = side == 2 ? 0 : side == 1 ? w : side == 0 ? w + d : w + d + w;
+        var count = side == 2 || side == 0 ? w : d;
+        var along = Turned(side);
+        mut var runStart = first;
+        for (var s = first; s <= first + count; s++)
+        {
+            var opening = s < first + count && (s == gateSegment || s == gateSegment2);
+            if (s < first + count && !opening) continue;
+            if (s > runStart)
+            {
+                var a = SegmentAt(x0, z0, w, d, runStart, out _);
+                var b = SegmentAt(x0, z0, w, d, s - 1, out _);
+                WallBox(plan, Math.Min(a, b) - along, Math.Max(a, b) + along, side, high, -1);
+            }
+            if (opening)
+            {
+                var at = SegmentAt(x0, z0, w, d, s, out _);
+                // The door's posts either side of its opening, and the opening's own box, which is the gate's
+                WallBox(plan, at - along * 1.0, at - along * 0.62, side, high, -1);
+                WallBox(plan, at + along * 0.62, at + along * 1.0, side, high, -1);
+                var id = s == gateSegment ? gate : gate2;
+                if (id >= 0) WallBox(plan, at - along * 0.62, at + along * 0.62, side, STOREY, id);
+            }
+            runStart = s + 1;
+        }
+    }
+    // The corners
+    for (var c = 0; c < 4; c++)
+    {
+        var at = float3(c == 1 || c == 2 ? x0 + w * 2 : x0, 0, c >= 2 ? z0 + d * 2 : z0);
+        var yaw = SideYaw((c + 2) % 4);
+        Place(plan, style.corner, at, yaw);
+        for (var floor = 1; floor < storeys; floor++) Place(plan, style.upperCorner, at + float3(0, STOREY * floor, 0), yaw);
+    }
+    // The roof
+    var top = STOREY * storeys;
+    var middle = float3(x0 + w, top, z0 + d);
+    var across = ridgeX ? d : w;
+    var long = ridgeX ? w : d;
+    var yaw = ridgeX ? Math.PI * 0.5 : 0.0;
+    var stretch = float3(style.roofScale, 1, 1);
+    var roof = RoofOf(Math.Min(across, 4), long);
+    plan.placements.Add(Put { piece = roof, at = middle, yaw = yaw, scale = stretch });
+    var gableWidth = Math.Min(across, 4);
+    var gable = gableWidth == 2 ? Piece.Roof_Front_Brick4 : gableWidth == 3 ? Piece.Roof_Front_Brick6 : Piece.Roof_Front_Brick8;
+    var ridge = ridgeX ? float3(1, 0, 0) : float3(0, 0, 1);
+    plan.placements.Add(Put { piece = gable, at = middle + ridge * long, yaw = yaw, scale = stretch });
+    plan.placements.Add(Put { piece = gable, at = middle - ridge * long, yaw = yaw + Math.PI, scale = stretch });
+}
+
+// The unit step from a to b along whichever axis they differ on.
+float2 Toward(float2 a, float2 b)
+{
+    var d = b - a;
+    if (Math.Abs(d.x) > Math.Abs(d.y)) return float2(d.x >= 0 ? 1.0 : -1.0, 0);
+    if (Math.Abs(d.y) > 0.001) return float2(0, d.y >= 0 ? 1.0 : -1.0);
+    return float2(0);
+}
+
+// Along a wall that faces `side`.
+float2 Turned(int side)
+{
+    var way = SideWay(side);
+    return float2(Math.Abs(way.y), Math.Abs(way.x));
+}
+
+// The kit's roof for a building `across` by `long` segments of 2 m.
+Piece RoofOf(int across, int long)
+{
+    if (across <= 2)
+    {
+        if (long <= 2) return Piece.Roof_RoundTiles_4x4;
+        if (long <= 3) return Piece.Roof_RoundTiles_4x6;
+        return Piece.Roof_RoundTiles_4x8;
+    }
+    if (across <= 3)
+    {
+        if (long <= 2) return Piece.Roof_RoundTiles_6x4;
+        if (long <= 3) return Piece.Roof_RoundTiles_6x6;
+        if (long <= 4) return Piece.Roof_RoundTiles_6x8;
+        if (long <= 5) return Piece.Roof_RoundTiles_6x10;
+        if (long <= 6) return Piece.Roof_RoundTiles_6x12;
+        return Piece.Roof_RoundTiles_6x14;
+    }
+    if (long <= 4) return Piece.Roof_RoundTiles_8x8;
+    if (long <= 5) return Piece.Roof_RoundTiles_8x10;
+    if (long <= 6) return Piece.Roof_RoundTiles_8x12;
+    return Piece.Roof_RoundTiles_8x14;
+}
+
+// A free-standing wall from `a` to `b` (whole 2 m segments along x or z), stone on both faces. Bits of `windows` make
+// a segment a window (a barrier's), and `gateSegment` an opening for gate `gate` (its bars or door drawn by the gate).
+void StoneWall(mut Plan plan, float2 a, float2 b, long windows, int gateSegment = -1, int gate = -1)
+{
+    var step = Toward(a, b);
+    var count = int(Math.Round(Math.Length(b - a) / 2));
+    var side = step.x != 0 ? 0 : 1;           // Its face: north for a wall along x, east for one along z
+    for (var s = 0; s < count; s++)
+    {
+        var at = a + step * (1 + s * 2);
+        var bit = 1L << s;
+        if (s == gateSegment)
+        {
+            Place(plan, Piece.Corner_ExteriorWide_Brick, Flat3(at - step * 1.0), 0);
+            Place(plan, Piece.Corner_ExteriorWide_Brick, Flat3(at + step * 1.0), 0);
+            continue;
+        }
+        var piece = (windows & bit) != 0 ? Piece.Wall_UnevenBrick_Window_Wide_Round : Piece.Wall_UnevenBrick_Straight;
+        // Two pieces back to back, so both faces are stone; each one's inside is the other's
+        var way = SideWay(side);
+        Place(plan, piece, Flat3(at - way * 0.21), SideYaw(side));
+        Place(plan, piece, Flat3(at + way * 0.21), SideYaw((side + 2) % 4));
+    }
+    // A post at each end and every few segments
+    for (var s = 0; s <= count; s += 3) Place(plan, Piece.Corner_ExteriorWide_Brick, Flat3(a + step * (s * 2)), 0);
+    Place(plan, Piece.Corner_ExteriorWide_Brick, Flat3(b), 0);
+    // Its boxes, either side of the gate
+    var thick = float2(Math.Abs(step.y), Math.Abs(step.x)) * 0.32;
+    if (gateSegment < 0 || gateSegment >= count)
+    {
+        BlockFlat(plan, Math.Min(a, b) - thick, Math.Max(a, b) + thick, STOREY, -1);
+        return;
+    }
+    var g0 = a + step * (gateSegment * 2);
+    var g1 = g0 + step * 2;
+    if (gateSegment > 0) BlockFlat(plan, Math.Min(a, g0) - thick, Math.Max(a, g0) + thick, STOREY, -1);
+    if (gateSegment < count - 1) BlockFlat(plan, Math.Min(g1, b) - thick, Math.Max(g1, b) + thick, STOREY, -1);
+    BlockFlat(plan, Math.Min(g0, g1) - thick, Math.Max(g0, g1) + thick, STOREY, gate);
+}
+
+void BlockFlat(mut Plan plan, float2 lo, float2 hi, float high, int gate)
+{
+    Block(plan, float3(lo.x, 0, lo.y), float3(hi.x, high, hi.y), gate);
+}
+
+// Paving: the kit's floor tiles, 2 m square, over x0..x1 by z0..z1.
+void Pave(mut Plan plan, Piece tile, float x0, float z0, float x1, float z1, float y)
+{
+    for (var x = x0 + 1; x < x1; x += 2)
+    {
+        for (var z = z0 + 1; z < z1; z += 2)
+        {
+            var turn = (Math.Hash(int2(int(x * 7), int(z * 13))) & 3) * Math.PI * 0.5;
+            plan.placements.Add(Put { piece = tile, at = float3(x, y, z), yaw = turn, open = y > 0.05 ? 0.0 : 1.0 });
+        }
+    }
+}
+
+int AddGate(mut Plan plan, int cost, Zone a, Zone b, GateLook look, float3 at, float yaw, float width)
+{
+    plan.gates.Add(Gate { cost = cost, a = a, b = b, look = look, at = at, yaw = yaw, width = width });
+    return plan.gates.count - 1;
+}
+
+// A barrier window in a building's segment: `at` the segment's middle on its line, `side` the way the wall faces
+// (the zombies' side), `deep` how far out their spawn is.
+void AddWindow(mut Plan plan, Zone zone, float2 at, int side, float deep)
+{
+    var way = SideWay(side);
+    var inward = -way;
+    plan.windows.Add(Window
+    {
+        zone = zone,
+        at = float3(at.x, 1.05, at.y),
+        yaw = SideYaw((side + 2) % 4),
+        outside = Flat3(at + way * 0.85),
+        inside = Flat3(at + inward * 0.95),
+        spawn = Flat3(at + way * deep),
+    });
+}
+
+// A window in a free-standing wall, its zombies on the side `side` faces.
+void AddWallWindow(mut Plan plan, Zone zone, float2 at, int side, float deep)
+{
+    AddWindow(plan, zone, at, side, deep);
+}
+
+void AddStall(mut Plan plan, Sale sale, int item, float3 at, float yaw, Zone zone)
+{
+    plan.stalls.Add(Stall { sale = sale, item = item, at = at, yaw = yaw, zone = zone });
+}
+
+void AddArea(mut Plan plan, Zone zone, float x0, float z0, float x1, float z1)
+{
+    plan.areas.Add(Area { zone = zone, lo = float2(x0, z0), hi = float2(x1, z1) });
+}
+
+// Which area a place is in: the first that has it.
+Zone ZoneAt(Plan plan, float3 at)
+{
+    foreach (var area in plan.areas)
+    {
+        if (at.x >= area.lo.x && at.x <= area.hi.x && at.z >= area.lo.y && at.z <= area.hi.y) return area.zone;
+    }
+    return Zone.Outside;
+}
+
+Plan MakePlan()
+{
+    mut Plan plan = Plan { };
+    AddArea(plan, Zone.Tavern, 12.3, -1.7, 25.7, 5.7);
+    AddArea(plan, Zone.Chapel, -4.7, 18.3, 4.7, 31.7);
+    AddArea(plan, Zone.Square, -10, -14, 12, 18);
+    AddArea(plan, Zone.Square, -18, 2, -10, 6);
+    AddArea(plan, Zone.Stables, 12, -32, 34, -2);
+    AddArea(plan, Zone.Smithy, -12, -32, 12, -14);
+    AddArea(plan, Zone.Graveyard, -34, 14, -5, 36);
+    AddArea(plan, Zone.Keep, -34, -8, -18, 14);
+
+    // ---- The doors between the areas ----
+    var tavernFront = AddGate(plan, 750, Zone.Square, Zone.Tavern, GateLook.Door, float3(12, 0, 1), Math.PI * 0.5, 1.2);
+    var tavernBack = AddGate(plan, 1000, Zone.Tavern, Zone.Stables, GateLook.Door, float3(21, 0, -2), Math.PI, 1.2);
+    var chapelStreet = AddGate(plan, 1000, Zone.Square, Zone.Chapel, GateLook.Rubble, float3(0, 0, 14.5), 0, 4);
+    var chapelSide = AddGate(plan, 750, Zone.Chapel, Zone.Graveyard, GateLook.Door, float3(-5, 0, 25), -Math.PI * 0.5, 1.2);
+    var graveGate = AddGate(plan, 1250, Zone.Graveyard, Zone.Keep, GateLook.Bars, float3(-25, 0, 14), Math.PI, 2);
+    var keepAlley = AddGate(plan, 1250, Zone.Square, Zone.Keep, GateLook.Bars, float3(-18, 0, 4), -Math.PI * 0.5, 4);
+    var smithyAlley = AddGate(plan, 1000, Zone.Square, Zone.Smithy, GateLook.Rubble, float3(0, 0, -15), Math.PI, 4);
+    var stableDoor = AddGate(plan, 750, Zone.Stables, Zone.Smithy, GateLook.Bars, float3(12, 0, -23), -Math.PI * 0.5, 2);
+
+    // ---- The square: cobbles, the houses round it, the well ----
+    Pave(plan, Piece.Floor_UnevenBrick, -10, -8, 12, 12, 0);
+    Pave(plan, Piece.Floor_UnevenBrick, -2, -16, 2, -8, 0);       // The alley to the smithy
+    Pave(plan, Piece.Floor_UnevenBrick, -2, 12, 2, 18, 0);        // The street to the chapel
+    Pave(plan, Piece.Floor_UnevenBrick, -18, 2, -10, 6, 0);       // The alley to the keep
+    // West: two houses either side of the keep's alley; the dead come in through the south one's windows
+    House(plan, Timber(), -18, -8, 4, 5, 2, false, 0, (1L << 5) | (1L << 7));
+    AddWindow(plan, Zone.Square, float2(-10, -5), 3, 3.0);
+    House(plan, Stone(), -18, 6, 4, 4, 2, false, 1L << 4, 1L << 6);
+    // North: either side of the street up to the chapel
+    House(plan, Stone(), -10, 12, 4, 3, 2, true, 0, (1L << 0) | (1L << 2));
+    House(plan, Timber(), 2, 12, 5, 3, 2, true, 1L << 1, (1L << 3));
+    AddWindow(plan, Zone.Square, float2(9, 12), 0, 3.0);
+    // East: the tavern, between two houses
+    House(plan, Timber(), 12, 8, 4, 2, 2, false, 0, (1L << 8) | (1L << 10));
+    StoneWall(plan, float2(12, 6), float2(12, 8), 0);
+    House(plan, Stone(), 12, -10, 3, 3, 2, false, 0, (1L << 9) | (1L << 11));
+    StoneWall(plan, float2(12, -4), float2(12, -2), 0);
+    // South: either side of the alley down to the smithy
+    House(plan, Stone(), -10, -14, 4, 3, 2, true, 0, (1L << 9) | (1L << 11));
+    AddWindow(plan, Zone.Square, float2(-7, -8), 2, 3.0);
+    House(plan, Timber(), 2, -14, 4, 3, 2, true, 1L << 8, 0);
+    StoneWall(plan, float2(10, -8), float2(12, -8), 0);
+    // The well, and the market's stalls
+    Place(plan, Piece.Stall_Empty, float3(-6, 0, 8), Math.PI);
+    Place(plan, Piece.Stall_Cart_Empty, float3(7, 0, -4), -0.4);
+    Place(plan, Piece.Barrel, float3(-8.6, 0, 9.6), 0.3);
+    Place(plan, Piece.Barrel_Apples, float3(-7.4, 0, 10.2), 1.1);
+    Place(plan, Piece.Crate_Wooden, float3(8.8, 0, -6.6), 0.2);
+    Place(plan, Piece.FarmCrate_Apple, float3(9.6, 0, -5.2), 0.9);
+    Place(plan, Piece.Bench, float3(-3, 0, 2.6), 0);
+    Block(plan, float3(-0.9, 0, -0.9), float3(0.9, 1.0, 0.9), -1);  // The well
+    WallTorch(plan, float3(-9.9, 2.0, 0), 1);
+    WallTorch(plan, float3(11.9, 2.0, 2.5), 3);
+    WallTorch(plan, float3(-2.8, 2.0, 11.9), 2);
+    WallTorch(plan, float3(2.8, 2.0, -7.9), 0);
+    // The chapel's street is blocked with what the villagers piled there
+    plan.placements.Add(Put { piece = Piece.Prop_Wagon, at = float3(-0.6, 0, 15.6), yaw = 1.35, gate = chapelStreet });
+    plan.placements.Add(Put { piece = Piece.Barrel, at = float3(1.2, 0, 13.6), yaw = 0.2, gate = chapelStreet });
+    plan.placements.Add(Put { piece = Piece.Crate_Wooden, at = float3(-1.3, 0, 13.4), yaw = 0.7, gate = chapelStreet });
+    plan.placements.Add(Put { piece = Piece.Crate_Wooden, at = float3(-1.1, 0.8, 13.6), yaw = 0.2, gate = chapelStreet });
+    BlockFlat(plan, float2(-2, 13), float2(2, 16), 2.2, chapelStreet);
+    // ...and the smithy's alley
+    plan.placements.Add(Put { piece = Piece.Stall_Cart_Empty, at = float3(0.2, 0, -15.2), yaw = 1.6, gate = smithyAlley });
+    plan.placements.Add(Put { piece = Piece.Barrel, at = float3(-1.3, 0, -14.2), yaw = 0.6, gate = smithyAlley });
+    plan.placements.Add(Put { piece = Piece.Crate_Wooden, at = float3(1.3, 0, -14.4), yaw = 0.1, gate = smithyAlley });
+    BlockFlat(plan, float2(-2, -16), float2(2, -14), 2.2, smithyAlley);
+    // The keep's alley has iron bars across it
+    BlockFlat(plan, float2(-18.3, 2), float2(-17.7, 6), 3, keepAlley);
+    AddStall(plan, Sale.Weapon, int(Weapon.HandAxe), float3(-9.65, 1.5, -3), Math.PI * 0.5, Zone.Square);
+    AddStall(plan, Sale.Weapon, int(Weapon.HuntingBow), float3(7, 1.5, -7.65), 0, Zone.Square);
+    plan.starts.Add(float3(-2, 0, -2));
+    plan.starts.Add(float3(2, 0, -2));
+    plan.starts.Add(float3(-2, 0, 3));
+    plan.starts.Add(float3(2, 0, 3));
+    plan.risers.Add(Riser { zone = Zone.Square, at = float3(-7, 0, -5) });
+    plan.risers.Add(Riser { zone = Zone.Square, at = float3(8, 0, 9) });
+
+    // ---- The tavern: a long hall, its bar at the east end ----
+    House(plan, Timber(), 12, -2, 7, 4, 2, true, 0, (1L << 7) | (1L << 10) | (1L << 11) | (1L << 13), 20, tavernFront, 4, tavernBack);
+    Pave(plan, Piece.Floor_WoodDark, 12, -2, 26, 6, 0.02);
+    AddWindow(plan, Zone.Tavern, float2(26, -1), 1, 3.0);
+    AddWindow(plan, Zone.Tavern, float2(26, 5), 1, 3.0);
+    PlaceIn(plan, Piece.Table_Large, float3(16, 0, 2.5), 0);
+    PlaceIn(plan, Piece.Table_Large, float3(19.5, 0, 0.5), 0.1);
+    PlaceIn(plan, Piece.Bench, float3(16, 0, 3.6), 0);
+    PlaceIn(plan, Piece.Bench, float3(16, 0, 1.4), Math.PI);
+    PlaceIn(plan, Piece.Chair_1, float3(19.5, 0, 1.6), Math.PI);
+    PlaceIn(plan, Piece.Chair_1, float3(18.4, 0, 0.4), Math.PI * 0.5);
+    PlaceIn(plan, Piece.Barrel, float3(25, 0, 4.9), 0);
+    PlaceIn(plan, Piece.Barrel, float3(24, 0, 5.1), 0.6);
+    PlaceIn(plan, Piece.Barrel_Holder, float3(25, 0, 2.8), -Math.PI * 0.5);
+    PlaceIn(plan, Piece.Chandelier, float3(17.5, 4.6, 2), 0);
+    PlaceIn(plan, Piece.Mug, float3(16.2, 0.95, 2.4), 0);
+    Block(plan, float3(14.4, 0, 1.9), float3(17.6, 0.9, 3.1), -1);
+    Block(plan, float3(18.3, 0, -0.1), float3(20.7, 0.9, 1.1), -1);
+    Block(plan, float3(23.6, 0, 1.5), float3(25.7, 1.6, 5.7), -1);
+    plan.torches.Add(float3(17.5, 4.2, 2));
+    WallTorch(plan, float3(24.4, 2.0, -1.69), 0);
+    AddStall(plan, Sale.Brew, int(Brew.Ironhide), float3(23.3, 1.2, 3.4), -Math.PI * 0.5, Zone.Tavern);
+    AddStall(plan, Sale.Weapon, int(Weapon.LightCrossbow), float3(15, 1.5, 5.65), Math.PI, Zone.Tavern);
+    AddStall(plan, Sale.Weapon, int(Weapon.Dagger), float3(19, 1.5, -1.65), 0, Zone.Tavern);
+    AddStall(plan, Sale.Chest, 0, float3(21.5, 0, 4.8), Math.PI, Zone.Tavern);
+
+    // ---- The lane and the stables ----
+    House(plan, Stone(), 24, -10, 4, 4, 1, false, 0, 0);
+    Pave(plan, Piece.Floor_UnevenBrick, 18, -10, 24, -2, 0);
+    StoneWall(plan, float2(12, -32), float2(34, -32), (1L << 6));
+    AddWallWindow(plan, Zone.Stables, float2(25, -32), 2, 4.0);
+    StoneWall(plan, float2(34, -32), float2(34, -10), (1L << 5));
+    AddWallWindow(plan, Zone.Stables, float2(34, -21), 1, 4.0);
+    StoneWall(plan, float2(32, -10), float2(34, -10), 0);
+    House(plan, Timber(), 22, -30, 5, 3, 1, true, (1L << 6) | (1L << 8), 0);
+    Place(plan, Piece.Prop_Wagon, float3(16, 0, -17), 0.4);
+    Block(plan, float3(14.8, 0, -19.4), float3(17.2, 1.6, -14.6), -1);
+    Place(plan, Piece.FarmCrate_Carrot, float3(30, 0, -12.5), 0.3);
+    Place(plan, Piece.Bucket_Wooden_1, float3(21, 0, -24), 0);
+    Place(plan, Piece.Rope_1, float3(24.5, 0, -11), 0);
+    WallTorch(plan, float3(22.6, 2.0, -2.1), 2);
+    WallTorch(plan, float3(27, 2.0, -23.9), 0);
+    WallTorch(plan, float3(14, 2.0, -31.69), 0);
+    AddStall(plan, Sale.FirePots, 0, float3(31.65, 1.5, -26), -Math.PI * 0.5, Zone.Stables);
+    AddStall(plan, Sale.Chest, 0, float3(28, 0, -14), Math.PI, Zone.Stables);
+    plan.risers.Add(Riser { zone = Zone.Stables, at = float3(30, 0, -18) });
+    plan.risers.Add(Riser { zone = Zone.Stables, at = float3(18, 0, -27) });
+
+    // ---- The smithy, through the alley south of the square ----
+    StoneWall(plan, float2(-12, -32), float2(12, -32), (1L << 2) | (1L << 9));
+    AddWallWindow(plan, Zone.Smithy, float2(-7, -32), 2, 4.0);
+    AddWallWindow(plan, Zone.Smithy, float2(7, -32), 2, 4.0);
+    StoneWall(plan, float2(-12, -32), float2(-12, -14), (1L << 4));
+    AddWallWindow(plan, Zone.Smithy, float2(-12, -23), 3, 4.0);
+    StoneWall(plan, float2(12, -32), float2(12, -14), 0, 4, stableDoor);
+    House(plan, Stone(), -8, -30, 4, 3, 1, true, 0, (1L << 9));
+    Place(plan, Piece.Anvil, float3(-2.5, 0, -21), 0.3);
+    Place(plan, Piece.Workbench, float3(5, 0, -24.3), Math.PI);
+    Place(plan, Piece.WeaponStand, float3(8, 0, -16.5), 0);
+    Place(plan, Piece.Barrel, float3(9.6, 0, -30.4), 0.4);
+    Place(plan, Piece.Chain_Coil, float3(4, 0, -29), 0);
+    Block(plan, float3(4.1, 0, -25), float3(5.9, 1.0, -23.6), -1);
+    WallTorch(plan, float3(-3.5, 2.0, -14.1), 2);
+    WallTorch(plan, float3(11.69, 2.0, -27), 3);
+    AddStall(plan, Sale.Forge, 0, float3(-2.5, 0.9, -21), 0, Zone.Smithy);
+    AddStall(plan, Sale.Brew, int(Brew.Quickhand), float3(-6.6, 1.2, -23.65), 0, Zone.Smithy);
+    AddStall(plan, Sale.Weapon, int(Weapon.Longsword), float3(-11.65, 1.5, -18), Math.PI * 0.5, Zone.Smithy);
+    AddStall(plan, Sale.Weapon, int(Weapon.WarHammer), float3(11.65, 1.5, -18), -Math.PI * 0.5, Zone.Smithy);
+    AddStall(plan, Sale.Weapon, int(Weapon.Halberd), float3(2, 1.5, -24.35), Math.PI, Zone.Smithy);
+    plan.risers.Add(Riser { zone = Zone.Smithy, at = float3(6, 0, -20) });
+    plan.risers.Add(Riser { zone = Zone.Smithy, at = float3(-8, 0, -18) });
+
+    // ---- The chapel, up the street ----
+    mut var chapel = Chapelstone();
+    chapel.roofScale = 1.25;
+    House(plan, chapel, -5, 18, 5, 7, 2, false, 0, (1L << 7) | (1L << 10) | (1L << 15) | (1L << 18), 2, -1, 20, chapelSide);
+    Pave(plan, Piece.Floor_Brick, -5, 18, 5, 32, 0.02);
+    AddWindow(plan, Zone.Chapel, float2(5, 23), 1, 3.0);
+    AddWindow(plan, Zone.Chapel, float2(5, 29), 1, 3.0);
+    PlaceIn(plan, Piece.Bench, float3(-2, 0, 22), 0);
+    PlaceIn(plan, Piece.Bench, float3(2, 0, 22), 0);
+    PlaceIn(plan, Piece.Bench, float3(-2, 0, 24.5), 0);
+    PlaceIn(plan, Piece.Bench, float3(2, 0, 24.5), 0);
+    PlaceIn(plan, Piece.CandleStick_Stand, float3(-2.5, 0, 30), 0);
+    PlaceIn(plan, Piece.CandleStick_Stand, float3(2.5, 0, 30), 0);
+    PlaceIn(plan, Piece.Table_Large, float3(0, 0, 30.4), 0);
+    PlaceIn(plan, Piece.Banner_1, float3(-4.6, 2.2, 28), Math.PI * 0.5);
+    Block(plan, float3(-3, 0, 21.6), float3(-1, 0.9, 22.4), -1);
+    Block(plan, float3(1, 0, 21.6), float3(3, 0.9, 22.4), -1);
+    Block(plan, float3(-3, 0, 24.1), float3(-1, 0.9, 24.9), -1);
+    Block(plan, float3(1, 0, 24.1), float3(3, 0.9, 24.9), -1);
+    Block(plan, float3(-1.6, 0, 29.8), float3(1.6, 1.0, 31.0), -1);
+    plan.torches.Add(float3(-2.5, 1.6, 30));
+    plan.torches.Add(float3(2.5, 1.6, 30));
+    AddStall(plan, Sale.Brew, int(Brew.SecondWind), float3(3.3, 1.2, 30.5), -Math.PI * 0.5, Zone.Chapel);
+    AddStall(plan, Sale.Weapon, int(Weapon.Mace), float3(-4.65, 1.5, 20.5), Math.PI * 0.5, Zone.Chapel);
+    AddStall(plan, Sale.Weapon, int(Weapon.Spear), float3(4.65, 1.5, 26), -Math.PI * 0.5, Zone.Chapel);
+    AddStall(plan, Sale.Bells, 0, float3(4.65, 1.5, 20.5), -Math.PI * 0.5, Zone.Chapel);
+    WallTorch(plan, float3(4.69, 2.0, 19.2), 3);
+    AddStall(plan, Sale.Chest, 0, float3(-3.6, 0, 28.5), Math.PI * 0.5, Zone.Chapel);
+
+    // ---- The graveyard, west of the chapel ----
+    StoneWall(plan, float2(-34, 36), float2(-4, 36), 0);
+    StoneWall(plan, float2(-34, 14), float2(-34, 36), 0);
+    StoneWall(plan, float2(-34, 14), float2(-18, 14), 0, 4, graveGate);
+    StoneWall(plan, float2(-5, 32), float2(-5, 36), 0);
+    House(plan, Timber(), -32, 30, 2, 2, 1, false, 1L << 2, 0);    // The gravedigger's shed
+    Place(plan, Piece.DeadTree_1, float3(-14, 0, 30), 0.4);
+    Place(plan, Piece.DeadTree_3, float3(-28, 0, 19), 2.1);
+    Place(plan, Piece.TwistedTree_3, float3(-9, 0, 34), 1.0);
+    Place(plan, Piece.DeadTree_2, float3(-22, 0, 33), 3.0);
+    Block(plan, float3(-14.5, 0, 29.5), float3(-13.5, 4, 30.5), -1);
+    Block(plan, float3(-28.5, 0, 18.5), float3(-27.5, 4, 19.5), -1);
+    Block(plan, float3(-9.5, 0, 33.5), float3(-8.5, 4, 34.5), -1);
+    Block(plan, float3(-22.5, 0, 32.5), float3(-21.5, 4, 33.5), -1);
+    WallTorch(plan, float3(-5.1, 2.0, 19.6), 3);
+    WallTorch(plan, float3(-30, 2.0, 29.9), 2);
+    for (var i = 0; i < 10; i++)
+    {
+        var h = Math.Hash(int2(i, 77));
+        var at = float3(-28 + (i % 5) * 4.6 + ((h & 7) - 3) * 0.15, 0, 21 + (i / 5) * 7 + ((h >> 3) & 7) * 0.2);
+        plan.risers.Add(Riser { zone = Zone.Graveyard, at = at + float3(0, 0, 1.6) });
+    }
+    AddStall(plan, Sale.Weapon, int(Weapon.Scythe), float3(-28, 1.5, 30), 0, Zone.Graveyard);
+    AddStall(plan, Sale.Brew, int(Brew.Fleetfoot), float3(-16, 1.2, 35.4), Math.PI, Zone.Graveyard);
+    AddStall(plan, Sale.Chest, 0, float3(-20, 0, 24.5), 0, Zone.Graveyard);
+
+    // ---- The keep, west of the square ----
+    StoneWall(plan, float2(-34, -8), float2(-34, 14), (1L << 3) | (1L << 8));
+    AddWallWindow(plan, Zone.Keep, float2(-34, -1), 3, 4.0);
+    AddWallWindow(plan, Zone.Keep, float2(-34, 9), 3, 4.0);
+    StoneWall(plan, float2(-34, -8), float2(-18, -8), 0);
+    House(plan, Stone(), -30, 2, 3, 3, 3, false, 1L << 4, 0);    // The tower
+    Place(plan, Piece.Crate_Metal, float3(-20, 0, -6), 0.3);
+    Place(plan, Piece.Barrel, float3(-32.4, 0, 12.4), 0.9);
+    plan.braziers.Add(float3(-21, 0, 1));
+    plan.braziers.Add(float3(-21, 0, 11));
+    plan.braziers.Add(float3(-31, 0, -5));
+    WallTorch(plan, float3(-23.9, 2.0, 6.4), 1);
+    AddStall(plan, Sale.Beacon, 0, float3(-23.7, 1.3, 3.6), Math.PI * 0.5, Zone.Keep);
+    AddStall(plan, Sale.Brew, int(Brew.Twinstrike), float3(-33.3, 1.2, 4), Math.PI * 0.5, Zone.Keep);
+    AddStall(plan, Sale.Brew, int(Brew.Packmule), float3(-26, 1.2, -7.35), 0, Zone.Keep);
+    AddStall(plan, Sale.Weapon, int(Weapon.Arbalest), float3(-18.35, 1.5, -3), -Math.PI * 0.5, Zone.Keep);
+    AddStall(plan, Sale.Chest, 0, float3(-26, 0, 12.6), Math.PI, Zone.Keep);
+    plan.risers.Add(Riser { zone = Zone.Keep, at = float3(-28, 0, -4) });
+    plan.risers.Add(Riser { zone = Zone.Keep, at = float3(-22, 0, 9) });
+
+    // ---- What dresses the stalls and the graves ----
+    foreach (var stall in plan.stalls)
+    {
+        if (stall.sale != Sale.Brew) continue;
+        var out = float3(Math.Sin(stall.yaw), 0, Math.Cos(stall.yaw));
+        plan.placements.Add(Put { piece = Piece.Barrel, at = float3(stall.at.x, 0, stall.at.z) + out * 0.15, yaw = stall.yaw });
+        plan.placements.Add(Put { piece = Piece.Shelf_Small_Bottles, at = float3(stall.at.x, 1.75, stall.at.z) - out * 0.12, yaw = stall.yaw });
+        BlockFlat(plan, float2(stall.at.x - 0.45, stall.at.z - 0.45) + out.xz * 0.15, float2(stall.at.x + 0.45, stall.at.z + 0.45) + out.xz * 0.15, 1.0, -1);
+    }
+    foreach (var at in plan.braziers)
+    {
+        plan.dressing.Add(ItemPut { item = "brazier", at = at });
+        Block(plan, at - float3(0.5, 0, 0.5), at + float3(0.5, 1.4, 0.5), -1);
+    }
+    for (var i = 0; i < plan.risers.count; i++)
+    {
+        var riser = plan.risers[i];
+        if (riser.zone != Zone.Graveyard) continue;
+        var h = Math.Hash(int2(i, 313));
+        plan.dressing.Add(ItemPut { item = "grave_mound", at = riser.at, yaw = ((h & 7) - 3) * 0.04 });
+        var stone = (h >> 3) % 3 == 0 ? "gravestone_a" : (h >> 3) % 3 == 1 ? "gravestone_b" : "gravestone_c";
+        plan.dressing.Add(ItemPut { item = stone, at = riser.at + float3(0, 0, 1.15), yaw = Math.PI + ((h >> 6) & 7) * 0.04 - 0.14 });
+        Block(plan, riser.at + float3(-0.4, 0, 0.98), riser.at + float3(0.4, 1.1, 1.32), -1);
+    }
+    for (var i = 0; i < 16; i++)
+    {
+        var h = Math.Hash(int2(i, 911));
+        var at = float3(-31 + (h & 255) / 255.0 * 22, 0, 16.5 + ((h >> 8) & 255) / 255.0 * 17);
+        mut var near = false;
+        foreach (var riser in plan.risers)
+            if (Math.Distance(riser.at, at) < 2.6) near = true;
+        if (near) continue;
+        var stone = (h >> 16) % 3 == 0 ? "gravestone_a" : (h >> 16) % 3 == 1 ? "gravestone_b" : "gravestone_c";
+        plan.dressing.Add(ItemPut { item = stone, at = at, yaw = ((h >> 20) & 63) * 0.02 - 0.6 + Math.PI, scale = 0.9 + ((h >> 26) & 3) * 0.08 });
+        Block(plan, at - float3(0.35, 0, 0.18), at + float3(0.35, 1.1, 0.18), -1);
+    }
+
+    // ---- The doors' leaves and the gates' bars ----
+    for (var g = 0; g < plan.gates.count; g++)
+    {
+        var gate = plan.gates[g];
+        var along = float3(Math.Sin(gate.yaw + Math.PI * 0.5), 0, Math.Cos(gate.yaw + Math.PI * 0.5));
+        if (gate.look == GateLook.Door)
+        {
+            plan.placements.Add(Put { piece = Piece.Door_4_Round, at = gate.at - along * 0.55, yaw = gate.yaw, gate = g });
+        }
+        else if (gate.look == GateLook.Bars)
+        {
+            var pieces = int(Math.Round(gate.width / 2));
+            for (var k = 0; k < pieces; k++)
+            {
+                var offset = (k - (pieces - 1) * 0.5) * 2.0;
+                plan.placements.Add(Put { piece = Piece.Prop_MetalFence_Ornament, at = gate.at + along * offset, yaw = gate.yaw, gate = g });
+            }
+        }
+    }
+
+    // ---- Beyond the walls: woods in the fog ----
+    for (var i = 0; i < 70; i++)
+    {
+        var h = Math.Hash(int2(i, 4242));
+        var angle = (h & 1023) / 1023.0 * Math.TAU;
+        var far = 48 + ((h >> 10) & 255) / 255.0 * 50;
+        var at = float3(Math.Cos(angle) * far, 0, Math.Sin(angle) * far + 2);
+        var tree = (h >> 18) % 4 == 0 ? Piece.TwistedTree_3 : (h >> 18) % 4 == 1 ? Piece.DeadTree_2 : (h >> 18) % 4 == 2 ? Piece.DeadTree_3 : Piece.DeadTree_1;
+        Place(plan, tree, at, ((h >> 20) & 63) * 0.1);
+    }
+    return plan;
+}

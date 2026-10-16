@@ -1,0 +1,263 @@
+// Where this machine looks from, and what it gathers for the frame: the
+// village's pieces once (again while a door swings), the ones near enough each
+// frame, and the lamps: torches and candles, the beacon's braziers once the
+// power is on, the dead that burn, fireballs and the chest's light.
+using Rooms;
+
+// Which survivor this machine plays, and how its eye moves.
+local singleton Me
+{
+    int seat = -1;
+    float3 eye;
+    quaternion turn = quaternion.identity;
+    float yaw;
+    float pitch;
+    float dt;
+    float clock;
+    float bob;
+    float settle;               // The eye's height, catching up with a step or a landing
+    float dip;                  // A landing's dip
+    float kick;                 // Recoil, radians up
+    float shake;                // A blast's or a blow's, 0 to 1
+    float zoom;                 // Aiming in, 0 to 1
+    float hurt;                 // The red of a fresh blow
+    bool wasGrounded = true;
+    float3 last;                // Last frame's feet, for footfalls
+    int overhead;               // Development: 1 looks down on the whole village (F9), 2 from a corner
+}
+
+local singleton Village
+{
+    Plan plan;
+    float[16] shown;            // Each gate as drawn: 0 shut, 1 open
+    bool made;
+}
+
+[Stage(Layers.Prepare, -2)]
+view Forget(mut Me me)
+{
+    me.seat = -1;
+}
+
+[Stage(Layers.Prepare, -1)]
+view Mine(Survivor survivor, mut Me me, with ownership)
+{
+    me.seat = survivor.seat;
+}
+
+// The eye: this machine's survivor's, or a slow flight over the square behind the title.
+[Stage(Layers.Prepare)]
+view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit kit, mut Shapes shapes, mut Village village, Match match,
+             Lobby lobby, Devices devices, query (Survivor survivor) survivors, query (Zombie zombie) zombies, query (Missile missile) missiles)
+{
+    if (!village.made)
+    {
+        village.plan = MakePlan();
+        village.made = true;
+    }
+    if (!kit.made)
+    {
+        LoadKit(kit);
+        PlaceKit(kit, village.plan, village.shown);
+        kit.made = true;
+    }
+    if (!shapes.made) MakeShapes(shapes);
+    me.dt = Math.Min(Frame.dt, 0.05);
+    me.clock += me.dt;
+    if (me.clock > 3600) me.clock -= 3600;
+    Focus(lens, look);
+
+    // Doors swing, bars rise and rubble falls away as they're bought
+    mut var moved = false;
+    for (var g = 0; g < village.plan.gates.count; g++)
+    {
+        var goal = GateOpen(match.gatesOpen, g) ? 1.0 : 0.0;
+        var now = village.shown[g];
+        if (now == goal) continue;
+        village.shown[g] = goal > now ? Math.Min(goal, now + me.dt * 1.2) : goal;
+        moved = true;
+    }
+    if (moved) PlaceKit(kit, village.plan, village.shown);
+
+    // Whose eyes
+    var seat = me.seat;
+    mut var found = false;
+    mut var mine = Survivor { };
+    foreach (var row in survivors)
+    {
+        if (row.survivor.seat != seat) continue;
+        mine = row.survivor;
+        found = true;
+    }
+    var playing = lobby.playing && found && mine.ready;
+    me.kick = Math.Max(0, me.kick - me.dt * 4);
+    me.shake = Math.Max(0, me.shake - me.dt * 2.5);
+    me.hurt = Math.Max(0, me.hurt - me.dt * 0.9);
+    mut var eye = float3(0);
+    if (playing)
+    {
+        var moving = Math.Length(mine.velocity.xz);
+        if (mine.grounded && moving > 0.5) me.bob += me.dt * moving * 1.9;
+        var bob = Math.Sin(me.bob) * 0.035 * Math.Saturate(moving / 4);
+        if (mine.grounded && !me.wasGrounded) me.dip = 0.12;
+        me.wasGrounded = mine.grounded;
+        me.dip = Math.Max(0, me.dip - me.dt * 0.6);
+        var height = EyeHeight(mine);
+        me.settle += (mine.feet.y + height - me.settle) * Math.Min(1, me.dt * (mine.life == Life.Downed ? 4.0 : 18.0));
+        if (Math.Abs(mine.feet.y + height - me.settle) > 1.2 || mine.placed) me.settle = mine.feet.y + height;
+        eye = float3(mine.feet.x, me.settle + bob - me.dip, mine.feet.z);
+        var aimHeld = devices.mouse.right.pressed || devices.gamepad.leftTrigger > 0.4;
+        var aiming = Info(mine.weapons[mine.slot]).kind != Kind.Melee && aimHeld && mine.life == Life.Standing;
+        me.zoom += ((aiming ? 1.0 : 0.0) - me.zoom) * Math.Min(1, me.dt * 10);
+        var wobble = me.shake * 0.04;
+        var shakeYaw = (Math.Perlin(float2(me.clock * 23, 1.7)) * wobble);
+        var shakePitch = (Math.Perlin(float2(me.clock * 21, 7.1)) * wobble);
+        me.yaw = mine.yaw + shakeYaw;
+        me.pitch = mine.pitch + me.kick + shakePitch;
+        var roll = mine.life == Life.Downed ? 0.25 : Math.Sin(me.bob * 0.5) * 0.004 * Math.Saturate(moving / 4);
+        me.turn = Math.Mul(quaternion.Euler(-me.pitch, me.yaw, 0), quaternion.AxisAngle(float3(0, 0, 1), roll));
+        look.downed = mine.life == Life.Downed ? 1.0 : 0.0;
+        var low = 1 - Math.Saturate(mine.health / MaxHealth(mine));
+        look.hurt = Math.Max(me.hurt, mine.life == Life.Standing ? low * low * 0.9 : 0.6);
+        look.fov = 74 - me.zoom * 22;
+    }
+    else
+    {
+        // Behind the title: a slow drift round the square, clear of the market's cart and stall
+        var drift = me.clock * 0.035;
+        eye = float3(-1 + Math.Sin(drift) * 6, 2.4 + Math.Sin(me.clock * 0.13) * 0.3, -1 + Math.Cos(drift) * 6);
+        me.yaw = YawTo(eye, float3(0, 1, 4)) + Math.Sin(me.clock * 0.07) * 0.2;
+        me.pitch = 0.04;
+        me.turn = quaternion.Euler(-me.pitch, me.yaw, 0);
+        look.downed = 0;
+        look.hurt = 0;
+        look.fov = 70;
+    }
+    if (devices.keyboard.f9.down) me.overhead = (me.overhead + 1) % 3;
+    if (me.overhead == 1)
+    {
+        eye = float3(-2, 95, 2);
+        me.turn = quaternion.Euler(Math.PI * 0.5, 0, 0);
+        look.fov = 62;
+    }
+    else if (me.overhead == 2)
+    {
+        eye = float3(30, 38, -40);
+        me.turn = quaternion.Euler(0.62, -0.62, 0);
+        look.fov = 62;
+    }
+    me.eye = eye;
+    look.eye = eye;
+    look.time = me.clock;
+    look.power = match.power ? 1.0 : 0.0;
+    look.fade = match.phase == Phase.Over ? Math.Saturate(match.timer * 0.25) * 0.55 : 0.0;
+    lens.scene.SetCamera(float4x4.TRS(eye, me.turn, float3(1)), float4x4.PerspectiveFov(Math.Radians(look.fov), lens.size.x / Math.Max(1, lens.size.y), NEAR, FAR));
+    look.toClip = lens.scene.WorldToClip();
+    AimMoon(lens, look);
+    CullKit(kit, eye);
+    Audio.SetListener(eye, me.turn);
+    Audio.SetFalloff(2, 40);
+
+    // The lamps: nearest first, a few dozen at most
+    lights.list.Clear();
+    var plan = village.plan;
+    foreach (var at in plan.torches)
+    {
+        var flicker = 0.8 + Math.Perlin(float2(me.clock * 6.1 + at.x, at.z)) * 0.3;
+        AddLight(lights, eye, Light { at = at, color = float3(1.0, 0.5, 0.18) * 3.2 * flicker, reach = 10 });
+    }
+    foreach (var at in plan.braziers)
+    {
+        var lit = match.power ? 1.0 : 0.0;
+        if (lit <= 0) continue;
+        var flicker = 0.85 + Math.Perlin(float2(me.clock * 4.3 + at.x, at.z)) * 0.25;
+        AddLight(lights, eye, Light { at = at + float3(0, 1.8, 0), color = float3(1.0, 0.45, 0.12) * 6 * flicker, reach = 16 });
+    }
+    if (match.power)
+    {
+        // The Runeforge's glow, once there's fire in it
+        foreach (var stall in plan.stalls)
+        {
+            if (stall.sale != Sale.Forge) continue;
+            var working = match.forge == ForgeState.Working ? 1.6 : 1.0;
+            AddLight(lights, eye, Light { at = stall.at + float3(0, 0.6, 0), color = float3(0.3, 0.5, 1.0) * 3 * working, reach = 8 });
+        }
+    }
+    // The chest's beam
+    if (match.chest != ChestState.Gone && match.chest != ChestState.Fleeing)
+    {
+        var index = ChestStallOf(plan, match.chestSpot);
+        if (index >= 0) AddLight(lights, eye, Light { at = plan.stalls[index].at + float3(0, 1.4, 0), color = float3(0.6, 0.75, 1.0) * 2.2, reach = 7 });
+    }
+    foreach (var row in zombies)
+    {
+        if (row.zombie.burn <= 0 || row.zombie.state == ZombieState.Dying) continue;
+        AddLight(lights, eye, Light { at = row.zombie.at + float3(0, 1.2, 0), color = float3(1.0, 0.45, 0.1) * 2.5, reach = 6 });
+    }
+    foreach (var row in missiles)
+    {
+        if (row.missile.kind != Shot.Fireball) continue;
+        AddLight(lights, eye, Light { at = row.missile.at, color = float3(1.0, 0.5, 0.15) * 5, reach = 9 });
+    }
+}
+
+const int LIGHTS_MOST = 28;
+
+// A lamp, if it's among the nearest to the eye that can light what's seen.
+void AddLight(mut Lights lights, float3 eye, Light light)
+{
+    var far = Math.Distance(light.at, eye) - light.reach;
+    if (far > 30) return;
+    if (lights.list.count < LIGHTS_MOST)
+    {
+        lights.list.Add(light);
+        return;
+    }
+    // Full: in place of the farthest, if this is nearer
+    mut var worst = 0;
+    mut var worstFar = -1000.0;
+    for (var i = 0; i < lights.list.count; i++)
+    {
+        var f = Math.Distance(lights.list[i].at, eye) - lights.list[i].reach;
+        if (f > worstFar)
+        {
+            worstFar = f;
+            worst = i;
+        }
+    }
+    if (far < worstFar) lights.list[worst] = light;
+}
+
+int ChestStallOf(Plan plan, int spot)
+{
+    mut var n = 0;
+    for (var i = 0; i < plan.stalls.count; i++)
+    {
+        if (plan.stalls[i].sale != Sale.Chest) continue;
+        if (n == spot) return i;
+        n += 1;
+    }
+    return -1;
+}
+
+// Kicks to the eye from what happens: a blow taken, a blast near, a bow loosed.
+local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
+{
+    if (survivor.seat != me.seat) return;
+    me.hurt = 1;
+    me.shake = Math.Max(me.shake, 0.6);
+}
+
+local event(Blast blast) FeelBlast(mut Me me)
+{
+    var far = Math.Distance(blast.at, me.eye);
+    me.shake = Math.Max(me.shake, Math.Saturate(1.2 - far / 14));
+}
+
+local event(Loosed loosed) FeelLoosed(mut Me me)
+{
+    if (loosed.seat != me.seat) return;
+    var kind = Info(loosed.weapon).kind;
+    me.kick += kind == Kind.Gun ? 0.06 : kind == Kind.Crossbow ? 0.022 : kind == Kind.Staff ? 0.03 : 0.012;
+    if (kind == Kind.Gun) me.shake = Math.Max(me.shake, 0.35);
+}

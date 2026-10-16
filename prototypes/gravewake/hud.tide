@@ -1,0 +1,622 @@
+// What's written over the picture, after Black Ops 2's zombies: the round in
+// blood-red chalk in the bottom left, everyone's gold over it (with what each
+// blow earns floating off it), the brews drunk, the weapon and its arrows in
+// the bottom right, the crosshair and the mark of a blow landing, what use
+// would do, the power-ups running, a friend down, and the end.
+using Rooms;
+
+local singleton Feed
+{
+    List<Gain> gains;            // Points earned, floating off this machine's tally
+    float marker;                // Seconds left of the hit marker
+    bool markerKill;
+    float roundFlash;            // Seconds since the round changed
+    int roundShown;
+    string banner;               // A power-up's name, or what just happened, big in the middle
+    float bannerLeft;
+    Color bannerColor = Color.white;
+    float played;                // Seconds played, for the controls' reminder
+    float gameOver;
+}
+
+struct Gain
+{
+    int points;
+    float age;
+    float lane;
+}
+
+const Color GOLD = Color(0.95, 0.82, 0.45);
+const Color CHALK = Color(0.62, 0.04, 0.03);
+const Color BONE = Color(0.92, 0.88, 0.8);
+const Color ASH = Color(0.6, 0.57, 0.52);
+const Color SHADOW = Color(0, 0, 0, 0.8);
+
+float Unit()
+{
+    return Math.Max(1, Screen.height / 720);
+}
+
+void Write(string text, float2 at, float size, Color tint, Anchor anchor)
+{
+    Draw.Text(text, at + float2(1.5, 1.5) * Unit(), size, Color(0, 0, 0, tint.a * 0.85), anchor);
+    Draw.Text(text, at, size, tint, anchor);
+}
+
+void WriteBold(string text, float2 at, float size, Color tint, Anchor anchor)
+{
+    Draw.Text(text, at + float2(2, 2) * Unit(), size, Color(0, 0, 0, tint.a * 0.85), anchor, Font.Bold);
+    Draw.Text(text, at, size, tint, anchor, Font.Bold);
+}
+
+string HeroName(int seat)
+{
+    switch (seat)
+    {
+        case 0: return "Wat";
+        case 1: return "Maud";
+        case 2: return "Godric";
+    }
+    return "Agnes";
+}
+
+Color HeroColor(int seat)
+{
+    switch (seat)
+    {
+        case 0: return Color(0.45, 0.78, 0.38);
+        case 1: return Color(0.86, 0.3, 0.26);
+        case 2: return Color(0.38, 0.6, 0.92);
+    }
+    return Color(0.93, 0.76, 0.3);
+}
+
+Color BrewColor(Brew brew)
+{
+    switch (brew)
+    {
+        case Brew.Ironhide: return Color(0.85, 0.2, 0.15);
+        case Brew.Quickhand: return Color(0.3, 0.8, 0.35);
+        case Brew.SecondWind: return Color(0.35, 0.6, 0.95);
+        case Brew.Twinstrike: return Color(0.95, 0.75, 0.2);
+        case Brew.Fleetfoot: return Color(0.9, 0.9, 0.85);
+        case Brew.Packmule: return Color(0.6, 0.35, 0.85);
+    }
+    return Color.white;
+}
+
+string BoonName(Boon kind)
+{
+    switch (kind)
+    {
+        case Boon.MaxAmmo: return "FULL QUIVERS";
+        case Boon.InstaKill: return "DEATH'S TOUCH";
+        case Boon.DoublePoints: return "DOUBLE GOLD";
+        case Boon.Nuke: return "HOLY FIRE";
+    }
+    return "CARPENTER";
+}
+
+// The round, as chalk: strokes for the first five, numerals after.
+void DrawRound(int round, float2 at, float u, float flash)
+{
+    var red = Math.Lerp(CHALK, Color(1, 0.95, 0.85), Math.Saturate(1 - flash * 0.7));
+    if (round <= 0) return;
+    if (round <= 5)
+    {
+        for (var i = 0; i < Math.Min(round, 4); i++)
+        {
+            var x = at.x + i * 16 * u;
+            var lean = (Math.Hash(int2(i, round)) & 7) * 0.6 - 2;
+            Draw.Line(float2(x + 3 * u + 1, at.y - 58 * u + 1), float2(x + lean * u + 1, at.y + 1), 7 * u, Color(0, 0, 0, 0.6));
+            Draw.Line(float2(x + 3 * u, at.y - 58 * u), float2(x + lean * u, at.y), 7 * u, red);
+        }
+        if (round == 5)
+        {
+            Draw.Line(float2(at.x - 8 * u + 1, at.y - 12 * u + 1), float2(at.x + 62 * u + 1, at.y - 46 * u + 1), 7 * u, Color(0, 0, 0, 0.6));
+            Draw.Line(float2(at.x - 8 * u, at.y - 12 * u), float2(at.x + 62 * u, at.y - 46 * u), 7 * u, red);
+        }
+        return;
+    }
+    var text = $"{round}";
+    var size = 78 * u;
+    Draw.Text(text, at + float2(3, -26 * u + 3) * float2(1, 1), size, Color(0, 0, 0, 0.6), Anchor.MiddleLeft, Font.Bold);
+    // Chalk: a few passes, a little off each other
+    for (var pass = 0; pass < 3; pass++)
+    {
+        var off = float2(((pass * 37) % 5 - 2) * 0.6, ((pass * 53) % 5 - 2) * 0.6) * u;
+        Draw.Text(text, at + float2(0, -26 * u) + off, size, Color(red.r, red.g, red.b, 0.55), Anchor.MiddleLeft, Font.Bold);
+    }
+}
+
+// A brew's mark: a little bottle in its colour.
+void DrawBrew(Brew brew, float2 at, float u)
+{
+    var color = BrewColor(brew);
+    Draw.RoundRect(at, float2(26 * u, 30 * u), 6 * u, Color(0.05, 0.04, 0.03, 0.75));
+    Draw.Circle(at + float2(0, 3 * u), 9 * u, color);
+    Draw.Rect(at + float2(0, -8 * u), float2(6 * u, 7 * u), color);
+    Draw.Rect(at + float2(0, -12 * u), float2(8 * u, 3 * u), Color(0.45, 0.3, 0.15));
+    Draw.Circle(at + float2(-3 * u, 1 * u), 2.5 * u, Color(1, 1, 1, 0.5));
+}
+
+string PromptOf(Survivor me, Ashwick ashwick, Match match, Party party, out bool held)
+{
+    held = false;
+    if (me.aimed < 0) return "";
+    var kind = AimKind(me.aimed);
+    var index = AimIndex(me.aimed);
+    switch (kind)
+    {
+        case Target.Friend:
+            held = true;
+            return $"Hold E to revive {HeroName(index)}";
+        case Target.Window:
+            held = true;
+            return "Hold E to board up the window";
+        case Target.Gate:
+        {
+            var gate = ashwick.gates[index];
+            var what = gate.look == GateLook.Rubble ? "clear the way" : gate.look == GateLook.Bars ? "raise the gate" : "open the door";
+            return $"Press E to {what} [{gate.cost}]";
+        }
+        case Target.ChestPrize:
+            return $"Press E for the {Info(match.chestWeapon).name}";
+        case Target.ForgePrize:
+            return $"Press E for {Info(match.forgeWeapon).upName}";
+    }
+    var stall = ashwick.stalls[index];
+    switch (stall.sale)
+    {
+        case Sale.Weapon:
+        {
+            var weapon = Weapon(stall.item);
+            var info = Info(weapon);
+            for (var i = 0; i < 3; i++)
+            {
+                if (me.weapons[i] != weapon) continue;
+                if (!UsesAmmo(weapon)) return $"You carry the {info.name}";
+                return $"Press E for {(info.kind == Kind.Bow ? "arrows" : "bolts")} [{(me.forged[i] ? 4500 : AmmoCost(weapon))}]";
+            }
+            return $"Press E for the {info.name} [{info.cost}]";
+        }
+        case Sale.FirePots:
+            return $"Press E for fire pots [{FIREPOT_COST}]";
+        case Sale.Bells:
+            if (me.lures >= BELLS_MOST) return "You carry two grave bells";
+            return $"Press E for grave bells [{BELL_COST}]: Q rings one";
+        case Sale.Brew:
+        {
+            var brew = Brew(stall.item);
+            if (HasBrew(me, brew)) return $"You've drunk the {BrewName(brew)}";
+            if (!match.power && brew != Brew.SecondWind) return "The alchemist's fire is out: light the beacon";
+            return $"Press E for {BrewName(brew)} [{BrewCost(brew, Players(party))}]";
+        }
+        case Sale.Chest:
+            if (match.chest == ChestState.Shut) return $"Press E for the Pilgrim's Chest [{CHEST_COST}]";
+            return "";
+        case Sale.Forge:
+            if (!match.power) return "The Runeforge is cold: light the beacon";
+            if (match.forge == ForgeState.Working) return "The Runeforge is working";
+            if (match.forge == ForgeState.Offering) return "Not yours to take";
+            if (me.forged[me.slot]) return "That weapon bears the runes already";
+            return $"Press E to runeforge your weapon [{FORGE_COST}]";
+        case Sale.Beacon:
+            if (match.power) return "";
+            return "Press E to light the beacon";
+    }
+    return "";
+}
+
+string BrewLine(Brew brew)
+{
+    switch (brew)
+    {
+        case Brew.Ironhide: return "Take more blows";
+        case Brew.Quickhand: return "Reload, draw and switch faster";
+        case Brew.SecondWind: return "Revive faster; alone, rise again";
+        case Brew.Twinstrike: return "Strike faster and harder";
+        case Brew.Fleetfoot: return "Run faster and longer";
+        case Brew.Packmule: return "Carry a third weapon";
+    }
+    return "";
+}
+
+[Stage(Layers.Hud)]
+view Overlay(Me me, Look look, Match match, Ashwick ashwick, Party party, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
+{
+    if (lobby.page != Page.Playing) return;
+    Cursor.Lock();
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    var dt = Math.Min(Frame.dt, 0.05);
+    feed.played += dt;
+    mut var mine = Survivor { };
+    mut var found = false;
+    foreach (var row in survivors)
+    {
+        if (row.survivor.seat != me.seat) continue;
+        mine = row.survivor;
+        found = true;
+    }
+    if (!found) return;
+
+    // ---- The round, bottom left ----
+    if (match.round != feed.roundShown)
+    {
+        feed.roundShown = match.round;
+        feed.roundFlash = 0;
+    }
+    feed.roundFlash += dt;
+    DrawRound(match.round, float2(34 * u, h - 30 * u), u, feed.roundFlash);
+
+    // ---- Everyone's gold, over the round ----
+    mut var line = 0;
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (!s.ready) continue;
+        var own = s.seat == me.seat;
+        var y = h - 128 * u - line * 30 * u;
+        var size = own ? 22 * u : 17 * u;
+        var x = 34 * u;
+        Draw.Rect(float2(x - 10 * u, y), float2(5 * u, size * 0.9), HeroColor(s.seat));
+        var text = s.life == Life.Downed ? $"{s.points}  down" : s.life == Life.Gone ? $"{s.points}  gone" : $"{s.points}";
+        Write(text, float2(x, y), size, own ? GOLD : Color(GOLD.r, GOLD.g, GOLD.b, 0.75), Anchor.MiddleLeft);
+        if (own)
+        {
+            // What each blow earned, drifting off to the right
+            var width = Draw.MeasureText($"{s.points}", size).x;
+            for (var i = 0; i < feed.gains.count; i++)
+            {
+                var gain = feed.gains[i];
+                var fade = Math.Saturate(1.4 - gain.age * 1.4);
+                var at = float2(x + width + 18 * u + gain.age * 70 * u, y - gain.lane * 16 * u - gain.age * 14 * u);
+                Write($"+{gain.points}", at, 15 * u, Color(GOLD.r, GOLD.g * 0.95, GOLD.b * 0.7, fade), Anchor.MiddleLeft);
+            }
+        }
+        line += 1;
+    }
+    for (var i = feed.gains.count - 1; i >= 0; i--)
+    {
+        mut var gain = feed.gains[i];
+        gain.age += dt;
+        if (gain.age > 1.0) feed.gains.RemoveAt(i);
+        else feed.gains[i] = gain;
+    }
+
+    // ---- Brews drunk ----
+    mut var brewAt = 0;
+    for (var b = 0; b < BREW_COUNT; b++)
+    {
+        if ((mine.brews & (1 << b)) == 0) continue;
+        DrawBrew(Brew(b), float2(40 * u + brewAt * 32 * u, h - 128 * u - line * 30 * u - 14 * u), u);
+        brewAt += 1;
+    }
+
+    // ---- The weapon, bottom right ----
+    var weapon = mine.weapons[mine.slot];
+    var forged = mine.forged[mine.slot];
+    var info = InfoOf(weapon, forged);
+    var name = forged ? Info(weapon).upName : info.name;
+    var right = w - 34 * u;
+    if (weapon != Weapon.None)
+    {
+        Write(name, float2(right, h - 92 * u), 17 * u, forged ? Color(0.65, 0.75, 1.0) : BONE, Anchor.MiddleRight);
+        if (info.kind != Kind.Melee)
+        {
+            var spare = $"{mine.ammo[mine.slot]}";
+            var loaded = $"{mine.mag[mine.slot]}";
+            var spareWidth = Draw.MeasureText(spare, 22 * u).x;
+            Write(spare, float2(right, h - 50 * u), 22 * u, ASH, Anchor.MiddleRight);
+            Write("/", float2(right - spareWidth - 8 * u, h - 50 * u), 22 * u, ASH, Anchor.MiddleRight);
+            var low = mine.mag[mine.slot] == 0 ? Color(0.9, 0.3, 0.2) : BONE;
+            WriteBold(loaded, float2(right - spareWidth - 26 * u, h - 52 * u), 40 * u, low, Anchor.MiddleRight);
+        }
+    }
+    // The fire pots and bells, as small marks
+    for (var i = 0; i < mine.firePots; i++) Draw.Circle(float2(right - 8 * u - i * 18 * u, h - 128 * u), 6 * u, Color(0.85, 0.42, 0.15));
+    for (var i = 0; i < mine.lures; i++) Draw.Circle(float2(right - 8 * u - i * 18 * u, h - 148 * u), 6 * u, Color(0.85, 0.8, 0.5));
+    // The other slots, small
+    for (var i = 0; i < Slots(mine); i++)
+    {
+        if (i == mine.slot || mine.weapons[i] == Weapon.None) continue;
+        var other = mine.forged[i] ? Info(mine.weapons[i]).upName : Info(mine.weapons[i]).name;
+        Write($"{i + 1}  {other}", float2(right, h - 118 * u - (i > mine.slot ? 0 : 0) - (i == 2 ? 18 * u : 0) - 18 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.MiddleRight);
+    }
+
+    // ---- The crosshair and the hit marker ----
+    var middle = float2(w * 0.5, h * 0.5);
+    if (mine.life == Life.Standing && mine.act != Act.Drink)
+    {
+        if (info.kind == Kind.Melee)
+        {
+            Draw.Circle(middle, 2.2 * u, Color(1, 1, 1, 0.65));
+        }
+        else
+        {
+            var gap = (6 + info.spread * 900) * u * (1 - me.zoom * 0.6);
+            var tick = 7 * u;
+            var c = Color(1, 1, 1, 0.75 - me.zoom * 0.35);
+            Draw.Line(middle + float2(gap, 0), middle + float2(gap + tick, 0), 2 * u, c);
+            Draw.Line(middle - float2(gap, 0), middle - float2(gap + tick, 0), 2 * u, c);
+            Draw.Line(middle + float2(0, gap), middle + float2(0, gap + tick), 2 * u, c);
+            Draw.Line(middle - float2(0, gap), middle - float2(0, gap + tick), 2 * u, c);
+            if (mine.act == Act.Draw) Draw.Arc(middle, 18 * u, -Math.PI * 0.5, Math.TAU * mine.charge, 2.5 * u, Color(1, 0.85, 0.5, 0.85));
+        }
+    }
+    feed.marker = Math.Max(0, feed.marker - dt);
+    if (feed.marker > 0)
+    {
+        var a = Math.Saturate(feed.marker * 5);
+        var c = feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
+        var s = (feed.markerKill ? 11 : 8) * u;
+        Draw.Line(middle + float2(-s, -s), middle + float2(-s * 0.4, -s * 0.4), 2.5 * u, c);
+        Draw.Line(middle + float2(s, -s), middle + float2(s * 0.4, -s * 0.4), 2.5 * u, c);
+        Draw.Line(middle + float2(-s, s), middle + float2(-s * 0.4, s * 0.4), 2.5 * u, c);
+        Draw.Line(middle + float2(s, s), middle + float2(s * 0.4, s * 0.4), 2.5 * u, c);
+    }
+
+    // ---- What use would do ----
+    var prompt = PromptOf(mine, ashwick, match, party, out var held);
+    if (prompt != "" && mine.life == Life.Standing)
+    {
+        Write(prompt, float2(w * 0.5, h * 0.64), 18 * u, BONE, Anchor.MiddleCenter);
+        if (mine.aimed >= 0 && AimKind(mine.aimed) == Target.Stall && ashwick.stalls[AimIndex(mine.aimed)].sale == Sale.Brew)
+            Write(BrewLine(Brew(ashwick.stalls[AimIndex(mine.aimed)].item)), float2(w * 0.5, h * 0.64 + 24 * u), 14 * u, ASH, Anchor.MiddleCenter);
+        if (held && mine.using >= 0 && AimKind(mine.using) == Target.Window)
+            Draw.Rect(float2(w * 0.5, h * 0.64 + 22 * u), float2(160 * u * Math.Saturate(mine.useTime / (BOARD_SECONDS * Haste(mine))), 4 * u), GOLD);
+    }
+
+    // ---- Power-ups running, bottom middle ----
+    mut var boons = 0;
+    if (match.instakill > 0) boons += 1;
+    if (match.doubled > 0) boons += 1;
+    mut var slot = 0;
+    for (var k = 0; k < 2; k++)
+    {
+        var left = k == 0 ? match.instakill : match.doubled;
+        if (left <= 0) continue;
+        var blink = left > 5 || Math.Frac(left * 3) > 0.35;
+        var at = float2(w * 0.5 + (slot - (boons - 1) * 0.5) * 70 * u, h - 52 * u);
+        slot += 1;
+        if (!blink) continue;
+        Draw.Circle(at, 24 * u, Color(0.05, 0.08, 0.05, 0.75));
+        Draw.WireCircle(at, 24 * u, 2 * u, Color(0.4, 1.0, 0.45, 0.9));
+        if (k == 0)
+        {
+            // A skull
+            var bone = Color(0.6, 1.0, 0.55);
+            Draw.Circle(at + float2(0, -3 * u), 11 * u, bone);
+            Draw.Rect(at + float2(0, 8 * u), float2(12 * u, 8 * u), bone);
+            Draw.Circle(at + float2(-4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
+            Draw.Circle(at + float2(4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
+        }
+        else
+        {
+            WriteBold("x2", at, 22 * u, Color(0.6, 1.0, 0.55), Anchor.MiddleCenter);
+        }
+    }
+
+    // ---- The banner: a power-up's name, the beacon lit ----
+    feed.bannerLeft = Math.Max(0, feed.bannerLeft - dt);
+    if (feed.bannerLeft > 0 && feed.banner != "")
+    {
+        var a = Math.Saturate(feed.bannerLeft * 1.5) * Math.Saturate((2.6 - feed.bannerLeft) * 4);
+        WriteBold(feed.banner, float2(w * 0.5, h * 0.3), 34 * u, Color(feed.bannerColor.r, feed.bannerColor.g, feed.bannerColor.b, a), Anchor.MiddleCenter);
+    }
+
+    // ---- A friend down: where they are, and the hands on them ----
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (s.seat == me.seat || s.life != Life.Downed) continue;
+        float4 clip = Math.Mul(look.toClip, float4(s.feet + float3(0, 1.0, 0), 1));
+        if (clip.w <= 0.01) continue;
+        var seen = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
+        var at = float2(Math.Clamp(seen.x, 40 * u, w - 40 * u), Math.Clamp(seen.y, 40 * u, h - 40 * u));
+        var pulse = 0.6 + Math.Sin(feed.played * 6) * 0.4;
+        Draw.Circle(at, 14 * u, Color(0.1, 0.02, 0.02, 0.7));
+        Draw.Rect(at, float2(4 * u, 16 * u), Color(0.9, 0.2, 0.15, pulse));
+        Draw.Rect(at, float2(16 * u, 4 * u), Color(0.9, 0.2, 0.15, pulse));
+        if (s.revive > 0) Draw.Arc(at, 20 * u, -Math.PI * 0.5, Math.TAU * s.revive, 3 * u, BONE);
+    }
+
+    // ---- Down ----
+    if (mine.life == Life.Downed && match.phase != Phase.Over)
+    {
+        WriteBold("BLEEDING OUT", float2(w * 0.5, h * 0.38), 30 * u, Color(0.85, 0.15, 0.12), Anchor.MiddleCenter);
+        Draw.Rect(float2(w * 0.5, h * 0.38 + 30 * u), float2(260 * u, 6 * u), Color(0, 0, 0, 0.6));
+        Draw.Rect(float2(w * 0.5 - 130 * u + 130 * u * Math.Saturate(mine.bleed / BLEED_SECONDS), h * 0.38 + 30 * u),
+                  float2(260 * u * Math.Saturate(mine.bleed / BLEED_SECONDS), 6 * u), Color(0.8, 0.12, 0.1));
+        if (mine.revive > 0)
+        {
+            Write("Being raised...", float2(w * 0.5, h * 0.62), 18 * u, BONE, Anchor.MiddleCenter);
+            Draw.Rect(float2(w * 0.5, h * 0.62 + 22 * u), float2(200 * u * Math.Saturate(mine.revive), 5 * u), GOLD);
+        }
+        else if (mine.selfRevives > 0)
+        {
+            Write("Second Wind will raise you", float2(w * 0.5, h * 0.62), 16 * u, ASH, Anchor.MiddleCenter);
+        }
+    }
+    if (mine.life == Life.Gone && match.phase != Phase.Over)
+        WriteBold("You bled out. You'll be back next round.", float2(w * 0.5, h * 0.4), 24 * u, BONE, Anchor.MiddleCenter);
+
+    // ---- How to play, for the first minute ----
+    if (feed.played < 45 && match.phase != Phase.Over)
+    {
+        var fade = Math.Saturate((45 - feed.played) * 0.2);
+        Write("WASD move   Shift sprint   Space jump   Mouse attack / RMB heavy or aim   E use   R reload   V stab   G fire pot   1-3 weapons",
+              float2(w * 0.5, h - 14 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
+    }
+    if (party.joined < 2 && feed.played < 20)
+        Write("Alone. Host a room from the menu to fight with friends.", float2(w - 22 * u, 22 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.UpperRight);
+}
+
+// The end: the round they fell in, and what each did.
+[Stage(Layers.Hud, 5)]
+view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Survivor survivor) survivors)
+{
+    if (lobby.page != Page.Playing || match.phase != Phase.Over) return;
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    feed.gameOver += Math.Min(Frame.dt, 0.05);
+    var a = Math.Saturate(match.timer * 0.8);
+    Draw.Rect(float2(w * 0.5, h * 0.5), float2(w, h), Color(0.02, 0, 0, 0.55 * a));
+    WriteBold("GAME OVER", float2(w * 0.5, h * 0.24), 64 * u, Color(CHALK.r * 1.4, CHALK.g, CHALK.b, a), Anchor.MiddleCenter);
+    var rounds = match.lastRound == 1 ? "You survived 1 round" : $"You survived {match.lastRound} rounds";
+    Write(rounds, float2(w * 0.5, h * 0.33), 24 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+    var top = h * 0.43;
+    var columns = float4(-90, 40, 140, 240) * u;
+    Write("Kills", float2(w * 0.5 + columns.x, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
+    Write("Heads", float2(w * 0.5 + columns.y, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
+    Write("Downs", float2(w * 0.5 + columns.z, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
+    Write("Raised", float2(w * 0.5 + columns.w, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
+    mut var row = 1;
+    foreach (var r in survivors)
+    {
+        var s = r.survivor;
+        if (!s.ready) continue;
+        var y = top + row * 32 * u;
+        Write(HeroName(s.seat), float2(w * 0.5 - 300 * u, y), 18 * u, Color(HeroColor(s.seat).r, HeroColor(s.seat).g, HeroColor(s.seat).b, a), Anchor.MiddleLeft);
+        Write($"{s.kills}", float2(w * 0.5 + columns.x, y), 18 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+        Write($"{s.headshots}", float2(w * 0.5 + columns.y, y), 18 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+        Write($"{s.downs}", float2(w * 0.5 + columns.z, y), 18 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+        Write($"{s.revives}", float2(w * 0.5 + columns.w, y), 18 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+        row += 1;
+    }
+    if (match.timer > 3)
+    {
+        Write("Press E to rise again", float2(w * 0.5, h * 0.8), 20 * u, Color(GOLD.r, GOLD.g, GOLD.b, 0.6 + Math.Sin(feed.gameOver * 3) * 0.3), Anchor.MiddleCenter);
+        if (devices.keyboard.e.down || devices.keyboard.enter.down || devices.gamepad.buttonSouth.down) Send(Restart { });
+    }
+}
+
+// Development keys, not in play's interface: F2 gold, F3 the beacon, F4 every door, F5 the round's end, F6 a walk to the
+// next area.
+local singleton DevWalk
+{
+    int next;
+}
+
+[Stage(Layers.Hud, 21)]
+view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
+{
+    if (!lobby.playing) return;
+    var keys = devices.keyboard;
+    if (keys.f2.down) Send(Cheat { what = 1 });
+    if (keys.f3.down) Send(Cheat { what = 2 });
+    if (keys.f4.down) Send(Cheat { what = 3 });
+    if (keys.f5.down) Send(Cheat { what = 4 });
+    if (keys.f6.down)
+    {
+        walk.next = (walk.next + 1) % 8;
+        Send(Cheat { what = 10 + walk.next });
+    }
+}
+
+// A new game from the menu starts over at round one.
+[Stage(Layers.Hud, 20)]
+view Menus(Lobby lobby)
+{
+    if (lobby.newGame) Send(Restart { });
+}
+
+// The menu's button in the top left, out of the round's way.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(8, 8, 84, 36);
+}
+
+// The title's words, over the picture (TitlePage's own drawing would be under it: the picture is brought to the window
+// after the package's views).
+[Stage(Layers.Hud, -1)]
+view TitleCard(Lobby lobby)
+{
+    if (lobby.page != Page.Title) return;
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Math.Max(0.6, h / 720);
+    var left = 84 * u;
+    // A dark band behind the words, fading out to the right
+    List<Vertex> band = [Vertex { position = float2(0, 0), color = Color(0, 0, 0, 0.7) }, Vertex { position = float2(w * 0.62, 0), color = Color(0, 0, 0, 0) },
+                         Vertex { position = float2(w * 0.62, h), color = Color(0, 0, 0, 0) }, Vertex { position = float2(0, h), color = Color(0, 0, 0, 0.7) }];
+    List<int> faces = [0, 1, 2, 0, 2, 3];
+    Draw.Mesh(band, faces);
+    Draw.Text("GRAVEWAKE", float2(left + 4 * u, h * 0.3 + 5 * u), 96 * u, Color(0, 0, 0, 0.85), Anchor.MiddleLeft, Font.Bold);
+    Draw.Text("GRAVEWAKE", float2(left, h * 0.3), 96 * u, Color(0.62, 0.05, 0.04), Anchor.MiddleLeft, Font.Bold);
+    Draw.Text("GRAVEWAKE", float2(left + 1.5 * u, h * 0.3 - 1.5 * u), 96 * u, Color(0.78, 0.1, 0.07, 0.45), Anchor.MiddleLeft, Font.Bold);
+    Draw.Text("The dead rise in Ashwick. Hold the village, round after round.", float2(left + 4 * u, h * 0.3 + 64 * u), 20 * u, Color(0.85, 0.8, 0.72),
+              Anchor.MiddleLeft);
+    Draw.Text("Swords, axes, bows and crossbows  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u, Color(0.6, 0.57, 0.52), Anchor.MiddleLeft);
+    if (lobby.message != "") Draw.Text(lobby.message, float2(left + 4 * u, h * 0.86), 15 * u, Color(0.9, 0.5, 0.4), Anchor.MiddleLeft);
+}
+
+// The title: GRAVEWAKE in blood over the village at night, and the way in.
+override void Rooms.TitlePage(Session session, mut Lobby lobby)
+{
+    var connected = session.state == SessionState.Connected;
+    var h = Screen.height;
+    var u = Math.Max(0.6, h / 720);
+    var left = 84 * u;
+    mut var play = false;
+    mut var host = false;
+    var y = h * 0.3 + 140 * u;
+    var size = float2(290 * u, 46 * u);
+    GUI.Theme(GUITheme { text = Color(0.92, 0.88, 0.8), control = Color(0.1, 0.05, 0.04, 0.88), hot = Color(0.42, 0.07, 0.05), pressed = Color(0.6, 0.1, 0.06),
+                         accent = Color(0.8, 0.15, 0.1), panel = Color(0, 0, 0, 0), radius = 3 })
+    {
+        GUI.Disabled(!connected)
+        {
+            play = GUI.Button(Rect(left, y, size.x, size.y), "Play");
+            host = GUI.Button(Rect(left, y + 56 * u, size.x, size.y), "Host a room");
+        }
+        var join = GUI.Button(Rect(left, y + 112 * u, size.x, size.y), "Join a room");
+        var settings = GUI.Button(Rect(left, y + 168 * u, size.x, size.y), "Settings");
+        if (join) ShowJoin(lobby);
+        if (settings) ShowSettings(lobby);
+    }
+    if (play) Play(lobby);
+    if (host) Host(lobby);
+}
+
+override string Rooms.Tagline()
+{
+    return "The dead rise in Ashwick. Hold the village, round after round.";
+}
+
+// ---- What the feed hears ----
+
+local event(Earned earned) ShowEarned(Survivor survivor, mut Feed feed, Me me, Match match)
+{
+    if (survivor.seat != me.seat) return;
+    feed.gains.Add(Gain { points = earned.points * (match.doubled > 0 ? 2 : 1), lane = float(feed.gains.count % 3) });
+}
+
+local event(Struck struck) ShowMarker(mut Feed feed, Me me)
+{
+    if (struck.seat != me.seat || struck.seat < 0) return;
+    // Fire and bleeding wear them down quietly; only the kill shows
+    if (!struck.killed && (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding)) return;
+    feed.marker = 0.25;
+    feed.markerKill = struck.killed;
+}
+
+local event(Boons boons) ShowBoon(mut Feed feed)
+{
+    feed.banner = BoonName(boons.kind);
+    feed.bannerLeft = 2.6;
+    feed.bannerColor = Color(0.6, 1.0, 0.55);
+}
+
+local event(PowerOn power) ShowPower(mut Feed feed)
+{
+    feed.banner = "THE BEACON IS LIT";
+    feed.bannerLeft = 3.2;
+    feed.bannerColor = Color(1.0, 0.65, 0.3);
+}

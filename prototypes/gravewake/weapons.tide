@@ -1,0 +1,197 @@
+// Every weapon in Ashwick: what it is, what it does, what it costs, and what
+// the Runeforge makes of it. A weapon's numbers are one switch, Info(), read
+// by the match and by what's drawn.
+
+enum Weapon
+{
+    None,
+    // Blades, axes, hammers and polearms
+    RustySword,
+    Dagger,
+    ArmingSword,
+    Falchion,
+    Longsword,
+    Claymore,
+    HandAxe,
+    BeardedAxe,
+    Greataxe,
+    WarHammer,
+    Maul,
+    Mace,
+    MorningStar,
+    Flail,
+    Spear,
+    Halberd,
+    Scythe,
+    Pitchfork,
+    SpikedClub,
+    // Bows
+    HuntingBow,
+    Longbow,
+    SunBow,
+    WraithBow,
+    // Crossbows
+    HandCrossbow,
+    LightCrossbow,
+    Arbalest,
+    Repeater,
+    // Black powder, staffs, and what's thrown
+    Handgonne,
+    StaffFire,
+    StaffFrost,
+    StaffStorm,
+    Javelins,
+    ThrowingAxes,
+}
+
+const int WEAPON_COUNT = 34;
+
+enum Kind { Melee, Bow, Crossbow, Gun, Staff, Thrown }
+
+// How a melee weapon moves: across, down, straight ahead, or round in a wide arc.
+enum Swing { Slash, Chop, Thrust, Sweep }
+
+// What a weapon's hits do besides the damage, once it's been through the Runeforge (and a few before).
+enum Element { None, Fire, Frost, Shock, Bleed, Blast }
+
+struct WeaponInfo
+{
+    string name;
+    string upName;          // Its name after the Runeforge
+    Kind kind;
+    Swing swing;
+    float damage;           // A hit's, before a head's
+    float head = 2;         // How much more a hit on the head does
+    float reach = 2.2;      // Melee: how far a swing reaches
+    float arc = 0.7;        // Melee: the half angle of what a swing sweeps, in radians
+    int cleave = 1;         // Melee: how many one swing cuts; a missile: how many it goes through
+    float rate = 0.5;       // Seconds between attacks
+    float hitAt = 0.4;      // Melee: how far into the swing it lands
+    int mag;                // A missile weapon's: loaded at once
+    int reserve;            // ...and carried besides
+    float reload = 1;       // Seconds to load
+    float speed = 60;       // A missile's metres a second
+    float gravity = 4;      // ...and how much it drops
+    float draw;             // A bow's seconds to full draw
+    float spread = 0.004;   // Radians off the aim, hip-fired
+    int pellets = 1;
+    float splash;           // Metres an explosion reaches
+    Element element;        // What its hits do besides, as it comes
+    Element upElement;      // ...and after the Runeforge
+    int cost;               // On a wall: what it costs; 0 is the chest's alone
+    float slow = 1;         // How fast its bearer moves with it out
+    bool twoHanded;
+    bool wonder;            // A chest's prize that the Runeforge still takes
+}
+
+WeaponInfo Info(Weapon weapon)
+{
+    switch (weapon)
+    {
+        case Weapon.RustySword:
+            return WeaponInfo { name = "Rusty Shortsword", upName = "Bloodrust", kind = Kind.Melee, swing = Swing.Slash, damage = 75, reach = 2.1, arc = 0.75, cleave = 2, rate = 0.55, upElement = Element.Bleed };
+        case Weapon.Dagger:
+            return WeaponInfo { name = "Rondel Dagger", upName = "Widow's Kiss", kind = Kind.Melee, swing = Swing.Thrust, damage = 60, head = 3.5, reach = 1.7, arc = 0.45, rate = 0.3, hitAt = 0.35, upElement = Element.Bleed, cost = 500 };
+        case Weapon.ArmingSword:
+            return WeaponInfo { name = "Arming Sword", upName = "Oathkeeper", kind = Kind.Melee, swing = Swing.Slash, damage = 115, reach = 2.3, arc = 0.8, cleave = 2, rate = 0.5, upElement = Element.Fire };
+        case Weapon.Falchion:
+            return WeaponInfo { name = "Falchion", upName = "Moonsickle", kind = Kind.Melee, swing = Swing.Slash, damage = 130, reach = 2.2, arc = 0.95, cleave = 3, rate = 0.55, upElement = Element.Frost, cost = 750 };
+        case Weapon.Longsword:
+            return WeaponInfo { name = "Longsword", upName = "Kingsbane", kind = Kind.Melee, swing = Swing.Slash, damage = 185, reach = 2.6, arc = 0.85, cleave = 3, rate = 0.65, upElement = Element.Fire, cost = 1250, twoHanded = true };
+        case Weapon.Claymore:
+            return WeaponInfo { name = "Claymore", upName = "Mountainsplitter", kind = Kind.Melee, swing = Swing.Sweep, damage = 310, reach = 2.9, arc = 1.25, cleave = 6, rate = 1.0, hitAt = 0.45, upElement = Element.Fire, slow = 0.88, twoHanded = true };
+        case Weapon.HandAxe:
+            return WeaponInfo { name = "Hand Axe", upName = "Skullsplitter", kind = Kind.Melee, swing = Swing.Chop, damage = 95, head = 3, reach = 2.0, arc = 0.55, rate = 0.5, upElement = Element.Bleed, cost = 500 };
+        case Weapon.BeardedAxe:
+            return WeaponInfo { name = "Bearded Axe", upName = "Graveborn", kind = Kind.Melee, swing = Swing.Chop, damage = 165, head = 2.5, reach = 2.3, arc = 0.65, cleave = 2, rate = 0.65, upElement = Element.Bleed };
+        case Weapon.Greataxe:
+            return WeaponInfo { name = "Greataxe", upName = "Executioner's Due", kind = Kind.Melee, swing = Swing.Sweep, damage = 330, head = 2.5, reach = 2.8, arc = 1.1, cleave = 4, rate = 1.05, hitAt = 0.45, upElement = Element.Bleed, slow = 0.88, twoHanded = true };
+        case Weapon.WarHammer:
+            return WeaponInfo { name = "War Hammer", upName = "Bonecrusher", kind = Kind.Melee, swing = Swing.Chop, damage = 160, head = 2.5, reach = 2.2, arc = 0.6, rate = 0.7, element = Element.Shock, upElement = Element.Shock, cost = 1250 };
+        case Weapon.Maul:
+            return WeaponInfo { name = "Maul", upName = "Earthshaker", kind = Kind.Melee, swing = Swing.Chop, damage = 390, head = 2, reach = 2.6, arc = 0.9, cleave = 3, rate = 1.2, hitAt = 0.5, element = Element.Shock, upElement = Element.Shock, slow = 0.85, twoHanded = true };
+        case Weapon.Mace:
+            return WeaponInfo { name = "Flanged Mace", upName = "Mercy of Saints", kind = Kind.Melee, swing = Swing.Chop, damage = 140, head = 2.5, reach = 2.1, arc = 0.6, rate = 0.6, upElement = Element.Shock, cost = 1000 };
+        case Weapon.MorningStar:
+            return WeaponInfo { name = "Morning Star", upName = "Dawnbreaker", kind = Kind.Melee, swing = Swing.Slash, damage = 195, head = 2.5, reach = 2.3, arc = 0.75, cleave = 2, rate = 0.7, upElement = Element.Fire };
+        case Weapon.Flail:
+            return WeaponInfo { name = "Flail", upName = "Penitent's Chain", kind = Kind.Melee, swing = Swing.Sweep, damage = 235, reach = 2.6, arc = 1.15, cleave = 3, rate = 0.8, hitAt = 0.5, upElement = Element.Fire };
+        case Weapon.Spear:
+            return WeaponInfo { name = "Boar Spear", upName = "Longinus", kind = Kind.Melee, swing = Swing.Thrust, damage = 165, head = 2.5, reach = 3.3, arc = 0.3, cleave = 3, rate = 0.6, upElement = Element.Frost, cost = 1250, twoHanded = true };
+        case Weapon.Halberd:
+            return WeaponInfo { name = "Halberd", upName = "The Last Watch", kind = Kind.Melee, swing = Swing.Sweep, damage = 265, reach = 3.2, arc = 1.0, cleave = 4, rate = 0.9, hitAt = 0.45, upElement = Element.Frost, cost = 1500, slow = 0.92, twoHanded = true };
+        case Weapon.Scythe:
+            return WeaponInfo { name = "Grave Scythe", upName = "Harvest Moon", kind = Kind.Melee, swing = Swing.Sweep, damage = 245, reach = 3.0, arc = 1.35, cleave = 6, rate = 0.85, hitAt = 0.5, upElement = Element.Frost, cost = 1500, slow = 0.92, twoHanded = true };
+        case Weapon.Pitchfork:
+            return WeaponInfo { name = "Pitchfork", upName = "The Devil's Fork", kind = Kind.Melee, swing = Swing.Thrust, damage = 120, reach = 2.9, arc = 0.35, cleave = 2, rate = 0.6, upElement = Element.Fire, twoHanded = true };
+        case Weapon.SpikedClub:
+            return WeaponInfo { name = "Spiked Club", upName = "Ogre's Toothpick", kind = Kind.Melee, swing = Swing.Chop, damage = 125, head = 2.5, reach = 2.1, arc = 0.65, cleave = 2, rate = 0.6, upElement = Element.Shock };
+        case Weapon.HuntingBow:
+            return WeaponInfo { name = "Hunting Bow", upName = "Sure Shot", kind = Kind.Bow, damage = 160, head = 3, cleave = 1, rate = 0.25, mag = 1, reserve = 60, reload = 0.25, speed = 55, gravity = 5, draw = 0.6, upElement = Element.Fire, cost = 750, twoHanded = true };
+        case Weapon.Longbow:
+            return WeaponInfo { name = "Longbow", upName = "Agincourt", kind = Kind.Bow, damage = 330, head = 3, cleave = 3, rate = 0.3, mag = 1, reserve = 40, reload = 0.3, speed = 75, gravity = 4, draw = 1.0, upElement = Element.Blast, twoHanded = true };
+        case Weapon.SunBow:
+            return WeaponInfo { name = "Sunbow", upName = "Solar Flare", kind = Kind.Bow, damage = 280, head = 3, cleave = 2, rate = 0.2, mag = 1, reserve = 80, reload = 0.2, speed = 80, gravity = 2, draw = 0.4, element = Element.Fire, upElement = Element.Fire, twoHanded = true };
+        case Weapon.WraithBow:
+            return WeaponInfo { name = "Wraithbow", upName = "Soulreaver", kind = Kind.Bow, damage = 520, head = 2, cleave = 1, rate = 0.25, mag = 1, reserve = 40, reload = 0.25, speed = 70, gravity = 1, draw = 0.5, splash = 3.2, element = Element.Blast, upElement = Element.Blast, twoHanded = true, wonder = true };
+        case Weapon.HandCrossbow:
+            return WeaponInfo { name = "Hand Crossbow", upName = "Vex", kind = Kind.Crossbow, damage = 115, head = 3, rate = 0.25, mag = 1, reserve = 40, reload = 0.75, speed = 70, gravity = 3, upElement = Element.Fire };
+        case Weapon.LightCrossbow:
+            return WeaponInfo { name = "Light Crossbow", upName = "Quarrel of Kings", kind = Kind.Crossbow, damage = 230, head = 3, cleave = 2, rate = 0.3, mag = 1, reserve = 50, reload = 1.0, speed = 85, gravity = 2, upElement = Element.Shock, cost = 1000, twoHanded = true };
+        case Weapon.Arbalest:
+            return WeaponInfo { name = "Arbalest", upName = "Siegebreaker", kind = Kind.Crossbow, damage = 560, head = 3, cleave = 5, rate = 0.4, mag = 1, reserve = 30, reload = 2.0, speed = 110, gravity = 1, upElement = Element.Blast, cost = 2000, slow = 0.9, twoHanded = true };
+        case Weapon.Repeater:
+            return WeaponInfo { name = "Repeating Crossbow", upName = "Hornet's Nest", kind = Kind.Crossbow, damage = 125, head = 2.5, rate = 0.17, mag = 10, reserve = 120, reload = 2.2, speed = 75, gravity = 3, spread = 0.012, upElement = Element.Fire, twoHanded = true };
+        case Weapon.Handgonne:
+            return WeaponInfo { name = "Handgonne", upName = "Dragon's Roar", kind = Kind.Gun, damage = 85, head = 1.5, rate = 0.4, mag = 1, reserve = 24, reload = 2.4, speed = 90, gravity = 2, spread = 0.07, pellets = 8, upElement = Element.Fire, twoHanded = true };
+        case Weapon.StaffFire:
+            return WeaponInfo { name = "Staff of Embers", upName = "Staff of the Inferno", kind = Kind.Staff, damage = 650, head = 1, rate = 0.45, mag = 8, reserve = 40, reload = 2.5, speed = 35, gravity = 0, splash = 3.4, element = Element.Fire, upElement = Element.Fire, twoHanded = true, wonder = true };
+        case Weapon.StaffFrost:
+            return WeaponInfo { name = "Staff of Rime", upName = "Staff of the Long Winter", kind = Kind.Staff, damage = 480, head = 1, reach = 9, arc = 0.35, cleave = 8, rate = 0.5, mag = 12, reserve = 60, reload = 2.5, element = Element.Frost, upElement = Element.Frost, twoHanded = true, wonder = true };
+        case Weapon.StaffStorm:
+            return WeaponInfo { name = "Staff of Storms", upName = "Staff of the Tempest", kind = Kind.Staff, damage = 560, head = 1, reach = 22, cleave = 5, rate = 0.5, mag = 10, reserve = 50, reload = 2.5, element = Element.Shock, upElement = Element.Shock, twoHanded = true, wonder = true };
+        case Weapon.Javelins:
+            return WeaponInfo { name = "Javelins", upName = "Thunderbolts", kind = Kind.Thrown, damage = 420, head = 2, cleave = 3, rate = 0.3, mag = 1, reserve = 10, reload = 0.6, speed = 38, gravity = 9, upElement = Element.Shock };
+        case Weapon.ThrowingAxes:
+            return WeaponInfo { name = "Throwing Axes", upName = "Hurlbats", kind = Kind.Thrown, damage = 260, head = 3, rate = 0.25, mag = 1, reserve = 16, reload = 0.4, speed = 32, gravity = 9, upElement = Element.Bleed };
+    }
+    return WeaponInfo { name = "Bare hands", upName = "Bare hands", kind = Kind.Melee, damage = 20 };
+}
+
+// What the Runeforge makes of a weapon's numbers.
+WeaponInfo Forged(WeaponInfo info)
+{
+    mut var up = info;
+    up.damage *= info.kind == Kind.Melee ? 3.0 : info.kind == Kind.Staff ? 2.0 : 2.5;
+    up.mag = info.mag > 1 ? int(info.mag * 1.5) : info.mag;
+    up.reserve = int(info.reserve * 1.6);
+    up.reload *= 0.8;
+    up.cleave = info.cleave + 1;
+    up.element = info.upElement;
+    if (info.kind == Kind.Bow && info.upElement == Element.Blast) up.splash = Math.Max(up.splash, 2.6);
+    if (info.kind == Kind.Crossbow && info.upElement == Element.Blast) up.splash = Math.Max(up.splash, 2.4);
+    return up;
+}
+
+WeaponInfo InfoOf(Weapon weapon, bool forged)
+{
+    var info = Info(weapon);
+    return forged ? Forged(info) : info;
+}
+
+bool UsesAmmo(Weapon weapon)
+{
+    return Info(weapon).kind != Kind.Melee;
+}
+
+// What the chest can give: everything but the starting kit.
+bool InChest(Weapon weapon)
+{
+    return weapon != Weapon.None && weapon != Weapon.RustySword && weapon != Weapon.HandCrossbow;
+}
+
+// A price on a wall: the weapon's, and its ammunition's at half that.
+int AmmoCost(Weapon weapon)
+{
+    return Info(weapon).cost / 2;
+}

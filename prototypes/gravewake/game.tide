@@ -1,0 +1,378 @@
+// GRAVEWAKE: the dead rise in Ashwick, and up to four survivors hold the
+// village round after round, with the blades, bows and crossbows they can
+// buy. This file is who plays: the survivors, what a player's hands send,
+// joining and leaving, and starting over.
+using Rooms;
+
+settings
+{
+    title = "GRAVEWAKE";
+    tickRate = 60;
+    maxPlayers = 4;
+    hostMigration = true;
+}
+
+scene Main { }
+
+enum Life { Standing, Downed, Gone }
+
+// What a survivor's hands are busy with.
+enum Act { Idle, Raise, Swing, Heavy, Stab, Loose, Draw, Reload, Drink, Throw, Lower }
+
+// A survivor: one of the four, walking, fighting and buying. `seat` is which: 0 Wat, 1 Maud, 2 Godric, 3 Agnes.
+component Survivor
+{
+    int seat;
+    [Position] float3 feet;
+    [Rotation] float yaw;            // 0 looks along +z, a quarter turn right is +x
+    float pitch;
+    float3 velocity;
+    bool grounded;
+    float health = 100;
+    float calm = 10;                 // Seconds since last hurt: health comes back after a while
+    Life life;
+    float bleed;                     // Seconds left before a downed survivor is gone
+    float revive;                    // How far someone's got raising them, 0 to 1
+    int reviver = -1;                // Whose hands are on them
+    int selfRevives;                 // Second Wind's, alone
+    int points = 500;
+    Weapon[3] weapons;
+    int[3] mag;
+    int[3] ammo;
+    bool[3] forged;
+    int slot;
+    Act act;
+    float actTime;                   // Seconds into what the hands do
+    float actLength;
+    bool landed;                     // This swing's blow has been dealt
+    int swings;                      // Swings so far: they go one way then the other
+    float charge;                    // A bow's draw, 0 to 1
+    int firePots = 2;
+    int lures;
+    int brews;                       // A bit per Brew
+    float stamina = 1;
+    int using = -1;                  // What use is held on (a Target), and for how long
+    float useTime;
+    int aimed = -1;                  // What's in reach under the crosshair (a Target), for the prompt
+    int kills;
+    int headshots;
+    int downs;
+    int revives;
+    bool ready;                      // Past the menu
+    bool placed;                     // Put somewhere at once: views don't slide them there
+    float hurtFrom;                  // Which way the last blow came from (a yaw), for the screen's red
+    local Pose pose;                 // This machine's: the frame's pose, sampled once
+    local float4x4 place = float4x4.identity;
+    local float stride;              // Metres walked, the walk's clock
+}
+
+input Hands
+{
+    [Clamp(-1, 1)] float2 move;
+    [Clamp(-0.5, 0.5)] float2 look;
+    bool attack;
+    bool aim;
+    bool use;
+    bool reload;
+    bool jump;
+    bool sprint;
+    bool stab;
+    bool pot;
+    bool lure;
+    bool next;
+    bool slot1;
+    bool slot2;
+    bool slot3;
+    [Absolute] bool ready;
+
+    Sample(Devices devices, Lobby lobby, Feel feel)
+    {
+        ready = lobby.playing;
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        var pad = devices.gamepad;
+        move.x = (keys.d.pressed ? 1 : 0) - (keys.a.pressed ? 1 : 0);
+        move.y = (keys.w.pressed ? 1 : 0) - (keys.s.pressed ? 1 : 0);
+        move += pad.leftStick;
+        if (Cursor.locked) look = devices.mouse.delta * feel.sensitivity;
+        look += pad.rightStick * float2(0.055, 0.045);
+        attack = devices.mouse.left.pressed || pad.rightTrigger > 0.4;
+        aim = devices.mouse.right.pressed || pad.leftTrigger > 0.4;
+        use = keys.e.pressed || keys.f.pressed || pad.buttonWest.pressed;
+        reload = keys.r.pressed || pad.buttonWest.pressed;
+        jump = keys.space.pressed || pad.buttonSouth.pressed;
+        sprint = keys.leftShift.pressed || pad.leftStickButton.pressed;
+        stab = keys.v.pressed || keys.c.pressed || pad.buttonEast.pressed || pad.rightStickButton.pressed;
+        pot = keys.g.pressed || pad.rightShoulder.pressed;
+        lure = keys.q.pressed || pad.leftShoulder.pressed;
+        next = devices.mouse.scroll.y != 0 || pad.buttonNorth.pressed;
+        slot1 = keys.digit1.pressed;
+        slot2 = keys.digit2.pressed;
+        slot3 = keys.digit3.pressed;
+    }
+}
+
+// This machine's feel for the controls.
+local singleton Feel
+{
+    float sensitivity = 0.0022;
+}
+
+// Who plays whom: a seat for each of the four.
+singleton Party
+{
+    Entity[4] survivors;
+    PlayerID[4] players;
+    bool[4] taken;
+    int joined;
+}
+
+// Start again from round one, from a menu's New game or Play.
+command Restart { }
+
+const float BODY_RADIUS = 0.32;
+const float BODY_HIGH = 1.8;
+const float EYE_HIGH = 1.62;
+const float DOWNED_EYE = 0.55;
+const float WALK_SPEED = 4.2;
+const float SPRINT_SPEED = 6.2;
+const float STEP_UP = 0.45;
+const float GRAVITY = 20;
+const float JUMP_SPEED = 6.2;
+const float REACH = 2.4;
+
+float3 LookDirection(float yaw, float pitch)
+{
+    var flat = Math.Cos(pitch);
+    return float3(Math.Sin(yaw) * flat, Math.Sin(pitch), Math.Cos(yaw) * flat);
+}
+
+float3 Flat(float yaw)
+{
+    return float3(Math.Sin(yaw), 0, Math.Cos(yaw));
+}
+
+float YawTo(float3 from, float3 to)
+{
+    return Math.Atan2(to.x - from.x, to.z - from.z);
+}
+
+// The shortest turn from one yaw to another, from -PI to PI.
+float TurnBetween(float from, float to)
+{
+    mut var turn = to - from;
+    while (turn > Math.PI) turn -= Math.TAU;
+    while (turn < -Math.PI) turn += Math.TAU;
+    return turn;
+}
+
+float EyeHeight(Survivor s)
+{
+    return s.life == Life.Downed ? DOWNED_EYE : EYE_HIGH;
+}
+
+float3 EyeOf(Survivor s)
+{
+    return s.feet + float3(0, EyeHeight(s), 0);
+}
+
+bool HasBrew(Survivor s, Brew brew)
+{
+    return (s.brews & (1 << int(brew))) != 0;
+}
+
+int BrewCount(Survivor s)
+{
+    mut var count = 0;
+    for (var i = 0; i < BREW_COUNT; i++)
+        if ((s.brews & (1 << i)) != 0) count += 1;
+    return count;
+}
+
+int Slots(Survivor s)
+{
+    return HasBrew(s, Brew.Packmule) ? 3 : 2;
+}
+
+float MaxHealth(Survivor s)
+{
+    return HasBrew(s, Brew.Ironhide) ? 250 : 100;
+}
+
+// A survivor as they start: the rusty sword, the hand crossbow, two fire pots.
+Survivor Outfitted(int seat, float3 at, float yaw)
+{
+    mut var s = Survivor { seat = seat, feet = at, yaw = yaw, placed = true };
+    s.weapons[0] = Weapon.RustySword;
+    s.weapons[1] = Weapon.HandCrossbow;
+    s.mag[1] = Info(Weapon.HandCrossbow).mag;
+    s.ammo[1] = Info(Weapon.HandCrossbow).reserve;
+    s.act = Act.Raise;
+    s.actLength = 0.5;
+    return s;
+}
+
+event(Spawned) Begin(with Main, mut Ashwick ashwick, mut Match match)
+{
+    BuildAshwick(ashwick);
+    ResetMatch(match, ashwick);
+}
+
+event(PlayerJoined joined) TakeSeat(mut Party party, Ashwick ashwick, Match match)
+{
+    for (var seat = 0; seat < 4; seat++)
+        if (party.taken[seat] && party.players[seat] == joined.player) return;
+    for (var seat = 0; seat < 4; seat++)
+    {
+        if (party.taken[seat]) continue;
+        party.taken[seat] = true;
+        party.players[seat] = joined.player;
+        party.joined += 1;
+        var start = ashwick.starts[seat];
+        // Late to the fight: what the others have earned, near enough
+        var points = match.round > 1 ? 500 + match.round * 250 : 500;
+        party.survivors[seat] = Spawn(Survivor
+        {
+            seat = seat,
+            feet = start,
+            yaw = YawTo(start, float3(0, 0, 4)),
+            placed = true,
+            points = points,
+            weapons = [Weapon.RustySword, Weapon.HandCrossbow, Weapon.None],
+            mag = [0, 1, 0],
+            ammo = [0, 40, 0],
+            act = Act.Raise,
+            actLength = 0.5,
+        }, Owner { player = joined.player });
+        return;
+    }
+}
+
+event(PlayerLeft left) LeaveSeat(mut Party party)
+{
+    for (var seat = 0; seat < 4; seat++)
+    {
+        if (!party.taken[seat] || party.players[seat] != left.player) continue;
+        party.taken[seat] = false;
+        party.players[seat] = default;
+        party.joined -= 1;
+        party.survivors[seat].Destroy();
+        party.survivors[seat] = default;
+    }
+}
+
+// New game: asked for by any of the survivors' players, done at the start of the next tick (Restarting, below).
+command(Restart restart, PlayerID sender) StartOver(Party party, mut Match match)
+{
+    for (var seat = 0; seat < 4; seat++)
+        if (party.taken[seat] && party.players[seat] == sender) match.restarting = true;
+}
+
+[Stage(Tick.Restart)]
+system ClearZombie(with Zombie, Match match)
+{
+    if (match.restarting) this.Destroy();
+}
+
+[Stage(Tick.Restart)]
+system ClearMissile(with Missile, Match match)
+{
+    if (match.restarting) this.Destroy();
+}
+
+[Stage(Tick.Restart)]
+system ClearDrop(with Drop, Match match)
+{
+    if (match.restarting) this.Destroy();
+}
+
+[Stage(Tick.Restart)]
+system RestartSurvivor(mut Survivor survivor, Match match, Ashwick ashwick)
+{
+    if (!match.restarting) return;
+    var start = ashwick.starts[survivor.seat];
+    var ready = survivor.ready;
+    survivor = Outfitted(survivor.seat, start, YawTo(start, float3(0, 0, 4)));
+    survivor.ready = ready;
+}
+
+[Stage(Tick.Restart, 1)]
+system Restarting(mut Match match, Ashwick ashwick)
+{
+    if (!match.restarting) return;
+    ResetMatch(match, ashwick);
+}
+
+// Development shortcuts, not in play's interface (hud.tide's DevKeys): gold, the beacon, every door, the round's end, a
+// walk to an area.
+command Cheat
+{
+    int what;
+}
+
+command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party, Ashwick ashwick)
+{
+    mut var seat = -1;
+    for (var s = 0; s < 4; s++)
+        if (party.taken[s] && party.players[s] == sender) seat = s;
+    if (seat < 0) return;
+    switch (cheat.what)
+    {
+        case 1:
+            party.survivors[seat].Send(Refund { points = 10000 });
+            return;
+        case 2:
+            if (!match.power)
+            {
+                match.power = true;
+                Send(PowerOn { });
+            }
+            return;
+        case 3:
+            match.gatesOpen = (1 << ashwick.gates.count) - 1;
+            match.zonesOpen = (1 << ZONE_COUNT) - 1;
+            return;
+        case 4:
+            match.toSpawn = 0;
+            match.culling = true;
+            return;
+    }
+    if (cheat.what >= 10) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
+}
+
+// Where each area is seen from, for the development walks.
+float4 Showplace(int area)
+{
+    switch (area)
+    {
+        case 0: return float4(0, 0, -4, 0);
+        case 1: return float4(14, 0, 2, Math.PI * 0.5);
+        case 2: return float4(16, 0, -14, 2.4);
+        case 3: return float4(0, 0, -17, Math.PI);
+        case 4: return float4(0, 0, 20, 0);
+        case 5: return float4(-10, 0, 20, -1.9);
+        case 6: return float4(-20, 0, -2, -0.6);
+        case 7: return float4(-6.5, 0, -5, -Math.PI * 0.5);
+    }
+    return float4(0, 0, 0, 0);
+}
+
+event Moved
+{
+    float4 to;
+}
+
+event(Moved moved) TakeMoved(mut Survivor survivor)
+{
+    survivor.feet = moved.to.xyz;
+    survivor.yaw = moved.to.w;
+    survivor.pitch = 0;
+    survivor.velocity = float3(0);
+    survivor.placed = true;
+}
+
+// How many survivors are in the match.
+int Players(Party party)
+{
+    return Math.Max(1, party.joined);
+}

@@ -1,0 +1,322 @@
+// The people: the dead, and the other survivors. Their bodies are Quaternius'
+// modular men and women (art/people), and every clip comes from one of two
+// catalogs, the men's skeleton's or the women's. Each frame a body's pose is
+// sampled once, into the entity's local fields, and drawn into the moon's
+// shadows and into the picture from there.
+
+asset SkinnedMesh<Corner> zombieFarmer = "art/people/zombie_farmer.glb";
+asset SkinnedMesh<Corner> zombieWorker = "art/people/zombie_worker.glb";
+asset SkinnedMesh<Corner> zombieKing = "art/people/zombie_king.glb";
+asset SkinnedMesh<Corner> zombieWanderer = "art/people/zombie_wanderer.glb";
+asset SkinnedMesh<Corner> zombiePeasant = "art/people/zombie_peasant.glb";
+asset SkinnedMesh<Corner> zombieMaid = "art/people/zombie_maid.glb";
+// The bones a survivor's body is asked for by name: the hand that holds their weapon.
+struct Rig
+{
+    [Name("Wrist.R")] Bone wristR;
+    [Name("Head")] Bone head;
+}
+
+asset SkinnedMesh<Corner, Rig> heroRanger = "art/people/hero_ranger.glb";
+asset SkinnedMesh<Corner, Rig> heroHuntress = "art/people/hero_huntress.glb";
+asset SkinnedMesh<Corner, Rig> heroSmith = "art/people/hero_smith.glb";
+asset SkinnedMesh<Corner, Rig> heroWitch = "art/people/hero_witch.glb";
+asset AnimationCatalog menMoves = "art/people/moves.glb";
+asset AnimationCatalog womenMoves = "art/people/moves_women.glb";
+
+// The clips both catalogs have.
+enum Move
+{
+    Idle, Walk, Run, IdleSword, SwordSlash, IdleGun, GunShoot, PunchRight, PunchLeft, HitRecieve, HitRecieve2, Death, Interact,
+    ZIdle, ZWalk, ZScratch, ZKnockback, ZClimb, Sprint, DeathB, HitHead, HitChest, CrouchIdle, CrouchWalk
+}
+
+// How each body draws: the dead's grey skin glows at the eyes, burns, frosts, flashes when struck.
+struct Skin
+{
+    float burn;
+    float frost;
+    float flash;
+    float eyes = 1;
+    float grime = 0.4;
+    float inside;
+}
+
+// A zombie's look: which body (0 to 5), and whether it's a woman's.
+bool WomanZombie(int look)
+{
+    return look == 4 || look == 5;
+}
+
+bool WomanHero(int seat)
+{
+    return seat == 1 || seat == 3;
+}
+
+SkinnedMesh<Corner> ZombieBody(int look)
+{
+    switch (look)
+    {
+        case 0: return zombieFarmer;
+        case 1: return zombieWorker;
+        case 2: return zombieWanderer;
+        case 3: return zombieKing;
+        case 4: return zombiePeasant;
+    }
+    return zombieMaid;
+}
+
+SkinnedMesh<Corner, Rig> HeroBody(int seat)
+{
+    switch (seat)
+    {
+        case 0: return heroRanger;
+        case 1: return heroHuntress;
+        case 2: return heroSmith;
+    }
+    return heroWitch;
+}
+
+Animation MoveOf(bool woman, Move move)
+{
+    if (woman)
+    {
+        switch (move)
+        {
+            case Move.Idle: return womenMoves.idle;
+            case Move.Walk: return womenMoves.walk;
+            case Move.Run: return womenMoves.run;
+            case Move.IdleSword: return womenMoves.idle_Sword;
+            case Move.SwordSlash: return womenMoves.sword_Slash;
+            case Move.IdleGun: return womenMoves.idle_Gun;
+            case Move.GunShoot: return womenMoves.gun_Shoot;
+            case Move.PunchRight: return womenMoves.punch_Right;
+            case Move.PunchLeft: return womenMoves.punch_Left;
+            case Move.HitRecieve: return womenMoves.hitRecieve;
+            case Move.HitRecieve2: return womenMoves.hitRecieve_2;
+            case Move.Death: return womenMoves.death;
+            case Move.Interact: return womenMoves.interact;
+            case Move.ZIdle: return womenMoves.z_Idle;
+            case Move.ZWalk: return womenMoves.z_Walk;
+            case Move.ZScratch: return womenMoves.z_Scratch;
+            case Move.ZKnockback: return womenMoves.z_Knockback;
+            case Move.ZClimb: return womenMoves.z_Climb;
+            case Move.Sprint: return womenMoves.sprint;
+            case Move.DeathB: return womenMoves.death_B;
+            case Move.HitHead: return womenMoves.hit_Head;
+            case Move.HitChest: return womenMoves.hit_Chest;
+            case Move.CrouchIdle: return womenMoves.crouch_Idle;
+        }
+        return womenMoves.crouch_Walk;
+    }
+    switch (move)
+    {
+        case Move.Idle: return menMoves.idle;
+        case Move.Walk: return menMoves.walk;
+        case Move.Run: return menMoves.run;
+        case Move.IdleSword: return menMoves.idle_Sword;
+        case Move.SwordSlash: return menMoves.sword_Slash;
+        case Move.IdleGun: return menMoves.idle_Gun;
+        case Move.GunShoot: return menMoves.gun_Shoot;
+        case Move.PunchRight: return menMoves.punch_Right;
+        case Move.PunchLeft: return menMoves.punch_Left;
+        case Move.HitRecieve: return menMoves.hitRecieve;
+        case Move.HitRecieve2: return menMoves.hitRecieve_2;
+        case Move.Death: return menMoves.death;
+        case Move.Interact: return menMoves.interact;
+        case Move.ZIdle: return menMoves.z_Idle;
+        case Move.ZWalk: return menMoves.z_Walk;
+        case Move.ZScratch: return menMoves.z_Scratch;
+        case Move.ZKnockback: return menMoves.z_Knockback;
+        case Move.ZClimb: return menMoves.z_Climb;
+        case Move.Sprint: return menMoves.sprint;
+        case Move.DeathB: return menMoves.death_B;
+        case Move.HitHead: return menMoves.hit_Head;
+        case Move.HitChest: return menMoves.hit_Chest;
+        case Move.CrouchIdle: return menMoves.crouch_Idle;
+    }
+    return menMoves.crouch_Walk;
+}
+
+// What a body's frag is drawn with: the dead's grime and blood, their eyes, fire and frost, and a flash when struck.
+frag Flesh(Corner corner, out Color color, Instance instance, Skin skin, Look look, Lights lights, Lens lens)
+{
+    var normal = instance.Normal(corner.normal);
+    mut var albedo = Linear(Rgb(corner.color));
+    var p = corner.position;
+    var grime = Math.Perlin(float2(p.x * 6 + p.z * 4, p.y * 7)) * 0.5 + 0.5;
+    albedo *= 1 - skin.grime * grime * 0.6;
+    if (skin.grime > 0.3)
+    {
+        var blood = Math.Perlin(float2(p.x * 3.1 + p.z * 2.3 + 17, p.y * 2.7));
+        if (blood > 0.32) albedo = Math.Lerp(albedo, float3(0.09, 0.006, 0.004), Math.Saturate((blood - 0.32) * 5) * 0.85);
+    }
+    albedo = Math.Lerp(albedo, float3(0.35, 0.5, 0.65), skin.frost * 0.6);
+    mut var lit = Shade(albedo, this.world, normal, 1 - skin.inside, look, lights.list, lens.moonDepth);
+    // Rim light from the moon's side, so the dead stand out of the dark
+    var toEye = Math.Normalize(look.eye - this.world);
+    var rim = Math.Pow(1 - Math.Saturate(Math.Dot(normal, toEye)), 3) * 0.35;
+    lit += (look.moonColor * 0.6 + float3(0.012, 0.014, 0.02)) * rim * (1 - skin.inside * 0.6);
+    if (corner.uv2.x > 0.5) lit = float3(2.6, 1.3, 0.25) * skin.eyes;
+    if (skin.burn > 0)
+    {
+        var flame = Math.Perlin(float2(p.x * 9 + look.time * 3, p.y * 8 - look.time * 6)) * 0.5 + 0.5;
+        lit += float3(1.6, 0.5, 0.08) * flame * skin.burn;
+    }
+    lit += float3(1.4, 1.2, 1.0) * skin.flash;
+    color = Color(Hazed(lit, this.world, look), 1);
+}
+
+// The dead, as this frame has them.
+[Stage(Layers.Gather)]
+view PoseZombie(mut Zombie zombie, Look look)
+{
+    var woman = WomanZombie(zombie.look);
+    var body = ZombieBody(zombie.look);
+    mut var pose = body.defaultPose;
+    mut var at = zombie.at;
+    var t = zombie.timer;
+    switch (zombie.state)
+    {
+        case ZombieState.Rising:
+        {
+            var risen = Math.SmoothStep(0, 1, t / RISE_SECONDS);
+            pose.Sample(MoveOf(woman, Move.ZClimb), 0.15 + risen * 0.5);
+            at.y -= (1 - risen) * 1.9;
+            break;
+        }
+        case ZombieState.Outside:
+            pose.Sample(MoveOf(woman, Move.ZWalk), zombie.stride / 1.361 * 1.333, Playback.Loop);
+            break;
+        case ZombieState.Tearing:
+            pose.Sample(MoveOf(woman, Move.ZScratch), (zombie.rip / RIP_SECONDS) * 1.8, Playback.Loop);
+            break;
+        case ZombieState.Climbing:
+            pose.Sample(MoveOf(woman, Move.ZClimb), Math.Saturate(t / CLIMB_SECONDS) * 0.667);
+            break;
+        case ZombieState.Dying:
+        {
+            var fall = zombie.fall == 0 ? Move.Death : Move.DeathB;
+            var length = zombie.fall == 0 ? 1.067 : 2.4;
+            pose.Sample(MoveOf(woman, fall), Math.Min(t * 1.15, length));
+            if (t > DEATH_SECONDS - 1.4) at.y -= (t - (DEATH_SECONDS - 1.4)) * 0.6;
+            break;
+        }
+        default:
+        {
+            // Hunting: walking, running or sprinting by how fast; swinging; reeling
+            var speed = zombie.speed;
+            if (zombie.gait == Gait.Shamble) pose.Sample(MoveOf(woman, Move.ZWalk), zombie.stride / 1.361 * 1.333, Playback.Loop);
+            else pose.Sample(MoveOf(woman, Move.Run), zombie.stride / 2.305 * 0.833, Playback.Loop);
+            // Frozen: held stiff mid-step, no idle sway
+            if (speed < 0.3 && zombie.frozen <= 0)
+            {
+                mut var idle = body.defaultPose;
+                idle.Sample(MoveOf(woman, Move.ZIdle), look.time + zombie.pace * 10, Playback.Loop);
+                pose.Blend(idle, Math.Saturate(1 - speed / 0.3));
+            }
+            if (zombie.swing > 0)
+            {
+                mut var strike = body.defaultPose;
+                var into = zombie.swing / ATTACK_SECONDS;
+                strike.Sample(MoveOf(woman, Move.ZScratch), into * 1.8);
+                pose.Blend(strike, Math.Saturate(Math.Min(into * 6, (1 - into) * 6)));
+            }
+            if (zombie.flinch > 0)
+            {
+                mut var reel = body.defaultPose;
+                reel.Sample(MoveOf(woman, Move.HitChest), (0.45 - zombie.flinch) * 0.9);
+                pose.Blend(reel, Math.Saturate(zombie.flinch * 4));
+            }
+            break;
+        }
+    }
+    zombie.pose = pose;
+    var scale = zombie.look == 3 ? 1.08 : 1.0;
+    zombie.place = float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), float3(scale));
+    zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
+}
+
+local event(Struck struck) FlashStruck(mut Zombie zombie)
+{
+    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding) return;
+    zombie.flash = struck.killed ? 0.0 : 0.35;
+}
+
+[Stage(Layers.Shadows, 1)]
+view ShadowZombie(Zombie zombie, Lens lens)
+{
+    if (!lens.made) return;
+    lens.moon.SkinnedMesh(ZombieBody(zombie.look), zombie.place, zombie.pose);
+}
+
+[Stage(Layers.Scene, 2)]
+view DrawZombie(Zombie zombie, Lens lens, Look look)
+{
+    if (!lens.made || Math.Distance(zombie.at, look.eye) > 70) return;
+    var eyes = zombie.state == ZombieState.Dying ? Math.Saturate(1 - zombie.timer * 1.5) : 1.0;
+    var burning = zombie.burn > 0 ? 1.0 : 0.0;
+    lens.scene.Bounds(float3(0, 1, 0), float3(3, 3.5, 3))
+    {
+        lens.scene.SkinnedMesh(ZombieBody(zombie.look), zombie.place, zombie.pose, Flesh,
+                               Skin { burn = burning, frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0, flash = zombie.flash, eyes = eyes, grime = 0.55 });
+    }
+}
+
+// The other survivors (and this machine's own, for its shadow).
+[Stage(Layers.Gather)]
+view PoseSurvivor(mut Survivor survivor, Look look)
+{
+    var woman = WomanHero(survivor.seat);
+    var body = HeroBody(survivor.seat);
+    mut var pose = body.defaultPose;
+    var speed = Math.Length(survivor.velocity.xz);
+    survivor.stride += speed * Math.Min(Frame.dt, 0.05);
+    var info = Info(survivor.weapons[survivor.slot]);
+    var melee = info.kind == Kind.Melee;
+    if (survivor.life == Life.Downed)
+    {
+        pose.Sample(MoveOf(woman, speed > 0.2 ? Move.CrouchWalk : Move.CrouchIdle), speed > 0.2 ? survivor.stride / 1.4 * 2.0 : look.time, Playback.Loop);
+    }
+    else if (speed > 0.4)
+    {
+        if (speed > 4.6) pose.Sample(MoveOf(woman, Move.Run), survivor.stride / 2.305 * 0.833, Playback.Loop);
+        else pose.Sample(MoveOf(woman, Move.Walk), survivor.stride / 1.777 * 1.333 * 1.25, Playback.Loop);
+    }
+    else
+    {
+        pose.Sample(MoveOf(woman, melee ? Move.IdleSword : Move.IdleGun), look.time, Playback.Loop);
+    }
+    if (survivor.act == Act.Swing || survivor.act == Act.Heavy || survivor.act == Act.Stab)
+    {
+        mut var slash = body.defaultPose;
+        var into = survivor.actTime / Math.Max(0.05, survivor.actLength);
+        slash.Sample(MoveOf(woman, Move.SwordSlash), 0.25 + into * 0.6);
+        pose.Blend(slash, Math.Saturate(Math.Min(into * 5, (1 - into) * 5)) * 0.85);
+    }
+    else if (!melee && survivor.life == Life.Standing)
+    {
+        mut var hold = body.defaultPose;
+        hold.Sample(MoveOf(woman, Move.GunShoot), survivor.act == Act.Loose ? Math.Min(survivor.actTime, 0.5) : 0.05);
+        pose.Blend(hold, 0.7);
+    }
+    survivor.pose = pose;
+    survivor.place = float4x4.TRS(survivor.feet, quaternion.AxisAngle(float3(0, 1, 0), survivor.yaw), float3(1));
+}
+
+[Stage(Layers.Shadows, 1)]
+view ShadowSurvivor(Survivor survivor, Lens lens)
+{
+    if (!lens.made || !survivor.ready || survivor.life == Life.Gone) return;
+    lens.moon.SkinnedMesh(HeroBody(survivor.seat), survivor.place, survivor.pose);
+}
+
+[Stage(Layers.Scene, 2)]
+view DrawSurvivor(Survivor survivor, Lens lens, Me me)
+{
+    if (!lens.made || !survivor.ready || survivor.life == Life.Gone || survivor.seat == me.seat) return;
+    lens.scene.Bounds(float3(0, 1, 0), float3(3, 3, 3))
+    {
+        lens.scene.SkinnedMesh(HeroBody(survivor.seat), survivor.place, survivor.pose, Flesh, Skin { eyes = 0.0, grime = 0.15 });
+    }
+}
