@@ -227,6 +227,12 @@ distance." Asked, they chose pixels finer with distance, and for the sounds:
   - Guns: The Free Firearm Sound Library's recordings as they were made,
     each shot's own echo off the trees left ringing (0.7 to 1.8 s), three
     takes a gun picked at random each shot. No added thump, snap or drive.
+    The SMG's first takes were cut from the PPSh's bursts (a shot every
+    50 ms), so each sounded like a burst (the owner: "the SMG one shot
+    sounds like a burst shot"). They're now its single shots (`P_30P`). The
+    other guns' files have one shot each: the Mossberg's second onset is an
+    echo 0.2 s after every blast, and the AR-15's 32 ms pair is one shot's
+    crack and boom.
   - Handling: SpringySpringo's real (airsoft) reloads, a rifle's, a pistol's
     and a shotgun's pump.
   - Hits: qubodup's meat impacts and Independent.nu's wet ones; Kenney's

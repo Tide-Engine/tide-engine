@@ -196,9 +196,9 @@ No attribution is required for any of it; it is given here anyway.
 | shotgun_fire_1.ogg | 1.57 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
 | shotgun_fire_2.ogg | 1.17 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
 | shotgun_fire_3.ogg | 1.57 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
-| smg_fire_1.ogg | 0.70 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
-| smg_fire_2.ogg | 0.70 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
-| smg_fire_3.ogg | 0.61 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
+| smg_fire_1.ogg | 0.57 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
+| smg_fire_2.ogg | 0.57 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
+| smg_fire_3.ogg | 0.59 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
 | snarl_1.ogg | 0.70 | Zombies Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/zombies-sound-pack) |
 | snarl_2.ogg | 0.86 | 16 Monster Growls by StarNinjas (CC0 1.0, https://opengameart.org/content/16-monster-growls) |
 | snarl_3.ogg | 0.70 | Zombies Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/zombies-sound-pack) |
