@@ -20,6 +20,7 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | --- | --- | --- |
 | Walk; forward runs, once you haven't fired for a moment | WASD | Left stick |
 | Look | Mouse | Right stick |
+| Over the shoulder or through the eyes | V | Right stick press |
 | Jump (again in the air, with Spring Boots) | Space | South button |
 | Fire | Left mouse | Right trigger |
 | The secondary skill | Right mouse | Left trigger |

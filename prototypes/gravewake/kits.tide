@@ -133,7 +133,7 @@ void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Her
         {
             if (busy) return;
             var eye = EyeOf(survivor);
-            var look = LookDirection(survivor.yaw, survivor.pitch);
+            var look = AimWay(survivor);
             Shoot(survivor, eye, look, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1);
             Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = eye, way = look, source = Source.Phase });
             survivor.act = Act.Fire;

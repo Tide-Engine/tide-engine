@@ -204,7 +204,7 @@ view ShadowSurvivor(Survivor survivor, Lens lens)
 [Stage(Layers.Scene, 2)]
 view DrawSurvivor(Survivor survivor, Lens lens, Me me)
 {
-    if (!lens.made || !survivor.ready || survivor.life == Life.Gone || survivor.seat == me.seat) return;
+    if (!lens.made || !survivor.ready || survivor.life == Life.Gone || (survivor.seat == me.seat && !me.third)) return;
     lens.scene.Bounds(float3(0, 1, 0), float3(3, 3, 3))
     {
         lens.scene.SkinnedMesh(HeroBody(survivor.seat), survivor.place, survivor.pose, Wobble, Flesh, Skin { eyes = 0.0, grime = 0.15 });
