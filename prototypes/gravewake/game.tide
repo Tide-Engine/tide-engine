@@ -80,6 +80,8 @@ component Survivor
     local Pose pose;                 // This machine's: the frame's pose, sampled once
     local float4x4 place = float4x4.identity;
     local float stride;              // Metres walked, the walk's clock
+    local float bash;                // How far into a shoulder charge the body is (0 to 1): a dash's pose, eased in and out
+    local float bashTurn;            // ...and how far the body turns from the aim for it (side-on, the leading shoulder first)
     local float legYaw;              // How far the legs are turned from the aim, toward the way they're going
     local float feetYaw;             // Which way the feet face, in the world: they stay put while the aim turns, then step round
     local float turning;             // Seconds left of a step round

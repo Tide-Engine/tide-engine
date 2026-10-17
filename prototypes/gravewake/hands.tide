@@ -7,7 +7,7 @@ const float REVIVE_SECONDS = 3;
 const float BLEED_SECONDS = 30;
 
 [Stage(Tick.Survivors)]
-system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, Time time, query (Survivor survivor) others)
+system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Match match, Time time, query (Survivor survivor) others)
 {
     survivor.placed = false;
     survivor.ready = hands.ready;
@@ -47,6 +47,7 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
     var running = hands.move.y > 0.3 && survivor.steady > 0.35 && !busy && !downed;
     mut var speed = (running ? SPRINT_SPEED : WALK_SPEED) * Fleetness(survivor);
     if (downed) speed = 0.6;
+    speed *= Wading(survivor, herd);
     mut var wish = Flat(survivor.yaw) * hands.move.y + Flat(survivor.yaw + Math.PI * 0.5) * hands.move.x;
     if (Math.Length(wish) > 1) wish = Math.Normalize(wish);
     // On a slope too steep to stand on, no walking up it
@@ -130,6 +131,24 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
     survivor.sliding = survivor.grounded && ground < Ground(feet.x, feet.z) + 0.05 && Steepness(feet.x, feet.z) > SLIDE_STEEP;
     survivor.feet = feet;
 }
+
+// How much of their speed a survivor keeps among the dead: each one pressed against them (on its feet, about as high)
+// takes TOUCH_SLOW of it, down to TOUCH_SLOW_MOST. A dash goes through at full speed.
+float Wading(Survivor survivor, Herd herd)
+{
+    if (survivor.dash > 0) return 1;
+    mut var touching = 0;
+    foreach (var z in Near(herd, survivor.feet, BODY_RADIUS + ZOMBIE_RADIUS * BOSS_SIZE))
+    {
+        if (!z.hittable || z.down || z.risen < 0.5 || Math.Abs(z.at.y - survivor.feet.y) > 1.2) continue;
+        if (Math.Length((z.at - survivor.feet).xz) < BODY_RADIUS + ZOMBIE_RADIUS * z.size + TOUCH_GAP) touching += 1;
+    }
+    return Math.Max(1 - TOUCH_SLOW_MOST, 1 - TOUCH_SLOW * touching);
+}
+
+const float TOUCH_SLOW = 0.22;      // Speed lost to each of the dead pressed against a survivor
+const float TOUCH_SLOW_MOST = 0.6;  // ...and the most lost to them all
+const float TOUCH_GAP = 0.1;        // How near counts as pressed against
 
 // Which way the ground climbs at a place, flat.
 float3 Uphill(float3 at)
@@ -384,7 +403,7 @@ float FirstHit(float3 from, float3 to, Ashwick ashwick, Herd herd)
     foreach (var z in Along(herd, from, Math.Lerp(from, to, Math.Min(1, first))))
     {
         if (!z.hittable) continue;
-        var body = Math.Min(SphereHit(from, to, z.chest, 0.36 * z.size), SphereHit(from, to, z.hips, 0.33 * z.size));
+        var body = Math.Min(Math.Min(SphereHit(from, to, z.chest, 0.36 * z.size), SphereHit(from, to, z.hips, 0.33 * z.size)), LegsHit(from, to, z, 0));
         first = Math.Min(first, Math.Min(SphereHit(from, to, z.head, HEAD_RADIUS * z.size), body));
     }
     return first;
@@ -440,7 +459,7 @@ void Shoot(Survivor survivor, float3 from, float3 way, float range, float damage
         var onHead = SphereHit(from, to, z.head, HEAD_RADIUS * z.size);
         var chest = SphereHit(from, to, z.chest, 0.36 * z.size);
         var hips = SphereHit(from, to, z.hips, 0.33 * z.size);
-        var first = Math.Min(onHead, Math.Min(chest, hips));
+        var first = Math.Min(Math.Min(onHead, LegsHit(from, to, z, 0)), Math.Min(chest, hips));
         if (first > 1 || first > wall) continue;
         mut var at = struck.count;
         while (at > 0 && when[at - 1] > first) at -= 1;
