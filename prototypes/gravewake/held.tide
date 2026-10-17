@@ -49,6 +49,7 @@ local singleton Grip
     float sprint;
     float low;                   // How far the arms hang below the kit's eye (fp.tide's LowFor), eased
     float3 muzzle;               // Where the gun's muzzle was last frame, in the world, for the tracers
+    float3[4] muzzles;           // Where each seat's gun's muzzle was drawn in the world last frame (DrawCarried)
 }
 
 Mesh<Corner> GunMesh(Weapon weapon)
@@ -292,14 +293,22 @@ view DrawMissile(Missile missile, Lens lens, Look look)
 
 // ---- Every other survivor's gun, in their hand ----
 
+// The gun in the hand laid along its shots' line, its top up: over the shoulder, from the hand to what the crosshair is
+// on (hands.tide's AimedAt); otherwise at the point 30 m along the look.
 [Stage(Layers.Scene, 3)]
-view DrawCarried(Survivor survivor, Lens lens, Me me, Armory armory)
+view DrawCarried(Survivor survivor, Lens lens, Me me, mut Grip grip, Armory armory, Ashwick ashwick, Herd herd)
 {
     if (!lens.made || !armory.made || !survivor.ready || survivor.life == Life.Gone || (survivor.seat == me.seat && !me.third) || survivor.role == Role.None) return;
     var body = HeroBody(survivor.seat);
     var hand = Math.Mul(survivor.place, survivor.pose.Model(body.skeleton.bones.wristR));
-    var grip = Math.Mul(hand, float4x4.TRS(float3(0, 0.07, 0.02), Degrees(-90, 0, 90), float3(1)));
-    lens.scene.Mesh(GunMesh(survivor.gun), grip, Wobble, Steel, Finish { });
+    var palm = Point(hand, float3(0, 0.07, 0.02));
+    var look = LookDirection(survivor.yaw, survivor.pitch);
+    var target = survivor.third ? AimedAt(survivor, Info(survivor.gun).range, ashwick, herd) : EyeOf(survivor) + look * 30;
+    var line = target - palm;
+    var way = Math.Length(line) > 0.8 && Math.Dot(Math.Normalize(line), look) > 0.5 ? Math.Normalize(line) : look;
+    var held = float4x4.TRS(palm, quaternion.LookRotation(way, float3(0, 1, 0)), float3(1));
+    lens.scene.Mesh(GunMesh(survivor.gun), held, Wobble, Steel, Finish { });
+    if (survivor.seat >= 0 && survivor.seat < 4) grip.muzzles[survivor.seat] = Point(held, V3(DataOf(armory, survivor.gun).muzzle));
 }
 
 // ---- The Engineer's turrets ----

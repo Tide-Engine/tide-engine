@@ -290,42 +290,96 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     survivor.mag -= 1;
     survivor.shotWait = info.rate / Haste(survivor);
     survivor.steady = 0;
-    var eye = EyeOf(survivor);
-    var look = AimWay(survivor);
-    var right = Flat(survivor.yaw + Math.PI * 0.5);
+    var from = AimFrom(survivor, info.range, ashwick, herd, out var look);
+    var right = Math.Normalize(Math.Cross(float3(0, 1, 0), look));
     var up = Math.Cross(look, right);
     var trace = info.pellets > 1 ? Trace.Pellet : Trace.Bullet;
     for (var p = 0; p < info.pellets; p++)
     {
         var off = Random.NextFloat2Direction() * Random.NextFloat(info.spread);
         var way = Math.Normalize(look + right * off.x + up * off.y);
-        Shoot(survivor, eye, way, info.range, info.damage * Might(survivor), info.head, info.pierce, ashwick, herd, trace, info.proc);
+        Shoot(survivor, from, way, info.range, info.damage * Might(survivor), info.head, info.pierce, ashwick, herd, trace, info.proc);
     }
-    Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = eye, way = look, source = Source.Gun });
+    Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Gun });
     survivor.act = Act.Fire;
     survivor.actTime = 0;
     survivor.actLength = Math.Max(0.12, info.rate / Haste(survivor));
 }
 
-// Where the camera is for one who plays from over the shoulder: behind the head, up a little, out to the right.
-float3 ShoulderOf(Survivor survivor)
+// Where the camera is for one who plays from over the shoulder (eye.tide's, and the aim's): behind the head, up a
+// little, out to the right, pulled in toward the head where the ground would be between them.
+float3 ShoulderFrom(float3 eye, float yaw, float pitch)
 {
-    var look = LookDirection(survivor.yaw, survivor.pitch);
-    return EyeOf(survivor) + Flat(survivor.yaw + Math.PI * 0.5) * SHOULDER_RIGHT + float3(0, SHOULDER_UP, 0) - look * SHOULDER_BACK;
+    var look = LookDirection(yaw, pitch);
+    var side = Flat(yaw + Math.PI * 0.5) * SHOULDER_RIGHT + float3(0, SHOULDER_UP, 0);
+    mut var back = SHOULDER_BACK;
+    for (var k = 0; k < 8; k++)
+    {
+        var at = eye + side - look * back;
+        if (at.y > Ground(at.x, at.z) + 0.35) break;
+        back *= 0.75;
+    }
+    mut var camera = eye + side - look * back;
+    camera.y = Math.Max(camera.y, Ground(camera.x, camera.z) + 0.35);
+    return camera;
 }
 
-// Which way a survivor's shots go: along their look; from over the shoulder, from their eye toward what the camera's
-// crosshair is on, as far as a gun reaches (so the round goes where the crosshair says).
-float3 AimWay(Survivor survivor)
+// Where a survivor's gun is, in their right hand as their body holds it (people.tide's pose): over the shoulder, the
+// shots leave from here.
+float3 GunHand(Survivor survivor)
+{
+    return survivor.feet + Flat(survivor.yaw + Math.PI * 0.5) * GUN_RIGHT + float3(0, GUN_UP, 0) + Flat(survivor.yaw) * GUN_AHEAD;
+}
+
+// What the crosshair is on from over the shoulder: the first of the dead, the ground or a wall along the camera's line,
+// from beside the head on (nothing behind the survivor is aimed at), no further than `range`.
+float3 AimedAt(Survivor survivor, float range, Ashwick ashwick, Herd herd)
+{
+    var eye = EyeOf(survivor);
+    var look = LookDirection(survivor.yaw, survivor.pitch);
+    var camera = ShoulderFrom(eye, survivor.yaw, survivor.pitch);
+    var from = camera + look * Math.Max(0, Math.Dot(eye - camera, look));
+    var to = from + look * range;
+    return Math.Lerp(from, to, Math.Min(1, FirstHit(from, to, ashwick, herd)));
+}
+
+// How far along a line (0 to 1; more than 1 for nothing) the first wall, ground or one of the dead is.
+float FirstHit(float3 from, float3 to, Ashwick ashwick, Herd herd)
+{
+    mut var first = LongRay(ashwick, from, to, out _);
+    foreach (var z in Along(herd, from, Math.Lerp(from, to, Math.Min(1, first))))
+    {
+        if (!z.hittable) continue;
+        var body = Math.Min(SphereHit(from, to, z.chest, 0.36 * z.size), SphereHit(from, to, z.hips, 0.33 * z.size));
+        first = Math.Min(first, Math.Min(SphereHit(from, to, z.head, HEAD_RADIUS * z.size), body));
+    }
+    return first;
+}
+
+// Where a survivor's shots start, and which way they go: from the eye along the look; over the shoulder, from the gun
+// in their hand toward what the crosshair is on, so a round goes from the gun to where the crosshair says (unless
+// something's between: hud.tide marks where it'd stop).
+float3 AimFrom(Survivor survivor, float range, Ashwick ashwick, Herd herd, out float3 way)
 {
     var look = LookDirection(survivor.yaw, survivor.pitch);
-    if (!survivor.third) return look;
-    return Math.Normalize(ShoulderOf(survivor) + look * 40 - EyeOf(survivor));
+    if (!survivor.third)
+    {
+        way = look;
+        return EyeOf(survivor);
+    }
+    var hand = GunHand(survivor);
+    var line = AimedAt(survivor, range, ashwick, herd) - hand;
+    var length = Math.Length(line);
+    way = length > 0.8 && Math.Dot(line / length, look) > 0.5 ? line / length : look;
+    return hand;
 }
 
 const float SHOULDER_BACK = 3.2;
 const float SHOULDER_RIGHT = 0.7;
 const float SHOULDER_UP = 0.35;
+const float GUN_RIGHT = 0.2;
+const float GUN_UP = 1.2;
+const float GUN_AHEAD = 0.5;
 
 void StartAct(mut Survivor survivor, Act act, float seconds)
 {
