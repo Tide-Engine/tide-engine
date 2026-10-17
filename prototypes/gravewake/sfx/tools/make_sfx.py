@@ -357,6 +357,33 @@ def gore(rng, i):
     return trim(y, -40, fade_out=0.12)
 
 
+@sound('bloat_swell', layers=True)
+def bloat_swell(rng):
+    # A Bloater about to burst: a moan dropped half an octave and gargled, wet bubbling under it, both swelling to the
+    # end (it bursts as this ends, about a second in)
+    moan = zvox(S('oga_zombie_moans_ds', 'darsycho__zombie-moans_0.ogg', 0.25, 1.45), -6, 0.3, fade_out=0.05)
+    bub = lowpass(at_onset(S('rd_water', 'slime_07.ogg')), 1800)
+    bub2 = lowpass(at_onset(S('rd_water', 'slime_11.ogg')), 1400)
+    y = mix((unit(moan), 0, 0), (unit(bub), 0.15, -5), (unit(bub2), 0.55, -4))
+    y = y[:n_of(1.0)]
+    y = y * np.minimum(1, (np.arange(len(y)) / R / 0.85) ** 1.5 * 0.85 + 0.15)
+    return trim(fade(y, 0.02, 0.04), -45, fade_out=0.04)
+
+
+@series('bloat_pop', 2, layers=True)
+def bloat_pop(rng, i):
+    # A Bloater bursting: a deep wet blast (a bang's low end), the splatter on top and a hard low thump, a short room
+    bang = lowpass(at_onset(S('rd_bang', ['bang_03.ogg', 'bang_09.ogg'][i - 1])), 900)
+    splat = at_onset(S(*[('oga_wetsquish', 'impactsplat02.mp3.flac'), ('oga_wetsquish', 'impactsplat05.mp3.flac')][i - 1]))
+    crack = at_onset(S('oga_splatter', 'crack11.mp3.flac'))
+    slime = at_onset(S('rd_water', ['slime_03.ogg', 'slime_07.ogg'][i - 1]))
+    y = mix((unit(bang), 0, -1), (unit(splat), 0, -2), (unit(crack), 0.01, -6), (unit(slime), 0.04, -8),
+            (unit(body_thump(0.45, rng, 48, 7)), 0, -2))
+    y = reverb(highpass(y, 30), 0.8, wet=0.12, damp=0.6)
+    y = limit(unit(y) * db(4), -1)
+    return cap(trim(y, -50, fade_out=0.2), 1.8, 0.7)
+
+
 @series('headshot', 2, layers=True)
 def headshot(rng, i):
     # Skull crack: a sharp bone crack, crunch, a heavy thud and a splat

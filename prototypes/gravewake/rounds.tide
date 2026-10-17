@@ -17,6 +17,7 @@ singleton Match
     int killed;
     float spawnWait;
     int rush;                    // Of the dead, how many more come six a tick (the development key's horde)
+    int bloaters;                // How many of the next to rise are Bloaters whatever the share (the development key's)
     // The party's experience (items.tide)
     int level;
     float xp;                    // Toward the next level
@@ -49,6 +50,7 @@ void ResetMatch(mut Match match)
     match.killed = 0;
     match.spawnWait = 0;
     match.rush = 0;
+    match.bloaters = 0;
     match.level = 1;
     match.xp = 0;
     match.bossNext = BOSS_FIRST;
@@ -204,11 +206,28 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor su
         if (at.y < -100) return;
         var gait = GaitFor(danger);
         var look = Random.NextInt(ZOMBIE_LOOKS);
-        Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = ZombieHealth(danger), gait = gait, look = look, state = ZombieState.Rising,
-                       pace = Random.NextFloat(0.9, 1.1), phase = Random.NextInt(64) });
+        var pace = Random.NextFloat(0.9, 1.1);
+        var phase = Random.NextInt(64);
+        mut var bloat = Random.NextFloat() < BloaterShare(match);
+        if (match.bloaters > 0)
+        {
+            match.bloaters -= 1;
+            bloat = true;
+        }
+        Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = ZombieHealth(danger) * (bloat ? BLOAT_HEALTH : 1.0), gait = bloat ? Gait.Shamble : gait, look = look,
+                       state = ZombieState.Rising, pace = pace, phase = phase, kind = bloat ? ZombieKind.Bloater : ZombieKind.Walker });
         if (k == 0) Send(Cue { sound = Sfx.Rise, at = at });
     }
 }
+
+// How many of the dead that rise are Bloaters: none in the first BLOATERS_FROM seconds, then one in 40, up to one in 14
+// as the danger grows.
+float BloaterShare(Match match)
+{
+    return match.clock < BLOATERS_FROM ? 0 : Math.Min(0.07, 0.025 + 0.01 * (match.danger - 1));
+}
+
+const float BLOATERS_FROM = 40;
 
 // Where one of the dead can claw up near a survivor: `near` to `far` metres off, any side, on open ground the dead can
 // walk and from which their way to the survivors is clear (eight tries); else a riser 7 m or more off; else a place far

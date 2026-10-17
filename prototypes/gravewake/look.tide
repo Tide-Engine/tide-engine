@@ -419,17 +419,17 @@ void MakeShapes(mut Shapes shapes)
             shapes.domeFaces.Add(corner + around + 2);
         }
     }
-    // The ground: its heights (plan.tide's Ground) on a grid of 1.25 m out to 120 m, its normals from its slopes
+    // The ground: its heights (plan.tide's Ground) on a grid of 1.25 m out to 150 m, its normals from its slopes
     shapes.ground.Clear();
     shapes.groundFaces.Clear();
-    var cells = 192;
-    var size = 240.0 / cells;
+    var cells = 240;
+    var size = 300.0 / cells;
     for (var z = 0; z <= cells; z++)
     {
         for (var x = 0; x <= cells; x++)
         {
-            var px = -120 + x * size;
-            var pz = -120 + z * size;
+            var px = -150 + x * size;
+            var pz = -150 + z * size;
             var normal = Math.Normalize(float3(Ground(px - 0.5, pz) - Ground(px + 0.5, pz), 1, Ground(px, pz - 0.5) - Ground(px, pz + 0.5)));
             shapes.ground.Add(Corner { position = float3(px, Ground(px, pz), pz), normal = normal });
             if (x == cells || z == cells) continue;

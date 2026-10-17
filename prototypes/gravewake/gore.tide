@@ -17,7 +17,7 @@
 // terrain").
 
 const int STAIN_PIXELS = 2048;
-const float STAIN_REACH = 56;        // Half the clearing's width the stains cover (NAV_X0, NAV_Z0 to 56)
+const float STAIN_REACH = 78;        // Half the clearing's width the stains cover (NAV_X0, NAV_Z0 to 78)
 const int GIBS_MOST = 600;
 const float GIB_SECONDS = 22;        // How long a piece lies before it's gone
 

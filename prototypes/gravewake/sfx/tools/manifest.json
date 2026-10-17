@@ -119,6 +119,43 @@
   ],
   "seconds": 0.316
  },
+ "bloat_pop_1": {
+  "bytes": 21434,
+  "file": "bloat_pop_1.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_splatter",
+   "oga_wetsquish",
+   "rd_bang",
+   "rd_water"
+  ],
+  "seconds": 1.8
+ },
+ "bloat_pop_2": {
+  "bytes": 21516,
+  "file": "bloat_pop_2.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_splatter",
+   "oga_wetsquish",
+   "rd_bang",
+   "rd_water"
+  ],
+  "seconds": 1.8
+ },
+ "bloat_swell": {
+  "bytes": 87444,
+  "file": "bloat_swell.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_zombie_moans_ds",
+   "rd_water"
+  ],
+  "seconds": 0.991
+ },
  "board_place_1": {
   "bytes": 49154,
   "file": "board_place_1.wav",

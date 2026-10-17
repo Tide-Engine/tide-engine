@@ -63,7 +63,15 @@ The dead claw up out of the ground all round you, from every side, a couple a
 second at first and many more as the danger climbs (Easy, Medium, Hard, Very
 Hard, Insane, Impossible: one more step every minute and a half, sooner with
 more of you), tougher and quicker too, up to 3000 at once. A head hit is gold
-on the crosshair, a Lucky Shot's double yellow.
+on the crosshair, a Lucky Shot's double yellow. Every one pressed against you
+slows you; a dash goes through them.
+
+After the first 40 seconds some of them are Bloaters (one in 40, up to one in
+14 as the danger climbs): wider, slower, sick green with glowing boils, and
+two and a half times as tough. Come within about 2.4 m and one stops, swells
+and throbs, and bursts a second later, hurting everyone within 3.6 m (up to
+45) and tearing up the dead round it. Shoot it dead and it bursts at once:
+from far off, that's a weapon.
 
 Every three minutes a Brute claws up, three times the size of the rest, its
 health across the top of the screen. It comes for the nearest of you, and
@@ -75,24 +83,25 @@ Down, you fight on from the ground with a pistol. A friend holding E for three
 seconds raises you, the gun back in hand as loaded as it was. Bleed out and
 you're back at the fire half a minute later, with everything you had.
 
-Development keys, not in play's interface: F3 a Brute, F4 two thousand more of
+Development keys, not in play's interface: F2 six Bloaters, F3 a Brute, F4 two thousand more of
 the dead, F5 a level (and so an offer), F6 walk to the next part of the
 clearing, F9 a camera over the clearing, F10 a random item.
 
 ## Ashwick Wood
 
-About 90 m across, its ground rising into the trees at its edge. The dead claw
-up out of the ground all round you, 16 to 32 m off, from every side.
+About 125 m across, its ground rising into the trees at its edge, and open:
+little stands in the way between the landmarks. The dead claw up out of the
+ground all round you, 16 to 32 m off, from every side.
 
 | Where | What's there |
 | --- | --- |
 | The middle | The camp's fire, where everyone starts; worn paths out to each landmark |
 | North | The chapel's rise, 6 m up, the ruin on it, a ramp down each side |
 | East | The beacon's spire: a lower tier 4 m up, its top 9 m up with the beacon burning, a ramp to each |
-| West | The old graveyard, sunk in its hollow behind a broken iron fence: ten graves the dead rise from |
+| West | The old graveyard, sunk in its hollow: ten graves the dead rise from, their stones small enough to run past |
 | North-west | A ring of standing stones |
 | South | The ravine, cut across the clearing, boulders on its banks |
-| About the clearing | Groves of trees and big stones to stand behind |
+| About the clearing | A few sparse groves, a wagon and a cart, and big stones to stand behind |
 
 ## Build and run
 

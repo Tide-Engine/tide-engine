@@ -388,6 +388,90 @@ should". (World War Z's piles.) The numbers are mine (Provisional).
   held still (`to_open`; the leap is from 3.5 m, the mine 1.8 m, as nothing
   walks to them now).
 
+### A bigger, more open clearing (2026-10-17)
+
+The owner: "we should make the map bigger; also include less obstructions i want
+movement to feel relatively free, having boxes or graves stopping the flow is a
+bit annoying". The scale and what was taken out are my picks.
+
+- **1.4 times as wide** (plan.tide): `CLEARING` 62 (was 44), about twice the
+  ground. The landmarks moved out with the edge, each its own size: the
+  chapel to (0, 42), the spire to (43, -4) with the beacon at (46, -1), the
+  graveyard (-38, 4), the stones (-36, 34), the ravine (-48, -38) to (45, -32).
+  The ramps keep their shape relative to what they climb. The ruin's walls
+  are now laid from `CHAPEL.y`, and the graveyard's graves, trees and brazier
+  from `GRAVES`. The wagon, cart, second fire, big stones and groves moved out
+  1.4 times. The edge has 36 risers (26) and 210 + 240 trees (150 + 170), with
+  undergrowth and grass to match.
+- **Grids to match**: nav `NAV_X0` -78 by `NAV_W` 156 (-56, 112), buckets 20
+  (14), the herd's `HERD_W` 78 (56), the stains' `STAIN_REACH` 78 (2048 px
+  now about 7.6 cm each). The ground mesh is 240 cells of 1.25 m out to 150 m
+  (192 to 120). The overhead development eyes are higher (98 m and (36, 42,
+  -36)). The F6 walk's places come from the landmarks' constants.
+- **Out of the way**: the camp's crate; the east's two barrels, crate, anvil
+  and fence; the graveyard's four iron fences. Gravestones are 0.75 the kit's
+  size and no box (they're passed through, as grass is), and there are 5 loose
+  stones, not 9. Two of the eight big stones are gone (the two nearest the
+  fire). Groves have 7 tries, not 9, each kept 2.6 m clear of the last (it
+  was 1.6), out to 8.5 m. What still blocks: the ruin's walls, the braziers,
+  the bench and cauldron by the fire, the wagon and cart, six big stones,
+  trees' trunks.
+- **Cost** (`gravewake_perf`, release): 2000 of the dead 2.03 ms a tick
+  (2.07 before); the grid of twice the cells doesn't show.
+- **Tests**: the places in test.c moved with the landmarks (`NAV_HALF`,
+  `NAV_SIDE` for the grid). Every high spot is still reached by a horde of
+  500 (piles 2.4 to 3.5 m up a face), all four ramps walked, the rise's face
+  not climbed by jumping (0.7 m). Two checks had leaned on how the old run
+  went: the stamp now clears the dead within 8 m and sets the one down
+  freshly fallen (others the kick had knocked down were nearer, and the boot
+  stamps the first it finds), and done sliding.
+- Looked at from overhead (F9) and at the F6 walk's places.
+
+### Bloaters (2026-10-17)
+
+The owner: "we should add other types of zombies, maybe mutants that are
+chunkier and explode when they get close or when you kill them (dealing damage
+to zombies but also potentially the player)". The numbers and look are my
+picks, not confirmed.
+
+- **What one is** (zombies.tide): `Zombie.kind`, `ZombieKind.Bloater`. Its
+  health is `BLOAT_HEALTH` (2.5) times the danger's, it always shambles, at
+  `BLOAT_PACE` (0.8) of that, and `Body.size` is `BLOAT_SIZE` (1.25), wider to
+  hit and to wade through (`Wading` scales by size). It doesn't swing.
+- **The fuse**: a survivor within `BLOAT_NEAR` (2.4 m) and it stops and swells
+  (`fuse` counts up, a `Sfx.Swell` cue). At `BLOAT_FUSE` (0.9 s) it bursts.
+  Knocked down it still bursts; frozen, it doesn't start.
+- **The burst** (`Rupture`, from `Hunt`): killed, it bursts the tick after the
+  blow; swelling, when its time's up. Within `BLOAT_REACH` (3.6 m), by how near
+  (the square root of 1 minus distance over reach, as missiles' bursts): the
+  dead take twice the danger's health, from 40% to all of it, are thrown
+  back and, past 0.3, knocked down. That's credited to whoever killed it, as
+  `echo`, so it sets off no Powder Kegs. Survivors standing take `BLOAT_HURT`
+  (45), from 40% to all of it, through armour, and are shoved. Then it's gone
+  at once (`Destroy`). One that burst by itself sent a killing `Struck` of
+  its own for the gore, and gives no orb or kill. A Bloater killed gives 50
+  more points and an orb of 1.5 (the dead's is 0.5).
+- **Rising** (rounds.tide's `BloaterShare`): none in the first
+  `BLOATERS_FROM` (40) s, then 2.5%, one percent more a step of danger, 7% at
+  most. The random draw is made into a local before the `Spawn`. `Match.bloaters`
+  (development key F2, `Cheat` 7) makes the next six rise as Bloaters.
+- **Drawn** (crowd.tide, `Shambler.bloat`): 1.18 by 1.04 by 1.16 the size, and
+  the vert pushes out the belly (and a little the shoulders) round its height
+  in the body. Skin lerped toward a sick dark green under the grime and
+  blood, boils (Perlin spots) that glow faintly. Swelling, the belly grows and
+  throbs ever faster and the boils glow hard. The first tries were a pale
+  glowing gold and swelled into a stretched blob; looked at in captures till
+  they read as the dead.
+- **Burst seen and heard**: `Shot.Bile` (fx.tide): a sick green flash, bile and
+  blood sprayed out, a thin foul haze. Gore from the `Struck`. `bloat_swell`
+  (a moan half an octave down, gargled, over wet bubbling, swelling to the
+  end) and `bloat_pop_1/2` (a bang's low end, wet splats, a slime splash, a
+  hard low thump) from `make_sfx.py`, CC0 sources credited.
+- **Tests**: a Bloater 1.8 m from a survivor bursts at 0.90 s, the survivor
+  taking 37 and a walker beside it 194. Shot dead from 8 m, it bursts at once,
+  the walker beside it hurt and the survivor not. `sturdy()` now always
+  gives a walker: the orb test's kill had been a Bloater, gone the tick after.
+
 ### Wading through the dead; the dash as a shoulder charge (2026-10-17)
 
 The owner: "we should slow the player down when touching zombies"; "make the
