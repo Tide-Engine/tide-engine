@@ -272,8 +272,8 @@ right-stick press switches between it and first person.
     ground or a wall along the camera's line, starting level with the head,
     so nothing behind the survivor is aimed at.
   - `AimFrom` gives where the shots leave and which way: from the gun in
-    the right hand (`GunHand`: 0.2 m right, 1.2 m up, 0.5 m ahead of the
-    feet, measured off the body's pose) toward `AimedAt`. The guns and the
+    the hands (`GunHand`, below under The survivors' bodies) toward
+    `AimedAt`. The guns and the
     Phase Round use it; in first person it's the eye along the look.
   - When something is between the gun and that point (a rock the camera
     sees over, one of the dead nearer the gun) and the shot would stop
@@ -287,6 +287,379 @@ right-stick press switches between it and first person.
   (`DrawSurvivor`, `DrawCarried`). The first-person arms aren't drawn.
 - Test: the gun section fires one carbine shot over the shoulder, turned
   so the camera's line is on the zombie's chest (`aim_over_shoulder`).
+
+### Playtest notes: the drone, the kick, the gun in the hands, the orbs (2026-10-17)
+
+The owner, playing: "the drone is right in my face (next to my crosshair)"; "the
+kicking animation in 3rd person also needs some work"; "the gun is close but
+not exactly on their hands; probably the same with the other guns"; "XP orbs
+are way too big, also lets add some satisfying sfx to it".
+
+- **The drone** (`items.tide`'s `DroneAt`, in the match: its shots leave from
+  there) hovers over the left shoulder, 2.35 m up and 0.45 m back; over the
+  right it sat by the over-the-shoulder camera's crosshair.
+- **The kick** in third person (`PoseSurvivor`): the gun stays in both hands
+  (a kick had dropped them to the clip's arms) and the right leg comes up
+  level ahead (`upperLegR` turned -1.75 rad about the body's right, the knee
+  a little bent through it), the other knee giving, the body leaning back
+  0.3 rad, on the act's timing as the first-person boot has it.
+- **The gun in the hands**: after the right arm's reach and the hand's turn,
+  the gun is put where the fist came to (between the wrist and the middle
+  knuckles, 0.55 of the way): an arm too short for where the gun was asked
+  to be had left the hand short of it. The left hand then reaches for the gun
+  as it is.
+- **Orbs** are smaller (0.045 m plus a little for more, was 0.11, a halo 2.2
+  times that). Taking one is a glass chime (`sfx/orb_1..3`: Kenney's
+  interface glass tings with a soft pluck an octave up and a little room,
+  `make_sfx.py`'s `orb`), each in a quick run of them a step up a C
+  pentatonic scale, two octaves, starting again at the bottom after 0.7 s
+  without one; a dozen a second at most.
+
+### Experience as orbs (2026-10-17)
+
+The owner: "lets make XP drop as orbs so you need to get close to pick them
+up (not THAT close), that should avoid camping too much". The numbers are mine
+(Provisional).
+
+- `orbs.tide`: each kill leaves an `Orb` (half a point of experience, as a
+  kill was) on the ground where the dead fell, off a pile too; a Brute's is
+  one of 25. The nearest survivor on their feet within `ORB_REACH` (5 m of
+  their chest) draws it, and it flies to them at `ORB_SPEED` (14 m/s),
+  following them; reaching them it's the party's (`GainXp`, which also
+  levels, as many times as it's enough). One nobody comes for is gone after
+  `ORB_SECONDS` (40 s), blinking its last 6 s. At most `ORBS_MOST` (800) lie
+  at once; past that a kill's experience is the party's at once. Restarts
+  clear them. Experience is still the party's, whoever takes it.
+- Seen: a small blue-green light with a soft halo bobbing over the ground,
+  bigger for more (gathered per orb into `Fx.orbSprites`, one instanced
+  draw); a few sparks when taken. Heard: a soft tick for this machine's own,
+  rising in pitch through a quick run of them, a dozen a second at most.
+- Test: a kill from 8 m leaves one that lies there a second untaken; from
+  4 m it's taken in about a quarter second; one left alone is gone after
+  40 s, its experience with it. The 90 s run still levels the party (its
+  survivor stands 6 m off what it shoots and walks among them).
+
+### Piles of the dead, and more of them (2026-10-17)
+
+The owner, on the climbing below: "what if we make them only be able to climb
+on each other? so they create a mountain of zombies similar to day z or
+whatever the movie was! ... also, if we can include even more zombies maybe we
+should". (World War Z's piles.) The numbers are mine (Provisional).
+
+- **No one climbs a cliff alone.** A zombie may step up into a cliff's cell
+  only when it's within a scramble of that cell's ledge (`Reaches`:
+  `ashwick.ledges`, the highest ground within two cells, less `STEP_UP` and
+  `SCRAMBLE`, 1.1 m), so banks and low ledges are still walked and scrambled
+  up alone; anything taller only from up a pile.
+- **The pile** (zombies.tide's `Hunt`): `Zombie.lift` is how high one is off
+  the ground (kept in the herd too, `Herd.lifts`). One pressed against a
+  cliff it can't get up (`pressing`), or behind others already up off the
+  ground (within 1.3 m ahead, `liftedAhead`), climbs at `CLIMB_RATE` (1.3 m/s,
+  a sprinter half again) onto one beside it no more than a body above it
+  (`onto`: within 0.85 m, `LAYER`, 0.55 m, higher). What's under it (within
+  0.6 m and lower) only stops it falling, never lifts it; with nothing under
+  it, it comes down at `FALL_SPEED` (5 m/s). The dead push apart only from
+  others at their own height, so one on top stands over the ones beneath. The
+  dying drop too, so shooting the bottom brings down what's on it. Once one is
+  near the ledge it walks over. In a pile they show the rise's clawing.
+- **They go straight at a cliff**: a cliff's cell costs as much as open
+  ground to the way (`CLIMB_COST` 1, was 3), so the dead pile up whatever face
+  is between them and the survivors; ramps are taken when they're on the way.
+- Seen (a fixed camera over the rise's east face, a horde of 1500): from 13 s
+  in, 100 to 270 of the dead up off the ground, piles to 4.5 m, spilling over
+  the rim by 19 s. Survivors on high ground have a while, then the dead come up
+  every side; four alone can't get up the ruin's cliff at all.
+- **More of the dead**: `SpawnRate` is `3 x danger^1.25` (was 1.4: three a
+  second at the start, thirty-five ten minutes in), up to ten a tick (was
+  six), `MAX_ALIVE` 4000 (was 3000); each a quarter weaker (`ZombieHealth`
+  `30 x danger^1.35`), a kill half the experience (so levels come as they
+  did).
+- **Numbers** (`gravewake_perf`, release, this machine): 2000 of the dead
+  2.07 ms a tick, 3000 3.37 ms, 4000 4.27 ms (26% of 60 Hz); before the piles
+  2000 cost 1.19 ms. The first try asked the ground's height for every
+  neighbour (4.46 ms at 2000); now once a zombie a tick, and the ledges are
+  kept per cell.
+- **Tests**: every high spot is reached by a horde of 500, piling 2.4 to 5 m
+  up a face. With twice the dead, the checks that aren't about the crowd
+  were moved off it: the 90 s run keeps the survivors whole through each
+  tick (a crowd's claws could down one within a tick), a Second Wind is tried
+  with only a few about, and the guns' and skills' target is moved to open
+  ground near the fire, turned so 9 m in front of it is flat and clear, and
+  held still (`to_open`; the leap is from 3.5 m, the mine 1.8 m, as nothing
+  walks to them now).
+
+### No climbing cliffs by jumping (2026-10-17)
+
+The owner: "i can spam jump and climb steep hills". Every jump left the
+ground, each landing a little further up, so any slope could be climbed a hop
+at a time.
+
+- **Footing** (hands.tide's `Steer`): ground (not a box's top) rising more
+  than `SLIDE_STEEP` (0.9) a metre is no footing: `Survivor.sliding`. On it
+  one can't walk any way uphill (`Uphill()`, the slope's flat direction),
+  is pulled down it at `SLIDE_PULL` (22 m/s²), and can't jump. A ramp
+  rises 0.75 at most, so all of them stay walkable.
+- **Ramp heads** (plan.tide's `RampTo`): a ramp climbed the whole way to the
+  rise's edge, where it met the mesa's rounded lip and turned steep, so
+  survivors slid back off the top of the west ramp. Now each ramp reaches
+  its top `RAMP_FLAT` (a fifth of its length) before its head, and runs flat
+  to the edge from there.
+- **Test**: holding forward and jumping every fifth of a second for 6 s at the
+  face of the chapel's rise must stay below 2.5 m (0.3 m at most now), and
+  walking up each of the four ramps from its foot must reach its top. The
+  dead still reach every high spot (piles 2.0 to 4.8 m).
+
+### The balance: bots playing whole runs (2026-10-17)
+
+The owner: "do a balancing pass on the characters, we need some tools or math
+or maybe even simulate full matches and see which are too strong which are too
+weak, how often we should give the player an upgrade etc".
+
+- **`gravewake_balance`** (test/balance.c, a release build; not a test): bots
+  play whole runs through the real input (aiming with the look at a human's
+  turn rate and with some error, backing off from the dead, going for orbs and
+  chests when it's safe, using each survivor's skills, reviving a friend).
+  `gravewake_balance <roles> [runs] [minutes] [first seed] [quiet|loud]
+  [items]`: roles one letter a survivor (G, B, E; "GB" a pair); items the
+  survivors start with ("GD2,PK1"), to weigh an item. It prints each run, then
+  the middle and the quartiles of how long runs lasted, kills a second, items
+  and their pace, levels, how much experience was picked up, downs, and when
+  each level came. Several go at once in the background; a 16-minute solo run
+  takes about a minute.
+- **`tools/balance_math.py`**: the same numbers on paper, read from the
+  source (`Danger`, `ZombieHealth`, `SpawnRate`, `LevelSpan`, `Might`, the guns'
+  `Info`): the health the dead bring a second against what each gun deals,
+  through its reloads, and the level pace.
+- **Changes from it**: the Mortar's shell 100 (was 160); Frostbite 12% a
+  stack for 2 s (was 8% for 1.5 s); the Keg hits two of the dead at most,
+  0.5 m more reach a stack (was 1.5 m); Leech Rounds heal from a store that
+  refills at 5% of health a second; a level gives 30 health (was 15); the
+  Breacher takes 35% less harm (`Armor()`, Kevlar 6% a stack, 60% at most).
+- **Results** (median seconds lasted, 16-minute cap, quartiles in brackets):
+  Gunner 449 [409–766] to 564; Engineer 695; Breacher 185 and then, with the
+  dash through the dead, 217 [178–356], and with the shotgun that doesn't
+  load, 575 [450–915]; Gunner and Breacher together 708 [534–807]. Items came
+  1.2 to 1.4 a minute. Starting with two Mortars takes a Gunner to 885 s (two
+  Pocket Kegs, 715 s): the Mortar is still the strongest item.
+
+### No more flying dead; a shotgun that doesn't load (2026-10-17)
+
+The owner, with a screenshot of a knot of the dead in mid-air: "zombies
+sometimes just fly lol ... i dont mind them crowding on top of each other what
+i mind is them just flying"; "the shotgun shouldnt need to reload, we already
+are slow"; "the shotgun SFX needs to feel more impactful".
+
+- **What held them up** (zombies.tide's `Hunt`): two of the dead about as
+  high, each climbing the other at once, leapfrogged up into the air with
+  nothing under either. Now one climbs only onto one lower than itself, and
+  of two about as high (within 0.12 m) only the one later in the herd climbs.
+  And what holds one up has to be under it: within 0.6 m and 0.25 to 0.88 m
+  lower (`props`), two of them once it's more than one and a half bodies up,
+  so a pile spreads at its foot as a heap does; with too few under it, it
+  comes down at `FALL_SPEED`.
+- **Test**: through the piling (a horde of 500 at each high spot), every tick,
+  each of the dead up off the ground and not falling has another of them
+  within 0.7 m and 0.2 to 1 m lower, or a cliff beside it (clawing at its
+  face), or isn't so for more than a sixth of a second (`lone`, a tick's lag
+  of the herd's places allowed). The leapfrogging pairs failed it.
+- **The shotgun** never loads (`WeaponInfo.bottomless`: it fires as long as
+  the trigger's held; the HUD shows its name alone). Its sound is the
+  recording over the cannon recording's low end (low-passed at 160 Hz) and a
+  hard low thump, pushed into the limiter (`make_sfx.py`'s `shotgun_fire`),
+  and a blast shakes the eye harder (0.5, was 0.3).
+
+### Gore: blood soaking the ground, pieces flying (2026-10-17)
+
+The owner: "i also want to add more gore, more blood, body parts flying,
+maybe decals of blood if we can render a shit tone of them or maybe we just
+draw to a texture that overlays the terrain". The texture it is (`gore.tide`,
+this machine's alone; picks mine, Provisional):
+
+- **The stains**: `Lens.stains`, an Rgba8 target 2048 texels across the
+  NAV area (112 m: about 5.5 cm a texel), seen straight down by an ortho
+  camera (`look.toStain`), never cleared but when it's made and at each new
+  run (`RunBegan`). A target keeps what's drawn into it from frame to frame
+  (`docs/spec.md`), so each splat is drawn once, the frame it lands
+  (`Soak`, at `Layers.Shadows`, before the scene: alpha-blended instanced
+  quads, `SplatAt` and `SplatBlood`, a ragged blot darker in the middle with
+  drops round its edge), and costs nothing after. `Earth` reads it at the
+  ground's place and lays its colour over the soil, with a wet shine.
+- **What stains**: a hit, drops under it (and a smear the way the blow went
+  on a head shot); a kill, a pool where it falls and four sprays thrown on
+  the blow's way (stretched 1.5 to 3 times along it); every flying piece a
+  drop each 0.07 s and a smear where it comes down. Up to 4000 splats a
+  frame.
+- **Pieces** (`Gib`): a kill by a blow (not burning or bleeding) throws 3 or
+  4 (a burst, 6): a limb (skin), a lump or a scrap (flesh), the head too on
+  a head shot; thrown on along the blow with some up and some scatter,
+  tumbling, bouncing (the ground's `Ground`), then lying `GIB_SECONDS`
+  (22 s), sinking away their last 2. At most `GIBS_MOST` (600), the oldest
+  going. Drawn as boxes in one instanced draw (`Meat`: mottled raw red over
+  the piece's colour, a wet shine fading as it dries over 12 s).
+
+### The grip, turning in place, and the dash for everyone (2026-10-17)
+
+The owner: "the gun still doesnt properly sit in the player's hands"; "looking
+around for example could not move the legs until you move too far and then
+they also move"; "i want movement to be more part of the experience. i like
+the dash, the other 2 characters feel like shit, i think they should all
+share the dash and maybe dashing through enemies pushes them or makes them
+fall". The numbers are mine (Provisional).
+
+- **The grip** (`PoseSurvivor`): the right hand turned down the grip's right
+  side (its knuckles down and a little forward, its thumb over the left), its
+  fingers closed round it (`CurlRight`: each finger joint 1.1 rad about the
+  hand's own x, the first joints most), and the gun put through the palm:
+  0.6 of the way from the wrist to the knuckles, `GRIP_IN` (2.8 cm) toward
+  where the fingers close, its origin (the top of the grip) `GRIP_UP` (5 cm)
+  above. The gun had been laid at the knuckles' line, so the grip stood out of
+  the back of the hand. The left hand is palm up under the handguard, its
+  fingers closed up round it (`CurlLeft`, 0.7 rad, the other way). The
+  hands' bones are named in `Rig` (Index2..4, Middle2..4, Ring2..4,
+  Pinky2..4, Thumb2, each side).
+- **Turning in place**: the feet keep a facing of their own in the world
+  (`Survivor.feetYaw`, local). Moving, it turns toward the way they go as
+  before. Standing, it stays put while the aim turns over it, the hips and
+  spine taking the twist, till it's past `STAND_TWIST` (1 rad); then the feet
+  step round to under the aim at `STEP_TURN` (4.5 rad/s) with the walk clip
+  blended in short and quick.
+- **The dash** is every survivor's Shift (`SkillOf`: the Breacher's Leap and
+  the Engineer's Blink are gone from their kits; their code stays, unused).
+  Two charges (`Survivor.dashes`, `DASHES`), each back `Cooldown` (3.5 s, less
+  with Field Batteries) after it's spent, one at a time (`dashWait`); 0.3 s
+  between dashes. 18 m/s for 0.26 s. Going through the dead it knocks each it
+  comes level with off its feet and flings it aside off its line
+  (`DashThrough`: within 1.1 m, not one already down; a Blunt blow of 30 x
+  might); a Brute is shoved, not knocked over. The eye widens in a dash (up
+  to +9 degrees, eased), and dust kicks up behind it (a streak of air behind it
+  went: the owner, "the dash line VFX is bad").
+- **Test**: two dashes then none, the first back after the cooldown; a dash
+  through one of the dead knocks it down and hurts it; Field Batteries
+  shorten a spent dash's wait to 2.975 s.
+
+### No power-ups; chests found, not shown (2026-10-17)
+
+The owner: "that ability that kills everything should maybe go; in general i
+dont like the drops from zombies being random abilities. lets make the chests
+be random, but not be pinged; players should discover them by roaming
+around".
+
+- **The dead drop nothing but orbs.** Recharge, Death's Touch and Holy Fire
+  are gone: the `Drop` component, its pick-up, the HUD's skull, the banner,
+  their sounds and hum (the `sfx` files stay, undeclared, so unpacked), and
+  `Match.instakill`, `drops`, `dropMinute`, `dropTurn`. `drops.tide` keeps the
+  cues and `Refill` (a survivor back at the fire).
+- **Chests** (`chests.tide`): `CHESTS_START` (4) stand about the clearing as
+  the run starts, one a tick at random open places 16 m apart and 14 m from
+  the survivors, then another every `CHEST_EVERY` (35 s), up to
+  `CHESTS_MOST` (7). Nothing points to them: no beam, no HUD marks, no line
+  in the corner. Each has a dim warm light on the ground round it (5 m) and
+  a glint off its lid now and then, seen near. By one, "Hold E to open the
+  chest" and its bar as before.
+
+### Chests, and levels half as often (2026-10-17)
+
+The owner: "could be fun adding chests around the map with upgrades /
+speaking of upgrades they are too frequent right now". Asked, they chose free
+chests on a timer, and level picks about half as often. The numbers are mine
+(Provisional).
+
+- **Chests** (`chests.tide`): the first 25 s into the run (`CHEST_FIRST`), then
+  one every 40 s (`CHEST_EVERY`), at most three standing (`CHESTS_MOST`); each
+  where the ground and the cells round it are open (`Open`), at least 14 m
+  from every survivor and 12 m from the other chests, in the clearing. Holding
+  E within 2.5 m (`CHEST_REACH`; not by a friend who's down: raising wins) for
+  1.2 s (`CHEST_SECONDS`) opens it: `Prying` sends twice a tick's share and
+  `ChestShut` takes one back each tick, so letting go shuts it again, as
+  reviving does. Its item is `RollItem`'s (as an offer's, by the run's
+  minutes; `Offer` now rolls through it too), given at once with no choosing
+  (`Given`, as F10's), and the chest is gone. Restarts clear them.
+- Seen and heard: the kit's wooden chest, a little big and bright, shaking as
+  it's pried; a warm light on the ground round it; a faint gold beam 9 m up
+  and sparks rising, so one is found across the clearing at night; a diamond
+  on the HUD where each is (kept on screen when it's off to the side or
+  behind, with its distance); "Hold E to open the chest" and a bar by one; a
+  line in the corner when one comes; a gold burst and the chest's sound
+  (`sfx/chest_open.ogg`) when it opens, the item's name as the banner.
+- **Levels** (`items.tide`): `LevelSpan` is as much as two levels took
+  (`12 x 2.22 x 1.4884^(level-1)`), so a pick comes half as often; each level
+  is worth two of the old: +24% damage (`Might`) and +30 health (`MaxHealth`,
+  `Experience`). A Brute felled still gives everyone a pick.
+- **Test**: a chest comes away from the survivors on open ground; E held 20
+  ticks and let go shuts it again; held, it opens in about 1.2 s and gives one
+  item. Tests that want a zombie on its feet take one on flat ground
+  (`flat_ground`), and Death's Touch is cleared before the boot's check: the
+  slower levels moved where the run is at those checks.
+
+### The survivors' bodies: legs that go where they move, arms on the gun (2026-10-17)
+
+The owner: "could we get some IK on the character and proper animations like
+strafing etc". The picks are mine (Provisional).
+
+- **Clips** (`art/people/tools/make_moves.py`, both catalogs): UAL1's
+  `Jog_Fwd_Loop` (Jog), `Pistol_Idle_Loop` (Pistol_Idle), `Jump_Loop` and
+  `Jump_Land`. Mesh2Motion's add-on set (CC0) has strafes and walking
+  backwards, but they're slow walks (0.8 and 1.2 m/s against a survivor's 4.6
+  to 6.8): played at speed their feet blur. So, as RoR2 does it:
+- **Legs** (`people.tide`'s `PoseSurvivor`): a gun idle standing; moving,
+  the Jog (the Sprint past 6 m/s going forward) by the metres walked over its
+  stride, its whole body turned toward the way they go (`legYaw`, up to
+  `LEG_TURN`, 75 degrees, eased), played backwards going back. In the air
+  `Jump_Loop`, landing the first of `Jump_Land` for a third of a second. The
+  abdomen, torso and chest turn back to the aim (40, 35, 25%) and bend to its
+  pitch, the head with them.
+- **The gun** is placed, not carried by the clip: from the right shoulder
+  along the line to what it's aimed at (over the shoulder `AimedAt`, else 30
+  m down the look), its top up; kicked back 7 cm by a shot, pulled in and
+  dipped for a reload. `Survivor.held` (local) has it; `DrawCarried` draws it
+  there and keeps its muzzle for the tracers.
+- **IK** (`Reach`, `AimHand`, over fp.tide's `TurnBone`): the right arm
+  reaches its wrist just behind and under the grip and the left under the
+  barrel (`ForeGrip`: 0.2 m ahead of the grip, the shotgun's 0.24, the SMG's
+  0.14; the pistol's grip cupped; the magazine while loading), each elbow
+  bent toward a pole down and out. Then each hand is turned so its middle
+  knuckle goes round the gun and rolled about it so its thumb is up the
+  barrel: the support hand's palm up under the handguard. These bodies'
+  arms are short (18 cm upper arm, 24 cm forearm), so the gun is held close.
+  A throw and the boot keep the clip's arms and the gun in the hand.
+- **Shots** still leave from the match's `GunHand`, now where the drawn
+  barrel is: 0.12 m right, 1.36 m up and 0.08 m ahead of the feet, then
+  0.45 m along the look (it swings with the pitch).
+
+### The dead climb, and nowhere is out of their reach (2026-10-17)
+
+The owner: "I can cheese a lot of it by staying at the highest point since
+they can only come from one direction. we either work it through map design
+or we allow zombies to stack on each other and come from all direction. also
+if i get to the house in some spots everyone just stops moving". I picked
+climbing (Provisional): map changes alone still leave choke points.
+
+- **The chapel's rise was cut off from the clearing.** A ramp's height
+  blended toward the ground under it, which at the rise's rim was still the
+  rise's own cliff, so a band of each ramp near the top climbed more than
+  `STEEP` (0.6 a metre) and was walls to the dead. A survivor on the rise
+  (the ruin, "the house") was out of the field: every one of the dead
+  stood still. `RampTo` now takes `below`, the ground before the rise
+  was raised, and stays at or above the rise (`Math.Max`), so the slope is
+  smooth to the top. The spire's ramps go the same way.
+- **A survivor in a wall's cell** (a wall's box is grown 0.12 m into the
+  cells, the chest's too) had the field start in a cell the dead never step
+  into, and the ones beside it stood still. `Seed` starts the field from
+  the cells the dead can go in within 1.5 m of them, with no box in between
+  (not the far side of the wall).
+- **The dead climb** (`ashwick.tide`): cells are open (0), walls (1) or
+  cliffs (2), the ground steeper than `STEEP` inside the clearing.
+  `Walkable` is anything but a wall; `Open` is flat ground, where the dead
+  rise. `Spread` counts a cliff's cell as `CLIMB_COST` (3) steps, a cell
+  walked again when a shorter way turns up. Going up a cliff, a step is cut
+  short so they rise no faster than `CLIMB_RATE` (1.3 m/s, a sprinter half
+  again; `Climbed`), the Brute the same. Climbing, they show the middle of
+  the rise clip, clawing, over and over (`Zombie.climbing`). Survivors still
+  can't climb (`Passable`), so high ground is worth having, but the dead
+  come up every side of it, slowly, while they're shot.
+- **Test**: survivors outside the ruin's north wall, by the chest, in the
+  ruin, on the spire's tier and on the beacon's top; at each the dead reach
+  them (all climbing, 5 to 12 s). The run's own Brute is held off meanwhile.
 
 ### Phase 2: the PSX look, guns, kits and items (built 2026-10-16)
 
@@ -367,9 +740,8 @@ An endless run in a forest clearing, an item at each level:
   with the pistol, unless a Second Wind puts them straight back up (one used
   up). Raised by a friend holding E for 3 s. Who bleeds out is back at the
   fire 30 s later. When nobody is left standing, the game is over.
-- **Power-ups**, at most four a minute: Recharge (every gun loaded, every skill
-  ready), Death's Touch (one-hit kills, 30 s), Holy Fire (every one of the
-  dead).
+- **No power-ups** (since 2026-10-17, below): items come from levels and
+  chests.
 
 ## Contracts
 
@@ -394,15 +766,17 @@ An endless run in a forest clearing, an item at each level:
   ground, and the picture draws it as a 193 × 193 heightfield at 1.25 m
   (`MakeShapes`), with rock where it's steep, casting the moon's shadows.
   Survivors can't walk up more than 0.75 m a metre (`Passable`), so cliffs
-  are climbed by ramp, Leap or not at all; jumping down is fine.
+  are climbed by ramp, Leap or not at all; jumping down is fine. The dead
+  climb them (above, The dead climb).
 - **Collision** is boxes in 8 m buckets, on the ground: circles pushed out,
   standing on the highest top within 0.45 m (the ground's or a box's). Props,
   tree trunks, the ruin's walls, the fence, the boulders and the gravestones
   have boxes.
 - **Navigation**: a 1 m grid, 112 × 112 cells from (-56, -56) (a byte field
-  reaches 254 m of path); cells past the clearing's edge, where the ground
-  climbs more than 0.6 a metre (`STEEP`, the cliffs), and every cell a box
-  taller than a step overlaps (a fence thinner than a cell too) are walls.
+  reaches 254 steps of path); cells past the clearing's edge and every cell a
+  box taller than a step overlaps (a fence thinner than a cell too) are
+  walls; where the ground climbs more than 0.6 a metre (`STEEP`) is a cliff
+  the dead climb at a cost (above, The dead climb).
   One of the dead already in a wall's cell (risen or thrown there) may walk
   out of it. Every six ticks `Wayfinding` spreads a
   breadth-first field from the standing survivors' cells; each zombie steps

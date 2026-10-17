@@ -128,6 +128,13 @@ void ShowState(Horde horde, mut Shambler one, Zombie zombie, int atlas)
         ShowFrame(horde, one, atlas, HordeClip.Claw, zombie.swing / ATTACK_SECONDS * horde.info.clips[int(HordeClip.Claw)].seconds);
         return;
     }
+    // Up a cliff: clawing its way, the middle of the rise's clip over and over
+    if (zombie.climbing)
+    {
+        var clip = horde.info.clips[int(HordeClip.Rise)];
+        ShowFrame(horde, one, atlas, HordeClip.Rise, (0.35 + 0.4 * Math.Frac(zombie.timer * 0.9)) * clip.seconds);
+        return;
+    }
     if (zombie.frozen > 0 || zombie.speed < 0.3)
     {
         ShowFrame(horde, one, atlas, HordeClip.Idle, zombie.frozen > 0 ? 0.0 : t + zombie.phase * 0.37);
@@ -219,7 +226,9 @@ vert Shamble(mut Corner corner, out float4 clip, Shambler one, Horde horde, Inst
 frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance, Look look, Lights lights, Lens lens)
 {
     var normal = instance.Normal(corner.normal);
-    mut var albedo = Linear(Rgb(corner.color)) * one.tint;
+    // Their clothes and skin gone to a dead grey-green, so the blood on them is what has colour
+    var worn = Linear(Rgb(corner.color));
+    mut var albedo = Math.Lerp(float3(Math.Dot(worn, float3(0.3, 0.55, 0.15))), worn, 0.4) * float3(0.85, 1.0, 0.82) * one.tint;
     var p = corner.position;
     var grime = Math.Perlin(float2(p.x * 6 + p.z * 4, p.y * 7)) * 0.5 + 0.5;
     albedo *= 1 - 0.55 * grime * 0.6;
@@ -234,8 +243,10 @@ frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance,
         lit += float3(1.6, 0.5, 0.08) * flame * one.burn;
     }
     lit += float3(1.4, 1.2, 1.0) * one.flash;
+    // The moon's edge: on the side of each body that faces the moon, where it turns away from the eye, so each has one
+    // clean outline against the mist and not a speckle of pale edges all over
     var toEye = Math.Normalize(look.eye - this.world);
-    var edge = Math.Pow(1 - Math.Saturate(Math.Dot(normal, toEye)), 3.5);
-    var through = Math.Exp(-Math.Distance(look.eye, this.world) * 0.012);
-    color = Color(Hazed(lit, this.world, look) + float3(0.1, 0.15, 0.11) * edge * through, 1);
+    var edge = Math.Pow(1 - Math.Saturate(Math.Dot(normal, toEye)), 4) * Math.Saturate(Math.Dot(normal, look.moonWay) * 1.5 + 0.2);
+    var through = Math.Exp(-Math.Distance(look.eye, this.world) * 0.02);
+    color = Color(Hazed(lit, this.world, look) + look.moonColor * 0.22 * edge * through, 1);
 }

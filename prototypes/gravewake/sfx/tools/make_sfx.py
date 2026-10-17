@@ -627,10 +627,18 @@ def smg_fire(rng, i):
     return trim(gunshot(*SMG_TAKES[i - 1], 0.7, rng), -55, fade_out=0.08)
 
 
-@series('shotgun_fire', 3, layers=False)
+@series('shotgun_fire', 3, layers=True)
 def shotgun_fire(rng, i):
-    # A Mossberg's blast and its long echo
-    return trim(gunshot(*SHOTGUN_TAKES[i - 1], 1.8, rng), -55, fade_out=0.2)
+    # A Mossberg's blast and its long echo, over a deep boom (the cannon recording's low end) and a hard low thump at
+    # the crack, pushed into the limiter: the blast felt in the chest (the owner: "the shotgun SFX needs to feel more
+    # impactful")
+    shot = gunshot(*SHOTGUN_TAKES[i - 1], 1.8, rng)
+    boom = lowpass(at_onset(S('oga_cannon', 'cannon_fire.ogg')), 160)
+    boom = fade(boom[:n_of(1.2)], 0.0, 0.8)
+    thump = body_thump(0.35, rng, 55, 9)
+    y = mix((unit(shot), 0, 0), (unit(boom), 0, -5), (unit(thump), 0, -4))
+    y = limit(unit(y) * db(5), -1)
+    return trim(y, -55, fade_out=0.2)
 
 
 @series('pistol_fire', 3, layers=False)
@@ -1482,6 +1490,16 @@ def points_tick(rng):
     y = sine(2350, sec) * np.exp(-tt * 140) + 0.4 * sine(4700, sec) * np.exp(-tt * 220)
     y += 0.15 * highpass(white(sec, rng), 3000) * np.exp(-tt * 600)
     return fade(y, 0.0005, 0.01)
+
+
+@series('orb', 3, layers=False)
+def orb(rng, i):
+    # An experience orb taken: Kenney's glass tings, brightened, a soft pluck an octave up under each, a little room
+    glass = highpass(at_onset(S('kenney_interface', ('glass_001.ogg', 'glass_003.ogg', 'glass_005.ogg')[i - 1])), 900)
+    pluck = pitch(highpass(at_onset(S('kenney_interface', 'pluck_001.ogg')), 600), 12)
+    y = mix((unit(glass), 0, 0), (unit(pluck), 0.0, -9))
+    y = reverb(y, rt60=0.6, wet=0.14, predelay=0.008, damp=0.4)
+    return trim(unit(y) * db(-2), -48, fade_out=0.05)
 
 
 @sound('hitmarker')

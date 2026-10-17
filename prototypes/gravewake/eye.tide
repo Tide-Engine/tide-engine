@@ -23,6 +23,7 @@ local singleton Me
     float3 last;                // Last frame's feet, for footfalls
     int overhead;               // Development: 1 looks down on the whole clearing (F9), 2 from over the trees
     bool third;                 // This frame's eye is over the shoulder (Feel.third), not the survivor's own
+    float fov = 74;             // The eye's breadth, eased: wider at a run and in a dash
 }
 
 local singleton Village
@@ -104,7 +105,11 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         look.downed = mine.life == Life.Downed ? 1.0 : 0.0;
         var low = 1 - Math.Saturate(mine.health / MaxHealth(mine));
         look.hurt = Math.Max(me.hurt, mine.life == Life.Standing ? low * low * 0.9 : 0.6);
-        look.fov = 74 + 4 * Math.Saturate((Math.Length(mine.velocity.xz) - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED));
+        // Wider running, and wider again in a dash: the speed felt
+        var pace = Math.Length(mine.velocity.xz);
+        var wide = 74 + 4 * Math.Saturate((pace - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)) + 9 * Math.Saturate((pace - SPRINT_SPEED) / (DASH_SPEED - SPRINT_SPEED));
+        me.fov += (wide - me.fov) * Math.Min(1, me.dt * (wide > me.fov ? 18 : 6));
+        look.fov = me.fov;
     }
     else
     {
@@ -156,7 +161,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     foreach (var at in plan.fires)
     {
         var flicker = 0.85 + Math.Perlin(float2(me.clock * 4.3 + at.x, at.z)) * 0.25;
-        AddLight(lights, eye, Light { at = at + float3(0, 1.8, 0), color = float3(1.0, 0.45, 0.12) * 6 * flicker, reach = 18 });
+        AddLight(lights, eye, Light { at = at + float3(0, 1.8, 0), color = float3(1.0, 0.42, 0.14) * 4.2 * flicker, reach = 18 });
     }
     foreach (var row in zombies)
     {
@@ -215,5 +220,5 @@ local event(Loosed loosed) FeelLoosed(mut Me me)
 {
     if (loosed.seat != me.seat || loosed.source == Source.Turret || loosed.source == Source.Drone) return;
     me.kick += loosed.source == Source.Phase ? 0.05 : Info(loosed.weapon).kick;
-    if (loosed.weapon == Weapon.Shotgun || loosed.source == Source.Phase) me.shake = Math.Max(me.shake, 0.3);
+    if (loosed.weapon == Weapon.Shotgun || loosed.source == Source.Phase) me.shake = Math.Max(me.shake, loosed.weapon == Weapon.Shotgun ? 0.5 : 0.3);
 }

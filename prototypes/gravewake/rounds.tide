@@ -22,19 +22,17 @@ singleton Match
     float xp;                    // Toward the next level
     // The Brutes (boss.tide)
     float bossNext;              // When the next comes, on the run's clock
+    float chestWait = CHEST_FIRST;  // Seconds till the next chest (chests.tide)
+    int chestsCome;              // How many have come this run
+    int orbs;                    // Experience orbs lying (orbs.tide)
     int bosses;                  // How many have come
-    // Power-ups
-    float instakill;             // Seconds left
-    int drops;                   // This minute's
-    int dropMinute;
-    int dropTurn;                // Where in the round of power-ups the next one is
     // The end
     float lasted;                // How long the run went
     bool restarting;
     bool culling;                // Development: the dead all go
 }
 
-const int MAX_ALIVE = 3000;      // Up at once: the most the tick and the frame afford (notes/gravewake.md)
+const int MAX_ALIVE = 4000;      // Up at once: the most the tick and the frame afford (notes/gravewake.md)
 const float START_SECONDS = 4;   // The breath before the first of the dead, once everyone has picked
 const float RETURN_SECONDS = 30; // How long one who bled out is gone before they're back at the fire
 const float BOSS_FIRST = 180;    // When the first Brute comes, and how long after each the next does
@@ -55,32 +53,33 @@ void ResetMatch(mut Match match)
     match.xp = 0;
     match.bossNext = BOSS_FIRST;
     match.bosses = 0;
-    match.instakill = 0;
-    match.drops = 0;
-    match.dropMinute = 0;
-    match.dropTurn = 0;
+    match.chestWait = CHEST_FIRST;
+    match.chestsCome = 0;
+    match.orbs = 0;
     match.lasted = 0;
     match.restarting = false;
     match.culling = false;
 }
 
 // How dangerous the night has got: 1 at the start, one more every minute and a half, a quarter more for each survivor
-// past the first.
+// How dangerous the night has got: 1 at the start, one more every two and a half minutes, nearly half again for each
+// survivor past the first. (Balanced with the bots, test/balance.c: the dead's health a second had grown as the minutes
+// to the 2.6th, a survivor's power about as the levels, and every run drowned by the third minute.)
 float Danger(Match match, int players)
 {
-    return (1 + match.clock / 90) * (1 + 0.25 * (players - 1));
+    return (1 + match.clock / 150) * (1 + 0.45 * (players - 1));
 }
 
 // What one of the dead can take, at a danger.
 float ZombieHealth(float danger)
 {
-    return 40 * Math.Pow(danger, 1.35);
+    return 25 * Math.Pow(danger, 1.1);
 }
 
-// How many of the dead come a second, at a danger: about one and a half at the start, seventeen ten minutes in.
+// How many of the dead come a second, at a danger: three at the start, fifteen ten minutes in.
 float SpawnRate(float danger)
 {
-    return 1.4 * Math.Pow(danger, 1.25);
+    return 3 * danger;
 }
 
 // The words for a danger, after Risk of Rain 2's.
@@ -101,7 +100,6 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
 {
     if (match.paused) return;
     match.timer += time.dt;
-    match.instakill = Math.Max(0, match.instakill - time.dt);
     mut var ready = 0;
     mut var hope = 0;
     mut var unpicked = 0;
@@ -141,13 +139,6 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
                 return;
             }
             if (match.culling && match.alive == 0) match.culling = false;
-            // A few power-ups a minute at most
-            var minute = int(match.clock / 60);
-            if (minute != match.dropMinute)
-            {
-                match.dropMinute = minute;
-                match.drops = 0;
-            }
             return;
         case Phase.Over:
             return;
@@ -194,7 +185,7 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor su
     else
     {
         match.spawnWait -= time.dt;
-        while (match.spawnWait <= 0 && count < 6)
+        while (match.spawnWait <= 0 && count < 10)
         {
             match.spawnWait += 1 / SpawnRate(danger);
             count += 1;
@@ -230,7 +221,7 @@ float3 RisingPlace(Ashwick ashwick, float3 focus, float near, float far)
         var off = Random.NextFloat(near, far);
         var there = focus + float3(Math.Sin(turn), 0, Math.Cos(turn)) * off;
         var cell = CellOf(there);
-        if (cell < 0 || !InClearing(there) || !Walkable(ashwick, cell) || FieldAt(ashwick, there) >= UNREACHED) continue;
+        if (cell < 0 || !InClearing(there) || !Open(ashwick, cell) || FieldAt(ashwick, there) >= UNREACHED) continue;
         return On(there.x, there.z);
     }
     mut List<int> picks = [];

@@ -131,7 +131,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
             mut var wish = toTarget;
             if (nearest > 18 || !ClearPath(ashwick, boss.at, targetAt)) wish = Downhill(ashwick, boss.at);
             Turn(boss, wish, 2.5 * dt);
-            Step(boss, ashwick, Flat(boss.yaw) * BOSS_SPEED * (1 + 0.08 * (boss.number - 1)) * dt);
+            Step(boss, ashwick, Flat(boss.yaw) * BOSS_SPEED * (1 + 0.08 * (boss.number - 1)) * dt, dt);
             return;
         }
         case BossMove.SlamWindup:
@@ -169,7 +169,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
         {
             // Through anyone in the way; the dead flung aside; stopped by what it can't go through
             var before = boss.at;
-            var moved = Step(boss, ashwick, boss.aim * CHARGE_SPEED * dt);
+            var moved = Step(boss, ashwick, boss.aim * CHARGE_SPEED * dt, dt);
             foreach (var row in survivors)
             {
                 var s = row.survivor;
@@ -236,11 +236,12 @@ void Turn(mut Boss boss, float3 way, float most)
 }
 
 // A step, kept out of what's solid and on ground the dead can walk: whether it got anywhere.
-bool Step(mut Boss boss, Ashwick ashwick, float3 by)
+bool Step(mut Boss boss, Ashwick ashwick, float3 by, float dt)
 {
     var before = boss.at;
     mut var at = PushOut(ashwick, boss.at + by, BOSS_RADIUS, 3);
     if (!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before))) at = before;
+    at = Climbed(ashwick, before, at, CLIMB_RATE, dt);
     at.y = Ground(at.x, at.z);
     boss.at = at;
     boss.stride += Math.Length((at - before).xz);
@@ -286,14 +287,14 @@ float BossSink(Boss boss)
 event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
 {
     if (boss.move == BossMove.Dying || wound.seat < 0) return;
-    var damage = match.instakill > 0 ? Math.Max(wound.damage, boss.healthMost * 0.05) : wound.damage;
+    var damage = wound.damage;
     boss.health -= damage;
     var killed = boss.health <= 0;
     if (killed)
     {
         BossTo(boss, BossMove.Dying);
         match.killed += 1;
-        match.xp += 25;
+        DropOrb(match, boss.at, 25);
         for (var seat = 0; seat < 4; seat++)
             if (party.taken[seat]) party.survivors[seat].Send(BossFelled { by = wound.seat });
         Send(Cue { sound = Sfx.BossDeath, at = boss.at + float3(0, 3, 0) });

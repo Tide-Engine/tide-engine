@@ -116,16 +116,23 @@ float Bump(float2 at, float2 c, float r, float h)
 }
 
 // A ramp from `a` (as high as `top`) down to `b`, `half` wide each side, its sides cliffs: the ground `h` there
-// becomes the ramp's slope, from `top` at `a` to `h` itself at `b`, so its foot meets whatever it comes down to.
-float RampTo(float h, float2 at, float2 a, float2 b, float half, float top)
+// A ramp from `a` (at `top`) straight down to the ground at `b`, `half` wide each side, laid over `h`: down to `below`,
+// the ground before what it climbs was raised, so the rise's own edge doesn't bend it (a ramp that met `h` there was
+// too steep for the dead where it left the top); and never under `h`, so the top stays flat.
+float RampTo(float h, float below, float2 at, float2 a, float2 b, float half, float top)
 {
     var ab = b - a;
     var t = Math.Dot(at - a, ab) / Math.Dot(ab, ab);
     var along = Math.Saturate(t);
     var side = Math.Distance(at, a + ab * along);
     var weight = (1 - Math.SmoothStep(half, half + 0.8, side)) * (1 - Math.SmoothStep(1.0, 1.1, t));
-    return Math.Lerp(h, Math.Lerp(top, h, along), weight);
+    // At the top from `a` till RAMP_FLAT of the way: out past the rise's edge, whose own blend climbs faster than a ramp
+    // (it had left a steep lip at the head of each ramp, which a survivor could only jump)
+    var slope = Math.Saturate((along - RAMP_FLAT) / (1 - RAMP_FLAT));
+    return Math.Lerp(h, Math.Max(h, Math.Lerp(top, below, slope)), weight);
 }
+
+const float RAMP_FLAT = 0.2;
 
 // How far into a ditch along `a` to `b` a place is: 1 on its floor (`half` each side), 0 past its banks.
 float Ditch(float2 at, float2 a, float2 b, float half, float fall)
@@ -166,14 +173,17 @@ float Ground(float x, float z)
     // Up into the trees past the edge
     h += 4 * Math.SmoothStep(-6, 6, far - Reach(Math.Atan2(z, x)));
     // The chapel's rise, a ramp down each side
+    var below = h;
     h = Math.Lerp(h, RUIN_TOP, Mesa(at, CHAPEL, 12, 1.5));
-    h = RampTo(h, at, WEST_RAMP_A, WEST_RAMP_B, 2.5, RUIN_TOP);
-    h = RampTo(h, at, EAST_RAMP_A, EAST_RAMP_B, 2.5, RUIN_TOP);
+    h = RampTo(h, below, at, WEST_RAMP_A, WEST_RAMP_B, 2.5, RUIN_TOP);
+    h = RampTo(h, below, at, EAST_RAMP_A, EAST_RAMP_B, 2.5, RUIN_TOP);
     // The beacon's spire: the lower tier and its ramp, then the top and its ramp up from the tier
+    var low = h;
     h = Math.Lerp(h, SPIRE_LOW, Mesa(at, SPIRE, 13, 1.4));
-    h = RampTo(h, at, SPIRE_RAMP_A, SPIRE_RAMP_B, 2.5, SPIRE_LOW);
+    h = RampTo(h, low, at, SPIRE_RAMP_A, SPIRE_RAMP_B, 2.5, SPIRE_LOW);
+    var tier = h;
     h = Math.Lerp(h, SPIRE_TOP, Mesa(at, BEACON, 4.5, 1.0));
-    h = RampTo(h, at, BEACON_RAMP_A, BEACON_RAMP_B, 1.8, SPIRE_TOP);
+    h = RampTo(h, tier, at, BEACON_RAMP_A, BEACON_RAMP_B, 1.8, SPIRE_TOP);
     return h;
 }
 
@@ -395,7 +405,7 @@ Plan MakePlan()
     PlaceSolid(plan, Piece.Bench, On(0, 2.7), 0);
     PlaceSolid(plan, Piece.Cauldron, On(2.5, 1.9), 0.4);
     PlaceSolid(plan, Piece.Crate_Wooden, On(-2.6, 2.1), 0.3);
-    Place(plan, Piece.Bag, On(-2.9, -1.2), 0.9);
+    Place(plan, Piece.Bag, On(-3.3, 1.5), 0.9);
     Place(plan, Piece.Bucket_Wooden_1, On(2.9, -0.9), 0);
     Place(plan, Piece.Rope_1, On(-1.9, 3.4), 0.6);
     plan.starts.Add(On(-1.6, -3.1));

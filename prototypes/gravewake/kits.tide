@@ -22,13 +22,22 @@ string RoleName(Role role)
     return "";
 }
 
+// How much less of a blow a survivor takes: the Breacher, built to be in among them, a third less; Kevlar 6% each; 60%
+// at most.
+float Armor(Survivor survivor)
+{
+    return Math.Min(0.6, (survivor.role == Role.Breacher ? BREACHER_ARMOR : 0.0) + 0.06 * Has(survivor, Item.Kevlar));
+}
+
+const float BREACHER_ARMOR = 0.35;
+
 string RoleLine(Role role)
 {
     switch (role)
     {
-        case Role.Gunner: return "A carbine for any range. Rounds through a whole line of the dead, a slide out of trouble, grenades into the thick of them.";
-        case Role.Breacher: return "A pump shotgun up close. Kicks them flat, leaps in and slams down, sets the ground alight.";
-        case Role.Engineer: return "An SMG and the machines: mines where they walk, a turret that fires on its own, a blink to get clear.";
+        case Role.Gunner: return "A carbine for any range. Rounds through a whole line of the dead, a dash out of trouble, grenades into the thick of them.";
+        case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, shoulders through them, sets the ground alight.";
+        case Role.Engineer: return "An SMG and the machines: mines where they walk, a turret that fires on its own, a dash to get clear.";
     }
     return "";
 }
@@ -50,8 +59,8 @@ Skill SkillOf(Role role, int slot)
     switch (role)
     {
         case Role.Gunner: return slot == 0 ? Skill.PhaseRound : slot == 1 ? Skill.Slide : Skill.Frag;
-        case Role.Breacher: return slot == 0 ? Skill.Boot : slot == 1 ? Skill.Leap : Skill.Firebomb;
-        case Role.Engineer: return slot == 0 ? Skill.Mine : slot == 1 ? Skill.Blink : Skill.Turret;
+        case Role.Breacher: return slot == 0 ? Skill.Boot : slot == 1 ? Skill.Slide : Skill.Firebomb;
+        case Role.Engineer: return slot == 0 ? Skill.Mine : slot == 1 ? Skill.Slide : Skill.Turret;
     }
     return Skill.None;
 }
@@ -61,7 +70,7 @@ string SkillName(Skill skill)
     switch (skill)
     {
         case Skill.PhaseRound: return "Phase Round";
-        case Skill.Slide: return "Slide";
+        case Skill.Slide: return "Dash";
         case Skill.Frag: return "Frag Grenade";
         case Skill.Boot: return "Boot";
         case Skill.Leap: return "Leap";
@@ -78,7 +87,7 @@ string SkillLine(Skill skill)
     switch (skill)
     {
         case Skill.PhaseRound: return "A heavy round through every one of the dead in its line";
-        case Skill.Slide: return "A burst of speed the way you're going";
+        case Skill.Slide: return "A burst of speed the way you're going, through the dead: they're knocked down. Two charges";
         case Skill.Frag: return "A grenade that bursts on the dead or after a moment";
         case Skill.Boot: return "Kick the dead in front off their feet; one down is stamped on";
         case Skill.Leap: return "Leap high and far, and knock down the dead where you land";
@@ -96,7 +105,7 @@ float BaseCooldown(Skill skill)
     switch (skill)
     {
         case Skill.PhaseRound: return 3;
-        case Skill.Slide: return 4;
+        case Skill.Slide: return 3.5;
         case Skill.Frag: return 7;
         case Skill.Boot: return 3.5;
         case Skill.Leap: return 7;
@@ -113,9 +122,13 @@ float Cooldown(Survivor survivor, Skill skill)
     return BaseCooldown(skill) * Math.Pow(0.85, survivor.items[int(Item.Battery)]);
 }
 
-const float DASH_SECONDS = 0.22;
-const float DASH_SPEED = 17;
-const float SLAM_REACH = 3.5;
+const float DASH_SECONDS = 0.26;
+const float DASH_SPEED = 18;
+const int DASHES = 2;               // Charges
+const float DASH_HIT = 30;          // A dash's blow to each of the dead it goes through, before might
+const float BREACHER_DASH_HIT = 5;  // The Breacher's dash goes through them shoulder first: so many times the blow...
+const float BREACHER_DASH_REACH = 1.8;  // ...and this wide each side
+const float SLAM_REACH = 4.5;
 const float KICK_REACH = 2.6;
 const float TURRET_SECONDS = 15;
 const float TURRET_REACH = 24;
@@ -142,11 +155,17 @@ void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Her
         }
         case Skill.Slide:
         {
+            if (survivor.dash > 0) return;
             mut var way = Flat(survivor.yaw) * move.y + Flat(survivor.yaw + Math.PI * 0.5) * move.x;
             if (Math.Length(way) < 0.1) way = Flat(survivor.yaw);
             survivor.dashWay = Math.Normalize(way);
             survivor.dash = DASH_SECONDS;
-            break;
+            // Two charges, each back a cooldown after it's spent, one at a time (DashThrough); a moment between dashes
+            survivor.dashes = Math.Max(0, survivor.dashes - 1);
+            if (survivor.dashWait <= 0) survivor.dashWait = Cooldown(survivor, skill);
+            survivor.cooldowns[slot] = survivor.dashes > 0 ? 0.3 : survivor.dashWait;
+            Send(Unleashed { seat = survivor.seat, skill = skill, at = survivor.feet, to = survivor.feet });
+            return;
         }
         case Skill.Frag:
         case Skill.Firebomb:
@@ -214,7 +233,7 @@ void Slam(Survivor survivor, List<Body> bodies)
     foreach (var z in bodies)
     {
         if (!z.hittable || Math.Distance(z.at, survivor.feet) > SLAM_REACH) continue;
-        z.entity.Send(Wound { damage = 70 * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = 6, down = true, blow = Blow.Blunt });
+        z.entity.Send(Wound { damage = 150 * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = 6, down = true, blow = Blow.Blunt });
     }
     Send(Unleashed { seat = survivor.seat, skill = Skill.Leap, at = survivor.feet, to = survivor.feet, landed = true });
 }
@@ -243,7 +262,7 @@ void Kick(Entity self, Survivor survivor, List<Body> bodies)
         else if (hits < 6)
         {
             hits += 1;
-            z.entity.Send(Wound { damage = 45 * might, seat = survivor.seat, from = survivor.feet, knock = 7, down = true, blow = Blow.Blunt });
+            z.entity.Send(Wound { damage = 80 * might, seat = survivor.seat, from = survivor.feet, knock = 7, down = true, blow = Blow.Blunt });
         }
     }
     self.Send(Kicked { seat = survivor.seat, hits = hits + (stamped ? 1 : 0), stamp = stamped });

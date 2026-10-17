@@ -5,9 +5,11 @@ outside it, round their fire, against endless and growing hordes of the dead,
 thousands at once. It plays like Risk of Rain 2 in a PSX-era picture: each
 picks a survivor (a Gunner, a Breacher or an Engineer), a gun to aim and three
 skills on cooldowns, and then the dead never stop coming, more and tougher the
-longer it goes. Every kill is experience for the party, and at every level
+longer it goes. Every kill leaves an orb of experience where the dead fell,
+the party's once someone goes within a few metres of it; and at every level
 each takes one of three items that stack, most of which fight on their own.
-Every few minutes a Brute comes: a giant of the dead that slams, charges and
+Chests stand about the clearing, more as the run goes on, found only by going
+about it: hold E by one for an item. Every few minutes a Brute comes: a giant of the dead that slams, charges and
 roars up more. There is no end but the last of them falling; how long they
 held out is the score.
 
@@ -24,20 +26,20 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Jump (again in the air, with Spring Boots) | Space | South button |
 | Fire | Left mouse | Right trigger |
 | The secondary skill | Right mouse | Left trigger |
-| The utility skill | Shift | Left shoulder |
+| Dash (two charges; knocks down the dead it goes through) | Shift | Left shoulder |
 | The special skill | Q | Right shoulder |
 | Pick a survivor, take an item | 1, 2, 3 | D-pad left, up, right |
 | Reload | R | West button |
-| Raise a friend who's down (hold) | E | West button |
+| Raise a friend who's down, open a chest (hold) | E | West button |
 | The room's menu | Escape, or **Menu** | |
 
 ### The survivors
 
 | Survivor | Gun | Right mouse | Shift | Q |
 | --- | --- | --- | --- | --- |
-| Gunner | Carbine: automatic, through two | Phase Round: through every one of the dead in its line | Slide | Frag Grenade |
-| Breacher | Pump Shotgun: nine pellets, loaded a shell at a time | Boot: kicks the dead in front over; one down is stamped on | Leap: slams down where it lands, knocking them over | Firebomb |
-| Engineer | SMG | Mine: bursts when the dead come near | Blink: ten metres the way you look | Turret: fires on its own for fifteen seconds |
+| Gunner | Carbine: automatic, through two | Phase Round: through every one of the dead in its line | Dash | Frag Grenade |
+| Breacher | Pump Shotgun: eleven pellets, never needs loading; takes a third less from the dead | Boot: kicks the dead in front over; one down is stamped on | Dash | Firebomb |
+| Engineer | SMG | Mine: bursts when the dead come near | Dash | Turret: fires on its own for fifteen seconds |
 
 Skills fire as soon as they're ready while their key is held. The guns never
 run out; only their magazines do.
@@ -128,7 +130,7 @@ this folder.
 | `weapons.tide` | The guns' numbers |
 | `hands.tide` | Running and jumping, firing (each round a ray through the dead), loading, raising friends, going down |
 | `missiles.tide` | Frag grenades, firebombs, mines, the Mortar Beacon's shells |
-| `drops.tide` | Power-ups, and the cues for what's heard |
+| `drops.tide` | The cues for what's heard, and a survivor's refill |
 | `crowd.tide` | The horde drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
 | `kit.tide`, `look.tide`, `eye.tide` | The clearing's meshes; light, shadows, fog, bloom; the camera |
 | `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide` | The survivors; the gun in hand, grenades, mines, turrets, drones; the graves and braziers; tracers, flames, blood, sparks |

@@ -32,13 +32,16 @@ local singleton Look
     float time;
     float fov = 70;
     float3 moonWay = float3(0.35, 0.8, 0.45);    // Toward the moon
-    float3 moonColor = float3(0.32, 0.36, 0.5);
+    float3 moonColor = float3(0.4, 0.45, 0.63);
     float3 skyLight = float3(0.06, 0.07, 0.1);
     float3 groundLight = float3(0.02, 0.018, 0.02);
     float3 fogColor = float3(0.045, 0.05, 0.07);
     float fog = 0.009;
+    float3 mistColor = float3(0.075, 0.085, 0.11);  // The mist in the low ground, paler than the haze
+    float mist = 0.022;
     float4x4 toMoon;
     float4x4 toClip;                              // The eye's camera, world to clip, for what's marked on the screen
+    float4x4 toStain;                             // The stains' camera, world to clip (gore.tide)
     float2 pixel;                                 // One pixel of the window, in uv
     float2 low;                                   // The picture's size in its biggest (nearest) pixels
     float2 full;                                  // ...and in the window's
@@ -64,6 +67,8 @@ local singleton Lens
     DepthTexture moonDepth;
     RenderTarget bright;
     RenderTarget blur;
+    RenderTarget stains;               // Blood on the ground, seen from above over the whole clearing (gore.tide)
+    Texture stainsColor;
     Texture glow;
     float2 size;
     bool made;
@@ -141,14 +146,38 @@ float3 Shade(float3 albedo, float3 world, float3 normal, float open, Look look, 
     return albedo * (sky + moonlit + LampLight(lights, world, normal));
 }
 
-// The air between the eye and a place: thicker with distance and low down, the fog's colour.
+// The air between the eye and a place: a haze thicker with distance and low down, and a mist lying in the low ground
+// (thickest at the ground, thin by two metres up, drifting), both lit by the moon, brighter looking toward it. What's
+// far off goes into it, and what stands in it is dark against it.
 float3 Hazed(float3 lit, float3 world, Look look)
 {
-    var far = Math.Distance(world, look.eye);
+    var toward = world - look.eye;
+    var far = Math.Length(toward);
+    var way = toward / Math.Max(far, 0.0001);
     var low = Math.Saturate(1.2 - world.y * 0.25);
-    var clear = Math.Exp(-far * look.fog * (0.7 + low * 0.6));
-    return Math.Lerp(look.fogColor, lit, clear);
+    var haze = far * look.fog * (0.7 + low * 0.6);
+    var drift = Math.Perlin(world.xz * 0.045 + float2(look.time * 0.025, look.time * 0.017)) * 0.7 + 0.75;
+    var mist = far * look.mist * (MistAt(look.eye.y) + MistAt(world.y)) * 0.5 * drift;
+    var clear = Math.Exp(-(haze + mist));
+    return Math.Lerp(AirColor(way, mist / Math.Max(haze + mist, 0.0001), look), lit, clear);
 }
+
+// How thick the mist is at a height: all of it at the ground of the clearing, a third a metre up, nothing above the hills.
+float MistAt(float y)
+{
+    return Math.Exp(-Math.Max(y - MIST_FLOOR, 0) * 1.1);
+}
+
+// The colour of the air looking one way: the haze, or (by `misty`, how much of it is the mist) the paler mist, both
+// brighter toward the moon.
+float3 AirColor(float3 way, float misty, Look look)
+{
+    var moonward = Math.Saturate(Math.Dot(way, look.moonWay) * 0.5 + 0.5);
+    var glow = 0.7 + Math.Pow(moonward, 5) * 1.1;
+    return Math.Lerp(look.fogColor, look.mistColor, misty) * glow;
+}
+
+const float MIST_FLOOR = 0.2;
 
 // ---- Frags ----
 
@@ -167,7 +196,9 @@ frag KitCutout(Corner corner, out Color color, Texture source, Instance instance
 {
     var paint = source.Sample(corner.uv);
     if (paint.a < 0.5) this.Discard();
-    var albedo = Linear(Rgb(paint)) * Linear(Rgb(corner.color)) * placed.tint;
+    // The kits' leaves are a daylit green: at night duller and darker, so the trees don't outshine what's in front of them
+    var leaf = Linear(Rgb(paint)) * Linear(Rgb(corner.color)) * placed.tint;
+    var albedo = Math.Lerp(float3(Math.Dot(leaf, float3(0.3, 0.55, 0.15))), leaf, 0.7) * 0.6;
     mut var normal = instance.Normal(corner.normal);
     if (Math.Dot(normal, look.eye - this.world) < 0) normal = -normal;
     var lit = Shade(albedo, this.world, normal, placed.open, look, lights.list, lens.moonDepth);
@@ -210,7 +241,14 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens)
     // Cliffs and steep banks are bare rock and earth
     var normal = Math.Normalize(corner.normal);
     paint = Math.Lerp(paint, float3(0.16, 0.15, 0.14) * (0.8 + fine * 0.3), Math.SmoothStep(0.8, 0.55, normal.y));
-    var lit = Shade(Linear(paint), this.world, normal, 1, look, lights.list, lens.moonDepth);
+    mut var ground = Linear(paint * 1.45);
+    // Blood soaked in where it fell (gore.tide's stains), and a wet shine on it
+    float4 seen = Math.Mul(look.toStain, float4(this.world, 1));
+    var blood = lens.stainsColor.Sample(float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5));
+    ground = Math.Lerp(ground, Linear(float3(blood.r, blood.g, blood.b) / Math.Max(blood.a, 0.001)) * 0.9, Math.Saturate(blood.a * 1.15));
+    mut var lit = Shade(ground, this.world, normal, 1, look, lights.list, lens.moonDepth);
+    var toEye = Math.Normalize(look.eye - this.world);
+    lit += look.moonColor * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, normal), look.moonWay)), 30) * blood.a * 0.8;
     color = Color(Hazed(lit, this.world, look), 1);
 }
 
@@ -227,7 +265,7 @@ frag SkyDome(Corner corner, out Color color, Look look)
 {
     var way = Math.Normalize(corner.position);
     var up = Math.Saturate(way.y);
-    mut var sky = Math.Lerp(look.fogColor * 1.1, float3(0.006, 0.008, 0.018), Math.Pow(up, 0.45));
+    mut var sky = Math.Lerp(AirColor(way, Math.Saturate(1 - up * 6), look) * 1.05, float3(0.006, 0.008, 0.018), Math.Pow(up, 0.45));
     var grid = way * 260;
     var cell = int3(int(Math.Floor(grid.x)), int(Math.Floor(grid.y)), int(Math.Floor(grid.z)));
     var star = Math.Hash(cell) & 4095;
@@ -245,7 +283,7 @@ frag SkyDome(Corner corner, out Color color, Look look)
     if (moon > 0.9993) sky = float3(2.2, 2.3, 2.4) * (0.85 + Math.Perlin(way.xz * 900) * 0.15);
     var cloud = Math.Saturate(Math.Perlin(way.xz / Math.Max(way.y, 0.08) * 0.9 + float2(look.time * 0.01, 0)) * 1.6 + 0.1);
     sky = Math.Lerp(sky, look.fogColor * 0.7 + float3(0.02, 0.022, 0.03) * halo * 30, cloud * 0.6 * Math.Saturate(way.y * 3));
-    if (way.y < 0) sky = look.fogColor;
+    if (way.y < 0) sky = AirColor(way, 1, look);
     color = Color(sky, 1);
 }
 
@@ -289,6 +327,10 @@ frag Develop(Vertex vertex, out Color color, Texture source, Lens lens, Look loo
     var a = exposed * (exposed * 2.51 + float3(0.03));
     var b = exposed * (exposed * 2.43 + float3(0.59)) + float3(0.14);
     mut var shown = float3(Math.Saturate(a.x / b.x), Math.Saturate(a.y / b.y), Math.Saturate(a.z / b.z));
+    // Graded: the shadows cold, the lights warm, a little more colour
+    var luma = Math.Dot(shown, float3(0.2126, 0.7152, 0.0722));
+    shown *= Math.Lerp(float3(0.86, 0.97, 1.16), float3(1.08, 1.0, 0.9), Math.SmoothStep(0.03, 0.5, luma));
+    shown = Math.Saturate(Math.Lerp(float3(luma), shown, 1.1));
     var grey = Math.Dot(shown, float3(0.3, 0.59, 0.11));
     shown = Math.Lerp(shown, float3(grey), look.downed * 0.75);
     shown = float3(Math.Pow(shown.x, 0.4545), Math.Pow(shown.y, 0.4545), Math.Pow(shown.z, 0.4545));
@@ -423,6 +465,12 @@ void Focus(mut Lens lens, mut Look look)
         lens.bright = RenderTarget(int(Math.Max(1, low.x / 2)), int(Math.Max(1, low.y / 2)), 1, Format.Rgba16f);
         lens.blur = RenderTarget(int(Math.Max(1, low.x / 2)), int(Math.Max(1, low.y / 2)), 1, Format.Rgba16f);
         lens.glow = lens.bright.color;
+        // The stains: straight down on the clearing, north up, never moving
+        lens.stains = RenderTarget(STAIN_PIXELS, STAIN_PIXELS, 1, Format.Rgba8);
+        lens.stainsColor = lens.stains.color;
+        lens.stains.SetCamera(float4x4.TRS(float3(NAV_X0 + STAIN_REACH, 120, NAV_Z0 + STAIN_REACH), quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1)), float3(1)),
+                              float4x4.Ortho(STAIN_REACH * 2, STAIN_REACH * 2, 1, 260));
+        look.toStain = lens.stains.WorldToClip();
     }
     else if (full.x != look.full.x || full.y != look.full.y)
     {

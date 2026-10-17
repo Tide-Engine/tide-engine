@@ -15,7 +15,12 @@ const int NAV_H = 112;            // To z 56
 const float BUCKET = 8;
 const int BUCKETS_W = 14;
 const int BUCKETS_H = 14;
-const float STEEP = 0.6;          // Ground that climbs more than this a metre is a cliff: the dead go round
+const float STEEP = 0.6;          // Ground that climbs more than this a metre is a cliff: the dead pile up its face
+const int CLIMB_COST = 1;         // A cliff's cell is as far as open ground to the dead's way: they go straight at a cliff and pile up it
+const float CLIMB_RATE = 1.3;     // How fast the dead climb onto each other, metres up a second (a sprinter half again)
+const float LAYER = 0.55;         // How much higher one of the dead is, on another (a body lying under it)
+const float FALL_SPEED = 5;       // How fast the dead come down off a pile with nothing under them
+const float SCRAMBLE = 1.1;       // A ledge this much above a step the dead get up alone; higher, only on each other
 const int UNREACHED = 255;        // A cell nothing reaches
 
 singleton Ashwick
@@ -24,7 +29,8 @@ singleton Ashwick
     List<List<int>> buckets;      // The solids near each 8 m square, by bucket
     List<Riser> risers;
     List<float3> starts;
-    List<byte> cells;             // 0 open, 1 a wall (a box, a cliff, or the forest past the clearing's edge)
+    List<byte> cells;             // 0 open, 1 a wall (a box, or the forest past the clearing's edge), 2 a cliff
+    List<float> ledges;           // By cliff cell: the top of the cliff there (the highest ground within two cells)
     List<byte> field;             // Cells to the nearest survivor, UNREACHED where none can be reached
     bool made;
 }
@@ -95,22 +101,77 @@ void BuildAshwick(mut Ashwick ashwick)
             for (var cx = c0x; cx <= c1x; cx++) ashwick.cells[cz * NAV_W + cx] = 1;
         }
     }
-    // Past the clearing's edge is nobody's ground, and a cliff nobody walks: walls there too, so the field stays in
-    // the clearing and goes round by the ramps
+    // Past the clearing's edge is nobody's ground: walls there, so the field stays in the clearing. A cliff in it the
+    // dead climb (survivors can't): so nowhere high is out of their reach, and they come up every side of it
     for (var c = 0; c < NAV_W * NAV_H; c++)
     {
         var middle = CellMiddle(c);
-        if (!InClearing(middle) || Steepness(middle.x, middle.z) > STEEP) ashwick.cells[c] = 1;
+        if (!InClearing(middle)) ashwick.cells[c] = 1;
+        else if (ashwick.cells[c] == 0 && Steepness(middle.x, middle.z) > STEEP) ashwick.cells[c] = 2;
+    }
+    // Each cliff cell's ledge: what the dead have to be up to, on each other, to go over it
+    ashwick.ledges.Resize(NAV_W * NAV_H);
+    for (var c = 0; c < NAV_W * NAV_H; c++)
+    {
+        ashwick.ledges[c] = 0;
+        if (ashwick.cells[c] != 2) continue;
+        var cx = c % NAV_W;
+        var cz = c / NAV_W;
+        mut var top = -100.0;
+        for (var dz = -2; dz <= 2; dz++)
+        {
+            for (var dx = -2; dx <= 2; dx++)
+            {
+                var nx = Math.Clamp(cx + dx, 0, NAV_W - 1);
+                var nz = Math.Clamp(cz + dz, 0, NAV_H - 1);
+                var middle = CellMiddle(nz * NAV_W + nx);
+                top = Math.Max(top, Ground(middle.x, middle.z));
+            }
+        }
+        ashwick.ledges[c] = top;
     }
     ashwick.field.Resize(NAV_W * NAV_H);
     for (var c = 0; c < NAV_W * NAV_H; c++) ashwick.field[c] = byte(UNREACHED);
     ashwick.made = true;
 }
 
-// Whether a cell can be walked.
+// Whether the dead can go in a cell: walk it, or climb it.
 bool Walkable(Ashwick ashwick, int cell)
 {
+    return cell >= 0 && ashwick.cells[cell] != 1;
+}
+
+// Whether a cell is open ground (not a cliff), where the dead can rise.
+bool Open(Ashwick ashwick, int cell)
+{
     return cell >= 0 && ashwick.cells[cell] == 0;
+}
+
+// Whether a cell is a cliff the dead climb.
+bool Cliff(Ashwick ashwick, int cell)
+{
+    return cell >= 0 && ashwick.cells[cell] == 2;
+}
+
+// Whether one of the dead `up` metres high can step from `before` to `at`: anywhere but up into a cliff, and up into a
+// cliff only when its ledge is within a scramble (a bank, a low ledge) or a pile has it up that near.
+bool Reaches(Ashwick ashwick, float3 before, float3 at, float up)
+{
+    var cell = CellOf(at);
+    if (!Cliff(ashwick, cell) || up >= ashwick.ledges[cell] - STEP_UP - SCRAMBLE) return true;
+    return Ground(at.x, at.z) <= Ground(before.x, before.z) + 0.001;
+}
+
+// How high a Brute may go in a step of `dt` up a cliff (it climbs, slowly, on its own): a step that would rise more is
+// cut short to what it may.
+float3 Climbed(Ashwick ashwick, float3 before, float3 at, float rate, float dt)
+{
+    if (!Cliff(ashwick, CellOf(at)) && !Cliff(ashwick, CellOf(before))) return at;
+    var rise = Ground(at.x, at.z) - before.y;
+    var most = rate * dt;
+    if (rise <= most) return at;
+    var part = most / rise;
+    return float3(before.x + (at.x - before.x) * part, at.y, before.z + (at.z - before.z) * part);
 }
 
 // ---- Bodies against the boxes ----
@@ -297,22 +358,51 @@ system Wayfinding(mut Ashwick ashwick, Time time, query (Survivor survivor) surv
     {
         var s = row.survivor;
         if (s.life != Life.Standing || !s.ready) continue;
-        var cell = CellOf(s.feet);
-        if (cell >= 0) sources.Add(cell);
+        Seed(ashwick, sources, s.feet);
     }
     if (sources.count == 0)
     {
         foreach (var row in survivors)
         {
             if (row.survivor.life != Life.Downed) continue;
-            var cell = CellOf(row.survivor.feet);
-            if (cell >= 0) sources.Add(cell);
+            Seed(ashwick, sources, row.survivor.feet);
         }
     }
     Spread(ashwick, sources);
 }
 
-// A breadth-first walk out from the sources over walkable cells, counting steps.
+// Where the field starts for a survivor: their cell; and if that's a wall's (beside a wall, by the chest), the cells the
+// dead can go in round it, within a metre and a half and in plain reach (no box between, so not the far side of the
+// wall), so the way still leads to them. A wall's cell the dead never step in: from it the field had spread, and the
+// dead beside it, with nowhere lower they could go, stood still.
+void Seed(Ashwick ashwick, mut List<int> sources, float3 feet)
+{
+    var cell = CellOf(feet);
+    if (cell < 0) return;
+    sources.Add(cell);
+    if (Walkable(ashwick, cell)) return;
+    var cx = cell % NAV_W;
+    var cz = cell / NAV_W;
+    for (var dz = -2; dz <= 2; dz++)
+    {
+        for (var dx = -2; dx <= 2; dx++)
+        {
+            var nx = cx + dx;
+            var nz = cz + dz;
+            if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_H) continue;
+            var next = nz * NAV_W + nx;
+            if (!Walkable(ashwick, next)) continue;
+            var middle = CellMiddle(next);
+            if (Math.Length((middle - feet).xz) > 1.6) continue;
+            var chest = feet + float3(0, 1, 0);
+            if (RayHit(ashwick, chest, float3(middle.x, Ground(middle.x, middle.z) + 1, middle.z), out _) <= 1) continue;
+            sources.Add(next);
+        }
+    }
+}
+
+// A walk out from the sources over the cells the dead can go in, counting how far: a step of open ground 1, into a
+// cliff's cell CLIMB_COST. A cell is walked again when a shorter way to it turns up.
 void Spread(mut Ashwick ashwick, List<int> sources)
 {
     var total = NAV_W * NAV_H;
@@ -329,7 +419,6 @@ void Spread(mut Ashwick ashwick, List<int> sources)
         var cell = queue[head];
         head += 1;
         var here = int(ashwick.field[cell]);
-        if (here >= UNREACHED - 1) continue;
         var cx = cell % NAV_W;
         var cz = cell / NAV_W;
         for (var n = 0; n < 4; n++)
@@ -338,8 +427,10 @@ void Spread(mut Ashwick ashwick, List<int> sources)
             var nz = cz + (n == 2 ? 1 : n == 3 ? -1 : 0);
             if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_H) continue;
             var next = nz * NAV_W + nx;
-            if (int(ashwick.field[next]) != UNREACHED || !Walkable(ashwick, next)) continue;
-            ashwick.field[next] = byte(here + 1);
+            if (!Walkable(ashwick, next)) continue;
+            var far = here + (ashwick.cells[next] == 2 ? CLIMB_COST : 1);
+            if (far >= UNREACHED || far >= int(ashwick.field[next])) continue;
+            ashwick.field[next] = byte(far);
             queue.Add(next);
         }
     }
