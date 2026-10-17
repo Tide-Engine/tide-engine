@@ -8,6 +8,7 @@
 #include "deploy.h"
 #include "editors.h"
 #include "install.h"
+#include "help.h"
 #include "lexer.h"
 #include "open.h"
 #include "packages.h"
@@ -24,107 +25,6 @@
 #ifndef TIDE_VERSION
 #define TIDE_VERSION "0.0.0-dev"
 #endif
-
-#ifdef TIDE_EMBEDDED_CLANG
-#define CC_USAGE "  cc <options>       clang, built into tide, for C to build yourself (like libraries)\n"
-#else
-#define CC_USAGE ""
-#endif
-
-static void usage(void)
-{
-    printf("tide %s: builds and runs Tide games.\n"
-           "\n"
-           "usage: tide <command> [folder] [options]\n"
-           "\n"
-           "  run [folder]       build the game in folder (default: here), play it and reload as files change\n"
-           "  build [folder]     build the game into <folder>/build\n"
-           "  deploy [folder]    build locally and upload client + WASM server (--server-only omits the client)\n"
-           "  login / logout     authorize or revoke this CLI's hosting access through the browser\n"
-           "  schedule [folder]  show which systems can run at the same time, and why the others wait\n"
-           "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
-           "  add <source>       add a package to the game here: from git, a folder, or one that comes with tide (see below)\n"
-           "  update [package]   move the game's packages from git to the newest commit of what they follow\n"
-           "  eject <package>    copy one of the game's packages into the game's folder, to change it as the game's own\n"
-           "  fetch [folder]     download the game's packages from git that aren't on this machine yet, building nothing\n"
-           "  publish [folder]   send this version of the game's source to the build service, which builds it with mods\n"
-           "  editors            add Tide to VS Code, Cursor, VSCodium and Windsurf\n"
-           "  open <file.tprefab> open the native scene editor (--project <folder> selects its game)\n"
-           "  upgrade            update tide to the newest version\n"
-           "  version            show tide's version and channel, where it's installed, and which compilers it found\n"
-           CC_USAGE
-           "\n"
-           "A game is every .tide file in its folder and its subfolders, and the packages its\n"
-           "tide.packages lists.\n"
-           "\n"
-           "run and build:\n"
-           "  --release          optimize game code for players; the engine is always optimized\n"
-           "  --web              a web page (WebGPU, or WebGL 2 where the browser has none), with clang's WebAssembly target\n"
-           "  --android          an Android app (.apk); run installs it on the phone or emulator connected\n"
-           "  --define <SYMBOL>  a symbol the game's #if lines read as defined, like `--define FAST`; as many as needed.\n"
-           "                     DEBUG is defined without --release, and PACKAGE_<NAME> for each of the game's packages\n"
-           "  --title <title>    the window's title (default: the game's title setting, or the folder's name)\n"
-           "  --stats            show the stats in a corner, as the game's stats setting does: the frame rate, and at a\n"
-           "                     click or F8 the rest (cpu time, ping, bandwidth, memory, draw calls, the slowest\n"
-           "                     systems). run starts them open\n"
-           "  --debug-views      F7 shows the profiler: where a frame's time and a tick's go (as the debugViews setting)\n"
-           "  -o <path>          build: where the program goes\n"
-           "  --no-open          run --web: serve the page without opening a browser\n"
-           "\n"
-           "run, in a match with others (the game's Main must be the match's for --host):\n"
-           "  --host [port]        a match others can join: in a room, and on a port (7777 by default; not on the web)\n"
-           "  --join <code>        the match in the room with this code, like K7QF2M\n"
-           "  --connect <address>  the match at an address, like 192.168.1.5 or localhost:7777 (not on the web)\n"
-           "\n",
-           TIDE_VERSION);
-    // In two parts: C promises a string literal of 4095 characters only
-    printf("dedicated servers:\n"
-           "  deploy creates or reuses a folder-named project and saves tide.deploy.json\n"
-           "  deploy --project <name-or-id> changes the target; --bundle-only builds without uploading\n"
-           "  --server             run/build a native headless server, hosting many matches in one process\n"
-           "  --strip-server-assets also select --server; opt custom C into simulation asset pruning\n"
-           "  --anonymous          run --server: allow clients to create and join matches without authentication\n"
-           "  --port <n>           server listening port (7777 by default)\n"
-           "  --max-matches <n>    maximum simultaneous matches (64 by default)\n"
-           "  --max-connections <n> maximum admitted/pending connections (256 by default)\n"
-           "  --udp-only           disable the server's WebRTC room\n"
-           "  --connect host:port/0 requests a new match; /<match-id> joins an existing match\n"
-           "  --join room/0        the same over WebRTC, including web clients\n\n");
-    printf("run, with no window, to see what the game draws (not on the web or Android). The game runs once, in\n"
-           "made-up time, a 60th of a second a frame, so a run repeats exactly, and tide ends with its exit code:\n"
-           "  --capture <file.png>  the run's last frame, as a PNG\n"
-           "  --capture-audio <file.wav>\n"
-           "                        everything the run played, as a WAV\n"
-           "  --microphone <file>   a WAV or Ogg Vorbis file the run's microphone plays, looped: it hears nothing\n"
-           "                        without it\n"
-           "  --frames <n>          the run ends after this many frames\n"
-           "  --script <file>       input by frame, and when to capture and quit: lines like `120 key d down`,\n"
-           "                        `200 mouse 640 360`, `201 button left`, `400 capture fight.png` and `500 quit`\n"
-           "  --scale <s>           as on a display scaled this much: 1.5, 2 (1 without it)\n"
-           "  --size <w> <h>        the window's size in pixels, for a run with a window too (960 by 540 without it)\n"
-           "  --seed <n>            the seed of the matches the game starts, from 0 to 2147483647, for any run: without\n"
-           "                        it, 0 with no window, and another one every match with one\n"
-           "  --players <n>         a run of this many players, each a copy of the game on a made-up network: the\n"
-           "                        first opens Main's match and the others join it. A script's line says whose it\n"
-           "                        is, like `120 player 2 key d down`, and a picture has its player's number\n"
-           "                        (fight-2.png)\n"
-           "With TIDE_HIDDEN set (an agent's shell, a build server), games show no window: run takes one of\n"
-           "these or says so, and run --web opens no browser.\n"
-           "\n"
-           "add: a package from git is github.com/owner/repo (or its URL), at the newest commit of\n"
-           "its default branch; @branch after it follows a branch, @v1 the newest v1.x.y tag, and\n"
-           "//folder a folder in the repository. A folder on this machine is a path, like ../shared.\n"
-           "A package that comes with tide is its name alone, and is the version this tide came with.\n"
-           "\n"
-           "publish: the game's key is in the environment, as TIDE_GAME_KEY. What's sent is what a build reads from\n"
-           "the game's folder: its .tide files, its C and libraries, and its tide.packages.\n"
-           "\n"
-           "upgrade:\n"
-           "  --nightly          follow nightly versions from now on\n"
-           "  --stable           follow stable versions from now on\n"
-           "  --version <v>      install exactly this version\n"
-           "tide says once a day when a newer version is out, unless TIDE_NO_UPDATE_CHECK is set.\n");
-}
 
 // The installation: tide is in <root>/bin.
 static char *install_root(void)
@@ -163,11 +63,15 @@ int main(const int argc, char **argv)
         return tide_cc(argc, (const char **)argv);
     }
 #endif
-    if (argc < 2 || strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
-        usage();
-        return argc < 2 ? 2 : 0;
+    if (argc < 2) {
+        tide_help(0, NULL, TIDE_VERSION);
+        return 2;
     }
     const char *command = argv[1];
+    if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0)
+        return tide_help(argc - 2, (const char *const *)argv + 2, TIDE_VERSION);
+    if (argc == 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0))
+        return tide_help(1, &command, TIDE_VERSION);
     if (strcmp(command, "open") == 0) return tide_open(argc, argv);
     char *root = install_root();
     // The packages that come with tide are sources of the installation, like the engine's
@@ -261,8 +165,7 @@ int main(const int argc, char **argv)
     const bool schedule = strcmp(command, "schedule") == 0 || shaders;
     if (!run && !build && !schedule) {
         fprintf(stderr, "tide: unknown command '%s'\n", command);
-        fprintf(stderr, "  = note: the commands are run, build, schedule, shaders, add, update, eject, fetch, publish, editors, "
-                        "upgrade and version; see `tide help`\n");
+        fprintf(stderr, "  = note: see `tide help` for commands\n");
         return 2;
     }
 
@@ -385,7 +288,7 @@ int main(const int argc, char **argv)
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && build) opts.output = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {
-            fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help`\n", command, a);
+            fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
             free(defines);
             return 2;
         }
