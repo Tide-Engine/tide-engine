@@ -1,8 +1,9 @@
 // GRAVEWAKE: Ashwick is burned, and up to four survivors hold a clearing in
-// the wood outside it, round its fire, against the dead without end, in
-// their thousands, with guns, skills and items that stack, taking one at
-// each level. This file is who plays: the survivors, what a player's hands
-// send, joining and leaving, and starting over.
+// the wood outside it through night after night, against the dead without
+// end, in their thousands, with guns, skills and items that stack, taking one
+// at each level. Each night ends at a beacon they light and keep till dawn
+// (nights.tide). This file is who plays: the survivors, what a player's
+// hands send, joining and leaving, and starting over.
 using Rooms;
 
 settings
@@ -37,7 +38,6 @@ component Survivor
     float revive;                    // How far someone's got raising them, 0 to 1
     int reviver = -1;                // Whose hands are on them
     int selfRevives;                 // Second Winds not yet used
-    int points;                      // The score: what the dead have paid
     // The kit (kits.tide): the gun in hand (the role's, or the pistol while down) and the skills' cooldowns
     Role role;                       // None till it's picked, before the first wave
     Weapon gun;
@@ -57,15 +57,16 @@ component Survivor
     int dashes = 2;                  // Dash charges ready (DASHES)
     float dashWait;                  // Seconds till a spent dash comes back
     float3 dashWay;
+    float slimed;                    // Seconds left slowed by a Spitter's bile
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
     bool third;                      // Played from over the shoulder (Hands.third)
-    // The items (items.tide): stacks of each, the three on offer after a wave while `choosing`
-    int[16] items;
+    // The items (items.tide): stacks of each, the three on offer at a level while `choosing`
+    int[24] items;
     Item[3] offers;
     bool choosing;
     int pending;                     // Picks owed: a level's, a Brute's, after the one on offer
     int picks;
-    float gone;                      // Seconds since bleeding out: they're back at the fire after RETURN_SECONDS
+    float gone;                      // Seconds since bleeding out: they're back beside the beacon when it's lit, or at dawn
     int level = 1;                   // The party's, as it reached this survivor
     float droneWait;
     float emberWait;
@@ -150,7 +151,7 @@ singleton Party
     int joined;
 }
 
-// Start again from round one, from a menu's New game or Play.
+// Start again from the first night, from a menu's New game or Play.
 command Restart { }
 
 const float BODY_RADIUS = 0.32;
@@ -290,7 +291,7 @@ system Restarting(mut Match match)
 }
 
 // Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, a level (and so an
-// offer), an item, a Brute, a walk to a place.
+// offer), an item, a Brute, six of one kind of the dead, the night kept, a walk to a place.
 command Cheat
 {
     int what;
@@ -314,18 +315,32 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
             Send(Levelled { level = match.level });
             return;
         case 6:
-            match.bossNext = match.clock;
+            match.bossNext = match.nightClock;
             return;
-        case 7:
-            // Six Bloaters, the next six to rise
-            match.bloaters += 6;
-            match.rush += 6;
+        case 8:
+            // The night kept: dawn now, everyone up
+            if (match.phase != Phase.Fighting) return;
+            match.phase = Phase.Dawn;
+            match.timer = 0;
+            match.vigil = false;
+            match.kept = match.night;
+            for (var s = 0; s < 4; s++)
+                if (party.taken[s]) party.survivors[s].Send(Dawned { at = match.beaconAt });
+            Send(DawnBroke { night = match.night, at = match.beaconAt });
             return;
         case 5:
             party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
             return;
     }
-    if (cheat.what >= 10) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
+    // Six of a kind of the dead, the next six to rise: 20 Bloaters, 21 Spitters, 22 Wardens
+    if (cheat.what >= 20 && cheat.what < 23)
+    {
+        match.special = cheat.what == 20 ? ZombieKind.Bloater : cheat.what == 21 ? ZombieKind.Spitter : ZombieKind.Warden;
+        match.specials += 6;
+        match.rush += 6;
+        return;
+    }
+    if (cheat.what >= 10 && cheat.what < 20) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
 }
 
 // Where each part of the clearing is seen from, for the development walks: x, z and the way to look.

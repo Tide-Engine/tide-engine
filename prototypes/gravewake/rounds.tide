@@ -1,30 +1,43 @@
-// The run: once everyone has picked a survivor, a few seconds' breath, the
-// siren, and the dead never stop coming, more of them and tougher the longer
-// it goes (the danger, after Risk of Rain 2's difficulty); every few minutes
-// a Brute among them. There's no end but the last of the survivors falling;
-// how long they held out is the score.
+// The run: once everyone has picked a survivor, a few seconds' breath, and
+// the first night falls (nights.tide): the dead never stop coming, more of
+// them and tougher the longer it goes and the further into the nights (the
+// danger, after Risk of Rain 2's difficulty). Each night ends at its beacon's
+// vigil and a dawn; then the next, harder. There's no end but the last of the
+// survivors falling; how many nights, and how long, they held out is the
+// score.
 
-enum Phase { Waiting, Fighting, Over }
+enum Phase { Waiting, Fighting, Dawn, Over }
 
 singleton Match
 {
     Phase phase;
-    float timer;                 // Seconds into the phase (the countdown, while waiting)
+    float timer;                 // Seconds into the phase (the countdown while waiting, the dawn)
     float clock;                 // Seconds the run has gone
-    float danger;                // How dangerous the night has got (Danger), each tick
+    float danger;                // How dangerous it's got (Danger), each tick
     bool paused;                 // Someone has items to choose: everything waits for them (Pause)
+    int players = 1;             // Survivors in the match, each tick
+    float crowd = 1;             // How many more of the dead they bring than one alone (nights.tide's Crowd)
     int alive;                   // Up now, counted each tick
     int killed;
     float spawnWait;
     int rush;                    // Of the dead, how many more come six a tick (the development key's horde)
-    int bloaters;                // How many of the next to rise are Bloaters whatever the share (the development key's)
+    int specials;                // How many of the next to rise are of `special`'s kind whatever the shares (the development key's)
+    ZombieKind special;
+    // The nights (nights.tide)
+    int night;                   // Which, from 1
+    float nightClock;            // Seconds into it
+    float late;                  // Seconds the danger has run ahead of the clock: the nights that went on too long (IMPATIENT_AFTER)
+    int place = -1;              // Where its beacon stands (BeaconPlace)
+    float3 beaconAt;
+    bool vigil;                  // Its beacon's lit and burning
+    int kept;                    // Nights kept to their dawn
+    int chestsDue;               // Of its chests, how many are still to be put out...
+    int chestsPlaced;            // ...and how many have been
     // The party's experience (items.tide)
     int level;
     float xp;                    // Toward the next level
     // The Brutes (boss.tide)
-    float bossNext;              // When the next comes, on the run's clock
-    float chestWait = CHEST_FIRST;  // Seconds till the next chest (chests.tide)
-    int chestsCome;              // How many have come this run
+    float bossNext;              // When the night's next impatient one comes, on its clock
     int orbs;                    // Experience orbs lying (orbs.tide)
     int bosses;                  // How many have come
     // The end
@@ -35,9 +48,7 @@ singleton Match
 
 const int MAX_ALIVE = 4000;      // Up at once: the most the tick and the frame afford (notes/gravewake.md)
 const float START_SECONDS = 4;   // The breath before the first of the dead, once everyone has picked
-const float RETURN_SECONDS = 30; // How long one who bled out is gone before they're back at the fire
-const float BOSS_FIRST = 180;    // When the first Brute comes, and how long after each the next does
-const float BOSS_EVERY = 180;
+const float BOSS_EVERY = 150;    // A night not yet lit grows impatient: a Brute every so many seconds of it
 
 void ResetMatch(mut Match match)
 {
@@ -50,26 +61,34 @@ void ResetMatch(mut Match match)
     match.killed = 0;
     match.spawnWait = 0;
     match.rush = 0;
-    match.bloaters = 0;
+    match.specials = 0;
+    match.special = ZombieKind.Walker;
+    match.night = 0;
+    match.nightClock = 0;
+    match.late = 0;
+    match.place = -1;
+    match.beaconAt = float3(0);
+    match.vigil = false;
+    match.kept = 0;
+    match.chestsDue = 0;
+    match.chestsPlaced = 0;
     match.level = 1;
     match.xp = 0;
-    match.bossNext = BOSS_FIRST;
+    match.bossNext = BOSS_EVERY;
     match.bosses = 0;
-    match.chestWait = CHEST_FIRST;
-    match.chestsCome = 0;
     match.orbs = 0;
     match.lasted = 0;
     match.restarting = false;
     match.culling = false;
 }
 
-// How dangerous the night has got: 1 at the start, one more every minute and a half, a quarter more for each survivor
-// How dangerous the night has got: 1 at the start, one more every two and a half minutes, nearly half again for each
-// survivor past the first. (Balanced with the bots, test/balance.c: the dead's health a second had grown as the minutes
-// to the 2.6th, a survivor's power about as the levels, and every run drowned by the third minute.)
-float Danger(Match match, int players)
+// How dangerous it's got: 1 at the start, one more every two and a half minutes of the run (and of the time a night
+// went on too long, `late`), and each night beyond the first NIGHT_STEP times the one before. The same for one
+// survivor as for four: a party brings more of the dead (SpawnDead, by Crowd), not tougher ones. (Balanced with the
+// bots, test/balance.c.)
+float Danger(Match match)
 {
-    return (1 + match.clock / 150) * (1 + 0.45 * (players - 1));
+    return (1 + (match.clock + match.late) / DANGER_EVERY) * Math.Pow(NIGHT_STEP, Math.Max(0, match.night - 1));
 }
 
 // What one of the dead can take, at a danger.
@@ -78,7 +97,7 @@ float ZombieHealth(float danger)
     return 25 * Math.Pow(danger, 1.1);
 }
 
-// How many of the dead come a second, at a danger: three at the start, fifteen ten minutes in.
+// How many of the dead come a second for one survivor, at a danger: three at the start, fifteen at danger 5.
 float SpawnRate(float danger)
 {
     return 3 * danger;
@@ -96,10 +115,12 @@ string DangerName(float danger)
     return "HAHAHAHA";
 }
 
-// Waiting for everyone's survivor, the breath, the run, and the end.
+// Waiting for everyone's survivor, the breath, the nights and their dawns, and the end.
 [Stage(Tick.Rounds)]
 system RunRounds(mut Match match, Time time, Party party, query (Survivor survivor) survivors)
 {
+    match.players = Players(party);
+    match.crowd = Crowd(match.players);
     if (match.paused) return;
     match.timer += time.dt;
     mut var ready = 0;
@@ -127,18 +148,32 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
             match.timer = 0;
             match.clock = 0;
             match.spawnWait = 1;
+            Nightfall(match, match.players);
+            match.danger = Danger(match);
             Send(RunBegan { });
             return;
         case Phase.Fighting:
+        case Phase.Dawn:
             match.clock += time.dt;
-            match.danger = Danger(match, Players(party));
+            if (match.phase == Phase.Fighting) match.nightClock += time.dt;
+            // A night that goes on too long, lit or not, grows impatient: the danger climbs twice as fast till its dawn
+            if (match.phase == Phase.Fighting && match.nightClock > IMPATIENT_AFTER) match.late += time.dt;
+            match.danger = Danger(match);
             if (ready > 0 && hope == 0)
             {
                 match.phase = Phase.Over;
                 match.timer = 0;
                 match.lasted = match.clock;
-                Send(GameOver { lasted = match.clock });
+                Send(GameOver { lasted = match.clock, nights = match.kept });
                 return;
+            }
+            // Dawn's breath over: the next night
+            if (match.phase == Phase.Dawn && match.timer >= DAWN_SECONDS)
+            {
+                match.phase = Phase.Fighting;
+                match.timer = 0;
+                Nightfall(match, match.players);
+                match.danger = Danger(match);
             }
             if (match.culling && match.alive == 0) match.culling = false;
             return;
@@ -156,7 +191,7 @@ system Pause(mut Match match, query (Survivor survivor) survivors)
     mut var waiting = false;
     foreach (var row in survivors)
         if (row.survivor.ready && row.survivor.role != Role.None && row.survivor.choosing) waiting = true;
-    match.paused = waiting && match.phase == Phase.Fighting;
+    match.paused = waiting && (match.phase == Phase.Fighting || match.phase == Phase.Dawn);
 }
 
 // Count who's up, each tick, before the run looks.
@@ -170,8 +205,9 @@ system CountDead(mut Match match, query (Zombie zombie) zombies)
 }
 
 // The dead come all the time, clawing up out of the ground all round a survivor, 16 to 32 m off and from every side,
-// wherever the ground is open and their way to the survivors is clear; a rush (the development key's horde) six a
-// tick. Where no such ground is found, out of a grave or the roots at the clearing's edge.
+// wherever the ground is open and their way to the survivors is clear; more for a party (Crowd), and faster and
+// mostly round the beacon while it burns; a rush (the development key's horde) six a tick. Where no such ground is
+// found, out of a grave or the roots at the clearing's edge.
 [Stage(Tick.Rounds, 1)]
 system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor survivor) survivors)
 {
@@ -187,47 +223,61 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor su
     else
     {
         match.spawnWait -= time.dt;
+        var rate = SpawnRate(danger) * match.crowd * (match.vigil ? VIGIL_RUSH : 1.0);
         while (match.spawnWait <= 0 && count < 10)
         {
-            match.spawnWait += 1 / SpawnRate(danger);
+            match.spawnWait += 1 / rate;
             count += 1;
         }
         if (count == 0) return;
     }
-    // Whom they come for: a survivor on their feet, any of them
+    // Whom they come for: a survivor on their feet, any of them; or, while the beacon burns, it
     mut List<float3> near = [];
     foreach (var row in survivors)
         if (row.survivor.ready && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
     if (near.count == 0) return;
     for (var k = 0; k < count; k++)
     {
-        var focus = near[Random.NextInt(near.count)];
+        var round = Random.NextFloat();
+        var pick = Random.NextInt(near.count);
+        var focus = match.vigil && round < VIGIL_FOCUS ? match.beaconAt : near[pick];
         var at = RisingPlace(ashwick, focus, 16, 32);
         if (at.y < -100) return;
         var gait = GaitFor(danger);
         var look = Random.NextInt(ZOMBIE_LOOKS);
         var pace = Random.NextFloat(0.9, 1.1);
         var phase = Random.NextInt(64);
-        mut var bloat = Random.NextFloat() < BloaterShare(match);
-        if (match.bloaters > 0)
+        var roll = Random.NextFloat();
+        mut var kind = KindFor(match, roll);
+        if (match.specials > 0)
         {
-            match.bloaters -= 1;
-            bloat = true;
+            match.specials -= 1;
+            kind = match.special;
         }
-        Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = ZombieHealth(danger) * (bloat ? BLOAT_HEALTH : 1.0), gait = bloat ? Gait.Shamble : gait, look = look,
-                       state = ZombieState.Rising, pace = pace, phase = phase, kind = bloat ? ZombieKind.Bloater : ZombieKind.Walker });
+        Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = ZombieHealth(danger) * KindHealth(kind), gait = KindGait(kind, gait), look = look,
+                       state = ZombieState.Rising, pace = pace, phase = phase, kind = kind, spit = SPIT_EVERY });
         if (k == 0) Send(Cue { sound = Sfx.Rise, at = at });
     }
 }
 
-// How many of the dead that rise are Bloaters: none in the first BLOATERS_FROM seconds, then one in 40, up to one in 14
-// as the danger grows.
-float BloaterShare(Match match)
+// What kind of the dead rises, from a roll: none but the walking dead at first; then Bloaters from BLOATERS_FROM (one
+// in 40, up to one in 14 as the danger climbs), Spitters from SPITTERS_FROM (one in 50 up to one in 20) and Wardens
+// from WARDENS_FROM (one in 50 up to one in 12).
+ZombieKind KindFor(Match match, float roll)
 {
-    return match.clock < BLOATERS_FROM ? 0 : Math.Min(0.07, 0.025 + 0.01 * (match.danger - 1));
+    var steps = match.danger - 1;
+    var bloaters = match.clock < BLOATERS_FROM ? 0 : Math.Min(0.07, 0.025 + 0.01 * steps);
+    var spitters = match.clock < SPITTERS_FROM ? 0 : Math.Min(0.05, 0.02 + 0.006 * steps);
+    var wardens = match.clock < WARDENS_FROM ? 0 : Math.Min(0.08, 0.02 + 0.008 * steps);
+    if (roll < bloaters) return ZombieKind.Bloater;
+    if (roll < bloaters + spitters) return ZombieKind.Spitter;
+    if (roll < bloaters + spitters + wardens) return ZombieKind.Warden;
+    return ZombieKind.Walker;
 }
 
 const float BLOATERS_FROM = 40;
+const float SPITTERS_FROM = 75;
+const float WARDENS_FROM = 120;
 
 // Where one of the dead can claw up near a survivor: `near` to `far` metres off, any side, on open ground the dead can
 // walk and from which their way to the survivors is clear (eight tries); else a riser 7 m or more off; else a place far
@@ -259,29 +309,10 @@ Gait GaitFor(float danger)
     return Random.NextFloat() < sprinters ? Gait.Sprint : Gait.Run;
 }
 
-// One who bled out is gone a while, then back at their place by the fire with everything they had.
-[Stage(Tick.Rounds, 2)]
-system Return(mut Survivor survivor, Match match, Ashwick ashwick, Time time)
-{
-    if (match.paused) return;
-    if (match.phase != Phase.Fighting || survivor.life != Life.Gone) return;
-    survivor.gone += time.dt;
-    if (survivor.gone < RETURN_SECONDS) return;
-    var start = ashwick.starts[survivor.seat];
-    StandUp(survivor);
-    Refill(survivor);
-    survivor.gone = 0;
-    survivor.feet = start;
-    survivor.yaw = YawTo(float3(0), start);
-    survivor.pitch = 0;
-    survivor.velocity = float3(0);
-    survivor.placed = true;
-    Send(Cue { sound = Sfx.Revive, at = start });
-}
-
 event RunBegan { }
 
 event GameOver
 {
     float lasted;
+    int nights;                  // Kept to their dawn
 }

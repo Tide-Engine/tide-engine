@@ -58,9 +58,197 @@ The work is in phases, each merged when it plays: 1, the horde's technology
 stacking items with levels (done, below; the items are offered three at a
 time after each wave until chests come); 3, the RoR2 loop proper (gold from
 kills, chests that sell the items, a teleporter-like event and a boss, elites,
-difficulty with time, stage after stage in place of waves); 4, the biomes,
-and more survivors. All the picks in phase 2 are mine (Provisional): the
+difficulty with time, stage after stage in place of waves; built as nights,
+below); 4, the biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
+
+### Phase 3: the nights, and a design pass (2026-10-17)
+
+The owner, after a review of the design I gave them (the run had no shape:
+everything rode one clock and nothing traded time for power; a kill's
+experience didn't grow with the dead's health, so the level picks dried up
+just as the run got hard; four players faced six times one's health a
+second with four times the guns, shared one survivor's chests and paused for
+twice as many picks; aiming had little to aim at; the SMG was the weakest
+gun in a horde; most items were stat bumps, and none touched the game's own
+moves): "yeah go ahead and make a coherent game design as you see fit. I will
+then test and we will tweak". Everything below is my pick, Provisional,
+waiting on their play. Phase 3 as first planned (gold, chests that sell)
+became this: the owner had chosen free chests found by roaming.
+
+- **Nights** (`nights.tide`). The run is a string of them. As one falls
+  (`Nightfall`), its beacon stands cold at one of five landmarks
+  (`BeaconPlace`: the spire's top, the chapel's ruin, the graveyard's edge,
+  the standing stones, the ravine's bottom; never last night's; the first
+  never the spire's top), a pale wake-fire in a great brazier and a column of
+  it 34 m up, an additive streak with no fog so it's seen from anywhere; and
+  its chests are hidden (`ChestsTonight`: five, two more a survivor past the
+  first). Holding E within `KINDLE_REACH` (3 m) for `KINDLE_SECONDS` (1.5 s)
+  lights it (`Kindling`, which falls back while nobody holds it, as prying a
+  chest does). The vigil: the dead come `VIGIL_RUSH` (1.4) times as fast,
+  `VIGIL_FOCUS` (65%) of them rising round the beacon; its Brutes rise 24 to
+  32 m off (`VigilBrutes`: one, two from the fourth night, three from the
+  seventh); the beacon fills in `VIGIL_SECONDS` (90) with every standing
+  survivor within `VIGIL_REACH` (11 m, across the ground), in proportion to
+  how many of them are (none, none); a ring of embers on the ground marks the
+  reach. Full, with its Brutes down: dawn (`Phase.Dawn`, `DAWN_SECONDS`, 10).
+  Every one of the dead catches fire and falls in the first two seconds (by a
+  hash of where it stands, no orb, no burst), the Brutes too; every orb lying
+  flies to the nearest survivor from anywhere; each survivor gets `Dawned`
+  (up, whole, ready; one bled out back beside the beacon). Then the next night
+  falls. Chests and beacons carry their night (`Chest.night`, `Beacon.night`)
+  and go when it's over.
+- **The trade**: a night's chests are a set, not a timer's, and they're lost
+  at dawn; the danger climbs with the clock meanwhile. So looking about longer
+  finds more items and costs danger; lighting early is safer and leaves
+  things. The night's panel (top left) says how many of its chests are found,
+  never where. A night that goes on too long grows impatient: past
+  `IMPATIENT_AFTER` (270 s of it, lit or not, past a night looked about for
+  two or three minutes and kept in 90 s) the danger runs ahead of the clock
+  (`Match.late` grows with it, so it climbs twice as fast) till its dawn,
+  "IMPATIENT" on the panel. While it's unlit, a Brute comes every
+  `BOSS_EVERY` (150 s) of its own clock, which gives no pick (a big orb
+  only). The night's own give every survivor a pick. (The bots found the
+  need: with the levels coming on, a Breacher could stall to the 25-minute
+  cap in an unlit night, and then, with that closed, in a lit one it
+  couldn't keep for the dead round it.)
+- **The fallen**: one who bleeds out is gone till the beacon's lit
+  (`Recalled`, sent to every survivor as it catches) or dawn, beside it, with
+  everything; meanwhile their eye watches a standing friend over the shoulder
+  (eye.tide). It was 30 s at the fire, which cost nothing in a party; now a
+  party a survivor short has a reason to light the beacon sooner. Alone,
+  going down still ends the run (nobody standing).
+- **The danger** (`Danger`): `(1 + (clock + late) / DANGER_EVERY) × NIGHT_STEP^(night - 1)`,
+  150 s and 1.25. Nothing for the party's size any more: a party brings
+  `Crowd` (1 + 0.8 a survivor past the first) times as many of the dead, as
+  tough as one survivor's. Four used to start at Medium with 28% runners and
+  face 6x one's health a second; now about 3.4x for 4x the guns.
+- **Experience** (`OrbWorth`, orbs.tide): an orb is `0.5 × danger^1.1`, as the
+  dead's health grows, times its kind's (`KindWorth`: a Bloater's and a
+  Warden's 3, a Spitter's 2; a Brute's 50). A level takes
+  `LEVEL_FIRST (40) × LEVEL_GROWTH (1.28)^(level - 1) × Crowd`, so each
+  survivor's picks come about as often in a party as alone (they had come
+  twice as often for four, each one pausing the run till all had chosen). On
+  paper (`tools/balance_math.py`, everything killed, 80% of the orbs taken,
+  two minutes looked about each night) a pick every 25 s at first, 35 s in
+  the second night, about a minute by the fourth; before, the gaps had grown
+  to three minutes by the fifteenth. The pause stays as the owner asked; with
+  Dawn it waits too.
+- **New dead** (zombies.tide's `ZombieKind`, rounds.tide's `KindFor`, one roll
+  into a local): **Spitters** from 75 s (2%, +0.6% a step of danger, 5% at
+  most): thin and sallow, a glowing throat (`Shambler.spit`). A few times a
+  second one looks for a clear line (`LongRay` from its head) to whom it's
+  after, 4 to 20 m off; with one it stands its ground within 13 m, its throat
+  swells `SPIT_WINDUP` (0.8 s, the claw clip's first half, a gargled retch),
+  and it lobs bile (`Shot.Spit`, a missile of the dead's, seat -1) at where
+  the survivor will be (half their way, `SPIT_LEAD`), arcing over the dead;
+  it splashes on the first survivor or the ground: up to 18 (half at the
+  edge) and `Slimed` 2 s (60% of their speed, a green edge on the screen).
+  **Wardens** from 2 min (2%, +0.8% a step, 8% at most): broad, dark iron mail
+  below the neck with rings and the moon's glint, the head bare; twice the
+  health, always shambling; blows to the body (not burning, bleeding or a
+  shove) do `WARDEN_MAIL` (25%), the head all of it, and on its back the mail
+  doesn't help; a turned blow shows sparks, a grey hit mark and a ring of
+  iron. Claws 1.5x. Both are what aiming is for in a horde, with the Bloater.
+- **Items** (24, was 16; `Survivor.items` is `int[24]`):
+  - New commons: Smelling Salts (raising 50% faster each; not offered alone).
+  - New uncommons: Energy Drink (a dash more: `DashCharges`), Kerosene (the
+    dead the dash goes through catch fire; 0.4 m wider each), Steel Toes (50%
+    more to the dead on the ground, each), Gas Mask (Bloaters' bursts can't
+    hurt you; the ones you kill burst 30% wider each), AP Rounds (a round
+    goes through one more each).
+  - New rares (there were two): HE Rounds (a round bursts on the first of the
+    dead it hits, 1.5 + 1 m a stack across, 30 + 10% of its damage to six at
+    most; a pellet as often as it sets items off; `Shot.Pop`, a small light
+    burst), Dragon's Breath (25% a stack, times the proc, a hit sets the dead
+    alight).
+  - Mortar Beacon is the Mortar Flare now: the night's beacon is the word.
+  - Reworked to scale with the danger: the Powder Keg's burst hurts `2 + keg`
+    of the dead for `ZombieHealth × (0.25 + 0.25 keg)` (it was a flat 23
+    times might, nothing by the fourth minute); the Ember Ring sets the dead
+    within `2.5 + 0.5 a stack` m alight every second (the fire's own damage
+    grows with the danger).
+  - Items reach rounds through `Arms` (whose, what's held, might, crit), so
+    the Engineer's turret keeps its maker's as it's set down and its rounds
+    go through `Land` (`TURRET_PROC`, 0.6): their items fight for them.
+- **The Engineer**: the SMG is 15 a round (14), 50 a magazine (40) and sets
+  items off 1.5 times as often (`proc`); with the turret carrying items, the
+  Engineer is the survivor of builds.
+- **The Gunner**, the weakest with the bots once the Engineer's turret
+  carried items: the carbine is 25 a round (22) and goes through three (two).
+- **The Brutes**: `BossHealth` is `2000 × danger × Crowd` (it was 2500 ×
+  danger, half again for each before it, nothing for the party); their blows,
+  speed and roars grow with their night (`Boss.night`), not with how many
+  came before.
+- **Points are gone.** They bought nothing once gold went; the HUD shows each
+  survivor's kills, and the end says how many nights and how long.
+- **Night looks** (`NightLook`, eased each frame in eye.tide's Prepare): the
+  first moonlit; then mist (fog 0.015), a blood moon, starless, the wake (a
+  sick green), round again from the mist; dawn a grey-rose light. The camp's
+  fire and the wagon's still burn; the spire's and the graveyard's fires
+  became beacons, cold but on their night.
+- **The dead's way** (ashwick.tide): two places at the spire held stragglers
+  for good, and the soak's "longest any hunted" had been 160 to 171 s of a
+  180 s limit. At the foot of a face, the band of cliff cells two wide:
+  `Reaches` let a step inside a cliff's cells rise not at all, so where the
+  ground climbed a hair away from the face, one walking off it was held; a
+  step may now rise as walkable ground does (`STEEP` a metre). Beside the
+  spire ramp's low side, the field (a cliff cell costing as open ground) sent
+  a few straight over the wall, which takes a pile, and too few to pile
+  pressed against it; a step up a face (from a cell lower by `CLIMB_RISE`,
+  half a metre, kept per cell in `Ashwick.heights`, bytes) now costs
+  `CLIMB_COST` (5) to the way, down or along it one. So a way round a few
+  metres longer is taken; the dead still pile up every face the test asks
+  (1.5 to 2.6 m up). The longest any hunted in the soak is now 105 s.
+- **HUD**: the night's panel top left (the night and its kind; "Light the
+  beacon in the chapel's ruin" and the chests found; the vigil's bar, who's
+  near it, "FELL THE BRUTE" once it's full; dawn's count to the next), an
+  arrow at the screen's edge toward the beacon for one outside its reach
+  during the vigil, "Hold E to light the beacon" by it, banners for nightfall,
+  the vigil and dawn, kills in place of points, the Energy Drink's dash pips.
+- **Development keys**: F2 six of a kind of the dead, Bloaters, Spitters and
+  Wardens in turn (`Cheat` 20-22); F7 the night kept (dawn now, `Cheat` 8).
+- **The bots** (`gravewake_balance`, which now lights each night's beacon once
+  its chests are found, 150 s in (its 7th argument) or a friend's bled out,
+  holding E through the hits; takes the ramps to the spire's top and the
+  ruin; keeps within 8 m of a lit beacon; shoots a Brute that's close, or
+  when the beacon's full; and prints how many nights each run kept and how
+  it ended). Ten runs a survivor alone, six of a Gunner and a Breacher, four
+  of four, 25 minutes at most, the medians: the Gunner 1014 s [180-1476], 2
+  nights [0-4]; the Breacher 1172 s [320-1479], 1.5 nights [0-3]; the
+  Engineer 607 s [463-1476], 1 night [1-3]; the pair and the four to the cap,
+  3 and 2 nights. A pick about every 25 s at first and 40 s by the eighth
+  minute, about two items a minute in all. A third of the solo runs end
+  about a fifth of the way into the first vigil: the bots don't step out of
+  a Brute's slam or charge, which are shown before they land, so I didn't
+  tune that down to them. The strongest runs reach the cap at night 4 or 5:
+  at a high danger the dead up at once (4000 at most) cap the pressure while
+  the levels keep adding damage. The levers for that are the damage a level
+  gives (`Might`, 24%) and `NIGHT_STEP`; the owner's play first.
+  Along the way: the first vigil had been a wall (1.75 times the dead, a
+  Brute of 2500 × danger 18 to 28 m off: most Gunners died in it), now 1.4,
+  2000 and 24 to 32 m; the Gunner, the weakest, got the carbine's 25 and
+  three; the nights went to 1.25; and the impatient night came in (above).
+- **Cost** (`gravewake_perf`, release): 2000 of the dead 2.00 ms a tick
+  (2.03 before), 3000 3.14 ms (3.37), 4000 4.03 ms (4.27). The perf tool now
+  turns down offers (with a level's worth of orbs coming sooner, a pick had
+  held the run still and the tick cheap) and raises only walkers (Bloaters
+  had burst through the horde before the timing).
+- **Tests** (`gravewake_test`): the first night's beacon cold and not the
+  spire's, its seven chests (two survivors) on open ground 16 m apart and
+  10 m from the beacon, one opened; a Spitter 9 m off spits and slimes; a
+  carbine round does a quarter to a Warden's mail and twice a walker's to its
+  head; three in a line take two rounds' worth, and three with an AP Round;
+  HE Rounds wound the one beside; Dragon's Breath and Kerosene set alight; a
+  Gas Mask keeps a Bloater's burst off; the turret with its maker's
+  Frostbite freezes; the impatient Brute isn't the night's; then a night
+  kept: one bled out still gone 40 s on, the beacon lit by E in 1.5 s and
+  them back beside it, its one Brute, the vigil's six seconds with nobody,
+  one and both near it (0, 0.033, 0.067), not dawn while the Brute stands,
+  dawn with it down (every one of the dead dying, the orbs in, both up), and
+  the second night at another beacon with seven new chests and the danger up
+  more than 1.15 times. The soak leaves Spitters out of the longest hunted:
+  they hang back on purpose. The orb section clears orbs lying from before.
 
 ### Phase 1: the horde (built 2026-10-16)
 
@@ -138,6 +326,10 @@ the sounds', weak guns and the wrong mood.
   arpeggios; the night has thunder in place of crows and owls.
 
 ### No waves, levels and the Brute (2026-10-17)
+
+(Since Phase 3, above: the run is nights; the danger, the spawn rate, the
+Brutes' timing, coming back after bleeding out and the levels' cost are as
+it says, not as below.)
 
 The owner, after the second playtest: "ambient sound might need to go away /
 lets maybe remove the rounds system and just give upgrades based on leveling
@@ -317,6 +509,9 @@ are way too big, also lets add some satisfying sfx to it".
 
 ### Experience as orbs (2026-10-17)
 
+(An orb's worth grows with the danger since Phase 3, above; at dawn every orb
+flies in.)
+
 The owner: "lets make XP drop as orbs so you need to get close to pick them
 up (not THAT close), that should avoid camping too much". The numbers are mine
 (Provisional).
@@ -340,6 +535,9 @@ up (not THAT close), that should avoid camping too much". The numbers are mine
   survivor stands 6 m off what it shoots and walks among them).
 
 ### Piles of the dead, and more of them (2026-10-17)
+
+(A step up a face costs the dead's way 5 since Phase 3, above, not 1; the
+spawn rate and the dead's health are Phase 3's.)
 
 The owner, on the climbing below: "what if we make them only be able to climb
 on each other? so they create a mountain of zombies similar to day z or
@@ -533,6 +731,9 @@ at a time.
 
 ### The balance: bots playing whole runs (2026-10-17)
 
+(The results below are from before the nights; Phase 3, above, has the
+bots lighting beacons and the results since.)
+
 The owner: "do a balancing pass on the characters, we need some tools or math
 or maybe even simulate full matches and see which are too strong which are too
 weak, how often we should give the player an upgrade etc".
@@ -661,6 +862,8 @@ fall". The numbers are mine (Provisional).
 
 ### No power-ups; chests found, not shown (2026-10-17)
 
+(Chests are a set a night since Phase 3, above, not on a timer.)
+
 The owner: "that ability that kills everything should maybe go; in general i
 dont like the drops from zombies being random abilities. lets make the chests
 be random, but not be pinged; players should discover them by roaming
@@ -680,6 +883,9 @@ around".
   chest" and its bar as before.
 
 ### Chests, and levels half as often (2026-10-17)
+
+(Both replaced since: the chests by the owner's next note, below, then by
+Phase 3's nights; the levels' cost by Phase 3's.)
 
 The owner: "could be fun adding chests around the map with upgrades /
 speaking of upgrades they are too frequent right now". Asked, they chose free
@@ -750,6 +956,9 @@ strafing etc". The picks are mine (Provisional).
 
 ### The dead climb, and nowhere is out of their reach (2026-10-17)
 
+(`CLIMB_COST` went to 1 with the piles, below, and is 5 for a step up a face
+since Phase 3, above.)
+
 The owner: "I can cheese a lot of it by staying at the highest point since
 they can only come from one direction. we either work it through map design
 or we allow zombies to stack on each other and come from all direction. also
@@ -806,8 +1015,9 @@ climbing (Provisional): map changes alone still leave choke points.
   Sprinting went: a survivor runs whenever they go forward and haven't fired
   for 0.35 s, as RoR2 can. ADS, the stab and the kick key went; the Boot is
   the Breacher's.
-- **The items** (`items.tide`): sixteen, stacking, in three rarities; three
-  offered after each wave (uncommon and rare more often as waves go on).
+- **The items** (`items.tide`): sixteen (24 since Phase 3), stacking, in three
+  rarities; three offered after each wave (uncommon and rare more often as
+  waves go on).
   Damage, fire rate, health, speed, leech, cooldowns, magazine, crits; Live
   Wire (hits arc), Powder Keg (kills burst), Gun Drone, Ember Ring, Frostbite,
   Spring Boots; Mortar Beacon (shells called down), Second Wind. A hit's
@@ -836,99 +1046,123 @@ climbing (Provisional): map changes alone still leave choke points.
 
 ## How it plays
 
-An endless run in a forest clearing, an item at each level:
+A run of nights in a forest clearing (Phase 3, above), an item at each level:
 
 - **Survivors** (`kits.tide`), picked with 1, 2 or 3 before the run (nothing
   starts till every ready survivor has one, and a joiner picks on joining).
-  Each a gun and three skills, above.
-- **The run** (`rounds.tide`): the dead come all the time, more and tougher
-  as the danger climbs with the minutes (above, No waves), at most 3000 up at
-  once, clawing up 16 to 32 m round a random standing survivor; a claw does
-  30. A Brute every three minutes (`boss.tide`).
-- **Levels** (`items.tide`): every kill is the party's experience; each level
-  is an item to pick for every survivor, taken while the fight goes on.
-- **Points** are only a score: 10 a hit, 20 a hit to the head, 50 a kill,
-  100 a kill to the head; burning and bleeding give none.
-- **The dead** rise out of the graves and from among the roots round the edge
-  (1.8 s), then walk a flow field to the nearest standing survivor and claw.
+  Each a gun and three skills, the dash every survivor's Shift.
+- **The run** (`rounds.tide`, `nights.tide`): night after night, each ended
+  by its beacon's vigil and a dawn. The dead come all the time, more and
+  tougher as the danger climbs with the clock and the nights, more for a
+  party, at most 4000 up at once, clawing up 16 to 32 m round a random
+  standing survivor (or, in a vigil, mostly round the beacon); a claw does 30
+  (a Warden's 45). A night's Brutes rise as its beacon's lit; an unlit night
+  sends one every 150 s (`boss.tide`).
+- **Kinds of the dead**: walkers; Bloaters from 40 s, Spitters from 75 s,
+  Wardens from 2 min (Phase 3, above).
+- **Levels** (`items.tide`): every kill leaves an orb (`orbs.tide`), the
+  party's experience when one of them comes near; each level is an item to
+  pick for every survivor, and the run waits till all have. Chests (`chests.tide`)
+  give one at random.
+- **The score** is the nights kept and the time; the HUD counts each one's
+  kills (there are no points).
+- **The dead** walk a flow field to the nearest standing survivor and claw.
   Heads take double (a shotgun's pellet half again). Fire burns for 3 s,
   frost slows for 3 s and a second frost while slowed freezes solid (and
   Frostbite freezes outright), shock stuns for 0.6 s, a blast throws. A boot,
-  a slam and a grenade's middle knock them over; one lying takes half as much
-  again and is stamped on by the boot.
+  a dash, a slam and a grenade's middle knock them over; one lying takes half
+  as much again and is stamped on by the boot.
 - **Headshots**: a gold hit marker (red and bigger for a kill), a crack,
-  HEADSHOT over the crosshair for a kill; a crit's marker is yellow.
+  HEADSHOT over the crosshair for a kill; a crit's marker is yellow; one a
+  Warden's mail turns is grey.
 - **Down and out.** At 0 health a survivor goes down for 30 s and fights on
   with the pistol, unless a Second Wind puts them straight back up (one used
-  up). Raised by a friend holding E for 3 s. Who bleeds out is back at the
-  fire 30 s later. When nobody is left standing, the game is over.
-- **No power-ups** (since 2026-10-17, below): items come from levels and
-  chests.
+  up). Raised by a friend holding E for 3 s. Who bleeds out is back beside
+  the beacon when it's lit, or at dawn. When nobody is left standing (alone,
+  going down), the game is over.
+- **No power-ups** (since 2026-10-17, below): items come from levels, the
+  nights' Brutes and chests.
 
 ## Contracts
 
-- **The match** (`game.tide`, `rounds.tide`, `kits.tide`, `items.tide`,
-  `zombies.tide`, `hands.tide`, `missiles.tide`, `drops.tide`, `ashwick.tide`) is
+- **The match** (`game.tide`, `rounds.tide`, `nights.tide`, `kits.tide`,
+  `items.tide`, `orbs.tide`, `chests.tide`, `boss.tide`, `zombies.tide`,
+  `hands.tide`, `missiles.tide`, `drops.tide`, `ashwick.tide`) is
   deterministic and ordered by `enum Tick { Restart, Survivors, Hands,
   Missiles, Zombies, Field, Rounds, Late }`. `Random` is the match's (the
-  items' procs and offers roll it); views roll their own local `Random`
-  (`Fx.random`).
+  items' procs and offers, the spawns, the beacon's place roll it; rolls are
+  drawn into locals before a call uses them); views roll their own local
+  `Random` (`Fx.random`). Dawn's staggered fall is a hash of where each of
+  the dead stands, not a roll.
+- **The phases**: `Waiting` (picking, then `START_SECONDS`), `Fighting` (a
+  night, `Match.night`, its own clock `nightClock`, its beacon lit or not:
+  `Match.vigil`), `Dawn` (`DAWN_SECONDS`, nothing rises, then `Nightfall`),
+  `Over`. `Match.kept` is the nights kept, the score with `lasted`. The
+  pause (`Pause`) holds `Fighting` and `Dawn` alike.
+- **A night's things carry its number** (`Beacon.night`, `Chest.night`, a
+  Brute's `night` for its blows): `Keep` and `ChestShut` destroy what isn't
+  tonight's as the next falls; `Restart` clears them all.
 - **Ashwick Wood is one function**, `MakePlan()` (`plan.tide`): the match
   keeps its solids, risers and starts (`Ashwick`, built at `Spawned`), and
   each machine calls it again for what it draws (`Village`, a local
   singleton, because local handlers can't read the match's lists). Change one
   and both follow. The clearing's edge is `Reach(angle)`, about 38 to 50 m
-  from the fire; the forest past it is drawn but nobody's ground.
+  from the fire; the forest past it is drawn but nobody's ground. The five
+  beacons' braziers are the plan's (`BeaconPlace`, nights.tide, from the
+  landmarks' constants), each with a box.
 - **The ground is one function too**, `Ground(x, z)` (`plan.tide`): Perlin
   rolling ground laid flat round the fire, the graveyard's hollow (`Bump`),
   the ravine (`Ditch`), the chapel's rise and the spire's two tiers (`Mesa`,
   short sides) with their ramps (`RampTo`), and a rise into the trees past
-  the edge. Nothing of it is stored:
-  the match asks it where feet, the dead, drops, rounds and grenades meet the
-  ground, and the picture draws it as a 193 × 193 heightfield at 1.25 m
-  (`MakeShapes`), with rock where it's steep, casting the moon's shadows.
-  Survivors can't walk up more than 0.75 m a metre (`Passable`), so cliffs
-  are climbed by ramp, Leap or not at all; jumping down is fine. The dead
-  climb them (above, The dead climb).
+  the edge. Nothing of it is stored but each nav cell's middle as bytes
+  (`Ashwick.heights`, for the dead's way): the match asks it where feet, the
+  dead, drops, rounds and grenades meet the ground, and the picture draws it
+  as a 193 × 193 heightfield at 1.25 m (`MakeShapes`), with rock where it's
+  steep, casting the moon's shadows. Survivors can't walk up more than 0.75 m
+  a metre (`Passable`), so cliffs are climbed by ramp or not at all; jumping
+  down is fine. The dead climb them on each other (above, Piles).
 - **Collision** is boxes in 8 m buckets, on the ground: circles pushed out,
   standing on the highest top within 0.45 m (the ground's or a box's). Props,
-  tree trunks, the ruin's walls, the fence, the boulders and the gravestones
+  tree trunks, the ruin's walls, the boulders, the braziers and the beacons
   have boxes.
-- **Navigation**: a 1 m grid, 112 × 112 cells from (-56, -56) (a byte field
+- **Navigation**: a 1 m grid, 156 × 156 cells from (-78, -78) (a byte field
   reaches 254 steps of path); cells past the clearing's edge and every cell a
-  box taller than a step overlaps (a fence thinner than a cell too) are
-  walls; where the ground climbs more than 0.6 a metre (`STEEP`) is a cliff
-  the dead climb at a cost (above, The dead climb).
-  One of the dead already in a wall's cell (risen or thrown there) may walk
-  out of it. Every six ticks `Wayfinding` spreads a
-  breadth-first field from the standing survivors' cells; each zombie steps
-  downhill, or straight at its target when the
-  path is clear. The soak test checks that every one of the dead reaches the
-  survivors (none hunts for two minutes).
+  box taller than a step overlaps are walls; where the ground climbs more
+  than 0.6 a metre (`STEEP`) is a cliff. Every six ticks `Wayfinding` spreads
+  a breadth-first field from the standing survivors' cells: a step 1, a step
+  up a face `CLIMB_COST` (5). Each zombie steps downhill, or straight at its
+  target when the path is clear and it's within 14 m. One of the dead already
+  in a wall's cell (risen or thrown there) may walk out of it. The soak test
+  checks that every one of the dead but the Spitters, who hang back, reaches
+  the survivors.
 - **Seats**: `Party` holds four seats (0 Wat, 1 Maud, 2 Godric, 3 Agnes).
   A joiner takes the first free seat; a leaver's survivor is destroyed.
-- **Items**: `Survivor.items` (a count of each), `offers` and `choosing`;
-  `dealt` is the wave they were offered for. `Survivor.role` is `None` till a
+- **Items**: `Survivor.items` (a count of each, `int[24]`), `offers` and
+  `choosing`, `pending` (picks owed). `Survivor.role` is `None` till a
   survivor is picked; `Fight` does nothing until then. `Choose` (at
-  `Tick.Survivors`) takes one on `pick1`..`pick3` and sends `Picked`;
-  `RunRounds` holds the countdown while any ready survivor is `choosing`.
+  `Tick.Survivors`) takes one on `pick1`..`pick3` and sends `Picked`. What a
+  round's items do goes through `Arms` (`ArmsOf`, or a turret's copy) and
+  `Land`.
 - **Skills**: `Survivor.cooldowns` (secondary, utility, special); `UseSkill`
   in `Fight`, before the gun. A throw and the boot are acts (`Act.Throw`,
-  `Act.Kick`) that land part way in; the gun waits for them.
+  `Act.Kick`) that land part way in; the gun waits for them. The dash's
+  charges are `dashes`, `DashCharges` at most.
 - **Commands**: `Restart` (Rooms' New game, Play, or use on the game-over
   screen) sets `Match.restarting`; the `Tick.Restart` systems clear the dead,
-  missiles and drops, re-outfit the survivors and reset the match (command
-  handlers can't query). `Cheat` is the development keys (F4 a horde, F5 the
-  wave's end, F6 the places in turn, F10 a random item).
+  missiles, turrets, Brutes, orbs, chests and the beacon, re-outfit the
+  survivors and reset the match (command handlers can't query). `Cheat` is
+  the development keys (3 a horde, 4 a level, 5 an item, 6 a Brute, 8 the
+  night kept, 10-17 the places in turn, 20-22 six of a kind of the dead).
 - **Inputs**: `ready` is `[Absolute]`; the rest are held bools read with
   `.down`, look is clamped to half a radian a tick. Mouse look is read only
   while the cursor is locked.
-- **What's local**: the camera (`Me`), the plan's copy (`Village`), the kit's
-  placements (`Kit`), poses (`local Pose pose` on survivors and zombies,
-  sampled once a frame), walk clocks, hit flashes, voices and drop hums
-  (`local` fields), the feed (with the others' picks), effects and sounds.
-  Hits, kills, shots (`Loosed`, and a `Traced` line for each round), skills,
-  picks and cues reach views through local handlers.
+- **What's local**: the camera (`Me`, watching a friend while bled out), the
+  plan's copy (`Village`), the kit's placements (`Kit`), poses, walk clocks,
+  hit flashes and voices (`local` fields), the night's light (`NightLook`
+  into `Look`), the feed, effects and sounds. Hits, kills, shots (`Loosed`,
+  and a `Traced` line for each round), skills, picks, the nights' turns
+  (`NightFell`, `VigilBegan`, `DawnBroke`) and cues reach views through local
+  handlers.
 
 ## Art
 
@@ -1131,27 +1365,36 @@ An endless run in a forest clearing, an item at each level:
 - `gravewake_test` (native and WASI, `test/test.c`): two players through the
   real input: the risers and starts clear of every box and on walkable
   cells; nothing starting till both have picked a survivor (a Gunner with the
-  carbine's 30 rounds, a Breacher with the shotgun's 6); the first wave shot
-  down with the carbine (kills, a score, the party's level climbing for
-  both); three items offered each, none twice, one taken by each, the
-  countdown held while one is still choosing; items taken through the input
-  (Kevlar's health, an extended magazine loaded at once, a Second Wind, and
-  every other), a Field Battery's shorter cooldown, a Spring Boots jump in
-  the air; a Second Wind putting one straight back up; the Breacher downed,
-  the pistol firing from the ground with the shotgun's rounds kept, items
-  kept, raised by the other with the shotgun back as loaded as it was; one
-  bleeding out and back at the wave's end with everything; a carbine round
-  and a shotgun blast into one of the dead; every skill (a phase round, a
-  slide, a frag; a boot, a leap's slam, a firebomb's burn, the boot's stamp;
-  a mine laid and set off by the dead, a blink, a turret that fires and then
-  goes); Frostbite freezing and the Mortar Beacon calling a shell, Live Wire
-  arcing to another of the dead, a Powder Keg kill burning the one beside
-  it, the drone and the ember ring wounding without a shot; then both
-  holding the fire for three fresh waves, shooting the nearest, taking the
-  third item after each (every one of the dead reaches them: the longest any
-  hunted was 11 s), then the match from a snapshot and through its packed
-  bytes hashes the same. In the soak a crowd's claws can land together for
-  more than anyone's health, so it keeps them whole.
+  carbine's 30 rounds, a Breacher with the shotgun's 8); the first night: its
+  beacon cold, not the spire's, its seven chests; the dead shot down with the
+  carbine for a minute and a half (kills, the party's level climbing for
+  both); three items offered each, one taken by each, the run held still
+  while one is still choosing; items taken through the input (Kevlar's
+  health, an extended magazine loaded at once, a Second Wind, an Energy
+  Drink's third dash, and every other), a Field Battery's shorter cooldown, a
+  Spring Boots jump in the air; a Second Wind putting one straight back up;
+  the Breacher downed, the pistol firing from the ground with the shotgun's
+  rounds kept, items kept, raised by the other with the shotgun back as
+  loaded as it was; a carbine round and a shotgun blast into one of the dead,
+  over the shoulder and at the legs; every skill (a phase round, the dash
+  twice and a third time through one of the dead, a frag; a boot, a
+  firebomb's burn, the boot's stamp; a mine laid and set off by the dead, a
+  turret that fires and then goes); Frostbite freezing and the Mortar Flare
+  calling a shell, Live Wire arcing to another of the dead, a Powder Keg
+  kill hurting the one beside it, the drone and the ember ring wounding
+  without a shot; a horde of 500 reaching the survivors at every high spot,
+  piling up the faces, and none hanging in the air; no climbing the rise's
+  face by jumping, and every ramp walked to its top; wading slowed by three
+  of the dead; a Bloater's swelling and burst, and one shot dead from afar;
+  the Spitter, the Warden and the newer items (Phase 3, above); a chest
+  opened, and one let go shutting again; orbs lying, taken from 4 m, gone
+  after 40 s; a Brute's slam, charge and roar, and one of the night's own
+  felled owing each a pick; then both holding the fire for three minutes,
+  shooting the nearest, taking the third item at each level (every one of
+  the dead but the Spitters reaches them: the longest any hunted is about
+  105 s of 180); a night kept (Phase 3); then the match from a snapshot and
+  through its packed bytes hashes the same. In the soak a crowd's claws can
+  land together for more than anyone's health, so it keeps them whole.
 - `gravewake_play_webgl` / `_webgpu` (`test/browser.mjs`, label
   `private-prototype`, `webgpu`, run serially): the page in headless Chrome
   with frame control and `checkGL`: the title, Play, a Breacher, the first
@@ -1182,10 +1425,11 @@ An endless run in a forest clearing, an item at each level:
   with keys or the d-pad only (the cursor is locked in play).
 - Not measured: frame cost on a real GPU in a browser with the forest's
   trees (the owner is testing it), live play over the Internet with four,
-  gamepad feel, host migration mid-wave, balance past wave ten, how the
-  cards' numbers stack deep into a run.
-- Late joiners start with the hand crossbow and nothing taken, a few waves
-  behind the others.
+  gamepad feel, host migration mid-night, the balance with people rather than
+  the bots (who don't dodge a Brute's slam or charge, and find a high beacon
+  only by the ramps they're told of).
+- A late joiner picks a survivor and is owed a pick for every level the
+  party has, offered one after another, the run waiting.
 - What the engine made awkward, worked round in the game:
   - tidec emits an unused `const int32_t` temporary for an int literal given
     to a float field of a frag's values struct (`Skin { eyes = 0 }`), which

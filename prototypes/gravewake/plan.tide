@@ -135,6 +135,7 @@ float RampTo(float h, float below, float2 at, float2 a, float2 b, float half, fl
 
 const float RAMP_FLAT = 0.2;
 const float GRAVESTONE_SCALE = 0.75;    // Gravestones, smaller than the kit's: nothing to walk round, stepped past
+const float BEACON_SCALE = 1.5;         // The beacons' braziers, against the fires'
 
 // How far into a ditch along `a` to `b` a place is: 1 on its floor (`half` each side), 0 past its banks.
 float Ditch(float2 at, float2 a, float2 b, float half, float fall)
@@ -443,7 +444,6 @@ Plan MakePlan()
     }
     Tree(plan, Piece.DeadTree_1, On(GRAVES.x - 6, GRAVES.y + 9), 0.4, 0.9);
     Tree(plan, Piece.DeadTree_3, On(GRAVES.x + 5, GRAVES.y + 11), 2.1, 0.8);
-    plan.fires.Add(On(GRAVES.x + 8, GRAVES.y - 0.5));
 
     // ---- North-west: a ring of standing stones ----
     for (var i = 0; i < 7; i++)
@@ -452,8 +452,7 @@ Plan MakePlan()
         Standing(plan, STONES + float2(Math.Cos(turn), Math.Sin(turn)) * 4.8, turn * 1.7, i, 1.15 + (i % 3) * 0.12);
     }
 
-    // ---- East: the beacon's spire, its fire on top; a cart and a wagon left at its foot, the camp's second fire ----
-    plan.fires.Add(On(BEACON.x, BEACON.y));
+    // ---- East: the beacon's spire; a cart and a wagon left at its foot, the camp's second fire ----
     PlaceSolid(plan, Piece.Prop_Wagon, On(18, 11), 0.35);
     PlaceSolid(plan, Piece.Stall_Cart_Empty, On(10, -8.4), 1.2);
     plan.fires.Add(On(16, 1.4));
@@ -515,11 +514,17 @@ Plan MakePlan()
         plan.dressing.Add(ItemPut { item = stone, at = at, yaw = Math.PI * 0.5 + ((h >> 22) & 63) * 0.02 - 0.6, scale = GRAVESTONE_SCALE * (0.9 + ((h >> 28) & 3) * 0.08) });
     }
 
-    // ---- The fires' braziers ----
+    // ---- The fires' braziers; and the five beacons, great braziers cold but on the night they're lit (nights.tide) ----
     foreach (var at in plan.fires)
     {
         plan.dressing.Add(ItemPut { item = "brazier", at = at });
         Block(plan, at - float3(0.5, 0, 0.5), at + float3(0.5, 1.4, 0.5));
+    }
+    for (var place = 0; place < BEACON_PLACES; place++)
+    {
+        var at = BeaconPlace(place);
+        plan.dressing.Add(ItemPut { item = "brazier", at = at, scale = BEACON_SCALE });
+        Block(plan, at - float3(0.7, 0, 0.7), at + float3(0.7, 1.4 * BEACON_SCALE, 0.7));
     }
 
     // ---- The forest: close round the edge, thinning into the fog ----

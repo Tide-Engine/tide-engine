@@ -22,6 +22,7 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
 
     // Health comes back after a few calm seconds; what Leech Rounds may heal comes back all the time
     survivor.calm += dt;
+    survivor.slimed = Math.Max(0, survivor.slimed - dt);
     var leechMost = MaxHealth(survivor) * 0.08 * Has(survivor, Item.Leech);
     survivor.leech = Math.Min(leechMost, survivor.leech + leechMost * dt);
     if (survivor.life == Life.Standing && survivor.calm > 3.5) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * 0.6);
@@ -48,6 +49,7 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
     mut var speed = (running ? SPRINT_SPEED : WALK_SPEED) * Fleetness(survivor);
     if (downed) speed = 0.6;
     speed *= Wading(survivor, herd);
+    if (survivor.slimed > 0) speed *= SLIME_SLOW;
     mut var wish = Flat(survivor.yaw) * hands.move.y + Flat(survivor.yaw + Math.PI * 0.5) * hands.move.x;
     if (Math.Length(wish) > 1) wish = Math.Normalize(wish);
     // On a slope too steep to stand on, no walking up it
@@ -146,6 +148,7 @@ float Wading(Survivor survivor, Herd herd)
     return Math.Max(1 - TOUCH_SLOW_MOST, 1 - TOUCH_SLOW * touching);
 }
 
+const float SLIME_SLOW = 0.6;       // Of their speed a survivor keeps while a Spitter's bile is on them (zombies.tide)
 const float TOUCH_SLOW = 0.22;      // Speed lost to each of the dead pressed against a survivor
 const float TOUCH_SLOW_MOST = 0.6;  // ...and the most lost to them all
 const float TOUCH_GAP = 0.1;        // How near counts as pressed against
@@ -228,7 +231,7 @@ system Raise(Hands hands, Survivor survivor, Party party, Match match, Time time
     if (!survivor.ready || survivor.life != Life.Standing || !hands.use || survivor.aimed < 0) return;
     var seat = survivor.aimed;
     // Twice the tick's share: Steer lets it fall back on any tick nobody holds them
-    party.survivors[seat].Send(Helped { amount = time.dt / REVIVE_SECONDS * 2, by = survivor.seat });
+    party.survivors[seat].Send(Helped { amount = time.dt / REVIVE_SECONDS * 2 * (1 + 0.5 * Has(survivor, Item.Salts)), by = survivor.seat });
 }
 
 // A hand to someone who's down; up when it's done.
@@ -350,7 +353,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     {
         var off = Random.NextFloat2Direction() * Random.NextFloat(info.spread);
         var way = Math.Normalize(look + right * off.x + up * off.y);
-        Shoot(survivor, from, way, info.range, info.damage * Might(survivor), info.head, info.pierce, ashwick, herd, trace, info.proc);
+        Shoot(ArmsOf(survivor), from, way, info.range, info.damage * Might(survivor), info.head, info.pierce + Has(survivor, Item.ApRounds), ashwick, herd, trace, info.proc);
     }
     Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Gun });
     survivor.act = Act.Fire;
@@ -444,8 +447,9 @@ void StartAct(mut Survivor survivor, Act act, float seconds)
 }
 
 // A round from `from` along `way`: the dead in its line, nearest first, as many as it goes through, then the wall or the
-// ground it ends in. What it hits is wounded through the items (Land); what it leaves is a tracer and, in a wall, a chip.
-void Shoot(Survivor survivor, float3 from, float3 way, float range, float damage, float head, int pierce, Ashwick ashwick, Herd herd, Trace kind, float chance)
+// ground it ends in. What it hits is wounded through the items (Land); with HE Rounds it bursts on the first (a pellet's
+// as often as it sets items off). What it leaves is a tracer and, in a wall, a chip.
+void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float head, int pierce, Ashwick ashwick, Herd herd, Trace kind, float chance)
 {
     var to = from + way * range;
     var wall = LongRay(ashwick, from, to, out var normal);
@@ -472,10 +476,15 @@ void Shoot(Survivor survivor, float3 from, float3 way, float range, float damage
     mut var end = Math.Min(1, wall);
     for (var i = 0; i < count; i++)
     {
-        Land(survivor, struck[i], heads[i] ? damage * head : damage, heads[i], from, knock, chance, herd);
+        Land(arms, struck[i], heads[i] ? damage * head : damage, heads[i], from, knock, chance, herd);
         if (i == pierce - 1) end = when[i];
     }
-    Send(Traced { seat = survivor.seat, from = from, to = Math.Lerp(from, to, end), kind = kind });
+    if (count > 0 && Holds(arms, Item.HeRounds) > 0)
+    {
+        var roll = Random.NextFloat();
+        if (roll < chance) Detonate(arms, struck[0], Math.Lerp(from, to, when[0]), damage, herd);
+    }
+    Send(Traced { seat = arms.seat, from = from, to = Math.Lerp(from, to, end), kind = kind });
     if (wall <= 1 && count < pierce) Send(Thud { at = Math.Lerp(from, to, wall), normal = normal });
 }
 
@@ -612,19 +621,21 @@ system DashThrough(mut Survivor survivor, Match match, Herd herd, Time time)
     // The second charge back: when the cooldown's come round with one spent, another's ready
     // (one at a time, each the whole cooldown; with none ready, the skill's cooldown is the wait for the next)
     var slot = 1;
-    if (survivor.dashes < DASHES)
+    var most = DashCharges(survivor);
+    if (survivor.dashes < most)
     {
         survivor.dashWait -= time.dt;
         if (survivor.dashWait <= 0)
         {
             survivor.dashes += 1;
-            survivor.dashWait = survivor.dashes < DASHES ? Cooldown(survivor, Skill.Slide) : 0;
+            survivor.dashWait = survivor.dashes < most ? Cooldown(survivor, Skill.Slide) : 0;
         }
         if (survivor.dashes == 0) survivor.cooldowns[slot] = survivor.dashWait;
     }
     if (survivor.dash <= 0) return;
     var side = float3(-survivor.dashWay.z, 0, survivor.dashWay.x);
-    var reach = survivor.role == Role.Breacher ? BREACHER_DASH_REACH : 1.1;
+    var kerosene = Has(survivor, Item.Kerosene);
+    var reach = (survivor.role == Role.Breacher ? BREACHER_DASH_REACH : 1.1) + 0.4 * kerosene;
     var hit = DASH_HIT * (survivor.role == Role.Breacher ? BREACHER_DASH_HIT : 1.0) * Might(survivor);
     foreach (var z in Near(herd, survivor.feet, reach + 0.5))
     {
@@ -637,6 +648,6 @@ system DashThrough(mut Survivor survivor, Match match, Herd herd, Time time)
         if (Math.Dot(off, survivor.dashWay) < -0.3) continue;
         var away = Math.Dot(off, side) >= 0 ? side : -side;
         z.entity.Send(Wound { damage = hit, seat = survivor.seat, from = z.at - away - survivor.dashWay * 0.5, knock = 6 / z.size, down = z.size < 1.5,
-                              blow = Blow.Blunt });
+                              blow = Blow.Blunt, element = kerosene > 0 ? Element.Fire : Element.None });
     }
 }

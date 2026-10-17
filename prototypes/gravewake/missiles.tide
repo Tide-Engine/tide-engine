@@ -1,12 +1,13 @@
 // What's thrown, laid and called down (rounds are rays, hands.tide's Shoot):
 // frag grenades, which burst on the dead or after a moment; firebombs, which
 // burst into flame where they land; mines, which wait for the dead to come
-// near; the Mortar Beacon's shells. Each tick one moves, drops, and meets the
-// dead before the walls.
+// near; the Mortar Flare's shells; and a Spitter's bile, the one that's the
+// dead's, which flies at the living. Each tick one moves, drops, and meets
+// the dead (or the living) before the walls.
 
-// What a missile is. A Keg, a Quake and Bile are none: a Powder Keg's burst, a Brute's slam and a Bloater's burst, for
-// what's seen and heard.
-enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake, Bile }
+// What a missile is. A Keg, a Quake, Bile and a Pop are none: a Powder Keg's burst, a Brute's slam, a Bloater's burst
+// and an HE round's, for what's seen and heard.
+enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake, Bile, Spit, Pop }
 
 component Missile
 {
@@ -74,12 +75,46 @@ float LegsHit(float3 from, float3 to, Body z, float wider)
 const float LEG_RADIUS = 0.2;
 
 [Stage(Tick.Missiles)]
-system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time time)
+system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time time, query (Survivor survivor) survivors)
 {
     if (match.paused) return;
     var dt = time.dt;
     missile.age += dt;
     missile.life -= dt;
+    if (missile.kind == Shot.Spit)
+    {
+        // Bile: over the dead, at the living; it splashes on the first survivor in its way, or the ground or a wall
+        var from = missile.at;
+        missile.velocity.y -= missile.gravity * dt;
+        var to = from + missile.velocity * dt;
+        mut var first = RayHit(ashwick, from, to, out _);
+        foreach (var row in survivors)
+        {
+            var s = row.survivor;
+            if (!s.ready || s.life != Life.Standing) continue;
+            first = Math.Min(first, SphereHit(from, to, s.feet + float3(0, 1.0, 0), 0.55));
+        }
+        if (first <= 1 || missile.life <= 0)
+        {
+            // The survivors near enough hurt (half at its edge) and slowed a while
+            var at = Math.Lerp(from, to, Math.Min(1, first));
+            foreach (var row in survivors)
+            {
+                var s = row.survivor;
+                if (!s.ready || s.life != Life.Standing) continue;
+                var far = Math.Distance(s.feet + float3(0, 0.9, 0), at);
+                if (far > missile.splash + 0.4) continue;
+                var share = Math.Saturate(1 - far / (missile.splash + 0.4));
+                row.entity.Send(Hurt { damage = missile.damage * (0.5 + 0.5 * share), from = at });
+                row.entity.Send(Slimed { seconds = SLIME_SECONDS });
+            }
+            Send(Blast { at = at, reach = missile.splash, element = Element.None, kind = Shot.Spit });
+            this.Destroy();
+            return;
+        }
+        missile.at = to;
+        return;
+    }
     if (missile.kind == Shot.Mine)
     {
         // Waiting: the first of the dead near enough sets it off

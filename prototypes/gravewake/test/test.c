@@ -1,17 +1,21 @@
 // GRAVEWAKE played with no window: two survivors pick theirs (a Gunner and a
-// Breacher), and once both have the run starts and never stops: the Gunner
-// shoots the dead down, the party levels up, and each survivor is offered
-// three items and takes one while the fighting goes on; then every kind of
-// item in turn. Every survivor's every skill is used; the items that fight on
-// their own (the drone, the ember ring) and the ones a hit or a kill sets off
-// (Live Wire, Frostbite, the Mortar Beacon, the Powder Keg) are seen to. One
-// goes down, fights on with the pistol, keeps everything and is raised; one
-// gets straight back up with a Second Wind; one bleeds out and is back at the
-// fire half a minute later with everything they had. A Brute claws up, slams,
-// charges and roars, and felled gives both an item to pick. Then both hold the
-// fire for minutes, every one of the dead finding its way to them. What they
-// press goes through the input, as a player's does; where they'd stand and
-// look, the test puts them.
+// Breacher), and once both have the first night falls: its beacon stands cold
+// at a landmark and its chests are hidden about. The Gunner shoots the dead
+// down, the party levels up, and each survivor is offered three items and
+// takes one while the run waits; then every kind of item in turn. Every
+// survivor's every skill is used; the items that fight on their own (the
+// drone, the ember ring, the Engineer's turret with its maker's items) and the
+// ones a hit, a kill or a dash sets off are seen to. One goes down, fights on
+// with the pistol, keeps everything and is raised; one gets straight back up
+// with a Second Wind. A Spitter spits, a Warden's mail turns a round, a
+// Bloater bursts. A Brute claws up, slams, charges and roars, and felled gives
+// both an item to pick. Both hold the fire for minutes, every one of the dead
+// finding its way to them. Then a night is kept: one bleeds out and stays
+// gone; the beacon's lit, which calls them back; its Brute rises; it's kept
+// only while they're near it; dawn burns the dead away; and the next night
+// falls at another beacon, with new chests, more dangerous. What they press
+// goes through the input, as a player's does; where they'd stand and look, the
+// test puts them.
 #include "gravewake_test.h"
 #include <math.h>
 #include <stdio.h>
@@ -45,7 +49,7 @@ static void tick(int count)
     }
 }
 
-static float max_health(Survivor s) { return 100.0f + 30.0f * (float)(s.level - 1) + 30.0f * (float)s.items.at[Item_Kevlar]; }
+static float max_health(Survivor s) { return 100.0f + 30.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
 
 // Both on their feet and whole, so the dead don't end a test that's about something else.
 static void heal(void)
@@ -244,8 +248,8 @@ static bool open_round(tide_float3 at, float reach)
 static int hunting_row(void)
 {
     int any = -1, flat = -1;
-    for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) {
-        const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, r);
+    for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) {
+        const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, r);
         if (z.state != ZombieState_Hunting) continue;
         if (open_round(z.at, 8)) return (int)r;
         if (flat < 0 && flat_ground(z.at)) flat = (int)r;
@@ -264,7 +268,7 @@ static tide_entity sturdy(void)
         if (row < 0) tick_safe(1);
     }
     CHECK(row >= 0);
-    const tide_entity e = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+    const tide_entity e = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
     Zombie z = tide_get_Zombie(&world, e);
     z.health = 100000;
     z.kind = ZombieKind_Walker;
@@ -322,8 +326,8 @@ static void press(bool *key)
 static int missiles_of(Shot kind)
 {
     int count = 0;
-    for (uint32_t row = 0; row < world.arch1_Missile.count; row++)
-        if (TIDE_AT(&world, arch1_Missile, Missile, row).kind == kind) count++;
+    for (uint32_t row = 0; row < world.arch2_Missile.count; row++)
+        if (TIDE_AT(&world, arch2_Missile, Missile, row).kind == kind) count++;
     return count;
 }
 
@@ -340,7 +344,7 @@ int main(void)
     CHECK(world.Party.joined == 2);
     CHECK(world.Ashwick.made);
     CHECK(get(0).role == Role_None && get(0).gun == Weapon_None);
-    CHECK(get(0).points == 0);
+    CHECK(get(0).kills == 0);
 
     // Where the dead rise is clear of everything solid and on ground they can walk; so is where the survivors start
     const int risers = tide_list_read_count(&world.heap, world.Ashwick.risers);
@@ -370,19 +374,23 @@ int main(void)
     pick(1, 2);
     CHECK(get(1).role == Role_Breacher && get(1).gun == Weapon_Shotgun && get(1).mag == 8);
 
-    // ---- The run: a breath, then the dead, which the Gunner shoots down for a minute and a half ----
+    // ---- The run: a breath, then the first night: its beacon, cold at a landmark (not the spire's top), and its chests
+    // hidden about; and the dead, which the Gunner shoots down for a minute and a half ----
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick(1);
     CHECK(world.Match.phase == Phase_Fighting && world.Match.clock < 0.1f);
+    CHECK(world.Match.night == 1 && world.Match.place >= 1 && world.Match.place < 5);
     tick_safe(60 * 6);
-    CHECK(world.arch5_Zombie.count > 0);
+    CHECK(world.arch6_Zombie.count > 0);
+    CHECK(world.arch4_Beacon.count == 1 && !TIDE_AT(&world, arch4_Beacon, Beacon, 0).lit);
+    CHECK(world.Match.chestsDue == 0 && world.Match.chestsPlaced == 7 && world.arch7_Chest.count == 7);
     int fired = 0;
     bool offered = false;
     for (int t = 0; t < 60 * 60 * 5 && world.Match.clock < 90; t++) {
         float nearest = 1e9f;
         Zombie target = {0};
         bool found = false;
-        for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
-            const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, row);
+        for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+            const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, row);
             if (z.state != ZombieState_Hunting) continue;
             const float d = fabsf(z.at.x - get(0).feet.x) + fabsf(z.at.z - get(0).feet.z);
             if (d < nearest) { nearest = d; target = z; found = true; }
@@ -401,13 +409,12 @@ int main(void)
     held[0].attack = held[0].pick3 = held[1].pick3 = false;
     tick_whole(1);
     CHECK(world.Match.phase == Phase_Fighting && world.Match.clock >= 90);
-    CHECK(world.Match.danger > 1.9f);
+    CHECK(world.Match.danger > 1.55f);
     CHECK(fired > 0);
     CHECK(get(0).kills >= 1);
-    CHECK(get(0).points > 0);
     CHECK(world.Match.level > 1 && get(0).level == world.Match.level && get(1).level == world.Match.level);
-    printf("a minute and a half: %d kills, a score of %d, the party at level %d, danger %.2f\n", get(0).kills, get(0).points, world.Match.level, world.Match.danger);
-    world.Match.bossNext = 1e9f;     // No Brute of the run's own till the part that calls one
+    printf("a minute and a half: %d kills, the party at level %d, danger %.2f\n", get(0).kills, world.Match.level, world.Match.danger);
+    world.Match.bossNext = 1e9f;     // No impatient Brute of the night's own till the part that calls one
 
     // ---- A level's offer: three items, none twice; the run waits, the clock and the dead still, till both have taken
     // one; the next owed is offered then ----
@@ -421,7 +428,7 @@ int main(void)
         const float clock = world.Match.clock;
         const int row = hunting_row();
         CHECK(row >= 0);
-        const tide_entity e = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
         const tide_float3 at = tide_get_Zombie(&world, e).at;
         tick_whole(60);
         CHECK(world.Match.clock == clock && world.Match.paused);
@@ -430,7 +437,7 @@ int main(void)
     for (int seat = 0; seat < 2; seat++) {
         const Survivor s = get(seat);
         CHECK(s.choosing);
-        for (int k = 0; k < 3; k++) CHECK((int)s.offers.at[k] >= 0 && (int)s.offers.at[k] < 16);
+        for (int k = 0; k < 3; k++) CHECK((int)s.offers.at[k] >= 0 && (int)s.offers.at[k] < 24);
         CHECK(s.offers.at[0] != s.offers.at[1] && s.offers.at[1] != s.offers.at[2] && s.offers.at[0] != s.offers.at[2]);
     }
     {
@@ -456,13 +463,16 @@ int main(void)
         s.selfRevives = 0;
         set(0, s);
         s = take(0, Item_Kevlar);
-        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 130.0f + 30.0f * (float)(s.level - 1));
+        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 30.0f * (float)(s.level - 1));
         s = take(0, Item_ExtendedMag);
         CHECK(s.mag == 45);                             // Half again a carbine's 30, loaded now
         s = take(0, Item_SecondWind);
         CHECK(s.selfRevives == 1);
-        const Item rest[] = {Item_HollowPoints, Item_HairTrigger, Item_Sneakers, Item_Leech, Item_Battery, Item_LuckyShot, Item_LiveWire,
-                             Item_PowderKeg, Item_GunDrone, Item_EmberRing, Item_Frostbite, Item_SpringBoots, Item_Mortar};
+        s = take(0, Item_EnergyDrink);
+        CHECK(s.dashes == 3);                           // A third dash, ready now
+        const Item rest[] = {Item_HollowPoints, Item_HairTrigger, Item_Sneakers, Item_Leech, Item_Battery, Item_LuckyShot, Item_Salts, Item_LiveWire,
+                             Item_PowderKeg, Item_GunDrone, Item_EmberRing, Item_Frostbite, Item_SpringBoots, Item_Kerosene, Item_SteelToes, Item_GasMask,
+                             Item_ApRounds, Item_Mortar, Item_HeRounds, Item_DragonsBreath};
         for (size_t k = 0; k < sizeof rest / sizeof rest[0]; k++) {
             const int before = get(0).items.at[rest[k]];
             CHECK(take(0, rest[k]).items.at[rest[k]] == before + 1);
@@ -534,7 +544,7 @@ int main(void)
         friend = get(1);
         if (friend.life != Life_Downed)
             fprintf(stderr, "not down: life %d health %.0f, the zombie state %d at %.1f %.1f %.1f, swing %.2f, %u up\n", (int)friend.life, friend.health, (int)zombie(e).state,
-                    zombie(e).at.x, zombie(e).at.y, zombie(e).at.z, zombie(e).swing, world.arch5_Zombie.count);
+                    zombie(e).at.x, zombie(e).at.y, zombie(e).at.z, zombie(e).swing, world.arch6_Zombie.count);
         CHECK(friend.life == Life_Downed);
         CHECK(friend.gun == Weapon_Pistol && friend.mag == 12 && friend.stowed == 4);
         CHECK(friend.items.at[Item_HollowPoints] == 2);
@@ -563,26 +573,6 @@ int main(void)
         CHECK(get(1).gun == Weapon_Shotgun && get(1).mag == 4);
     }
 
-    // ---- Bled out: back at the fire half a minute later, with everything they had ----
-    {
-        Survivor friend = get(1);
-        friend.life = Life_Downed;
-        friend.bleed = 0.05f;
-        friend.health = 0;
-        friend.stowed = friend.mag;
-        friend.gun = Weapon_Pistol;
-        set(1, friend);
-        tick(10);
-        CHECK(get(1).life == Life_Gone);
-        tick_safe(60 * 25);
-        CHECK(get(1).life == Life_Gone);
-        tick_safe(60 * 6);
-        friend = get(1);
-        CHECK(friend.life == Life_Standing && friend.gone == 0);
-        CHECK(friend.items.at[Item_HollowPoints] >= 2 && friend.gun == Weapon_Shotgun && friend.mag >= 8);
-        tick_safe(60 * 2);
-    }
-
     // ---- The guns: a carbine's round, a shotgun's pellets, into one of the dead; and the carbine again from over the
     // shoulder, the round going where the camera's crosshair is; and the carbine at the legs, below the hips ----
     few(3);
@@ -604,7 +594,7 @@ int main(void)
                 fprintf(stderr, "the %s missed: survivor at %.2f %.2f %.2f yaw %.2f pitch %.2f; zombie at %.2f %.2f %.2f chest %.2f %.2f %.2f state %d; %u up\n",
                         k == 0 ? "carbine" : k == 1 ? "shotgun" : k == 2 ? "carbine from over the shoulder" : "carbine at the legs", get(0).feet.x, get(0).feet.y, get(0).feet.z, get(0).yaw, get(0).pitch,
                         zombie(e).at.x, zombie(e).at.y, zombie(e).at.z, zombie(e).chestAt.x, zombie(e).chestAt.y, zombie(e).chestAt.z, (int)zombie(e).state,
-                        world.arch5_Zombie.count);
+                        world.arch6_Zombie.count);
             CHECK(zombie(e).health < before);
         }
         held[0].third = false;
@@ -703,8 +693,8 @@ int main(void)
                 before = z.health;
                 // The rest of the dead well off, so this is the one down within the boot's reach (others it knocked down
                 // could still be lying nearer)
-                for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
-                    const tide_entity other = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+                for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+                    const tide_entity other = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
                     if (other.index == e.index) continue;
                     Zombie o = tide_get_Zombie(&world, other);
                     if (hypotf(o.at.x - z.at.x, o.at.z - z.at.z) > 8) continue;
@@ -738,11 +728,11 @@ int main(void)
         face(0, e, 4);
         before = zombie(e).health;
         press(&held[0].special);
-        CHECK(world.arch2_Turret.count == 1);
+        CHECK(world.arch3_Turret.count == 1);
         for (int t = 0; t < 60 * 5 && zombie(e).health >= before; t++) tick_safe(1);
         CHECK(zombie(e).health < before);
         tick_safe(60 * 16);
-        CHECK(world.arch2_Turret.count == 0);           // Its time up
+        CHECK(world.arch3_Turret.count == 0);           // Its time up
     }
 
     // (A crowd, for what sets off on the dead near the one hit)
@@ -773,8 +763,8 @@ int main(void)
             set(0, s);
             press(&held[0].attack);
             tick_safe(2);
-            for (uint32_t row = 0; row < world.arch5_Zombie.count; row++)
-                if (TIDE_AT(&world, arch5_Zombie, Zombie, row).frozen > 0) froze = true;
+            for (uint32_t row = 0; row < world.arch6_Zombie.count; row++)
+                if (TIDE_AT(&world, arch6_Zombie, Zombie, row).frozen > 0) froze = true;
             called = missiles_of(Shot_Shell) > shells;
         }
         CHECK(froze);
@@ -782,8 +772,8 @@ int main(void)
         // Live Wire: some of the dead near the one shot are struck too, sooner or later
         bool arced = false;
         for (int shot = 0; shot < 60 && !arced; shot++) {
-            for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
-                const tide_entity other = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+            for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+                const tide_entity other = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
                 Zombie z = tide_get_Zombie(&world, other);
                 if (other.index == e.index || z.state == ZombieState_Dying) continue;
                 z.health = 100000;
@@ -796,9 +786,9 @@ int main(void)
             set(0, s);
             press(&held[0].attack);
             tick_safe(1);
-            for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
-                const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, row);
-                if (TIDE_ENTITY_AT(&world, arch5_Zombie, row).index != e.index && z.state != ZombieState_Dying && z.health < 100000) arced = true;
+            for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+                const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, row);
+                if (TIDE_ENTITY_AT(&world, arch6_Zombie, row).index != e.index && z.state != ZombieState_Dying && z.health < 100000) arced = true;
             }
         }
         CHECK(arced);
@@ -811,17 +801,17 @@ int main(void)
         for (int tries = 0; tries < 40 && !burst; tries++) {
             // One of the dead with another close by
             int a = -1, b = -1;
-            for (uint32_t i = 0; i < world.arch5_Zombie.count && a < 0; i++) {
-                const Zombie zi = TIDE_AT(&world, arch5_Zombie, Zombie, i);
+            for (uint32_t i = 0; i < world.arch6_Zombie.count && a < 0; i++) {
+                const Zombie zi = TIDE_AT(&world, arch6_Zombie, Zombie, i);
                 if (zi.state != ZombieState_Hunting) continue;
-                for (uint32_t j = 0; j < world.arch5_Zombie.count; j++) {
-                    const Zombie zj = TIDE_AT(&world, arch5_Zombie, Zombie, j);
+                for (uint32_t j = 0; j < world.arch6_Zombie.count; j++) {
+                    const Zombie zj = TIDE_AT(&world, arch6_Zombie, Zombie, j);
                     if (i == j || zj.state != ZombieState_Hunting) continue;
                     if (hypotf(zi.at.x - zj.at.x, zi.at.z - zj.at.z) < 2.5f) { a = (int)i; b = (int)j; break; }
                 }
             }
             if (a < 0) { tick_safe(30); continue; }
-            const tide_entity ea = TIDE_ENTITY_AT(&world, arch5_Zombie, a), eb = TIDE_ENTITY_AT(&world, arch5_Zombie, b);
+            const tide_entity ea = TIDE_ENTITY_AT(&world, arch6_Zombie, a), eb = TIDE_ENTITY_AT(&world, arch6_Zombie, b);
             Zombie za = zombie(ea), zb = zombie(eb);
             za.health = 1;
             zb.health = 100000;
@@ -885,15 +875,15 @@ int main(void)
             float piled = 0;
             static float wasY[8192];
             static int lone[8192];
-            for (uint32_t r = 0; r < world.arch5_Zombie.count && r < 8192; r++) {
-                wasY[r] = TIDE_AT(&world, arch5_Zombie, Zombie, r).at.y;
+            for (uint32_t r = 0; r < world.arch6_Zombie.count && r < 8192; r++) {
+                wasY[r] = TIDE_AT(&world, arch6_Zombie, Zombie, r).at.y;
                 lone[r] = 0;
             }
             for (; t < 60 * 90 && !reached; t++) {
                 tick_safe(1);
                 // None hangs in the air: one up off the ground, not falling, has one of the dead nearly under it
-                for (uint32_t r = 0; r < world.arch5_Zombie.count && r < 8192; r++) {
-                    const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, r);
+                for (uint32_t r = 0; r < world.arch6_Zombie.count && r < 8192; r++) {
+                    const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, r);
                     const bool falling = z.at.y < wasY[r] - 0.01f;
                     wasY[r] = z.at.y;
                     // (one against a cliff's face is clawing at it: the wall holds it)
@@ -908,8 +898,8 @@ int main(void)
                         continue;
                     }
                     bool held = false;
-                    for (uint32_t q = 0; q < world.arch5_Zombie.count && !held; q++) {
-                        const Zombie o = TIDE_AT(&world, arch5_Zombie, Zombie, q);
+                    for (uint32_t q = 0; q < world.arch6_Zombie.count && !held; q++) {
+                        const Zombie o = TIDE_AT(&world, arch6_Zombie, Zombie, q);
                         const float rise = o.at.y - z.at.y;
                         if (q != r && hypotf(o.at.x - z.at.x, o.at.z - z.at.z) < 0.7f && rise < -0.2f && rise > -1.0f) held = true;     // (bodies touching: 0.7 m, a body's breadth)
                     }
@@ -918,8 +908,8 @@ int main(void)
                     if (lone[r] > 10) {
                         fprintf(stderr, "one of the dead hangs in the air at %.2f %.2f %.2f, %.2f m up, state %d climbing %d speed %.2f fall %d\n", z.at.x, z.at.y, z.at.z, z.lift,
                                 (int)z.state, z.climbing, z.speed, z.fall);
-                        for (uint32_t q = 0; q < world.arch5_Zombie.count; q++) {
-                            const Zombie o = TIDE_AT(&world, arch5_Zombie, Zombie, q);
+                        for (uint32_t q = 0; q < world.arch6_Zombie.count; q++) {
+                            const Zombie o = TIDE_AT(&world, arch6_Zombie, Zombie, q);
                             const float d = hypotf(o.at.x - z.at.x, o.at.z - z.at.z);
                             if (q != r && d < 1.5f) fprintf(stderr, "   near: %.2f m off, %.2f up, state %d lift %.2f\n", d, o.at.y - z.at.y, (int)o.state, o.lift);
                         }
@@ -927,8 +917,8 @@ int main(void)
                     CHECK(lone[r] <= 10);
                 }
                 const tide_float3 feet = get(0).feet;
-                for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) {
-                    const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, r);
+                for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) {
+                    const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, r);
                     if (z.state != ZombieState_Hunting) continue;
                     const int cx = (int)floorf(z.at.x + NAV_HALF), cz = (int)floorf(z.at.z + NAV_HALF);
                     const bool cliff = cx >= 0 && cz >= 0 && cx < NAV_SIDE && cz < NAV_SIDE &&
@@ -940,7 +930,7 @@ int main(void)
             }
             if (!reached) fprintf(stderr, "none of the dead reached the survivors at %.2f %.2f %.2f\n", get(0).feet.x, get(0).feet.y, get(0).feet.z);
             CHECK(reached);
-            printf("the dead reached the survivors at %.1f %.1f %.1f in %.1f s, %u up, piled %.1f m up a face\n", get(0).feet.x, get(0).feet.y, get(0).feet.z, t / 60.0, world.arch5_Zombie.count, piled);
+            printf("the dead reached the survivors at %.1f %.1f %.1f in %.1f s, %u up, piled %.1f m up a face\n", get(0).feet.x, get(0).feet.y, get(0).feet.z, t / 60.0, world.arch6_Zombie.count, piled);
             world.Match.rush = 0;
         }
         spawning();
@@ -991,12 +981,13 @@ int main(void)
         few(3);
         tide_entity pressed[3];
         int found = 0;
-        for (uint32_t row = 0; row < world.arch5_Zombie.count && found < 3; row++) {
-            if (TIDE_AT(&world, arch5_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
-            pressed[found] = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+        for (uint32_t row = 0; row < world.arch6_Zombie.count && found < 3; row++) {
+            if (TIDE_AT(&world, arch6_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
+            pressed[found] = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
             Zombie z = zombie(pressed[found]);
             z.health = 100000;
             z.pace = 0;
+            z.kind = ZombieKind_Walker;
             CHECK(tide_set_Zombie(&world, pressed[found], z));
             found++;
         }
@@ -1038,9 +1029,9 @@ int main(void)
         become(0, Role_Gunner, Weapon_Rifle);
         tide_entity dead[3];
         int found = 0;
-        for (uint32_t row = 0; row < world.arch5_Zombie.count && found < 3; row++) {
-            if (TIDE_AT(&world, arch5_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
-            dead[found++] = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+        for (uint32_t row = 0; row < world.arch6_Zombie.count && found < 3; row++) {
+            if (TIDE_AT(&world, arch6_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
+            dead[found++] = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
         }
         CHECK(found == 3);
         for (int k = 0; k < 3; k++) {
@@ -1104,66 +1095,246 @@ int main(void)
         CHECK(zombie(dead[1]).health < 100000 && get(0).health >= whole);
         // Its orb taken, so none's left lying for what comes after
         put(0, (tide_float3){feet.x, feet.y, feet.z - 7}, (tide_float3){feet.x, 1.6f, feet.z - 12});
-        for (int t = 0; t < 180 && world.arch3_Orb.count > 0; t++) tick_safe(1);
-        CHECK(world.arch3_Orb.count == 0);
+        for (int t = 0; t < 180 && world.arch5_Orb.count > 0; t++) tick_safe(1);
+        CHECK(world.arch5_Orb.count == 0);
         spawning();
     }
 
-    // ---- A chest: a few stand about from the start, and another comes, somewhere open and away from the survivors; the
-    // first to hold E by one has its item; a chest left alone shuts again ----
+    // ---- A Spitter: from 9 m off with a clear line, its throat swells and its bile lands on the survivor, hurting them and
+    // slowing them a while. A Warden: a round to its body does a quarter of what it does to one of the walking dead, one
+    // to its head all of it (twice a body's) ----
+    {
+        few(2);
+        become(0, Role_Gunner, Weapon_Rifle);
+        const tide_entity e = sturdy();
+        to_open(e);
+        Zombie z = zombie(e);
+        z.kind = ZombieKind_Spitter;
+        z.spit = 0;
+        CHECK(tide_set_Zombie(&world, e, z));
+        face(0, e, 9);
+        Survivor s = get(0);
+        s.health = 100;
+        s.calm = 0;
+        set(0, s);
+        bool spat = false, slimed = false;
+        float least = 100;
+        for (int t = 0; t < 60 * 6 && !slimed; t++) {
+            if (missiles_of(Shot_Spit) > 0) spat = true;
+            tick(1);        // Not tick_safe: it keeps the survivors whole
+            decline();
+            least = fminf(least, get(0).health);
+            if (get(0).slimed > 0) slimed = true;
+        }
+        printf("a Spitter's bile: spat %d, the survivor slimed %d, down to %.0f health\n", spat, slimed, least);
+        CHECK(spat && slimed && least < 100);
+        heal();
+        // Its body and head as a Warden's, and as one of the walking dead's
+        float hits[3] = {0};
+        const ZombieKind kinds[3] = {ZombieKind_Warden, ZombieKind_Walker, ZombieKind_Warden};
+        for (int k = 0; k < 3; k++) {
+            z = zombie(e);
+            z.kind = kinds[k];
+            z.health = 100000;
+            z.windup = 0;
+            z.spit = 99;
+            z.flinch = 0;
+            CHECK(tide_set_Zombie(&world, e, z));
+            s = get(0);
+            s.shotWait = 0;
+            s.mag = 30;
+            set(0, s);
+            look_at(0, k == 2 ? zombie(e).headAt : zombie(e).chestAt);
+            const float before = zombie(e).health;
+            press(&held[0].attack);
+            tick_safe(2);
+            hits[k] = before - zombie(e).health;
+        }
+        printf("a carbine round: %.1f to a Warden's mail, %.1f to one of the walking dead, %.1f to a Warden's head\n", hits[0], hits[1], hits[2]);
+        CHECK(hits[0] > 0 && hits[0] < hits[1] * 0.3f && hits[2] > hits[1] * 1.9f);
+        z = zombie(e);
+        z.kind = ZombieKind_Walker;
+        CHECK(tide_set_Zombie(&world, e, z));
+    }
+
+    // ---- What the newer items do: AP Rounds through one more (four in a row, the carbine going through three); HE Rounds burst on the first they hit, wounding the one
+    // beside it; Dragon's Breath sets the dead alight; Kerosene sets the ones a dash goes through alight; a Gas Mask keeps
+    // a Bloater's burst off; the Engineer's turret sets off its maker's items (Frostbite, here) ----
+    {
+        few(5);
+        become(0, Role_Gunner, Weapon_Rifle);
+        tide_entity line[4];
+        int found = 0;
+        for (uint32_t row = 0; row < world.arch6_Zombie.count && found < 4; row++) {
+            if (TIDE_AT(&world, arch6_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
+            line[found++] = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
+        }
+        CHECK(found == 4);
+        put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -16});
+        tick_safe(10);
+        const tide_float3 feet = get(0).feet;
+        // Four in a row down the carbine's line: it goes through three, and with an AP Round four
+        for (int ap = 0; ap < 2; ap++) {
+            float before[4];
+            for (int k = 0; k < 4; k++) {
+                Zombie z = zombie(line[k]);
+                z.at = (tide_float3){feet.x, feet.y, feet.z - 5.0f - 1.2f * (float)k};
+                z.yaw = 0;
+                z.pace = 0;
+                z.health = 100000;
+                z.kind = ZombieKind_Walker;
+                z.state = ZombieState_Hunting;
+                CHECK(tide_set_Zombie(&world, line[k], z));
+            }
+            tick_safe(2);
+            for (int k = 0; k < 4; k++) before[k] = zombie(line[k]).health;
+            Survivor s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.items.at[Item_ApRounds] = ap;
+            s.shotWait = 0;
+            s.mag = 30;
+            set(0, s);
+            look_at(0, zombie(line[0]).chestAt);
+            press(&held[0].attack);
+            tick_safe(2);
+            int struck = 0;
+            for (int k = 0; k < 4; k++) struck += zombie(line[k]).health < before[k];
+            CHECK(struck == 3 + ap);
+        }
+        // HE Rounds and Dragon's Breath: one shot at the first, the one beside it wounded, the first burning
+        {
+            Zombie side = zombie(line[1]);
+            side.at = (tide_float3){feet.x + 1.0f, feet.y, feet.z - 5.0f};
+            CHECK(tide_set_Zombie(&world, line[1], side));
+            for (int k = 2; k < 4; k++) {
+                Zombie back = zombie(line[k]);
+                back.at.x += 20 + 3 * k;
+                CHECK(tide_set_Zombie(&world, line[k], back));
+            }
+            tick_safe(2);
+            const float besides = zombie(line[1]).health;
+            Survivor s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.items.at[Item_HeRounds] = 1;
+            s.items.at[Item_DragonsBreath] = 4;          // Always
+            s.shotWait = 0;
+            s.mag = 30;
+            set(0, s);
+            look_at(0, zombie(line[0]).chestAt);
+            press(&held[0].attack);
+            tick_safe(2);
+            CHECK(zombie(line[1]).health < besides);
+            CHECK(zombie(line[0]).burn > 0);
+        }
+        // Kerosene: the dash through one of the dead sets it alight
+        {
+            Survivor s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.items.at[Item_Kerosene] = 1;
+            set(0, s);
+            become(0, Role_Gunner, Weapon_Rifle);
+            const tide_entity e = sturdy();
+            to_open(e);
+            face(0, e, 3.5f);
+            held[0].move = (tide_float2){0, 1};
+            press(&held[0].utility);
+            bool lit = false;
+            for (int t = 0; t < 30 && !lit; t++) {
+                tick_safe(1);
+                lit = zombie(e).burn > 0;
+            }
+            held[0].move = (tide_float2){0, 0};
+            CHECK(lit);
+        }
+        // A Gas Mask: a Bloater bursting beside its wearer doesn't hurt them
+        {
+            Survivor s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.items.at[Item_GasMask] = 1;
+            s.health = 100;
+            set(0, s);
+            put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -12});
+            tick_safe(10);
+            const tide_entity e = sturdy();
+            Zombie z = zombie(e);
+            z.kind = ZombieKind_Bloater;
+            z.pace = 0;
+            z.at = (tide_float3){get(0).feet.x, get(0).feet.y, get(0).feet.z - 1.8f};
+            CHECK(tide_set_Zombie(&world, e, z));
+            s = get(0);
+            s.health = 100;
+            set(0, s);
+            bool burst = false;
+            float least = 100;
+            for (int t = 0; t < 120 && !burst; t++) {
+                tick(1);
+                decline();
+                least = fminf(least, get(0).health);
+                burst = !tide_entity_alive(&world.entities, e);
+            }
+            tick(3);
+            least = fminf(least, get(0).health);
+            CHECK(burst && least >= 100);
+        }
+        // The turret, with its maker's Frostbite: what it shoots freezes
+        {
+            become(0, Role_Engineer, Weapon_Smg);
+            Survivor s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.items.at[Item_Frostbite] = 14;              // Always, even at the turret's lesser chance
+            set(0, s);
+            few(2);
+            const tide_entity e = sturdy();
+            to_open(e);
+            face(0, e, 4);
+            press(&held[0].special);
+            bool froze = false;
+            for (int t = 0; t < 60 * 5 && !froze; t++) {
+                tick_safe(1);
+                froze = zombie(e).frozen > 0;
+            }
+            CHECK(froze);
+            s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            set(0, s);
+            tick_safe(60 * 16);         // The turret's time up
+        }
+        spawning();
+    }
+
+    // ---- The night's chests: seven for two (five, and two for the second), on open ground, apart; the first to hold E by
+    // one has its item; a chest left alone shuts again ----
     {
         heal();
-        CHECK(world.arch6_Chest.count >= 4);
-        // Room for another: one opened if they're all standing
-        while (world.arch6_Chest.count >= 7) {
-            const uint32_t was = world.arch6_Chest.count;
-            const Chest first = TIDE_AT(&world, arch6_Chest, Chest, 0);
-            put(0, (tide_float3){first.at.x + 1.0f, first.at.y, first.at.z}, first.at);
-            held[0].use = true;
-            for (int t = 0; t < 120 && world.arch6_Chest.count == was; t++) tick_safe(1);
-            held[0].use = false;
-            CHECK(world.arch6_Chest.count < was);
+        CHECK(world.Match.chestsPlaced == 7 && world.arch7_Chest.count <= 7 && world.arch7_Chest.count >= 1);
+        for (uint32_t r = 0; r < world.arch7_Chest.count; r++) {
+            const Chest a = TIDE_AT(&world, arch7_Chest, Chest, r);
+            CHECK(a.night == world.Match.night && walkable(a.at));
+            CHECK(hypotf(a.at.x - world.Match.beaconAt.x, a.at.z - world.Match.beaconAt.z) >= 10.0f);
+            for (uint32_t q = r + 1; q < world.arch7_Chest.count; q++) {
+                const Chest b = TIDE_AT(&world, arch7_Chest, Chest, q);
+                CHECK(hypotf(a.at.x - b.at.x, a.at.z - b.at.z) >= 16.0f);
+            }
         }
-        world.Match.chestWait = 1e9f;
-        tick_safe(2);
-        tide_float3 standing[16];
-        const uint32_t before = world.arch6_Chest.count;
-        CHECK(before < 7 && before <= 16);
-        for (uint32_t r = 0; r < before; r++) standing[r] = TIDE_AT(&world, arch6_Chest, Chest, r).at;
-        world.Match.chestWait = 0;
-        tick_safe(2);
-        CHECK(world.arch6_Chest.count == before + 1);
-        int fresh = -1;
-        for (uint32_t r = 0; r < world.arch6_Chest.count; r++) {
-            const tide_float3 at = TIDE_AT(&world, arch6_Chest, Chest, r).at;
-            bool old = false;
-            for (uint32_t k = 0; k < before; k++)
-                if (at.x == standing[k].x && at.z == standing[k].z) old = true;
-            if (!old) fresh = (int)r;
-        }
-        CHECK(fresh >= 0);
-        const Chest chest = TIDE_AT(&world, arch6_Chest, Chest, (uint32_t)fresh);
-        const tide_float3 feet = get(0).feet;
-        CHECK(hypotf(chest.at.x - feet.x, chest.at.z - feet.z) >= 14.0f && walkable(chest.at));
+        const Chest chest = TIDE_AT(&world, arch7_Chest, Chest, 0);
         int had = 0;
-        for (int i = 0; i < 16; i++) had += get(0).items.at[i];
-        const uint32_t chests = world.arch6_Chest.count;
+        for (int i = 0; i < 24; i++) had += get(0).items.at[i];
+        const uint32_t chests = world.arch7_Chest.count;
         put(0, (tide_float3){chest.at.x + 1.0f, chest.at.y, chest.at.z}, chest.at);
         held[0].use = true;
         tick_safe(20);
         held[0].use = false;
         tick_safe(40);
-        CHECK(world.arch6_Chest.count == chests && TIDE_AT(&world, arch6_Chest, Chest, (uint32_t)fresh).pried == 0);
+        CHECK(world.arch7_Chest.count == chests && TIDE_AT(&world, arch7_Chest, Chest, 0).pried == 0);
         held[0].use = true;
         int t = 0;
-        for (; t < 120 && world.arch6_Chest.count == chests; t++) tick_safe(1);
+        for (; t < 120 && world.arch7_Chest.count == chests; t++) tick_safe(1);
         held[0].use = false;
         tick_safe(2);
         int has = 0;
-        for (int i = 0; i < 16; i++) has += get(0).items.at[i];
-        CHECK(world.arch6_Chest.count == chests - 1 && has == had + 1);
+        for (int i = 0; i < 24; i++) has += get(0).items.at[i];
+        CHECK(world.arch7_Chest.count == chests - 1 && has == had + 1);
         printf("a chest opened in %.2f s\n", t / 60.0);
-        world.Match.chestWait = 1e9f;
         Survivor s = get(0);
         memset(&s.items, 0, sizeof s.items);
         set(0, s);
@@ -1174,7 +1345,17 @@ int main(void)
     {
         few(2);
         become(0, Role_Gunner, Weapon_Rifle);
-        const uint32_t orbs = world.arch3_Orb.count;
+        // Orbs left lying from before gone, so the one this makes is the only one
+        for (uint32_t r = 0; r < world.arch5_Orb.count; r++) {
+            const tide_entity eo = TIDE_ENTITY_AT(&world, arch5_Orb, r);
+            Orb o = tide_get_Orb(&world, eo);
+            o.age = 1000;
+            o.seat = -1;
+            CHECK(tide_set_Orb(&world, eo, o));
+        }
+        tick_safe(2);
+        CHECK(world.arch5_Orb.count == 0);
+        const uint32_t orbs = world.arch5_Orb.count;
         for (int k = 0; k < 2; k++) {
             const tide_entity e = sturdy();
             to_open(e);
@@ -1187,25 +1368,25 @@ int main(void)
             press(&held[0].attack);
             tick_safe(4);
             CHECK(zombie(e).state == ZombieState_Dying);
-            CHECK(world.arch3_Orb.count == orbs + 1);
+            CHECK(world.arch5_Orb.count == orbs + 1);
             const float xp = world.Match.xp;
             const int level = world.Match.level;
             if (k == 0) {
                 // Lying while nobody's near; taken from 4 m
                 tick_safe(60);
-                CHECK(world.arch3_Orb.count == orbs + 1 && world.Match.xp == xp);
+                CHECK(world.arch5_Orb.count == orbs + 1 && world.Match.xp == xp);
                 const tide_float3 fell = zombie(e).at;
                 put(0, (tide_float3){fell.x + (shooter.feet.x - fell.x) * 0.5f, shooter.feet.y, fell.z + (shooter.feet.z - fell.z) * 0.5f}, fell);
                 int t = 0;
-                for (; t < 120 && world.arch3_Orb.count > orbs; t++) tick_safe(1);
-                CHECK(world.arch3_Orb.count == orbs && (world.Match.xp > xp || world.Match.level > level));
+                for (; t < 120 && world.arch5_Orb.count > orbs; t++) tick_safe(1);
+                CHECK(world.arch5_Orb.count == orbs && (world.Match.xp > xp || world.Match.level > level));
                 printf("an orb taken from 4 m in %.2f s\n", t / 60.0);
             } else {
                 // Left alone, gone
                 tick_safe(60 * 41);
-                if (world.arch3_Orb.count != orbs || world.Match.xp != xp)
-                    fprintf(stderr, "a lone orb: %u orbs (were %u), experience %.2f (was %.2f), %u of the dead\n", world.arch3_Orb.count, orbs, world.Match.xp, xp, world.arch5_Zombie.count);
-                CHECK(world.arch3_Orb.count == orbs && world.Match.xp == xp);
+                if (world.arch5_Orb.count != orbs || world.Match.xp != xp)
+                    fprintf(stderr, "a lone orb: %u orbs (were %u), experience %.2f (was %.2f), %u of the dead\n", world.arch5_Orb.count, orbs, world.Match.xp, xp, world.arch6_Zombie.count);
+                CHECK(world.arch5_Orb.count == orbs && world.Match.xp == xp);
             }
         }
         spawning();
@@ -1216,16 +1397,17 @@ int main(void)
     {
         cull();
         spawning();
-        world.Match.bossNext = world.Match.clock;
-        for (int t = 0; t < 60 * 2 && world.arch4_Boss.count == 0; t++) tick_safe(1);
-        CHECK(world.arch4_Boss.count == 1);
-        const tide_entity e = TIDE_ENTITY_AT(&world, arch4_Boss, 0);
+        world.Match.bossNext = world.Match.nightClock;
+        for (int t = 0; t < 60 * 2 && world.arch1_Boss.count == 0; t++) tick_safe(1);
+        CHECK(world.arch1_Boss.count == 1);
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch1_Boss, 0);
+        CHECK(!tide_get_Boss(&world, e).vigil);       // An impatient one: the night's not lit
         CHECK(tide_get_Boss(&world, e).health > 1000);
         tick_safe(60 * 3);     // Up out of the ground
         CHECK(tide_get_Boss(&world, e).move != BossMove_Coming && tide_get_Boss(&world, e).move != BossMove_Dying);
         bool slammed = false, charged = false, roared = false;
         for (int t = 0; t < 60 * 40 && !(slammed && charged && roared); t++) {
-            const uint32_t before = world.arch5_Zombie.count;
+            const uint32_t before = world.arch6_Zombie.count;
             const Boss b = tide_get_Boss(&world, e);
             // One survivor close, the other further off, both kept whole and on their feet
             for (int seat = 0; seat < 2; seat++) {
@@ -1245,15 +1427,16 @@ int main(void)
             tick(1);
             if (b.move == BossMove_SlamWindup && get(0).health < was0) slammed = true;
             if (b.move == BossMove_Charge && (get(0).health < was0 || get(1).health < was1)) charged = true;
-            if (b.move == BossMove_Roar && world.arch5_Zombie.count > before + 10) roared = true;
+            if (b.move == BossMove_Roar && world.arch6_Zombie.count > before + 10) roared = true;
         }
         printf("the Brute: slammed %d, charged %d, roared %d\n", slammed, charged, roared);
         CHECK(slammed && charged && roared);
-        // Felled
+        // Felled: one of the night's own (as if it had risen at the beacon) owes each a pick
         decline();
         const int picks0 = 0, picks1 = 0;
         Boss b = tide_get_Boss(&world, e);
         b.health = 1;
+        b.vigil = true;
         b.at = (tide_float3){0, 0, -14};      // On open ground south of the fire, nothing between it and the gun
         CHECK(tide_set_Boss(&world, e, b));
         become(0, Role_Gunner, Weapon_Rifle);
@@ -1274,14 +1457,14 @@ int main(void)
         if (!felled) {
             b = tide_get_Boss(&world, e);
             fprintf(stderr, "the Brute wasn't felled: health %.1f, move %d, at %.2f %.2f %.2f; survivor at %.2f %.2f %.2f, life %d, act %d, %u of the dead\n", b.health, (int)b.move,
-                    b.at.x, b.at.y, b.at.z, get(0).feet.x, get(0).feet.y, get(0).feet.z, (int)get(0).life, (int)get(0).act, world.arch5_Zombie.count);
+                    b.at.x, b.at.y, b.at.z, get(0).feet.x, get(0).feet.y, get(0).feet.z, (int)get(0).life, (int)get(0).act, world.arch6_Zombie.count);
         }
         CHECK(felled);
         tick_whole(2);
         CHECK(get(0).pending + (get(0).choosing ? 1 : 0) >= picks0 + 1);
         CHECK(get(1).pending + (get(1).choosing ? 1 : 0) >= picks1 + 1);
         tick_safe(60 * 6);
-        CHECK(world.arch4_Boss.count == 0);
+        CHECK(world.arch1_Boss.count == 0);
     }
 
     // ---- Holding the fire: the dead come from every side, and every one of them has to find its way to the survivors.
@@ -1310,8 +1493,8 @@ int main(void)
                 // Each faces the nearest of the dead and shoots when one is near
                 float nearest = 1e9f;
                 tide_float3 at = {0};
-                for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
-                    const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, row);
+                for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+                    const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, row);
                     if (z.state != ZombieState_Hunting) continue;
                     const float dx = z.at.x - s.feet.x, dz = z.at.z - s.feet.z;
                     const float d = sqrtf(dx * dx + dz * dz);
@@ -1320,10 +1503,10 @@ int main(void)
                 if (nearest < 20.0f) look_at(seat, at);
                 held[seat].attack = nearest < 20.0f;
             }
-            // How long the oldest of the dead has been about
-            for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
-                const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, row);
-                if (z.state == ZombieState_Hunting && (int)z.timer > oldest) oldest = (int)z.timer;
+            // How long the oldest of the dead has been about (not a Spitter, which hangs back on purpose)
+            for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+                const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, row);
+                if (z.state == ZombieState_Hunting && z.kind != ZombieKind_Spitter && (int)z.timer > oldest) oldest = (int)z.timer;
             }
             // A crowd's claws can land together for more than anyone's health: kept whole, as this is about the dead
             for (int seat = 0; seat < 2; seat++) {
@@ -1335,12 +1518,13 @@ int main(void)
             held[0].pick3 = held[1].pick3 = false;
         }
         held[0].attack = held[1].attack = false;
-        for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
-            const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, row);
-            if (z.state != ZombieState_Hunting || z.timer < 120) continue;
+        for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+            const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, row);
+            if (z.state != ZombieState_Hunting || z.timer < 120 || z.kind == ZombieKind_Spitter) continue;
             const int cx = (int)floorf(z.at.x + NAV_HALF), cz = (int)floorf(z.at.z + NAV_HALF);
             const int field = *(const uint8_t *)tide_list_read(&world.heap, world.Ashwick.field, cz * NAV_SIDE + cx, 1);
-            fprintf(stderr, "stuck for %.0f s at %.2f %.2f %.2f, walkable %d, field %d\n", z.timer, z.at.x, z.at.y, z.at.z, walkable(z.at), field);
+            fprintf(stderr, "stuck for %.0f s at %.2f %.2f %.2f, walkable %d, field %d, kind %d lift %.2f climbing %d speed %.2f yaw %.2f\n", z.timer, z.at.x, z.at.y, z.at.z, walkable(z.at), field,
+                    (int)z.kind, z.lift, z.climbing, z.speed, z.yaw);
         }
         const int taken = get(0).picks + get(1).picks - picked;
         printf("held the fire to %.0f s, %d items taken, level %d, %d of the dead up; the longest any hunted: %d s\n", world.Match.clock, taken, world.Match.level,
@@ -1348,6 +1532,117 @@ int main(void)
         CHECK(world.Match.clock >= last && world.Match.phase == Phase_Fighting);
         CHECK(taken >= 4);
         CHECK(oldest < 180);
+    }
+
+    // ---- A night kept: one bleeds out and stays gone; the beacon's lit (E held by it), which calls them back beside it, and
+    // its Brute claws up near it; it's kept only while the survivors are near it, faster the more of them; with it full
+    // and its Brute down, dawn: the dead burn away and none rise, the orbs fly in, everyone's up and whole; then the next
+    // night falls at another beacon, with new chests, a step more dangerous ----
+    {
+        decline();
+        become(0, Role_Gunner, Weapon_Rifle);
+        become(1, Role_Breacher, Weapon_Shotgun);
+        // Bled out: still gone forty seconds on
+        Survivor friend = get(1);
+        friend.life = Life_Downed;
+        friend.bleed = 0.05f;
+        friend.health = 0;
+        friend.stowed = friend.mag;
+        friend.gun = Weapon_Pistol;
+        set(1, friend);
+        tick(10);
+        CHECK(get(1).life == Life_Gone);
+        tick_safe(60 * 40);
+        CHECK(get(1).life == Life_Gone);
+        // Lit
+        CHECK(world.arch4_Beacon.count == 1);
+        const tide_entity be = TIDE_ENTITY_AT(&world, arch4_Beacon, 0);
+        const Beacon cold = tide_get_Beacon(&world, be);
+        const int night = world.Match.night, place = world.Match.place;
+        CHECK(cold.night == night && !cold.lit);
+        put(0, (tide_float3){cold.at.x + 1.6f, cold.at.y, cold.at.z}, (tide_float3){cold.at.x, cold.at.y + 1.6f, cold.at.z});
+        tick_safe(10);
+        held[0].use = true;
+        int t = 0;
+        for (; t < 60 * 3 && !tide_get_Beacon(&world, be).lit; t++) tick_safe(1);
+        held[0].use = false;
+        if (!tide_get_Beacon(&world, be).lit)
+            fprintf(stderr, "the beacon at %.1f %.1f %.1f wasn't lit: the survivor at %.1f %.1f %.1f, kindled %.2f\n", cold.at.x, cold.at.y, cold.at.z, get(0).feet.x, get(0).feet.y,
+                    get(0).feet.z, tide_get_Beacon(&world, be).kindled);
+        CHECK(tide_get_Beacon(&world, be).lit);
+        printf("the beacon %s lit in %.2f s\n", place == 0 ? "on the spire" : place == 1 ? "in the ruin" : place == 2 ? "by the graveyard" : place == 3 ? "among the stones" : "in the ravine",
+               t / 60.0);
+        tick_safe(2);
+        // Called back, beside it, with the shotgun in hand
+        friend = get(1);
+        CHECK(friend.life == Life_Standing && hypotf(friend.feet.x - cold.at.x, friend.feet.z - cold.at.z) < 4 && friend.gun == Weapon_Shotgun);
+        // Its Brute, held off where it rose (this is about the beacon)
+        CHECK(world.Match.vigil);
+        tide_float3 rose[4];
+        int brutes = 0;
+        for (uint32_t r = 0; r < world.arch1_Boss.count && brutes < 4; r++)
+            if (TIDE_AT(&world, arch1_Boss, Boss, r).vigil) rose[brutes++] = TIDE_AT(&world, arch1_Boss, Boss, r).at;
+        CHECK(brutes == 1);
+        // Kept: near it, how fast (both away, then one, then both)
+        const tide_float3 near[2] = {{cold.at.x + 2.0f, cold.at.y, cold.at.z + 1.0f}, {cold.at.x - 2.0f, cold.at.y, cold.at.z - 1.0f}};
+        float charged[3];
+        for (int k = 0; k < 3; k++) {
+            for (int seat = 0; seat < 2; seat++) {
+                const bool by = k == 2 || (k == 1 && seat == 0);
+                put(seat, by ? near[seat] : (tide_float3){cold.at.x + (seat ? -24.0f : 24.0f), cold.at.y, cold.at.z}, cold.at);
+            }
+            const float was = tide_get_Beacon(&world, be).charge;
+            for (int i = 0; i < 60 * 6; i++) {
+                for (uint32_t r = 0, n = 0; r < world.arch1_Boss.count; r++) {
+                    const tide_entity eb = TIDE_ENTITY_AT(&world, arch1_Boss, r);
+                    Boss b = tide_get_Boss(&world, eb);
+                    if (!b.vigil || n >= 4) continue;
+                    b.at = rose[n++];
+                    b.cooldown = 9;
+                    CHECK(tide_set_Boss(&world, eb, b));
+                }
+                tick_safe(1);
+            }
+            charged[k] = tide_get_Beacon(&world, be).charge - was;
+        }
+        printf("six seconds of the vigil: %.3f with nobody near it, %.3f with one of two, %.3f with both\n", charged[0], charged[1], charged[2]);
+        CHECK(charged[0] < 0.001f && charged[1] > 0.02f && charged[2] > charged[1] * 1.8f);
+        // Full: not dawn while its Brute stands
+        Beacon full = tide_get_Beacon(&world, be);
+        full.charge = 1;
+        CHECK(tide_set_Beacon(&world, be, full));
+        tick_safe(30);
+        CHECK(world.Match.phase == Phase_Fighting);
+        // Its Brute down: dawn
+        const float before = world.Match.danger;
+        for (uint32_t r = 0; r < world.arch1_Boss.count; r++) {
+            const tide_entity eb = TIDE_ENTITY_AT(&world, arch1_Boss, r);
+            Boss b = tide_get_Boss(&world, eb);
+            b.move = BossMove_Dying;
+            b.timer = 0;
+            CHECK(tide_set_Boss(&world, eb, b));
+        }
+        tick_safe(2);
+        CHECK(world.Match.phase == Phase_Dawn && world.Match.kept == night);
+        tick_safe(60 * 3);
+        int up = 0;
+        for (uint32_t r = 0; r < world.arch6_Zombie.count; r++)
+            if (TIDE_AT(&world, arch6_Zombie, Zombie, r).state != ZombieState_Dying) up++;
+        CHECK(up == 0 && world.Match.alive == 0);
+        tick_safe(60 * 3);
+        CHECK(world.arch5_Orb.count == 0);
+        CHECK(get(0).life == Life_Standing && get(1).life == Life_Standing);
+        // The next night
+        for (int i = 0; i < 60 * 8 && world.Match.phase == Phase_Dawn; i++) tick_safe(1);
+        tick_safe(30);
+        CHECK(world.Match.phase == Phase_Fighting && world.Match.night == night + 1 && world.Match.place != place);
+        CHECK(world.arch4_Beacon.count == 1 && TIDE_AT(&world, arch4_Beacon, Beacon, 0).night == night + 1 && !TIDE_AT(&world, arch4_Beacon, Beacon, 0).lit);
+        CHECK(world.Match.chestsPlaced == 7 && world.arch7_Chest.count == 7);
+        for (uint32_t r = 0; r < world.arch7_Chest.count; r++) CHECK(TIDE_AT(&world, arch7_Chest, Chest, r).night == night + 1);
+        printf("night %d kept; night %d falls %s, danger %.2f to %.2f\n", night, world.Match.night,
+               world.Match.place == 0 ? "on the spire" : world.Match.place == 1 ? "in the ruin" : world.Match.place == 2 ? "by the graveyard" : world.Match.place == 3 ? "among the stones" : "in the ravine",
+               before, world.Match.danger);
+        CHECK(world.Match.danger > before * 1.15f);
     }
 
     // ---- The match is the same from a snapshot, and through its packed bytes ----

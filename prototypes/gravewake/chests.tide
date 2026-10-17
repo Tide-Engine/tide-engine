@@ -1,26 +1,27 @@
 using Rooms;
 
-// Chests: CHESTS_START stand about the clearing when the run starts, each
-// somewhere random and open, and another every CHEST_EVERY seconds, as many as
-// CHESTS_MOST at once. The first to hold E by one for CHEST_SECONDS has what's
-// in it: an item, rolled as a level's offer is (rarer ones as the run goes
-// on), no choosing. Nothing points to them: they're found by going about the
-// clearing, a warm glint and the light on the ground round them in the dark.
-// (The owner: "could be fun adding chests around the map with upgrades"; free,
-// on a timer; then "lets make the chests be random, but not be pinged; players
-// should discover them by roaming around".)
+// Chests: each night hides ChestsTonight of them about the clearing as it
+// falls (nights.tide), each somewhere random and open; they're there till the
+// next night falls, and the ones not opened by then are gone with it. The
+// first to hold E by one for CHEST_SECONDS has what's in it: an item, rolled
+// as a level's offer is (rarer ones as the run goes on), no choosing. Nothing
+// points to them: they're found by going about the clearing, a warm glint and
+// the light on the ground round them in the dark. (The owner: "could be fun
+// adding chests around the map with upgrades"; then "lets make the chests be
+// random, but not be pinged; players should discover them by roaming
+// around". A night's set in place of one on a timer is mine, Provisional: so
+// looking for them is weighed against lighting the beacon.)
 
-const int CHESTS_START = 4;          // Standing about the clearing as the run starts
-const float CHEST_FIRST = 0;         // Seconds into the run the first come
-const float CHEST_EVERY = 35;        // ...and between them after
-const int CHESTS_MOST = 7;
 const float CHEST_SECONDS = 1.2;     // Held E to open one
 const float CHEST_REACH = 2.5;
 const float CHEST_FROM = 14;         // At least this far from every survivor when it comes
+const float CHEST_APART = 16;        // ...and from the other chests
+const float CHEST_BEACON = 10;       // ...and from the night's beacon
 
 component Chest
 {
     float3 at;
+    int night;                       // The night it's hidden for
     float yaw;
     float pried;                     // 0 to 1: how far it's been opened; it shuts again when nobody holds E by it
 }
@@ -44,35 +45,33 @@ event ChestOpened
     Item item;
 }
 
-// A chest, now and then, somewhere open in the clearing: flat ground (not a cliff, a wall or a box) with open ground
-// round it, away from the survivors and the other chests.
+// The night's chests, one a tick as it falls, each somewhere open in the clearing: flat ground (not a cliff, a wall or
+// a box) with open ground round it, away from the survivors, the other chests and the beacon. (A tick with no room
+// found tries again the next.)
 [Stage(Tick.Rounds, 2)]
-system ChestComing(mut Match match, Ashwick ashwick, Time time, query (Survivor survivor) survivors, query (Chest chest) chests)
+system ChestComing(mut Match match, Ashwick ashwick, query (Survivor survivor) survivors, query (Chest chest) chests)
 {
-    if (match.paused || match.phase != Phase.Fighting) return;
-    match.chestWait -= time.dt;
-    if (match.chestWait > 0) return;
-    // The first chests at once, one a tick; then one every CHEST_EVERY
-    match.chestsCome += 1;
-    match.chestWait = match.chestsCome < CHESTS_START ? 0 : CHEST_EVERY;
-    mut var standing = 0;
-    foreach (var row in chests) standing += 1;
-    if (standing >= CHESTS_MOST) return;
+    if (match.paused || match.phase != Phase.Fighting || match.chestsDue <= 0) return;
     for (var tries = 0; tries < 40; tries++)
     {
-        var there = On(Random.NextFloat(-40, 40), Random.NextFloat(-40, 40));
+        var x = Random.NextFloat(-52, 52);
+        var z = Random.NextFloat(-52, 52);
+        var there = On(x, z);
         var cell = CellOf(there);
         if (cell < 0 || !InClearing(there) || !Open(ashwick, cell)) continue;
-        mut var room = true;
+        mut var room = Math.Length((match.beaconAt - there).xz) >= CHEST_BEACON;
         for (var dz = -1; dz <= 1; dz++)
             for (var dx = -1; dx <= 1; dx++)
                 if (!Open(ashwick, cell + dz * NAV_W + dx)) room = false;
         foreach (var row in survivors)
             if (row.survivor.ready && Math.Length((row.survivor.feet - there).xz) < CHEST_FROM) room = false;
         foreach (var row in chests)
-            if (Math.Length((row.chest.at - there).xz) < 16) room = false;
+            if (row.chest.night == match.night && Math.Length((row.chest.at - there).xz) < CHEST_APART) room = false;
         if (!room) continue;
-        Spawn(Chest { at = there, yaw = Random.NextFloat(Math.TAU) });
+        var yaw = Random.NextFloat(Math.TAU);
+        Spawn(Chest { at = there, yaw = yaw, night = match.night });
+        match.chestsDue -= 1;
+        match.chestsPlaced += 1;
         Send(ChestCame { at = there });
         return;
     }
@@ -82,7 +81,7 @@ system ChestComing(mut Match match, Ashwick ashwick, Time time, query (Survivor 
 [Stage(Tick.Hands, 1)]
 system PryChest(Hands hands, Survivor survivor, Match match, Time time, query (Chest chest) chests)
 {
-    if (match.paused || !survivor.ready || survivor.life != Life.Standing || survivor.role == Role.None || !hands.use || survivor.aimed >= 0) return;
+    if (match.paused || match.phase == Phase.Over || !survivor.ready || survivor.life != Life.Standing || survivor.role == Role.None || !hands.use || survivor.aimed >= 0) return;
     mut Entity best = default;
     mut var nearest = CHEST_REACH;
     foreach (var row in chests)
@@ -96,9 +95,15 @@ system PryChest(Hands hands, Survivor survivor, Match match, Time time, query (C
     if (best != default) best.Send(Prying { amount = time.dt / CHEST_SECONDS * 2, by = survivor.seat });
 }
 
+// Shutting again while nobody pries it; gone when its night is (the next has fallen).
 [Stage(Tick.Late)]
 system ChestShut(mut Chest chest, Match match, Time time)
 {
+    if (chest.night != match.night && match.phase != Phase.Over)
+    {
+        this.Destroy();
+        return;
+    }
     if (match.paused) return;
     chest.pried = Math.Max(0, chest.pried - time.dt / CHEST_SECONDS);
 }
@@ -109,7 +114,7 @@ event(Prying prying) Pry(mut Chest chest, Party party, Match match)
     if (chest.pried >= 1) return;
     chest.pried += prying.amount;
     if (chest.pried < 1) return;
-    var item = RollItem(1 + int(match.clock / 60));
+    var item = RollItem(1 + int(match.clock / 60), match.players);
     if (prying.by >= 0 && prying.by < 4 && party.taken[prying.by]) party.survivors[prying.by].Send(Given { item = item });
     Send(ChestOpened { at = chest.at, seat = prying.by, item = item });
     this.Destroy();

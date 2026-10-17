@@ -65,6 +65,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     me.clock += me.dt;
     if (me.clock > 3600) me.clock -= 3600;
     Focus(lens, look);
+    NightLook(look, match, me.dt);
 
     // Whose eyes
     var seat = me.seat;
@@ -77,6 +78,17 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         found = true;
     }
     var playing = lobby.playing && found && mine.ready;
+    // Bled out: watching a friend still standing, over their shoulder, till the beacon calls them back
+    mut var watching = false;
+    if (playing && mine.life == Life.Gone)
+    {
+        foreach (var row in survivors)
+        {
+            if (watching || !row.survivor.ready || row.survivor.life != Life.Standing) continue;
+            mine = row.survivor;
+            watching = true;
+        }
+    }
     me.kick = Math.Max(0, me.kick - me.dt * 4);
     me.shake = Math.Max(0, me.shake - me.dt * 2.5);
     me.hurt = Math.Max(0, me.hurt - me.dt * 0.9);
@@ -101,7 +113,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         var roll = mine.life == Life.Downed ? 0.25 : Math.Sin(me.bob * 0.5) * 0.004 * Math.Saturate(moving / 4);
         me.turn = Math.Mul(quaternion.Euler(-me.pitch, me.yaw, 0), quaternion.AxisAngle(float3(0, 0, 1), roll));
         // From over the shoulder: behind the head, up a little, out to the right, pulled in where the ground's in the way
-        if (feel.third) eye = ShoulderFrom(eye, me.yaw, me.pitch);
+        if (feel.third || watching) eye = ShoulderFrom(eye, me.yaw, me.pitch);
         look.downed = mine.life == Life.Downed ? 1.0 : 0.0;
         var low = 1 - Math.Saturate(mine.health / MaxHealth(mine));
         look.hurt = Math.Max(me.hurt, mine.life == Life.Standing ? low * low * 0.9 : 0.6);
@@ -138,7 +150,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         look.fov = 62;
     }
     me.eye = eye;
-    me.third = playing && feel.third && me.overhead == 0;
+    me.third = playing && (feel.third || watching) && me.overhead == 0;
     look.eye = eye;
     look.time = me.clock;
     look.fade = match.phase == Phase.Over ? Math.Saturate(match.timer * 0.25) * 0.55 : 0.0;
@@ -212,6 +224,7 @@ local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
 
 local event(Blast blast) FeelBlast(mut Me me)
 {
+    if (blast.kind == Shot.Pop || blast.kind == Shot.Spit) return;
     var far = Math.Distance(blast.at, me.eye);
     me.shake = Math.Max(me.shake, Math.Saturate(1.2 - far / 14));
 }
