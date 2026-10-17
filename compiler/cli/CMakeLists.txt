@@ -1,6 +1,6 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang (see AGENTS.md, Packaging and releases).
-add_executable(tide_cli main.c android.c build.c deploy.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
+add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
     serve.c sys.c toolchain.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
@@ -36,7 +36,7 @@ add_test(NAME tide_cli_tests COMMAND tide_cli_tests)
 # The command must finish when its game does, with the game's exit code.
 # Exercise main's real dispatch with runs and update checks supplied by a
 # fixture, so shutdown order is checked without a game window or network.
-add_executable(tide_cli_run_exit_tests tests/run_exit_test.c sys.c)
+add_executable(tide_cli_run_exit_tests tests/run_exit_test.c help.c sys.c)
 target_include_directories(tide_cli_run_exit_tests PRIVATE . ../lsp)
 target_link_libraries(tide_cli_run_exit_tests PRIVATE tidec_core)
 if(NOT WIN32)
@@ -63,6 +63,11 @@ if(NOT WIN32)
     target_link_libraries(tide_cli_fetch_tests PRIVATE Threads::Threads)
 endif()
 add_test(NAME tide_cli_fetch COMMAND tide_cli_fetch_tests)
+
+# Help must be available without a project, installation or side effects.
+add_test(NAME tide_cli_help
+    COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/help_test.cmake")
 
 # Games with packages: in folders, and from git through a folder that stands
 # in for git hosts.

@@ -24,13 +24,34 @@ tide <command> [folder] [options]
 | `tide open <file.tprefab>` | Opens the native [scene editor](editors.md#native-scene-editor) |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
-| `tide help` | Lists every option |
+| `tide help [command \| argument]` | Lists commands, or shows details for one command or argument |
 | `tide login` / `tide logout` | Authorizes or revokes this CLI's hosting access through the browser |
 | `tide deploy [folder]` | Creates or reuses a project and saves its link in `tide.deploy.json`; builds and uploads locally. `--server-only` omits the client, `--bundle-only` only builds |
 | `tide cc <options>` | clang, built into tide, for C you build yourself (see [Calling C](../c/functions.md#where-the-c-goes)) |
 
 Managed deployment, project selection, prepaid credit and current availability
 are described in [Managed hosting](../multiplayer/hosting.md).
+
+`tide` and `tide help` show a short command list. Ask for a topic to see its
+usage, options, defaults and limits:
+
+```sh
+tide help run
+tide help --frames
+tide help deploy --project
+tide run --help
+```
+
+For commands such as `run` and `build`, `tide <command> --help` (or `-h`)
+shows the same help as `tide help <command>`. `tide cc --help` shows Clang's
+own options in packages with the built-in compiler.
+Arguments shared by commands show each meaning; `tide help open --project`
+selects the editor's project folder, while `tide help deploy --project`
+describes the hosting project. Positional arguments have topics too:
+`tide help folder`, `tide help source`, and `tide help package`.
+Help works without a game or complete installation and performs no command
+actions. Unknown topics or arguments return exit code 2. Bare `tide` keeps
+exit code 2; explicit help returns 0.
 
 ## open
 

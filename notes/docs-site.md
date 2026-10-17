@@ -1,5 +1,10 @@
 # The docs site
 
+Focused CLI help (2026-10-17): tools/cli.md and the README now describe the
+compact command overview, command/argument topics, scoped lookup and --help/-h
+command aliases. CLI behavior and validation are recorded in cli-and-packages.md.
+No language semantics, site navigation or deployment changed.
+
 Scene visibility unification (2026-10-15): Scenes, State visibility, language
 basics and the spec use ordinary root Visibility groups for scene audiences.
 They describe scene/entity/component intersection, live shared updates,
