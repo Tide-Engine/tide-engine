@@ -577,24 +577,25 @@ int main(void)
     }
 
     // ---- The guns: a carbine's round, a shotgun's pellets, into one of the dead; and the carbine again from over the
-    // shoulder, the round going where the camera's crosshair is ----
+    // shoulder, the round going where the camera's crosshair is; and the carbine at the legs, below the hips ----
     few(3);
     {
-        const Weapon guns[3] = {Weapon_Rifle, Weapon_Shotgun, Weapon_Rifle};
-        const Role roles[3] = {Role_Gunner, Role_Breacher, Role_Gunner};
-        for (int k = 0; k < 3; k++) {
+        const Weapon guns[4] = {Weapon_Rifle, Weapon_Shotgun, Weapon_Rifle, Weapon_Rifle};
+        const Role roles[4] = {Role_Gunner, Role_Breacher, Role_Gunner, Role_Gunner};
+        for (int k = 0; k < 4; k++) {
             become(0, roles[k], guns[k]);
             held[0].third = k == 2;
             const tide_entity e = sturdy();
             to_open(e);
             face(0, e, 6);
             if (k == 2) aim_over_shoulder(0, zombie(e).chestAt);
+            if (k == 3) look_at(0, (tide_float3){zombie(e).at.x, zombie(e).at.y + 0.35f, zombie(e).at.z});
             const float before = zombie(e).health;
             press(&held[0].attack);
             tick_safe(2);
             if (zombie(e).health >= before)
                 fprintf(stderr, "the %s missed: survivor at %.2f %.2f %.2f yaw %.2f pitch %.2f; zombie at %.2f %.2f %.2f chest %.2f %.2f %.2f state %d; %u up\n",
-                        k == 0 ? "carbine" : k == 1 ? "shotgun" : "carbine from over the shoulder", get(0).feet.x, get(0).feet.y, get(0).feet.z, get(0).yaw, get(0).pitch,
+                        k == 0 ? "carbine" : k == 1 ? "shotgun" : k == 2 ? "carbine from over the shoulder" : "carbine at the legs", get(0).feet.x, get(0).feet.y, get(0).feet.z, get(0).yaw, get(0).pitch,
                         zombie(e).at.x, zombie(e).at.y, zombie(e).at.z, zombie(e).chestAt.x, zombie(e).chestAt.y, zombie(e).chestAt.z, (int)zombie(e).state,
                         world.arch5_Zombie.count);
             CHECK(zombie(e).health < before);
@@ -958,6 +959,52 @@ int main(void)
         spawning();
     }
 
+    // ---- Wading through the dead: three pressed against a survivor slow them to well under half their pace; none near,
+    // full pace ----
+    {
+        few(3);
+        tide_entity pressed[3];
+        int found = 0;
+        for (uint32_t row = 0; row < world.arch5_Zombie.count && found < 3; row++) {
+            if (TIDE_AT(&world, arch5_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
+            pressed[found] = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+            Zombie z = zombie(pressed[found]);
+            z.health = 100000;
+            z.pace = 0;
+            CHECK(tide_set_Zombie(&world, pressed[found], z));
+            found++;
+        }
+        CHECK(found == 3);
+        float went[2];
+        for (int close = 0; close < 2; close++) {
+            put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -12});
+            tick_safe(10);
+            const tide_float3 from = get(0).feet;
+            held[0].move = (tide_float2){1, 0};
+            for (int t = 0; t < 60; t++) {
+                // Kept against them (beside, either side, and behind) or well away, every tick
+                const tide_float3 feet = get(0).feet;
+                const tide_float2 offsets[3] = {{0.62f, 0}, {-0.62f, 0}, {0, 0.62f}};
+                for (int k = 0; k < 3; k++) {
+                    Zombie z = zombie(pressed[k]);
+                    const float away = close ? 1.0f : 8.0f;
+                    z.at = (tide_float3){feet.x + offsets[k].x * away, feet.y, feet.z + offsets[k].y * away};
+                    CHECK(tide_set_Zombie(&world, pressed[k], z));
+                }
+                Survivor s = get(0);
+                s.health = 100;
+                s.dash = 0;
+                set(0, s);
+                tick_safe(1);
+            }
+            held[0].move = (tide_float2){0, 0};
+            went[close] = hypotf(get(0).feet.x - from.x, get(0).feet.z - from.z);
+        }
+        printf("a second's walk: %.2f m alone, %.2f m with three of the dead pressed against them\n", went[0], went[1]);
+        CHECK(went[0] > 2 && went[1] < went[0] * 0.5f);
+        spawning();
+    }
+
     // ---- A chest: a few stand about from the start, and another comes, somewhere open and away from the survivors; the
     // first to hold E by one has its item; a chest left alone shuts again ----
     {
@@ -1101,12 +1148,13 @@ int main(void)
         const int picks0 = 0, picks1 = 0;
         Boss b = tide_get_Boss(&world, e);
         b.health = 1;
+        b.at = (tide_float3){0, 0, -14};      // On open ground south of the fire, nothing between it and the gun
         CHECK(tide_set_Boss(&world, e, b));
         become(0, Role_Gunner, Weapon_Rifle);
         bool felled = false;
         for (int t = 0; t < 60 * 5 && !felled; t++) {
             b = tide_get_Boss(&world, e);
-            put(0, (tide_float3){b.at.x, 0, b.at.z - 8}, (tide_float3){b.at.x, b.at.y + 3, b.at.z});
+            put(0, (tide_float3){b.at.x, 0, b.at.z + 8}, (tide_float3){b.at.x, b.at.y + 3, b.at.z});
             Survivor s = get(0);
             s.shotWait = 0;
             s.mag = 30;
@@ -1116,6 +1164,11 @@ int main(void)
             held[0].attack = false;
             tick_whole(1);
             felled = tide_get_Boss(&world, e).move == BossMove_Dying;
+        }
+        if (!felled) {
+            b = tide_get_Boss(&world, e);
+            fprintf(stderr, "the Brute wasn't felled: health %.1f, move %d, at %.2f %.2f %.2f; survivor at %.2f %.2f %.2f, life %d, act %d, %u of the dead\n", b.health, (int)b.move,
+                    b.at.x, b.at.y, b.at.z, get(0).feet.x, get(0).feet.y, get(0).feet.z, (int)get(0).life, (int)get(0).act, world.arch5_Zombie.count);
         }
         CHECK(felled);
         tick_whole(2);

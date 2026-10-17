@@ -388,6 +388,44 @@ should". (World War Z's piles.) The numbers are mine (Provisional).
   held still (`to_open`; the leap is from 3.5 m, the mine 1.8 m, as nothing
   walks to them now).
 
+### Wading through the dead; the dash as a shoulder charge (2026-10-17)
+
+The owner: "we should slow the player down when touching zombies"; "make the
+dash maybe animate into a shoulder bash? makes more sense visually as to what
+is actually happening (hitting things in front)".
+
+- **Wading** (hands.tide's `Wading`, in `Steer`, which now reads the `Herd`):
+  each of the dead pressed against a survivor (on its feet, risen, about as
+  high, within `TOUCH_GAP` 0.1 m of touching) takes `TOUCH_SLOW` (22%) of
+  their speed, 60% at most (`TOUCH_SLOW_MOST`). A dash goes through at full
+  speed, so it's the way out of a crowd. The dead still don't hold a survivor;
+  they only slow one.
+- **The shoulder charge** (people.tide's `PoseSurvivor`; local `bash` and
+  `bashTurn`): while a dash lasts, the whole body (legs included) turns
+  side-on to the way it goes (`BASH_SIDE`, about 63 degrees), leading with
+  the shoulder that turns it least from the aim (the left going ahead or
+  left, the right going right; picked as the dash starts). It leans into it
+  (`BASH_LEAN` 0.6 rad, hips to chest, the head kept up), and the gun comes in
+  low down the way it goes. In 0.06 s, out over 0.22 s after the dash.
+  Looked at in captures, ahead and to the right: the first try always led
+  with the left shoulder, and dashing right turned the body to face the
+  camera.
+- **Tests**: a second's sideways walk covers 4.35 m alone and 1.77 m with three
+  of the dead kept pressed against the survivor (beside and behind); it must
+  be under half. The felled-Brute check now moves the Brute to open ground
+  south of the fire first; this change moved where the run took it (up on
+  the clearing's east edge, out of the gun's line).
+
+### Legs that can be shot (2026-10-17)
+
+The owner: "i cant shoot legs? of the zombies". A round, the crosshair's stop
+and a thrown missile met a zombie only at three balls (head, chest, hips), so
+anything below about 0.6 m went between its legs. Now `LegsHit`
+(missiles.tide) adds two balls (`LEG_RADIUS` 0.2, larger for a missile) from
+the hips away from the chest: down to the ground when it stands, along it
+when it's down, and the Brute's scaled by its size. A leg is a body hit, not
+a head. Test: the carbine aimed 0.35 m up a zombie's legs wounds it.
+
 ### No climbing cliffs by jumping (2026-10-17)
 
 The owner: "i can spam jump and climb steep hills". Every jump left the

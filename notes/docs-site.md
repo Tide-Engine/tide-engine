@@ -1,5 +1,23 @@
 # The docs site
 
+Fly host loss (2026-10-17): the site was down. Its one machine (82d1990b071698,
+release 291) sat on a fra host Fly reported unreachable after its 05:15 UTC
+host-restart incident ("a small number of hosts remain degraded or offline").
+A deploy at about 10:00 (v292, Docs run 39023241585) failed at its Deploy step
+on that host. A machine on a dead host can't be cloned, and its volume can't
+be attached elsewhere. Recovery: a new `access_requests` volume
+(vol_4m3mm6odj5eo97gv, fra) from the latest daily snapshot
+(vs_yGmLzgNyzwn9U19bZabym, about 18 hours old); the dead machine destroyed
+(`machine destroy --force`); a machine run from v291's image on the new volume,
+with fly.toml's env and the `app` process-group metadata. The Docs workflow
+then deployed dev (run 39040810696, release 293) onto it in place, with one
+machine and a passing health check. Its first attempt timed out in the docs
+browser test (`draw3d: starts in view`, 20 s); the rerun of the failed job
+passed. The old volume (vol_4qle7yl3xx90wd6r) is kept: access requests and
+analytics written after the snapshot exist only on it, if the host comes
+back. Delete it once that's settled. The local `fly.exe` points to a
+`flyctl.exe` that a self-upgrade left renamed to `flyctl.exe.old`.
+
 Focused CLI help (2026-10-17): tools/cli.md and the README now describe the
 compact command overview, command/argument topics, scoped lookup and --help/-h
 command aliases. CLI behavior and validation are recorded in cli-and-packages.md.

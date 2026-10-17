@@ -58,6 +58,20 @@ float SphereHit(float3 from, float3 to, float3 middle, float radius)
     return t >= 0 && t <= 1 ? t : 2;
 }
 
+// Where along a line (0 to 1; 2 for nowhere) it meets one of the dead's legs: two balls from the hips away from the
+// chest, down to the ground when it stands and along it when it's down.
+float LegsHit(float3 from, float3 to, Body z, float wider)
+{
+    var off = z.hips - z.chest;
+    var length = Math.Length(off);
+    var down = length > 0.0001 ? off / length : float3(0, -1, 0);
+    var radius = (LEG_RADIUS + wider) * z.size;
+    var upper = SphereHit(from, to, z.hips + down * (0.38 * z.size), radius);
+    return Math.Min(upper, SphereHit(from, to, z.hips + down * (0.68 * z.size), radius));
+}
+
+const float LEG_RADIUS = 0.2;
+
 [Stage(Tick.Missiles)]
 system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time time)
 {
@@ -99,7 +113,8 @@ system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time ti
         foreach (var z in Near(herd, from, Math.Length(to - from) + 1.5))
         {
             if (!z.hittable) continue;
-            var first = Math.Min(SphereHit(from, to, z.head, (HEAD_RADIUS + 0.1) * z.size), Math.Min(SphereHit(from, to, z.chest, 0.45 * z.size), SphereHit(from, to, z.hips, 0.4 * z.size)));
+            var body = Math.Min(Math.Min(SphereHit(from, to, z.chest, 0.45 * z.size), SphereHit(from, to, z.hips, 0.4 * z.size)), LegsHit(from, to, z, 0.05));
+            var first = Math.Min(SphereHit(from, to, z.head, (HEAD_RADIUS + 0.1) * z.size), body);
             if (first > 1 || first > wall) continue;
             var where = Math.Lerp(from, to, first);
             Burst(missile, where, Near(herd, where, missile.splash + 1));
