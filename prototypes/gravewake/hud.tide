@@ -497,7 +497,7 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
     }
 }
 
-// Development keys, not in play's interface: F3 a Brute, F4 a horde of two thousand more, F5 a level (and so an offer),
+// Development keys, not in play's interface: F2 six Bloaters, F3 a Brute, F4 a horde of two thousand more, F5 a level (and so an offer),
 // F6 a walk to the next place, F10 an item.
 local singleton DevWalk
 {
@@ -509,6 +509,7 @@ view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
 {
     if (!lobby.playing) return;
     var keys = devices.keyboard;
+    if (keys.f2.down) Send(Cheat { what = 7 });
     if (keys.f3.down) Send(Cheat { what = 6 });
     if (keys.f4.down) Send(Cheat { what = 3 });
     if (keys.f5.down) Send(Cheat { what = 4 });

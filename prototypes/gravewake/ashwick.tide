@@ -8,13 +8,13 @@
 enum Tick { Restart, Survivors, Hands, Missiles, Zombies, Field, Rounds, Late }
 
 const float CELL = 1;
-const float NAV_X0 = -56;
-const float NAV_Z0 = -56;
-const int NAV_W = 112;            // To x 56
-const int NAV_H = 112;            // To z 56
+const float NAV_X0 = -78;
+const float NAV_Z0 = -78;
+const int NAV_W = 156;            // To x 78
+const int NAV_H = 156;            // To z 78
 const float BUCKET = 8;
-const int BUCKETS_W = 14;
-const int BUCKETS_H = 14;
+const int BUCKETS_W = 20;         // 160 m
+const int BUCKETS_H = 20;
 const float STEEP = 0.6;          // Ground that climbs more than this a metre is a cliff: the dead pile up its face
 const int CLIMB_COST = 1;         // A cliff's cell is as far as open ground to the dead's way: they go straight at a cliff and pile up it
 const float CLIMB_RATE = 1.3;     // How fast the dead climb onto each other, metres up a second (a sprinter half again)

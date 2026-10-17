@@ -316,6 +316,11 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
         case 6:
             match.bossNext = match.clock;
             return;
+        case 7:
+            // Six Bloaters, the next six to rise
+            match.bloaters += 6;
+            match.rush += 6;
+            return;
         case 5:
             party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
             return;
@@ -329,13 +334,13 @@ float4 Showplace(int place)
     mut var at = float3(0, -6, 0);                          // South of the fire, looking north to the chapel's rise
     switch (place)
     {
-        case 1: at = float3(0, 27, Math.PI); break;          // On the chapel's rise, looking out over the clearing
-        case 2: at = float3(-15, 2, -Math.PI * 0.5); break;   // Above the sunken graveyard
-        case 3: at = float3(34, 0, -Math.PI * 0.5); break;    // The beacon's top, back toward the fire
-        case 4: at = float3(26, -6, -Math.PI * 0.6); break;   // The spire's lower tier
-        case 5: at = float3(-19, 10, 0.8); break;            // The foot of the chapel's west ramp
-        case 6: at = float3(0, -25, Math.PI * 0.5); break;    // In the ravine, along it
-        case 7: at = float3(-17, 17, -0.9); break;           // By the standing stones
+        case 1: at = float3(0, CHAPEL.y - 3, Math.PI); break;                       // On the chapel's rise, looking out over the clearing
+        case 2: at = float3(GRAVES.x + 12, GRAVES.y, -Math.PI * 0.5); break;        // Above the sunken graveyard
+        case 3: at = float3(BEACON.x, BEACON.y, -Math.PI * 0.5); break;            // The beacon's top, back toward the fire
+        case 4: at = float3(SPIRE.x - 5, SPIRE.y - 3, -Math.PI * 0.6); break;      // The spire's lower tier
+        case 5: at = float3(WEST_RAMP_B.x + 2, WEST_RAMP_B.y - 2, 0.8); break;     // The foot of the chapel's west ramp
+        case 6: at = float3(0, -35, Math.PI * 0.5); break;                          // In the ravine, along it
+        case 7: at = float3(STONES.x + 9, STONES.y - 7, -0.9); break;              // By the standing stones
     }
     return float4(On(at.x, at.y), at.z);
 }

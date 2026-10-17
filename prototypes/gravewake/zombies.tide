@@ -8,6 +8,17 @@ enum ZombieState { Rising, Hunting, Dying, Fallen }
 
 enum Gait { Shamble, Run, Sprint }
 
+// What kind of the dead: the ordinary walking dead, or a Bloater (wider, slower, tougher, swollen with what's rotting
+// in it): near a survivor it swells and bursts, and killed it bursts at once, hurting the dead and the living round it.
+enum ZombieKind { Walker, Bloater }
+
+const float BLOAT_NEAR = 2.4;      // How near a survivor sets a Bloater swelling
+const float BLOAT_FUSE = 0.9;      // Seconds from that to its burst
+const float BLOAT_REACH = 3.6;     // How far its burst reaches
+const float BLOAT_HURT = 45;       // A survivor at its heart takes this (40% of it at the edge)
+const float BLOAT_SIZE = 1.25;     // How much wider it is to hit and to bump into
+const float BLOAT_HEALTH = 2.5;    // Its health against one of the ordinary dead's
+
 const int ZOMBIE_LOOKS = 6;
 const float ZOMBIE_RADIUS = 0.34;
 const float RISE_SECONDS = 1.8;
@@ -53,6 +64,9 @@ component Zombie
     int bleeder = -1;           // Who opened the wound
     bool climbing;              // In a pile against a cliff, or clawing its way up one this tick
     float lift;                 // How high it is off the ground: up a pile
+    ZombieKind kind;
+    float fuse;                 // A Bloater: seconds since it began to swell (0, not yet)
+    bool popped;                // ...and it has burst
     local float flash;          // The flash of a fresh blow
     local float voice = 1;      // Seconds till it groans
 }
@@ -61,7 +75,7 @@ component Zombie
 // the dead's own crowding look in the cells near them, not through the whole horde. Made again each tick after the dead
 // move (Muster), so what's struck is where it stood when the tick began.
 const float HERD_CELL = 2;
-const int HERD_W = 56;                  // From NAV_X0, NAV_Z0: 112 m each way
+const int HERD_W = 78;                  // From NAV_X0, NAV_Z0: 156 m each way
 
 singleton Herd
 {
@@ -167,7 +181,7 @@ Body BodyOf(Entity entity, Zombie zombie)
                   head = placed ? zombie.headAt : zombie.at + up * 1.62,
                   chest = placed ? zombie.chestAt : zombie.at + up * 1.15,
                   hips = placed ? zombie.hipsAt : zombie.at + up * 0.6,
-                  down = LyingOf(zombie) > 0.5 };
+                  down = LyingOf(zombie) > 0.5, size = zombie.kind == ZombieKind.Bloater ? BLOAT_SIZE : 1.0 };
 }
 
 // How far over one of the dead is: 0 on its feet, 1 flat on its back (it falls away from the blow).
@@ -255,6 +269,27 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     zombie.chill = Math.Max(0, zombie.chill - dt);
     zombie.frozen = Math.Max(0, zombie.frozen - dt);
     zombie.stun = Math.Max(0, zombie.stun - dt);
+    // A Bloater killed bursts (the tick after the blow); one swelling bursts when its time's up
+    if (zombie.kind == ZombieKind.Bloater && !zombie.popped)
+    {
+        if (zombie.fuse > 0 && zombie.state != ZombieState.Dying) zombie.fuse += dt;
+        if (zombie.state == ZombieState.Dying || zombie.fuse >= BLOAT_FUSE)
+        {
+            // The living round it hurt and thrown back, the nearer the more
+            foreach (var row in survivors)
+            {
+                var s = row.survivor;
+                if (!s.ready || s.life != Life.Standing) continue;
+                var far = Math.Distance(s.feet + float3(0, 1, 0), zombie.chestAt);
+                if (far > BLOAT_REACH) continue;
+                var share = Math.Sqrt(1 - far / BLOAT_REACH);
+                row.entity.Send(Hurt { damage = BLOAT_HURT * (0.4 + 0.6 * share), from = zombie.chestAt });
+                row.entity.Send(Shoved { velocity = Flatten(s.feet - zombie.chestAt) * 9 * share + float3(0, 4 * share, 0) });
+            }
+            Rupture(this, zombie, match, herd);
+            return;
+        }
+    }
     if (zombie.state == ZombieState.Dying)
     {
         // Off a pile, it drops (and what it held up comes down after it)
@@ -387,8 +422,17 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
             }
         }
     }
+    // A Bloater doesn't swing: near enough a survivor, it stops and swells
+    if (zombie.kind == ZombieKind.Bloater)
+    {
+        if (zombie.fuse == 0 && target != default && nearest < BLOAT_NEAR && zombie.frozen <= 0)
+        {
+            zombie.fuse = 0.0001;
+            Send(Cue { sound = Sfx.Swell, at = zombie.at + float3(0, 1.2, 0) });
+        }
+    }
     // The blow
-    if (zombie.swing > 0)
+    else if (zombie.swing > 0)
     {
         zombie.swing += dt;
         if (!zombie.struck && zombie.swing >= ATTACK_LANDS)
@@ -416,7 +460,8 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     if (zombie.chill > 0) speed *= 0.45;
     if (zombie.flinch > 0) speed *= 0.3;
     if (zombie.swing > 0) speed *= zombie.gait == Gait.Shamble ? 0.2 : 0.45;
-    if (zombie.frozen > 0 || zombie.stun > 0) speed = 0;
+    if (zombie.frozen > 0 || zombie.stun > 0 || zombie.fuse > 0) speed = 0;
+    if (zombie.kind == ZombieKind.Bloater) speed *= BLOAT_PACE;
     if (target != default && nearest < ATTACK_REACH * 0.8) speed *= 0.1;
     var wanted = Math.Length(wish) > 0.001 ? Math.Normalize(wish) : float3(0);
     if (Math.Length(wanted) > 0.5)
@@ -464,6 +509,29 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     zombie.climbing = climb || pressing || zombie.lift > 0.25;
     zombie.stride += Math.Length((at - before).xz);
     zombie.at = at;
+}
+
+const float BLOAT_PACE = 0.8;      // A Bloater's speed against the ordinary dead's of its gait
+
+// A Bloater bursting: the dead round it wounded and thrown down (credited to whoever killed it, if anyone did), and it
+// gone, in pieces. (Hunt hurts the living round it.)
+void Rupture(Entity self, mut Zombie zombie, Match match, Herd herd)
+{
+    zombie.popped = true;
+    var at = zombie.chestAt;
+    foreach (var z in Near(herd, at, BLOAT_REACH))
+    {
+        if (!z.hittable || z.entity == self) continue;
+        var far = Math.Distance(z.at + float3(0, 1, 0), at);
+        if (far > BLOAT_REACH) continue;
+        var share = Math.Sqrt(1 - far / BLOAT_REACH);
+        z.entity.Send(Wound { damage = ZombieHealth(match.danger) * 2 * (0.4 + 0.6 * share), seat = zombie.killer, element = Element.Blast, from = at,
+                              knock = 8 * share, down = share > 0.3, blow = Blow.Burst, echo = true });
+    }
+    Send(Blast { at = at, reach = BLOAT_REACH, element = Element.Blast, kind = Shot.Bile });
+    if (zombie.state != ZombieState.Dying)
+        self.Send(Struck { at = at, from = at - Flat(zombie.yaw), killed = true, element = Element.None, seat = -1, blow = Blow.Burst });
+    self.Destroy();
 }
 
 void Become(mut Zombie zombie, ZombieState state)
@@ -525,8 +593,9 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         zombie.swing = 0;
         match.killed += 1;
         points = (wound.head ? 100 : 50) + wound.bonus;
+        if (zombie.kind == ZombieKind.Bloater) points += 50;
         // The party's experience, and a level when there's enough
-        DropOrb(match, zombie.at, 0.5);
+        DropOrb(match, zombie.at, zombie.kind == ZombieKind.Bloater ? 1.5 : 0.5);
     }
     else
     {

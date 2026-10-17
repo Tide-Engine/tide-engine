@@ -4,8 +4,9 @@
 // near; the Mortar Beacon's shells. Each tick one moves, drops, and meets the
 // dead before the walls.
 
-// What a missile is. A Keg and a Quake are none: a Powder Keg's burst and a Brute's slam, for what's seen and heard.
-enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake }
+// What a missile is. A Keg, a Quake and Bile are none: a Powder Keg's burst, a Brute's slam and a Bloater's burst, for
+// what's seen and heard.
+enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake, Bile }
 
 component Missile
 {

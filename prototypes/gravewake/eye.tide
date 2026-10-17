@@ -127,13 +127,13 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     if (lobby.playing && (devices.keyboard.v.down || devices.gamepad.rightStickButton.down)) feel.third = !feel.third;
     if (me.overhead == 1)
     {
-        eye = float3(0, 70, 0);
+        eye = float3(0, 98, 0);
         me.turn = quaternion.Euler(Math.PI * 0.5, 0, 0);
         look.fov = 62;
     }
     else if (me.overhead == 2)
     {
-        eye = float3(26, 30, -26);
+        eye = float3(36, 42, -36);
         me.turn = quaternion.Euler(0.68, -0.785, 0);
         look.fov = 62;
     }

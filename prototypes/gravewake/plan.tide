@@ -8,7 +8,8 @@
 // and each machine makes it again for what it draws. Change one, and both
 // follow.
 //
-// The clearing, metres, x east and z north, about 44 m round the fire:
+// The clearing, metres, x east and z north, about 62 m round the fire (it was 44: the owner, "we should make the map
+// bigger; also include less obstructions"):
 //
 //                          N    the chapel's rise, 6 m up, the ruin on it
 //                  .-----------[ ruin ]-----------.
@@ -69,7 +70,7 @@ struct Plan
 }
 
 const float STOREY = 3.12;    // A kit wall's height
-const float CLEARING = 44;    // About how far the clearing reaches from the fire
+const float CLEARING = 62;    // About how far the clearing reaches from the fire
 const float RUIN_TOP = 6;     // The chapel's rise, the ruin on it
 const float SPIRE_LOW = 4;    // The beacon's spire: its lower tier...
 const float SPIRE_TOP = 9;    // ...and its top, where the beacon burns
@@ -133,6 +134,7 @@ float RampTo(float h, float below, float2 at, float2 a, float2 b, float half, fl
 }
 
 const float RAMP_FLAT = 0.2;
+const float GRAVESTONE_SCALE = 0.75;    // Gravestones, smaller than the kit's: nothing to walk round, stepped past
 
 // How far into a ditch along `a` to `b` a place is: 1 on its floor (`half` each side), 0 past its banks.
 float Ditch(float2 at, float2 a, float2 b, float half, float fall)
@@ -142,23 +144,23 @@ float Ditch(float2 at, float2 a, float2 b, float half, float fall)
     return 1 - Math.SmoothStep(half, half + fall, Math.Distance(at, a + ab * along));
 }
 
-// The landmarks' places
-const float2 CHAPEL = float2(0, 30);
-const float2 SPIRE = float2(31, -3);        // The lower tier's middle
-const float2 BEACON = float2(34, 0);        // The top's
-const float2 GRAVES = float2(-27, 3);
-const float2 STONES = float2(-26, 24);
-const float2 RAVINE_A = float2(-34, -27);
-const float2 RAVINE_B = float2(32, -23);
+// The landmarks' places (each as big as it was when the clearing was 44 m: they moved out with its edge)
+const float2 CHAPEL = float2(0, 42);
+const float2 SPIRE = float2(43, -4);        // The lower tier's middle
+const float2 BEACON = float2(46, -1);       // The top's
+const float2 GRAVES = float2(-38, 4);
+const float2 STONES = float2(-36, 34);
+const float2 RAVINE_A = float2(-48, -38);
+const float2 RAVINE_B = float2(45, -32);
 // The ramps: from the top end down to the foot
-const float2 WEST_RAMP_A = float2(-8, 23);
-const float2 WEST_RAMP_B = float2(-21, 12);
-const float2 EAST_RAMP_A = float2(8, 23);
-const float2 EAST_RAMP_B = float2(20, 13);
-const float2 SPIRE_RAMP_A = float2(19.5, -8);
-const float2 SPIRE_RAMP_B = float2(10, -14);
-const float2 BEACON_RAMP_A = float2(31.5, -3.5);
-const float2 BEACON_RAMP_B = float2(24, -10);
+const float2 WEST_RAMP_A = float2(-8, 35);
+const float2 WEST_RAMP_B = float2(-21, 24);
+const float2 EAST_RAMP_A = float2(8, 35);
+const float2 EAST_RAMP_B = float2(20, 25);
+const float2 SPIRE_RAMP_A = float2(31.5, -9);
+const float2 SPIRE_RAMP_B = float2(22, -15);
+const float2 BEACON_RAMP_A = float2(43.5, -4.5);
+const float2 BEACON_RAMP_B = float2(36, -11);
 
 // The ground's height at a place: the same everywhere it's asked, in the match and in the picture.
 float Ground(float x, float z)
@@ -404,7 +406,6 @@ Plan MakePlan()
     plan.fires.Add(On(0, 0));
     PlaceSolid(plan, Piece.Bench, On(0, 2.7), 0);
     PlaceSolid(plan, Piece.Cauldron, On(2.5, 1.9), 0.4);
-    PlaceSolid(plan, Piece.Crate_Wooden, On(-2.6, 2.1), 0.3);
     Place(plan, Piece.Bag, On(-3.3, 1.5), 0.9);
     Place(plan, Piece.Bucket_Wooden_1, On(2.9, -0.9), 0);
     Place(plan, Piece.Rope_1, On(-1.9, 3.4), 0.6);
@@ -415,36 +416,34 @@ Plan MakePlan()
 
     // ---- North: the chapel's ruin on its rise, its walls half down, its floor still there; the ramps up from the
     // south-west and the south-east ----
-    Pave(plan, Piece.Floor_UnevenBrick, -6, 26, 6, 34, RUIN_TOP + 0.02);
-    StoneWall(plan, float2(-4, 34), float2(4, 34), (1L << 1) | (1L << 2), 0, RUIN_TOP);
-    StoneWall(plan, float2(-6, 26), float2(-6, 32), 0, 1L << 0, RUIN_TOP);
-    StoneWall(plan, float2(6, 28), float2(6, 32), 1L << 0, 0, RUIN_TOP);
-    WallTorch(plan, float3(-2, RUIN_TOP + 2.0, 33.69), 2);
-    WallTorch(plan, float3(2, RUIN_TOP + 2.0, 33.69), 2);
-    PlaceSolid(plan, Piece.Chest_Wood, float3(0, RUIN_TOP + 0.02, 32.9), Math.PI);
+    var cz = CHAPEL.y;
+    Pave(plan, Piece.Floor_UnevenBrick, -6, cz - 4, 6, cz + 4, RUIN_TOP + 0.02);
+    StoneWall(plan, float2(-4, cz + 4), float2(4, cz + 4), (1L << 1) | (1L << 2), 0, RUIN_TOP);
+    StoneWall(plan, float2(-6, cz - 4), float2(-6, cz + 2), 0, 1L << 0, RUIN_TOP);
+    StoneWall(plan, float2(6, cz - 2), float2(6, cz + 2), 1L << 0, 0, RUIN_TOP);
+    WallTorch(plan, float3(-2, RUIN_TOP + 2.0, cz + 3.69), 2);
+    WallTorch(plan, float3(2, RUIN_TOP + 2.0, cz + 3.69), 2);
+    PlaceSolid(plan, Piece.Chest_Wood, float3(0, RUIN_TOP + 0.02, cz + 2.9), Math.PI);
     for (var i = 0; i < 9; i++)
     {
         var h = Math.Hash(int2(i, 515));
         var x = -6 + Unit01(h, 0) * 12;
-        var z = 24 + Unit01(h, 10) * 9;
+        var z = cz - 6 + Unit01(h, 10) * 9;
         Place(plan, i % 2 == 0 ? Piece.Prop_Brick1 : Piece.Prop_Brick3, On(x, z) + float3(0, 0.05, 0), Unit01(h, 20) * 6);
     }
 
-    // ---- West: the old graveyard sunk in its hollow, its iron fence fallen in places, a brazier at its edge ----
+    // ---- West: the old graveyard sunk in its hollow, a brazier at its edge (its iron fences are gone: they were in the
+    // way) ----
     for (var i = 0; i < 10; i++)
     {
         var h = Math.Hash(int2(i, 77));
-        var x = -29 + (i % 2) * 4.4 + ((h & 7) - 3) * 0.1;
-        var z = -4.5 + (i / 2) * 3.4 + ((h >> 3) & 7) * 0.05;
+        var x = GRAVES.x - 2 + (i % 2) * 4.4 + ((h & 7) - 3) * 0.1;
+        var z = GRAVES.y - 7.5 + (i / 2) * 3.4 + ((h >> 3) & 7) * 0.05;
         plan.risers.Add(Riser { at = On(x, z), grave = true });
     }
-    PlaceSolid(plan, Piece.Prop_MetalFence_Ornament, On(-17.5, -3.6), Math.PI * 0.5 + 0.05);
-    PlaceSolid(plan, Piece.Prop_MetalFence_Ornament, On(-17.6, 9.4), Math.PI * 0.5 - 0.04);
-    PlaceSolid(plan, Piece.Prop_MetalFence_Ornament, On(-23, -8.4), 0.03);
-    PlaceSolid(plan, Piece.Prop_MetalFence_Ornament, On(-28, -8.5), -0.05);
-    Tree(plan, Piece.DeadTree_1, On(-33, 12), 0.4, 0.9);
-    Tree(plan, Piece.DeadTree_3, On(-22, 14), 2.1, 0.8);
-    plan.fires.Add(On(-19, 2.5));
+    Tree(plan, Piece.DeadTree_1, On(GRAVES.x - 6, GRAVES.y + 9), 0.4, 0.9);
+    Tree(plan, Piece.DeadTree_3, On(GRAVES.x + 5, GRAVES.y + 11), 2.1, 0.8);
+    plan.fires.Add(On(GRAVES.x + 8, GRAVES.y - 0.5));
 
     // ---- North-west: a ring of standing stones ----
     for (var i = 0; i < 7; i++)
@@ -455,36 +454,29 @@ Plan MakePlan()
 
     // ---- East: the beacon's spire, its fire on top; a cart and a wagon left at its foot, the camp's second fire ----
     plan.fires.Add(On(BEACON.x, BEACON.y));
-    PlaceSolid(plan, Piece.Prop_Wagon, On(13, 8), 0.35);
-    PlaceSolid(plan, Piece.Stall_Cart_Empty, On(7, -6), 1.2);
-    PlaceSolid(plan, Piece.Barrel, On(10.6, 9.8), 0.3);
-    PlaceSolid(plan, Piece.Barrel, On(11.4, 10.5), 1.1);
-    PlaceSolid(plan, Piece.Crate_Wooden, On(26.5, 2), 0.2);
-    PlaceSolid(plan, Piece.Anvil_Log, On(9.6, -2.6), 0.7);
-    PlaceSolid(plan, Piece.Prop_WoodenFence_Single, On(17, 2), Math.PI * 0.5 + 0.1);
-    plan.fires.Add(On(11.5, 1));
+    PlaceSolid(plan, Piece.Prop_Wagon, On(18, 11), 0.35);
+    PlaceSolid(plan, Piece.Stall_Cart_Empty, On(10, -8.4), 1.2);
+    plan.fires.Add(On(16, 1.4));
 
     // ---- The ravine's banks, boulders along them; and big stones about the clearing, to stand behind ----
-    Standing(plan, float2(-18, -19), 0.3, 0, 1.4);
-    Standing(plan, float2(4, -17), 2.0, 2, 1.2);
-    Standing(plan, float2(20, -31), 4.1, 1, 1.5);
-    Standing(plan, float2(-8, -33), 1.2, 0, 1.3);
-    Standing(plan, float2(-6, -11), 0.8, 1, 1.1);
-    Standing(plan, float2(-34, -12), 2.6, 2, 1.4);
-    Standing(plan, float2(36, 22), 0.5, 0, 1.6);
-    Standing(plan, float2(-4, 12), 3.3, 1, 0.9);
+    Standing(plan, float2(-25, -27), 0.3, 0, 1.4);
+    Standing(plan, float2(6, -24), 2.0, 2, 1.2);
+    Standing(plan, float2(28, -43), 4.1, 1, 1.5);
+    Standing(plan, float2(-11, -46), 1.2, 0, 1.3);
+    Standing(plan, float2(-48, -17), 2.6, 2, 1.4);
+    Standing(plan, float2(50, 31), 0.5, 0, 1.6);
 
-    // ---- Groves within the clearing: a few close stands of trees, the ground between them open ----
-    List<float2> groves = [float2(-35, 18), float2(22, 31), float2(-36, -19), float2(28, -27), float2(8, -38), float2(-2, -16)];
+    // ---- Groves within the clearing: a few stands of trees, room to run between them, the ground between them open ----
+    List<float2> groves = [float2(-49, 25), float2(31, 43), float2(-50, -27), float2(39, -38), float2(11, -53), float2(-3, -22)];
     for (var g = 0; g < groves.count; g++)
     {
-        for (var i = 0; i < 9; i++)
+        for (var i = 0; i < 7; i++)
         {
             var h = Math.Hash(int2(i + g * 31, 2323));
             var turn = Unit01(h, 0) * Math.TAU;
-            var far = 1.5 + Unit01(h, 10) * 5.5;
+            var far = 2 + Unit01(h, 10) * 6.5;
             var at = On(groves[g].x + Math.Cos(turn) * far, groves[g].y + Math.Sin(turn) * far);
-            if (!Open(plan, at, 1.6) || OnLandmark(at.xz, 1) || Ditch(at.xz, RAVINE_A, RAVINE_B, 4, 0) > 0) continue;
+            if (!Open(plan, at, 2.6) || OnLandmark(at.xz, 1) || Ditch(at.xz, RAVINE_A, RAVINE_B, 4, 0) > 0) continue;
             var kind = (h >> 20) % 5;
             var piece = kind == 0 ? Piece.CommonTree_1 : kind == 1 ? Piece.CommonTree_3 : kind == 2 ? Piece.Pine_3 : kind == 3 ? Piece.Pine_5 : Piece.CommonTree_5;
             Tree(plan, piece, at, Unit01(h, 4) * Math.TAU, 0.95 + Unit01(h, 14) * 0.35);
@@ -492,9 +484,9 @@ Plan MakePlan()
     }
 
     // ---- The dead's other way in: up through the roots at the clearing's edge ----
-    for (var i = 0; i < 26; i++)
+    for (var i = 0; i < 36; i++)
     {
-        var angle = (i + 0.5) * Math.TAU / 26;
+        var angle = (i + 0.5) * Math.TAU / 36;
         mut var at = EdgeAt(angle, -4);
         if (!Open(plan, at, 0.8)) at = EdgeAt(angle, -6);
         if (!Open(plan, at, 0.6)) continue;
@@ -509,20 +501,18 @@ Plan MakePlan()
         plan.dressing.Add(ItemPut { item = "grave_mound", at = riser.at, yaw = Math.PI * 0.5 + ((h & 7) - 3) * 0.04 });
         var stone = (h >> 3) % 3 == 0 ? "gravestone_a" : (h >> 3) % 3 == 1 ? "gravestone_b" : "gravestone_c";
         var head = On(riser.at.x - 1.35, riser.at.z);
-        plan.dressing.Add(ItemPut { item = stone, at = head, yaw = Math.PI * 0.5 + ((h >> 6) & 7) * 0.04 - 0.14 });
-        Block(plan, head + float3(-0.17, 0, -0.4), head + float3(0.17, 1.1, 0.4));
+        plan.dressing.Add(ItemPut { item = stone, at = head, yaw = Math.PI * 0.5 + ((h >> 6) & 7) * 0.04 - 0.14, scale = GRAVESTONE_SCALE });
     }
-    for (var i = 0; i < 9; i++)
+    for (var i = 0; i < 5; i++)
     {
         var h = Math.Hash(int2(i, 911));
-        var at = On(-33 + Unit01(h, 0) * 12, -7 + Unit01(h, 10) * 17);
+        var at = On(GRAVES.x - 6 + Unit01(h, 0) * 12, GRAVES.y - 10 + Unit01(h, 10) * 17);
         mut var near = false;
         foreach (var riser in plan.risers)
             if (Math.Distance(riser.at, at) < 2.2) near = true;
         if (near || !Open(plan, at, 0.5)) continue;
         var stone = (h >> 20) % 3 == 0 ? "gravestone_a" : (h >> 20) % 3 == 1 ? "gravestone_b" : "gravestone_c";
-        plan.dressing.Add(ItemPut { item = stone, at = at, yaw = Math.PI * 0.5 + ((h >> 22) & 63) * 0.02 - 0.6, scale = 0.9 + ((h >> 28) & 3) * 0.08 });
-        Block(plan, at - float3(0.18, 0, 0.35), at + float3(0.18, 1.1, 0.35));
+        plan.dressing.Add(ItemPut { item = stone, at = at, yaw = Math.PI * 0.5 + ((h >> 22) & 63) * 0.02 - 0.6, scale = GRAVESTONE_SCALE * (0.9 + ((h >> 28) & 3) * 0.08) });
     }
 
     // ---- The fires' braziers ----
@@ -533,17 +523,17 @@ Plan MakePlan()
     }
 
     // ---- The forest: close round the edge, thinning into the fog ----
-    for (var i = 0; i < 150; i++)
+    for (var i = 0; i < 210; i++)
     {
         var h = Math.Hash(int2(i, 4242));
-        var angle = (i + Unit01(h, 0) * 0.8) * Math.TAU / 150;
+        var angle = (i + Unit01(h, 0) * 0.8) * Math.TAU / 210;
         var at = EdgeAt(angle, 1.2 + Unit01(h, 10) * 7);
         var kind = (h >> 20) % 9;
         var piece = kind == 0 ? Piece.CommonTree_1 : kind == 1 ? Piece.CommonTree_3 : kind == 2 ? Piece.CommonTree_5 : kind == 3 ? Piece.Pine_1
                   : kind == 4 ? Piece.Pine_3 : kind == 5 ? Piece.Pine_5 : kind == 6 ? Piece.DeadTree_2 : kind == 7 ? Piece.CommonTree_1 : Piece.Pine_3;
         PlaceScaled(plan, piece, at - float3(0, 0.3, 0), Unit01(h, 4) * Math.TAU, 1.0 + Unit01(h, 14) * 0.5);
     }
-    for (var i = 0; i < 170; i++)
+    for (var i = 0; i < 240; i++)
     {
         var h = Math.Hash(int2(i, 4343));
         var angle = Unit01(h, 0) * Math.TAU;
@@ -554,10 +544,10 @@ Plan MakePlan()
         PlaceScaled(plan, piece, at - float3(0, 0.3, 0), Unit01(h, 4) * Math.TAU, 1.1 + Unit01(h, 14) * 0.5);
     }
     // Undergrowth along the edge, a few ferns and plants, and grass and mushrooms over the clearing
-    for (var i = 0; i < 80; i++)
+    for (var i = 0; i < 110; i++)
     {
         var h = Math.Hash(int2(i, 5151));
-        var angle = (i + Unit01(h, 0)) * Math.TAU / 80;
+        var angle = (i + Unit01(h, 0)) * Math.TAU / 110;
         var at = EdgeAt(angle, -0.6 + Unit01(h, 10) * 1.6);
         var kind = (h >> 20) % 4;
         if (kind == 0) PlaceScaled(plan, Piece.Fern_1, at, Unit01(h, 4) * Math.TAU, 0.22 + Unit01(h, 14) * 0.1);
@@ -565,7 +555,7 @@ Plan MakePlan()
         else PlaceScaled(plan, Piece.Bush_Common, at, Unit01(h, 4) * Math.TAU, 0.9 + Unit01(h, 14) * 0.6);
     }
     // Grass in tufts round the groves and the edge, not everywhere
-    for (var i = 0; i < 120; i++)
+    for (var i = 0; i < 170; i++)
     {
         var h = Math.Hash(int2(i, 6161));
         mut var at = EdgeAt(Unit01(h, 0) * Math.TAU, -1 - Unit01(h, 10) * 6);

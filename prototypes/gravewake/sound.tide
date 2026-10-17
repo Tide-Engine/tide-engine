@@ -29,6 +29,8 @@ asset List<Clip> fleshHits = "sfx/bullet_flesh_*.ogg";
 asset List<Clip> woodHits = "sfx/arrow_hit_wood_*.ogg";
 asset List<Clip> stoneHits = "sfx/arrow_hit_stone_*.ogg";
 asset List<Clip> explosions = "sfx/explode_*.ogg";
+asset List<Clip> bloatPops = "sfx/bloat_pop_*.ogg";
+asset Clip bloatSwell = "sfx/bloat_swell.ogg";
 asset List<Clip> stepsStone = "sfx/step_stone_*.ogg";
 asset List<Clip> stepsDirt = "sfx/step_dirt_*.ogg";
 asset List<Clip> hurts = "sfx/hurt_*.ogg";
@@ -337,6 +339,7 @@ local event(Blast blast) HearBlast(mut Ears ears)
 {
     if (blast.kind == Shot.Pot || blast.kind == Shot.Keg) Audio.Play(fireBurst, blast.at, blast.kind == Shot.Keg ? 0.6 : 1.0, ears.random.NextFloat(0.9, 1.1));
     else if (blast.kind == Shot.Quake) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, 0.55);
+    else if (blast.kind == Shot.Bile) Audio.Play(bloatPops[ears.random.NextInt(bloatPops.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.05));
     else Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.1));
 }
 
@@ -346,6 +349,7 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
     switch (cue.sound)
     {
         case Sfx.Rise: Audio.Play(riseClip, cue.at, 0.9, ears.random.NextFloat(0.9, 1.1)); return;
+        case Sfx.Swell: Audio.Play(bloatSwell, cue.at, 1.0, ears.random.NextFloat(0.95, 1.05)); return;
         case Sfx.Snarl: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 0.85, ears.random.NextFloat(0.85, 1.15)); return;
         case Sfx.Revive: Audio.Play(reviveClip, cue.at, 0.9, 1.0); return;
         case Sfx.Downed: PlayAt(downedClip, cue.at, near, 0.9, 1.0); return;
