@@ -28,6 +28,8 @@ static void tick(void)
         Survivor s = tide_get_Survivor(&world, e);
         if (s.life == Life_Standing) {
             s.health = 1e9f;      // Not to be downed by hundreds of claws in a tick
+            s.choosing = false;   // ...nor the run held still by a level's offer
+            s.pending = 0;
             tide_set_Survivor(&world, e, s);
         }
         tide_world_set_input(&world, tide_player_from_index(seat), held[seat]);
@@ -54,13 +56,15 @@ int main(int argc, char **argv)
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick();
     // The dead that don't die, coming one a tick till there are `count` of them, then no more (and no Brute)
     world.Match.bossNext = 1e9f;
-    for (int i = 0; i < count * 4 && (int)world.arch5_Zombie.count < count; i++) {
+    world.Match.special = ZombieKind_Walker;      // Walkers only: a Bloater bursting through them would thin the horde
+    world.Match.specials = 1 << 30;
+    for (int i = 0; i < count * 4 && (int)world.arch6_Zombie.count < count; i++) {
         world.Match.spawnWait = 1.0f / 60;
         tick();
     }
     world.Match.spawnWait = 1e9f;
-    for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) {
-        const tide_entity e = TIDE_ENTITY_AT(&world, arch5_Zombie, r);
+    for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) {
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch6_Zombie, r);
         Zombie z = tide_get_Zombie(&world, e);
         z.health = 1e12f;
         tide_set_Zombie(&world, e, z);
@@ -76,7 +80,7 @@ int main(int argc, char **argv)
         held[seat].attack = true;
     }
     int states[8] = {0};
-    for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) states[TIDE_AT(&world, arch5_Zombie, Zombie, r).state & 7]++;
+    for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) states[TIDE_AT(&world, arch6_Zombie, Zombie, r).state & 7]++;
     printf("spawned: rising %d hunting %d dying %d fallen %d; phase %d\n", states[0], states[1], states[2], states[3], (int)world.Match.phase);
     for (int i = 0; i < 240; i++) tick();
     const double start = now();
@@ -87,7 +91,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < 20; i++) tide_world_copy(&copy, &world);
     const double perCopy = (now() - copied) / 20;
     const uint32_t size = tide_world_pack(&world, NULL, 0);
-    printf("%d of the dead: %.3f ms a tick (%.1f%% of 60 Hz), a world copy %.3f ms, packed %u bytes\n", (int)world.arch5_Zombie.count,
+    printf("%d of the dead: %.3f ms a tick (%.1f%% of 60 Hz), a world copy %.3f ms, packed %u bytes\n", (int)world.arch6_Zombie.count,
            per * 1000, per * 60 * 100, perCopy * 1000, size);
     tide_world_free(&copy);
     tide_world_free(&world);

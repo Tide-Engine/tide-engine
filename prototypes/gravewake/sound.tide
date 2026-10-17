@@ -1,10 +1,11 @@
 using Rooms;
 
-// What this machine hears: the night in Ashwick Wood and a low dread under
-// it that rises with the waves, the bell that starts each one, the dead
-// groaning where they are, feet on earth and the ruin's stones, the fires,
-// every gun's shot and load, the skills, what each hit sounds like, the items
-// taken, the levels, the power-ups.
+// What this machine hears: a low dread under the night that rises with the
+// danger and the vigils, the dead groaning where they are, feet on earth and
+// the ruin's stones, the fires and the beacon's, every gun's shot and load,
+// the skills, what each hit sounds like (a Warden's mail rings), a Spitter's
+// retch and its bile, the items taken, the levels, the nights' falls and
+// dawns.
 
 [Bus]
 enum Bus { Master, Effects, Music, Ambience }
@@ -105,14 +106,14 @@ local singleton Ears
 
 // The bed: the night, the dread under it, the heart when it's bad.
 [Stage(Layers.Hud, 30)]
-view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, query (Survivor survivor) survivors)
+view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, query (Survivor survivor) survivors, query (Beacon beacon) beacons)
 {
     Audio.SetEffect(Bus.Master, Limit());
     var dt = me.dt;
     var playing = lobby.playing;
     // The dread: low through the early rounds, the high one later or when the dead are many
     var fighting = match.phase == Phase.Fighting;
-    var tense = fighting && (match.danger >= 3.5 || match.alive >= 150) ? 1.0 : 0.0;
+    var tense = fighting && (match.vigil || match.danger >= 3.5 || match.alive >= 150) ? 1.0 : 0.0;
     var under = fighting ? 1.0 : 0.15;
     ears.low.clip = musicLow;
     ears.low.loop = true;
@@ -165,6 +166,17 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
         {
             brazierFar = far;
             brazierAt = b + float3(0, 1.4, 0);
+        }
+    }
+    // A lit beacon is a fire too
+    foreach (var row in beacons)
+    {
+        if (!row.beacon.lit || row.beacon.night != match.night) continue;
+        var far = Math.Distance(row.beacon.at, me.eye) - 6;
+        if (far < brazierFar)
+        {
+            brazierFar = Math.Max(0, far);
+            brazierAt = row.beacon.at + float3(0, 2.2, 0);
         }
     }
     ears.brazier.clip = fireLoop;
@@ -271,6 +283,13 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
         return;
     }
     if (struck.blow == Blow.Shove) return;
+    // On a Warden's mail: iron, ringing
+    if (struck.mail && !struck.killed)
+    {
+        if (mine) Audio.Play(stoneHits[ears.random.NextInt(stoneHits.count)], struck.at, 0.7, ears.random.NextFloat(1.6, 1.9));
+        if (mine) Audio.Play(hitmarkerClip, 0.25, 0.6);
+        return;
+    }
     // A horde's worth of hits at once would be noise: the kills, the heads and this machine's own
     if (!struck.killed && !struck.head && !mine) return;
     mut Clip clip = fleshHits[ears.random.NextInt(fleshHits.count)];
@@ -337,6 +356,19 @@ local event(Thud thud) HearThud(mut Ears ears, Village village, Me me)
 
 local event(Blast blast) HearBlast(mut Ears ears)
 {
+    if (blast.kind == Shot.Pop)
+    {
+        // An HE round's, many at once: a few a second, small
+        if (ears.voices < 0.5) return;
+        ears.voices -= 0.5;
+        Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 0.35, ears.random.NextFloat(1.7, 2.0));
+        return;
+    }
+    if (blast.kind == Shot.Spit)
+    {
+        Audio.Play(bloatPops[ears.random.NextInt(bloatPops.count)], blast.at, 0.6, ears.random.NextFloat(1.6, 1.9));
+        return;
+    }
     if (blast.kind == Shot.Pot || blast.kind == Shot.Keg) Audio.Play(fireBurst, blast.at, blast.kind == Shot.Keg ? 0.6 : 1.0, ears.random.NextFloat(0.9, 1.1));
     else if (blast.kind == Shot.Quake) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, 0.55);
     else if (blast.kind == Shot.Bile) Audio.Play(bloatPops[ears.random.NextInt(bloatPops.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.05));
@@ -363,10 +395,11 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
         case Sfx.Shell: PlayAt(shellLoad, cue.at, near, 0.7, ears.random.NextFloat(0.95, 1.05)); return;
         case Sfx.BossRoar: Audio.Play(screams[ears.random.NextInt(screams.count)], cue.at, 1.0, 0.42); return;
         case Sfx.BossCharge: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, 0.5); return;
-        case Sfx.BossDeath:
-            Audio.Play(deaths[ears.random.NextInt(deaths.count)], cue.at, 1.0, 0.45);
-            Audio.Play(roundEnd, 0.9);
-            return;
+        case Sfx.BossDeath: Audio.Play(deaths[ears.random.NextInt(deaths.count)], cue.at, 1.0, 0.45); return;
+        case Sfx.Retch: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 0.9, ears.random.NextFloat(1.3, 1.45)); return;
+        case Sfx.Spit: Audio.Play(throwClip, cue.at, 0.8, 0.7); return;
+        case Sfx.Splat: Audio.Play(bloatPops[ears.random.NextInt(bloatPops.count)], cue.at, 0.6, 1.7); return;
+        case Sfx.Clank: Audio.Play(stoneHits[ears.random.NextInt(stoneHits.count)], cue.at, 0.6, 1.7); return;
     }
 }
 

@@ -1,9 +1,12 @@
 // The survivors' kits, after Risk of Rain 2's: each picked before the first
-// wave and kept to the end, a gun to aim and three skills on cooldowns: a
+// night and kept to the end, a gun to aim and three skills on cooldowns: a
 // secondary on the right mouse button, a utility on Shift, a special on Q.
-// The Gunner carries a carbine, a piercing round, a slide and frag grenades;
-// the Breacher a pump shotgun, a boot, a leap that slams down and a firebomb;
-// the Engineer an SMG, mines, a blink and a turret.
+// Every survivor's Shift is the dash. The Gunner carries a carbine, a piercing
+// round and frag grenades; the Breacher a pump shotgun, a boot and a firebomb,
+// and takes less from the dead; the Engineer an SMG whose rounds set items
+// off more, mines and a turret that carries their items. (The Leap and the
+// Blink, the Breacher's and the Engineer's Shift before the dash, are kept
+// but given to nobody.)
 
 enum Role { None, Gunner, Breacher, Engineer }
 
@@ -37,7 +40,7 @@ string RoleLine(Role role)
     {
         case Role.Gunner: return "A carbine for any range. Rounds through a whole line of the dead, a dash out of trouble, grenades into the thick of them.";
         case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, shoulders through them, sets the ground alight.";
-        case Role.Engineer: return "An SMG and the machines: mines where they walk, a turret that fires on its own, a dash to get clear.";
+        case Role.Engineer: return "An SMG whose rounds set items off half again as often, mines where they walk, and a turret that fires on its own, carrying your items.";
     }
     return "";
 }
@@ -94,7 +97,7 @@ string SkillLine(Skill skill)
         case Skill.Firebomb: return "Throw a pot of burning fuel";
         case Skill.Mine: return "Lay a mine that bursts when the dead come near";
         case Skill.Blink: return "Step through the air to where you look";
-        case Skill.Turret: return "Set down a turret that fires at the dead on its own a while";
+        case Skill.Turret: return "Set down a turret that fires at the dead on its own a while, setting off your items";
     }
     return "";
 }
@@ -146,7 +149,7 @@ void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Her
         {
             if (busy) return;
             var from = AimFrom(survivor, 90, ashwick, herd, out var look);
-            Shoot(survivor, from, look, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1);
+            Shoot(ArmsOf(survivor), from, look, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1);
             Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Phase });
             survivor.act = Act.Fire;
             survivor.actTime = 0;
@@ -219,7 +222,7 @@ void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Her
             var ahead = survivor.feet + Flat(survivor.yaw) * 1.5;
             mut var at = On(ahead.x, ahead.z);
             if (Math.Distance(PushOut(ashwick, at, 0.4, 1.2), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
-            Spawn(Turret { seat = survivor.seat, at = at, yaw = survivor.yaw, life = TURRET_SECONDS, might = Might(survivor), crit = CritChance(survivor) });
+            Spawn(Turret { seat = survivor.seat, at = at, yaw = survivor.yaw, life = TURRET_SECONDS, arms = ArmsOf(survivor) });
             break;
         }
     }
@@ -285,7 +288,8 @@ void Throw(Survivor survivor, Skill skill)
 
 // ---- The Engineer's turret ----
 
-// A turret where it was set down: it turns to the nearest of the dead it can see and fires, till its time is up.
+// A turret where it was set down: it turns to the nearest of the dead it can see and fires, till its time is up, each
+// round setting off its maker's items (a little less often than his own).
 component Turret
 {
     int seat;
@@ -294,9 +298,10 @@ component Turret
     float pitch;
     float life;
     float wait;
-    float might;            // Its maker's, when it was set down
-    float crit;
+    Arms arms;              // Its maker's, when it was set down
 }
+
+const float TURRET_PROC = 0.6;
 
 [Stage(Tick.Missiles, 1)]
 system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time time)
@@ -337,8 +342,7 @@ system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time t
     turret.yaw = Math.Atan2(way.x, way.z);
     turret.pitch = Math.Asin(Math.Clamp(way.y, -1, 1));
     turret.wait = 0.09;
-    var crit = Random.NextFloat() < turret.crit;
-    best.entity.Send(Wound { damage = 11 * turret.might * (crit ? 2.0 : 1.0), seat = turret.seat, from = gun, knock = 0.6, blow = Blow.Missile, echo = true });
+    Land(turret.arms, best, 11 * turret.arms.might, false, gun, 0.6, TURRET_PROC, herd);
     var muzzle = gun + way * 0.45;
     Send(Traced { seat = turret.seat, from = muzzle, to = best.chest, kind = Trace.Turret });
     Send(Loosed { seat = turret.seat, weapon = Weapon.Smg, at = muzzle, way = way, source = Source.Turret });

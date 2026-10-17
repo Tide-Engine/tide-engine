@@ -47,6 +47,8 @@ struct Shambler
     float frost;
     float3 tint;        // Its own shade of grime
     float bloat;        // A Bloater: 1, and more as it swells to burst; 0 for the rest
+    float spit;         // A Spitter: 1, and more as its throat swells to spit; 0 for the rest
+    float mail;         // A Warden: 1; 0 for the rest
 }
 
 local singleton Horde
@@ -129,6 +131,12 @@ void ShowState(Horde horde, mut Shambler one, Zombie zombie, int atlas)
         ShowFrame(horde, one, atlas, HordeClip.Claw, zombie.swing / ATTACK_SECONDS * horde.info.clips[int(HordeClip.Claw)].seconds);
         return;
     }
+    // A Spitter's throat swelling: the claw's first half, rearing back, to the spit
+    if (zombie.windup > 0)
+    {
+        ShowFrame(horde, one, atlas, HordeClip.Claw, Math.Saturate(zombie.windup / SPIT_WINDUP) * horde.info.clips[int(HordeClip.Claw)].seconds * 0.45);
+        return;
+    }
     // Up a cliff: clawing its way, the middle of the rise's clip over and over
     if (zombie.climbing)
     {
@@ -176,11 +184,16 @@ view GatherZombie(mut Zombie zombie, mut Horde horde, Look look)
     var lit = Math.Saturate(zombie.fuse / BLOAT_FUSE);
     var throb = lit > 0 ? 0.5 + 0.5 * Math.Sin(look.time * (14 + 30 * lit)) : 0.0;
     var bloat = bloater ? 1 + lit * 0.6 + throb * 0.3 * lit : 0.0;
-    var wide = bloater ? float3(1.18 + throb * lit * 0.06, 1.04, 1.16 + throb * lit * 0.06) : float3(1);
+    mut var wide = bloater ? float3(1.18 + throb * lit * 0.06, 1.04, 1.16 + throb * lit * 0.06) : float3(1);
+    // A Spitter thin and tall, a Warden broad in its mail
+    if (zombie.kind == ZombieKind.Spitter) wide = float3(0.9, 1.07, 0.9);
+    if (zombie.kind == ZombieKind.Warden) wide = float3(1.13, 1.04, 1.12);
     mut var one = Shambler
     {
         transform = float4x4.TRS(zombie.at - float3(0, SinkOf(zombie), 0), quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), wide * scale),
         bloat = bloat,
+        spit = zombie.kind == ZombieKind.Spitter ? 1 + Math.Saturate(zombie.windup / SPIT_WINDUP) : 0.0,
+        mail = zombie.kind == ZombieKind.Warden ? 1.0 : 0.0,
         flash = zombie.flash,
         burn = zombie.burn > 0 ? 1.0 : 0.0,
         frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0,
@@ -247,9 +260,14 @@ frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance,
     // Their clothes and skin gone to a dead grey-green, so the blood on them is what has colour
     var worn = Linear(Rgb(corner.color));
     mut var albedo = Math.Lerp(float3(Math.Dot(worn, float3(0.3, 0.55, 0.15))), worn, 0.4) * float3(0.85, 1.0, 0.82) * one.tint;
-    // A Bloater's skin: a sick yellow-green under the grime, boils on it
+    // A Bloater's skin: a sick yellow-green under the grime, boils on it; a Spitter's a sallow yellow
     if (one.bloat > 0) albedo = Math.Lerp(albedo, float3(0.11, 0.15, 0.055), 0.6);
+    if (one.spit > 0) albedo = Math.Lerp(albedo, float3(0.2, 0.17, 0.05), 0.55);
     var p = corner.position;
+    // A Warden's mail, from its neck down: dark iron in rings, its bare head above
+    var mailed = one.mail > 0 && p.y < 1.42 ? 1.0 : 0.0;
+    var rings = Math.Saturate(Math.Perlin(float2(p.x * 40 + p.z * 31, p.y * 44)) * 0.5 + 0.5);
+    if (mailed > 0) albedo = float3(0.07, 0.075, 0.085) * (0.6 + 0.8 * rings);
     var grime = Math.Perlin(float2(p.x * 6 + p.z * 4, p.y * 7)) * 0.5 + 0.5;
     albedo *= 1 - 0.55 * grime * 0.6;
     var blood = Math.Perlin(float2(p.x * 3.1 + p.z * 2.3 + 17, p.y * 2.7));
@@ -259,6 +277,18 @@ frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance,
     mut var lit = Shade(albedo, this.world, normal, 1, look, lights.list, lens.moonDepth);
     // ...that glow, a little at rest and hard as it swells to burst
     if (one.bloat > 0) lit += float3(0.7, 0.95, 0.12) * boils * (0.1 + Math.Saturate(one.bloat - 1) * 1.1);
+    // A Spitter's throat, glowing through its skin, bright as it swells to spit
+    if (one.spit > 0)
+    {
+        var throat = Math.Exp(-((p.y - 1.4) / 0.12) * ((p.y - 1.4) / 0.12)) * Math.Saturate(p.z * 6 + 0.6);
+        lit += float3(0.75, 0.95, 0.15) * throat * (0.25 + Math.Saturate(one.spit - 1) * 2.2);
+    }
+    // The mail catches the moon
+    if (mailed > 0)
+    {
+        var shine = Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-Math.Normalize(look.eye - this.world), normal), look.moonWay)), 12);
+        lit += look.moonColor * shine * (0.5 + rings * 0.8);
+    }
     if (corner.uv2.x > 0.5) lit = float3(2.6, 1.3, 0.25);
     if (one.burn > 0)
     {

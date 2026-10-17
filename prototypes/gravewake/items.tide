@@ -1,10 +1,14 @@
 // Items, after Risk of Rain 2's: each stacks, and most of them fight for
-// you: rounds that arc lightning, kills that burst, a drone at your shoulder,
-// a ring of embers, shells called down on what you hit. At each level (and
-// for each Brute felled) every survivor is offered three and takes one with
-// 1, 2 or 3 (the pad's d-pad left, up and right); the run waits for everyone
-// to choose (rounds.tide's Pause). Rarer ones turn up more as the night goes on. What's
-// taken is kept through going down and bleeding out, till the game's over.
+// you: rounds that arc lightning, burst or set the dead alight, kills that
+// burst, a drone at your shoulder, a ring of embers, shells called down on
+// what you hit. Others change what the game's own moves do: the dash goes
+// further or leaves the dead burning, the dead on the ground take more, a
+// Bloater's burst is yours to use, a friend's raised sooner. At each level
+// (and for each of a night's Brutes felled) every survivor is offered three
+// and takes one with 1, 2 or 3 (the pad's d-pad left, up and right); the run
+// waits for everyone to choose (rounds.tide's Pause). Rarer ones turn up more
+// as the run goes on. What's taken is kept through going down and bleeding
+// out, till the game's over.
 //
 // And levels: every kill by anyone is experience for the whole party, and each
 // level makes every survivor's damage and health a little greater.
@@ -12,14 +16,14 @@
 enum Item
 {
     // Common
-    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot,
+    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts,
     // Uncommon
-    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, SpringBoots,
+    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, SpringBoots, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds,
     // Rare
-    Mortar, SecondWind,
+    Mortar, SecondWind, HeRounds, DragonsBreath,
 }
 
-const int ITEM_COUNT = 16;
+const int ITEM_COUNT = 24;
 
 enum Rarity { Common, Uncommon, Rare }
 
@@ -42,14 +46,22 @@ string ItemName(Item item)
         case Item.Battery: return "Field Battery";
         case Item.ExtendedMag: return "Extended Mag";
         case Item.LuckyShot: return "Lucky Shot";
+        case Item.Salts: return "Smelling Salts";
         case Item.LiveWire: return "Live Wire";
         case Item.PowderKeg: return "Powder Keg";
         case Item.GunDrone: return "Gun Drone";
         case Item.EmberRing: return "Ember Ring";
         case Item.Frostbite: return "Frostbite";
         case Item.SpringBoots: return "Spring Boots";
-        case Item.Mortar: return "Mortar Beacon";
+        case Item.EnergyDrink: return "Energy Drink";
+        case Item.Kerosene: return "Kerosene";
+        case Item.SteelToes: return "Steel Toes";
+        case Item.GasMask: return "Gas Mask";
+        case Item.ApRounds: return "AP Rounds";
+        case Item.Mortar: return "Mortar Flare";
         case Item.SecondWind: return "Second Wind";
+        case Item.HeRounds: return "HE Rounds";
+        case Item.DragonsBreath: return "Dragon's Breath";
     }
     return "";
 }
@@ -67,14 +79,22 @@ string ItemLine(Item item)
         case Item.Battery: return "Skills come back 15% sooner (+15% each)";
         case Item.ExtendedMag: return "Half again the rounds in a magazine (+50% each)";
         case Item.LuckyShot: return "15% chance a hit does double (+15% each)";
+        case Item.Salts: return "Raise a friend who's down 50% faster (+50% each)";
         case Item.LiveWire: return "15% chance a hit arcs to 3 more of the dead (+2 each)";
-        case Item.PowderKeg: return "Your kills burst into the 2 nearest, 4 m across (+1 m, more damage each)";
+        case Item.PowderKeg: return "Your kills burst, hurting the 3 nearest for half what one of the dead can take (+1, +25% each)";
         case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (faster each)";
-        case Item.EmberRing: return "Burn the dead within 3.5 m of you (+0.5 m, and more damage, each)";
+        case Item.EmberRing: return "Sets the dead within 3 m of you alight (+0.5 m each)";
         case Item.Frostbite: return "12% chance a hit freezes the dead solid for 2 s (+12% each)";
         case Item.SpringBoots: return "One more jump in the air (+1 each)";
+        case Item.EnergyDrink: return "One more dash (+1 each)";
+        case Item.Kerosene: return "The dead your dash goes through catch fire (wider each)";
+        case Item.SteelToes: return "50% more to the dead on the ground (+50% each)";
+        case Item.GasMask: return "Bloaters' bursts can't hurt you, and the ones you kill burst 30% wider (+30% each)";
+        case Item.ApRounds: return "Rounds go through one more of the dead (+1 each)";
         case Item.Mortar: return "3% chance a hit calls a shell down on it (+3% each)";
         case Item.SecondWind: return "Going down, get straight back up. Used up (one more each)";
+        case Item.HeRounds: return "Every round bursts where it lands, 2.5 m across, for 40% of its damage (+1 m, +10% each)";
+        case Item.DragonsBreath: return "25% chance a hit sets the dead alight (+25% each)";
     }
     return "";
 }
@@ -119,18 +139,44 @@ int MagOf(Survivor s, Weapon weapon)
     return weapon == Weapon.Pistol ? info.mag : int(info.mag * (1 + 0.5 * Has(s, Item.ExtendedMag)));
 }
 
-// ---- The offer after a wave ----
+// How many dashes a survivor holds: two, and an Energy Drink's each.
+int DashCharges(Survivor s)
+{
+    return DASHES + Has(s, Item.EnergyDrink);
+}
+
+// What a survivor's blows carry, for the rounds and what they set off: whose they are, what they hold, how hard they
+// land. A turret keeps its maker's as it's set down, so it sets their items off too.
+struct Arms
+{
+    int seat;
+    int[24] items;
+    float might;
+    float crit;
+}
+
+Arms ArmsOf(Survivor s)
+{
+    return Arms { seat = s.seat, items = s.items, might = Might(s), crit = CritChance(s) };
+}
+
+int Holds(Arms arms, Item item)
+{
+    return arms.items[int(item)];
+}
+
+// ---- The offer at a level ----
 
 // Three items for a survivor, `minute` minutes into the run, no two the same: mostly common, uncommon more often as the
 // run goes on, now and then a rare.
-void Offer(mut Survivor survivor, int minute)
+void Offer(mut Survivor survivor, int minute, int players)
 {
     for (var k = 0; k < 3; k++)
     {
         mut var item = Item.HollowPoints;
         for (var tries = 0; tries < 20; tries++)
         {
-            item = RollItem(minute);
+            item = RollItem(minute, players);
             mut var taken = false;
             for (var j = 0; j < k; j++)
                 if (survivor.offers[j] == item) taken = true;
@@ -142,17 +188,24 @@ void Offer(mut Survivor survivor, int minute)
 }
 
 // One item, `minute` minutes into the run: mostly common, uncommon more often as the run goes on, now and then a rare.
-Item RollItem(int minute)
+// Smelling Salts only with a friend to raise.
+Item RollItem(int minute, int players)
 {
-    var roll = Random.NextFloat();
     var rare = Math.Min(0.12, 0.02 + 0.01 * minute);
     var uncommon = Math.Min(0.45, 0.18 + 0.03 * minute);
-    var first = roll < rare ? int(Item.Mortar) : roll < rare + uncommon ? int(Item.LiveWire) : 0;
-    var last = roll < rare ? ITEM_COUNT : roll < rare + uncommon ? int(Item.Mortar) : int(Item.LiveWire);
-    return Item(first + Random.NextInt(last - first));
+    for (var tries = 0; tries < 8; tries++)
+    {
+        var roll = Random.NextFloat();
+        var first = roll < rare ? int(Item.Mortar) : roll < rare + uncommon ? int(Item.LiveWire) : 0;
+        var last = roll < rare ? ITEM_COUNT : roll < rare + uncommon ? int(Item.Mortar) : int(Item.LiveWire);
+        var pick = Random.NextInt(last - first);
+        var item = Item(first + pick);
+        if (item != Item.Salts || players > 1) return item;
+    }
+    return Item.HollowPoints;
 }
 
-// Taking an item: 1, 2 or 3 while there's an offer. Before the first wave, the same keys pick a survivor.
+// Taking an item: 1, 2 or 3 while there's an offer. Before the first night, the same keys pick a survivor.
 [Stage(Tick.Survivors, 3)]
 system Choose(Hands hands, mut Survivor survivor)
 {
@@ -181,7 +234,7 @@ void TakeRole(mut Survivor survivor, Role role)
     survivor.gun = RoleWeapon(role);
     survivor.mag = MagOf(survivor, survivor.gun);
     for (var i = 0; i < 3; i++) survivor.cooldowns[i] = 0;
-    survivor.dashes = DASHES;
+    survivor.dashes = DashCharges(survivor);
     survivor.dashWait = 0;
     survivor.act = Act.Raise;
     survivor.actTime = 0;
@@ -195,28 +248,36 @@ void Take(mut Survivor survivor, Item item)
     if (item == Item.Kevlar) survivor.health = MaxHealth(survivor);
     if (item == Item.ExtendedMag) survivor.mag = MagOf(survivor, survivor.gun);
     if (item == Item.SecondWind) survivor.selfRevives += 1;
+    if (item == Item.EnergyDrink) survivor.dashes += 1;
 }
 
 // ---- Procs: what the items do when a round lands, and when the dead die ----
 
-// A round's hit on one of the dead: a crit, perhaps; then what the items set off, `chance` times as likely as a
-// whole round's (a shotgun's pellet sets off less). What the items set off themselves sets off nothing more.
-void Land(Survivor survivor, Body z, float damage, bool head, float3 from, float knock, float chance, Herd herd)
+// A round's hit on one of the dead: a crit, perhaps; more if it's down; then what the items set off, `chance` times as
+// likely as a whole round's (a shotgun's pellet sets off less, an SMG's round more). What the items set off themselves
+// sets off nothing more.
+void Land(Arms arms, Body z, float damage, bool head, float3 from, float knock, float chance, Herd herd)
 {
-    var crit = Random.NextFloat() < CritChance(survivor);
-    var frozen = Has(survivor, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Has(survivor, Item.Frostbite) * chance;
-    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0), seat = survivor.seat, head = head, from = from, knock = knock, blow = Blow.Missile, crit = crit,
-                          element = frozen ? Element.Frost : Element.None, freeze = frozen ? 2.0 : 0 });
-    var wire = Has(survivor, Item.LiveWire);
-    if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(survivor, z, 1 + 2 * wire, damage * 0.6, herd);
-    var mortar = Has(survivor, Item.Mortar);
+    var crit = Random.NextFloat() < arms.crit;
+    var frozen = Holds(arms, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Holds(arms, Item.Frostbite) * chance;
+    var lit = Holds(arms, Item.DragonsBreath) > 0 && Random.NextFloat() < 0.25 * Holds(arms, Item.DragonsBreath) * chance;
+    var toes = z.down ? 1 + 0.5 * Holds(arms, Item.SteelToes) : 1.0;
+    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, from = from, knock = knock, blow = Blow.Missile, crit = crit,
+                          element = frozen ? Element.Frost : lit ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
+    var wire = Holds(arms, Item.LiveWire);
+    if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(arms, z, 1 + 2 * wire, damage * 0.6, herd);
+    var mortar = Holds(arms, Item.Mortar);
     if (mortar > 0 && Random.NextFloat() < 0.03 * mortar * chance)
-        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(Random.NextFloat(-0.4, 0.4), 30, Random.NextFloat(-0.4, 0.4)), velocity = float3(0, -45, 0), damage = 100 * Might(survivor),
-                        splash = 3.5, element = Element.Blast, seat = survivor.seat, life = 2, echo = true });
+    {
+        var dx = Random.NextFloat(-0.4, 0.4);
+        var dz = Random.NextFloat(-0.4, 0.4);
+        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(dx, 30, dz), velocity = float3(0, -45, 0), damage = 100 * arms.might, splash = 3.5, element = Element.Blast,
+                        seat = arms.seat, life = 2, echo = true });
+    }
 }
 
 // Live Wire: from one of the dead to the next nearest, so many times.
-void Arc(Survivor survivor, Body first, int count, float damage, Herd herd)
+void Arc(Arms arms, Body first, int count, float damage, Herd herd)
 {
     mut var from = first.chest;
     mut List<Entity> struck = [first.entity];
@@ -236,19 +297,32 @@ void Arc(Survivor survivor, Body first, int count, float damage, Herd herd)
             }
         }
         if (best.entity == default) break;
-        best.entity.Send(Wound { damage = damage, seat = survivor.seat, element = Element.Shock, from = from, knock = 1, blow = Blow.Burst, echo = true });
-        Send(Spell { seat = survivor.seat, from = from, to = best.chest });
+        best.entity.Send(Wound { damage = damage, seat = arms.seat, element = Element.Shock, from = from, knock = 1, blow = Blow.Burst, echo = true });
+        Send(Spell { seat = arms.seat, from = from, to = best.chest });
         struck.Add(best.entity);
         from = best.chest;
     }
 }
 
-const int KEG_MOST = 2;
+// HE Rounds: where a round first lands on one of the dead it bursts, wounding the others near (six at most).
+void Detonate(Arms arms, Body first, float3 at, float damage, Herd herd)
+{
+    var he = Holds(arms, Item.HeRounds);
+    var reach = 1.5 + 1.0 * he;
+    var share = 0.3 + 0.1 * he;
+    mut var caught = 0;
+    foreach (var z in Near(herd, at, reach))
+    {
+        if (!z.hittable || z.entity == first.entity || caught >= 6 || Math.Distance(z.chest, at) > reach) continue;
+        caught += 1;
+        z.entity.Send(Wound { damage = damage * share, seat = arms.seat, element = Element.Blast, from = at, knock = 1.5, blow = Blow.Burst, echo = true });
+    }
+    Send(Blast { at = at, reach = reach, element = Element.Blast, kind = Shot.Pop });
+}
 
 // A kill: a Powder Keg bursts it, Leech Rounds heal.
-event(Earned earned) Earn(mut Survivor survivor, Herd herd)
+event(Earned earned) Earn(mut Survivor survivor, Herd herd, Match match)
 {
-    survivor.points += earned.points;
     if (!earned.kill) return;
     survivor.kills += 1;
     if (earned.head) survivor.headshots += 1;
@@ -263,14 +337,15 @@ event(Earned earned) Earn(mut Survivor survivor, Herd herd)
     if (keg > 0 && !earned.echo)
     {
         // (a few of the dead at most: in a horde, every kill bursting through all round it had cleared the clearing)
-        var reach = 1.5 + 0.5 * keg;
+        var reach = 2 + 0.5 * keg;
         mut var caught = 0;
         foreach (var z in Near(herd, earned.at, reach))
         {
-            if (!z.hittable || Math.Distance(z.at, earned.at) > reach || caught >= KEG_MOST) continue;
+            if (!z.hittable || Math.Distance(z.at, earned.at) > reach || caught >= 2 + keg) continue;
             caught += 1;
             // (no throw: in a horde, every kill shoving the dead back had kept them off for good)
-            z.entity.Send(Wound { damage = (15 + 8 * keg) * Might(survivor), seat = survivor.seat, element = Element.None, from = earned.at, blow = Blow.Burst, echo = true });
+            z.entity.Send(Wound { damage = ZombieHealth(match.danger) * (0.25 + 0.25 * keg), seat = survivor.seat, element = Element.None, from = earned.at, blow = Blow.Burst,
+                                  echo = true });
         }
         Send(Blast { at = earned.at + float3(0, 0.8, 0), reach = reach, element = Element.Fire, kind = Shot.Keg });
     }
@@ -305,27 +380,35 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
             }
             if (best.entity != default && LongRay(ashwick, drone, best.chest, out _) > 1)
             {
-                Land(survivor, best, 14 * Might(survivor), false, drone, 0.5, 0.5, herd);
+                Land(ArmsOf(survivor), best, 14 * Might(survivor), false, drone, 0.5, 0.5, herd);
                 Send(Traced { seat = survivor.seat, from = drone, to = best.chest, kind = Trace.Drone });
                 Send(Loosed { seat = survivor.seat, weapon = Weapon.Smg, at = drone, way = Math.Normalize(best.chest - drone), source = Source.Drone });
             }
         }
     }
+    // The ember ring: every second, the dead near enough catch fire (the fire's own damage, zombies.tide, grows with the
+    // danger)
     var embers = Has(survivor, Item.EmberRing);
     if (embers > 0)
     {
         survivor.emberWait -= time.dt;
         if (survivor.emberWait <= 0)
         {
-            survivor.emberWait = 0.5;
-            var reach = 3 + 0.5 * embers;
+            survivor.emberWait = 1;
+            var reach = EmberReach(embers);
             foreach (var z in Near(herd, survivor.feet, reach))
             {
                 if (!z.hittable || Math.Distance(z.at, survivor.feet) > reach) continue;
-                z.entity.Send(Wound { damage = 7 * embers * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = -1, blow = Blow.Burning, echo = true });
+                z.entity.Send(Wound { damage = 5 * embers * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = -1, blow = Blow.Burning, element = Element.Fire,
+                                      echo = true });
             }
         }
     }
+}
+
+float EmberReach(int embers)
+{
+    return 2.5 + 0.5 * embers;
 }
 
 // Where a survivor's drone hovers: over their left shoulder, up and a little back (the over-the-shoulder camera is on
@@ -337,13 +420,17 @@ float3 DroneAt(Survivor survivor)
 
 // ---- Levels ----
 
-// The experience a level takes, from the one before: a little more each.
-// The experience a level takes: as much as two did (12 then 22% more each), so a pick comes half as often (the owner:
-// "upgrades ... are too frequent"); and each is worth two of the old in damage and health (Might, MaxHealth).
-float LevelSpan(int level)
+// The experience a level takes: LEVEL_FIRST, LEVEL_GROWTH times more each; and as many times more as the party brings
+// of the dead (Crowd), so each survivor's picks come about as often in a party as alone. (An orb's worth grows with the
+// dead's health, orbs.tide, so the levels keep coming deep into the run; the owner found them too frequent once,
+// 2026-10-17, so the first come about every half a minute.)
+float LevelSpan(int level, float crowd)
 {
-    return 12 * 2.22 * Math.Pow(1.22 * 1.22, level - 1);
+    return LEVEL_FIRST * Math.Pow(LEVEL_GROWTH, level - 1) * crowd;
 }
+
+const float LEVEL_FIRST = 40;
+const float LEVEL_GROWTH = 1.28;
 
 // Every kill is the party's: each survivor's level climbs together (Match.xp), each level a pick of three items; the
 // next is offered as soon as the last is taken.
@@ -362,7 +449,7 @@ system Experience(mut Survivor survivor, Match match)
     if (!survivor.choosing && survivor.pending > 0)
     {
         survivor.pending -= 1;
-        Offer(survivor, 1 + int(match.clock / 60));
+        Offer(survivor, 1 + int(match.clock / 60), match.players);
     }
 }
 

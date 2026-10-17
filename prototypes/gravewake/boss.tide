@@ -1,12 +1,15 @@
-// The Brutes: every few minutes one of the dead claws up three times the
-// size of the rest, with a bar of health across the top of the screen. It
-// walks at the nearest survivor and, every couple of seconds, does one of
-// three things, each shown before it lands: a slam (it raises its arms; a red
-// ring on the ground is where it comes down, throwing back everyone and
+// The Brutes: one of the dead three times the size of the rest, with a bar of
+// health across the top of the screen. Each night's rise as its beacon is
+// lit (nights.tide: one, two from the fourth night, three from the seventh),
+// and the night isn't kept till they're down; felled, each gives every
+// survivor an item to pick. A night left unlit grows impatient: a Brute
+// every BOSS_EVERY seconds of it, which brings no prize. A Brute walks at
+// the nearest survivor and, every couple of seconds, does one of three
+// things, each shown before it lands: a slam (it raises its arms; a red ring
+// on the ground is where it comes down, throwing back everyone and
 // everything in it), a charge (it lowers its head; a line on the ground is
 // where it'll run, through anyone on it) or, every third time, a roar that
-// raises the dead all round it. Felled, it gives every survivor an item to
-// pick, and the next comes tougher.
+// raises the dead all round it. Each night's come harder.
 
 enum BossMove { Coming, Walk, SlamWindup, ChargeWindup, Charge, Roar, Dying }
 
@@ -24,6 +27,8 @@ component Boss
     int struck;                 // A bit per seat: who this charge has hit
     float stride;               // Metres walked: the walk's clock
     int number;                 // Which Brute of the run it is, from 1
+    int night;                  // The night it rose in: its blows and roars are that night's
+    bool vigil;                 // Risen at the beacon's lighting: the night's own, with a prize
     int slot = -1;              // Where it is in the Herd this tick
     local float flash;
 }
@@ -41,30 +46,38 @@ const float CHARGE_SECONDS = 1.3;
 const float CHARGE_DAMAGE = 35;
 const float ROAR_SECONDS = 1.6;
 
-// A Brute's health: a great deal, more with the danger and with each that's come before.
-float BossHealth(float danger, int number)
+// A Brute's health: a great deal, more with the danger, and with the party (Crowd).
+float BossHealth(float danger, float crowd)
 {
-    return 2500 * danger * (1 + 0.5 * (number - 1));
+    return 2000 * danger * crowd;
 }
 
-// When it's time, a Brute claws up 22 to 34 m from one of the survivors.
+// A Brute clawing up `near` to `far` metres from a place: the beacon's (one of the night's own, `vigil`), or a
+// survivor's.
+void RaiseBrute(mut Match match, Ashwick ashwick, float3 focus, bool vigil, float near, float far)
+{
+    var at = RisingPlace(ashwick, focus, near, far);
+    if (at.y < -100) return;
+    match.bosses += 1;
+    var health = BossHealth(match.danger, match.crowd);
+    Spawn(Boss { at = at, yaw = YawTo(at, focus), health = health, healthMost = health, move = BossMove.Coming, number = match.bosses, night = match.night, vigil = vigil,
+                 cooldown = 1.5 });
+    Send(BossCame { at = at, number = match.bosses, vigil = vigil });
+}
+
+// A night not yet lit grows impatient: a Brute every BOSS_EVERY seconds of it, 22 to 34 m from one of the survivors.
 [Stage(Tick.Rounds, 3)]
 system BossCome(mut Match match, Ashwick ashwick, query (Survivor survivor) survivors)
 {
     if (match.paused) return;
-    if (match.phase != Phase.Fighting || match.clock < match.bossNext) return;
+    if (match.phase != Phase.Fighting || match.vigil || match.nightClock < match.bossNext) return;
     mut List<float3> near = [];
     foreach (var row in survivors)
         if (row.survivor.ready && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
     if (near.count == 0) return;
     match.bossNext += BOSS_EVERY;
-    match.bosses += 1;
-    var focus = near[Random.NextInt(near.count)];
-    var at = RisingPlace(ashwick, focus, 22, 34);
-    if (at.y < -100) return;
-    var health = BossHealth(match.danger, match.bosses);
-    Spawn(Boss { at = at, yaw = YawTo(at, focus), health = health, healthMost = health, move = BossMove.Coming, number = match.bosses, cooldown = 1.5 });
-    Send(BossCame { at = at, number = match.bosses });
+    var pick = Random.NextInt(near.count);
+    RaiseBrute(match, ashwick, near[pick], false, 22, 34);
 }
 
 [Stage(Tick.Zombies)]
@@ -75,6 +88,13 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
     boss.timer += dt;
     boss.cooldown = Math.Max(0, boss.cooldown - dt);
     if (match.restarting) return;
+    // Dawn: it burns away with the rest
+    if (match.phase == Phase.Dawn && boss.move != BossMove.Dying)
+    {
+        BossTo(boss, BossMove.Dying);
+        return;
+    }
+    var later = boss.night - 1;     // Nights past the first: each one's Brutes hit harder and come faster
     switch (boss.move)
     {
         case BossMove.Coming:
@@ -131,7 +151,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
             mut var wish = toTarget;
             if (nearest > 18 || !ClearPath(ashwick, boss.at, targetAt)) wish = Downhill(ashwick, boss.at);
             Turn(boss, wish, 2.5 * dt);
-            Step(boss, ashwick, Flat(boss.yaw) * BOSS_SPEED * (1 + 0.08 * (boss.number - 1)) * dt, dt);
+            Step(boss, ashwick, Flat(boss.yaw) * BOSS_SPEED * (1 + 0.08 * later) * dt, dt);
             return;
         }
         case BossMove.SlamWindup:
@@ -144,7 +164,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
                 if (!s.ready || s.life != Life.Standing) continue;
                 var off = Flatten(s.feet - boss.aim);
                 if (Math.Length((s.feet - boss.aim).xz) > SLAM_RADIUS) continue;
-                row.entity.Send(Hurt { damage = SLAM_DAMAGE * (1 + 0.15 * (boss.number - 1)), from = boss.aim });
+                row.entity.Send(Hurt { damage = SLAM_DAMAGE * (1 + 0.15 * later), from = boss.aim });
                 row.entity.Send(Shoved { velocity = off * 11 + float3(0, 6, 0) });
             }
             foreach (var z in Near(herd, boss.aim, SLAM_RADIUS))
@@ -177,7 +197,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
                 if (Math.Length((s.feet - boss.at).xz) > 1.9) continue;
                 boss.struck |= 1 << s.seat;
                 var side = Flatten(s.feet - boss.at);
-                row.entity.Send(Hurt { damage = CHARGE_DAMAGE * (1 + 0.15 * (boss.number - 1)), from = boss.at });
+                row.entity.Send(Hurt { damage = CHARGE_DAMAGE * (1 + 0.15 * later), from = boss.at });
                 row.entity.Send(Shoved { velocity = boss.aim * 12 + side * 6 + float3(0, 5, 0) });
             }
             foreach (var z in Near(herd, boss.at, 2.2))
@@ -197,7 +217,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
             // Half a second in, the dead claw up all round it
             if (boss.timer - dt < 0.6 && boss.timer >= 0.6)
             {
-                var count = 14 + 6 * boss.number;
+                var count = 14 + 6 * boss.night;
                 for (var k = 0; k < count; k++)
                 {
                     var at = RisingPlace(ashwick, boss.at, 3, 11);
@@ -282,8 +302,8 @@ float BossSink(Boss boss)
     return 0;
 }
 
-// A blow to a Brute: no knocking it over, no freezing it; Death's Touch takes a twentieth. Felled, every survivor gets
-// an item to pick, and the one who felled it a thousand points.
+// A blow to a Brute: no knocking it over, no freezing it. Felled, a great orb; one of the night's own gives every
+// survivor an item to pick.
 event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
 {
     if (boss.move == BossMove.Dying || wound.seat < 0) return;
@@ -294,15 +314,15 @@ event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
     {
         BossTo(boss, BossMove.Dying);
         match.killed += 1;
-        DropOrb(match, boss.at, 25);
-        for (var seat = 0; seat < 4; seat++)
-            if (party.taken[seat]) party.survivors[seat].Send(BossFelled { by = wound.seat });
+        DropOrb(match, boss.at, 50 * OrbWorth(match.danger));
+        if (boss.vigil)
+            for (var seat = 0; seat < 4; seat++)
+                if (party.taken[seat]) party.survivors[seat].Send(BossFelled { by = wound.seat });
         Send(Cue { sound = Sfx.BossDeath, at = boss.at + float3(0, 3, 0) });
     }
-    if (wound.seat < 4 && party.taken[wound.seat]) party.survivors[wound.seat].Send(Earned { points = killed ? 1000 : 5, kill = false, at = boss.at, echo = true });
     var turn = quaternion.AxisAngle(float3(0, 1, 0), boss.yaw);
     this.Send(Struck { at = boss.at + Math.Rotate(turn, float3(0, 1.15, 0.12) * BOSS_SIZE), from = wound.from, head = wound.head, killed = killed, element = wound.element,
-                       seat = wound.seat, points = 0, blow = wound.blow, crit = wound.crit });
+                       seat = wound.seat, blow = wound.blow, crit = wound.crit });
 }
 
 // A blow's flash, on this machine.
@@ -329,6 +349,7 @@ event BossCame
 {
     float3 at;
     int number;
+    bool vigil;
 }
 
 event BossFelled

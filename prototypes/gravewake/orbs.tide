@@ -3,7 +3,9 @@
 // it, when it flies to them. Left alone it goes after ORB_SECONDS. So the
 // party has to go out among the dead for its levels, not hold one spot (the
 // owner: "lets make XP drop as orbs so you need to get close to pick them up
-// (not THAT close), that should avoid camping too much").
+// (not THAT close), that should avoid camping too much"). An orb is worth
+// what the dead it came from could take (OrbWorth), so the levels keep coming
+// as the dead get tougher. At dawn every orb lying flies in.
 
 const float ORB_REACH = 5;           // How near a survivor draws an orb in
 const float ORB_SECONDS = 40;        // How long one lies before it's gone
@@ -26,13 +28,19 @@ event OrbTaken
     float value;
 }
 
+// What one of the ordinary dead's orb is worth, at a danger: as its health grows (half a point at the start).
+float OrbWorth(float danger)
+{
+    return 0.5 * Math.Pow(danger, 1.1);
+}
+
 // Experience to the party, a level each time it's enough.
 void GainXp(mut Match match, float xp)
 {
     match.xp += xp;
-    while (match.xp >= LevelSpan(match.level))
+    while (match.xp >= LevelSpan(match.level, match.crowd))
     {
-        match.xp -= LevelSpan(match.level);
+        match.xp -= LevelSpan(match.level, match.crowd);
         match.level += 1;
         Send(Levelled { level = match.level });
     }
@@ -77,7 +85,8 @@ system OrbPull(mut Orb orb, mut Match match, Time time, query (Survivor survivor
     if (!found)
     {
         orb.seat = -1;
-        mut var nearest = ORB_REACH;
+        // At dawn, from anywhere
+        mut var nearest = match.phase == Phase.Dawn ? 1000.0 : ORB_REACH;
         foreach (var row in survivors)
         {
             var s = row.survivor;
@@ -115,7 +124,7 @@ view ShowOrb(Orb orb, mut Fx fx, Look look)
     if (Math.Distance(orb.at, look.eye) > 70) return;
     var left = ORB_SECONDS - orb.age;
     if (orb.seat < 0 && left < 6 && Math.Frac(left * (left < 3 ? 4 : 2)) < 0.35) return;
-    var size = 0.045 + Math.Min(0.12, orb.value * 0.012);
+    var size = 0.045 + Math.Min(0.12, Math.Log(1 + orb.value) * 0.03);
     var bob = orb.seat < 0 ? Math.Sin(look.time * 3 + orb.at.x * 2 + orb.at.z) * 0.08 : 0.0;
     var at = orb.at + float3(0, bob, 0);
     fx.orbSprites.Add(Sprite { at = at, to = at, size = size * 2.2, color = float4(0.25, 0.8, 0.6, 0.45) });
