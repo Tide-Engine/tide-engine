@@ -61,19 +61,19 @@ string ItemLine(Item item)
     {
         case Item.HollowPoints: return "15% more damage (+15% each)";
         case Item.HairTrigger: return "Shoot and reload 15% faster (+15% each)";
-        case Item.Kevlar: return "30 more health (+30 each)";
+        case Item.Kevlar: return "45 more health and 6% less from blows (+45, +6% each)";
         case Item.Sneakers: return "Run 12% faster (+12% each)";
-        case Item.Leech: return "Each kill heals 3 (+3 each)";
+        case Item.Leech: return "Each kill heals 3 (+3 each), at most 8% of your health a second (+8% each)";
         case Item.Battery: return "Skills come back 15% sooner (+15% each)";
         case Item.ExtendedMag: return "Half again the rounds in a magazine (+50% each)";
-        case Item.LuckyShot: return "10% chance a hit does double (+10% each)";
+        case Item.LuckyShot: return "15% chance a hit does double (+15% each)";
         case Item.LiveWire: return "15% chance a hit arcs to 3 more of the dead (+2 each)";
-        case Item.PowderKeg: return "Your kills burst, 3 m across (+1.5 m each)";
+        case Item.PowderKeg: return "Your kills burst into the 2 nearest, 4 m across (+1 m, more damage each)";
         case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (faster each)";
         case Item.EmberRing: return "Burn the dead within 3.5 m of you (+0.5 m, and more damage, each)";
-        case Item.Frostbite: return "8% chance a hit freezes the dead solid (+8% each)";
+        case Item.Frostbite: return "12% chance a hit freezes the dead solid for 2 s (+12% each)";
         case Item.SpringBoots: return "One more jump in the air (+1 each)";
-        case Item.Mortar: return "10% chance a hit calls a shell down on it (+10% each)";
+        case Item.Mortar: return "3% chance a hit calls a shell down on it (+3% each)";
         case Item.SecondWind: return "Going down, get straight back up. Used up (one more each)";
     }
     return "";
@@ -89,7 +89,7 @@ int Has(Survivor s, Item item)
 // How hard a survivor's shots and skills land: their level, and the hollow points.
 float Might(Survivor s)
 {
-    return (1 + 0.12 * (s.level - 1)) * (1 + 0.15 * Has(s, Item.HollowPoints));
+    return (1 + 0.24 * (s.level - 1)) * (1 + 0.15 * Has(s, Item.HollowPoints));
 }
 
 // How much quicker their hands are: shots and loading.
@@ -100,12 +100,12 @@ float Haste(Survivor s)
 
 float CritChance(Survivor s)
 {
-    return Math.Min(1, 0.1 * Has(s, Item.LuckyShot));
+    return Math.Min(1, 0.15 * Has(s, Item.LuckyShot));
 }
 
 float MaxHealth(Survivor s)
 {
-    return 100 + 15 * (s.level - 1) + 30 * Has(s, Item.Kevlar);
+    return 100 + 30 * (s.level - 1) + 45 * Has(s, Item.Kevlar);
 }
 
 float Fleetness(Survivor s)
@@ -130,12 +130,7 @@ void Offer(mut Survivor survivor, int minute)
         mut var item = Item.HollowPoints;
         for (var tries = 0; tries < 20; tries++)
         {
-            var roll = Random.NextFloat();
-            var rare = Math.Min(0.12, 0.02 + 0.01 * minute);
-            var uncommon = Math.Min(0.45, 0.18 + 0.03 * minute);
-            var first = roll < rare ? int(Item.Mortar) : roll < rare + uncommon ? int(Item.LiveWire) : 0;
-            var last = roll < rare ? ITEM_COUNT : roll < rare + uncommon ? int(Item.Mortar) : int(Item.LiveWire);
-            item = Item(first + Random.NextInt(last - first));
+            item = RollItem(minute);
             mut var taken = false;
             for (var j = 0; j < k; j++)
                 if (survivor.offers[j] == item) taken = true;
@@ -144,6 +139,17 @@ void Offer(mut Survivor survivor, int minute)
         survivor.offers[k] = item;
     }
     survivor.choosing = true;
+}
+
+// One item, `minute` minutes into the run: mostly common, uncommon more often as the run goes on, now and then a rare.
+Item RollItem(int minute)
+{
+    var roll = Random.NextFloat();
+    var rare = Math.Min(0.12, 0.02 + 0.01 * minute);
+    var uncommon = Math.Min(0.45, 0.18 + 0.03 * minute);
+    var first = roll < rare ? int(Item.Mortar) : roll < rare + uncommon ? int(Item.LiveWire) : 0;
+    var last = roll < rare ? ITEM_COUNT : roll < rare + uncommon ? int(Item.Mortar) : int(Item.LiveWire);
+    return Item(first + Random.NextInt(last - first));
 }
 
 // Taking an item: 1, 2 or 3 while there's an offer. Before the first wave, the same keys pick a survivor.
@@ -175,6 +181,8 @@ void TakeRole(mut Survivor survivor, Role role)
     survivor.gun = RoleWeapon(role);
     survivor.mag = MagOf(survivor, survivor.gun);
     for (var i = 0; i < 3; i++) survivor.cooldowns[i] = 0;
+    survivor.dashes = DASHES;
+    survivor.dashWait = 0;
     survivor.act = Act.Raise;
     survivor.actTime = 0;
     survivor.actLength = 0.5;
@@ -196,14 +204,14 @@ void Take(mut Survivor survivor, Item item)
 void Land(Survivor survivor, Body z, float damage, bool head, float3 from, float knock, float chance, Herd herd)
 {
     var crit = Random.NextFloat() < CritChance(survivor);
-    var frozen = Has(survivor, Item.Frostbite) > 0 && Random.NextFloat() < 0.08 * Has(survivor, Item.Frostbite) * chance;
+    var frozen = Has(survivor, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Has(survivor, Item.Frostbite) * chance;
     z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0), seat = survivor.seat, head = head, from = from, knock = knock, blow = Blow.Missile, crit = crit,
-                          element = frozen ? Element.Frost : Element.None, freeze = frozen ? 1.5 : 0 });
+                          element = frozen ? Element.Frost : Element.None, freeze = frozen ? 2.0 : 0 });
     var wire = Has(survivor, Item.LiveWire);
     if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(survivor, z, 1 + 2 * wire, damage * 0.6, herd);
     var mortar = Has(survivor, Item.Mortar);
-    if (mortar > 0 && Random.NextFloat() < 0.1 * mortar * chance)
-        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(Random.NextFloat(-0.4, 0.4), 30, Random.NextFloat(-0.4, 0.4)), velocity = float3(0, -45, 0), damage = 160 * Might(survivor),
+    if (mortar > 0 && Random.NextFloat() < 0.03 * mortar * chance)
+        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(Random.NextFloat(-0.4, 0.4), 30, Random.NextFloat(-0.4, 0.4)), velocity = float3(0, -45, 0), damage = 100 * Might(survivor),
                         splash = 3.5, element = Element.Blast, seat = survivor.seat, life = 2, echo = true });
 }
 
@@ -235,6 +243,8 @@ void Arc(Survivor survivor, Body first, int count, float damage, Herd herd)
     }
 }
 
+const int KEG_MOST = 2;
+
 // A kill: a Powder Keg bursts it, Leech Rounds heal.
 event(Earned earned) Earn(mut Survivor survivor, Herd herd)
 {
@@ -242,15 +252,25 @@ event(Earned earned) Earn(mut Survivor survivor, Herd herd)
     if (!earned.kill) return;
     survivor.kills += 1;
     if (earned.head) survivor.headshots += 1;
-    if (survivor.life == Life.Standing) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 3 * Has(survivor, Item.Leech));
+    var leech = Has(survivor, Item.Leech);
+    if (survivor.life == Life.Standing && leech > 0)
+    {
+        var healed = Math.Min(3.0 * leech, survivor.leech);
+        survivor.leech -= healed;
+        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + healed);
+    }
     var keg = Has(survivor, Item.PowderKeg);
     if (keg > 0 && !earned.echo)
     {
-        var reach = 1.5 + 1.5 * keg;
+        // (a few of the dead at most: in a horde, every kill bursting through all round it had cleared the clearing)
+        var reach = 1.5 + 0.5 * keg;
+        mut var caught = 0;
         foreach (var z in Near(herd, earned.at, reach))
         {
-            if (!z.hittable || Math.Distance(z.at, earned.at) > reach) continue;
-            z.entity.Send(Wound { damage = 40 * Might(survivor), seat = survivor.seat, element = Element.Fire, from = earned.at, knock = 3, blow = Blow.Burst, echo = true });
+            if (!z.hittable || Math.Distance(z.at, earned.at) > reach || caught >= KEG_MOST) continue;
+            caught += 1;
+            // (no throw: in a horde, every kill shoving the dead back had kept them off for good)
+            z.entity.Send(Wound { damage = (15 + 8 * keg) * Might(survivor), seat = survivor.seat, element = Element.None, from = earned.at, blow = Blow.Burst, echo = true });
         }
         Send(Blast { at = earned.at + float3(0, 0.8, 0), reach = reach, element = Element.Fire, kind = Shot.Keg });
     }
@@ -308,18 +328,21 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
     }
 }
 
-// Where a survivor's drone hovers: over their right shoulder, bobbing.
+// Where a survivor's drone hovers: over their left shoulder, up and a little back (the over-the-shoulder camera is on
+// the right: over that shoulder it sat by the crosshair).
 float3 DroneAt(Survivor survivor)
 {
-    return survivor.feet + float3(0, 2.1, 0) + Flat(survivor.yaw + Math.PI * 0.5) * 0.55 - Flat(survivor.yaw) * 0.2;
+    return survivor.feet + float3(0, 2.35, 0) - Flat(survivor.yaw + Math.PI * 0.5) * 0.75 - Flat(survivor.yaw) * 0.45;
 }
 
 // ---- Levels ----
 
 // The experience a level takes, from the one before: a little more each.
+// The experience a level takes: as much as two did (12 then 22% more each), so a pick comes half as often (the owner:
+// "upgrades ... are too frequent"); and each is worth two of the old in damage and health (Might, MaxHealth).
 float LevelSpan(int level)
 {
-    return 12 * Math.Pow(1.22, level - 1);
+    return 12 * 2.22 * Math.Pow(1.22 * 1.22, level - 1);
 }
 
 // Every kill is the party's: each survivor's level climbs together (Match.xp), each level a pick of three items; the
@@ -334,7 +357,7 @@ system Experience(mut Survivor survivor, Match match)
         survivor.level = match.level;
         survivor.pending += gained;
         // A level's health comes with it
-        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 15 * gained);
+        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 30 * gained);
     }
     if (!survivor.choosing && survivor.pending > 0)
     {

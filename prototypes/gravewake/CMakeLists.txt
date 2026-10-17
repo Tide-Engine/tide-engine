@@ -9,6 +9,8 @@ add_test(NAME gravewake_test COMMAND gravewake_test)
 set_tests_properties(gravewake_test PROPERTIES TIMEOUT 300 LABELS "private-prototype")
 # A tick's cost with a horde, to run from a release build: not a test.
 tide_add_game(gravewake_perf SOURCES ${GRAVEWAKE_SOURCES} ${GRAVEWAKE_ROOMS} HOST test/perf.c)
+# Whole runs played by bots, for the survivors' balance and the items' pace: not a test.
+tide_add_game(gravewake_balance SOURCES ${GRAVEWAKE_SOURCES} ${GRAVEWAKE_ROOMS} HOST test/balance.c)
 
 if(NOT TARGET tide_platform)
     return()

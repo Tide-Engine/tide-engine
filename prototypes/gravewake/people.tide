@@ -7,7 +7,38 @@
 // The bones a body is asked for by name: the hand that holds a survivor's weapon, the head that comes off.
 struct Rig
 {
+    [Name("Root")] Bone root;
+    [Name("Abdomen")] Bone abdomen;
+    [Name("Wrist.L")] Bone wristL;
     [Name("Wrist.R")] Bone wristR;
+    [Name("Middle2.L")] Bone fingersL;
+    [Name("Middle2.R")] Bone fingersR;
+    [Name("Thumb2.L")] Bone thumbL;
+    [Name("Thumb2.R")] Bone thumbR;
+    [Name("Index2.R")] Bone index2R;
+    [Name("Index3.R")] Bone index3R;
+    [Name("Index4.R")] Bone index4R;
+    [Name("Middle2.R")] Bone middle2R;
+    [Name("Middle3.R")] Bone middle3R;
+    [Name("Middle4.R")] Bone middle4R;
+    [Name("Ring2.R")] Bone ring2R;
+    [Name("Ring3.R")] Bone ring3R;
+    [Name("Ring4.R")] Bone ring4R;
+    [Name("Pinky2.R")] Bone pinky2R;
+    [Name("Pinky3.R")] Bone pinky3R;
+    [Name("Pinky4.R")] Bone pinky4R;
+    [Name("Index2.L")] Bone index2L;
+    [Name("Index3.L")] Bone index3L;
+    [Name("Index4.L")] Bone index4L;
+    [Name("Middle2.L")] Bone middle2L;
+    [Name("Middle3.L")] Bone middle3L;
+    [Name("Middle4.L")] Bone middle4L;
+    [Name("Ring2.L")] Bone ring2L;
+    [Name("Ring3.L")] Bone ring3L;
+    [Name("Ring4.L")] Bone ring4L;
+    [Name("Pinky2.L")] Bone pinky2L;
+    [Name("Pinky3.L")] Bone pinky3L;
+    [Name("Pinky4.L")] Bone pinky4L;
     [Name("Head")] Bone head;
     [Name("Neck")] Bone neck;
     [Name("Chest")] Bone chest;
@@ -36,7 +67,8 @@ asset AnimationCatalog womenMoves = "art/people/moves_women.glb";
 enum Move
 {
     Idle, Walk, Run, IdleSword, SwordSlash, IdleGun, GunShoot, PunchRight, PunchLeft, HitRecieve, HitRecieve2, Death, Interact,
-    ZIdle, ZWalk, ZScratch, ZKnockback, ZClimb, Sprint, DeathB, HitHead, HitChest, CrouchIdle, CrouchWalk, ZGetUp
+    ZIdle, ZWalk, ZScratch, ZKnockback, ZClimb, Sprint, DeathB, HitHead, HitChest, CrouchIdle, CrouchWalk, ZGetUp,
+    Jog, PistolIdle, JumpLoop, JumpLand
 }
 
 // How each body draws: the dead's grey skin glows at the eyes, burns, frosts, flashes when struck.
@@ -97,6 +129,10 @@ Animation MoveOf(bool woman, Move move)
             case Move.HitHead: return womenMoves.hit_Head;
             case Move.HitChest: return womenMoves.hit_Chest;
             case Move.CrouchIdle: return womenMoves.crouch_Idle;
+            case Move.Jog: return womenMoves.jog;
+            case Move.PistolIdle: return womenMoves.pistol_Idle;
+            case Move.JumpLoop: return womenMoves.jump_Loop;
+            case Move.JumpLand: return womenMoves.jump_Land;
         }
         return womenMoves.crouch_Walk;
     }
@@ -126,6 +162,10 @@ Animation MoveOf(bool woman, Move move)
         case Move.HitHead: return menMoves.hit_Head;
         case Move.HitChest: return menMoves.hit_Chest;
         case Move.CrouchIdle: return menMoves.crouch_Idle;
+        case Move.Jog: return menMoves.jog;
+        case Move.PistolIdle: return menMoves.pistol_Idle;
+        case Move.JumpLoop: return menMoves.jump_Loop;
+        case Move.JumpLand: return menMoves.jump_Land;
     }
     return menMoves.crouch_Walk;
 }
@@ -162,36 +202,285 @@ frag Flesh(Corner corner, out Color color, Instance instance, Skin skin, Look lo
     color = Color(Hazed(lit, this.world, look) + float3(0.2, 0.3, 0.22) * edge * skin.ghost * through, 1);
 }
 
-// The other survivors (and this machine's own, for its shadow).
+// The other survivors (and this machine's own, seen from behind, and its shadow). The legs go the way the survivor
+// moves: a gun idle standing, a jog (a sprint at a run) turned toward the way they go, up to LEG_TURN either side and
+// played backwards going back, the jump in the air and its landing after. Over them the body turns back to the aim and
+// bends to its pitch, the gun is laid along the line to what it's aimed at, and the arms reach it (Reach): the right
+// hand on the grip, the left along the barrel (cupping the pistol's grip).
 [Stage(Layers.Gather)]
-view PoseSurvivor(mut Survivor survivor, Look look)
+view PoseSurvivor(mut Survivor survivor, Look look, Ashwick ashwick, Herd herd)
 {
     var woman = WomanHero(survivor.seat);
     var body = HeroBody(survivor.seat);
+    var bones = body.skeleton.bones;
+    var dt = Math.Min(Frame.dt, 0.05);
     mut var pose = body.defaultPose;
-    var speed = Math.Length(survivor.velocity.xz);
-    survivor.stride += speed * Math.Min(Frame.dt, 0.05);
+    var flat = float3(survivor.velocity.x, 0, survivor.velocity.z);
+    var speed = Math.Length(flat);
+    survivor.stride += speed * dt;
+    if (survivor.grounded)
+    {
+        if (survivor.air > 0.15) survivor.touched = 0;
+        survivor.air = 0;
+        survivor.touched += dt;
+    }
+    else
+    {
+        survivor.air += dt;
+    }
+    // Which way they're going, against the way they face: the legs turn toward it, or away from it going back
+    var ahead = Flat(survivor.yaw);
+    var side = Flat(survivor.yaw + Math.PI * 0.5);
+    var going = Math.Atan2(Math.Dot(flat, side), Math.Dot(flat, ahead));
+    var back = Math.Abs(going) > Math.PI * 0.6;
+    // The feet, in the world: going somewhere, they turn toward the way they go (up to LEG_TURN off the aim, going back
+    // the other way), quickly. Standing, they stay where they were while the aim turns over them, till the twist is
+    // past STAND_TWIST: then they step round to under the aim, a few short steps.
+    if (!survivor.footed || survivor.placed)
+    {
+        survivor.feetYaw = survivor.yaw;
+        survivor.footed = true;
+    }
+    var moving = speed > 0.6 && survivor.life == Life.Standing;
+    if (moving)
+    {
+        var want = survivor.yaw + Math.Clamp(back ? TurnBetween(0, going - Math.PI) : going, -LEG_TURN, LEG_TURN);
+        survivor.feetYaw += TurnBetween(survivor.feetYaw, want) * Math.Min(1, dt * 10);
+        survivor.turning = 0;
+    }
+    else
+    {
+        var twist = TurnBetween(survivor.feetYaw, survivor.yaw);
+        if (Math.Abs(twist) > STAND_TWIST) survivor.turning = 0.35;
+        if (survivor.turning > 0)
+        {
+            survivor.turning -= dt;
+            survivor.feetYaw += Math.Clamp(twist, -STEP_TURN * dt, STEP_TURN * dt);
+            survivor.stepClock += dt;
+            if (Math.Abs(twist) < 0.05) survivor.turning = 0;
+        }
+    }
+    survivor.legYaw = Math.Clamp(TurnBetween(survivor.yaw, survivor.feetYaw), -LEG_TURN - 0.4, LEG_TURN + 0.4);
+    var stepping = !moving && survivor.turning > 0;
+    var armed = survivor.role != Role.None;
     if (survivor.life == Life.Downed)
     {
         pose.Sample(MoveOf(woman, speed > 0.2 ? Move.CrouchWalk : Move.CrouchIdle), speed > 0.2 ? survivor.stride / 1.4 * 2.0 : look.time, Playback.Loop);
     }
-    else if (speed > 0.4)
+    else if (survivor.air > 0.12)
     {
-        if (speed > 4.6) pose.Sample(MoveOf(woman, Move.Run), survivor.stride / 2.305 * 0.833, Playback.Loop);
-        else pose.Sample(MoveOf(woman, Move.Walk), survivor.stride / 1.777 * 1.333 * 1.25, Playback.Loop);
+        pose.Sample(MoveOf(woman, Move.JumpLoop), survivor.air, Playback.Loop);
     }
     else
     {
-        pose.Sample(MoveOf(woman, Move.IdleGun), look.time, Playback.Loop);
+        pose.Sample(MoveOf(woman, armed ? Move.PistolIdle : Move.Idle), look.time, Playback.Loop);
+        // Stepping round where they stand: the walk, small and quick
+        if (stepping)
+        {
+            mut var step = body.defaultPose;
+            step.Sample(MoveOf(woman, Move.Walk), survivor.stepClock * 1.6, Playback.Loop);
+            pose.Blend(step, 0.55);
+        }
+        if (speed > 0.3)
+        {
+            mut var legs = body.defaultPose;
+            var sprint = speed > 6 && !back;
+            var stride = sprint ? (woman ? 6.406 : 5.9) : (woman ? 5.863 : 5.528);
+            var cycle = sprint ? 0.667 : 0.933;
+            var t = survivor.stride / stride * cycle;
+            legs.Sample(MoveOf(woman, sprint ? Move.Sprint : Move.Jog), back ? -t : t, Playback.Loop);
+            pose.Blend(legs, Math.Saturate(speed / 2.5));
+        }
+        // Coming down: the knees give
+        if (survivor.touched < 0.35)
+        {
+            mut var land = body.defaultPose;
+            land.Sample(MoveOf(woman, Move.JumpLand), 0.15 + survivor.touched);
+            pose.Blend(land, 1 - survivor.touched / 0.35);
+        }
     }
-    if (survivor.life == Life.Standing && survivor.role != Role.None && survivor.act != Act.Throw && survivor.act != Act.Kick)
+    // The legs turned toward the way they go, the body turned back over them to the aim, and bent to its pitch
+    var up = float3(0, 1, 0);
+    var right = float3(1, 0, 0);
+    if (Math.Abs(survivor.legYaw) > 0.001)
     {
-        mut var hold = body.defaultPose;
-        hold.Sample(MoveOf(woman, Move.GunShoot), survivor.act == Act.Fire ? Math.Min(survivor.actTime, 0.5) : 0.05);
-        pose.Blend(hold, 0.7);
+        TurnBone(pose, bones.hips, bones.root, quaternion.AxisAngle(up, survivor.legYaw));
+        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(up, -survivor.legYaw * 0.4));
+        TurnBone(pose, bones.torso, bones.abdomen, quaternion.AxisAngle(up, -survivor.legYaw * 0.35));
+        TurnBone(pose, bones.chest, bones.torso, quaternion.AxisAngle(up, -survivor.legYaw * 0.25));
     }
+    var place = float4x4.TRS(survivor.feet, quaternion.AxisAngle(up, survivor.yaw), float3(1));
+    survivor.place = place;
+    var holding = armed && survivor.life != Life.Gone && survivor.act != Act.Throw;
+    // The boot: the right leg out and up, the body leaning back over it (the act's timing, as the arms' kick has it)
+    if (survivor.act == Act.Kick)
+    {
+        var kt = survivor.actTime / Math.Max(0.01, survivor.actLength);
+        var out = kt < 0.3 ? EaseOut(kt / 0.3) : kt < 0.42 ? 1.0 : 1 - Ease((kt - 0.42) / 0.58);
+        TurnBone(pose, bones.upperLegR, bones.hips, quaternion.AxisAngle(right, -1.75 * out));
+        TurnBone(pose, bones.lowerLegR, bones.upperLegR, quaternion.AxisAngle(right, 0.35 * out * (1 - out)));
+        TurnBone(pose, bones.upperLegL, bones.hips, quaternion.AxisAngle(right, 0.15 * out));
+        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(right, 0.3 * out));
+    }
+    if (holding)
+    {
+        var pitch = Math.Clamp(survivor.pitch, -1.2, 1.2);
+        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(right, -pitch * 0.2));
+        TurnBone(pose, bones.torso, bones.abdomen, quaternion.AxisAngle(right, -pitch * 0.25));
+        TurnBone(pose, bones.chest, bones.torso, quaternion.AxisAngle(right, -pitch * 0.25));
+        TurnBone(pose, bones.head, bones.neck, quaternion.AxisAngle(right, -pitch * 0.3));
+    }
+    // The gun: from the right shoulder along the line to what it's aimed at (over the shoulder, what the crosshair is
+    // on: hands.tide's AimedAt; else 30 m down the look), its top up; pulled in and dipped to load, kicked back by a shot
+    var look3 = LookDirection(survivor.yaw, survivor.pitch);
+    var shoulder = Point(place, Point(pose.Model(bones.upperArmR), float3(0)));
+    var target = survivor.third ? AimedAt(survivor, Info(survivor.gun).range, ashwick, herd) : EyeOf(survivor) + look3 * 30;
+    var line = target - shoulder;
+    mut var aim = Math.Length(line) > 1.2 && Math.Dot(Math.Normalize(line), look3) > 0.5 ? Math.Normalize(line) : look3;
+    var loading = survivor.act == Act.Reload;
+    var t = survivor.actTime / Math.Max(0.01, survivor.actLength);
+    if (loading) aim = Math.Normalize(aim - up * 0.55 * Math.Saturate(Math.Min(t * 6, (1 - t) * 6)));
+    var across = Math.Normalize(Math.Cross(up, aim));
+    var pistol = GraspOf(survivor.gun) == Grasp.Pistol;
+    mut var grip = shoulder + aim * (pistol ? 0.4 : 0.14) - across * (pistol ? 0.14 : 0.04) - up * (pistol ? 0.04 : 0.12);
+    if (survivor.act == Act.Fire) grip -= aim * 0.07 * Math.Saturate(1 - survivor.actTime / 0.1);
+    if (loading) grip -= aim * 0.1 * Math.Saturate(Math.Min(t * 6, (1 - t) * 6));
+    mut var held = float4x4.TRS(grip, quaternion.LookRotation(aim, up), float3(1));
+    if (holding)
+    {
+        var inside = Math.Inverse(place);
+        var gunUp = Math.Rotate(held, up);
+        // The right hand round the grip, its wrist a little behind and under it; the elbow down and out
+        var wrist = grip - aim * 0.05 - gunUp * 0.04 + across * 0.01;
+        var elbowR = shoulder + across * 0.25 - up * 0.45 - aim * 0.15;
+        Reach(pose, bones.shoulderR, bones.upperArmR, bones.lowerArmR, bones.wristR, Point(inside, wrist), Point(inside, elbowR));
+        // The hand down the grip's right side, its back to the right, the thumb over the left: the fingers then close
+        // round the grip's front
+        AimHand(pose, bones.wristR, bones.lowerArmR, bones.fingersR, bones.thumbR, Math.Rotate(inside, Math.Normalize(aim * 0.45 - gunUp * 0.85 + across * 0.05)),
+                Math.Rotate(inside, Math.Normalize(aim * 0.6 - across * 0.6 + gunUp * 0.3)));
+        CurlRight(pose, body, CURL_RIGHT);
+        // The gun where the hand came to (an arm too short to reach leaves the hand short of where it was asked to go):
+        // its grip in the fist, between the wrist and the knuckles
+        var wristAt = Point(place, Point(pose.Model(bones.wristR), float3(0)));
+        var knuckles = Point(place, Point(pose.Model(bones.fingersR), float3(0)));
+        // The grip through the palm: off the line of the hand's back toward where its fingers close, its top (the gun's
+        // origin) a little above
+        var along = Math.Normalize(knuckles - wristAt);
+        var tip = Point(place, Point(pose.Model(bones.index4R), float3(0))) - knuckles;
+        var palm = Math.Normalize(tip - along * Math.Dot(tip, along) + float3(0.0001, 0, 0));
+        grip = Math.Lerp(wristAt, knuckles, 0.6) + palm * GRIP_IN + gunUp * GRIP_UP;
+        held = float4x4.TRS(grip, quaternion.LookRotation(aim, up), float3(1));
+        // The left along the barrel (to the magazine, loading; cupping the pistol's grip)
+        var fore = loading ? grip + aim * 0.06 - gunUp * (0.08 + 0.04 * Math.Sin(t * Math.PI * 4)) : pistol ? grip - gunUp * 0.05 - across * 0.04 - aim * 0.02
+                 : grip + aim * ForeGrip(survivor.gun) - gunUp * 0.06 - across * 0.03;
+        var shoulderL = Point(place, Point(pose.Model(bones.upperArmL), float3(0)));
+        var elbowL = shoulderL - across * 0.2 - up * 0.45 - aim * 0.1;
+        Reach(pose, bones.shoulderL, bones.upperArmL, bones.lowerArmL, bones.wristL, Point(inside, fore), Point(inside, elbowL));
+        // The left palm up under the barrel, its fingers out to the right side and up round it, its thumb along the left
+        var curl = pistol ? -across * 0.5 + aim * 0.5 - gunUp * 0.3 : aim * 0.55 + across * 0.75 + gunUp * 0.2;
+        AimHand(pose, bones.wristL, bones.lowerArmL, bones.fingersL, bones.thumbL, Math.Rotate(inside, Math.Normalize(curl)), Math.Rotate(inside, Math.Normalize(aim * 0.7 + gunUp * 0.5)));
+        CurlLeft(pose, body, -CURL_LEFT);
+    }
+    else
+    {
+        // A throw or the boot: the gun in the hand, as the clip has it
+        var hand = Math.Mul(place, pose.Model(bones.wristR));
+        held = float4x4.TRS(Point(hand, float3(0, 0.07, 0.02)), quaternion.LookRotation(look3, up), float3(1));
+    }
+    survivor.held = held;
     survivor.pose = pose;
-    survivor.place = float4x4.TRS(survivor.feet, quaternion.AxisAngle(float3(0, 1, 0), survivor.yaw), float3(1));
+}
+
+const float GRIP_IN = 0.028;      // The grip from the hand's back, toward the palm, and the gun's origin above the hand
+const float GRIP_UP = 0.05;
+const float CURL_RIGHT = 1.1;     // How far each finger joint bends round what the hand holds (radians)
+const float CURL_LEFT = 0.7;
+const float LEG_TURN = 1.3;   // How far the legs turn from the aim toward the way they go (about 75 degrees)
+const float STAND_TWIST = 1.0;  // Standing, how far the aim turns over the feet before they step round (about 57 degrees)
+const float STEP_TURN = 4.5;    // How fast they step round, radians a second
+
+// How far ahead of the grip the left wrist is, holding each long gun under its barrel.
+float ForeGrip(Weapon weapon)
+{
+    switch (weapon)
+    {
+        case Weapon.Shotgun: return 0.24;
+        case Weapon.Smg: return 0.14;
+    }
+    return 0.2;
+}
+
+// A hand turned about its wrist so its fingers (`fingers`, a knuckle) go `way`, then rolled about them so its thumb is
+// toward `thumbWay`: which side its palm faces. In the model's space.
+void AimHand(mut Pose pose, Bone wrist, Bone parent, Bone fingers, Bone thumb, float3 way, float3 thumbWay)
+{
+    var at = Point(pose.Model(wrist), float3(0));
+    TurnBone(pose, wrist, parent, FromTo(Point(pose.Model(fingers), float3(0)) - at, way));
+    var along = Math.Normalize(way);
+    var side = Point(pose.Model(thumb), float3(0)) - at;
+    var have = side - along * Math.Dot(side, along);
+    var want = thumbWay - along * Math.Dot(thumbWay, along);
+    if (Math.Length(have) > 0.0001 && Math.Length(want) > 0.0001) TurnBone(pose, wrist, parent, FromTo(have, want));
+}
+
+// A hand's fingers closed round what it holds: each joint bent about the hand's knuckle axis (its own x), the first
+// joints most. Index1..4 are the palm and the three joints: the palm follows the wrist.
+void CurlRight(mut Pose pose, SkinnedMesh<Corner, Rig> body, float angle)
+{
+    var bones = body.skeleton.bones;
+    var axis = Math.Normalize(Math.Rotate(pose.Model(bones.wristR), float3(1, 0, 0)));
+    TurnBone(pose, bones.index2R, bones.wristR, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.index3R, bones.index2R, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.index4R, bones.index3R, quaternion.AxisAngle(axis, angle * 0.6));
+    TurnBone(pose, bones.middle2R, bones.wristR, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.middle3R, bones.middle2R, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.middle4R, bones.middle3R, quaternion.AxisAngle(axis, angle * 0.6));
+    TurnBone(pose, bones.ring2R, bones.wristR, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.ring3R, bones.ring2R, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.ring4R, bones.ring3R, quaternion.AxisAngle(axis, angle * 0.6));
+    TurnBone(pose, bones.pinky2R, bones.wristR, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.pinky3R, bones.pinky2R, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.pinky4R, bones.pinky3R, quaternion.AxisAngle(axis, angle * 0.6));
+}
+
+void CurlLeft(mut Pose pose, SkinnedMesh<Corner, Rig> body, float angle)
+{
+    var bones = body.skeleton.bones;
+    var axis = Math.Normalize(Math.Rotate(pose.Model(bones.wristL), float3(1, 0, 0)));
+    TurnBone(pose, bones.index2L, bones.wristL, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.index3L, bones.index2L, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.index4L, bones.index3L, quaternion.AxisAngle(axis, angle * 0.6));
+    TurnBone(pose, bones.middle2L, bones.wristL, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.middle3L, bones.middle2L, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.middle4L, bones.middle3L, quaternion.AxisAngle(axis, angle * 0.6));
+    TurnBone(pose, bones.ring2L, bones.wristL, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.ring3L, bones.ring2L, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.ring4L, bones.ring3L, quaternion.AxisAngle(axis, angle * 0.6));
+    TurnBone(pose, bones.pinky2L, bones.wristL, quaternion.AxisAngle(axis, angle * 1.0));
+    TurnBone(pose, bones.pinky3L, bones.pinky2L, quaternion.AxisAngle(axis, angle * 0.9));
+    TurnBone(pose, bones.pinky4L, bones.pinky3L, quaternion.AxisAngle(axis, angle * 0.6));
+}
+
+// Two bones (an upper arm and its forearm) turned so the end of the second (the wrist) is at `target`, the joint
+// between them (the elbow) bent toward `pole`. Everything in the model's space.
+void Reach(mut Pose pose, Bone shoulder, Bone upper, Bone lower, Bone end, float3 target, float3 pole)
+{
+    var a = Point(pose.Model(upper), float3(0));
+    var b = Point(pose.Model(lower), float3(0));
+    var c = Point(pose.Model(end), float3(0));
+    var first = Math.Distance(a, b);
+    var second = Math.Distance(b, c);
+    var to = target - a;
+    var far = Math.Clamp(Math.Length(to), 0.02, first + second - 0.002);
+    var way = Math.Normalize(to);
+    var cosA = Math.Clamp((first * first + far * far - second * second) / (2 * first * far), -1, 1);
+    var off = pole - a;
+    var bend = Math.Normalize(off - way * Math.Dot(off, way));
+    var elbow = a + way * first * cosA + bend * first * Math.Sqrt(Math.Max(0, 1 - cosA * cosA));
+    TurnBone(pose, upper, shoulder, FromTo(b - a, elbow - a));
+    var b2 = Point(pose.Model(lower), float3(0));
+    var c2 = Point(pose.Model(end), float3(0));
+    TurnBone(pose, lower, upper, FromTo(c2 - b2, a + way * far - b2));
 }
 
 [Stage(Layers.Shadows, 1)]

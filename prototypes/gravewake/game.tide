@@ -29,6 +29,7 @@ component Survivor
     float pitch;
     float3 velocity;
     bool grounded;
+    bool sliding;                    // On ground steeper than a ramp: no footing, down it they go
     float health = 100;
     float calm = 10;                 // Seconds since last hurt: health comes back after a while
     Life life;
@@ -52,7 +53,9 @@ component Survivor
     float steady;                    // Seconds since the last shot, for the spread's bloom and the run
     int airJumps;                    // Jumps taken in the air since the ground (Spring Boots)
     bool leaping;                    // In the air from a leap: it slams down where it lands
-    float dash;                      // Seconds left of a slide, and which way
+    float dash;                      // Seconds left of a dash, and which way
+    int dashes = 2;                  // Dash charges ready (DASHES)
+    float dashWait;                  // Seconds till a spent dash comes back
     float3 dashWay;
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
     bool third;                      // Played from over the shoulder (Hands.third)
@@ -73,9 +76,18 @@ component Survivor
     bool ready;                      // Past the menu
     bool placed;                     // Put somewhere at once: views don't slide them there
     float hurtFrom;                  // Which way the last blow came from (a yaw), for the screen's red
+    float leech;                     // What Leech Rounds may still heal: it comes back at 5% of health a second each
     local Pose pose;                 // This machine's: the frame's pose, sampled once
     local float4x4 place = float4x4.identity;
     local float stride;              // Metres walked, the walk's clock
+    local float legYaw;              // How far the legs are turned from the aim, toward the way they're going
+    local float feetYaw;             // Which way the feet face, in the world: they stay put while the aim turns, then step round
+    local float turning;             // Seconds left of a step round
+    local float stepClock;           // The stepping round's walk clock
+    local bool footed;               // feetYaw has been set
+    local float air;                 // Seconds off the ground
+    local float touched = 10;        // Seconds since they came down
+    local float4x4 held = float4x4.identity;  // Where the gun is in the hands, in the world, this frame
 }
 
 input Hands
@@ -242,12 +254,6 @@ system ClearZombie(with Zombie, Match match)
 
 [Stage(Tick.Restart)]
 system ClearMissile(with Missile, Match match)
-{
-    if (match.restarting) this.Destroy();
-}
-
-[Stage(Tick.Restart)]
-system ClearDrop(with Drop, Match match)
 {
     if (match.restarting) this.Destroy();
 }

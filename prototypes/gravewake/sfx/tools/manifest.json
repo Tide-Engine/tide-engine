@@ -1049,6 +1049,36 @@
   ],
   "seconds": 120.0
  },
+ "orb_1": {
+  "bytes": 33282,
+  "file": "orb_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.377
+ },
+ "orb_2": {
+  "bytes": 31106,
+  "file": "orb_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.352
+ },
+ "orb_3": {
+  "bytes": 28930,
+  "file": "orb_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.328
+ },
  "pain_1": {
   "bytes": 30850,
   "file": "pain_1.wav",
@@ -1360,34 +1390,37 @@
   "seconds": 0.15
  },
  "shotgun_fire_1": {
-  "bytes": 16913,
+  "bytes": 16877,
   "file": "shotgun_fire_1.ogg",
   "kind": "sfx",
-  "layers": false,
+  "layers": true,
   "packs": [
+   "oga_cannon",
    "oga_firearms"
   ],
-  "seconds": 1.573
+  "seconds": 1.583
  },
  "shotgun_fire_2": {
-  "bytes": 13558,
+  "bytes": 13802,
   "file": "shotgun_fire_2.ogg",
   "kind": "sfx",
-  "layers": false,
+  "layers": true,
   "packs": [
+   "oga_cannon",
    "oga_firearms"
   ],
-  "seconds": 1.174
+  "seconds": 1.22
  },
  "shotgun_fire_3": {
-  "bytes": 16898,
+  "bytes": 16906,
   "file": "shotgun_fire_3.ogg",
   "kind": "sfx",
-  "layers": false,
+  "layers": true,
   "packs": [
+   "oga_cannon",
    "oga_firearms"
   ],
-  "seconds": 1.574
+  "seconds": 1.576
  },
  "smg_fire_1": {
   "bytes": 50562,

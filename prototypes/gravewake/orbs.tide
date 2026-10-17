@@ -1,0 +1,135 @@
+// Experience as orbs: each of the dead killed leaves one where it fell, and
+// the party has its experience only when a survivor comes within ORB_REACH of
+// it, when it flies to them. Left alone it goes after ORB_SECONDS. So the
+// party has to go out among the dead for its levels, not hold one spot (the
+// owner: "lets make XP drop as orbs so you need to get close to pick them up
+// (not THAT close), that should avoid camping too much").
+
+const float ORB_REACH = 5;           // How near a survivor draws an orb in
+const float ORB_SECONDS = 40;        // How long one lies before it's gone
+const float ORB_SPEED = 14;          // How fast one flies to whoever draws it
+const int ORBS_MOST = 800;           // Lying at once; past this a kill's experience is the party's at once
+
+component Orb
+{
+    float3 at;
+    float value;
+    float age;
+    int seat = -1;                   // Who it's flying to, or -1 lying
+}
+
+// An orb taken, for what's seen and heard.
+event OrbTaken
+{
+    float3 at;
+    int seat;
+    float value;
+}
+
+// Experience to the party, a level each time it's enough.
+void GainXp(mut Match match, float xp)
+{
+    match.xp += xp;
+    while (match.xp >= LevelSpan(match.level))
+    {
+        match.xp -= LevelSpan(match.level);
+        match.level += 1;
+        Send(Levelled { level = match.level });
+    }
+}
+
+// An orb where one of the dead fell, on the ground under it (off a pile, it drops).
+void DropOrb(mut Match match, float3 at, float value)
+{
+    if (match.orbs >= ORBS_MOST)
+    {
+        GainXp(match, value);
+        return;
+    }
+    match.orbs += 1;
+    Spawn(Orb { at = On(at.x, at.z) + float3(0, 0.45, 0), value = value });
+}
+
+// Each tick: a lying orb drawn in by the nearest survivor on their feet within reach, flying to them, taken when it
+// reaches them; one left too long gone.
+[Stage(Tick.Late, 1)]
+system OrbPull(mut Orb orb, mut Match match, Time time, query (Survivor survivor) survivors)
+{
+    if (match.paused) return;
+    var dt = time.dt;
+    orb.age += dt;
+    if (orb.seat < 0 && orb.age >= ORB_SECONDS)
+    {
+        match.orbs = Math.Max(0, match.orbs - 1);
+        this.Destroy();
+        return;
+    }
+    // Already flying to someone still on their feet: on after them. Else the nearest on their feet within reach.
+    mut var target = float3(0);
+    mut var found = false;
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (s.seat != orb.seat || !s.ready || s.life != Life.Standing) continue;
+        target = s.feet + float3(0, 1.0, 0);
+        found = true;
+    }
+    if (!found)
+    {
+        orb.seat = -1;
+        mut var nearest = ORB_REACH;
+        foreach (var row in survivors)
+        {
+            var s = row.survivor;
+            if (!s.ready || s.life != Life.Standing) continue;
+            var chest = s.feet + float3(0, 1.0, 0);
+            var far = Math.Distance(chest, orb.at);
+            if (far >= nearest) continue;
+            nearest = far;
+            target = chest;
+            orb.seat = s.seat;
+            found = true;
+        }
+    }
+    if (!found) return;
+    var to = target - orb.at;
+    var far = Math.Length(to);
+    var step = ORB_SPEED * dt;
+    if (far <= Math.Max(step, 0.5))
+    {
+        GainXp(match, orb.value);
+        Send(OrbTaken { at = orb.at, seat = orb.seat, value = orb.value });
+        match.orbs = Math.Max(0, match.orbs - 1);
+        this.Destroy();
+        return;
+    }
+    orb.at += to / far * step;
+}
+
+// ---- What's seen and heard ----
+
+// A soft blue-green light bobbing over the ground, bigger for more; blinking before it goes; a streak as it flies.
+[Stage(Layers.Gather, 3)]
+view ShowOrb(Orb orb, mut Fx fx, Look look)
+{
+    if (Math.Distance(orb.at, look.eye) > 70) return;
+    var left = ORB_SECONDS - orb.age;
+    if (orb.seat < 0 && left < 6 && Math.Frac(left * (left < 3 ? 4 : 2)) < 0.35) return;
+    var size = 0.045 + Math.Min(0.12, orb.value * 0.012);
+    var bob = orb.seat < 0 ? Math.Sin(look.time * 3 + orb.at.x * 2 + orb.at.z) * 0.08 : 0.0;
+    var at = orb.at + float3(0, bob, 0);
+    fx.orbSprites.Add(Sprite { at = at, to = at, size = size * 2.2, color = float4(0.25, 0.8, 0.6, 0.45) });
+    fx.orbSprites.Add(Sprite { at = at, to = at, size = size, color = float4(0.65, 1.0, 0.85, 4) });
+}
+
+local event(OrbTaken taken) OrbSpark(mut Fx fx)
+{
+    for (var i = 0; i < 4; i++)
+        Glow(fx, Mote { at = taken.at, velocity = Scatter(fx, 1.5) + float3(0, 1, 0), life = 0.3, size = 0.04, color = float3(0.5, 1.0, 0.8), alpha = 3, drag = 3 });
+}
+
+[Stage(Tick.Restart)]
+system ClearOrb(with Orb, Match match)
+{
+    if (match.restarting) this.Destroy();
+}

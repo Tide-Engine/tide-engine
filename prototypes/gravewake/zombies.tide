@@ -51,6 +51,8 @@ component Zombie
     int fall;                   // Which way it falls
     int burner = -1;            // Who set it alight
     int bleeder = -1;           // Who opened the wound
+    bool climbing;              // In a pile against a cliff, or clawing its way up one this tick
+    float lift;                 // How high it is off the ground: up a pile
     local float flash;          // The flash of a fresh blow
     local float voice = 1;      // Seconds till it groans
 }
@@ -65,6 +67,7 @@ singleton Herd
 {
     List<Body> bodies;          // By slot
     List<float3> feet;          // By slot: where it stands, or (lying) far below, for the dead's own crowding
+    List<float> lifts;          // By slot: how high it is off the ground, up a pile
     List<int> next;             // By slot: the next in its cell, or -1
     List<int> first;            // By cell: the first slot in it, or -1
 }
@@ -105,6 +108,7 @@ system HerdClear(mut Herd herd)
 {
     herd.bodies.Clear();
     herd.feet.Clear();
+    herd.lifts.Clear();
     herd.next.Clear();
     if (herd.first.count != HERD_W * HERD_W) herd.first.Resize(HERD_W * HERD_W);
     for (var c = 0; c < HERD_W * HERD_W; c++) herd.first[c] = -1;
@@ -133,6 +137,7 @@ system Muster(mut Zombie zombie, mut Herd herd)
     var body = BodyOf(this, zombie);
     herd.bodies.Add(body);
     herd.feet.Add(body.down || body.risen < 1 ? float3(0, -1000, 0) : zombie.at);
+    herd.lifts.Add(zombie.lift);
     herd.next.Add(herd.first[cell]);
     herd.first[cell] = zombie.slot;
 }
@@ -252,6 +257,8 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     zombie.stun = Math.Max(0, zombie.stun - dt);
     if (zombie.state == ZombieState.Dying)
     {
+        // Off a pile, it drops (and what it held up comes down after it)
+        zombie.at.y = Math.Max(Ground(zombie.at.x, zombie.at.z), zombie.at.y - FALL_SPEED * dt);
         if (zombie.timer > DEATH_SECONDS) this.Destroy();
         return;
     }
@@ -283,8 +290,8 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
             mut var at = zombie.at + zombie.shove * dt;
             zombie.shove *= Math.Max(0, 1 - dt * 5);
             at = PushOut(ashwick, at, ZOMBIE_RADIUS, 1.7);
-            if (!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before))) at = before;
-            at.y = Ground(at.x, at.z);
+            if ((!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before))) || !Reaches(ashwick, before, at, before.y)) at = before;
+            at.y = Math.Max(Ground(at.x, at.z), before.y - FALL_SPEED * dt);
             zombie.at = at;
             // What it's thrown into goes over too
             var flung = Math.Length(zombie.shove);
@@ -326,7 +333,19 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     }
     // Room among the others
     // (straight from the herd's cells, a dozen at most, of two dozen looked at: in a crowd of thousands, more change
-    // nothing but the cost)
+    // nothing but the cost). And the pile: what's under it holds it up (`under`); one ahead of it no higher than a body
+    // it can climb onto (`onto`), if it's pressed against a cliff or behind others already up off the ground.
+    // (the ground is asked for once a tick, at the step's end: it's the costliest thing here; under it now is where it
+    // stood less how high it was)
+    var ground = zombie.at.y - zombie.lift;
+    var way = Math.Length(wish) > 0.001 ? Math.Normalize(wish) : float3(0);
+    var aheadAt = zombie.at + way * 0.7;
+    var aheadCell = CellOf(aheadAt);
+    var pressing = Cliff(ashwick, aheadCell) && zombie.at.y < ashwick.ledges[aheadCell] - STEP_UP - SCRAMBLE;
+    mut var under = ground;
+    mut var props = 0;                // How many hold it up
+    mut var onto = -1000.0;
+    mut var liftedAhead = false;
     if (herd.first.count > 0)
     {
         var cx = Math.Clamp(int(Math.Floor((zombie.at.x - NAV_X0) / HERD_CELL)), 1, HERD_W - 2);
@@ -346,11 +365,22 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
                     {
                         var off = zombie.at.xz - other.xz;
                         var far = Math.Length(off);
-                        if (far < 0.75 && far > 0.0001)
+                        var rise = other.y - zombie.at.y;
+                        if (far < 0.75 && far > 0.0001 && Math.Abs(rise) < 0.4)
                         {
                             wish += float3(off.x, 0, off.y) / far * (0.75 - far) * 2.2;
                             seen += 1;
                         }
+                        if (far < 0.6 && rise < -0.25 && rise > -LAYER * 1.6)
+                        {
+                            under = Math.Max(under, other.y + LAYER);
+                            props += 1;
+                        }
+                        // Onto one lower than itself; of two about as high, only one climbs the other, the one later in the herd
+                        // (two climbing each other at once had leapfrogged up a wall into the air with nothing under either)
+                        var lower = rise < -0.12 || (rise < 0.12 && slot < zombie.slot);
+                        if (far < 0.6 && rise > -0.35 && lower && (pressing || Math.Dot(-off, way.xz) > 0)) onto = Math.Max(onto, other.y + LAYER);
+                        if (far < 1.3 && herd.lifts[slot] > 0.3 && Math.Dot(-off, way.xz) > 0) liftedAhead = true;
                     }
                     slot = herd.next[slot];
                 }
@@ -406,17 +436,32 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     mut var at = zombie.at + forward * zombie.speed * dt + zombie.shove * dt;
     zombie.shove *= Math.Max(0, 1 - dt * 7);
     at = PushOut(ashwick, at, ZOMBIE_RADIUS, 1.7);
-    // Keep to cells the dead can walk; a step into a wall slides along it (one already in a wall's cell, risen or
-    // thrown there, walks out)
-    if (!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before)))
+    // Keep to cells the dead can walk, and off a cliff's face till a pile has them up to its ledge; a step into either
+    // slides along it (one already in a wall's cell, risen or thrown there, walks out)
+    var up = before.y;
+    if ((!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before))) || !Reaches(ashwick, before, at, up))
     {
         var alongX = float3(at.x, at.y, before.z);
         var alongZ = float3(before.x, at.y, at.z);
-        if (Walkable(ashwick, CellOf(alongX))) at = alongX;
-        else if (Walkable(ashwick, CellOf(alongZ))) at = alongZ;
+        if (Walkable(ashwick, CellOf(alongX)) && Reaches(ashwick, before, alongX, up)) at = alongX;
+        else if (Walkable(ashwick, CellOf(alongZ)) && Reaches(ashwick, before, alongZ, up)) at = alongZ;
         else at = before;
     }
-    at.y = Ground(at.x, at.z);
+    // Its height: on the ground; held up by what's under it; climbing onto the one ahead when it's pressed against a
+    // cliff or behind others already up; coming down when nothing holds it
+    // (what's under it only stops it falling, never lifts it: on a slope the one below isn't under it)
+    // Held up only by what's under it: one nearly straight beneath, and two once it's more than a body up, so a pile
+    // spreads at its foot as a heap does (a lean of one on one, each a little off the last, had stood out over a slope
+    // with nothing under it)
+    var floor = Ground(at.x, at.z);
+    var held = props >= (before.y - floor > LAYER * 1.5 ? 2 : 1) ? Math.Min(under, before.y) : floor;
+    var climb = zombie.frozen <= 0 && zombie.stun <= 0 && (pressing || liftedAhead) && onto > before.y + 0.05;
+    var rate = CLIMB_RATE * (zombie.gait == Gait.Sprint ? 1.5 : 1.0);
+    if (climb) at.y = Math.Min(before.y + rate * dt, onto);
+    else at.y = Math.Max(held, before.y - FALL_SPEED * dt);
+    at.y = Math.Max(at.y, floor);
+    zombie.lift = at.y - floor;
+    zombie.climbing = climb || pressing || zombie.lift > 0.25;
     zombie.stride += Math.Length((at - before).xz);
     zombie.at = at;
 }
@@ -431,10 +476,9 @@ void Become(mut Zombie zombie, ZombieState state)
 event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
 {
     if (zombie.state == ZombieState.Dying) return;
-    var insta = match.instakill > 0 && wound.seat >= 0;
     // On its back it's open: blows land harder
     var over = zombie.state == ZombieState.Fallen && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding;
-    var damage = insta ? zombie.health + 1 : wound.damage * (over ? 1.5 : 1.0);
+    var damage = wound.damage * (over ? 1.5 : 1.0);
     zombie.health -= damage;
     var killed = zombie.health <= 0;
     // What the element does besides
@@ -481,15 +525,8 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         zombie.swing = 0;
         match.killed += 1;
         points = (wound.head ? 100 : 50) + wound.bonus;
-        MaybeDrop(match, zombie.at);
         // The party's experience, and a level when there's enough
-        match.xp += 1;
-        if (match.xp >= LevelSpan(match.level))
-        {
-            match.xp -= LevelSpan(match.level);
-            match.level += 1;
-            Send(Levelled { level = match.level });
-        }
+        DropOrb(match, zombie.at, 0.5);
     }
     else
     {

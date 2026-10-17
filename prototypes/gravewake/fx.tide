@@ -18,6 +18,7 @@ struct Mote
     float gravity;
     float drag;
     float alpha = 1;
+    float cool;               // How far a glowing one goes toward a dull red over its life (a flame's cooling)
 }
 
 // A streak between two places, facing the eye: a tracer, lightning.
@@ -29,6 +30,16 @@ struct Streak
     float life = 0.2;
     float width = 0.05;
     float3 color = float3(1);
+}
+
+// A moment's light: a muzzle's flash, a blast. It lights what's round it as a lamp does, fading over its life.
+struct Flash
+{
+    float3 at;
+    float3 color;
+    float reach;
+    float age;
+    float life = 0.06;
 }
 
 // What a mote or a streak is drawn with, per instance.
@@ -45,12 +56,16 @@ local singleton Fx
     List<Mote> glow;          // Added light: fire, sparks, magic
     List<Mote> murk;          // Laid over: blood, smoke, earth, splinters
     List<Streak> streaks;
+    List<Flash> flashes;
     List<Sprite> glowSprites;
     List<Sprite> murkSprites;
     List<Sprite> streakSprites;
+    List<Sprite> orbSprites;     // The experience orbs, gathered each frame (orbs.tide)
     List<Corner> quad;
     List<int> quadFaces;
     float emberClock;
+    float ashClock;
+    float blasts;             // How many blasts lately (each 1, gone over a second and a half): many at once, each less
     Random random;
     bool made;
 }
@@ -97,7 +112,7 @@ frag GlowMote(Corner corner, out Color color, Sprite sprite, Look look)
     var soft = Math.Saturate(1 - Math.Dot(off, off));
     var light = float3(sprite.color.x, sprite.color.y, sprite.color.z) * sprite.color.w * soft * soft;
     var far = Math.Distance(sprite.at, look.eye);
-    color = Color(light * Math.Exp(-far * look.fog * 0.6), 1);
+    color = Color(light * Math.Exp(-far * look.fog * 0.6) * Math.Saturate((far - 0.4) / 1.5), 1);
 }
 
 frag MurkMote(Corner corner, out Color color, Sprite sprite, Look look, Lights lights)
@@ -107,7 +122,9 @@ frag MurkMote(Corner corner, out Color color, Sprite sprite, Look look, Lights l
     if (edge > 1) this.Discard();
     var paint = Linear(float3(sprite.color.x, sprite.color.y, sprite.color.z));
     var lit = paint * (look.skyLight * 2 + look.moonColor * 0.5 + LampLight(lights.list, sprite.at, Math.Normalize(look.eye - sprite.at)));
-    color = Color(Hazed(lit, sprite.at, look), sprite.color.w);
+    // Smoke and dust by the eye thin away, so they never cover the picture
+    var near = Math.Saturate((Math.Distance(sprite.at, look.eye) - 1.0 - sprite.size) / 3.5);
+    color = Color(Hazed(lit, sprite.at, look), sprite.color.w * near);
 }
 
 frag StreakLight(Corner corner, out Color color, Sprite sprite)
@@ -136,7 +153,7 @@ void MakeQuad(mut Fx fx)
 
 // Each frame: what burns gives off flames, and every mote moves on.
 [Stage(Layers.Gather, 2)]
-view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, query (Missile missile) missiles, query (Drop drop) drops,
+view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, query (Missile missile) missiles,
              query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
     if (!fx.made) MakeQuad(fx);
@@ -150,14 +167,14 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
         {
             if (Math.Distance(at, me.eye) > 40) continue;
             Glow(fx, Mote { at = at + float3(fx.random.NextFloat(-0.05, 0.05), 0.05, fx.random.NextFloat(-0.05, 0.05)), velocity = float3(0, 0.7, 0),
-                            life = fx.random.NextFloat(0.3, 0.5), size = 0.12, grow = -0.15, color = float3(1.0, 0.45, 0.12), alpha = 2.4 });
+                            life = fx.random.NextFloat(0.3, 0.5), size = 0.12, grow = -0.15, color = float3(1.0, 0.5, 0.15), alpha = 2.4, cool = 1 });
         }
         foreach (var at in village.plan.fires)
         {
             if (Math.Distance(at, me.eye) > 50) continue;
             for (var k = 0; k < 3; k++)
                 Glow(fx, Mote { at = at + float3(fx.random.NextFloat(-0.3, 0.3), 1.4, fx.random.NextFloat(-0.3, 0.3)), velocity = float3(0, 1.2, 0),
-                                life = fx.random.NextFloat(0.3, 0.6), size = 0.2, grow = -0.25, color = float3(1.0, 0.42, 0.1), alpha = 1.3 });
+                                life = fx.random.NextFloat(0.3, 0.6), size = 0.2, grow = -0.25, color = float3(1.0, 0.5, 0.14), alpha = 1.3, cool = 1 });
             Glow(fx, Mote { at = at + float3(0, 1.6, 0), velocity = float3(fx.random.NextFloat(-0.3, 0.3), 2.2, fx.random.NextFloat(-0.3, 0.3)),
                             life = 1.6, size = 0.025, color = float3(1.0, 0.6, 0.2), alpha = 4, drag = 0.4 });
         }
@@ -182,11 +199,6 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
                 var at = s.feet + float3(Math.Cos(turn) * reach * fx.random.NextFloat(0.5, 1), 0.1, Math.Sin(turn) * reach * fx.random.NextFloat(0.5, 1));
                 Glow(fx, Mote { at = at, velocity = float3(-Math.Sin(turn), 0.8, Math.Cos(turn)) * 0.8, life = 0.6, size = 0.06, color = float3(1.0, 0.4, 0.08), alpha = 2.5 });
             }
-        }
-        foreach (var row in drops)
-        {
-            Glow(fx, Mote { at = row.drop.at + float3(fx.random.NextFloat(-0.3, 0.3), 0.4 + fx.random.NextFloat(0.6), fx.random.NextFloat(-0.3, 0.3)),
-                            velocity = float3(0, 0.5, 0), life = 0.8, size = 0.04, color = float3(0.4, 1.0, 0.45), alpha = 3 });
         }
     }
     foreach (var row in missiles)
@@ -225,6 +237,33 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
         if (b.move == BossMove.Charge)
             Murk(fx, Mote { at = b.at + float3(fx.random.NextFloat(-1, 1), 0.2, fx.random.NextFloat(-1, 1)), velocity = Scatter(fx, 1.5) + float3(0, 1, 0), life = 0.8,
                             size = 0.5, grow = 0.8, color = float3(0.17, 0.14, 0.11), alpha = 0.6, drag = 2 });
+    }
+
+    fx.blasts = Math.Max(0, fx.blasts - dt / 1.5);
+    // Dashes: dust kicked up behind each survivor in one
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (s.dash <= 0 || !s.ready) continue;
+        var back = -s.dashWay;
+        Murk(fx, Mote { at = s.feet + float3(fx.random.NextFloat(-0.2, 0.2), 0.15, fx.random.NextFloat(-0.2, 0.2)), velocity = back * 2 + float3(0, 0.6, 0), life = 0.45,
+                        size = 0.2, grow = 0.7, color = float3(0.17, 0.14, 0.11), alpha = 0.55, drag = 3 });
+    }
+    // Embers and ash on the air from the burning of Ashwick, drifting about the eye
+    fx.ashClock += dt;
+    while (fx.ashClock > 0.06)
+    {
+        fx.ashClock -= 0.06;
+        var turn = fx.random.NextFloat(Math.TAU);
+        var out = fx.random.NextFloat(4, 15);
+        var at = me.eye + float3(Math.Cos(turn) * out, fx.random.NextFloat(-1.5, 6), Math.Sin(turn) * out);
+        var wind = float3(0.5, 0.05, 0.25) + Scatter(fx, 0.25);
+        if (fx.random.NextInt(3) == 0)
+            Glow(fx, Mote { at = at, velocity = wind + float3(0, 0.2, 0), life = fx.random.NextFloat(3, 6), size = fx.random.NextFloat(0.012, 0.022),
+                            color = float3(1.0, 0.45, 0.12), alpha = 2.2, cool = 0.6 });
+        else
+            Murk(fx, Mote { at = at, velocity = wind - float3(0, 0.15, 0), life = fx.random.NextFloat(4, 7), size = fx.random.NextFloat(0.015, 0.03),
+                            color = float3(0.5, 0.48, 0.46), alpha = 0.8 });
     }
 
     // Moving on
@@ -274,12 +313,21 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
         if (s.age >= s.life) fx.streaks.RemoveAt(i);
         else fx.streaks[i] = s;
     }
+    for (var i = fx.flashes.count - 1; i >= 0; i--)
+    {
+        mut var f = fx.flashes[i];
+        f.age += dt;
+        if (f.age >= f.life) fx.flashes.RemoveAt(i);
+        else fx.flashes[i] = f;
+    }
     // Into what's drawn
     fx.glowSprites.Clear();
+    fx.orbSprites.Clear();
     foreach (var m in fx.glow)
     {
         var fade = 1 - m.age / m.life;
-        fx.glowSprites.Add(Sprite { at = m.at, to = m.at, size = m.size, color = float4(m.color, m.alpha * fade) });
+        var tint = Math.Lerp(m.color, float3(0.75, 0.13, 0.03), Math.Saturate(m.age / m.life * m.cool));
+        fx.glowSprites.Add(Sprite { at = m.at, to = m.at, size = m.size, color = float4(tint, m.alpha * fade) });
     }
     fx.murkSprites.Clear();
     foreach (var m in fx.murk)
@@ -295,6 +343,17 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
     }
 }
 
+// The flashes among the lamps, after the frame's lamps are chosen.
+[Stage(Layers.Gather, 3)]
+view FlashLights(Fx fx, mut Lights lights, Me me)
+{
+    foreach (var f in fx.flashes)
+    {
+        var fade = 1 - f.age / f.life;
+        AddLight(lights, me.eye, Light { at = f.at, color = f.color * fade * fade, reach = f.reach });
+    }
+}
+
 [Stage(Layers.Glass, 1)]
 view DrawFx(Fx fx, Lens lens)
 {
@@ -306,6 +365,7 @@ view DrawFx(Fx fx, Lens lens)
         lens.scene.Blend(Blend.Add)
         {
             if (fx.glowSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.glowSprites, Face, GlowMote);
+            if (fx.orbSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.orbSprites, Face, GlowMote);
             if (fx.streakSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.streakSprites, Face, StreakLight);
         }
     }
@@ -335,7 +395,13 @@ local event(Struck struck) Bleed(mut Fx fx)
     for (var i = 0; i < count; i++)
     {
         Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, struck.head ? 3.5 : 2.4) + float3(0, 1.2, 0), life = fx.random.NextFloat(0.5, 1.0),
-                        size = fx.random.NextFloat(0.03, 0.08), gravity = 9, color = float3(0.32, 0.02, 0.02), alpha = 0.95 });
+                        size = fx.random.NextFloat(0.04, 0.09), gravity = 9, color = float3(0.5, 0.03, 0.03), alpha = 0.95 });
+    }
+    // A puff of it where the round went in, and a glint of the hit
+    if (struck.blow != Blow.Burning && struck.blow != Blow.Bleeding)
+    {
+        Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 0.6), life = 0.35, size = struck.head ? 0.22 : 0.16, grow = 1.1, color = float3(0.45, 0.03, 0.03), alpha = 0.75, drag = 4 });
+        Glow(fx, Mote { at = struck.at, life = 0.05, size = struck.head ? 0.16 : 0.1, color = float3(1.0, 0.85, 0.6), alpha = 2.5 });
     }
     // A pool where they fall
     if (struck.killed)
@@ -363,12 +429,52 @@ local event(Blast blast) Explode(mut Fx fx)
         return;
     }
     var hot = blast.element == Element.Frost ? float3(0.5, 0.75, 1.0) : blast.element == Element.Fire ? float3(1.0, 0.42, 0.08) : float3(1.0, 0.62, 0.25);
-    for (var i = 0; i < 40; i++)
-        Glow(fx, Mote { at = blast.at, velocity = Scatter(fx, blast.reach * 3), life = fx.random.NextFloat(0.3, 0.7), size = fx.random.NextFloat(0.15, 0.5), grow = -0.4,
-                        color = hot, alpha = 3, drag = 3 });
-    for (var i = 0; i < 14; i++)
-        Murk(fx, Mote { at = blast.at + Scatter(fx, 0.6), velocity = Scatter(fx, 1.5) + float3(0, 1.2, 0), life = fx.random.NextFloat(1.2, 2.4), size = 0.35, grow = 0.6,
-                        color = float3(0.09, 0.08, 0.075), alpha = 0.55, drag = 1.5 });
+    var size = Math.Saturate(blast.reach / 5.5) * 0.6 + 0.4;
+    // A Powder Keg's burst (a kill's, often many at once) is a small one: a flash, a ball of fire and sparks, a wisp.
+    // And the more blasts lately, the less each leaves: in a chain of them the fight stays in sight
+    fx.blasts += 1;
+    var small = blast.kind == Shot.Keg;
+    var crowd = Math.Saturate((fx.blasts - 2) / 4);
+    var share = (small ? 0.4 : 1.0) * (1 - crowd * 0.75);
+    fx.flashes.Add(Flash { at = blast.at + float3(0, 0.8, 0), color = hot * (small ? 7.0 : 16.0) * (1 - crowd * 0.5), reach = blast.reach * (small ? 2.0 : 3.0),
+                           life = small ? 0.25 : 0.45 });
+    if (small || crowd > 0.5)
+    {
+        for (var i = 0; i < int(14 * share) + 4; i++)
+            Glow(fx, Mote { at = blast.at + Scatter(fx, 0.3), velocity = Scatter(fx, blast.reach * 1.4) + float3(0, 1.2, 0), life = fx.random.NextFloat(0.15, 0.35),
+                            size = fx.random.NextFloat(0.2, 0.4) * size, grow = 0.6, color = hot, alpha = 1.0, drag = 5, gravity = -3, cool = 1.4 });
+        for (var i = 0; i < int(16 * share) + 4; i++)
+            Glow(fx, Mote { at = blast.at, velocity = Scatter(fx, blast.reach * 3.5) + float3(0, 2, 0), life = fx.random.NextFloat(0.4, 0.8), size = 0.03,
+                            color = float3(1.0, 0.7, 0.35), alpha = 5, gravity = 9, drag = 0.6 });
+        for (var i = 0; i < 3; i++)
+            Murk(fx, Mote { at = blast.at + Scatter(fx, 0.4), velocity = Scatter(fx, 0.8) + float3(0, 1.4, 0), life = fx.random.NextFloat(0.8, 1.3), size = 0.3 * size,
+                            grow = 0.6, color = float3(0.22, 0.21, 0.2), alpha = 0.3, drag = 1.5 });
+        return;
+    }
+    Glow(fx, Mote { at = blast.at + float3(0, 0.3, 0), life = 0.07, size = 0.9 * size, grow = 5, color = float3(1.0, 0.9, 0.75), alpha = 3 });
+    // The fireball, rolling up and cooling to red as it goes
+    for (var i = 0; i < 22; i++)
+        Glow(fx, Mote { at = blast.at + Scatter(fx, 0.4) + float3(0, 0.3, 0), velocity = Scatter(fx, blast.reach * 1.4) + float3(0, 1.5, 0), life = fx.random.NextFloat(0.2, 0.45),
+                        size = fx.random.NextFloat(0.3, 0.6) * size, grow = 0.9, color = hot, alpha = 1.1, drag = 5, gravity = -3, cool = 1.4 });
+    // Sparks flung out and falling
+    for (var i = 0; i < 34; i++)
+        Glow(fx, Mote { at = blast.at + float3(0, 0.2, 0), velocity = Scatter(fx, blast.reach * 4) + float3(0, 3, 0), life = fx.random.NextFloat(0.5, 1.2), size = 0.035,
+                        color = float3(1.0, 0.7, 0.35), alpha = 5, gravity = 9, drag = 0.6 });
+    // Earth thrown up, and a ring of dust along the ground
+    for (var i = 0; i < 22; i++)
+        Murk(fx, Mote { at = blast.at + float3(0, 0.1, 0), velocity = Scatter(fx, 5) + float3(0, fx.random.NextFloat(4, 8), 0), life = fx.random.NextFloat(0.9, 1.5),
+                        size = fx.random.NextFloat(0.05, 0.11), gravity = 12, color = float3(0.16, 0.12, 0.09), alpha = 1 });
+    for (var i = 0; i < 24; i++)
+    {
+        var turn = i * Math.TAU / 24;
+        var way = float3(Math.Cos(turn), 0, Math.Sin(turn));
+        Murk(fx, Mote { at = blast.at + way * 0.5 + float3(0, 0.15, 0), velocity = way * fx.random.NextFloat(4, 7) + float3(0, 0.5, 0), life = 1.0, size = 0.35 * size,
+                        grow = 0.9, color = float3(0.17, 0.14, 0.11), alpha = 0.6, drag = 3 });
+    }
+    // Smoke, rising and spreading after
+    for (var i = 0; i < 10; i++)
+        Murk(fx, Mote { at = blast.at + Scatter(fx, 0.8) + float3(0, 0.6, 0), velocity = Scatter(fx, 1.2) + float3(0, 1.8, 0), life = fx.random.NextFloat(1.3, 2.3),
+                        size = 0.5 * size, grow = 0.8, color = float3(0.22, 0.21, 0.2), alpha = 0.35, drag = 1.2 });
 }
 
 local event(Thud thud) Chip(mut Fx fx)
@@ -413,15 +519,38 @@ local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
             fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.06, width = 0.02, color = float3(1.0, 0.3, 0.2) });
             break;
         case Trace.Pellet:
-            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.05, width = 0.012, color = float3(1.0, 0.8, 0.5) });
+            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.06, width = 0.035, color = float3(1.0, 0.75, 0.45) });
             break;
         default:
-            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.06, width = 0.018, color = float3(1.0, 0.85, 0.55) });
+            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.08, width = 0.05, color = float3(1.0, 0.82, 0.5) });
             break;
     }
-    // The flash, small at this machine's own muzzle, a hand's breadth from the eye
-    if (traced.kind != Trace.Pellet || fx.random.NextInt(4) == 0)
-        Glow(fx, Mote { at = from, life = 0.04, size = (traced.kind == Trace.Phase ? 0.12 : 0.05) * (own ? 1.0 : 2.0), color = float3(1.0, 0.7, 0.35), alpha = own ? 2.0 : 3.0 });
+}
+
+// A shot's flash at the muzzle, as the gun is drawn: a burst of light and a few tongues of flame along the barrel's way,
+// the light of it on what's round, a wisp of smoke, and the spent case thrown out to the right.
+local event(Loosed loosed) MuzzleFlash(mut Fx fx, Me me, Grip grip)
+{
+    if (loosed.source != Source.Gun && loosed.source != Source.Phase && loosed.source != Source.Turret) return;
+    var own = loosed.seat == me.seat && !me.third && loosed.source != Source.Turret;
+    var drawn = loosed.seat >= 0 && loosed.seat < 4 ? grip.muzzles[loosed.seat] : float3(0);
+    var at = own ? grip.muzzle : loosed.source != Source.Turret && Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
+    var way = loosed.way;
+    var heavy = loosed.weapon == Weapon.Shotgun || loosed.source == Source.Phase;
+    var scale = (own ? 0.5 : 1.0) * (heavy ? 1.5 : 1.0) * (loosed.source == Source.Turret ? 0.7 : 1.0);
+    var hot = loosed.source == Source.Phase ? float3(0.6, 0.75, 1.0) : float3(1.0, 0.68, 0.32);
+    Glow(fx, Mote { at = at, life = 0.05, size = 0.2 * scale, color = hot, alpha = 4 });
+    for (var k = 1; k <= 3; k++)
+        Glow(fx, Mote { at = at + way * (0.09 * k * scale), life = 0.04, size = (0.13 - k * 0.025) * scale, color = float3(1.0, 0.8, 0.45), alpha = 3 });
+    fx.flashes.Add(Flash { at = at + way * 0.2, color = hot * (heavy ? 7.0 : 4.5), reach = heavy ? 9.0 : 7.0, life = 0.07 });
+    if (own) return;
+    Murk(fx, Mote { at = at + way * 0.15, velocity = way * 0.6 + float3(0, 0.4, 0), life = 0.6, size = 0.08 * scale, grow = 0.5, color = float3(0.3, 0.29, 0.28), alpha = 0.3, drag = 2 });
+    if (loosed.source == Source.Gun && loosed.weapon != Weapon.Shotgun)
+    {
+        var right = Math.Normalize(Math.Cross(float3(0, 1, 0), way));
+        Glow(fx, Mote { at = at - way * 0.3, velocity = right * fx.random.NextFloat(1.5, 2.5) + float3(0, fx.random.NextFloat(1.5, 2.5), 0) - way * 0.5, life = 0.5,
+                        size = 0.018, color = float3(0.9, 0.65, 0.25), alpha = 0.7, gravity = 9 });
+    }
 }
 
 local event(Cue cue) Dust(mut Fx fx)
@@ -464,8 +593,3 @@ local event(Unleashed used) Flourish(mut Fx fx)
     }
 }
 
-local event(Boons boons) Sparkle(mut Fx fx)
-{
-    for (var i = 0; i < 40; i++)
-        Glow(fx, Mote { at = boons.at + float3(0, 0.8, 0), velocity = Scatter(fx, 4), life = 0.8, size = 0.06, color = float3(0.4, 1.0, 0.45), alpha = 3, drag = 2 });
-}

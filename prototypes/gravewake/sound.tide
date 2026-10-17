@@ -16,7 +16,6 @@ asset Clip gameOverClip = "sfx/game_over.ogg";
 asset Clip fireLoop = "sfx/fire_loop.ogg";
 asset Clip heartbeatClip = "sfx/heartbeat.ogg";
 asset Clip breathClip = "sfx/breath.ogg";
-asset Clip powerupLoop = "sfx/powerup_loop.ogg";
 asset List<Clip> groans = "sfx/groan_*.ogg";
 asset List<Clip> screams = "sfx/scream_*.ogg";
 asset List<Clip> snarls = "sfx/snarl_*.ogg";
@@ -49,18 +48,15 @@ asset Clip chainZap = "sfx/chain_zap.ogg";
 asset Clip throwClip = "sfx/throw.ogg";
 asset Clip biteClip = "sfx/bite.ogg";
 asset Clip riseClip = "sfx/rise.ogg";
+asset Clip chestOpenClip = "sfx/chest_open.ogg";
+asset List<Clip> orbClips = "sfx/orb_*.ogg";
 asset Clip landClip = "sfx/land.ogg";
 asset Clip downedClip = "sfx/downed.ogg";
 asset Clip reviveClip = "sfx/revive.ogg";
 asset Clip levelClip = "sfx/level_up.ogg";
 asset Clip itemUncommon = "sfx/item_uncommon.ogg";
 asset Clip itemRare = "sfx/item_rare.ogg";
-asset Clip powerupSpawn = "sfx/powerup_spawn.ogg";
 asset Clip powerupGrab = "sfx/powerup_grab.ogg";
-asset Clip puMaxAmmo = "sfx/pu_max_ammo.ogg";
-asset Clip puInstakill = "sfx/pu_instakill.ogg";
-asset Clip puNuke = "sfx/pu_nuke.ogg";
-asset Clip puEnd = "sfx/pu_end.ogg";
 asset Clip hitmarkerClip = "sfx/hitmarker.ogg";
 
 // The master's limiter: whatever piles up (a bell over two dozen groans) is held under full scale, at once, and let back
@@ -99,8 +95,8 @@ local singleton Ears
     float[4] othersStepped;
     Act lastAct;
     float lastActTime;
-    float boonWait;
-    bool wasInstakill;
+    float orbChime;           // When the last orb's chime was, and how far up the scale the run of them has got
+    int orbStep;
     float voices;             // The dead's voices that may start now, coming back at eight a second
     float lastPoints;
 }
@@ -178,9 +174,6 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     ears.brazier.bus = Bus.Ambience;
     ears.brazier.playing = brazierFar < 25;
     ears.voices = Math.Min(4, ears.voices + dt * 8);
-    // Death's Touch wearing off
-    if (ears.wasInstakill && match.instakill <= 0) Audio.Play(puEnd, 0.6);
-    ears.wasInstakill = match.instakill > 0;
 }
 
 // The dead's voices: a groan now and then from each, a scream from the fast ones.
@@ -409,22 +402,6 @@ local event(Levelled levelled) HearLevel()
     Audio.Play(levelClip, 0.6);
 }
 
-local event(Boons boons) HearBoon()
-{
-    Audio.Play(powerupGrab, 0.8);
-    switch (boons.kind)
-    {
-        case Boon.Recharge: Audio.Play(puMaxAmmo, 1.0); return;
-        case Boon.InstaKill: Audio.Play(puInstakill, 1.0); return;
-        case Boon.Nuke: Audio.Play(puNuke, 1.0); return;
-    }
-}
-
-local event(Spawned spawned) HearDrop(Drop drop)
-{
-    Audio.Play(powerupSpawn, drop.at + float3(0, 1, 0), 0.9, 1.0);
-}
-
 // A Brute: its roar coming up out of the ground, and its fall.
 local event(BossCame came) HearBoss(mut Ears ears)
 {
@@ -436,14 +413,33 @@ local event(GameOver over) HearGameOver()
     Audio.Play(gameOverClip, 1.0);
 }
 
-// A power-up's hum while it floats.
-[Stage(Layers.Hud, 34)]
-view Hum(mut Drop drop)
+
+local event(ChestOpened opened) HearChest()
 {
-    drop.hum.clip = powerupLoop;
-    drop.hum.loop = true;
-    drop.hum.spatial = true;
-    drop.hum.position = drop.at + float3(0, 1, 0);
-    drop.hum.volume = 0.6;
-    drop.hum.playing = true;
+    Audio.Play(chestOpenClip, opened.at, 1.0, 1.0);
+}
+
+// An orb taken by this machine's survivor: a glass chime, each in a quick run of them a step up a pentatonic scale
+// (two octaves of it, then on at the top), the run starting again at the bottom after a breath; a dozen a second at most.
+local event(OrbTaken taken) HearOrb(mut Ears ears, Me me, Look look)
+{
+    if (taken.seat != me.seat) return;
+    var since = look.time - ears.orbChime;
+    if (since >= 0 && since < 0.07) return;
+    ears.orbStep = since >= 0 && since < 0.7 ? Math.Min(ears.orbStep + 1, 10) : 0;
+    ears.orbChime = look.time;
+    Audio.Play(orbClips[ears.random.NextInt(orbClips.count)], 0.32, Math.Pow(2, OrbSemitone(ears.orbStep) / 12.0));
+}
+
+// The scale an orb run climbs: C D E G A, two octaves.
+float OrbSemitone(int step)
+{
+    switch (step % 5)
+    {
+        case 0: return 12.0 * (step / 5);
+        case 1: return 2 + 12.0 * (step / 5);
+        case 2: return 4 + 12.0 * (step / 5);
+        case 3: return 7 + 12.0 * (step / 5);
+    }
+    return 9 + 12.0 * (step / 5);
 }

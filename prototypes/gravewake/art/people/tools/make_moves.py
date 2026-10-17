@@ -76,8 +76,13 @@ CLIPS = [
     ("Hit_Chest", "ual1", "Hit_Chest", False),
     ("Crouch_Idle", "ual1", "Crouch_Idle_Loop", True),
     ("Crouch_Walk", "ual1", "Crouch_Fwd_Loop", True),
+    # A survivor's legs, the upper body turned to the aim over them (people.tide): a jog, a gun idle, a jump
+    ("Jog", "ual1", "Jog_Fwd_Loop", True),
+    ("Pistol_Idle", "ual1", "Pistol_Idle_Loop", True),
+    ("Jump_Loop", "ual1", "Jump_Loop", True),
+    ("Jump_Land", "ual1", "Jump_Land", False),
 ]
-LOCOMOTION = {"Walk", "Run", "Z_Walk", "Sprint", "Crouch_Walk"}
+LOCOMOTION = {"Walk", "Run", "Z_Walk", "Sprint", "Crouch_Walk", "Jog"}
 # Joints that mustn't go deeper into the floor than the source's (scaled) when the body is down.
 UPPER = ["Abdomen", "Torso", "Chest", "Neck", "Head"] + [f"{b}.{s}" for b in ("Shoulder", "UpperArm", "LowerArm", "Wrist") for s in ("L", "R")]
 

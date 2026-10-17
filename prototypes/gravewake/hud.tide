@@ -1,10 +1,11 @@
-// What's written over the picture: how long the run has gone and how
-// dangerous it's got in the bottom left, everyone's score over it (with what
-// each hit earns floating off it), the items taken, the party's level, the
-// gun and its magazine and the three skills in the bottom right, the
-// crosshair and the mark of a hit landing, the power-ups running, a friend
-// down, a Brute's health across the top, the items offered at a level, the
-// survivors to pick from, and the end.
+// What's written over the picture, on dark glass panels: this survivor's
+// health and the party's level in the bottom left, everyone's score over it
+// (with what each hit earns floating off it) and the items taken; how long
+// the run has gone and how dangerous it's got in the top right; the gun and
+// its magazine and the three skills in the bottom right; the crosshair, the
+// mark of a hit landing and where a blow came from; the power-ups running, a
+// friend down, a Brute's health across the top, the items offered at a level,
+// the survivors to pick from, and the end.
 using Rooms;
 
 local singleton Feed
@@ -25,6 +26,10 @@ local singleton Feed
     float dealt;                 // Seconds the offer has been showing, for its rise
     List<string> news;           // What the others took, a line each...
     List<float> newsAge;         // ...and how long ago
+    float trail = 1;             // The health bar's share a moment ago, trailing down to what's left
+    float bossTrail = 1;
+    List<float3> blows;          // Where the blows taken came from...
+    List<float> blowAges;        // ...and how long ago
 }
 
 struct Gain
@@ -44,6 +49,37 @@ float Unit()
 {
     return Math.Max(1, Screen.height / 720);
 }
+
+// A panel of dark glass: darker toward its foot, a faint light edge, a soft shadow under it.
+void Panel(float2 center, float2 size, float u)
+{
+    Draw.Shape(Shape { center = center + float2(0, 3 * u), size = size, radius = 5 * u, color = Color(0, 0, 0, 0.3), soft = 12 * u });
+    Draw.Shape(Shape { center = center, size = size, radius = 5 * u, color = Color(0.08, 0.06, 0.055, 0.8), color2 = Color(0.025, 0.02, 0.02, 0.88), outline = Math.Max(1, u),
+                       outlineColor = Color(1, 0.9, 0.75, 0.13) });
+}
+
+// A bar from `left` (the middle of its left end): a dark track, what's left from `fill` at its top to `fill2` at its
+// foot with a shine, what was just lost (`trail`) paler behind it, and `ticks` marks across.
+void Bar(float2 left, float2 size, float share, float trail, Color fill, Color fill2, int ticks, float u)
+{
+    Draw.Shape(Shape { center = left + float2(size.x * 0.5, 0), size = size + float2(4, 4) * u, radius = 2 * u, color = Color(0, 0, 0, 0.65) });
+    var kept = Math.Saturate(share);
+    var lost = Math.Saturate(trail);
+    if (lost > kept + 0.001)
+        Draw.Shape(Shape { center = left + float2(size.x * (kept + lost) * 0.5, 0), size = float2(size.x * (lost - kept), size.y), color = Color(1.0, 0.86, 0.7, 0.75) });
+    if (kept > 0.001)
+    {
+        Draw.Shape(Shape { center = left + float2(size.x * kept * 0.5, 0), size = float2(size.x * kept, size.y), color = fill, color2 = fill2 });
+        Draw.Shape(Shape { center = left + float2(size.x * kept * 0.5, -size.y * 0.28), size = float2(size.x * kept, size.y * 0.32), color = Color(1, 1, 1, 0.2),
+                           color2 = Color(1, 1, 1, 0) });
+    }
+    for (var t = 1; t < ticks; t++) Draw.Rect(left + float2(size.x * t / ticks, 0), float2(Math.Max(1, u), size.y), Color(0, 0, 0, 0.5));
+}
+
+const Color EMBER = Color(0.98, 0.5, 0.18);
+const Color HEALTH = Color(0.86, 0.16, 0.1);
+const Color HEALTH_FOOT = Color(0.5, 0.04, 0.03);
+const Color SKY_BLUE = Color(0.6, 0.82, 1.0);
 
 void Write(string text, float2 at, float size, Color tint, Anchor anchor)
 {
@@ -77,16 +113,6 @@ Color HeroColor(int seat)
         case 2: return Color(0.38, 0.6, 0.92);
     }
     return Color(0.93, 0.76, 0.3);
-}
-
-string BoonName(Boon kind)
-{
-    switch (kind)
-    {
-        case Boon.Recharge: return "RECHARGE";
-        case Boon.InstaKill: return "DEATH'S TOUCH";
-    }
-    return "HOLY FIRE";
 }
 
 // Minutes and seconds.
@@ -124,7 +150,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     }
     if (!found) return;
 
-    // ---- How long the run has gone, and how dangerous it's got: bottom left ----
+    // ---- How long the run has gone, and how dangerous it's got: top right, the danger a meter of eight that fills ----
     var words = DangerName(match.danger);
     if (words != feed.dangerShown)
     {
@@ -134,10 +160,29 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     feed.dangerFlash += dt;
     if (match.phase != Phase.Waiting)
     {
-        WriteBold(Clock(match.phase == Phase.Over ? match.lasted : match.clock), float2(34 * u, h - 62 * u), 44 * u, BONE, Anchor.MiddleLeft);
+        var box = float2(w - 34 * u - 120 * u, 58 * u);
+        Panel(box, float2(240 * u, 80 * u), u);
+        WriteBold(Clock(match.phase == Phase.Over ? match.lasted : match.clock), float2(box.x + 106 * u, box.y - 14 * u), 32 * u, BONE, Anchor.MiddleRight);
         var flash = Math.Saturate(1 - feed.dangerFlash * 0.7);
         var c = DangerColor(match.danger);
-        WriteBold(words.ToUpper(), float2(34 * u, h - 28 * u), (18 + flash * 8) * u, Color(c.r, c.g, c.b, 1), Anchor.MiddleLeft);
+        Write("DANGER", float2(box.x - 106 * u, box.y - 22 * u), 10 * u, ASH, Anchor.MiddleLeft);
+        WriteBold(words.ToUpper(), float2(box.x - 106 * u, box.y - 6 * u), (15 + flash * 6) * u, Color(c.r, c.g, c.b, 1), Anchor.MiddleLeft);
+        var filled = Math.Saturate((match.danger - 1) / 7) * 8;
+        var seg = 212 * u / 8;
+        for (var k = 0; k < 8; k++)
+        {
+            var at = float2(box.x - 106 * u + seg * (k + 0.5), box.y + 22 * u);
+            var tone = DangerColor(1 + k * 7.0 / 7);
+            var part = Math.Saturate(filled - k);
+            Draw.Shape(Shape { center = at, size = float2(seg - 4 * u, 8 * u), radius = 1.5 * u, color = Color(0, 0, 0, 0.6) });
+            if (part > 0)
+                Draw.Shape(Shape { center = at - float2((seg - 4 * u) * (1 - part) * 0.5, 0), size = float2((seg - 4 * u) * part, 8 * u), radius = 1.5 * u, color = tone,
+                                   color2 = Color(tone.r * 0.55, tone.g * 0.55, tone.b * 0.55, 1) });
+        }
+        // The segment filling now glows as the danger climbs into it
+        var now = Math.Min(7, int(filled));
+        Draw.Shape(Shape { center = float2(box.x - 106 * u + seg * (now + 0.5), box.y + 22 * u), size = float2(seg - 4 * u, 8 * u), radius = 2 * u, color = Color.none,
+                           soft = 8 * u, outline = 0, outlineColor = Color.none });
     }
 
     // ---- Everyone's score, over the wave ----
@@ -188,45 +233,101 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         slot += 1;
     }
 
-    // ---- The party's level, bottom middle ----
-    var barAt = float2(w * 0.5, h - 18 * u);
-    var span = LevelSpan(match.level);
-    Draw.Rect(barAt, float2(240 * u, 5 * u), Color(0, 0, 0, 0.55));
-    Draw.Rect(barAt - float2(120 * u * (1 - Math.Saturate(match.xp / span)), 0), float2(240 * u * Math.Saturate(match.xp / span), 5 * u), Color(0.55, 0.8, 1.0, 0.9));
-    Write($"LV {match.level}", barAt + float2(-128 * u, 0), 13 * u, Color(0.65, 0.85, 1.0), Anchor.MiddleRight);
+    // ---- This survivor: who, their health (or how long they've to bleed), and the party's level, bottom left ----
+    {
+        var box = float2(34 * u + 170 * u, h - 62 * u);
+        Panel(box, float2(340 * u, 84 * u), u);
+        var left = box.x - 156 * u;
+        var hero = HeroColor(mine.seat);
+        Draw.Shape(Shape { center = float2(box.x - 167 * u, box.y), size = float2(3 * u, 70 * u), color = hero });
+        WriteBold(HeroName(mine.seat).ToUpper(), float2(left, box.y - 26 * u), 15 * u, hero, Anchor.MiddleLeft);
+        if (mine.role != Role.None)
+            Write(RoleName(mine.role).ToUpper(), float2(left + Draw.MeasureText(HeroName(mine.seat).ToUpper(), 15 * u, Font.Bold).x + 10 * u, box.y - 25 * u), 11 * u, ASH,
+                  Anchor.MiddleLeft);
+        WriteBold($"LV {match.level}", float2(box.x + 156 * u, box.y - 26 * u), 15 * u, SKY_BLUE, Anchor.MiddleRight);
+        var most = MaxHealth(mine);
+        var share = mine.life == Life.Standing ? mine.health / Math.Max(1, most) : mine.life == Life.Downed ? mine.bleed / BLEED_SECONDS : 0.0;
+        feed.trail = share > feed.trail ? share : Math.Max(share, feed.trail - dt * 0.5);
+        var down = mine.life == Life.Downed;
+        Bar(float2(left, box.y - 2 * u), float2(312 * u, 18 * u), share, feed.trail, down ? Color(0.55, 0.06, 0.05) : HEALTH, down ? Color(0.25, 0.02, 0.02) : HEALTH_FOOT,
+            down ? 1 : Math.Clamp(int(most / 25), 1, 16), u);
+        var label = down ? "BLEEDING OUT" : mine.life == Life.Gone ? "GONE" : $"{int(Math.Ceil(mine.health))} / {int(most)}";
+        WriteBold(label, float2(left + 8 * u, box.y - 2 * u), 12 * u, BONE, Anchor.MiddleLeft);
+        var span = LevelSpan(match.level);
+        Bar(float2(left, box.y + 24 * u), float2(312 * u, 5 * u), match.xp / span, 0, SKY_BLUE, Color(0.3, 0.5, 0.8), 1, u);
+    }
 
-    // ---- The gun, bottom right ----
+    // ---- The gun, bottom right: its name, the rounds in it big, the magazine as a bar ----
     var info = Info(mine.gun);
     var right = w - 34 * u;
     if (mine.gun != Weapon.None)
     {
-        Write(info.name, float2(right, h - 92 * u), 17 * u, BONE, Anchor.MiddleRight);
-        var low = mine.mag == 0 ? Color(0.9, 0.3, 0.2) : BONE;
+        var box = float2(right - 120 * u, h - 52 * u);
+        Panel(box, float2(240 * u, 64 * u), u);
+        Write(info.name.ToUpper(), float2(box.x - 106 * u, box.y - 14 * u), 12 * u, ASH, Anchor.MiddleLeft);
+        var holds = MagOf(mine, mine.gun);
+        var low = mine.mag == 0 ? Color(0.95, 0.3, 0.2) : mine.mag <= holds / 4 ? Color(0.98, 0.7, 0.35) : BONE;
         var loading = mine.act == Act.Reload;
-        WriteBold(loading && !info.shells ? "..." : $"{mine.mag}", float2(right - 42 * u, h - 52 * u), 40 * u, low, Anchor.MiddleRight);
-        Write($"/ {MagOf(mine, mine.gun)}", float2(right, h - 50 * u), 18 * u, ASH, Anchor.MiddleRight);
+        if (!info.bottomless || mine.gun != RoleWeapon(mine.role))
+        {
+            WriteBold(loading && !info.shells ? "RELOADING" : $"{mine.mag}", float2(box.x + 60 * u, box.y - 4 * u), (loading && !info.shells ? 16 : 34) * u, low, Anchor.MiddleRight);
+            Write($"/ {holds}", float2(box.x + 106 * u, box.y + 2 * u), 15 * u, ASH, Anchor.MiddleRight);
+            var fill = loading && !info.shells ? Math.Saturate(mine.actTime / Math.Max(0.01, mine.actLength)) : float(mine.mag) / Math.Max(1, holds);
+            Bar(float2(box.x - 106 * u, box.y + 18 * u), float2(120 * u, 4 * u), fill, 0, low, Color(low.r * 0.6, low.g * 0.6, low.b * 0.6, 1), 1, u);
+        }
     }
-    // The three skills: each a key in a ring that fills as it comes back
+    // The three skills: each a slot with its key, shaded as it comes back with the seconds left, lit when it's ready
     if (mine.role != Role.None && mine.life == Life.Standing)
     {
         for (var k = 0; k < 3; k++)
         {
             var skill = SkillOf(mine.role, k);
-            var at = float2(right - 20 * u - (2 - k) * 58 * u, h - 146 * u);
+            var at = float2(right - 27 * u - (2 - k) * 64 * u, h - 140 * u);
             var full = Cooldown(mine, skill);
             var ready = mine.cooldowns[k] <= 0;
-            Draw.Circle(at, 22 * u, Color(0.05, 0.04, 0.05, 0.78));
-            Draw.Arc(at, 22 * u, -Math.PI * 0.5, Math.TAU * (1 - Math.Saturate(mine.cooldowns[k] / Math.Max(0.01, full))), 3 * u,
-                     ready ? Color(0.95, 0.75, 0.35, 0.95) : Color(0.5, 0.42, 0.3, 0.8));
+            var square = float2(52, 52) * u;
+            if (ready) Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(EMBER.r, EMBER.g, EMBER.b, 0.18), soft = 10 * u });
+            Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(0.1, 0.08, 0.07, 0.86), color2 = Color(0.03, 0.025, 0.02, 0.92), outline = 1.5 * u,
+                               outlineColor = ready ? Color(EMBER.r, EMBER.g, EMBER.b, 0.95) : Color(1, 0.9, 0.75, 0.15) });
             var key = k == 0 ? "RMB" : k == 1 ? "SHIFT" : "Q";
-            WriteBold(key, at, (k == 1 ? 10 : 13) * u, ready ? BONE : Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.MiddleCenter);
-            if (!ready) Write($"{int(Math.Ceil(mine.cooldowns[k]))}", at + float2(0, 13 * u), 10 * u, ASH, Anchor.MiddleCenter);
-            Write(SkillName(skill), at + float2(0, 32 * u), 11 * u, ready ? BONE : ASH, Anchor.MiddleCenter);
+            WriteBold(key, at, (k == 1 ? 12 : 16) * u, ready ? BONE : Color(ASH.r, ASH.g, ASH.b, 0.6), Anchor.MiddleCenter);
+            if (!ready)
+            {
+                var left = Math.Saturate(mine.cooldowns[k] / Math.Max(0.01, full));
+                Draw.Shape(Shape { center = at + float2(0, square.y * (1 - left) * 0.5), size = float2(square.x - 3 * u, (square.y - 3 * u) * left), radius = 4 * u,
+                                   color = Color(0, 0, 0, 0.55) });
+                WriteBold($"{int(Math.Ceil(mine.cooldowns[k]))}", at + float2(0, 14 * u), 12 * u, BONE, Anchor.MiddleCenter);
+            }
+            Write(SkillName(skill).ToUpper(), at + float2(0, 36 * u), 9 * u, ready ? BONE : ASH, Anchor.MiddleCenter);
+            // The dash's charges: a pip each, lit when ready
+            if (skill == Skill.Slide)
+                for (var c = 0; c < DASHES; c++)
+                    Draw.Circle(at + float2((c - (DASHES - 1) * 0.5) * 9 * u, -33 * u), 2.5 * u, c < mine.dashes ? EMBER : Color(0.3, 0.27, 0.25, 0.8));
         }
     }
 
     // ---- The crosshair and the hit marker ----
     var middle = float2(w * 0.5, h * 0.5);
+    // Where each blow taken came from: a red arc round the crosshair on that side, fading
+    for (var i = feed.blows.count - 1; i >= 0; i--)
+    {
+        feed.blowAges[i] = feed.blowAges[i] + dt;
+        if (feed.blowAges[i] > 1.4)
+        {
+            feed.blows.RemoveAt(i);
+            feed.blowAges.RemoveAt(i);
+        }
+    }
+    for (var i = 0; i < feed.blows.count; i++)
+    {
+        var to = feed.blows[i] - mine.feet;
+        var side = Math.Dot(to, Flat(me.yaw + Math.PI * 0.5));
+        var ahead = Math.Dot(to, Flat(me.yaw));
+        var turn = Math.Atan2(-ahead, side);
+        var fade = Math.Saturate(1.4 - feed.blowAges[i]);
+        Draw.Arc(middle, 118 * u, turn - 0.32, 0.64, 7 * u, Color(0.95, 0.12, 0.08, 0.85 * fade));
+        Draw.Arc(middle, 108 * u, turn - 0.18, 0.36, 3 * u, Color(1.0, 0.5, 0.4, 0.6 * fade));
+    }
     if (mine.life != Life.Gone && mine.role != Role.None)
     {
         var gap = (5 + info.spread * h * 0.6) * u / Unit();
@@ -257,6 +358,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         Draw.Line(middle - float2(gap, 0), middle - float2(gap + tick, 0), 2 * u, c);
         Draw.Line(middle + float2(0, gap), middle + float2(0, gap + tick), 2 * u, c);
         Draw.Line(middle - float2(0, gap), middle - float2(0, gap + tick), 2 * u, c);
+        Draw.Circle(middle, 1.5 * u, c);
     }
     feed.marker = Math.Max(0, feed.marker - dt);
     if (feed.marker > 0)
@@ -282,19 +384,6 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     // ---- A friend to raise ----
     if (mine.aimed >= 0 && mine.life == Life.Standing) Write($"Hold E to revive {HeroName(mine.aimed)}", float2(w * 0.5, h * 0.64), 18 * u, BONE, Anchor.MiddleCenter);
 
-    // ---- Death's Touch running, bottom middle: a skull ----
-    var left = match.instakill;
-    if (left > 0 && (left > 5 || Math.Frac(left * 3) > 0.35))
-    {
-        var at = float2(w * 0.5, h - 52 * u);
-        Draw.Circle(at, 24 * u, Color(0.05, 0.08, 0.05, 0.75));
-        Draw.WireCircle(at, 24 * u, 2 * u, Color(0.4, 1.0, 0.45, 0.9));
-        var bone = Color(0.6, 1.0, 0.55);
-        Draw.Circle(at + float2(0, -3 * u), 11 * u, bone);
-        Draw.Rect(at + float2(0, 8 * u), float2(12 * u, 8 * u), bone);
-        Draw.Circle(at + float2(-4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
-        Draw.Circle(at + float2(4.5 * u, -3 * u), 3.5 * u, Color(0.05, 0.08, 0.05));
-    }
 
     // ---- What the others took ----
     for (var i = feed.news.count - 1; i >= 0; i--)
@@ -307,11 +396,11 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         }
     }
     for (var i = 0; i < feed.news.count; i++)
-        Write(feed.news[i], float2(w - 22 * u, 60 * u + i * 20 * u), 14 * u, Color(BONE.r, BONE.g, BONE.b, Math.Saturate(6 - feed.newsAge[i])), Anchor.MiddleRight);
+        Write(feed.news[i], float2(w - 34 * u, 140 * u + i * 20 * u), 14 * u, Color(BONE.r, BONE.g, BONE.b, Math.Saturate(6 - feed.newsAge[i])), Anchor.MiddleRight);
 
     // ---- The banner: a power-up's name, the card taken ----
     feed.bannerLeft = Math.Max(0, feed.bannerLeft - dt);
-    if (feed.bannerLeft > 0 && feed.banner != "")
+    if (feed.bannerLeft > 0 && feed.banner != "" && !mine.choosing && !match.paused)
     {
         var a = Math.Saturate(feed.bannerLeft * 1.5) * Math.Saturate((2.6 - feed.bannerLeft) * 4);
         WriteBold(feed.banner, float2(w * 0.5, h * 0.3), 34 * u, Color(feed.bannerColor.r, feed.bannerColor.g, feed.bannerColor.b, a), Anchor.MiddleCenter);
@@ -357,7 +446,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
               float2(w * 0.5, h - 30 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)
-        Write("Alone. Host a room from the menu to fight with friends.", float2(w - 22 * u, 22 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.UpperRight);
+        Write("Alone. Host a room from the menu to fight with friends.", float2(w - 34 * u, 110 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, 0.7), Anchor.UpperRight);
 }
 
 // The end: the wave they fell in, and what each did.
@@ -377,6 +466,11 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
           Anchor.MiddleCenter);
     var top = h * 0.43;
     var columns = float4(-90, 40, 140, 240) * u;
+    mut var rows = 0;
+    foreach (var r in survivors)
+        if (r.survivor.ready) rows += 1;
+    if (a > 0.5) Panel(float2(w * 0.5 - 20 * u, top + rows * 16 * u + 2 * u), float2(640 * u, (rows + 1) * 32 * u + 28 * u), u);
+    Draw.Shape(Shape { center = float2(w * 0.5, h * 0.24), size = float2(560, 80) * u, ellipse = true, color = Color(0.6, 0.04, 0.02, 0.3 * a), soft = 80 * u });
     Write("Score", float2(w * 0.5 - 170 * u, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
     Write("Kills", float2(w * 0.5 + columns.x, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
     Write("Heads", float2(w * 0.5 + columns.y, top), 14 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
@@ -455,12 +549,14 @@ view TitleCard(Lobby lobby)
                          Vertex { position = float2(w * 0.62, h), color = Color(0, 0, 0, 0) }, Vertex { position = float2(0, h), color = Color(0, 0, 0, 0.7) }];
     List<int> faces = [0, 1, 2, 0, 2, 3];
     Draw.Mesh(band, faces);
+    Draw.Shape(Shape { center = float2(left + 260 * u, h * 0.3), size = float2(520, 90) * u, ellipse = true, color = Color(0.6, 0.06, 0.03, 0.35), soft = 90 * u });
     Draw.Text("GRAVEWAKE", float2(left + 4 * u, h * 0.3 + 5 * u), 96 * u, Color(0, 0, 0, 0.85), Anchor.MiddleLeft, Font.Bold);
     Draw.Text("GRAVEWAKE", float2(left, h * 0.3), 96 * u, Color(0.62, 0.05, 0.04), Anchor.MiddleLeft, Font.Bold);
     Draw.Text("GRAVEWAKE", float2(left + 1.5 * u, h * 0.3 - 1.5 * u), 96 * u, Color(0.78, 0.1, 0.07, 0.45), Anchor.MiddleLeft, Font.Bold);
+    Draw.Shape(Shape { center = float2(left + 230 * u, h * 0.3 + 112 * u), size = float2(460 * u, 2 * u), color = Color(0.9, 0.35, 0.12, 0.8), soft = 4 * u });
     Draw.Text("Ashwick burned. Hold the fire in the wood as long as you can.", float2(left + 4 * u, h * 0.3 + 64 * u), 20 * u, Color(0.85, 0.8, 0.72),
               Anchor.MiddleLeft);
-    Draw.Text("Three survivors, thousands of the dead, an item at every level, a Brute every three minutes  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u,
+    Draw.Text("Three survivors, thousands of the dead, items at levels and in chests, a Brute every three minutes  -  for one to four", float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u,
               Color(0.6, 0.57, 0.52), Anchor.MiddleLeft);
     if (lobby.message != "") Draw.Text(lobby.message, float2(left + 4 * u, h * 0.86), 15 * u, Color(0.9, 0.5, 0.4), Anchor.MiddleLeft);
     // The licence the first-person arms come under asks for their maker's name
@@ -521,11 +617,17 @@ local event(Struck struck) ShowMarker(mut Feed feed, Me me)
     if (struck.head && struck.killed) feed.headshot = 0.9;
 }
 
-local event(Boons boons) ShowBoon(mut Feed feed)
+// A blow taken, for the arc that says where it came from.
+local event(Hurt hurt) ShowHurt(mut Feed feed, Survivor survivor, Me me)
 {
-    feed.banner = BoonName(boons.kind);
-    feed.bannerLeft = 2.6;
-    feed.bannerColor = Color(0.6, 1.0, 0.55);
+    if (survivor.seat != me.seat) return;
+    feed.blows.Add(hurt.from);
+    feed.blowAges.Add(0);
+    if (feed.blows.count > 8)
+    {
+        feed.blows.RemoveAt(0);
+        feed.blowAges.RemoveAt(0);
+    }
 }
 
 // An item taken: this machine's own as a banner, the others' as a line in the corner.
@@ -569,6 +671,17 @@ string RarityName(Rarity rarity)
         case Rarity.Rare: return "Rare";
     }
     return "Common";
+}
+
+// A card: a shadow and a glow of its colour under it, dark glass, its colour along its top fading down, a fine edge.
+void Card(float2 middle, float2 size, Color tint, float a, float u)
+{
+    Draw.Shape(Shape { center = middle + float2(0, 8 * u), size = size, radius = 10 * u, color = Color(0, 0, 0, 0.55 * a), soft = 24 * u });
+    Draw.Shape(Shape { center = middle, size = size, radius = 10 * u, color = Color(tint.r, tint.g, tint.b, 0.1 * a), soft = 16 * u });
+    Draw.Shape(Shape { center = middle, size = size, radius = 10 * u, color = Color(0.1, 0.075, 0.065, 0.95 * a), color2 = Color(0.03, 0.022, 0.02, 0.97 * a) });
+    Draw.Shape(Shape { center = middle - float2(0, size.y * 0.5 - 40 * u), size = float2(size.x, 80 * u), radius = 10 * u, color = Color(tint.r, tint.g, tint.b, 0.22 * a),
+                       color2 = Color(tint.r, tint.g, tint.b, 0) });
+    Draw.Shape(Shape { center = middle, size = size, radius = 10 * u, color = Color.none, outline = 1.5 * u, outlineColor = Color(tint.r, tint.g, tint.b, 0.75 * a) });
 }
 
 // An item's mark: a rounded square in its rarity's colour, with two letters of its name.
@@ -657,13 +770,13 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
         var rarity = RarityOf(item);
         var tint = RarityColor(rarity);
         var a = rise;
-        Draw.RoundRect(middle + float2(4, 6) * u, size, 10 * u, Color(0, 0, 0, 0.5 * a));
-        Draw.RoundRect(middle, size, 10 * u, Color(0.07, 0.05, 0.045, 0.94 * a));
-        Draw.WireRoundRect(middle, size - float2(10, 10) * u, 7 * u, 1.5 * u, Color(tint.r * 0.7, tint.g * 0.7, tint.b * 0.7, 0.8 * a));
-        var key = middle + float2(0, -size.y * 0.5 + 32 * u);
-        Draw.Circle(key, 17 * u, Color(CHALK.r, CHALK.g, CHALK.b, 0.9 * a));
-        WriteBold($"{k + 1}", key, 20 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
-        DrawItemMark(item, middle + float2(0, -36 * u), 50 * u, a);
+        Card(middle, size, tint, a, u);
+        var key = middle + float2(0, -size.y * 0.5 + 24 * u);
+        Draw.Shape(Shape { center = key, size = float2(30, 30) * u, radius = 15 * u, color = Color(0.05, 0.04, 0.04, 0.9 * a), outline = 1.5 * u,
+                           outlineColor = Color(tint.r, tint.g, tint.b, 0.9 * a) });
+        WriteBold($"{k + 1}", key, 16 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
+        Draw.Shape(Shape { center = middle + float2(0, -40 * u), size = float2(60, 60) * u, radius = 30 * u, color = Color(tint.r, tint.g, tint.b, 0.16 * a), soft = 22 * u });
+        DrawItemMark(item, middle + float2(0, -40 * u), 60 * u, a);
         var have = mine.items[int(item)];
         Write(have > 0 ? $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}" : RarityName(rarity).ToUpper(), middle + float2(0, 8 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a),
               Anchor.MiddleCenter);
@@ -675,7 +788,7 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
 
 // A Brute's health across the top: the nearest of them, if any is about.
 [Stage(Layers.Hud, 4)]
-view BossBar(Lobby lobby, Look look, query (Boss boss) bosses)
+view BossBar(Lobby lobby, Look look, mut Feed feed, query (Boss boss) bosses)
 {
     if (lobby.page != Page.Playing) return;
     mut var found = false;
@@ -697,12 +810,16 @@ view BossBar(Lobby lobby, Look look, query (Boss boss) bosses)
     Draw.SetScreen();
     var w = Screen.width;
     var u = Unit();
-    var at = float2(w * 0.5, 64 * u);
-    var width = 520 * u;
+    var at = float2(w * 0.5, 62 * u);
+    var width = 560 * u;
     var share = Math.Saturate(shown.health / Math.Max(1, shown.healthMost));
-    WriteBold(shown.number > 1 ? $"THE BRUTE  {shown.number}" : "THE BRUTE", at - float2(0, 22 * u), 18 * u, Color(0.95, 0.3, 0.2), Anchor.MiddleCenter);
-    Draw.Rect(at, float2(width + 6 * u, 14 * u), Color(0, 0, 0, 0.7));
-    Draw.Rect(at - float2(width * 0.5 * (1 - share), 0), float2(width * share, 10 * u), Color(0.75, 0.1, 0.07));
+    feed.bossTrail = share > feed.bossTrail ? share : Math.Max(share, feed.bossTrail - Math.Min(Frame.dt, 0.05) * 0.25);
+    Draw.Shape(Shape { center = at - float2(0, 8 * u), size = float2(width + 120 * u, 70 * u), radius = 30 * u, color = Color(0, 0, 0, 0.35), soft = 30 * u });
+    WriteBold(shown.number > 1 ? $"THE BRUTE  {shown.number}" : "THE BRUTE", at - float2(0, 24 * u), 20 * u, Color(0.98, 0.32, 0.2), Anchor.MiddleCenter);
+    Bar(at - float2(width * 0.5, 0), float2(width, 12 * u), share, feed.bossTrail, Color(0.85, 0.12, 0.08), Color(0.45, 0.03, 0.02), 10, u);
+    // A spike at each end
+    Draw.Shape(Shape { center = at - float2(width * 0.5 + 14 * u, 0), size = float2(12, 12) * u, rotation = Math.PI * 0.25, color = Color(0.85, 0.12, 0.08) });
+    Draw.Shape(Shape { center = at + float2(width * 0.5 + 14 * u, 0), size = float2(12, 12) * u, rotation = Math.PI * 0.25, color = Color(0.85, 0.12, 0.08) });
 }
 
 local event(BossCame came) ShowBoss(mut Feed feed)
@@ -757,13 +874,11 @@ view Callings(Me me, Lobby lobby, Match match, query (Survivor survivor) survivo
         var role = Role(k + 1);
         var middle = float2(w * 0.5 + (k - 1) * (size.x + 22 * u), h * 0.55);
         var tint = k == 0 ? Color(0.95, 0.75, 0.35) : k == 1 ? Color(0.9, 0.45, 0.35) : Color(0.5, 0.8, 0.95);
-        Draw.RoundRect(middle + float2(4, 6) * u, size, 10 * u, Color(0, 0, 0, 0.5));
-        Draw.RoundRect(middle, size, 10 * u, Color(0.07, 0.05, 0.045, 0.94));
-        Draw.WireRoundRect(middle, size - float2(10, 10) * u, 7 * u, 1.5 * u, Color(tint.r * 0.7, tint.g * 0.7, tint.b * 0.7, 0.8));
+        Card(middle, size, tint, 1, u);
         var top = middle.y - size.y * 0.5;
         var key = float2(middle.x, top + 32 * u);
-        Draw.Circle(key, 17 * u, Color(CHALK.r, CHALK.g, CHALK.b, 0.9));
-        WriteBold($"{k + 1}", key, 20 * u, BONE, Anchor.MiddleCenter);
+        Draw.Shape(Shape { center = key, size = float2(32, 32) * u, radius = 16 * u, color = Color(0.05, 0.04, 0.04, 0.9), outline = 1.5 * u, outlineColor = tint });
+        WriteBold($"{k + 1}", key, 17 * u, BONE, Anchor.MiddleCenter);
         WriteBold(RoleName(role).ToUpper(), float2(middle.x, top + 76 * u), 26 * u, tint, Anchor.MiddleCenter);
         Write(Info(RoleWeapon(role)).name, float2(middle.x, top + 104 * u), 15 * u, GOLD, Anchor.MiddleCenter);
         for (var s = 0; s < 3; s++)

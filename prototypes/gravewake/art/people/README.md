@@ -118,6 +118,10 @@ is in place. Loops end on their first pose, so they loop on their duration.
 | Hit_Chest | UAL1 Hit_Chest | 0.333 | | | | |
 | Crouch_Idle | UAL1 Crouch_Idle_Loop | 2.933 | yes | | | |
 | Crouch_Walk | UAL1 Crouch_Fwd_Loop | 2.000 | yes | 1.400 / 0.700 | 1.560 / 0.780 | source 1.442 |
+| Jog | UAL1 Jog_Fwd_Loop | 0.933 | yes | 5.528 / 5.923 | 5.863 / 6.281 | source 5.505; a survivor's legs at a walk or a run, turned toward the way they go and played backwards going back (people.tide) |
+| Pistol_Idle | UAL1 Pistol_Idle_Loop | 1.667 | yes | | | a survivor's stance standing, the arms put on the gun |
+| Jump_Loop | UAL1 Jump_Loop | 2.500 | yes | | | in the air |
+| Jump_Land | UAL1 Jump_Land | 1.267 | | | | its first half-second, coming down |
 
 Stride is the ground a cycle covers, from the speed at which a planted toe slides backwards in the
 in-place cycle (median over the frames a toe is down), measured on each exported skeleton; moving

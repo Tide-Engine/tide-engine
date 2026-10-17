@@ -20,8 +20,10 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
     if (survivor.yaw < -Math.PI) survivor.yaw += Math.TAU;
     survivor.pitch = Math.Clamp(survivor.pitch + hands.look.y, -1.45, 1.45);
 
-    // Health comes back after a few calm seconds
+    // Health comes back after a few calm seconds; what Leech Rounds may heal comes back all the time
     survivor.calm += dt;
+    var leechMost = MaxHealth(survivor) * 0.08 * Has(survivor, Item.Leech);
+    survivor.leech = Math.Min(leechMost, survivor.leech + leechMost * dt);
     if (survivor.life == Life.Standing && survivor.calm > 3.5) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * 0.6);
 
     // Down: bleeding out, crawling, unless someone comes
@@ -47,12 +49,20 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
     if (downed) speed = 0.6;
     mut var wish = Flat(survivor.yaw) * hands.move.y + Flat(survivor.yaw + Math.PI * 0.5) * hands.move.x;
     if (Math.Length(wish) > 1) wish = Math.Normalize(wish);
+    // On a slope too steep to stand on, no walking up it
+    if (survivor.sliding)
+    {
+        var uphill = Uphill(survivor.feet);
+        var up = Math.Dot(wish, uphill);
+        if (up > 0) wish -= uphill * up;
+    }
     var target = wish * speed;
     var grip = survivor.grounded ? 14.0 : 3.5;
     var blend = Math.Min(1, dt * grip);
     survivor.velocity.x += (target.x - survivor.velocity.x) * blend;
     survivor.velocity.z += (target.z - survivor.velocity.z) * blend;
-    // A slide carries them along whatever they press
+    // A dash carries them along whatever they press, through the dead (they don't hold a survivor; Hunt's crowding
+    // doesn't push one), knocking down each it goes through (DashThrough)
     if (survivor.dash > 0)
     {
         survivor.dash -= dt;
@@ -60,7 +70,15 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
         survivor.velocity.z = survivor.dashWay.z * DASH_SPEED * Fleetness(survivor);
     }
     if (survivor.grounded) survivor.airJumps = 0;
-    if (hands.jump.down && !downed)
+    // Down a slope too steep to stand on: pulled down it, and no jumping off it (jumping again and again up a hill
+    // the feet couldn't climb had walked them up any cliff)
+    if (survivor.sliding)
+    {
+        var downhill = -Uphill(survivor.feet);
+        survivor.velocity.x += downhill.x * SLIDE_PULL * dt;
+        survivor.velocity.z += downhill.z * SLIDE_PULL * dt;
+    }
+    if (hands.jump.down && !downed && !survivor.sliding)
     {
         if (survivor.grounded)
         {
@@ -108,8 +126,22 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
     {
         survivor.grounded = feet.y - ground < 0.05;
     }
+    // Footing: the ground (not a box's top) no steeper than a ramp
+    survivor.sliding = survivor.grounded && ground < Ground(feet.x, feet.z) + 0.05 && Steepness(feet.x, feet.z) > SLIDE_STEEP;
     survivor.feet = feet;
 }
+
+// Which way the ground climbs at a place, flat.
+float3 Uphill(float3 at)
+{
+    var dx = Ground(at.x + 0.5, at.z) - Ground(at.x - 0.5, at.z);
+    var dz = Ground(at.x, at.z + 0.5) - Ground(at.x, at.z - 0.5);
+    var way = float3(dx, 0, dz);
+    return Math.Length(way) > 0.0001 ? Math.Normalize(way) : float3(0);
+}
+
+const float SLIDE_STEEP = 0.9;      // Ground climbing more than this a metre isn't footing (a ramp is 0.75 at most)
+const float SLIDE_PULL = 22;        // How hard a slope like that pulls one down it, metres a second each second
 
 // Whether a survivor whose feet are `height` up can step from `before` to `at`: in the clearing, and not climbing
 // steeper than a ramp.
@@ -283,11 +315,12 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
         return;
     }
     if (!hands.attack || survivor.shotWait > 0 || survivor.mag <= 0) return;
-    // A shot cuts a shotgun's loading short; a magazine's has to finish
-    if (survivor.act == Act.Reload && !info.shells) return;
+    // A fresh pull of the trigger cuts a shotgun's loading short (held down, it loads on till it's full: held, it had
+    // fired each shell as it went in, and never filled); a magazine's has to finish
+    if (survivor.act == Act.Reload && (!info.shells || !hands.attack.down)) return;
 
     // A shot: each pellet a ray
-    survivor.mag -= 1;
+    if (!info.bottomless) survivor.mag -= 1;
     survivor.shotWait = info.rate / Haste(survivor);
     survivor.steady = 0;
     var from = AimFrom(survivor, info.range, ashwick, herd, out var look);
@@ -324,11 +357,12 @@ float3 ShoulderFrom(float3 eye, float yaw, float pitch)
     return camera;
 }
 
-// Where a survivor's gun is, in their right hand as their body holds it (people.tide's pose): over the shoulder, the
-// shots leave from here.
+// Where a survivor's gun's barrel is as their body holds it (people.tide's pose: from the right shoulder along the aim,
+// both hands on it): over the shoulder, the shots leave from here.
 float3 GunHand(Survivor survivor)
 {
-    return survivor.feet + Flat(survivor.yaw + Math.PI * 0.5) * GUN_RIGHT + float3(0, GUN_UP, 0) + Flat(survivor.yaw) * GUN_AHEAD;
+    var look = LookDirection(survivor.yaw, survivor.pitch);
+    return survivor.feet + Flat(survivor.yaw + Math.PI * 0.5) * GUN_RIGHT + float3(0, GUN_UP, 0) + Flat(survivor.yaw) * GUN_AHEAD + look * GUN_REACH;
 }
 
 // What the crosshair is on from over the shoulder: the first of the dead, the ground or a wall along the camera's line,
@@ -377,9 +411,10 @@ float3 AimFrom(Survivor survivor, float range, Ashwick ashwick, Herd herd, out f
 const float SHOULDER_BACK = 3.2;
 const float SHOULDER_RIGHT = 0.7;
 const float SHOULDER_UP = 0.35;
-const float GUN_RIGHT = 0.2;
-const float GUN_UP = 1.2;
-const float GUN_AHEAD = 0.5;
+const float GUN_RIGHT = 0.12;
+const float GUN_UP = 1.36;
+const float GUN_AHEAD = 0.08;
+const float GUN_REACH = 0.45;
 
 void StartAct(mut Survivor survivor, Act act, float seconds)
 {
@@ -478,7 +513,7 @@ List<Body> Along(Herd herd, float3 from, float3 to)
 event(Hurt hurt) TakeHurt(mut Survivor survivor, Match match)
 {
     if (survivor.life != Life.Standing || match.phase == Phase.Over) return;
-    survivor.health -= hurt.damage;
+    survivor.health -= hurt.damage * (1 - Armor(survivor));
     survivor.calm = 0;
     survivor.hurtFrom = YawTo(survivor.feet, hurt.from);
     Send(Cue { sound = Sfx.Hurt, at = survivor.feet + float3(0, 1.4, 0) });
@@ -547,4 +582,42 @@ event Spell
     int seat;
     float3 from;
     float3 to;
+}
+
+// A dash going through the dead: each it passes within a stride of is knocked down and flung aside, off the dash's line
+// (each once: the dash lasts a quarter second and its blow lands as it comes level); and a charge back each cooldown.
+[Stage(Tick.Hands, 2)]
+system DashThrough(mut Survivor survivor, Match match, Herd herd, Time time)
+{
+    if (match.paused || !survivor.ready || survivor.life != Life.Standing) return;
+    // The second charge back: when the cooldown's come round with one spent, another's ready
+    // (one at a time, each the whole cooldown; with none ready, the skill's cooldown is the wait for the next)
+    var slot = 1;
+    if (survivor.dashes < DASHES)
+    {
+        survivor.dashWait -= time.dt;
+        if (survivor.dashWait <= 0)
+        {
+            survivor.dashes += 1;
+            survivor.dashWait = survivor.dashes < DASHES ? Cooldown(survivor, Skill.Slide) : 0;
+        }
+        if (survivor.dashes == 0) survivor.cooldowns[slot] = survivor.dashWait;
+    }
+    if (survivor.dash <= 0) return;
+    var side = float3(-survivor.dashWay.z, 0, survivor.dashWay.x);
+    var reach = survivor.role == Role.Breacher ? BREACHER_DASH_REACH : 1.1;
+    var hit = DASH_HIT * (survivor.role == Role.Breacher ? BREACHER_DASH_HIT : 1.0) * Might(survivor);
+    foreach (var z in Near(herd, survivor.feet, reach + 0.5))
+    {
+        // (the dead already knocked down aren't struck again: a dash's blow lands once on each)
+        if (!z.hittable || z.down || z.risen < 1) continue;
+        var off = z.at - survivor.feet;
+        var far = Math.Length(off.xz);
+        if (far > reach * z.size) continue;
+        // Behind the dash already: passed
+        if (Math.Dot(off, survivor.dashWay) < -0.3) continue;
+        var away = Math.Dot(off, side) >= 0 ? side : -side;
+        z.entity.Send(Wound { damage = hit, seat = survivor.seat, from = z.at - away - survivor.dashWay * 0.5, knock = 6 / z.size, down = z.size < 1.5,
+                              blow = Blow.Blunt });
+    }
 }
