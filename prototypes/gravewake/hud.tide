@@ -104,7 +104,7 @@ Color DangerColor(float danger)
 }
 
 [Stage(Layers.Hud)]
-view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed feed, query (Survivor survivor) survivors)
+view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed feed, Ashwick ashwick, Herd herd, query (Survivor survivor) survivors)
 {
     if (lobby.page != Page.Playing) return;
     Cursor.Lock();
@@ -231,7 +231,28 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     {
         var gap = (5 + info.spread * h * 0.6) * u / Unit();
         var tick = 7 * u;
-        var c = Color(1, 1, 1, 0.75);
+        // Over the shoulder a round goes from the gun to what the crosshair is on; where something's in the way (a
+        // rise, a wall, one of the dead nearer the gun) and it'd stop away from the crosshair, a red ring is where,
+        // and the crosshair dims.
+        mut var blocked = false;
+        if (me.third && mine.life == Life.Standing)
+        {
+            var from = AimFrom(mine, info.range, ashwick, herd, out var way);
+            var reach = Math.Distance(from, AimedAt(mine, info.range, ashwick, herd));
+            var stop = FirstHit(from, from + way * reach, ashwick, herd);
+            float4 clip = Math.Mul(look.toClip, float4(from + way * reach * Math.Min(1, stop), 1));
+            if (stop < 1 && clip.w > 0.01)
+            {
+                var seen = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
+                if (Math.Distance(seen, middle) > 14 * u)
+                {
+                    blocked = true;
+                    Draw.WireCircle(seen, 9 * u, 2.5 * u, Color(1.0, 0.25, 0.15, 0.95));
+                    Draw.Circle(seen, 2.5 * u, Color(1.0, 0.25, 0.15, 0.95));
+                }
+            }
+        }
+        var c = Color(1, 1, 1, blocked ? 0.3 : 0.75);
         Draw.Line(middle + float2(gap, 0), middle + float2(gap + tick, 0), 2 * u, c);
         Draw.Line(middle - float2(gap, 0), middle - float2(gap + tick, 0), 2 * u, c);
         Draw.Line(middle + float2(0, gap), middle + float2(0, gap + tick), 2 * u, c);

@@ -400,7 +400,9 @@ local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
 {
     var own = traced.seat == me.seat && !me.third && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
     var way = Math.Normalize(traced.to - traced.from);
-    var from = own ? grip.muzzle : traced.kind == Trace.Turret || traced.kind == Trace.Drone ? traced.from : traced.from + way * 0.6;
+    var gun = traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase;
+    var drawn = gun && traced.seat >= 0 && traced.seat < 4 ? grip.muzzles[traced.seat] : float3(0);
+    var from = own ? grip.muzzle : gun && Math.Distance(drawn, traced.from) < 1.5 ? drawn : gun ? traced.from + way * 0.6 : traced.from;
     if (Math.Distance(from, traced.to) < 0.3) return;
     switch (traced.kind)
     {

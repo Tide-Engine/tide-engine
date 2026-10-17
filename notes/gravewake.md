@@ -256,20 +256,37 @@ around you making getting back stabbed too easy". Third person is the default
 (`Feel.third`, local, so each machine picks its own view). V or the pad's
 right-stick press switches between it and first person.
 
-- The camera (eye.tide's `Prepare`) sits 3.2 m behind the head, 0.7 m to the
-  right and 0.35 m up (`SHOULDER_BACK`, `SHOULDER_RIGHT`, `SHOULDER_UP` in
-  hands.tide). It's pulled in toward the head where the ground would be
-  between them, and kept 0.35 m above the ground. `Me.third` is this frame's
-  answer. The development views (F9) aren't third person.
-- The shots go where the crosshair is. The view is sent with the hands
-  (`Hands.third`, stored as `Survivor.third`), and `AimWay` aims the guns and
-  the Phase Round from the eye toward the point 40 m along the look from
-  the shoulder camera. Point blank, a shot can go a little left of the
-  crosshair. Because the aim is in the match, every machine shoots alike.
+- The camera (`ShoulderFrom` in hands.tide, used by eye.tide's `Prepare` and
+  by the aim) sits 3.2 m behind the head, 0.7 m to the right and 0.35 m up
+  (`SHOULDER_BACK`, `SHOULDER_RIGHT`, `SHOULDER_UP`). It's pulled in toward
+  the head where the ground would be between them, and kept 0.35 m above
+  the ground. `Me.third` is this frame's answer. The development views (F9)
+  aren't third person.
+- The view is sent with the hands (`Hands.third`, stored as
+  `Survivor.third`), so the aim is in the match and every machine shoots
+  alike.
+- First version: shots went from the eye toward the point 40 m along the
+  camera's line. The owner: "it doesnt go where i aim nor from the gun;
+  worst of both worlds", and the carried gun was upside down. Now:
+  - `AimedAt` is what the crosshair is on: the first of the dead, the
+    ground or a wall along the camera's line, starting level with the head,
+    so nothing behind the survivor is aimed at.
+  - `AimFrom` gives where the shots leave and which way: from the gun in
+    the right hand (`GunHand`: 0.2 m right, 1.2 m up, 0.5 m ahead of the
+    feet, measured off the body's pose) toward `AimedAt`. The guns and the
+    Phase Round use it; in first person it's the eye along the look.
+  - When something is between the gun and that point (a rock the camera
+    sees over, one of the dead nearer the gun) and the shot would stop
+    more than 14 px from the crosshair, the HUD (`Overlay`) draws a red
+    ring where it stops and dims the crosshair.
+  - Every carried gun (`DrawCarried`) is laid along its shots' line at the
+    palm, top up (`quaternion.LookRotation`), in place of a fixed turn off
+    the wrist bone, which had it upside down. Its muzzle is kept per seat
+    (`Grip.muzzles`), and every survivor's tracers start there.
 - Seen from behind: your own survivor and gun draw as everyone else's do
-  (`DrawSurvivor`, `DrawCarried`). The first-person arms aren't drawn, and
-  your own tracers start at the gun in the world, not the arms' muzzle.
-- Test: the gun section fires one carbine shot over the shoulder.
+  (`DrawSurvivor`, `DrawCarried`). The first-person arms aren't drawn.
+- Test: the gun section fires one carbine shot over the shoulder, turned
+  so the camera's line is on the zombie's chest (`aim_over_shoulder`).
 
 ### Phase 2: the PSX look, guns, kits and items (built 2026-10-16)
 

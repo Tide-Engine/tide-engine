@@ -105,6 +105,24 @@ static void put(int seat, tide_float3 feet, tide_float3 look)
 // Turn a survivor where they stand to look at a point.
 static void look_at(int seat, tide_float3 look) { put(seat, get(seat).feet, look); }
 
+// Turn a survivor so the over-the-shoulder camera's crosshair is on a point (hands.tide's ShoulderFrom, on open
+// ground): the camera moves as they turn, so a few rounds of turning toward the point from where it is.
+static void aim_over_shoulder(int seat, tide_float3 at)
+{
+    Survivor s = get(seat);
+    const tide_float3 eye = {s.feet.x, s.feet.y + 1.62f, s.feet.z};
+    for (int round = 0; round < 6; round++) {
+        const float flat = cosf(s.pitch);
+        const tide_float3 look = {sinf(s.yaw) * flat, sinf(s.pitch), cosf(s.yaw) * flat};
+        const float rx = sinf(s.yaw + 1.5707964f), rz = cosf(s.yaw + 1.5707964f);
+        const tide_float3 camera = {eye.x + rx * 0.7f - look.x * 3.2f, eye.y + 0.35f - look.y * 3.2f, eye.z + rz * 0.7f - look.z * 3.2f};
+        const float dx = at.x - camera.x, dy = at.y - camera.y, dz = at.z - camera.z;
+        s.yaw = atan2f(dx, dz);
+        s.pitch = atan2f(dy, sqrtf(dx * dx + dz * dz));
+    }
+    set(seat, s);
+}
+
 // An item or a survivor taken: 1, 2 or 3, pressed for a tick.
 static void pick(int seat, int which)
 {
@@ -502,6 +520,7 @@ int main(void)
             held[0].third = k == 2;
             const tide_entity e = sturdy();
             face(0, e, 6);
+            if (k == 2) aim_over_shoulder(0, zombie(e).chestAt);
             const float before = zombie(e).health;
             press(&held[0].attack);
             tick_safe(2);
