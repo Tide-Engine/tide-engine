@@ -101,7 +101,8 @@ Then, in that folder:
 | `tide update` | Moves the packages to the newest commits of what they follow |
 | `tide eject rooms` | Copies a package into the game's folder, to change as the game's own |
 
-`tide help` lists every option. `tide` keeps its work in a hidden `.tide`
+`tide help` lists commands; `tide help run` or `tide help --web` shows details
+for one command or argument. `tide` keeps its work in a hidden `.tide`
 folder next to your files, which you can delete any time; it's ignored by git.
 
 The [docs](https://tide-engine.dev) go through the language a topic at a time, and

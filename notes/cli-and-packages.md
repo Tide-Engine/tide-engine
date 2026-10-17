@@ -1,5 +1,39 @@
 # `tide`, packages and the package
 
+## Focused CLI help (2026-10-17)
+
+`tide` and `tide help` now show only a compact command list with a route to
+details. `tide help <command>` prints usage, explanation and relevant arguments;
+`tide help <argument>` describes a flag or positional argument, including its
+defaults, limits and commands. `tide help <command> <argument>` selects the
+command's meaning when names overlap (--project, --size and --frames). Exact
+topic names are required; unknown topics, invalid command/argument pairs and
+extra topics return 2 with guidance. Bare tide keeps exit code 2; explicit
+valid help returns 0. --help and -h remain top-level help aliases.
+
+`tide <command> --help` and `-h`, with no other arguments, show command help
+before installation setup, cleanup, update checks or command dispatch, including
+open/login/deploy/upgrade. `tide help --help` describes the help argument itself;
+`tide help help` describes the help command. Embedded Clang retains its own
+`tide cc --help`; only embedded builds advertise cc in Tide's help catalog.
+No operational command parsing or language semantics changed.
+
+`compiler/cli/help.c` owns shared command/argument metadata for the overview,
+command lists and topic details. main.c dispatches help before doing work.
+New CLI arguments need catalog entries as well as their parser cases. README
+and docs/tools/cli.md describe discovery. No spec change is needed.
+
+The tide_cli_help CTest runs a standalone copy without installed sources or a
+sibling editor. It checks compactness, all public commands and argument topics,
+command aliases, relevant-option lists, scoped defaults, failure diagnostics and
+exit codes. Windows validation with Clang 23.1.2 and Node 24.16.0 passes:
+full native debug 2,366/2,366 (63.71 s), full web debug 2,277/2,277 (237.09 s),
+including native GPU and WebGL/WebGPU tests, and the docs production build.
+The embedded-Clang catalog branch also passes strict C17 syntax/warning checks;
+the development CLI uses external Clang. git diff --check passes. Docs retain
+their existing allowed unstaged-example 404s. Other operating systems, Android
+and sanitizers were not run; no CI dispatch or deployment was requested.
+
 ## Failed-build cache comparison (2026-10-15)
 
 Build `38761765659` passed Windows packaging but Linux and macOS packaging
@@ -252,7 +286,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **What `run` passes on to the game is a list kept by hand** (the options' loop in `compiler/cli/main.c`, into `game_args`): `--host`, `--join`, `--connect`, `--capture`, `--capture-audio`, `--script`, `--microphone`, `--frames`, `--scale`, `--players`, `--size` and `--seed`. An option of the game's own command line (`tide_run_configure` in `tide/host.h`) with no case there is one `run` "doesn't take", whatever the docs say: `--capture-audio` and `--microphone` were so from the day the host got them until 2026-10-08, listed in `docs/tools/cli.md` and refused with exit code 2. So an option the host gains gets a case in that loop (its file through `path_absolute`, and `headless` where the host makes the run one with no window), a line of `tide help`, and a place in `run_exit_test.c`'s run of every option once.
   - **`game_args` has 32 slots, and every option once is 25 arguments.** The loop refuses ("run takes each of its options once") only past 28, which leaves room for the longest option, `--size`'s 3, and the NULL after them, so every option once fits in any order, with the game's folder after them. It was 24 slots and a refusal past 20, which the two audio options would have outgrown: all of them once were refused.
   - **Repeated `--define` flags have no fixed parser cap** (fixed 2026-10-08): `main.c` keeps an argument-sized heap array, with room for `DEBUG`, and `build_options.defines` borrows it until the command returns. The array and its argv strings survive the arena resets of every watched build; `generate` and `tide_schedule` pass its pointer and count to the in-process compiler, so no extra compiler command line or command-length limit is involved. The old 64-slot field rejected the 64th valid symbol as an invalid name. `tide_cli_packages` schedules an offline game with 71 user symbols in debug and release, requiring early, middle and late symbols and the right `DEBUG` value.
-  - **`tide help`'s text is two string literals**, as C promises one of 4095 characters only and `-Wpedantic` makes a longer one an error: 2,629 and 2,405 characters now. The run with no window's options are the second.
+  - **Help text respects C17's 4095-character string-literal guarantee.** The former full usage literals were replaced by the focused command/argument catalog described above; keep each catalog string within that limit for `-Wpedantic` builds.
   - **A file that isn't there yet has a whole path on Linux and macOS too** (found and fixed 2026-10-08). `path_absolute` (`compiler/cli/sys.c`) asked `realpath`, which answers only for what exists, and gave the path back as it was typed otherwise, so `--capture` and `--capture-audio`, whose files a run makes, went to the game by the path typed, into a game that runs in its own folder. Seen with a tide built for Linux under WSL, from a folder beside the game's: `tide run game --frames 2 --capture x.png` wrote `game/x.png`, `--capture-audio x.wav` wrote `game/x.wav`, and a file in a folder (`shots/x.png`, `./shots/x.png`, `../there/shots/x.png`, one through a link) was one it "can't write". `--script` and `--microphone` name files that exist, and Windows' `GetFullPathNameA` needs none to, so both were right. Now, where `realpath` has no answer, it's asked for as much of the path as is there, a name less at a time from the end, down to the current folder for a path that isn't from the root, and the names left follow as they were typed (`absolute_missing`). What code relies on:
     - **A file has the path it will have once it's written:** the part that's there is `realpath`'s, with its links followed and its `.` and `..` gone, as a path that exists always was. Joining the current folder and the path as typed would name the same file, under another path than the next call's (`out/../x.png`, a folder that's a link), and that's what the game says it captured and what `Built` says. Names after one that isn't there stay as typed, a `..` among them too: the system refuses such a path, from the root as from here.
     - **No path stays no path** (`""`, as on Windows), never the current folder: `sys_exe_dir` asks with one when it can't read where tide is.
