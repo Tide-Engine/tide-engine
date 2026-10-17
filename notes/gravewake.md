@@ -210,8 +210,11 @@ distance." Asked, they chose pixels finer with distance, and for the sounds:
   size (`lens.scene`, with its depth kept as `lens.sceneDepth`), and
   `Develop` cuts it into pixels whose size is the scene's distance there:
   the nearest about 270 up the window (`look.block` of the window's pixels
-  across, `look.low` of them), half that past 14 m, a quarter past 30 m, an
-  eighth past 55 m, never under one (`Fineness`). The distance is read once
+  across, `look.low` of them), a third finer past 18 m and half their size
+  past 40 m, no finer (`Fineness`; each a whole number of the window's
+  pixels, so 4, 3 and 2 at 1080 lines). It went to an eighth at first, down
+  to the window's own pixels far off; the owner: "i like it better (more
+  visible) but distant stuff feels too detailed almost now". The distance is read once
   for the nearest-size pixel round each pixel (`NEAR / (1 - depth)`), so a
   pixel is one size throughout. The first-person arms and gun draw into their
   own target (`lens.hands`, cleared see-through each frame, with the scene's
