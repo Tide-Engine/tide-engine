@@ -609,7 +609,8 @@ def gunshot(rel, t0, seconds, rng):
 
 # Each gun's takes: the library's file and when each shot's crack comes
 RIFLE_TAKES = [('AR-15/D_24P.wav', 0.547), ('AR-15/D_24P.wav', 3.908), ('AR-15/D_32P.wav', 0.703)]
-SMG_TAKES = [('PPSh/P_22P.wav', 1.143), ('PPSh/P_34P.wav', 0.723), ('PPSh/P_32P.wav', 0.803)]
+# (the PPSh's single shots: its other files are bursts, fourteen shots in a 0.7 s take)
+SMG_TAKES = [('PPSh/P_30P.wav', 0.968), ('PPSh/P_30P.wav', 4.386), ('PPSh/P_30P.wav', 8.241)]
 SHOTGUN_TAKES = [('Mossberg/N_26P.wav', 0.785), ('Mossberg/N_30P.wav', 1.694), ('Mossberg/N_26P.wav', 4.573)]
 PISTOL_TAKES = [('1911/A_42P.wav', 0.939), ('1911/A_34P.wav', 1.541), ('1911/A_42P.wav', 4.999)]
 

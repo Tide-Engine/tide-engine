@@ -1390,34 +1390,34 @@
   "seconds": 1.574
  },
  "smg_fire_1": {
-  "bytes": 61698,
+  "bytes": 50562,
   "file": "smg_fire_1.wav",
   "kind": "sfx",
   "layers": false,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 0.699
+  "seconds": 0.573
  },
  "smg_fire_2": {
-  "bytes": 61784,
+  "bytes": 50562,
   "file": "smg_fire_2.wav",
   "kind": "sfx",
   "layers": false,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 0.7
+  "seconds": 0.573
  },
  "smg_fire_3": {
-  "bytes": 54146,
+  "bytes": 51714,
   "file": "smg_fire_3.wav",
   "kind": "sfx",
   "layers": false,
   "packs": [
    "oga_firearms"
   ],
-  "seconds": 0.613
+  "seconds": 0.586
  },
  "snarl_1": {
   "bytes": 61586,
