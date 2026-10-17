@@ -11,6 +11,7 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Match match, T
 {
     survivor.placed = false;
     survivor.ready = hands.ready;
+    survivor.third = hands.third;
     if (match.paused) return;
     var dt = time.dt;
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over) return;
@@ -290,7 +291,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     survivor.shotWait = info.rate / Haste(survivor);
     survivor.steady = 0;
     var eye = EyeOf(survivor);
-    var look = LookDirection(survivor.yaw, survivor.pitch);
+    var look = AimWay(survivor);
     var right = Flat(survivor.yaw + Math.PI * 0.5);
     var up = Math.Cross(look, right);
     var trace = info.pellets > 1 ? Trace.Pellet : Trace.Bullet;
@@ -305,6 +306,26 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     survivor.actTime = 0;
     survivor.actLength = Math.Max(0.12, info.rate / Haste(survivor));
 }
+
+// Where the camera is for one who plays from over the shoulder: behind the head, up a little, out to the right.
+float3 ShoulderOf(Survivor survivor)
+{
+    var look = LookDirection(survivor.yaw, survivor.pitch);
+    return EyeOf(survivor) + Flat(survivor.yaw + Math.PI * 0.5) * SHOULDER_RIGHT + float3(0, SHOULDER_UP, 0) - look * SHOULDER_BACK;
+}
+
+// Which way a survivor's shots go: along their look; from over the shoulder, from their eye toward what the camera's
+// crosshair is on, as far as a gun reaches (so the round goes where the crosshair says).
+float3 AimWay(Survivor survivor)
+{
+    var look = LookDirection(survivor.yaw, survivor.pitch);
+    if (!survivor.third) return look;
+    return Math.Normalize(ShoulderOf(survivor) + look * 40 - EyeOf(survivor));
+}
+
+const float SHOULDER_BACK = 3.2;
+const float SHOULDER_RIGHT = 0.7;
+const float SHOULDER_UP = 0.35;
 
 void StartAct(mut Survivor survivor, Act act, float seconds)
 {

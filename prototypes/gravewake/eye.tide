@@ -22,6 +22,7 @@ local singleton Me
     bool wasGrounded = true;
     float3 last;                // Last frame's feet, for footfalls
     int overhead;               // Development: 1 looks down on the whole clearing (F9), 2 from over the trees
+    bool third;                 // This frame's eye is over the shoulder (Feel.third), not the survivor's own
 }
 
 local singleton Village
@@ -45,7 +46,7 @@ view Mine(Survivor survivor, mut Me me, with ownership)
 // The eye: this machine's survivor's, or a slow circle round the fire behind the title.
 [Stage(Layers.Prepare)]
 view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit kit, mut Shapes shapes, mut Village village, Match match,
-             Lobby lobby, Devices devices, query (Survivor survivor) survivors, query (Zombie zombie) zombies, query (Missile missile) missiles)
+             Lobby lobby, Devices devices, mut Feel feel, query (Survivor survivor) survivors, query (Zombie zombie) zombies, query (Missile missile) missiles)
 {
     if (!village.made)
     {
@@ -98,6 +99,22 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         me.pitch = mine.pitch + me.kick + shakePitch;
         var roll = mine.life == Life.Downed ? 0.25 : Math.Sin(me.bob * 0.5) * 0.004 * Math.Saturate(moving / 4);
         me.turn = Math.Mul(quaternion.Euler(-me.pitch, me.yaw, 0), quaternion.AxisAngle(float3(0, 0, 1), roll));
+        // From over the shoulder: behind the head, up a little, out to the right, pulled in where the ground's in the way
+        if (feel.third)
+        {
+            var look3 = LookDirection(me.yaw, me.pitch);
+            var head = eye;
+            mut var back = SHOULDER_BACK;
+            var side = Flat(me.yaw + Math.PI * 0.5) * SHOULDER_RIGHT + float3(0, SHOULDER_UP, 0);
+            for (var k = 0; k < 8; k++)
+            {
+                var at = head + side - look3 * back;
+                if (at.y > Ground(at.x, at.z) + 0.35) break;
+                back *= 0.75;
+            }
+            eye = head + side - look3 * back;
+            eye.y = Math.Max(eye.y, Ground(eye.x, eye.z) + 0.35);
+        }
         look.downed = mine.life == Life.Downed ? 1.0 : 0.0;
         var low = 1 - Math.Saturate(mine.health / MaxHealth(mine));
         look.hurt = Math.Max(me.hurt, mine.life == Life.Standing ? low * low * 0.9 : 0.6);
@@ -116,6 +133,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         look.fov = 70;
     }
     if (devices.keyboard.f9.down) me.overhead = (me.overhead + 1) % 3;
+    if (lobby.playing && (devices.keyboard.v.down || devices.gamepad.rightStickButton.down)) feel.third = !feel.third;
     if (me.overhead == 1)
     {
         eye = float3(0, 70, 0);
@@ -129,6 +147,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         look.fov = 62;
     }
     me.eye = eye;
+    me.third = playing && feel.third && me.overhead == 0;
     look.eye = eye;
     look.time = me.clock;
     look.fade = match.phase == Phase.Over ? Math.Saturate(match.timer * 0.25) * 0.55 : 0.0;

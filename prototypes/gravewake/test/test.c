@@ -491,21 +491,24 @@ int main(void)
         tick_safe(60 * 2);
     }
 
-    // ---- The guns: a carbine's round, a shotgun's pellets, into one of the dead ----
-    few(2);
+    // ---- The guns: a carbine's round, a shotgun's pellets, into one of the dead; and the carbine again from over the
+    // shoulder, the round going where the camera's crosshair is ----
+    few(3);
     {
-        const Weapon guns[2] = {Weapon_Rifle, Weapon_Shotgun};
-        const Role roles[2] = {Role_Gunner, Role_Breacher};
-        for (int k = 0; k < 2; k++) {
+        const Weapon guns[3] = {Weapon_Rifle, Weapon_Shotgun, Weapon_Rifle};
+        const Role roles[3] = {Role_Gunner, Role_Breacher, Role_Gunner};
+        for (int k = 0; k < 3; k++) {
             become(0, roles[k], guns[k]);
+            held[0].third = k == 2;
             const tide_entity e = sturdy();
-            face(0, e, 5);
+            face(0, e, 6);
             const float before = zombie(e).health;
             press(&held[0].attack);
             tick_safe(2);
-            if (zombie(e).health >= before) fprintf(stderr, "the %s missed\n", k == 0 ? "carbine" : "shotgun");
+            if (zombie(e).health >= before) fprintf(stderr, "the %s missed\n", k == 0 ? "carbine" : k == 1 ? "shotgun" : "carbine from over the shoulder");
             CHECK(zombie(e).health < before);
         }
+        held[0].third = false;
     }
 
     // ---- Every skill ----
@@ -528,7 +531,7 @@ int main(void)
         tick_safe(12);
         CHECK(hypotf(get(0).feet.x - was.x, get(0).feet.z - was.z) > 3 && get(0).cooldowns.at[1] > 0);
         e = sturdy();
-        face(0, e, 6);
+        face(0, e, 3);           // Well within the blast however far the throw carries
         before = zombie(e).health;
         press(&held[0].special);
         for (int t = 0; t < 150 && zombie(e).health >= before; t++) tick_safe(1);

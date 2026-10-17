@@ -1,6 +1,6 @@
 # GRAVEWAKE
 
-`prototypes/gravewake/`: a first-person cooperative zombie survival game for
+`prototypes/gravewake/`: a third- or first-person cooperative zombie survival game for
 one to four, requested on 2026-10-16. The catalog and staging contract is
 `notes/private-prototypes.md`; this note is the game's. How to play, the map
 and the files are in the game's `README.md`.
@@ -242,6 +242,28 @@ distance." Asked, they chose pixels finer with distance, and for the sounds:
     interface chime.
   - Not yet replaced: the dead's voices (recordings already), footsteps,
     explosions, the power-ups' sounds.
+
+### Third person (2026-10-17)
+
+The owner: "lets try a 3rd person mode, with first person its hard to see
+around you making getting back stabbed too easy". Third person is the default
+(`Feel.third`, local, so each machine picks its own view). V or the pad's
+right-stick press switches between it and first person.
+
+- The camera (eye.tide's `Prepare`) sits 3.2 m behind the head, 0.7 m to the
+  right and 0.35 m up (`SHOULDER_BACK`, `SHOULDER_RIGHT`, `SHOULDER_UP` in
+  hands.tide). It's pulled in toward the head where the ground would be
+  between them, and kept 0.35 m above the ground. `Me.third` is this frame's
+  answer. The development views (F9) aren't third person.
+- The shots go where the crosshair is. The view is sent with the hands
+  (`Hands.third`, stored as `Survivor.third`), and `AimWay` aims the guns and
+  the Phase Round from the eye toward the point 40 m along the look from
+  the shoulder camera. Point blank, a shot can go a little left of the
+  crosshair. Because the aim is in the match, every machine shoots alike.
+- Seen from behind: your own survivor and gun draw as everyone else's do
+  (`DrawSurvivor`, `DrawCarried`). The first-person arms aren't drawn, and
+  your own tracers start at the gun in the world, not the arms' muzzle.
+- Test: the gun section fires one carbine shot over the shoulder.
 
 ### Phase 2: the PSX look, guns, kits and items (built 2026-10-16)
 

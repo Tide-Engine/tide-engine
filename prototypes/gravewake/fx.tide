@@ -398,7 +398,7 @@ local event(Spell spell) Conjure(mut Fx fx)
 // stopped; a phase round's wide and pale, a drone's red. And the muzzle's flash.
 local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
 {
-    var own = traced.seat == me.seat && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
+    var own = traced.seat == me.seat && !me.third && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
     var way = Math.Normalize(traced.to - traced.from);
     var from = own ? grip.muzzle : traced.kind == Trace.Turret || traced.kind == Trace.Drone ? traced.from : traced.from + way * 0.6;
     if (Math.Distance(from, traced.to) < 0.3) return;

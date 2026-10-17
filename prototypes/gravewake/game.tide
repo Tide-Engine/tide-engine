@@ -55,6 +55,7 @@ component Survivor
     float dash;                      // Seconds left of a slide, and which way
     float3 dashWay;
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
+    bool third;                      // Played from over the shoulder (Hands.third)
     // The items (items.tide): stacks of each, the three on offer after a wave while `choosing`
     int[16] items;
     Item[3] offers;
@@ -91,6 +92,7 @@ input Hands
     bool pick1;                      // An item, or a survivor before the first wave
     bool pick2;
     bool pick3;
+    bool third;                      // Played from over the shoulder: the shots aim where its camera's crosshair is
     [Absolute] bool ready;
 
     Sample(Devices devices, Lobby lobby, Feel feel)
@@ -114,6 +116,7 @@ input Hands
         pick1 = keys.digit1.pressed || pad.dpad.left.pressed;
         pick2 = keys.digit2.pressed || pad.dpad.up.pressed;
         pick3 = keys.digit3.pressed || pad.dpad.right.pressed;
+        third = feel.third;
     }
 }
 
@@ -121,6 +124,7 @@ input Hands
 local singleton Feel
 {
     float sensitivity = 0.0022;
+    bool third = true;               // Played from over the shoulder (V switches to the eyes and back)
 }
 
 // Who plays whom: a seat for each of the four.

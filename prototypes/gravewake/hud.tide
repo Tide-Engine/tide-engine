@@ -332,7 +332,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     if (feed.played < 45 && match.phase != Phase.Over && mine.role != Role.None && !mine.choosing)
     {
         var fade = Math.Saturate((45 - feed.played) * 0.2);
-        Write("WASD move (forward runs)   Space jump   Mouse fire   RMB / Shift / Q skills   R reload   E revive",
+        Write("WASD move (forward runs)   Space jump   Mouse fire   RMB / Shift / Q skills   R reload   E revive   V view",
               float2(w * 0.5, h - 30 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)
