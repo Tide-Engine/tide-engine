@@ -47,6 +47,22 @@ bool inside_out_test_act(const uint32_t id, const int sender, const int value)
     return received;
 }
 
+bool inside_out_test_progress(const int sender, const int completed, const bool playtest)
+{
+    uint8_t bytes[TIDE_COMMAND_BYTES];
+    tide_bits bits = {bytes, TIDE_COMMAND_BYTES, 0, false};
+    tide_bits_put(&bits, TIDE_COMMAND_ID_Progress, 16);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put(&bits, 0, 32);
+    tide_bits_put_varint(&bits, tide_zigzag(completed));
+    tide_bits_put_bool(&bits, playtest);
+    const uint32_t size = tide_bits_end(&bits);
+    const bool received = tide_game_api.command(&world, player(sender), 0,
+        tide_game_api.command_sequence(&world, player(sender), 0) + 1, bytes, size);
+    tide_world_tick(&world);
+    return received;
+}
+
 static bool same_cell(const tide_int2 a, const tide_int2 b) { return a.x == b.x && a.y == b.y; }
 static int cell(const int x, const int y, const int size) { return y * size + x; }
 static void actor(const int seat, const int room, const int x, const int y)

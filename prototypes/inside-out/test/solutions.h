@@ -21,3 +21,8 @@ static const char *const inside_out_solutions[20] = {
     "EEN wwnnwne SESEE eesn E w N w W s WW sesense",
     "E s EESEENEN es N n N w SSSWWSWNW nesw EWWSSWWNN n"
 };
+// The challenges' witnesses: inside_out_solve's shortest routes, each exactly
+// its puzzle's budget of moves.
+static const char *const inside_out_challenge_solutions[3] = {
+    "ENNWSN wwwwwnneee", "NWWSWS eesenen E w NNW nne", "SS wsnnenwwwsssse NN enne",
+};

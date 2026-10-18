@@ -7,5 +7,5 @@ command Describe { int level; }
 command(Describe describe, PlayerID sender) DescribePuzzle()
 {
     var chapter = LevelChapter(describe.level);
-    SolverWords(LEVEL_COUNT, describe.level, chapter, LevelName(describe.level), ChapterName(chapter), LevelLesson(describe.level));
+    SolverWords(PUZZLE_COUNT, describe.level, chapter, LevelName(describe.level), ChapterName(chapter), LevelLesson(describe.level));
 }

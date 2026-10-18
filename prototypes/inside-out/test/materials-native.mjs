@@ -38,8 +38,9 @@ let saved;
 try { saved = await readFile(preferences); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 let child, timer, log = '';
 try {
+    // Playtest mode keeps the menu's puzzle list, which this script clicks.
     child = spawn(path.resolve(executable), ['--players', '2', '--script', script, '--size', '1280', '800'],
-        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, INSIDE_OUT_PLAYTEST: '1' } });
     child.stdout.on('data', data => { log += data; });
     child.stderr.on('data', data => { log += data; });
     const code = await new Promise((resolve, reject) => {

@@ -23,6 +23,8 @@
   };
   const previewLook = new URLSearchParams(location.search).get('look');
   if (/^[1-5]$/.test(previewLook || '')) Tide.arguments.push(`--inside-out-look=${Number(previewLook) - 1}`);
+  // Every chapter open and puzzles chosen from the menu, for playtests.
+  if (new URLSearchParams(location.search).has('playtest')) Tide.arguments.push('--inside-out-playtest');
 </script>
 {{{ SCRIPT }}}
 </body>
