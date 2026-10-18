@@ -403,13 +403,11 @@ Plan MakePlan()
 {
     mut Plan plan = Plan { };
 
-    // ---- The camp in the middle: the fire, logs to sit on, what was carried out of the village ----
+    // ---- The camp in the middle: the fire, a log to sit on, a cauldron (the bag, bucket and rope that lay about it went:
+    // the owner, 2026-10-18, of props there for their own sake, "they add noise to already a full scene") ----
     plan.fires.Add(On(0, 0));
     PlaceSolid(plan, Piece.Bench, On(0, 2.7), 0);
     PlaceSolid(plan, Piece.Cauldron, On(2.5, 1.9), 0.4);
-    Place(plan, Piece.Bag, On(-3.3, 1.5), 0.9);
-    Place(plan, Piece.Bucket_Wooden_1, On(2.9, -0.9), 0);
-    Place(plan, Piece.Rope_1, On(-1.9, 3.4), 0.6);
     plan.starts.Add(On(-1.6, -3.1));
     plan.starts.Add(On(1.6, -3.1));
     plan.starts.Add(On(-3.4, 0.4));
@@ -424,14 +422,6 @@ Plan MakePlan()
     StoneWall(plan, float2(6, cz - 2), float2(6, cz + 2), 1L << 0, 0, RUIN_TOP);
     WallTorch(plan, float3(-2, RUIN_TOP + 2.0, cz + 3.69), 2);
     WallTorch(plan, float3(2, RUIN_TOP + 2.0, cz + 3.69), 2);
-    PlaceSolid(plan, Piece.Chest_Wood, float3(0, RUIN_TOP + 0.02, cz + 2.9), Math.PI);
-    for (var i = 0; i < 9; i++)
-    {
-        var h = Math.Hash(int2(i, 515));
-        var x = -6 + Unit01(h, 0) * 12;
-        var z = cz - 6 + Unit01(h, 10) * 9;
-        Place(plan, i % 2 == 0 ? Piece.Prop_Brick1 : Piece.Prop_Brick3, On(x, z) + float3(0, 0.05, 0), Unit01(h, 20) * 6);
-    }
 
     // ---- West: the old graveyard sunk in its hollow, a brazier at its edge (its iron fences are gone: they were in the
     // way) ----
@@ -449,13 +439,10 @@ Plan MakePlan()
     for (var i = 0; i < 7; i++)
     {
         var turn = i * Math.TAU / 7 + 0.3;
-        Standing(plan, STONES + float2(Math.Cos(turn), Math.Sin(turn)) * 4.8, turn * 1.7, i, 1.15 + (i % 3) * 0.12);
+        Standing(plan, STONES + float2(Math.Cos(turn), Math.Sin(turn)) * 6.5, turn * 1.7, i, 1.0 + (i % 3) * 0.1);
     }
 
-    // ---- East: the beacon's spire; a cart and a wagon left at its foot, the camp's second fire ----
-    PlaceSolid(plan, Piece.Prop_Wagon, On(18, 11), 0.35);
-    PlaceSolid(plan, Piece.Stall_Cart_Empty, On(10, -8.4), 1.2);
-    plan.fires.Add(On(16, 1.4));
+    // (East: the beacon's spire. The cart, the wagon and the second fire by them went with the camp's clutter.)
 
     // ---- The ravine's banks, boulders along them; and big stones about the clearing, to stand behind ----
     Standing(plan, float2(-25, -27), 0.3, 0, 1.4);
@@ -469,7 +456,7 @@ Plan MakePlan()
     List<float2> groves = [float2(-49, 25), float2(31, 43), float2(-50, -27), float2(39, -38), float2(11, -53), float2(-3, -22)];
     for (var g = 0; g < groves.count; g++)
     {
-        for (var i = 0; i < 7; i++)
+        for (var i = 0; i < 5; i++)
         {
             var h = Math.Hash(int2(i + g * 31, 2323));
             var turn = Unit01(h, 0) * Math.TAU;
@@ -502,18 +489,6 @@ Plan MakePlan()
         var head = On(riser.at.x - 1.35, riser.at.z);
         plan.dressing.Add(ItemPut { item = stone, at = head, yaw = Math.PI * 0.5 + ((h >> 6) & 7) * 0.04 - 0.14, scale = GRAVESTONE_SCALE });
     }
-    for (var i = 0; i < 5; i++)
-    {
-        var h = Math.Hash(int2(i, 911));
-        var at = On(GRAVES.x - 6 + Unit01(h, 0) * 12, GRAVES.y - 10 + Unit01(h, 10) * 17);
-        mut var near = false;
-        foreach (var riser in plan.risers)
-            if (Math.Distance(riser.at, at) < 2.2) near = true;
-        if (near || !Open(plan, at, 0.5)) continue;
-        var stone = (h >> 20) % 3 == 0 ? "gravestone_a" : (h >> 20) % 3 == 1 ? "gravestone_b" : "gravestone_c";
-        plan.dressing.Add(ItemPut { item = stone, at = at, yaw = Math.PI * 0.5 + ((h >> 22) & 63) * 0.02 - 0.6, scale = GRAVESTONE_SCALE * (0.9 + ((h >> 28) & 3) * 0.08) });
-    }
-
     // ---- The fires' braziers; and the five beacons, great braziers cold but on the night they're lit (nights.tide) ----
     foreach (var at in plan.fires)
     {
@@ -548,7 +523,8 @@ Plan MakePlan()
                   : kind == 4 ? Piece.CommonTree_5 : Piece.TwistedTree_3;
         PlaceScaled(plan, piece, at - float3(0, 0.3, 0), Unit01(h, 4) * Math.TAU, 1.1 + Unit01(h, 14) * 0.5);
     }
-    // Undergrowth along the edge, a few ferns and plants, and grass and mushrooms over the clearing
+    // Undergrowth along the edge, a few ferns and plants (the grass and mushrooms over the clearing went: noise in a full
+    // scene)
     for (var i = 0; i < 110; i++)
     {
         var h = Math.Hash(int2(i, 5151));
@@ -558,21 +534,6 @@ Plan MakePlan()
         if (kind == 0) PlaceScaled(plan, Piece.Fern_1, at, Unit01(h, 4) * Math.TAU, 0.22 + Unit01(h, 14) * 0.1);
         else if (kind == 1) PlaceScaled(plan, Piece.Plant_1_Big, at, Unit01(h, 4) * Math.TAU, 0.5 + Unit01(h, 14) * 0.3);
         else PlaceScaled(plan, Piece.Bush_Common, at, Unit01(h, 4) * Math.TAU, 0.9 + Unit01(h, 14) * 0.6);
-    }
-    // Grass in tufts round the groves and the edge, not everywhere
-    for (var i = 0; i < 170; i++)
-    {
-        var h = Math.Hash(int2(i, 6161));
-        mut var at = EdgeAt(Unit01(h, 0) * Math.TAU, -1 - Unit01(h, 10) * 6);
-        if (i % 2 == 0)
-        {
-            var g = groves[i / 2 % groves.count];
-            var turn = Unit01(h, 0) * Math.TAU;
-            at = On(g.x + Math.Cos(turn) * (2 + Unit01(h, 10) * 7), g.y + Math.Sin(turn) * (2 + Unit01(h, 10) * 7));
-        }
-        if (Paved(plan, at) || !Clear(plan, at, 0.2) || Math.Length(at.xz) < 6 || Steepness(at.x, at.z) > 0.9 || OnLandmark(at.xz, 0)) continue;
-        if ((h >> 20) % 5 == 0) PlaceScaled(plan, Piece.Mushroom_Common, at, Unit01(h, 4) * Math.TAU, 0.6 + Unit01(h, 14) * 0.5);
-        else plan.placements.Add(Put { piece = Piece.Grass_Common_Tall, at = at, yaw = Unit01(h, 4) * Math.TAU, scale = float3(0.4 + Unit01(h, 14) * 0.3), tint = 0.6 });
     }
     return plan;
 }

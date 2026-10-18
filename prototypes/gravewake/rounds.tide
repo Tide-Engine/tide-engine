@@ -36,10 +36,11 @@ singleton Match
     // The party's experience (items.tide)
     int level;
     float xp;                    // Toward the next level
-    // The Brutes (boss.tide)
+    // The bosses (boss.tide)
     float bossNext;              // When the night's next impatient one comes, on its clock
     int orbs;                    // Experience orbs lying (orbs.tide)
     int bosses;                  // How many have come
+    int devBoss = -1;            // Development: the kind the next impatient one is (the key's), or -1 for any
     // The end
     float lasted;                // How long the run went
     bool restarting;
@@ -48,7 +49,8 @@ singleton Match
 
 const int MAX_ALIVE = 4000;      // Up at once: the most the tick and the frame afford (notes/gravewake.md)
 const float START_SECONDS = 4;   // The breath before the first of the dead, once everyone has picked
-const float BOSS_EVERY = 150;    // A night not yet lit grows impatient: a Brute every so many seconds of it
+const float BOSS_EVERY = 150;    // A night not yet lit grows impatient: a boss every so many seconds of it
+const float BOSS_THIN = 0.45;    // Of the dead that come, while a boss stands
 
 void ResetMatch(mut Match match)
 {
@@ -76,6 +78,7 @@ void ResetMatch(mut Match match)
     match.xp = 0;
     match.bossNext = BOSS_EVERY;
     match.bosses = 0;
+    match.devBoss = -1;
     match.orbs = 0;
     match.lasted = 0;
     match.restarting = false;
@@ -89,6 +92,13 @@ void ResetMatch(mut Match match)
 float Danger(Match match)
 {
     return (1 + (match.clock + match.late) / DANGER_EVERY) * Math.Pow(NIGHT_STEP, Math.Max(0, match.night - 1));
+}
+
+// How hard the dead hit at a danger, against at the start: a claw, bile, a Bloater's burst, a boss's blows. (A claw was
+// 30 at every danger, which the levels' health soon made nothing.)
+float Harm(float danger)
+{
+    return Math.Pow(danger, 0.4);
 }
 
 // What one of the dead can take, at a danger.
@@ -182,7 +192,7 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
     }
 }
 
-// While anyone has items to choose, everything waits: the clock, the dead, the Brutes, what flies, the guns and the
+// While anyone has items to choose, everything waits: the clock, the dead, the bosses, what flies, the guns and the
 // skills; the next tick's choosing is this one's (the owner: "the upgrade screen should pause the game, in
 // multiplayer it should wait for all").
 [Stage(Tick.Restart, 2)]
@@ -206,10 +216,11 @@ system CountDead(mut Match match, query (Zombie zombie) zombies)
 
 // The dead come all the time, clawing up out of the ground all round a survivor, 16 to 32 m off and from every side,
 // wherever the ground is open and their way to the survivors is clear; more for a party (Crowd), and faster and
-// mostly round the beacon while it burns; a rush (the development key's horde) six a tick. Where no such ground is
-// found, out of a grave or the roots at the clearing's edge.
+// mostly round the beacon while it burns; fewer while a boss stands (BOSS_THIN: a boss's fight had been lost in the
+// crowd round it); a rush (the development key's horde) six a tick. Where no such ground is found, out of a grave or
+// the roots at the clearing's edge.
 [Stage(Tick.Rounds, 1)]
-system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor survivor) survivors)
+system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
     if (match.paused) return;
     if (match.phase != Phase.Fighting || match.alive >= MAX_ALIVE || match.culling) return;
@@ -223,7 +234,10 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor su
     else
     {
         match.spawnWait -= time.dt;
-        var rate = SpawnRate(danger) * match.crowd * (match.vigil ? VIGIL_RUSH : 1.0);
+        mut var brute = false;
+        foreach (var row in bosses)
+            if (row.boss.move != BossMove.Dying) brute = true;
+        var rate = SpawnRate(danger) * match.crowd * (match.vigil ? VIGIL_RUSH : 1.0) * (brute ? BOSS_THIN : 1.0);
         while (match.spawnWait <= 0 && count < 10)
         {
             match.spawnWait += 1 / rate;

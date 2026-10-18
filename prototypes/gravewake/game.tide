@@ -64,7 +64,7 @@ component Survivor
     int[24] items;
     Item[3] offers;
     bool choosing;
-    int pending;                     // Picks owed: a level's, a Brute's, after the one on offer
+    int pending;                     // Picks owed: a level's, a boss's, after the one on offer
     int picks;
     float gone;                      // Seconds since bleeding out: they're back beside the beacon when it's lit, or at dawn
     int level = 1;                   // The party's, as it reached this survivor
@@ -158,11 +158,11 @@ const float BODY_RADIUS = 0.32;
 const float BODY_HIGH = 1.8;
 const float EYE_HIGH = 1.62;
 const float DOWNED_EYE = 0.55;
-const float WALK_SPEED = 4.6;
-const float SPRINT_SPEED = 6.8;     // Running: whenever a survivor goes forward and hasn't fired for a moment
+const float WALK_SPEED = 5.6;       // Any way, firing or not
+const float SPRINT_SPEED = 7.0;     // Running: whenever a survivor goes forward and hasn't fired for a moment
 const float STEP_UP = 0.45;
-const float GRAVITY = 20;
-const float JUMP_SPEED = 6.2;
+const float GRAVITY = 24;
+const float JUMP_SPEED = 7.0;
 const float REACH = 2.4;
 
 float3 LookDirection(float yaw, float pitch)
@@ -291,7 +291,7 @@ system Restarting(mut Match match)
 }
 
 // Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, a level (and so an
-// offer), an item, a Brute, six of one kind of the dead, the night kept, a walk to a place.
+// offer), an item, a boss, six of one kind of the dead, the night kept, a walk to a place.
 command Cheat
 {
     int what;
@@ -315,6 +315,13 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
             Send(Levelled { level = match.level });
             return;
         case 6:
+            match.bossNext = match.nightClock;
+            return;
+        case 30:
+        case 31:
+        case 32:
+            // A boss of a kind, now
+            match.devBoss = cheat.what - 30;
             match.bossNext = match.nightClock;
             return;
         case 8:

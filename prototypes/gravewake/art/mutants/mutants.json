@@ -1,0 +1,171 @@
+{
+ "width": 1192,
+ "height": 624,
+ "rowsPerBody": 208,
+ "frames": 104,
+ "boxLo": [
+  -3.0,
+  -1.4,
+  -2.8
+ ],
+ "boxHi": [
+  3.0,
+  3.2,
+  2.4
+ ],
+ "bodies": [
+  "brood",
+  "mauler",
+  "stalker"
+ ],
+ "marks": [
+  {
+   "head": [
+    -0.034,
+    1.45,
+    0.381
+   ],
+   "chest": [
+    -0.002,
+    1.375,
+    0.172
+   ],
+   "hips": [
+    -0.017,
+    0.99,
+    0.066
+   ],
+   "weak": [
+    0.009,
+    1.025,
+    0.392
+   ],
+   "weakSpread": 0.397
+  },
+  {
+   "head": [
+    -0.039,
+    1.171,
+    0.463
+   ],
+   "chest": [
+    -0.02,
+    1.141,
+    0.316
+   ],
+   "hips": [
+    -0.019,
+    0.779,
+    0.045
+   ],
+   "weak": [
+    0.014,
+    1.288,
+    0.194
+   ],
+   "weakSpread": 0.335
+  },
+  {
+   "head": [
+    -0.061,
+    1.707,
+    0.612
+   ],
+   "chest": [
+    -0.017,
+    1.662,
+    0.327
+   ],
+   "hips": [
+    -0.019,
+    1.228,
+    0.045
+   ],
+   "weak": [
+    -0.018,
+    1.506,
+    0.443
+   ],
+   "weakSpread": 0.081
+  }
+ ],
+ "clips": [
+  {
+   "name": "walk",
+   "first": 0,
+   "frames": 12,
+   "seconds": 1.3333333333333333,
+   "loops": true
+  },
+  {
+   "name": "run",
+   "first": 12,
+   "frames": 10,
+   "seconds": 0.6666666666666666,
+   "loops": true
+  },
+  {
+   "name": "idle",
+   "first": 22,
+   "frames": 8,
+   "seconds": 1.3333333333333333,
+   "loops": true
+  },
+  {
+   "name": "claw",
+   "first": 30,
+   "frames": 12,
+   "seconds": 1.7999998728434246,
+   "loops": false
+  },
+  {
+   "name": "slam",
+   "first": 42,
+   "frames": 12,
+   "seconds": 1.0333333015441895,
+   "loops": false
+  },
+  {
+   "name": "jump",
+   "first": 54,
+   "frames": 8,
+   "seconds": 2.5,
+   "loops": true
+  },
+  {
+   "name": "land",
+   "first": 62,
+   "frames": 6,
+   "seconds": 0.6,
+   "loops": false
+  },
+  {
+   "name": "hit",
+   "first": 68,
+   "frames": 8,
+   "seconds": 0.5666666825612386,
+   "loops": false
+  },
+  {
+   "name": "crouch",
+   "first": 76,
+   "frames": 8,
+   "seconds": 2.933333396911621,
+   "loops": true
+  },
+  {
+   "name": "death",
+   "first": 84,
+   "frames": 10,
+   "seconds": 1.0666667620340984,
+   "loops": false
+  },
+  {
+   "name": "rise",
+   "first": 94,
+   "frames": 10,
+   "seconds": 0.5000000000000001,
+   "loops": false
+  }
+ ]
+}

@@ -11,8 +11,8 @@ Each night, a beacon stands cold at one of the clearing's landmarks, a pale
 column of wake-fire over it, and chests are hidden about the clearing. Look
 about for them as long as you dare, then hold E at the beacon to light it.
 That starts the vigil: the dead come thicker, most of them for the beacon,
-and the night's Brute claws up. Keep near the beacon till it's full and its
-Brute is down, and dawn breaks: the dead burn away, whoever's down or bled
+and the night's boss claws up, a mutant grown from the dead. Keep near the
+beacon till it's full and its boss is down, and dawn breaks: the dead burn away, whoever's down or bled
 out is up, and a moment later the next night falls, harder, at another
 beacon. The chests not opened by then are gone with the night.
 
@@ -34,7 +34,7 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Jump (again in the air, with Spring Boots) | Space | South button |
 | Fire | Left mouse | Right trigger |
 | The secondary skill | Right mouse | Left trigger |
-| Dash (two charges; knocks down the dead it goes through) | Shift | Left shoulder |
+| Dash (two charges; throws aside the dead it goes through) | Shift | Left shoulder |
 | The special skill | Q | Right shoulder |
 | Pick a survivor, take an item | 1, 2, 3 | D-pad left, up, right |
 | Reload | R | West button |
@@ -59,20 +59,20 @@ run out; only their magazines do.
 | The beacon | Five great braziers stand at the landmarks: on the spire's top, in the chapel's ruin, by the graveyard, among the standing stones and down in the ravine. Each night one of them (never last night's) burns a pale wake-fire, seen across the clearing. |
 | The chests | Five a night, and two more for each survivor past the first, hidden about the clearing and not marked; the night's panel says how many are found. They're gone when the next night falls. |
 | The vigil | Lit, the beacon is kept while the survivors standing are within 11 m of it: in 90 s with all of them there, slower with only some, not at all with none. The dead come 1.4 times as fast, most of them rising round it. Lighting it also calls back anyone who bled out. |
-| Its Brute | One rises as it's lit (two from the fourth night, three from the seventh); dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
+| Its boss | One rises as it's lit (two from the fourth night, three from the seventh), the nights taking the three in turn; dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
 | Dawn | Everything left of the dead burns away, every orb flies in, everyone's up, whole and ready. Ten seconds later the next night falls: more dangerous than the last (the danger climbs with the clock, and each night's is 1.25 times the one before), and each of its kind (mist, a blood moon, starless, the wake). |
-| Waiting | A night that goes on more than four and a half minutes grows impatient (IMPATIENT on its panel): the danger climbs twice as fast till its dawn. While it's unlit, a Brute comes every two and a half minutes, with no prize. |
+| Waiting | A night that goes on more than four and a half minutes grows impatient (IMPATIENT on its panel): the danger climbs twice as fast till its dawn. While it's unlit, a boss comes every two and a half minutes, with no prize. |
 
 ### The items
 
-At every level, and for every one of a night's Brutes felled, three to choose
+At every level, and for every one of a night's bosses felled, three to choose
 from (1, 2 or 3, shown across the middle of the screen); each stacks. The run
 waits while anyone chooses. Chests give one at random.
 
 | Rarity | Items |
 | --- | --- |
 | Common | Hollow Points (damage), Hair Trigger (fire and reload faster), Kevlar Vest (health, armour), Running Shoes (speed), Leech Rounds (kills heal), Field Battery (skills back sooner), Extended Mag, Lucky Shot (hits for double), Smelling Salts (raise friends faster; not offered alone) |
-| Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the dead near them), Gun Drone (shoots the nearest dead), Ember Ring (sets the dead near you alight), Frostbite (hits freeze), Spring Boots (jumps in the air), Energy Drink (another dash), Kerosene (the dash sets the dead it goes through alight), Steel Toes (more to the dead on the ground), Gas Mask (Bloaters' bursts can't hurt you; the ones you kill burst wider), AP Rounds (through one more) |
+| Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (shoots the nearest dead), Ember Ring (sets the dead near you alight), Frostbite (hits freeze), Spring Boots (jumps in the air), Energy Drink (another dash), Kerosene (the dash sets the dead it goes through alight), Steel Toes (more to the dead on the ground), Gas Mask (Bloaters' bursts can't hurt you; the ones you kill burst wider), AP Rounds (through one more) |
 | Rare | Mortar Flare (hits call a shell down), Second Wind (going down, straight back up, used up), HE Rounds (every round bursts where it lands), Dragon's Breath (hits set the dead alight) |
 
 Uncommon and rare items turn up more as the run goes on. What you take is
@@ -85,14 +85,28 @@ second at first (more with more of you) and many more as the danger climbs
 (Easy, Medium, Hard, Very Hard, Insane, Impossible), tougher and quicker
 too, up to 4000 at once. A head hit is gold on the crosshair, a Lucky Shot's
 double yellow. Every one pressed against you slows you; a dash goes through
-them. None climbs a cliff alone: they pile up its face on each other.
+them. None climbs a cliff alone: they pile up its face on each other. Their
+claws hit harder as the danger climbs, and your health comes back only
+slowly, once you've gone four seconds unhurt.
 
 | Kind | From | |
 | --- | --- | --- |
 | Bloater | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it swells and bursts a second later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it bursts at once: from far off, that's a weapon. |
 | Spitter | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile that hurts (up to 18) and slows you for 2 s. Find it and shoot it. |
 | Warden | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
-| Brute | the vigil | Three times the size of the rest, its health across the top of the screen. It comes for the nearest of you, and every couple of seconds it slams (a red ring on the ground is where it comes down), charges (a line on the ground is where it'll run) or, every third time, roars up the dead round it. |
+
+### The bosses
+
+Mutants twice the size of the rest, their name, health and weak spot across
+the top of the screen. Each has a growth that glows: a round there does
+several times as much (an orange mark on the crosshair), and it glows
+brighter when it's open. While one stands, fewer of the dead come.
+
+| Boss | | Weak spot |
+| --- | --- | --- |
+| The Mauler | A hulk with arms like trunks. It slams (a red ring on the ground is where it comes down) and charges (a line on the ground is where it'll run); after a charge it stands spent a moment. | The sores on its back: three times as much |
+| The Broodmother | A great egg sac on spindly legs, slow. She lobs a spread of bile and crouches to birth a pack of runners. | Her sac: twice as much, four times while she births |
+| The Stalker | Stilt-legged, long-necked, quick. It crouches and leaps at you (a ring is where it lands), swipes close in, and shrieks, sending the dead near it into a frenzy. | The sac at its throat: half again as much, four times while it shrieks; enough there cuts the shriek short and staggers it |
 
 Down, you fight on from the ground with a pistol, and a friend holding E for
 three seconds raises you, the gun back in hand as loaded as it was. Alone,
@@ -101,7 +115,8 @@ dawn breaks, watching a friend over their shoulder; then you're back beside
 the beacon with everything you had.
 
 Development keys, not in play's interface: F2 six of the dead of a kind
-(Bloaters, Spitters, Wardens in turn), F3 a Brute, F4 two thousand more of the
+(Bloaters, Spitters, Wardens in turn), F3 a boss (the Mauler, the Broodmother,
+the Stalker in turn), F4 two thousand more of the
 dead, F5 a level (and so an offer), F6 walk to the next part of the clearing,
 F7 the night kept (dawn now), F9 a camera over the clearing, F10 a random
 item.
@@ -120,7 +135,7 @@ ground all round you, 16 to 32 m off, from every side.
 | West | The old graveyard, sunk in its hollow: ten graves the dead rise from, their stones small enough to run past; a beacon at its edge |
 | North-west | A ring of standing stones, a beacon in it |
 | South | The ravine, cut across the clearing, boulders on its banks, a beacon at its bottom |
-| About the clearing | A few sparse groves, a wagon and a cart, and big stones to stand behind |
+| About the clearing | A few sparse groves and big stones to stand behind |
 
 ## Build and run
 
@@ -152,7 +167,7 @@ this folder.
 | `ashwick.tide` | The plan made solid: collision, the ground under feet, the lines rounds and grenades follow, the way to the survivors |
 | `rounds.tide` | The run: the danger with time and the nights, how many of the dead come, of which kinds and how tough, where they rise |
 | `nights.tide` | The nights: the beacons and the vigil, dawn, calling the fallen back, each night's look, the night's panel |
-| `boss.tide` | The Brutes: the night's own and the impatient ones, their slam, charge and roar, drawn three times the size |
+| `boss.tide` | The bosses: the Mauler, the Broodmother and the Stalker, the night's own and the impatient ones, their moves and weak spots |
 | `kits.tide` | The survivors' kits: each skill's use and cooldown, the Engineer's turret |
 | `items.tide` | The items: what each does, the offer at a level, what a hit or a kill sets off, the drone and the ember ring, levels |
 | `zombies.tide` | The dead and their kinds: rising, hunting, a Spitter's bile, a Warden's mail, a Bloater's burst, wounds, burning, freezing, going over |
@@ -160,12 +175,12 @@ this folder.
 | `hands.tide` | Running and jumping, firing (each round a ray through the dead), loading, raising friends, going down |
 | `missiles.tide` | Frag grenades, firebombs, mines, the Mortar Flare's shells, a Spitter's bile |
 | `drops.tide` | The cues for what's heard, and a survivor's refill |
-| `crowd.tide` | The horde drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
+| `crowd.tide` | The horde and the bosses drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
 | `kit.tide`, `look.tide`, `eye.tide` | The clearing's meshes; light, shadows, fog, bloom; the camera |
 | `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide` | The survivors; the gun in hand, grenades, mines, turrets, drones; the graves and braziers; tracers, flames, blood, sparks |
 | `hud.tide`, `sound.tide` | What's written over the picture (the offer and the survivors too), the title; what's heard |
 | `fp.tide` | The first-person arms: which clips move them for each gun |
-| `art/` | The forest, ruin, people, guns, items and first-person arms, with how each was made: see `art/CREDITS.md` (the arms are CC BY 4.0, by CoinCoin) |
+| `art/` | The forest, ruin, people, mutants, guns, items and first-person arms, with how each was made: see `art/CREDITS.md` (the arms are CC BY 4.0, by CoinCoin) |
 | `sfx/` | The sounds, made by `sfx/tools/make_sfx.py`: see `sfx/CREDITS.md` |
 | `test/` | The run played with no window (`test.c`), a tick's cost with a horde (`perf.c`, `gravewake_perf`, not a test), whole runs played by bots for the balance (`balance.c`, `gravewake_balance`, not a test), and the browser test |
 | `tools/balance_math.py` | The balance on paper, read from the source: night by night, what the dead bring and the level pace |
