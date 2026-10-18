@@ -208,12 +208,12 @@ frag Flesh(Corner corner, out Color color, Instance instance, Skin skin, Look lo
 // bends to its pitch, the gun is laid along the line to what it's aimed at, and the arms reach it (Reach): the right
 // hand on the grip, the left along the barrel (cupping the pistol's grip).
 [Stage(Layers.Gather)]
-view PoseSurvivor(mut Survivor survivor, Look look)
+view PoseSurvivor(mut Survivor survivor, Look look, Me me)
 {
     var woman = WomanHero(survivor.seat);
     var body = HeroBody(survivor.seat);
     var bones = body.skeleton.bones;
-    var dt = Math.Min(Frame.dt, 0.05);
+    var dt = me.dt;
     mut var pose = body.defaultPose;
     var flat = float3(survivor.velocity.x, 0, survivor.velocity.z);
     var speed = Math.Length(flat);

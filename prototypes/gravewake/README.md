@@ -35,29 +35,31 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Aim (the crosshair is the cursor) | Mouse | Right stick |
 | The camera nearer or further | Mouse wheel | |
 | Fire | Left mouse | Right trigger |
-| Roll: a dodge, nothing the dead do touches you for most of it (two charges) | Space (or Shift, or right mouse) | East or South button, left trigger |
+| The secondary skill, at the cursor | Right mouse | Left trigger or shoulder |
+| Roll: a dodge, nothing the dead do touches you for most of it (two charges) | Space (or Shift) | East or South button |
 | Pick a survivor, take an item | 1, 2, 3 | D-pad left, up, right |
 | Reload (it loads by itself when empty) | R | West button |
 | The room's menu | Escape, or **Menu** | |
 
 ### The survivors
 
-| Survivor | Gun | By itself | By itself |
+| Survivor | Gun | Right mouse | By itself |
 | --- | --- | --- | --- |
-| Gunner | Carbine: automatic, through three | Phase Round: down the line with the most of the dead in it | Frag Grenade: into the thickest of them |
-| Breacher | Pump Shotgun: eleven pellets, never needs loading; takes a third less from the dead | Boot: kicks the nearest close by over; one down is stamped on | Firebomb: into the thickest of them |
-| Engineer | SMG: sets items off half again as often | Mine: laid as the dead come near | Turret: set down when the dead are about; fires on its own for fifteen seconds, setting off your items |
+| Gunner | Carbine: automatic, through three | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
+| Breacher | Pump Shotgun: eleven pellets, never needs loading; takes a third less from the dead | Boot: kicks the dead in front over; the nearest one down is stamped on | Firebomb: into the thickest of them |
+| Engineer | SMG: sets items off half again as often | Mine: bursts when the dead come near | Turret: set down when the dead are about; fires on its own for fifteen seconds, setting off your items |
 
-Everything but the gun and the roll happens by itself: each survivor's two
-skills as soon as they're ready and the dead are in reach, and standing by a
-chest opens it, by the beacon lights it, by a friend who's down raises them.
-The guns never run out; only their magazines do.
+Everything but the gun, the right mouse skill and the roll happens by
+itself: each survivor's special as soon as it's ready and the dead are in
+reach, and standing by a chest opens it, by the beacon lights it, by a friend
+who's down raises them. The guns never run out; only their magazines do.
 
 The camera is high behind you looking down, north up the screen, and WASD
 moves you up, down and across it whichever way you face; you turn to the
-cursor, and your shots go level through it, or into the one of the dead it's
-on: the cursor on a head is a headshot (the crosshair goes gold), on a
-boss's weak spot a weak hit (orange). A ring on the ground marks each
+cursor, and your shots go level through it across the ground, whatever its
+rise and fall, striking the dead by where they stand: the cursor on a head is
+a headshot (the crosshair goes gold), on a boss's weak spot a weak hit
+(orange), from the side it faces. A ring on the ground marks each
 survivor, and what stands between the camera and you is cut away. There's
 no jumping.
 
@@ -77,7 +79,8 @@ no jumping.
 
 At every level, and for every one of a night's bosses felled, three to choose
 from (1, 2 or 3, shown across the middle of the screen); each stacks. The run
-waits while anyone chooses. A chest gives everyone a pick too.
+waits while anyone chooses, the picture and its sounds held still. A chest
+gives everyone a pick too.
 
 | Rarity | Items |
 | --- | --- |
@@ -103,7 +106,7 @@ slowly, once you've gone four seconds unhurt.
 
 | Kind | From | |
 | --- | --- | --- |
-| Bloater | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it swells and bursts a second later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it bursts at once: from far off, that's a weapon. |
+| Bloater | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. A faint ring on the ground round it shows how far its burst reaches. Within 2.4 m of you it swells, its ring red with another growing out to meet it, and bursts a second later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it bursts at once: from far off, that's a weapon. |
 | Spitter | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile that hurts (up to 18) and slows you for 2 s. Find it and shoot it. |
 | Warden | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
 
