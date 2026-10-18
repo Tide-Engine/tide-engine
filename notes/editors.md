@@ -1,5 +1,12 @@
 # The language server and the editors
 
+Texture.size (2026-10-18) completes as a read-only int2 in CPU and GPU contexts,
+supports chained vector member completion, and hovers with physical-pixel,
+missing-image and metadata-only semantics. lsp_textures_in_functions checks
+CPU helper diagnostics, view/helper completion and the member hover. Shared
+compiler checking also supplies empty-map, component-value and payload-helper
+behavior; no editor-specific syntax rule is added.
+
 ## Scene visibility uses ordinary groups (2026-10-15)
 
 Scene completion now offers only Load/Unload. Its load signature/hover explains

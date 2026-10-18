@@ -4,7 +4,7 @@
 // what you hit. Others change what the game's own moves do: the dash goes
 // further or leaves the dead burning, the dead on the ground take more, a
 // Bloater's burst is yours to use, a friend's raised sooner. At each level
-// (and for each of a night's Brutes felled) every survivor is offered three
+// (and for each of a night's bosses felled) every survivor is offered three
 // and takes one with 1, 2 or 3 (the pad's d-pad left, up and right); the run
 // waits for everyone to choose (rounds.tide's Pause). Rarer ones turn up more
 // as the run goes on. What's taken is kept through going down and bleeding
@@ -81,7 +81,7 @@ string ItemLine(Item item)
         case Item.LuckyShot: return "15% chance a hit does double (+15% each)";
         case Item.Salts: return "Raise a friend who's down 50% faster (+50% each)";
         case Item.LiveWire: return "15% chance a hit arcs to 3 more of the dead (+2 each)";
-        case Item.PowderKeg: return "Your kills burst, hurting the 3 nearest for half what one of the dead can take (+1, +25% each)";
+        case Item.PowderKeg: return "Your kills burst, hurting the 2 nearest for a quarter of what one of the dead can take (+10% each, +1 every second)";
         case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (faster each)";
         case Item.EmberRing: return "Sets the dead within 3 m of you alight (+0.5 m each)";
         case Item.Frostbite: return "12% chance a hit freezes the dead solid for 2 s (+12% each)";
@@ -256,14 +256,14 @@ void Take(mut Survivor survivor, Item item)
 // A round's hit on one of the dead: a crit, perhaps; more if it's down; then what the items set off, `chance` times as
 // likely as a whole round's (a shotgun's pellet sets off less, an SMG's round more). What the items set off themselves
 // sets off nothing more.
-void Land(Arms arms, Body z, float damage, bool head, float3 from, float knock, float chance, Herd herd)
+void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd)
 {
     var crit = Random.NextFloat() < arms.crit;
     var frozen = Holds(arms, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Holds(arms, Item.Frostbite) * chance;
     var lit = Holds(arms, Item.DragonsBreath) > 0 && Random.NextFloat() < 0.25 * Holds(arms, Item.DragonsBreath) * chance;
     var toes = z.down ? 1 + 0.5 * Holds(arms, Item.SteelToes) : 1.0;
-    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, from = from, knock = knock, blow = Blow.Missile, crit = crit,
-                          element = frozen ? Element.Frost : lit ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
+    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, weak = weak, from = from, knock = knock, blow = Blow.Missile,
+                          crit = crit, element = frozen ? Element.Frost : lit ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
     var wire = Holds(arms, Item.LiveWire);
     if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(arms, z, 1 + 2 * wire, damage * 0.6, herd);
     var mortar = Holds(arms, Item.Mortar);
@@ -336,17 +336,33 @@ event(Earned earned) Earn(mut Survivor survivor, Herd herd, Match match)
     var keg = Has(survivor, Item.PowderKeg);
     if (keg > 0 && !earned.echo)
     {
-        // (a few of the dead at most: in a horde, every kill bursting through all round it had cleared the clearing)
+        // (a few of the dead at most, the nearest: in a horde, every kill bursting through all round it had cleared the
+        // clearing)
         var reach = 2 + 0.5 * keg;
-        mut var caught = 0;
+        var most = 2 + keg / 2;
+        mut List<Body> caught = [];
+        mut List<float> far = [];
         foreach (var z in Near(herd, earned.at, reach))
         {
-            if (!z.hittable || Math.Distance(z.at, earned.at) > reach || caught >= 2 + keg) continue;
-            caught += 1;
-            // (no throw: in a horde, every kill shoving the dead back had kept them off for good)
-            z.entity.Send(Wound { damage = ZombieHealth(match.danger) * (0.25 + 0.25 * keg), seat = survivor.seat, element = Element.None, from = earned.at, blow = Blow.Burst,
-                                  echo = true });
+            var off = Math.Distance(z.at, earned.at);
+            if (!z.hittable || off > reach) continue;
+            mut var at = caught.count;
+            while (at > 0 && far[at - 1] > off) at -= 1;
+            if (at >= most) continue;
+            caught.Insert(at, z);
+            far.Insert(at, off);
+            if (caught.count > most)
+            {
+                caught.RemoveAt(most);
+                far.RemoveAt(most);
+            }
         }
+        // (no throw: in a horde, every kill shoving the dead back had kept them off for good)
+        // (a quarter of a zombie's health, 10% more a stack: at a share that killed outright, one kill by a fast gun had
+        // felled four or five round it, and a crowd went down a kill at a time)
+        foreach (var z in caught)
+            z.entity.Send(Wound { damage = ZombieHealth(match.danger) * (0.15 + 0.1 * keg), seat = survivor.seat, element = Element.None, from = earned.at, blow = Blow.Burst,
+                                  echo = true });
         Send(Blast { at = earned.at + float3(0, 0.8, 0), reach = reach, element = Element.Fire, kind = Shot.Keg });
     }
 }
@@ -380,7 +396,7 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
             }
             if (best.entity != default && LongRay(ashwick, drone, best.chest, out _) > 1)
             {
-                Land(ArmsOf(survivor), best, 14 * Might(survivor), false, drone, 0.5, 0.5, herd);
+                Land(ArmsOf(survivor), best, 14 * Might(survivor), false, false, drone, 0.5, 0.5, herd);
                 Send(Traced { seat = survivor.seat, from = drone, to = best.chest, kind = Trace.Drone });
                 Send(Loosed { seat = survivor.seat, weapon = Weapon.Smg, at = drone, way = Math.Normalize(best.chest - drone), source = Source.Drone });
             }

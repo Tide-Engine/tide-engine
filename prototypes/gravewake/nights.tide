@@ -5,10 +5,10 @@ using Rooms;
 // landmarks, burning a pale wake-fire that's seen across the clearing, and
 // its chests are hidden about. The party finds what it can, and when it's
 // ready, holds E at the beacon to light it: the vigil. The dead come
-// thicker, most of them rising round the beacon, and the night's Brute (two
+// thicker, most of them rising round the beacon, and the night's boss (two
 // from the fourth night, three from the seventh) claws up near it. The
 // beacon is kept while the survivors standing are near it, faster the more
-// of them are; once it's full and its Brutes are down, dawn breaks: the dead
+// of them are; once it's full and its bosses are down, dawn breaks: the dead
 // burn away, the orbs fly in, whoever's down or bled out is up, and a
 // moment later the next night falls, at another beacon, with new chests
 // (the ones not found are gone with the night).
@@ -17,7 +17,7 @@ using Rooms;
 // minute meanwhile; lighting the beacon early is safer and leaves things
 // behind. A night that drags on grows impatient: after IMPATIENT_AFTER, lit
 // or not, the danger climbs twice as fast till its dawn; and while it's unlit
-// a Brute comes every few minutes, which brings no prize. Lighting the beacon
+// a boss comes every few minutes, which brings no prize. Lighting the beacon
 // also calls back anyone who has bled out, so a party a survivor short has a
 // reason to light it sooner.
 
@@ -47,8 +47,8 @@ int ChestsTonight(int players)
     return 5 + 2 * (players - 1);
 }
 
-// How many Brutes rise at a night's vigil.
-int VigilBrutes(int night)
+// How many bosses rise at a night's vigil.
+int VigilBosses(int night)
 {
     return 1 + (night - 1) / 3;
 }
@@ -114,7 +114,7 @@ component Beacon
     int night;                       // The night it's for: gone when the next falls
     float kindled;                   // 0 to 1: held E toward lighting it; it dies down again when nobody holds E by it
     bool lit;                        // The vigil's begun
-    bool called;                     // ...and its Brutes have risen
+    bool called;                     // ...and its bosses have risen
     float charge;                    // 0 to 1: how far the vigil's been kept
     int keepers;                     // Survivors standing near it, this tick
     int standing;                    // ...of how many standing
@@ -158,11 +158,12 @@ event Recalled
     float3 at;
 }
 
-// A night falls: its beacon at another landmark, its chests to come, its own clock, and the impatient Brute's wait.
+// A night falls: its beacon at another landmark, its chests to come, its own clock, and the impatient boss's wait.
 void Nightfall(mut Match match, int players)
 {
     match.night += 1;
     match.nightClock = 0;
+    ResetHordes(match);
     match.bossNext = BOSS_EVERY;
     match.chestsDue = ChestsTonight(players);
     match.chestsPlaced = 0;
@@ -201,7 +202,7 @@ event(Kindling kindling) Kindle(mut Beacon beacon, Party party, Match match)
     Send(VigilBegan { at = beacon.at, night = match.night, by = kindling.by });
 }
 
-// The beacon, each tick: dying down while nobody lights it; lit, its Brutes up, kept as the survivors stand by it,
+// The beacon, each tick: dying down while nobody lights it; lit, its bosses up, kept as the survivors stand by it,
 // and dawn once it's full and they're down. A night's beacon goes when the next night falls (or the run starts again).
 [Stage(Tick.Rounds, 4)]
 system Keep(mut Beacon beacon, mut Match match, Ashwick ashwick, Party party, Time time, query (Survivor survivor) survivors, query (Boss boss) bosses)
@@ -222,7 +223,7 @@ system Keep(mut Beacon beacon, mut Match match, Ashwick ashwick, Party party, Ti
     if (!beacon.called)
     {
         beacon.called = true;
-        for (var k = 0; k < VigilBrutes(match.night); k++) RaiseBrute(match, ashwick, beacon.at, true, 24, 32);
+        for (var k = 0; k < VigilBosses(match.night); k++) RaiseBoss(match, ashwick, beacon.at, true, 24, 32, KindForNight(match.night, k));
     }
     mut var standing = 0;
     mut var near = 0;
@@ -295,37 +296,37 @@ event(Dawned dawned) TakeDawn(mut Survivor survivor)
 // the night's kept, back to the next night's dark as it falls. (eye.tide's Prepare, each frame.)
 void NightLook(mut Look look, Match match, float dt)
 {
-    mut var moon = float3(0.4, 0.45, 0.63);
-    mut var sky = float3(0.06, 0.07, 0.1);
+    mut var moon = float3(0.52, 0.57, 0.74);
+    mut var sky = float3(0.09, 0.1, 0.13);
     mut var fogColor = float3(0.045, 0.05, 0.07);
     mut var mistColor = float3(0.075, 0.085, 0.11);
-    mut var fog = 0.009;
-    mut var mist = 0.022;
+    mut var fog = 0.007;
+    mut var mist = 0.018;
     switch (NightKind(match.night))
     {
         case 1:
-            moon = float3(0.34, 0.38, 0.5);
-            fogColor = float3(0.06, 0.066, 0.08);
-            mistColor = float3(0.1, 0.11, 0.13);
-            fog = 0.015;
-            mist = 0.05;
+            moon = float3(0.46, 0.5, 0.62);
+            fogColor = float3(0.07, 0.076, 0.09);
+            mistColor = float3(0.11, 0.12, 0.14);
+            fog = 0.011;
+            mist = 0.035;
             break;
         case 2:
-            moon = float3(0.66, 0.24, 0.2);
-            sky = float3(0.08, 0.04, 0.045);
+            moon = float3(0.78, 0.32, 0.27);
+            sky = float3(0.1, 0.06, 0.065);
             fogColor = float3(0.065, 0.028, 0.03);
             mistColor = float3(0.1, 0.045, 0.045);
             break;
         case 3:
-            moon = float3(0.16, 0.18, 0.27);
-            sky = float3(0.03, 0.034, 0.05);
-            fogColor = float3(0.02, 0.022, 0.03);
-            mistColor = float3(0.035, 0.04, 0.05);
-            fog = 0.012;
+            moon = float3(0.32, 0.35, 0.48);
+            sky = float3(0.06, 0.065, 0.085);
+            fogColor = float3(0.025, 0.028, 0.036);
+            mistColor = float3(0.04, 0.045, 0.055);
+            fog = 0.009;
             break;
         case 4:
-            moon = float3(0.32, 0.6, 0.42);
-            sky = float3(0.04, 0.07, 0.05);
+            moon = float3(0.42, 0.7, 0.5);
+            sky = float3(0.06, 0.09, 0.07);
             fogColor = float3(0.03, 0.06, 0.045);
             mistColor = float3(0.05, 0.1, 0.07);
             fog = 0.011;
@@ -444,7 +445,7 @@ view BeaconPrompt(Me me, Lobby lobby, Match match, query (Survivor survivor) sur
 }
 
 // The night, top left under the menu: which, and what's to do: find and light the beacon (and how many of the night's
-// chests are found), keep it (how full, and who's by it), fell its Brute, or dawn. During the vigil, one away from the
+// chests are found), keep it (how full, and who's by it), fell its boss, or dawn. During the vigil, one away from the
 // beacon sees which way it is at the screen's edge.
 [Stage(Layers.Hud, 1)]
 view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors, query (Beacon beacon) beacons, query (Chest chest) chests,

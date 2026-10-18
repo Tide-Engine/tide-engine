@@ -782,6 +782,13 @@ struct Turns
     quaternion eulerDegrees;
     float4 degreeLiterals;
     quaternion look;
+    quaternion fromTo;
+    quaternion fromToOpposite;
+    quaternion fromToNearOpposite;
+    quaternion fromToNone;
+    quaternion fromToBad;
+    quaternion fromToHuge;
+    quaternion fromToTiny;
     quaternion fromSmall;
     quaternion fromX;
     quaternion fromY;
@@ -817,6 +824,7 @@ struct Matrices
     float4x4 fromParts;
     float4x4 trs;
     float4x4 translate;
+    float4x4 scale;
     float4x4 perspective;
     float4x4 ortho;
     float4x4 constant;
@@ -907,6 +915,13 @@ Turns TurnsOf(Given given)
     turns.eulerDegrees = quaternion.Euler(180deg, -45.5deg, 9e1deg);
     turns.degreeLiterals = float4(180deg, -45.5deg, 1_8e1deg, .5deg);
     turns.look = quaternion.LookRotation(Math.Forward(a), Math.Up(b));
+    turns.fromTo = quaternion.FromToRotation(from: given.point, to: given.angles);
+    turns.fromToOpposite = quaternion.FromToRotation(given.point, -given.point);
+    turns.fromToNearOpposite = quaternion.FromToRotation(float3(1, 0, 0), float3(-1, 0.0001, 0));
+    turns.fromToNone = quaternion.FromToRotation(float3(given.zero), given.point);
+    turns.fromToBad = quaternion.FromToRotation(float3(given.nan, 1, 0), given.point);
+    turns.fromToHuge = quaternion.FromToRotation(given.point * 1e30, given.angles * 1e30);
+    turns.fromToTiny = quaternion.FromToRotation(given.point * 1e-30, given.angles * 1e-30);
     // From a matrix, each of the four ways there are: by its trace, and by each axis it turns nearly half around
     turns.fromSmall = quaternion(float3x3(a));
     turns.fromX = quaternion(float3x3(quaternion.AxisAngle(float3(1, 0, 0), given.wide)));
@@ -968,6 +983,11 @@ bool SameTurns(Turns a, Turns b)
     same = same && CloseTurn(a.slerp, b.slerp) && CloseTurn(a.slerpNear, b.slerpNear) && CloseTurn(a.slerpFar, b.slerpFar);
     same = same && CloseTurn(a.nlerp, b.nlerp) && CloseTurn(a.nlerpFar, b.nlerpFar) && CloseTurn(a.nlerpNone, b.nlerpNone);
     same = same && CloseTurn(a.axisAngle, b.axisAngle) && CloseTurn(a.euler, b.euler) && CloseTurn(a.look, b.look);
+    same = same && CloseTurn(a.fromTo, b.fromTo) && CloseTurn(a.fromToOpposite, b.fromToOpposite)
+                && CloseTurn(a.fromToNearOpposite, b.fromToNearOpposite) && CloseTurn(a.fromToNone, b.fromToNone)
+                && CloseTurn(a.fromToBad, b.fromToBad) && CloseTurn(a.fromToHuge, b.fromToHuge) && CloseTurn(a.fromToTiny, b.fromToTiny);
+    same = same && Close3(Math.Rotate(a.fromTo, Math.Normalize(float3(1, -2, 0.5))), Math.Normalize(float3(0.3, -1.1, 2)))
+                && a.fromToNone.value.w == 1 && a.fromToBad.value.w == 1;
     same = same && CloseTurn(a.eulerScalar, b.eulerScalar) && CloseTurn(a.eulerNamed, b.eulerNamed) && CloseTurn(a.eulerInt, b.eulerInt);
     same = same && CloseTurn(a.eulerScalar, a.euler) && CloseTurn(a.eulerNamed, a.euler)
                 && CloseTurn(a.eulerInt, quaternion.Euler(float3(1, 2, 3)));
@@ -1003,6 +1023,7 @@ Matrices MatricesOf(Given given)
     made.fromParts = float4x4(made.fromTurn, given.point);
     made.trs = float4x4.TRS(given.point, given.other, given.angles);
     made.translate = float4x4.Translate(given.angles);
+    made.scale = float4x4.Scale(scale: float3(given.one, 0, -2));
     made.perspective = float4x4.PerspectiveFov(given.wide / 3, 1.5, given.amount, 100);
     made.ortho = float4x4.Ortho(8, given.wide, given.amount, 50);
     // Of constants, and of a matrix with no inverse: neither may be a shader a compiler refuses
@@ -1021,6 +1042,7 @@ bool SameMatrices(Matrices a, Matrices b)
     same = same && Close3x3(a.transposed, b.transposed) && Close3(a.moved, b.moved) && Close3(a.turned, b.turned);
     same = same && Close3x3(a.fromTurn, b.fromTurn) && Close4x4(a.fromParts, b.fromParts) && Close4x4(a.trs, b.trs);
     same = same && Close4x4(a.translate, b.translate) && Close4x4(a.perspective, b.perspective) && Close4x4(a.ortho, b.ortho);
+    same = same && Close4x4(a.scale, b.scale) && Close3(Math.Transform(a.scale, float3(1)), float3(1, 0, -2));
     return same && Close4x4(a.constant, b.constant);
 }
 
@@ -4373,6 +4395,57 @@ view Placing(Art art, mut Places places)
     {
         Draw.Mesh(places.card, art.faces, CardPushed); // Its transform puts it at 160: drawn at 192
     }
+}
+
+// Metadata-only size reads use uniforms, so no image is captured or sampled.
+local singleton ImageSizes
+{
+    Texture grid;
+    Texture missing;
+    Texture kept;
+    Texture window;
+    int2 expected;
+    int2 expectedWindow;
+    bool cpu;
+}
+event ImageDimensions { int2 size; }
+int2 ImageSize(Texture image) { return image.size; }
+int2 ForwardImageSize(Texture image) { return ImageSize(image); }
+int2 PayloadSize(ImageDimensions payload) { return payload.size; }
+ImageDimensions MeasuredDimensions(int2 size) { return ImageDimensions { size = size }; }
+vert SizedImage(mut Vertex vertex, ImageSizes sizes)
+{
+    if (ForwardImageSize(sizes.grid).x != 2) vertex.position += float2(1000);
+}
+frag ImageMetadata(Vertex vertex, out Color color, Texture source, ImageSizes sizes)
+{
+    var direct = ForwardImageSize(source);
+    var grid = ForwardImageSize(sizes.grid);
+    var missing = ForwardImageSize(sizes.missing);
+    var target = ForwardImageSize(sizes.kept);
+    var window = sizes.window.size;
+    var raw = heroNumbers.size;
+    var payload = MeasuredDimensions(heroColors.size);
+    bool good = sizes.cpu && direct.x == 8 && direct.y == 6 && grid.x == 2 && grid.y == 2
+        && missing.x == 0 && missing.y == 0 && raw.x == 8 && raw.y == 6
+        && target.x == sizes.expected.x && target.y == sizes.expected.y
+        && window.x == sizes.expectedWindow.x && window.y == sizes.expectedWindow.y
+        && PayloadSize(payload).x == 8 && PayloadSize(payload).y == 6;
+    color = good ? Color.green : Color.red;
+}
+view ImageMeasurements(Art art, mut ImageSizes sizes)
+{
+    if (art.targetPass != 23) return;
+    sizes.grid = art.four;
+    var target = ForwardImageSize(sizes.kept);
+    var window = sizes.window.size;
+    sizes.cpu = target.x == sizes.expected.x && target.y == sizes.expected.y
+        && window.x == sizes.expectedWindow.x && window.y == sizes.expectedWindow.y
+        && heroColors.size.x == 8 && heroColors.size.y == 6 && heroNumbers.size.x == 8;
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Clear(Color.black);
+    Draw.Mesh(art.targetQuad, art.faces, heroColors, SizedImage, ImageMetadata);
 }
 
 // shaders.c requests independent full-window checks after the existing grid.

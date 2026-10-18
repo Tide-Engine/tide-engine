@@ -88,6 +88,7 @@ component Zombie
     ZombieKind kind;
     float fuse;                 // A Bloater: seconds since it began to swell (0, not yet)
     bool popped;                // ...and it has burst
+    float frenzy;               // Seconds left frenzied by a Stalker's shriek: faster
     float spit;                 // A Spitter: seconds till it can spit again...
     float windup;               // ...seconds into the swelling of its throat (0, none)...
     bool sight;                 // ...and whether it has a clear line to whom it's after (looked for a few times a second)
@@ -108,6 +109,7 @@ singleton Herd
     List<float> lifts;          // By slot: how high it is off the ground, up a pile
     List<int> next;             // By slot: the next in its cell, or -1
     List<int> first;            // By cell: the first slot in it, or -1
+    List<Spots> bosses;         // The bosses' hit spots, by Body.boss (kept apart: thousands of the dead don't carry them)
 }
 
 int HerdCell(float3 at)
@@ -148,6 +150,7 @@ system HerdClear(mut Herd herd)
     herd.feet.Clear();
     herd.lifts.Clear();
     herd.next.Clear();
+    herd.bosses.Clear();
     if (herd.first.count != HERD_W * HERD_W) herd.first.Resize(HERD_W * HERD_W);
     for (var c = 0; c < HERD_W * HERD_W; c++) herd.first[c] = -1;
 }
@@ -192,7 +195,25 @@ struct Body
     float3 chest;
     float3 hips;
     bool down;                  // On its back
-    float size = 1;             // How much bigger than one of the dead (a Brute's)
+    float size = 1;             // How much bigger than one of the dead (a boss's)
+    int boss = -1;              // A boss's place in Herd.bosses
+}
+
+// How wide a body's head and chest are to a round, and its weak spot: where, how wide (0, none) and how many times a
+// round there does. A boss's are its mesh's (boss.tide's MutantOf); one of the dead's are a man's at its size.
+struct Spots
+{
+    float headRadius;
+    float chestRadius;
+    float3 weak;
+    float weakRadius;
+    float weakTimes;
+}
+
+Spots SpotsOf(Body z, Herd herd)
+{
+    if (z.boss >= 0 && z.boss < herd.bosses.count) return herd.bosses[z.boss];
+    return Spots { headRadius = HEAD_RADIUS * z.size, chestRadius = 0.36 * z.size, weakTimes = 1 };
 }
 
 Body BodyOf(Entity entity, Zombie zombie)
@@ -266,6 +287,7 @@ event Wound
     float freeze;               // Freezes it solid, so many seconds
     bool crit;                  // Lucky Shot's double
     bool echo;                  // Set off by an item: a kill sets off nothing more
+    bool weak;                  // To a boss's weak spot (the damage already the more for it)
 }
 
 // What dealt a blow.
@@ -299,7 +321,21 @@ event Struck
     Blow blow;
     bool crit;
     bool mail;                  // Turned by a Warden's mail
+    bool weak;                  // On a boss's weak spot
 }
+
+// A Stalker's shriek, to each of the dead near it.
+event Frenzied
+{
+    float seconds;
+}
+
+event(Frenzied frenzied) TakeFrenzied(mut Zombie zombie)
+{
+    if (zombie.state != ZombieState.Dying) zombie.frenzy = Math.Max(zombie.frenzy, frenzied.seconds);
+}
+
+const float FRENZY_PACE = 1.6;     // How much faster the frenzied go
 
 // A Spitter's bile on a survivor: slowed a while.
 event Slimed
@@ -351,6 +387,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     zombie.chill = Math.Max(0, zombie.chill - dt);
     zombie.frozen = Math.Max(0, zombie.frozen - dt);
     zombie.stun = Math.Max(0, zombie.stun - dt);
+    zombie.frenzy = Math.Max(0, zombie.frenzy - dt);
     // A Bloater killed bursts (the tick after the blow); one swelling bursts when its time's up
     if (zombie.kind == ZombieKind.Bloater && !zombie.popped)
     {
@@ -369,7 +406,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
                 var far = Math.Distance(s.feet + float3(0, 1, 0), zombie.chestAt);
                 if (far > BLOAT_REACH) continue;
                 var share = Math.Sqrt(1 - far / BLOAT_REACH);
-                row.entity.Send(Hurt { damage = BLOAT_HURT * (0.4 + 0.6 * share), from = zombie.chestAt });
+                row.entity.Send(Hurt { damage = BLOAT_HURT * Harm(match.danger) * (0.4 + 0.6 * share), from = zombie.chestAt });
                 row.entity.Send(Shoved { velocity = Flatten(s.feet - zombie.chestAt) * 9 * share + float3(0, 4 * share, 0) });
             }
             Rupture(this, zombie, match, herd, BLOAT_REACH * (1 + 0.3 * masks));
@@ -525,7 +562,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
             {
                 zombie.windup = 0;
                 zombie.spit = SPIT_EVERY;
-                if (target != default) Spit(zombie, targetAt, targetGoes);
+                if (target != default) Spit(zombie, targetAt, targetGoes, match.danger);
             }
         }
         else if (zombie.sight && zombie.spit <= 0 && zombie.frozen <= 0 && zombie.stun <= 0 && zombie.flinch <= 0 && nearest > SPIT_NEAR)
@@ -555,7 +592,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
                 if (row.entity != target || row.survivor.life != Life.Standing) continue;
                 var to = row.survivor.feet - zombie.at;
                 if (Math.Length(to.xz) < ATTACK_REACH + 0.45 && Math.Dot(Math.Normalize(to.xz), Flat(zombie.yaw).xz) > 0.2)
-                    target.Send(Hurt { damage = ZOMBIE_HIT * (zombie.kind == ZombieKind.Warden ? WARDEN_HIT : 1.0), from = zombie.at });
+                    target.Send(Hurt { damage = ZOMBIE_HIT * Harm(match.danger) * (zombie.kind == ZombieKind.Warden ? WARDEN_HIT : 1.0), from = zombie.at });
             }
         }
         if (zombie.swing >= ATTACK_SECONDS) zombie.swing = 0;
@@ -574,6 +611,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     if (zombie.swing > 0) speed *= zombie.gait == Gait.Shamble ? 0.2 : 0.45;
     if (zombie.frozen > 0 || zombie.stun > 0 || zombie.fuse > 0) speed = 0;
     if (zombie.kind == ZombieKind.Bloater) speed *= BLOAT_PACE;
+    if (zombie.frenzy > 0) speed *= FRENZY_PACE;
     // A Spitter with a clear line stands its ground and spits
     if (spitter && (zombie.windup > 0 || (zombie.sight && nearest < SPIT_KEEP))) speed = 0;
     if (target != default && nearest < ATTACK_REACH * 0.8) speed *= 0.1;
@@ -650,14 +688,14 @@ void Rupture(Entity self, mut Zombie zombie, Match match, Herd herd, float reach
 
 // A Spitter's bile: lobbed from its mouth to land where the survivor will be (half of the way they're going), arcing
 // over the dead between.
-void Spit(Zombie zombie, float3 target, float3 goes)
+void Spit(Zombie zombie, float3 target, float3 goes, float danger)
 {
     var from = zombie.headAt + Flat(zombie.yaw) * 0.3;
     var aim = target + float3(0, 1.0, 0);
     var flight = Math.Clamp(Math.Length((aim - from).xz) / SPIT_SPEED, 0.4, 1.6);
     var to = aim + float3(goes.x, 0, goes.z) * flight * SPIT_LEAD;
     var velocity = (to - from) / flight + float3(0, 0.5 * SPIT_GRAVITY * flight, 0);
-    Spawn(Missile { kind = Shot.Spit, at = from, velocity = velocity, gravity = SPIT_GRAVITY, damage = SPIT_HURT, splash = SPIT_REACH, seat = -1, life = 4 });
+    Spawn(Missile { kind = Shot.Spit, at = from, velocity = velocity, gravity = SPIT_GRAVITY, damage = SPIT_HURT * Harm(danger), splash = SPIT_REACH, seat = -1, life = 4 });
     Send(Cue { sound = Sfx.Spit, at = from });
 }
 
@@ -739,7 +777,8 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         else if (wound.damage >= 1 && zombie.state == ZombieState.Hunting && wound.knock >= 0) zombie.flinch = Math.Max(zombie.flinch, wound.head ? 0.45 : 0.3);
     }
     if (killed && wound.seat >= 0 && wound.seat < 4 && party.taken[wound.seat])
-        party.survivors[wound.seat].Send(Earned { kill = true, head = wound.head, at = zombie.at, echo = wound.echo });
+        party.survivors[wound.seat].Send(Earned { kill = true, head = wound.head, at = zombie.at,
+                                                  echo = wound.echo || wound.blow == Blow.Burning || wound.blow == Blow.Bleeding });
     var body = BodyOf(this, zombie);
     this.Send(Struck { at = wound.head ? body.head : body.chest, from = wound.from, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
                        blow = wound.blow, crit = wound.crit, mail = mail && wound.damage >= 1 });

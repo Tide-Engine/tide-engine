@@ -59,8 +59,254 @@ stacking items with levels (done, below; the items are offered three at a
 time after each wave until chests come); 3, the RoR2 loop proper (gold from
 kills, chests that sell the items, a teleporter-like event and a boss, elites,
 difficulty with time, stage after stage in place of waves; built as nights,
-below); 4, the biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
+below; the bosses became three mutants after the third playtest); 4, the
+biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
+
+### Hordes, and a view from above (2026-10-18)
+
+The owner, after the third round: "i think zombies should spawn in "hordes"
+more so than one randomly / also I want to play with a top down camera too".
+How both work is my pick, Provisional.
+
+- **Hordes** (rounds.tide's `SpawnDead`): the rate is as it was (`SpawnRate`,
+  `Crowd`, `VIGIL_RUSH`, `BOSS_THIN`); what changed is where and when they
+  come. Of the dead owed, `STRAY_SHARE` (a quarter, kept as a fraction in
+  `Match.strays`, no roll) rise alone as before, anywhere 16 to 32 m round;
+  the rest wait in `Match.hordePool`. Every `HORDE_EVERY_LEAST` to
+  `HORDE_EVERY_MOST` seconds (5 to 9; the first `HORDE_FIRST`, 3 s, into a
+  night), once at least `HORDE_LEAST` (6) wait, a horde forms: its middle
+  (`RisingPlace`) 22 to 32 m from a standing survivor or, in a vigil,
+  `VIGIL_FOCUS` of the time from the beacon; its patch `HORDE_SPREAD` (0.9)
+  times the root of how many, 2 to 12 m across; one gait rolled for all of it
+  (`GaitFor`; Bloaters and Wardens keep theirs), so a horde comes at one pace
+  and the runners' hordes are seen as such; at most `HORDE_MOST` (400). It
+  claws up within `HORDE_RISE` (1 s), `HORDE_PER_TICK` (12) a tick at most,
+  each where the ground in its patch is open (`HordePlace`, four tries, else
+  its middle). `HordeRose` is heard (the rise and a few groans from all over
+  the patch, from wherever it is) and seen (earth thrown up over the patch).
+  At the start, alone, that's about a dozen and a half every seven seconds.
+  `ResetHordes` at a new night and a new run; `Match.scattered` (development
+  and tests: `few`, `perf.c`) sends every one alone, as before. The
+  development key's rush still comes six a tick, alone.
+- **The Powder Keg takes the nearest**: its burst had taken the first of the
+  dead its cells listed within reach, not the nearest its line says; in a
+  horde those were often not the ones beside the kill. It now keeps the
+  `2 + keg / 2` nearest (items.tide's `Earn`).
+- **The view from above** (`View.Above`; `View { Eyes, Shoulder, Above }`
+  replaces the bool `third`: `Feel.view`, `Hands.view`, `Survivor.view`, and
+  `Me.outside` for any eye that isn't the survivor's own, `Me.above` for
+  this one). V goes round them: over the shoulder (still the first), from
+  above, through the eyes.
+  - The camera (eye.tide's `Prepare`): `TOP_HIGH` (11.5 m) over the
+    survivor's feet and `TOP_BACK` (7 m) south of them, looking down at a
+    metre above their feet, north up the screen (`TOP_YAW` 0, so the chapel
+    is at the top and the graveyard on the left), `TOP_FOV` 52 degrees; the
+    mouse's wheel takes it between 0.6 and 1.6 times as far (`Feel.zoom`).
+    A blast's shake moves it a little. The ears are the survivor's, turned
+    as the screen is. The F9 views are as they were.
+  - The cursor (`Pointing`, a view): the lock still holds the real one; the
+    mouse moves `Me.cursor` across the screen, starting where the look was.
+    The right stick, once it's pushed, aims its way from the survivor
+    (`PAD_REACH`, 9 m) till the mouse moves. What the cursor's on is
+    `Me.pointed`, which the input sends (`Hands.aim`): on one of the dead
+    (hands.tide's `BodyFirst` along the line from the eye), its chest, or a
+    boss's weak spot when the cursor's on that (from above every cursor on
+    the dead would otherwise be on a head, and every round a headshot); else
+    where the line crosses the gun's height above the survivor's feet, so a
+    shot goes level and passes under the cursor (the first version took the
+    gun's height above the ground under the cursor, which the camera sees
+    higher on the screen: the tracers passed over the cursor); where the
+    ground rises into the line first, the gun's height above where it meets
+    it.
+  - The match (hands.tide): `FaceAim` turns the survivor to the aim each tick
+    (yaw, and pitch for the gun's line), not when it's within 0.4 m of their
+    gun; moving goes by the screen (`MoveYaw`: `TOP_YAW` from above, else
+    the look), and running is any way, not only forward; `AimedAt` is the aim
+    (no further than the gun's range), so `AimFrom` sends the rounds from the
+    gun to it, as over the shoulder. The dash goes by the screen too. A
+    grenade or a firebomb is lobbed to land on the ground under the aim
+    (kits.tide's `ThrowTo`: no further than `THROW_MOST`, 20 m, a flight a
+    second per 13 m, 0.35 to 1.3 s), a grenade's fuse its flight and a tenth
+    of a second, so it bursts there rather than bouncing on. The boot, the
+    mine, the turret and the Phase Round go the way they face, which is the
+    cursor's.
+  - The HUD: the crosshair (and the hit marker, HEADSHOT) is drawn at the
+    cursor, warmer when it's on one of the dead; the blows' arcs go round
+    the survivor; the over-the-shoulder ring where a shot would stop isn't
+    drawn (from above the dead are nearly always in the line). A ring on the
+    ground round each survivor, in their colour, finds them in a crowd. The
+    first-person arms aren't drawn; tracers start at the gun.
+  - Not done: trees between the camera and the survivor aren't faded (the
+    groves are sparse since the props went, and in the captures the survivor
+    stayed in sight); no aim assist; the camera doesn't lead toward the
+    cursor.
+- **Tests** (`gravewake_test`): from above, turned away, the aim put on one
+  of the dead's chest: turned to it (0.000 off) and the carbine's round hits
+  (43); half a second up the screen while facing east: 3.09 m north, none
+  east, still facing the aim; a grenade at a spot 12 m off bursts 0.40 m from
+  it. A horde of 30 claws up within a second, all within its 4.9 m patch,
+  23 m from whom it's for. The Powder Keg check stands two of the dead alone,
+  one beside the other: with the dead in hordes, others had stood in the line
+  of fire. The soak's longest any hunted is 164 s (of 180), up from 138:
+  hordes rise further off.
+- **The bots** (`gravewake_balance`, 25 minutes at most, eight runs alone,
+  four of the pair, medians, with the last round's in brackets): the Gunner
+  576 s (409), the Breacher 424 s (206), the Engineer 616 s (918), the pair
+  591 s (652); a night or two. The Breacher's shotgun and boot do well
+  against a horde come close together; the Engineer's turret, which takes
+  the nearest one at a time, less so.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  (151 s) pass. Looked at in standard-host captures from above: the camp,
+  firing at the cursor (the tracer through it), the rings, a grenade thrown
+  to the cursor, a walk south through a grove, a horde coming in. The
+  browser tests weren't run (the owner asked not to).
+
+### After the third playtest: harder, clearer, three bosses (2026-10-18)
+
+The owner, after playing Phase 3: "ok the game is too easy and it gets a bit
+hard to read things; i think we need to work on the visibility aspect.
+between the glowing orbs and then everything being just dark its hard to see
+whats going on. I could basically stay alive forever by just dashing, even if
+I got hit I got my life back so quickly it didnt really matter. I think we
+need some contrast improvement and maybe just cleanup some map props that are
+there just for the sakes of being there. they add noise to already a full
+scene. we need more boss variety and also it would be nice if the boss wasnt
+just a scaled up human/zombie looking dude, we can do mutants thats fine. it
+would also be nice being able to be strategic about where we shoot maybe? if
+they have some glowing back or whatever and that deals more damage for
+example. the boss fight is also messy cause we keep getting surrounded. Idk
+how `The Spell Brigade` did it but they made the movement feel and be so
+impactful." Then: "also some ability allows me to kill multiple enemies at
+once by killing one i think? that ended up allowing me to kill entire hordes
+easily too". Everything below is my pick, Provisional, for their next play.
+
+- **Harder.** Health came back at 60% a second after 3.5 s unhurt, whole in
+  under two: now `REGEN_RATE` (4%) a second after `REGEN_DELAY` (4 s), 25 s
+  from nothing (hands.tide). The dead's blows grow with the danger
+  (`Harm(danger)`, rounds.tide: `danger^0.4`, about 1.7 times at danger 4 and
+  2.5 at 10) for a claw (30), bile (18), a Bloater's burst (45) and a boss's
+  blows; a claw had been 30 at every danger, which the levels' health soon
+  made nothing.
+- **The dash** (kits.tide, hands.tide's `DashThrough`): 4.5 s a charge (3.5).
+  The Gunner's and the Engineer's throw the dead aside (`knock` 8 / size)
+  instead of knocking them down, which had left the way out flat; the
+  Breacher's still bowls them over. A dash that strikes sends `Barged`: a
+  jolt of the camera for whoever made it (eye.tide, more for more struck) and
+  the thump of bodies (sound.tide).
+- **Movement** (game.tide): walk 5.6 m/s (4.6), run 7.0 (6.8), grip on the
+  ground 22 (14, `GRIP`: how fast feet take up the way asked), gravity 24
+  (20), a jump 7.0 (6.2): quicker to start, stop and turn, a jump as high and
+  sooner down. What I could find on The Spell Brigade (reviews; I've no way
+  to play it) says it has no dash at all: quick, responsive movement and big
+  hits,
+  so the feel went into the walk, the dash's thump and the hits; the owner's
+  play decides it.
+- **Chain kills** (items.tide's Powder Keg): every kill burst into `2 + keg`
+  of the dead for `ZombieHealth × (0.25 + 0.25 keg)`: half of what one can
+  take at a stack, so with a fast gun a kill felled the ones it burst into,
+  and a crowd fell a kill at a time. Now `2 + keg / 2` of them, for
+  `0.15 + 0.1 keg` (a quarter at a stack). Kills by burning or bleeding are
+  `echo` now (zombies.tide's `TakeWound`), so fire spreading through a crowd
+  doesn't set off kegs either (an item's own kills already didn't).
+- **Fewer of the dead while a boss stands** (rounds.tide's `BOSS_THIN`,
+  0.45 of the rate while any isn't dying): the boss's fight had been lost in
+  the crowd round it.
+- **Three bosses, mutants** (boss.tide, crowd.tide, `art/mutants/`): the
+  Brute (a walker drawn three times the size) is gone. `BossKind` is the
+  Mauler, the Broodmother or the Stalker (`MutantOf`: name, size, radius,
+  speed, health against the others, hit spots, tint, the HUD's hint); a
+  night's take them in turn (`KindForNight`: `(night - 1 + k) % 3`), the
+  impatient ones at random. Health `2000 × danger × Crowd × kind` (1, 1.1,
+  0.75). Their moves (`BossMove`, `NextMove` picks):
+  - The Mauler (2.4 m/s): within 7 m the slam (1.1 s windup, 6.5 m, 45; a
+    red ring), every third move and out to 26 m the charge (0.9 s windup,
+    15 m/s for 1.3 s, 35; a line on the ground), then `Recover`, 1.6 s spent.
+    Weak spot: the sores on its back, three times.
+  - The Broodmother (1.7 m/s): a volley (0.9 s windup, five globs of bile in
+    a spread, `Lob`), and a birth (2.4 s crouched: `6 + 2 × night` runners at
+    half a walker's health, shoved out). Her sac: twice, four times while she
+    births.
+  - The Stalker (4.2 m/s): out to 30 m a leap at where its target will be
+    (0.75 s crouched, 0.8 s through the air, 40 within 4.2 m of where it
+    lands; a ring), within 5 m a swipe (0.55 s, 3.2 m, 30), and every third
+    move a shriek
+    (1.8 s: every one of the dead within 18 m `Frenzied` for 7 s,
+    `FRENZY_PACE` 1.6 times as fast, their eyes red-hot). Its throat: half
+    again, four times while it shrieks, and a tenth of its health there
+    (`Boss.hurt`, `SHRIEK_CUT`) cuts the shriek short into a 1.3 s `Stagger`.
+- **Weak spots**: each boss's hit spots are `Spots` in `Herd.bosses` (head
+  and chest radii, the weak spot, how wide, how many times), found by
+  `Body.boss`; the dead's are a man's at their size (`SpotsOf`). They were
+  first fields of `Body`, which grew the packed world 8% for the thousands
+  that never use them; apart, it's 2% (the frenzy and the index). A round is
+  on the weak spot if where it first meets the body is within
+  `WEAK_PATCH` (1.15) of its radius of the spot, so a spot partly inside the
+  chest's ball still counts (the chest's ball of one of the dead at the
+  Stalker's size had buried its throat: each mutant has its own head and
+  chest radii). The HUD's marker is orange and big on one (`Struck.weak`),
+  with a low crack; the boss bar names it and says where the weak spot is;
+  the spot glows on the mesh (the growths' `uv2.x` 0.5, `Shambler.weak`),
+  brighter when it's open (birth, volley, shriek: motes rise from it too).
+- **The mutants' art** (`art/mutants/tools/make_mutants.py`, Blender 4.4):
+  three of the dead from `art/people` (the king for the Mauler, the maid for
+  the Broodmother, the wanderer for the Stalker), each bone scaled along and
+  across and bent from `RECIPES`, the meshes deformed by that pose and the
+  pose made the rest (`inherit_scale` off while posing, so a scale isn't
+  passed down unless the name ends in `*`), growths and spikes put on bones;
+  then the catalog's clips baked into `anim.png` as the horde's are, and each
+  body's head, chest, hips and weak spot measured into `mutants.json` (which
+  `MutantOf` copies by hand: rebaking means reading them again). Gotchas met:
+  the clips are quaternion keys, so bones posed in Euler mode stood in a
+  T-pose; and scales compounded down the arms until inheriting was turned
+  off. crowd.tide draws them with the horde's `Mutate` vert (`Mutants`,
+  `MutantMesh`, `PoseMutant` per move: walk, run, claw, slam, crouch, jump,
+  land, hit, death, rise).
+- **Readability** (crowd.tide's `CrowdFlesh`, look.tide, nights.tide's
+  `NightLook`): the horde's skin paler and less grimy, a little sky light on
+  it, a rim toward the eye fading slowly with distance, eyes that glow; the
+  bosses darker, their own colour, so the fires don't wash them out. The
+  nights brighter: the moon (0.52, 0.57, 0.74; was 0.4, 0.45, 0.63), sky light
+  (0.09, 0.1, 0.13; was 0.06, 0.07, 0.1), fog 0.007 (0.009), exposure 1.75
+  (1.6), each night's kind brightened alike; bloom from 1.1 (0.9), weighed 0.4
+  (0.6). Orbs (orbs.tide) are quiet: drawn within 45 m (70), smaller, their
+  halo faint (alpha 0.12, was 0.45), lower and bobbing less; hundreds lie in a
+  fight. The ash and embers drifting over everything (fx.tide) are gone.
+- **Props gone** (plan.tide), the ones there for their own sake: the camp's
+  bag, bucket and rope; the ruin's chest and loose bricks; the cart and the
+  wagon east and the second fire by them; the loose gravestones (the graves'
+  own stay); the grass and mushrooms over the clearing. The groves are five
+  trees, not seven; the standing stones a wider ring (6.5 m, was 4.8),
+  smaller.
+- **Development**: F3 a boss of each kind in turn (`Cheat` 30 to 32, through
+  `Match.devBoss`).
+- **Tests** (`gravewake_test`): the dash's cooldown (4.5 s), a Gunner's dash
+  throwing one of the dead aside without knocking it down, the Breacher's
+  still knocking down; the Mauler slamming, charging and standing spent; a
+  carbine round to its hips 49, to its back's sores 147; felled as the
+  night's own, a pick each; the Broodmother's volley (five globs) and birth
+  (eight runners); the Stalker's leap (7.3 m, landing where it aimed), its
+  shriek frenzying one of the dead beside it, and a round to its throat
+  (196 of 1000) cutting the shriek into a stagger.
+- **The bots** (`gravewake_balance`, 25 minutes at most, the medians; eight
+  runs alone, four of a Gunner and a Breacher): the Gunner 409 s (1014 in
+  Phase 3), a night; the Breacher 206 s (1172), every run dying in the first
+  vigil; the Engineer 918 s (607), three nights; the pair 652 s (to the cap),
+  2.5 nights. The bots don't dodge, don't dash out and stand in the vigil's
+  crowd, which is just what the owner said they no longer had to fear; the
+  Breacher's bot fights up close and suffers most. A first pass was harder
+  still (regen 2.5% after 5 s, `Harm` at `danger^0.5`: the Breacher 197 s,
+  the pair 259 s); this is softened from it. The levers: `REGEN_RATE`,
+  `REGEN_DELAY` and `Harm`'s power.
+- **Cost** (`gravewake_perf`, release): this machine was loaded by other
+  work, and runs of the same build ranged 3.9 to 8.7 ms at 4000; alternating
+  this round's and Phase 3's builds, they came out the same (4.5 to 5.6 ms
+  both). Packed, 1.70 MB at 4000 (1.67 MB).
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  pass (156 s). The browser tests weren't run (the owner asked not to). Looked
+  at in standard-host captures: the horde by night from the camp and from
+  afar, each night's kind, each boss in its moves and its weak spot's glow,
+  the orbs lying after a fight.
 
 ### Phase 3: the nights, and a design pass (2026-10-17)
 
@@ -1054,10 +1300,13 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 - **The run** (`rounds.tide`, `nights.tide`): night after night, each ended
   by its beacon's vigil and a dawn. The dead come all the time, more and
   tougher as the danger climbs with the clock and the nights, more for a
-  party, at most 4000 up at once, clawing up 16 to 32 m round a random
-  standing survivor (or, in a vigil, mostly round the beacon); a claw does 30
-  (a Warden's 45). A night's Brutes rise as its beacon's lit; an unlit night
-  sends one every 150 s (`boss.tide`).
+  party, at most 4000 up at once, most in hordes clawing up together 22 to
+  32 m from a standing survivor, a quarter alone 16 to 32 m round (in a
+  vigil, mostly round the beacon); a claw does 30
+  (a Warden's 45) times `Harm(danger)`. Health comes back at 4% a second
+  after 4 s unhurt. A night's bosses (the Mauler, the Broodmother, the
+  Stalker, in turn) rise as its beacon's lit; an unlit night sends one every
+  150 s (`boss.tide`); fewer of the dead come while one stands.
 - **Kinds of the dead**: walkers; Bloaters from 40 s, Spitters from 75 s,
   Wardens from 2 min (Phase 3, above).
 - **Levels** (`items.tide`): every kill leaves an orb (`orbs.tide`), the
@@ -1067,7 +1316,8 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 - **The score** is the nights kept and the time; the HUD counts each one's
   kills (there are no points).
 - **The dead** walk a flow field to the nearest standing survivor and claw.
-  Heads take double (a shotgun's pellet half again). Fire burns for 3 s,
+  Heads take double (a shotgun's pellet half again); a boss's weak spot
+  takes its own (two to four times). Fire burns for 3 s,
   frost slows for 3 s and a second frost while slowed freezes solid (and
   Frostbite freezes outright), shock stuns for 0.6 s, a blast throws. A boot,
   a dash, a slam and a grenade's middle knock them over; one lying takes half
@@ -1081,7 +1331,7 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   the beacon when it's lit, or at dawn. When nobody is left standing (alone,
   going down), the game is over.
 - **No power-ups** (since 2026-10-17, below): items come from levels, the
-  nights' Brutes and chests.
+  nights' bosses and chests.
 
 ## Contracts
 
@@ -1100,7 +1350,7 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   `Over`. `Match.kept` is the nights kept, the score with `lasted`. The
   pause (`Pause`) holds `Fighting` and `Dawn` alike.
 - **A night's things carry its number** (`Beacon.night`, `Chest.night`, a
-  Brute's `night` for its blows): `Keep` and `ChestShut` destroy what isn't
+  boss's `night` for its blows): `Keep` and `ChestShut` destroy what isn't
   tonight's as the next falls; `Restart` clears them all.
 - **Ashwick Wood is one function**, `MakePlan()` (`plan.tide`): the match
   keeps its solids, risers and starts (`Ashwick`, built at `Spawned`), and
@@ -1149,14 +1399,22 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   charges are `dashes`, `DashCharges` at most.
 - **Commands**: `Restart` (Rooms' New game, Play, or use on the game-over
   screen) sets `Match.restarting`; the `Tick.Restart` systems clear the dead,
-  missiles, turrets, Brutes, orbs, chests and the beacon, re-outfit the
+  missiles, turrets, bosses, orbs, chests and the beacon, re-outfit the
   survivors and reset the match (command handlers can't query). `Cheat` is
-  the development keys (3 a horde, 4 a level, 5 an item, 6 a Brute, 8 the
-  night kept, 10-17 the places in turn, 20-22 six of a kind of the dead).
+  the development keys (3 a horde, 4 a level, 5 an item, 6 a boss of any
+  kind, 8 the night kept, 10-17 the places in turn, 20-22 six of a kind of the
+  dead, 30-32 a boss of a kind).
+- **The herd** (`Herd`, zombies.tide, rebuilt each tick): every hittable
+  body (the dead's `Muster`, the bosses' `BossMuster`) in a grid of cells for
+  `Near` and `Along`; a boss's hit spots apart in `Herd.bosses`
+  (`Body.boss`, `SpotsOf`).
 - **Inputs**: `ready` is `[Absolute]`; the rest are held bools read with
   `.down`, look is clamped to half a radian a tick. Mouse look is read only
-  while the cursor is locked.
-- **What's local**: the camera (`Me`, watching a friend while bled out), the
+  while the cursor is locked. `view` is how the player sees; from above,
+  `aim` is what the cursor's on (eye.tide's `Pointing`, `Me.pointed`) and
+  look is nothing.
+- **What's local**: the camera (`Me`, watching a friend while bled out; the
+  view and the zoom from above in `Feel`; the cursor from above), the
   plan's copy (`Village`), the kit's placements (`Kit`), poses, walk clocks,
   hit flashes and voices (`local` fields), the night's light (`NightLook`
   into `Look`), the feed, effects and sounds. Hits, kills, shots (`Loosed`,
@@ -1186,6 +1444,9 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   power-ups, the well) are no longer made or packed (`art/items/README.md`);
   `sfx/` still has the door, board, chest, coin and forge sounds, which the
   game no longer declares, so they aren't packed.
+- The bosses (`art/mutants`, 2026-10-18): three of the dead reshaped into
+  mutants by `make_mutants.py` and baked as the horde is (above, After the
+  third playtest; `art/mutants/README.md`).
 - People: six of the dead and four survivors from Ultimate Modular Men and
   Women, recoloured in Blender (`art/people/tools/make_bodies.py`); clips from
   the men's pack and Universal Animation Library 1 and 2, retargeted onto
@@ -1388,8 +1649,10 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   of the dead; a Bloater's swelling and burst, and one shot dead from afar;
   the Spitter, the Warden and the newer items (Phase 3, above); a chest
   opened, and one let go shutting again; orbs lying, taken from 4 m, gone
-  after 40 s; a Brute's slam, charge and roar, and one of the night's own
-  felled owing each a pick; then both holding the fire for three minutes,
+  after 40 s; the Mauler's slam, charge and spent stand, its weak spot
+  against its hips, and one of the night's own felled owing each a pick; the
+  Broodmother's volley and birth; the Stalker's leap, its shriek's frenzy,
+  and one cut short by its throat; then both holding the fire for three minutes,
   shooting the nearest, taking the third item at each level (every one of
   the dead but the Spitters reaches them: the longest any hunted is about
   105 s of 180); a night kept (Phase 3); then the match from a snapshot and
@@ -1426,8 +1689,8 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 - Not measured: frame cost on a real GPU in a browser with the forest's
   trees (the owner is testing it), live play over the Internet with four,
   gamepad feel, host migration mid-night, the balance with people rather than
-  the bots (who don't dodge a Brute's slam or charge, and find a high beacon
-  only by the ramps they're told of).
+  the bots (who don't dodge a boss's slam, charge or leap, or dash, and find a
+  high beacon only by the ramps they're told of).
 - A late joiner picks a survivor and is owed a pick for every level the
   party has, offered one after another, the run waiting.
 - What the engine made awkward, worked round in the game:

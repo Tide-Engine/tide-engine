@@ -1,0 +1,4 @@
+// expect: a parallel loop's steps run at once, so they can't read frame image metadata
+scene Main { }
+local singleton Art { Grid2<int> cells = Grid2(8, 8); Texture image; }
+view Read(mut Art art) { parallel (var at in art.cells) art.cells[at] = art.image.size.x; }

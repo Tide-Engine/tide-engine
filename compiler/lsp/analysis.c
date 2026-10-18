@@ -1898,6 +1898,7 @@ static const method_form session_calls[] = {
 #define GRID_SIZE_DOC                                                                                                  \
     "A grid of that size, in cells, whose cell type comes from where it goes: 0 or nothing leaves an axis open."
 #define GRID_SIZE_FIELD_DOC "The grid's size, 0 on the axes where it's open."
+#define TEXTURE_SIZE_DOC "Base-level width and height in physical pixels, as int2. Reads metadata without copying or uploading pixels. Missing images give (0, 0); render targets use the current frame's display scale and device limit."
 // The built-in struct Random (its methods' docs are in builtins.c).
 #define RANDOM_DOC                                                                                                     \
     "A random number generator's state, 8 bytes that live where the game puts them: a field of a component (a "       \
@@ -3422,6 +3423,7 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, "\n\n" DEVICE_ARRAY_COUNT_DOC);
         }
         if (o->object_type.kind == TY_GRID && str_eq_c(o->name, "size")) sb_put(out, "\n\n" GRID_SIZE_FIELD_DOC);
+        if (o->object_type.kind == TY_TEXTURE && str_eq_c(o->name, "size")) sb_put(out, "\n\n" TEXTURE_SIZE_DOC);
         break;
     case OCC_ATTRIBUTE: {
         static const struct {
@@ -6331,6 +6333,7 @@ static type member_type(const type t, const str member)
         return (type){TY_FLOAT, NULL};
     }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
+    if (t.kind == TY_TEXTURE && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
     if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_RECORD && t.decl->array_of && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_ARRAY && str_eq_c(member, "count")) return (type){TY_INT, NULL};
@@ -6453,6 +6456,7 @@ static void method_snippet(const method_form *form, sb *out)
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
+    if (t.kind == TY_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
         item(c, "Value", CK_PROPERTY, type_name((type){TY_MESH, t.decl->asset_ref_of}),
              "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);

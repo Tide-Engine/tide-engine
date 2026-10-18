@@ -63,7 +63,7 @@ enum {
     H_XXH, H_HASH1, H_HASH2, H_HASH3, H_HASH4,
     H_FADE, H_GRAD2, H_GRAD3, H_PERLIN2, H_PERLIN3, H_SIMPLEX2, H_SIMPLEX3, H_NEAREST, H_CELLULAR2, H_CELLULAR3, // noise.c's
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
-    H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
+    H_Q_FROM_M3, H_LOOKROTATION_Q, H_FROMTO_UNIT3, H_FROMTO_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
@@ -247,7 +247,7 @@ static const char *function_name(const decl *fn)
 
 static bool is_struct_like(const type t)
 {
-    return t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON;
+    return t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT;
 }
 
 // How many floats and ints a value of type `t` is, as the GPU is sent it.
@@ -289,6 +289,7 @@ static bool type_words(const type t, int *floats, int *ints)
     case TY_STRUCT:
     case TY_COMPONENT:
     case TY_SINGLETON:
+    case TY_EVENT:
         if (t.decl->skin_kind && t.decl->skin_kind != SKIN_TRANSFORM) return false;
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
@@ -1096,6 +1097,32 @@ static const char *const helper_texts[H_COUNT] = {
                          "    vec3 t = tide_normalize3(cross(u, f));\n"
                          "    return tide_q_from_m3(mat3(t, cross(f, t), f));\n"
                          "}\n",
+    [H_FROMTO_UNIT3] = "vec3 tide_fromto_unit3(vec3 v) {\n"
+                       "    if ((floatBitsToInt(v.x) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.y) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.z) & 0x7f800000) == 0x7f800000) { return vec3(0.0); }\n"
+                       "    float largest = max(max(abs(v.x), abs(v.y)), abs(v.z));\n"
+                       "    if (largest == 0.0) { return vec3(0.0); }\n"
+                       "    return tide_normalize3(v / largest);\n"
+                       "}\n",
+    [H_FROMTO_Q] = "vec4 tide_fromto_q(vec3 f, vec3 t) {\n"
+                   "    vec3 a = tide_fromto_unit3(f);\n"
+                   "    vec3 b = tide_fromto_unit3(t);\n"
+                   "    if (dot(a, a) == 0.0 || dot(b, b) == 0.0) { return vec4(0.0, 0.0, 0.0, 1.0); }\n"
+                   "    float d = clamp(dot(a, b), -1.0, 1.0);\n"
+                   "    vec3 axis = cross(a, b);\n"
+                   "    if (d >= 0.0) { return tide_normalize_q(vec4(axis, 1.0 + d)); }\n"
+                   "    float largest = max(max(abs(axis.x), abs(axis.y)), abs(axis.z));\n"
+                   "    if (largest == 0.0 || (a.x == -b.x && a.y == -b.y && a.z == -b.z)) {\n"
+                   "        vec3 absolute = abs(a);\n"
+                   "        vec3 side = vec3(0.0, 0.0, 1.0);\n"
+                   "        if (absolute.x <= absolute.y && absolute.x <= absolute.z) { side = vec3(1.0, 0.0, 0.0); }\n"
+                   "        else if (absolute.y <= absolute.z) { side = vec3(0.0, 1.0, 0.0); }\n"
+                   "        return vec4(tide_fromto_unit3(cross(a, side)), 0.0);\n"
+                   "    }\n"
+                   "    vec3 scaled = axis / largest;\n"
+                   "    float size = length(scaled);\n"
+                   "    float sine = sqrt(0.5 * (1.0 - d));\n"
+                   "    return tide_normalize_q(vec4(scaled * (sine / size), (largest * size) / (2.0 * sine)));\n"
+                   "}\n",
     [H_M3_FROM_Q] = "mat3 tide_m3_from_q(vec4 q) {\n"
                     "    float x = q.x + q.x;\n"
                     "    float y = q.y + q.y;\n"
@@ -1119,6 +1146,9 @@ static const char *const helper_texts[H_COUNT] = {
               "    mat3 m = tide_m3_from_q(q);\n"
               "    return mat4(vec4(m[0] * s.x, 0.0), vec4(m[1] * s.y, 0.0), vec4(m[2] * s.z, 0.0), vec4(t, 1.0));\n"
               "}\n",
+    [H_SCALE] = "mat4 tide_scaling(vec3 s) {\n"
+                "    return mat4(vec4(s.x, 0.0, 0.0, 0.0), vec4(0.0, s.y, 0.0, 0.0), vec4(0.0, 0.0, s.z, 0.0), vec4(0.0, 0.0, 0.0, 1.0));\n"
+                "}\n",
     // From a view down -z to OpenGL's clip space, as Unity.Mathematics': the field of view, the aspect, near and far
     [H_PERSPECTIVE] = "mat4 tide_perspective(float v, float a, float n, float f) {\n"
                       "    float c = 1.0 / tan(v * 0.5);\n"
@@ -1416,6 +1446,13 @@ static void need(emit *em, const int h)
     case H_LOOKROTATION_Q:
         need(em, H_NORMALIZE3);
         need(em, H_Q_FROM_M3);
+        break;
+    case H_FROMTO_UNIT3:
+        need(em, H_NORMALIZE3);
+        break;
+    case H_FROMTO_Q:
+        need(em, H_FROMTO_UNIT3);
+        need(em, H_NORMALIZE_Q);
         break;
     case H_TRS:
         need(em, H_M3_FROM_Q);
@@ -2583,8 +2620,14 @@ static void ex_placed(emit *em)
     sb_put(em->o, flat ? "0.0, 1.0))" : "1.0)))");
 }
 
+static void ex_texture_size(emit *em, const expr *e);
+
 static void ex_member(emit *em, const expr *e)
 {
+    if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+        ex_texture_size(em, e);
+        return;
+    }
     if (e->object->type.kind == TY_ARRAY && str_eq_c(e->member, "count")) { // How many an array has: its type says
         put_int(em, e->object->type.decl->array_length);
         return;
@@ -2853,6 +2896,7 @@ static const struct {
 } builders[] = {
     {"quaternion", "AxisAngle", H_AXISANGLE_Q, "tide_axisangle_q"}, {"quaternion", "Euler", H_EULER_Q, "tide_euler_q"},
     {"quaternion", "LookRotation", H_LOOKROTATION_Q, "tide_lookrotation_q"}, {"float4x4", "TRS", H_TRS, "tide_trs"},
+    {"quaternion", "FromToRotation", H_FROMTO_Q, "tide_fromto_q"}, {"float4x4", "Scale", H_SCALE, "tide_scaling"},
     {"float4x4", "PerspectiveFov", H_PERSPECTIVE, "tide_perspective"}, {"float4x4", "Ortho", H_ORTHO, "tide_ortho"},
 };
 
@@ -3435,9 +3479,11 @@ static int sample_slot(emit *em, const expr *of, const sampling how)
         if (!known) vec_push(em->root->samples, sample);
         return 0;
     }
+    const shader_texture *textures = how.read == READ_SIZE ? em->sh->sizes.items : em->sh->textures.items;
+    const int count = how.read == READ_SIZE ? em->sh->sizes.count : em->sh->textures.count;
     int slot = 0;
-    while (slot < em->sh->textures.count) {
-        const shader_texture *t = &em->sh->textures.items[slot];
+    while (slot < count) {
+        const shader_texture *t = &textures[slot];
         if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == (asset ? NULL : of->field)
             && t->filter == how.filter && t->wrap == how.wrap && t->read == how.read && t->filter_said == how.filter_said
             && t->wrap_said == how.wrap_said) {
@@ -3463,6 +3509,11 @@ static int texture_number(const emit *em, const expr *of)
             && t->field == (asset ? NULL : of->field)) {
             return slot;
         }
+    }
+    for (int slot = 0; slot < em->sh->sizes.count; slot++) {
+        const shader_texture *t = &em->sh->sizes.items[slot];
+        if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL)
+            && t->field == (asset ? NULL : of->field)) return em->sh->textures.count + slot;
     }
     return -1;
 }
@@ -3524,6 +3575,24 @@ static void note_function_sample(decl *fn, const int param, const expr *asset, c
     const function_sample sample = {.param = param, .asset = param >= 0 ? NULL : asset, .read = read, .filter = filter,
                                     .wrap = wrap, .at = at};
     vec_push(fn->gpu_samples, sample);
+}
+
+static void ex_texture_size(emit *em, const expr *e)
+{
+    int own;
+    const expr *of = texture_of(em, e->object, &own);
+    if (em->code != em->root && (own >= 0 || of)) {
+        if (em->checking) note_function_sample(em->code, own, of, READ_SIZE, 0, 0, e->at);
+        if (em->checking) { sb_printf(em->o, "%s(0)", ty(em, e->type)); return; }
+    }
+    if (!of) {
+        refuse_texture(em, e->object);
+        sb_printf(em->o, "%s(0)", ty(em, e->type));
+        return;
+    }
+    const int slot = sample_slot(em, of, sampling_of(of, READ_SIZE, 0, 0));
+    if (em->checking) sb_printf(em->o, "%s(0)", ty(em, e->type));
+    else put_words(em, 'v', em->sh->sizes.items[slot].count_at, 2, ty(em, e->type));
 }
 
 // What a texture is called where it's named, for a message.
@@ -6109,19 +6178,27 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
                                   .filter = s->filter, .direct = s->field < 0 && !s->asset, .asset = s->asset,
                                   .wrap = s->wrap, .read = s->read, .filter_said = s->filter_said, .wrap_said = s->wrap_said};
         bool known = false;
-        for (int k = 0; k < sh->textures.count; k++) {
-            known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
-                  && sh->textures.items[k].filter == t.filter && sh->textures.items[k].asset == t.asset
-                  && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read
-                  && sh->textures.items[k].filter_said == t.filter_said && sh->textures.items[k].wrap_said == t.wrap_said;
+        const shader_texture *textures = s->read == READ_SIZE ? sh->sizes.items : sh->textures.items;
+        const int count = s->read == READ_SIZE ? sh->sizes.count : sh->textures.count;
+        for (int k = 0; k < count; k++) {
+            known |= textures[k].direct == t.direct && textures[k].source == t.source && textures[k].field == t.field
+                  && textures[k].filter == t.filter && textures[k].asset == t.asset
+                  && textures[k].wrap == t.wrap && textures[k].read == t.read
+                  && textures[k].filter_said == t.filter_said && textures[k].wrap_said == t.wrap_said;
         }
-        if (!known) vec_push(sh->textures, t);
+        if (!known) {
+            if (s->read == READ_SIZE) vec_push(sh->sizes, t);
+            else vec_push(sh->textures, t);
+        }
         if (source) add_bound(sh, (decl *)source);
     }
 }
 
 bool shader_reads_local(const shader *sh, const decl *d)
 {
+    for (int i = 0; i < sh->sizes.count; i++) {
+        if (sh->sizes.items[i].source == d && sh->sizes.items[i].field && sh->sizes.items[i].field->is_local) return true;
+    }
     for (int i = 0; i < sh->values.count; i++) {
         if (sh->values.items[i].source == d && sh->values.items[i].field && sh->values.items[i].field->is_local) return true;
     }
@@ -6227,6 +6304,10 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         if (t->skin) { sh->uniform_ints += t->skin == 1 ? 1 : 2; continue; }
         const type held = t->asset ? t->asset->return_type : t->field->type;
         sh->uniform_ints += held.kind == TY_LIST ? 1 : held.kind != TY_GRID ? 2 : held.decl->dims == 3 ? 10 : 6;
+    }
+    for (int i = 0; i < sh->sizes.count; i++) {
+        sh->sizes.items[i].count_at = sh->uniform_ints;
+        sh->uniform_ints += 2;
     }
     // The number the frame rolled, which the generators of code that rolls are made of, and the match's seed
     // for code that reads it: a word each of the draw's ints, the same for every draw of a frame

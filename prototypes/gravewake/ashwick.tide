@@ -179,7 +179,7 @@ bool Reaches(Ashwick ashwick, float3 before, float3 at, float up)
     return Ground(at.x, at.z) - Ground(before.x, before.z) <= STEEP * Math.Length((at - before).xz) + 0.001;
 }
 
-// How high a Brute may go in a step of `dt` up a cliff (it climbs, slowly, on its own): a step that would rise more is
+// How high a boss may go in a step of `dt` up a cliff (it climbs, slowly, on its own): a step that would rise more is
 // cut short to what it may.
 float3 Climbed(Ashwick ashwick, float3 before, float3 at, float rate, float dt)
 {
