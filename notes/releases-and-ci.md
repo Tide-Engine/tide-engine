@@ -1,5 +1,43 @@
 # Releases, installing and CI
 
+## Audio completion and browser scheduling (2026-10-18)
+
+Run `39128917687`, at `2c4c8e29`, failed Android's audio-device state-reclamation
+assertion and Windows web's hidden-host room session. All other platform
+suites, Windows/macOS package checks, Docs and JetBrains verification passed.
+Linux packaging stopped at its failed Android suite; the aggregate Build gates
+failed/cancelled and Release was skipped. No nightly was published.
+
+The audio completion ordering fix and deterministic old-code failure are in
+`notes/audio.md`. The custom browser tests now use the existing CPU reservation
+and graceful profile shutdown, described in `notes/testing.md` and
+`notes/webrtc-and-rooms.md`. No check, timeout or publication gate was removed.
+
+Local full native debug passes 2,375 tests (436.73 seconds), including the
+audio device and native GPU checks. Full web debug passes 2,285 tests (275.42
+seconds), including WebGL/WebGPU and the new deterministic audio regression.
+Validation used Clang 23.1.2, Node 24.16.0 and Chrome Headless Shell
+154.0.8037.92; hosted Windows uses the separately pinned 155 build.
+
+With CTest and its child browsers restricted to two CPUs, each of the three
+room cases passes three consecutive debug runs and three optimized runs.
+The hidden-host case takes 11.49--11.68 seconds in debug and 11.79--11.99
+optimized, versus 30.23 seconds in the original concurrent schedule. The
+original immediate repeats failed with locked profiles; corrected repeats
+reuse their profiles successfully. These local timings demonstrate scheduling
+and shutdown effects, not the exact cause of the hosted disconnect.
+
+Affinity-only threaded stress still advertises this machine's 24 CPUs to
+Chrome. It reached its unchanged 45-second guard during constrained/load
+checks, then passed three isolated optimized repeats (40.19, 10.47 and 5.57
+seconds). A scratch generated page reporting two CPUs as well as running on
+two passes in 26.48 seconds, with 408 identical ticks, both threads participating
+and a C worker sleep observed. The generated page was restored afterward;
+no worker-count override was added to the repository. Both runners' early-exit
+controls fail immediately as intended. Node syntax and whitespace checks pass.
+Actual Android/AAudio, other operating systems, MinGW and sanitizer confirmation
+remain the next requested CI run's coverage; no workflow was dispatched.
+
 ## Nightly package/test fixture corrections (2026-10-15)
 
 Owner-requested run `38761765659` at ea0ad363 completed with four failing
