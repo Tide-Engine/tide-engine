@@ -2639,7 +2639,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     sb_put(out, values_param(d, p)        ? "\n\nThe values of the draw: the struct a `Draw.Mesh`, `Draw.Instanced` or `Draw.Blit` "
                                             "gives after its vert and frag, sent to the GPU once for the draw."
               : p->type.kind == TY_STRUCT ? "\n\nAn element of the draw's instance list, sent to the GPU for each instance drawn."
-              : p->type.kind == TY_COMPONENT ? "\n\nA component of the entity the view that draws the mesh runs for, sent "
+              : p->type.kind == TY_COMPONENT ? "\n\nA component supplied by the drawing view or function, sent "
                                                "to the GPU for each instance drawn."
                                              : "\n\nA singleton, sent to the GPU once for each draw.");
     if (!planned) {
@@ -9490,14 +9490,15 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
         if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
             const scope sc = scope_at(at);
+            const bool draws = sc.decl && (sc.decl->is_view || (sc.decl->kind == DECL_FUNCTION && !sc.decl->is_async));
             call_args args;
             call_arguments(call, &args);
             const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
             // ...and after them, the values they take
-            for (int a = 2; sc.decl && sc.decl->is_view && a < args.count && a < commas; a++) {
+            for (int a = 2; draws && a < args.count && a < commas; a++) {
                 complete_draw_values(&c, shader_written(args.first[a], args.last[a]));
             }
-            if (sc.decl && sc.decl->is_view) complete_shaders(&c, vertex);
+            if (draws) complete_shaders(&c, vertex);
         } else if (call >= 3 && commas >= 3 && DOC->toks[call - 1].kind == T_IDENT && str_eq_c(DOC->toks[call - 1].text, "Blit")
                    && DOC->toks[call - 2].kind == T_DOT && str_eq_c(DOC->toks[call - 3].text, "Draw")) {
             // Draw.Blit(source, destination, Blur, ...: the values its frag takes

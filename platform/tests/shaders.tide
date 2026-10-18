@@ -2538,6 +2538,21 @@ frag SpeckTint(Vertex vertex, out Color color, Speck speck, Strip strip)
     color = Color(speck.tint.r * strip.gain, speck.tint.g * strip.gain, speck.tint.b * strip.gain);
 }
 
+void RinseDraw(Texture source, RenderTarget destination, Rinse rinse)
+{
+    Draw.Blit(source, destination, Rinsed, rinse);
+}
+
+void PutDraw(List<Vertex> vertices, List<int> indices, Put put)
+{
+    Draw.Mesh(vertices, indices, PutAt, PutTint, put);
+}
+
+void SpeckDraw(List<Vertex> vertices, List<int> indices, List<Speck> specks, Strip strip)
+{
+    Draw.Instanced(vertices, indices, specks, SpeckAt, SpeckTint, strip);
+}
+
 [After(Outputs)]
 view Values(Art art, mut PerDraw given)
 {
@@ -2561,7 +2576,7 @@ view Values(Art art, mut PerDraw given)
     given.second.Clear(Color.black);
 
     // One frag, three blits, each with its own values: none of them is the others'
-    Draw.Blit(given.source.color, given.first, Rinsed, Rinse { tint = Color(1, 0.5, 0.25) });
+    RinseDraw(given.source.color, given.first, Rinse { tint = Color(1, 0.5, 0.25) });
     Draw.Blit(given.source.color, given.second, Rinsed, Rinse { tint = Color(0.25, 0.5, 0.5), steps = 2 });
     Draw.Blit(given.source.color, given.second, Blend.Add, Rinsed, Rinse { tint = Color(0, 0, 0.25) });
 
@@ -2573,7 +2588,7 @@ view Values(Art art, mut PerDraw given)
 
     // Meshes: the vert reads where, the frag which color, of the same values. Two values in a row are two
     // draws; the same values twice are one, of two instances, which add up here
-    Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(0, 64), tint = Color.red });
+    PutDraw(given.square, art.faces, Put { by = float2(0, 64), tint = Color.red });
     Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(32, 64), tint = Color.green, dim = true });
     var gray = Put { by = float2(64, 64), tint = Color(0.25, 0.25, 0.25) };
     Draw.Blend(Blend.Add)
@@ -2583,7 +2598,7 @@ view Values(Art art, mut PerDraw given)
     }
 
     // Instances: each one's own struct, and the draw's for all of them
-    Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 128), gain = 0.5 });
+    SpeckDraw(given.square, art.faces, given.dots, Strip { origin = float2(0, 128), gain = 0.5 });
     Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 160) });
 }
 
