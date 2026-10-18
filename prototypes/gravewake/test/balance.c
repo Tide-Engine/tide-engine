@@ -2,13 +2,12 @@
 // input (aiming with the look as a player's mouse does, at a human's turn rate
 // and with some error; backing off from the dead; going for orbs and chests
 // when it's safe; using each survivor's skills as a player would; reviving a
-// friend; lighting the night's beacon once its chests are found, or the night
-// has gone on a while, or a friend has bled out; keeping by it through the
-// vigil and shooting its boss), and each run's numbers are printed: how long
+// friend; stepping out of the fires on the ground, and rolling out of one
+// about to burst; going for the night's boss when it rises), and each run's numbers are printed: how long
 // it lasted, how many nights were kept, kills, downs, when each level came,
 // the items taken (at levels and from chests). Not a test: run it from a
 // release build.
-//   gravewake_balance <roles> [runs] [minutes] [first seed] [quiet|loud] [items] [roam seconds]
+//   gravewake_balance <roles> [runs] [minutes] [first seed] [quiet|loud] [items] [still]
 // `roles` is one letter a survivor: G Gunner, B Breacher, E Engineer ("G" alone,
 // "GB" a pair). Each run's line, then the runs' means.
 #include "gravewake_balance.h"
@@ -87,8 +86,7 @@ typedef struct Run {
     float levelAt[64];        // Seconds into the run each level came
     int levels;
     int nights;               // Kept to their dawn
-    bool vigil;               // The run ended in a vigil...
-    float charge;             // ...this far kept
+    bool reckoning;           // The run ended with the night's bosses up
     float nightAt[16];        // Seconds into the run each dawn broke
     int killsAll;
     int mostAlive;
@@ -99,10 +97,6 @@ typedef struct Run {
     float itemsAt[SEATS_MOST][8]; // Items held at 2, 4, 6, 8, 10, 12, 14, 16 minutes
 } Run;
 
-// How long into a night the bots look about before they light its beacon whatever's left (the harness's 7th argument,
-// seconds), and how near it they keep while it burns (it's kept from 11 m).
-static float roam = 150;
-#define VIGIL_KEEP 8.0f
 
 // The input a bot gives for a tick.
 static Hands think(int seat, float dt)
@@ -167,19 +161,22 @@ static Hands think(int seat, float dt)
             best = e;
         }
     }
-    // A boss in range, and nothing on top of us (or it's close, or the beacon's full and it's what's keeping the dawn
-    // off): it first
+    // A boss in range, and nothing on top of us (or it's close, or it's one of the night's own, keeping the dawn off):
+    // it first. The nearest of the night's own, to go to
     bool bestBoss = false;
-    bool full = false;
-    for (uint32_t r = 0; r < world.arch5_Beacon.count; r++)
-        if (TIDE_AT(&world, arch5_Beacon, Beacon, r).night == world.Match.night && TIDE_AT(&world, arch5_Beacon, Beacon, r).charge >= 1) full = true;
+    tide_float3 own = {0};
+    float toOwn = 1e9f;
     for (uint32_t r = 0; r < world.arch1_Boss.count; r++) {
         const Boss b = TIDE_AT(&world, arch1_Boss, Boss, r);
         if (b.move == BossMove_Dying || b.move == BossMove_Coming) continue;
         const tide_entity e = TIDE_ENTITY_AT(&world, arch1_Boss, r);
         const float d = flat_distance(b.at, s.feet);
+        if (b.own && d < toOwn) {
+            toOwn = d;
+            own = b.at;
+        }
         if (bot->targetBoss && e.index == bot->target.index && e.generation == bot->target.generation) targetAlive = d < 40;
-        if (d < 35 && (nearest > 4.5f || d < 12 || full)) {
+        if (d < 35 && (nearest > 4.5f || d < 12 || b.own)) {
             best = e;
             bestBoss = true;
             bestScore = -1;
@@ -225,58 +222,44 @@ static Hands think(int seat, float dt)
     h.attack = onTarget;
     h.reload = s.mag == 0;
 
-    // The night's beacon: lit, kept by; cold, lit once the night's chests are found, or it's gone on a while, or a
-    // friend's bled out
-    bool lit = false, haveBeacon = false;
-    tide_float3 beacon = {0};
-    for (uint32_t r = 0; r < world.arch5_Beacon.count; r++) {
-        const Beacon b = TIDE_AT(&world, arch5_Beacon, Beacon, r);
-        if (b.night != world.Match.night) continue;
-        beacon = b.at;
-        lit = b.lit;
-        haveBeacon = true;
+    // The fires on the ground: out of any we're in or by (burning, or cracking to burst), and a roll out of one about to
+    // burst under us
+    float fireX = 0, fireZ = 0;
+    bool inFire = false, bursting = false;
+    for (uint32_t r = 0; r < world.arch8_Blaze.count; r++) {
+        const Blaze b = TIDE_AT(&world, arch8_Blaze, Blaze, r);
+        const float d = flat_distance(b.at, s.feet);
+        if (d > b.reach + 1.2f) continue;
+        inFire = true;
+        fireX += (s.feet.x - b.at.x) / fmaxf(d, 0.1f);
+        fireZ += (s.feet.z - b.at.z) / fmaxf(d, 0.1f);
+        if (!b.burst && b.timer > 1.0f && d < b.reach + 0.4f) bursting = true;
     }
-    int chestsLeft = 0;
-    for (uint32_t r = 0; r < world.arch7_Chest.count; r++)
-        if (TIDE_AT(&world, arch7_Chest, Chest, r).night == world.Match.night) chestsLeft++;
-    bool friendGone = false;
-    for (int other = 0; other < seats; other++)
-        if (other != seat && get(other).life == Life_Gone) friendGone = true;
-    const bool fighting = world.Match.phase == Phase_Fighting;
-    const bool keeping = haveBeacon && lit && fighting;
-    const bool lighting = haveBeacon && !lit && fighting && (chestsLeft == 0 || world.Match.nightClock > roam || friendGone);
-    const float toBeacon = haveBeacon ? flat_distance(beacon, s.feet) : 1e9f;
-    // (the map's flat: straight to the beacon)
-    const tide_float3 goal = beacon;
-    const float toGoal = haveBeacon ? flat_distance(goal, s.feet) : 1e9f;
+    // The night's boss: to it, when it's up and far off
+    const bool hunting = world.Match.phase == Phase_Fighting && world.Match.reckoning && toOwn < 1e8f && toOwn > 22;
 
-    // Where to go: to the beacon to light it (through the dead, unless they're right on us), or back to it if it's lit
-    // and they're far from it; else away from the dead pressing close; else for an orb or a chest when it's safe; else
-    // round the clearing's middle (or the beacon), side to side
+    // Where to go: out of a fire; else away from the dead pressing close; else for an orb or a chest when it's safe;
+    // else to the night's boss; else round the clearing's middle, side to side
     float goX = 0, goZ = 0;
     const float press = sqrtf(pressX * pressX + pressZ * pressZ);
     // At a chest: stay and open it unless one of the dead is right on us
     bool atChest = false;
-    for (uint32_t r = 0; r < world.arch7_Chest.count; r++)
-        if (flat_distance(TIDE_AT(&world, arch7_Chest, Chest, r).at, s.feet) < 2.2f) atChest = true;
-    if (atChest && nearest > 2.5f) {
-    } else if (lighting && toBeacon < 2.4f) {
-        // Held through the hits: lighting it is worth a few
-    } else if (lighting) {
-        goX = (goal.x - s.feet.x) / fmaxf(toGoal, 0.1f);
-        goZ = (goal.z - s.feet.z) / fmaxf(toGoal, 0.1f);
-    } else if (nearest < 4.5f && press > 0.01f && !(keeping && toBeacon > VIGIL_KEEP)) {
+    for (uint32_t r = 0; r < world.arch6_Chest.count; r++)
+        if (flat_distance(TIDE_AT(&world, arch6_Chest, Chest, r).at, s.feet) < 2.2f) atChest = true;
+    if (inFire && (fireX != 0 || fireZ != 0)) {
+        const float out = sqrtf(fireX * fireX + fireZ * fireZ);
+        goX = fireX / out;
+        goZ = fireZ / out;
+    } else if (atChest && nearest > 2.5f) {
+    } else if (nearest < 4.5f && press > 0.01f) {
         goX = -pressX / press;
         goZ = -pressZ / press;
-    } else if (keeping && toBeacon > VIGIL_KEEP) {
-        goX = (goal.x - s.feet.x) / fmaxf(toGoal, 0.1f);
-        goZ = (goal.z - s.feet.z) / fmaxf(toGoal, 0.1f);
     } else {
         bool going = false;
         if (nearest > 5) {
             float orbNear = 12;
-            for (uint32_t r = 0; r < world.arch6_Orb.count; r++) {
-                const Orb o = TIDE_AT(&world, arch6_Orb, Orb, r);
+            for (uint32_t r = 0; r < world.arch5_Orb.count; r++) {
+                const Orb o = TIDE_AT(&world, arch5_Orb, Orb, r);
                 if (o.seat >= 0) continue;
                 const float d = flat_distance(o.at, s.feet);
                 if (d < orbNear) {
@@ -287,10 +270,10 @@ static Hands think(int seat, float dt)
                 }
             }
         }
-        if (!going && nearest > 5 && !keeping) {
+        if (!going && nearest > 5) {
             float chestNear = 40;
-            for (uint32_t r = 0; r < world.arch7_Chest.count; r++) {
-                const Chest c = TIDE_AT(&world, arch7_Chest, Chest, r);
+            for (uint32_t r = 0; r < world.arch6_Chest.count; r++) {
+                const Chest c = TIDE_AT(&world, arch6_Chest, Chest, r);
                 const float d = flat_distance(c.at, s.feet);
                 if (d < chestNear) {
                     chestNear = d;
@@ -315,15 +298,15 @@ static Hands think(int seat, float dt)
             }
             going = true;
         }
-        if (!going && lighting) {
-            goX = (goal.x - s.feet.x) / fmaxf(toGoal, 0.1f);
-            goZ = (goal.z - s.feet.z) / fmaxf(toGoal, 0.1f);
+        if (!going && hunting) {
+            goX = (own.x - s.feet.x) / toOwn;
+            goZ = (own.z - s.feet.z) / toOwn;
             going = true;
         }
         if (!going) {
-            const tide_float3 centre = keeping ? beacon : (tide_float3){0};
+            const tide_float3 centre = {0};
             const float home = flat_distance(s.feet, centre);
-            if (home > (keeping ? 6.0f : 18.0f)) {
+            if (home > 18.0f) {
                 goX = (centre.x - s.feet.x) / home;
                 goZ = (centre.z - s.feet.z) / home;
             } else if (press > 0.01f) {
@@ -352,7 +335,7 @@ static Hands think(int seat, float dt)
     // The roll, out of the dead pressing round, the way it's going; the secondary as a player would use it (the special
     // uses itself)
     bot->blinkTurn = false;
-    h.roll = s.life == Life_Standing && s.rolls > 0 && nearest < 2.2f && press > 0.01f && s.roll <= 0;
+    h.roll = s.life == Life_Standing && s.rolls > 0 && s.roll <= 0 && ((nearest < 2.2f && press > 0.01f) || bursting);
     const bool ready0 = s.cooldowns.at[0] <= 0;
     switch (s.role) {
     case Role_Gunner: h.secondary = ready0 && onTarget && within20 >= 3; break;          // Phase Round down a line of them
@@ -366,8 +349,12 @@ static Hands think(int seat, float dt)
     return h;
 }
 
+// The ground never erupting (the harness's 7th argument, "still"): what the eruptions do to a run, by the difference.
+static bool still;
+
 static void tick(float dt)
 {
+    if (still) world.Match.eruptWait = 1e9f;
     for (int seat = 0; seat < seats; seat++) {
         held[seat] = think(seat, dt);
         tide_world_set_input(&world, tide_player_from_index(seat), held[seat]);
@@ -426,12 +413,7 @@ static Run play(const char *roles, unsigned seed, float minutes)
         }
     }
     run.lasted = world.Match.phase == Phase_Over ? world.Match.lasted : world.Match.clock;
-    for (uint32_t r = 0; r < world.arch5_Beacon.count; r++) {
-        const Beacon b = TIDE_AT(&world, arch5_Beacon, Beacon, r);
-        if (b.night != world.Match.night) continue;
-        run.vigil = b.lit;
-        run.charge = b.charge;
-    }
+    run.reckoning = world.Match.reckoning;
     {
         const Survivor first = get(0);
         run.itemNames[0] = 0;
@@ -478,7 +460,7 @@ static void quartiles(float *v, int n, float out[3])
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "gravewake_balance <roles: G B E, one a survivor> [runs] [minutes] [first seed] [quiet|loud] [items] [roam seconds]\n");
+        fprintf(stderr, "gravewake_balance <roles: G B E, one a survivor> [runs] [minutes] [first seed] [quiet|loud] [items] [still]\n");
         return 2;
     }
     const char *roles = argv[1];
@@ -488,7 +470,7 @@ int main(int argc, char **argv)
     const unsigned first = argc > 4 ? (unsigned)atoi(argv[4]) : 1;
     const bool quiet = argc > 5 && strcmp(argv[5], "loud") != 0;
     parse_items(argc > 6 ? argv[6] : "");
-    if (argc > 7) roam = (float)atof(argv[7]);
+    still = argc > 7 && strcmp(argv[7], "still") == 0;
     extern const unsigned char tide_game_pack[];
     extern const size_t tide_game_pack_size;
     if (!tide_assets_load(tide_game_pack, tide_game_pack_size)) return 1;
@@ -508,7 +490,7 @@ int main(int argc, char **argv)
         if (!quiet) {
             printf("%s seed %u: lasted %5.0f s, nights %d (", roles, first + (unsigned)k, r.lasted, r.nights);
             for (int n = 0; n < r.nights; n++) printf(n ? " %.0f" : "%.0f", r.nightAt[n]);
-            printf(r.vigil ? ", ended in a vigil %.0f%% kept" : ", ended before a vigil", 100.0f * r.charge);
+            printf(r.reckoning ? ", ended with the night's boss up" : ", ended before the night's end");
             printf("), kills %4d (%.1f a s), downs %d, levels %d, items %d (%d at levels), %d up at most, shots %.1f/s, loading %.0f%%, items:%s\n", killsAll,
                    killsAll / fmaxf(r.lasted, 1), downsAll, r.levels, itemsAll, picksAll, r.mostAlive, r.shots / fmaxf(r.lasted, 1), 100.0f * r.reloading / fmaxf(r.lasted * 60, 1),
                    r.itemNames);

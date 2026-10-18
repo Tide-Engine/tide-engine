@@ -17,12 +17,11 @@
 //   frenzying the dead near it: the sac at its throat takes four times as
 //   much while it shrieks, and enough there cuts the shriek short.
 //
-// Each night's rise as its beacon is lit (nights.tide: one, two from the
+// Each night's rise as its clock runs out (nights.tide: one, two from the
 // fourth night, three from the seventh), the nights taking them in turn, and
 // the night isn't kept till they're down; felled, each gives every survivor
-// an item to pick. A night left unlit grows impatient: one every BOSS_EVERY
-// seconds of it, which brings no prize. While one stands, fewer of the dead
-// come (rounds.tide's BOSS_THIN). Each night's come harder.
+// an item to pick. While one stands, fewer of the dead come (rounds.tide's
+// BOSS_THIN). Each night's come harder.
 
 enum BossKind { Mauler, Brood, Stalker }
 
@@ -48,7 +47,7 @@ component Boss
     float stride;               // Metres walked: the walk's clock
     int number;                 // Which of the run it is, from 1
     int night;                  // The night it rose in: its blows are that night's
-    bool vigil;                 // Risen at the beacon's lighting: the night's own, with a prize
+    bool own;                   // Risen at the night's end: one of the night's own, with a prize, holding off its dawn
     int slot = -1;              // Where it is in the Herd this tick
     local float flash;
 }
@@ -138,39 +137,35 @@ float BossHealth(float danger, float crowd, BossKind kind)
     return 2000 * danger * crowd * MutantOf(kind).health;
 }
 
-// Which kind rises: the nights take them in turn, and two or three at a vigil are each another.
+// Which kind rises: the nights take them in turn, and two or three at a night's end are each another.
 BossKind KindForNight(int night, int k)
 {
     return BossKind(((night - 1) + k) % BOSS_KINDS);
 }
 
-// A boss clawing up `near` to `far` metres from a place: the beacon's (one of the night's own, `vigil`), or a
-// survivor's.
-void RaiseBoss(mut Match match, Ashwick ashwick, float3 focus, bool vigil, float near, float far, BossKind kind)
+// A boss clawing up `near` to `far` metres from a survivor: one of the night's own (`own`), or the development key's.
+void RaiseBoss(mut Match match, Ashwick ashwick, float3 focus, bool own, float near, float far, BossKind kind)
 {
     var at = RisingPlace(ashwick, focus, near, far);
     if (at.y < -100) return;
     match.bosses += 1;
     var health = BossHealth(match.danger, match.crowd, kind);
     Spawn(Boss { at = at, yaw = YawTo(at, focus), kind = kind, health = health, healthMost = health, move = BossMove.Coming, number = match.bosses, night = match.night,
-                 vigil = vigil, cooldown = 1.5 });
-    Send(BossCame { at = at, number = match.bosses, vigil = vigil, kind = kind });
+                 own = own, cooldown = 1.5 });
+    Send(BossCame { at = at, number = match.bosses, own = own, kind = kind });
 }
 
-// A night not yet lit grows impatient: a boss every BOSS_EVERY seconds of it, 22 to 34 m from one of the survivors.
+// Development: a boss of the key's kind, now, 22 to 34 m from one of the survivors (not one of the night's own).
 [Stage(Tick.Rounds, 3)]
-system BossCome(mut Match match, Ashwick ashwick, query (Survivor survivor) survivors)
+system DevBoss(mut Match match, Ashwick ashwick, query (Survivor survivor) survivors)
 {
-    if (match.paused) return;
-    if (match.phase != Phase.Fighting || match.vigil || match.nightClock < match.bossNext) return;
+    if (match.paused || match.devBoss < 0 || match.phase != Phase.Fighting) return;
     mut List<float3> near = [];
     foreach (var row in survivors)
         if (row.survivor.ready && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
     if (near.count == 0) return;
-    match.bossNext += BOSS_EVERY;
     var pick = Random.NextInt(near.count);
-    var kind = Random.NextInt(BOSS_KINDS);
-    RaiseBoss(match, ashwick, near[pick], false, 22, 34, BossKind(match.devBoss >= 0 ? match.devBoss : kind));
+    RaiseBoss(match, ashwick, near[pick], false, 22, 34, BossKind(match.devBoss));
     match.devBoss = -1;
 }
 
@@ -554,7 +549,7 @@ event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
         BossTo(boss, BossMove.Dying);
         match.killed += 1;
         DropOrb(match, boss.at, 50 * OrbWorth(match.danger));
-        if (boss.vigil)
+        if (boss.own)
             for (var seat = 0; seat < 4; seat++)
                 if (party.taken[seat]) party.survivors[seat].Send(BossFelled { by = wound.seat });
         Send(Cue { sound = Sfx.BossDeath, at = boss.at + float3(0, 3, 0) });
@@ -595,7 +590,7 @@ event BossCame
 {
     float3 at;
     int number;
-    bool vigil;
+    bool own;
     BossKind kind;
 }
 

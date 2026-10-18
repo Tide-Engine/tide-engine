@@ -55,8 +55,9 @@ int main(int argc, char **argv)
     tick();
     held[0].pick1 = held[1].pick1 = false;
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick();
-    // The dead that don't die, coming one a tick till there are `count` of them, then no more (and no boss)
-    world.Match.bossNext = 1e9f;
+    // The dead that don't die, coming one a tick till there are `count` of them, then no more (and no boss, no eruption)
+    world.Match.nightEnds = 1e9f;
+    world.Match.eruptWait = 1e9f;
     world.Match.special = ZombieKind_Walker;      // Walkers only: a Bloater bursting through them would thin the horde
     world.Match.specials = 1 << 30;
     world.Match.scattered = true;                 // One a tick, not in hordes

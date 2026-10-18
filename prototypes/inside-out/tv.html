@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Inside Out on a TV</title>
+<!--
+  Both players of one match side by side on one screen, with phones as their
+  controllers. The left view hosts the match and the right one joins it as
+  soon as it has a code. This page also opens a controller room on the relay
+  (relay/relay.mjs): phones join it from pad/ with its code, and each press
+  arrives here as a signal, which goes to that player's view as its key.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color: #efe5cc; font: 600 18px system-ui, sans-serif; }
+  iframe { position: absolute; top: 0; width: 50%; height: 100%; border: 0; }
+  #left { left: 0; }
+  #right { right: 0; border-left: 2px solid #3a2e22; box-sizing: border-box; }
+  #card { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); background: rgba(20, 15, 11, .94);
+    border: 1px solid #5c4a37; border-radius: 14px; padding: 16px 24px; text-align: center; line-height: 1.6; max-width: 90vw; }
+  #code { font-size: 44px; letter-spacing: .12em; color: #c39752; }
+  #players { color: #9b8b72; font-size: 15px; }
+  #card small { color: #8a7a62; }
+</style>
+</head>
+<body>
+<iframe id="left" allow="autoplay; fullscreen"></iframe>
+<iframe id="right" allow="autoplay; fullscreen"></iframe>
+<div id="card">
+  On each phone open <b id="where"></b> and enter
+  <div id="code">······</div>
+  <div id="players">No phones yet</div>
+  <small>F11 for full screen. Click this card to hide it.</small>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const relay = params.get('relay') || window.TideRelay || 'wss://relay.tide-engine.dev';
+  // The game's folder, whether this page was opened as tv/, tv or tv/index.html.
+  const game = new URL(location.pathname.replace(/\/tv(\/(index\.html)?)?$/, '/'), location.origin);
+  const views = { 1: document.getElementById('left'), 2: document.getElementById('right') };
+  const card = document.getElementById('card');
+  card.onclick = () => { card.style.display = 'none'; };
+  document.getElementById('where').textContent = new URL('pad/', game).href.replace(/^https?:\/\//, '');
+
+  // The whole screen draws at about 1440p, each view at most 1280x1440
+  // device pixels, stretched to fit: two views at a 4K TV's full resolution
+  // is more than most computers draw smoothly, and half of it looked coarse.
+  // ?scale sets the device pixels to a page pixel instead (1 for full).
+  const fitted = Math.min(window.devicePixelRatio || 1, Math.sqrt(1280 * 1440 / Math.max(1, innerWidth / 2 * innerHeight)));
+  const scale = Number(params.get('scale')) > 0 ? params.get('scale') : fitted.toFixed(3);
+  // The left view hosts; the right joins its room, and stays quiet.
+  views[1].src = new URL('?host&scale=' + scale, game).href;
+  const waiting = setInterval(() => {
+    const room = views[1].contentWindow && views[1].contentWindow.Tide && views[1].contentWindow.Tide.room;
+    if (!room) return;
+    clearInterval(waiting);
+    views[2].src = new URL('?quiet&scale=' + scale + '&join=' + room, game).href;
+  }, 300);
+
+  // A press from a phone is that player's key, as the keyboard sends it.
+  const KEYS = { up: ['KeyW', 'w'], down: ['KeyS', 's'], left: ['KeyA', 'a'], right: ['KeyD', 'd'],
+    undo: ['KeyZ', 'z'], restart: ['KeyR', 'r'], menu: ['Escape', 'Escape'], ok: ['Enter', 'Enter'] };
+  function press(player, name, down) {
+    const key = KEYS[name], view = views[player] && views[player].contentWindow;
+    if (!key || !view) return;
+    view.dispatchEvent(new view.KeyboardEvent(down ? 'keydown' : 'keyup', { code: key[0], key: key[1], bubbles: true }));
+  }
+
+  // The controller room. Codes use the relay's letters, without look-alikes.
+  const LETTERS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const phones = new Map();
+  function showPhones() {
+    const taken = [...phones.values()];
+    const names = [taken.includes(1) ? 'Amber' : '', taken.includes(2) ? 'Teal' : ''].filter(Boolean);
+    document.getElementById('players').textContent = names.length ? `Connected: ${names.join(' and ')}` : 'No phones yet';
+  }
+  function open() {
+    const code = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => LETTERS[b & 31]).join('');
+    const socket = new WebSocket(relay);
+    socket.onopen = () => socket.send(JSON.stringify({ host: code }));
+    socket.onmessage = event => {
+      const message = JSON.parse(event.data);
+      if (message.taken) { socket.onclose = null; socket.close(); open(); return; }
+      if (message.hosting) document.getElementById('code').textContent = code;
+      if (message.left) { phones.delete(message.left); showPhones(); }
+      if (message.from && message.signal && typeof message.signal === 'object') {
+        const { player, key, down } = message.signal;
+        if (player !== 1 && player !== 2) return;
+        if (phones.get(message.from) !== player) { phones.set(message.from, player); showPhones(); }
+        if (key) press(player, key, !!down);
+      }
+    };
+    // The relay closes rooms whose host goes: open another and show it.
+    socket.onclose = () => setTimeout(open, 1000);
+  }
+  open();
+</script>
+</body>
+</html>

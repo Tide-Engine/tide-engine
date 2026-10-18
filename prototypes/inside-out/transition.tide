@@ -82,8 +82,10 @@ void SolvedSummary(Workshop workshop, float alpha)
     Label(IsChallenge(workshop.level) ? "CHALLENGE MET" : "SOLVED", center - float2(0, 34), 12,
         Color(SAGE.r, SAGE.g, SAGE.b, alpha), Anchor.MiddleCenter);
     FittedHeading(LevelName(workshop.level), center + float2(0, 12), Color(INK.r, INK.g, INK.b, alpha));
-    var line = workshop.opened >= 0 ? $"The lift to chapter {workshop.opened + 1}, {ChapterName(workshop.opened)}, is working." :
-        $"{ChapterName(chapter)}: {ChapterSolved(workshop.completed, chapter)} of {ChapterSize(chapter)} solved";
+    var count = $"{ChapterName(chapter)}: {ChapterSolved(workshop.completed, chapter)} of {ChapterSize(chapter)} solved";
+    // A new battery waits in the gallery until the hall's lift works.
+    var waiting = !IsChallenge(workshop.level) && (workshop.unlocked & (1 << chapter)) == 0 && ChapterNeed(chapter) > 0;
+    var line = waiting ? $"{count}. Its battery is waiting in the hall." : count;
     Label(line, center + float2(0, 52), 15, Color(MUTED.r, MUTED.g, MUTED.b, alpha), Anchor.MiddleCenter);
 }
 

@@ -133,10 +133,12 @@ void Pointer(Look look, float3 at, float3 from, string label, Color c, float w, 
     var scale = 1 / Math.Max(Math.Abs(way.x) / reach.x, Math.Abs(way.y) / reach.y);
     mut var edge = middle + way * scale;
     // Slid along the edge clear of the panels: the night's and the mission's top left, the danger's top right, the
-    // experience across the top, the survivor's bottom left, the gun's and the skills' bottom right
+    // experience across the top and a boss's health under it, the survivor's bottom left, the gun's and the skills'
+    // bottom right
     if (edge.x < 360 * u && edge.y < 230 * u) edge.y = 230 * u;
     if (edge.x > w - 280 * u && edge.y < 120 * u) edge.y = 120 * u;
     if (edge.y < 64 * u) edge.y = 64 * u;
+    if (Math.Abs(edge.x - w * 0.5) < 350 * u && edge.y < 112 * u) edge.y = 112 * u;
     if (edge.x < 400 * u && edge.y > h - 120 * u) edge.y = h - 120 * u;
     if (edge.x > w - 300 * u && edge.y > h - 200 * u) edge.y = h - 200 * u;
     var turn = Math.Atan2(way.y, way.x);
@@ -529,7 +531,8 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     if (mine.life == Life.Gone && match.phase != Phase.Over)
     {
         WriteBold("You bled out", float2(w * 0.5, h * 0.36), 26 * u, BONE, Anchor.MiddleCenter);
-        Write("The beacon calls you back when it's lit, and at dawn", float2(w * 0.5, h * 0.36 + 28 * u), 16 * u, ASH, Anchor.MiddleCenter);
+        Write($"Back beside a friend in {int(Math.Ceil(Math.Max(0, BACK_AFTER - mine.gone)))} s, or as the boss rises, or at dawn", float2(w * 0.5, h * 0.36 + 28 * u),
+              16 * u, ASH, Anchor.MiddleCenter);
     }
     // A Spitter's bile on them: green at the edges
     if (mine.slimed > 0 && mine.life == Life.Standing)
@@ -545,7 +548,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     if (feed.played < 45 && match.phase != Phase.Over && mine.role != Role.None && !mine.choosing)
     {
         var fade = Math.Saturate((45 - feed.played) * 0.2);
-        Write("WASD move   Mouse aim and fire   Right mouse skill   Space roll   R reload   Wheel zoom   (chests, the beacon, friends down: stand by them)",
+        Write("WASD move   Mouse aim and fire   Right mouse skill   Space roll   R reload   Wheel zoom   (chests, friends down: stand by them)",
               float2(w * 0.5, h - 30 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)
@@ -602,8 +605,8 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
 
 // Development keys, not in play's interface: F2 six of the next kind of the dead (Bloaters, Spitters, Wardens in turn),
 // F3 a boss (the Mauler, the Broodmother, the Stalker in turn), F4 a horde of two thousand more, F5 a level (and so an
-// offer), F6 a walk to the next place, F7 the night kept (dawn), F10 an item, F1 a mission (a hold, a cull, a hunt in
-// turn).
+// offer), F6 a walk to the next place, F7 the night on (its end, its bosses, now; with them up, dawn), F10 an item, F1
+// a mission (a hold, a cull, a hunt in turn). (F8 is the engine's: its numbers.)
 local singleton DevWalk
 {
     int next;
@@ -613,7 +616,7 @@ local singleton DevWalk
 }
 
 [Stage(Layers.Hud, 21)]
-view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
+view DevKeys(Devices devices, Lobby lobby, Match match, mut DevWalk walk)
 {
     if (!lobby.playing) return;
     var keys = devices.keyboard;
@@ -622,7 +625,7 @@ view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
         Send(Cheat { what = 20 + walk.kind });
         walk.kind = (walk.kind + 1) % 3;
     }
-    if (keys.f7.down) Send(Cheat { what = 8 });
+    if (keys.f7.down) Send(Cheat { what = match.reckoning ? 8 : 6 });
     if (keys.f3.down)
     {
         Send(Cheat { what = 30 + walk.boss });
@@ -679,7 +682,7 @@ view TitleCard(Lobby lobby)
     Draw.Shape(Shape { center = float2(left + 230 * u, h * 0.3 + 112 * u), size = float2(460 * u, 2 * u), color = Color(0.9, 0.35, 0.12, 0.8), soft = 4 * u });
     Draw.Text("Ashwick burned. Hold the fire in the wood as long as you can.", float2(left + 4 * u, h * 0.3 + 64 * u), 20 * u, Color(0.85, 0.8, 0.72),
               Anchor.MiddleLeft);
-    Draw.Text("Night after night: find the beacon, light it, hold it till dawn. Thousands of the dead, items that stack  -  for one to four",
+    Draw.Text("Night after night: roam, kill, level, fell its boss at the night's end. Thousands of the dead, items that stack  -  for one to four",
               float2(left + 4 * u, h * 0.3 + 92 * u), 15 * u,
               Color(0.6, 0.57, 0.52), Anchor.MiddleLeft);
     if (lobby.message != "") Draw.Text(lobby.message, float2(left + 4 * u, h * 0.86), 15 * u, Color(0.9, 0.5, 0.4), Anchor.MiddleLeft);
@@ -946,7 +949,7 @@ view BossBar(Lobby lobby, Look look, mut Feed feed, query (Boss boss) bosses)
 
 local event(BossCame came) ShowBoss(mut Feed feed)
 {
-    feed.banner = came.vigil ? $"{MutantOf(came.kind).name} CLAWS UP" : "THE NIGHT GROWS IMPATIENT";
+    feed.banner = $"{MutantOf(came.kind).name} CLAWS UP";
     feed.bannerLeft = 3;
     feed.bannerColor = Color(0.95, 0.3, 0.2);
 }

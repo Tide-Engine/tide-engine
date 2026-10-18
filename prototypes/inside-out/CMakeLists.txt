@@ -71,7 +71,11 @@ if(TIDE_WEB)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "$<TARGET_FILE_DIR:inside_out>/inside_out.html" "${destination}/index.html"
-        DEPENDS inside_out VERBATIM)
+        # One TV with phones as the controllers, over the relay.
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}/tv" "${destination}/pad"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/tv.html" "${destination}/tv/index.html"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/pad.html" "${destination}/pad/index.html"
+        DEPENDS inside_out "${CMAKE_CURRENT_SOURCE_DIR}/tv.html" "${CMAKE_CURRENT_SOURCE_DIR}/pad.html" VERBATIM)
     if(TIDE_NODE)
         foreach(backend webgl webgpu)
             add_test(NAME inside_out_play_${backend}

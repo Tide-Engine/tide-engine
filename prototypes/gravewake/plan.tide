@@ -1,5 +1,5 @@
 // Ashwick Wood as one plan: a wide clearing in the forest outside the burned
-// village, its ground (the chapel's rise, the beacon's spire in two tiers, the
+// village, its ground (the chapel's rise, the spire in two tiers, the
 // sunken graveyard, the ravine, ramps up and down them all), every kit piece
 // and where it stands, the
 // boxes nobody walks through, where the survivors start round the fire and
@@ -14,9 +14,9 @@
 //                          N    the chapel's rise, 6 m up, the ruin on it
 //                  .-----------[ ruin ]-----------.
 //                /  stones   ramp /    \ ramp       \
-//               |                           beacon's  |
-//               | graves         fire       spire     |  E
-//               | (sunken)                 4 m, 9 m   |
+//               |                                     |
+//               | graves         fire       cairn     |  E
+//               | (sunken)                            |
 //               |  ~~~~~~~~~~~ the ravine ~~~~~~~~~~~  |
 //                '-----------------------------------'
 //                          S
@@ -67,6 +67,7 @@ struct Plan
     List<float3> fires;      // The braziers, always burning: the camp's fire in the middle, and the wagon's
     List<ItemPut> dressing;
     List<float4> paved;      // Stone underfoot: x0, z0, x1, z1
+    List<float4> pits;       // The plague pits (hazards.tide): x0, z0, x1, z1
 }
 
 const float STOREY = 3.12;    // A kit wall's height
@@ -91,9 +92,12 @@ float3 EdgeAt(float angle, float out)
 }
 
 const float GRAVESTONE_SCALE = 0.75;    // Gravestones, smaller than the kit's: nothing to walk round, stepped past
-const float BEACON_SCALE = 1.5;         // The beacons' braziers, against the fires'
+const float GREAT_BRAZIER = 1.5;        // The landmarks' braziers, against the camp's
+const int PITS = 12;                    // The plague pits (hazards.tide)...
+const float PIT_RIM = 0.7;              // ...each a box so high over the ground: walls to the dead's way (ashwick.tide), too high to step on
+const float PITS_APART = 14;
 
-// The landmarks' places, each with one of the five beacons (nights.tide's BeaconPlace)
+// The landmarks' places, each with a great brazier (BrazierPlace)
 const float2 CHAPEL = float2(0, 42);        // The ruin's middle
 const float2 CAIRN = float2(44, -2);        // A ring of boulders
 const float2 GRAVES = float2(-38, 4);
@@ -112,6 +116,27 @@ float Ground(float x, float z)
     h *= Math.SmoothStep(9, 13, Math.Distance(at, CHAPEL));
     h += 4 * Math.SmoothStep(-6, 6, far - Reach(Math.Atan2(z, x)));
     return h;
+}
+
+// Where each landmark's great brazier stands: in the cairn, in the chapel's ruin, at the graveyard's edge, among the
+// standing stones, beside the dead oak. (Each was a night's beacon once, lit and kept till dawn.)
+float3 BrazierPlace(int place)
+{
+    switch (place)
+    {
+        case 0: return On(CAIRN.x, CAIRN.y);
+        case 1: return On(CHAPEL.x, CHAPEL.y - 1);
+        case 2: return On(GRAVES.x + 8, GRAVES.y - 0.5);
+        case 3: return On(STONES.x, STONES.y);
+    }
+    return On(OAK.x + 4, OAK.y + 1);
+}
+
+// How far a place is from the paths worn from the fire to the landmarks (look.tide's Earth draws them).
+float FromPaths(float2 at)
+{
+    return Math.Min(Math.Min(Lane(at, float2(0), CHAPEL - float2(0, 5)), Lane(at, float2(0), CAIRN - float2(5, 0))),
+                    Math.Min(Math.Min(Lane(at, float2(0), GRAVES + float2(8, 0)), Lane(at, float2(0), STONES + float2(6, -6))), Lane(at, float2(0), OAK + float2(0, 4))));
 }
 
 // Whether a place is on one of the landmarks (by `room` metres): nothing grows there.
@@ -362,14 +387,14 @@ Plan MakePlan()
         Standing(plan, STONES + float2(Math.Cos(turn), Math.Sin(turn)) * 6.5, turn * 1.7, i, 1.0 + (i % 3) * 0.1);
     }
 
-    // ---- East: the cairn, a ring of great boulders open toward the fire, a beacon in it ----
+    // ---- East: the cairn, a ring of great boulders open toward the fire, a brazier in it ----
     for (var i = 0; i < 6; i++)
     {
         var turn = (i + 0.5) * Math.TAU / 7 - Math.PI * 0.5 + Math.TAU / 7;
         Standing(plan, CAIRN + float2(Math.Cos(turn), Math.Sin(turn)) * 4.4, turn * 2.3, i + 1, 1.0 + (i % 2) * 0.25);
     }
 
-    // ---- South: a great dead oak, a beacon beside it ----
+    // ---- South: a great dead oak, a brazier beside it ----
     Tree(plan, Piece.DeadTree_2, On(OAK.x, OAK.y), 0.8, 1.0);
 
     // ---- Big stones about the clearing, to stand behind ----
@@ -397,6 +422,35 @@ Plan MakePlan()
         }
     }
 
+    // ---- The plague pits: open graves brimming with black blood and bones, out in the open between the landmarks, clear of
+    // them, the paths and the graveyard, each with room to go round it (hazards.tide). A low box: nobody walks in, rounds
+    // go over ----
+    for (var i = 0; i < 80 && plan.pits.count < PITS; i++)
+    {
+        var h = Math.Hash(int2(i, 6161));
+        var g = Math.Hash(int2(i, 6262));
+        var angle = Unit01(h, 0) * Math.TAU;
+        var far = 17 + Unit01(h, 10) * 31;
+        var middle = float2(Math.Cos(angle) * far, Math.Sin(angle) * far);
+        var length = 4 + Unit01(g, 0) * 3.5;
+        var width = 2.2 + Unit01(g, 10) * 0.8;
+        var half = ((g >> 20) & 1) == 0 ? float2(length, width) * 0.5 : float2(width, length) * 0.5;
+        var room = Math.Max(half.x, half.y);
+        if (OnLandmark(middle, room + 3) || Math.Distance(middle, GRAVES) < room + 12 || FromPaths(middle) < room + 1.5) continue;
+        if (!Open(plan, On(middle.x, middle.y), room + 2.5) || !InClearing(On(middle.x, middle.y) + float3(Math.Sign(middle.x), 0, Math.Sign(middle.y)) * (room + 6))) continue;
+        mut var apart = true;
+        foreach (var p in plan.pits)
+            if (Math.Distance(middle, float2((p.x + p.z) * 0.5, (p.y + p.w) * 0.5)) < PITS_APART) apart = false;
+        if (!apart) continue;
+        plan.pits.Add(float4(middle.x - half.x, middle.y - half.y, middle.x + half.x, middle.y + half.y));
+        var y = Ground(middle.x, middle.y);
+        BlockFlat(plan, middle - half, middle + half, y - 1, PIT_RIM + 1);
+        // The earth dug out of it heaped at one end
+        var end = half.x > half.y ? float2(half.x + 0.9, 0) : float2(0, half.y + 0.9);
+        var heap = ((g >> 21) & 1) == 0 ? middle + end : middle - end;
+        plan.dressing.Add(ItemPut { item = "grave_mound", at = On(heap.x, heap.y), yaw = half.x > half.y ? 0.0 : Math.PI * 0.5, scale = 1.3 });
+    }
+
     // ---- The dead's other way in: up through the roots at the clearing's edge ----
     for (var i = 0; i < 36; i++)
     {
@@ -417,17 +471,19 @@ Plan MakePlan()
         var head = On(riser.at.x - 1.35, riser.at.z);
         plan.dressing.Add(ItemPut { item = stone, at = head, yaw = Math.PI * 0.5 + ((h >> 6) & 7) * 0.04 - 0.14, scale = GRAVESTONE_SCALE });
     }
-    // ---- The fires' braziers; and the five beacons, great braziers cold but on the night they're lit (nights.tide) ----
+    // ---- The fires' braziers: the camp's, and a great one burning at each landmark, to know it by in the dark ----
     foreach (var at in plan.fires)
     {
         plan.dressing.Add(ItemPut { item = "brazier", at = at });
         Block(plan, at - float3(0.5, 0, 0.5), at + float3(0.5, 1.4, 0.5));
     }
-    for (var place = 0; place < BEACON_PLACES; place++)
+    for (var place = 0; place < 5; place++)
     {
-        var at = BeaconPlace(place);
-        plan.dressing.Add(ItemPut { item = "brazier", at = at, scale = BEACON_SCALE });
-        Block(plan, at - float3(0.7, 0, 0.7), at + float3(0.7, 1.4 * BEACON_SCALE, 0.7));
+        var at = BrazierPlace(place);
+        plan.dressing.Add(ItemPut { item = "brazier", at = at, scale = GREAT_BRAZIER });
+        Block(plan, at - float3(0.7, 0, 0.7), at + float3(0.7, 1.4 * GREAT_BRAZIER, 0.7));
+        // Its fire is drawn, lit and heard as the camp's is, as high as it stands
+        plan.fires.Add(at + float3(0, 1.4 * (GREAT_BRAZIER - 1), 0));
     }
 
     // ---- The forest: close round the edge, thinning into the fog ----

@@ -20,6 +20,14 @@
 //       before it.
 //   inside_out_solve all [--limit <positions>]
 //       The shortest search on every puzzle, as a table.
+//   inside_out_solve hall <chapter> [<solved>] [--print | --play "<moves>" | --limit <positions>]
+//       A chapter's hall (hall.tide) with the puzzles in <solved> solved: a
+//       mask of the chapter's puzzles in order (1 the first, 3 the first two),
+//       all of them unless given. The goal is the lift working: as many
+//       batteries in the hall's sockets as it takes.
+//   inside_out_solve hall <chapter> --subsets [--limit <positions>]
+//       The shortest such solution for every set of solved puzzles that has
+//       enough batteries, as a table.
 //   Add --no-battery-plates or --keep-docked for a design counterfactual:
 //       forbid batteries on plates, or any departure from an occupied dock.
 //       Exhaustion proves impossibility only under that additional rule.
@@ -67,6 +75,11 @@ static const char *const ROBOTS[2] = {"Amber", "Teal"};
 
 static tide_world world;
 static int world_level = -1;
+// In hall mode, the chapter whose hall is open and its solved puzzles.
+static int hall_chapter = -1;
+static int32_t hall_completed;
+// The batteries a stage of a hall search asks for, or -1 for the lift's.
+static int hall_stage = -1;
 // Design probes remove one strategy without changing the production rules.
 // A failed bounded search is never an impossibility proof.
 static bool no_battery_plates;
@@ -147,6 +160,30 @@ static bool open_level(const int level)
     return world.Workshop.level == level && world.Workshop.serial != serial;
 }
 
+// The campaign's chapters as hall.tide counts them: where each starts, and
+// the batteries its lift up takes (all but one of its puzzles').
+static const int CHAPTER_STARTS[7] = {0, 5, 9, 14, 17, 19, 20};
+static int chapter_size(const int chapter) { return CHAPTER_STARTS[chapter + 1] - CHAPTER_STARTS[chapter]; }
+static int chapter_need(const int chapter)
+{
+    return chapter >= 5 ? 0 : chapter_size(chapter) > 1 ? chapter_size(chapter) - 1 : 1;
+}
+
+// A new match with both players in it, in a chapter's hall (from 0) with
+// the chapter's puzzles in `solved` solved.
+static bool open_hall(const int chapter, const int solved)
+{
+    tide_world_free(&world);
+    tide_world_init(&world, 1.0f / 30.0f);
+    for (int seat = 0; seat < 2; seat++) tide_world_player_joined(&world, tide_player_from_index(seat));
+    tide_world_tick(&world);
+    tide_world_tick(&world);
+    hall_chapter = chapter;
+    hall_completed = solved << CHAPTER_STARTS[chapter];
+    send(TIDE_COMMAND_ID_HallSetup, 0, (const int32_t[]){chapter, hall_completed}, 2);
+    return world.Workshop.inHall && world.Workshop.hall == chapter;
+}
+
 // Fills `words` for a puzzle. The match is left as it was.
 static bool describe(const int level)
 {
@@ -160,9 +197,16 @@ static bool describe(const int level)
 static bool step(const Puzzle *const from, const int seat, const int direction, Puzzle *const to)
 {
     // Time.tick is an int: start the match again long before it could wrap.
-    if (world.Time.tick > (1 << 30)) open_level(world_level);
+    if (world.Time.tick > (1 << 30)) {
+        if (hall_chapter >= 0) open_hall(hall_chapter, hall_completed >> CHAPTER_STARTS[hall_chapter]);
+        else open_level(world_level);
+    }
     world.Workshop.puzzle = *from;
     world.Workshop.historyCount = 0;
+    // A hall's lanes would set off for a puzzle, and its lift stay working.
+    world.Workshop.departStation = -1;
+    world.Workshop.departTick = -1;
+    world.Workshop.unlocked = 0;
     send(TIDE_COMMAND_ID_Move, seat, (const int32_t[]){world.Workshop.serial, direction}, 2);
     if (world.Workshop.puzzle.moves == from->moves) return false;
     *to = world.Workshop.puzzle;
@@ -223,6 +267,33 @@ static bool in_place(const LevelLayout *const layout, const Puzzle *const puzzle
             return false;
     }
     return true;
+}
+
+// In hall mode: the hall's lift works, with as many batteries in its
+// sockets as it takes. A socket in a box counts while the box is on its
+// outline (HallSeated in hall.tide).
+static int hall_seated(const LevelLayout *const layout, const Puzzle *const puzzle)
+{
+    int seated = 0;
+    for (int room = -1; room < box_count(layout); room++) {
+        if (room >= 0) {
+            const RoomLayout *const inside = &layout->rooms.at[room];
+            if (inside->dock.x >= 0 && (puzzle->rooms.at[room].room != inside->dockRoom ||
+                !same_cell(puzzle->rooms.at[room].position, inside->dock))) continue;
+        }
+        for (int y = 0; y < room_height(layout, room); y++)
+            for (int x = 0; x < room_width(layout, room); x++)
+                if (tile_at(layout, room, tide_i2(x, y)) == Tile_Target && battery_at(layout, puzzle, room, tide_i2(x, y))) seated++;
+    }
+    return seated;
+}
+static bool lift_works(const LevelLayout *const layout, const Puzzle *const puzzle)
+{
+    return hall_seated(layout, puzzle) >= (hall_stage > 0 ? hall_stage : chapter_need(hall_chapter));
+}
+static bool goal(const LevelLayout *const layout, const Puzzle *const puzzle)
+{
+    return hall_chapter >= 0 ? lift_works(layout, puzzle) : puzzle->solved;
 }
 
 static bool strategy_allowed(const LevelLayout *const layout, const Puzzle *const from, const Puzzle *const to)
@@ -469,7 +540,7 @@ static Outcome explore(const Setup *const setup, Search *const search, const uin
                     outcome.found = true;
                     outcome.solution = search->count - 1;
                 }
-            } else if (to.solved) {
+            } else if (goal(&setup->layout, &to)) {
                 outcome.found = true;
                 outcome.solution = search->count - 1;
                 stopped = true;
@@ -768,6 +839,117 @@ static int solve_all(const int puzzles, const uint32_t limit)
     return status;
 }
 
+// One hall search, in stages: the shortest way to one more battery in the
+// sockets, from where the last stage left off, until the lift works. A
+// route found proves the hall can be done with those puzzles solved; it is
+// not the shortest overall, and a stage that finds none proves nothing.
+// The route is replayed through the handler from the start.
+static int solve_hall(const int chapter, const int solved, const uint32_t limit, const bool brief)
+{
+    if (!open_hall(chapter, solved)) {
+        fprintf(stderr, "The game did not open hall %d.\n", chapter + 1);
+        return 3;
+    }
+    Setup setup = setup_of(-1);
+    char label[48], positions[32];
+    Outcome outcome = {.found = true, .exhausted = false};
+    uint32_t explored = 0;
+    double seconds = 0.0;
+    int status = 0, length = 0;
+    char *moves = grow(NULL, 1, 1);
+    moves[0] = 0;
+    bool replayed = false;
+    int failed = 0;
+    // Where the last stage started, and the route up to it, to go back to
+    // once when a stage's end leaves no way on.
+    Puzzle earlier = setup.start;
+    size_t earlier_text = 0;
+    int earlier_length = 0;
+    bool backed = false;
+    for (int stage = 1; stage <= chapter_need(chapter) && outcome.found; stage++) {
+        hall_stage = stage;
+        if (hall_seated(&setup.layout, &setup.start) >= stage) continue;
+        snprintf(label, sizeof label, "Hall %d, solved %d, battery %d", chapter + 1, solved, stage);
+        outcome = explore(&setup, &search, limit, false, label);
+        explored += outcome.positions;
+        seconds += outcome.seconds;
+        if (!outcome.found && stage > 1 && !backed) {
+            // Two batteries in one search, from where the last stage began.
+            backed = true;
+            setup.start = earlier;
+            moves[earlier_text] = 0;
+            length = earlier_length;
+            outcome = explore(&setup, &search, limit, false, label);
+            explored += outcome.positions;
+            seconds += outcome.seconds;
+        }
+        if (!outcome.found) {
+            failed = stage;
+            break;
+        }
+        earlier = setup.start;
+        earlier_text = strlen(moves);
+        earlier_length = length;
+        int count = 0;
+        char *const part = moves_to(&search, outcome.solution, &count);
+        const size_t had = strlen(moves);
+        moves = grow(moves, had + strlen(part) + 2, 1);
+        if (had && part[0]) strcat(moves, " ");
+        strcat(moves, part);
+        free(part);
+        length += count;
+        position_of(&setup, search.keys[outcome.solution], &setup.start);
+    }
+    hall_stage = -1;
+    outcome.positions = explored;
+    outcome.seconds = seconds;
+    if (outcome.found) {
+        int taken = 0;
+        replayed = open_hall(chapter, solved) && play(moves, &taken) < 0 && (world.Workshop.unlocked & (1 << chapter)) != 0;
+        if (!replayed) status = 1;
+    }
+    char route[16], stage[16];
+    snprintf(route, sizeof route, "%d", length);
+    snprintf(stage, sizeof stage, "stage %d", failed);
+    if (brief)
+        printf("%6d  %-7s  %8s  %12s  %-9s  %7.2f\n", solved, replayed ? "yes" : outcome.found ? "NO" : stage,
+            outcome.found ? route : outcome.exhausted ? "none" : "-",
+            grouped(outcome.positions, positions, sizeof positions), outcome.exhausted ? "yes" : "no", outcome.seconds);
+    else {
+        printf("Hall %d, its puzzles solved: mask %d; the lift takes %d batteries.\n", chapter + 1, solved, chapter_need(chapter));
+        if (outcome.found) printf("Route, in stages: %d moves\nMoves: %s\nReplayed from the start through the Move handler: %s.\n", length,
+            moves, replayed ? "the lift works" : "NOT WORKING");
+        else {
+            printf("No route at battery %d%s. Where that stage began:\n\n", failed,
+                outcome.exhausted ? ": every position reachable from that stage was explored" : " within the limit");
+            print_board(&setup.layout, &setup.start);
+            printf("Moves to there: %s\n", moves);
+        }
+        printf("Positions explored: %s in %.2f s.\n", grouped(outcome.positions, positions, sizeof positions), outcome.seconds);
+    }
+    free(moves);
+    return status;
+}
+static int hall_subsets(const int chapter, const uint32_t limit)
+{
+    const int size = chapter_size(chapter), need = chapter_need(chapter);
+    if (need <= 0) {
+        printf("Hall %d has no lift up: nothing has to be powered.\n", chapter + 1);
+        return 0;
+    }
+    printf("Hall %d: %d puzzles, the lift takes %d batteries.\nSolved  Replays  Shortest     Positions  Exhausted  Seconds\n",
+        chapter + 1, size, need);
+    int status = 0;
+    for (int solved = 1; solved < 1 << size; solved++) {
+        int count = 0;
+        for (int bit = 0; bit < size; bit++) count += solved >> bit & 1;
+        if (count < need) continue;
+        if (solve_hall(chapter, solved, limit, true)) status = 1;
+        fflush(stdout);
+    }
+    return status;
+}
+
 static int usage(void)
 {
     fputs("inside_out_solve <level> --print\n"
@@ -775,6 +957,8 @@ static int usage(void)
           "inside_out_solve <level> --alone <seat> [--limit <positions>]\n"
           "inside_out_solve <level> --play \"<moves>\"\n"
           "inside_out_solve all [--limit <positions>]\n"
+          "inside_out_solve hall <chapter> [<solved mask>] [--print | --play \"<moves>\" | --limit <positions>]\n"
+          "inside_out_solve hall <chapter> --subsets [--limit <positions>]\n"
           "Design probes: --no-battery-plates or --keep-docked remove that strategy from search.\n"
           "Levels count from 1; moves are NESW for Amber (seat 0), nesw for Teal (seat 1).\n",
         stderr);
@@ -796,9 +980,52 @@ static bool read_number(const char *const text, const long long least, const lon
     return true;
 }
 
+static int hall_main(const int argc, char **const argv)
+{
+    long long chapter = 0, solved = -1, limit = DEFAULT_LIMIT;
+    bool print = false, subsets = false;
+    const char *moves = NULL;
+    if (argc < 3 || !read_number(argv[2], 1, 6, &chapter)) {
+        fputs("hall takes a chapter, 1 to 6.\n", stderr);
+        return 2;
+    }
+    for (int i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "--print") == 0) print = true;
+        else if (strcmp(argv[i], "--subsets") == 0) subsets = true;
+        else if (strcmp(argv[i], "--play") == 0 && i + 1 < argc) moves = argv[++i];
+        else if (strcmp(argv[i], "--limit") == 0 && i + 1 < argc) {
+            if (!read_number(argv[++i], 1, MOST_LIMIT - 1, &limit)) return usage();
+        } else if (solved < 0 && read_number(argv[i], 1, 31, &solved)) continue;
+        else return usage();
+    }
+    const int index = (int)chapter - 1;
+    if (solved < 0) solved = (1 << chapter_size(index)) - 1;
+    int status = 0;
+    if (subsets) status = hall_subsets(index, (uint32_t)limit);
+    else if (print || moves) {
+        if (!open_hall(index, (int)solved)) return 3;
+        printf("Hall %d, its puzzles solved: mask %lld.\n", index + 1, solved);
+        if (moves) {
+            int taken = 0;
+            const int refused = play(moves, &taken);
+            if (refused < 0) printf("Played all %d moves; the lift %s.\n\n", taken,
+                (world.Workshop.unlocked & (1 << index)) ? "works" : "does not work yet");
+            else printf("Move %d, '%c' at character %d, was refused. The board before it:\n\n", taken + 1, moves[refused], refused + 1);
+            status = refused < 0 ? 0 : 1;
+        }
+        print_board(&world.Workshop.layout, &world.Workshop.puzzle);
+    } else status = solve_hall(index, (int)solved, (uint32_t)limit, false);
+    free(search.keys);
+    free(search.links);
+    free(search.slots);
+    tide_world_free(&world);
+    return status;
+}
+
 int main(const int argc, char **const argv)
 {
     if (argc < 2) return usage();
+    if (strcmp(argv[1], "hall") == 0) return hall_main(argc, argv);
     bool print = false;
     int alone = -1;
     const char *moves = NULL;

@@ -56,7 +56,13 @@ struct Shambler
     float mail;         // A Warden: 1; 0 for the rest
     float weak;         // A boss: how bright its weak spot glows
     float frenzy;       // Frenzied by a Stalker's shriek: 1
+    float headless;     // Its head blown off (killed by a head shot): 1
 }
+
+// Where one of the dead's head is on its body as it stands (the bodies' rest meshes, art/crowd: about the same for all
+// six), and how far round that is its head: gone, with a blown off head.
+const float3 HEAD_REST = float3(0.01, 1.34, 0.28);
+const float HEAD_GONE = 0.18;
 
 local singleton Horde
 {
@@ -265,6 +271,7 @@ view GatherZombie(mut Zombie zombie, mut Horde horde, Look look)
         burn = zombie.burn > 0 ? 1.0 : 0.0,
         frost = zombie.frozen > 0 ? 1.0 : zombie.chill > 0 ? 0.6 : 0.0,
         frenzy = zombie.frenzy > 0 ? 1.0 : 0.0,
+        headless = zombie.state == ZombieState.Dying && zombie.head ? 1.0 : 0.0,
         tint = float3(0.85 + (h & 15) * 0.02, 0.85 + ((h >> 8) & 15) * 0.02, 0.85 + ((h >> 12) & 15) * 0.015),
     };
     ShowState(horde, one, zombie, mesh);
@@ -324,6 +331,8 @@ vert Mutate(mut Corner corner, out float4 clip, Shambler one, Mutants mutants, I
 // A corner where its clip has it: its place and normal at the two frames, blended.
 vert Shamble(mut Corner corner, out float4 clip, Shambler one, Horde horde, Instance instance, Look look)
 {
+    // Where it is on the body at rest (its head's gone, with a blown off one: CrowdFlesh)
+    var rest = corner.position;
     var u = corner.uv2.y;
     var a = crowdAnim.Sample(float2(u, one.row));
     var b = crowdAnim.Sample(float2(u, one.next));
@@ -343,6 +352,7 @@ vert Shamble(mut Corner corner, out float4 clip, Shambler one, Horde horde, Inst
         var out = 1 + swell * (0.36 * belly + 0.1 * back);
         corner.position = float3(p.x * out, p.y, p.z * out + 0.08 * swell * belly);
     }
+    corner.uv = float2(Math.Distance(rest, HEAD_REST), one.headless);
     // On the low picture's pixels, as the world is (look.tide's Wobble)
     clip = Snapped(Math.Mul(look.toClip, Math.Mul(instance.transform, float4(corner.position, 1))), look);
 }
@@ -351,6 +361,8 @@ vert Shamble(mut Corner corner, out float4 clip, Shambler one, Horde horde, Inst
 // readable against the trees.
 frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance, Look look, Lights lights, Lens lens)
 {
+    // A blown off head: gone, and the neck's stump raw
+    if (one.headless > 0 && corner.uv.x < HEAD_GONE) this.Discard();
     var normal = instance.Normal(corner.normal);
     // Their clothes and skin gone to a dead grey-green, so the blood on them is what has colour
     var worn = Linear(Rgb(corner.color));
@@ -397,6 +409,7 @@ frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance,
         lit += float3(1.6, 0.5, 0.08) * flame * one.burn;
     }
     lit += float3(1.4, 1.2, 1.0) * one.flash;
+    if (one.headless > 0 && corner.uv.x < HEAD_GONE + 0.07) lit = float3(0.32, 0.015, 0.012) * (0.7 + 0.3 * grime);
     // A soft pale edge all round each body, where its side turns from the eye, and a little light of its own: the dead
     // stand out from the dark ground as shapes (the owner, 2026-10-18: "between the glowing orbs and then everything
     // being just dark its hard to see whats going on"). It was a glint on the moon's side alone, sharp, which broke
