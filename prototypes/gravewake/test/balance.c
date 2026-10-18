@@ -304,9 +304,10 @@ static Hands think(int seat, float dt)
             going = true;
         }
         if (!going) {
-            const tide_float3 centre = {0};
+            // (round the clearing's middle; at the night's end, the wake-fire's ring's)
+            const tide_float3 centre = world.Match.ringReach > 0 ? world.Match.ringAt : (tide_float3){0};
             const float home = flat_distance(s.feet, centre);
-            if (home > 18.0f) {
+            if (home > (world.Match.ringReach > 0 ? 7.0f : 18.0f)) {
                 goX = (centre.x - s.feet.x) / home;
                 goZ = (centre.z - s.feet.z) / home;
             } else if (press > 0.01f) {

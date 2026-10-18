@@ -43,6 +43,8 @@ singleton Match
     float nightClock;            // Seconds into it
     float nightEnds;             // When, on its clock, its bosses rise (NIGHT_SECONDS)
     bool reckoning;              // ...and they have: it's dawn once they're down
+    float3 ringAt;               // The wake-fire's ring round the fight with them (nights.tide): its middle...
+    float ringReach;             // ...and how far it reaches (0, none)
     int kept;                    // Nights kept to their dawn
     int chestsDue;               // Of its chests, how many are still to be put out...
     int chestsPlaced;            // ...and how many have been
@@ -118,6 +120,7 @@ void ResetMatch(mut Match match)
     match.nightClock = 0;
     match.nightEnds = NIGHT_SECONDS;
     match.reckoning = false;
+    match.ringReach = 0;
     match.kept = 0;
     match.chestsDue = 0;
     match.chestsPlaced = 0;
