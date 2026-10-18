@@ -43,6 +43,7 @@ vert Blow(mut SkyVertex vertex, Wind wind)
     quaternion scalar = quaternion.Euler(wind.from.x, wind.from.y, wind.from.z);
     quaternion named = quaternion.Euler(z: wind.from.z, x: wind.from.x, y: wind.from.y);
     quaternion whole = quaternion.Euler(1, 2, 3);
+    quaternion aligned = quaternion.FromToRotation(to: float3(0, 1, 0), from: wind.from);
     quaternion degrees = quaternion.Euler(180deg, -45.5deg, 9e1deg);
     float angle = .5deg + 1_8deg - 0deg;
     quaternion aimed = Math.Nlerp(quaternion.LookRotation(Math.Forward(eased), Math.Up(spin)), Math.Conjugate(Math.Normalize(spin)), 0.5);
@@ -52,6 +53,7 @@ vert Blow(mut SkyVertex vertex, Wind wind)
     float4x4 moved = Math.Mul(float4x4.Translate(pushed), float4x4(Math.Inverse(float3x3(spin)), wind.from));
     float2x2 flat = Math.Inverse(float2x2(2, 1, -1, 3));
     vertex.position = Math.Mul(flat, Math.Transform(Math.Mul(placed, Math.Mul(seen, moved)), pushed).xy)
+                    + Math.Transform(float4x4.Scale(scale: wind.from), Math.Forward(aligned)).xy
                     + Math.Rotate(scalar, Math.Forward(named)).xy + Math.Right(whole).xy + Math.Up(degrees).xy * angle;
 }
 
@@ -66,9 +68,11 @@ frag Calm(SkyVertex vertex, out Color color, Wind wind)
     float turned = Math.Atan2(vertex.uv.y - 0.5, vertex.uv.x - 0.5);
     int capped = Math.Clamp(wind.seed, 0, 9);
     quaternion scalar = quaternion.Euler(wind.from.x, wind.from.y, wind.from.z);
+    quaternion aligned = quaternion.FromToRotation(wind.from, float3(0, -1, 0));
     quaternion named = quaternion.Euler(y: 2, z: 3, x: 1);
     quaternion degrees = quaternion.Euler(z: 1_8e1deg, x: .5deg, y: -4.55e1deg);
     color = Color(most.x * eased, held.y * raised, Math.Cmin(held) + turned, 1) * (capped / 9.0)
+          + Color(Math.Transform(float4x4.Scale(wind.from), Math.Forward(aligned)), 0)
           + Color(Math.Forward(scalar) + Math.Up(named) + Math.Right(degrees), 0);
 }
 

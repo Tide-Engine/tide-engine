@@ -1,5 +1,52 @@
 # Language features, as tidec builds them
 
+## Conventional math API completions (2026-10-18)
+
+The owner approved `quaternion.FromToRotation(float3 from, float3 to)` and
+`float4x4.Scale(float3 scale)` as clear wins following the existing API style,
+and clarified that routine completions and edge cases should be handled within
+the assigned task without approval questions. Substantive language/behavior
+and ownership decisions still belong to the owner; `AGENTS.md` records this
+distinction.
+
+Both signatures live in the shared builtins table, so ordinary checking,
+named arguments, C generation, editor completion/hover/signature help and
+shader-call checking use the existing paths. Generated CPU calls are
+`tide_fromto_q` and `tide_scaling_f4x4`, inline in `tide/math.h`. No parser,
+capability, evaluation-order or storage rule changes. The existing C matrix
+scalar-multiplication helper `tide_scale_f4x4(matrix, scalar)` is unchanged.
+
+FromToRotation normalizes arbitrary finite nonzero directions after dividing
+by their largest absolute component, avoiding overflow and squared-length
+underflow, including subnormals. Invalid or zero directions return identity.
+The ordinary shortest-arc formula is used for nonnegative dot products. Near
+pi, cosine of the half-angle is derived from cross-product length rather than
+`1 + dot`, preserving small deviations from an opposite direction. Exact
+opposites cross normalized `from` with its least-aligned cardinal axis (ties
+X, then Y, then Z), and return a unit quaternion with w = 0. Quaternion output
+is finite and chooses w >= 0. The scale builder directly sets the diagonal
+and homogeneous 1, leaving other entries zero; negative and zero scales work.
+
+Runtime accuracy tests compare independently normalized double-precision
+directions after rotation, exercise 10,000 direction pairs, unit lengths,
+nearly/exactly opposite directions, axis ties, zero/nonfinite inputs and the
+smallest subnormal/largest finite magnitudes. The new
+`crossplatform_direction_rotation_and_scale` hashes 100,000 arbitrary float
+direction pairs (including invalid values and opposites), plus scaled points;
+its pin is `A40EAB68989DC773`. Existing pins are unchanged. The math E2E fixture
+checks defaults, positional and reordered named arguments and resulting
+rotations/transforms. GPU coverage is recorded in `notes/shaders.md`; public
+contracts are in `docs/spec.md` and `docs/language/math.md`.
+
+Validation: full native debug passed all 2,374 tests. The full web debug run
+covered 2,284 tests; its one WebGPU shader failure (reserved helper parameter)
+was fixed, and focused engine, math E2E, shader golden, WebGL and WebGPU tests
+then all passed. Focused native engine/E2E/golden/SPIR-V/Vulkan checks also
+passed after the fix. Both native and WASI release engine suites and math E2E
+passed, retaining the new exact-bit pin across all four configurations and
+all prior pins. The docs production build passed. Other platforms remain CI
+coverage; CI was not dispatched.
+
 ## Attached local arrays: final prototype compiler audit (2026-10-18)
 
 GRAVEWAKE's `local Shard[4] pieces` report still reproduced: the parser's

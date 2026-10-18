@@ -27,6 +27,8 @@ component Body
     float degreeAngle = 180deg;
     float degreeConstant = QUARTER_TURN;
     quaternion degreeEuler = quaternion.Euler(y: 90deg, x: 0deg, z: 0deg);
+    quaternion initialFromTo = quaternion.FromToRotation(float3(2, 0, 0), float3(0, 3, 0));
+    float4x4 initialScale = float4x4.Scale(float3(2, 3, 4));
 }
 
 component Results
@@ -49,6 +51,10 @@ component Results
     float3 crossed;
     float3 rotated;
     float3 transformed;
+    quaternion fromTo;
+    float3 aimed;
+    float3 opposite;
+    float3 scalePoint;
     float determinant;
     int clamped;
     float3 lerped;
@@ -144,6 +150,10 @@ system Compute(mut Body body, mut Results r)
     r.crossed = Math.Cross(float3(1, 0, 0), float3(0, 1, 0));
 
     quaternion yaw = quaternion.AxisAngle(float3(0, 1, 0), body.angle);
+    r.fromTo = quaternion.FromToRotation(to: float3(-3, 2, 1), from: body.position);
+    r.aimed = Math.Rotate(r.fromTo, Math.Normalize(body.position));
+    r.opposite = Math.Rotate(quaternion.FromToRotation(body.position, -body.position), Math.Normalize(body.position));
+    r.scalePoint = Math.Transform(float4x4.Scale(scale: float3(-2, 0, 3)), body.position);
     r.rotated = Math.Rotate(yaw, float3(1, 0, 0));
     body.rotation = Math.Mul(body.rotation, yaw);
 
