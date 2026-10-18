@@ -89,6 +89,7 @@ char *find_clang(void) { abort(); }
 char *find_web_clang(void) { abort(); }
 char *find_wasm_ld(const char *clang) { (void)clang; abort(); }
 int tide_editors(const char *root, const bool only_updates) { (void)root; (void)only_updates; abort(); }
+int tide_ide(const char *root, int count, const char *const *args) { (void)root; (void)count; (void)args; abort(); }
 int tide_add(const char *folder, const char *what) { (void)folder; (void)what; abort(); }
 int tide_eject(const char *folder, const char *name) { (void)folder; (void)name; abort(); }
 int tide_update(const char *folder, const char *const *names, const int count)

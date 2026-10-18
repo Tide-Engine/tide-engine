@@ -1,5 +1,70 @@
 # The language server and the editors
 
+## Installed terminal editor setup (2026-10-18)
+
+The modes now ship as editors/tide-emacs and editors/tide-vim, excluding tests.
+`tide ide emacs`, `tide ide vim` and `tide ide neovim` print configuration using
+the installed runtime and matching absolute tidels path. The user copies it into
+their chosen init file; the helper changes no files or personal settings.
+Emacs/Neovim connect automatically; Vim retains the user's choice of LSP client.
+Moving the installation requires generating the paths again. This replaces the
+source-checkout-only setup described in the first implementation below.
+
+The real generated snippets are exercised by tide_cli_ide's optional host cases:
+set TIDE_TEST_EMACS, TIDE_TEST_VIM and/or TIDE_TEST_NVIM to executable paths.
+They use isolated configuration and the actual installed payload from CMake.
+The comma-path host regression exposed Neovim's unescaped runtimepath: the
+helper now escapes its comma before prepending it. Vim/Neovim glob-character
+installation paths fail with an explicit move/install-path fix instead of
+silently losing runtime discovery. Plain string quoting remains editor-specific.
+The existing mode/LSP/runtime behavior is unchanged. CLI, packaging, tests and
+validation are recorded in notes/cli-and-packages.md.
+
+## Emacs, Vim and Neovim (2026-10-18)
+
+`tools/tide-emacs/tide-lang-mode.el` adds .tide/.tprefab detection, basic
+lexical highlighting, four-space BSD-style C indentation and comment editing.
+It derives from c-mode and registers the explicit language id `tide` with
+Eglot when Eglot loads. `tide-lang-server-command` is an executable/argument
+list; it defaults to tidels on exec-path. Connecting is opt-in (M-x eglot or
+the documented eglot-ensure hook). The distinct mode/package name avoids
+colliding with the existing TypeScript tide package. Minimum Emacs is 29.1.
+
+`tools/tide-vim` supplies ftdetect, ftplugin and syntax for both extensions
+on Vim 8+ and Neovim. Its local indentation/comment settings have an undo
+contract when changing filetypes. Highlighting is basic lexical styling;
+interpolated strings retain string styling throughout. These modes do not
+consume the TextMate grammar or promise its contextual highlighting precision.
+Neovim 0.11+ discovers lsp/tidels.lua through runtimepath; users explicitly
+enable it with vim.lsp.enable. Root selection prefers the nearest tide.packages,
+then CMake/Git, then the file's folder, including paths with spaces. Plain Vim
+uses a separately chosen LSP client and the tide filetype over stdio.
+
+Both are manually loaded from a downloaded tools folder or source checkout.
+They are not added to release archives or tide editors automatic installation.
+There are no run controls, embedded prefab canvases or adapters for the server's
+VS Code-specific code-lens commands. Other LSP features use the client's own
+support. The README, public Editors page and each tool README document setup,
+server selection, capabilities and these limits. No compiler, language/runtime,
+build configuration, existing IDE adapter or shared grammar changed.
+
+Validation on Windows: Emacs 30.2 passes all six ERT cases (detection, syntax,
+highlighting, indentation, Eglot registration and a real server connection/hover/
+clean shutdown). Its mode byte-compiles with warnings treated as errors.
+Vim 9.1 and Neovim 0.11.5/0.12.6 pass the headless runtime checks, including
+multiline comments, quoted characters, degree literals and filetype cleanup.
+Both Neovim versions pass root/space-path checks and real tidels attachment,
+hover and shutdown. Tests use isolated configuration and temporary project files;
+set TIDELS to an absolute executable path to include the optional real-server
+checks. The server was freshly built in this checkout with Clang 23.1.2 and
+TIDE_PLATFORM=OFF, not borrowed from another worktree. The production docs build
+passes with Node 24.21.0 and existing allowed unstaged-example 404s. Diff checks
+pass. Full engine native/web suites are outside these tools/docs-only changes;
+Emacs 29.1, Vim 8, other operating systems and interactive GUI use were not run.
+No CI or deployment was dispatched.
+
+## Shared language-server updates (2026-10-18)
+
 Synchronous match event/command queries (2026-10-18) use the existing query
 completion and row members. Header completion now includes every synchronous
 Tide handler, while tasks and extern systems retain their restrictions. Hover

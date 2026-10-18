@@ -93,6 +93,11 @@ add_test(NAME tide_cli_editors
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/editors_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editors_test.cmake")
 
+add_test(NAME tide_cli_ide
+    COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DTIDELS=$<TARGET_FILE:tidels>"
+            "-DSOURCE=${PROJECT_SOURCE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/ide_test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ide_test.cmake")
+
 # tide upgrade, with a folder that stands in for the site's releases.
 add_test(NAME tide_cli_upgrade
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/upgrade_test"

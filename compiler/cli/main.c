@@ -74,6 +74,11 @@ int main(const int argc, char **argv)
         return tide_help(1, &command, TIDE_VERSION);
     if (strcmp(command, "open") == 0) return tide_open(argc, argv);
     char *root = install_root();
+    if (strcmp(command, "ide") == 0) {
+        const int result = tide_ide(root, argc - 2, (const char *const *)argv + 2);
+        free(root);
+        return result;
+    }
     // The packages that come with tide are sources of the installation, like the engine's
     char *builtin = path_join(root, "src/packages");
     packages_set_builtin_folder(builtin);
