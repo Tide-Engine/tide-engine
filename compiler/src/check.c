@@ -57,6 +57,7 @@ typedef struct checker {
     const expr *member_object; // a.b's a, about to be checked: a Forgotten handler's component is only named for its local fields
     const expr *query_value; // A foreach's direct query parameter name, which is only iterable
     const expr *input_value; // A direct input parameter being borrowed by a synchronous helper
+    const expr *asset_value; // A resource asset collection being read or forwarded without escaping
     const expr *out_arg;     // An argument written `out x`, about to be checked as the variable an `out` parameter makes
     int outs;                // Unassigned locals and out arguments: bodies needing assignment analysis
     const expr *initializing; // A plain assignment may initialize a delayed read-only local
@@ -1759,25 +1760,26 @@ static type resolve_type(const checker *c, const type_ref *r, type_place place, 
 // value, a key, or a grid's cell. `key` is the key type where it's a map's
 // value, and `asset` whether the type is an asset's, where a list or a map
 // holds grids (never written, so never copied).
-static type resolve_arg(const checker *c, const type_ref *arg, const generic_form *form, const int i, const loc at, const type *key, const bool asset)
+static type resolve_arg(const checker *c, const type_ref *arg, const generic_form *form, const int i, const loc at, const type *key, const bool asset, const bool borrow)
 {
     static const type_place places[] = {ARG_ELEMENT, ARG_KEY, ARG_CELL};
     const generic_arg kind = form->args[i];
     const type t = resolve_type(c, arg, places[kind], at);
     switch (kind) {
-    case GENERIC_ELEMENT: return element_ok(t, at, key, asset) ? t : T_ERR;
+    case GENERIC_ELEMENT: return element_ok(t, at, key, asset || (borrow && (!key || key->kind == TY_STRING)
+                                           && (t.kind == TY_CLIP || t.kind == TY_TEXTURE || t.kind == TY_MESH))) ? t : T_ERR;
     case GENERIC_KEY: return map_key_ok(t, at, strcmp(form->name, "Set") == 0) ? t : T_ERR;
     default: return grid_cell_ok(t, at) ? t : T_ERR;
     }
 }
 
 // List<T>, Map<K, V>, Set<K>, Grid2<T> or Grid3<T>, from what's written in its <>.
-static type resolve_generic(const checker *c, const type_ref *r, const loc at, const bool asset)
+static type resolve_generic(const checker *c, const type_ref *r, const loc at, const bool asset, const bool borrow)
 {
     const generic_form *form = generic_form_named(r->name);
     type args[2] = {T_ERR, T_ERR};
     for (int i = 0; i < form->arity; i++) {
-        args[i] = resolve_arg(c, r->args.items[i], form, i, at, i == 1 ? &args[0] : NULL, asset);
+        args[i] = resolve_arg(c, r->args.items[i], form, i, at, i == 1 ? &args[0] : NULL, asset, borrow);
     }
     for (int i = 0; i < form->arity; i++) {
         if (args[i].kind == TY_ERROR) return T_ERR;
@@ -1938,7 +1940,8 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
-    if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
+    if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET,
+                                                place == PLACE_FUNCTION || place == PLACE_RETURN);
     if (builtin_type_named(name, &t)) {
         if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION) {
             diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one");
@@ -4225,9 +4228,12 @@ static void check_method_args(checker *c, expr *e, decl *m)
             c->query_value = previous;
         } else {
             const expr *previous = c->input_value;
+            const expr *previous_asset = c->asset_value;
             if (p && p->type.kind == TY_INPUT) c->input_value = arg;
+            if (p && type_is_asset_collection(p->type)) c->asset_value = arg;
             check_expr_want(c, arg, p ? p->type : T_ERR);
             c->input_value = previous;
+            c->asset_value = previous_asset;
         }
         c->resident_arg = NULL;
     }
@@ -4307,6 +4313,15 @@ static void check_arg_types(checker *c, expr *e, decl *m)
         const param *p = &m->params.items[i];
         expr *arg = e->args.items[i];
         if (arg == p->default_value) continue;
+        if (type_is_asset_collection(p->type)) {
+            const bool source = arg->bind == BIND_ASSET || (arg->kind == E_NAME && arg->bind == BIND_PARAM
+                                && arg->param->function_param && type_is_asset_collection(arg->param->type));
+            if (arg->type.kind != TY_ERROR && (arg->is_out || !same_type(arg->type, p->type) || !source)) {
+                diag_error(arg->at, "pass an asset collection or forward a borrowed parameter directly");
+                diag_note("a helper reads the asset's existing list or map; the collection can't be stored or returned");
+            }
+            continue;
+        }
         if (p->type.kind == TY_INPUT) {
             if (arg->type.kind != TY_ERROR && (arg->is_out || arg->type.kind != TY_INPUT || arg->kind != E_NAME || arg->bind != BIND_PARAM)) {
                 diag_error(arg->at, "pass the caller's input parameter directly: a helper borrows its current and previous tick");
@@ -4514,11 +4529,14 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         c->in_place_ok = arg; // Which parameter takes it isn't known yet: a long array's is 'mut', or it's said below
         const expr *previous_query = c->query_value;
         const expr *previous_input = c->input_value;
+        const expr *previous_asset = c->asset_value;
         c->query_value = arg; // A query can select an overload that explicitly borrows it.
         c->input_value = arg;
+        c->asset_value = arg;
         check_expr_any(c, arg);
         c->query_value = previous_query;
         c->input_value = previous_input;
+        c->asset_value = previous_asset;
     }
     int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
     bool *fits = arena_alloc(sizeof(bool) * (size_t)same.count);
@@ -7137,7 +7155,10 @@ static type check_method(checker *c, expr *e)
         }
     }
 
+    const expr *previous_asset = c->asset_value;
+    c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
+    c->asset_value = previous_asset;
     if ((obj.kind == TY_STRUCT && obj.decl == c->prog->audience)
         || (obj.kind == TY_COMPONENT && obj.decl == c->prog->visibility))
         return check_visibility_method(c, e, obj);
@@ -8612,6 +8633,12 @@ static type check_name(checker *c, expr *e)
         e->bind = BIND_PARAM;
         e->param = p;
         p->read = true;
+        if (p->function_param && type_is_asset_collection(p->type) && c->member_object != e && c->asset_value != e) {
+            diag_error(e->at, "a borrowed asset collection is only read or forwarded to a synchronous helper");
+            diag_note("read its count, elements or entries, or pass '" STR_FMT "' directly; the collection can't be stored or returned",
+                      STR_ARG(p->name));
+            return T_ERR;
+        }
         if (p->type.kind == TY_INPUT && c->member_object != e && c->input_value != e) {
             diag_error(e->at, "input is read through its fields, inspected as a value or passed directly to a synchronous helper");
             diag_note("pass '" STR_FMT "' to an input parameter, or copy individual fields; an input borrow can't be stored or returned",
@@ -8907,7 +8934,10 @@ static type check_index(checker *c, expr *e)
     c->device_whole_ok = e->object; // devices.touchscreen.touches[0] reads the one it names
     c->in_place_ok = e->object;     // tail[i] reads its element where the array is
     c->colors_indexed = e->object;  // target.colors[1] reads the one it names
+    const expr *previous_asset = c->asset_value;
+    c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
+    c->asset_value = previous_asset;
     c->colors_indexed = NULL;
     bool skin_handled;
     const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
@@ -10426,6 +10456,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                                          : "it changes its vertex, and writes what it takes as 'out' for its frag");
         } else if (root->param->type.kind == TY_INPUT) {
             diag_note("input comes from the players; the simulation can only read it");
+        } else if (root->param->function_param && type_is_asset_collection(root->param->type)) {
+            diag_note("borrowed asset collections are read-only; copy an element when a value is needed");
         } else if (root->param->function_param) {
             diag_note("declare the parameter as 'mut " STR_FMT " " STR_FMT "' to change the caller's variable, or copy "
                       "it into a 'mut var'", STR_ARG(root->param->type_name), STR_ARG(root->name));
@@ -11875,7 +11907,10 @@ static void check_stmt(checker *c, stmt *s)
     case S_FOREACH: {
         c->device_whole_ok = s->value; // Touches count as read by what the loop reads of them
         c->query_value = s->value->kind == E_NAME ? s->value : NULL;
+        const expr *previous_asset = c->asset_value;
+        c->asset_value = s->value;
         const type list = check_expr(c, s->value);
+        c->asset_value = previous_asset;
         c->query_value = NULL;
         type element = T_ERR;
         if (list.kind == TY_QUERY) {
@@ -13487,7 +13522,12 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
 {
     if (r->optional) { // int?
         const type_ref inner = without_question(r);
-        return optional_type(c, method_type(c, &inner, at, is_return), at);
+        const type value = method_type(c, &inner, at, is_return);
+        if (type_is_asset_collection(value)) {
+            diag_error(at, "a borrowed asset collection can't be optional");
+            return T_ERR;
+        }
+        return optional_type(c, value, at);
     }
     const type t = resolve_type(c, r, is_return ? PLACE_RETURN : PLACE_FUNCTION, at);
     switch (t.kind) {
@@ -13537,6 +13577,10 @@ static void check_fails(const checker *c, decl *m)
     const loc at = m->fails_type_qual_at.line ? m->fails_type_qual_at : m->fails_at;
     const type error = method_type(c, type_ref_or_text(m->fails_ref, m->fails_name), at, false);
     if (error.kind == TY_ERROR || m->return_type.kind == TY_ERROR) return;
+    if (type_is_asset_collection(error)) {
+        diag_error(at, "a borrowed asset collection can't be an error value");
+        return;
+    }
     if (m->is_operator) {
         diag_error(m->fails_at, "operators can't fail");
         diag_note("a method or function can: 'Money Parse(string text) fails ParseError'");
@@ -13652,6 +13696,10 @@ static void check_entity_query(const checker *c, decl *sys, param *query);
 static void check_signature(checker *c, decl *m)
 {
     m->return_type = method_type(c, type_ref_or_text(m->return_type_ref, m->return_type_name), m->return_type_qual_at, true);
+    if (type_is_asset_collection(m->return_type)) {
+        diag_error(m->return_type_qual_at, "functions can't return a borrowed asset collection");
+        m->return_type = T_ERR;
+    }
     if (holds_mesh(m->return_type) && (m->is_extern || m->is_async)) {
         diag_error(m->return_type_qual_at, m->is_extern ? "C can't return a Mesh: one is the pack's own, two lists of it"
                                                         : "a task can't return a Mesh: it's the pack's own memory, which is read within a frame");
@@ -13685,6 +13733,18 @@ static void check_signature(checker *c, decl *m)
         c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
         c->grid_param = false;
+        if (type_is_asset_collection(p->type)) {
+            m->borrows_asset_collections = true;
+            if (m->is_async || m->is_extern || m->is_operator || m->is_interpolate || m->is_audio || m->kind == DECL_SHADER) {
+                diag_error(p->type_at, "asset collections are borrowed by ordinary synchronous Tide functions and methods");
+                p->type = T_ERR;
+            } else if (p->mode != PARAM_READ || p->is_out) {
+                diag_error(p->at, "a borrowed asset collection is read-only: remove 'mut', 'out' or 'in'");
+                p->mode = PARAM_READ;
+                p->is_out = false;
+            }
+            if (p->default_value) diag_error(p->at, "a borrowed asset collection has no default: pass the asset explicitly");
+        }
         if (p->type.kind == TY_INPUT) {
             if (m->is_async || m->is_extern || m->is_operator || m->is_interpolate || m->is_audio || m->kind == DECL_SHADER) {
                 diag_error(p->type_at, "input is borrowed by ordinary synchronous Tide functions and methods");
@@ -17912,6 +17972,10 @@ static void check_render_resource_calls(const checker *c)
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
+            if (site->to->borrows_asset_collections && !site->from->borrows_asset_collections) {
+                site->from->borrows_asset_collections = true;
+                changed = true;
+            }
             if (site->to->reads_texture_size && !site->from->reads_texture_size) {
                 site->from->reads_texture_size = true;
                 changed = true;
@@ -17924,6 +17988,11 @@ static void check_render_resource_calls(const checker *c)
     }
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
+        if (site->from->kind == DECL_SHADER && site->to->borrows_asset_collections) {
+            diag_error(site->call->at, "'" STR_FMT "' borrows asset collections, which synchronous CPU helpers read",
+                       STR_ARG(site->to->name));
+            diag_note("select an individual resource in CPU code and pass it to the draw");
+        }
         if (site->parallel && site->to->reads_texture_size) {
             diag_error(site->call->at, "'" STR_FMT "' reads frame image metadata, so it can't run in a parallel loop", STR_ARG(site->to->name));
             diag_note("read Texture.size before the loop and pass its int2 value to the step");

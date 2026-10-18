@@ -343,6 +343,20 @@ TIDE_TEST(lsp_borrowed_input_in_helpers)
     TIDE_CHECK(has(request("textDocument/hover"), "Current and previous tick"));
 }
 
+TIDE_TEST(lsp_borrowed_asset_collections_in_helpers)
+{
+    start();
+    open_document("scene Main { }\nint Count(List<Clip> val$ues) { return values.count; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "List<Clip> values"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Read-only asset collection borrowed"));
+    TIDE_CHECK(offers(complete("scene Main { }\nint Count(List<Texture> values) { return values.$; }\n"), "count"));
+    TIDE_CHECK(offers(complete("scene Main { }\nint Count(Map<string, Clip> values) { return values.$; }\n"), "TryGet"));
+    const char *shader = complete("scene Main { }\nint Count(List<Texture> values) { return values.count; }\n"
+                                 "frag Shade(Vertex vertex, out Color color) { $ }\n");
+    TIDE_CHECK(!offers(shader, "Count"));
+}
+
 // Inside Sanitize, the input's fields are in scope; this machine's devices aren't.
 TIDE_TEST(lsp_sanitize)
 {
