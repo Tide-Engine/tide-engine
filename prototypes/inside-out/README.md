@@ -235,7 +235,8 @@ To play on one TV with phones as controllers, run
 TV and open <http://127.0.0.1:8790/tv> there: both players side by side,
 the left hosting and the right joining by itself, with sound from the left
 only. Each phone, on the same network, opens the `/pad` address the TV
-shows and picks Amber or Teal: a d-pad, Undo, Restart, Menu and OK, which
+shows (its home network's, or over Tailscale its 100.x address) and picks
+Amber or Teal: a d-pad, Undo, Restart, Menu and OK, which
 reach that player's view as its keys. The phones only send presses; both
 games run on the computer. Windows may ask to let Node through its
 firewall on private networks.

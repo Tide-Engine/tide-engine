@@ -179,13 +179,15 @@ for (const listener of [relay, server]) listener.on('error', error => {
     console.error(error.message);
     process.exit(1);
 });
-// This machine's addresses a phone on the same home network can reach:
-// 192.168 and 10 ones where there are any, ahead of VPN and VM adapters.
+// This machine's addresses a phone can reach: on the same home network
+// (192.168 and 10), and over Tailscale (100.64 to 100.127), ahead of other
+// VPN and VM adapters.
 function lanAddresses() {
     const all = Object.values(os.networkInterfaces()).flat()
         .filter(entry => entry && entry.family === 'IPv4' && !entry.internal).map(entry => entry.address);
-    const home = all.filter(address => address.startsWith('192.168.') || address.startsWith('10.'));
-    return home.length ? home : all;
+    const tailscale = address => { const [a, b] = address.split('.').map(Number); return a === 100 && b >= 64 && b < 128; };
+    const reachable = all.filter(address => address.startsWith('192.168.') || address.startsWith('10.') || tailscale(address));
+    return reachable.length ? reachable : all;
 }
 // The game views stay on this machine, so the relay does too.
 relay.listen(relayPort, '127.0.0.1');
