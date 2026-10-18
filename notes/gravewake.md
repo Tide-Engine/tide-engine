@@ -63,6 +63,128 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Nights on a clock, plague pits and fire, more blood (2026-10-18)
+
+The owner: "the maps need some hazzard to avoid or have to walk around and
+maybe the bosses are time based instead of that one mission? more in line
+with The Spell Brigade, right now that mission just feels like something
+annoying to do; i just wanna roam, shoot and level the fuck up haha. also we
+need to play more into satisfaction and gore aspect, not enough blood and
+juices flowing". How each works is my pick, Provisional.
+
+- **Nights on a clock** (nights.tide's `Reckon`, `NIGHT_SECONDS`,
+  `Match.nightEnds`, `Match.reckoning`): the beacon, its kindling, the vigil,
+  the impatient night and its bosses are gone. Each night is three minutes of
+  roaming (the night's panel: BOSS IN and the time over a bar running down,
+  red in the last ten seconds, a bell and a banner then: `WarnBoss`); over its
+  last minute the dead come thicker, up to twice as fast (`Rush`,
+  `NIGHT_RUSH`, `RUSH_SECONDS`). When it runs out its bosses (as many as
+  before) claw up 24 to 32 m from one of the survivors standing (each a
+  random one), pointed to at the screen's edge (missions.tide's
+  `Objectives`, BOSS), and whoever bled out is back beside one of them; with
+  them down, dawn, as before. `Boss.vigil` is `Boss.own`. Bled out is back
+  beside a friend after `BACK_AFTER` (60 s) too (`ComeBack`, `Survivor.gone`
+  counting at last), so a party isn't a survivor short for a whole night. No
+  mission begins in a night's last 70 s (`MISSION_ROOM`); the bosses rising
+  calls off any going. The five beacons' braziers burn at the landmarks
+  (`plan.fires`, `BrazierPlace`), to know each by in the dark. Development:
+  F7 the night on: its end now (cheat 6), and with its bosses up, dawn; F3's
+  bosses come at once (`DevBoss`).
+- **Plague pits** (plan.tide's pits, `PITS`, `PIT_RIM`; look.tide's `Earth`):
+  eleven open mass graves, 4 to 7.5 m by 2.2 to 3, out in the open between
+  the landmarks (clear of them, the worn paths, the graveyard and each other
+  by 14 m), each a box 0.7 m over the ground: a wall to the dead's way (they
+  go round), too high to step onto, under the rounds (they go over at 1.36
+  m). Drawn in the ground's frag from a list of them (hazards.tide's
+  `Hazards`): black blood to a rounded, frayed edge, darkest deep in, a bone
+  awash here and there, a sick light drifting on it (they read in the dark),
+  a lip of pale stones and trodden mud round it, the earth dug out heaped at
+  one end (a grave mound).
+- **The ground erupting** (hazards.tide's `Erupt`, `Burn`, `Blaze`): every
+  `EruptGap` seconds (nine less the night, at least three; over the root of
+  the party's `Crowd`), from 15 s into a night, the ground cracks near one of
+  the survivors standing, 5 to 12 m off (half the time under the thickest of
+  the dead there, kits.tide's `Thickest`), never within 3 m of one nor in
+  another fire: its seams glow brighter (in `Earth`), smoke and sparks rise,
+  a red ring with an orange one growing out to meet it (`BlazeRings`). 1.6 s
+  later it bursts (`ERUPT_HURT` 24 times `Harm`, and thrown, unless
+  rolling, the roll's guard; the dead in it take 1.6 times their health, a
+  burst: torn apart) and burns 8 s, biting every half second: survivors
+  standing in it 12 a second times `Harm` (not while rolling), the dead in it
+  set alight (a Fire wound of nothing: `burn` 3 s). Its light, flames, embers
+  and smoke; a fire's sound when it's the nearest; all out at dawn.
+  `Match.blazes` keeps them for what's placed round them (chests and missions
+  keep out: `Afire`).
+- **Blood** (fx.tide's `Bleed`, gore.tide's `Spill`, `Splash`, `Tumble`):
+  the stains had never been drawn from above. Their camera, set once, was
+  gone by the time they were drawn into, so nothing landed (`AimStains` now
+  sets it each time); and the ground read their colour as their colour over
+  their alpha, which blew up where faint ones lay (alpha blending keeps far
+  less alpha than colour): it's their hue at blood's darkness now, darker
+  where it's thick. Every hit sprays drops out the far side the way the round
+  went (more, bigger, 0.5 to 5 m/s on), and half of them, landing, soak in
+  as stains smeared the way they flew (`Mote.stain`, `MURK_MOST` 2600); a
+  hit leaves drops under it and a smear out the far side. A kill: a burst, a
+  long fan of spray, a pool spreading under it over 2.5 s (`Pool`), seven
+  splats thrown up to 4.5 m; five to seven pieces (twelve for a burst),
+  bigger, ropes of gut among them, each trailing drops through the air that
+  stain where they fall; a head shot a fountain from the neck, the head
+  thrown, and the body's head gone (crowd.tide's `Shambler.headless`: the
+  frag drops what's within 0.18 m of where the head is on the rest mesh, a raw
+  stump round it). Bile: a Bloater's burst and a Spitter's splash leave
+  green stains (`Splat.tint`), the burst's thrown bile soaking in too. Old
+  blood dries away: every 2 s the stains fade by 2.5% (`Dry`), gone in a few
+  minutes, so the clearing doesn't go red for good.
+- **Tests**: the harness holds the eruptions and the night's end off (its
+  clock 100 s short of it) but where they're the point. New: a pit stops a
+  survivor walking at it 0.32 m short and its middle's a wall to the dead's
+  way; a round goes over it into one of the dead beyond; the ground cracks
+  3 to 12.5 m from a survivor; its burst does 25 to one standing in it and
+  throws them, nothing to one rolling, tears one of the dead apart; burning,
+  it bites a survivor in it and sets one of the dead walking in alight; it
+  goes out. The night kept: the clock run out raises its boss 24 to 32 m off
+  and brings the one who bled out back beside the other; not dawn while it
+  stands; dawn once it's down; the next night's clock from the start; one who
+  bleeds out with no boss coming is back a minute later.
+- **More of the dead, from both sides** (rounds.tide's `SpawnRate`,
+  `HORDE_SWING`, `RisingToward`, `Match.hordeTurn`; nights.tide's
+  `NIGHT_RUSH`): four a second a danger (three), each horde from about the
+  far side of whom it's for from the last (within 0.8 rad), and the night's
+  last minute up to twice as fast (1.5 first). With no beacon to hold, the
+  bots had stopped going down at all: the vigil, standing in the crowd by a
+  place, was where they died (above, Phase 3's notes), and a survivor (5.6
+  m/s firing, 7 running) outruns any of the dead (4.8 at a sprint). These
+  didn't change that (below); they're kept for the carnage and the levels
+  (about 45 kills a second by the tenth minute, against 30), not for the
+  bots.
+- **The bots** (`gravewake_balance`, 25 minutes at most; they step out of
+  fires and roll out of a ring about to burst, go for the night's boss when
+  it's up and far; a 7th argument, `still`, holds the ground from erupting):
+  four runs of each alone and two of the pair, all at the cap but one
+  Engineer (783 s): 0 downs, 7 nights, level 36 or 37, 44 to 47 kills a
+  second (the pair 67). The same with the ground held still (three Gunners
+  and Breachers to a 20-minute cap: all at it, 0 downs), so the eruptions
+  aren't what makes it easy. Before this round, the Gunner's median was 962
+  s, the Breacher's 1097, the Engineer's 1176. The bots kite perfectly,
+  which a player with the dead off the screen's edge won't; the levers if
+  it's too easy in play: the dead's pace (`GaitSpeed`, `GaitFor`), `Harm`,
+  `SpawnRate`, `NIGHT_STEP`, and something to hold (the missions' hold).
+- **Cost** (`gravewake_perf`, release, the eruptions and the night's end
+  held off): 2000 of the dead 1.80 ms a tick (2.1 before), 4000 3.36 ms
+  (4.1): noise on a loaded machine; nothing new runs for each of the dead in
+  the tick (a fire looks up the dead in it twice a second). The frame: `Earth` loops the
+  pits and the fires per pixel (eleven and up to twelve), and the stains get
+  a fade every 2 s.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  (96 s) pass. Looked at in standard-host captures: a pit near the stones (black,
+  a sick light on it, the mound at its end) and walked into; an eruption
+  cracking, bursting and burning; the boss rising at the key with its marker
+  (BOSS 27 m) at the screen's edge clear of the boss's bar; the Gunner
+  firing into two thousand of the dead, the ground red and sprays fanning
+  out down the line of fire; the dead drawn headless (a test build) to see
+  the cut takes the head and nothing else. The browser tests weren't run
+  (the owner asked not to).
+
 ### Held still at a pick, Bloaters' rings, the right mouse back, level rounds (2026-10-18)
 
 The owner: "when selecting upgrades i can see and hear my character still

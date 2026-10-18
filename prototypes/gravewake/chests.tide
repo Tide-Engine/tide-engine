@@ -10,14 +10,12 @@ using Rooms;
 // going about the clearing, a warm glint and the light on the ground round
 // them in the dark. (The owner: "lets make the chests be random, but not be
 // pinged; players should discover them by roaming around". A night's set in
-// place of one on a timer is mine, Provisional: so looking for them is
-// weighed against lighting the beacon.)
+// place of one on a timer is mine, Provisional: so roaming finds more.)
 
 const float CHEST_SECONDS = 1.5;     // Standing by one to open it
 const float CHEST_REACH = 2.5;
 const float CHEST_FROM = 14;         // At least this far from every survivor when it comes
 const float CHEST_APART = 16;        // ...and from the other chests
-const float CHEST_BEACON = 10;       // ...and from the night's beacon
 
 component Chest
 {
@@ -46,8 +44,8 @@ event ChestOpened
 }
 
 // The night's chests, one a tick as it falls, each somewhere open in the clearing: flat ground (not a cliff, a wall or
-// a box) with open ground round it, away from the survivors, the other chests and the beacon. (A tick with no room
-// found tries again the next.)
+// a box, a pit) with open ground round it, away from the survivors and the other chests, out of the fires. (A tick with
+// no room found tries again the next.)
 [Stage(Tick.Rounds, 2)]
 system ChestComing(mut Match match, Ashwick ashwick, query (Survivor survivor) survivors, query (Chest chest) chests)
 {
@@ -59,7 +57,7 @@ system ChestComing(mut Match match, Ashwick ashwick, query (Survivor survivor) s
         var there = On(x, z);
         var cell = CellOf(there);
         if (cell < 0 || !InClearing(there) || !Open(ashwick, cell)) continue;
-        mut var room = Math.Length((match.beaconAt - there).xz) >= CHEST_BEACON;
+        mut var room = !Afire(match, there, 2);
         for (var dz = -1; dz <= 1; dz++)
             for (var dx = -1; dx <= 1; dx++)
                 if (!Open(ashwick, cell + dz * NAV_W + dx)) room = false;

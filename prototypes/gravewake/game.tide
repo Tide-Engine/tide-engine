@@ -1,8 +1,8 @@
 // GRAVEWAKE: Ashwick is burned, and up to four survivors hold a clearing in
 // the wood outside it through night after night, against the dead without
 // end, in their thousands, with guns, skills and items that stack, taking one
-// at each level. Each night ends at a beacon they light and keep till dawn
-// (nights.tide). This file is who plays: the survivors, what a player's
+// at each level. Each night runs on a clock to its bosses, and dawn once
+// they're down (nights.tide). This file is who plays: the survivors, what a player's
 // hands send, joining and leaving, and starting over.
 using Rooms;
 
@@ -65,7 +65,7 @@ component Survivor
     int pending;                     // Picks owed: a level's, a chest's, a boss's, after the one on offer...
     int boons;                       // ...and a mission's, of the rarer items, before them
     int picks;
-    float gone;                      // Seconds since bleeding out: they're back beside the beacon when it's lit, or at dawn
+    float gone;                      // Seconds since bleeding out: back beside a friend as the night's bosses rise, at dawn, or BACK_AFTER
     int level = 1;                   // The party's, as it reached this survivor
     float droneWait;
     float emberWait;
@@ -95,7 +95,7 @@ input Hands
     [Clamp(-1, 1)] float2 move;      // Across and up the screen
     bool attack;                     // The gun
     bool roll;                       // The roll
-    bool secondary;                  // The secondary skill (the special, a chest, the beacon, a friend down: by themselves)
+    bool secondary;                  // The secondary skill (the special, a chest, a friend down: by themselves)
     bool reload;
     bool pick1;                      // An item, or a survivor before the first wave
     bool pick2;
@@ -278,7 +278,8 @@ system Restarting(mut Match match)
 }
 
 // Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, a level (and so an
-// offer), an item, a boss, six of one kind of the dead, the night kept, a walk to a place.
+// offer), an item, the night's end (its bosses) now, a boss, six of one kind of the dead, the night kept, a walk to a
+// place.
 command Cheat
 {
     int what;
@@ -302,7 +303,8 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
             Send(Levelled { level = match.level });
             return;
         case 6:
-            match.bossNext = match.nightClock;
+            // The night's end now: its bosses
+            if (match.phase == Phase.Fighting && !match.reckoning) match.nightEnds = match.nightClock;
             return;
         case 40:
         case 41:
@@ -315,20 +317,19 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
         case 30:
         case 31:
         case 32:
-            // A boss of a kind, now
+            // A boss of a kind, now (boss.tide's DevBoss)
             match.devBoss = cheat.what - 30;
-            match.bossNext = match.nightClock;
             return;
         case 8:
             // The night kept: dawn now, everyone up
             if (match.phase != Phase.Fighting) return;
             match.phase = Phase.Dawn;
             match.timer = 0;
-            match.vigil = false;
+            match.reckoning = false;
             match.kept = match.night;
             for (var s = 0; s < 4; s++)
-                if (party.taken[s]) party.survivors[s].Send(Dawned { at = match.beaconAt });
-            Send(DawnBroke { night = match.night, at = match.beaconAt });
+                if (party.taken[s]) party.survivors[s].Send(Dawned { at = On(0, 3) });
+            Send(DawnBroke { night = match.night, at = On(0, 3) });
             return;
         case 5:
             party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
