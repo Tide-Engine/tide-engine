@@ -96,10 +96,15 @@ singleton Workshop
     // The exhibit whose lane both robots stand in, and when they got there.
     int departStation = -1;
     int departTick = -1;
-    // What the last solve did: a chapter it opened, and whether it was the
-    // campaign's last. Both are told on the way back to the hall.
+    // A chapter whose lift has just been powered, and whether the last solve
+    // was the campaign's last.
     int opened = -1;
     bool finale;
+    // A bit for each hall whose lift up works, and each hall's arrangement
+    // as the pair left it (`hallKept` has a bit for each kept).
+    int unlocked;
+    Puzzle[CHAPTER_COUNT] halls;
+    int hallKept;
     // Every chapter is open, and puzzles can be chosen from the menu.
     bool playtest;
     Map<PlayerID, int> seats;
@@ -116,7 +121,7 @@ command ChooseLevel { int serial; int level; }
 command ToHall { int serial; }
 // What a player's machine has solved before, and whether it plays with
 // every chapter open. The room's progress is what either of them has solved.
-command Progress { int completed; bool playtest; }
+command Progress { int completed; int unlocked; bool playtest; }
 
 int SeatOf(Workshop workshop, PlayerID player)
 {
@@ -363,6 +368,11 @@ bool RebaseTrail(LevelLayout layout, Puzzle puzzle, mut Traveler actor, int room
     return true;
 }
 
+bool BoxDocked(LevelLayout layout, Puzzle puzzle, int room)
+{
+    var dock = layout.rooms[room];
+    return dock.dock.x >= 0 && puzzle.rooms[room].room == dock.dockRoom && CellEqual(puzzle.rooms[room].position, dock.dock);
+}
 bool IsSolved(LevelLayout layout, Puzzle puzzle)
 {
     for (var seat = 0; seat < 2; seat++)
@@ -552,6 +562,7 @@ void Remember(mut Workshop workshop, Puzzle before)
 }
 void OpenLevel(mut Workshop workshop, int level, int tick)
 {
+    KeepHall(workshop);
     var next = Math.Clamp(level, 0, PUZZLE_COUNT - 1);
     workshop.introTicks = !workshop.initialized || workshop.inHall || workshop.level != next ? INTRO_TICKS : 0;
     workshop.inHall = false;
@@ -639,7 +650,7 @@ event(PlayerLeft left) LeaveWorkshop(mut Workshop workshop)
 }
 command(Move move, PlayerID sender) MoveHand(mut Workshop workshop, Time time)
 {
-    if (!Authorized(workshop, sender, move.serial) || Departing(HallOf(workshop), time.tick)) return;
+    if (!Authorized(workshop, sender, move.serial) || Leaving(workshop, time.tick)) return;
     var seat = SeatOf(workshop, sender);
     var before = workshop.puzzle;
     if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction, out var step))
@@ -647,8 +658,8 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop, Time time)
         Send(PuzzleCue { kind = 6, seat = seat });
         return;
     }
-    // Walking the hall is no puzzle's history.
-    if (!workshop.inHall) Remember(workshop, before);
+    Remember(workshop, before);
+    if (workshop.inHall) PowerLift(workshop);
     var source = before.actors[seat];
     var now = workshop.puzzle.actors[seat];
     var stepped = source.room != now.room || !CellEqual(source.position, now.position);
@@ -661,16 +672,13 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop, Time time)
         workshop.solvedTick = time.tick;
         var earlier = workshop.completed;
         workshop.completed |= 1 << workshop.level;
-        workshop.opened = -1;
-        for (var chapter = 1; chapter < CHAPTER_COUNT; chapter++)
-            if (!ChapterOpenFor(earlier, chapter) && ChapterOpenFor(workshop.completed, chapter)) workshop.opened = chapter;
         workshop.finale = !CampaignDone(earlier) && CampaignDone(workshop.completed);
         Send(PuzzleCue { kind = 5, seat = seat });
     }
 }
-command(Undo undo, PlayerID sender) UndoMove(mut Workshop workshop)
+command(Undo undo, PlayerID sender) UndoMove(mut Workshop workshop, Time time)
 {
-    if (!Authorized(workshop, sender, undo.serial) || workshop.inHall || workshop.historyCount <= 0) return;
+    if (!Authorized(workshop, sender, undo.serial) || Leaving(workshop, time.tick) || workshop.historyCount <= 0) return;
     workshop.historyCount -= 1;
     workshop.puzzle = workshop.history[workshop.historyCount];
     workshop.serial += 1;
@@ -678,8 +686,9 @@ command(Undo undo, PlayerID sender) UndoMove(mut Workshop workshop)
 }
 command(Reset reset, PlayerID sender) ResetPuzzle(mut Workshop workshop, Time time)
 {
-    if (!Authorized(workshop, sender, reset.serial) || workshop.inHall) return;
-    OpenLevel(workshop, workshop.level, time.tick);
+    if (!Authorized(workshop, sender, reset.serial) || Leaving(workshop, time.tick)) return;
+    if (workshop.inHall) ResetHall(workshop, time.tick);
+    else OpenLevel(workshop, workshop.level, time.tick);
     Send(PuzzleCue { kind = 4, seat = SeatOf(workshop, sender) });
 }
 command(ChooseLevel choice, PlayerID sender) ExplorePuzzle(mut Workshop workshop, Time time)
@@ -698,6 +707,7 @@ command(Progress progress, PlayerID sender) ShareProgress(mut Workshop workshop,
 {
     if (!workshop.initialized || SeatOf(workshop, sender) < 0) return;
     workshop.completed |= progress.completed & ((1 << PUZZLE_COUNT) - 1);
+    workshop.unlocked |= progress.unlocked & ((1 << (CHAPTER_COUNT - 1)) - 1);
     if (progress.playtest) workshop.playtest = true;
     // A pair that has solved the first puzzle before starts in the hall
     // they last reached, unless the first puzzle is already under way.

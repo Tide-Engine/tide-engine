@@ -636,7 +636,7 @@ void WallStrip(mut Sculpture sculpture, float2 from, float2 to, float thickness,
 // The walls sit inside the exact room footprint. Where the outermost cell is
 // wall, that block already runs to the edge and nothing more is drawn. A
 // doorway is a plain open edge cell: the wall blockout is its whole frame.
-void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens)
+void RoomWalls(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, int room, MapLens lens)
 {
     var thickness = lens.tile * 0.11;
     var tone = room < 0 ? STEEL : RoomColor(room);
@@ -660,7 +660,9 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
             var last = mouth + tangent * lens.tile * 0.5;
             if (room < 0)
             {
-                // The table has a raised frame all the way round.
+                // The table has a raised frame all the way round, but for
+                // where a box stands at its edge: the box fills that cell.
+                if (BoxAt(layout, puzzle, -1, cell) >= 0) continue;
                 var frame = sculpture.look >= 0 ? ChapterFrame(sculpture.look) : FRAME;
                 WallStrip(sculpture, first, last, thickness, frame, lens.floor, lens.tile, .13, SurfaceRole.Trim);
                 continue;
@@ -674,9 +676,9 @@ void RoomWalls(mut Sculpture sculpture, LevelLayout layout, int room, MapLens le
     }
 }
 
-void RoomTrim(mut Sculpture sculpture, LevelLayout layout, int room, MapLens lens)
+void RoomTrim(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, int room, MapLens lens)
 {
-    RoomWalls(sculpture, layout, room, lens);
+    RoomWalls(sculpture, layout, puzzle, room, lens);
     if (room < 0 || lens.tile < 3) return;
     var badge = lens.origin + float2(lens.tile * 0.12, lens.tile * 0.12);
     FloorNumber(sculpture, room + 1, badge, Math.Max(3, lens.tile * .30), DECAL, lens.floor + lens.tile * .015, lens.tile);
@@ -706,7 +708,7 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
         sculpture.surface = SurfaceRole.Prop;
         DimensionFloor(sculpture, workshop, item.room, item.lens, picture);
         DimensionPieces(sculpture, workshop, item.room, item.lens, picture, hands);
-        RoomTrim(sculpture, workshop.layout, item.room, item.lens);
+        RoomTrim(sculpture, workshop.layout, workshop.puzzle, item.room, item.lens);
         for (var box = 0; box < MAX_ROOMS; box++)
         {
             if (!ValidRoom(workshop.layout, box) || (index == 0 && box == hideBox)) continue;
@@ -744,7 +746,7 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
 
 // The HUD is screen-space and independent of the room's camera.
 [Stage(ArtStage.Board, 2)]
-view WorkbenchLabels(Workshop workshop, Time time, Rooms.Lobby lobby, Picture picture)
+view WorkbenchLabels(Workshop workshop, Time time, Rooms.Lobby lobby, Picture picture, Hands hands)
 {
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
     Draw.SetScreen();
@@ -755,7 +757,7 @@ view WorkbenchLabels(Workshop workshop, Time time, Rooms.Lobby lobby, Picture pi
         Label($"CHAPTER {workshop.hall + 1} / {ChapterName(workshop.hall)}", float2(20, 22), 11, BRASS);
         Draw.Text("The hall", float2(20, 47), narrow ? 17.0 : 24.0, INK, Anchor.MiddleLeft, Font.Bold);
         Label($"{ChapterSolved(workshop.completed, workshop.hall)} / {ChapterSize(workshop.hall)} solved", corner, 14, MUTED, Anchor.MiddleRight);
-        HallLabels(HallOf(workshop), time, picture);
+        HallLabels(HallOf(workshop), time, picture, workshop.puzzle.actors[hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0].room);
         return;
     }
     var chapter = LevelChapter(workshop.level);
@@ -770,7 +772,7 @@ view WorkbenchLabels(Workshop workshop, Time time, Rooms.Lobby lobby, Picture pi
 
 // Each exhibit's number on a chip at its post, hidden while the view goes
 // into or comes out of a model.
-void HallLabels(HallState workshop, Time time, Picture picture)
+void HallLabels(HallState workshop, Time time, Picture picture, int room)
 {
     var now = time.t / time.dt;
     if (HallDive(workshop, now, out _) > 0 || workshop.departStation >= 0) return;
@@ -779,9 +781,9 @@ void HallLabels(HallState workshop, Time time, Picture picture)
     for (var index = 0; index < MAX_STATIONS; index++)
     {
         var station = HallStation(workshop.hall, index);
-        if (station.kind == StationKind.None) continue;
-        var north = station.post.y == 0;
-        var at = MapPoint(float2(station.post), lens) + float2(0, lens.tile * (north ? .34 : .62));
+        if (station.kind == StationKind.None || station.room != room) continue;
+        // On the post's side that faces its lane.
+        var at = MapPoint(float2(station.post), lens) + float2(station.near - station.post) * lens.tile * .5;
         mut var text = station.kind == StationKind.Up ? "up" : station.kind == StationKind.Down ? "down" : $"{station.level + 1:D2}";
         if (station.kind == StationKind.Level && IsChallenge(station.level)) text = $"{ChallengeBudget(station.level)} moves";
         var width = Draw.MeasureText(text, size).x + 14;
@@ -1031,7 +1033,8 @@ view Workbench(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands, The
     // In the hall, the view closes in on the model of the puzzle the pair
     // is going into, and comes back out of the one they leave.
     var now = time.t / time.dt;
-    var dive = HallDive(HallOf(workshop), now, out var divePost);
+    var hall = HallOf(workshop);
+    var dive = HallDive(hall, now, out var divePost);
     var lens = DiveLens(picture.cameraLens, divePost, hands.reduceMotion ? 0.0 : dive, screen);
     // The scene fills the window below the heading; the room keeps its
     // place and size in it, and the controls lie over what surrounds it.
@@ -1065,7 +1068,14 @@ view Workbench(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands, The
             var hiddenBox = layer > 0 ? ancestors[layer - 1].box : -1;
             RoomScene(sculpture, workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox);
         }
-        HallScene(sculpture, HallOf(workshop), gallery, lens, now);
+        // A hall's posts and lanes, in every drawing of the rooms they are in.
+        // Drawn here rather than in RoomScene: a model's drawing is deep, and
+        // RoomScene's frame already holds copies of the Workshop.
+        for (var shown = 0; shown < sculpture.shown.count && hall.inHall; shown++)
+        {
+            var item = sculpture.shown[shown];
+            HallRoom(sculpture, hall, gallery, item.room, item.lens, now);
+        }
         for (var seat = 0; seat < 2; seat++) PassageMaker(sculpture, workshop, picture, hands, seat, contexts, dimensions, contextCount);
         if (hands.seat == localSeat && !picture.passages[localSeat].active && picture.cameraBlend >= 1)
         {

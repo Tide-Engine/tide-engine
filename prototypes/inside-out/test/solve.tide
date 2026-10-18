@@ -9,3 +9,14 @@ command(Describe describe, PlayerID sender) DescribePuzzle()
     var chapter = LevelChapter(describe.level);
     SolverWords(PUZZLE_COUNT, describe.level, chapter, LevelName(describe.level), ChapterName(chapter), LevelLesson(describe.level));
 }
+// The solver's hall mode opens a chapter's hall with the puzzles it is given
+// solved, and no lift working.
+command HallSetup { int chapter; int completed; }
+command(HallSetup setup, PlayerID sender) SetUpHall(mut Workshop workshop, Time time)
+{
+    workshop.completed = setup.completed;
+    workshop.unlocked = 0;
+    workshop.hallKept = 0;
+    workshop.inHall = false;
+    OpenHall(workshop, setup.chapter, 0, time.tick);
+}

@@ -78,33 +78,52 @@ before clearing the shared moves.
 
 The first puzzle starts straight away. Solve it and the view pulls back out
 of a model on a post: it was one exhibit in the **hall**, where you choose
-what to play next. Each chapter has its own hall. A pair that has solved the
+what to play next. Each chapter has its own hall, and each hall is a small
+puzzle of its own, made of that chapter's idea. A pair that has solved the
 first puzzle before starts in the highest hall they have reached.
 
-- Along the north edge stand the chapter's puzzles, each a model of its
-  rooms as the puzzle starts, with its number. A green ring marks a solved
-  one. In front of each post is a lane of two pads: when both robots stand
-  in it, one on each pad, the pads fill with light and the view closes in on
-  the model, into the puzzle. Step off while they fill to change your mind.
-  Standing in a lane shows its puzzle's name.
-- Play a hall's puzzles in any order. The **lift up**, at the south edge's
-  right, works once every puzzle of this hall is solved: its lights count
-  them. The lift down, on the left, takes you back to an earlier hall.
-  Its doors close, show the chapter you are going to, and open on its hall.
-- The covered post in the middle of the south edge is the hall's
-  **challenge**, uncovered once the hall's puzzles are solved. A challenge is
+- The **gallery** is a box clamped at the top of the hall's table. On its
+  north wall stand the chapter's puzzles, each a model of its rooms as the
+  puzzle starts, with its number; a green ring marks a solved one. In front
+  of each post is a lane of two pads: when both robots stand in it, one on
+  each pad, the pads fill with light and the view closes in on the model,
+  into the puzzle. Step off while they fill to change your mind. Standing in
+  a lane shows its puzzle's name.
+- Below the gallery's doorway is the hall's **yard**. Every puzzle you solve
+  puts its **battery** there. The box at the foot of the yard has the hall's
+  sockets in a row down from its doorway: push enough batteries into it and
+  the **lift up**, to the right of where the gallery lets out, starts
+  working, for good. It takes all but one of the hall's batteries, so a
+  puzzle nobody can crack never shuts the way on; its lights count them in.
+  Each hall's yard has its chapter's twist:
+  - **Boxes:** the socket box is clamped and takes whatever you push at it.
+  - **Each other:** it must stay on its outline in open floor, so it only
+    takes a battery while your partner holds it from below.
+  - **Power:** a shutter guards its doorway; stand on the plate, or leave a
+    spare battery on it.
+  - **Itself:** the sockets are in a box inside the box.
+  - **Held:** the socket box is loose; a clamp will hold it.
+- The lift down, left of the gallery's door, takes you back to an earlier
+  hall. A lift's doors close, show the chapter you are going to, and open
+  on its hall. A hall keeps its arrangement while you play; **Restart**
+  there sets its batteries out again, and a lift that works keeps working.
+  Undo works in the hall as in a puzzle.
+- The first three halls each hide a **challenge**: its post is inside
+  another box in the yard, which you have to find a way into. A challenge is
   a small, hard puzzle with a budget of moves, shown on its post and beside
   the move count; once it is spent, nothing moves until you undo or restart.
   Each budget is the shortest solution there is. Challenges never hold up
-  the lift. The first three halls have one each: **Freight** (16 moves),
-  **Backstage** (21) and **Overload** (22).
-- After a puzzle is solved, its name and what the solve opened are shown
-  briefly, and you are back in the hall in front of its post. **Back to the
-  hall** in the menu leaves a puzzle without solving it.
+  the lift: **Freight** (16 moves), **Backstage** (21) and **Overload** (22).
+- After a puzzle is solved, its name and the chapter's count are shown
+  briefly, and you are back in the gallery in front of its post. **Back to
+  the hall** in the menu leaves a puzzle without solving it.
 
 For playtesting, `?playtest` on the web page (or `INSIDE_OUT_PLAYTEST=1`
-for a native run) opens every chapter and challenge for the room and adds
-**Choose puzzle** to the menu, a list of every puzzle by chapter.
+for a native run) opens every chapter's lift and adds **Choose puzzle** to
+the menu, a list of every puzzle by chapter.
+
+Saves from before the lifts took batteries keep every lift that was open:
+a hall whose puzzles were all solved has its lift working.
 
 If your save predates the campaign rebuild, completion ticks for puzzles
 7–13 and 15–18 are cleared. The occupied-shutter update clears earlier
@@ -208,13 +227,26 @@ The server runs its own
 local relay on port 8791 and serves the page with the isolation headers
 needed by Tide. It reads the latest staged page on each reload. Ctrl+C
 stops both services; optional HTTP and relay ports are the script's two
-positional arguments. The server binds to this machine only.
+positional arguments. The server binds to this machine only, unless
+started with `--lan`.
+
+To play on one TV with phones as controllers, run
+`node prototypes/inside-out/serve.mjs --lan` on the computer connected to the
+TV. Open its `?pad=1` and `?pad=2` addresses in two windows side by side,
+host in the first and join from the second. Each phone, on the same
+network, opens the `/pad?player=1` or `/pad?player=2` address the server
+prints: a d-pad, Undo, Restart, Menu and OK, which reach that player's
+window as its keys. The phones only send presses; both games run on the
+computer. Windows may ask to let Node through its firewall on private
+networks. Mute one window's sound in Settings.
 
 The prototype uses Tide and the existing Rooms package. Its deterministic
 match rules are in `game.tide`; the puzzles, drawn as text maps (their
 legend is at the top of the file), with their chapter grouping,
-are in `levels.tide`. `hall.tide` has the halls' exhibits, their lanes and
-what opens them; `gallery.tide` draws the posts, models and lifts. `geometry.tide` builds the local 3D scene and `render.tide`
+are in `levels.tide`. `hall.tide` has the halls' maps, exhibits, lanes,
+batteries and lifts; `gallery.tide` draws the posts, models and lifts.
+`inside_out_solve hall 2 --subsets` checks a hall can power its lift for
+every set of solved puzzles that has enough batteries. `geometry.tide` builds the local 3D scene and `render.tide`
 handles lighting, shadow mapping and screen-space ambient occlusion.
 `ink.tide` has the drawing: its marks are kept in the match so both
 players see them, and nothing in the puzzle reads them.
