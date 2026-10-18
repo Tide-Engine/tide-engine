@@ -447,13 +447,15 @@ static void apply_handed(const handed *h)
         atomic_store_explicit(&m.capture_tail, atomic_load_explicit(&m.capture_head, memory_order_acquire), memory_order_release);
         m.capture_primed = false;
         memset(m.mic, 0, sizeof m.mic);
-        atomic_store_explicit(&m.forget_done, h->forget_serial, memory_order_release);
         if (h->forget) {
             // Nothing plays any more, so no state is read: settled with no block to wait for.
             m.applied = h->serial;
             atomic_store_explicit(&m.settled, h->serial, memory_order_release);
+            // The waiting frame thread frees retired states as soon as it sees this.
+            atomic_store_explicit(&m.forget_done, h->forget_serial, memory_order_release);
             return;
         }
+        atomic_store_explicit(&m.forget_done, h->forget_serial, memory_order_release);
         // A timed-out request can have been replaced by this normal frame. Its new
         // voices and states apply after the clear, and settle only after their block.
     }
