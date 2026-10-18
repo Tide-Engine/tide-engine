@@ -84,6 +84,7 @@ system Regenerate(mut Unit unit)
 
 - A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
 - Parameters are built-in types, structs, components, singletons and event/command payloads, and an argument's type matches exactly. Return values are built-in types, structs, components and event/command payloads; singleton returns remain unsupported. Input helper parameters remain unsupported.
+- Synchronous functions and methods can also borrow a read-only `query`, as described below.
 - A function returns a value on every path, unless it returns `void`. The check follows conditions known while compiling, including named bool constants and comparisons of constant integers: `if (true) return 1;` covers its only path. A loop whose condition is always true and has no reachable `break` can't end without returning.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
 - A parameter can have a default value, a call can pass arguments by name, and functions can share a name: see [Default values, names and overloads](#default-values-names-and-overloads).
@@ -130,6 +131,32 @@ _ = request.SetHeader("Accept", "text/plain");        // Drops it, on purpose
 ```
 
 `_ = value;` works anything out and drops it. A call that does something besides giving its value (it sends, spawns, draws, calls C, or changes a `mut` argument or its own value) is a statement as it always was, and so is one that can fail, which has a warning of its own.
+
+## Borrowing a query
+
+A helper uses the same `query (...)` parameter syntax as a system or handler. The caller explicitly passes the selection to inspect:
+
+```csharp
+float TotalMass(query (Body body) bodies)
+{
+    mut var total = 0.0;
+    foreach (var row in bodies) total += row.body.mass;
+    return total;
+}
+
+system Weigh(mut Stats stats, query (Body candidate, with Enemy) enemies)
+{
+    stats.enemyMass = TotalMass(enemies);
+}
+```
+
+`TotalMass` visits the enemies the caller selected. The helper declares the component data each row must provide; names can differ, and the caller can supply extra bindings and filters. Every requested component type needs one unambiguous data binding in the source query. A `with Body` filter alone does not provide Body data. Filters written in a helper's signature are requirements the caller's query must already guarantee, and do not select additional entities.
+
+The source keeps its order and timing. Match queries read the current match, a view passes its blended or verified rows, and local handlers pass their recorded rows. A helper can forward the query to another helper. Passing it allocates no collection and makes no snapshot. Recorded rows retain their existing omitted-data rules. To borrow local entities, use local bindings such as `query (local Spark spark) sparks`.
+
+The query is read-only and valid for the call. It has no `mut`, `out` or default; queries and whole rows cannot be stored or returned, and whole rows cannot be passed as values. Component values read from a row can be copied and passed normally. Keep query iteration and forwarding outside callback blocks and parallel steps. Async functions, externs, operators, audio declarations and shaders take no borrowed queries.
+
+The helper gains the row access its parameter declares. Its other capabilities still come from its caller; explicit `World` access remains separate. Reads and writes preserve the existing scheduling and evaluation-order rules.
 
 ## Sending and spawning
 

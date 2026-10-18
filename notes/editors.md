@@ -65,6 +65,15 @@ No CI or deployment was dispatched.
 
 ## Shared language-server updates (2026-10-18)
 
+Borrowed helper queries (2026-10-18) complete in ordinary synchronous function
+and method signatures. Nested headers offer component bindings and filters,
+and helper foreach rows offer entity/component members. Hover explains the
+call lifetime, structural binding requirements and source timing; existing
+recursive signature formatting supplies signature help and declaration text.
+lsp_entity_query_in_helpers checks headers, async/extern exclusions, nested
+binding/member completion, arguments, diagnostics and hover. Query uses in
+helpers count as uses of the caller's bound component data.
+
 Synchronous match event/command queries (2026-10-18) use the existing query
 completion and row members. Header completion now includes every synchronous
 Tide handler, while tasks and extern systems retain their restrictions. Hover

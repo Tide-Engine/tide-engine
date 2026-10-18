@@ -1,0 +1,5 @@
+// expect: a query is borrowed in ordinary control flow
+component Body { int x; }
+int Read(query (Body body) rows) { foreach (var row in rows) return row.body.x; return 0; }
+system Test(query (Body body) rows) { mut List<int> list = [2, 1]; list.Sort(a,b) { return a + Read(rows) < b; } }
+scene Main { }
