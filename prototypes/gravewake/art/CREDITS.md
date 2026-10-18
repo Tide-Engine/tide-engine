@@ -26,6 +26,7 @@ game's title screen.
 | `items/` | Power-ups, potions, the brazier, graves | Ultimate RPG (skull, coins, chalice, potions), Medieval Weapons (arrows, hammer); the rest modelled by `items/tools/make_items.py` |
 | `guns/` | The survivors' guns and the turret's tripod | Ultimate Gun Pack, cut to one GLB each, recoloured and scaled by `guns/tools/make_guns.py` |
 | `crowd/` | The horde: the six zombie bodies cut to about 700 triangles and their clips baked into `anim.png` | Made from `people/` by `crowd/tools/make_crowd.py` |
+| `mutants/` | The three bosses: three of the dead reshaped (bones scaled and bent, growths added), and their clips baked into `anim.png` | Made from `people/` by `mutants/tools/make_mutants.py` (see `mutants/README.md`) |
 | `fp/` | The first-person arms, the bow and arrow in them, and every first-person clip | CoinCoin's first-person kit (CC BY 4.0, above); clips for two-handed weapons, polearms, crossbows, staffs, throwing and drinking made by `fp/tools/make_fp.py` |
 
 The packs' pages:

@@ -20,12 +20,14 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
     if (survivor.yaw < -Math.PI) survivor.yaw += Math.TAU;
     survivor.pitch = Math.Clamp(survivor.pitch + hands.look.y, -1.45, 1.45);
 
-    // Health comes back after a few calm seconds; what Leech Rounds may heal comes back all the time
+    // Health comes back slowly after a few calm seconds (REGEN_DELAY, REGEN_RATE of it a second: it had come back whole in
+    // under two, so a survivor who dashed clear a moment never had to fear a blow); what Leech Rounds may heal comes back
+    // all the time
     survivor.calm += dt;
     survivor.slimed = Math.Max(0, survivor.slimed - dt);
     var leechMost = MaxHealth(survivor) * 0.08 * Has(survivor, Item.Leech);
     survivor.leech = Math.Min(leechMost, survivor.leech + leechMost * dt);
-    if (survivor.life == Life.Standing && survivor.calm > 3.5) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * 0.6);
+    if (survivor.life == Life.Standing && survivor.calm > REGEN_DELAY) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * REGEN_RATE);
 
     // Down: bleeding out, crawling, unless someone comes
     if (survivor.life == Life.Downed)
@@ -60,7 +62,7 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
         if (up > 0) wish -= uphill * up;
     }
     var target = wish * speed;
-    var grip = survivor.grounded ? 14.0 : 3.5;
+    var grip = survivor.grounded ? GRIP : 3.5;
     var blend = Math.Min(1, dt * grip);
     survivor.velocity.x += (target.x - survivor.velocity.x) * blend;
     survivor.velocity.z += (target.z - survivor.velocity.z) * blend;
@@ -149,6 +151,9 @@ float Wading(Survivor survivor, Herd herd)
 }
 
 const float SLIME_SLOW = 0.6;       // Of their speed a survivor keeps while a Spitter's bile is on them (zombies.tide)
+const float REGEN_DELAY = 4;        // Seconds unhurt before health comes back...
+const float REGEN_RATE = 0.04;      // ...and how much of it a second
+const float GRIP = 22;              // How fast feet on the ground take up the way they're asked to go (a second's share)
 const float TOUCH_SLOW = 0.22;      // Speed lost to each of the dead pressed against a survivor
 const float TOUCH_SLOW_MOST = 0.6;  // ...and the most lost to them all
 const float TOUCH_GAP = 0.1;        // How near counts as pressed against
@@ -406,11 +411,15 @@ float FirstHit(float3 from, float3 to, Ashwick ashwick, Herd herd)
     foreach (var z in Along(herd, from, Math.Lerp(from, to, Math.Min(1, first))))
     {
         if (!z.hittable) continue;
-        var body = Math.Min(Math.Min(SphereHit(from, to, z.chest, 0.36 * z.size), SphereHit(from, to, z.hips, 0.33 * z.size)), LegsHit(from, to, z, 0));
-        first = Math.Min(first, Math.Min(SphereHit(from, to, z.head, HEAD_RADIUS * z.size), body));
+        var spots = SpotsOf(z, herd);
+        var body = Math.Min(Math.Min(SphereHit(from, to, z.chest, spots.chestRadius), SphereHit(from, to, z.hips, 0.33 * z.size)), LegsHit(from, to, z, 0));
+        first = Math.Min(first, Math.Min(SphereHit(from, to, z.head, spots.headRadius), body));
     }
     return first;
 }
+
+// A round landing this near a boss's weak spot (for its size) is on it, even where its body's ball is in front of it.
+const float WEAK_PATCH = 1.15;
 
 // Where a survivor's shots start, and which way they go: from the eye along the look; over the shoulder, from the gun
 // in their hand toward what the crosshair is on, so a round goes from the gun to where the crosshair says (unless
@@ -457,26 +466,32 @@ void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float 
     mut List<Body> struck = [];
     mut List<float> when = [];
     mut List<bool> heads = [];
+    mut List<bool> weaks = [];
     foreach (var z in Along(herd, from, stop))
     {
         if (!z.hittable) continue;
-        var onHead = SphereHit(from, to, z.head, HEAD_RADIUS * z.size);
-        var chest = SphereHit(from, to, z.chest, 0.36 * z.size);
+        var spots = SpotsOf(z, herd);
+        var onHead = SphereHit(from, to, z.head, spots.headRadius);
+        var chest = SphereHit(from, to, z.chest, spots.chestRadius);
         var hips = SphereHit(from, to, z.hips, 0.33 * z.size);
-        var first = Math.Min(Math.Min(onHead, LegsHit(from, to, z, 0)), Math.Min(chest, hips));
+        var onWeak = spots.weakRadius > 0 ? SphereHit(from, to, spots.weak, spots.weakRadius) : 2.0;
+        var first = Math.Min(Math.Min(Math.Min(onHead, LegsHit(from, to, z, 0)), Math.Min(chest, hips)), onWeak);
         if (first > 1 || first > wall) continue;
         mut var at = struck.count;
         while (at > 0 && when[at - 1] > first) at -= 1;
         struck.Insert(at, z);
         when.Insert(at, first);
-        heads.Insert(at, onHead <= first + 0.0001);
+        var weak = spots.weakRadius > 0 && Math.Length(Math.Lerp(from, to, first) - spots.weak) <= spots.weakRadius * WEAK_PATCH;
+        weaks.Insert(at, weak);
+        heads.Insert(at, !weak && onHead <= first + 0.0001);
     }
     var count = Math.Min(pierce, struck.count);
     var knock = kind == Trace.Phase ? 3.0 : kind == Trace.Pellet ? 1.5 : 1.0;
     mut var end = Math.Min(1, wall);
     for (var i = 0; i < count; i++)
     {
-        Land(arms, struck[i], heads[i] ? damage * head : damage, heads[i], from, knock, chance, herd);
+        var dealt = weaks[i] ? damage * SpotsOf(struck[i], herd).weakTimes : heads[i] ? damage * head : damage;
+        Land(arms, struck[i], dealt, heads[i], weaks[i], from, knock, chance, herd);
         if (i == pierce - 1) end = when[i];
     }
     if (count > 0 && Holds(arms, Item.HeRounds) > 0)
@@ -604,6 +619,14 @@ event Traced
     Trace kind;
 }
 
+// A dash going through the dead, for what's felt and heard: how many it struck this tick.
+event Barged
+{
+    int seat;
+    float3 at;
+    int count;
+}
+
 // Live Wire's arc, from one of the dead to the next.
 event Spell
 {
@@ -635,7 +658,9 @@ system DashThrough(mut Survivor survivor, Match match, Herd herd, Time time)
     if (survivor.dash <= 0) return;
     var side = float3(-survivor.dashWay.z, 0, survivor.dashWay.x);
     var kerosene = Has(survivor, Item.Kerosene);
-    var reach = (survivor.role == Role.Breacher ? BREACHER_DASH_REACH : 1.1) + 0.4 * kerosene;
+    var breacher = survivor.role == Role.Breacher;
+    var reach = (breacher ? BREACHER_DASH_REACH : 1.1) + 0.4 * kerosene;
+    mut var struck = 0;
     var hit = DASH_HIT * (survivor.role == Role.Breacher ? BREACHER_DASH_HIT : 1.0) * Might(survivor);
     foreach (var z in Near(herd, survivor.feet, reach + 0.5))
     {
@@ -647,7 +672,9 @@ system DashThrough(mut Survivor survivor, Match match, Herd herd, Time time)
         // Behind the dash already: passed
         if (Math.Dot(off, survivor.dashWay) < -0.3) continue;
         var away = Math.Dot(off, side) >= 0 ? side : -side;
-        z.entity.Send(Wound { damage = hit, seat = survivor.seat, from = z.at - away - survivor.dashWay * 0.5, knock = 6 / z.size, down = z.size < 1.5,
-                              blow = Blow.Blunt, element = kerosene > 0 ? Element.Fire : Element.None });
+        z.entity.Send(Wound { damage = hit, seat = survivor.seat, from = z.at - away - survivor.dashWay * 0.5, knock = (breacher ? 6 : 8) / z.size,
+                              down = breacher && z.size < 1.5, blow = Blow.Blunt, element = kerosene > 0 ? Element.Fire : Element.None });
+        struck += 1;
     }
+    if (struck > 0) Send(Barged { seat = survivor.seat, at = survivor.feet, count = struck });
 }
