@@ -85,7 +85,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         found = true;
     }
     var playing = lobby.playing && found && mine.ready;
-    // Bled out: watching a friend still standing, from above, till the beacon calls them back
+    // Bled out: watching a friend still standing, from above, till they're back
     mut var watching = false;
     if (playing && mine.life == Life.Gone)
     {

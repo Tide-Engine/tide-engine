@@ -1,8 +1,8 @@
 using Rooms;
 
 // What this machine hears: a low dread under the night that rises with the
-// danger and the vigils, the dead groaning where they are, feet on earth and
-// the ruin's stones, the fires and the beacon's, every gun's shot and load,
+// danger and the bosses, the dead groaning where they are, feet on earth and
+// the ruin's stones, the fires and the ground's, every gun's shot and load,
 // the skills, what each hit sounds like (a Warden's mail rings), a Spitter's
 // retch and its bile, the items taken, the levels, the nights' falls and
 // dawns.
@@ -46,6 +46,7 @@ asset Clip magReload = "sfx/mag_reload.ogg";
 asset Clip shellLoad = "sfx/shell_load.ogg";
 asset Clip pumpClip = "sfx/pump.ogg";
 asset Clip fireBurst = "sfx/fire_burst.ogg";
+asset Clip bellClip = "sfx/bell_lure.ogg";
 asset Clip freezeClip = "sfx/freeze.ogg";
 asset Clip chainZap = "sfx/chain_zap.ogg";
 asset Clip throwClip = "sfx/throw.ogg";
@@ -106,14 +107,14 @@ local singleton Ears
 
 // The bed: the night, the dread under it, the heart when it's bad.
 [Stage(Layers.Hud, 30)]
-view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, query (Survivor survivor) survivors, query (Beacon beacon) beacons)
+view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, Hazards hazards, query (Survivor survivor) survivors)
 {
     Audio.SetEffect(Bus.Master, Limit());
     var dt = me.dt;
     var playing = lobby.playing;
     // The dread: low through the early rounds, the high one later or when the dead are many
     var fighting = match.phase == Phase.Fighting;
-    var tense = fighting && (match.vigil || match.danger >= 3.5 || match.alive >= 150) ? 1.0 : 0.0;
+    var tense = fighting && (match.reckoning || match.danger >= 3.5 || match.alive >= 150) ? 1.0 : 0.0;
     var under = fighting ? 1.0 : 0.15;
     ears.low.clip = musicLow;
     ears.low.loop = true;
@@ -168,15 +169,16 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
             brazierAt = b + float3(0, 1.4, 0);
         }
     }
-    // A lit beacon is a fire too
-    foreach (var row in beacons)
+    // The ground burning is a fire too
+    foreach (var f in hazards.fires)
     {
-        if (!row.beacon.lit || row.beacon.night != match.night) continue;
-        var far = Math.Distance(row.beacon.at, me.ears) - 6;
+        if (f.w <= 0) continue;
+        var spot = On(f.x, f.y);
+        var far = Math.Distance(spot, me.ears) - f.z;
         if (far < brazierFar)
         {
             brazierFar = Math.Max(0, far);
-            brazierAt = row.beacon.at + float3(0, 2.2, 0);
+            brazierAt = spot + float3(0, 0.5, 0);
         }
     }
     ears.brazier.clip = fireLoop;
