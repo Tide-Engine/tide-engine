@@ -43,13 +43,17 @@
   card.onclick = () => { card.style.display = 'none'; };
   document.getElementById('where').textContent = new URL('pad/', game).href.replace(/^https?:\/\//, '');
 
+  // Each view draws at one device pixel to a page pixel unless ?scale says
+  // otherwise (0.75 is lighter still): two views at a TV's full density is
+  // more than most computers draw smoothly.
+  const scale = Number(params.get('scale')) > 0 ? params.get('scale') : '1';
   // The left view hosts; the right joins its room, and stays quiet.
-  views[1].src = new URL('?host', game).href;
+  views[1].src = new URL('?host&scale=' + scale, game).href;
   const waiting = setInterval(() => {
     const room = views[1].contentWindow && views[1].contentWindow.Tide && views[1].contentWindow.Tide.room;
     if (!room) return;
     clearInterval(waiting);
-    views[2].src = new URL('?quiet&join=' + room, game).href;
+    views[2].src = new URL('?quiet&scale=' + scale + '&join=' + room, game).href;
   }, 300);
 
   // A press from a phone is that player's key, as the keyboard sends it.

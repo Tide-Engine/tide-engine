@@ -17,6 +17,14 @@
 <script>
   // ?quiet keeps this page's sound from ever starting: on the TV page
   // (tv.html) both players' views share a screen, and one of them sounds.
+  // ?scale=N draws at no more than N device pixels to a page pixel: the TV
+  // page runs two views at once, and a big screen's full density costs more
+  // than it shows from across a room. The browser stretches the rest.
+  const pixelScale = Number(new URLSearchParams(location.search).get('scale'));
+  if (pixelScale > 0) {
+    const native = window.devicePixelRatio || 1;
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get: () => Math.min(native, pixelScale) });
+  }
   if (new URLSearchParams(location.search).has('quiet') && window.AudioContext) {
     const Sounding = window.AudioContext;
     window.AudioContext = class extends Sounding {
