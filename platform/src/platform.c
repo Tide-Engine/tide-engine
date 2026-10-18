@@ -3656,6 +3656,24 @@ tide_float2 tide_platform_screen_size(void)
     return tide_f2((float)screen_width, (float)screen_height);
 }
 
+tide_int2 tide_platform_target_pixels(const tide_target_size size)
+{
+    const draw_root window = {.width = (float)screen_width, .height = (float)screen_height,
+                              .pixel_width = pixel_width, .pixel_height = pixel_height};
+    const tide_gpu *gpu = tide_window_gpu();
+    static uint32_t seen_epoch;
+    const uint32_t epoch = gpu ? gpu->epoch() : 0;
+    if (!epoch) return tide_i2(0, 0);
+    if (!target_most || epoch != seen_epoch) {
+        target_most = gpu->target_limit();
+        seen_epoch = epoch;
+    }
+    float width, height;
+    int wide, high;
+    bool limited;
+    return target_extent(size, &window, &width, &height, &wide, &high, &limited) ? tide_i2(wide, high) : tide_i2(0, 0);
+}
+
 // As add_text draws it: on the window's pixels, or on those of a render
 // target's image, as many to a logical one as a frame drawn into the window
 // gives it.

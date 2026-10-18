@@ -12,7 +12,9 @@ SUNDAY SUPPER, GRAVEWAKE, the physics-game notes and `GAME_TRIAL_FEEDBACK.md`.
 Inside Out and Foldline were also searched for engine gaps; their remaining
 reports concern game rules, content, presentation or playtest coverage.
 Original observations are historical; this table records current behavior.
-The owner authorized all clear wins, leaving language/API decisions for later.
+The owner authorized all clear wins, including small API completions that follow
+existing copy, capability and naming conventions. Substantive language,
+ownership and policy decisions remain for later.
 It does not approve a new feature merely because a game worked around it.
 
 | Report | Current disposition and evidence |
@@ -33,16 +35,18 @@ It does not approve a new feature merely because a game worked around it.
 | A system writing one component cannot set another entity's same component | Existing row/World write restriction in `check_world_call`; event routing is the current supported contract. Alias/scheduling semantics need review. |
 | Local handlers cannot read match lists/maps/grids | Tick-event journaling intentionally excludes heap payloads, including query rows. The spec says these copies omit them; lifting it needs lifetime/copy-cost design. |
 | `with ownership` in local handlers, local fields through query rows, mutable local query bindings | Explicit current query/handler limitations. Need caller/row ownership and local-write rules. |
-| Spawn accepts component literals, not component values | Current component-composition interface; broadening it needs language/evaluation/ownership rules. |
-| Input/event values cannot be helper parameters | `method_type` explicitly refuses TY_INPUT/TY_EVENT. A language change, not a missing codegen case. |
-| No empty Map literal | `default` is the existing empty-map expression. A collection-literal syntax choice remains for the owner. |
+| Spawn accepts component literals, not component values | Fixed as an authorized API completion: Spawn/Add and Scene.Load extra root components copy existing values/helper results through the existing ordered deferred path, including owned containers and sparse presence. Local fields get fresh defaults; Remove stays type-only. `component_values`, `notes/language.md`. |
+| Event/command values cannot be helper parameters | Fixed: ordinary functions/methods take and return whole payloads under existing value/mut, heap and capability rules; no implicit World or authenticated sender. Numeric payload helpers/factories also work on GPU. `component_values`, `maps`, `commands` and shader pass 23. |
+| Input values cannot be helper parameters | Still needs previous-input/tick context through helper chains: allowing a plain value would break `.down`/`.up` lowering and transitive input-field usage. This is distinct from ordinary payload forwarding. |
+| No empty Map literal | Fixed: contextual `[]` initializes an empty map in fields, locals, assignments, arguments and returns. Nonempty map literals remain unsupported; add entries by key. `maps` and `map_nonempty_literal`. |
 | A CPU drawing helper cannot name a frag/vert | Explicit `check_mesh_draw` restriction: shader component/singleton bindings are the view's implicit context. Needs an explicit-binding/helper capability design. Ordinary unshaded drawing helpers already work. |
 | A GPU helper cannot take a singleton containing Cubemap/Random | Spec deliberately requires resource parameters themselves and excludes 64-bit Random values on GPU. Field projection/specialization would be a new contract. Numeric values and direct texture parameters are supported. |
 | A helper cannot borrow List<Clip> from an asset glob | `element_ok` permits resource collections only as assets. Borrowing resource collections needs ownership/lifetime rules shared with Texture/Mesh; not silently broadened. |
 | No live shape-cast self/layer filtering | Owner-approved follow-up built: live/rewound `RaycastAll` and `CastAll` in both physics packages give deterministically sorted first hits per collider for game filtering, with optional sensors and ignore-Body overloads. Live Box3D closest queries now also support ignore-Body. Layers/masks remain absent; no layer API was approved. `notes/box2d.md`, `notes/box3d.md`. |
 | No arbitrary hull shapes or joints | Still absent from the package API; triangles are supported. Shape/constraint APIs and runtime boundaries need their own approved task. |
 | No instanced skinned draw | Still a future API, not an existing Draw.Instanced overload. Pose/instance transport and batching need renderer/runtime agreement. |
-| No custom fonts, wrapping or Texture size | Still missing public APIs. Font ownership/shaping/measurement, wrapping behavior and resource metadata are API choices. Current measuring/manual layout works. |
+| No Texture size | Fixed: read-only `Texture.size: int2` is metadata-only on CPU/GPU, covers assets/Raw assets, grids and current target aliases, and reports zero for missing images. No upload or texture binding for size-only shaders. `texture_size`, platform shader pass 23 and `notes/textures.md`. |
+| No custom fonts or wrapping | Still missing: font resource ownership/shaping/measurement and wrapping/layout behavior are separate feature contracts. Current measuring/manual layout works. |
 | No quaternion.FromToRotation / float4x4.Scale | Fixed as conventional API completions, authorized by the owner on 2026-10-18. Both are built for CPU and shaders; FromToRotation accepts arbitrary finite direction lengths, returns identity for zero/nonfinite inputs and chooses a deterministic axis for opposite directions. `notes/language.md`, `notes/shaders.md`. |
 | Model materials are not imported | Base color/vertex-color factors already import; embedded textures, full materials and separate render parts do not. Their representation/bindings need design. `notes/assets-and-files.md`. |
 | Separate clips only bind by bone names | Matching now includes complete parent chains and permits differing source defaults. Different-name/proportion/coordinate-space retargeting remains absent and needs an explicit design. |
@@ -55,6 +59,10 @@ It does not approve a new feature merely because a game worked around it.
 | Touch controls, missing voice chat, art/NPC detail, campaign mechanics and human/hardware/network checks | Game/content work, a new networking feature or unmeasured coverage. Not compiler defects or implicitly authorized new runtime systems. Proximity voice remains unbuilt; no claim of human playtesting. |
 
 All reproduced inconsistencies with existing contracts above are now addressed.
+The follow-up API pass also completed the conventional value/metadata gaps:
+final warning-free builds pass all 2,383 native and 2,293 web debug CTests, plus
+the docs build. Detailed contracts and coverage are in notes/language.md and
+notes/textures.md. No CI was dispatched.
 The remaining rows name the concrete decision/feature boundary; they are not
 left as an uninvestigated set of "other possible wins". Private prototype
 workarounds were not mechanically rewritten: those game revisions can follow

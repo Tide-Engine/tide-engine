@@ -83,7 +83,7 @@ system Regenerate(mut Unit unit)
 ```
 
 - A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
-- Parameters are built-in types, structs, components and singletons, and an argument's type matches exactly. Return values are built-in types, structs and components; singleton return values aren't supported.
+- Parameters are built-in types, structs, components, singletons and event/command payloads, and an argument's type matches exactly. Return values are built-in types, structs, components and event/command payloads; singleton returns remain unsupported. Input helper parameters remain unsupported.
 - A function returns a value on every path, unless it returns `void`. The check follows conditions known while compiling, including named bool constants and comparisons of constant integers: `if (true) return 1;` covers its only path. A loop whose condition is always true and has no reachable `break` can't end without returning.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
 - A parameter can have a default value, a call can pass arguments by name, and functions can share a name: see [Default values, names and overloads](#default-values-names-and-overloads).

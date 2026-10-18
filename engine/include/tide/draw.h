@@ -380,6 +380,9 @@ typedef struct tide_target_size {
     float window;
 } tide_target_size;
 
+// The physical image size for a target under the host's current window and device.
+typedef tide_int2 (*tide_target_pixels_fn)(tide_target_size size);
+
 // Whether there's an image of that size: a window to follow, or a width and a
 // height above 0 at a scale that isn't under it. Never for a NaN.
 static inline bool tide_target_size_valid(const tide_target_size size)
@@ -593,6 +596,11 @@ typedef struct tide_texture_ref {
     tide_texture image;
     tide_render_target target; // A rendered image; its id is 0 for CPU pixels
 } tide_texture_ref;
+
+// Base-level pixels, without capturing or uploading the image. Missing images give (0, 0).
+tide_int2 tide_texture_size(tide_texture_ref texture);
+// Borrow the host's resolver during local execution; returns the previous resolver for restoration.
+tide_target_pixels_fn tide_texture_target_pixels(tide_target_pixels_fn resolve);
 
 // A reference's sampling: bit 0 for the nearest pixel (none: blended, as a
 // draw that says nothing is), bit 1 for its smaller images too
@@ -1325,6 +1333,7 @@ typedef struct tide_draw_list {
     // The window's size in logical pixels, supplied before recording (tide_draw_screen_size).
     // With none, window frustum culling and automatic LOD selection are skipped.
     tide_float2 screen;
+    tide_target_pixels_fn target_pixels; // Borrowed frame metadata; no GPU readback
     float lod_pixels;  // How many pixels a level may be off by to be picked; 0 is 1
     uint32_t leveled;  // Whether the frame drew a level: its runs may want gathering (tide_draw_gather_levels)
     uint8_t *level_room; // Where the instances of a draw are sorted by their levels
