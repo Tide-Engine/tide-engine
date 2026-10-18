@@ -68,6 +68,7 @@ tide_e2e_test(math)
 tide_e2e_test(input)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
+tide_e2e_test(prototype_codegen) # Nested foreach receivers, stored vector writes and captured numeric literals
 tide_e2e_test(increments) # ++i and i++ as values, in their turn
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
 tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state

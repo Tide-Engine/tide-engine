@@ -2166,7 +2166,7 @@ static bool element_path_in_place(const expr *target)
     const type kept = is_optional_field(target) ? target->field->type : target->type; // A T? field: what it's kept as
     if (holds_heap(kept) || holds_grid(kept)) why = "it holds text or a list, which an element's bytes can't take as they are";
     for (const expr *e = target; !why && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
-        if (e->kind == E_MEMBER && (!e->field || e->swizzle_len > 0)) why = "it's a part of a value, not a field";
+        if (e->kind == E_MEMBER && !e->field && e->swizzle_len == 0) why = "it's a part of a value, not a field";
         if (e->kind == E_INDEX && e->object->type.kind == TY_GRID) cell = e;
         if (e->kind == E_INDEX && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP) && through_element(e->object)) {
             why = "it's in a list or a map inside the element";

@@ -1,5 +1,59 @@
 # Language features, as tidec builds them
 
+## Compiler gaps found in prototypes (2026-10-18)
+
+This pass fixes three inconsistencies with existing language behavior, without
+new syntax, runtime functions, ABI/layout changes or deterministic hash updates:
+
+- SUNDAY SUPPER's `foreach (var p in kit.placed[model])` generated an address
+  of a returned `tide_list` value. Lists, maps and sets now share receiver
+  lowering that captures the selected indexes/keys once and reads a stored
+  container again each round. It retains no pointer into an enclosing
+  container across a loop body or wait, so growing/replacing outer storage
+  remains safe and inner additions are reached. A computed receiver is
+  evaluated once into an owned value. Existing element-copy, insertion-order,
+  missing-key and bounds rules remain; reading an absent map value adds no key.
+- GRAVEWAKE's integer literals in skinned-draw shader values were captured in
+  temporaries, then emitted again as float literals, leaving the captures
+  unused under `-Werror`. Numeric widening now reads an existing capture,
+  including negative literals and int-to-long conversions; uncaptured
+  constants keep their existing literal output and rounding.
+- CRACKED's `arena.seats[s].velocity.y = 0` was rejected by the element-path
+  checker even though plain stored-field writes and their generated swizzle
+  path already existed (`docs/language/text-and-lists.md` already promised
+  `trail.points[i].x`). Vector lanes and final swizzles now pass that path for
+  list/map/array elements. Readonly/capability, duplicate-lane and intermediate
+  temporary-swizzle checks still apply. Heap-valued field/method/argument
+  restrictions remain unchanged.
+
+`prototype_codegen` reproduces both invalid-C cases with warnings as errors,
+checks live nested list/map/set traversal during inner and outer growth,
+once-only/computed receivers, missing and out-of-range accesses, positive and
+negative numeric captures, vector/compound/swizzle writes and captured draw
+values over repeated local frames. Its waiting match loops replay from both a
+COW snapshot and packed bytes. Two error fixtures retain repeated-lane and
+temporary-swizzle rejection through an indexed element.
+
+Left for later review with the owner: broader helper/query/handler capabilities, whole
+singleton assignment and component-value Spawn; random seeding independent of
+declaration order; GUI keyboard ownership and headless save isolation; new
+draw/physics/resource APIs (including skinned instancing, cast filtering, fonts,
+wrapping and texture metadata). These reports need separate reproduction or
+design/API review beyond the three bugs above; they are not assumed to be new
+requirements. The original reports remain in `notes/cracked.md`,
+`notes/underfoot.md`, `notes/sunday-supper.md` and `notes/gravewake.md`.
+
+Validation: complete Windows native/web debug builds are warning-free with
+clang 23.1.2 and checkout-local Node 24.19.0. The full suites exercised 2,369
+native cases (71.65 s, including 31 Vulkan/OpenGL checks) and 2,280 WASI/web
+cases (185.35 s, including WebGL/WebGPU). Their only failures were the two new
+error fixtures using `// error:` instead of the required `// expect:` header.
+After correction, both fixtures and the final expanded `prototype_codegen`
+target pass on native and WASI; every other full-suite case passed. Existing
+math/random/simulation hash pins are unchanged. All runs used `TIDE_HIDDEN=1`
+and browser runners' mute flags. Other OSes, Android, sanitizers and private
+prototype browser playtests were not run; no CI or deployment was requested.
+
 ## One visibility mechanism for scenes, entities and components (2026-10-15)
 
 The owner approved replacing the separate private-scene API with ordinary
