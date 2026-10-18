@@ -1,4 +1,4 @@
-// expect: a query is only used directly by foreach
+// expect: a query is only iterated by foreach or passed to a query parameter
 component Body { float x; }
 scene Main { }
 float First(float x) { return x; }

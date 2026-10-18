@@ -4171,6 +4171,26 @@ static bool order_named_args(expr *e, const char *names, const int optional)
 static void check_arg_types(checker *c, expr *e, decl *m);
 
 // The arguments of a call of method or function `m`, against its parameters.
+// A borrowed query requires data bindings and filter guarantees from its
+// argument. Extra bindings/filters stay with the caller's selection.
+static bool query_fits(const param *want, const param *source)
+{
+    if (!want || !source || want->query_local != source->query_local) return false;
+    for (int i = 0; i < want->query.count; i++) {
+        const param *p = &want->query.items[i];
+        int matches = 0;
+        for (int j = 0; j < source->query.count; j++) {
+            const param *q = &source->query.items[j];
+            if (!same_type(p->type, q->type)) continue;
+            if (p->mode == PARAM_READ) matches += q->mode == PARAM_READ;
+            else if (p->mode == PARAM_WITH) matches += q->mode != PARAM_WITHOUT;
+            else if (p->mode == PARAM_WITHOUT) matches += q->mode == PARAM_WITHOUT;
+        }
+        if (p->mode == PARAM_READ ? matches != 1 : matches == 0) return false;
+    }
+    return true;
+}
+
 static void check_method_args(checker *c, expr *e, decl *m)
 {
     check_placement_body(c, m);
@@ -4197,7 +4217,12 @@ static void check_method_args(checker *c, expr *e, decl *m)
         c->world_arg = arg;
         c->in_place_ok = p && p->mode == PARAM_MUT && !p->is_out ? arg : NULL; // By its address: nothing is copied
         c->resident_arg = p && p->type.kind == TY_RESIDENT && m->is_extern ? arg : NULL;
-        check_expr_want(c, arg, p ? p->type : T_ERR);
+        if (p && p->type.kind == TY_QUERY) {
+            const expr *previous = c->query_value;
+            c->query_value = arg;
+            check_expr_any(c, arg);
+            c->query_value = previous;
+        } else check_expr_want(c, arg, p ? p->type : T_ERR);
         c->resident_arg = NULL;
     }
     for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
@@ -4276,6 +4301,29 @@ static void check_arg_types(checker *c, expr *e, decl *m)
         const param *p = &m->params.items[i];
         expr *arg = e->args.items[i];
         if (arg == p->default_value) continue;
+        if (p->type.kind == TY_QUERY) {
+            if (c->parallel || c->compare || c->block_depth) {
+                diag_error(arg->at, "a query is borrowed in ordinary control flow, outside parallel steps and callback blocks");
+            }
+            if (arg->type.kind != TY_ERROR && (arg->type.kind != TY_QUERY || arg->bind != BIND_PARAM
+                || !query_fits(p, arg->param))) {
+                diag_error(arg->at, "'" STR_FMT "' needs a compatible borrowed query for '" STR_FMT "'",
+                           STR_ARG(m->name), STR_ARG(p->name));
+                diag_note("pass a query with each requested component binding and filter; bindings match by component type, "
+                          "and extra bindings and filters keep the caller's selection");
+            }
+            if (arg->type.kind == TY_QUERY && arg->param) {
+                for (int k = 0; k < p->query.count; k++) {
+                    const param *need = &p->query.items[k];
+                    if (need->mode != PARAM_READ) continue;
+                    for (int j = 0; j < arg->param->query.count; j++) {
+                        param *given = &arg->param->query.items[j];
+                        if (given->mode == PARAM_READ && same_type(need->type, given->type)) given->read = true;
+                    }
+                }
+            }
+            continue;
+        }
         const bool exact = p->type.kind == arg->type.kind && p->type.decl == arg->type.decl;
         if (!check_out_param(c, m, p, arg) || p->is_out) continue;
         if (p->mode == PARAM_MUT && arg->type.kind != TY_ERROR && p->type.kind != TY_ERROR && !exact) {
@@ -4332,6 +4380,7 @@ static void check_untyped_items(checker *c, expr *arg)
 // else does.
 static bool arg_fits(const expr *arg, const param *p)
 {
+    if (p->type.kind == TY_QUERY) return arg->type.kind == TY_QUERY && arg->bind == BIND_PARAM && query_fits(p, arg->param);
     if (arg->is_out != p->is_out) return false;
     if (arg->is_out) {
         return out_untyped(arg) || arg->type.kind == TY_ERROR || p->type.kind == TY_ERROR || same_type(p->type, arg->type);
@@ -4396,6 +4445,12 @@ static void put_routine(sb *out, const decl *m)
     sb_printf(out, STR_FMT "(", STR_ARG(m->name));
     for (int i = 0; i < m->params.count; i++) {
         const param *p = &m->params.items[i];
+        if (p->mode == PARAM_QUERY) {
+            if (i) sb_put(out, ", ");
+            put_param_types(out, p, 1);
+            sb_printf(out, " " STR_FMT, STR_ARG(p->name));
+            continue;
+        }
         sb_printf(out, "%s%s" STR_FMT " " STR_FMT, i ? ", " : "",
                   p->is_out ? "out " : p->mode == PARAM_MUT ? "mut " : p->mode == PARAM_IN ? "in " : "", STR_ARG(p->type_name),
                   STR_ARG(p->name));
@@ -4445,7 +4500,10 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         c->device_whole_ok = arg;
         c->world_arg = arg;
         c->in_place_ok = arg; // Which parameter takes it isn't known yet: a long array's is 'mut', or it's said below
+        const expr *previous_query = c->query_value;
+        c->query_value = arg; // A query can select an overload that explicitly borrows it.
         check_expr_any(c, arg);
+        c->query_value = previous_query;
     }
     int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
     bool *fits = arena_alloc(sizeof(bool) * (size_t)same.count);
@@ -8552,8 +8610,9 @@ static type check_name(checker *c, expr *e)
         e->param = p;
         p->read = true;
         if (p->type.kind == TY_QUERY && c->query_value != e) {
-            diag_error(e->at, "a query is only used directly by foreach");
-            diag_note("write 'foreach (var row in " STR_FMT ") { ... }'; queries can't be stored or passed on", STR_ARG(e->name));
+            diag_error(e->at, "a query is only iterated by foreach or passed to a query parameter");
+            diag_note("write 'foreach (var row in " STR_FMT ") { ... }', or pass it directly to a synchronous helper's "
+                      "'query (...)' parameter; queries can't be stored or returned", STR_ARG(e->name));
             return T_ERR;
         }
         if (p->type.kind == TY_ACTION) {
@@ -10687,6 +10746,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
         if (skinned_lookup(e->skin_operation) && !step_own(e->args.items[1], loop)) return false;
         break; // Read-only sampling and step-local poses use the executing thread's scratch area.
     case CALL_FUNCTION:
+        if (e->method && e->method->borrows_queries) return false;
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
         if (e->method && (e->method->acts[0] || e->method->acts[1])) return false; // What it sends and spawns is recorded in order
         if (e->method && e->method->starts_tasks) return false; // And the tasks it starts, started in order
@@ -13568,6 +13628,8 @@ static void check_world_param(const decl *m, param *p, const int k)
     }
 }
 
+static void check_entity_query(const checker *c, decl *sys, param *query);
+
 // The types in a method's or function's signature.
 static void check_signature(checker *c, decl *m)
 {
@@ -13591,6 +13653,16 @@ static void check_signature(checker *c, decl *m)
         }
         // `World world`: its caller's World, to read any entity's components through (a game's own type of
         // that name comes first, as for a system's)
+        if (p->mode == PARAM_QUERY) {
+            m->borrows_queries = true;
+            if (m->is_extern || m->is_operator || m->is_interpolate || m->is_audio || m->kind == DECL_SHADER) {
+                diag_error(p->at, "queries are borrowed by ordinary synchronous Tide functions and methods");
+            }
+            check_entity_query(c, m, p);
+            if (k && m->params.items[k - 1].default_value)
+                diag_error(p->at, "a borrowed query has no default: move it before parameters with defaults");
+            continue;
+        }
         const bool world = str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
         c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
@@ -14994,7 +15066,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             refused_binding(row, p);
             continue;
         }
-        if (!check_param_side(sys, p, d)) {
+        if (!query->function_param && !check_param_side(sys, p, d)) {
             p->type = T_ERR;
             refused_binding(row, p);
             continue;
@@ -18568,6 +18640,7 @@ static void check_world_passing(checker *c)
             if (!world_param(site->to) || !world_param(site->from)) continue;
             for (int k = 0; k < site->to->world_uses.count; k++) {
                 const world_use *theirs = &site->to->world_uses.items[k];
+                if (!theirs->through_world) continue;
                 world_use *own = NULL;
                 for (int j = 0; j < site->from->world_uses.count; j++) {
                     if (site->from->world_uses.items[j].component == theirs->component) own = &site->from->world_uses.items[j];
@@ -18595,6 +18668,7 @@ static void check_world_passing(checker *c)
             if (m->kind != DECL_FUNCTION && m->kind != DECL_METHOD) continue;
             for (int j = 0; j < m->world_uses.count; j++) {
                 const world_use *u = &m->world_uses.items[j];
+                if (!u->through_world) continue;
                 m->world_match |= !u->component->is_local;
                 m->world_local |= u->component->is_local;
                 m->world_sets |= u->writes && !u->component->is_local;
@@ -18624,6 +18698,7 @@ static void check_world_passing(checker *c)
         if (from->kind != DECL_SYSTEM) continue; // A function's own callers answer for it
         for (int k = 0; k < to->world_uses.count; k++) {
             const world_use *u = &to->world_uses.items[k];
+            if (!u->through_world) continue;
             const decl *d = u->component;
             if (d->is_local && !is_local_code(from)) {
                 diag_error(at, "'" STR_FMT "' is local, and the match can't use local state: '" STR_FMT "' reaches it through its World",

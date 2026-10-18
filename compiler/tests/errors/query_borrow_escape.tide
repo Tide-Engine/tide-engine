@@ -1,0 +1,4 @@
+// expect: a query is only iterated by foreach or passed to a query parameter
+component Body { int x; }
+void Read(query (Body body) rows) { var copy = rows; }
+scene Main { }

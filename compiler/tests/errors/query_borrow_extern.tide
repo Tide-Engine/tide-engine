@@ -1,0 +1,4 @@
+// expect: queries are borrowed by ordinary synchronous Tide functions and methods
+component Body { int x; }
+extern int Read(query (Body body) rows);
+scene Main { }
