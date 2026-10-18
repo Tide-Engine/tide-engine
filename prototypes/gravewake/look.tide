@@ -32,11 +32,11 @@ local singleton Look
     float time;
     float fov = 70;
     float3 moonWay = float3(0.35, 0.8, 0.45);    // Toward the moon
-    float3 moonColor = float3(0.4, 0.45, 0.63);
-    float3 skyLight = float3(0.06, 0.07, 0.1);
+    float3 moonColor = float3(0.52, 0.57, 0.74);
+    float3 skyLight = float3(0.09, 0.1, 0.13);
     float3 groundLight = float3(0.02, 0.018, 0.02);
     float3 fogColor = float3(0.045, 0.05, 0.07);
-    float fog = 0.009;
+    float fog = 0.007;
     float3 mistColor = float3(0.075, 0.085, 0.11);  // The mist in the low ground, paler than the haze
     float mist = 0.022;
     float4x4 toMoon;
@@ -46,7 +46,7 @@ local singleton Look
     float2 low;                                   // The picture's size in its biggest (nearest) pixels
     float2 full;                                  // ...and in the window's
     float block;                                  // How many of the window's pixels across the biggest is
-    float exposure = 1.6;
+    float exposure = 1.75;
     float hurt;                                   // The red of being hit, 0 to 1
     float downed;                                 // Grey of being down
     float fade;                                   // To black
@@ -292,7 +292,7 @@ frag Bright(Vertex vertex, out Color color, Texture source)
 {
     var seen = Rgb(source.Sample(vertex.uv));
     var most = Math.Max(seen.x, Math.Max(seen.y, seen.z));
-    var over = Math.Max(most - 0.9, 0) / Math.Max(most, 0.0001);
+    var over = Math.Max(most - 1.1, 0) / Math.Max(most, 0.0001);
     color = Color(seen * over, 1);
 }
 
@@ -321,7 +321,7 @@ frag Develop(Vertex vertex, out Color color, Texture source, Lens lens, Look loo
     var block = held ? coarse : Math.Max(1, Math.Round(coarse / Fineness(far)));
     var at = (Math.Floor(px / block) + float2(0.5)) * block;
     var picture = held ? Rgb(hand) : Rgb(source.Sample(at / look.full, Filter.Point));
-    var seen = picture + Rgb(lens.glow.Sample(vertex.uv)) * 0.6;
+    var seen = picture + Rgb(lens.glow.Sample(vertex.uv)) * 0.4;
     var exposed = seen * look.exposure;
     // A filmic curve (Narkowicz's fit of ACES)
     var a = exposed * (exposed * 2.51 + float3(0.03));

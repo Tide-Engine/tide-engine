@@ -39,7 +39,7 @@ string RoleLine(Role role)
     switch (role)
     {
         case Role.Gunner: return "A carbine for any range. Rounds through a whole line of the dead, a dash out of trouble, grenades into the thick of them.";
-        case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, shoulders through them, sets the ground alight.";
+        case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, bowls them over shoulder first, sets the ground alight.";
         case Role.Engineer: return "An SMG whose rounds set items off half again as often, mines where they walk, and a turret that fires on its own, carrying your items.";
     }
     return "";
@@ -90,7 +90,7 @@ string SkillLine(Skill skill)
     switch (skill)
     {
         case Skill.PhaseRound: return "A heavy round through every one of the dead in its line";
-        case Skill.Slide: return "A burst of speed the way you're going, through the dead: they're knocked down. Two charges";
+        case Skill.Slide: return "A burst of speed the way you're going, through the dead: they're thrown aside (the Breacher's bowls them over). Two charges";
         case Skill.Frag: return "A grenade that bursts on the dead or after a moment";
         case Skill.Boot: return "Kick the dead in front off their feet; one down is stamped on";
         case Skill.Leap: return "Leap high and far, and knock down the dead where you land";
@@ -108,7 +108,7 @@ float BaseCooldown(Skill skill)
     switch (skill)
     {
         case Skill.PhaseRound: return 3;
-        case Skill.Slide: return 3.5;
+        case Skill.Slide: return 4.5;
         case Skill.Frag: return 7;
         case Skill.Boot: return 3.5;
         case Skill.Leap: return 7;
@@ -342,7 +342,7 @@ system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time t
     turret.yaw = Math.Atan2(way.x, way.z);
     turret.pitch = Math.Asin(Math.Clamp(way.y, -1, 1));
     turret.wait = 0.09;
-    Land(turret.arms, best, 11 * turret.arms.might, false, gun, 0.6, TURRET_PROC, herd);
+    Land(turret.arms, best, 11 * turret.arms.might, false, false, gun, 0.6, TURRET_PROC, herd);
     var muzzle = gun + way * 0.45;
     Send(Traced { seat = turret.seat, from = muzzle, to = best.chest, kind = Trace.Turret });
     Send(Loosed { seat = turret.seat, weapon = Weapon.Smg, at = muzzle, way = way, source = Source.Turret });
