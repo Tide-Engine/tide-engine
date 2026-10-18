@@ -518,7 +518,8 @@ system BossMuster(mut Boss boss, mut Herd herd)
         hips = boss.at + Math.Rotate(turn, m.hips * m.size) - low, boss = herd.bosses.count,
     };
     herd.bosses.Add(Spots { headRadius = m.headRadius * m.size, chestRadius = m.chestRadius * m.size, weak = boss.at + Math.Rotate(turn, m.weak * m.size) - low,
-                            weakRadius = m.weakRadius * m.size, weakTimes = WeakTimes(boss) });
+                            weakRadius = m.weakRadius * m.size, weakTimes = WeakTimes(boss), base = boss.at - low, columnRadius = m.radius,
+                            columnHigh = (m.head.y + m.headRadius) * m.size });
     boss.slot = herd.bodies.count;
     var cell = HerdCell(boss.at);
     herd.bodies.Add(body);

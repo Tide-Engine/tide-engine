@@ -63,6 +63,138 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### A roll, skills by themselves, shared chests, missions (2026-10-18)
+
+The owner, after playing from above: "maybe instead of dashing its more so a
+rolling that makes you dodge like in dark soul games / i do like mixing this
+with a dark souls style games / objective was not clear, didnt even find it;
+i do like the rotating missions in `The Spell Brigade` where they just give
+you an optional extra enhancement; also i want players to share chests and
+for them to be an option so we all play together for the same goals; sharing
+XP too but i think thats already the case; XP should be very clear and very
+prominent in the UI / i think all actions expect roll and fire should be
+automatic, so firing grenades or maybe even extra abilities we find. similar
+to the drone, its automatic, i think everything other than dodge and main
+weapon firing should be automatic. / for the bosses the hitboxes felt weird,
+they are so big yet shooting at their feet felt like was always a miss. /
+headshots, we need to make these make sense, my gutt is telling me it could
+be based on mouse position, if you shoot while aiming at the head it deals a
+headshot?" How each works is my pick, Provisional. (The Spell Brigade's
+optional missions grant an Augmentation that changes how a spell works, by
+GameGrin's review; here a mission's done for a rarer item pick.)
+
+- **The roll** (kits.tide's `StartRoll`, hands.tide's `Steer` and
+  `Rolling`), in the dash's place for everyone: Space (or Shift, or the right
+  mouse button; a pad's East or South button or left trigger), the way the
+  move points on the screen, else the way they face. `ROLL_SECONDS` (0.5 s),
+  `ROLL_SPEED` 9.5 m/s eased from 1.3 to 0.5 of it (4.2 m); for its first
+  `ROLL_GUARD` (0.36 s, `Guarded`) nothing the dead do lands: claws, bile,
+  bursts, a boss's slam, charge and leap (`TakeHurt` sends `Dodged`, a swish
+  and a pale ring, in place of the blow; no slime, no shove; the screen
+  doesn't redden). No shot while rolling (a load goes on). It goes through
+  the dead without knocking them about (it's a dodge; the dash's blow, the
+  Breacher's bowling over and `Barged` are gone). Two charges, 2.5 s each
+  (the dash's 4.5), an Energy Drink one more; Kerosene sets alight the dead it
+  passes. `Survivor.dash`, `dashes`, `dashWait`, `dashWay` are `roll`,
+  `rolls`, `rollWait`, `rollWay`; `Skill.Slide` is `Skill.Roll`. The body
+  tucks low and turns head over heels the roll's way (people.tide,
+  `ROLL_TURNS`, `ROLL_MIDDLE`), the gun out of the hands for it.
+- **Skills by themselves** (kits.tide's `AutoSkill`): the secondary and the
+  special have no keys; each goes as soon as it's ready and one of the dead
+  is in its reach (`AutoReach`), where it does the most: the Phase Round
+  down the line (`BestLine`) with the most of the dead within `AUTO_LINE`
+  (0.8 m) of it, of lines toward the nearest `AUTO_TRIES` (24); a grenade or
+  a firebomb into the thickest knot (`Thickest`, within `AUTO_KNOT`, 4 m), 3
+  to 18 m (15 for the firebomb) off; the boot at the nearest close by,
+  whichever way, at the head of one down (it stamps the nearest down, where
+  it had taken the first in the list); a mine underfoot with any within 7 m;
+  a turret toward the cursor with any within 16 m. A boss counts as five.
+  With nobody in reach it looks again `AUTO_LOOK` (0.25 s) later, so the
+  herd's gathered only then. They don't take the hands (`Act.Throw`,
+  `Act.Kick`, `Survivor.throwing` and `landed` are gone): a throw leaves the
+  hand at once and the boot lands at once, its leg out for `KICK_POSE`
+  (`Survivor.kicked`). The HUD's three boxes read AUTO, SPACE, AUTO.
+- **Standing by, not E**: `Hands.use` (and `secondary`, `utility`,
+  `special`) are gone. Standing by a chest opens it (`CHEST_SECONDS` 1.5),
+  by the cold beacon lights it (`KINDLE_SECONDS` 2.5, long enough not to by
+  walking past), by a friend who's down raises them (not while rolling).
+  Enter or E still rises again after the end.
+- **Chests are the party's**: opening one sends every survivor `Owed`, a
+  pick of three as at a level, whoever found it ("A CHEST: EVERYONE PICKS AN
+  ITEM"). Four a night whatever the party (`CHESTS_A_NIGHT`; it was five and
+  two more a survivor, each an item for its opener alone).
+- **Missions** (missions.tide): optional, one at a time, only while the
+  night's beacon is cold (lighting it calls the one going off; `ResetMissions`
+  at nightfall and a new run). The first `MISSION_FIRST` (25 s) into a night,
+  then 20 to 35 s after each ends, one appears 22 to 40 m from a standing
+  survivor on open ground, 14 m or more from the beacon: a hold (some
+  survivor in a 6 m circle for 12 s all told, half again as fast for each
+  more, within 50 s), a cull (25 times `Crowd` of the dead killed in a 9 m
+  circle within 45 s, counted in zombies.tide's `TakeWound`), or a hunt (an
+  elite rises there, a Warden 10 times as tough, running, `Zombie.elite`,
+  within 60 s). Done, every survivor's owed a boon (`Owed.boons`,
+  `Survivor.boons`): a pick of three uncommon or rare items, offered before
+  the level's (`RollItem`'s `least`). Out of time, nothing. A panel under the
+  night's, a gold circle of motes on the ground or over the elite, banners
+  and sounds. F1 starts one of each kind in turn (`Cheat` 40 to 42,
+  `Match.devMission`).
+- **Where the objectives are** (missions.tide's `Objectives`, hud.tide's
+  `Pointer`): the cold beacon ("BEACON"), the lit one when a survivor's out
+  of its reach ("BACK TO THE BEACON") and the mission: a bobbing marker over
+  it with its distance while it's on the screen, else an arrow at the
+  screen's edge the way it is, slid clear of the panels.
+- **Experience across the top** (hud.tide): a bar near half the screen wide,
+  LEVEL and the share filled, easing as it fills and glowing as orbs come in.
+  (Experience was the party's already: `Match.xp`.)
+- **Bosses' bulk** (zombies.tide's `Spots.base`, `columnRadius`,
+  `columnHigh`; hands.tide's `ColumnHit`): an upright column from a boss's
+  feet to the top of its head, its radius the mutant's (`Mutant.radius`, 0.7
+  to 1.1 m), struck by any round into it (a body hit), with the spheres for
+  the head, chest, hips and weak spot inside it; the cursor's picking uses it
+  too. A round at the Mauler's feet does a body hit's 43, where it had
+  passed between the spheres.
+- **Headshots by the cursor** (eye.tide's `Pointing`, hands.tide's
+  `BodyFirst` and `Shoot`): on one of the dead, the cursor's line says what
+  it's on, the head, a boss's weak spot or the rest; the aim's the head's
+  middle, the weak spot's or the chest's. A round that strikes one of the
+  dead whose head the aim is within `AIM_HEAD` (1.25) of its radius is a
+  headshot (a weak hit, the same for its weak spot), whatever of it the
+  round goes into first: from behind, through its back, a headshot still
+  (86 where a body hit's 43). The crosshair's gold on a head, orange on a
+  weak spot, warm on the rest.
+- **Tests**: the harness holds the automatic skills (`autos`) and the
+  missions (`missions`) off but in the checks about them; `only_skill` lets
+  one skill go at a time. New: a roll of 4.2 m, through one of the dead
+  untouched, its charges and cooldown; each automatic skill at its mark (the
+  Phase Round, a grenade into a knot 8 m off, the boot and its stamp, a
+  firebomb, a mine, a turret, a turret's Frostbite); a chest opened by
+  standing by it and a pick for both, the one away too; a hold done in 8 s
+  with both in the circle, a cull of three, a hunt's elite shot down; a slam
+  rolled through with no health lost; a round at the Mauler's feet; a
+  headshot from behind by the cursor. The four chests and the 2.5 s beacon.
+  (Archetype numbers moved again: `arch4_Zombie`, `arch5_Beacon`,
+  `arch6_Orb`.)
+- **The bots** don't press skills any more; they roll out of a press of the
+  dead and walk to what they used to press E at (and ignore the missions,
+  but a hunt's elite comes for them). Eight runs alone, four of the pair,
+  25 minutes at most, medians (the flat map's round in brackets): the Gunner
+  916 s (831), the Breacher 1117 s (588), the Engineer 1006 s (552), the
+  pair at the cap (1480), six nights and none down. Their skills now go off
+  whenever ready and in reach, where before they used them sparingly; a
+  player using them by hand often would have been nearer this. A try at
+  harder nights (`NIGHT_STEP` 1.32, `Harm` at `danger^0.45`) didn't shorten
+  the runs (the Gunner and the Engineer lasted longer: more danger is more
+  experience, more might, and the skills scale with it), so it's back as it
+  was; the owner's play first.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  (105 s) pass. `gravewake_perf` (release, which now holds the skills back
+  while its horde gathers, else they thinned it): 2000 of the dead 2.10 ms a
+  tick, 4000 4.09 ms, the skills going off as it's timed. Looked at in
+  standard-host captures: the experience bar, the
+  beacon's and a hold's markers (at the edge, clear of the panels, and over
+  it), the mission's panel and banner, a roll frame by frame. The browser
+  tests weren't run (the owner asked not to).
+
 ### Flat, from above only, no jumping (2026-10-18)
 
 The owner, after trying the view from above: "i think we should make the map
@@ -1366,7 +1498,7 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 
 - **Survivors** (`kits.tide`), picked with 1, 2 or 3 before the run (nothing
   starts till every ready survivor has one, and a joiner picks on joining).
-  Each a gun and three skills, the dash every survivor's Shift.
+  Each a gun, two skills that use themselves and the roll on Space.
 - **The run** (`rounds.tide`, `nights.tide`): night after night, each ended
   by its beacon's vigil and a dawn. The dead come all the time, more and
   tougher as the danger climbs with the clock and the nights, more for a
@@ -1397,7 +1529,7 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   Warden's mail turns is grey.
 - **Down and out.** At 0 health a survivor goes down for 30 s and fights on
   with the pistol, unless a Second Wind puts them straight back up (one used
-  up). Raised by a friend holding E for 3 s. Who bleeds out is back beside
+  up). Raised by a friend standing by them for 3 s. Who bleeds out is back beside
   the beacon when it's lit, or at dawn. When nobody is left standing (alone,
   going down), the game is over.
 - **No power-ups** (since 2026-10-17, below): items come from levels, the
@@ -1461,10 +1593,13 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   `Tick.Survivors`) takes one on `pick1`..`pick3` and sends `Picked`. What a
   round's items do goes through `Arms` (`ArmsOf`, or a turret's copy) and
   `Land`.
-- **Skills**: `Survivor.cooldowns` (secondary, utility, special); `UseSkill`
-  in `Fight`, before the gun. A throw and the boot are acts (`Act.Throw`,
-  `Act.Kick`) that land part way in; the gun waits for them. The dash's
-  charges are `dashes`, `DashCharges` at most.
+- **Skills**: `Survivor.cooldowns` (secondary, roll, special); in `Fight`,
+  before the gun, `StartRoll` on the roll's press and `AutoSkill` for the
+  other two. None takes the hands. The roll's charges are `rolls`,
+  `RollCharges` at most.
+- **Missions** (missions.tide): `Match.mission` and its fields, run by
+  `Missions` at `Tick.Rounds` + 3; a cull's kills and a hunt's elite counted
+  in `TakeWound`; rewards through `Owed`.
 - **Commands**: `Restart` (Rooms' New game, Play, or use on the game-over
   screen) sets `Match.restarting`; the `Tick.Restart` systems clear the dead,
   missiles, turrets, bosses, orbs, chests and the beacon, re-outfit the

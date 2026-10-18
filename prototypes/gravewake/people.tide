@@ -261,24 +261,13 @@ view PoseSurvivor(mut Survivor survivor, Look look)
         }
     }
     survivor.legYaw = Math.Clamp(TurnBetween(survivor.yaw, survivor.feetYaw), -LEG_TURN - 0.4, LEG_TURN + 0.4);
-    // A dash is a shoulder charge: quickly in, held while it lasts, eased out after
-    var dashing = survivor.dash > 0 && survivor.life == Life.Standing;
-    var dashTurn = TurnBetween(survivor.yaw, Math.Atan2(survivor.dashWay.x, survivor.dashWay.z));
-    // The shoulder it leads with is the one that turns the body least from the aim (the left, going ahead or left; the
-    // right, going right), picked as it starts so it can't change sides halfway
-    if (dashing && survivor.bash == 0)
-    {
-        var leftFirst = TurnBetween(0, dashTurn + BASH_SIDE);
-        var rightFirst = TurnBetween(0, dashTurn - BASH_SIDE);
-        survivor.bashTurn = Math.Abs(rightFirst) + 0.3 < Math.Abs(leftFirst) ? rightFirst : leftFirst;
-    }
-    survivor.bash = dashing ? Math.Min(1, survivor.bash + dt / BASH_IN) : Math.Max(0, survivor.bash - dt / BASH_OUT);
-    var bash = Ease(survivor.bash);
+    // Rolling: tucked low and turning head over heels the way it goes (ROLL_TURNS over the roll)
+    var rolling = survivor.roll > 0 && survivor.life == Life.Standing;
     var stepping = !moving && survivor.turning > 0;
     var armed = survivor.role != Role.None;
-    if (survivor.life == Life.Downed)
+    if (survivor.life == Life.Downed || rolling)
     {
-        pose.Sample(MoveOf(woman, speed > 0.2 ? Move.CrouchWalk : Move.CrouchIdle), speed > 0.2 ? survivor.stride / 1.4 * 2.0 : look.time, Playback.Loop);
+        pose.Sample(MoveOf(woman, speed > 0.2 && !rolling ? Move.CrouchWalk : Move.CrouchIdle), speed > 0.2 ? survivor.stride / 1.4 * 2.0 : look.time, Playback.Loop);
     }
     else if (survivor.air > 0.12)
     {
@@ -315,31 +304,29 @@ view PoseSurvivor(mut Survivor survivor, Look look)
     // The legs turned toward the way they go, the body turned back over them to the aim, and bent to its pitch
     var up = float3(0, 1, 0);
     var right = float3(1, 0, 0);
-    // Charging, the whole body turns side-on to the way it goes, the left shoulder first, and drops its weight into it
-    var hipsYaw = Math.Lerp(survivor.legYaw, survivor.bashTurn, bash);
-    var unwind = 1 - bash;
-    if (Math.Abs(hipsYaw) > 0.001)
+    if (Math.Abs(survivor.legYaw) > 0.001 && !rolling)
     {
-        TurnBone(pose, bones.hips, bones.root, quaternion.AxisAngle(up, hipsYaw));
-        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(up, -survivor.legYaw * 0.4 * unwind));
-        TurnBone(pose, bones.torso, bones.abdomen, quaternion.AxisAngle(up, -survivor.legYaw * 0.35 * unwind));
-        TurnBone(pose, bones.chest, bones.torso, quaternion.AxisAngle(up, -survivor.legYaw * 0.25 * unwind));
+        TurnBone(pose, bones.hips, bones.root, quaternion.AxisAngle(up, survivor.legYaw));
+        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(up, -survivor.legYaw * 0.4));
+        TurnBone(pose, bones.torso, bones.abdomen, quaternion.AxisAngle(up, -survivor.legYaw * 0.35));
+        TurnBone(pose, bones.chest, bones.torso, quaternion.AxisAngle(up, -survivor.legYaw * 0.25));
     }
-    if (bash > 0.001)
+    mut var place = float4x4.TRS(survivor.feet, quaternion.AxisAngle(up, survivor.yaw), float3(1));
+    if (rolling)
     {
-        var into = Math.Cross(up, float3(Math.Sin(dashTurn), 0, Math.Cos(dashTurn)));
-        TurnBone(pose, bones.hips, bones.root, quaternion.AxisAngle(into, BASH_LEAN * 0.4 * bash));
-        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(into, BASH_LEAN * 0.35 * bash));
-        TurnBone(pose, bones.torso, bones.abdomen, quaternion.AxisAngle(into, BASH_LEAN * 0.25 * bash));
-        TurnBone(pose, bones.head, bones.neck, quaternion.AxisAngle(into, -BASH_LEAN * 0.4 * bash));
+        // Facing the way it rolls, turning about a point at the hips, low
+        var along = 1 - survivor.roll / ROLL_SECONDS;
+        var spin = Math.TAU * ROLL_TURNS * Ease(along);
+        var middle = survivor.feet + up * ROLL_MIDDLE;
+        var turn = Math.Mul(quaternion.AxisAngle(up, Math.Atan2(survivor.rollWay.x, survivor.rollWay.z)), quaternion.AxisAngle(right, spin));
+        place = Math.Mul(float4x4.TRS(middle - up * (0.35 * Math.Sin(along * Math.PI)), turn, float3(1)), float4x4.Translate(-up * ROLL_MIDDLE));
     }
-    var place = float4x4.TRS(survivor.feet, quaternion.AxisAngle(up, survivor.yaw), float3(1));
     survivor.place = place;
-    var holding = armed && survivor.life != Life.Gone && survivor.act != Act.Throw;
-    // The boot: the right leg out and up, the body leaning back over it (the act's timing, as the arms' kick has it)
-    if (survivor.act == Act.Kick)
+    var holding = armed && survivor.life != Life.Gone && !rolling;
+    // The boot: the right leg out and up, the body leaning back over it
+    if (survivor.kicked < KICK_POSE)
     {
-        var kt = survivor.actTime / Math.Max(0.01, survivor.actLength);
+        var kt = survivor.kicked / KICK_POSE;
         var out = kt < 0.3 ? EaseOut(kt / 0.3) : kt < 0.42 ? 1.0 : 1 - Ease((kt - 0.42) / 0.58);
         TurnBone(pose, bones.upperLegR, bones.hips, quaternion.AxisAngle(right, -1.75 * out));
         TurnBone(pose, bones.lowerLegR, bones.upperLegR, quaternion.AxisAngle(right, 0.35 * out * (1 - out)));
@@ -364,8 +351,6 @@ view PoseSurvivor(mut Survivor survivor, Look look)
     var loading = survivor.act == Act.Reload;
     var t = survivor.actTime / Math.Max(0.01, survivor.actLength);
     if (loading) aim = Math.Normalize(aim - up * 0.55 * Math.Saturate(Math.Min(t * 6, (1 - t) * 6)));
-    // Charging, the gun comes in close across the body, its muzzle down the way they go
-    if (bash > 0.001) aim = Math.Normalize(Math.Lerp(aim, Math.Normalize(Flat(survivor.yaw + dashTurn) - up * 0.7), bash));
     var across = Math.Normalize(Math.Cross(up, aim));
     var pistol = GraspOf(survivor.gun) == Grasp.Pistol;
     mut var grip = shoulder + aim * (pistol ? 0.4 : 0.14) - across * (pistol ? 0.14 : 0.04) - up * (pistol ? 0.04 : 0.12);
@@ -421,10 +406,9 @@ const float GRIP_IN = 0.028;      // The grip from the hand's back, toward the p
 const float GRIP_UP = 0.05;
 const float CURL_RIGHT = 1.1;     // How far each finger joint bends round what the hand holds (radians)
 const float CURL_LEFT = 0.7;
-const float BASH_IN = 0.06;       // Seconds into a shoulder charge's pose, and out of it after the dash
-const float BASH_OUT = 0.22;
-const float BASH_SIDE = 1.1;      // How far side-on the body turns charging (about 63 degrees from the way it goes)
-const float BASH_LEAN = 0.6;      // How far it leans into the charge (radians, hips to chest)
+const float ROLL_TURNS = 1;       // Head over heels, so many times a roll
+const float ROLL_MIDDLE = 0.6;    // ...about a point so high over the feet
+const float KICK_POSE = 0.45;     // Seconds the boot's out
 const float LEG_TURN = 1.3;   // How far the legs turn from the aim toward the way they go (about 75 degrees)
 const float STAND_TWIST = 1.0;  // Standing, how far the aim turns over the feet before they step round (about 57 degrees)
 const float STEP_TURN = 4.5;    // How fast they step round, radians a second

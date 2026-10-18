@@ -190,7 +190,7 @@ view DrawMissile(Missile missile, Lens lens, Look look)
 [Stage(Layers.Scene, 3)]
 view DrawCarried(Survivor survivor, Lens lens, mut Grip grip, Armory armory)
 {
-    if (!lens.made || !armory.made || !survivor.ready || survivor.life == Life.Gone || survivor.role == Role.None) return;
+    if (!lens.made || !armory.made || !survivor.ready || survivor.life == Life.Gone || survivor.role == Role.None || survivor.roll > 0) return;
     lens.scene.Mesh(GunMesh(survivor.gun), survivor.held, Wobble, Steel, Finish { });
     if (survivor.seat >= 0 && survivor.seat < 4) grip.muzzles[survivor.seat] = Point(survivor.held, V3(DataOf(armory, survivor.gun).muzzle));
 }
