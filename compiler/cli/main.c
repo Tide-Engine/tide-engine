@@ -175,7 +175,7 @@ int main(const int argc, char **argv)
     if (!defines) abort();
     build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, its matches' seed, and a run with no window. Each of them once is 25
+    // --connect <address>, the window's size, its matches' seed, its data directory, and a run with no window. Each once is 27
     // arguments
     const char *game_args[32] = {NULL};
     int game_arg_count = 0;
@@ -183,6 +183,7 @@ int main(const int argc, char **argv)
     bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
     bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
+    bool data_directory = false;
     bool server_args = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
@@ -210,6 +211,15 @@ int main(const int argc, char **argv)
         } else if (run && (strcmp(a, "--join") == 0 || strcmp(a, "--connect") == 0) && left >= 1) {
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
+        } else if (run && strcmp(a, "--data-dir") == 0) {
+            if (left < 1 || !argv[i + 1][0] || argv[i + 1][0] == '-') {
+                fprintf(stderr, "tide: --data-dir takes a nonempty save directory, like `--data-dir test-saves`\n");
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = path_absolute(argv[++i]);
+            data_directory = true;
         } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--script") == 0 ||
                            strcmp(a, "--microphone") == 0)) {
             if (left < 1) {
@@ -339,6 +349,11 @@ int main(const int argc, char **argv)
     if ((headless || sized) && (opts.web || opts.android)) {
         fprintf(stderr, "tide: %s on this machine: not with --web or --android\n",
                 headless ? "--capture, --frames and --script run the game with no window," : "--size is for a window");
+        free(defines);
+        return 2;
+    }
+    if (data_directory && (opts.web || opts.android)) {
+        fprintf(stderr, "tide: --data-dir overrides native desktop saves, not web or Android storage\n");
         free(defines);
         return 2;
     }

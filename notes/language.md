@@ -1,5 +1,36 @@
 # Language features, as tidec builds them
 
+## Attached local arrays: final prototype compiler audit (2026-10-18)
+
+GRAVEWAKE's `local Shard[4] pieces` report still reproduced: the parser's
+lookahead recognized the contextual `local` field modifier before a name,
+qualified/generic type or nullable type, but omitted an array's `[`. It parsed
+`local` as the type and `Shard` as the field name, then failed at the bracket.
+`at_local_field` now includes `[`. This restores the existing array/local-field
+contracts; it adds no type, syntax or runtime function. A type actually named
+`local` remains unambiguous because the modifier still requires a following
+identifier. Match layouts, seeded results and hashes are unchanged.
+
+The existing `local_fields` E2E now keeps a vector array on each match component
+and a nested integer array on a match singleton. It checks nonzero defaults
+before a row exists, helper writes, vector/swizzle and out-of-bounds writes,
+separate entities/machines, disconnect resets and local pack/unpack followed by
+continued frames. Its existing plain-world comparison and packed/hash checks
+ensure these arrays remain outside match state. User docs and the spec clarify
+fixed arrays alongside the other supported local field values.
+
+Whole-singleton replacement was a stale report: current checking/codegen accepts
+ordinary `mut` singleton assignment, and `singleton_params` already executes it
+through `Replace`. A fresh direct-system probe also compiles. The documented
+Resident/grid ownership restrictions still apply. The exhaustive report inventory
+and remaining decisions are in `notes/private-prototypes.md`, Engine gap audit;
+the host save-directory fix is recorded in `notes/standard-host.md`.
+
+Final validation passes all 2,372 native and 2,282 web debug CTests, including
+the expanded local-fields fixture and unchanged world/hash comparisons. Builds
+are warning-free and the docs production build passes. Toolchain, backend
+coverage and unavailable platform checks are recorded with the host fix.
+
 ## Follow-up prototype gap audit (2026-10-18)
 
 The first pass was not exhaustive. CRACKED's default singleton Random seeding
@@ -52,14 +83,11 @@ values over repeated local frames. Its waiting match loops replay from both a
 COW snapshot and packed bytes. Two error fixtures retain repeated-lane and
 temporary-swizzle rejection through an indexed element.
 
-Left for later review with the owner: broader helper/query/handler capabilities,
-whole singleton assignment and component-value Spawn; GUI keyboard ownership and
-headless save isolation; new
-draw/physics/resource APIs (including skinned instancing, cast filtering, fonts,
-wrapping and texture metadata). These reports need separate reproduction or
-design/API review beyond the three bugs above; they are not assumed to be new
-requirements. The original reports remain in `notes/cracked.md`,
-`notes/underfoot.md`, `notes/sunday-supper.md` and `notes/gravewake.md`.
+This initial pass left the other reports unverified. The completed follow-up
+inventory in `notes/private-prototypes.md`, Engine gap audit, supersedes that
+temporary list: attached arrays and save isolation are addressed, whole-singleton
+replacement already works, and the remaining restrictions/APIs have their actual
+design boundary recorded there. Original observations remain in the game notes.
 
 Validation: complete Windows native/web debug builds are warning-free with
 clang 23.1.2 and checkout-local Node 24.19.0. The full suites exercised 2,369

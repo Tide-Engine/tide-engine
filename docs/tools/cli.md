@@ -99,6 +99,7 @@ still performs only front-end validation, even with a preview flag.
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
+| `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
@@ -316,6 +317,20 @@ A page can have the browser download a game before any frame shows it: it loads 
 With `?embedded`, the wheel always scrolls the page around the game. On a touchscreen, a swipe that starts on the game scrolls the page too, until the player taps the game: the tap reaches the game, and from then on so does every touch, swipes included, until the player taps the page somewhere else.
 
 ## Without a window
+
+Scripted runs use the game's normal saves unless you select a separate directory:
+
+```sh
+tide run --frames 300 --data-dir test-saves --capture play.png
+```
+
+`--data-dir` overrides `Application.persistentDataPath` and relative file paths.
+The directory and its parents are created when the game uses files. Reusing it
+keeps those saves; remove it when the test is finished. With several `--players`,
+each process uses `player-1`, `player-2`, and so on inside it. Temporary cache
+paths retain their normal location. The flag also works in a desktop window and
+on a built game's command line; it is unavailable on web, Android and dedicated
+servers.
 
 `tide run` can play a game with no window at all, to see what it draws or to check it still runs: from a script, on a build server, or for an agent that shouldn't open windows on your screen. The game runs once, as it was built, and `tide` ends with the game's exit code. Nothing is watched or reloaded.
 

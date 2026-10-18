@@ -49,6 +49,9 @@ TIDE_TEST(local_fields_bake_once_and_draw)
     start();
     TIDE_CHECK(!tide_has_Box_local(&local, BOX4));
     TIDE_CHECK(tide_get_Box_local(&local, BOX4).age == 0.5f); // Nothing written: the defaults
+    const Box_local defaults = tide_get_Box_local(&local, BOX4);
+    TIDE_CHECK(defaults.pieces.at[0].x == 1.0f && defaults.pieces.at[1].z == 6.0f);
+    TIDE_CHECK(local.Arena_local.tiles.at[1].at[0] == 3);
     frame();
     const Box_local four = tide_get_Box_local(&local, BOX4);
     const Box_local three = tide_get_Box_local(&local, BOX3);
@@ -56,6 +59,10 @@ TIDE_TEST(local_fields_bake_once_and_draw)
     TIDE_CHECK(four.bakes == 1 && tide_list_count(four.verts) == 4 && tide_list_count(four.faces) == 4);
     TIDE_CHECK(three.bakes == 1 && tide_list_count(three.verts) == 3);
     TIDE_CHECK(four.age == 1.5f);
+    TIDE_CHECK(four.pieces.at[0].x == 5.0f && four.pieces.at[0].y == 2.0f);
+    TIDE_CHECK(four.pieces.at[1].x == 4.0f && four.pieces.at[1].y == 1.5f && four.pieces.at[1].z == 1.0f);
+    TIDE_CHECK(three.pieces.at[0].x == 4.0f); // Each entity has its own array
+    TIDE_CHECK(local.Arena_local.tiles.at[1].at[0] == 4 && local.Arena_local.tiles.at[0].at[1] == 2);
     TIDE_CHECK(local.Stats.corners == 12); // What functions read through the component
     // Each box drew its own mesh, from its local fields
     uint32_t meshes = 0;
@@ -66,6 +73,7 @@ TIDE_TEST(local_fields_bake_once_and_draw)
     frame();
     TIDE_CHECK(tide_get_Box_local(&local, BOX4).bakes == 1); // Baked once
     TIDE_CHECK(tide_get_Box_local(&local, BOX4).age == 3.5f); // Written in place, frame after frame
+    TIDE_CHECK(tide_get_Box_local(&local, BOX4).pieces.at[0].x == 13.0f);
     TIDE_CHECK(local.Stats.corners == 36);
     TIDE_CHECK(local.tide_fields_Box.rows.count == 3);
 }
@@ -360,6 +368,9 @@ TIDE_TEST(local_fields_start_at_their_defaults_on_every_machine)
     TIDE_CHECK(tide_get_Box_local(&other, BOX4).bakes == 1 && tide_get_Box_local(&other, BOX4).age == 1.5f);
     TIDE_CHECK(tide_get_Box_local(&local, BOX4).age == 4.5f);
     TIDE_CHECK(other.Arena_local.painted == 1 && local.Arena_local.painted == 4);
+    TIDE_CHECK(tide_get_Box_local(&other, BOX4).pieces.at[0].x == 5.0f);
+    TIDE_CHECK(tide_get_Box_local(&local, BOX4).pieces.at[0].x == 17.0f);
+    TIDE_CHECK(other.Arena_local.tiles.at[1].at[0] == 4 && local.Arena_local.tiles.at[1].at[0] == 7);
     tide_local_free(&other);
 }
 
@@ -375,6 +386,8 @@ TIDE_TEST(local_fields_go_when_the_match_is_over)
     TIDE_CHECK(local.Stats.forgotten == 3 && local.Stats.arenas == 3);
     TIDE_CHECK(tide_get_Box_local(&local, BOX4).bakes == 1 && tide_get_Box_local(&local, BOX4).age == 1.5f); // The new one's
     TIDE_CHECK(local.Arena_local.painted == 1);
+    TIDE_CHECK(tide_get_Box_local(&local, BOX4).pieces.at[0].x == 5.0f);
+    TIDE_CHECK(local.Arena_local.tiles.at[1].at[0] == 4);
 }
 
 // The local state as bytes, as hot reloading carries it where a new build is
@@ -395,9 +408,13 @@ TIDE_TEST(local_fields_are_in_the_local_states_bytes)
     TIDE_CHECK(tide_has_Glow_local(&other, BOX3) && !tide_has_Glow_local(&other, BOX5));
     TIDE_CHECK(text_is(&other, tide_get_Label_local(&other, BOX4).text, "label 1"));
     TIDE_CHECK(other.Arena_local.painted == 2);
+    TIDE_CHECK(five.pieces.at[0].x == 11.0f && five.pieces.at[1].y == 2.5f);
+    TIDE_CHECK(other.Arena_local.tiles.at[1].at[0] == 5);
     // And it goes on from there
     frame_on(&other, &world, NULL);
     TIDE_CHECK(tide_get_Box_local(&other, BOX5).bakes == 1 && tide_get_Box_local(&other, BOX5).age == 3.5f);
+    TIDE_CHECK(tide_get_Box_local(&other, BOX5).pieces.at[0].x == 16.0f);
+    TIDE_CHECK(other.Arena_local.tiles.at[1].at[0] == 6);
     tide_local_free(&other);
 }
 

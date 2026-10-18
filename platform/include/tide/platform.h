@@ -246,11 +246,14 @@ void tide_platform_gpu_timing(bool enabled);
 double tide_platform_gpu_ms(void);
 
 // Local files, independent of a window or renderer. The app ID identifies
-// saves across versions. Reinitializing the same ID preserves the provider
+// saves across versions. Reinitializing the same ID and directory preserves the provider
 // and pending storage operations, including when the game hot reloads.
 // Relative paths are under persistent_data_path; native absolute paths use
 // the operating system's permissions. Browser paths stay in its app's roots.
-const tide_io *tide_platform_io_init(const char *app_id);
+// directory overrides the native persistent root (relative to the process's
+// working directory); NULL uses the app's normal save folder. Created with its
+// parents. A web provider requires NULL. Same-app/root reloads reuse it.
+const tide_io *tide_platform_io_init(const char *app_id, const char *directory);
 // The game this program runs, by the same app ID, for a game that never uses
 // files too: what names the folder the renderer keeps what it compiled in
 // across runs (Vulkan's pipelines), the game's temporary cache folder, which
