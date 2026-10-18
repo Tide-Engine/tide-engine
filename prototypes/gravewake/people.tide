@@ -208,7 +208,7 @@ frag Flesh(Corner corner, out Color color, Instance instance, Skin skin, Look lo
 // bends to its pitch, the gun is laid along the line to what it's aimed at, and the arms reach it (Reach): the right
 // hand on the grip, the left along the barrel (cupping the pistol's grip).
 [Stage(Layers.Gather)]
-view PoseSurvivor(mut Survivor survivor, Look look, Ashwick ashwick, Herd herd)
+view PoseSurvivor(mut Survivor survivor, Look look)
 {
     var woman = WomanHero(survivor.seat);
     var body = HeroBody(survivor.seat);
@@ -358,7 +358,7 @@ view PoseSurvivor(mut Survivor survivor, Look look, Ashwick ashwick, Herd herd)
     // on: hands.tide's AimedAt; else 30 m down the look), its top up; pulled in and dipped to load, kicked back by a shot
     var look3 = LookDirection(survivor.yaw, survivor.pitch);
     var shoulder = Point(place, Point(pose.Model(bones.upperArmR), float3(0)));
-    var target = survivor.view != View.Eyes ? AimedAt(survivor, Info(survivor.gun).range, ashwick, herd) : EyeOf(survivor) + look3 * 30;
+    var target = AimedAt(survivor, Info(survivor.gun).range);
     var line = target - shoulder;
     mut var aim = Math.Length(line) > 1.2 && Math.Dot(Math.Normalize(line), look3) > 0.5 ? Math.Normalize(line) : look3;
     var loading = survivor.act == Act.Reload;
@@ -521,9 +521,9 @@ view ShadowSurvivor(Survivor survivor, Lens lens)
 }
 
 [Stage(Layers.Scene, 2)]
-view DrawSurvivor(Survivor survivor, Lens lens, Me me)
+view DrawSurvivor(Survivor survivor, Lens lens)
 {
-    if (!lens.made || !survivor.ready || survivor.life == Life.Gone || (survivor.seat == me.seat && !me.outside)) return;
+    if (!lens.made || !survivor.ready || survivor.life == Life.Gone) return;
     lens.scene.Bounds(float3(0, 1, 0), float3(3, 3, 3))
     {
         lens.scene.SkinnedMesh(HeroBody(survivor.seat), survivor.place, survivor.pose, Wobble, Flesh, Skin { eyes = 0.0, grime = 0.15 });
@@ -535,4 +535,27 @@ local event(Struck struck) FlashStruck(mut Zombie zombie)
 {
     if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Shove) return;
     zombie.flash = struck.killed ? 0.0 : 0.35;
+}
+
+// How a gun is held: a long gun in both hands, the pistol in the right alone.
+enum Grasp { Long, Pistol, Thrown }
+
+Grasp GraspOf(Weapon weapon)
+{
+    return weapon == Weapon.Pistol ? Grasp.Pistol : Grasp.Long;
+}
+
+// A bone turned in the model's axes (about its own joint), its children with it.
+void TurnBone(mut Pose pose, Bone bone, Bone parent, quaternion turn)
+{
+    var p = Unscaled(pose.Model(parent));
+    var q = Math.Normalize(quaternion(float3x3(p.c0.xyz, p.c1.xyz, p.c2.xyz)));
+    var local = pose[bone].rotation;
+    pose[bone].rotation = Math.Mul(Math.Inverse(q), Math.Mul(turn, Math.Mul(q, local)));
+}
+
+// A bone's place with the kit's scale taken out: its axes made a unit long.
+float4x4 Unscaled(float4x4 m)
+{
+    return float4x4(float4(Math.Normalize(m.c0.xyz), 0), float4(Math.Normalize(m.c1.xyz), 0), float4(Math.Normalize(m.c2.xyz), 0), m.c3);
 }

@@ -1,5 +1,24 @@
 # The docs site
 
+Installed terminal editor setup (2026-10-18): the CLI page has an ide section
+and command-table entry. The Emacs and Vim/Neovim sections now start with
+`tide ide <editor>`, explain where to copy its output, matching bundled server
+paths, automatic/manual connections and moving the installation. README and
+the tool READMEs point to the same helper; manual source-checkout instructions
+remain in the tool READMEs for contributors. No navigation or language-spec
+change is needed. The production docs build passes with Node 24.21.0 and the
+existing allowed unstaged-example 404s. CLI/editor/packaging validation is in
+cli-and-packages.md. No deployment or CI was dispatched.
+
+Terminal editor setup (2026-10-18): Editors and the repository README now link
+the new manually installed Emacs mode and Vim/Neovim runtime, with copyable
+configuration and tidels selection. The page distinguishes LSP client support,
+unadapted clickable lenses and IDE-only embedding from basic terminal editing.
+No release installation or tide editors behavior changes. The production docs
+build passes on Node 24.21.0 with the existing allowed unstaged-example 404s;
+editor-host checks and remaining coverage are in notes/editors.md. No deployment
+or CI was requested.
+
 Fly host loss (2026-10-17): the site was down. Its one machine (82d1990b071698,
 release 291) sat on a fra host Fly reported unreachable after its 05:15 UTC
 host-restart incident ("a small number of hosts remain degraded or offline").

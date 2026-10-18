@@ -71,10 +71,6 @@ struct Plan
 
 const float STOREY = 3.12;    // A kit wall's height
 const float CLEARING = 62;    // About how far the clearing reaches from the fire
-const float RUIN_TOP = 6;     // The chapel's rise, the ruin on it
-const float SPIRE_LOW = 4;    // The beacon's spire: its lower tier...
-const float SPIRE_TOP = 9;    // ...and its top, where the beacon burns
-const float RAVINE_DEPTH = 3; // The ravine across the south
 
 // How far the clearing reaches from the fire, toward a turn about up (0 east, a quarter north).
 float Reach(float angle)
@@ -94,109 +90,35 @@ float3 EdgeAt(float angle, float out)
     return On(Math.Cos(angle) * far, Math.Sin(angle) * far);
 }
 
-// A flat top `top` high within `r` of `c`, falling away over `w` (a cliff when `w` is short): 0 to 1 of the way up.
-float Mesa(float2 at, float2 c, float r, float w)
-{
-    return 1 - Math.SmoothStep(r, r + w, Math.Distance(at, c));
-}
-
-// A ramp from `a` (as high as what it climbs to) down to `b`, `half` wide each side: 0 to 1 of the way up.
-float Ramp(float2 at, float2 a, float2 b, float half)
-{
-    var ab = b - a;
-    var t = Math.Saturate(Math.Dot(at - a, ab) / Math.Dot(ab, ab));
-    var side = Math.Distance(at, a + ab * t);
-    return (1 - t) * (1 - Math.SmoothStep(half, half + 0.8, side));
-}
-
-// A round hill or, with a negative height, a hollow.
-float Bump(float2 at, float2 c, float r, float h)
-{
-    var d = Math.Saturate(Math.Distance(at, c) / r);
-    return h * (1 - d * d * (3 - 2 * d));
-}
-
-// A ramp from `a` (as high as `top`) down to `b`, `half` wide each side, its sides cliffs: the ground `h` there
-// A ramp from `a` (at `top`) straight down to the ground at `b`, `half` wide each side, laid over `h`: down to `below`,
-// the ground before what it climbs was raised, so the rise's own edge doesn't bend it (a ramp that met `h` there was
-// too steep for the dead where it left the top); and never under `h`, so the top stays flat.
-float RampTo(float h, float below, float2 at, float2 a, float2 b, float half, float top)
-{
-    var ab = b - a;
-    var t = Math.Dot(at - a, ab) / Math.Dot(ab, ab);
-    var along = Math.Saturate(t);
-    var side = Math.Distance(at, a + ab * along);
-    var weight = (1 - Math.SmoothStep(half, half + 0.8, side)) * (1 - Math.SmoothStep(1.0, 1.1, t));
-    // At the top from `a` till RAMP_FLAT of the way: out past the rise's edge, whose own blend climbs faster than a ramp
-    // (it had left a steep lip at the head of each ramp, which a survivor could only jump)
-    var slope = Math.Saturate((along - RAMP_FLAT) / (1 - RAMP_FLAT));
-    return Math.Lerp(h, Math.Max(h, Math.Lerp(top, below, slope)), weight);
-}
-
-const float RAMP_FLAT = 0.2;
 const float GRAVESTONE_SCALE = 0.75;    // Gravestones, smaller than the kit's: nothing to walk round, stepped past
 const float BEACON_SCALE = 1.5;         // The beacons' braziers, against the fires'
 
-// How far into a ditch along `a` to `b` a place is: 1 on its floor (`half` each side), 0 past its banks.
-float Ditch(float2 at, float2 a, float2 b, float half, float fall)
-{
-    var ab = b - a;
-    var along = Math.Saturate(Math.Dot(at - a, ab) / Math.Dot(ab, ab));
-    return 1 - Math.SmoothStep(half, half + fall, Math.Distance(at, a + ab * along));
-}
-
-// The landmarks' places (each as big as it was when the clearing was 44 m: they moved out with its edge)
-const float2 CHAPEL = float2(0, 42);
-const float2 SPIRE = float2(43, -4);        // The lower tier's middle
-const float2 BEACON = float2(46, -1);       // The top's
+// The landmarks' places, each with one of the five beacons (nights.tide's BeaconPlace)
+const float2 CHAPEL = float2(0, 42);        // The ruin's middle
+const float2 CAIRN = float2(44, -2);        // A ring of boulders
 const float2 GRAVES = float2(-38, 4);
 const float2 STONES = float2(-36, 34);
-const float2 RAVINE_A = float2(-48, -38);
-const float2 RAVINE_B = float2(45, -32);
-// The ramps: from the top end down to the foot
-const float2 WEST_RAMP_A = float2(-8, 35);
-const float2 WEST_RAMP_B = float2(-21, 24);
-const float2 EAST_RAMP_A = float2(8, 35);
-const float2 EAST_RAMP_B = float2(20, 25);
-const float2 SPIRE_RAMP_A = float2(31.5, -9);
-const float2 SPIRE_RAMP_B = float2(22, -15);
-const float2 BEACON_RAMP_A = float2(43.5, -4.5);
-const float2 BEACON_RAMP_B = float2(36, -11);
+const float2 OAK = float2(-2, -36);         // A great dead oak
 
-// The ground's height at a place: the same everywhere it's asked, in the match and in the picture.
+// The ground's height at a place: the same everywhere it's asked, in the match and in the picture. Near flat (the
+// owner, 2026-10-18: "make the map mostly flat now"; the chapel's rise, the spire's two tiers, their ramps, the
+// graveyard's hollow and the ravine are gone): a gentle roll, laid flat round the fire and under the ruin, rising into
+// the trees past the edge.
 float Ground(float x, float z)
 {
     var at = float2(x, z);
     var far = Math.Length(at);
-    // Rolling ground, laid flat round the fire
-    mut var h = (Math.Perlin(at * 0.045 + float2(3.1, 7.7)) * 1.1 + Math.Perlin(at * 0.13 + float2(11, 5)) * 0.35) * Math.SmoothStep(6, 12, far);
-    // The graveyard sunk in its hollow, the ravine cut across the south
-    h += Bump(at, GRAVES, 11, -2.4);
-    h -= RAVINE_DEPTH * Ditch(at, RAVINE_A, RAVINE_B, 2.5, 9);
-    // Up into the trees past the edge
+    mut var h = (Math.Perlin(at * 0.045 + float2(3.1, 7.7)) * 0.35 + Math.Perlin(at * 0.13 + float2(11, 5)) * 0.1) * Math.SmoothStep(6, 12, far);
+    h *= Math.SmoothStep(9, 13, Math.Distance(at, CHAPEL));
     h += 4 * Math.SmoothStep(-6, 6, far - Reach(Math.Atan2(z, x)));
-    // The chapel's rise, a ramp down each side
-    var below = h;
-    h = Math.Lerp(h, RUIN_TOP, Mesa(at, CHAPEL, 12, 1.5));
-    h = RampTo(h, below, at, WEST_RAMP_A, WEST_RAMP_B, 2.5, RUIN_TOP);
-    h = RampTo(h, below, at, EAST_RAMP_A, EAST_RAMP_B, 2.5, RUIN_TOP);
-    // The beacon's spire: the lower tier and its ramp, then the top and its ramp up from the tier
-    var low = h;
-    h = Math.Lerp(h, SPIRE_LOW, Mesa(at, SPIRE, 13, 1.4));
-    h = RampTo(h, low, at, SPIRE_RAMP_A, SPIRE_RAMP_B, 2.5, SPIRE_LOW);
-    var tier = h;
-    h = Math.Lerp(h, SPIRE_TOP, Mesa(at, BEACON, 4.5, 1.0));
-    h = RampTo(h, tier, at, BEACON_RAMP_A, BEACON_RAMP_B, 1.8, SPIRE_TOP);
     return h;
 }
 
-// Whether a place is on one of the landmarks or their ramps (by `room` metres): nothing grows or is left there.
+// Whether a place is on one of the landmarks (by `room` metres): nothing grows there.
 bool OnLandmark(float2 at, float room)
 {
-    if (Math.Distance(at, CHAPEL) < 13.5 + room || Math.Distance(at, SPIRE) < 14.5 + room) return true;
-    if (Ditch(at, WEST_RAMP_A, WEST_RAMP_B, 3.3 + room, 0) > 0 || Ditch(at, EAST_RAMP_A, EAST_RAMP_B, 3.3 + room, 0) > 0) return true;
-    if (Ditch(at, SPIRE_RAMP_A, SPIRE_RAMP_B, 3.3 + room, 0) > 0) return true;
-    return false;
+    return Math.Distance(at, CHAPEL) < 9.5 + room || Math.Distance(at, CAIRN) < 7 + room || Math.Distance(at, OAK) < 5 + room
+           || Math.Distance(at, STONES) < 9 + room;
 }
 
 float3 On(float x, float z)
@@ -413,18 +335,16 @@ Plan MakePlan()
     plan.starts.Add(On(-3.4, 0.4));
     plan.starts.Add(On(3.4, 0.4));
 
-    // ---- North: the chapel's ruin on its rise, its walls half down, its floor still there; the ramps up from the
-    // south-west and the south-east ----
+    // ---- North: the chapel's ruin, its walls half down, its floor still there ----
     var cz = CHAPEL.y;
-    Pave(plan, Piece.Floor_UnevenBrick, -6, cz - 4, 6, cz + 4, RUIN_TOP + 0.02);
-    StoneWall(plan, float2(-4, cz + 4), float2(4, cz + 4), (1L << 1) | (1L << 2), 0, RUIN_TOP);
-    StoneWall(plan, float2(-6, cz - 4), float2(-6, cz + 2), 0, 1L << 0, RUIN_TOP);
-    StoneWall(plan, float2(6, cz - 2), float2(6, cz + 2), 1L << 0, 0, RUIN_TOP);
-    WallTorch(plan, float3(-2, RUIN_TOP + 2.0, cz + 3.69), 2);
-    WallTorch(plan, float3(2, RUIN_TOP + 2.0, cz + 3.69), 2);
+    Pave(plan, Piece.Floor_UnevenBrick, -6, cz - 4, 6, cz + 4, 0.02);
+    StoneWall(plan, float2(-4, cz + 4), float2(4, cz + 4), (1L << 1) | (1L << 2), 0, 0);
+    StoneWall(plan, float2(-6, cz - 4), float2(-6, cz + 2), 0, 1L << 0, 0);
+    StoneWall(plan, float2(6, cz - 2), float2(6, cz + 2), 1L << 0, 0, 0);
+    WallTorch(plan, float3(-2, 2.0, cz + 3.69), 2);
+    WallTorch(plan, float3(2, 2.0, cz + 3.69), 2);
 
-    // ---- West: the old graveyard sunk in its hollow, a brazier at its edge (its iron fences are gone: they were in the
-    // way) ----
+    // ---- West: the old graveyard, a brazier at its edge (its iron fences are gone: they were in the way) ----
     for (var i = 0; i < 10; i++)
     {
         var h = Math.Hash(int2(i, 77));
@@ -442,9 +362,17 @@ Plan MakePlan()
         Standing(plan, STONES + float2(Math.Cos(turn), Math.Sin(turn)) * 6.5, turn * 1.7, i, 1.0 + (i % 3) * 0.1);
     }
 
-    // (East: the beacon's spire. The cart, the wagon and the second fire by them went with the camp's clutter.)
+    // ---- East: the cairn, a ring of great boulders open toward the fire, a beacon in it ----
+    for (var i = 0; i < 6; i++)
+    {
+        var turn = (i + 0.5) * Math.TAU / 7 - Math.PI * 0.5 + Math.TAU / 7;
+        Standing(plan, CAIRN + float2(Math.Cos(turn), Math.Sin(turn)) * 4.4, turn * 2.3, i + 1, 1.0 + (i % 2) * 0.25);
+    }
 
-    // ---- The ravine's banks, boulders along them; and big stones about the clearing, to stand behind ----
+    // ---- South: a great dead oak, a beacon beside it ----
+    Tree(plan, Piece.DeadTree_2, On(OAK.x, OAK.y), 0.8, 1.0);
+
+    // ---- Big stones about the clearing, to stand behind ----
     Standing(plan, float2(-25, -27), 0.3, 0, 1.4);
     Standing(plan, float2(6, -24), 2.0, 2, 1.2);
     Standing(plan, float2(28, -43), 4.1, 1, 1.5);
@@ -462,7 +390,7 @@ Plan MakePlan()
             var turn = Unit01(h, 0) * Math.TAU;
             var far = 2 + Unit01(h, 10) * 6.5;
             var at = On(groves[g].x + Math.Cos(turn) * far, groves[g].y + Math.Sin(turn) * far);
-            if (!Open(plan, at, 2.6) || OnLandmark(at.xz, 1) || Ditch(at.xz, RAVINE_A, RAVINE_B, 4, 0) > 0) continue;
+            if (!Open(plan, at, 2.6) || OnLandmark(at.xz, 1)) continue;
             var kind = (h >> 20) % 5;
             var piece = kind == 0 ? Piece.CommonTree_1 : kind == 1 ? Piece.CommonTree_3 : kind == 2 ? Piece.Pine_3 : kind == 3 ? Piece.Pine_5 : Piece.CommonTree_5;
             Tree(plan, piece, at, Unit01(h, 4) * Math.TAU, 0.95 + Unit01(h, 14) * 0.35);

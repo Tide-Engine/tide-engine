@@ -7,6 +7,7 @@
 // to measure.
 //   gravewake_perf [count] [ticks]
 #include "gravewake_perf.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -76,9 +77,9 @@ int main(int argc, char **argv)
         s.items.at[Item_GunDrone] = 2;
         s.items.at[Item_EmberRing] = 1;
         s.items.at[Item_LiveWire] = 1;
-        s.pitch = -0.1f;
         tide_set_Survivor(&world, e, s);
         held[seat].attack = true;
+        held[seat].aim = (tide_float3){s.feet.x + sinf(s.yaw) * 20, s.feet.y + 1.0f, s.feet.z + cosf(s.yaw) * 20};    // Out into the horde
     }
     int states[8] = {0};
     for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) states[TIDE_AT(&world, arch6_Zombie, Zombie, r).state & 7]++;

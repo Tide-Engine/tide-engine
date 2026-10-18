@@ -51,7 +51,6 @@ component Survivor
     bool landed;                     // This throw or kick has been dealt
     Skill throwing;                  // What's thrown
     float steady;                    // Seconds since the last shot, for the spread's bloom and the run
-    int airJumps;                    // Jumps taken in the air since the ground (Spring Boots)
     bool leaping;                    // In the air from a leap: it slams down where it lands
     float dash;                      // Seconds left of a dash, and which way
     int dashes = 2;                  // Dash charges ready (DASHES)
@@ -59,10 +58,9 @@ component Survivor
     float3 dashWay;
     float slimed;                    // Seconds left slowed by a Spitter's bile
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
-    View view;                       // How their player sees (Hands.view)
-    float3 aim;                      // From above: what the cursor's on (Hands.aim)
+    float3 aim;                      // What the cursor's on (Hands.aim)
     // The items (items.tide): stacks of each, the three on offer at a level while `choosing`
-    int[24] items;
+    int[23] items;
     Item[3] offers;
     bool choosing;
     int pending;                     // Picks owed: a level's, a boss's, after the one on offer
@@ -96,23 +94,20 @@ component Survivor
 
 input Hands
 {
-    [Clamp(-1, 1)] float2 move;
-    [Clamp(-0.5, 0.5)] float2 look;
+    [Clamp(-1, 1)] float2 move;      // Across and up the screen
     bool attack;                     // The gun
     bool secondary;                  // The skills: right mouse, Shift, Q
     bool utility;
     bool special;
     bool use;
     bool reload;
-    bool jump;
     bool pick1;                      // An item, or a survivor before the first wave
     bool pick2;
     bool pick3;
-    View view;                       // How its player sees: over the shoulder, the shots aim where its camera's crosshair is
-    float3 aim;                      // ...from above, at what the cursor's on (eye.tide's Pointing)
+    float3 aim;                      // What the cursor's on, where the shots go (eye.tide's Pointing)
     [Absolute] bool ready;
 
-    Sample(Devices devices, Lobby lobby, Feel feel, Me me)
+    Sample(Devices devices, Lobby lobby, Me me)
     {
         ready = lobby.playing;
         if (!lobby.playing) return;
@@ -121,38 +116,24 @@ input Hands
         move.x = (keys.d.pressed ? 1 : 0) - (keys.a.pressed ? 1 : 0);
         move.y = (keys.w.pressed ? 1 : 0) - (keys.s.pressed ? 1 : 0);
         move += pad.leftStick;
-        // From above, the mouse and the right stick move the cursor, not the eye
-        if (feel.view == View.Above) aim = me.pointed;
-        else
-        {
-            if (Cursor.locked) look = devices.mouse.delta * feel.sensitivity;
-            look += pad.rightStick * float2(0.055, 0.045);
-        }
+        // The mouse and the right stick move the cursor
+        aim = me.pointed;
         attack = devices.mouse.left.pressed || pad.rightTrigger > 0.4;
         secondary = devices.mouse.right.pressed || pad.leftTrigger > 0.4;
         utility = keys.leftShift.pressed || pad.leftShoulder.pressed;
         special = keys.q.pressed || pad.rightShoulder.pressed;
         use = keys.e.pressed || pad.buttonWest.pressed;
         reload = keys.r.pressed || pad.buttonWest.pressed;
-        jump = keys.space.pressed || pad.buttonSouth.pressed;
         pick1 = keys.digit1.pressed || pad.dpad.left.pressed;
         pick2 = keys.digit2.pressed || pad.dpad.up.pressed;
         pick3 = keys.digit3.pressed || pad.dpad.right.pressed;
-        view = feel.view;
     }
 }
-
-// How a survivor's player sees: through the eyes, from over the shoulder, or from above, the camera high behind them
-// looking down, north up the screen, the shots going where the cursor is (the owner, 2026-10-18: "I want to play with a
-// top down camera too").
-enum View { Eyes, Shoulder, Above }
 
 // This machine's feel for the controls.
 local singleton Feel
 {
-    float sensitivity = 0.0022;
-    View view = View.Shoulder;       // V goes round them: over the shoulder, from above, through the eyes
-    float zoom = 1;                  // From above, how far off the camera is (the mouse's wheel)
+    float zoom = 1;                  // How far off the camera is (the mouse's wheel)
 }
 
 // Who plays whom: a seat for each of the four.
@@ -171,11 +152,10 @@ const float BODY_RADIUS = 0.32;
 const float BODY_HIGH = 1.8;
 const float EYE_HIGH = 1.62;
 const float DOWNED_EYE = 0.55;
-const float WALK_SPEED = 5.6;       // Any way, firing or not
-const float SPRINT_SPEED = 7.0;     // Running: whenever a survivor goes forward and hasn't fired for a moment
+const float WALK_SPEED = 5.6;       // Firing
+const float SPRINT_SPEED = 7.0;     // Running: whenever a survivor moves and hasn't fired for a moment
 const float STEP_UP = 0.45;
 const float GRAVITY = 24;
-const float JUMP_SPEED = 7.0;
 const float REACH = 2.4;
 
 float3 LookDirection(float yaw, float pitch)
@@ -366,15 +346,15 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
 // Where each part of the clearing is seen from, for the development walks: x, z and the way to look.
 float4 Showplace(int place)
 {
-    mut var at = float3(0, -6, 0);                          // South of the fire, looking north to the chapel's rise
+    mut var at = float3(0, -6, 0);                          // South of the fire
     switch (place)
     {
-        case 1: at = float3(0, CHAPEL.y - 3, Math.PI); break;                       // On the chapel's rise, looking out over the clearing
-        case 2: at = float3(GRAVES.x + 12, GRAVES.y, -Math.PI * 0.5); break;        // Above the sunken graveyard
-        case 3: at = float3(BEACON.x, BEACON.y, -Math.PI * 0.5); break;            // The beacon's top, back toward the fire
-        case 4: at = float3(SPIRE.x - 5, SPIRE.y - 3, -Math.PI * 0.6); break;      // The spire's lower tier
-        case 5: at = float3(WEST_RAMP_B.x + 2, WEST_RAMP_B.y - 2, 0.8); break;     // The foot of the chapel's west ramp
-        case 6: at = float3(0, -35, Math.PI * 0.5); break;                          // In the ravine, along it
+        case 1: at = float3(0, CHAPEL.y - 7, Math.PI); break;                       // Before the chapel's ruin
+        case 2: at = float3(GRAVES.x + 12, GRAVES.y, -Math.PI * 0.5); break;        // By the graveyard
+        case 3: at = float3(CAIRN.x - 8, CAIRN.y, Math.PI * 0.5); break;           // Before the cairn
+        case 4: at = float3(OAK.x, OAK.y + 7, Math.PI); break;                     // By the dead oak
+        case 5: at = float3(20, 25, 0.8); break;                                   // Between the fire and the ruin, east
+        case 6: at = float3(-20, -30, 0); break;                                   // South-west, among the groves
         case 7: at = float3(STONES.x + 9, STONES.y - 7, -0.9); break;              // By the standing stones
     }
     return float4(On(at.x, at.y), at.z);

@@ -63,6 +63,76 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Flat, from above only, no jumping (2026-10-18)
+
+The owner, after trying the view from above: "i think we should make the map
+mostly flat now and just not be able to jump; we should also remove all
+other points of views and stick to top down". Done as asked; the landmarks
+that were heights became my picks (Provisional): a cairn and a dead oak.
+
+- **The ground** (plan.tide's `Ground`): a gentle roll (Perlin, 0.35 and 0.1
+  m, where it had been 1.1 and 0.35), laid flat round the fire and under the
+  ruin, rising into the trees past the edge as before. The chapel's rise, the
+  spire's two tiers, the four ramps, the graveyard's hollow and the ravine are
+  gone, with `Mesa`, `Ramp`, `RampTo`, `Bump` and `Ditch`. The cliff
+  machinery (`STEEP`, `Passable`, the dead's piling and `CLIMB_COST`) stays,
+  with nothing left to use it but the rise past the edge.
+- **The landmarks**, each still a beacon's: the chapel's ruin on level ground
+  (its floor and walls at 0); the graveyard, level; the standing stones; the
+  cairn east (`CAIRN`, where the spire was: six boulders in a ring 4.4 m
+  across, open toward the fire, round the beacon); a great dead oak south
+  (`OAK`, where the ravine ran, the beacon beside it). From above, the oak at
+  twice its size hid the survivor whole, and the cairn's boulders at 1.7 to 2
+  times crowded the beacon: the oak is at its own size, the boulders 1 to
+  1.25. The first night may now be any beacon (the spire's top had been
+  kept for later as the narrowest). The worn paths run to the landmarks.
+  F6's walks visit them.
+- **No jumping**: `Hands.jump`, `Survivor.airJumps`, `JUMP_SPEED` and the
+  Spring Boots item (a jump in the air) are gone; `ITEM_COUNT` is 23. The
+  Leap and Blink skills, which no survivor has, stay.
+- **Only the view from above**: `View`, `Feel.view` and V, `Hands.look` and
+  `Feel.sensitivity`, `ShoulderFrom`, the first-person eye's bob, dip, recoil
+  and widening at a run, and the first-person arms (`fp.tide`, `art/fp`,
+  CoinCoin's CC BY 4.0 kit, so its credit is gone from the title and
+  `art/CREDITS.md`; held.tide's `DrawHands`; look.tide's `Lens.hands` pass,
+  `Layers.Hands` and `Develop`'s compositing of it) are gone. `AimedAt` is
+  the aim no further than the gun's range, `AimFrom` from the gun toward it;
+  moving and the dash go by the screen (`TOP_YAW`), running is any way; a
+  throw always lands at the aim. `Me.playing` is whether a survivor is seen
+  (not the title, nor F9's views); `Me.ears` is where this machine hears from
+  (the survivor's head while playing), which the sounds' distances and a
+  blast's shake now use: from above they had measured from the camera, 13 m
+  up, so nothing was ever near (a fault of the last round's view from
+  above). The mouse's wheel zooms always.
+- **What's in the way is cut away** (look.tide's `InTheWay`): from above,
+  anything tall south of a survivor (a tree, the oak, a ruin's wall) stands
+  between them and the camera. `KitLit` and `KitCutout` don't draw what's in
+  a cone from the eye to this machine's survivor (`Look.focus`, a metre over
+  their feet), `CUT_RADIUS` (2.6 m) across at the survivor, ragged at its
+  edge; shadows are drawn as before. Friends under a tree are found by their
+  rings.
+- **Tests**: shots, throws and the dash go where the cursor is: the harness's
+  `put` sets the aim (`Hands.aim`) with the survivor's turn, and dashes with
+  no way pressed go the way they face; the over-the-shoulder shot, Spring
+  Boots, the five high places and their piles, and the ramps and jumping at
+  the rise's face are gone. The soak's longest any hunted is 32 s of 180,
+  from 164.
+- **The bots** set the aim at their target (a hand's error on it), move in
+  the screen's axes, take no ramps and don't jump when stuck. Eight runs
+  alone, four of the pair, 25 minutes at most, medians (the hordes' round in
+  brackets): the Gunner 831 s (576), the Breacher 588 s (424), the Engineer
+  552 s (616), the pair 1480 s, the cap (591), three nights. With no cliffs
+  to be cornered under or ramps to climb, the bots hold out longer; people
+  seeing all round them from above likely will too. The levers are as before
+  (`REGEN_RATE`, `Harm`, the rates).
+- **Cost** (`gravewake_perf`, release): 2000 of the dead 1.88 ms a tick, 4000
+  4.14 ms; packed, 1.70 MB at 4000.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  (102 s) pass; the release page builds (21.1 MB, the arms' kit gone). Looked
+  at in standard-host captures from above: the camp, each landmark by F6's
+  walks (the oak and the cairn twice, after shrinking them), the cut-away
+  through the oak. The browser tests weren't run (the owner asked not to).
+
 ### Hordes, and a view from above (2026-10-18)
 
 The owner, after the third round: "i think zombies should spawn in "hordes"
@@ -1360,17 +1430,15 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   from the fire; the forest past it is drawn but nobody's ground. The five
   beacons' braziers are the plan's (`BeaconPlace`, nights.tide, from the
   landmarks' constants), each with a box.
-- **The ground is one function too**, `Ground(x, z)` (`plan.tide`): Perlin
-  rolling ground laid flat round the fire, the graveyard's hollow (`Bump`),
-  the ravine (`Ditch`), the chapel's rise and the spire's two tiers (`Mesa`,
-  short sides) with their ramps (`RampTo`), and a rise into the trees past
-  the edge. Nothing of it is stored but each nav cell's middle as bytes
+- **The ground is one function too**, `Ground(x, z)` (`plan.tide`): a
+  gentle Perlin roll laid flat round the fire and under the ruin, and a rise
+  into the trees past the edge (it was hills, a rise, a spire and a ravine
+  till 2026-10-18, above). Nothing of it is stored but each nav cell's middle as bytes
   (`Ashwick.heights`, for the dead's way): the match asks it where feet, the
   dead, drops, rounds and grenades meet the ground, and the picture draws it
   as a 193 × 193 heightfield at 1.25 m (`MakeShapes`), with rock where it's
   steep, casting the moon's shadows. Survivors can't walk up more than 0.75 m
-  a metre (`Passable`), so cliffs are climbed by ramp or not at all; jumping
-  down is fine. The dead climb them on each other (above, Piles).
+  a metre (`Passable`); there's no jumping.
 - **Collision** is boxes in 8 m buckets, on the ground: circles pushed out,
   standing on the highest top within 0.45 m (the ground's or a box's). Props,
   tree trunks, the ruin's walls, the boulders, the braziers and the beacons
@@ -1408,13 +1476,12 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   body (the dead's `Muster`, the bosses' `BossMuster`) in a grid of cells for
   `Near` and `Along`; a boss's hit spots apart in `Herd.bosses`
   (`Body.boss`, `SpotsOf`).
-- **Inputs**: `ready` is `[Absolute]`; the rest are held bools read with
-  `.down`, look is clamped to half a radian a tick. Mouse look is read only
-  while the cursor is locked. `view` is how the player sees; from above,
-  `aim` is what the cursor's on (eye.tide's `Pointing`, `Me.pointed`) and
-  look is nothing.
-- **What's local**: the camera (`Me`, watching a friend while bled out; the
-  view and the zoom from above in `Feel`; the cursor from above), the
+- **Inputs**: `ready` is `[Absolute]`; `move` is across and up the screen;
+  `aim` is what the cursor's on (eye.tide's `Pointing`, `Me.pointed`, moved
+  by the mouse only while the cursor is locked); the rest are held bools
+  read with `.down`.
+- **What's local**: the camera (`Me`, from above, watching a friend while
+  bled out; the zoom in `Feel`; the cursor), the
   plan's copy (`Village`), the kit's placements (`Kit`), poses, walk clocks,
   hit flashes and voices (`local` fields), the night's light (`NightLook`
   into `Look`), the feed, effects and sounds. Hits, kills, shots (`Loosed`,
@@ -1600,7 +1667,7 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   distance since 2026-10-17, above): the scene drew into an `Rgba16f` target
   270 lines high (`LINES`), its width the window's shape, no multisampling,
   and `Develop` read it back with `Filter.Point` so its pixels stayed sharp. Every world draw (the ground, kit,
-  dressing, survivors, first-person arms and weapons) has the `Wobble` vert:
+  dressing, survivors and weapons) has the `Wobble` vert:
   each corner's clip position snapped to the low picture's pixel grid
   (`Snapped`, `look.low`), so still things shimmer a little as the eye moves
   and moving ones wobble. The horde's `Shamble` snaps the same way. `Develop`
@@ -1614,10 +1681,11 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   camera (snapped to its texels), a sky dome, fog, and up to 28 point lamps
   nearest the camera: the ruin's two torches (`WallTorch`), the two fires'
   braziers (always burning), fireballs and burning dead.
-- Kit placements are culled by distance each frame. The first-person arms
-  draw after a depth clear, hung from the eye (`FpEye`: 0.15 m lower for the
-  made clips, eased between), with sway, bob, a lowered raise, a sprint carry
-  and a shot's recoil on top of the clips.
+- Kit placements are culled by distance each frame; what stands between the
+  eye and this machine's survivor isn't drawn (`InTheWay`, above). The
+  camera is above (`TOP_HIGH` 11.5 m over the feet, `TOP_BACK` 7 m south,
+  `TOP_FOV` 52, the wheel's zoom 0.6 to 1.6). The first-person arms and
+  their pass are gone (2026-10-18).
 - Behind the title, the camera circles the fire at 6.5 m, looking past it
   into the trees.
 
@@ -1627,25 +1695,25 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   real input: the risers and starts clear of every box and on walkable
   cells; nothing starting till both have picked a survivor (a Gunner with the
   carbine's 30 rounds, a Breacher with the shotgun's 8); the first night: its
-  beacon cold, not the spire's, its seven chests; the dead shot down with the
+  beacon cold, its seven chests; the dead shot down with the
   carbine for a minute and a half (kills, the party's level climbing for
   both); three items offered each, one taken by each, the run held still
   while one is still choosing; items taken through the input (Kevlar's
   health, an extended magazine loaded at once, a Second Wind, an Energy
-  Drink's third dash, and every other), a Field Battery's shorter cooldown, a
-  Spring Boots jump in the air; a Second Wind putting one straight back up;
+  Drink's third dash, and every other), a Field Battery's shorter cooldown;
+  a Second Wind putting one straight back up;
   the Breacher downed, the pistol firing from the ground with the shotgun's
   rounds kept, items kept, raised by the other with the shotgun back as
-  loaded as it was; a carbine round and a shotgun blast into one of the dead,
-  over the shoulder and at the legs; every skill (a phase round, the dash
+  loaded as it was; a carbine round and a shotgun blast into one of the dead
+  from the gun to the aim, and at the legs; from above, turning to the
+  cursor, moving up the screen, a grenade bursting at the cursor; a horde
+  rising in its patch; every skill (a phase round, the dash
   twice and a third time through one of the dead, a frag; a boot, a
   firebomb's burn, the boot's stamp; a mine laid and set off by the dead, a
   turret that fires and then goes); Frostbite freezing and the Mortar Flare
   calling a shell, Live Wire arcing to another of the dead, a Powder Keg
   kill hurting the one beside it, the drone and the ember ring wounding
-  without a shot; a horde of 500 reaching the survivors at every high spot,
-  piling up the faces, and none hanging in the air; no climbing the rise's
-  face by jumping, and every ramp walked to its top; wading slowed by three
+  without a shot; wading slowed by three
   of the dead; a Bloater's swelling and burst, and one shot dead from afar;
   the Spitter, the Warden and the newer items (Phase 3, above); a chest
   opened, and one let go shutting again; orbs lying, taken from 4 m, gone
@@ -1654,8 +1722,8 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   Broodmother's volley and birth; the Stalker's leap, its shriek's frenzy,
   and one cut short by its throat; then both holding the fire for three minutes,
   shooting the nearest, taking the third item at each level (every one of
-  the dead but the Spitters reaches them: the longest any hunted is about
-  105 s of 180); a night kept (Phase 3); then the match from a snapshot and
+  the dead but the Spitters reaches them: the longest any hunted is 32 s of
+  180 on the flat map); a night kept (Phase 3); then the match from a snapshot and
   through its packed bytes hashes the same. In the soak a crowd's claws can
   land together for more than anyone's health, so it keeps them whole.
 - `gravewake_play_webgl` / `_webgpu` (`test/browser.mjs`, label
