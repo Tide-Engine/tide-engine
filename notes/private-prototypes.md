@@ -30,7 +30,7 @@ It does not approve a new feature merely because a game worked around it.
 | Eight-parameter shader-bound query hangs tidec (GRAVEWAKE) | Already fixed: `view_bound_query`, `notes/shaders.md`. |
 | No Box3D triangle meshes (CRACKED) | Stale: static/kinematic mesh shapes and rewind queries are built, `packages/box3d/README.md`, `notes/box3d.md`. Arbitrary convex hulls/joints remain separate below. |
 | No audio, Spawn/Send helpers or multi-player scripts (original game trial) | Already built: audio, caller-capability propagation and standard-host `--players`. Their notes supersede the historical trial. |
-| Match event/command handlers cannot query | Explicit current spec restriction. Adding queries affects event/structural-change ordering; owner language decision. Local handlers already take queries. |
+| Match event/command handlers cannot query | Fixed as the owner-approved extension of existing queries: synchronous handlers read their current match at their existing queue turn, with read-only rows and ordinary World.Set/copy-writeback rules. No ordering phase or queue flush was added. `handler_queries`, `notes/language.md`. Async handlers/tasks remain separate. |
 | Queries cannot be function parameters | Explicit non-storable/non-passable query-row contract in the spec. Needs a borrowing/capability design rather than copying an implicit world into helpers. |
 | A system writing one component cannot set another entity's same component | Existing row/World write restriction in `check_world_call`; event routing is the current supported contract. Alias/scheduling semantics need review. |
 | Local handlers cannot read match lists/maps/grids | Tick-event journaling intentionally excludes heap payloads, including query rows. The spec says these copies omit them; lifting it needs lifetime/copy-cost design. |
@@ -59,8 +59,9 @@ It does not approve a new feature merely because a game worked around it.
 | Touch controls, missing voice chat, art/NPC detail, campaign mechanics and human/hardware/network checks | Game/content work, a new networking feature or unmeasured coverage. Not compiler defects or implicitly authorized new runtime systems. Proximity voice remains unbuilt; no claim of human playtesting. |
 
 All reproduced inconsistencies with existing contracts above are now addressed.
-The follow-up API pass also completed the conventional value/metadata gaps:
-final warning-free builds pass all 2,383 native and 2,293 web debug CTests, plus
+The follow-up API and handler-query passes completed the conventional
+value/metadata gaps and synchronous handler queries: final warning-free builds
+pass all 2,385 native and 2,295 web debug CTests, plus
 the docs build. Detailed contracts and coverage are in notes/language.md and
 notes/textures.md. No CI was dispatched.
 The remaining rows name the concrete decision/feature boundary; they are not

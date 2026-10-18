@@ -3100,6 +3100,9 @@ static void describe(const occurrence *o, sb *out)
             } else if (of && of->listens) {
                 sb_printf(out, " Its rows are the match as the tick that sent the event left it%s.",
                           of->listens_verified ? ", once the server confirmed that tick" : "");
+            } else if (of && of->is_handler) {
+                sb_put(out, " Its rows read the current match at this handler's turn in the tick-end queue. "
+                            "Events and structural changes recorded by the handler remain deferred.");
             }
             break;
         }
@@ -3881,8 +3884,12 @@ void analysis_code_lenses(jbuf *out)
     // checker only lists once the game has no errors
     for (int i = 0; i < A.prog->handlers.count; i++) {
         const decl *h = A.prog->handlers.items[i];
-        if (h->at.file != A.doc || !h->listens || !h->event) continue;
+        if (h->at.file != A.doc || !h->event) continue;
         sb title = {0};
+        if (!h->listens) {
+            if (put_world_lens(&title, h, "")) write_lens(out, &written, h, title.data);
+            continue;
+        }
         sb_put(&title, "hears ");
         put_decl_name(&title, h->event, "", h);
         sb_put(&title, h->listens_verified ? " once the server confirmed it" : " at the start of a frame");
@@ -8027,19 +8034,6 @@ static bool local_trigger(const int open)
     return false;
 }
 
-// Whether the handler whose parameters open at token `open` is local:
-// `local event(Hit hit) ShowHit(`.
-static bool local_handler(const int open)
-{
-    if (open < 2 || DOC->toks[open - 2].kind != T_RPAREN) return false;
-    int depth = 0;
-    for (int k = open - 2; k >= 0; k--) {
-        if (DOC->toks[k].kind == T_RPAREN) depth++;
-        else if (DOC->toks[k].kind == T_LPAREN && --depth == 0) return local_trigger(k);
-    }
-    return false;
-}
-
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
 // Sanitize, or a method's (`bool IsDead(`, `Money operator +(`). None for a
 // value, like a field's default.
@@ -9275,9 +9269,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (!extern_system) {
                     item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
                 }
-                // Systems, views and local handlers take a second set of entities to go through
-                if (f.open >= 2 && !is_async && !extern_system
-                    && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
+                // Systems, views and synchronous handlers take a second entity set.
+                if (f.header == HEADER_SYSTEM && !is_async && !extern_system) {
                     item(&c, "query", CK_SNIPPET, "query (Component value, with Tag) entities",
                          "A read-only second entity set, traversed with foreach independently of the outer entity.",
                          "query (${1:Component} ${2:value}) ${3:entities}");

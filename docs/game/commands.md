@@ -61,6 +61,8 @@ A handler is void. Guard clauses end processing, and writes take effect normally
 
 Components and `this` refer to the target entity, as in an event handler. A handler taking no components runs once for the command. The compiler requires an entity target if the handler needs one. A target that no longer exists, or no longer matches the handler, has no effect.
 
+Synchronous command handlers also take read-only `query` parameters, using the same [query rules as match events](./events.md#querying-other-entities). A query selects a separate set of entities, so a handler taking only queries and singletons requires no entity target. It reads the current match at the command's turn in the tick-end queue; recorded events and structural changes remain deferred. Check the authenticated sender's permissions before acting on queried entities, as with any command target.
+
 ## Delivery and ticks
 
 Commands are queued independently of input. Multiple submissions between ticks remain separate commands, and a late command is not lost because its original input tick passed. The engine resends pending commands and identifies duplicates by a per-player sequence.
