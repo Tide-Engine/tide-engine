@@ -65,14 +65,46 @@ segment fades away within half a second, like a short cursor trail. A click
 without dragging leaves no mark or sound. Undo leaves the trail; restarting
 or changing the puzzle clears it. Drawing never moves anything in the puzzle.
 
-The menu's chapter selector can revisit or skip any puzzle. A sage tick beside a
-title marks one you have completed. The game teaches through its puzzles;
-there are no hint panels, guide pages or lesson cards. Settings include
+The game teaches through its puzzles; there are no hint panels, guide pages
+or lesson cards. Settings include
 master, music, effects and interface volumes, mute, reduced motion and
 step previews. Settings and
-completion ticks are saved on this machine. Escape opens the in-game menu;
-your partner's match keeps running. Reset and changing an active puzzle ask
+what you have solved are saved on this machine; when you play together, the
+room counts every puzzle either of you has solved. Escape opens the in-game
+menu; your partner's match keeps running. Reset and **Back to the hall** ask
 before clearing the shared moves.
+
+## The hall
+
+The first puzzle starts straight away. Solve it and the view pulls back out
+of a model on a post: it was one exhibit in the **hall**, where you choose
+what to play next. Each chapter has its own hall. A pair that has solved the
+first puzzle before starts in the highest hall they have reached.
+
+- Along the north edge stand the chapter's puzzles, each a model of its
+  rooms as the puzzle starts, with its number. A green ring marks a solved
+  one. In front of each post is a lane of two pads: when both robots stand
+  in it, one on each pad, the pads fill with light and the view closes in on
+  the model, into the puzzle. Step off while they fill to change your mind.
+  Standing in a lane shows its puzzle's name.
+- Play a hall's puzzles in any order. The **lift up**, at the south edge's
+  right, works once every puzzle of this hall is solved: its lights count
+  them. The lift down, on the left, takes you back to an earlier hall.
+  Its doors close, show the chapter you are going to, and open on its hall.
+- The covered post in the middle of the south edge is the hall's
+  **challenge**, uncovered once the hall's puzzles are solved. A challenge is
+  a small, hard puzzle with a budget of moves, shown on its post and beside
+  the move count; once it is spent, nothing moves until you undo or restart.
+  Each budget is the shortest solution there is. Challenges never hold up
+  the lift. The first three halls have one each: **Freight** (16 moves),
+  **Backstage** (21) and **Overload** (22).
+- After a puzzle is solved, its name and what the solve opened are shown
+  briefly, and you are back in the hall in front of its post. **Back to the
+  hall** in the menu leaves a puzzle without solving it.
+
+For playtesting, `?playtest` on the web page (or `INSIDE_OUT_PLAYTEST=1`
+for a native run) opens every chapter and challenge for the room and adds
+**Choose puzzle** to the menu, a list of every puzzle by chapter.
 
 If your save predates the campaign rebuild, completion ticks for puzzles
 7–13 and 15–18 are cleared. The occupied-shutter update clears earlier
@@ -139,15 +171,15 @@ One rule moves everything: robots, batteries and boxes.
 
 Shared undo takes back the last successful action, whoever made it, and
 retains 128 actions. Reset restores the complete starting arrangement.
-After solving, the game holds the completed arrangement briefly, then
-closes the view and holds the next puzzle's name clearly for three seconds
-before opening it automatically. The name appears only during this transition;
-the playing header keeps the chapter and puzzle count. Each new arrangement
-is revealed before movement begins. Restarting the same puzzle uses a short
+After solving, the game closes the view, says what was solved, and returns
+both of you to the hall. Going into a puzzle holds its name clearly for three
+seconds before it opens. The name appears only during this transition; the
+playing header keeps the chapter and puzzle count. Each new arrangement is
+revealed before movement begins. Restarting the same puzzle uses a short
 reveal without repeating its name. Undo or restart cancels an outstanding
-transition. The last puzzle remains on its completed ending. Losing a participant stops gameplay
-and advancement; reconnecting restarts an outstanding name hold so both
-players have time to read it.
+return. Solving the campaign's last puzzle shows its ending before the hall.
+Losing a participant stops gameplay and the return; reconnecting restarts an
+outstanding hold so both players have time to read it.
 
 ## Development
 
@@ -181,7 +213,8 @@ positional arguments. The server binds to this machine only.
 The prototype uses Tide and the existing Rooms package. Its deterministic
 match rules are in `game.tide`; the puzzles, drawn as text maps (their
 legend is at the top of the file), with their chapter grouping,
-are in `levels.tide`. `geometry.tide` builds the local 3D scene and `render.tide`
+are in `levels.tide`. `hall.tide` has the halls' exhibits, their lanes and
+what opens them; `gallery.tide` draws the posts, models and lifts. `geometry.tide` builds the local 3D scene and `render.tide`
 handles lighting, shadow mapping and screen-space ambient occlusion.
 `ink.tide` has the drawing: its marks are kept in the match so both
 players see them, and nothing in the puzzle reads them.

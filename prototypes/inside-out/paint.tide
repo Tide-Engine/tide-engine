@@ -744,19 +744,55 @@ void RoomScene(mut Sculpture sculpture, Workshop workshop, int room, MapLens len
 
 // The HUD is screen-space and independent of the room's camera.
 [Stage(ArtStage.Board, 2)]
-view WorkbenchLabels(Workshop workshop, Rooms.Lobby lobby)
+view WorkbenchLabels(Workshop workshop, Time time, Rooms.Lobby lobby, Picture picture)
 {
     if (!workshop.initialized || lobby.page != Rooms.Page.Playing) return;
     Draw.SetScreen();
     var narrow = Screen.width < 720;
-    var title = $"{workshop.level + 1:D2} / {LEVEL_COUNT}";
-    Label($"CHAPTER {LevelChapter(workshop.level) + 1} / {ChapterName(LevelChapter(workshop.level))}", float2(20, 22), 11, BRASS);
-    Draw.Text(title, float2(20, 47), narrow ? 17.0 : 24.0, INK, Anchor.MiddleLeft, Font.Bold);
-    Label($"{workshop.puzzle.moves} moves", float2(Screen.width - (narrow ? 20.0 : 108.0), narrow ? 68.0 : 37.0), 14, MUTED, Anchor.MiddleRight);
+    var corner = float2(Screen.width - (narrow ? 20.0 : 108.0), narrow ? 68.0 : 37.0);
+    if (workshop.inHall)
+    {
+        Label($"CHAPTER {workshop.hall + 1} / {ChapterName(workshop.hall)}", float2(20, 22), 11, BRASS);
+        Draw.Text("The hall", float2(20, 47), narrow ? 17.0 : 24.0, INK, Anchor.MiddleLeft, Font.Bold);
+        Label($"{ChapterSolved(workshop.completed, workshop.hall)} / {ChapterSize(workshop.hall)} solved", corner, 14, MUTED, Anchor.MiddleRight);
+        HallLabels(HallOf(workshop), time, picture);
+        return;
+    }
+    var chapter = LevelChapter(workshop.level);
+    var challenge = IsChallenge(workshop.level);
+    Label(challenge ? $"CHALLENGE / {ChapterName(chapter)}" : $"CHAPTER {chapter + 1} / {ChapterName(chapter)}", float2(20, 22), 11, BRASS);
+    Draw.Text(challenge ? LevelName(workshop.level) : $"{workshop.level + 1:D2} / {LEVEL_COUNT}", float2(20, 47), narrow ? 17.0 : 24.0, INK,
+        Anchor.MiddleLeft, Font.Bold);
+    var limit = workshop.layout.moveLimit;
+    var spent = limit > 0 && workshop.puzzle.moves >= limit && !workshop.puzzle.solved;
+    Label(limit > 0 ? $"{workshop.puzzle.moves} / {limit} moves" : $"{workshop.puzzle.moves} moves", corner, 14, spent ? AMBER : MUTED, Anchor.MiddleRight);
+}
+
+// Each exhibit's number on a chip at its post, hidden while the view goes
+// into or comes out of a model.
+void HallLabels(HallState workshop, Time time, Picture picture)
+{
+    var now = time.t / time.dt;
+    if (HallDive(workshop, now, out _) > 0 || workshop.departStation >= 0) return;
+    var lens = picture.cameraLens;
+    var size = Screen.width < 720 ? 10.0 : 12.0;
+    for (var index = 0; index < MAX_STATIONS; index++)
+    {
+        var station = HallStation(workshop.hall, index);
+        if (station.kind == StationKind.None) continue;
+        var north = station.post.y == 0;
+        var at = MapPoint(float2(station.post), lens) + float2(0, lens.tile * (north ? .34 : .62));
+        mut var text = station.kind == StationKind.Up ? "up" : station.kind == StationKind.Down ? "down" : $"{station.level + 1:D2}";
+        if (station.kind == StationKind.Level && IsChallenge(station.level)) text = $"{ChallengeBudget(station.level)} moves";
+        var width = Draw.MeasureText(text, size).x + 14;
+        Chip(at, float2(width, size + 10));
+        Label(text, at, size, StationOpen(workshop, workshop.hall, station) ? INK : MUTED, Anchor.MiddleCenter);
+    }
 }
 
 [Stage(ArtStage.Board)]
-view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview preview, mut Picture picture, mut Sculpture sculpture, mut SceneRender render)
+view Workbench(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands, ThemePreview preview, mut Picture picture, mut Sculpture sculpture,
+    mut SceneRender render, mut Gallery gallery)
 {
     render.pending = false;
     Draw.SetScreen();
@@ -767,7 +803,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview p
     picture.solved = workshop.puzzle.solved;
     if (picture.solved) picture.celebration += dt;
     var first = !picture.ready;
-    var levelChanged = picture.level != workshop.level;
+    var levelChanged = picture.level != Place(workshop);
     var reopened = levelChanged || picture.openedTick != workshop.openedTick;
     var undo = !reopened && picture.serial != workshop.serial && workshop.puzzle.moves < picture.moves;
     var snap = first || reopened || hands.reduceMotion;
@@ -919,7 +955,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview p
         picture.travelers[seat] = actor;
     }
     picture.ready = true;
-    picture.level = workshop.level;
+    picture.level = Place(workshop);
     picture.serial = workshop.serial;
     picture.openedTick = workshop.openedTick;
     picture.moves = workshop.puzzle.moves;
@@ -992,7 +1028,11 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview p
     }
     picture.cameraActor = actor;
     picture.cameraSurround = surround;
-    var lens = picture.cameraLens;
+    // In the hall, the view closes in on the model of the puzzle the pair
+    // is going into, and comes back out of the one they leave.
+    var now = time.t / time.dt;
+    var dive = HallDive(HallOf(workshop), now, out var divePost);
+    var lens = DiveLens(picture.cameraLens, divePost, hands.reduceMotion ? 0.0 : dive, screen);
     // The scene fills the window below the heading; the room keeps its
     // place and size in it, and the controls lie over what surrounds it.
     var sceneTop = SceneTop(screen);
@@ -1025,6 +1065,7 @@ view Workbench(Workshop workshop, Rooms.Lobby lobby, Hands hands, ThemePreview p
             var hiddenBox = layer > 0 ? ancestors[layer - 1].box : -1;
             RoomScene(sculpture, workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox);
         }
+        HallScene(sculpture, HallOf(workshop), gallery, lens, now);
         for (var seat = 0; seat < 2; seat++) PassageMaker(sculpture, workshop, picture, hands, seat, contexts, dimensions, contextCount);
         if (hands.seat == localSeat && !picture.passages[localSeat].active && picture.cameraBlend >= 1)
         {

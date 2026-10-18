@@ -568,9 +568,52 @@ void TradingPlaces(mut Draft draft)
     ]);
 }
 
+// Challenges: small puzzles apart from the campaign, solved within a budget
+// of moves (`ChallengeBudget`), which is each one's shortest solution.
+
+// The box has a socket in each doorway. Teal starts outside, on the table,
+// and one line of pushes from the doorway can load both batteries.
+void Freight(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0.  .0&", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#x...x#  .......", "#....##  .+.....",
+        "#......  .@.1.+.", "#....##  .......", "#.....#  .......", "#######  .......",
+    ]);
+    Room(draft, 1, ["###  ...", "o.o  ...", "###  ..."]);
+}
+// The parked box takes a battery at each doorway, and only while the partner
+// stands on its far side: the two robots change sides between the two.
+void Backstage(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#x...x#  .......", "#.....#  ..+.@..",
+        "#..1..#  ...1...", "#.....#  .&..+..", "#.....#  .......", "#######  .......",
+    ]);
+    Room(draft, 1, ["###  ...", "o.o  ...", "###  ..."]);
+}
+// Each half's plate opens the other half's shutter, so each robot holds the
+// way open for the other's battery, and nobody stays to hold the last one.
+void Overload(mut Draft draft)
+{
+    Room(draft, -1, ["###  ...", "#0#  .0.", "###  ..."]);
+    Room(draft, 0, [
+        "#######  .......", "#o.A.a#  .......", "#..#..#  ....+..",
+        "#x.#.x#  .@...&.", "#..#..#  ....+..", "#b.B.o#  .......", "#######  .......",
+    ]);
+}
+int ChallengeBudget(int level)
+{
+    if (level == LEVEL_COUNT) return 16;
+    if (level == LEVEL_COUNT + 1) return 21;
+    if (level == LEVEL_COUNT + 2) return 22;
+    return 0;
+}
+
 void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
 {
-    var chosen = Math.Clamp(level, 0, LEVEL_COUNT - 1);
+    var chosen = Math.Clamp(level, 0, PUZZLE_COUNT - 1);
     mut var draft = Draft { level = chosen };
     draft.layout = LevelLayout { width = 7, height = 7 };
     draft.puzzle = Puzzle { };
@@ -598,7 +641,11 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
         case 17: HeldFast(draft); break;
         case 18: StillPoint(draft); break;
         case 19: TradingPlaces(draft); break;
+        case 20: Freight(draft); break;
+        case 21: Backstage(draft); break;
+        case 22: Overload(draft); break;
     }
+    draft.layout.moveLimit = ChallengeBudget(chosen);
     var rooms = (1 << draft.layout.roomCount) - 1;
     Debug.Assert(draft.robots == 3, $"Puzzle {chosen + 1}: both robots, @ and &, are drawn once");
     Debug.Assert(draft.drawn >> 1 == rooms, $"Puzzle {chosen + 1}: the rooms drawn are 0 to {draft.layout.roomCount - 1}, with none left out");
@@ -618,6 +665,8 @@ void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
 const int CHAPTER_COUNT = 6;
 int LevelChapter(int level)
 {
+    // A challenge stands in the hall of the chapter it follows.
+    if (level >= LEVEL_COUNT) return Math.Min(level - LEVEL_COUNT, CHAPTER_COUNT - 1);
     if (level < 5) return 0;
     if (level < 9) return 1;
     if (level < 14) return 2;
@@ -663,6 +712,9 @@ string LevelName(int level)
         case 17: return "Held fast";
         case 18: return "Still point";
         case 19: return "Trading places";
+        case 20: return "Freight";
+        case 21: return "Backstage";
+        case 22: return "Overload";
     }
     return "Inside Out";
 }
@@ -688,5 +740,8 @@ string LevelLesson(int level)
     if (level == 17) return "Push the occupied cargo room into the clamped room and onto its outline, seat its battery and leave by the shutter.";
     if (level == 18) return "Seat one battery through the clamped self-box at the top doorway and the other beside the box, from its side doorway.";
     if (level == 19) return "Complete both deliveries and restore both boxes across a two-circuit recursive cycle.";
+    if (level == 20) return "In 16 moves: seat both batteries in the box's doorways and reach both goals.";
+    if (level == 21) return "In 21 moves: seat both batteries in the parked box, each while the partner holds it.";
+    if (level == 22) return "In 22 moves: carry both batteries across, each robot holding the other's shutter open.";
     return "";
 }

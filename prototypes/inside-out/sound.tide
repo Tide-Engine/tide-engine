@@ -65,7 +65,9 @@ local singleton Hearing
     bool baseline;
     bool inGame;
     Puzzle previous;
+    // Where the pair is: a puzzle, or a hall (`Place`).
     int level = -1;
+    bool departing;
     int serial = -1;
     bool[2] present;
     int[2] steps;
@@ -172,8 +174,14 @@ local event(PuzzleCue cue) HearPuzzle(Workshop workshop, Hands hands, Mixer mixe
     else if (cue.kind == 3) PlayCue(littleUndo, 0.26);
     // Next/selection share the reset event, but get the new puzzle's intro
     // from WorkshopChanges. Avoid stacking a reset sweep over that chime.
-    else if (cue.kind == 4 && workshop.level == hearing.level) PlayCue(littleReset, 0.62);
+    else if (cue.kind == 4 && Place(workshop) == hearing.level) PlayCue(littleReset, 0.62);
     else if (cue.kind == 5) PlayCue(puzzleSolve, 2.6);
+    // Both robots in a hall's lane: its pads start to fill.
+    else if (cue.kind == 7)
+    {
+        PlayCue(plateDown, 0.12);
+        PlayCue(uiToggle, 0.085, MixBus.Effects, .7);
+    }
     else if (cue.kind == 6)
     {
         if (hearing.movementWait[seat] > 0) return;
@@ -199,11 +207,20 @@ bool PlateHeld(LevelLayout layout, Puzzle puzzle, int room, int2 at)
 }
 
 [Stage(ArtStage.Sound, -1)]
-view WorkshopChanges(Workshop workshop, Hands hands, Mixer mixer, mut Hearing hearing)
+view WorkshopChanges(Workshop workshop, Time time, Hands hands, Mixer mixer, mut Hearing hearing)
 {
     if (!hearing.inGame) return;
     var audible = !mixer.muted && mixer.effects > 0;
-    var fresh = !hearing.baseline || hearing.level != workshop.level;
+    // A full lane goes: into a model with the doorway's sound, or the lift
+    // doors shutting.
+    var departing = Departing(HallOf(workshop), time.tick);
+    if (departing && !hearing.departing && audible)
+    {
+        if (HallStation(workshop.hall, workshop.departStation).kind == StationKind.Level) PlayCue(doorwayEnter, 0.6);
+        else PlayCue(shutterClose, 0.32);
+    }
+    hearing.departing = departing;
+    var fresh = !hearing.baseline || hearing.level != Place(workshop);
     if (fresh && audible && Together(workshop)) PlayCue(puzzleStart, 1.1);
     if (hearing.baseline && audible)
     {
@@ -269,7 +286,7 @@ view WorkshopChanges(Workshop workshop, Hands hands, Mixer mixer, mut Hearing he
     }
     hearing.baseline = true;
     hearing.previous = workshop.puzzle;
-    hearing.level = workshop.level;
+    hearing.level = Place(workshop);
     hearing.serial = workshop.serial;
     hearing.present = workshop.present;
 }
