@@ -1,5 +1,7 @@
 # Tide for Vim and Neovim
 
+Released under the [MIT license](LICENSE).
+
 This runtime detects `.tide` and `.tprefab`, adds basic syntax highlighting,
 C-style indentation and comment settings. Vim 8+ and Neovim can use it without
 any other plugin. Interpolated strings have string highlighting; expressions

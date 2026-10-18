@@ -1,5 +1,7 @@
 ;;; tide-lang-mode-test.el --- Batch tests -*- lexical-binding: t; -*-
 
+;; Copyright (c) 2026 Tide Engine contributors
+;; SPDX-License-Identifier: MIT
 ;; Author: Tide Engine contributors
 ;; Assisted-by: Codex:gpt-6.1-sol
 

@@ -1,5 +1,17 @@
 # The language server and the editors
 
+## Editor-only MIT licensing (2026-10-18)
+
+The owner explicitly approved MIT for both standalone editor plugins.
+tools/tide-emacs/LICENSE and tools/tide-vim/LICENSE cover those directories
+only; there is no engine-wide license change. The Emacs library includes the
+MIT boilerplate so an ELPA archive built from just the .el file retains its
+license. Its test carries the same SPDX identifier. The package passes current
+package-lint, checkdoc and warning-as-error byte compilation after the headers
+are added. This resolves the license prerequisite recorded in preparation below.
+Public repository creation and remote-install validation are the next steps;
+MELPA's public-maintenance/human-review requirements still apply.
+
 ## Standalone package distribution preparation (2026-10-18)
 
 Prepared tools/tide-emacs and tools/tide-vim as standalone repository roots for

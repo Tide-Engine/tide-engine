@@ -1,5 +1,7 @@
 # Tide for Emacs
 
+Released under the [MIT license](LICENSE).
+
 `tide-lang-mode` recognizes `.tide` and `.tprefab` files, with basic syntax
 highlighting, C-style indentation and comment editing. It registers `tidels`
 with Eglot for completion, diagnostics, navigation, rename and formatting.
