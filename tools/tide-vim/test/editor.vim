@@ -1,6 +1,6 @@
-" Run from the repository root with Vim -Nu NONE -n -es -S this-file.
+" Run with Vim -Nu NONE -n -es -S this-file from either repository.
 set nocompatible
-set runtimepath^=tools/tide-vim
+let &runtimepath = escape(fnamemodify(expand('<sfile>:p'), ':h:h'), ',\') . ',' . &runtimepath
 filetype plugin indent on
 syntax enable
 
