@@ -4397,6 +4397,57 @@ view Placing(Art art, mut Places places)
     }
 }
 
+// Metadata-only size reads use uniforms, so no image is captured or sampled.
+local singleton ImageSizes
+{
+    Texture grid;
+    Texture missing;
+    Texture kept;
+    Texture window;
+    int2 expected;
+    int2 expectedWindow;
+    bool cpu;
+}
+event ImageDimensions { int2 size; }
+int2 ImageSize(Texture image) { return image.size; }
+int2 ForwardImageSize(Texture image) { return ImageSize(image); }
+int2 PayloadSize(ImageDimensions payload) { return payload.size; }
+ImageDimensions MeasuredDimensions(int2 size) { return ImageDimensions { size = size }; }
+vert SizedImage(mut Vertex vertex, ImageSizes sizes)
+{
+    if (ForwardImageSize(sizes.grid).x != 2) vertex.position += float2(1000);
+}
+frag ImageMetadata(Vertex vertex, out Color color, Texture source, ImageSizes sizes)
+{
+    var direct = ForwardImageSize(source);
+    var grid = ForwardImageSize(sizes.grid);
+    var missing = ForwardImageSize(sizes.missing);
+    var target = ForwardImageSize(sizes.kept);
+    var window = sizes.window.size;
+    var raw = heroNumbers.size;
+    var payload = MeasuredDimensions(heroColors.size);
+    bool good = sizes.cpu && direct.x == 8 && direct.y == 6 && grid.x == 2 && grid.y == 2
+        && missing.x == 0 && missing.y == 0 && raw.x == 8 && raw.y == 6
+        && target.x == sizes.expected.x && target.y == sizes.expected.y
+        && window.x == sizes.expectedWindow.x && window.y == sizes.expectedWindow.y
+        && PayloadSize(payload).x == 8 && PayloadSize(payload).y == 6;
+    color = good ? Color.green : Color.red;
+}
+view ImageMeasurements(Art art, mut ImageSizes sizes)
+{
+    if (art.targetPass != 23) return;
+    sizes.grid = art.four;
+    var target = ForwardImageSize(sizes.kept);
+    var window = sizes.window.size;
+    sizes.cpu = target.x == sizes.expected.x && target.y == sizes.expected.y
+        && window.x == sizes.expectedWindow.x && window.y == sizes.expectedWindow.y
+        && heroColors.size.x == 8 && heroColors.size.y == 6 && heroNumbers.size.x == 8;
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Clear(Color.black);
+    Draw.Mesh(art.targetQuad, art.faces, heroColors, SizedImage, ImageMetadata);
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]

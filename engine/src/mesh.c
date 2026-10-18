@@ -159,6 +159,37 @@ static bool see_grid(const tide_grid g, const tide_grid_shape *s, grid_seen *v)
     return !dir->records || v->records;
 }
 
+static _Thread_local tide_target_pixels_fn target_pixels;
+
+tide_target_pixels_fn tide_texture_target_pixels(const tide_target_pixels_fn resolve)
+{
+    const tide_target_pixels_fn previous = target_pixels;
+    target_pixels = resolve;
+    return previous;
+}
+
+tide_int2 tide_texture_size(const tide_texture_ref texture)
+{
+    if (texture.target.id) {
+        const tide_render_target target = tide_render_target_resolve(texture.target);
+        if (!target.id || target.id == TIDE_RENDER_INVALID || target.id == TIDE_RENDER_WINDOW || tide_render_target_cubic(target.id)
+            || tide_render_target_image(target.id) >= tide_render_target_colors(target.id)) return tide_i2(0, 0);
+        return target_pixels ? target_pixels(target.size) : tide_i2(0, 0);
+    }
+    if (texture.image.height == TIDE_TEXTURE_GRID) {
+        tide_grid grid;
+        tide_grid_shape shape;
+        grid_seen seen;
+        if (!tide_texture_grid(texture, &grid, &shape) || !see_grid(grid, &shape, &seen)
+            || seen.dir.size[0] <= 0 || seen.dir.size[1] <= 0
+            || seen.dir.size[0] > TIDE_GRID_TEXTURE_MOST || seen.dir.size[1] > TIDE_GRID_TEXTURE_MOST) return tide_i2(0, 0);
+        return tide_i2(seen.dir.size[0], seen.dir.size[1]);
+    }
+    tide_texture image = texture.image;
+    if (!image.pixels && !tide_pack_texture_find(image.version & TIDE_TEXTURE_NAME, &image)) return tide_i2(0, 0);
+    return image.width > 0 && image.height > 0 ? tide_i2(image.width, image.height) : tide_i2(0, 0);
+}
+
 // What a chunk of a heap's grid holds, without reading it: the hash its heap
 // keeps of its page until the page changes. Other blocks in the page change it
 // too, where a chunk is under a page: such a chunk is then copied again, and

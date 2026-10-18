@@ -34,7 +34,7 @@ system EndRound(Round round)
 
 The sender isn't recorded. When handlers need it, put it in a field: the entity that sends is often not the one that matters, like a bomb sending a `Hit` for whoever threw it.
 
-An event is a value, so a local can hold one, and a handler can send its event on: `other.Send(hit)`. Fields and parameters can't hold events. The engine's own events, below, are only the engine's to send.
+An event is a value, so a local can hold one, a handler can send its event on (`other.Send(hit)`), and ordinary functions and methods can take or return the whole payload (`int Damage(Hit hit) { return hit.damage; }`). Factories can return `Hit { damage = amount }`; the caller chooses whether to send it. Command payloads follow the same value rules. Passing one grants no world or sending access and supplies no authenticated sender; handlers pass that separately when needed. Payloads cannot be stored fields. Local handlers still receive only the match data their event journal captures. The engine's own events, below, are only the engine's to send.
 
 A [function](../language/functions.md#sending-and-spawning) can send too, for the code that calls it:
 

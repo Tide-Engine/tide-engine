@@ -247,7 +247,7 @@ static const char *function_name(const decl *fn)
 
 static bool is_struct_like(const type t)
 {
-    return t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON;
+    return t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT;
 }
 
 // How many floats and ints a value of type `t` is, as the GPU is sent it.
@@ -289,6 +289,7 @@ static bool type_words(const type t, int *floats, int *ints)
     case TY_STRUCT:
     case TY_COMPONENT:
     case TY_SINGLETON:
+    case TY_EVENT:
         if (t.decl->skin_kind && t.decl->skin_kind != SKIN_TRANSFORM) return false;
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
@@ -2619,8 +2620,14 @@ static void ex_placed(emit *em)
     sb_put(em->o, flat ? "0.0, 1.0))" : "1.0)))");
 }
 
+static void ex_texture_size(emit *em, const expr *e);
+
 static void ex_member(emit *em, const expr *e)
 {
+    if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+        ex_texture_size(em, e);
+        return;
+    }
     if (e->object->type.kind == TY_ARRAY && str_eq_c(e->member, "count")) { // How many an array has: its type says
         put_int(em, e->object->type.decl->array_length);
         return;
@@ -3472,9 +3479,11 @@ static int sample_slot(emit *em, const expr *of, const sampling how)
         if (!known) vec_push(em->root->samples, sample);
         return 0;
     }
+    const shader_texture *textures = how.read == READ_SIZE ? em->sh->sizes.items : em->sh->textures.items;
+    const int count = how.read == READ_SIZE ? em->sh->sizes.count : em->sh->textures.count;
     int slot = 0;
-    while (slot < em->sh->textures.count) {
-        const shader_texture *t = &em->sh->textures.items[slot];
+    while (slot < count) {
+        const shader_texture *t = &textures[slot];
         if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == (asset ? NULL : of->field)
             && t->filter == how.filter && t->wrap == how.wrap && t->read == how.read && t->filter_said == how.filter_said
             && t->wrap_said == how.wrap_said) {
@@ -3500,6 +3509,11 @@ static int texture_number(const emit *em, const expr *of)
             && t->field == (asset ? NULL : of->field)) {
             return slot;
         }
+    }
+    for (int slot = 0; slot < em->sh->sizes.count; slot++) {
+        const shader_texture *t = &em->sh->sizes.items[slot];
+        if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL)
+            && t->field == (asset ? NULL : of->field)) return em->sh->textures.count + slot;
     }
     return -1;
 }
@@ -3561,6 +3575,24 @@ static void note_function_sample(decl *fn, const int param, const expr *asset, c
     const function_sample sample = {.param = param, .asset = param >= 0 ? NULL : asset, .read = read, .filter = filter,
                                     .wrap = wrap, .at = at};
     vec_push(fn->gpu_samples, sample);
+}
+
+static void ex_texture_size(emit *em, const expr *e)
+{
+    int own;
+    const expr *of = texture_of(em, e->object, &own);
+    if (em->code != em->root && (own >= 0 || of)) {
+        if (em->checking) note_function_sample(em->code, own, of, READ_SIZE, 0, 0, e->at);
+        if (em->checking) { sb_printf(em->o, "%s(0)", ty(em, e->type)); return; }
+    }
+    if (!of) {
+        refuse_texture(em, e->object);
+        sb_printf(em->o, "%s(0)", ty(em, e->type));
+        return;
+    }
+    const int slot = sample_slot(em, of, sampling_of(of, READ_SIZE, 0, 0));
+    if (em->checking) sb_printf(em->o, "%s(0)", ty(em, e->type));
+    else put_words(em, 'v', em->sh->sizes.items[slot].count_at, 2, ty(em, e->type));
 }
 
 // What a texture is called where it's named, for a message.
@@ -6146,19 +6178,27 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
                                   .filter = s->filter, .direct = s->field < 0 && !s->asset, .asset = s->asset,
                                   .wrap = s->wrap, .read = s->read, .filter_said = s->filter_said, .wrap_said = s->wrap_said};
         bool known = false;
-        for (int k = 0; k < sh->textures.count; k++) {
-            known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
-                  && sh->textures.items[k].filter == t.filter && sh->textures.items[k].asset == t.asset
-                  && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read
-                  && sh->textures.items[k].filter_said == t.filter_said && sh->textures.items[k].wrap_said == t.wrap_said;
+        const shader_texture *textures = s->read == READ_SIZE ? sh->sizes.items : sh->textures.items;
+        const int count = s->read == READ_SIZE ? sh->sizes.count : sh->textures.count;
+        for (int k = 0; k < count; k++) {
+            known |= textures[k].direct == t.direct && textures[k].source == t.source && textures[k].field == t.field
+                  && textures[k].filter == t.filter && textures[k].asset == t.asset
+                  && textures[k].wrap == t.wrap && textures[k].read == t.read
+                  && textures[k].filter_said == t.filter_said && textures[k].wrap_said == t.wrap_said;
         }
-        if (!known) vec_push(sh->textures, t);
+        if (!known) {
+            if (s->read == READ_SIZE) vec_push(sh->sizes, t);
+            else vec_push(sh->textures, t);
+        }
         if (source) add_bound(sh, (decl *)source);
     }
 }
 
 bool shader_reads_local(const shader *sh, const decl *d)
 {
+    for (int i = 0; i < sh->sizes.count; i++) {
+        if (sh->sizes.items[i].source == d && sh->sizes.items[i].field && sh->sizes.items[i].field->is_local) return true;
+    }
     for (int i = 0; i < sh->values.count; i++) {
         if (sh->values.items[i].source == d && sh->values.items[i].field && sh->values.items[i].field->is_local) return true;
     }
@@ -6264,6 +6304,10 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         if (t->skin) { sh->uniform_ints += t->skin == 1 ? 1 : 2; continue; }
         const type held = t->asset ? t->asset->return_type : t->field->type;
         sh->uniform_ints += held.kind == TY_LIST ? 1 : held.kind != TY_GRID ? 2 : held.decl->dims == 3 ? 10 : 6;
+    }
+    for (int i = 0; i < sh->sizes.count; i++) {
+        sh->sizes.items[i].count_at = sh->uniform_ints;
+        sh->uniform_ints += 2;
     }
     // The number the frame rolled, which the generators of code that rolls are made of, and the match's seed
     // for code that reads it: a word each of the draw's ints, the same for every draw of a frame

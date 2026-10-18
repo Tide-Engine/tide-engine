@@ -1,5 +1,14 @@
 # The platform layer and the renderer
 
+## Target dimensions for local metadata (2026-10-18)
+
+tide_platform_target_pixels exposes the existing target_extent calculation to
+the frame's Texture.size resolver, using current window logical/physical sizes
+and a device-limit cache keyed by GPU epoch. No readback or target allocation
+is needed. Custom capture hosts provide their own root-aware callback; the
+platform shader fixture does so for scale-1/2 read_pixels_as frames. Rendering
+and texture binding paths are unchanged; coverage is in notes/textures.md.
+
 Texture compression/residency (2026-10-11): the private `tide_gpu.texture_blocks` factory uploads complete immutable BC1/BC3 chains or returns zero for RGBA fallback. GPU accounting uses the actual representation, and compressed objects are recreated on content/draw epoch changes. Inactive pack images/cubes now have a 128 MiB / 4096-image / 60-rendered-list cache; other texture lifetimes remain unchanged. The cache owns no CPU pack pointers. Contracts, measurements, coverage and remaining streaming gaps are in `notes/textures.md`.
 
 ## Submitted vertex totals (2026-10-15)

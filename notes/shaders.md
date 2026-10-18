@@ -1,5 +1,25 @@
 # Code the GPU runs: frags and verts
 
+## Texture-size metadata and payload values (2026-10-18)
+
+Texture.size is lowered to two uniform ints per distinct named image source.
+Compiler-only READ_SIZE flows through the existing helper sampling analysis,
+but shader.sizes is separate from sampled textures: no binding slot, pixel
+capture, mip work or sampler is needed. Metadata sources bind their owning
+component/singleton and attached local fields normally. Helper specialization
+numbers also distinguish size-only sources; metadata shared by stages is
+deduplicated. Actual texture bindings and their runtime enum values are
+unchanged. The normal uniform-size limit still applies. Runtime lookup happens
+when the draw is recorded, so missing Texture metadata stays zero rather than
+reporting the GPU fallback's 1x1 dimensions.
+
+Numeric event/command values use the existing struct-like field lowering in GPU
+helper parameters and factory returns. They grant no dispatch capability. texture_size and platform shader
+pass 23 exercise helper chains, several different textures through one helper,
+direct sources, assets, Raw assets, singleton/attached-local fields, event
+payloads and both stages. Native Vulkan/OpenGL pixels passed; final native/web
+suite results are recorded with the language completion pass.
+
 ## FromToRotation and scale matrices (2026-10-18)
 
 The approved math builders `quaternion.FromToRotation(from, to)` and

@@ -438,7 +438,8 @@ typedef enum decl_kind {
 // values are tide/draw.h's tide_shader_read's.
 // READ_CUBE is a Cubemap's color, read by a direction.
 // READ_DATA is a list's elements, as numbers: read by their place (shader.c, Lists).
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA } shader_read;
+// READ_SIZE is compiler-only metadata in uniforms, never a runtime texture binding.
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -683,6 +684,7 @@ typedef struct decl {
     bool plays;          // Plays sounds (Audio), itself or through the functions it calls: local code's
     loc plays_at;
     bool render_resources; // Uses local rendering handles, directly or through its calls
+    bool reads_texture_size; // Frame-host metadata: not available to parallel loop workers
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
     loc io_at;
@@ -1271,6 +1273,7 @@ typedef struct shader {
     const field *instance_list;      // A list its code reads of the instance struct, which no draw can send
     VEC(shader_value) values;
     VEC(shader_texture) textures;
+    VEC(shader_texture) sizes; // Metadata only: two uniform ints, no sampled texture binding
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
     VEC(shader_handed) handed; // What its vert writes for its frag, in the order the vert takes them
     int instance_floats, instance_ints; // Words
@@ -1399,6 +1402,7 @@ typedef struct program {
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
     bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
+    bool uses_texture_size; // Local frames borrow the host's physical target-size resolver
     bool uses_resident;  // A match singleton has a Resident field: the worlds carry its pages, the local state the arenas' registry
     bool quiet_names;    // While a built-in struct's own fields resolve: what they name isn't the game naming it
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader

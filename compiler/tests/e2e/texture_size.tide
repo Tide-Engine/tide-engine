@@ -1,0 +1,71 @@
+asset Texture hero = "assets/hero.png";
+[Raw] asset Texture numbers = "assets/hero.png";
+scene Main { }
+component Panel { local Texture image; }
+event(Spawned) Setup(with Main) { Spawn(Panel); }
+event Dimensions { int2 value; }
+local singleton Sizes
+{
+    Grid2<Color> grid = Grid2(3, 5);
+    Texture image;
+    Texture none;
+    RenderTarget target;
+    Texture alias;
+    int2 assetSize;
+    int2 rawSize;
+    int2 gridSize;
+    int2 targetSize;
+    int2 noneSize;
+    int2 helperSize;
+    bool checkOrder;
+    int directOrder;
+    int helperOrder;
+    Grid2<int> copies = Grid2(2, 2);
+}
+int ResizeWidth(RenderTarget target) { target.Resize(7, 4); return 0; }
+int First(int value, int other) { return value + other; }
+int2 Size(Texture image) { return image.size; }
+int2 Forward(Texture image) { return Size(image); }
+int2 Payload(Dimensions payload) { return payload.value; }
+frag Sized(Vertex vertex, out Color color, Texture source, Sizes sizes, Panel panel)
+{
+    int2 direct = Forward(source);
+    int2 packed = hero.size;
+    int2 raw = numbers.size;
+    int2 field = sizes.image.size;
+    int2 attached = panel.image.size;
+    int2 missing = sizes.none.size;
+    int2 target = sizes.alias.size;
+    var value = Dimensions { value = packed };
+    color = Color(float(Payload(value).x + direct.x + raw.x + field.x + attached.x + missing.x + target.x), 0, 0);
+}
+vert SizedVertex(mut Vertex vertex, Sizes sizes)
+{
+    vertex.position += float2(Forward(sizes.image)) * 0.001;
+}
+view Measure(mut Sizes sizes)
+{
+    if (sizes.checkOrder)
+    {
+        sizes.checkOrder = false;
+        var alias = sizes.alias;
+        sizes.directOrder = First(alias.size.x, ResizeWidth(sizes.target));
+        sizes.target.Resize(10, 6);
+        foreach (var at in sizes.copies) sizes.copies[at] = alias.size.x;
+        foreach (var at in sizes.copies) sizes.copies[at] = Forward(alias).x;
+        sizes.helperOrder = First(Forward(alias).x, ResizeWidth(sizes.target));
+        sizes.target.Resize(10, 6);
+    }
+    sizes.image = sizes.grid;
+    sizes.assetSize = hero.size;
+    sizes.rawSize = numbers.size;
+    sizes.gridSize = sizes.image.size;
+    sizes.targetSize = sizes.alias.size;
+    sizes.noneSize = sizes.none.size;
+    sizes.helperSize = Forward(sizes.image);
+}
+view Paint(with Panel, Sizes sizes)
+{
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2],
+              sizes.image, SizedVertex, Sized);
+}

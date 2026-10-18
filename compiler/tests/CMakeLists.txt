@@ -37,6 +37,8 @@ tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
 tide_e2e_test(asset_references SOURCES e2e/asset_references.tide e2e/asset_references.tprefab)
 tide_e2e_test(asset_reference_empty)
 tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
+tide_e2e_test(component_values SOURCES e2e/component_values.tide e2e/component_values.tprefab) # Copied component and payload values
+tide_e2e_test(texture_size) # Metadata-only CPU/GPU image dimensions, aliases and resource lifetime
 tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and for their callers' entities
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
