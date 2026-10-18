@@ -1,5 +1,14 @@
 # The docs site
 
+Terminal editor setup (2026-10-18): Editors and the repository README now link
+the new manually installed Emacs mode and Vim/Neovim runtime, with copyable
+configuration and tidels selection. The page distinguishes LSP client support,
+unadapted clickable lenses and IDE-only embedding from basic terminal editing.
+No release installation or tide editors behavior changes. The production docs
+build passes on Node 24.21.0 with the existing allowed unstaged-example 404s;
+editor-host checks and remaining coverage are in notes/editors.md. No deployment
+or CI was requested.
+
 Fly host loss (2026-10-17): the site was down. Its one machine (82d1990b071698,
 release 291) sat on a fra host Fly reported unreachable after its 05:15 UTC
 host-restart incident ("a small number of hosts remain degraded or offline").
