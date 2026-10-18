@@ -1,5 +1,220 @@
 # Inside Out
 
+## The hall, lifts and challenges (2026-10-18)
+
+The owner asked for a meta level to choose puzzles from and come back to
+after each one, like a hub, acting as the game's designer. Their ideas: two
+pads to stand on to enter a puzzle, as two goals end one; a smooth
+transition (an elevator, or the room dematerializing); any order within a
+chapter with every puzzle needed to go on, so one stuck puzzle is not a
+wall; and small side challenges with only so many moves. All four are
+built. Everything else below is the agent's pick, provisional until the
+owner has played it.
+
+Why puzzle games have hubs, as weighed for this game: choice relieves being
+stuck (Baba Is You's map, Patrick's Parabox's areas, The Witness); the
+solved set is visible as a place, not a list; a hub is a breather between
+hard puzzles; in a co-op game, standing together at the next puzzle is
+the pair agreeing what to do (Portal 2's co-op hub); and optional hard
+puzzles reward mastery without blocking anyone. Parabox is the closest
+model: it is also recursive boxes, and its hub is made of its own rules.
+
+### Rules and contracts (`hall.tide`, `game.tide`)
+
+- **A hall is a puzzle floor.** `OpenHall` loads a 7x7 table, walls round
+  a 5x5 floor, no rooms or batteries, into `Workshop.layout/puzzle`, so
+  walking uses `MovePuzzle` unchanged and the whole renderer, camera, ink
+  and sound work as in a puzzle. `IsSolved` is never true there (no goals).
+  New match state: `inHall`, `hall` (its chapter), `arrival` (0 start, 1
+  back from a puzzle, 2 up the lift, 3 down), `departStation`/`departTick`,
+  `opened` and `finale` (what the last solve did) and `playtest`. `level`
+  stays the last puzzle played. `Place()` is a puzzle's number or, below
+  zero, a hall, for what resets on a change of place.
+- **Exhibits** (`HallStation`, a pure function of the chapter): posts in the
+  north edge at x 1–5 for the chapter's puzzles in order (5 fill it; 4 skip
+  x 3; 3 use 1, 3, 5; 2 use 2, 4; 1 uses 3), and in the south edge the lift
+  down (x 1, from chapter 2), the challenge (x 3, chapters 1–3) and the
+  lift up (x 5, to chapter 6). Each has a lane of two pads in front, near
+  (touching the post) and far. Row 3 is open floor.
+- **Going.** `ContinueHall` (from `ContinueWorkshop`): both robots on one
+  open lane's pads, either way round, starts `departTick` (cue kind 7).
+  Stepping off within `CHARGE_TICKS` 18 cancels. Once full, `MoveHand`
+  refuses moves (`Departing`) and Undo/Reset do nothing in a hall anyway
+  (walking a hall keeps no history). `DIVE_TICKS` 36 later a puzzle opens
+  with its full name hold (`OpenLevel` now gives `INTRO_TICKS` whenever it
+  comes from a hall), or the next/previous hall opens. A partner leaving
+  cancels a departure.
+- **Coming back.** A solve no longer opens the next puzzle. After
+  `RETURN_TICKS` 96 (close 36 + hold 60), or `CLOSE_TICKS` +
+  `ENDING_HOLD_TICKS` 150 when it completed the campaign (`finale`), both
+  are in its chapter's hall, on row 3 below its post (`arrival` 1,
+  `introTicks` 0). Undo/Reset cancel this as before; a missing partner
+  holds it and a rejoin restarts the hold.
+- **Gating** (owner's rule, read as: any order within a chapter, all of it
+  for the next). `ChapterOpenFor(completed, k)`: every main puzzle of
+  chapters before k solved. The lift up is open when the next chapter is;
+  a challenge when its own chapter is done. Challenges never gate. A solve
+  that opens a chapter sets `opened`, told in the hold and by the lift's
+  lights.
+- **Progress across sessions.** Match progress started at zero each
+  session, which gating would have locked. `command Progress { int
+  completed; bool playtest; }`: each seated machine offers its saved bits
+  (`Roster`, once per serial while the match lacks some); the match takes
+  the union, masked to `PUZZLE_COUNT` bits. If puzzle 1 is solved and
+  still untouched, the pair goes to the hall of `Frontier` (highest open
+  chapter), with the lift doors and chapter name (`arrival` 0). Pick: union
+  rather than the host's, so a friend who is further on brings the room
+  along. Fresh players still start straight in puzzle 1, and its solve
+  reveals the hall.
+- **`command ToHall { int serial; }`**: the menu's **Back to the hall**
+  (asks when moves were made), to the puzzle's own hall, below its post.
+- **Playtest.** `?playtest` (web, `--inside-out-playtest` through
+  `invite.c`) or `INSIDE_OUT_PLAYTEST` natively (`getenv`; nonempty, not
+  `0`) sets `Progress.playtest`: every chapter and challenge open, and the
+  menu's third button is the old **Choose puzzle** list (now with the
+  challenges, and **Back to the hall** beside its Back). Otherwise that
+  button is **Back to the hall**. `ChooseLevel` stays unrestricted as the
+  tools' and tests' command; only playtest offers it in the UI.
+- **Move budgets.** `LevelLayout.moveLimit` (`ChallengeBudget`); `MovePuzzle`
+  refuses a move once `moves` reaches it (a bump cue), until undo or reset.
+  The step preview shows it blocked. The header shows `moves / limit`, amber
+  when spent.
+- `CHALLENGE_COUNT` 3, `PUZZLE_COUNT` 23: challenges are levels 20–22 after
+  the campaign; `LevelChapter` puts challenge k in chapter k. Preferences
+  keep `PUZZLE_COUNT` bits (version unchanged: new bits only).
+- Hall helpers take `HallState` (`HallOf`), not `Workshop`: generated C
+  passes read-only structs by value, and nested helpers each copying the
+  38 KB `Workshop` overflowed a view's stack (0xC00000FD) on the first
+  native capture.
+
+### Look and transitions (`gallery.tide`, `transition.tide`)
+
+- A post is a walnut block on the table's slab with a **live model** of its
+  puzzle as it starts (`ModelScene`: every room, tile, battery, outline and
+  both robots, two levels of nesting, from `LoadLevel` cached once per
+  puzzle in `local singleton Gallery`). `ModelSpan` frames the used part
+  of the table, so a puzzle whose table is wall round one box shows that
+  box filling its post. A ring round the post's top glows green once
+  solved, brass while open. The challenge's post is brass-tinted and under
+  a dark cloth until open. A lift post is a cab with shut doors and an
+  arrow, teal when working; the lift up has a light per puzzle of its hall.
+- Pads: a grey inlay with a line in the lane's paint (amber unsolved, green
+  solved, teal lifts, grey locked), filling with light while charging.
+  2D chips give each post its number, `up`/`down`, or a challenge's
+  budget; standing in a lane shows a chip naming where it leads (and "Both
+  stand here to go."), where Undo/Restart are in a puzzle.
+- **Into a puzzle**: the view dives into the post's model (`DiveLens`: zoom
+  toward the post's top, exponential to about 1.3 screens of model, the
+  model eased to the scene's center) while the nested-square aperture closes
+  over it, then the puzzle's name holds as before. **Back**: the solve's
+  hold says SOLVED (CHALLENGE MET), the name and "Chapter: n of m solved",
+  or which chapter's lift now works; the hall opens with the aperture while
+  the view comes back out of that post's model over `EMERGE_TICKS` 45.
+  **Lift**: two door leaves close from the sides, the next hall's chapter
+  name holds on them (`HALL_NAME_TICKS` 60), and they open. Reduced motion
+  fades instead and skips the dive. All of it follows match ticks
+  (`Time.t` in views, blended), so both screens agree.
+- Sound: kind 7 plays plate-down and the toggle tick as pads start to fill;
+  the commit plays the doorway's enter sound (puzzle) or the shutter's
+  close (lift); a new place gets the existing start chime. No new assets.
+
+### Challenges (`levels.tide`)
+
+Small puzzles whose budget is their shortest solution, found and checked
+with `inside_out_solve` (its search ignores the budget; its replay keeps
+it). Witnesses are in `test/solutions.h`. Nobody has played them.
+
+| # | Name | Idea | Budget | Search |
+|---|---|---|---:|---|
+| 21 | Freight (Boxes) | The box has a socket in each doorway. Teal starts outside on the table; one line of pushes in from the doorway takes the far battery in and posts the near one. Amber alone cannot finish; Teal alone can, in more moves. | 16 | 320,551 positions to the first solution |
+| 22 | Backstage (Each other) | The parked box (on its outline, open floor round it) takes a battery at each doorway only with the partner on its far side; the robots change sides between. | 21 | 4,190,045 positions; each robot alone exhausts 180,408 unsolved |
+| 23 | Overload (Power) | Each half's plate opens the other half's shutter, so each robot holds the way for the other's battery. | 22 | 9,694 positions; alone exhausts 10 and 231 unsolved |
+
+Freight's first versions had one robot do all the cargo while the other
+walked; starting Teal outside made the doorway the trick. A version with
+the batteries in walled niches had no solution at all (exhausted).
+
+### Tests
+
+The five auto-advance tests became `inside_out_a_solved_puzzle_returns_to_its_hall`,
+`..._undo_and_reset_cancel_the_return`, `..._the_return_waits_for_the_missing_partner`
+and `..._the_last_puzzle_ends_the_campaign_then_returns`; the count test also
+opens the last challenge and refuses the one after. New:
+`inside_out_both_robots_in_a_lane_open_its_puzzle` (one robot is not enough,
+stepping off cancels, full pads refuse moves/undo/reset, puzzle opens 54
+ticks after with its name), `..._the_lift_works_once_every_puzzle_of_its_hall_is_solved`
+(locked, then opened by the partner's Progress, up and back down with the
+arrival cells), `..._a_challenge_opens_with_its_chapter_and_keeps_its_budget`
+(covered, opened, the 17th move refused until undo, back to the hall below
+its post), `..._every_challenge_is_met_exactly_within_its_budget` (witness
+length equals the budget; the alone searches for 22 and 23) and
+`..._leaving_for_the_hall_and_sharing_progress` (union, masking, a started
+first puzzle stays, `ToHall` placement, no hall history, playtest frontier).
+`test/simulation.c` gained `inside_out_test_progress`. All twenty campaign
+witnesses, exchanged jobs and solo searches are unchanged.
+
+`test/browser.mjs`: the host page adds `&playtest`, so `choose()` keeps the
+menu list; the first-solve review now checks the closing frame, an opaque
+static summary, the hall reveal and settled hall, held-input suppression by
+an unchanged hall frame, and a released step by a changed one. The
+reduced-motion pass compares the summary's heading band (the progress line
+differs by then). Later witnesses check they come back to the hall.
+`presentation-timing.mjs` replaces `SOLVE_TICKS` with `RETURN_TICKS` and
+`EMERGE_TICKS`. `materials-native.mjs` runs with `INSIDE_OUT_PLAYTEST=1`
+for its menu clicks.
+
+### Validation
+
+Native debug (`inside_out`, aggregate, solver, invite) and web debug
+(`inside_out`, aggregate, invite) build warning-free. Native: all four
+Inside Out CTest entries pass, the aggregate 55/55 (including all twenty
+campaign witnesses, both seats exchanged, the solo searches, and the new hall
+and challenge tests) and `inside_out_materials_native`. WASM: the aggregate
+and all fourteen bridge entries pass, two of them new
+(`inside_out_playtest_argument`, `inside_out_playtest_absent`).
+
+Browser, WebGL: `inside_out_materials_webgl` passed (206.0 s). The first
+`inside_out_play_webgl` run failed the new "summary stays still" probe: at 8
+verified ticks before the return the rendered frame had already begun to
+open the hall, which is the prediction lead the old name-hold probe left 24
+ticks for; the probe now leaves the same 24. The first
+`inside_out_shutters_webgl` run hit CTest's 600 s limit just after writing
+its final report (every assertion had passed; another session's process was
+using most of the CPU). Rerun: `inside_out_play_webgl` passed in 1,263.7 s and
+`inside_out_shutters_webgl` in 539.0 s. The machine's Node is 24.15.0, below
+the 24.16 that `notes/testing.md` asks for on Windows; no run hit its crash.
+
+Bounded hidden two-player native captures under ignored
+`build/io-shots/` (a seeded save, restored after each run) were inspected:
+the first hall with models, lanes, a covered challenge and the locked lift
+with its lights; a lane charging and its name chip; the dive into puzzle 2's
+model under the closing aperture and its name hold; the lift doors with
+the chapter name, the second hall, the ride down; the solve summary and the
+view coming back out of puzzle 1's model; and a 390x844 phone hall. They
+led to two fixes before the tests above: models framed to their used table
+cells (most showed one tiny box), and the summary waiting for the closed
+aperture.
+
+The clean merge of origin/dev brought compiler, `tide/math.h` and mixer
+changes (no Inside Out overlap). After it, the native and web game targets
+rebuilt warning-free; native passed all four Inside Out entries and WASM the
+aggregate and all fourteen bridge entries again. On the merged code
+`inside_out_play_webgpu` passed in 1,246.2 s, `inside_out_materials_webgpu`
+in 209.0 s and `inside_out_shutters_webgpu` in 533.1 s. Native Vulkan
+validation layers are unavailable here. No CI or deployment was requested.
+
+### Open
+
+- Nobody has played the hall or the challenges. Picks to confirm: the
+  column lanes, the union of progress, chapter gating counting only main
+  puzzles, challenge placement (first three chapters only) and budgets
+  equal to the minimum, the 18-tick charge, timings and the look.
+- The website catalog description (`docs/.../admin/prototypes`) was
+  already out of date (nine puzzles, copies) and is unchanged.
+- One unintended launch: an early `inside_out.exe --help` from this session
+  ran the game without `TIDE_HIDDEN` before being stopped; no save was
+  written.
+
 ## Short drawing trail, no click ping (2026-10-16)
 
 The owner requested removing the click ping and keeping drawing as a very

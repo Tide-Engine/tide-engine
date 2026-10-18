@@ -206,6 +206,7 @@ static void cull(void)
 // doesn't find another in the way.
 static void few(int count)
 {
+    world.Match.scattered = true;      // Alone, as they come: no horde
     world.Match.spawnWait = 1e9f;
     cull();
     world.Match.spawnWait = 0;
@@ -217,6 +218,7 @@ static void few(int count)
 // The dead coming again as the run has them.
 static void spawning(void)
 {
+    world.Match.scattered = false;
     world.Match.spawnWait = 0;
 }
 
@@ -583,7 +585,7 @@ int main(void)
         const Role roles[4] = {Role_Gunner, Role_Breacher, Role_Gunner, Role_Gunner};
         for (int k = 0; k < 4; k++) {
             become(0, roles[k], guns[k]);
-            held[0].third = k == 2;
+            held[0].view = k == 2 ? View_Shoulder : View_Eyes;
             const tide_entity e = sturdy();
             to_open(e);
             face(0, e, 6);
@@ -599,7 +601,105 @@ int main(void)
                         world.arch6_Zombie.count);
             CHECK(zombie(e).health < before);
         }
-        held[0].third = false;
+        held[0].view = View_Eyes;
+    }
+
+    // ---- From above: turned to what the cursor's on, the carbine's round into the chest it's on; moving up the screen
+    // whichever way they face; a grenade lobbed to burst where the cursor is ----
+    few(2);
+    {
+        become(0, Role_Gunner, Weapon_Rifle);
+        const tide_entity e = sturdy();
+        to_open(e);
+        face(0, e, 6);
+        const tide_float3 chest = zombie(e).chestAt;
+        look_at(0, (tide_float3){get(0).feet.x + 10, get(0).feet.y + 1.6f, get(0).feet.z});      // Turned away
+        held[0].view = View_Above;
+        held[0].aim = chest;
+        tick_safe(1);
+        float off = get(0).yaw - atan2f(chest.x - get(0).feet.x, chest.z - get(0).feet.z);
+        while (off > 3.14159265f) off -= 6.2831853f;
+        while (off < -3.14159265f) off += 6.2831853f;
+        Survivor s = get(0);
+        s.shotWait = 0;
+        s.mag = 30;
+        set(0, s);
+        const float before = zombie(e).health;
+        press(&held[0].attack);
+        tick_safe(2);
+        printf("from above: turned %.3f from the chest the cursor's on, the round doing %.1f\n", fabsf(off), before - zombie(e).health);
+        CHECK(fabsf(off) < 0.05f && zombie(e).health < before);
+        // Up the screen (north), turned east
+        cull();
+        put(1, (tide_float3){30, 0, 30}, (tide_float3){30, 1.6f, 40});
+        put(0, (tide_float3){0, 0, -14}, (tide_float3){10, 1.6f, -14});
+        tick_safe(8);
+        const tide_float3 was = get(0).feet;
+        held[0].aim = (tide_float3){was.x + 10, was.y + 1.36f, was.z};
+        held[0].move = (tide_float2){0, 1};
+        tick_safe(30);
+        held[0].move = (tide_float2){0, 0};
+        printf("from above, half a second up the screen turned east: %.2f m north, %.2f m east, facing %.2f\n", get(0).feet.z - was.z, get(0).feet.x - was.x, get(0).yaw);
+        const float facing = atan2f(held[0].aim.x - get(0).feet.x, held[0].aim.z - get(0).feet.z);      // Still at the cursor
+        CHECK(get(0).feet.z - was.z > 1.5f && fabsf(get(0).feet.x - was.x) < 0.3f && fabsf(get(0).yaw - facing) < 0.05f);
+        // A grenade at a spot 12 m off
+        tick_safe(60);
+        const tide_float3 from = get(0).feet;
+        const tide_float3 spot = {from.x + 12, from.y + 1.36f, from.z};
+        held[0].aim = spot;
+        tick_safe(1);
+        s = get(0);
+        s.cooldowns.at[2] = 0;
+        set(0, s);
+        const int grenades = missiles_of(Shot_Grenade);
+        press(&held[0].special);
+        tide_float3 last = {0};
+        bool flew = false, burst = false;
+        for (int t = 0; t < 120 && !burst; t++) {
+            for (uint32_t row = 0; row < world.arch2_Missile.count; row++) {
+                const Missile m = TIDE_AT(&world, arch2_Missile, Missile, row);
+                if (m.kind == Shot_Grenade && m.seat == 0) {
+                    last = m.at;
+                    flew = true;
+                }
+            }
+            tick_safe(1);
+            burst = flew && missiles_of(Shot_Grenade) == grenades;
+        }
+        printf("from above, a grenade at a spot 12 m off burst %.2f m from it\n", hypotf(last.x - spot.x, last.z - spot.z));
+        CHECK(burst && hypotf(last.x - spot.x, last.z - spot.z) < 1.5f);
+        held[0].view = View_Eyes;
+    }
+
+    // ---- A horde: what's owed claws up together out of one patch of ground, 22 to 32 m from whom it's for, within a
+    // second ----
+    {
+        cull();
+        world.Match.scattered = false;
+        world.Match.spawnWait = 1e9f;      // Nothing more owed: the horde alone
+        world.Match.hordePool = 30;
+        world.Match.hordeWait = 0;
+        world.Match.hordeLeft = 0;
+        tick_safe(1);
+        CHECK(world.Match.hordeSize == 30 && world.Match.hordePool == 0);
+        const tide_float3 middle = world.Match.hordeAt;
+        const tide_float3 focus = world.Match.hordeFocus;
+        const float radius = world.Match.hordeRadius;
+        int risen = 0;
+        float farthest = 0;
+        for (int t = 0; t < 62 && risen < 30; t++) {
+            tick_safe(1);
+            risen = (int)world.arch6_Zombie.count;
+        }
+        for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+            const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, row);
+            farthest = fmaxf(farthest, hypotf(z.at.x - middle.x, z.at.z - middle.z));
+        }
+        const float off = hypotf(middle.x - focus.x, middle.z - focus.z);
+        printf("a horde of 30: up within a second, %d of them, %.1f m from its middle at most (its patch %.1f m), %.1f m from whom it's for\n", risen, farthest,
+               radius, off);
+        CHECK(risen == 30 && world.Match.hordeLeft == 0 && farthest <= radius + 1.0f && farthest > 1.0f && off >= 21.9f && off <= 32.1f);
+        spawning();
     }
 
     // ---- Every skill ----
@@ -797,32 +897,39 @@ int main(void)
             }
         }
         CHECK(arced);
-        // A Powder Keg: a kill bursts, and the dead near it are burned
+        // A Powder Keg: a kill bursts, and the nearest of the dead to it are burned. Two of the dead alone, one beside the
+        // other out of the line of fire (with the dead in hordes, others stood in it)
+        few(2);
         s = get(0);
         memset(&s.items, 0, sizeof s.items);
         s.items.at[Item_PowderKeg] = 3;
         set(0, s);
         bool burst = false;
-        for (int tries = 0; tries < 40 && !burst; tries++) {
-            // One of the dead with another close by
-            int a = -1, b = -1;
-            for (uint32_t i = 0; i < world.arch6_Zombie.count && a < 0; i++) {
-                const Zombie zi = TIDE_AT(&world, arch6_Zombie, Zombie, i);
-                if (zi.state != ZombieState_Hunting) continue;
-                for (uint32_t j = 0; j < world.arch6_Zombie.count; j++) {
-                    const Zombie zj = TIDE_AT(&world, arch6_Zombie, Zombie, j);
-                    if (i == j || zj.state != ZombieState_Hunting) continue;
-                    if (hypotf(zi.at.x - zj.at.x, zi.at.z - zj.at.z) < 2.5f) { a = (int)i; b = (int)j; break; }
-                }
+        for (int tries = 0; tries < 10 && !burst; tries++) {
+            const tide_entity ea = sturdy();
+            to_open(ea);
+            tide_entity eb = {0};
+            bool other = false;
+            for (uint32_t row = 0; row < world.arch6_Zombie.count && !other; row++) {
+                const tide_entity e2 = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
+                if (e2.index == ea.index || zombie(e2).state != ZombieState_Hunting) continue;
+                eb = e2;
+                other = true;
             }
-            if (a < 0) { tick_safe(30); continue; }
-            const tide_entity ea = TIDE_ENTITY_AT(&world, arch6_Zombie, a), eb = TIDE_ENTITY_AT(&world, arch6_Zombie, b);
+            if (!other) {
+                few(2);
+                continue;
+            }
             Zombie za = zombie(ea), zb = zombie(eb);
-            za.health = 1;
+            zb.at = (tide_float3){za.at.x + cosf(za.yaw) * 1.2f, za.at.y, za.at.z - sinf(za.yaw) * 1.2f};
+            zb.pace = 0;
+            zb.kind = ZombieKind_Walker;
             zb.health = 100000;
-            CHECK(tide_set_Zombie(&world, ea, za));
             CHECK(tide_set_Zombie(&world, eb, zb));
             face(0, ea, 5);
+            za = zombie(ea);
+            za.health = 1;
+            CHECK(tide_set_Zombie(&world, ea, za));
             s = get(0);
             s.shotWait = 0;
             s.mag = 12;

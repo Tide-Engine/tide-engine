@@ -1,6 +1,9 @@
 using Rooms;
 
 extern string InsideOutInviteBase();
+// 1 when this machine plays with every chapter open (invite.c): `?playtest`
+// on the web, INSIDE_OUT_PLAYTEST natively.
+extern int InsideOutPlaytest();
 
 void CopyInvite(mut Rooms.Lobby lobby, string room)
 {
@@ -53,6 +56,10 @@ local singleton Hands
     int chapter;
     int pendingLevel = -1;
     bool pendingReset;
+    bool pendingHall;
+    bool playtest;
+    // The match serial this machine last offered its saved progress at.
+    int progressSerial = -1;
     bool confirmFromPlaying;
     float clock;
     Rooms.Page pageAtStart;
@@ -159,7 +166,7 @@ local event(PuzzleCue cue) FeelPuzzle(mut Hands hands)
     if (cue.kind == 2) hands.portalTime = 0.36;
 }
 
-string DimensionName(int room) { return room < 0 ? "Outer room" : RoomName(room); }
+string DimensionName(bool inHall, int room) { return inHall ? "The hall" : room < 0 ? "Outer room" : RoomName(room); }
 
 override string Rooms.Tagline() { return "Two test robots. Rooms within rooms. Find your way out."; }
 override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 88, 16, 72, 42); }
@@ -181,12 +188,21 @@ view Roster(Workshop workshop, mut Hands hands, mut Rooms.Lobby lobby)
     lobby.mine = hands.seat;
     lobby.offersNewGame = false;
     lobby.offersBots = false;
-    if (hands.level != workshop.level)
+    if (hands.level != Place(workshop))
     {
-        hands.level = workshop.level;
-        hands.chapter = LevelChapter(workshop.level);
+        hands.level = Place(workshop);
+        hands.chapter = workshop.inHall ? workshop.hall : LevelChapter(workshop.level);
         hands.pendingLevel = -1;
         hands.pendingReset = false;
+        hands.pendingHall = false;
+    }
+    // What this machine solved before counts for the room. Offered again
+    // whenever the room changes, until the match has it all.
+    if (hands.seat >= 0 && workshop.initialized && hands.progressSerial != workshop.serial &&
+        ((hands.completed & ~workshop.completed) != 0 || hands.playtest && !workshop.playtest))
+    {
+        Send(Progress { completed = hands.completed, playtest = hands.playtest });
+        hands.progressSerial = workshop.serial;
     }
     if (hands.serial != workshop.serial)
     {
@@ -235,9 +251,10 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
     var height = Screen.height;
     var narrow = width < 720;
     var together = Together(workshop);
-    var overlay = hands.journal || hands.pendingReset || hands.pendingLevel >= 0;
+    var overlay = hands.journal || hands.pendingReset || hands.pendingHall || hands.pendingLevel >= 0;
     var playing = lobby.playing && together && hands.seat >= 0 && !overlay;
-    var revealing = time.tick - workshop.openedTick < workshop.introTicks + REVEAL_TICKS;
+    // Nothing moves while a room opens, or once a lane's pads are full.
+    var revealing = time.tick - workshop.openedTick < workshop.introTicks + REVEAL_TICKS || Departing(HallOf(workshop), time.tick);
     for (var d = 0; d < 4; d++)
     {
         hands.ahead[d] = Step.Blocked;
@@ -279,21 +296,30 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
         var plateWidth = narrow ? (width - 40) * .5 : 224.0;
         var plate = float2(left + plateWidth * .5 + seat * (plateWidth + 8), height - (narrow ? 148.0 : 28.0));
         Chip(plate, float2(plateWidth, 28));
-        Label($"{who} / {DimensionName(actor.room)}", plate, narrow ? 10.0 : 12.0, seat == 0 ? AMBER : TEAL, Anchor.MiddleCenter);
+        Label($"{who} / {DimensionName(workshop.inHall, actor.room)}", plate, narrow ? 10.0 : 12.0, seat == 0 ? AMBER : TEAL, Anchor.MiddleCenter);
     }
     var bottom = height - 92;
-    if (PaperButton("Undo", Rect(left, bottom, 82, 40), workshop.historyCount > 0 && playing) || playing && (key.z.down || key.backspace.down))
-        Send(Undo { serial = workshop.serial });
-    if (PaperButton("Restart", Rect(left + 90, bottom, 82, 40), playing) || playing && key.r.down)
+    // The hall has no history to undo, and its lanes say where they lead.
+    var tools = workshop.inHall ? left : left + 180;
+    if (workshop.inHall)
     {
-        hands.pendingReset = true;
-        hands.confirmFromPlaying = true;
-        lobby.page = Rooms.Page.Room;
-        lobby.resume = true;
-        UiSound(UiCue.Open);
+        if (!revealing) LaneNote(HallOf(workshop), workshop.puzzle, hands, height - (narrow ? 190.0 : 72.0));
+    }
+    else
+    {
+        if (PaperButton("Undo", Rect(left, bottom, 82, 40), workshop.historyCount > 0 && playing) || playing && (key.z.down || key.backspace.down))
+            Send(Undo { serial = workshop.serial });
+        if (PaperButton("Restart", Rect(left + 90, bottom, 82, 40), playing) || playing && key.r.down)
+        {
+            hands.pendingReset = true;
+            hands.confirmFromPlaying = true;
+            lobby.page = Rooms.Page.Room;
+            lobby.resume = true;
+            UiSound(UiCue.Open);
+        }
     }
     // The mouse always draws; a finger draws while this is on.
-    if (devices.touchscreen.connected && PaperButton(hands.pen ? "Drawing" : "Draw", Rect(left + 180, bottom, 82, 40), true, hands.pen))
+    if (devices.touchscreen.connected && PaperButton(hands.pen ? "Drawing" : "Draw", Rect(tools, bottom, 82, 40), true, hands.pen))
         hands.pen = !hands.pen;
     hands.repeat -= Math.Min(Frame.dt, .1);
     var direction = KeyDirection(devices, false);
@@ -338,6 +364,39 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
     if (!touch.press.pressed) hands.swipeReady = false;
 }
 
+// What the lane this screen's robot stands in leads to, on a chip above the
+// robots' names.
+void LaneNote(HallState workshop, Puzzle puzzle, Hands hands, float y)
+{
+    if (hands.seat < 0 || hands.seat > 1) return;
+    var me = puzzle.actors[hands.seat].position;
+    var partner = puzzle.actors[1 - hands.seat].position;
+    for (var index = 0; index < MAX_STATIONS; index++)
+    {
+        var station = HallStation(workshop.hall, index);
+        if (station.kind == StationKind.None || !CellEqual(me, station.near) && !CellEqual(me, station.far)) continue;
+        var open = StationOpen(workshop, workshop.hall, station);
+        mut var text = "";
+        if (station.kind == StationKind.Level)
+        {
+            var solved = Solved(workshop.completed, station.level) ? " / solved" : "";
+            if (!IsChallenge(station.level)) text = $"{station.level + 1:D2}. {LevelName(station.level)}{solved}";
+            else if (open) text = $"Challenge: {LevelName(station.level)}, in {ChallengeBudget(station.level)} moves{solved}";
+            else text = "A challenge, uncovered once every puzzle here is solved";
+        }
+        else if (station.kind == StationKind.Down) text = $"Lift down to chapter {workshop.hall}, {ChapterName(workshop.hall - 1)}";
+        else if (open) text = $"Lift up to chapter {workshop.hall + 2}, {ChapterName(workshop.hall + 1)}";
+        else text = $"Lift up: it works once every puzzle here is solved ({ChapterSolved(workshop.completed, workshop.hall)} of {ChapterSize(workshop.hall)})";
+        var waiting = open && !CellEqual(partner, station.near) && !CellEqual(partner, station.far);
+        if (waiting) text = $"{text}. Both stand here to go.";
+        var size = Screen.width < 720 ? 11.0 : 13.0;
+        var at = float2(Screen.width * .5, y);
+        Chip(at, float2(Math.Min(Screen.width - 24, Draw.MeasureText(text, size).x + 28), size + 16));
+        Label(text, at, size, open ? INK : MUTED, Anchor.MiddleCenter);
+        return;
+    }
+}
+
 // Hover events carry the control's position so moving between controls makes
 // one quiet tick, rather than a sound every frame the pointer rests on one.
 local event UiHover { float x; float y; }
@@ -377,6 +436,19 @@ void PagePanel(Rect card, string title, string subtitle = "")
     Panel(float2(card.x + card.width * .5, card.y + card.height * .5), float2(card.width, card.height));
     Heading(title, float2(Screen.width * .5, card.y + 38), 30);
     if (subtitle != "") Paragraph(subtitle, float2(card.x + 24, card.y + 78), card.width - 48, 14, MUTED);
+}
+
+// Leaving a puzzle with moves made asks first, for both players' sake.
+void BackToHall(Workshop workshop, mut Hands hands, mut Rooms.Lobby lobby)
+{
+    if (workshop.puzzle.moves > 0)
+    {
+        hands.pendingHall = true;
+        hands.confirmFromPlaying = false;
+        return;
+    }
+    Send(ToHall { serial = workshop.serial });
+    Rooms.Resume(lobby);
 }
 
 bool MenuBack(Rect card)
@@ -430,6 +502,7 @@ view ReadPreferences(mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
 {
     if (hands.preferencesLoaded) return;
     hands.preferencesLoaded = true;
+    hands.playtest = InsideOutPlaytest() != 0;
     if (File.ReadAllText(Path.Combine(Application.persistentDataPath, "preferences.json")) is string text)
     {
         if (Json.Read<Preferences>(text) is Preferences saved)
@@ -441,7 +514,7 @@ view ReadPreferences(mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
             mixer.muted = saved.muted;
             hands.reduceMotion = saved.reducedMotion;
             hands.preview = saved.preview;
-            mut var completed = saved.completed & ((1 << LEVEL_COUNT) - 1);
+            mut var completed = saved.completed & ((1 << PUZZLE_COUNT) - 1);
             // Version 2 replaces puzzles 7–13 and 15–18. Keep old ticks only
             // for unchanged puzzles, while retaining every personal setting.
             if (saved.version < 2) completed &= ((1 << 6) - 1) | (1 << 13);
@@ -495,15 +568,20 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
         }
         return;
     }
-    if (hands.pendingReset || hands.pendingLevel >= 0)
+    if (hands.pendingReset || hands.pendingHall || hands.pendingLevel >= 0)
     {
         var card = MenuCard(480, 300);
-        PagePanel(card, hands.pendingReset ? "Restart this puzzle?" : "Change puzzle?", "This restarts the puzzle for both of you. Your shared undo history will be cleared.");
-        if (PaperButton(hands.pendingReset ? "Restart puzzle" : "Choose puzzle", Rect(card.x + 24, card.y + 166, card.width - 48, 44), Together(workshop), true))
+        var title = hands.pendingReset ? "Restart this puzzle?" : hands.pendingHall ? "Back to the hall?" : "Change puzzle?";
+        PagePanel(card, title, hands.pendingHall ? "This leaves the puzzle for both of you. Its moves are not kept." :
+            "This restarts the puzzle for both of you. Your shared undo history will be cleared.");
+        var action = hands.pendingReset ? "Restart puzzle" : hands.pendingHall ? "Back to the hall" : "Choose puzzle";
+        if (PaperButton(action, Rect(card.x + 24, card.y + 166, card.width - 48, 44), Together(workshop), true))
         {
             if (hands.pendingReset) Send(Reset { serial = workshop.serial });
+            else if (hands.pendingHall) Send(ToHall { serial = workshop.serial });
             else Send(ChooseLevel { serial = workshop.serial, level = hands.pendingLevel });
             hands.pendingReset = false;
+            hands.pendingHall = false;
             hands.pendingLevel = -1;
             hands.journal = false;
             Rooms.Resume(lobby);
@@ -511,6 +589,7 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
         if (MenuBack(card) || escape)
         {
             hands.pendingReset = false;
+            hands.pendingHall = false;
             hands.pendingLevel = -1;
             if (hands.confirmFromPlaying) Rooms.Resume(lobby);
             hands.confirmFromPlaying = false;
@@ -530,15 +609,16 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
         }
         Label($"CHAPTER {hands.chapter + 1} / {ChapterName(hands.chapter)}", float2(card.x + 24, card.y + 180), 14, BRASS);
         mut var row = 0;
-        for (var level = 0; level < LEVEL_COUNT; level++)
+        for (var level = 0; level < PUZZLE_COUNT; level++)
         {
             if (LevelChapter(level) != hands.chapter) continue;
             var solved = ((workshop.completed | hands.completed) & (1 << level)) != 0;
-            var label = $"{level + 1:D2}   {LevelName(level)}";
-            if (PaperButton(label, Rect(card.x + 24, card.y + 204 + row * 57, card.width - 48, 48), Together(workshop), level == workshop.level))
+            var label = IsChallenge(level) ? $"Challenge   {LevelName(level)}" : $"{level + 1:D2}   {LevelName(level)}";
+            var current = level == workshop.level && !workshop.inHall;
+            if (PaperButton(label, Rect(card.x + 24, card.y + 204 + row * 57, card.width - 48, 48), Together(workshop), current))
             {
-                if (level == workshop.level) { hands.journal = false; Rooms.Resume(lobby); }
-                else if (workshop.puzzle.moves > 0) hands.pendingLevel = level;
+                if (current) { hands.journal = false; Rooms.Resume(lobby); }
+                else if (!workshop.inHall && workshop.puzzle.moves > 0) hands.pendingLevel = level;
                 else
                 {
                     Send(ChooseLevel { serial = workshop.serial, level = level });
@@ -554,7 +634,20 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
             }
             row++;
         }
-        if (MenuBack(card) || escape) { hands.journal = false; UiSound(UiCue.Back); }
+        mut var back = escape;
+        if (workshop.inHall) back = MenuBack(card) || back;
+        else
+        {
+            var half = (card.width - 60) * .5;
+            var foot = card.y + card.height - 66;
+            if (PaperButton("Back to the hall", Rect(card.x + 24, foot, half, 44), Together(workshop)))
+            {
+                hands.journal = false;
+                BackToHall(workshop, hands, lobby);
+            }
+            if (PaperButton("Back", Rect(card.x + 36 + half, foot, half, 44))) back = true;
+        }
+        if (back) { hands.journal = false; UiSound(UiCue.Back); }
         return;
     }
     if (lobby.page == Rooms.Page.Playing) return;
@@ -636,12 +729,19 @@ view GamePages(Workshop workshop, Session session, Devices devices, mut Rooms.Lo
         var x = card.x + 24;
         var w = card.width - 48;
         if (PaperButton("Resume", Rect(x, card.y + 122 * compact, w, 46), true, true)) { Rooms.Resume(lobby); UiSound(UiCue.Back); }
-        if (PaperButton("Restart puzzle", Rect(x, card.y + 180 * compact, w, 46), Together(workshop)))
+        if (PaperButton("Restart puzzle", Rect(x, card.y + 180 * compact, w, 46), Together(workshop) && !workshop.inHall))
         {
             hands.pendingReset = true;
             hands.confirmFromPlaying = false;
         }
-        if (PaperButton("Choose puzzle", Rect(x, card.y + 238 * compact, w, 46))) { hands.journal = true; UiSound(UiCue.Open); }
+        // The hall is where puzzles are chosen. Playtesting can also pick
+        // any puzzle from a list, which has its own way back to the hall.
+        if (workshop.playtest)
+        {
+            if (PaperButton("Choose puzzle", Rect(x, card.y + 238 * compact, w, 46))) { hands.journal = true; UiSound(UiCue.Open); }
+        }
+        else if (PaperButton("Back to the hall", Rect(x, card.y + 238 * compact, w, 46), Together(workshop) && !workshop.inHall))
+            BackToHall(workshop, hands, lobby);
         if (PaperButton("Settings", Rect(x, card.y + 296 * compact, w, 46))) { Rooms.ShowSettings(lobby); UiSound(UiCue.Open); }
         Label(session.room != "" ? $"ROOM / {session.room}" : "Opening your room...", float2(Screen.width * .5, card.y + 381 * compact), 17, BRASS, Anchor.MiddleCenter);
         if (PaperButton(lobby.copied < 1.5 ? "Copied" : "Copy invite", Rect(x, card.y + 406 * compact, (w - 12) * .5, 42), session.room != "", true)) CopyInvite(lobby, session.room);
