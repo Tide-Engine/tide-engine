@@ -1,37 +1,30 @@
 using Rooms;
 
 // The nights: a run is a string of them in the clearing, each harder than
-// the last. As a night falls, its beacon stands cold at one of five
-// landmarks, burning a pale wake-fire that's seen across the clearing, and
-// its chests are hidden about. The party finds what it can, and when it's
-// ready, holds E at the beacon to light it: the vigil. The dead come
-// thicker, most of them rising round the beacon, and the night's boss (two
-// from the fourth night, three from the seventh) claws up near it. The
-// beacon is kept while the survivors standing are near it, faster the more
-// of them are; once it's full and its bosses are down, dawn breaks: the dead
-// burn away, the orbs fly in, whoever's down or bled out is up, and a
-// moment later the next night falls, at another beacon, with new chests
-// (the ones not found are gone with the night).
-//
-// So looking about for longer finds more, and the danger climbs with every
-// minute meanwhile; lighting the beacon early is safer and leaves things
-// behind. A night that drags on grows impatient: after IMPATIENT_AFTER, lit
-// or not, the danger climbs twice as fast till its dawn; and while it's unlit
-// a boss comes every few minutes, which brings no prize. Lighting the beacon
-// also calls back anyone who has bled out, so a party a survivor short has a
-// reason to light it sooner.
+// the last, each on its own clock (after The Spell Brigade's: the owner,
+// 2026-10-18, "maybe the bosses are time based instead of that one mission?
+// ... i just wanna roam, shoot and level"). As a night falls its chests are
+// hidden about and its clock starts: NIGHT_SECONDS to roam, kill and level,
+// the dead coming thicker over its last minute (NIGHT_RUSH), the boss's
+// coming told WARN_SECONDS before. When it runs out the night's boss (two
+// from the fourth night, three from the seventh) claws up near the
+// survivors, and whoever has bled out is back. Once its bosses are down, dawn
+// breaks: the dead burn away, the orbs fly in, whoever's down is up, and a
+// moment later the next night falls, with new chests (the ones not found are
+// gone with the night). One who bleeds out is back beside a friend
+// BACK_AFTER later, if the boss or the dawn hasn't brought them sooner. (The
+// beacon each night had to be found, lit and kept by is gone: the owner,
+// "that mission just feels like something annoying to do".) The numbers are
+// mine, Provisional.
 
 const float NIGHT_STEP = 1.25;       // How much more dangerous each night is than the one before, on top of the clock's climb
 const float DANGER_EVERY = 150;      // Seconds of the run for each step of danger the clock brings
-const float KINDLE_SECONDS = 2.5;    // Standing by the beacon to light it (long enough not to by passing it)
-const float KINDLE_REACH = 3;
-const float VIGIL_SECONDS = 90;      // To keep it with every survivor standing near it
-const float VIGIL_REACH = 11;        // How near (across the ground) counts as keeping it
-const float VIGIL_RUSH = 1.4;        // The dead come so many times as fast while it burns...
-const float VIGIL_FOCUS = 0.65;      // ...and this share of them rise round the beacon
+const float NIGHT_SECONDS = 180;     // To roam, till the night's boss claws up
+const float RUSH_SECONDS = 60;       // Over a night's last so many seconds...
+const float NIGHT_RUSH = 2;          // ...the dead come thicker, up to so many times as fast
+const float WARN_SECONDS = 10;       // The boss's coming told so long before
 const float DAWN_SECONDS = 10;       // The breath between one night and the next
-const float IMPATIENT_AFTER = 270;   // Seconds a night may go on, lit or not, before the danger climbs twice as fast (rounds.tide)
-const int BEACON_PLACES = 5;
+const float BACK_AFTER = 60;         // Bled out: back beside a friend after so long, if nothing's brought them sooner
 
 // How many more of the dead a party brings than one survivor alone: each beyond the first, most of another's worth.
 // The dead are as tough for four as for one; the experience a level takes grows the same way (items.tide), so each
@@ -44,44 +37,18 @@ float Crowd(int players)
 // How many chests a night hides, however many there are: each one's a pick for all of them.
 const int CHESTS_A_NIGHT = 4;
 
-// How many bosses rise at a night's vigil.
-int VigilBosses(int night)
+// How many bosses rise at a night's end.
+int NightBosses(int night)
 {
     return 1 + (night - 1) / 3;
 }
 
-// Where each beacon stands: in the cairn, in the chapel's ruin, at the graveyard's edge, among the standing stones,
-// beside the dead oak.
-float3 BeaconPlace(int place)
+// How many times as fast the dead come, by the night's clock: thickening over its last RUSH_SECONDS to NIGHT_RUSH.
+// (While its bosses stand, rounds.tide's BOSS_THIN.)
+float Rush(Match match)
 {
-    switch (place)
-    {
-        case 0: return On(CAIRN.x, CAIRN.y);
-        case 1: return On(CHAPEL.x, CHAPEL.y - 1);
-        case 2: return On(GRAVES.x + 8, GRAVES.y - 0.5);
-        case 3: return On(STONES.x, STONES.y);
-    }
-    return On(OAK.x + 4, OAK.y + 1);
-}
-
-string BeaconPlaceName(int place)
-{
-    switch (place)
-    {
-        case 0: return "in the cairn";
-        case 1: return "in the chapel's ruin";
-        case 2: return "by the graveyard";
-        case 3: return "among the standing stones";
-    }
-    return "by the dead oak";
-}
-
-// Another beacon than last night's.
-int NextPlace(int last)
-{
-    if (last < 0) return Random.NextInt(BEACON_PLACES);
-    var pick = Random.NextInt(BEACON_PLACES - 1);
-    return pick >= last ? pick + 1 : pick;
+    if (match.reckoning) return 1;
+    return 1 + (NIGHT_RUSH - 1) * Math.Saturate((match.nightClock - (match.nightEnds - RUSH_SECONDS)) / RUSH_SECONDS);
 }
 
 // What each night is like: the first moonlit, then mist, a blood moon, a starless one, the wake (a sick green), and
@@ -104,31 +71,12 @@ string NightName(int night)
     return "Moonlit";
 }
 
-component Beacon
+// Seconds as a clock: 2:05.
+string ClockText(float seconds)
 {
-    [Position] float3 at;
-    int place;
-    int night;                       // The night it's for: gone when the next falls
-    float kindled;                   // 0 to 1: held E toward lighting it; it dies down again when nobody holds E by it
-    bool lit;                        // The vigil's begun
-    bool called;                     // ...and its bosses have risen
-    float charge;                    // 0 to 1: how far the vigil's been kept
-    int keepers;                     // Survivors standing near it, this tick
-    int standing;                    // ...of how many standing
-}
-
-// A tick's share of lighting the beacon, from a survivor holding E by it.
-event Kindling
-{
-    float amount;
-    int by;
-}
-
-event VigilBegan
-{
-    float3 at;
-    int night;
-    int by;
+    var whole = int(Math.Ceil(Math.Max(0, seconds)));
+    var s = whole % 60;
+    return s < 10 ? $"{whole / 60}:0{s}" : $"{whole / 60}:{s}";
 }
 
 event DawnBroke
@@ -140,121 +88,97 @@ event DawnBroke
 event NightFell
 {
     int night;
-    int place;
 }
 
-// To each survivor at dawn: up, whole and ready, wherever they are (or, bled out, beside the beacon).
+// The night's clock run out: its bosses rising.
+event Reckoning
+{
+    int night;
+    int bosses;
+}
+
+// To each survivor at dawn: up, whole and ready, wherever they are (or, bled out, beside a friend).
 event Dawned
 {
     float3 at;
 }
 
-// To each survivor as the beacon's lit: one who bled out is back beside it.
+// To each survivor as the night's bosses rise: one who bled out is back beside a friend.
 event Recalled
 {
     float3 at;
 }
 
-// A night falls: its beacon at another landmark, its chests to come, its own clock, and the impatient boss's wait.
+// A night falls: its chests to come, its own clock and its end.
 void Nightfall(mut Match match)
 {
     match.night += 1;
     match.nightClock = 0;
+    match.nightEnds = NIGHT_SECONDS;
+    match.reckoning = false;
     ResetHordes(match);
     ResetMissions(match);
-    match.bossNext = BOSS_EVERY;
+    ResetEruptions(match);
     match.chestsDue = CHESTS_A_NIGHT;
     match.chestsPlaced = 0;
-    match.vigil = false;
-    var place = NextPlace(match.place);
-    match.place = place;
-    match.beaconAt = BeaconPlace(place);
-    Spawn(Beacon { at = match.beaconAt, place = place, night = match.night });
-    Send(NightFell { night = match.night, place = place });
+    Send(NightFell { night = match.night });
 }
 
-// Standing by the beacon (not by a friend who's down: raising wins) lights it.
-[Stage(Tick.Hands, 1)]
-system KindleBeacon(Survivor survivor, Match match, Time time, query (Beacon beacon) beacons)
-{
-    if (match.paused || match.phase != Phase.Fighting || !survivor.ready || survivor.life != Life.Standing || survivor.role == Role.None || survivor.aimed >= 0) return;
-    foreach (var row in beacons)
-    {
-        var b = row.beacon;
-        if (b.lit || b.night != match.night || Math.Length((b.at - survivor.feet).xz) > KINDLE_REACH || Math.Abs(b.at.y - survivor.feet.y) > 2.5) continue;
-        // Twice the tick's share: Keep takes one back every tick it isn't lit
-        row.entity.Send(Kindling { amount = time.dt / KINDLE_SECONDS * 2, by = survivor.seat });
-    }
-}
-
-// Lit: the vigil begins, and whoever bled out is called back to it.
-event(Kindling kindling) Kindle(mut Beacon beacon, Party party, Match match)
-{
-    if (beacon.lit || beacon.night != match.night) return;
-    beacon.kindled += kindling.amount;
-    if (beacon.kindled < 1) return;
-    beacon.kindled = 1;
-    beacon.lit = true;
-    for (var seat = 0; seat < 4; seat++)
-        if (party.taken[seat]) party.survivors[seat].Send(Recalled { at = beacon.at });
-    Send(VigilBegan { at = beacon.at, night = match.night, by = kindling.by });
-}
-
-// The beacon, each tick: dying down while nobody lights it; lit, its bosses up, kept as the survivors stand by it,
-// and dawn once it's full and they're down. A night's beacon goes when the next night falls (or the run starts again).
+// The night's clock run out: its bosses claw up, each 24 to 32 m from one of the survivors standing, and whoever bled
+// out is back beside one of them; once its bosses are down (or dying), dawn.
 [Stage(Tick.Rounds, 4)]
-system Keep(mut Beacon beacon, mut Match match, Ashwick ashwick, Party party, Time time, query (Survivor survivor) survivors, query (Boss boss) bosses)
+system Reckon(mut Match match, Ashwick ashwick, Party party, query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
-    if (match.restarting || (beacon.night != match.night && match.phase != Phase.Over))
-    {
-        this.Destroy();
-        return;
-    }
     if (match.paused || match.phase != Phase.Fighting) return;
-    if (!beacon.lit)
+    mut List<float3> near = [];
+    foreach (var row in survivors)
+        if (row.survivor.ready && row.survivor.role != Role.None && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
+    if (near.count == 0) return;
+    if (!match.reckoning)
     {
-        beacon.kindled = Math.Max(0, beacon.kindled - time.dt / KINDLE_SECONDS);
-        match.vigil = false;
+        if (match.nightClock < match.nightEnds) return;
+        match.reckoning = true;
+        var count = NightBosses(match.night);
+        for (var k = 0; k < count; k++)
+        {
+            var pick = Random.NextInt(near.count);
+            RaiseBoss(match, ashwick, near[pick], true, 24, 32, KindForNight(match.night, k));
+        }
+        for (var seat = 0; seat < 4; seat++)
+            if (party.taken[seat]) party.survivors[seat].Send(Recalled { at = near[0] });
+        Send(Reckoning { night = match.night, bosses = count });
         return;
     }
-    match.vigil = true;
-    if (!beacon.called)
-    {
-        beacon.called = true;
-        for (var k = 0; k < VigilBosses(match.night); k++) RaiseBoss(match, ashwick, beacon.at, true, 24, 32, KindForNight(match.night, k));
-    }
-    mut var standing = 0;
-    mut var near = 0;
-    foreach (var row in survivors)
-    {
-        var s = row.survivor;
-        if (!s.ready || s.role == Role.None || s.life != Life.Standing) continue;
-        standing += 1;
-        if (Math.Length((s.feet - beacon.at).xz) <= VIGIL_REACH) near += 1;
-    }
-    beacon.keepers = near;
-    beacon.standing = standing;
-    if (standing > 0) beacon.charge = Math.Min(1, beacon.charge + time.dt / VIGIL_SECONDS * near / standing);
-    if (beacon.charge < 1) return;
     foreach (var row in bosses)
-        if (row.boss.vigil && row.boss.move != BossMove.Dying) return;
+        if (row.boss.own && row.boss.move != BossMove.Dying) return;
     // Dawn
     match.phase = Phase.Dawn;
     match.timer = 0;
-    match.vigil = false;
+    match.reckoning = false;
     match.kept = match.night;
     for (var seat = 0; seat < 4; seat++)
-        if (party.taken[seat]) party.survivors[seat].Send(Dawned { at = beacon.at });
-    Send(DawnBroke { night = match.night, at = beacon.at });
+        if (party.taken[seat]) party.survivors[seat].Send(Dawned { at = near[0] });
+    Send(DawnBroke { night = match.night, at = near[0] });
 }
 
-[Stage(Tick.Restart)]
-system ClearBeacon(with Beacon, Match match)
+// Bled out: back beside a friend still standing BACK_AFTER later, if the night's bosses or its dawn haven't brought
+// them back sooner.
+[Stage(Tick.Rounds, 5)]
+system ComeBack(mut Survivor survivor, Match match, Time time, query (Survivor survivor) others)
 {
-    if (match.restarting) this.Destroy();
+    if (match.paused || match.phase != Phase.Fighting || !survivor.ready || survivor.role == Role.None || survivor.life != Life.Gone) return;
+    survivor.gone += time.dt;
+    if (survivor.gone < BACK_AFTER) return;
+    foreach (var row in others)
+    {
+        var other = row.survivor;
+        if (other.seat == survivor.seat || !other.ready || other.life != Life.Standing) continue;
+        Recall(survivor, other.feet);
+        return;
+    }
 }
 
-// Back beside the beacon, as they were when they went, whole: by their seat, a few steps off it.
+// Back beside a friend, as they were when they went, whole: by their seat, a few steps off them.
 void Recall(mut Survivor survivor, float3 at)
 {
     var off = Flat(survivor.seat * Math.PI * 0.5 + 0.4) * 2.4;
@@ -274,7 +198,7 @@ event(Recalled recalled) TakeRecalled(mut Survivor survivor)
     if (survivor.ready && survivor.role != Role.None && survivor.life == Life.Gone) Recall(survivor, recalled.at);
 }
 
-// Dawn: everyone up, whole and ready; one who bled out back beside the beacon.
+// Dawn: everyone up, whole and ready; one who bled out back beside a friend.
 event(Dawned dawned) TakeDawn(mut Survivor survivor)
 {
     if (!survivor.ready || survivor.role == Role.None) return;
@@ -349,105 +273,10 @@ void NightLook(mut Look look, Match match, float dt)
     look.mist += (mist - look.mist) * ease;
 }
 
-// Cold, a pale wake-fire in the brazier and a column of it high over the trees, seen from anywhere in the clearing;
-// being lit, the fire catching; lit, a roaring fire and a ring of embers on the ground as far as it's kept from, which
-// burns brighter as the vigil fills.
-[Stage(Layers.Gather, 3)]
-view BeaconFlames(Beacon beacon, Match match, mut Fx fx, Me me, Look look)
-{
-    if (!fx.made || beacon.night != match.night) return;
-    var top = beacon.at + float3(0, 1.6, 0);
-    var far = Math.Distance(beacon.at, me.eye);
-    if (!beacon.lit)
-    {
-        if (match.phase != Phase.Fighting) return;
-        // The column: brightest at its foot, fading up; brighter as it's kindled
-        var strength = 0.45 + 0.15 * Math.Sin(look.time * 1.7) + beacon.kindled * 0.8;
-        fx.streakSprites.Add(Sprite { at = top, to = top + float3(0, 34, 0), size = 0.55 + Math.Saturate(far / 60) * 0.6, color = float4(0.45, 0.95, 0.75, strength * 0.35) });
-        fx.streakSprites.Add(Sprite { at = top, to = top + float3(0, 12, 0), size = 0.22 + Math.Saturate(far / 60) * 0.3, color = float4(0.7, 1.0, 0.9, strength * 0.5) });
-        if (far < 60 && fx.random.NextFloat() < me.dt * 30)
-            Glow(fx, Mote { at = top + float3(fx.random.NextFloat(-0.35, 0.35), 0, fx.random.NextFloat(-0.35, 0.35)), velocity = float3(0, fx.random.NextFloat(0.8, 1.8), 0),
-                            life = fx.random.NextFloat(0.5, 1.0), size = 0.16, grow = -0.12, color = float3(0.4, 1.0, 0.7), alpha = 1.2 + beacon.kindled * 2 });
-        return;
-    }
-    if (far < 70)
-    {
-        for (var k = 0; k < 4; k++)
-            Glow(fx, Mote { at = top + float3(fx.random.NextFloat(-0.5, 0.5), 0, fx.random.NextFloat(-0.5, 0.5)), velocity = float3(0, fx.random.NextFloat(1.5, 3.2), 0),
-                            life = fx.random.NextFloat(0.35, 0.7), size = 0.32, grow = -0.35, color = float3(1.0, 0.52, 0.15), alpha = 1.6, cool = 1 });
-        if (fx.random.NextFloat() < me.dt * 20)
-            Glow(fx, Mote { at = top + float3(0, 0.6, 0), velocity = float3(fx.random.NextFloat(-0.6, 0.6), 3.5, fx.random.NextFloat(-0.6, 0.6)), life = 2.2, size = 0.03,
-                            color = float3(1.0, 0.65, 0.25), alpha = 4, drag = 0.3 });
-    }
-    // The ring, while the vigil lasts
-    if (match.phase == Phase.Fighting && far < 80)
-    {
-        var count = 6 + int(beacon.charge * 10);
-        for (var k = 0; k < count; k++)
-        {
-            var turn = fx.random.NextFloat(Math.TAU);
-            var at = beacon.at + float3(Math.Cos(turn) * VIGIL_REACH, 0, Math.Sin(turn) * VIGIL_REACH);
-            Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.1, 0), velocity = float3(0, 0.5, 0), life = 0.35, size = 0.14, color = float3(1.0, 0.45, 0.12),
-                            alpha = 1.2 + beacon.charge * 1.6 });
-        }
-    }
-    // The column goes on, warm, while the vigil lasts: where to come back to
-    if (match.phase == Phase.Fighting)
-        fx.streakSprites.Add(Sprite { at = top, to = top + float3(0, 26, 0), size = 0.4 + Math.Saturate(far / 60) * 0.5, color = float4(1.0, 0.55, 0.2, 0.18 + beacon.charge * 0.2) });
-}
-
-// Its light: a cold glow, or a fire's, on what's round it.
-[Stage(Layers.Gather, 3)]
-view BeaconLight(Beacon beacon, Match match, mut Lights lights, Me me, Look look)
-{
-    if (beacon.night != match.night) return;
-    var at = beacon.at + float3(0, 2.2, 0);
-    if (!beacon.lit)
-    {
-        var pulse = 0.85 + Math.Sin(look.time * 1.7) * 0.15;
-        AddLight(lights, me.eye, Light { at = at, color = float3(0.35, 1.0, 0.7) * (1.2 + beacon.kindled * 2) * pulse, reach = 9 });
-        return;
-    }
-    var flicker = 0.85 + Math.Perlin(float2(look.time * 4.3 + at.x, at.z)) * 0.25;
-    AddLight(lights, me.eye, Light { at = at, color = float3(1.0, 0.45, 0.15) * 7 * flicker, reach = 24 });
-}
-
-// By the beacon: standing by it lights it.
+// The night, top left under the menu: which, and what's coming: the time till its boss (going red as it nears) and how
+// many of its chests are found; its bosses to fell; or dawn.
 [Stage(Layers.Hud, 1)]
-view BeaconPrompt(Me me, Lobby lobby, Match match, query (Survivor survivor) survivors, query (Beacon beacon) beacons)
-{
-    if (lobby.page != Page.Playing || match.phase != Phase.Fighting || match.paused) return;
-    mut var mine = Survivor { };
-    mut var found = false;
-    foreach (var row in survivors)
-    {
-        if (row.survivor.seat != me.seat) continue;
-        mine = row.survivor;
-        found = true;
-    }
-    if (!found || mine.role == Role.None || mine.choosing || mine.life != Life.Standing || mine.aimed >= 0) return;
-    foreach (var row in beacons)
-    {
-        var b = row.beacon;
-        if (b.lit || b.night != match.night || Math.Length((b.at - mine.feet).xz) > KINDLE_REACH) continue;
-        Draw.SetScreen();
-        var w = Screen.width;
-        var h = Screen.height;
-        var u = Unit();
-        var y = h * 0.7;
-        WriteBold("Stay by the beacon to light it", float2(w * 0.5, y), 20 * u, Color(0.6, 1.0, 0.8), Anchor.MiddleCenter);
-        Write("The dead will come for it. Stay near till dawn.", float2(w * 0.5, y + 24 * u), 13 * u, ASH, Anchor.MiddleCenter);
-        Draw.Rect(float2(w * 0.5, y + 44 * u), float2(220 * u, 5 * u), Color(0, 0, 0, 0.6));
-        if (b.kindled > 0) Draw.Rect(float2(w * 0.5 - 110 * u + 110 * u * Math.Saturate(b.kindled), y + 44 * u), float2(220 * u * Math.Saturate(b.kindled), 5 * u), Color(1.0, 0.6, 0.25));
-    }
-}
-
-// The night, top left under the menu: which, and what's to do: find and light the beacon (and how many of the night's
-// chests are found), keep it (how full, and who's by it), fell its boss, or dawn. (Where it is: missions.tide's
-// Objectives.)
-[Stage(Layers.Hud, 1)]
-view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors, query (Beacon beacon) beacons, query (Chest chest) chests,
-                query (Boss boss) bosses)
+view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors, query (Chest chest) chests, query (Boss boss) bosses)
 {
     if (lobby.page != Page.Playing || match.phase == Phase.Waiting || match.phase == Phase.Over || match.night < 1) return;
     mut var mine = Survivor { };
@@ -459,31 +288,21 @@ view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
         found = true;
     }
     if (!found || mine.role == Role.None) return;
-    mut var b = Beacon { };
-    mut var has = false;
-    foreach (var row in beacons)
-    {
-        if (row.beacon.night != match.night) continue;
-        b = row.beacon;
-        has = true;
-    }
     mut var standing = 0;
     foreach (var row in chests)
         if (row.chest.night == match.night) standing += 1;
     mut var brutes = 0;
     foreach (var row in bosses)
-        if (row.boss.vigil && row.boss.move != BossMove.Dying) brutes += 1;
+        if (row.boss.own && row.boss.move != BossMove.Dying) brutes += 1;
     Draw.SetScreen();
     var u = Unit();
     var box = float2(34 * u + 150 * u, 92 * u);
     Panel(box, float2(300 * u, 74 * u), u);
     var left = box.x - 136 * u;
+    var right = box.x + 136 * u;
     WriteBold($"NIGHT {match.night}", float2(left, box.y - 20 * u), 18 * u, BONE, Anchor.MiddleLeft);
     Write(NightName(match.night).ToUpper(), float2(left + Draw.MeasureText($"NIGHT {match.night}", 18 * u, Font.Bold).x + 12 * u, box.y - 19 * u), 12 * u,
           Color(look.moonColor.x * 1.6 + 0.2, look.moonColor.y * 1.6 + 0.2, look.moonColor.z * 1.6 + 0.2, 1), Anchor.MiddleLeft);
-    // Gone on too long: the danger climbing twice as fast
-    if (match.phase == Phase.Fighting && match.nightClock > IMPATIENT_AFTER)
-        WriteBold("IMPATIENT", float2(box.x + 136 * u, box.y - 19 * u), 11 * u, Color(0.95, 0.3, 0.2, 0.7 + 0.3 * Math.Sin(look.time * 4)), Anchor.MiddleRight);
     if (match.phase == Phase.Dawn)
     {
         WriteBold("DAWN", float2(left, box.y + 6 * u), 15 * u, GOLD, Anchor.MiddleLeft);
@@ -491,20 +310,48 @@ view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
               Anchor.MiddleLeft);
         return;
     }
-    if (!has) return;
-    if (!b.lit)
+    if (match.reckoning)
     {
-        WriteBold($"Light the beacon {BeaconPlaceName(b.place)}", float2(left, box.y + 6 * u), 14 * u, Color(0.6, 1.0, 0.8), Anchor.MiddleLeft);
-        var opened = Math.Max(0, match.chestsPlaced - standing);
-        Write($"Chests found {opened} of {match.chestsPlaced + match.chestsDue}   (left at dawn, they're lost)", float2(left, box.y + 24 * u), 11 * u, ASH,
-              Anchor.MiddleLeft);
+        var pulse = 0.75 + 0.25 * Math.Sin(look.time * 5);
+        WriteBold(brutes > 1 ? $"FELL THE BOSSES  -  {brutes} LEFT" : "FELL THE BOSS", float2(left, box.y + 6 * u), 15 * u, Color(EMBER.r, EMBER.g, EMBER.b, pulse),
+                  Anchor.MiddleLeft);
+        Write("Dawn breaks when it's down", float2(left, box.y + 24 * u), 11 * u, ASH, Anchor.MiddleLeft);
         return;
     }
-    var full = b.charge >= 1;
-    WriteBold(full && brutes > 0 ? "FELL THE BOSS" : "HOLD THE BEACON", float2(left, box.y + 4 * u), 14 * u, EMBER, Anchor.MiddleLeft);
-    Bar(float2(left, box.y + 22 * u), float2(200 * u, 8 * u), b.charge, 0, EMBER, Color(0.5, 0.2, 0.05), 10, u);
-    Write($"{int(b.charge * 100)}%", float2(left + 208 * u, box.y + 22 * u), 12 * u, BONE, Anchor.MiddleLeft);
-    if (b.standing > 1) Write($"{b.keepers} of {b.standing} near it", float2(left + 246 * u, box.y + 22 * u), 11 * u, ASH, Anchor.MiddleLeft);
+    // The clock to the boss: its time left over a bar running down, red in its last seconds
+    var remaining = Math.Max(0, match.nightEnds - match.nightClock);
+    var soon = remaining <= WARN_SECONDS;
+    var share = Math.Saturate(remaining / Math.Max(1, match.nightEnds));
+    var tint = soon ? Color(1.0, 0.3, 0.2, 0.7 + 0.3 * Math.Sin(look.time * 10)) : remaining <= RUSH_SECONDS ? EMBER : Color(0.75, 0.8, 0.95);
+    WriteBold(ClockText(remaining), float2(right, box.y - 20 * u), 18 * u, tint, Anchor.MiddleRight);
+    WriteBold("BOSS IN", float2(right - Draw.MeasureText(ClockText(remaining), 18 * u, Font.Bold).x - 10 * u, box.y - 19 * u), 11 * u,
+              Color(tint.r, tint.g, tint.b, 0.85), Anchor.MiddleRight);
+    Bar(float2(left, box.y + 4 * u), float2(272 * u, 7 * u), share, 0, Color(tint.r, tint.g, tint.b, 1), Color(0.25, 0.1, 0.06), 12, u);
+    var opened = Math.Max(0, match.chestsPlaced - standing);
+    Write($"Chests found {opened} of {match.chestsPlaced + match.chestsDue}   (left at dawn, they're lost)", float2(left, box.y + 24 * u), 11 * u, ASH, Anchor.MiddleLeft);
+}
+
+// The boss's coming, told WARN_SECONDS before: a bell, and a banner.
+local singleton Warned
+{
+    int night;
+}
+
+[Stage(Layers.Hud, 1)]
+view WarnBoss(Match match, Lobby lobby, mut Warned warned, mut Feed feed)
+{
+    if (!lobby.playing || match.phase != Phase.Fighting || match.reckoning || match.paused || warned.night == match.night) return;
+    if (match.nightEnds - match.nightClock > WARN_SECONDS) return;
+    warned.night = match.night;
+    feed.banner = "THE BOSS IS COMING";
+    feed.bannerLeft = 2.6;
+    feed.bannerColor = Color(0.95, 0.3, 0.2);
+    Audio.Play(bellClip, 0.9, 0.6);
+}
+
+local event(RunBegan began) WarnAgain(mut Warned warned)
+{
+    warned.night = 0;
 }
 
 local event(NightFell fell) ShowNightFell(mut Feed feed)
@@ -514,13 +361,6 @@ local event(NightFell fell) ShowNightFell(mut Feed feed)
     feed.bannerColor = Color(0.6, 1.0, 0.8);
 }
 
-local event(VigilBegan began) ShowVigil(mut Feed feed)
-{
-    feed.banner = "HOLD THE BEACON";
-    feed.bannerLeft = 2.8;
-    feed.bannerColor = Color(1.0, 0.55, 0.2);
-}
-
 local event(DawnBroke broke) ShowDawn(mut Feed feed)
 {
     feed.banner = "DAWN";
@@ -528,10 +368,10 @@ local event(DawnBroke broke) ShowDawn(mut Feed feed)
     feed.bannerColor = GOLD;
 }
 
-local event(VigilBegan began) HearVigil(mut Ears ears)
+local event(Reckoning reckoning) HearReckoning(mut Ears ears)
 {
-    Audio.Play(fireBurst, began.at + float3(0, 2, 0), 1.0, 0.55);
-    Audio.Play(screams[ears.random.NextInt(screams.count)], began.at + float3(0, 6, 0), 0.8, 0.38);
+    Audio.Play(bellClip, 1.0, 0.45);
+    Audio.Play(screams[ears.random.NextInt(screams.count)], 0.7, 0.36);
 }
 
 local event(DawnBroke broke) HearDawn()
@@ -542,13 +382,4 @@ local event(DawnBroke broke) HearDawn()
 local event(NightFell fell) HearNightFell(mut Ears ears)
 {
     if (fell.night > 1) Audio.Play(screams[ears.random.NextInt(screams.count)], 0.45, 0.32);
-}
-
-// A flash of fire where it catches.
-local event(VigilBegan began) BeaconCatches(mut Fx fx)
-{
-    fx.flashes.Add(Flash { at = began.at + float3(0, 2, 0), color = float3(1.0, 0.55, 0.2) * 12, reach = 18, life = 0.6 });
-    for (var i = 0; i < 60; i++)
-        Glow(fx, Mote { at = began.at + float3(0, 1.6, 0), velocity = Scatter(fx, 6) + float3(0, 4, 0), life = fx.random.NextFloat(0.6, 1.4), size = 0.05,
-                        color = float3(1.0, 0.6, 0.25), alpha = 4, gravity = 5, drag = 0.8 });
 }
