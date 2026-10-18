@@ -66,7 +66,9 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         kit.made = true;
     }
     if (!shapes.made) MakeShapes(shapes);
-    me.dt = Math.Min(Frame.dt, 0.05);
+    // While anyone picks an item, the picture's clock stops with the match's (the owner, 2026-10-18: "when selecting
+    // upgrades i can see and hear my character still animating")
+    me.dt = match.paused ? 0.0 : Math.Min(Frame.dt, 0.05);
     me.clock += me.dt;
     if (me.clock > 3600) me.clock -= 3600;
     Focus(lens, look);

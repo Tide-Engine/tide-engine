@@ -94,7 +94,8 @@ input Hands
 {
     [Clamp(-1, 1)] float2 move;      // Across and up the screen
     bool attack;                     // The gun
-    bool roll;                       // The roll (the other skills, a chest, the beacon, a friend down: all by themselves)
+    bool roll;                       // The roll
+    bool secondary;                  // The secondary skill (the special, a chest, the beacon, a friend down: by themselves)
     bool reload;
     bool pick1;                      // An item, or a survivor before the first wave
     bool pick2;
@@ -114,8 +115,8 @@ input Hands
         // The mouse and the right stick move the cursor
         aim = me.pointed;
         attack = devices.mouse.left.pressed || pad.rightTrigger > 0.4;
-        roll = keys.space.pressed || keys.leftShift.pressed || devices.mouse.right.pressed || pad.buttonEast.pressed || pad.buttonSouth.pressed
-               || pad.leftTrigger > 0.4;
+        roll = keys.space.pressed || keys.leftShift.pressed || pad.buttonEast.pressed || pad.buttonSouth.pressed;
+        secondary = devices.mouse.right.pressed || pad.leftTrigger > 0.4 || pad.leftShoulder.pressed;
         reload = keys.r.pressed || pad.buttonWest.pressed;
         pick1 = keys.digit1.pressed || pad.dpad.left.pressed;
         pick2 = keys.digit2.pressed || pad.dpad.up.pressed;

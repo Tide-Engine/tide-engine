@@ -257,7 +257,7 @@ event Helped
     int by;
 }
 
-// The gun, the roll, the skills that use themselves, and what the hands are in the middle of.
+// The gun, the roll, the secondary, the special that uses itself, and what the hands are in the middle of.
 [Stage(Tick.Hands)]
 system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, Herd herd, Time time)
 {
@@ -271,12 +271,12 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     survivor.actTime += dt;
     survivor.kicked += dt;
 
-    // The roll on its key; the other two skills by themselves
+    // The roll and the secondary on their keys; the special by itself
     if (!downed)
     {
         if (hands.roll.down) StartRoll(survivor, hands.move);
-        AutoSkill(this, survivor, 0, ashwick, herd);
-        AutoSkill(this, survivor, 2, ashwick, herd);
+        if (hands.secondary) UseSecondary(this, survivor, ashwick, herd);
+        AutoSkill(survivor, 2, ashwick, herd);
     }
     if (survivor.leaping && survivor.grounded)
     {
@@ -438,8 +438,32 @@ float ColumnHit(float3 from, float3 to, float3 base, float radius, float high)
     return first;
 }
 
-// A round landing this near a boss's weak spot (for its size) is on it, even where its body's ball is in front of it.
+// The cursor this near a boss's weak spot (for its size) when the round's fired is on it.
 const float WEAK_PATCH = 1.15;
+// How wide one of the dead is to a level round, at its size: round its line from its hips to its head (upright, about
+// one place; lying, along the ground).
+const float BODY_HIT = 0.42;
+
+// Where along a segment across the ground (0 to 1; 2 for never) it first comes within `radius` of the line from `a` to
+// `b` (a body's hips to its head; a boss's column, a point).
+float FlatHit(float2 from, float2 to, float2 a, float2 b, float radius)
+{
+    var way = to - from;
+    var length = Math.Length(way);
+    if (length < 0.0001) return 2;
+    var dir = way / length;
+    mut var best = 2.0;
+    for (var k = 0; k <= 4; k++)
+    {
+        var p = Math.Lerp(a, b, k / 4.0);
+        var along = Math.Dot(p - from, dir);
+        if (along < -radius || along > length + radius) continue;
+        var off = Math.Length(from + dir * along - p);
+        if (off > radius) continue;
+        best = Math.Min(best, Math.Max(0, along - Math.Sqrt(radius * radius - off * off)) / length);
+    }
+    return best;
+}
 // The cursor this near one of the dead's head (for its size) when the round's fired: a headshot, whatever of it the
 // round goes into first.
 const float AIM_HEAD = 1.25;
@@ -473,8 +497,13 @@ void StartAct(mut Survivor survivor, Act act, float seconds)
 // as often as it sets items off). What it leaves is a tracer and, in a wall, a chip.
 void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float head, int pierce, Ashwick ashwick, Herd herd, Trace kind, float chance, float3 aim)
 {
-    var to = from + way * range;
-    var wall = LongRay(ashwick, from, to, out var normal);
+    // Level, across the ground (the owner, 2026-10-18: "when i shoot from a slight slope i completely miss the zombies,
+    // we should likely ignore elevation"): the round keeps the gun's height, goes over the ground's rise and fall, is
+    // stopped only by what stands up from it, and strikes the dead by where they stand, not how high
+    var flat = Math.Length(way.xz);
+    var level = flat > 0.001 ? float3(way.x / flat, 0, way.z / flat) : way;
+    var to = from + level * range;
+    var wall = WallRay(ashwick, from, to, out var normal);
     var stop = Math.Lerp(from, to, Math.Min(1, wall));
     mut List<Body> struck = [];
     mut List<float> when = [];
@@ -484,25 +513,20 @@ void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float 
     {
         if (!z.hittable) continue;
         var spots = SpotsOf(z, herd);
-        var onHead = SphereHit(from, to, z.head, spots.headRadius);
-        var chest = SphereHit(from, to, z.chest, spots.chestRadius);
-        var hips = SphereHit(from, to, z.hips, 0.33 * z.size);
-        var onWeak = spots.weakRadius > 0 ? SphereHit(from, to, spots.weak, spots.weakRadius) : 2.0;
-        var bulk = ColumnHit(from, to, spots.base, spots.columnRadius, spots.columnHigh);
-        var first = Math.Min(Math.Min(Math.Min(onHead, LegsHit(from, to, z, 0)), Math.Min(chest, hips)), Math.Min(onWeak, bulk));
+        var first = spots.columnRadius > 0 ? FlatHit(from.xz, to.xz, spots.base.xz, spots.base.xz, spots.columnRadius)
+                                           : FlatHit(from.xz, to.xz, z.hips.xz, z.head.xz, BODY_HIT * z.size);
         if (first > 1 || first > wall) continue;
         mut var at = struck.count;
         while (at > 0 && when[at - 1] > first) at -= 1;
         struck.Insert(at, z);
         when.Insert(at, first);
-        // The cursor on its head, or on a boss's weak spot, makes it a headshot (a weak hit), whatever of it the round
-        // goes into first (the owner, 2026-10-18: "if you shoot while aiming at the head it deals a headshot"); else
-        // where the round goes in
-        var aimedWeak = spots.weakRadius > 0 && Math.Length(aim - spots.weak) <= spots.weakRadius * WEAK_PATCH;
+        // The cursor on its head makes it a headshot, on a boss's weak spot (on the side of it facing the round) a weak
+        // hit (the owner, 2026-10-18: "if you shoot while aiming at the head it deals a headshot")
+        var aimedWeak = spots.weakRadius > 0 && Math.Length(aim - spots.weak) <= spots.weakRadius * WEAK_PATCH
+                        && Math.Dot(spots.weakFace.xz, (from - spots.base).xz) >= 0;
         var aimedHead = Math.Length(aim - z.head) <= spots.headRadius * AIM_HEAD;
-        var weak = aimedWeak || spots.weakRadius > 0 && Math.Length(Math.Lerp(from, to, first) - spots.weak) <= spots.weakRadius * WEAK_PATCH;
-        weaks.Insert(at, weak);
-        heads.Insert(at, !weak && (aimedHead || onHead <= first + 0.0001));
+        weaks.Insert(at, aimedWeak);
+        heads.Insert(at, !aimedWeak && aimedHead);
     }
     var count = Math.Min(pierce, struck.count);
     var knock = kind == Trace.Phase ? 3.0 : kind == Trace.Pellet ? 1.5 : 1.0;

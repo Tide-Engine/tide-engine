@@ -63,6 +63,69 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Held still at a pick, Bloaters' rings, the right mouse back, level rounds (2026-10-18)
+
+The owner: "when selecting upgrades i can see and hear my character still
+animating / explosions need a radius or something, maybe not my own but when
+the guys explode or are about to explode i have no idea how far or when they
+will explode / i think the right click ability might still be cool to be
+manual? idk i like this new "automatic" abilities direction but i miss the
+right click power / when i shoot from a slight slope i completely miss the
+zombies, we should likely ignore elevation?" How each works is my pick,
+Provisional.
+
+- **Held still at a pick** (eye.tide's `Prepare`): while the match is paused
+  the picture's clock (`Me.dt`, and so `Look.time`) stops. The survivor's
+  pose had gone on (`PoseSurvivor` timed itself by `Frame.dt` and walked its
+  stride on the velocity left from the last tick, so its footfalls sounded);
+  it takes `Me.dt` now. The effects, the dead's voices and gore already ran
+  on `Me.dt`. Two captures half a second apart during an offer are the same
+  to the pixel.
+- **Bloaters' rings** (hud.tide's `BloaterRings`, `GroundRing`): round each
+  Bloater within `BLOAT_SHOWN` (22 m), a faint sick ring as wide as its
+  burst (`BLOAT_REACH`, 3.6 m); swelling, the ring red and pulsing, and a
+  second, orange, growing out from it to meet the first as the fuse runs out
+  (`BLOAT_FUSE`). Drawn over the picture, on the ground's height. Not at the
+  end. (The survivors' rings use `GroundRing` too.)
+- **The right mouse button's skill by hand** (kits.tide's `UseSecondary`):
+  the secondary (the Phase Round, the boot, the mine) is on the right mouse
+  button again (a pad's left trigger or shoulder), as soon as it's ready
+  while it's held, at the cursor: the Phase Round from the gun down the
+  aim's line (the cursor's headshot rule holds), the boot toward the cursor
+  (stamping on the nearest one down), the mine the cursor's way; not
+  mid-roll. The special (the grenade, the firebomb, the turret) still uses
+  itself (`AutoSkill`, now only that slot; `BestLine` and the automatic
+  boot, mine and Phase Round are gone). The roll is Space or Shift only. The
+  HUD's boxes read RMB, SPACE, AUTO.
+- **Level rounds** (hands.tide's `Shoot`, `FlatHit`, `BODY_HIT`;
+  ashwick.tide's `WallRay`): a round goes level from the gun along the
+  aim's way across the ground, at the gun's height whatever the ground does,
+  stopped only by boxes (`RayHit`'s `ground` off), and strikes each of the
+  dead whose line from its hips to its head (upright, about one place;
+  lying, along the ground) it passes within `BODY_HIT` (0.42 m, times its
+  size) of, a boss whose column it crosses. What it strikes is a headshot
+  only when the cursor's on that one's head, a weak hit only when it's on a
+  boss's weak spot and the round comes from the side the spot faces
+  (`Mutant.weakFace`, `Spots.weakFace`: the Mauler's sores face back, the
+  others' sacs forward); the round's own way into a body no longer decides
+  either. A round aimed 3.5 m over one of the dead's feet strikes it (43).
+  The Phase Round, now level, goes its whole 90 m.
+- **Tests**: the harness holds only the special now; the secondary's checks
+  press the right mouse button. New: a round aimed high over one of the dead
+  strikes it. The shot Bloater's orb check counts only the orbs it drops
+  (a level Phase Round kills down its whole line, and their orbs lay far
+  off). The dodged slam allows a point of regained health.
+- **The bots** press the secondary as they did before it used itself (the
+  Phase Round with three or more within 20 m and on target, the boot close
+  in, a mine with three within 8 m). Medians, eight runs alone and four of
+  the pair (the last round's in brackets): the Gunner 962 s (916), the
+  Breacher 1097 s (1117), the Engineer 1176 s (1006), the pair at the cap.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  (136 s) pass. Looked at in standard-host captures: six Bloaters walking in
+  with their rings, one swelling (red, the orange ring growing), and two
+  frames half a second apart during an offer, the same to the pixel. The
+  browser tests weren't run (the owner asked not to).
+
 ### A roll, skills by themselves, shared chests, missions (2026-10-18)
 
 The owner, after playing from above: "maybe instead of dashing its more so a
@@ -1498,7 +1561,8 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 
 - **Survivors** (`kits.tide`), picked with 1, 2 or 3 before the run (nothing
   starts till every ready survivor has one, and a joiner picks on joining).
-  Each a gun, two skills that use themselves and the roll on Space.
+  Each a gun, a skill on the right mouse button, one that uses itself, and
+  the roll on Space.
 - **The run** (`rounds.tide`, `nights.tide`): night after night, each ended
   by its beacon's vigil and a dawn. The dead come all the time, more and
   tougher as the danger climbs with the clock and the nights, more for a
@@ -1594,8 +1658,8 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   round's items do goes through `Arms` (`ArmsOf`, or a turret's copy) and
   `Land`.
 - **Skills**: `Survivor.cooldowns` (secondary, roll, special); in `Fight`,
-  before the gun, `StartRoll` on the roll's press and `AutoSkill` for the
-  other two. None takes the hands. The roll's charges are `rolls`,
+  before the gun, `StartRoll` on the roll's press, `UseSecondary` while the
+  right mouse button's held, and `AutoSkill` for the special. None takes the hands. The roll's charges are `rolls`,
   `RollCharges` at most.
 - **Missions** (missions.tide): `Match.mission` and its fields, run by
   `Missions` at `Tick.Rounds` + 3; a cull's kills and a hunt's elite counted
