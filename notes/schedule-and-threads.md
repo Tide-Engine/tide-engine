@@ -1,5 +1,14 @@
 # The schedule and the tick on threads
 
+Borrowed query helpers (2026-10-18) retain the source query's global component
+reads and existing World reads-own-writes scheduling. World effects propagate
+separately from borrowed query access, preventing implicit World capabilities.
+Query operands are unsettled reads beside writers; source-order regression
+calls read the old/new values around helper World.Set writes. An automatic grid
+foreach containing a borrow stays ordered, while explicit parallel/callback
+borrows are rejected. Existing multi-chunk/thread/snapshot query checks retain
+their original deterministic pin; full validation is recorded in language.md.
+
 Frame metadata and automatic loops (2026-10-18): Texture.size uses the frame
 host's borrowed resolver, so explicit parallel steps read a precomputed int2
 instead. Direct reads and helper chains give a diagnostic there. After helper

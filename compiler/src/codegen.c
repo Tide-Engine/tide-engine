@@ -112,6 +112,17 @@ typedef struct asset_dependency {
     uint8_t hash[32];
 } asset_dependency;
 
+typedef struct borrow_source {
+    const decl *owner;
+    int index;
+} borrow_source;
+
+typedef struct borrow_variant {
+    const decl *routine;
+    borrow_source *sources; // In routine parameter order; only query slots are used.
+    int index;
+} borrow_variant;
+
 typedef struct gen {
     program *prog;
     const codegen_options *opts;
@@ -124,6 +135,8 @@ typedef struct gen {
     int indent;
     bool in_input; // Generating the input's constructor: fields live in tide_self.
     const decl *routine; // The method or function being generated: a mut method's fields are tide_self->
+    const borrow_variant *borrow;
+    VEC(borrow_variant *) borrows;
     int spawn_temps;     // Temporaries for hoisted spawns, numbered per function.
     bool has_scene;      // The body being generated has tide_scene: the scene of the entity it runs for
     bool scene_local;    // ...an entity of the local world
@@ -2942,6 +2955,8 @@ static const char *task_owner(const gen *g, const bool local)
     return b.data;
 }
 
+#include "query_codegen.inc"
+
 static void gen_routine_call(gen *g, sb *o, const expr *e)
 {
     const decl *m = e->method;
@@ -2965,7 +2980,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     const type self = {m->owner && m->owner->kind == DECL_COMPONENT ? TY_COMPONENT
                       : m->owner && m->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, m->owner};
     const bool copy_self = m->owner && !m->is_mut_method && mut_list && type_has_list(self);
-    sb_printf(o, "%s(", routine_cname(m));
+    const borrow_variant *borrowed = m->borrows_queries ? borrow_call(g, g->routine ? g->routine : g->code, g->borrow, e) : NULL;
+    sb_printf(o, "%s(", borrowed ? borrow_cname(borrowed) : routine_cname(m));
     int args = 0;
     // A function that draws gets the frame: the draw list, the GUI, and a seed
     // for its widgets' IDs that's different at each place it's called from.
@@ -3017,7 +3033,9 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     for (int i = 0; i < e->args.count; i++) {
         if (m->params.items[i].type.kind == TY_WORLD) continue; // The worlds it's handed, above
         if (args++) sb_put(o, ", ");
-        if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)) {
+        if (m->params.items[i].type.kind == TY_QUERY) {
+            gen_borrow_arg(g, o, e->args.items[i]);
+        } else if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)) {
             gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
         } else if (m->params.items[i].mode == PARAM_MUT && m->params.items[i].type.kind == TY_STRING) {
             gen_text_ref(g, o, e->args.items[i]);
@@ -4838,7 +4856,7 @@ static bool settled(const expr *e)
     if (!e) return true;
     // Constants and assets; Devices and the draw list, which nothing in Tide writes
     if (e->bind == BIND_CONST || e->bind == BIND_ASSET || e->type.kind == TY_RECORD || e->type.kind == TY_DRAW_LIST) return true;
-    if (e->type.kind == TY_WORLD) return false; // Passed on: what the call reads through it, another call can change
+    if (e->type.kind == TY_WORLD || e->type.kind == TY_QUERY) return false; // Passed-on reads can observe another call's writes.
     switch (e->kind) {
     case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
     case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
@@ -5890,6 +5908,8 @@ static void gen_inline(gen *g, const expr *e)
 {
     sb *o = &g->c;
     const decl *fn = e->method;
+    const borrow_variant *caller_borrow = g->borrow;
+    const borrow_variant *inline_borrow = fn->borrows_queries ? borrow_call(g, g->routine ? g->routine : g->code, g->borrow, e) : NULL;
     const char *prefix = made_up(g, "in");
     gen_frame frame = {fn, arena_alloc(strlen(prefix) + 2), NULL, false, g->containers.count, g->frame, g->routine, e->block};
     strcpy((char *)frame.prefix, prefix);
@@ -5914,6 +5934,18 @@ static void gen_inline(gen *g, const expr *e)
         g->frame = &frame;
         names[i] = local_cname(g, p->name);
         g->frame = caller;
+        if (p->type.kind == TY_QUERY) {
+            const borrow_source source = inline_borrow->sources[i];
+            const param *q = source_query(source);
+            line(g, o, "const %s *const %s = %s;", q->query_rows ? query_row_type(source.owner, source.index) : world_type(q->query_local),
+                 names[i], borrow_arg_name(g, e->args.items[i], false));
+            line(g, o, "(void)%s;", names[i]);
+            if (q->query_rows) {
+                line(g, o, "const uint32_t %s = %s;", borrow_count_name(names[i]), borrow_arg_name(g, e->args.items[i], true));
+                line(g, o, "(void)%s;", borrow_count_name(names[i]));
+            }
+            continue;
+        }
         indent(g, o);
         if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) {
             sb_printf(o, "const tide_textref %s = ", names[i]);
@@ -5955,10 +5987,12 @@ static void gen_inline(gen *g, const expr *e)
     }
     g->frame = &frame;
     g->routine = fn;
+    g->borrow = inline_borrow;
     for (int i = 0; i < fn->body->stmts.count; i++) gen_stmt(g, fn->body->stmts.items[i]);
     g->list_caches = false;
     g->frame = frame.caller;
     g->routine = frame.caller_routine;
+    g->borrow = caller_borrow;
     if (frame.end_used) line(g, o, "%s:;", frame.end);
     g->indent--;
     line(g, o, "}");
@@ -11211,7 +11245,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         if (fn->uses_this) capture(&out, "tide_entity", "tide_this");
         for (int i = 0; i < fn->params.count; i++) {
             const param *p = &fn->params.items[i];
-            if (p->type.kind == TY_WORLD) continue;
+            if (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) continue;
             if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
             else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
             else if (p->type.kind == TY_RECORD) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
@@ -11840,8 +11874,10 @@ static void gen_query_row_types(gen *g, const decl *sys)
 // Its rows are copies from the current world's lanes, in normal ECS order.
 static bool query_changes_binding(const gen *g, const param *p)
 {
-    for (int i = 0; g->code && i < g->code->world_uses.count; i++) {
-        const world_use *u = &g->code->world_uses.items[i];
+    // An inlined Action can write through its caller's World between rows.
+    const decl *code = own_routine(g) ? own_routine(g) : g->code;
+    for (int i = 0; code && i < code->world_uses.count; i++) {
+        const world_use *u = &code->world_uses.items[i];
         if (u->writes && u->component == p->type.decl) return true;
     }
     return false;
@@ -11852,19 +11888,49 @@ static void gen_query_foreach(gen *g, const stmt *s)
     sb *o = &g->c;
     const param *q = s->query;
     const decl *row = q->type.decl;
-    const char *world = q->query_local ? "tide_l" : "tide_w";
+    const bool borrowed = q->function_param;
+    const borrow_source source = borrowed ? query_source(g->routine, g->borrow, q) : (borrow_source){0};
+    const param *selection = borrowed ? source_query(source) : q;
+    const char *world = borrowed ? local_cname(g, q->name) : q->query_local ? "tide_l" : "tide_w";
     const char *name = local_cname(g, s->name);
     const char *end = made_up(g, "query_end");
     bool end_used = false;
-    if (q->query_rows) { // The rows it was handed: tide_q<i>, tide_q<i>n of them
+    if (selection->query_rows) { // The rows it was handed, retaining the caller's timing.
         // Found by name: bind_views may have grown the view's parameters since `q` was taken, leaving it pointing at
         // the old copy
-        int qi = 0;
-        while (qi < g->code->params.count && !str_eq(g->code->params.items[qi].name, q->name)) qi++;
-        if (qi == g->code->params.count) abort();
-        line(g, o, "for (uint32_t tide_qi = 0; tide_qi < tide_q%dn; tide_qi++) {", qi);
+        const int qi = borrowed ? source.index : query_index(g->code, q);
+        sb array = {0}, count = {0};
+        if (borrowed) {
+            sb_put(&array, local_cname(g, q->name));
+            sb_put(&count, borrow_count_name(array.data));
+        } else {
+            sb_printf(&array, "tide_q%d", qi);
+            sb_printf(&count, "tide_q%dn", qi);
+        }
+        line(g, o, "for (uint32_t tide_qi = 0; tide_qi < %s; tide_qi++) {", count.data);
         g->indent++;
-        line(g, o, "const %s %s = tide_q%d[tide_qi];", query_row_type(g->code, qi), name, qi);
+        if (!borrowed) line(g, o, "const %s %s = tide_q%d[tide_qi];", query_row_type(g->code, qi), name, qi);
+        else {
+            line(g, o, "struct {");
+            g->indent++;
+            for (int i = 0; i < row->fields.count; i++) {
+                const field *f = &row->fields.items[i];
+                line(g, o, "%s %s;", c_type(f->type), field_cname(f));
+            }
+            g->indent--;
+            line(g, o, "} %s;", name);
+            const decl *source_row = selection->type.decl;
+            for (int i = 0; i < row->fields.count; i++) {
+                const field *f = &row->fields.items[i];
+                const field *from = &source_row->fields.items[0];
+                if (i) for (int k = 1; k < source_row->fields.count; k++) {
+                    if (f->type.kind == source_row->fields.items[k].type.kind && f->type.decl == source_row->fields.items[k].type.decl) {
+                        from = &source_row->fields.items[k]; break;
+                    }
+                }
+                line(g, o, "%s.%s = %s[tide_qi].%s;", name, field_cname(f), array.data, field_cname(from));
+            }
+        }
         line(g, o, "(void)%s;", name);
         const gen_target loop = {g->frame, g->containers.count, true, true, end, false, made_up(g, "next"), false, true};
         vec_push(g->targets, loop);
@@ -11879,7 +11945,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
     line(g, o, "{");
     g->indent++;
     for (int a = 0; a < g->prog->archetypes.count; a++) {
-        if (!query_admits(g, q, a)) continue;
+        if (!query_admits(g, selection, a)) continue;
         line(g, o, "{ // query: %s", arch_label(g, a));
         g->indent++;
         line(g, o, "const tide_table *tide_qt = &%s->%s;", world, arch_name(g, a));
@@ -11901,7 +11967,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
         }
         for (int c = 0; c < g->prog->components.count; c++) {
             if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
-            if (!mask_has(q->query_need_mask, c) && !mask_has(q->query_without_mask, c)) continue;
+            if (!mask_has(selection->query_need_mask, c) && !mask_has(selection->query_without_mask, c)) continue;
             line(g, o, "const uint8_t *tide_qpres%d = tide_table_column(tide_qt, %s, tide_qc, %d);", c,
                  arch_columns(g, a), arch_presence(g, a, c));
         }
@@ -11909,8 +11975,8 @@ static void gen_query_foreach(gen *g, const stmt *s)
         g->indent++;
         for (int c = 0; c < g->prog->components.count; c++) {
             if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
-            if (mask_has(q->query_need_mask, c)) line(g, o, "if (!tide_qpres%d[tide_qi]) continue;", c);
-            else if (mask_has(q->query_without_mask, c)) line(g, o, "if (tide_qpres%d[tide_qi]) continue;", c);
+            if (mask_has(selection->query_need_mask, c)) line(g, o, "if (!tide_qpres%d[tide_qi]) continue;", c);
+            else if (mask_has(selection->query_without_mask, c)) line(g, o, "if (tide_qpres%d[tide_qi]) continue;", c);
         }
         line(g, o, "struct {");
         g->indent++;
@@ -11959,7 +12025,6 @@ static void gen_system_body(gen *g, const decl *sys)
     const char *name = decl_cname(sys);
     gen_par_heads(g, sys);
     gen_sort_heads(g, sys, NULL, sys->body);
-    gen_query_row_types(g, sys);
     sb_printf(o, "// %s " STR_FMT "\n", sys->is_view ? "view" : sys->is_handler ? "event handler" : "system",
               STR_ARG(sys->qualified));
     // TIDE_HELPER: a system that no entity matches is never called.
@@ -13113,7 +13178,8 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         sb_put(o, m->params.count == 0 ? "void)" : ")");
         return;
     }
-    sb_printf(o, "TIDE_HELPER %s %s(", m->result.kind == TY_VOID ? "void" : c_type(m->result), routine_cname(m));
+    sb_printf(o, "TIDE_HELPER %s %s(", m->result.kind == TY_VOID ? "void" : c_type(m->result),
+              m->borrows_queries ? borrow_cname(g->borrow) : routine_cname(m));
     int n = 0;
     if (m->draws) {
         sb_put(o, "tide_draw_list *tide_draw, tide_gui *tide_ui, uint32_t tide_seed");
@@ -13144,7 +13210,10 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     for (int i = 0; i < m->params.count; i++) {
         const param *p = &m->params.items[i];
         if (p->type.kind == TY_WORLD) continue; // The worlds it's handed, above
-        if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) sb_printf(o, "%stide_textref %s", n++ ? ", " : "", local_cname(g, p->name));
+        if (p->type.kind == TY_QUERY) {
+            if (n++) sb_put(o, ", ");
+            gen_borrow_param(g, o, p, g->borrow->sources[i]);
+        } else if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) sb_printf(o, "%stide_textref %s", n++ ? ", " : "", local_cname(g, p->name));
         else if (p->mode == PARAM_MUT) sb_printf(o, "%s%s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else sb_printf(o, "%s%s", n++ ? ", " : "", const_decl(p->type, local_cname(g, p->name)));
@@ -13187,6 +13256,8 @@ static void gen_routine(gen *g, const decl *m)
     for (int i = 0; i < m->params.count; i++) {
         if (m->params.items[i].type.kind == TY_WORLD) continue;
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
+        if (m->params.items[i].type.kind == TY_QUERY && source_query(g->borrow->sources[i])->query_rows)
+            line(g, o, "(void)%s;", borrow_count_name(local_cname(g, m->params.items[i].name)));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
         if (has_fields_ptr(&m->params.items[i])) line(g, o, "(void)%s;", fields_name(g, m->params.items[i].name));
     }
@@ -13521,12 +13592,19 @@ static void gen_task_routines(gen *g)
                       && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only && takes_task(d);
         for (int k = -1; k < d->methods.count; k++) {
             const decl *m = k < 0 ? d : d->methods.items[k];
-            if (k < 0 ? !own : m->gpu_only || !takes_task(m)) continue;
+            if (m->borrows_queries || (k < 0 ? !own : m->gpu_only || !takes_task(m))) continue;
             if (!any) sb_put(o, "// Methods and functions that start tasks\n\n");
             any = true;
             gen_routine(g, m);
         }
     }
+    for (int i = 0; i < g->borrows.count; i++) {
+        const borrow_variant *v = g->borrows.items[i];
+        if (v->routine->takes_action || !takes_task(v->routine)) continue;
+        g->borrow = v;
+        gen_routine(g, v->routine);
+    }
+    g->borrow = NULL;
 }
 
 static void gen_tasks(gen *g)
@@ -13653,7 +13731,7 @@ static void gen_routine_prototypes(gen *g)
     bool any = false;
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
-        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) {
+        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) {
             if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
             any = true;
             gen_routine_signature(g, o, d);
@@ -13661,13 +13739,21 @@ static void gen_routine_prototypes(gen *g)
         }
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = d->methods.items[k];
-            if (m->gpu_only || !m->body_checked) continue;
+            if (m->borrows_queries || m->gpu_only || !m->body_checked) continue;
             if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
             any = true;
             gen_routine_signature(g, o, m);
             sb_put(o, ";\n");
         }
     }
+    for (int i = 0; i < g->borrows.count; i++) {
+        if (g->borrows.items[i]->routine->takes_action) continue;
+        g->borrow = g->borrows.items[i];
+        gen_routine_signature(g, o, g->borrow->routine);
+        sb_put(o, ";\n");
+        any = true;
+    }
+    g->borrow = NULL;
     if (any) sb_put(o, "\n");
 }
 
@@ -13734,16 +13820,23 @@ static void gen_routines(gen *g)
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
         // Those are copied into each call. One that takes a grid is the GPU's alone (shader.c writes it)
-        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) vec_push(all, d);
+        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) vec_push(all, d);
         for (int k = 0; k < d->methods.count; k++) {
-            if (!d->methods.items[k]->gpu_only && d->methods.items[k]->body_checked) vec_push(all, d->methods.items[k]);
+            if (!d->methods.items[k]->borrows_queries && !d->methods.items[k]->gpu_only && d->methods.items[k]->body_checked) vec_push(all, d->methods.items[k]);
         }
     }
-    if (all.count == 0) return;
+    if (all.count == 0 && g->borrows.count == 0) return;
     sb_put(o, "// Methods and functions\n\n");
     for (int i = 0; i < all.count; i++) {
         if (!takes_task(all.items[i])) gen_routine(g, all.items[i]); // Those come once the tasks' frames are known (gen_tasks)
     }
+    for (int i = 0; i < g->borrows.count; i++) {
+        const borrow_variant *v = g->borrows.items[i];
+        if (v->routine->takes_action || takes_task(v->routine)) continue;
+        g->borrow = v;
+        gen_routine(g, v->routine);
+    }
+    g->borrow = NULL;
 }
 
 // The devices as the input sends them: the values match code reads, repaired,
@@ -19612,6 +19705,7 @@ bool codegen(program *prog, const codegen_options *opts)
         vec_push(prog->singletons, state);
     }
     name_program(&g);
+    collect_borrows(&g);
     if (prog->asset_refs.count) for (int i = 0; i < prog->assets.count; i++) {
         const decl *a = prog->assets.items[i];
         if (a->return_type.kind != TY_MESH) continue;
@@ -19690,6 +19784,9 @@ bool codegen(program *prog, const codegen_options *opts)
 
     gen_prelude(&g);
     gen_result_types(&g); // Before routine signatures and maps' Get helpers.
+    for (int i = 0; i < prog->systems.count; i++) gen_query_row_types(&g, prog->systems.items[i]);
+    for (int i = 0; i < prog->views.count; i++) gen_query_row_types(&g, prog->views.items[i]);
+    for (int i = 0; i < prog->handlers.count; i++) gen_query_row_types(&g, prog->handlers.items[i]);
     gen_routine_prototypes(&g);
     for (int i = 0; opts->server && i < all_asset_count; i++) {
         const decl *d = all_assets[i];

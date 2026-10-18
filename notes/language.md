@@ -1,5 +1,72 @@
 # Language features, as tidec builds them
 
+## Borrowed query parameters (2026-10-18)
+
+The owner approved read-only borrowing with the existing `query (...)` syntax.
+Ordinary synchronous functions and methods require explicit query arguments;
+the signature describes row data/filter guarantees, never a new selection.
+Bindings match by component type, independently of names/order, with one
+unambiguous source binding per requested type. Extra bindings/filters remain
+the caller's. Required/excluded filters must already be guaranteed. Local rows
+require local bindings; verified/blended/recorded timing comes from the source.
+No collection, snapshot or whole-set copy is made merely to pass a query.
+Borrowed queries have no mut/out/default, cannot be stored/returned, and remain
+outside callbacks, parallel steps and async signatures. Whole rows still cannot
+be copied/passed/returned; component copies retain ordinary value semantics.
+Recorded rows retain the journal's omitted heap fields, as existing component
+forwarding does. No implicit World, singleton or entity access is introduced.
+
+The parser reuses query binding syntax. The checker validates structural row
+requirements, marks data used through forwarding, and preserves source domains.
+Existing World access propagation now distinguishes explicit World reads from
+query reads so a borrowed query grants no ambient world pointer/capability.
+Query values are unsettled in evaluation-order analysis: reads beside a writer
+remain in their written order. Automatic grid loops that borrow stay serial;
+explicit parallel/callback borrows are diagnosed.
+
+`query_codegen.inc` follows static query sources through calls, forwarding,
+recursion and multiple query arguments. Source-specialized helpers receive the
+existing world pointer or recorded/blended row pointer/count. Iteration reuses
+normal query loops and projects only requested components into helper rows.
+Equivalent live selections share code; recorded layouts retain their sources.
+No runtime API, world layout, container handle or persistent borrow is added.
+World.Set helper writes use the existing replaced-page reads. Action-loop reads
+use the outer routine's World effects too, so callback writes cannot leave a
+cached column on the old snapshot page. Actions with borrowed parameters inline
+with lexical aliases; helpers starting tasks keep ordinary owner/singleton rules
+and retain no query in task frames. Sort blocks
+capture ordinary values, excluding queries. Internal names use reserved tide_
+prefixes for count arguments/specializations.
+
+`query_borrows` covers projection, filters, methods, recursive forwarding,
+multiple/swapped queries, named arguments, empty sets, action blocks (including
+World.Set page replacement under a retained snapshot), sorting,
+read/write operand order, short-circuiting, deferred sends, task starts, COW and
+replay. Existing `queries` now executes helper traversal across chunks and
+threads with its original exact-bit pin; `view_queries` forwards live local,
+blended, verified and recorded rows, including owned text/list values in views;
+`handler_queries` forwards event/command rows through World-writing helpers.
+Thirteen query_borrow error fixtures cover missing/ambiguous bindings, missing
+filter guarantees, domain mismatch, escape, mutation and unsupported lifetimes.
+Editor completion/hover/signature formatting use the same query representation.
+Public contracts are in docs/spec.md, functions.md, systems.md and view docs.
+
+A bounded optimized traversal comparison used 65,536 integer component rows,
+4,000 reductions per round and eight alternating rounds. Generated borrowed
+query traversal and equivalent handwritten table/chunk traversal used the same
+clang 23.1.2 `-O2` strict deterministic flags, with matching sums. Best times
+were 8.119 ms and 8.145 ms respectively (ratio 0.997). This measures these
+optimized loops, not world construction or general engine performance; linked
+engine libraries were the checkout's debug build. Scratch harness/results are
+under ignored `build/query-borrow-perf/`.
+
+Validation: final warning-free native/web debug builds, all 2,399 native and
+2,309 web CTests, and the docs production build pass. This includes native GPU,
+WebGL/WebGPU validation, existing exact-bit/thread/replay pins, the new borrow
+and snapshot/action regressions, thirteen diagnostic fixtures and LSP coverage.
+Linux, macOS, MinGW, Android and sanitizer coverage remain for CI; none was
+dispatched.
+
 ## Queries in synchronous match handlers (2026-10-18)
 
 The owner approved extending the existing read-only query functionality to
