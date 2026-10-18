@@ -1,5 +1,61 @@
 # The Box3D package
 
+## All-hit queries and live ignore-body parity (2026-10-18)
+
+The owner approved `RaycastAll`/`CastAll` and ignore-body overloads after the
+prototype gap review. Live `Physics` and detached rewound `Query` now have
+`RaycastAll(from, to, out List<RayHit> hits, bool includeSensors = false)`
+and an overload with `Body ignore` before the optional sensor flag.
+`CastAll` has the same forms for `Box`, `Sphere` and `Capsule`, retaining
+`shape, from, rotation, to` order. Named arguments are `ignore: body` and
+`includeSensors: true`; sensors are excluded by default. Live closest-hit
+`Raycast` and `Cast` now also support `ignore: body`, matching Box2D and the
+existing rewound overloads. Ignoring uses the whole native handle including
+generation, and excludes all the body's shapes, including parts.
+
+Each collider contributes its first hit. Results sort by increasing fraction,
+then the complete shape-handle tie order used by the closest-hit method.
+Separate colliders on a body remain separate even if their `entity` and `part`
+match. A mesh contributes one hit for the whole collider, not every triangle,
+entry or exit. The methods replace the destination list, return whether it has
+any hits, and give an empty list for an unstepped world, invalid cast inputs
+or an invalid/empty rewind context. Results are ordinary `RayHit` values for
+game filtering and match/local retention, snapshots and packing. Existing
+live deletion exclusions and captured-context retention remain in effect.
+
+The native callback collects actual hits in 32 stack slots and grows only as
+needed, retaining the full sweep by returning 1. Box3D's native mesh query
+already returns the first intersection of each shape. Results are sorted once
+and written through a checked `out List<Found>`; all native record bytes are
+cleared before assignment, including padding. Growth arithmetic is bounded
+by the runtime's 1 GiB output-list byte limit and uses its existing fatal
+allocation failure path, without a smaller hit cap or silent truncation.
+Tide maps records through `Met`. No global query storage, public result field,
+body/physics ABI or resident-world representation changed. The native filter
+gained ignore-body and sensor flags; closest-hit queries retain early pruning.
+
+The detached path reuses the existing BVH candidates and `SceneRay`/`SceneCast`
+narrow phase. Candidates are in collider-array order, with each mesh's
+triangles contiguous. `AddSceneHit` therefore merges those adjacent triangle
+answers in linear time, retaining the nearest one (first triangle on a tie),
+before sorting collider hits by the same fraction/shape keys. A starting cast
+overlap retains fraction 0 and zero normal; no unique surface point is
+specified there. Rays still skip shapes they start inside, with either sensor
+option, as before.
+
+`test/query_all.tide` and `packages/test/query_all_test.h` cover rays and all
+three cast shapes, closest/all-first agreement, equal-fraction order,
+compounds/parts, sensors, old versus reused body handles, gameplay filtering,
+empty/nonfinite/overflow queries, first-step availability, initial overlaps,
+70-hit growth, fractional rewind, deletion and retained contexts, local/match
+result retention, snapshot/pack/restore, and serial/job-pool equivalence. A
+two-plane mesh verifies exactly one hit per collider in both live and detached
+paths. The public-hit digest `f8d8985883f8ec9f` matches native/WASI debug and
+release. Full debug suites passed (native 2374, web 2284); both query fixtures
+passed in native and web release, and the docs build passed. Existing physics
+and resident pins remain unchanged. User references are `README.md` and
+`docs/packages/box3d.md`.
+
 Scene visibility unification (2026-10-15): removal of generated scene audience
 fields changes complete-world/world-sequence pins in stack, course, sleep and
 mesh (mesh sequence now afa0b803e82fedb1). Native and WASI agree. Body, resident

@@ -1,0 +1,149 @@
+using Box3D;
+settings { maxRewind = 0.25; }
+component Marker { int kind; }
+component Checked { int count; }
+singleton Request { int drop; bool spawn; }
+singleton Captured { List<RayHit> hits; bool done; }
+local singleton Controls
+{
+    int which;
+    float from;
+    float to = 12;
+    float y;
+    long ignore;
+    ViewTime time;
+    bool keep;
+}
+local singleton Observed
+{
+    List<RayHit> live;
+    List<RayHit> historical;
+    List<RayHit> sensors;
+    List<RayHit> historicalSensors;
+    List<RayHit> ignored;
+    List<RayHit> historicalIgnored;
+    List<RayHit> ignoredSensors;
+    List<RayHit> savedHits;
+    Query saved;
+    bool liveAny;
+    bool historicalAny;
+    bool prepared;
+    bool closestAny;
+    RayHit closest;
+    bool ignoredClosestAny;
+    RayHit ignoredClosest;
+    RayHit filtered;
+}
+float3 At(float x, float y) { return float3(x, y, 0); }
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = At(8, 0), rewind = true }, Box, Marker { kind = 80 }, Checked);
+    Spawn(Body { type = BodyType.Kinematic, position = At(2, 0), velocity = At(1, 0), rewind = true }, Box, Marker { kind = 20 }, Checked);
+    Spawn(Body { type = BodyType.Static, position = At(4, 0), rewind = true }, Box, Marker { kind = 40 }, Checked);
+    Spawn(Body { type = BodyType.Static, position = At(4, 0), rewind = true }, Box, Marker { kind = 41 }, Checked);
+    Spawn(Body { type = BodyType.Static, position = At(6, 0), rewind = true }, Box, Sphere { radius = 0.3 }, Marker { kind = 60 }, Checked);
+    Spawn(Body { type = BodyType.Static, position = At(1, 0), rewind = true }, Box { sensor = true }, Marker { kind = 10 }, Checked);
+    for (int i = 0; i < 70; i++)
+        Spawn(Body { type = BodyType.Static, position = At(1 + i, 5), rewind = true }, Box { size = float3(0.5) }, Marker { kind = 100 + i }, Checked);
+    Spawn(Body { type = BodyType.Static, position = At(0, 10), rewind = true },
+        MeshCollider { vertices = [float3(3, -1, -1), float3(3, -1, 1), float3(3, 1, 1), float3(3, 1, -1),
+                                  float3(7, -1, -1), float3(7, -1, 1), float3(7, 1, 1), float3(7, 1, -1)],
+                       indices = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7] }, Marker { kind = 90 }, Checked);
+}
+event(Spawned) Parts(Marker marker)
+{
+    if (marker.kind == 60)
+        Spawn(Part { of = this }, Box { size = float3(0.2), offset = At(1, 0) }, Marker { kind = 61 });
+}
+[After(PhysicsStages.Step)]
+system Remove(Request request, Marker marker)
+{
+    if (request.drop != 0 && marker.kind == request.drop) this.Destroy();
+}
+[After(PhysicsStages.Step)]
+system Replace(mut Request request)
+{
+    if (!request.spawn) return;
+    request.spawn = false;
+    Spawn(Body { type = BodyType.Static, position = At(6, 0), rewind = true }, Box, Marker { kind = 62 }, Checked);
+}
+[After(PhysicsStages.Step)]
+system Rows(Physics physics, mut Checked checked)
+{
+    physics.RaycastAll(At(0, 5), At(80, 5), out var hits);
+    checked.count = hits.count;
+}
+[After(PhysicsStages.Step)]
+system Record(Physics physics, mut Captured captured)
+{
+    if (captured.done) return;
+    captured.done = true;
+    physics.RaycastAll(At(0, 0), At(12, 0), out captured.hits);
+}
+view Probe(Physics physics, World world, Controls controls, mut Observed observed)
+{
+    var from = At(controls.from, controls.y);
+    var to = At(controls.to, controls.y);
+    var ignored = Body { id = controls.ignore };
+    observed.prepared = physics.Rewind(controls.time, out var query);
+    observed.saved.RaycastAll(from, to, out observed.savedHits);
+    if (!controls.keep) observed.saved = query;
+    observed.live = [RayHit { }];
+    observed.historical = [RayHit { }];
+    if (controls.which == 0)
+    {
+        observed.liveAny = physics.RaycastAll(from, to, out observed.live);
+        observed.historicalAny = query.RaycastAll(from, to, out observed.historical);
+        physics.RaycastAll(from, to, out observed.sensors, includeSensors: true);
+        query.RaycastAll(from, to, out observed.historicalSensors, includeSensors: true);
+        physics.RaycastAll(from, to, out observed.ignored, ignored);
+        query.RaycastAll(from, to, out observed.historicalIgnored, ignored);
+        physics.RaycastAll(from, to, out observed.ignoredSensors, ignored, true);
+        observed.closestAny = physics.Raycast(from, to, out observed.closest);
+        observed.ignoredClosestAny = physics.Raycast(from, to, out observed.ignoredClosest, ignored);
+    }
+    else if (controls.which == 1)
+    {
+        observed.liveAny = physics.CastAll(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.live);
+        observed.historicalAny = query.CastAll(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.historical);
+        physics.CastAll(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.sensors, includeSensors: true);
+        query.CastAll(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.historicalSensors, includeSensors: true);
+        physics.CastAll(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.ignored, ignored);
+        query.CastAll(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.historicalIgnored, ignored);
+        physics.CastAll(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.ignoredSensors, ignored, true);
+        observed.closestAny = physics.Cast(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.closest);
+        observed.ignoredClosestAny = physics.Cast(Box { size = float3(0.2) }, from, quaternion.identity, to, out observed.ignoredClosest, ignored);
+    }
+    else if (controls.which == 2)
+    {
+        observed.liveAny = physics.CastAll(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.live);
+        observed.historicalAny = query.CastAll(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.historical);
+        physics.CastAll(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.sensors, includeSensors: true);
+        query.CastAll(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.historicalSensors, includeSensors: true);
+        physics.CastAll(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.ignored, ignored);
+        query.CastAll(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.historicalIgnored, ignored);
+        physics.CastAll(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.ignoredSensors, ignored, true);
+        observed.closestAny = physics.Cast(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.closest);
+        observed.ignoredClosestAny = physics.Cast(Sphere { radius = 0.1 }, from, quaternion.identity, to, out observed.ignoredClosest, ignored);
+    }
+    else if (controls.which == 3)
+    {
+        observed.liveAny = physics.CastAll(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.live);
+        observed.historicalAny = query.CastAll(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.historical);
+        physics.CastAll(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.sensors, includeSensors: true);
+        query.CastAll(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.historicalSensors, includeSensors: true);
+        physics.CastAll(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.ignored, ignored);
+        query.CastAll(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.historicalIgnored, ignored);
+        physics.CastAll(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.ignoredSensors, ignored, true);
+        observed.closestAny = physics.Cast(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.closest);
+        observed.ignoredClosestAny = physics.Cast(Capsule { radius = 0.1, height = 0.4 }, from, quaternion.identity, to, out observed.ignoredClosest, ignored);
+    }
+    observed.filtered = default;
+    foreach (var hit in observed.live)
+    {
+        if (world.Get<Marker>(hit.entity).kind != 60) continue;
+        observed.filtered = hit;
+        break;
+    }
+}
