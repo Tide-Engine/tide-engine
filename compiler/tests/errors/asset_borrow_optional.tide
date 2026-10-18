@@ -1,0 +1,3 @@
+// expect: a borrowed asset collection can't be optional
+void Keep(List<Clip>? values) { Debug.Log(values); }
+scene Main { }

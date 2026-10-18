@@ -3151,6 +3151,10 @@ static void describe(const occurrence *o, sb *out)
                   "copy individual fields to retain ordinary values."
                 : "\n\nThe input of the player who owns the entity, or the server's for unowned entities and once-only code.");
         }
+        else if (o->param->function_param && type_is_asset_collection(o->param->type))
+            sb_put(out, "\n\nRead-only asset collection borrowed for this synchronous CPU call. Pass an asset or forward another "
+                        "borrowed parameter; read its count, elements and entries without copying the collection. "
+                        "The borrow can't be stored, returned or retained by a task.");
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
         else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
@@ -7429,7 +7433,8 @@ static void complete_routine_param_types(completion *c, const bool after_mut, co
 // can't, nor a task, nor what draws or takes a block.
 static bool gpu_callable(const decl *d)
 {
-    return d->kind == DECL_FUNCTION && !d->is_extern && !d->is_async && !d->takes_action && !d->draws;
+    return d->kind == DECL_FUNCTION && !d->is_extern && !d->is_async && !d->takes_action && !d->draws
+        && !d->borrows_asset_collections;
 }
 
 // Names and keywords in a frag or vert, which the GPU runs: what it takes, its

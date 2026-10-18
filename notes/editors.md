@@ -1,5 +1,13 @@
 # The language server and the editors
 
+Resource asset collection borrows (2026-10-18) resolve in ordinary helper
+signatures, so list/map member completion and signature/type text use existing
+paths. Parameter hover explains read-only synchronous borrowing and no escape;
+shader completion excludes helpers that borrow directly or through helper
+chains. `lsp_borrowed_asset_collections_in_helpers` checks readonly signatures,
+hover and list/map completion, and GPU filtering. Contracts and validation are
+in notes/language.md; no editor configuration or protocol changed.
+
 ## Standalone editor publication (2026-10-18)
 
 Published public MIT repositories https://github.com/Tide-Engine/tide-emacs
