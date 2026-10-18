@@ -20,7 +20,7 @@ import { installFrameControl } from './frame-control.mjs';
 import { connectDevTools } from './browser-devtools.mjs';
 import { checkMaterials, materialScene } from './material-pixels.mjs';
 import { MANUAL_SETTLE_TICKS, AUTO_SETTLE_TICKS, CLOSE_TICKS, NAME_FADE_TICKS,
-    NAME_HOLD_TICKS, REVEAL_TICKS, ANIMATED_FRAME_MS, STATIC_FRAME_MS } from './presentation-timing.mjs';
+    RETURN_TICKS, REVEAL_TICKS, ANIMATED_FRAME_MS, STATIC_FRAME_MS } from './presentation-timing.mjs';
 
 const [gamePage, captureDirectory, backend = 'webgl', mode = 'campaign'] = process.argv.slice(2);
 assert.ok(gamePage && captureDirectory, 'Usage: browser.mjs <inside_out.html> <capture directory> [webgl|webgpu] [campaign|materials|shutters]');
@@ -524,7 +524,8 @@ try {
     stage = 'title and exactly-two-player waiting';
     await navigate(host);
     await host.screenshot('desktop-title');
-    await navigate(host, '&host');
+    // Every chapter open, so the menu can choose any puzzle directly.
+    await navigate(host, '&host&playtest');
     await host.until(value => /^[0-9A-Z]{6}$/.test(value.room ?? ''), 'host receives room code');
     await host.until(value => value.state === 2 && value.verified >= 4, 'host has initialized and rendered its waiting puzzle');
     const room = host.state.room;
@@ -688,46 +689,41 @@ try {
         if (reduced) assert.ok(closingLight < normalClosingLight * .8,
             'reduced motion fades the still-visible center instead of repeating the moving aperture');
         else normalClosingLight = closingLight;
-        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + 6, `${label} opaque name hold`);
-        const hold = await transitionFrame(host, `${label}-name-hold-start`);
-        assertImagesDiffer(closing, hold, 'closing reaches an opaque title rather than freezing the solved scene');
+        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + 6, `${label} opaque solve summary`);
+        const hold = await transitionFrame(host, `${label}-summary-start`);
+        assertImagesDiffer(closing, hold, 'closing reaches an opaque summary rather than freezing the solved scene');
         let letters = 0, exposed = 0;
         screenshotPixels(hold, (r, g, b, x, y) => {
             if (x > 200 && x < 1080 && y > 330 && y < 460 && r > 150 && g > 125 && b > 80) letters++;
             // The Menu action remains accessible during a transition.
             if ((y < 280 || y > 500) && !(x >= 1180 && y <= 70) && (r > 40 || g > 35 || b > 30)) exposed++;
         });
-        assert.ok(letters > 300, 'the puzzle name is visibly readable during its hold');
-        assert.equal(exposed, 0, 'the name hold completely hides the scene and puzzle labels');
-        // The hold is deliberately static. Check its middle and late frame
-        // while advancing real ticks at 10fps; fades/close/reveal stay 30fps.
-        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + NAME_HOLD_TICKS / 2,
-            `${label} middle quiet name`, STATIC_FRAME_MS);
-        assertImagesEqual(await transitionFrame(host, `${label}-name-hold-middle`), hold,
-            'the readable title remains still in the middle of its hold');
-        // Leave room for the observation anchor, prediction lead and one
-        // three-tick static frame before the title's 12-tick fade-out.
-        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + NAME_HOLD_TICKS - 24,
-            `${label} sustained quiet name`, STATIC_FRAME_MS);
-        assertImagesEqual(await transitionFrame(host, `${label}-name-hold-end`), hold,
-            'the fully readable name stays still for multiple seconds');
-        if (reduced) assertImagesEqual(hold, normalNameHold, 'reduced motion retains the same quiet readable name hold');
-        else normalNameHold = hold;
-        await atTick(anchor + CLOSE_TICKS + NAME_FADE_TICKS + NAME_HOLD_TICKS + 5, `${label} name fades away`);
-        assertImagesDiffer(await transitionFrame(host, `${label}-name-fade-out`), hold, 'the held name fades before the level switches');
-        await atTick(anchor + AUTO_SETTLE_TICKS - REVEAL_TICKS + 4, `${label} new-room reveal`);
-        const reveal = await transitionFrame(host, `${label}-reveal`);
-        assertImagesDiffer(reveal, hold, 'the next room begins revealing after the name hold');
-        await atTick(anchor + AUTO_SETTLE_TICKS + 6, `${label} settled next room`, STATIC_FRAME_MS);
-        const settled = await transitionFrame(host, `${label}-settled`);
-        assertImagesDiffer(settled, reveal, 'the reveal reaches the playable next room');
+        assert.ok(letters > 300, 'the solved puzzle is named readably during the hold');
+        assert.equal(exposed, 0, 'the hold completely hides the scene and puzzle labels');
+        // The hold is deliberately static until the hall opens.
+        // Leave room for the observation anchor and prediction lead before
+        // the hall opens, as the name hold always has.
+        await atTick(anchor + RETURN_TICKS - 24, `${label} sustained summary`, STATIC_FRAME_MS);
+        assertImagesEqual(await transitionFrame(host, `${label}-summary-end`), hold,
+            'the summary stays still until the hall opens');
+        // The puzzle's name is the same whatever else has been solved since.
+        const heading = { x: 200, y: 385, width: 880, height: 55 };
+        const named = await host.crop(heading);
+        if (reduced) assertImagesEqual(named, normalNameHold, 'reduced motion retains the same quiet readable summary');
+        else normalNameHold = named;
+        await atTick(anchor + RETURN_TICKS + REVEAL_TICKS / 2, `${label} hall reveal`);
+        const reveal = await transitionFrame(host, `${label}-hall-reveal`);
+        assertImagesDiffer(reveal, hold, 'the hall begins revealing after the summary');
+        await atTick(anchor + AUTO_SETTLE_TICKS + 6, `${label} settled hall`, STATIC_FRAME_MS);
+        const settled = await transitionFrame(host, `${label}-hall-settled`);
+        assertImagesDiffer(settled, reveal, 'the reveal reaches the walkable hall');
         const nextTitle = await host.crop(titleClip);
-        assertImagesDiffer(nextTitle, firstTitle, 'the solved puzzle advances through the production timer');
-        assertImagesEqual(await small.crop(titleClip), nextTitle, 'both players reach the same next puzzle');
+        assertImagesDiffer(nextTitle, firstTitle, 'the solved puzzle returns to its hall through the production timer');
+        assertImagesEqual(await small.crop(titleClip), nextTitle, 'both players reach the same hall');
         for (const client of clients) await assertNoRepeatedLabels(client);
-        assertImagesEqual(await moveLabel(host), zeroMoves, 'the next puzzle starts with zero moves');
         await advanceMatch(8);
-        assertImagesEqual(await moveLabel(host), zeroMoves, 'a held valid next-room direction stays suppressed after reveal');
+        assertImagesEqual(await transitionFrame(host, `${label}-hall-held`), settled,
+            'a held valid hall direction stays suppressed after the reveal');
         return nextTitle;
     };
 
@@ -992,17 +988,18 @@ try {
     await host.key('KeyW', 'w', true);
     await transitionFrame(host, 'desktop-first-puzzle-complete-amber');
     await transitionFrame(small, 'desktop-first-puzzle-complete-teal');
-    const secondTitle = await reviewFirstTransition('normal');
+    const hallTitle = await reviewFirstTransition('normal');
     await host.key('KeyW', 'w', false);
     await small.key('KeyS', 's', false);
+    const hallBefore = await transitionFrame(host, 'hall-before-step');
     await action('N');
-    assertImagesDiffer(await moveLabel(host), zeroMoves, 'releasing and pressing the guarded direction allows its valid next-room move');
+    await advanceMatch(12);
+    assertImagesDiffer(await transitionFrame(host, 'hall-after-step'), hallBefore,
+        'releasing and pressing the guarded direction walks the hall');
 
     stage = 'offset doorway and physical occupied-box transport';
-    await choose(1, 0, 1, true);
-    // Reselecting the current puzzle resumes it. Clear the fresh movement
-    // used to prove release recovery before replaying the authored witness.
-    await reset(host);
+    // From the hall, the menu's puzzle list (every chapter is open here).
+    await choose(1, 0, 1);
     const carryGeometry = focusedGeometry(small, 5, 5);
     const carryPatch = (dx, dy, side = 0.4) => ({
         x: Math.round(carryGeometry.x + dx * carryGeometry.tile),
@@ -1030,7 +1027,7 @@ try {
     await action('N');
     await witness('eeee WS');
     await settleMatch(AUTO_SETTLE_TICKS + 4);
-    assertImagesDiffer(await host.crop(titleClip), secondTitle, 'the occupied-box witness completes through production rules');
+    assertImagesEqual(await host.crop(titleClip), hallTitle, 'the occupied-box witness completes and returns to the hall');
 
     stage = 'a room containing its own one real box';
     await choose(14, 3, 0);
@@ -1108,8 +1105,11 @@ try {
     await reviewFirstTransition('reduced-motion', true);
     await host.key('KeyW', 'w', false);
     await small.key('KeyS', 's', false);
+    const reducedBefore = await transitionFrame(host, 'reduced-hall-before-step');
     await action('N');
-    assertImagesDiffer(await moveLabel(host), zeroMoves, 'reduced-motion reveal also accepts the released fresh direction');
+    await advanceMatch(12);
+    assertImagesDiffer(await transitionFrame(host, 'reduced-hall-after-step'), reducedBefore,
+        'reduced-motion reveal also accepts the released fresh direction');
 
     for (const client of clients) {
         assert.ok(client.state.frames > 10 && client.state.draws > 150, `${client.name}: continuous rendering`);
@@ -1117,7 +1117,7 @@ try {
         assert.equal(client.state.aborted, '');
     }
     assert.deepEqual(errors, [], 'No runtime, shader, GPU or browser errors');
-    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, click without a ping, a shared drawing trail that expires while released or held, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
+    console.log(`Inside Out (${backend}): two real WebRTC players, waiting/join, click without a ping, a shared drawing trail that expires while released or held, chapter selection and reset confirmation, nested outward starts, progressive spatial doorway passage, partner-independent framing, canonical interior parity, occupied-box context, real self-recursive entry and exact undo, shared controls, sustained opaque puzzle-name hold and reduced-motion parity, valid held-input recovery, three witnessed puzzles/four completions returning to their halls and phone touch passed in ${((performance.now() - began) / 1000).toFixed(1)}s (${clients.map(client => `${client.name}: ${client.state.frames} frames`).join(', ')}). Captures: ${output}`);
     }
     }
 } catch (error) {

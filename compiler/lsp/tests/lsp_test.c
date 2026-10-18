@@ -7715,10 +7715,12 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *header = complete(QUERY_TYPES "system Hits(Body shot, $) { }\n");
     TIDE_CHECK(offers(header, "query"));
     TIDE_CHECK(has(header, "query (${1:Component} ${2:value}) ${3:entities}"));
-    // Views and local handlers take them too; the match's handlers don't yet
+    // Views and synchronous handlers take them too.
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "event Hit { int damage; }\nlocal event(Hit hit) Show($) { }\n"), "query"));
-    TIDE_CHECK(!offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "command Inspect { }\ncommand(Inspect value, PlayerID sender) InspectAll($) { }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "async event(Spawned) OnSpawn($) { }\n"), "query"));
 
     const char *bindings = complete(QUERY_TYPES "system Hits(Body shot, query ($) fighters) { }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "Fighter"));
@@ -7739,6 +7741,34 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *braceless = complete(QUERY_TYPES "system Hits(query (Body body) fighters)\n{\n"
                                                "    foreach (var fighter in fighters) Debug.Log(fighter.$\n}\n");
     TIDE_CHECK(offers(braceless, "entity") && offers(braceless, "body"));
+}
+
+TIDE_TEST(lsp_entity_query_in_match_handlers)
+{
+    start();
+    const char *bindings = complete(QUERY_TYPES "event(Spawned) Inspect(query ($) bodies) { }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    const char *rows = complete(QUERY_TYPES "command Inspect { }\n"
+        "command(Inspect value, PlayerID sender) InspectAll(query (Body body) bodies)\n{\n"
+        "    foreach (var row in bodies) Debug.Log(row.$);\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
+    open_document(QUERY_TYPES
+        "event Scan { }\n"
+        "system ScanNow() { Send(Scan); }\n"
+        "event(Scan) Inspect(query (Body body) bodies)\n"
+        "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n"
+        "command InspectCommand { }\n"
+        "command(InspectCommand value, PlayerID sender) InspectAll(query (Body body) bodies)\n"
+        "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *event_query = request_at("file:///test.tide", "textDocument/hover", 9, 40, "");
+    TIDE_CHECK(has(event_query, "current match at this handler's turn in the tick-end queue"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 78, ""),
+                   "current match at this handler's turn in the tick-end queue"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 13, ""),
+                   "Through its queries, it reads any entity's `Body`"));
+    TIDE_CHECK(count(request("textDocument/codeLens"), "Query: reads Body") == 2);
 }
 
 // A view's and a local handler's query: what's offered in it, and what the

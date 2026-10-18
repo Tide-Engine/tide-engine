@@ -1,0 +1,188 @@
+// Match handlers use ordinary current-world query traversal at their queue turn.
+component Sample { int number; int value; List<int> data = [2, 3]; }
+[Sparse] component Selected { }
+[Sparse] component Excluded { }
+component Missing { }
+component Actor { int value = 5; }
+
+singleton Seen
+{
+    Entity first;
+    Entity second;
+    Entity actor;
+    int action;
+    int[4] counts;
+    int[4] sums;
+    int[4] pairs;
+    int empty;
+    int spawns;
+    int spawnedMatches;
+    int destroyed;
+    int destroyedOwn;
+    int destroyedQuery;
+    int culled;
+    int stillPresent;
+    int ownDuring;
+    int ownAfter;
+    int queryAfter;
+    int before;
+    int after;
+    int dataRead;
+    int commandRows;
+}
+
+event Probe { int slot; }
+event Change { int delta; }
+event CullSamples { }
+event SelfCheck { }
+event Update { }
+command Shift { int delta; }
+command SetActor { int value; }
+local singleton UI { bool shift; bool targeted; Entity target; }
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Seen seen)
+{
+    seen.first = Spawn(Sample { number = 1, value = 10 }, Selected);
+    seen.second = Spawn(Sample { number = 2, value = 20 }, Selected);
+    Spawn(Sample { number = 3, value = 40 }, Selected, Excluded);
+    Spawn(Sample { number = 4, value = 50 });
+    seen.actor = Spawn(Actor);
+}
+
+event(Spawned) Created(Sample sample, mut Seen seen,
+                       query (with Selected, without Excluded) selected)
+{
+    if (sample.number <= 0) return;
+    seen.spawns++;
+    foreach (var row in selected) if (row.entity != default) seen.spawnedMatches++;
+}
+
+event(Destroyed) Removed(Sample sample, mut Seen seen, query (Sample sample) samples)
+{
+    seen.destroyed++;
+    seen.destroyedOwn += sample.value;
+    foreach (var row in samples)
+        if (row.entity == this) seen.destroyedQuery += row.sample.value;
+}
+
+system Exercise(mut Seen seen)
+{
+    if (seen.action == 1)
+    {
+        seen.first.Send(Change { delta = 1 });
+        Send(Probe { slot = 0 });
+        Spawn(Sample { number = 5, value = 30 }, Selected);
+        Send(Probe { slot = 1 });
+        seen.first.Remove(Selected);
+        Send(Probe { slot = 2 });
+        seen.second.Destroy();
+        Send(Probe { slot = 3 });
+    }
+    if (seen.action == 2)
+    {
+        Send(CullSamples);
+        seen.actor.Send(SelfCheck);
+    }
+    if (seen.action == 3) Send(Update);
+    seen.action = 0;
+}
+
+event(Change change) ApplyChange(mut Sample sample) { sample.value += change.delta; }
+
+event(Probe probe) Inspect(mut Seen seen,
+                           query (Sample sample, with Selected, without Excluded) samples,
+                           query (with Selected, without Excluded) selected,
+                           query (with Missing) empty)
+{
+    seen.counts[probe.slot] = 0;
+    seen.sums[probe.slot] = 0;
+    seen.pairs[probe.slot] = 0;
+    foreach (var row in samples)
+    {
+        seen.counts[probe.slot]++;
+        seen.sums[probe.slot] += row.sample.value;
+        foreach (var other in selected)
+            if (other.entity != default) seen.pairs[probe.slot]++;
+    }
+    foreach (var row in empty) if (row.entity != default) seen.empty++;
+}
+
+event(CullSamples) CullSelected(mut Seen seen, query (with Selected, without Excluded) selected)
+{
+    foreach (var row in selected)
+    {
+        seen.culled++;
+        row.entity.Destroy();
+    }
+    foreach (var row in selected) if (row.entity != default) seen.stillPresent++;
+    Send(Probe { slot = 0 });
+}
+
+event(SelfCheck) ChangeSelf(mut Actor actor, mut Seen seen, query (Actor actor) actors)
+{
+    actor.value += 10;
+    foreach (var row in actors) if (row.entity == this) seen.ownDuring = row.actor.value;
+}
+
+[After(ChangeSelf)]
+event(SelfCheck) CheckSelf(Actor actor, mut Seen seen, query (Actor actor) actors)
+{
+    seen.ownAfter = actor.value;
+    foreach (var row in actors) if (row.entity == this) seen.queryAfter = row.actor.value;
+}
+
+void SetValue(Entity target, int value, mut World world)
+{
+    mut var sample = world.Get<Sample>(target);
+    sample.value = value;
+    world.Set<Sample>(target, sample);
+}
+
+void Bump(Entity target, mut World world)
+{
+    mut var sample = world.Get<Sample>(target);
+    sample.value++;
+    sample.data.Add(sample.value);
+    world.Set<Sample>(target, sample);
+}
+
+event(Update) UpdateSamples(mut Seen seen, mut World world,
+                            query (Sample sample, with Selected, without Excluded) samples)
+{
+    foreach (var row in samples)
+    {
+        seen.before += row.sample.value;
+        seen.dataRead += row.sample.data[0] + row.sample.data[1];
+        if (row.sample.number == 1) SetValue(seen.second, 200, world);
+        Bump(row.entity, world);
+        foreach (var current in samples)
+            if (current.entity == row.entity) seen.after += current.sample.value;
+    }
+}
+
+command(Shift shift, PlayerID sender) ShiftAll(mut Seen seen, mut World world,
+                                             query (Sample sample, with Selected, without Excluded) samples)
+{
+    if (sender != PlayerID(0)) return;
+    foreach (var row in samples)
+    {
+        SetValue(row.entity, row.sample.value + shift.delta, world);
+        seen.commandRows++;
+    }
+    Send(Probe { slot = 0 });
+}
+
+command(SetActor change, PlayerID sender) SetOne(mut Actor actor, mut Seen seen,
+                                               query (Sample sample, with Selected, without Excluded) samples)
+{
+    if (sender != PlayerID(0)) return;
+    actor.value = change.value;
+    foreach (var row in samples) seen.commandRows += row.sample.number;
+}
+
+view Submit(mut UI ui)
+{
+    if (ui.shift) { Send(Shift { delta = 7 }); ui.shift = false; }
+    if (ui.targeted) { ui.target.Send(SetActor { value = 42 }); ui.targeted = false; }
+}

@@ -14918,13 +14918,13 @@ static void refused_binding(decl *row, const param *p)
 
 static void check_entity_query(const checker *c, decl *sys, param *query)
 {
-    // The match's handlers and tasks have none yet
-    const bool refused = sys->is_async || (sys->is_handler && !sys->is_local);
+    // A synchronous handler iterates its current world just as a system does.
+    // Tasks still need a lifetime rule for queries and rows across waits.
+    const bool refused = sys->is_async;
     if (refused) {
-        diag_error(query->at, "%s can't take a query yet", sys->is_async ? "a task" : sys->is_command ? "a command handler"
-                                                                                                      : "a match event handler");
-        diag_note("systems, views and local handlers take them: a handler reads the entity its event was sent to, and "
-                  "others through 'World world'");
+        diag_error(query->at, "a task can't take a query yet");
+        diag_note("systems, views and synchronous event and command handlers take them; a task reads other entities "
+                  "through 'World world'");
     }
     // What a local handler takes of the match is its event's: one of a local event has none
     const bool hears = sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command;
