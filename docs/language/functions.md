@@ -96,6 +96,21 @@ Functions work from their parameters, constants and the functions they call; met
 
 A helper can `Set<T>` when its caller takes a read-only `T` parameter. That parameter keeps the value the caller read on entering the entity's invocation; later world reads see the write immediately. Taking `mut T` still prevents `Set<T>` through the caller's World, because its write-back could overwrite a Set of the same entity.
 
+Resource asset collections can be borrowed by synchronous CPU functions and methods with ordinary read-only parameters: `List<Clip>`, `List<Texture>`, `List<Mesh<V>>`, and their `Map<string, T>` equivalents.
+
+```csharp
+asset List<Clip> hits = "sfx/hit_*.wav";
+
+Clip Pick(List<Clip> clips, int index)
+{
+    return clips[index];
+}
+
+view HitSound() { Audio.Play(Pick(hits, 0)); }
+```
+
+Pass the asset directly, or forward a borrowed parameter through further helpers. Count, indexing, `foreach` and read-only collection methods work as usual; passing copies no collection. Elements keep their ordinary value rules, so a helper can return a selected clip, texture or mesh. The collection borrow itself cannot be stored, returned, optional, mutated or retained by an async declaration, and has no default. Externs, operators, audio declarations and GPU code take no such borrow. Texture and clip collections remain local code's; mesh geometry retains its existing match-read rules.
+
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
 ```csharp

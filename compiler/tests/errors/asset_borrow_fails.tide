@@ -1,0 +1,3 @@
+// expect: a borrowed asset collection can't be an error value
+void Reject(List<Clip> values) fails List<Clip> { fail values; }
+scene Main { }

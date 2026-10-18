@@ -1,5 +1,51 @@
 # Language features, as tidec builds them
 
+## Borrowed resource asset collections (2026-10-18)
+
+Implemented as an authorized completion of existing read-only helper access:
+ordinary synchronous CPU functions/methods accept List<Clip>, List<Texture>,
+List<Mesh<V>> and matching Map<string, T> parameters. Arguments name an asset
+directly or forward another borrow of the exact type. Count, indexing, foreach,
+readonly methods, overloads, named arguments, recursion, methods and synchronous
+callbacks retain existing behavior. Individual elements retain ordinary value
+rules and may be returned. The collection itself has no mut/out/in/default,
+optional, return/error-payload, storage or async lifetime. Externs, operators,
+audio declarations and GPU code take no borrow. Clip/Texture retain local-only
+capabilities; numeric Mesh geometry retains its existing match reads.
+
+Header generation includes the Clip reference definition for borrowed Clip
+list/map signatures even with no declared assets. `asset_borrows_unused` compiles
+all six unused collection signatures on native/web without enabling asset
+loading or audio playback. This fixes a type-only header omission found in the
+final review.
+
+The resolver permits these collection types in helper signatures; the checker
+validates borrow uses and direct/forwarded sources. A transitive CPU-only flag
+prevents shader helper chains from reaching a resource-collection borrow.
+Codegen passes the existing list/map handle, including beside mutable arguments,
+in ordered operands and through inlined Action calls. It introduces no owned
+collection copy, allocation, runtime call, pack ownership, persistent state,
+public C ABI or release-pruning rule. Existing asset/element lifetimes and pack
+replacement behavior remain in force. Other resource-collection storage and
+unique grid borrowing are unchanged.
+
+`asset_borrows` executes all six collection forms, recursive/method/named
+forwarding, readonly map methods, foreach, mutable neighboring arguments,
+Action/sort captures, Clip playback, Texture metadata, Mesh geometry, pack
+reload and retained-world immutability. Scratch marks verify no passing copy
+beside an effectful argument, a mutable list or an Action, and normal cleanup.
+Fourteen diagnostic fixtures cover signature/mutation/source/escape/domain
+restrictions; existing persistent-resource collection errors remain pinned.
+Editor hover explains the borrow, collection completion uses the resolved type,
+and GPU completion excludes direct/transitive borrow helpers.
+
+Validation: final warning-free native/web debug builds, all 2,427 native and
+2,336 web CTests, and the docs production build pass. The final suites include
+the declaration-only header regression, execution/diagnostic/editor checks,
+existing exact-bit/network pins, Vulkan/OpenGL and WebGL/WebGPU validation.
+Native took 151.49 seconds and web 246.39 seconds. Other operating systems,
+Android and sanitizers remain CI coverage; no CI was dispatched.
+
 ## World.Set beside read-only component parameters (2026-10-18)
 
 The owner approved lifting the read-only overlap restriction as backend work

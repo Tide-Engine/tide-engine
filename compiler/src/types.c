@@ -119,6 +119,14 @@ bool type_is_integer(const type t)
     return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG;
 }
 
+bool type_is_asset_collection(const type t)
+{
+    if ((t.kind != TY_LIST && t.kind != TY_MAP) || !t.decl) return false;
+    if (t.kind == TY_MAP && t.decl->fields.items[0].type.kind != TY_STRING) return false;
+    const type element = t.decl->fields.items[t.kind == TY_MAP ? 1 : 0].type;
+    return element.kind == TY_TEXTURE || element.kind == TY_CLIP || element.kind == TY_MESH;
+}
+
 int matrix_dim(const type t)
 {
     switch (t.kind) {
