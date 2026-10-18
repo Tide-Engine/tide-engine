@@ -18,12 +18,12 @@ enum Item
     // Common
     HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts,
     // Uncommon
-    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, SpringBoots, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds,
+    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds,
     // Rare
     Mortar, SecondWind, HeRounds, DragonsBreath,
 }
 
-const int ITEM_COUNT = 24;
+const int ITEM_COUNT = 23;          // (Spring Boots, a jump in the air, went with jumping)
 
 enum Rarity { Common, Uncommon, Rare }
 
@@ -52,7 +52,6 @@ string ItemName(Item item)
         case Item.GunDrone: return "Gun Drone";
         case Item.EmberRing: return "Ember Ring";
         case Item.Frostbite: return "Frostbite";
-        case Item.SpringBoots: return "Spring Boots";
         case Item.EnergyDrink: return "Energy Drink";
         case Item.Kerosene: return "Kerosene";
         case Item.SteelToes: return "Steel Toes";
@@ -85,7 +84,6 @@ string ItemLine(Item item)
         case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (faster each)";
         case Item.EmberRing: return "Sets the dead within 3 m of you alight (+0.5 m each)";
         case Item.Frostbite: return "12% chance a hit freezes the dead solid for 2 s (+12% each)";
-        case Item.SpringBoots: return "One more jump in the air (+1 each)";
         case Item.EnergyDrink: return "One more dash (+1 each)";
         case Item.Kerosene: return "The dead your dash goes through catch fire (wider each)";
         case Item.SteelToes: return "50% more to the dead on the ground (+50% each)";
@@ -150,7 +148,7 @@ int DashCharges(Survivor s)
 struct Arms
 {
     int seat;
-    int[24] items;
+    int[23] items;
     float might;
     float crit;
 }

@@ -143,7 +143,7 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     mut var at = float3(0);
     foreach (var t in village.plan.torches)
     {
-        var far = Math.Distance(t, me.eye);
+        var far = Math.Distance(t, me.ears);
         if (far < nearest)
         {
             nearest = far;
@@ -161,7 +161,7 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     mut var brazierAt = float3(0);
     foreach (var b in village.plan.fires)
     {
-        var far = Math.Distance(b, me.eye);
+        var far = Math.Distance(b, me.ears);
         if (far < brazierFar)
         {
             brazierFar = far;
@@ -172,7 +172,7 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, que
     foreach (var row in beacons)
     {
         if (!row.beacon.lit || row.beacon.night != match.night) continue;
-        var far = Math.Distance(row.beacon.at, me.eye) - 6;
+        var far = Math.Distance(row.beacon.at, me.ears) - 6;
         if (far < brazierFar)
         {
             brazierFar = Math.Max(0, far);
@@ -197,7 +197,7 @@ view Groan(mut Zombie zombie, mut Ears ears, Me me)
     zombie.voice -= me.dt;
     if (zombie.voice > 0 || zombie.state == ZombieState.Dying) return;
     zombie.voice = ears.random.NextFloat(2.5, 6.5);
-    var far = Math.Distance(zombie.at, me.eye);
+    var far = Math.Distance(zombie.at, me.ears);
     if (far > 30) return;
     var head = zombie.at + float3(0, 1.6, 0);
     // A horde would drown everything: a few voices a second at most, the nearest first come
@@ -349,7 +349,7 @@ local event(Spell spell) HearSpell(mut Ears ears)
 
 local event(Thud thud) HearThud(mut Ears ears, Village village, Me me)
 {
-    if (Math.Distance(thud.at, me.eye) > 30 || ears.voices < 0.5) return;
+    if (Math.Distance(thud.at, me.ears) > 30 || ears.voices < 0.5) return;
     ears.voices -= 0.25;
     // Into the ruin's walls or floor, or the boulders south of the fire: stone; into earth and wood, not
     var stone = Paved(village.plan, thud.at) || (thud.normal.y < 0.5 && (thud.at.z > 7 || thud.at.z < -8));
@@ -393,7 +393,7 @@ local event(HordeRose horde) HearHorde(mut Ears ears)
 
 local event(Cue cue) HearCue(mut Ears ears, Me me)
 {
-    var near = Math.Distance(cue.at, me.eye) < 2.5;
+    var near = Math.Distance(cue.at, me.ears) < 2.5;
     switch (cue.sound)
     {
         case Sfx.Rise: Audio.Play(riseClip, cue.at, 0.9, ears.random.NextFloat(0.9, 1.1)); return;

@@ -100,39 +100,23 @@ static void tick_safe(int count)
     }
 }
 
-// Stand a survivor at a place, looking at a point.
+// Stand a survivor at a place, the cursor on a point (they turn to it, and their shots and throws go to it).
 static void put(int seat, tide_float3 feet, tide_float3 look)
 {
     Survivor s = get(seat);
     s.feet = feet;
     s.velocity = (tide_float3){0};
-    const float dx = look.x - feet.x, dz = look.z - feet.z, dy = look.y - (feet.y + 1.62f);
+    const float dx = look.x - feet.x, dz = look.z - feet.z, dy = look.y - (feet.y + 1.36f);
     s.yaw = atan2f(dx, dz);
     s.pitch = atan2f(dy, sqrtf(dx * dx + dz * dz));
+    s.aim = look;
     s.placed = true;
     set(seat, s);
+    held[seat].aim = look;
 }
 
-// Turn a survivor where they stand to look at a point.
+// The cursor on a point, where a survivor stands.
 static void look_at(int seat, tide_float3 look) { put(seat, get(seat).feet, look); }
-
-// Turn a survivor so the over-the-shoulder camera's crosshair is on a point (hands.tide's ShoulderFrom, on open
-// ground): the camera moves as they turn, so a few rounds of turning toward the point from where it is.
-static void aim_over_shoulder(int seat, tide_float3 at)
-{
-    Survivor s = get(seat);
-    const tide_float3 eye = {s.feet.x, s.feet.y + 1.62f, s.feet.z};
-    for (int round = 0; round < 6; round++) {
-        const float flat = cosf(s.pitch);
-        const tide_float3 look = {sinf(s.yaw) * flat, sinf(s.pitch), cosf(s.yaw) * flat};
-        const float rx = sinf(s.yaw + 1.5707964f), rz = cosf(s.yaw + 1.5707964f);
-        const tide_float3 camera = {eye.x + rx * 0.7f - look.x * 3.2f, eye.y + 0.35f - look.y * 3.2f, eye.z + rz * 0.7f - look.z * 3.2f};
-        const float dx = at.x - camera.x, dy = at.y - camera.y, dz = at.z - camera.z;
-        s.yaw = atan2f(dx, dz);
-        s.pitch = atan2f(dy, sqrtf(dx * dx + dz * dz));
-    }
-    set(seat, s);
-}
 
 // An item or a survivor taken: 1, 2 or 3, pressed for a tick.
 static void pick(int seat, int which)
@@ -378,11 +362,11 @@ int main(void)
     pick(1, 2);
     CHECK(get(1).role == Role_Breacher && get(1).gun == Weapon_Shotgun && get(1).mag == 8);
 
-    // ---- The run: a breath, then the first night: its beacon, cold at a landmark (not the spire's top), and its chests
+    // ---- The run: a breath, then the first night: its beacon, cold at a landmark, and its chests
     // hidden about; and the dead, which the Gunner shoots down for a minute and a half ----
     for (int i = 0; i < 60 * 15 && world.Match.phase != Phase_Fighting; i++) tick(1);
     CHECK(world.Match.phase == Phase_Fighting && world.Match.clock < 0.1f);
-    CHECK(world.Match.night == 1 && world.Match.place >= 1 && world.Match.place < 5);
+    CHECK(world.Match.night == 1 && world.Match.place >= 0 && world.Match.place < 5);
     tick_safe(60 * 6);
     CHECK(world.arch6_Zombie.count > 0);
     CHECK(world.arch4_Beacon.count == 1 && !TIDE_AT(&world, arch4_Beacon, Beacon, 0).lit);
@@ -475,7 +459,7 @@ int main(void)
         s = take(0, Item_EnergyDrink);
         CHECK(s.dashes == 3);                           // A third dash, ready now
         const Item rest[] = {Item_HollowPoints, Item_HairTrigger, Item_Sneakers, Item_Leech, Item_Battery, Item_LuckyShot, Item_Salts, Item_LiveWire,
-                             Item_PowderKeg, Item_GunDrone, Item_EmberRing, Item_Frostbite, Item_SpringBoots, Item_Kerosene, Item_SteelToes, Item_GasMask,
+                             Item_PowderKeg, Item_GunDrone, Item_EmberRing, Item_Frostbite, Item_Kerosene, Item_SteelToes, Item_GasMask,
                              Item_ApRounds, Item_Mortar, Item_HeRounds, Item_DragonsBreath};
         for (size_t k = 0; k < sizeof rest / sizeof rest[0]; k++) {
             const int before = get(0).items.at[rest[k]];
@@ -487,14 +471,6 @@ int main(void)
         tick_safe(8);
         press(&held[0].utility);
         CHECK(get(0).dashWait > 3.8f && get(0).dashWait < 3.85f);     // A spent dash back in 4.5 s, 15% sooner
-        // Spring Boots: a jump in the air
-        tick_safe(30);
-        press(&held[0].jump);
-        tick_safe(12);
-        const float up = get(0).feet.y;
-        press(&held[0].jump);
-        tick_safe(8);
-        CHECK(get(0).airJumps == 1 && get(0).feet.y > up);
         tick_safe(60);
         s = get(0);
         memset(&s.items, 0, sizeof s.items);
@@ -577,31 +553,28 @@ int main(void)
         CHECK(get(1).gun == Weapon_Shotgun && get(1).mag == 4);
     }
 
-    // ---- The guns: a carbine's round, a shotgun's pellets, into one of the dead; and the carbine again from over the
-    // shoulder, the round going where the camera's crosshair is; and the carbine at the legs, below the hips ----
+    // ---- The guns: a carbine's round, a shotgun's pellets, into one of the dead, each from the gun to where the cursor
+    // is; and the carbine at the legs, below the hips ----
     few(3);
     {
-        const Weapon guns[4] = {Weapon_Rifle, Weapon_Shotgun, Weapon_Rifle, Weapon_Rifle};
-        const Role roles[4] = {Role_Gunner, Role_Breacher, Role_Gunner, Role_Gunner};
-        for (int k = 0; k < 4; k++) {
+        const Weapon guns[3] = {Weapon_Rifle, Weapon_Shotgun, Weapon_Rifle};
+        const Role roles[3] = {Role_Gunner, Role_Breacher, Role_Gunner};
+        for (int k = 0; k < 3; k++) {
             become(0, roles[k], guns[k]);
-            held[0].view = k == 2 ? View_Shoulder : View_Eyes;
             const tide_entity e = sturdy();
             to_open(e);
             face(0, e, 6);
-            if (k == 2) aim_over_shoulder(0, zombie(e).chestAt);
-            if (k == 3) look_at(0, (tide_float3){zombie(e).at.x, zombie(e).at.y + 0.35f, zombie(e).at.z});
+            if (k == 2) look_at(0, (tide_float3){zombie(e).at.x, zombie(e).at.y + 0.35f, zombie(e).at.z});
             const float before = zombie(e).health;
             press(&held[0].attack);
             tick_safe(2);
             if (zombie(e).health >= before)
                 fprintf(stderr, "the %s missed: survivor at %.2f %.2f %.2f yaw %.2f pitch %.2f; zombie at %.2f %.2f %.2f chest %.2f %.2f %.2f state %d; %u up\n",
-                        k == 0 ? "carbine" : k == 1 ? "shotgun" : k == 2 ? "carbine from over the shoulder" : "carbine at the legs", get(0).feet.x, get(0).feet.y, get(0).feet.z, get(0).yaw, get(0).pitch,
+                        k == 0 ? "carbine" : k == 1 ? "shotgun" : "carbine at the legs", get(0).feet.x, get(0).feet.y, get(0).feet.z, get(0).yaw, get(0).pitch,
                         zombie(e).at.x, zombie(e).at.y, zombie(e).at.z, zombie(e).chestAt.x, zombie(e).chestAt.y, zombie(e).chestAt.z, (int)zombie(e).state,
                         world.arch6_Zombie.count);
             CHECK(zombie(e).health < before);
         }
-        held[0].view = View_Eyes;
     }
 
     // ---- From above: turned to what the cursor's on, the carbine's round into the chest it's on; moving up the screen
@@ -614,7 +587,6 @@ int main(void)
         face(0, e, 6);
         const tide_float3 chest = zombie(e).chestAt;
         look_at(0, (tide_float3){get(0).feet.x + 10, get(0).feet.y + 1.6f, get(0).feet.z});      // Turned away
-        held[0].view = View_Above;
         held[0].aim = chest;
         tick_safe(1);
         float off = get(0).yaw - atan2f(chest.x - get(0).feet.x, chest.z - get(0).feet.z);
@@ -668,7 +640,6 @@ int main(void)
         }
         printf("from above, a grenade at a spot 12 m off burst %.2f m from it\n", hypotf(last.x - spot.x, last.z - spot.z));
         CHECK(burst && hypotf(last.x - spot.x, last.z - spot.z) < 1.5f);
-        held[0].view = View_Eyes;
     }
 
     // ---- A horde: what's owed claws up together out of one patch of ground, 22 to 32 m from whom it's for, within a
@@ -717,17 +688,13 @@ int main(void)
         put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -12});
         tick_safe(8);
         tide_float3 was = get(0).feet;
-        held[0].move = (tide_float2){0, 1};
-        press(&held[0].utility);
-        held[0].move = (tide_float2){0, 0};
+        press(&held[0].utility);          // No way pressed: the way they face
         tick_safe(12);
         CHECK(hypotf(get(0).feet.x - was.x, get(0).feet.z - was.z) > 3 && get(0).dashes == 1);
         // The second charge at once, then none, and the first back after the cooldown
         tick_safe(20);
         was = get(0).feet;
-        held[0].move = (tide_float2){0, 1};
         press(&held[0].utility);
-        held[0].move = (tide_float2){0, 0};
         tick_safe(12);
         CHECK(hypotf(get(0).feet.x - was.x, get(0).feet.z - was.z) > 3 && get(0).dashes == 0 && get(0).cooldowns.at[1] > 0);
         tick_safe(60 * 5);
@@ -739,14 +706,12 @@ int main(void)
         before = zombie(e).health;
         // Through one of the dead: thrown aside and hurt, not knocked down (the Breacher's dash does that, below)
         const tide_float3 stood = zombie(e).at;
-        held[0].move = (tide_float2){0, 1};
         press(&held[0].utility);
         bool thrown = false;
         for (int t = 0; t < 30 && !thrown; t++) {
             tick_safe(1);
             thrown = hypotf(zombie(e).at.x - stood.x, zombie(e).at.z - stood.z) > 0.5f;
         }
-        held[0].move = (tide_float2){0, 0};
         CHECK(thrown && zombie(e).health < before && zombie(e).state != ZombieState_Fallen);
         e = sturdy();
         to_open(e);
@@ -965,126 +930,6 @@ int main(void)
         s = get(0);
         memset(&s.items, 0, sizeof s.items);
         set(0, s);
-    }
-
-    // ---- Nowhere out of reach: the dead find the survivors in the ruin (beside its north wall outside, by the chest, in
-    // the middle), on the spire's tier and on the beacon's top: a few walk up a ramp, and a horde piles up a cliff's face
-    // on itself till the ones on top go over (none climbs a cliff alone) ----
-    {
-        const tide_float3 spots[5] = {{4.25f, 6, 46.75f}, {0.6f, 6, 44.3f}, {0, 6, 41}, {36, 4, -4}, {46, 9, -1}};
-        for (int seat = 0; seat < 2; seat++) {
-            Survivor s = get(seat);
-            memset(&s.items, 0, sizeof s.items);
-            set(seat, s);
-        }
-        for (int k = 0; k < 5; k++) {
-            put(0, spots[k], (tide_float3){spots[k].x, spots[k].y + 1.6f, spots[k].z - 5});
-            put(1, spots[k], (tide_float3){spots[k].x, spots[k].y + 1.6f, spots[k].z - 5});
-            few(4);
-            world.Match.rush = 500;     // A few can't get up a cliff: a horde piles up it
-            int t = 0;
-            bool reached = false;
-            float piled = 0;
-            static float wasY[8192];
-            static int lone[8192];
-            for (uint32_t r = 0; r < world.arch6_Zombie.count && r < 8192; r++) {
-                wasY[r] = TIDE_AT(&world, arch6_Zombie, Zombie, r).at.y;
-                lone[r] = 0;
-            }
-            for (; t < 60 * 90 && !reached; t++) {
-                tick_safe(1);
-                // None hangs in the air: one up off the ground, not falling, has one of the dead nearly under it
-                for (uint32_t r = 0; r < world.arch6_Zombie.count && r < 8192; r++) {
-                    const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, r);
-                    const bool falling = z.at.y < wasY[r] - 0.01f;
-                    wasY[r] = z.at.y;
-                    // (one against a cliff's face is clawing at it: the wall holds it)
-                    bool walled = false;
-                    for (int dz = -1; dz <= 1; dz++)
-                        for (int dx = -1; dx <= 1; dx++) {
-                            const int cx = (int)floorf(z.at.x + NAV_HALF) + dx, cz = (int)floorf(z.at.z + NAV_HALF) + dz;
-                            if (cx >= 0 && cz >= 0 && cx < NAV_SIDE && cz < NAV_SIDE && *(const uint8_t *)tide_list_read(&world.heap, world.Ashwick.cells, cz * NAV_SIDE + cx, 1) == 2) walled = true;
-                        }
-                    if (z.state != ZombieState_Hunting || z.lift < 0.4f || falling || walled) {
-                        lone[r] = 0;
-                        continue;
-                    }
-                    bool held = false;
-                    for (uint32_t q = 0; q < world.arch6_Zombie.count && !held; q++) {
-                        const Zombie o = TIDE_AT(&world, arch6_Zombie, Zombie, q);
-                        const float rise = o.at.y - z.at.y;
-                        if (q != r && hypotf(o.at.x - z.at.x, o.at.z - z.at.z) < 0.7f && rise < -0.2f && rise > -1.0f) held = true;     // (bodies touching: 0.7 m, a body's breadth)
-                    }
-                    // (a moment's lag is allowed: what holds one up is where the others stood as the tick began)
-                    lone[r] = held ? 0 : lone[r] + 1;
-                    if (lone[r] > 10) {
-                        fprintf(stderr, "one of the dead hangs in the air at %.2f %.2f %.2f, %.2f m up, state %d climbing %d speed %.2f fall %d\n", z.at.x, z.at.y, z.at.z, z.lift,
-                                (int)z.state, z.climbing, z.speed, z.fall);
-                        for (uint32_t q = 0; q < world.arch6_Zombie.count; q++) {
-                            const Zombie o = TIDE_AT(&world, arch6_Zombie, Zombie, q);
-                            const float d = hypotf(o.at.x - z.at.x, o.at.z - z.at.z);
-                            if (q != r && d < 1.5f) fprintf(stderr, "   near: %.2f m off, %.2f up, state %d lift %.2f\n", d, o.at.y - z.at.y, (int)o.state, o.lift);
-                        }
-                    }
-                    CHECK(lone[r] <= 10);
-                }
-                const tide_float3 feet = get(0).feet;
-                for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) {
-                    const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, r);
-                    if (z.state != ZombieState_Hunting) continue;
-                    const int cx = (int)floorf(z.at.x + NAV_HALF), cz = (int)floorf(z.at.z + NAV_HALF);
-                    const bool cliff = cx >= 0 && cz >= 0 && cx < NAV_SIDE && cz < NAV_SIDE &&
-                                       *(const uint8_t *)tide_list_read(&world.heap, world.Ashwick.cells, cz * NAV_SIDE + cx, 1) == 2;
-                    // None goes up a cliff's face without the others under it
-                    if (cliff && z.climbing) piled = fmaxf(piled, z.lift);
-                    if (hypotf(z.at.x - feet.x, z.at.z - feet.z) < 1.6f && fabsf(z.at.y - feet.y) < 1.2f) reached = true;
-                }
-            }
-            if (!reached) fprintf(stderr, "none of the dead reached the survivors at %.2f %.2f %.2f\n", get(0).feet.x, get(0).feet.y, get(0).feet.z);
-            CHECK(reached);
-            printf("the dead reached the survivors at %.1f %.1f %.1f in %.1f s, %u up, piled %.1f m up a face\n", get(0).feet.x, get(0).feet.y, get(0).feet.z, t / 60.0, world.arch6_Zombie.count, piled);
-            world.Match.rush = 0;
-        }
-        spawning();
-    }
-
-    // ---- No climbing a cliff by jumping up it: at the foot of the chapel rise's face, forward and jumping again and
-    // again for six seconds, a survivor's still at its foot; up its ramp, they walk to the top ----
-    {
-        few(1);
-        world.Match.spawnWait = 1e9f;
-        put(0, (tide_float3){0, 0, 26.5f}, (tide_float3){0, 3, 42});
-        tick_safe(10);
-        held[0].move = (tide_float2){0, 1};
-        float highest = 0;
-        for (int t = 0; t < 60 * 6; t++) {
-            held[0].jump = t % 12 < 2;
-            tick_safe(1);
-            highest = fmaxf(highest, get(0).feet.y);
-        }
-        held[0].jump = false;
-        held[0].move = (tide_float2){0, 0};
-        if (highest > 3) fprintf(stderr, "jumped up the cliff: %.2f m, at %.2f %.2f %.2f\n", highest, get(0).feet.x, get(0).feet.y, get(0).feet.z);
-        CHECK(get(0).feet.y < 2.5f);
-        // Up each ramp (from near its foot to its head): walked to the top
-        const float ramps[4][6] = {
-            {-20, 0, 24.8f, -8, 35, 6}, {19.2f, 0, 25.7f, 8, 35, 6}, {22.7f, 0, -14.5f, 31.5f, -9, 4}, {36.6f, 4, -10.5f, 43.5f, -4.5f, 9},
-        };
-        const char *ramp_names[4] = {"chapel's west", "chapel's east", "spire's", "beacon's"};
-        float lowest_top = 99;
-        for (int k = 0; k < 4; k++) {
-            put(0, (tide_float3){ramps[k][0], ramps[k][1], ramps[k][2]}, (tide_float3){ramps[k][3], ramps[k][5] + 1.6f, ramps[k][4]});
-            tick_safe(10);
-            held[0].move = (tide_float2){0, 1};
-            for (int t = 0; t < 60 * 5 && hypotf(get(0).feet.x - ramps[k][3], get(0).feet.z - ramps[k][4]) > 1; t++) tick_safe(1);
-            held[0].move = (tide_float2){0, 0};
-            if (get(0).feet.y < ramps[k][5] - 0.6f)
-                fprintf(stderr, "stopped on the %s ramp at %.2f %.2f %.2f, sliding %d\n", ramp_names[k], get(0).feet.x, get(0).feet.y, get(0).feet.z, get(0).sliding);
-            CHECK(get(0).feet.y > ramps[k][5] - 0.6f);
-            lowest_top = fminf(lowest_top, get(0).feet.y - ramps[k][5]);
-        }
-        printf("up each of the four ramps to its top (%.1f m off at worst); jumping at the rise's face, %.1f m at most\n", lowest_top, highest);
-        spawning();
     }
 
     // ---- Wading through the dead: three pressed against a survivor slow them to well under half their pace; none near,
@@ -1348,7 +1193,6 @@ int main(void)
             const tide_entity e = sturdy();
             to_open(e);
             face(0, e, 3.5f);
-            held[0].move = (tide_float2){0, 1};
             press(&held[0].utility);
             bool lit = false;
             for (int t = 0; t < 30 && !lit; t++) {
@@ -1824,7 +1668,7 @@ int main(void)
             fprintf(stderr, "the beacon at %.1f %.1f %.1f wasn't lit: the survivor at %.1f %.1f %.1f, kindled %.2f\n", cold.at.x, cold.at.y, cold.at.z, get(0).feet.x, get(0).feet.y,
                     get(0).feet.z, tide_get_Beacon(&world, be).kindled);
         CHECK(tide_get_Beacon(&world, be).lit);
-        printf("the beacon %s lit in %.2f s\n", place == 0 ? "on the spire" : place == 1 ? "in the ruin" : place == 2 ? "by the graveyard" : place == 3 ? "among the stones" : "in the ravine",
+        printf("the beacon %s lit in %.2f s\n", place == 0 ? "in the cairn" : place == 1 ? "in the ruin" : place == 2 ? "by the graveyard" : place == 3 ? "among the stones" : "by the oak",
                t / 60.0);
         tick_safe(2);
         // Called back, beside it, with the shotgun in hand
@@ -1894,7 +1738,7 @@ int main(void)
         CHECK(world.Match.chestsPlaced == 7 && world.arch7_Chest.count == 7);
         for (uint32_t r = 0; r < world.arch7_Chest.count; r++) CHECK(TIDE_AT(&world, arch7_Chest, Chest, r).night == night + 1);
         printf("night %d kept; night %d falls %s, danger %.2f to %.2f\n", night, world.Match.night,
-               world.Match.place == 0 ? "on the spire" : world.Match.place == 1 ? "in the ruin" : world.Match.place == 2 ? "by the graveyard" : world.Match.place == 3 ? "among the stones" : "in the ravine",
+               world.Match.place == 0 ? "in the cairn" : world.Match.place == 1 ? "in the ruin" : world.Match.place == 2 ? "by the graveyard" : world.Match.place == 3 ? "among the stones" : "by the oak",
                before, world.Match.danger);
         CHECK(world.Match.danger > before * 1.15f);
     }
