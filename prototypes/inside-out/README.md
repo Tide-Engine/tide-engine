@@ -230,16 +230,17 @@ stops both services; optional HTTP and relay ports are the script's two
 positional arguments. The server binds to this machine only, unless
 started with `--lan`.
 
-To play on one TV with phones as controllers, run
-`node prototypes/inside-out/serve.mjs --lan` on the computer connected to the
-TV and open <http://127.0.0.1:8790/tv> there: both players side by side,
-the left hosting and the right joining by itself, with sound from the left
-only. Each phone, on the same network, opens the `/pad` address the TV
-shows (its home network's, or over Tailscale its 100.x address) and picks
-Amber or Teal: a d-pad, Undo, Restart, Menu and OK, which
-reach that player's view as its keys. The phones only send presses; both
-games run on the computer. Windows may ask to let Node through its
-firewall on private networks.
+To play on one TV with phones as controllers, open the TV page,
+<https://tide-engine.dev/prototypes/inside-out/tv/>, on the computer
+connected to the TV: both players side by side, the left hosting and the
+right joining by itself, with sound from the left only. It shows a code.
+Each phone opens <https://tide-engine.dev/prototypes/inside-out/pad/>,
+enters the code and picks Amber or Teal: a d-pad, Undo, Restart, Menu and
+OK, which reach that player's view as its keys through the relay. The
+phones only send presses; both games run on the TV's computer. Locally,
+`node prototypes/inside-out/serve.mjs --lan` serves the same pages at `/tv`
+and `/pad` with its own relay, for phones on this network or on Tailscale;
+Windows may ask to let Node through its firewall on private networks.
 
 The prototype uses Tide and the existing Rooms package. Its deterministic
 match rules are in `game.tide`; the puzzles, drawn as text maps (their

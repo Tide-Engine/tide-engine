@@ -155,7 +155,25 @@ After moving the posts' drawing, `inside_out_play_webgl` passed in
 shutter fixtures never open a hall and were not rerun. Node here is
 24.15.0. No CI or deployment was requested.
 
-### Phones as controllers (`serve.mjs --lan`)
+### Phones as controllers over the relay (website)
+
+Asked to play it from the website rather than a local server, the TV and
+controller pages became static pages staged beside the game
+(`inside_out_page` copies `tv.html` and `pad.html` to `tv/index.html` and
+`pad/index.html`). The TV page hosts a controller room on the relay under
+a random six-letter code and shows it; a phone's `pad/` joins that room,
+says which player it is, and sends each press and release as a `signal`,
+which the relay passes to the room's host unread (at most 50 messages a
+second per connection, far above a d-pad's). The TV page dispatches it as
+a KeyboardEvent into that player's same-origin frame. `?quiet` moved into
+`web.html`, so the shipped page has it. `serve.mjs` now serves the same
+staged pages with its own relay at the requesting host (`window.TideRelay`),
+binding both to every network with `--lan`; its server-sent-events
+forwarding is gone. Checked locally in a muted headless Chrome: both
+frames in one match, a stand-in phone over the relay shown as Amber, and
+its two presses moving Amber two steps on both views.
+
+### Phones as controllers (`serve.mjs --lan`, superseded above)
 
 Asked to play on one TV with phones as controllers, the local server
 gained `--lan`: it listens on this machine's network (the relay stays on
