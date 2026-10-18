@@ -5,7 +5,7 @@
 // dead's, which flies at the living. Each tick one moves, drops, and meets
 // the dead (or the living) before the walls.
 
-// What a missile is. A Keg, a Quake, Bile and a Pop are none: a Powder Keg's burst, a Brute's slam, a Bloater's burst
+// What a missile is. A Keg, a Quake, Bile and a Pop are none: a Powder Keg's burst, a boss's slam, a Bloater's burst
 // and an HE round's, for what's seen and heard.
 enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake, Bile, Spit, Pop }
 

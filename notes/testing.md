@@ -1,5 +1,19 @@
 # Test infrastructure
 
+## Custom browser runners reserve CPUs (2026-10-18)
+
+The three `tide_platform_web_rooms*` tests and `tide_platform_web_threads`
+now reserve `TIDE_WEB_TEST_PROCESSORS`, matching `tide_add_web_test`.
+Their manually registered tests had bypassed the software renderer's CPU
+accounting. Run `39128917687` ran rooms alongside migration/ended rooms and
+threaded-browser work on Windows; the hidden host reported 5.878 seconds
+skipped, followed by its joiner's session timeout. The log does not prove
+the underlying source of that hosted scheduling gap. Reservation prevents
+CTest itself from oversubscribing these pages, without changing session
+timeouts, test deadlines, assertions or browser flags that affect rendering.
+The runners also close Chrome through DevTools before returning, as described
+in `notes/webrtc-and-rooms.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## GPU tests on Vulkan (2026-10-14)

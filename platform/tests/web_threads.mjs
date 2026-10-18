@@ -61,16 +61,39 @@ const child = spawn(browser, [
     `--user-data-dir=${profileDir}`,
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
+    '--remote-debugging-pipe', // Close the entire browser before reusing its profile.
     `http://127.0.0.1:${server.address().port}/`,
-], { stdio: 'ignore' });
+], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+child.stdio[4].resume();
+child.stdio[3].on('error', error => {
+    console.log(`browser control: ${error.message}`);
+    finish('browser control failed');
+});
 child.on('error', error => {
     console.log(`${browser}: ${error.message}`);
     finish('no browser');
 });
+let exited = false;
+const gone = new Promise(resolve => child.on('close', code => {
+    exited = true;
+    finish(`browser exited with ${code} before reporting a result`);
+    resolve(true);
+}));
 const timeout = setTimeout(() => finish('the page said nothing more for 60 seconds'), 60000);
 
-const code = await result;
+let code = await result;
 clearTimeout(timeout);
-child.kill();
+if (!exited) {
+    let guard;
+    const deadline = new Promise(resolve => { guard = setTimeout(() => resolve(false), 30000); });
+    child.stdio[3].end(JSON.stringify({ id: 1, method: 'Browser.close' }) + '\0');
+    const closed = await Promise.race([gone, deadline]);
+    clearTimeout(guard);
+    if (!closed) {
+        code = 'the browser did not close within 30 seconds';
+        if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        else child.kill('SIGKILL');
+    }
+}
 console.log(code === '0' ? 'Ticks on threads in the browser came out the same as on one.' : `The page ended with ${code}.`);
 process.exit(code === '0' ? 0 : 1);

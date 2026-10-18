@@ -222,6 +222,13 @@ local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
     me.shake = Math.Max(me.shake, 0.6);
 }
 
+// A dash going through the dead: a jolt for the one who made it, harder the more it struck.
+local event(Barged barged) FeelBarged(mut Me me)
+{
+    if (barged.seat != me.seat) return;
+    me.shake = Math.Max(me.shake, Math.Min(0.55, 0.22 + 0.08 * barged.count));
+}
+
 local event(Blast blast) FeelBlast(mut Me me)
 {
     if (blast.kind == Shot.Pop || blast.kind == Shot.Spit) return;

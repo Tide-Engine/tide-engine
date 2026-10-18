@@ -46,8 +46,14 @@ Vulkan/OpenGL and WebGL/WebGPU pixel checks cover the metadata/payload paths;
 WebGPU repeats them after device recreation. Existing determinism pins are
 unchanged. An earlier serial native run had one audio-device state-cleanup
 timing failure; it passed in isolation and both subsequent full native runs
-passed, with no audio change. Linux/macOS/MinGW/Android and sanitizers remain
-CI coverage; no workflow was dispatched.
+passed, with no audio change in this task. The clean origin/dev merge then
+brought the owning thread's audio completion fix and browser-runner fixes,
+alongside unrelated Gravewake work. Rebuilt affected targets and reran five
+native platform checks (audio, device, new forget regression, Vulkan/OpenGL
+shaders) and eight web checks (audio/forget, WebGL/WebGPU shaders, rooms,
+handover, ended rooms and threads); all passed. Unrelated game changes needed
+no repeated playtest. Linux/macOS/MinGW/Android and sanitizers remain CI
+coverage; no workflow was dispatched.
 
 ## Conventional math API completions (2026-10-18)
 
