@@ -36,11 +36,12 @@
 <script>
   const params = new URLSearchParams(location.search);
   const relay = params.get('relay') || window.TideRelay || 'wss://relay.tide-engine.dev';
-  const game = new URL('../', location.href);
+  // The game's folder, whether this page was opened as tv/, tv or tv/index.html.
+  const game = new URL(location.pathname.replace(/\/tv(\/(index\.html)?)?$/, '/'), location.origin);
   const views = { 1: document.getElementById('left'), 2: document.getElementById('right') };
   const card = document.getElementById('card');
   card.onclick = () => { card.style.display = 'none'; };
-  document.getElementById('where').textContent = new URL('../pad/', location.href).href.replace(/^https?:\/\//, '');
+  document.getElementById('where').textContent = new URL('pad/', game).href.replace(/^https?:\/\//, '');
 
   // The left view hosts; the right joins its room, and stays quiet.
   views[1].src = new URL('?host', game).href;
