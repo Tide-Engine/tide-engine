@@ -163,6 +163,7 @@ void Nightfall(mut Match match, int players)
 {
     match.night += 1;
     match.nightClock = 0;
+    ResetHordes(match);
     match.bossNext = BOSS_EVERY;
     match.chestsDue = ChestsTonight(players);
     match.chestsPlaced = 0;

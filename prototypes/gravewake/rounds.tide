@@ -20,6 +20,20 @@ singleton Match
     int alive;                   // Up now, counted each tick
     int killed;
     float spawnWait;
+    // The hordes (SpawnDead): of the dead owed, the share that rises alone, how many wait for the next horde, and the
+    // horde rising now (how many of it are still to come up, of how many, how long since it began, its middle, how wide,
+    // whom it's for and at what pace)
+    float strays;
+    int hordePool;
+    float hordeWait;             // Seconds till the next can form
+    int hordeLeft;
+    int hordeSize;
+    float hordeClock;
+    float3 hordeAt;
+    float hordeRadius;
+    float3 hordeFocus;
+    Gait hordeGait;
+    bool scattered;              // Development and tests: every one rises alone, as before the hordes
     int rush;                    // Of the dead, how many more come six a tick (the development key's horde)
     int specials;                // How many of the next to rise are of `special`'s kind whatever the shares (the development key's)
     ZombieKind special;
@@ -51,6 +65,29 @@ const int MAX_ALIVE = 4000;      // Up at once: the most the tick and the frame 
 const float START_SECONDS = 4;   // The breath before the first of the dead, once everyone has picked
 const float BOSS_EVERY = 150;    // A night not yet lit grows impatient: a boss every so many seconds of it
 const float BOSS_THIN = 0.45;    // Of the dead that come, while a boss stands
+// The hordes (the owner, 2026-10-18: "i think zombies should spawn in "hordes" more so than one randomly")
+const float STRAY_SHARE = 0.25;  // Of the dead owed, how many rise alone, anywhere round; the rest come as hordes
+const int HORDE_LEAST = 6;       // A horde waits for at least so many
+const int HORDE_MOST = 400;      // ...and is no more than so many (the rest wait for the next)
+const float HORDE_FIRST = 3;     // Seconds into a night before the first can form...
+const float HORDE_EVERY_LEAST = 5;   // ...and between one and the next
+const float HORDE_EVERY_MOST = 9;
+const float HORDE_NEAR = 22;     // How far off a survivor (or the burning beacon) its middle is
+const float HORDE_FAR = 32;
+const float HORDE_SPREAD = 0.9;  // How wide a horde's patch is: so many metres times the root of how many, 2 to 12 m
+const float HORDE_RISE = 1.0;    // Seconds for the whole of it to claw up
+const int HORDE_PER_TICK = 12;
+
+// No horde forming or rising, none owed: a new night's, or a new run's.
+void ResetHordes(mut Match match)
+{
+    match.strays = 0;
+    match.hordePool = 0;
+    match.hordeWait = HORDE_FIRST;
+    match.hordeLeft = 0;
+    match.hordeSize = 0;
+    match.hordeClock = 0;
+}
 
 void ResetMatch(mut Match match)
 {
@@ -62,6 +99,8 @@ void ResetMatch(mut Match match)
     match.alive = 0;
     match.killed = 0;
     match.spawnWait = 0;
+    ResetHordes(match);
+    match.scattered = false;
     match.rush = 0;
     match.specials = 0;
     match.special = ZombieKind.Walker;
@@ -214,22 +253,29 @@ system CountDead(mut Match match, query (Zombie zombie) zombies)
     match.alive = alive;
 }
 
-// The dead come all the time, clawing up out of the ground all round a survivor, 16 to 32 m off and from every side,
-// wherever the ground is open and their way to the survivors is clear; more for a party (Crowd), and faster and
-// mostly round the beacon while it burns; fewer while a boss stands (BOSS_THIN: a boss's fight had been lost in the
-// crowd round it); a rush (the development key's horde) six a tick. Where no such ground is found, out of a grave or
-// the roots at the clearing's edge.
+// The dead come all the time, at a rate: more for a party (Crowd), faster while the beacon burns, fewer while a boss
+// stands (BOSS_THIN: a boss's fight had been lost in the crowd round it). Most come as hordes: every HORDE_EVERY_LEAST
+// to HORDE_EVERY_MOST seconds the ones owed since the last claw up together out of one patch of ground, 22 to 32 m
+// round a standing survivor (or, while the beacon burns, mostly round it), at one pace, a groan going up from them
+// (HordeRose). The rest (STRAY_SHARE) rise one at a time anywhere 16 to 32 m round, so no side is ever quite safe. A
+// rush (the development key's) comes six a tick, alone. Where no open ground is found, out of a grave or the roots at
+// the clearing's edge.
 [Stage(Tick.Rounds, 1)]
 system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
     if (match.paused) return;
     if (match.phase != Phase.Fighting || match.alive >= MAX_ALIVE || match.culling) return;
     var danger = match.danger;
-    mut var count = 0;
+    // Whom they come for: a survivor on their feet, any of them; or, while the beacon burns, it
+    mut List<float3> near = [];
+    foreach (var row in survivors)
+        if (row.survivor.ready && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
+    if (near.count == 0) return;
+    mut var alone = 0;
     if (match.rush > 0)
     {
-        count = Math.Min(6, match.rush);
-        match.rush -= count;
+        alone = Math.Min(6, match.rush);
+        match.rush -= alone;
     }
     else
     {
@@ -238,19 +284,56 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor su
         foreach (var row in bosses)
             if (row.boss.move != BossMove.Dying) brute = true;
         var rate = SpawnRate(danger) * match.crowd * (match.vigil ? VIGIL_RUSH : 1.0) * (brute ? BOSS_THIN : 1.0);
-        while (match.spawnWait <= 0 && count < 10)
+        mut var owed = 0;
+        while (match.spawnWait <= 0 && owed < 10)
         {
             match.spawnWait += 1 / rate;
-            count += 1;
+            owed += 1;
         }
-        if (count == 0) return;
+        // Of those owed, the strays' share rises now; the rest wait for the next horde
+        match.strays += owed * (match.scattered ? 1.0 : STRAY_SHARE);
+        alone = int(Math.Floor(match.strays));
+        match.strays -= alone;
+        match.hordePool += owed - alone;
+        match.hordeWait -= time.dt;
+        if (match.hordeLeft == 0 && match.hordeWait <= 0 && match.hordePool >= HORDE_LEAST)
+        {
+            var round = Random.NextFloat();
+            var pick = Random.NextInt(near.count);
+            var wait = Random.NextFloat(HORDE_EVERY_LEAST, HORDE_EVERY_MOST);
+            var gait = GaitFor(danger);
+            var focus = match.vigil && round < VIGIL_FOCUS ? match.beaconAt : near[pick];
+            var middle = RisingPlace(ashwick, focus, HORDE_NEAR, HORDE_FAR);
+            match.hordeWait = wait;
+            if (middle.y > -100)
+            {
+                var size = Math.Min(match.hordePool, HORDE_MOST);
+                match.hordePool -= size;
+                match.hordeSize = size;
+                match.hordeLeft = size;
+                match.hordeClock = 0;
+                match.hordeAt = middle;
+                match.hordeRadius = Math.Clamp(HORDE_SPREAD * Math.Sqrt(size), 2, 12);
+                match.hordeFocus = focus;
+                match.hordeGait = gait;
+                Send(HordeRose { at = middle, count = size, radius = match.hordeRadius });
+            }
+        }
     }
-    // Whom they come for: a survivor on their feet, any of them; or, while the beacon burns, it
-    mut List<float3> near = [];
-    foreach (var row in survivors)
-        if (row.survivor.ready && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
-    if (near.count == 0) return;
-    for (var k = 0; k < count; k++)
+    // The horde rising: all of it within HORDE_RISE of its beginning
+    if (match.hordeLeft > 0)
+    {
+        match.hordeClock += time.dt;
+        var behind = int(Math.Ceil(match.hordeSize * (1 - Math.Saturate(match.hordeClock / HORDE_RISE))));
+        var up = Math.Clamp(match.hordeLeft - behind, 0, HORDE_PER_TICK);
+        for (var k = 0; k < up; k++)
+        {
+            var at = HordePlace(ashwick, match.hordeAt, match.hordeRadius);
+            RaiseOne(match, at, match.hordeFocus, match.hordeGait, danger);
+        }
+        match.hordeLeft -= up;
+    }
+    for (var k = 0; k < alone; k++)
     {
         var round = Random.NextFloat();
         var pick = Random.NextInt(near.count);
@@ -258,20 +341,50 @@ system SpawnDead(mut Match match, Ashwick ashwick, Time time, query (Survivor su
         var at = RisingPlace(ashwick, focus, 16, 32);
         if (at.y < -100) return;
         var gait = GaitFor(danger);
-        var look = Random.NextInt(ZOMBIE_LOOKS);
-        var pace = Random.NextFloat(0.9, 1.1);
-        var phase = Random.NextInt(64);
-        var roll = Random.NextFloat();
-        mut var kind = KindFor(match, roll);
-        if (match.specials > 0)
-        {
-            match.specials -= 1;
-            kind = match.special;
-        }
-        Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = ZombieHealth(danger) * KindHealth(kind), gait = KindGait(kind, gait), look = look,
-                       state = ZombieState.Rising, pace = pace, phase = phase, kind = kind, spit = SPIT_EVERY });
+        RaiseOne(match, at, focus, gait, danger);
         if (k == 0) Send(Cue { sound = Sfx.Rise, at = at });
     }
+}
+
+// One of the dead clawing up, of a kind by the shares (or the development key's), facing whom it's for.
+void RaiseOne(mut Match match, float3 at, float3 focus, Gait gait, float danger)
+{
+    var look = Random.NextInt(ZOMBIE_LOOKS);
+    var pace = Random.NextFloat(0.9, 1.1);
+    var phase = Random.NextInt(64);
+    var roll = Random.NextFloat();
+    mut var kind = KindFor(match, roll);
+    if (match.specials > 0)
+    {
+        match.specials -= 1;
+        kind = match.special;
+    }
+    Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = ZombieHealth(danger) * KindHealth(kind), gait = KindGait(kind, gait), look = look,
+                   state = ZombieState.Rising, pace = pace, phase = phase, kind = kind, spit = SPIT_EVERY });
+}
+
+// Where one of a horde claws up: anywhere in its patch where the ground is open and the way to the survivors clear
+// (four tries), else at its middle.
+float3 HordePlace(Ashwick ashwick, float3 middle, float radius)
+{
+    for (var tries = 0; tries < 4; tries++)
+    {
+        var turn = Random.NextFloat(Math.TAU);
+        var off = radius * Math.Sqrt(Random.NextFloat());
+        var there = middle + float3(Math.Sin(turn), 0, Math.Cos(turn)) * off;
+        var cell = CellOf(there);
+        if (cell < 0 || !InClearing(there) || !Open(ashwick, cell) || FieldAt(ashwick, there) >= UNREACHED) continue;
+        return On(there.x, there.z);
+    }
+    return middle;
+}
+
+// A horde clawing up: where its middle is, how many and how wide (for what's heard and seen).
+event HordeRose
+{
+    float3 at;
+    int count;
+    float radius;
 }
 
 // What kind of the dead rises, from a roll: none but the walking dead at first; then Bloaters from BLOATERS_FROM (one

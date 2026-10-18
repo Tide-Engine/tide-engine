@@ -28,9 +28,10 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 
 | Action | Keyboard and mouse | Gamepad |
 | --- | --- | --- |
-| Walk; forward runs, once you haven't fired for a moment | WASD | Left stick |
-| Look | Mouse | Right stick |
-| Over the shoulder or through the eyes | V | Right stick press |
+| Walk; forward runs (from above, any way), once you haven't fired for a moment | WASD | Left stick |
+| Look; from above, aim (the crosshair is the cursor) | Mouse | Right stick |
+| Over the shoulder, from above, through the eyes, in turn | V | Right stick press |
+| From above, the camera nearer or further | Mouse wheel | |
 | Jump (again in the air, with Spring Boots) | Space | South button |
 | Fire | Left mouse | Right trigger |
 | The secondary skill | Right mouse | Left trigger |
@@ -51,6 +52,13 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 
 Skills fire as soon as they're ready while their key is held. The guns never
 run out; only their magazines do.
+
+From above, the camera is high behind you looking down, north up the
+screen, and WASD moves you up, down and across it whichever way you face;
+you turn to the cursor, and your shots go level through it, or into the
+one of the dead it's on (its chest, or a boss's weak spot). A grenade or a
+firebomb lands where the cursor is. A ring on the ground marks each
+survivor.
 
 ### The nights
 
@@ -80,10 +88,13 @@ yours till the game's over, through going down and bleeding out.
 
 ### The dead
 
-They claw up out of the ground all round you, from every side, three a
-second at first (more with more of you) and many more as the danger climbs
-(Easy, Medium, Hard, Very Hard, Insane, Impossible), tougher and quicker
-too, up to 4000 at once. A head hit is gold on the crosshair, a Lucky Shot's
+They claw up out of the ground, three a second at first (more with more of
+you) and many more as the danger climbs (Easy, Medium, Hard, Very Hard,
+Insane, Impossible), tougher and quicker too, up to 4000 at once. Most come
+in hordes: every five to nine seconds the ones due claw up together out of
+one patch of ground 22 to 32 m from one of you (or, in a vigil, mostly from
+the beacon), a groan going up from them, all at one pace; a quarter come
+alone, from anywhere. A head hit is gold on the crosshair, a Lucky Shot's
 double yellow. Every one pressed against you slows you; a dash goes through
 them. None climbs a cliff alone: they pile up its face on each other. Their
 claws hit harder as the danger climbs, and your health comes back only
