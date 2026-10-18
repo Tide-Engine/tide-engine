@@ -28,7 +28,8 @@ const pages = {
 for (const file of Object.values(pages)) await readFile(new URL(file, staged));
 const relay = createRelay({ iceServers: [] });
 const server = createServer(async (request, response) => {
-    let pathname = new URL(request.url, 'http://localhost').pathname;
+    const address = new URL(request.url, 'http://localhost');
+    let pathname = address.pathname;
     const headers = {
         'Cross-Origin-Opener-Policy': 'same-origin',
         'Cross-Origin-Embedder-Policy': 'require-corp',
@@ -36,10 +37,11 @@ const server = createServer(async (request, response) => {
     };
     if (pathname === '/favicon.ico') return response.writeHead(204, headers).end();
     if (pathname === '/' || pathname === '/prototypes/inside-out/index.html') pathname = '/prototypes/inside-out/';
-    // Short addresses go to the staged ones, which the pages' links are relative to.
+    // Short addresses go to the staged ones, which the pages' links are
+    // relative to, keeping their query (the TV page's ?full or ?scale).
     const short = { '/tv': 'tv/', '/pad': 'pad/', '/tv/': 'tv/', '/pad/': 'pad/',
         '/prototypes/inside-out/tv': 'tv/', '/prototypes/inside-out/pad': 'pad/' }[pathname];
-    if (short) return response.writeHead(302, { ...headers, Location: `/prototypes/inside-out/${short}` }).end();
+    if (short) return response.writeHead(302, { ...headers, Location: `/prototypes/inside-out/${short}${address.search}` }).end();
     const file = pages[pathname];
     if (!file) return response.writeHead(404, headers).end('Not found');
     try {
