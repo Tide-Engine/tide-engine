@@ -346,6 +346,61 @@ TIDE_TEST(math_matrices)
     TIDE_CHECK(near(id2.c0.x, 1) && near(id2.c0.y, 0) && near(id2.c1.x, 0) && near(id2.c1.y, 1));
 }
 
+TIDE_TEST(math_fromto_rotation_handles_direction_lengths_and_half_turns)
+{
+    const tide_float3 from[] = {{2, 0, 0}, {0, -3, 0}, {1, 2, 3}, {1, 0, 0},
+        {1, 0, 0}, {0x1p-149f, 0, 0}, {0x1.fffffep127f, 0x1.fffffep127f, 0}, {1, 0, 0}};
+    const tide_float3 to[] = {{0, 4, 0}, {0, 0, 7}, {-1, -2, -3}, {-1, 0, 0},
+        {-1, 1e-6f, 0}, {0, 0x1p-149f, 0}, {0, -0x1.fffffep127f, 0x1.fffffep127f}, {-1, 0x1p-126f, 0}};
+    for (size_t i = 0; i < sizeof from / sizeof from[0]; i++) {
+        const tide_quaternion q = tide_fromto_q(from[i], to[i]);
+        TIDE_CHECK(isfinite(q.value.x) && isfinite(q.value.y) && isfinite(q.value.z) && isfinite(q.value.w));
+        TIDE_CHECK(near(tide_dot_q(q, q), 1.0f) && q.value.w >= 0.0f);
+        // Double-precision reference normalization is independent of the
+        // implementation's scaling and stays finite for every float length.
+        const double al = sqrt((double)from[i].x * from[i].x + (double)from[i].y * from[i].y + (double)from[i].z * from[i].z);
+        const double bl = sqrt((double)to[i].x * to[i].x + (double)to[i].y * to[i].y + (double)to[i].z * to[i].z);
+        const tide_float3 a = tide_f3((float)(from[i].x / al), (float)(from[i].y / al), (float)(from[i].z / al));
+        const tide_float3 b = tide_f3((float)(to[i].x / bl), (float)(to[i].y / bl), (float)(to[i].z / bl));
+        TIDE_CHECK(near3(tide_rotate_q(q, a), b));
+    }
+    const tide_quaternion almost = tide_fromto_q(tide_f3(1, 0, 0), tide_f3(-1, 1e-6f, 0));
+    TIDE_CHECK(almost.value.w > 0.0f && fabsf(almost.value.w - 5e-7f) < 1e-12f);
+    const tide_quaternion opposite = tide_fromto_q(tide_f3(1, 0, 0), tide_f3(-1, 0, 0));
+    TIDE_CHECK(opposite.value.z == 1.0f && opposite.value.w == 0.0f); // Y wins the least-aligned tie.
+    const tide_quaternion identity = tide_identity_q();
+    const tide_float3 invalid[] = {{0, 0, 0}, {NAN, 1, 0}, {0, INFINITY, 0}, {0, 0, -INFINITY}};
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        const tide_quaternion a = tide_fromto_q(invalid[i], tide_f3(1, 0, 0));
+        const tide_quaternion b = tide_fromto_q(tide_f3(0, 1, 0), invalid[i]);
+        TIDE_CHECK(same_bits(&a, &identity, sizeof a) && same_bits(&b, &identity, sizeof b));
+    }
+    rng_state = 20261018u;
+    for (int i = 0; i < 10000; i++) {
+        const float x = rnd(-1, 1);
+        const float y = rnd(-1, 1);
+        const float z = rnd(-1, 1);
+        const float u = rnd(-1, 1);
+        const float v = rnd(-1, 1);
+        const float w = rnd(-1, 1);
+        const tide_float3 a = tide_normalize_f3(tide_f3(x, y, z));
+        const tide_float3 b = tide_normalize_f3(tide_f3(u, v, w));
+        const tide_quaternion q = tide_fromto_q(a, b);
+        TIDE_REQUIRE(near3(tide_rotate_q(q, a), b));
+        TIDE_REQUIRE(near(tide_dot_q(q, q), 1.0f) && q.value.w >= 0.0f);
+    }
+}
+
+TIDE_TEST(math_scale_matrix_preserves_axes_without_translation)
+{
+    const tide_float3 scale = {-2, 0, 3};
+    const tide_float4x4 m = tide_scaling_f4x4(scale);
+    const tide_float4x4 expected = {{-2, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 3, 0}, {0, 0, 0, 1}};
+    TIDE_CHECK(same_bits(&m, &expected, sizeof m));
+    TIDE_CHECK(near3(tide_transform_f4x4(m, tide_f3(4, 5, 6)), tide_f3(-8, 0, 18)));
+    TIDE_CHECK(near3(tide_rotate_f4x4(m, tide_f3(4, 5, 6)), tide_f3(-8, 0, 18)));
+}
+
 // xxHash32 as its spec writes it, byte by byte, for Math.Hash's versions to
 // agree with.
 static uint32_t xxh32_read(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }

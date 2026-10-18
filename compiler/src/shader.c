@@ -63,7 +63,7 @@ enum {
     H_XXH, H_HASH1, H_HASH2, H_HASH3, H_HASH4,
     H_FADE, H_GRAD2, H_GRAD3, H_PERLIN2, H_PERLIN3, H_SIMPLEX2, H_SIMPLEX3, H_NEAREST, H_CELLULAR2, H_CELLULAR3, // noise.c's
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
-    H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
+    H_Q_FROM_M3, H_LOOKROTATION_Q, H_FROMTO_UNIT3, H_FROMTO_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
@@ -1096,6 +1096,32 @@ static const char *const helper_texts[H_COUNT] = {
                          "    vec3 t = tide_normalize3(cross(u, f));\n"
                          "    return tide_q_from_m3(mat3(t, cross(f, t), f));\n"
                          "}\n",
+    [H_FROMTO_UNIT3] = "vec3 tide_fromto_unit3(vec3 v) {\n"
+                       "    if ((floatBitsToInt(v.x) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.y) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.z) & 0x7f800000) == 0x7f800000) { return vec3(0.0); }\n"
+                       "    float largest = max(max(abs(v.x), abs(v.y)), abs(v.z));\n"
+                       "    if (largest == 0.0) { return vec3(0.0); }\n"
+                       "    return tide_normalize3(v / largest);\n"
+                       "}\n",
+    [H_FROMTO_Q] = "vec4 tide_fromto_q(vec3 f, vec3 t) {\n"
+                   "    vec3 a = tide_fromto_unit3(f);\n"
+                   "    vec3 b = tide_fromto_unit3(t);\n"
+                   "    if (dot(a, a) == 0.0 || dot(b, b) == 0.0) { return vec4(0.0, 0.0, 0.0, 1.0); }\n"
+                   "    float d = clamp(dot(a, b), -1.0, 1.0);\n"
+                   "    vec3 axis = cross(a, b);\n"
+                   "    if (d >= 0.0) { return tide_normalize_q(vec4(axis, 1.0 + d)); }\n"
+                   "    float largest = max(max(abs(axis.x), abs(axis.y)), abs(axis.z));\n"
+                   "    if (largest == 0.0 || (a.x == -b.x && a.y == -b.y && a.z == -b.z)) {\n"
+                   "        vec3 absolute = abs(a);\n"
+                   "        vec3 side = vec3(0.0, 0.0, 1.0);\n"
+                   "        if (absolute.x <= absolute.y && absolute.x <= absolute.z) { side = vec3(1.0, 0.0, 0.0); }\n"
+                   "        else if (absolute.y <= absolute.z) { side = vec3(0.0, 1.0, 0.0); }\n"
+                   "        return vec4(tide_fromto_unit3(cross(a, side)), 0.0);\n"
+                   "    }\n"
+                   "    vec3 scaled = axis / largest;\n"
+                   "    float size = length(scaled);\n"
+                   "    float sine = sqrt(0.5 * (1.0 - d));\n"
+                   "    return tide_normalize_q(vec4(scaled * (sine / size), (largest * size) / (2.0 * sine)));\n"
+                   "}\n",
     [H_M3_FROM_Q] = "mat3 tide_m3_from_q(vec4 q) {\n"
                     "    float x = q.x + q.x;\n"
                     "    float y = q.y + q.y;\n"
@@ -1119,6 +1145,9 @@ static const char *const helper_texts[H_COUNT] = {
               "    mat3 m = tide_m3_from_q(q);\n"
               "    return mat4(vec4(m[0] * s.x, 0.0), vec4(m[1] * s.y, 0.0), vec4(m[2] * s.z, 0.0), vec4(t, 1.0));\n"
               "}\n",
+    [H_SCALE] = "mat4 tide_scaling(vec3 s) {\n"
+                "    return mat4(vec4(s.x, 0.0, 0.0, 0.0), vec4(0.0, s.y, 0.0, 0.0), vec4(0.0, 0.0, s.z, 0.0), vec4(0.0, 0.0, 0.0, 1.0));\n"
+                "}\n",
     // From a view down -z to OpenGL's clip space, as Unity.Mathematics': the field of view, the aspect, near and far
     [H_PERSPECTIVE] = "mat4 tide_perspective(float v, float a, float n, float f) {\n"
                       "    float c = 1.0 / tan(v * 0.5);\n"
@@ -1416,6 +1445,13 @@ static void need(emit *em, const int h)
     case H_LOOKROTATION_Q:
         need(em, H_NORMALIZE3);
         need(em, H_Q_FROM_M3);
+        break;
+    case H_FROMTO_UNIT3:
+        need(em, H_NORMALIZE3);
+        break;
+    case H_FROMTO_Q:
+        need(em, H_FROMTO_UNIT3);
+        need(em, H_NORMALIZE_Q);
         break;
     case H_TRS:
         need(em, H_M3_FROM_Q);
@@ -2853,6 +2889,7 @@ static const struct {
 } builders[] = {
     {"quaternion", "AxisAngle", H_AXISANGLE_Q, "tide_axisangle_q"}, {"quaternion", "Euler", H_EULER_Q, "tide_euler_q"},
     {"quaternion", "LookRotation", H_LOOKROTATION_Q, "tide_lookrotation_q"}, {"float4x4", "TRS", H_TRS, "tide_trs"},
+    {"quaternion", "FromToRotation", H_FROMTO_Q, "tide_fromto_q"}, {"float4x4", "Scale", H_SCALE, "tide_scaling"},
     {"float4x4", "PerspectiveFov", H_PERSPECTIVE, "tide_perspective"}, {"float4x4", "Ortho", H_ORTHO, "tide_ortho"},
 };
 
