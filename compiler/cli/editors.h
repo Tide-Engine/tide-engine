@@ -10,3 +10,7 @@ int tide_editors(const char *root, bool only_updates);
 
 // Whether an editor tide finds has Tide already, for an update to go into.
 bool tide_editors_have_tide(void);
+
+// Prints configuration for Emacs, Vim or Neovim using the installed editor
+// files and server. Writes no configuration and starts no editor or server.
+int tide_ide(const char *root, int count, const char *const *args);

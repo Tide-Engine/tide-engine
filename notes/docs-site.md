@@ -1,5 +1,15 @@
 # The docs site
 
+Installed terminal editor setup (2026-10-18): the CLI page has an ide section
+and command-table entry. The Emacs and Vim/Neovim sections now start with
+`tide ide <editor>`, explain where to copy its output, matching bundled server
+paths, automatic/manual connections and moving the installation. README and
+the tool READMEs point to the same helper; manual source-checkout instructions
+remain in the tool READMEs for contributors. No navigation or language-spec
+change is needed. The production docs build passes with Node 24.21.0 and the
+existing allowed unstaged-example 404s. CLI/editor/packaging validation is in
+cli-and-packages.md. No deployment or CI was dispatched.
+
 Terminal editor setup (2026-10-18): Editors and the repository README now link
 the new manually installed Emacs mode and Vim/Neovim runtime, with copyable
 configuration and tidels selection. The page distinguishes LSP client support,

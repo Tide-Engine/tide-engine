@@ -1,5 +1,50 @@
 # `tide`, packages and the package
 
+## Terminal editor configuration helper (2026-10-18)
+
+`tide ide emacs|vim|neovim` prints ready-to-copy init configuration from the
+current installation. It writes no dotfiles, runs no editor/server and does no
+package setup, cleanup or update check. main dispatches it before that work;
+the implementation lives with the other editor helpers in editors.c. Help has
+the ide command, editor positional topic and ordinary --help/-h aliases.
+
+Emacs output loads the bundled tide-lang-mode, chooses the sibling tidels and
+adds eglot-ensure. Neovim output adds the bundled runtime, sets the matching
+server command and enables tidels. Vim output sets runtime/comment/indentation
+support and names the server in a comment for the user's own LSP client.
+Executable arguments are lists, with editor-specific string quoting rather than
+shell quoting. Commas in Vim runtime entries are escaped. The helper checks all
+required payload files and the server before printing; incomplete installations
+fail with reinstall/install-build guidance (1). Unsupported editors/counts fail
+with usage guidance (2). Vim/Neovim runtime paths containing glob characters
+(*?[]) are rejected with a move/install-path fix: real Windows runtime lookup
+treated the bracketed directory as a pattern despite ordinary slash escaping.
+Emacs retains support for bracketed paths. Moving Tide requires regenerating
+the copied configuration. No language or generated-runtime contract changed.
+
+tools/CMakeLists.txt now ships tide-emacs and tide-vim under editors/, excluding
+their test directories. This supersedes the initial source-only installation
+record in notes/editors.md. The existing VS Code installer/upgrade helper and
+JetBrains distribution are unchanged. README, both terminal runtime READMEs and
+the CLI/Editors user pages describe the helper, init destinations and client
+requirements. The new tide_cli_ide CTest uses the actual tools install rules in
+an isolated stage with spaces, an apostrophe, dollar sign and comma. It checks
+help/argument failures, repeatability, every missing payload/server, rejected
+wildcard paths, excluded tests and preserved configuration sentinels. Optional
+TIDE_TEST_EMACS, TIDE_TEST_VIM and TIDE_TEST_NVIM executable paths run the printed
+config in real isolated editor processes, with personal plugins disabled.
+
+Validation: warning-free Clang 23.1.2 builds, full native debug 2,386/2,386
+(47.08 s) and web debug 2,295/2,295 (247.43 s), including native GPU and
+WebGL/WebGPU coverage, with Node 24.21.0. The final native suite includes all
+optional generated-config host cases: Emacs 30.2 (all six ERT checks, real
+hover/shutdown), native Windows Vim 9.2.1202 (runtime detection/settings) and
+Neovim 0.11.5 (automatic connection, hover and shutdown). The generated snippet
+also passes on Neovim 0.12.6. The production docs build and diff checks pass;
+existing allowed unstaged-example 404s remain. No compiler/runtime semantics
+changed. Other operating systems, Emacs 29.1, Vim 8, Android, sanitizers and the
+embedded-LLVM package build were not run; no CI or deployment was dispatched.
+
 ## Test save directories (2026-10-18)
 
 `tide run --data-dir <folder>` forwards a full native save-directory path to
