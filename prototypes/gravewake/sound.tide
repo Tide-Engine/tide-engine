@@ -377,6 +377,20 @@ local event(Blast blast) HearBlast(mut Ears ears)
     else Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.1));
 }
 
+// A horde clawing up: the ground giving way, and a groan going up from all over its patch, heard from wherever it is.
+local event(HordeRose horde) HearHorde(mut Ears ears)
+{
+    Audio.Play(riseClip, horde.at, 1.0, ears.random.NextFloat(0.6, 0.7));
+    var voices = Math.Clamp(horde.count / 5, 2, 6);
+    for (var k = 0; k < voices; k++)
+    {
+        var turn = ears.random.NextFloat(Math.TAU);
+        var off = ears.random.NextFloat(horde.radius);
+        var at = horde.at + float3(Math.Sin(turn) * off, 1.4, Math.Cos(turn) * off);
+        Audio.Play(groans[ears.random.NextInt(groans.count)], at, 0.75, ears.random.NextFloat(0.7, 0.95));
+    }
+}
+
 local event(Cue cue) HearCue(mut Ears ears, Me me)
 {
     var near = Math.Distance(cue.at, me.eye) < 2.5;

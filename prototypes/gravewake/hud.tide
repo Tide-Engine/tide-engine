@@ -284,8 +284,45 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         }
     }
 
+    // ---- From above, a ring on the ground round each survivor standing, in their colour, to find them by in a crowd ----
+    if (me.above)
+    {
+        foreach (var row in survivors)
+        {
+            var s = row.survivor;
+            if (!s.ready || s.life == Life.Gone || s.role == Role.None) continue;
+            var hue = HeroColor(s.seat);
+            var ring = Color(hue.r, hue.g, hue.b, s.seat == me.seat ? 0.55 : 0.4);
+            mut var last = float2(0);
+            mut var seen = false;
+            for (var k = 0; k <= 32; k++)
+            {
+                var turn = k * Math.TAU / 32;
+                var at = s.feet + float3(Math.Sin(turn) * 0.75, 0.05, Math.Cos(turn) * 0.75);
+                float4 clip = Math.Mul(look.toClip, float4(at, 1));
+                if (clip.w <= 0.01)
+                {
+                    seen = false;
+                    continue;
+                }
+                var dot = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
+                if (seen) Draw.Line(last, dot, 2 * u, ring);
+                last = dot;
+                seen = true;
+            }
+        }
+    }
+
     // ---- The crosshair and the hit marker ----
     var middle = float2(w * 0.5, h * 0.5);
+    // From above, the crosshair is the cursor, and the blows' arcs go round the survivor
+    var reticle = me.above && me.cursor.x >= 0 ? me.cursor : middle;
+    mut var round = middle;
+    if (me.above)
+    {
+        float4 body = Math.Mul(look.toClip, float4(mine.feet + float3(0, 1, 0), 1));
+        if (body.w > 0.01) round = float2((body.x / body.w * 0.5 + 0.5) * w, (0.5 - body.y / body.w * 0.5) * h);
+    }
     // Where each blow taken came from: a red arc round the crosshair on that side, fading
     for (var i = feed.blows.count - 1; i >= 0; i--)
     {
@@ -303,8 +340,8 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         var ahead = Math.Dot(to, Flat(me.yaw));
         var turn = Math.Atan2(-ahead, side);
         var fade = Math.Saturate(1.4 - feed.blowAges[i]);
-        Draw.Arc(middle, 118 * u, turn - 0.32, 0.64, 7 * u, Color(0.95, 0.12, 0.08, 0.85 * fade));
-        Draw.Arc(middle, 108 * u, turn - 0.18, 0.36, 3 * u, Color(1.0, 0.5, 0.4, 0.6 * fade));
+        Draw.Arc(round, 118 * u, turn - 0.32, 0.64, 7 * u, Color(0.95, 0.12, 0.08, 0.85 * fade));
+        Draw.Arc(round, 108 * u, turn - 0.18, 0.36, 3 * u, Color(1.0, 0.5, 0.4, 0.6 * fade));
     }
     if (mine.life != Life.Gone && mine.role != Role.None)
     {
@@ -314,7 +351,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         // rise, a wall, one of the dead nearer the gun) and it'd stop away from the crosshair, a red ring is where,
         // and the crosshair dims.
         mut var blocked = false;
-        if (me.third && mine.life == Life.Standing)
+        if (me.outside && !me.above && mine.life == Life.Standing)
         {
             var from = AimFrom(mine, info.range, ashwick, herd, out var way);
             var reach = Math.Distance(from, AimedAt(mine, info.range, ashwick, herd));
@@ -331,12 +368,13 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
                 }
             }
         }
-        var c = Color(1, 1, 1, blocked ? 0.3 : 0.75);
-        Draw.Line(middle + float2(gap, 0), middle + float2(gap + tick, 0), 2 * u, c);
-        Draw.Line(middle - float2(gap, 0), middle - float2(gap + tick, 0), 2 * u, c);
-        Draw.Line(middle + float2(0, gap), middle + float2(0, gap + tick), 2 * u, c);
-        Draw.Line(middle - float2(0, gap), middle - float2(0, gap + tick), 2 * u, c);
-        Draw.Circle(middle, 1.5 * u, c);
+        // (from above, warmer on one of the dead)
+        var c = me.above && me.onBody ? Color(1.0, 0.6, 0.45, 0.9) : Color(1, 1, 1, blocked ? 0.3 : 0.75);
+        Draw.Line(reticle + float2(gap, 0), reticle + float2(gap + tick, 0), 2 * u, c);
+        Draw.Line(reticle - float2(gap, 0), reticle - float2(gap + tick, 0), 2 * u, c);
+        Draw.Line(reticle + float2(0, gap), reticle + float2(0, gap + tick), 2 * u, c);
+        Draw.Line(reticle - float2(0, gap), reticle - float2(0, gap + tick), 2 * u, c);
+        Draw.Circle(reticle, 1.5 * u, c);
     }
     feed.marker = Math.Max(0, feed.marker - dt);
     if (feed.marker > 0)
@@ -346,17 +384,17 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
               : feed.markerHead ? (feed.markerKill ? Color(1.0, 0.18, 0.1, a) : Color(1.0, 0.78, 0.25, a)) : feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
         var s = (feed.markerWeak ? 14 : feed.markerHead ? (feed.markerKill ? 15 : 11) : feed.markerKill ? 11 : 8) * u;
         var thick = (feed.markerHead ? 3.5 : 2.5) * u;
-        Draw.Line(middle + float2(-s, -s), middle + float2(-s * 0.4, -s * 0.4), thick, c);
-        Draw.Line(middle + float2(s, -s), middle + float2(s * 0.4, -s * 0.4), thick, c);
-        Draw.Line(middle + float2(-s, s), middle + float2(-s * 0.4, s * 0.4), thick, c);
-        Draw.Line(middle + float2(s, s), middle + float2(s * 0.4, s * 0.4), thick, c);
+        Draw.Line(reticle + float2(-s, -s), reticle + float2(-s * 0.4, -s * 0.4), thick, c);
+        Draw.Line(reticle + float2(s, -s), reticle + float2(s * 0.4, -s * 0.4), thick, c);
+        Draw.Line(reticle + float2(-s, s), reticle + float2(-s * 0.4, s * 0.4), thick, c);
+        Draw.Line(reticle + float2(s, s), reticle + float2(s * 0.4, s * 0.4), thick, c);
     }
     feed.headshot = Math.Max(0, feed.headshot - dt);
     if (feed.headshot > 0)
     {
         var a = Math.Saturate(feed.headshot * 3);
         var rise = (0.9 - feed.headshot) * 14 * u;
-        WriteBold("HEADSHOT", middle + float2(0, -46 * u - rise), 17 * u, Color(1.0, 0.25, 0.12, a), Anchor.MiddleCenter);
+        WriteBold("HEADSHOT", reticle + float2(0, -46 * u - rise), 17 * u, Color(1.0, 0.25, 0.12, a), Anchor.MiddleCenter);
     }
 
     // ---- A friend to raise ----

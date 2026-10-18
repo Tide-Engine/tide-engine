@@ -63,6 +63,105 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Hordes, and a view from above (2026-10-18)
+
+The owner, after the third round: "i think zombies should spawn in "hordes"
+more so than one randomly / also I want to play with a top down camera too".
+How both work is my pick, Provisional.
+
+- **Hordes** (rounds.tide's `SpawnDead`): the rate is as it was (`SpawnRate`,
+  `Crowd`, `VIGIL_RUSH`, `BOSS_THIN`); what changed is where and when they
+  come. Of the dead owed, `STRAY_SHARE` (a quarter, kept as a fraction in
+  `Match.strays`, no roll) rise alone as before, anywhere 16 to 32 m round;
+  the rest wait in `Match.hordePool`. Every `HORDE_EVERY_LEAST` to
+  `HORDE_EVERY_MOST` seconds (5 to 9; the first `HORDE_FIRST`, 3 s, into a
+  night), once at least `HORDE_LEAST` (6) wait, a horde forms: its middle
+  (`RisingPlace`) 22 to 32 m from a standing survivor or, in a vigil,
+  `VIGIL_FOCUS` of the time from the beacon; its patch `HORDE_SPREAD` (0.9)
+  times the root of how many, 2 to 12 m across; one gait rolled for all of it
+  (`GaitFor`; Bloaters and Wardens keep theirs), so a horde comes at one pace
+  and the runners' hordes are seen as such; at most `HORDE_MOST` (400). It
+  claws up within `HORDE_RISE` (1 s), `HORDE_PER_TICK` (12) a tick at most,
+  each where the ground in its patch is open (`HordePlace`, four tries, else
+  its middle). `HordeRose` is heard (the rise and a few groans from all over
+  the patch, from wherever it is) and seen (earth thrown up over the patch).
+  At the start, alone, that's about a dozen and a half every seven seconds.
+  `ResetHordes` at a new night and a new run; `Match.scattered` (development
+  and tests: `few`, `perf.c`) sends every one alone, as before. The
+  development key's rush still comes six a tick, alone.
+- **The Powder Keg takes the nearest**: its burst had taken the first of the
+  dead its cells listed within reach, not the nearest its line says; in a
+  horde those were often not the ones beside the kill. It now keeps the
+  `2 + keg / 2` nearest (items.tide's `Earn`).
+- **The view from above** (`View.Above`; `View { Eyes, Shoulder, Above }`
+  replaces the bool `third`: `Feel.view`, `Hands.view`, `Survivor.view`, and
+  `Me.outside` for any eye that isn't the survivor's own, `Me.above` for
+  this one). V goes round them: over the shoulder (still the first), from
+  above, through the eyes.
+  - The camera (eye.tide's `Prepare`): `TOP_HIGH` (11.5 m) over the
+    survivor's feet and `TOP_BACK` (7 m) south of them, looking down at a
+    metre above their feet, north up the screen (`TOP_YAW` 0, so the chapel
+    is at the top and the graveyard on the left), `TOP_FOV` 52 degrees; the
+    mouse's wheel takes it between 0.6 and 1.6 times as far (`Feel.zoom`).
+    A blast's shake moves it a little. The ears are the survivor's, turned
+    as the screen is. The F9 views are as they were.
+  - The cursor (`Pointing`, a view): the lock still holds the real one; the
+    mouse moves `Me.cursor` across the screen, starting where the look was.
+    The right stick, once it's pushed, aims its way from the survivor
+    (`PAD_REACH`, 9 m) till the mouse moves. What the cursor's on is
+    `Me.pointed`, which the input sends (`Hands.aim`): on one of the dead
+    (hands.tide's `BodyFirst` along the line from the eye), its chest, or a
+    boss's weak spot when the cursor's on that (from above every cursor on
+    the dead would otherwise be on a head, and every round a headshot); else
+    where the line crosses the gun's height above the survivor's feet, so a
+    shot goes level and passes under the cursor (the first version took the
+    gun's height above the ground under the cursor, which the camera sees
+    higher on the screen: the tracers passed over the cursor); where the
+    ground rises into the line first, the gun's height above where it meets
+    it.
+  - The match (hands.tide): `FaceAim` turns the survivor to the aim each tick
+    (yaw, and pitch for the gun's line), not when it's within 0.4 m of their
+    gun; moving goes by the screen (`MoveYaw`: `TOP_YAW` from above, else
+    the look), and running is any way, not only forward; `AimedAt` is the aim
+    (no further than the gun's range), so `AimFrom` sends the rounds from the
+    gun to it, as over the shoulder. The dash goes by the screen too. A
+    grenade or a firebomb is lobbed to land on the ground under the aim
+    (kits.tide's `ThrowTo`: no further than `THROW_MOST`, 20 m, a flight a
+    second per 13 m, 0.35 to 1.3 s), a grenade's fuse its flight and a tenth
+    of a second, so it bursts there rather than bouncing on. The boot, the
+    mine, the turret and the Phase Round go the way they face, which is the
+    cursor's.
+  - The HUD: the crosshair (and the hit marker, HEADSHOT) is drawn at the
+    cursor, warmer when it's on one of the dead; the blows' arcs go round
+    the survivor; the over-the-shoulder ring where a shot would stop isn't
+    drawn (from above the dead are nearly always in the line). A ring on the
+    ground round each survivor, in their colour, finds them in a crowd. The
+    first-person arms aren't drawn; tracers start at the gun.
+  - Not done: trees between the camera and the survivor aren't faded (the
+    groves are sparse since the props went, and in the captures the survivor
+    stayed in sight); no aim assist; the camera doesn't lead toward the
+    cursor.
+- **Tests** (`gravewake_test`): from above, turned away, the aim put on one
+  of the dead's chest: turned to it (0.000 off) and the carbine's round hits
+  (43); half a second up the screen while facing east: 3.09 m north, none
+  east, still facing the aim; a grenade at a spot 12 m off bursts 0.40 m from
+  it. A horde of 30 claws up within a second, all within its 4.9 m patch,
+  23 m from whom it's for. The Powder Keg check stands two of the dead alone,
+  one beside the other: with the dead in hordes, others had stood in the line
+  of fire. The soak's longest any hunted is 164 s (of 180), up from 138:
+  hordes rise further off.
+- **The bots** (`gravewake_balance`, 25 minutes at most, eight runs alone,
+  four of the pair, medians, with the last round's in brackets): the Gunner
+  576 s (409), the Breacher 424 s (206), the Engineer 616 s (918), the pair
+  591 s (652); a night or two. The Breacher's shotgun and boot do well
+  against a horde come close together; the Engineer's turret, which takes
+  the nearest one at a time, less so.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  (151 s) pass. Looked at in standard-host captures from above: the camp,
+  firing at the cursor (the tracer through it), the rings, a grenade thrown
+  to the cursor, a walk south through a grove, a horde coming in. The
+  browser tests weren't run (the owner asked not to).
+
 ### After the third playtest: harder, clearer, three bosses (2026-10-18)
 
 The owner, after playing Phase 3: "ok the game is too easy and it gets a bit
@@ -1201,8 +1300,9 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 - **The run** (`rounds.tide`, `nights.tide`): night after night, each ended
   by its beacon's vigil and a dawn. The dead come all the time, more and
   tougher as the danger climbs with the clock and the nights, more for a
-  party, at most 4000 up at once, clawing up 16 to 32 m round a random
-  standing survivor (or, in a vigil, mostly round the beacon); a claw does 30
+  party, at most 4000 up at once, most in hordes clawing up together 22 to
+  32 m from a standing survivor, a quarter alone 16 to 32 m round (in a
+  vigil, mostly round the beacon); a claw does 30
   (a Warden's 45) times `Harm(danger)`. Health comes back at 4% a second
   after 4 s unhurt. A night's bosses (the Mauler, the Broodmother, the
   Stalker, in turn) rise as its beacon's lit; an unlit night sends one every
@@ -1310,8 +1410,11 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   (`Body.boss`, `SpotsOf`).
 - **Inputs**: `ready` is `[Absolute]`; the rest are held bools read with
   `.down`, look is clamped to half a radian a tick. Mouse look is read only
-  while the cursor is locked.
-- **What's local**: the camera (`Me`, watching a friend while bled out), the
+  while the cursor is locked. `view` is how the player sees; from above,
+  `aim` is what the cursor's on (eye.tide's `Pointing`, `Me.pointed`) and
+  look is nothing.
+- **What's local**: the camera (`Me`, watching a friend while bled out; the
+  view and the zoom from above in `Feel`; the cursor from above), the
   plan's copy (`Village`), the kit's placements (`Kit`), poses, walk clocks,
   hit flashes and voices (`local` fields), the night's light (`NightLook`
   into `Look`), the feed, effects and sounds. Hits, kills, shots (`Loosed`,

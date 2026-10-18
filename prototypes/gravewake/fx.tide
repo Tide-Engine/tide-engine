@@ -551,7 +551,7 @@ local event(Spell spell) Conjure(mut Fx fx)
 // stopped; a phase round's wide and pale, a drone's red. And the muzzle's flash.
 local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
 {
-    var own = traced.seat == me.seat && !me.third && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
+    var own = traced.seat == me.seat && !me.outside && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
     var way = Math.Normalize(traced.to - traced.from);
     var gun = traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase;
     var drawn = gun && traced.seat >= 0 && traced.seat < 4 ? grip.muzzles[traced.seat] : float3(0);
@@ -579,7 +579,7 @@ local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
 local event(Loosed loosed) MuzzleFlash(mut Fx fx, Me me, Grip grip)
 {
     if (loosed.source != Source.Gun && loosed.source != Source.Phase && loosed.source != Source.Turret) return;
-    var own = loosed.seat == me.seat && !me.third && loosed.source != Source.Turret;
+    var own = loosed.seat == me.seat && !me.outside && loosed.source != Source.Turret;
     var drawn = loosed.seat >= 0 && loosed.seat < 4 ? grip.muzzles[loosed.seat] : float3(0);
     var at = own ? grip.muzzle : loosed.source != Source.Turret && Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
     var way = loosed.way;
@@ -606,6 +606,20 @@ local event(Cue cue) Dust(mut Fx fx)
     for (var i = 0; i < 22; i++)
         Murk(fx, Mote { at = cue.at + float3(fx.random.NextFloat(-0.4, 0.4), 0.05, fx.random.NextFloat(-0.4, 0.4)), velocity = float3(0, fx.random.NextFloat(1, 3), 0) + Scatter(fx, 1),
                         life = 1.2, size = fx.random.NextFloat(0.03, 0.09), gravity = 7, color = float3(0.18, 0.14, 0.1), alpha = 1 });
+}
+
+// A horde clawing up: earth thrown up all over its patch.
+local event(HordeRose horde) HordeDust(mut Fx fx)
+{
+    var motes = Math.Clamp(horde.count * 4, 40, 160);
+    for (var i = 0; i < motes; i++)
+    {
+        var turn = fx.random.NextFloat(Math.TAU);
+        var off = horde.radius * Math.Sqrt(fx.random.NextFloat());
+        var at = horde.at + float3(Math.Sin(turn) * off, 0, Math.Cos(turn) * off);
+        Murk(fx, Mote { at = On(at.x, at.z) + float3(0, 0.05, 0), velocity = float3(0, fx.random.NextFloat(1, 3.5), 0) + Scatter(fx, 1.2),
+                        life = 1.5, size = fx.random.NextFloat(0.04, 0.12), gravity = 6, color = float3(0.18, 0.14, 0.1), alpha = 1 });
+    }
 }
 
 // An ability used: a leap's landing throws up a ring of earth, frost bursts out in a ring, a war cry's breath of dust,

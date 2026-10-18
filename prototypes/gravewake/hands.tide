@@ -11,14 +11,19 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
 {
     survivor.placed = false;
     survivor.ready = hands.ready;
-    survivor.third = hands.third;
+    survivor.view = hands.view;
+    survivor.aim = hands.aim;
     if (match.paused) return;
     var dt = time.dt;
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over) return;
-    survivor.yaw += hands.look.x;
-    if (survivor.yaw > Math.PI) survivor.yaw -= Math.TAU;
-    if (survivor.yaw < -Math.PI) survivor.yaw += Math.TAU;
-    survivor.pitch = Math.Clamp(survivor.pitch + hands.look.y, -1.45, 1.45);
+    if (survivor.view == View.Above) FaceAim(survivor);
+    else
+    {
+        survivor.yaw += hands.look.x;
+        if (survivor.yaw > Math.PI) survivor.yaw -= Math.TAU;
+        if (survivor.yaw < -Math.PI) survivor.yaw += Math.TAU;
+        survivor.pitch = Math.Clamp(survivor.pitch + hands.look.y, -1.45, 1.45);
+    }
 
     // Health comes back slowly after a few calm seconds (REGEN_DELAY, REGEN_RATE of it a second: it had come back whole in
     // under two, so a survivor who dashed clear a moment never had to fear a blow); what Leech Rounds may heal comes back
@@ -44,15 +49,17 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
         }
     }
 
-    // Running: whenever they go forward and haven't fired for a moment
+    // Running: whenever they go forward (from above, any way) and haven't fired for a moment
     var downed = survivor.life == Life.Downed;
     var busy = survivor.act == Act.Throw || survivor.act == Act.Kick;
-    var running = hands.move.y > 0.3 && survivor.steady > 0.35 && !busy && !downed;
+    var forward = survivor.view == View.Above ? Math.Length(hands.move) > 0.3 : hands.move.y > 0.3;
+    var running = forward && survivor.steady > 0.35 && !busy && !downed;
     mut var speed = (running ? SPRINT_SPEED : WALK_SPEED) * Fleetness(survivor);
     if (downed) speed = 0.6;
     speed *= Wading(survivor, herd);
     if (survivor.slimed > 0) speed *= SLIME_SLOW;
-    mut var wish = Flat(survivor.yaw) * hands.move.y + Flat(survivor.yaw + Math.PI * 0.5) * hands.move.x;
+    var ahead = MoveYaw(survivor);
+    mut var wish = Flat(ahead) * hands.move.y + Flat(ahead + Math.PI * 0.5) * hands.move.x;
     if (Math.Length(wish) > 1) wish = Math.Normalize(wish);
     // On a slope too steep to stand on, no walking up it
     if (survivor.sliding)
@@ -135,6 +142,24 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
     survivor.sliding = survivor.grounded && ground < Ground(feet.x, feet.z) + 0.05 && Steepness(feet.x, feet.z) > SLIDE_STEEP;
     survivor.feet = feet;
 }
+
+// From above: turned to what the cursor's on, the gun's line up or down to it (not when it's right at their feet).
+void FaceAim(mut Survivor survivor)
+{
+    var off = survivor.aim - (survivor.feet + float3(0, GUN_UP, 0));
+    var flat = Math.Length(off.xz);
+    if (flat < 0.4) return;
+    survivor.yaw = Math.Atan2(off.x, off.z);
+    survivor.pitch = Math.Clamp(Math.Atan2(off.y, flat), -1.2, 1.2);
+}
+
+// Which way is forward for a survivor's moving: the way they look; from above, up the screen.
+float MoveYaw(Survivor survivor)
+{
+    return survivor.view == View.Above ? TOP_YAW : survivor.yaw;
+}
+
+const float TOP_YAW = 0;            // From above, the camera looks north
 
 // How much of their speed a survivor keeps among the dead: each one pressed against them (on its feet, about as high)
 // takes TOUCH_SLOW of it, down to TOUCH_SLOW_MOST. A dash goes through at full speed.
@@ -393,9 +418,17 @@ float3 GunHand(Survivor survivor)
 }
 
 // What the crosshair is on from over the shoulder: the first of the dead, the ground or a wall along the camera's line,
-// from beside the head on (nothing behind the survivor is aimed at), no further than `range`.
+// from beside the head on (nothing behind the survivor is aimed at), no further than `range`. From above, what the
+// cursor's on, as its player's machine sent it.
 float3 AimedAt(Survivor survivor, float range, Ashwick ashwick, Herd herd)
 {
+    if (survivor.view == View.Above)
+    {
+        var hand = GunHand(survivor);
+        var off = survivor.aim - hand;
+        var length = Math.Length(off);
+        return length > range ? hand + off / length * range : survivor.aim;
+    }
     var eye = EyeOf(survivor);
     var look = LookDirection(survivor.yaw, survivor.pitch);
     var camera = ShoulderFrom(eye, survivor.yaw, survivor.pitch);
@@ -418,16 +451,36 @@ float FirstHit(float3 from, float3 to, Ashwick ashwick, Herd herd)
     return first;
 }
 
+// How far along a line (0 to 1; 2 for none) the first of the dead is, and which: eye.tide's Pointing, from above.
+float BodyFirst(float3 from, float3 to, Herd herd, out Body hit)
+{
+    mut var first = 2.0;
+    mut var found = Body { };
+    foreach (var z in Along(herd, from, to))
+    {
+        if (!z.hittable) continue;
+        var spots = SpotsOf(z, herd);
+        mut var at = Math.Min(Math.Min(SphereHit(from, to, z.head, spots.headRadius), SphereHit(from, to, z.chest, spots.chestRadius)),
+                              Math.Min(SphereHit(from, to, z.hips, 0.33 * z.size), LegsHit(from, to, z, 0)));
+        if (spots.weakRadius > 0) at = Math.Min(at, SphereHit(from, to, spots.weak, spots.weakRadius));
+        if (at >= first) continue;
+        first = at;
+        found = z;
+    }
+    hit = found;
+    return first;
+}
+
 // A round landing this near a boss's weak spot (for its size) is on it, even where its body's ball is in front of it.
 const float WEAK_PATCH = 1.15;
 
-// Where a survivor's shots start, and which way they go: from the eye along the look; over the shoulder, from the gun
-// in their hand toward what the crosshair is on, so a round goes from the gun to where the crosshair says (unless
-// something's between: hud.tide marks where it'd stop).
+// Where a survivor's shots start, and which way they go: from the eye along the look; over the shoulder or from above,
+// from the gun in their hand toward what the crosshair or the cursor is on, so a round goes from the gun to where it
+// says (unless something's between: hud.tide marks where it'd stop, over the shoulder).
 float3 AimFrom(Survivor survivor, float range, Ashwick ashwick, Herd herd, out float3 way)
 {
     var look = LookDirection(survivor.yaw, survivor.pitch);
-    if (!survivor.third)
+    if (survivor.view == View.Eyes)
     {
         way = look;
         return EyeOf(survivor);
