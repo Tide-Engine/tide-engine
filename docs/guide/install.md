@@ -43,7 +43,25 @@ tide version
 
 This shows tide's version and channel, where it's installed, and which compilers it found.
 
-The installer also adds Tide to the editors it finds (see [Editors](../tools/editors.md)). If you run it again when `tide` is already there, it upgrades it instead, on the channel it's on unless you set `TIDE_CHANNEL`, and adds Tide to editors installed since.
+The installer also adds Tide to VS Code, Cursor, VSCodium and Windsurf when it finds them. If you run it again when `tide` is already there, it upgrades it instead, on the channel it's on unless you set `TIDE_CHANNEL`, and adds Tide to those editors installed since.
+
+## Set up your editor
+
+See [Editor setup](../tools/editors.md) for VS Code, JetBrains, Emacs, Vim and
+Neovim. Tide includes the Emacs and Vim/Neovim modes. Run the command for your
+editor, then copy its output into your init file:
+
+```sh
+tide ide emacs
+tide ide vim
+tide ide neovim
+```
+
+Prefer your existing package manager? Install the MIT plugins through
+[Emacs's built-in package-vc](../tools/editors.md#emacs) or
+[vim-plug/lazy.nvim](../tools/editors.md#vim-and-neovim). Those instructions link
+the official public repositories and explain how to connect to Tide's language
+server. The Emacs mode installs directly from GitHub; it is not on MELPA yet.
 
 ## Nightly versions
 

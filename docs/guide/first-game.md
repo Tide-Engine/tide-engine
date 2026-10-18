@@ -6,7 +6,8 @@ description: "Build your first Tide game with components, systems, input and dra
 
 This page builds a small game: a ball bouncing around, and a player for everyone who joins, which they steer with the keyboard. It takes a few minutes, and shows most of what a Tide game is made of.
 
-You'll need `tide` [installed](./install.md).
+You'll need `tide` [installed](./install.md). [Set up your editor](../tools/editors.md)
+for highlighting, completion and diagnostics before writing your first file.
 
 ## A folder of files
 

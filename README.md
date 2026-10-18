@@ -120,6 +120,10 @@ tide upgrade --stable   # back to stable ones
 
 ## Editors
 
+See [Editor setup](docs/tools/editors.md) for quick setup commands and
+package-manager instructions for each editor. The standalone Emacs and
+Vim/Neovim plugins use MIT; Emacs installs from GitHub and is not on MELPA yet.
+
 Open your game's folder, the one you run `tide run` in, and every `.tide` file
 in it is one game: completion, errors as you type with quick fixes, go to
 definition, rename, formatting, moving a declaration to a file of its own and
@@ -136,11 +140,13 @@ more work across all of them.
   to color them.
 - **Emacs:** [tide-lang-mode](tools/tide-emacs/README.md) adds highlighting,
   indentation and Eglot setup for `tidels`. Run `tide ide emacs` and copy the
-  printed configuration into your init file.
+  printed configuration into your init file, or install the mode from
+  [tide-emacs](https://github.com/Tide-Engine/tide-emacs) with Emacs's package manager.
 - **Vim and Neovim:** [the Tide runtime](tools/tide-vim/README.md) adds
   highlighting and indentation, with a built-in LSP configuration for
   Neovim 0.11+. Run `tide ide vim` or `tide ide neovim` and copy the printed
-  configuration into your vimrc or init.lua. The modes come with Tide.
+  configuration into your vimrc or init.lua. The modes come with Tide;
+  [tide-vim](https://github.com/Tide-Engine/tide-vim) also works with vim-plug and lazy.nvim.
 
 ## Working on the engine
 

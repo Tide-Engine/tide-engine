@@ -1,0 +1,4 @@
+// expect: input comes from the players; the simulation can only read it
+input Controls { bool jump; }
+void Read(Controls controls) { controls.jump = true; }
+scene Main { }

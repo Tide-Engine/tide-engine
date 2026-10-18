@@ -1,5 +1,94 @@
 # Language features, as tidec builds them
 
+## World.Set beside read-only component parameters (2026-10-18)
+
+The owner approved lifting the read-only overlap restriction as backend work
+on the existing API. Systems, handlers and local views can Set any entity's T
+while taking read-only T, including through ordinary helpers, methods,
+recursion and inlined actions. Each invocation reads the current component on
+entry, including preceding invocations' writes, then keeps that value. World
+reads see Set immediately. Tasks get fresh component values on resuming.
+The existing mut T overlap, match/local, view, parallel and comparison rules
+remain in force; no new implicit World capability is introduced.
+
+`check_world_call` and `check_world_passing` now reject only mutable overlapping
+component parameters. Existing transitive World effects already provide global
+write dependencies, heap serialization and a single-threaded system traversal.
+Generated rows pass page-slot arrays for components those World effects write,
+and reload their current lane addresses at each row. Structural changes remain
+queued, keeping the slots stable while Set replaces pages. The same path covers
+input's implicit Owner read. Other components retain their cached columns and
+normal staged/SIMD behavior; no extra table/entity lookup or eager page copy is
+added. Read-only parameters containing lists/maps/sets use the existing scratch
+value-copy helpers when Set can overlap, because assignment can reuse stored
+container allocations. This preserves the current invocation's values even
+after self Set through a helper. Async handler resumes apply that copy too.
+No runtime API, public C ABI, world layout, queue ordering or protocol changed.
+
+`world_set_read` checks direct and transitive/recursive/method/action writes
+across 5,000 rows, chunks and archetypes, partial and fully matching sparse
+chunks, ordinary mutable companion parameters, preceding-row visibility,
+snapshot immutability, rollback replay, packed round-trips, the threaded
+scheduler, input selection after Owner replacement, local views and heap-bearing
+handler parameters through self/other writes and task resumes. The two former
+read-only rejection fixtures are replaced by this execution coverage. Existing
+mutable-overlap and capability diagnostics remain pinned.
+
+Validation: warning-free full native/web debug builds, all 2,411 native and
+2,320 web CTests, and the docs production build pass. This includes native
+Vulkan/OpenGL, WebGL/WebGPU validation, existing exact-bit/network pins, the
+new snapshot/row/container/task regressions and the existing mutable-overlap
+diagnostics. Native took 133.93 seconds; web took 294.26 seconds. Other operating
+systems, Android and sanitizers remain CI coverage; no CI was dispatched.
+
+## Borrowed input parameters (2026-10-18)
+
+The owner approved ordinary parameter syntax for read-only input context:
+`bool WantsJump(Controls controls)`. A caller passes its input parameter
+directly; helpers forward the same current/previous tick pair. No new owner
+lookup, World/singleton/entity/sender capability, allocation or whole-input
+copy is introduced. Nested bool edges, held/released input, prediction's edge
+suppression, owner changes, server input and replay retain existing behavior.
+
+The checker accepts input parameters in ordinary synchronous functions/methods,
+rejects mut/out/in/default/optional/return/escape and diagnoses constructed or
+copied arguments that lack the caller's tick context. Async declarations,
+including match handlers, cannot retain input; pass ordinary field values.
+Mutation diagnostics explain readonly input instead of suggesting `mut`.
+Generated private helpers receive const current/previous input pointers. Input
+pointer access, calls, action inlining and function-local sort captures preserve
+the pair. Existing synchronous callbacks and parallel steps can forward it.
+Call operand planning treats input arguments as borrowed reads, so effectful
+neighboring arguments preserve source order without making a full input temp.
+Existing whole-input text formatting and comparisons remain value inspections;
+they do not store or forward an input context.
+There is no runtime API, public C ABI, world layout or protocol change.
+
+Correction to the earlier deferred-input note and discussion: custom input
+fields are all serialized already. Use-based pruning is for device leaves;
+there was no custom input-field pruning pass to preserve or add. Existing
+device reachability analysis and custom input packing are unchanged.
+
+`input_borrows` exercises recursion, methods, named/multiple parameters,
+overloads, effectful/named argument ordering, action blocks, nested sort
+captures, parallel steps, event handlers, retained snapshots and replay.
+Existing `input` now reads edges through helper
+chains (owner/server selection and owner swaps); `predict` forwards all reads
+through a helper (nested edges and guessed-input suppression); `net` forwards
+movement/jump reads without changing its bad-network traffic/hash assertions;
+`view_time` forwards engine-stamped timestamps. Eleven diagnostic fixtures pin
+unsupported signatures, mutation, defaults, missing context and escapes.
+Editor completion offers input types in readonly synchronous signatures and
+edges through nested input structs; hover explains the caller's tick context.
+Public contracts are in spec.md, functions.md and the input guide.
+
+Validation: final warning-free native/web debug builds, all 2,412 native and
+2,321 web CTests, and the docs production build pass. Native GPU and WebGL/WebGPU
+validation, existing exact-bit/network traffic pins, input edges and guessed
+edge suppression, snapshot/replay, the effectful-argument regression and full
+LSP/stdio/pipe coverage pass without changing expected values. Other operating
+systems, Android and sanitizers remain CI coverage; no CI was dispatched.
+
 ## Borrowed query parameters (2026-10-18)
 
 The owner approved read-only borrowing with the existing `query (...)` syntax.
@@ -148,10 +237,10 @@ game code easier, without returning for routine language/API choices.
   shader planning/capture and runtime contracts are in `notes/textures.md` and
   `notes/shaders.md`. New errors pin assignment and match access rejection.
 
-Input parameters are still deferred for a concrete boundary: `.down`/`.up`
-need the previous input and tick context. Simply allowing a value parameter
-would generate an unavailable previous-input pointer and lose transitive
-input-field usage. No input edge or borrowing semantics were inferred here.
+At this pass input parameters were deferred because `.down`/`.up` needed the
+previous tick context. Borrowed input parameters above now carry that context.
+The earlier concern about losing custom input-field usage was overstated:
+declared custom fields are all packed, with use-based pruning only for devices.
 
 Validation: warning-free Windows native and web debug builds, all 2,383 native
 and 2,293 web CTests, and the docs production build pass on the final source.
@@ -1353,11 +1442,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A parameter typed `World` where no type of the game's has the name is `TY_WORLD` (`check_signature`, `check_world_param`): one a function at most, `World` or `mut World`, never `out`, with no default; operators, `extern` functions and async functions take none (an async handler takes it itself). As a value it's still nothing: a field, a local or a return type of it is `world_misplaced`.
   - The World is named as a value in one place, a call's argument that a `World` parameter takes (`checker.world_arg`, `world_value_ok`, which `check_name` reads; `check_world_args`), and `mut World` takes a `mut World`, as any `mut` argument. Nothing is passed for it in C: the function gets the worlds it reaches as hidden parameters, where its other hidden ones go, `tide_w` when it reaches the match's components (`decl.world_match`, `takes_world` in `compiler/src/codegen.c`; `const` unless it sets, `decl.world_sets`) and `tide_l` when it reaches local ones (`decl.world_local`, through `takes_local`), which are the names its caller has them under. So `world.Get` in a function is the code it is in a system.
   - `check_world_call` checks a function's calls as a system's, but for the rules that depend on who calls (`helper`), which wait. `check_world_passing`, once every body is checked, adds what each function reaches (`decl.world_uses`) to its callers', over the checker's list of calls until nothing grows, so a system's `world_uses` are its own whether it calls the World or a function does: the schedule (`accesses_of`), `world_reads_own_writes`, `system_splits`, `tidec --schedule` and the language server's lens need no rule of their own. Then it checks each call a system, view or handler makes: a local component from the match, the match's from a local handler, a view that would change the match, a `Set` in a parallel loop's step or a sort's comparison, and a `Set` of a component the caller takes as a parameter, read or `mut`.
-  - `world.Set<T>(this, value)` beside a read parameter is the system's own to write: a function has no `this`, so a function that sets `T` is refused in a system that takes `T` at all, and the note says to write it in the system.
+  - Read-only component parameters permit direct and helper `Set<T>` calls on any target. Each row reloads affected pages, then retains its invocation's value. Mutable component parameters still refuse overlapping Set calls because their write-back could replace the Set.
   - `world.TryGet<T>(entity, out value)` is the engine's own beside `Get` and `Has` (`check_world_call`, its `out` through `check_out_param`): `tide_tryget_<Component>`, only in the C of a game that calls it (`decl.tried`), which gives whether the entity has one and assigns the variable its copy or the component's `default`. A component with a grid has none, as it can't be copied.
   - A program that passes no `World` to a function and calls no `TryGet` generates the C it did, byte for byte: checked by running old and new tidec over every game's source list.
   - `compiler/tests/e2e/world_functions` runs it (functions, methods, a World passed through two functions, `mut World`, local components in a view, `TryGet` of every form) natively and on the web; `compiler/tests/schedule/world_functions` pins that a function's reach is in its system's schedule; `compiler/tests/errors/world_function_*.tide` and `world_try_get_*.tide` have a file for each diagnostic; `lsp_world_in_functions` checks the editor's side.
-  - Provisional, awaiting the owner: `mut World` in functions; methods taking it too; async functions and code the GPU runs taking none; a function that sets a component always refused beside the caller's parameter of it; `TryGet` giving the component's `default` where `Get` gives zeros.
+  - Provisional, awaiting the owner: `mut World` in functions; methods taking it too; async functions and code the GPU runs taking none; a function that sets a component refused beside the caller's mutable parameter of it; `TryGet` giving the component's `default` where `Get` gives zeros. Read-only overlap is now supported, as recorded above.
 - **Functions and methods send, spawn and change entities as the code that calls them could** (the owner, 2026-10-08: "it should inherit their ability; if you say `Send` it should mean that what calls us can `Send` otherwise is a compiler error ONLY when its called from a place it can't"; `docs/spec.md`, Functions, with the picks made to build it Provisional under Functions and blocks). It was a recurring ask of the agent-written games (`GAME_TRIAL_FEEDBACK.md`), and Two Forks compared two copies of its board after a move to learn what to send. `Send`, `entity.Send`, `Spawn`, `Add`, `Remove` and `Destroy` are written in a function or a method as in a system. What's built, and what code relies on:
   - **A function records what it does, and nothing is wrong with it there** (`inherits`, `note_act` in `compiler/src/check.c`): `decl.acts[2]`, the match's ([0]) and this machine's ([1]), with where and what for the messages (`acts_at`, `acts_what`: "sends 'Hit'"), `acts_spawn[2]` and `acts_text`. Which world is told by what's written, as an async function's is: an event's own (a command is this machine's), the entity's type (`Entity`, `LocalEntity`), the components'; `same_world` is the one error in the function, a `Spawn`'s, an `Add`'s or a `Remove`'s components of two worlds, and an event sent to an entity of the other. A `Spawn` with no components is the match's. `check_component_side` and `check_entity_side` let an inheriting function through, where they check a system's or a view's against its own world.
   - **`refuse_act`** is what still refuses where it's written: frags and verts (the old messages), a struct's operators and a component's `Interpolate` (messages of their own), and the input's code. `passes_acts` says which declarations inherit: plain functions and methods, not async ones (their world is what they do), not operators (an operator's call is handed its operands, the dice and the seed and nothing else: `gen_operator_call`), not `Interpolate`.

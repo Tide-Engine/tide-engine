@@ -29,6 +29,12 @@ if(TIDE_PLATFORM)
 endif()
 tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
+
+tide_e2e_test(world_set_read) # Read parameters follow preceding cross-entity Set writes and snapshot page replacement
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_world_set_read PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_world_set_read PRIVATE TIDE_SET_READ_THREADS=1)
+endif()
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
 tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
@@ -70,6 +76,7 @@ tide_e2e_test(defaults)
 tide_e2e_test(default_value)
 tide_e2e_test(math)
 tide_e2e_test(input)
+tide_e2e_test(input_borrows)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
 tide_e2e_test(prototype_codegen) # Nested foreach receivers, stored vector writes and captured numeric literals
