@@ -47,7 +47,7 @@ bool inside_out_test_act(const uint32_t id, const int sender, const int value)
     return received;
 }
 
-bool inside_out_test_progress(const int sender, const int completed, const bool playtest)
+bool inside_out_test_progress(const int sender, const int completed, const int unlocked, const bool playtest)
 {
     uint8_t bytes[TIDE_COMMAND_BYTES];
     tide_bits bits = {bytes, TIDE_COMMAND_BYTES, 0, false};
@@ -55,6 +55,7 @@ bool inside_out_test_progress(const int sender, const int completed, const bool 
     tide_bits_put(&bits, 0, 32);
     tide_bits_put(&bits, 0, 32);
     tide_bits_put_varint(&bits, tide_zigzag(completed));
+    tide_bits_put_varint(&bits, tide_zigzag(unlocked));
     tide_bits_put_bool(&bits, playtest);
     const uint32_t size = tide_bits_end(&bits);
     const bool received = tide_game_api.command(&world, player(sender), 0,

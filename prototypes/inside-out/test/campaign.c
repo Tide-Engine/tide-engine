@@ -100,9 +100,12 @@ TIDE_TEST(inside_out_a_solved_puzzle_returns_to_its_hall)
     TIDE_CHECK(world.Workshop.serial == serial + 1 && world.Workshop.historyCount == 0);
     TIDE_CHECK((world.Workshop.completed & 1) != 0 && world.Workshop.opened == -1 && !world.Workshop.finale);
     const Puzzle hall = world.Workshop.puzzle;
-    TIDE_CHECK(hall.actors.at[0].room == -1 && same_cell(hall.actors.at[0].position, tide_i2(1, 3)));
-    TIDE_CHECK(hall.actors.at[1].room == -1 && same_cell(hall.actors.at[1].position, tide_i2(2, 3)));
-    TIDE_CHECK(world.Workshop.layout.roomCount == 0 && world.Workshop.layout.crateCount == 0);
+    TIDE_CHECK(hall.actors.at[0].room == 0 && same_cell(hall.actors.at[0].position, tide_i2(1, 3)));
+    TIDE_CHECK(hall.actors.at[1].room == 0 && same_cell(hall.actors.at[1].position, tide_i2(2, 3)));
+    // The Boxes hall: its gallery, socket box and challenge box, and a
+    // battery for each of its puzzles, the solved one's in its yard.
+    TIDE_CHECK(world.Workshop.layout.roomCount == 3 && world.Workshop.layout.crateCount == 5);
+    TIDE_CHECK(world.Workshop.puzzle.crates.at[0].active && !world.Workshop.puzzle.crates.at[1].active);
     // A reliable command already in flight belongs to the puzzle.
     TIDE_REQUIRE(inside_out_test_command(TIDE_COMMAND_ID_Move, 0, serial, 0));
     tide_world_tick(&world);
@@ -170,7 +173,7 @@ TIDE_TEST(inside_out_the_last_puzzle_ends_the_campaign_then_returns)
 {
     inside_out_test_start(2);
     // Everything but the last puzzle solved before.
-    TIDE_REQUIRE(inside_out_test_progress(0, (1 << (PUZZLES - 1)) - 1, false));
+    TIDE_REQUIRE(inside_out_test_progress(0, (1 << (PUZZLES - 1)) - 1, 31, false));
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 5 && world.Workshop.arrival == 0);
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, PUZZLES - 1));
     TIDE_REQUIRE(play_witness(PUZZLES - 1, inside_out_solutions[PUZZLES - 1], NULL));
@@ -420,7 +423,7 @@ static bool walk(const char *const moves)
         if (!inside_out_test_act(TIDE_COMMAND_ID_Move, seat, direction)) return false;
         const Traveler after = world.Workshop.puzzle.actors.at[seat];
         if (before.room == after.room && same_cell(before.position, after.position)) {
-            fprintf(stderr, "Hall step %c refused at (%d,%d).\n", *action, before.position.x, before.position.y);
+            fprintf(stderr, "Hall step %c refused at room %d (%d,%d).\n", *action, before.room, before.position.x, before.position.y);
             return false;
         }
     }
@@ -437,18 +440,30 @@ static int wait_for_place(const int limit)
     }
     return -1;
 }
+static bool robot_at(const int seat, const int room, const int x, const int y)
+{
+    const Traveler robot = world.Workshop.puzzle.actors.at[seat];
+    return robot.room == room && same_cell(robot.position, tide_i2(x, y));
+}
+static int active_batteries(void)
+{
+    int count = 0;
+    for (int crate = 0; crate < world.Workshop.layout.crateCount; crate++) count += world.Workshop.puzzle.crates.at[crate].active;
+    return count;
+}
 
 TIDE_TEST(inside_out_both_robots_in_a_lane_open_its_puzzle)
 {
     inside_out_test_start(2);
     // Teal's machine has solved the first puzzle before: both start in the
-    // first hall, with its name on the shut lift doors.
-    TIDE_REQUIRE(inside_out_test_progress(1, 1, false));
+    // first hall's gallery, with its name on the shut lift doors.
+    TIDE_REQUIRE(inside_out_test_progress(1, 1, 0, false));
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 0 && world.Workshop.arrival == 0);
     TIDE_CHECK(world.Workshop.introTicks == 60 && world.Workshop.completed == 1);
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(2, 3)));
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[1].position, tide_i2(4, 3)));
-    // Puzzle 2's lane is the second of the north edge: pads (2,1) and (2,2).
+    TIDE_CHECK(robot_at(0, 0, 2, 3) && robot_at(1, 0, 4, 3));
+    // Its yard has the solved puzzle's battery, and only that one.
+    TIDE_CHECK(active_batteries() == 1 && world.Workshop.puzzle.crates.at[0].active);
+    // Puzzle 2's lane is the second of the gallery's north wall: pads (2,1) and (2,2).
     TIDE_REQUIRE(walk("NN ww"));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == -1); // One robot is not enough.
@@ -466,60 +481,91 @@ TIDE_TEST(inside_out_both_robots_in_a_lane_open_its_puzzle)
     // Once the pads are full nobody moves, and nothing undoes or restarts.
     while (world.Time.tick <= began + 18) tide_world_tick(&world);
     const Puzzle full = world.Workshop.puzzle;
+    const int history = world.Workshop.historyCount;
+    TIDE_CHECK(history > 0); // Walking a hall can be undone.
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 2));
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Undo, 0, 0));
     TIDE_CHECK(inside_out_test_act(TIDE_COMMAND_ID_Reset, 0, 0));
     TIDE_CHECK(memcmp(&full, &world.Workshop.puzzle, sizeof full) == 0 && world.Workshop.inHall);
-    TIDE_CHECK(world.Workshop.historyCount == 0);
+    TIDE_CHECK(world.Workshop.historyCount == history);
     TIDE_CHECK(wait_for_place(60) >= 0);
     TIDE_CHECK(!world.Workshop.inHall && world.Workshop.level == 1 && !world.Workshop.puzzle.solved);
     // CHARGE_TICKS + DIVE_TICKS after both stood in the lane; then its name.
     TIDE_CHECK(world.Workshop.openedTick == began + 54 && world.Workshop.introTicks == 114);
     TIDE_CHECK(world.Workshop.puzzle.moves == 0 && world.Workshop.historyCount == 0);
+    // Back in the hall, it is as they left it, with both below the post.
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ToHall, 0, 0));
+    TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 0 && world.Workshop.arrival == 1);
+    TIDE_CHECK(robot_at(0, 0, 2, 3) && robot_at(1, 0, 3, 3) && active_batteries() == 1);
     tide_world_free(&world);
 }
 
-TIDE_TEST(inside_out_the_lift_works_once_every_puzzle_of_its_hall_is_solved)
+// The staged route `inside_out_solve hall 1` finds with every Boxes puzzle
+// solved: four batteries pushed into the socket box's doorway.
+static const char *const BOXES_HALL = "ESSSSSSS NEESWNWS NEENWNWSSS NWNWSSENES";
+
+TIDE_TEST(inside_out_batteries_in_the_sockets_power_the_lift)
 {
     inside_out_test_start(2);
-    TIDE_REQUIRE(inside_out_test_progress(0, 1, false));
-    TIDE_REQUIRE(world.Workshop.inHall && world.Workshop.hall == 0);
-    // The lift up is the south edge's last post: pads (5,5) and (5,4).
-    TIDE_REQUIRE(walk("ses EEES"));
-    tide_world_tick(&world);
-    TIDE_CHECK(world.Workshop.departStation == -1);
-    wait_ticks(80);
-    TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 0);
-    // The other machine has solved the whole first chapter.
-    TIDE_REQUIRE(inside_out_test_progress(1, 31, false));
-    TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 0 && world.Workshop.completed == 31);
-    tide_world_tick(&world);
-    TIDE_CHECK(world.Workshop.departStation == 9);
-    TIDE_CHECK(wait_for_place(60) >= 0);
-    TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 1 && world.Workshop.arrival == 2);
-    TIDE_CHECK(world.Workshop.introTicks == 60);
-    // Up the lift, both stand by the lift down.
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(1, 3)));
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[1].position, tide_i2(2, 3)));
-    TIDE_REQUIRE(walk("SS ws"));
+    TIDE_REQUIRE(inside_out_test_progress(0, 31, 0, false));
+    TIDE_REQUIRE(world.Workshop.inHall && world.Workshop.hall == 0 && active_batteries() == 5);
+    TIDE_REQUIRE(walk(BOXES_HALL));
+    TIDE_CHECK((world.Workshop.unlocked & 1) != 0 && world.Workshop.opened == 1);
+    // Undone, the lift keeps working; set out afresh, its sockets are full.
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Undo, 1, 0));
+    TIDE_CHECK((world.Workshop.unlocked & 1) != 0);
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Reset, 1, 0));
+    TIDE_CHECK(world.Workshop.inHall && world.Workshop.historyCount == 0 && (world.Workshop.unlocked & 1) != 0);
+    int seated = 0;
+    for (int crate = 0; crate < world.Workshop.layout.crateCount; crate++) {
+        const Cargo battery = world.Workshop.puzzle.crates.at[crate];
+        if (battery.active && battery.room == 1) seated++;
+    }
+    TIDE_CHECK(seated == 4);
+    tide_world_free(&world);
+    // With only three of five solved, the lift waits.
+    inside_out_test_start(2);
+    TIDE_REQUIRE(inside_out_test_progress(0, 7, 0, false));
+    TIDE_CHECK(active_batteries() == 3 && world.Workshop.unlocked == 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(inside_out_the_lift_works_once_its_hall_is_powered)
+{
+    inside_out_test_start(2);
+    // The other machine has seen the first hall's lift working.
+    TIDE_REQUIRE(inside_out_test_progress(1, 31, 1, false));
+    TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 1 && world.Workshop.arrival == 0);
+    // Out of the gallery onto the table, into the lift down's lane: pads
+    // (1,1) and (2,1), beside where the gallery lets out.
+    TIDE_REQUIRE(walk("ESSSSWW wssssw"));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == 5);
     TIDE_CHECK(wait_for_place(60) >= 0);
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 0 && world.Workshop.arrival == 3);
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(4, 3)));
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[1].position, tide_i2(5, 3)));
+    TIDE_CHECK(world.Workshop.introTicks == 60);
+    // Down the lift, both stand by the lift up, which works.
+    TIDE_CHECK(robot_at(0, -1, 3, 1) && robot_at(1, -1, 3, 2));
+    TIDE_REQUIRE(walk("EE ne"));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Workshop.departStation == 6);
+    TIDE_CHECK(wait_for_place(60) >= 0);
+    TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 1 && world.Workshop.arrival == 2);
+    TIDE_CHECK(robot_at(0, -1, 3, 1) && robot_at(1, -1, 3, 2));
+    // The second hall's own lift does not work yet: its lane does nothing.
+    TIDE_REQUIRE(walk("EE ne"));
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Workshop.departStation == -1);
     tide_world_free(&world);
 }
 
-TIDE_TEST(inside_out_a_challenge_opens_with_its_chapter_and_keeps_its_budget)
+TIDE_TEST(inside_out_a_challenge_is_found_in_its_box_and_keeps_its_budget)
 {
     inside_out_test_start(2);
-    TIDE_REQUIRE(inside_out_test_progress(0, 1, false));
-    // The covered post in the middle of the south edge: pads (3,5) and (3,4).
-    TIDE_REQUIRE(walk("ESS ws"));
-    tide_world_tick(&world);
-    TIDE_CHECK(world.Workshop.departStation == -1);
-    TIDE_REQUIRE(inside_out_test_progress(0, 31, false));
+    TIDE_REQUIRE(inside_out_test_progress(0, 1, 0, false));
+    // The challenge's post is inside the box against the yard's west edge:
+    // walked into, it cannot move, so they go in by its east doorway.
+    TIDE_REQUIRE(walk("ESSSSSSWWWW wsssssswwwnw"));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == 7);
     TIDE_CHECK(wait_for_place(60) >= 0);
@@ -534,11 +580,10 @@ TIDE_TEST(inside_out_a_challenge_opens_with_its_chapter_and_keeps_its_budget)
     TIDE_CHECK(world.Workshop.puzzle.moves == 15);
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 1, 3));
     TIDE_CHECK(world.Workshop.puzzle.moves == 16);
-    // Back in the hall from the challenge, both stand below its post.
+    // Back in the hall from the challenge, both stand in its box below the post.
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ToHall, 0, 0));
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 0 && world.Workshop.arrival == 1);
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(3, 3)));
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[1].position, tide_i2(4, 3)));
+    TIDE_CHECK(robot_at(0, 2, 2, 3) && robot_at(1, 2, 3, 3));
     tide_world_free(&world);
 }
 
@@ -552,9 +597,7 @@ TIDE_TEST(inside_out_every_challenge_is_met_exactly_within_its_budget)
         int actions = 0;
         TIDE_REQUIRE(play_witness(level, inside_out_challenge_solutions[challenge], &actions));
         TIDE_CHECK(actions == budget && world.Workshop.puzzle.moves == budget);
-        TIDE_CHECK((world.Workshop.completed & (1 << level)) != 0);
-        // A challenge counts for no chapter and opens no lift.
-        TIDE_CHECK(world.Workshop.opened == -1 && !world.Workshop.finale);
+        TIDE_CHECK((world.Workshop.completed & (1 << level)) != 0 && !world.Workshop.finale);
         printf("  Challenge %d: %2d moves, its budget.\n", challenge + 1, actions);
         tide_world_free(&world);
     }
@@ -573,34 +616,35 @@ TIDE_TEST(inside_out_leaving_for_the_hall_and_sharing_progress)
     inside_out_test_start(2);
     // Moves made in the first puzzle keep the pair there.
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 1));
-    TIDE_REQUIRE(inside_out_test_progress(1, 1, false));
+    TIDE_REQUIRE(inside_out_test_progress(1, 1, 0, false));
     TIDE_CHECK(!world.Workshop.inHall && world.Workshop.level == 0 && world.Workshop.completed == 1);
-    // Progress is what either has solved, kept to the puzzles there are.
-    TIDE_REQUIRE(inside_out_test_progress(0, 4, false));
-    TIDE_CHECK(world.Workshop.completed == 5);
-    TIDE_REQUIRE(inside_out_test_progress(0, -1, false));
-    TIDE_CHECK(world.Workshop.completed == (1 << (PUZZLES + CHALLENGES)) - 1);
+    // Progress is what either has solved and seen working, kept to the
+    // puzzles and lifts there are.
+    TIDE_REQUIRE(inside_out_test_progress(0, 4, 2, false));
+    TIDE_CHECK(world.Workshop.completed == 5 && world.Workshop.unlocked == 2);
+    TIDE_REQUIRE(inside_out_test_progress(0, -1, -1, false));
+    TIDE_CHECK(world.Workshop.completed == (1 << (PUZZLES + CHALLENGES)) - 1 && world.Workshop.unlocked == 31);
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, 7));
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 1));
     const int serial = world.Workshop.serial;
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ToHall, 1, 0));
-    // Puzzle 8 stands third on the second hall's north edge, at x 4.
+    // Puzzle 8 stands third on the second hall's north wall, at x 4.
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 1 && world.Workshop.arrival == 1);
     TIDE_CHECK(world.Workshop.level == 7 && world.Workshop.serial == serial + 1 && world.Workshop.historyCount == 0);
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[0].position, tide_i2(4, 3)));
-    TIDE_CHECK(same_cell(world.Workshop.puzzle.actors.at[1].position, tide_i2(5, 3)));
-    // Walking the hall leaves no history, and the hall has none to leave.
+    TIDE_CHECK(robot_at(0, 0, 4, 3) && robot_at(1, 0, 5, 3));
+    // Its lift works, so its sockets are full; the spare battery waits.
+    TIDE_CHECK(active_batteries() == 4);
     TIDE_REQUIRE(walk("N"));
-    TIDE_CHECK(world.Workshop.historyCount == 0);
+    TIDE_CHECK(world.Workshop.historyCount == 1);
     const int walked = world.Workshop.serial;
     TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ToHall, 0, 0));
     TIDE_CHECK(world.Workshop.serial == walked);
     tide_world_free(&world);
     // Playing with every chapter open starts a returning pair in the last hall.
     inside_out_test_start(2);
-    TIDE_REQUIRE(inside_out_test_progress(0, 0, true));
+    TIDE_REQUIRE(inside_out_test_progress(0, 0, 0, true));
     TIDE_CHECK(!world.Workshop.inHall && world.Workshop.playtest);
-    TIDE_REQUIRE(inside_out_test_progress(1, 1, false));
+    TIDE_REQUIRE(inside_out_test_progress(1, 1, 0, false));
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 5);
     tide_world_free(&world);
 }

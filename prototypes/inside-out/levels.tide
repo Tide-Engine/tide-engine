@@ -52,7 +52,8 @@ struct Draft
 
 string MapName(Draft draft, int room)
 {
-    return room < 0 ? $"Puzzle {draft.level + 1}, the table" : $"Puzzle {draft.level + 1}, room {room}";
+    var name = draft.level >= 100 ? $"Hall {draft.level - 99}" : $"Puzzle {draft.level + 1}";
+    return room < 0 ? $"{name}, the table" : $"{name}, room {room}";
 }
 void SetTile(mut LevelLayout layout, int room, int2 at, Tile tile)
 {

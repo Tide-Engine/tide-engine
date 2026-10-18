@@ -1,0 +1,5 @@
+// expect: 'Count' uses rendering resources, which belong to this machine: the match can't call it
+asset List<Clip> clips = "../e2e/assets/hits/*.wav";
+int Count(List<Clip> values) { return values.count; }
+system Test() { Debug.Log(Count(clips)); }
+scene Main { }

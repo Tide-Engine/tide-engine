@@ -1,5 +1,14 @@
 # Assets and local files
 
+Resource collection helpers (2026-10-18) borrow existing Clip, Texture and
+Mesh<V> asset lists/maps through ordinary read-only synchronous parameters.
+Direct assets and forwarded borrows pass their current handles without copying
+the collection or retaining pack data. Resource/value lifetimes, reload,
+canonical validation, pack kinds, identities and pruning remain unchanged.
+Collections cannot escape into storage, results, error payloads or tasks.
+`asset_borrows` and fourteen diagnostics cover the completion; contracts and
+validation are in notes/language.md and the public functions/assets pages.
+
 2026-10-18 test-save isolation: native `tide_platform_io_init` now takes an
 optional directory after app_id. NULL retains normal app storage; the desktop
 host supplies `--data-dir` when requested. Full native paths are resolved before

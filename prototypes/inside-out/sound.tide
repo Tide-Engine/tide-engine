@@ -176,6 +176,12 @@ local event(PuzzleCue cue) HearPuzzle(Workshop workshop, Hands hands, Mixer mixe
     // from WorkshopChanges. Avoid stacking a reset sweep over that chime.
     else if (cue.kind == 4 && Place(workshop) == hearing.level) PlayCue(littleReset, 0.62);
     else if (cue.kind == 5) PlayCue(puzzleSolve, 2.6);
+    // Enough batteries in a hall's sockets: its lift up starts working.
+    else if (cue.kind == 8)
+    {
+        PlayCue(shutterOpen, 0.3);
+        PlayCue(boxDock, 0.75);
+    }
     // Both robots in a hall's lane: its pads start to fill.
     else if (cue.kind == 7)
     {
@@ -195,11 +201,6 @@ local event(PuzzleCue cue) HearPuzzle(Workshop workshop, Hands hands, Mixer mixe
 bool BatterySeated(LevelLayout layout, Cargo cargo)
 {
     return cargo.active && TileAt(layout, cargo.room, cargo.position) == Tile.Target;
-}
-bool BoxDocked(LevelLayout layout, Puzzle puzzle, int room)
-{
-    var dock = layout.rooms[room];
-    return dock.dock.x >= 0 && puzzle.rooms[room].room == dock.dockRoom && CellEqual(puzzle.rooms[room].position, dock.dock);
 }
 bool PlateHeld(LevelLayout layout, Puzzle puzzle, int room, int2 at)
 {
