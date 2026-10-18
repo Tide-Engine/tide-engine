@@ -596,10 +596,11 @@ static void gen_seeding(const gen *g, sb *o, const char *indent_text, const decl
         sb from = {0};
         if (local) sb_put(&from, "0u, 0u");
         else sb_printf(&from, "(uint32_t)%s->Time.seed, (uint32_t)%s->Time.tick", w, w);
-        // Which field it is: its component's or singleton's number (a local part's is the one it's of), then
-        // its place among that one's generators
+        // Match singleton ordinals exclude presentation-only declarations and attached local fields.
+        // Local state and components keep their existing numbering.
         const decl *of = d->part_of ? d->part_of : d;
-        const int place = (d->kind == DECL_SINGLETON ? 0x10000 : 0) | (d->part_of ? 0x20000 : 0) | (of->index << 8);
+        const int index = !local && d->kind == DECL_SINGLETON ? of->match_singleton_index : of->index;
+        const int place = (d->kind == DECL_SINGLETON ? 0x10000 : 0) | (d->part_of ? 0x20000 : 0) | (index << 8);
         sb_printf(o, "%stide_random_seed_place(&%s.%s, %s, %s, %du);\n", indent_text, value, paths.items[i].path, from.data, entity,
                   place + i);
     }

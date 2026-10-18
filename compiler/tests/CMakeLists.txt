@@ -71,6 +71,11 @@ tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_
 tide_e2e_test(prototype_codegen) # Nested foreach receivers, stored vector writes and captured numeric literals
 tide_e2e_test(increments) # ++i and i++ as values, in their turn
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
+tide_e2e_test(random_local_order)
+tide_add_game(tidec_e2e_random_local_first SOURCES e2e/random_local_order.tide NAME game DEFINES LOCAL_FIRST
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/random_local_order_test.c")
+target_include_directories(tidec_e2e_random_local_first PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_random_local_first COMMAND tidec_e2e_random_local_first)
 tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
 tide_e2e_test(gpu_rolls) # ...and in frags and verts: the frame's number and the seed their draws send, alike for a frame's draws
 tide_e2e_test(views)

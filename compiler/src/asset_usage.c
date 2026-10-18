@@ -291,7 +291,8 @@ static void declaration(asset_usage *w, const decl *d)
     number(w, d->kind);
     text(w, d->qualified);
     number(w, d->is_scene);
-    if (d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON || d->kind == DECL_EVENT) number(w, d->index);
+    if (d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON || d->kind == DECL_EVENT)
+        number(w, d->kind == DECL_SINGLETON && !d->is_local ? d->match_singleton_index : d->index);
     number(w, d->is_sparse);
     number(w, d->visibility_optional);
     number(w, d->is_extern);
@@ -397,7 +398,7 @@ static void expression(asset_usage *w, const expr *e)
     number(w, e->kind);
     value_type(w, e->type);
     text(w, e->text);
-    text(w, e->name);
+    text(w, e->local && e->local->discard ? (str){0} : e->name);
     text(w, e->member);
     number(w, (uint64_t)e->int_value);
     uint32_t bits;
@@ -480,7 +481,9 @@ static void expression(asset_usage *w, const expr *e)
 static void statement(asset_usage *w, const stmt *s)
 {
     number(w, s->kind);
-    text(w, s->name);
+    // Discard storage has compiler-generated names containing source positions.
+    // Its graph edges/order carry identity; moving it does not change simulation.
+    text(w, s->discard ? (str){0} : s->name);
     number(w, s->is_mut);
     number(w, s->out_decl);
     number(w, s->delayed);

@@ -1,5 +1,46 @@
 # Random numbers
 
+## Match singleton seeding ignores local declarations (2026-10-18)
+
+The CRACKED report was still current: moving a local singleton changed a
+match singleton's default Random seeds. The global declaration ordinal also
+entered the simulation identity, so a presentation-only edit changed both
+behavior and compatibility. The initial audit's claim that these builds already
+had the same simulation identity was incorrect; a direct two-build probe found
+different identities as well as different seed sites.
+
+Checking now assigns a separate `match_singleton_index` after synthetic storage
+is complete, counting only match singletons. Generated default seeding and the
+simulation graph use that ordinal for match singletons. Local storage keeps its
+existing numbering and seeding; components, explicit Random(seed), runtime PCG
+arithmetic, source-order rolls and field-path numbering are unchanged. Reordering
+match declarations may still change their default streams. This adds no runtime
+function, generated ABI or state-layout field.
+
+`random_local_order` and `random_local_first` compile the same match with a local
+singleton before/after it and an added attached local field before a second match
+singleton. They share a pinned 30-tick hash, `5079178118440730783`, and check
+explicit seeds and snapshot replay. Simulation-identity tests cover the same
+presentation edits. A related identity defect found by those tests is recorded
+in `notes/language.md`: compiler-generated discard names included source positions.
+Validation: complete warning-free Windows debug builds exercised all 2,371
+native CTests (68.15 s, including 31 Vulkan/OpenGL checks) and 2,282 WASI/web
+CTests (210.32 s, including WebGL/WebGPU). Their only failures were the three
+fixtures whose fresh default singleton streams intentionally changed. Native
+and WASI printed identical replacements: the random fixture's match hash is
+`f556fd146da75bc9`; churn ends with `alive 64 text 429 lists 366076 keys 566 big
+40000`; Sumo's pins are `c659a401358bc369` / `3b39af7fab9a0826`. Those expectations
+are updated. All six affected native checks and five web checks pass afterward,
+including the two local-order layouts. The same checks pass in native release
+and web release, confirming all four configurations share both new RNG pins and
+Sumo's network pins. The release churn executable was explicitly built before
+its final rerun. Existing runtime math/PCG, physics and other world pins remain
+unchanged. The full simulation-identity/asset-usage unit target and production
+docs build pass with clang 23.1.2 / checkout-local Node 24.19.0. Missing example
+pages in the docs build are its existing placeholders. Runs used TIDE_HIDDEN and
+muted browser runners. Other OSes, Android, sanitizers and private-prototype
+playtests were not run; no CI or deployment was requested.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Language

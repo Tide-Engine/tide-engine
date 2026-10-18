@@ -144,7 +144,8 @@ real. The rest of the weekend, the escape and the endings are to be written.
 - tidec generated invalid C for `foreach (var p in kit.placed[model])` where
   `placed` is a `List<List<Placed>>` in a local singleton ("cannot take the
   address of an rvalue of type 'tide_list'"). `placing.tide` indexes instead.
-  Not fixed in the compiler yet.
+  Fixed in the compiler 2026-10-18 (`notes/language.md`); the game's indexed
+  workaround remains.
 - No proximity voice chat (not built in the engine); players use their own.
 - The tarp is a box, the sacks are boxes. No footsteps for the Hales, no
   voice, no lip or eye movement.
