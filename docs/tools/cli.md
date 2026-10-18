@@ -21,6 +21,7 @@ tide <command> [folder] [options]
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
+| `tide ide <editor>` | Prints setup for Emacs, Vim or Neovim using the installed Tide files |
 | `tide open <file.tprefab>` | Opens the native [scene editor](editors.md#native-scene-editor) |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
@@ -52,6 +53,35 @@ describes the hosting project. Positional arguments have topics too:
 Help works without a game or complete installation and performs no command
 actions. Unknown topics or arguments return exit code 2. Bare `tide` keeps
 exit code 2; explicit help returns 0.
+
+## ide
+
+```sh
+tide ide emacs
+tide ide vim
+tide ide neovim
+tide help ide
+```
+
+Copy the printed configuration into your editor's init file, then restart the
+editor. Tide bundles the modes and prints their full installed paths, including
+the matching `tidels` executable. No source checkout or separate mode download
+is needed. The helper prints configuration only; it does not edit files or
+launch an editor.
+
+`emacs` targets Emacs 29.1+ with Eglot; `neovim` targets Neovim 0.11+. Their
+configurations connect to `tidels` automatically when opening Tide files, so
+enable them for projects you trust. `vim` targets Vim 8+ with highlighting and
+indentation; configure a separate LSP client with the server command printed
+in its comments. See [Emacs setup](editors.md#emacs) and
+[Vim and Neovim setup](editors.md#vim-and-neovim) for controls and details.
+
+Missing packaged modes or server files return exit code 1 with reinstall
+guidance. An unsupported editor or extra arguments return 2. If you move your
+Tide installation, run the helper again and replace the old configuration.
+Vim/Neovim setup reports installation paths containing `*`, `?`, `[` or `]`:
+their runtime search treats these as wildcards. Use a Tide installation path
+without those characters.
 
 ## open
 
