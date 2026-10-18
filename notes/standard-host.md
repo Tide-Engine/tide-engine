@@ -1,5 +1,11 @@
 # The standard host: runs with no window, the stats, debug views
 
+Texture metadata (2026-10-18): before calling the generated frame the standard
+host supplies tide_platform_target_pixels in tide_draw_list.target_pixels.
+This borrowed callback crosses the host/game-library boundary explicitly;
+the generated frame saves/restores its thread-local binding. Custom hosts that
+need render-target Texture.size provide the callback too. See notes/textures.md.
+
 ## Explicit save directory for test runs (2026-10-18)
 
 UNDERFOOT's scripted tests wrote player saves. The desktop standard host now

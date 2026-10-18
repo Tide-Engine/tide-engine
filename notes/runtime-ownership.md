@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Conventional resource metadata (2026-10-18)
+
+Within the owner's authorized API-completion pass, generated local code now
+calls `tide_texture_size(tide_texture_ref)` and borrows/restores a frame resolver
+through `tide_texture_target_pixels(tide_target_pixels_fn)`. Both live in the
+existing temporary draw/mesh maintenance area. The resolver is a borrowed
+machine-local callback, carried by tide_draw_list.target_pixels, not a world
+pointer or a simulation allocation. Hosts and game libraries rebuild together
+for the draw-list C layout change. Asset/grid/target safety and coverage are in
+notes/textures.md; no container layout or simulation ABI changed.
+
 ## Approved math API completions (2026-10-18)
 
 The owner authorized FromToRotation and Scale as conventional additions within

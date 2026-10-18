@@ -1,0 +1,4 @@
+// expect: a Texture has 'size', its int2 pixel dimensions, not 'width'
+scene Main { }
+local singleton Art { Texture image; int width; }
+view Read(mut Art art) { art.width = art.image.width; }

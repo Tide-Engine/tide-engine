@@ -1,5 +1,14 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Frame image metadata (2026-10-18)
+
+tide_draw_list.target_pixels is a borrowed host callback for physical target
+dimensions while generated local code records Texture.size reads. It survives
+draw reset like screen metadata, records no command and owns no GPU resource.
+Hosts/libraries rebuild for this C layout addition. The shader captures only
+two uniform ints per source; draw texture bindings stay unchanged. Contracts
+and tests are in notes/textures.md.
+
 ## Frustum culling (2026-10-15)
 
 The owner approved automatic culling for ordinary draws, conservative developer bounds for deformation and a disable control. `Draw.FrustumCulling(bool)` / `SetFrustumCulling(bool)` and `Draw.Bounds(float3 center, float3 size)` / `SetBounds` are the implementation's provisional names in the destination-specific setting family. Reset forms, early-exit block restoration, target isolation, `tide_draw_defaults` and append use the ordinary contracts. A full size is halved into extents. Negative/nonfinite bounds keep the draw; zero sizes are valid. Views and draw operands always execute; no match state or hashes change.
