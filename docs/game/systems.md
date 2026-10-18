@@ -80,7 +80,7 @@ Query data reads the current world and participates in [the schedule](./schedule
 
 Queries have read-only component bindings and component filters. Queries and their whole rows are used directly in `foreach` in the system's ordinary control flow, outside parallel loops and callback blocks; they cannot be stored or passed to functions. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
 
-Systems, views and local handlers take queries. A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). The match's own event handlers, command handlers and tasks take none yet.
+Systems, views and synchronous event and command handlers take queries. A match handler reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
 
 ## Other entities: the World
 
