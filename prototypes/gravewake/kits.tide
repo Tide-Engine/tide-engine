@@ -1,7 +1,8 @@
 // The survivors' kits, after Risk of Rain 2's: each picked before the first
 // night and kept to the end, a gun to aim and three skills on cooldowns: a
-// secondary and a special that use themselves (AutoSkill), and every
-// survivor's roll on Space, a dodge after Dark Souls' (the owner, 2026-10-18:
+// secondary on the right mouse button, a special that uses itself
+// (AutoSkill), and every survivor's roll on Space, a dodge after Dark Souls'
+// (the owner, 2026-10-18:
 // "instead of dashing its more so a rolling that makes you dodge like in dark
 // soul games"). The Gunner carries a carbine, a piercing round and frag
 // grenades; the Breacher a pump shotgun, a boot and a firebomb, and takes less
@@ -39,9 +40,9 @@ string RoleLine(Role role)
 {
     switch (role)
     {
-        case Role.Gunner: return "A carbine for any range. Rounds through a whole line of the dead and grenades into the thick of them, by themselves.";
-        case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat and sets the ground alight by itself.";
-        case Role.Engineer: return "An SMG whose rounds set items off half again as often; lays mines and sets down a turret by itself, carrying your items.";
+        case Role.Gunner: return "A carbine for any range. A heavy round through a whole line of the dead, and grenades into the thick of them by themselves.";
+        case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, and sets the ground alight by itself.";
+        case Role.Engineer: return "An SMG whose rounds set items off half again as often. Lays mines, and sets down a turret by itself, carrying your items.";
     }
     return "";
 }
@@ -57,7 +58,7 @@ Weapon RoleWeapon(Role role)
     return Weapon.Pistol;
 }
 
-// A kit's skills: 0 the secondary and 2 the special, which use themselves, and 1 the roll (Space).
+// A kit's skills: 0 the secondary (right mouse), 1 the roll (Space), 2 the special, which uses itself.
 Skill SkillOf(Role role, int slot)
 {
     switch (role)
@@ -158,12 +159,49 @@ void StartRoll(mut Survivor survivor, float2 move)
     Send(Unleashed { seat = survivor.seat, skill = Skill.Roll, at = survivor.feet, to = survivor.feet });
 }
 
-// The skills that use themselves (the owner, 2026-10-18: "everything other than dodge and main weapon firing should be
-// automatic"): the secondary and the special, each as soon as it's ready and one of the dead is in its reach, where it
-// does the most. A phase round down the line with the most of the dead in it; a grenade or a firebomb into the
-// thickest of them; the boot at the nearest close by, whichever way; a mine underfoot; a turret where they're aiming.
-// With nobody in reach it looks again AUTO_LOOK later, not every tick (a horde's worth gathered each tick would cost).
-void AutoSkill(Entity self, mut Survivor survivor, int slot, Ashwick ashwick, Herd herd)
+// The secondary, on the right mouse button (the owner, 2026-10-18: "i like this new "automatic" abilities direction but
+// i miss the right click power"): as soon as it's ready while it's held, at the cursor. A phase round through every one
+// of the dead down its line (a headshot through the head the cursor's on); the boot at the dead in front, toward the
+// cursor, stamping on the nearest one down; a mine set down the cursor's way. Not mid-roll.
+void UseSecondary(Entity self, mut Survivor survivor, Ashwick ashwick, Herd herd)
+{
+    var skill = SkillOf(survivor.role, 0);
+    if (skill == Skill.None || survivor.cooldowns[0] > 0 || survivor.roll > 0) return;
+    switch (skill)
+    {
+        case Skill.PhaseRound:
+        {
+            var from = AimFrom(survivor, 90, out var look);
+            Shoot(ArmsOf(survivor), from, look, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1, AimedAt(survivor, 90));
+            Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Phase });
+            survivor.act = Act.Fire;
+            survivor.actTime = 0;
+            survivor.actLength = 0.3;
+            break;
+        }
+        case Skill.Boot:
+            Kick(self, survivor, Near(herd, survivor.feet, KICK_REACH + 1.5), survivor.yaw);
+            survivor.kicked = 0;
+            break;
+        case Skill.Mine:
+        {
+            var ahead = survivor.feet + Flat(survivor.yaw) * 1.2;
+            mut var at = On(ahead.x, ahead.z);
+            if (Math.Distance(PushOut(ashwick, at, 0.2, 0.3), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
+            Spawn(Missile { kind = Shot.Mine, at = at + float3(0, 0.03, 0), damage = 220 * Might(survivor), splash = 4.5, seat = survivor.seat, life = 40 });
+            Send(Cue { sound = Sfx.Mine, at = at });
+            break;
+        }
+    }
+    survivor.cooldowns[0] = Cooldown(survivor, skill);
+    Send(Unleashed { seat = survivor.seat, skill = skill, at = survivor.feet, to = survivor.feet });
+}
+
+// The special, by itself (the owner, 2026-10-18: "everything other than dodge and main weapon firing should be
+// automatic", then the secondary back on its key): as soon as it's ready and one of the dead is in its reach, where it
+// does the most: a grenade or a firebomb into the thickest of them; a turret where they're aiming. With nobody in reach
+// it looks again AUTO_LOOK later, not every tick (a horde's worth gathered each tick would cost).
+void AutoSkill(mut Survivor survivor, int slot, Ashwick ashwick, Herd herd)
 {
     var skill = SkillOf(survivor.role, slot);
     if (skill == Skill.None || skill == Skill.Roll || survivor.cooldowns[slot] > 0) return;
@@ -171,53 +209,12 @@ void AutoSkill(Entity self, mut Survivor survivor, int slot, Ashwick ashwick, He
     mut var used = false;
     switch (skill)
     {
-        case Skill.PhaseRound:
-        {
-            var gun = GunHand(survivor);
-            var way = BestLine(gun, bodies, AutoReach(skill));
-            if (Math.Length(way) < 0.5) break;
-            Shoot(ArmsOf(survivor), gun, way, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1, gun + way * 90);
-            Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = gun, way = way, source = Source.Phase });
-            used = true;
-            break;
-        }
         case Skill.Frag:
         case Skill.Firebomb:
         {
             var target = Thickest(survivor.feet, bodies, 3, AutoReach(skill), out var found);
             if (!found) break;
             Throw(survivor, skill, target);
-            used = true;
-            break;
-        }
-        case Skill.Boot:
-        {
-            mut var nearest = KICK_REACH + 0.6;
-            mut var toward = 0.0;
-            foreach (var z in bodies)
-            {
-                if (!z.hittable) continue;
-                // (what the boot meets: the head of one down, else the chest)
-                var spot = z.down ? z.head : z.chest;
-                var far = Math.Length((spot - survivor.feet).xz) - ZOMBIE_RADIUS * (z.size - 1);
-                if (far >= nearest) continue;
-                nearest = far;
-                toward = YawTo(survivor.feet, spot);
-                used = true;
-            }
-            if (!used) break;
-            Kick(self, survivor, bodies, toward);
-            survivor.kicked = 0;
-            break;
-        }
-        case Skill.Mine:
-        {
-            if (!Within(survivor.feet, bodies, AutoReach(skill))) break;
-            var ahead = survivor.feet + Flat(survivor.yaw) * 1.2;
-            mut var at = On(ahead.x, ahead.z);
-            if (Math.Distance(PushOut(ashwick, at, 0.2, 0.3), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
-            Spawn(Missile { kind = Shot.Mine, at = at + float3(0, 0.03, 0), damage = 220 * Might(survivor), splash = 4.5, seat = survivor.seat, life = 40 });
-            Send(Cue { sound = Sfx.Mine, at = at });
             used = true;
             break;
         }
@@ -243,11 +240,8 @@ float AutoReach(Skill skill)
 {
     switch (skill)
     {
-        case Skill.PhaseRound: return 30;
         case Skill.Frag: return 18;
         case Skill.Firebomb: return 15;
-        case Skill.Boot: return KICK_REACH + 1;
-        case Skill.Mine: return 7;
         case Skill.Turret: return 16;
     }
     return 10;
@@ -259,42 +253,6 @@ bool Within(float3 at, List<Body> bodies, float reach)
     foreach (var z in bodies)
         if (z.hittable && Math.Length((z.at - at).xz) <= reach) return true;
     return false;
-}
-
-// The way from a gun down which a round through everything would strike the most of the dead within `reach`: toward
-// one of the nearest few, whichever has the most within AUTO_LINE of its line (a boss counts as five). Nothing found:
-// a zero way.
-float3 BestLine(float3 gun, List<Body> bodies, float reach)
-{
-    mut var best = float3(0);
-    mut var most = 0.0;
-    mut var tried = 0;
-    foreach (var c in bodies)
-    {
-        if (tried >= AUTO_TRIES) break;
-        if (!c.hittable) continue;
-        var off = c.chest - gun;
-        var far = Math.Length(off);
-        if (far < 1 || far > reach) continue;
-        tried += 1;
-        var way = off / far;
-        mut var count = 0.0;
-        mut var looked = 0;
-        foreach (var z in bodies)
-        {
-            if (looked >= AUTO_CROWD) break;
-            if (!z.hittable) continue;
-            looked += 1;
-            var to = z.chest - gun;
-            var along = Math.Dot(to, way);
-            if (along < 0 || along > reach) continue;
-            if (Math.Length(to - way * along) < AUTO_LINE * Math.Max(1, z.size * 0.6)) count += z.size > 1.5 ? 5.0 : 1.0;
-        }
-        if (count <= most) continue;
-        most = count;
-        best = way;
-    }
-    return best;
 }
 
 // The middle of the thickest knot of the dead `near` to `far` away across the ground: whichever of the nearest few has
@@ -330,7 +288,6 @@ float3 Thickest(float3 from, List<Body> bodies, float near, float far, out bool 
 
 const int AUTO_TRIES = 24;          // How many of the nearest are tried as a skill's target...
 const int AUTO_CROWD = 200;         // ...against how many of the dead about
-const float AUTO_LINE = 0.8;        // How near a phase round's line one of the dead counts as on it
 const float AUTO_KNOT = 4;          // How near a grenade's mark one of the dead counts as in the knot
 
 // A leap come down: what's near goes over.

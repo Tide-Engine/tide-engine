@@ -73,6 +73,7 @@ struct Mutant
     float weakTimes;
     float headRadius;
     float chestRadius;
+    float3 weakFace;            // The way its weak spot faces: a round from the other side doesn't reach it
     float3 tint;
     string hint;
 }
@@ -83,15 +84,15 @@ Mutant MutantOf(BossKind kind)
     {
         case BossKind.Brood:
             return Mutant { name = "THE BROODMOTHER", size = 2.2, radius = 1.1, speed = 1.7, health = 1.1, head = float3(0, 1.45, 0.38), chest = float3(0, 1.375, 0.17),
-                            hips = float3(0, 0.99, 0.07), weak = float3(0, 1.03, 0.39), weakRadius = 0.36, weakTimes = 2, headRadius = 0.2, chestRadius = 0.36, tint = float3(0.9, 1.0, 0.75),
+                            hips = float3(0, 0.99, 0.07), weak = float3(0, 1.03, 0.39), weakRadius = 0.36, weakTimes = 2, headRadius = 0.2, chestRadius = 0.36, weakFace = float3(0, 0, 1), tint = float3(0.9, 1.0, 0.75),
                             hint = "Her glowing sac: wide open as she births" };
         case BossKind.Stalker:
             return Mutant { name = "THE STALKER", size = 2.0, radius = 0.7, speed = 4.2, health = 0.75, head = float3(0, 1.71, 0.61), chest = float3(0, 1.66, 0.33),
-                            hips = float3(0, 1.23, 0.05), weak = float3(0, 1.51, 0.44), weakRadius = 0.13, weakTimes = 1.5, headRadius = 0.13, chestRadius = 0.25, tint = float3(0.8, 0.85, 1.0),
+                            hips = float3(0, 1.23, 0.05), weak = float3(0, 1.51, 0.44), weakRadius = 0.13, weakTimes = 1.5, headRadius = 0.13, chestRadius = 0.25, weakFace = float3(0, 0, 1), tint = float3(0.8, 0.85, 1.0),
                             hint = "The sac at its throat, as it shrieks" };
     }
     return Mutant { name = "THE MAULER", size = 2.3, radius = 1.0, speed = 2.4, health = 1.0, head = float3(0, 1.17, 0.46), chest = float3(0, 1.14, 0.32),
-                    hips = float3(0, 0.78, 0.05), weak = float3(0, 1.29, 0.19), weakRadius = 0.3, weakTimes = 3, headRadius = 0.13, chestRadius = 0.36, tint = float3(1.0, 0.75, 0.68),
+                    hips = float3(0, 0.78, 0.05), weak = float3(0, 1.29, 0.19), weakRadius = 0.3, weakTimes = 3, headRadius = 0.13, chestRadius = 0.36, weakFace = float3(0, 0, -1), tint = float3(1.0, 0.75, 0.68),
                     hint = "The sores on its back" };
 }
 
@@ -518,7 +519,8 @@ system BossMuster(mut Boss boss, mut Herd herd)
         hips = boss.at + Math.Rotate(turn, m.hips * m.size) - low, boss = herd.bosses.count,
     };
     herd.bosses.Add(Spots { headRadius = m.headRadius * m.size, chestRadius = m.chestRadius * m.size, weak = boss.at + Math.Rotate(turn, m.weak * m.size) - low,
-                            weakRadius = m.weakRadius * m.size, weakTimes = WeakTimes(boss), base = boss.at - low, columnRadius = m.radius,
+                            weakRadius = m.weakRadius * m.size, weakTimes = WeakTimes(boss), weakFace = Math.Rotate(turn, m.weakFace), base = boss.at - low,
+                            columnRadius = m.radius,
                             columnHigh = (m.head.y + m.headRadius) * m.size });
     boss.slot = herd.bodies.count;
     var cell = HerdCell(boss.at);

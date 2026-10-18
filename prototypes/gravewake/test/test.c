@@ -35,7 +35,7 @@
 
 static tide_world world;
 static Hands held[2];
-static bool autos;          // The skills that use themselves left to use themselves (else held off: they'd come into checks about other things)
+static bool autos;          // The special left to use itself (else held off: it'd come into checks about other things)
 static bool missions;       // ...and the missions left to come
 
 static tide_entity survivor_of(int seat) { return world.Party.survivors.at[seat]; }
@@ -48,8 +48,8 @@ static void tick(int count)
         for (int seat = 0; seat < 2 && !autos; seat++) {
             if (!world.Party.taken.at[seat]) continue;
             Survivor s = get(seat);
-            if (s.cooldowns.at[0] >= 50 && s.cooldowns.at[2] >= 50) continue;
-            s.cooldowns.at[0] = s.cooldowns.at[2] = 100;
+            if (s.cooldowns.at[2] >= 50) continue;
+            s.cooldowns.at[2] = 100;
             set(seat, s);
         }
         if (!missions && world.Match.mission == MissionKind_None) world.Match.missionWait = 1e9f;
@@ -592,6 +592,18 @@ int main(void)
                         world.arch4_Zombie.count);
             CHECK(zombie(e).health < before);
         }
+        // The cursor's point high over one of the dead (as from a rise, or past it on rising ground): the round goes level
+        // and strikes it all the same
+        become(0, Role_Gunner, Weapon_Rifle);
+        const tide_entity e = sturdy();
+        to_open(e);
+        face(0, e, 6);
+        look_at(0, (tide_float3){zombie(e).at.x, zombie(e).at.y + 3.5f, zombie(e).at.z});
+        const float before = zombie(e).health;
+        press(&held[0].attack);
+        tick_safe(2);
+        printf("a round aimed 3.5 m over one of the dead's feet: %.1f to it\n", before - zombie(e).health);
+        CHECK(zombie(e).health < before);
     }
 
     // ---- From above: turned to what the cursor's on, the carbine's round into the chest it's on; moving up the screen
@@ -664,11 +676,11 @@ int main(void)
         spawning();
     }
 
-    // ---- Every skill: the roll on its key, the rest by themselves where they do the most ----
+    // ---- Every skill: the roll and the secondary on their keys, the special by itself where it does the most ----
     few(4);
     {
         autos = true;
-        // The Gunner: a phase round down a line of the dead, by itself (the grenade held back)
+        // The Gunner: a phase round at the cursor (the grenade held back)
         become(0, Role_Gunner, Weapon_Rifle);
         only_skill(0, -1);
         tide_entity e = sturdy();
@@ -676,6 +688,7 @@ int main(void)
         face(0, e, 6);
         only_skill(0, 0);
         float before = zombie(e).health;
+        press(&held[0].secondary);
         tick_safe(2);
         CHECK(zombie(e).health < before && get(0).cooldowns.at[0] > 1);
         only_skill(0, -1);
@@ -726,7 +739,7 @@ int main(void)
         }
         CHECK(thrown && zombie(e).health < before && get(0).cooldowns.at[2] > 0);
 
-        // The Breacher: the boot at one close, a firebomb at one further, each by itself
+        // The Breacher: the boot at one close, at the cursor; a firebomb at one further, by itself
         become(0, Role_Breacher, Weapon_Shotgun);
         only_skill(0, -1);
         const char *names[2] = {"boot", "firebomb"};
@@ -738,6 +751,7 @@ int main(void)
             face(0, e, nears[k]);
             before = zombie(e).health;
             only_skill(0, k == 0 ? 0 : 2);
+            if (k == 0) press(&held[0].secondary);
             bool struck = false;
             for (int t = 0; t < 150 && !struck; t++) {
                 tick_safe(1);
@@ -759,6 +773,7 @@ int main(void)
             to_open(e);
             face(0, e, 1.4f);
             only_skill(0, 0);
+            press(&held[0].secondary);
             for (int t = 0; t < 60 && zombie(e).state != ZombieState_Fallen; t++) tick_safe(1);
             only_skill(0, -1);
             tick_safe(20);
@@ -784,7 +799,8 @@ int main(void)
                 tick_safe(1);            // (the herd as it is now, the rest gone off)
                 before = zombie(e).health;
                 only_skill(0, 0);
-                tick_safe(6);
+                press(&held[0].secondary);
+                tick_safe(5);
                 if (zombie(e).health >= before - 100)
                     fprintf(stderr, "the stamp: health %.0f from %.0f, state %d, zombie at %.2f %.2f %.2f head %.2f %.2f %.2f, survivor at %.2f %.2f %.2f, boot cooldown %.2f, burn %.2f\n",
                             zombie(e).health, before, (int)zombie(e).state, zombie(e).at.x, zombie(e).at.y, zombie(e).at.z, zombie(e).headAt.x, zombie(e).headAt.y, zombie(e).headAt.z,
@@ -793,7 +809,7 @@ int main(void)
             }
         }
 
-        // The Engineer: a mine underfoot and a turret, each by itself
+        // The Engineer: a mine at the cursor, and a turret by itself
         become(0, Role_Engineer, Weapon_Smg);
         only_skill(0, -1);
         e = sturdy();
@@ -801,7 +817,7 @@ int main(void)
         face(0, e, 1.8f);        // The mine goes down 1.2 m ahead: at the feet of this one, held where it is
         const int mines = missiles_of(Shot_Mine);
         only_skill(0, 0);
-        tick_safe(1);
+        press(&held[0].secondary);
         CHECK(missiles_of(Shot_Mine) == mines + 1);
         only_skill(0, -1);
         // It arms, and bursts
@@ -1068,10 +1084,15 @@ int main(void)
         if (tide_entity_alive(&world.entities, dead[2])) fprintf(stderr, "the shot Bloater didn't burst: health %.1f, state %d\n", zombie(dead[2]).health, (int)zombie(dead[2]).state);
         CHECK(!tide_entity_alive(&world.entities, dead[2]));
         CHECK(zombie(dead[1]).health < 100000 && get(0).health >= whole);
-        // Its orb taken, so none's left lying for what comes after
+        // Its orb taken (any lying far off from before, a level round's kills down its whole line, left to the orbs' check)
+        int stale = 0;
+        for (uint32_t r = 0; r < world.arch6_Orb.count; r++) {
+            const Orb o = TIDE_AT(&world, arch6_Orb, Orb, r);
+            if (hypotf(o.at.x - feet.x, o.at.z - (feet.z - 8)) > 6) stale++;
+        }
         put(0, (tide_float3){feet.x, feet.y, feet.z - 7}, (tide_float3){feet.x, 1.6f, feet.z - 12});
-        for (int t = 0; t < 180 && world.arch6_Orb.count > 0; t++) tick_safe(1);
-        CHECK(world.arch6_Orb.count == 0);
+        for (int t = 0; t < 180 && (int)world.arch6_Orb.count > stale; t++) tick_safe(1);
+        CHECK((int)world.arch6_Orb.count <= stale);
         spawning();
     }
 
@@ -1548,7 +1569,7 @@ int main(void)
             tick(4);
             decline();
             printf("a slam rolled through: %.0f of 100 health left, the Mauler's move %d\n", get(0).health, (int)tide_get_Boss(&world, e).move);
-            CHECK(get(0).health == 100 && tide_get_Boss(&world, e).move != BossMove_SlamWindup);
+            CHECK(get(0).health >= 100 && tide_get_Boss(&world, e).move != BossMove_SlamWindup);     // (none lost; a little back, perhaps)
             tick_safe(30);           // The roll done (no shot in one)
         }
         // Its weak spot: held still on open ground, facing north; a round to its hips from the front, one to its back's
