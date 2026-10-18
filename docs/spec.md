@@ -3500,7 +3500,7 @@ view DrawSparks(mut local Sparks sparks)
 
 Local fields, beyond what's decided:
 
-- **What they hold** is what a local component's fields can: numbers, vectors, enums, structs, text, lists, maps, sets, grids, `Entity` and `LocalEntity`, each with a default like any field's. `[Snap]` on one is an error, as local state is never blended. A local field shares its name with no other field or method of its component.
+- **What they hold** is what a local component's fields can: numbers, vectors, enums, structs, fixed arrays, text, lists, maps, sets, grids, `Entity` and `LocalEntity`, each with a default like any field's. `local float3[4] pieces;` keeps an ordinary value array outside the match. `[Snap]` on one is an error, as local state is never blended. A local field shares its name with no other field or method of its component.
 - **Where `local` can't go.** On a field of a struct (structs belong to neither side: make the field that holds the struct local), of the input (all of it is sent), of an event (it's sent whole), or of a local singleton (all of it is local already): each is an error that says so, and the last has a quick fix that removes the word.
 - **They're reached through a parameter**, `box.verts`, where local code has the component or singleton itself:
   - a view's, read through `Box box` and written through `mut Box box`;

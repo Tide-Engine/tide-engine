@@ -124,6 +124,9 @@ async void Reveal(mut Banner banner)
 
 Some of what a machine keeps is about the match's own entities: a mesh baked for each, an animation timer, a smoothed position, a C library's handle. It isn't part of the match, since the simulation never reads it, and every machine can work it out for itself. `local` before a field of a match component or singleton makes that field this machine's:
 
+Fixed arrays work here too: `local float3[4] pieces;` keeps four positions in
+the entity's local storage, with the usual array defaults and checked indexing.
+
 ```csharp
 component Box
 {

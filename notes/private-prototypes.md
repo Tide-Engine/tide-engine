@@ -5,6 +5,62 @@ later that day public game URLs, so invited players need no admin access. This
 note is the catalog and staging contract. A game's own rules, tests and
 validation belong in that game's note.
 
+## Engine gap audit (2026-10-18)
+
+This is the complete disposition of engine reports in CRACKED, UNDERFOOT,
+SUNDAY SUPPER, GRAVEWAKE, the physics-game notes and `GAME_TRIAL_FEEDBACK.md`.
+Inside Out and Foldline were also searched for engine gaps; their remaining
+reports concern game rules, content, presentation or playtest coverage.
+Original observations are historical; this table records current behavior.
+The owner authorized all clear wins, leaving language/API decisions for later.
+It does not approve a new feature merely because a game worked around it.
+
+| Report | Current disposition and evidence |
+|---|---|
+| Nested-container `foreach` emits invalid C (SUNDAY SUPPER) | Fixed: stable receiver paths, captured indexes and waits/replay. `notes/language.md`, `prototype_codegen`. |
+| Vector lanes/swizzles in stored list/map/array elements reject writes (CRACKED) | Fixed through the existing in-place path, with bounds/capability checks retained. `prototype_codegen` and two error fixtures. |
+| Captured integer literals widened to shader floats leave unused C temporaries (GRAVEWAKE) | Fixed, including negative/int-to-long captures. `prototype_codegen`. |
+| Local singleton insertion changes match RNG (CRACKED) | Fixed with match-only ordinals, including attached local fields. Native/WASI debug/release parity is recorded in `notes/random.md`. |
+| Presentation/source positioning changes simulation identity | Fixed both singleton ordinals and compiler-created discard names. `tidec_asset_usage` regressions. |
+| Attached local fields reject fixed arrays (GRAVEWAKE) | Fixed parser lookahead, not a new type rule. `local_fields` checks defaults, helper/element writes, separate machines, reset and local packing. |
+| Headless tests write real saves (UNDERFOOT) | Addressed by explicit desktop `--data-dir`, including separate player directories. Defaults retain ordinary saves. `notes/standard-host.md`. |
+| Whole-singleton replacement is forbidden (GRAVEWAKE) | Stale for ordinary values: current direct-system probe compiles and `singleton_params.Replace` already executes it. Resident/grid ownership restrictions remain intentional. |
+| Eight-parameter shader-bound query hangs tidec (GRAVEWAKE) | Already fixed: `view_bound_query`, `notes/shaders.md`. |
+| No Box3D triangle meshes (CRACKED) | Stale: static/kinematic mesh shapes and rewind queries are built, `packages/box3d/README.md`, `notes/box3d.md`. Arbitrary convex hulls/joints remain separate below. |
+| No audio, Spawn/Send helpers or multi-player scripts (original game trial) | Already built: audio, caller-capability propagation and standard-host `--players`. Their notes supersede the historical trial. |
+| Match event/command handlers cannot query | Explicit current spec restriction. Adding queries affects event/structural-change ordering; owner language decision. Local handlers already take queries. |
+| Queries cannot be function parameters | Explicit non-storable/non-passable query-row contract in the spec. Needs a borrowing/capability design rather than copying an implicit world into helpers. |
+| A system writing one component cannot set another entity's same component | Existing row/World write restriction in `check_world_call`; event routing is the current supported contract. Alias/scheduling semantics need review. |
+| Local handlers cannot read match lists/maps/grids | Tick-event journaling intentionally excludes heap payloads, including query rows. The spec says these copies omit them; lifting it needs lifetime/copy-cost design. |
+| `with ownership` in local handlers, local fields through query rows, mutable local query bindings | Explicit current query/handler limitations. Need caller/row ownership and local-write rules. |
+| Spawn accepts component literals, not component values | Current component-composition interface; broadening it needs language/evaluation/ownership rules. |
+| Input/event values cannot be helper parameters | `method_type` explicitly refuses TY_INPUT/TY_EVENT. A language change, not a missing codegen case. |
+| No empty Map literal | `default` is the existing empty-map expression. A collection-literal syntax choice remains for the owner. |
+| A CPU drawing helper cannot name a frag/vert | Explicit `check_mesh_draw` restriction: shader component/singleton bindings are the view's implicit context. Needs an explicit-binding/helper capability design. Ordinary unshaded drawing helpers already work. |
+| A GPU helper cannot take a singleton containing Cubemap/Random | Spec deliberately requires resource parameters themselves and excludes 64-bit Random values on GPU. Field projection/specialization would be a new contract. Numeric values and direct texture parameters are supported. |
+| A helper cannot borrow List<Clip> from an asset glob | `element_ok` permits resource collections only as assets. Borrowing resource collections needs ownership/lifetime rules shared with Texture/Mesh; not silently broadened. |
+| No live shape-cast self/layer filtering | Current Physics.Cast/Raycast still have no filter argument. RewindQuery already has ignore-Body overloads, so the blanket original report is too broad. A common live/rewound filter API remains to choose. |
+| No arbitrary hull shapes or joints | Still absent from the package API; triangles are supported. Shape/constraint APIs and runtime boundaries need their own approved task. |
+| No instanced skinned draw | Still a future API, not an existing Draw.Instanced overload. Pose/instance transport and batching need renderer/runtime agreement. |
+| No custom fonts, wrapping or Texture size | Still missing public APIs. Font ownership/shaping/measurement, wrapping behavior and resource metadata are API choices. Current measuring/manual layout works. |
+| No quaternion.FromToRotation / float4x4.Scale | New math API choices, including degenerate/opposite-vector behavior for FromToRotation. Existing TRS and game helpers remain valid; no new runtime dependency introduced. |
+| Model materials are not imported | Base color/vertex-color factors already import; embedded textures, full materials and separate render parts do not. Their representation/bindings need design. `notes/assets-and-files.md`. |
+| Separate clips only bind by bone names | Matching now includes complete parent chains and permits differing source defaults. Different-name/proportion/coordinate-space retargeting remains absent and needs an explicit design. |
+| Catalog members retain underscores | Current inferred-name normalizer preserves valid underscores; contracts can use exact `[Name]` aliases. Changing identifier normalization is a naming decision, not failed importing. |
+| Texture/cubemap packs are large; globs keep whole folders | Ordinary textures now include BC1/BC3 plus exact RGBA fallback; cubemaps retain pixels. Pack fallback/compression policy and per-entry reachability differ from conservative declaration pruning. No new deletion/pruning policy inferred. |
+| GUI focus takes game keys / ClaimKeyboard hides Escape (UNDERFOOT) | Matches documented focus/claim behavior when the match reads no Devices. Granular ownership/navigation policy needs review; the game workaround remains. Inside Out's suspected behavior was not separately playtested. |
+| Package pages draw beneath game views | Views obey the existing global ordering/stage and draw-layer rules. Selecting a new package/game composition convention is a design decision. |
+| Volume above 1 clips (CRACKED) | The mixer preserves gain above 1 and sums before output; integer/device output has finite headroom. Automatic limiting/compression or gain normalization would change audio policy. |
+| C tests cannot call static TIDE_HELPER functions (UNDERFOOT) | Helpers are implementation details, not exported C API. Export syntax/stability and external-call capabilities need a language/C-boundary decision. |
+| Touch controls, missing voice chat, art/NPC detail, campaign mechanics and human/hardware/network checks | Game/content work, a new networking feature or unmeasured coverage. Not compiler defects or implicitly authorized new runtime systems. Proximity voice remains unbuilt; no claim of human playtesting. |
+
+All reproduced inconsistencies with existing contracts above are now addressed.
+The remaining rows name the concrete decision/feature boundary; they are not
+left as an uninvestigated set of "other possible wins". Private prototype
+workarounds were not mechanically rewritten: those game revisions can follow
+when their gameplay is next tested. Validation of the final array/host fixes is
+recorded in `notes/standard-host.md` and `notes/language.md`.
+
 ## Catalog and public addresses
 
 - `/admin/prototypes` is the catalog, beside Analytics and behind the admin

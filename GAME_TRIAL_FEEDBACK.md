@@ -13,10 +13,12 @@ restriction, rather than a compiler defect to lift without design review.
 The current prototype audit fixes nested-container foreach lowering, stored
 vector/swizzle writes, captured numeric literals in skinned draws, match Random
 seeding affected by local singletons, and compatibility identities affected by
-discard-storage source positions. `notes/language.md` and `notes/random.md`
-record their regressions and validation. Broader query/helper capabilities,
-resource collections, draw/physics APIs and save/input policies still need their
-own review; an old prototype workaround alone does not make them requirements.
+discard-storage source positions, and attached local fixed arrays. Native
+`--data-dir` now isolates test saves explicitly. `notes/language.md`,
+`notes/random.md` and `notes/standard-host.md` record their regressions and
+validation. The complete current report inventory and remaining language/API
+decisions are in `notes/private-prototypes.md`, Engine gap audit; an old
+prototype workaround alone does not make it a requirement.
 
 ## What was tried
 

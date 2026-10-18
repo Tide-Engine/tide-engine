@@ -171,6 +171,7 @@ static inline void tide_run_load_assets(void)
 }
 static void *tide_run_local;  // The game's tide_local
 static void *tide_run_start;  // A tide_start, for what local code asks
+static const char *tide_run_data_directory;
 static tide_devices tide_run_devices;
 // The watching host's shortcuts, immediately after polling and before the
 // game reads its devices. Plain hosts leave this unset.
@@ -574,11 +575,18 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_headless_desc = (tide_headless_desc){0};
     tide_run_seeded = false;
     tide_run_seed = 0;
+    tide_run_data_directory = NULL;
     bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
         const char *arg = tide_run_settings.argv[i];
         if (strcmp(arg, "--debug-views") == 0) {
             tide_run_settings.debug_views = true;
+        } else if (strcmp(arg, "--data-dir") == 0) {
+            tide_run_data_directory = tide_run_value(&i, arg, "a save directory, like --data-dir test-saves");
+            if (!*tide_run_data_directory || *tide_run_data_directory == '-') {
+                fprintf(stderr, "tide: --data-dir takes a nonempty save directory, like --data-dir test-saves\n");
+                exit(2);
+            }
         } else if (strcmp(arg, "--size") == 0) {
             const char *takes = "the window's width and height in pixels, like --size 1280 720";
             tide_run_settings.width = (int)tide_run_number(&i, arg, 1.0, 16384.0, takes);
@@ -650,6 +658,10 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_headless_desc.argc = tide_run_settings.argc;
     tide_run_headless_desc.argv = tide_run_settings.argv;
 #if defined(__wasm__) || defined(__ANDROID__)
+    if (tide_run_data_directory) {
+        fprintf(stderr, "tide: --data-dir overrides native desktop saves, not web or Android storage\n");
+        exit(2);
+    }
     if (tide_run_headless) {
         fprintf(stderr, "tide: --capture, --frames and --script run a game with no window, on desktop only\n");
         tide_run_headless = false;
@@ -751,7 +763,16 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
     }
     tide_platform_name_game(id); // Its folders: the renderer's cache too, whether the game uses files or not
     if (!game->set_io) return;
-    game->set_io(local, tide_platform_io_init(id));
+    const char *directory = tide_run_data_directory;
+    char *player_directory = NULL;
+    if (directory && tide_platform_players() > 1u) {
+        const size_t size = strlen(directory) + 32u;
+        player_directory = tide_alloc(size);
+        snprintf(player_directory, size, "%s/player-%u", directory, (unsigned)tide_platform_player());
+        directory = player_directory;
+    }
+    game->set_io(local, tide_platform_io_init(id, directory));
+    free(player_directory);
 }
 
 // Starts tide_run_game: its local state and a session, then the match the

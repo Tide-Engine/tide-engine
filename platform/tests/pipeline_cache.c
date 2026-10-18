@@ -100,7 +100,7 @@ static int frame(void *user, const float seconds)
 int main(const int argc, char **argv)
 {
     mode = argc > 1 ? argv[1] : "";
-    tide_platform_io_init("dev.tide.test.pipeline_cache");
+    tide_platform_io_init("dev.tide.test.pipeline_cache", NULL);
     char *file = cache_file();
     if (!file) {
         printf("FAIL: the game has no temporary cache folder\n");

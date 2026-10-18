@@ -38,7 +38,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "fetch: --port=<the server's port> is missing from the page's address\n");
         return 2;
     }
-    const tide_io *io = tide_platform_io_init("tests.tide.fetch");
+    const tide_io *io = tide_platform_io_init("tests.tide.fetch", NULL);
     tide_local_set_io(&local, io);
     tide_local_init(&local);
     tide_text_use(NULL, &local.heap);
