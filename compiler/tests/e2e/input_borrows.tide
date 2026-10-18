@@ -1,0 +1,75 @@
+struct Buttons { bool fire; }
+input Controls { bool jump; Buttons buttons; int amount; }
+singleton Seen
+{
+    int downs;
+    int ups;
+    int fires;
+    int releases;
+    int amount;
+    int paired;
+    int sorted;
+    int actions;
+    int parallelTotal;
+    int events;
+    bool formatted;
+    int calls;
+    int ordered;
+}
+singleton Cells { Grid2<int> values = Grid2(2, 2); }
+scene Main { }
+event Probe { }
+
+bool Down(Controls input) { return input.jump.down; }
+bool Down(bool value) { return value; }
+bool Forward(Controls other, int depth = 2)
+{
+    if (depth > 0) return Forward(other, depth - 1);
+    return Down(other);
+}
+struct Scale
+{
+    int factor = 3;
+    int Amount(Controls controls) { return controls.amount * factor; }
+}
+int Pair(Controls first, Controls second) { return first.amount * 10 + second.amount; }
+bool InspectText(Controls controls) { return $"input: {controls}" == "input: " + controls; }
+int CountCall(mut Seen seen) { seen.calls++; return seen.calls; }
+int WithValue(Controls controls, int value) { return controls.amount + value; }
+int SortInput(Controls controls)
+{
+    mut List<int> values = [3, 1, 2];
+    values.Sort(a, b)
+    {
+        if (Down(controls)) return a > b;
+        return a < b;
+    }
+    return values[0];
+}
+void OnPress(Controls controls, Action content) { if (Forward(controls)) content(); }
+void ThroughAction(Controls controls, mut Seen seen)
+{
+    OnPress(controls) { seen.actions++; }
+}
+event(Probe) ReadEvent(Controls controls, mut Seen seen) { if (Down(controls)) seen.events++; }
+void Observe(Controls controls, mut Seen seen)
+{
+    if (Forward(controls)) seen.downs++;
+    if (controls.jump.up) seen.ups++;
+    if (controls.buttons.fire.down) seen.fires++;
+    if (controls.buttons.fire.up) seen.releases++;
+    seen.amount = Scale {}.Amount(controls);
+    seen.paired = Pair(second: controls, first: controls);
+    seen.sorted = SortInput(controls);
+    seen.formatted = InspectText(controls);
+    ThroughAction(controls, seen);
+}
+system Read(Controls controls, mut Seen seen, mut Cells cells)
+{
+    Observe(controls, seen);
+    seen.ordered = WithValue(controls, CountCall(seen)) * 100 + WithValue(value: CountCall(seen), controls: controls);
+    if (Down(controls)) Send(Probe);
+    seen.parallelTotal = 0;
+    parallel (var at in cells.values) cells.values[at] = Down(controls) ? controls.amount : 0;
+    foreach (var at in cells.values) seen.parallelTotal += cells.values[at];
+}

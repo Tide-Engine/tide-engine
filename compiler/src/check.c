@@ -56,6 +56,7 @@ typedef struct checker {
     int compare_locals;       // ...and how many locals were in scope before its own
     const expr *member_object; // a.b's a, about to be checked: a Forgotten handler's component is only named for its local fields
     const expr *query_value; // A foreach's direct query parameter name, which is only iterable
+    const expr *input_value; // A direct input parameter being borrowed by a synchronous helper
     const expr *out_arg;     // An argument written `out x`, about to be checked as the variable an `out` parameter makes
     int outs;                // Unassigned locals and out arguments: bodies needing assignment analysis
     const expr *initializing; // A plain assignment may initialize a delayed read-only local
@@ -1434,7 +1435,7 @@ static bool is_wrapped(const type t)
 // function can return, but the devices or code.
 static bool result_value_ok(const type t, const loc at, const char *what)
 {
-    if (t.kind == TY_RECORD || t.kind == TY_ACTION || t.kind == TY_SINGLETON) {
+    if (t.kind == TY_RECORD || t.kind == TY_ACTION || t.kind == TY_SINGLETON || t.kind == TY_INPUT) {
         diag_error(at, "%s can't be %s", what, type_name(t));
         return false;
     }
@@ -4222,7 +4223,12 @@ static void check_method_args(checker *c, expr *e, decl *m)
             c->query_value = arg;
             check_expr_any(c, arg);
             c->query_value = previous;
-        } else check_expr_want(c, arg, p ? p->type : T_ERR);
+        } else {
+            const expr *previous = c->input_value;
+            if (p && p->type.kind == TY_INPUT) c->input_value = arg;
+            check_expr_want(c, arg, p ? p->type : T_ERR);
+            c->input_value = previous;
+        }
         c->resident_arg = NULL;
     }
     for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
@@ -4301,6 +4307,12 @@ static void check_arg_types(checker *c, expr *e, decl *m)
         const param *p = &m->params.items[i];
         expr *arg = e->args.items[i];
         if (arg == p->default_value) continue;
+        if (p->type.kind == TY_INPUT) {
+            if (arg->type.kind != TY_ERROR && (arg->is_out || arg->type.kind != TY_INPUT || arg->kind != E_NAME || arg->bind != BIND_PARAM)) {
+                diag_error(arg->at, "pass the caller's input parameter directly: a helper borrows its current and previous tick");
+            }
+            continue;
+        }
         if (p->type.kind == TY_QUERY) {
             if (c->parallel || c->compare || c->block_depth) {
                 diag_error(arg->at, "a query is borrowed in ordinary control flow, outside parallel steps and callback blocks");
@@ -4501,9 +4513,12 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         c->world_arg = arg;
         c->in_place_ok = arg; // Which parameter takes it isn't known yet: a long array's is 'mut', or it's said below
         const expr *previous_query = c->query_value;
+        const expr *previous_input = c->input_value;
         c->query_value = arg; // A query can select an overload that explicitly borrows it.
+        c->input_value = arg;
         check_expr_any(c, arg);
         c->query_value = previous_query;
+        c->input_value = previous_input;
     }
     int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
     bool *fits = arena_alloc(sizeof(bool) * (size_t)same.count);
@@ -8609,6 +8624,12 @@ static type check_name(checker *c, expr *e)
         e->bind = BIND_PARAM;
         e->param = p;
         p->read = true;
+        if (p->type.kind == TY_INPUT && c->member_object != e && c->input_value != e) {
+            diag_error(e->at, "input is read through its fields, inspected as a value or passed directly to a synchronous helper");
+            diag_note("pass '" STR_FMT "' to an input parameter, or copy individual fields; an input borrow can't be stored or returned",
+                      STR_ARG(e->name));
+            return T_ERR;
+        }
         if (p->type.kind == TY_QUERY && c->query_value != e) {
             diag_error(e->at, "a query is only iterated by foreach or passed to a query parameter");
             diag_note("write 'foreach (var row in " STR_FMT ") { ... }', or pass it directly to a synchronous helper's "
@@ -10041,13 +10062,17 @@ static type check_expr_any_raw(checker *c, expr *e)
             diag_note("it's only compared, with == and !=; write the value itself here");
         }
         const bool infer_left = compared && e->lhs->enum_shorthand && !e->rhs->enum_shorthand;
+        const expr *previous_input = c->input_value;
+        c->input_value = e->lhs; // Formatting and comparisons inspect input without retaining its context.
         type l = e->lhs == dflt || infer_left ? T_ERR : check_expr(c, e->lhs);
         const char *outer_side = c->short_circuit_side;
         if (short_circuit) {
             c->short_circuit_depth++;
             c->short_circuit_side = "on the right side of && or ||";
         }
+        c->input_value = e->rhs;
         type r = e->rhs == dflt ? T_ERR : compared && e->rhs->enum_shorthand ? check_expr_want(c, e->rhs, l) : check_expr(c, e->rhs);
+        c->input_value = previous_input;
         if (infer_left) l = check_expr_want(c, e->lhs, r);
         if (short_circuit) {
             c->short_circuit_depth--;
@@ -10068,7 +10093,10 @@ static type check_expr_any_raw(checker *c, expr *e)
         t = (type){TY_STRING, NULL};
         for (int i = 0; i < e->args.count; i++) {
             expr *value = e->args.items[i];
+            const expr *previous_input = c->input_value;
+            c->input_value = value;
             const type vt = check_expr(c, value);
+            c->input_value = previous_input;
             if (vt.kind == TY_VOID) {
                 diag_error(value->at, "this doesn't produce a value to show in the text");
             } else if (!text_can_hold(c->prog, vt)) {
@@ -10408,6 +10436,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("a %s reads what it's given: %s", shader_word(c->method),
                       c->method->is_frag ? "it writes its pixel's color, 'out Color color'"
                                          : "it changes its vertex, and writes what it takes as 'out' for its frag");
+        } else if (root->param->type.kind == TY_INPUT) {
+            diag_note("input comes from the players; the simulation can only read it");
         } else if (root->param->function_param) {
             diag_note("declare the parameter as 'mut " STR_FMT " " STR_FMT "' to change the caller's variable, or copy "
                       "it into a 'mut var'", STR_ARG(root->param->type_name), STR_ARG(root->name));
@@ -10415,8 +10445,6 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             vec_push(c->prog->fixes, f);
         } else if (root->param->type.kind == TY_ENTITY) {
             diag_note("entity handles can't be reassigned");
-        } else if (root->param->type.kind == TY_INPUT) {
-            diag_note("input comes from the players; the simulation can only read it");
         } else if (root->param->type.kind == TY_EVENT) {
             diag_note("%s can't change once it's sent; copy it into a 'mut var' to send a changed one",
                       root->param->type.decl->is_command ? "a command" : "an event");
@@ -13501,7 +13529,8 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
     case TY_EVENT:
         return t;
     case TY_INPUT:
-        diag_error(at, "methods take and return built-in types, structs, enums and components, not inputs");
+        if (!is_return) return t;
+        diag_error(at, "functions and methods can't return input: borrow the caller's input in a synchronous parameter");
         return T_ERR;
     case TY_WORLD:
         world_misplaced(str_from("World"), at);
@@ -13574,6 +13603,7 @@ static void check_param_default(checker *c, const decl *m, const param *p)
     case TY_RECORD: refused = "the devices, which the caller passes"; break;
     case TY_DRAW_LIST: refused = "the frame's draw list, which the caller passes"; break;
     case TY_WORLD: refused = "the World, which the caller passes its own"; break;
+    case TY_INPUT: refused = "the input context, which the caller passes explicitly"; break;
     default: break;
     }
     if (!refused && holds_render_resource(p->type)) refused = "a rendering resource, which the caller passes";
@@ -13667,6 +13697,16 @@ static void check_signature(checker *c, decl *m)
         c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
         c->grid_param = false;
+        if (p->type.kind == TY_INPUT) {
+            if (m->is_async || m->is_extern || m->is_operator || m->is_interpolate || m->is_audio || m->kind == DECL_SHADER) {
+                diag_error(p->type_at, "input is borrowed by ordinary synchronous Tide functions and methods");
+                p->type = T_ERR;
+            } else if (p->mode != PARAM_READ || p->is_out) {
+                diag_error(p->at, "input is read-only: a borrowed input parameter can't be 'mut', 'out' or 'in'");
+                p->mode = PARAM_READ;
+                p->is_out = false;
+            }
+        }
         if (m->is_async && p->type.kind == TY_COMPONENT) {
             p->type.decl = component_placement(c->prog, p->type.decl, p->placement_local, p->type_at);
         } else if (p->placement_local) diag_error(p->placement_at, "local component access belongs on a system, view, handler, query or async parameter; ordinary functions take values");
@@ -15296,7 +15336,9 @@ static void check_params(const checker *c, decl *sys)
         // An input parameter gives the input of the player who owns the entity,
         // or the server's input when no player does. It doesn't filter entities.
         if (d->kind == DECL_INPUT) {
-            if (sys->is_view) {
+            if (sys->is_async) {
+                diag_error(p->at, "a task can't take input: pass the individual fields it needs before it starts");
+            } else if (sys->is_view) {
                 diag_error(p->at, "views can't read input yet");
                 diag_note("read the state the input changed instead, like a component the systems update");
             } else if (is_local_code(sys)) {

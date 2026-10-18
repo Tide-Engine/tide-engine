@@ -1,5 +1,53 @@
 # Language features, as tidec builds them
 
+## Borrowed input parameters (2026-10-18)
+
+The owner approved ordinary parameter syntax for read-only input context:
+`bool WantsJump(Controls controls)`. A caller passes its input parameter
+directly; helpers forward the same current/previous tick pair. No new owner
+lookup, World/singleton/entity/sender capability, allocation or whole-input
+copy is introduced. Nested bool edges, held/released input, prediction's edge
+suppression, owner changes, server input and replay retain existing behavior.
+
+The checker accepts input parameters in ordinary synchronous functions/methods,
+rejects mut/out/in/default/optional/return/escape and diagnoses constructed or
+copied arguments that lack the caller's tick context. Async declarations,
+including match handlers, cannot retain input; pass ordinary field values.
+Mutation diagnostics explain readonly input instead of suggesting `mut`.
+Generated private helpers receive const current/previous input pointers. Input
+pointer access, calls, action inlining and function-local sort captures preserve
+the pair. Existing synchronous callbacks and parallel steps can forward it.
+Call operand planning treats input arguments as borrowed reads, so effectful
+neighboring arguments preserve source order without making a full input temp.
+Existing whole-input text formatting and comparisons remain value inspections;
+they do not store or forward an input context.
+There is no runtime API, public C ABI, world layout or protocol change.
+
+Correction to the earlier deferred-input note and discussion: custom input
+fields are all serialized already. Use-based pruning is for device leaves;
+there was no custom input-field pruning pass to preserve or add. Existing
+device reachability analysis and custom input packing are unchanged.
+
+`input_borrows` exercises recursion, methods, named/multiple parameters,
+overloads, effectful/named argument ordering, action blocks, nested sort
+captures, parallel steps, event handlers, retained snapshots and replay.
+Existing `input` now reads edges through helper
+chains (owner/server selection and owner swaps); `predict` forwards all reads
+through a helper (nested edges and guessed-input suppression); `net` forwards
+movement/jump reads without changing its bad-network traffic/hash assertions;
+`view_time` forwards engine-stamped timestamps. Eleven diagnostic fixtures pin
+unsupported signatures, mutation, defaults, missing context and escapes.
+Editor completion offers input types in readonly synchronous signatures and
+edges through nested input structs; hover explains the caller's tick context.
+Public contracts are in spec.md, functions.md and the input guide.
+
+Validation: final warning-free native/web debug builds, all 2,412 native and
+2,321 web CTests, and the docs production build pass. Native GPU and WebGL/WebGPU
+validation, existing exact-bit/network traffic pins, input edges and guessed
+edge suppression, snapshot/replay, the effectful-argument regression and full
+LSP/stdio/pipe coverage pass without changing expected values. Other operating
+systems, Android and sanitizers remain CI coverage; no CI was dispatched.
+
 ## Borrowed query parameters (2026-10-18)
 
 The owner approved read-only borrowing with the existing `query (...)` syntax.
@@ -148,10 +196,10 @@ game code easier, without returning for routine language/API choices.
   shader planning/capture and runtime contracts are in `notes/textures.md` and
   `notes/shaders.md`. New errors pin assignment and match access rejection.
 
-Input parameters are still deferred for a concrete boundary: `.down`/`.up`
-need the previous input and tick context. Simply allowing a value parameter
-would generate an unavailable previous-input pointer and lose transitive
-input-field usage. No input edge or borrowing semantics were inferred here.
+At this pass input parameters were deferred because `.down`/`.up` needed the
+previous tick context. Borrowed input parameters above now carry that context.
+The earlier concern about losing custom input-field usage was overstated:
+declared custom fields are all packed, with use-based pruning only for devices.
 
 Validation: warning-free Windows native and web debug builds, all 2,383 native
 and 2,293 web CTests, and the docs production build pass on the final source.

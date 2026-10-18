@@ -1,0 +1,4 @@
+// expect: input is read through its fields, inspected as a value or passed directly to a synchronous helper
+input Controls { bool jump; }
+void Read(Controls controls) { var copy = controls; }
+scene Main { }
