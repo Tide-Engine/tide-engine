@@ -148,7 +148,7 @@ void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Her
         case Skill.PhaseRound:
         {
             if (busy) return;
-            var from = AimFrom(survivor, 90, ashwick, herd, out var look);
+            var from = AimFrom(survivor, 90, out var look);
             Shoot(ArmsOf(survivor), from, look, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1);
             Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Phase });
             survivor.act = Act.Fire;
@@ -159,8 +159,7 @@ void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Her
         case Skill.Slide:
         {
             if (survivor.dash > 0) return;
-            var ahead = MoveYaw(survivor);
-            mut var way = Flat(ahead) * move.y + Flat(ahead + Math.PI * 0.5) * move.x;
+            mut var way = Flat(TOP_YAW) * move.y + Flat(TOP_YAW + Math.PI * 0.5) * move.x;
             if (Math.Length(way) < 0.1) way = Flat(survivor.yaw);
             survivor.dashWay = Math.Normalize(way);
             survivor.dash = DASH_SECONDS;
@@ -272,22 +271,16 @@ void Kick(Entity self, Survivor survivor, List<Body> bodies)
     self.Send(Kicked { seat = survivor.seat, hits = hits + (stamped ? 1 : 0), stamp = stamped });
 }
 
-// A grenade or a firebomb, thrown along the look; from above, lobbed to land where the cursor is (THROW_MOST at most),
-// a grenade's fuse running out just as it lands, so it bursts there and doesn't bounce on past.
+// A grenade or a firebomb, lobbed to land where the cursor is (THROW_MOST at most), a grenade's fuse running out just
+// as it lands, so it bursts there and doesn't bounce on past.
 void Throw(Survivor survivor, Skill skill)
 {
     var eye = EyeOf(survivor);
-    var look = LookDirection(survivor.yaw, survivor.pitch + 0.15);
     var right = Flat(survivor.yaw + Math.PI * 0.5);
     var from = eye + right * 0.2;
     var frag = skill == Skill.Frag;
-    mut var velocity = look * (frag ? 17.0 : 15.0);
-    mut var fuse = 1.6;
-    if (survivor.view == View.Above)
-    {
-        velocity = ThrowTo(from, survivor.aim, THROW_GRAVITY, out var flight);
-        fuse = flight + 0.1;
-    }
+    var velocity = ThrowTo(from, survivor.aim, THROW_GRAVITY, out var flight);
+    var fuse = flight + 0.1;
     if (frag)
         Spawn(Missile { kind = Shot.Grenade, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = 180 * Might(survivor), splash = 5.5, element = Element.Blast,
                         seat = survivor.seat, life = fuse });
