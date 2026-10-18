@@ -172,17 +172,38 @@ const child = spawn(browser, [
     `--user-data-dir=${profileDir}`,
     '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
+    '--remote-debugging-pipe', // Ask Chrome to close its children and release the profile.
     // Both players are on this machine: let WebRTC use its real addresses
     '--disable-features=WebRtcHideLocalIpsWithMdns',
     '--allow-loopback-in-peer-connection',
     `http://127.0.0.1:${server.address().port}/`,
-], { stdio: 'ignore' });
+], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+child.stdio[4].resume();
+child.stdio[3].on('error', error => finish({ passed: false, log: [`browser control: ${error.message}`] }));
 child.on('error', error => finish({ passed: false, log: [`${browser}: ${error.message}`] }));
+let exited = false;
+const gone = new Promise(resolve => child.on('close', code => {
+    exited = true;
+    finish({ passed: false, log: [...said, `the browser exited with ${code} before reporting a result`] });
+    resolve(true);
+}));
 const timeout = setTimeout(() => finish({ passed: false, log: [...said, 'the page said nothing more for 60 seconds'] }), 60000);
 
-const { passed, log } = await result;
+let { passed, log } = await result;
 clearTimeout(timeout);
-child.kill();
+if (!exited) {
+    let guard;
+    const deadline = new Promise(resolve => { guard = setTimeout(() => resolve(false), 30000); });
+    child.stdio[3].end(JSON.stringify({ id: 1, method: 'Browser.close' }) + '\0');
+    const closed = await Promise.race([gone, deadline]);
+    clearTimeout(guard);
+    if (!closed) {
+        passed = false;
+        log.push('the browser did not close within 30 seconds');
+        if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        else child.kill('SIGKILL');
+    }
+}
 for (const line of log) console.log(line);
 if (ended) console.log(passed ? 'The match stayed ended.' : 'The match didn\'t stay ended.');
 else if (handover) console.log(passed ? 'The match changed hands.' : 'The match didn\'t change hands.');
