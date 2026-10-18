@@ -1,5 +1,13 @@
 # The language server and the editors
 
+Synchronous match event/command queries (2026-10-18) use the existing query
+completion and row members. Header completion now includes every synchronous
+Tide handler, while tasks and extern systems retain their restrictions. Hover
+distinguishes current queue-time match reads from a local listener's recorded
+rows. Non-listener handlers now report World/query access in code lenses too.
+`lsp_entity_query_in_match_handlers` covers both handler kinds, row completion,
+clean diagnostics, hover and access lenses; header tests retain async rejection.
+
 Texture.size (2026-10-18) completes as a read-only int2 in CPU and GPU contexts,
 supports chained vector member completion, and hovers with physical-pixel,
 missing-image and metadata-only semantics. lsp_textures_in_functions checks

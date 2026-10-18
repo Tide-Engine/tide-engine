@@ -41,6 +41,7 @@ tide_e2e_test(component_values SOURCES e2e/component_values.tide e2e/component_v
 tide_e2e_test(texture_size) # Metadata-only CPU/GPU image dimensions, aliases and resource lifetime
 tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and for their callers' entities
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
+tide_e2e_test(handler_queries) # Current-world queries at match event/command turns, with ordinary deferred changes
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_queries PRIVATE TIDE_QUERY_THREADS=1)

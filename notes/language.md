@@ -1,5 +1,45 @@
 # Language features, as tidec builds them
 
+## Queries in synchronous match handlers (2026-10-18)
+
+The owner approved extending the existing read-only query functionality to
+match event and command handlers. The prior audit overstated the need for a
+separate ordering design: synchronous handlers already execute serially at
+their existing queue turn and can use the same current-world traversal as
+systems. `check_entity_query` now refuses only async declarations. No new
+runtime function, generated query representation, queue flush, snapshot,
+system dependency or simulation layout was introduced.
+
+Queries do not select the event target. A handler taking only queries and
+singletons runs once and accepts an untargeted event/command. Outer component
+parameters still select a target. Each foreach reads the stored match as it
+iterates, including completed earlier handler writes and applied structural
+changes. Structural work recorded in the handler remains queued. Existing
+World.Set rules and transitive helper access analysis keep query reads current
+after page replacement; each row is still a read-only component copy. An own
+mut component parameter retains normal write-back timing: querying the same
+entity sees its stored value until the handler returns, then subsequent
+handlers see the committed value. Spawned includes its new entity, Destroyed
+includes the entity before removal. Async handlers/tasks, query/row escape and
+match/local access restrictions retain their existing rules.
+
+`handler_queries` covers targeted/world events, query-only handlers, nested
+and empty sets, sparse required/excluded filters, interleaved Send/Spawn/Remove/
+Destroy, lifecycle queries, destruction requested during traversal, own-parameter
+write-back, transitive helper Set calls, heap-bearing rows, COW immutability and
+identical replay. Global/targeted commands exercise actual local submission,
+sender guards, tick deferral and duplicate sequence rejection. Mutation errors
+replace the two old rejection fixtures. The LSP completes handler query headers
+and rows, explains queue-time reads on hover and reports query access in lenses.
+Public contracts are in docs/spec.md and the systems/events/commands pages.
+
+Validation: fresh warning-free native/web debug builds, all 2,385 native and
+2,295 web CTests, and the docs production build pass. The full suites include
+the new handler regressions, editor tests, existing deterministic pins,
+Vulkan/OpenGL and WebGL/WebGPU checks. Native took 49.77 seconds; web took
+262.32 seconds, using Node 24.19.0. Other operating systems, Android and
+sanitizers were not run; no CI was dispatched.
+
 ## Conventional API completions (2026-10-18)
 
 The owner asked to clear the remaining gaps that follow existing APIs and make

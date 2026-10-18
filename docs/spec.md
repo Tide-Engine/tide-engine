@@ -427,7 +427,7 @@ system ClampPlayer(mut Transform trs, with Player)
 
 ### Read-only entity queries
 
-A system, a view or a local handler can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
+A system, a view or a synchronous event or command handler can take another set of entities to inspect, using the same component binding and filter syntax inside a `query` parameter:
 
 ```csharp
 system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) fighters)
@@ -441,10 +441,11 @@ system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) figh
 
 - The outer parameters still select the entities the code runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick, and a view with only query parameters once per frame.
 - The nested list accepts named read-only component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World` or nested query. A system's is of the match's components; a view's and a local handler's are all the match's or all local (below).
-- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are parameters of systems, views and local handlers, iterated in that code's ordinary control flow, outside parallel loops and callback blocks. The match's event handlers, command handlers and tasks take none yet.
+- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row, store a query or whole row, or pass either to a function. Queries are parameters of systems, views and synchronous event and command handlers, iterated in that code's ordinary control flow, outside parallel loops and callback blocks. Async handlers and tasks take none yet.
 - Every foreach traverses matching entities in normal deterministic ECS order, checking sparse component presence and filters per row. An empty set performs no iterations. Queries promise neither Entity-ID order nor distance or hit sorting; game code calculates intersections and chooses the earliest hit itself.
 - In a system, component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
 - `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the code's run.
+- **Match event and command handlers take queries too** (agreed 2026-10-18). Each `foreach` reads the current match at the handler's turn in the existing tick-end queue, including earlier handlers' completed writes and structural changes already applied. Queries do not select the event's target: a handler with only queries and singletons runs once per event or command and requires no entity target. Rows remain read-only; explicit `mut World` and its existing `Set` rules can change queried entities. Such writes are visible to later query reads. A handler's own `mut` component parameter keeps the ordinary copy/write-back rule: its unfinished changes are not in the stored component a query reads, and later handlers see the component after write-back. Query traversal adds no queue flush, snapshot or scheduling phase. `Spawned` queries include the new entity and `Destroyed` queries include the entity before removal.
 - **Views take `query` parameters as systems do**, read-only, with the same syntax and the same filters:
 
 ```csharp
@@ -936,7 +937,7 @@ Implemented, awaiting approval:
 ### Decided
 
 - An event is something that happened, sent from one part of the game to the rest: a hit, a pickup, a round ending. `event Hit { ... }` declares one, with fields like a struct's, which carry its context.
-- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, except query parameters, which only a local handler takes (see Read-only entity queries).
+- `event(Hit hit) TakeHit(...)` declares a handler: code that runs when a `Hit` is sent. The same keyword declares both, and `event(` starts a handler. The first parentheses hold the trigger, exactly one event. The second list takes the same parameters as a system, including read-only queries in synchronous handlers (see Read-only entity queries).
 - An event with no fields needs no name in the trigger: `event(Spawned) Arm(...)`.
 - `entity.Send(Hit { ... })` sends an event to an entity. `Send(RoundOver { ... })` sends it to the whole world.
 - A handler's components and `this` come from the entity the event was sent to, as a system's come from the entity it runs for. If that entity doesn't match the handler's parameters, the handler doesn't run for it.
@@ -1055,7 +1056,7 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 ### Open
 
 - Events for a component being added or removed.
-- Handling a world event for every matching entity, such as resetting every player on `RoundOver`. It waits for queries in the match's event handlers, command handlers and tasks, which only systems, views and local handlers take so far.
+- Queries in async handlers and tasks, including query-row lifetimes across waits. Synchronous handlers already iterate matching entities with ordinary query parameters.
 - Local handlers: text and lists of the match in what they hear; the `World` as an event left it; async ones; reading `verified` components in a handler that hears a tick as it's predicted; an event's local handler that follows the same entity when a replay gives it another handle on a machine that doesn't know what it was born as.
 
 ## Commands
