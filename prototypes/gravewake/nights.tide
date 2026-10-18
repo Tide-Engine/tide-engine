@@ -53,36 +53,36 @@ int VigilBosses(int night)
     return 1 + (night - 1) / 3;
 }
 
-// Where each beacon stands: on the spire's top, in the chapel's ruin, at the graveyard's edge, among the standing
-// stones, down in the ravine.
+// Where each beacon stands: in the cairn, in the chapel's ruin, at the graveyard's edge, among the standing stones,
+// beside the dead oak.
 float3 BeaconPlace(int place)
 {
     switch (place)
     {
-        case 0: return On(BEACON.x, BEACON.y);
+        case 0: return On(CAIRN.x, CAIRN.y);
         case 1: return On(CHAPEL.x, CHAPEL.y - 1);
         case 2: return On(GRAVES.x + 8, GRAVES.y - 0.5);
         case 3: return On(STONES.x, STONES.y);
     }
-    return On((RAVINE_A.x + RAVINE_B.x) * 0.5, (RAVINE_A.y + RAVINE_B.y) * 0.5);
+    return On(OAK.x + 4, OAK.y + 1);
 }
 
 string BeaconPlaceName(int place)
 {
     switch (place)
     {
-        case 0: return "on the spire";
+        case 0: return "in the cairn";
         case 1: return "in the chapel's ruin";
         case 2: return "by the graveyard";
         case 3: return "among the standing stones";
     }
-    return "down in the ravine";
+    return "by the dead oak";
 }
 
-// Another beacon than last night's: the first night's never the spire's top, the narrowest.
+// Another beacon than last night's.
 int NextPlace(int last)
 {
-    if (last < 0) return 1 + Random.NextInt(BEACON_PLACES - 1);
+    if (last < 0) return Random.NextInt(BEACON_PLACES);
     var pick = Random.NextInt(BEACON_PLACES - 1);
     return pick >= last ? pick + 1 : pick;
 }
@@ -505,7 +505,7 @@ view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
         return;
     }
     var full = b.charge >= 1;
-    WriteBold(full && brutes > 0 ? "FELL THE BRUTE" : "HOLD THE BEACON", float2(left, box.y + 4 * u), 14 * u, EMBER, Anchor.MiddleLeft);
+    WriteBold(full && brutes > 0 ? "FELL THE BOSS" : "HOLD THE BEACON", float2(left, box.y + 4 * u), 14 * u, EMBER, Anchor.MiddleLeft);
     Bar(float2(left, box.y + 22 * u), float2(200 * u, 8 * u), b.charge, 0, EMBER, Color(0.5, 0.2, 0.05), 10, u);
     Write($"{int(b.charge * 100)}%", float2(left + 208 * u, box.y + 22 * u), 12 * u, BONE, Anchor.MiddleLeft);
     if (b.standing > 1) Write($"{b.keepers} of {b.standing} near it", float2(left + 246 * u, box.y + 22 * u), 11 * u, ASH, Anchor.MiddleLeft);

@@ -1,8 +1,9 @@
 # GRAVEWAKE
 
-Ashwick burned. Up to four survivors hold a wide, hilly clearing in the wood
+Ashwick burned. Up to four survivors hold a wide, flat clearing in the wood
 outside it, night after night, against endless and growing hordes of the
-dead, thousands at once. It plays like Risk of Rain 2 in a PSX-era picture:
+dead, thousands at once. It's seen from above, and plays like Risk of Rain 2
+in a PSX-era picture:
 each picks a survivor (a Gunner, a Breacher or an Engineer), a gun to aim and
 three skills on cooldowns, and the dead never stop coming, more and tougher
 the longer it goes and the further into the nights.
@@ -28,11 +29,9 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 
 | Action | Keyboard and mouse | Gamepad |
 | --- | --- | --- |
-| Walk; forward runs (from above, any way), once you haven't fired for a moment | WASD | Left stick |
-| Look; from above, aim (the crosshair is the cursor) | Mouse | Right stick |
-| Over the shoulder, from above, through the eyes, in turn | V | Right stick press |
-| From above, the camera nearer or further | Mouse wheel | |
-| Jump (again in the air, with Spring Boots) | Space | South button |
+| Walk up, down and across the screen; it's a run once you haven't fired for a moment | WASD | Left stick |
+| Aim (the crosshair is the cursor) | Mouse | Right stick |
+| The camera nearer or further | Mouse wheel | |
 | Fire | Left mouse | Right trigger |
 | The secondary skill | Right mouse | Left trigger |
 | Dash (two charges; throws aside the dead it goes through) | Shift | Left shoulder |
@@ -53,18 +52,18 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 Skills fire as soon as they're ready while their key is held. The guns never
 run out; only their magazines do.
 
-From above, the camera is high behind you looking down, north up the
-screen, and WASD moves you up, down and across it whichever way you face;
-you turn to the cursor, and your shots go level through it, or into the
-one of the dead it's on (its chest, or a boss's weak spot). A grenade or a
-firebomb lands where the cursor is. A ring on the ground marks each
-survivor.
+The camera is high behind you looking down, north up the screen, and WASD
+moves you up, down and across it whichever way you face; you turn to the
+cursor, and your shots go level through it, or into the one of the dead it's
+on (its chest, or a boss's weak spot). A grenade or a firebomb lands where
+the cursor is. A ring on the ground marks each survivor, and what stands
+between the camera and you is cut away. There's no jumping.
 
 ### The nights
 
 | | |
 | --- | --- |
-| The beacon | Five great braziers stand at the landmarks: on the spire's top, in the chapel's ruin, by the graveyard, among the standing stones and down in the ravine. Each night one of them (never last night's) burns a pale wake-fire, seen across the clearing. |
+| The beacon | Five great braziers stand at the landmarks: in the cairn, in the chapel's ruin, by the graveyard, among the standing stones and by the dead oak. Each night one of them (never last night's) burns a pale wake-fire, seen across the clearing. |
 | The chests | Five a night, and two more for each survivor past the first, hidden about the clearing and not marked; the night's panel says how many are found. They're gone when the next night falls. |
 | The vigil | Lit, the beacon is kept while the survivors standing are within 11 m of it: in 90 s with all of them there, slower with only some, not at all with none. The dead come 1.4 times as fast, most of them rising round it. Lighting it also calls back anyone who bled out. |
 | Its boss | One rises as it's lit (two from the fourth night, three from the seventh), the nights taking the three in turn; dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
@@ -80,7 +79,7 @@ waits while anyone chooses. Chests give one at random.
 | Rarity | Items |
 | --- | --- |
 | Common | Hollow Points (damage), Hair Trigger (fire and reload faster), Kevlar Vest (health, armour), Running Shoes (speed), Leech Rounds (kills heal), Field Battery (skills back sooner), Extended Mag, Lucky Shot (hits for double), Smelling Salts (raise friends faster; not offered alone) |
-| Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (shoots the nearest dead), Ember Ring (sets the dead near you alight), Frostbite (hits freeze), Spring Boots (jumps in the air), Energy Drink (another dash), Kerosene (the dash sets the dead it goes through alight), Steel Toes (more to the dead on the ground), Gas Mask (Bloaters' bursts can't hurt you; the ones you kill burst wider), AP Rounds (through one more) |
+| Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (shoots the nearest dead), Ember Ring (sets the dead near you alight), Frostbite (hits freeze), Energy Drink (another dash), Kerosene (the dash sets the dead it goes through alight), Steel Toes (more to the dead on the ground), Gas Mask (Bloaters' bursts can't hurt you; the ones you kill burst wider), AP Rounds (through one more) |
 | Rare | Mortar Flare (hits call a shell down), Second Wind (going down, straight back up, used up), HE Rounds (every round bursts where it lands), Dragon's Breath (hits set the dead alight) |
 
 Uncommon and rare items turn up more as the run goes on. What you take is
@@ -96,8 +95,7 @@ one patch of ground 22 to 32 m from one of you (or, in a vigil, mostly from
 the beacon), a groan going up from them, all at one pace; a quarter come
 alone, from anywhere. A head hit is gold on the crosshair, a Lucky Shot's
 double yellow. Every one pressed against you slows you; a dash goes through
-them. None climbs a cliff alone: they pile up its face on each other. Their
-claws hit harder as the danger climbs, and your health comes back only
+them. Their claws hit harder as the danger climbs, and your health comes back only
 slowly, once you've gone four seconds unhurt.
 
 | Kind | From | |
@@ -134,18 +132,18 @@ item.
 
 ## Ashwick Wood
 
-About 125 m across, its ground rising into the trees at its edge, and open:
-little stands in the way between the landmarks. The dead claw up out of the
-ground all round you, 16 to 32 m off, from every side.
+About 125 m across, its ground near flat, rising into the trees at its edge,
+and open: little stands in the way between the landmarks. The dead claw up
+out of the ground all round you, 16 to 32 m off, from every side.
 
 | Where | What's there |
 | --- | --- |
 | The middle | The camp's fire, where everyone starts; worn paths out to each landmark |
-| North | The chapel's rise, 6 m up, the ruin on it (a beacon in it), a ramp down each side |
-| East | The spire: a lower tier 4 m up, its top 9 m up with a beacon, a ramp to each |
-| West | The old graveyard, sunk in its hollow: ten graves the dead rise from, their stones small enough to run past; a beacon at its edge |
+| North | The chapel's ruin, its walls half down (a beacon in it) |
+| East | The cairn: a ring of great boulders open toward the fire, a beacon in it |
+| West | The old graveyard: ten graves the dead rise from, their stones small enough to run past; a beacon at its edge |
 | North-west | A ring of standing stones, a beacon in it |
-| South | The ravine, cut across the clearing, boulders on its banks, a beacon at its bottom |
+| South | A great dead oak, a beacon beside it |
 | About the clearing | A few sparse groves and big stones to stand behind |
 
 ## Build and run
@@ -183,15 +181,14 @@ this folder.
 | `items.tide` | The items: what each does, the offer at a level, what a hit or a kill sets off, the drone and the ember ring, levels |
 | `zombies.tide` | The dead and their kinds: rising, hunting, a Spitter's bile, a Warden's mail, a Bloater's burst, wounds, burning, freezing, going over |
 | `weapons.tide` | The guns' numbers |
-| `hands.tide` | Running and jumping, firing (each round a ray through the dead), loading, raising friends, going down |
+| `hands.tide` | Running, turning to the cursor, firing (each round a ray through the dead), loading, raising friends, going down |
 | `missiles.tide` | Frag grenades, firebombs, mines, the Mortar Flare's shells, a Spitter's bile |
 | `drops.tide` | The cues for what's heard, and a survivor's refill |
 | `crowd.tide` | The horde and the bosses drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
 | `kit.tide`, `look.tide`, `eye.tide` | The clearing's meshes; light, shadows, fog, bloom; the camera |
 | `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide` | The survivors; the gun in hand, grenades, mines, turrets, drones; the graves and braziers; tracers, flames, blood, sparks |
 | `hud.tide`, `sound.tide` | What's written over the picture (the offer and the survivors too), the title; what's heard |
-| `fp.tide` | The first-person arms: which clips move them for each gun |
-| `art/` | The forest, ruin, people, mutants, guns, items and first-person arms, with how each was made: see `art/CREDITS.md` (the arms are CC BY 4.0, by CoinCoin) |
+| `art/` | The forest, ruin, people, mutants, guns and items, with how each was made: see `art/CREDITS.md` |
 | `sfx/` | The sounds, made by `sfx/tools/make_sfx.py`: see `sfx/CREDITS.md` |
 | `test/` | The run played with no window (`test.c`), a tick's cost with a horde (`perf.c`, `gravewake_perf`, not a test), whole runs played by bots for the balance (`balance.c`, `gravewake_balance`, not a test), and the browser test |
 | `tools/balance_math.py` | The balance on paper, read from the source: night by night, what the dead bring and the level pace |

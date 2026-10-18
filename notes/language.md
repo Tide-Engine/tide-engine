@@ -67,6 +67,12 @@ and snapshot/action regressions, thirteen diagnostic fixtures and LSP coverage.
 Linux, macOS, MinGW, Android and sanitizer coverage remain for CI; none was
 dispatched.
 
+Integration with origin/dev retained both editor-note entries at the sole
+conflict. Incoming terminal-editor/CLI and GRAVEWAKE changes touch no shared
+compiler/runtime source. Rebuilt CLI/LSP targets pass eight scoped CLI/LSP
+CTests, including the new installed-editor configuration test; the combined
+docs production build also passes. The full suites above preceded this merge.
+
 ## Queries in synchronous match handlers (2026-10-18)
 
 The owner approved extending the existing read-only query functionality to

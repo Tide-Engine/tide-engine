@@ -134,6 +134,13 @@ more work across all of them.
   Dark color schemes show type names as plain text; see
   [tools/tide-jetbrains/README.md](tools/tide-jetbrains/README.md#colors)
   to color them.
+- **Emacs:** [tide-lang-mode](tools/tide-emacs/README.md) adds highlighting,
+  indentation and Eglot setup for `tidels`. Run `tide ide emacs` and copy the
+  printed configuration into your init file.
+- **Vim and Neovim:** [the Tide runtime](tools/tide-vim/README.md) adds
+  highlighting and indentation, with a built-in LSP configuration for
+  Neovim 0.11+. Run `tide ide vim` or `tide ide neovim` and copy the printed
+  configuration into your vimrc or init.lua. The modes come with Tide.
 
 ## Working on the engine
 

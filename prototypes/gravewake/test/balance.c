@@ -61,9 +61,9 @@ typedef struct Bot {
 static Bot bots[SEATS_MOST];
 
 // Items every survivor starts the run with (the harness's last argument: "GD2,PK1"), to weigh what one is worth.
-#define ITEMS 24
+#define ITEMS 23
 static int startItems[ITEMS];
-static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "LW", "PK", "GD", "ER", "FR", "SB", "ED", "KE", "ST", "GM", "AP",
+static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "LW", "PK", "GD", "ER", "FR", "ED", "KE", "ST", "GM", "AP",
                                        "MF", "SW", "HE", "DB"};
 
 static void parse_items(const char *list)
@@ -132,8 +132,7 @@ static Hands think(int seat, float dt)
         return h;
     }
     if (s.life == Life_Gone) return h;
-    const float eyeHigh = s.life == Life_Downed ? 0.55f : 1.62f;
-    const tide_float3 eye = {s.feet.x, s.feet.y + eyeHigh, s.feet.z};
+    const tide_float3 gun = {s.feet.x, s.feet.y + 1.36f, s.feet.z};       // Where the shots leave from (hands.tide's GUN_UP)
     const WeaponInfo info = (WeaponInfo){0};
     (void)info;
     const float range = s.gun == Weapon_Shotgun ? 18.0f : s.gun == Weapon_Smg ? 35.0f : 55.0f;
@@ -197,7 +196,7 @@ static Hands think(int seat, float dt)
     bot->aimError += (frand() - 0.5f) * 0.02f - bot->aimError * 0.08f;
     bot->aimErrorPitch += (frand() - 0.5f) * 0.015f - bot->aimErrorPitch * 0.08f;
 
-    float wantYaw = s.yaw, wantPitch = 0;
+    float wantYaw = s.yaw, wantPitch = 0, far = 10;
     bool aiming = false;
     if ((bot->target.index != 0 || bot->target.generation != 0) && tide_entity_alive(&world.entities, bot->target)) {
         tide_float3 at;
@@ -208,9 +207,10 @@ static Hands think(int seat, float dt)
             const Zombie z = tide_get_Zombie(&world, bot->target);
             at = bot->aimHead ? z.headAt : z.chestAt;
         }
-        const float dx = at.x - eye.x, dy = at.y - eye.y, dz = at.z - eye.z;
+        const float dx = at.x - gun.x, dy = at.y - gun.y, dz = at.z - gun.z;
         wantYaw = atan2f(dx, dz) + bot->aimError;
         wantPitch = atan2f(dy, sqrtf(dx * dx + dz * dz)) + bot->aimErrorPitch;
+        far = fmaxf(1.5f, sqrtf(dx * dx + dy * dy + dz * dz));
         aiming = true;
     }
     // Blinking clear: a tick turned away from the dead first
@@ -218,11 +218,10 @@ static Hands think(int seat, float dt)
         wantYaw = atan2f(-pressX, -pressZ);
         wantPitch = 0;
     }
-    const float turn = 0.2f;   // Radians a tick at most: about 12 a second
-    const float dyaw = wrap(wantYaw - s.yaw);
-    h.look.x = fmaxf(-turn, fminf(turn, dyaw));
-    h.look.y = fmaxf(-turn, fminf(turn, wantPitch - s.pitch));
-    const bool onTarget = aiming && fabsf(dyaw) < 0.08f && !bot->blinkTurn;
+    // The cursor where it wants the shots, a little off as a hand is: the survivor turns to it
+    const float level = cosf(wantPitch);
+    h.aim = (tide_float3){gun.x + sinf(wantYaw) * level * far, gun.y + sinf(wantPitch) * far, gun.z + cosf(wantYaw) * level * far};
+    const bool onTarget = aiming && fabsf(wrap(wantYaw - s.yaw)) < 0.3f && !bot->blinkTurn;
     h.attack = onTarget;
     h.reload = s.mag == 0;
 
@@ -247,39 +246,8 @@ static Hands think(int seat, float dt)
     const bool keeping = haveBeacon && lit && fighting;
     const bool lighting = haveBeacon && !lit && fighting && (chestsLeft == 0 || world.Match.nightClock > roam || friendGone);
     const float toBeacon = haveBeacon ? flat_distance(beacon, s.feet) : 1e9f;
-    // A high beacon (the spire's top, the ruin's) is reached up the ramps: the way's next ramp end, or the beacon itself
-    tide_float3 goal = beacon;
-    if (haveBeacon && s.feet.y < beacon.y - 1.5f) {
-        tide_float3 way[4];
-        int legs = 0;
-        if (world.Match.place == 0) {
-            if (s.feet.y < 3) {
-                way[legs++] = (tide_float3){22, 0, -15};
-                way[legs++] = (tide_float3){31.5f, 4, -9};
-            }
-            way[legs++] = (tide_float3){36, 4, -11};
-            way[legs++] = (tide_float3){43.5f, 9, -4.5f};
-        } else if (world.Match.place == 1) {
-            const bool west = s.feet.x < 0;
-            way[legs++] = west ? (tide_float3){-21, 0, 24} : (tide_float3){20, 0, 25};
-            way[legs++] = west ? (tide_float3){-8, 6, 35} : (tide_float3){8, 6, 35};
-        }
-        if (legs > 0) {
-            // The first end not yet reached, from the one nearest on: a bot thrown off the ramp starts again lower
-            int at = 0;
-            float best = 1e9f;
-            for (int k = 0; k < legs; k++) {
-                const float d = flat_distance(way[k], s.feet) + fabsf(way[k].y - s.feet.y) * 4;
-                if (d < best) {
-                    best = d;
-                    at = k;
-                }
-            }
-            if (flat_distance(way[at], s.feet) < 2.5f && at + 1 < legs) at++;
-            else if (flat_distance(way[at], s.feet) < 2.5f) at = legs;
-            if (at < legs) goal = way[at];
-        }
-    }
+    // (the map's flat: straight to the beacon)
+    const tide_float3 goal = beacon;
     const float toGoal = haveBeacon ? flat_distance(goal, s.feet) : 1e9f;
 
     // Where to go: to the beacon to light it (through the dead, unless they're right on us), or back to it if it's lit
@@ -370,23 +338,20 @@ static Hands think(int seat, float dt)
             }
         }
     }
-    // Stuck against something: a jump and a turn of the way
+    // Stuck against something: a turn of the way
     const float moved = flat_distance(s.feet, bot->lastFeet);
     bot->lastFeet = s.feet;
     if ((goX != 0 || goZ != 0) && moved < 0.02f) bot->stuck += dt;
     else bot->stuck = fmaxf(0, bot->stuck - dt);
     if (bot->stuck > 0.6f) {
-        h.jump = true;
         const float t = goX;
         goX = -goZ;
         goZ = t;
         if (bot->stuck > 1.5f) bot->stuck = 0;
     }
-    // Into the move, in the survivor's own axes
-    const float fx = sinf(s.yaw), fz = cosf(s.yaw);
-    const float rx = cosf(s.yaw), rz = -sinf(s.yaw);
-    h.move.x = goX * rx + goZ * rz;
-    h.move.y = goX * fx + goZ * fz;
+    // Into the move: across (east) and up (north) the screen
+    h.move.x = goX;
+    h.move.y = goZ;
 
     // The skills, as a player would use them
     const bool ready0 = s.cooldowns.at[0] <= 0, ready1 = s.cooldowns.at[1] <= 0, ready2 = s.cooldowns.at[2] <= 0;
@@ -402,7 +367,7 @@ static Hands think(int seat, float dt)
         // Shoulder through a crowd ahead, or out of one pressing round
         if (ready1 && onTarget && within8 >= 4 && nearest > 1.2f && s.dashes > 0) {
             h.utility = true;
-            h.move = (tide_float2){0, 1};
+            h.move = (tide_float2){0, 0};                                          // No way pressed: the way it faces
         } else {
             h.utility = ready1 && nearest < 2.5f && press > 0.01f; (void)within4;
         }

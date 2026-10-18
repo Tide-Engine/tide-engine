@@ -50,7 +50,7 @@ foreach(alias help --help -h)
     endif()
 endforeach()
 
-foreach(command run build deploy login logout schedule shaders add update eject fetch publish editors open upgrade version help)
+foreach(command run build deploy login logout schedule shaders add update eject fetch publish editors ide open upgrade version help)
     contains("${overview}" "${command}")
     help(0 help "${command}")
     contains("${out}" "usage: tide ${command}")
@@ -80,7 +80,7 @@ contains("${out}" "--data-dir <folder>")
 contains("${out}" "--max-connections <n>")
 excludes("${out}" "--nightly")
 
-foreach(argument folder source package file.tprefab --release --web --android --define --title --stats --debug-views -o
+foreach(argument folder source package editor file.tprefab --release --web --android --define --title --stats --debug-views -o
         --no-open --host --join --connect --server --strip-server-assets --anonymous --port --max-matches --max-connections
         --udp-only --capture --capture-audio --microphone --frames --script --scale --size --seed --players --data-dir --project
         --server-only --bundle-only --check --preview --local-preview --nightly --stable --version --help -h)

@@ -174,12 +174,12 @@ check pass, including 404s for its removed page and thumbnail. No CI/deployment.
   staging `/prototypes/sunday-supper/` beside its gameplay thumbnail. Its
   story, contracts, tests and validation are in `notes/sunday-supper.md`.
 
-- GRAVEWAKE (`gravewake`): `prototypes/gravewake/`, a first-person
-  cooperative zombie survival game for one to four, requested on 2026-10-16
-  in the vein of Black Ops 2's zombies with medieval weapons (33 of them),
-  and made a roguelike the same day: endless waves in a forest clearing, a
-  card after each. Its forest, people and weapons are Quaternius' (CC0), its
-  first-person arms CoinCoin's (CC BY 4.0), its sounds CC0 recordings. It uses the same opt-in option; `private_games` collects
+- GRAVEWAKE (`gravewake`): `prototypes/gravewake/`, a cooperative zombie
+  survival game for one to four, requested on 2026-10-16 in the vein of Black
+  Ops 2's zombies, since remade as a Risk of Rain 2-like horde shooter with
+  guns, seen from above, in a flat forest clearing, night after night. Its
+  forest, people and guns are Quaternius' (CC0), its sounds CC0 recordings.
+  It uses the same opt-in option; `private_games` collects
   `gravewake_page` or `gravewake`, staging `/prototypes/gravewake/` beside its
   gameplay thumbnail. Its rules, contracts, tests and validation are in
   `notes/gravewake.md`.
