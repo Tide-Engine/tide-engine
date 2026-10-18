@@ -1,5 +1,15 @@
 # ECS and simulation state
 
+Read-only parameters beside World.Set (2026-10-18) reload affected component
+lanes from stable chunk page slots before each row. Earlier Set writes are
+visible regardless of snapshot sharing, across chunks and archetypes. The
+current invocation keeps its component value; containers that Set could reuse
+are copied through existing scratch value helpers. Input's implicit Owner read
+uses the same page reload. Ordinary cached columns, mutable companion lanes
+and staged/SIMD paths are unchanged. Structural changes remain deferred and
+there is no new runtime API, layout or world state. See notes/language.md and
+`world_set_read` for contracts and validation.
+
 Borrowed helper queries (2026-10-18) retain their caller's selection and data
 timing using source-specialized generated loops. Live sources pass an existing
 world pointer; blended/recorded sources pass their existing row pointer/count,

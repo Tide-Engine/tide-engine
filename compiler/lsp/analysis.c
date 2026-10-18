@@ -3144,7 +3144,13 @@ static void describe(const occurrence *o, sb *out)
                       o->param->mode == PARAM_MUT ? "writable" : "read-only", extern_param_number(of, o->param) + 1);
             break;
         }
-        if (o->param->type.kind == TY_INPUT) sb_put(out, "\n\nThe input of the player who owns the entity.");
+        if (o->param->type.kind == TY_INPUT) {
+            sb_put(out, o->param->function_param
+                ? "\n\nRead-only input borrowed from the caller for this synchronous call. Current and previous tick values "
+                  "stay together, preserving .down and .up through helper calls. Pass the input parameter directly; "
+                  "copy individual fields to retain ordinary values."
+                : "\n\nThe input of the player who owns the entity, or the server's for unowned entities and once-only code.");
+        }
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
         else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
@@ -6998,8 +7004,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         return;
     }
     for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) t = member_type(t, DOC->toks[ids[k]].text);
-    // input.jump.pressed, in systems
-    const bool edges = n == 2 && p && p->type.kind == TY_INPUT;
+    // input.jump.down or input.aim.fire.down, including borrowed helper input.
+    const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
     list_members(c, t, edges, &sc);
 }
 
@@ -7406,11 +7412,11 @@ static bool complete_asset_type(completion *c, const int last)
 // What a function's or method's parameter can be, as the checker takes it:
 // built-in values, text and lists, structs, enums, components and singletons;
 // after `mut`, what can change. A function's last can be its Action.
-static void complete_routine_param_types(completion *c, const bool after_mut, const bool function)
+static void complete_routine_param_types(completion *c, const bool after_mut, const bool function, const bool input)
 {
     complete_value_types(c, VT_LOCALS | VT_LOCAL_ENTITY);
     complete_structs(c);
-    complete_types(c, true, true, false);
+    complete_types(c, true, true, input && !after_mut);
     complete_namespaces(c, false);
     if (after_mut) return;
     if (function) item(c, "Action", CK_STRUCT, "Action", builtin_type_doc(TY_ACTION), NULL);
@@ -9157,10 +9163,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // extern float Noise(...): what C takes; async handlers also get self
         bool is_extern = false;
         bool is_async = false;
+        bool is_audio = false;
         for (int k = f.open - 1; k >= 0 && DOC->toks[k].at.line == DOC->toks[f.open].at.line; k--) {
             if (DOC->toks[k].kind != T_IDENT || DOC->toks[k].at.col != decl_col_at(DOC->toks[k].at)) continue;
             is_extern = str_eq_c(DOC->toks[k].text, "extern");
             is_async = str_eq_c(DOC->toks[k].text, "async");
+            is_audio = str_eq_c(DOC->toks[k].text, "audio");
         }
         // extern system Move(...): a system's parameters, less what C can't be handed
         const bool extern_system = is_extern && f.header == HEADER_SYSTEM;
@@ -9189,7 +9197,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                              NULL, NULL);
                     }
                 }
-                complete_routine_param_types(&c, pk == T_MUT || after_out, !method);
+                complete_routine_param_types(&c, pk == T_MUT || after_out, !method, !is_async && !is_audio && !operator_);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }

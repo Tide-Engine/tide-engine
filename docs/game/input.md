@@ -71,6 +71,26 @@ Players are `PlayerID`s, not ints or connections. Like `Entity`, a `PlayerID` is
 
 Input carries whether buttons are held, not whether they just went down: when a player's input is late, the other machines guess it by repeating their last one, and a repeated "just went down" would press twice. In the match, `bool` fields of the input get `.down` and `.up`, worked out against the previous tick, inside structs too: `input.aim.fire.down`.
 
+## Passing input to helpers
+
+Synchronous functions and methods can read the same input as their caller:
+
+```csharp
+bool WantsJump(PlayerInput controls)
+{
+    return controls.jump.down;
+}
+
+system Jump(PlayerInput input, mut Velocity velocity)
+{
+    if (WantsJump(input)) velocity.value.y = 5;
+}
+```
+
+Pass the caller's input parameter directly. The helper borrows its current and previous tick together, preserving the selected player's input, nested `.down`/`.up` edges, prediction and replay behavior. Helpers can forward it to other helpers, without an extra argument or a full input copy. They gain no implicit player, entity or world access.
+
+Input parameters are read-only: no `mut`, `out`, `in` or default. A borrow cannot be stored, returned or kept by a task. Copy individual fields when ordinary values need to outlive the call. Synchronous action blocks, comparisons and parallel steps can read or forward input under their existing rules. Externs, operators, shaders, audio declarations and async routines take no input borrow. `Sample`, `Sanitize` and `Predict` still pass their field values to helpers; they have no input parameter to borrow.
+
 ## What other machines guess
 
 A machine runs ahead of the last tick the server confirmed to it, by about its round trip (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). For those ticks it has to guess what the other players do, and its guess is their last input, repeated. A guess that turns out wrong is put right when the server's answer comes, and the further ahead a machine runs, the more there is to put right: at a ping of 500 ms, a player who stopped running is shown running for half a second more, and then moved back all of it.

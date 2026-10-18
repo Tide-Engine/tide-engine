@@ -1,16 +1,44 @@
 ;;; tide-lang-mode.el --- Editing Tide Engine source -*- lexical-binding: t; -*-
 
+;; Copyright (c) 2026 Tide Engine contributors
+;;
+;; Author: Tide Engine contributors
+;; Assisted-by: Codex:gpt-6.1-sol
+;; Maintainer: Valentin Bordeianu <blenminer123@gmail.com>
+;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: languages
-;; URL: https://github.com/Tide-Engine/tide-engine
+;; URL: https://github.com/Tide-Engine/tide-emacs
+
+;; SPDX-License-Identifier: MIT
+;;
+;; Permission is hereby granted, free of charge, to any person obtaining a copy
+;; of this software and associated documentation files (the "Software"), to deal
+;; in the Software without restriction, including without limitation the rights
+;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+;; copies of the Software, and to permit persons to whom the Software is
+;; furnished to do so, subject to the following conditions:
+;;
+;; The above copyright notice and this permission notice shall be included in all
+;; copies or substantial portions of the Software.
+;;
+;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+;; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+;; SOFTWARE.
 
 ;;; Commentary:
+
 ;; Load this file for .tide/.tprefab editing, then use M-x eglot to connect
 ;; to tidels.  The name avoids the TypeScript package named tide.
 
 ;;; Code:
 
 (require 'cc-mode)
+(require 'eglot)
 
 (defgroup tide-lang nil
   "Editing Tide Engine source."
@@ -61,14 +89,11 @@ Use `eglot' for completion, diagnostics, navigation, rename and formatting."
 (add-to-list 'auto-mode-alist '("\\.tprefab\\'" . tide-lang-mode))
 
 (defun tide-lang--eglot-contact (_interactive)
-  "Return the configured Tide server contact for Eglot."
+  "Return the Tide server contact for Eglot, ignoring _INTERACTIVE."
   tide-lang-server-command)
 
-(defvar eglot-server-programs)
-
-(with-eval-after-load 'eglot
-  (add-to-list 'eglot-server-programs
-               '((tide-lang-mode :language-id "tide") . tide-lang--eglot-contact)))
+(add-to-list 'eglot-server-programs
+             '((tide-lang-mode :language-id "tide") . tide-lang--eglot-contact))
 
 (provide 'tide-lang-mode)
 ;;; tide-lang-mode.el ends here

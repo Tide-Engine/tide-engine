@@ -53,7 +53,7 @@ component Body
 scene Main { }
 event(PlayerJoined joined) Join() { Spawn(Body, Owner { player = joined.player }); }
 
-system Drive(Controls input, mut Body body, with Owner)
+void ApplyInput(Controls input, mut Body body)
 {
     body.position += input.move;
     body.facing = input.aim;
@@ -64,3 +64,4 @@ system Drive(Controls input, mut Body body, with Owner)
     if (input.details.fire) body.fires += 1;
     if (input.details.fire.up) body.fireUps += 1;
 }
+system Drive(Controls input, mut Body body, with Owner) { ApplyInput(input, body); }

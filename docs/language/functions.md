@@ -82,8 +82,9 @@ system Regenerate(mut Unit unit)
 }
 ```
 
-- A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
-- Parameters are built-in types, structs, components, singletons and event/command payloads, and an argument's type matches exactly. Return values are built-in types, structs, components and event/command payloads; singleton returns remain unsupported. Input helper parameters remain unsupported.
+- A plain value parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
+- Parameters are built-in types, structs, components, singletons and event/command payloads, and an argument's type matches exactly. Return values are built-in types, structs, components and event/command payloads; singleton returns remain unsupported.
+- Synchronous functions and methods can borrow the caller's [input](../game/input.md#passing-input-to-helpers) with an ordinary parameter, `bool WantsJump(Controls controls)`. Pass the input parameter directly. Its current and previous tick stay together, so `controls.jump.down` and `.up` retain their meaning through helper calls. The input is read-only, has no default and cannot be stored or returned; tasks take individual field values instead.
 - Synchronous functions and methods can also borrow a read-only `query`, as described below.
 - A function returns a value on every path, unless it returns `void`. The check follows conditions known while compiling, including named bool constants and comparisons of constant integers: `if (true) return 1;` covers its only path. A loop whose condition is always true and has no reachable `break` can't end without returning.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
@@ -92,6 +93,8 @@ system Regenerate(mut Unit unit)
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
 Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, and start tasks, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
+
+A helper can `Set<T>` when its caller takes a read-only `T` parameter. That parameter keeps the value the caller read on entering the entity's invocation; later world reads see the write immediately. Taking `mut T` still prevents `Set<T>` through the caller's World, because its write-back could overwrite a Set of the same entity.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 

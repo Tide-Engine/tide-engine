@@ -998,7 +998,7 @@ static bool is_pointer_param(const param *p)
 {
     if (p->mode == PARAM_SENDER) return true;
     if (p->task_ref) return true;
-    if (p->function_param) return p->mode == PARAM_MUT || p->type.kind == TY_RECORD;
+    if (p->function_param) return p->mode == PARAM_MUT || p->type.kind == TY_RECORD || p->type.kind == TY_INPUT;
     const type_kind k = p->type.kind;
     return k == TY_COMPONENT || k == TY_SINGLETON || k == TY_INPUT || k == TY_RECORD || k == TY_EVENT;
 }
@@ -1409,7 +1409,7 @@ static void gen_operator_call(gen *g, sb *o, const decl *m, expr *l, expr *r)
     sb_put(o, ")");
 }
 
-// The hidden parameter holding last tick's input, for .pressed and .released.
+// The hidden parameter holding last tick's input, for .down and .up.
 static const char *prev_input_name(const gen *g, const str name)
 {
     sb b = {0};
@@ -3035,6 +3035,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         if (args++) sb_put(o, ", ");
         if (m->params.items[i].type.kind == TY_QUERY) {
             gen_borrow_arg(g, o, e->args.items[i]);
+        } else if (m->params.items[i].type.kind == TY_INPUT) {
+            sb_printf(o, "%s, %s", local_cname(g, e->args.items[i]->name), prev_input_name(g, e->args.items[i]->name));
         } else if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)) {
             gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
         } else if (m->params.items[i].mode == PARAM_MUT && m->params.items[i].type.kind == TY_STRING) {
@@ -5014,6 +5016,8 @@ static void call_operands(expr *e, operand_list *ops)
             const param *p = &m->params.items[i];
             if (p->mode == PARAM_MUT) {
                 role = PLACE;
+            } else if (p->type.kind == TY_INPUT) {
+                role = USED; // The call borrows its tick context; another argument doesn't copy the input.
             } else if (m->is_extern && p->mode == PARAM_IN && arg->type.kind == p->type.kind && arg->type.decl == p->type.decl
                        && addressable(arg)) {
                 role = USED; // C reads it where it is (gen_extern_call)
@@ -5944,6 +5948,15 @@ static void gen_inline(gen *g, const expr *e)
                 line(g, o, "const uint32_t %s = %s;", borrow_count_name(names[i]), borrow_arg_name(g, e->args.items[i], true));
                 line(g, o, "(void)%s;", borrow_count_name(names[i]));
             }
+            continue;
+        }
+        if (p->type.kind == TY_INPUT) {
+            g->frame = &frame;
+            const char *previous = prev_input_name(g, p->name);
+            g->frame = caller;
+            line(g, o, "const %s *const %s = %s;", c_type(p->type), names[i], local_cname(g, e->args.items[i]->name));
+            line(g, o, "const %s *const %s = %s;", c_type(p->type), previous, prev_input_name(g, e->args.items[i]->name));
+            line(g, o, "(void)%s; (void)%s;", names[i], previous);
             continue;
         }
         indent(g, o);
@@ -11248,8 +11261,9 @@ static capture_list sort_captures(gen *g, const expr *sort)
             if (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) continue;
             if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
             else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
-            else if (p->type.kind == TY_RECORD) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
+            else if (p->type.kind == TY_RECORD || p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
             else capture(&out, c_type(p->type), local_cname(g, p->name));
+            if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
             if (takes_where(p)) capture(&out, "uint32_t", where_name(g, p->name));
             if (has_fields_ptr(p)) {
                 capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type))),
@@ -11872,15 +11886,19 @@ static void gen_query_row_types(gen *g, const decl *sys)
 
 // A query is code over a second set of archetypes, never a stored collection.
 // Its rows are copies from the current world's lanes, in normal ECS order.
+static bool world_sets_component(const decl *code, const decl *component)
+{
+    for (int i = 0; code && i < code->world_uses.count; i++) {
+        const world_use *u = &code->world_uses.items[i];
+        if (u->writes && u->component == component) return true;
+    }
+    return false;
+}
+
 static bool query_changes_binding(const gen *g, const param *p)
 {
     // An inlined Action can write through its caller's World between rows.
-    const decl *code = own_routine(g) ? own_routine(g) : g->code;
-    for (int i = 0; code && i < code->world_uses.count; i++) {
-        const world_use *u = &code->world_uses.items[i];
-        if (u->writes && u->component == p->type.decl) return true;
-    }
-    return false;
+    return world_sets_component(own_routine(g) ? own_routine(g) : g->code, p->type.decl);
 }
 
 static void gen_query_foreach(gen *g, const stmt *s)
@@ -12296,6 +12314,36 @@ static bool changes_component(const decl *sys, const int c, const bool read_only
     return false;
 }
 
+// Whether the loop takes this component's lanes, including an implicit Owner
+// read for input. World.Set can replace their pages between row invocations.
+static bool rows_take(const gen *g, const decl *sys, const int a, const int c)
+{
+    if (!arch_stores(g, a, c)) return false;
+    if (c == g->prog->owner->index && reads_owner(g, sys, a)) return true;
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind == TY_COMPONENT && p->type.decl->index == c && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) return true;
+    }
+    return false;
+}
+
+// Structural changes stay queued, so a chunk's page slots stay put even when
+// Set replaces one page. Only affected components reload their lanes
+// at each row; the ordinary cached/SIMD path keeps its existing columns.
+static void gen_row_columns(gen *g, const decl *sys, const int a, const char *pad)
+{
+    for (int c = 0; c < g->prog->components.count; c++) {
+        const decl *d = g->prog->components.items[c];
+        if (!rows_take(g, sys, a, c) || !world_sets_component(sys, d)) continue;
+        const char *comp = type_cname(d);
+        sb_printf(&g->c, "%sconst uint8_t *const tide_col_%s[%d] = {", pad, comp, comp_lanes(d));
+        for (int k = 0; k < comp_lanes(d); k++) {
+            sb_printf(&g->c, "%stide_page_data(tide_pages_%s[%d])", k ? ", " : "", comp, k);
+        }
+        sb_put(&g->c, "};\n");
+    }
+}
+
 // Where a loop reads and writes the lanes it changes, from what the table said
 // (tide_table_lanes_begin): tide_in_<Component> and tide_col_<Component>, for
 // component `only`, or for each one the system changes. They're arrays of the
@@ -12351,6 +12399,11 @@ static void gen_chunk_columns(gen *g, const decl *sys, const int a, const char *
         // Its lanes in this chunk
         const decl *d = prog->components.items[c];
         const char *comp = type_cname(d);
+        if (world_sets_component(sys, d)) {
+            sb_printf(o, "%stide_page *const *const tide_pages_%s = &tide_t->pages[tide_c * (%s)->count + %d];\n", pad,
+                      comp, columns, arch_column(g, a, c));
+            continue;
+        }
         if (change && staged) {
             // The table says where each lane is read and written, and the
             // caller where the loop takes that from (gen_lanes_places)
@@ -12522,6 +12575,11 @@ static void gen_row_copies(gen *g, const decl *sys, const int a, const char *pad
         const char *c = type_cname(p->type.decl);
         sb_printf(o, "%s%s tide_v%d;\n%stide_gather_%s(&tide_v%d, (const uint8_t *const *)tide_%s_%s, tide_i);\n", pad, c, i, pad, c,
                   i, g->lanes_in && p->mode == PARAM_MUT ? "in" : "col", c);
+        // Set may reuse a stored container's allocation, including this row's.
+        // Its read parameter keeps an ordinary value copy until it returns.
+        if (p->mode == PARAM_READ && world_sets_component(sys, p->type.decl) && type_has_list(p->type)) {
+            sb_printf(o, "%stide_v%d = tide_copy_%s(tide_v%d);\n", pad, i, c, i);
+        }
         const bool drawn = sys->is_view;
         if (drawn && param_blends(p)) {
             sb_printf(o, "%sif (%s) { %s tide_p%d; %s(&tide_v%d, tide_prev_%s(%s, %s, tide_ent[tide_i], "
@@ -12807,6 +12865,7 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
             sb_printf(o, "        const uint32_t tide_c = tide_loc.row >> %d;\n", shift);
             sb_printf(o, "        const uint32_t tide_i = tide_loc.row & %du;\n", (1 << shift) - 1);
             gen_chunk_columns(g, h, a, "        ", false, false, NULL);
+            gen_row_columns(g, h, a, "        ");
             gen_row_filter(g, h, a, "        ", "break");
             gen_row_copies(g, h, a, "        ", COPIES_ALL);
             sb_printf(o, "        %s", call.data);
@@ -13213,6 +13272,9 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         if (p->type.kind == TY_QUERY) {
             if (n++) sb_put(o, ", ");
             gen_borrow_param(g, o, p, g->borrow->sources[i]);
+        } else if (p->type.kind == TY_INPUT) {
+            sb_printf(o, "%sconst %s *%s, const %s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name),
+                      c_type(p->type), prev_input_name(g, p->name));
         } else if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) sb_printf(o, "%stide_textref %s", n++ ? ", " : "", local_cname(g, p->name));
         else if (p->mode == PARAM_MUT) sb_printf(o, "%s%s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
@@ -13256,6 +13318,7 @@ static void gen_routine(gen *g, const decl *m)
     for (int i = 0; i < m->params.count; i++) {
         if (m->params.items[i].type.kind == TY_WORLD) continue;
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
+        if (m->params.items[i].type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, m->params.items[i].name));
         if (m->params.items[i].type.kind == TY_QUERY && source_query(g->borrow->sources[i])->query_rows)
             line(g, o, "(void)%s;", borrow_count_name(local_cname(g, m->params.items[i].name)));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
@@ -13395,6 +13458,9 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
         if (!d->is_local && local) sb_put(o, "    if (!tide_w) return TIDE_TASK_GONE;\n");
         sb_printf(o, "    %s tide_c%d;\n    if (!tide_load_%s(%s, tide_this, &tide_c%d)) return TIDE_TASK_GONE;\n", type_cname(d), i,
                   type_cname(d), d->is_local ? "tide_l" : "tide_w", i);
+        if (p->mode == PARAM_READ && world_sets_component(fn, d) && type_has_list(p->type)) {
+            sb_printf(o, "    tide_c%d = tide_copy_%s(tide_c%d);\n", i, type_cname(d), i);
+        }
         sb_printf(&body, ", &tide_c%d", i);
     }
     sb_printf(o, "    const int32_t tide_r = %s);\n", body.data);
@@ -14541,6 +14607,7 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
         sb_printf(o, "%s        tide_command *const tide_reserved = (tide_command *)(tide_records + tide_record * tide_record_size);\n", pad);
         sb inner_batch = {0};
         sb_printf(&inner_batch, "%s        ", pad);
+        gen_row_columns(g, sys, a, inner_batch.data);
         gen_row_copies(g, sys, a, inner_batch.data, COPIES_ALL);
         sb_printf(o, "%s%s", inner_batch.data, call);
         gen_system_args(g, sys, a);
@@ -14550,6 +14617,7 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     }
     g->lanes_in = staged && !read_only;
     sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n", pad);
+    gen_row_columns(g, sys, a, inner.data);
     gen_row_filter(g, sys, a, inner.data, "continue");
     gen_row_join(g, sys, inner.data);
     if (g->blending == sys && g->row_queries) sb_printf(o, "%s%s\n", inner.data, g->row_queries);
@@ -14604,19 +14672,6 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
 #define ROWS_LANES_MOST 240
 #define ROWS_PARAMS_MOST 1000
 
-// Whether a system's loop over archetype `a`'s rows takes component `c`'s
-// lanes: a parameter of it, or the Owner its input is read through.
-static bool rows_take(const gen *g, const decl *sys, const int a, const int c)
-{
-    if (!arch_stores(g, a, c)) return false;
-    if (c == g->prog->owner->index && reads_owner(g, sys, a)) return true;
-    for (int i = 0; i < sys->params.count; i++) {
-        const param *p = &sys->params.items[i];
-        if (p->type.kind == TY_COMPONENT && p->type.decl->index == c && (p->mode == PARAM_READ || p->mode == PARAM_MUT)) return true;
-    }
-    return false;
-}
-
 // Whether a system's loop changes any component of archetype `a`'s rows
 // through pages it begins and ends (tide_table_lanes_begin): then it has an
 // apart version too.
@@ -14647,12 +14702,17 @@ static bool rows_alone(const decl *sys)
 // own where each is read in one place and written in another.
 static int rows_lanes(const decl *sys, const decl *d, const bool apart)
 {
+    if (world_sets_component(sys, d)) return 1;
     return comp_lanes(d) * (apart && !world_reads_own_writes(sys) && changes_component(sys, d->index, false) ? 2 : 1);
 }
 
 // Parameters a component's lanes take when they're handed over as arrays.
 static int rows_arrays(const decl *sys, const int c, const bool apart)
 {
+    for (int i = 0; i < sys->world_uses.count; i++) {
+        const world_use *u = &sys->world_uses.items[i];
+        if (u->writes && u->component->index == c) return 1;
+    }
     const bool changed = changes_component(sys, c, false);
     const bool two = apart && changed && !world_reads_own_writes(sys);
     return (changed ? 1 : 0) + (two || !changed ? 1 : 0);
@@ -14722,6 +14782,11 @@ static void gen_rows_columns(gen *g, const decl *sys, const int a, const bool ap
         if (!rows_take(g, sys, a, c)) continue;
         const decl *d = prog->components.items[c];
         const char *comp = type_cname(d);
+        if (world_sets_component(sys, d)) {
+            if (kind == ROWS_PARAMS) sb_printf(o, ", tide_page *const *tide_pages_%s", comp);
+            else if (kind == ROWS_ARGS) sb_printf(o, ", tide_pages_%s", comp);
+            continue;
+        }
         const int n = comp_lanes(d);
         const bool changed = changes_component(sys, c, false);
         const bool two = apart && changed && staged; // Read in one place, written in another
@@ -14800,6 +14865,7 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
     const bool through = apart && !every && rows_filtered(g, sys, a);
     sb_put(o, "    for (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n");
     const char *pad = "        ";
+    gen_row_columns(g, sys, a, pad);
     if (through) {
         gen_row_copies(g, sys, a, pad, COPIES_CHANGED);
         sb_printf(o, "%sdo {\n", pad);
@@ -14946,6 +15012,11 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
         if (!rows_take(g, sys, a, c)) continue;
         const decl *d = prog->components.items[c];
         const bool changed = changes_component(sys, c, false);
+        if (world_sets_component(sys, d)) {
+            sb_printf(o, "%stide_page *const *const tide_pages_%s = &tide_t->pages[tide_c * (%s)->count + %d];\n", pad,
+                      type_cname(d), columns, arch_column(g, a, c));
+            continue;
+        }
         if (changed && staged) continue;
         sb_printf(o, "%s%suint8_t *const tide_col_%s[%d] = {", pad, changed ? "" : "const ", type_cname(d), comp_lanes(d));
         for (int k = 0; k < comp_lanes(d); k++) {
