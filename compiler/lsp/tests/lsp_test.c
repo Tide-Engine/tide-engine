@@ -7743,6 +7743,32 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     TIDE_CHECK(offers(braceless, "entity") && offers(braceless, "body"));
 }
 
+TIDE_TEST(lsp_entity_query_in_helpers)
+{
+    start();
+    TIDE_CHECK(offers(complete(QUERY_TYPES "float Total($) { return 0; }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "async void Total($) { }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "extern float Total($);\n"), "query"));
+    const char *bindings = complete(QUERY_TYPES "float Total(query ($) bodies) { return 0; }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    const char *rows = complete(QUERY_TYPES "float Total(query (Body body) bodies)\n{\n"
+        "    foreach (var row in bodies) { var x = row.$; }\n    return 0;\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
+    open_document(QUERY_TYPES
+        "float Total(query (Body body) bodies)\n"
+        "{ mut var x = 0.0; foreach (var row in bodies) x += row.body.position.x; return x; }\n"
+        "system Count(mut Score score, query (Body other, with Fighter) bodies)\n"
+        "{ score.value = int(Total(bodies)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 32, ""), "query borrowed from the caller"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 32, ""), "extra bindings and filters"));
+    const char *args = complete(QUERY_TYPES
+        "float Total(query (Body body) values) { return 0; }\n"
+        "system Count(query (Body body) bodies) { Total($); }\n");
+    TIDE_CHECK(offers(args, "bodies"));
+}
+
 TIDE_TEST(lsp_entity_query_in_match_handlers)
 {
     start();

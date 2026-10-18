@@ -1,0 +1,6 @@
+// expect: 'Read' needs a compatible borrowed query
+component Body { int x; }
+component Enemy { }
+int Read(query (Body body, with Enemy) rows) { foreach (var row in rows) return row.body.x; return 0; }
+system Test(query (Body body) rows) { Debug.Log($"{Read(rows)}"); }
+scene Main { }

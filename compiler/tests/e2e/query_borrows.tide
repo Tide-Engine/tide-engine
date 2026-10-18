@@ -1,0 +1,155 @@
+component Value { int id; int number; }
+component Extra { int number = 2; }
+[Sparse] component Picked { }
+[Sparse] component Blocked { }
+component Missing { }
+component ActionValue { int number; }
+singleton ActionChecks { Entity last; bool ran; int total; }
+singleton Checks
+{
+    Entity first;
+    bool ran;
+    int total;
+    int projected;
+    int filtered;
+    int method;
+    int pairs;
+    int swapped;
+    int named;
+    int empty;
+    int sorted;
+    int before;
+    int after;
+    int actions;
+    int calls;
+    bool skipped;
+    int tasks;
+}
+scene Main { }
+singleton ProbeGrid { Grid2<int> cells = Grid2(2, 2); int total; }
+event Marked { }
+event(Spawned) Setup(with Main, mut Checks checks, mut ActionChecks actions)
+{
+    checks.first = Spawn(Value { id = 1, number = 10 }, Extra, Picked);
+    Spawn(Value { id = 2, number = 20 }, Extra, Picked, Blocked);
+    Spawn(Value { id = 3, number = 30 }, Extra);
+    Spawn(Value { id = 4, number = 40 }, Extra, Picked);
+    Spawn(ActionValue { number = 10 });
+    actions.last = Spawn(ActionValue { number = 20 });
+}
+
+int Sum(query (Value value) values)
+{
+    mut var total = 0;
+    foreach (var row in values) total += row.value.number;
+    return total;
+}
+int Sum(int value) { return value + 1; }
+int SortedFirst(query (Value value) values)
+{
+    mut List<int> numbers = [];
+    foreach (var row in values) numbers.Add(row.value.number);
+    numbers.Sort(a, b) { return a < b; }
+    return numbers[0];
+}
+int Forward(query (Value other) source, int depth = 1)
+{
+    if (depth > 0) return Forward(source, depth - 1);
+    return Sum(source);
+}
+int Project(query (Extra extra, Value value) rows)
+{
+    mut var total = 0;
+    foreach (var row in rows) total += row.value.number * row.extra.number;
+    return total;
+}
+int Filtered(query (Value value, with Picked, without Blocked) rows) { return Forward(rows); }
+int Pairs(query (Value left) a, query (Value right) b)
+{
+    mut var total = 0;
+    foreach (var left in a)
+        foreach (var right in b) total += left.left.id * 100 + right.right.id;
+    return total;
+}
+struct Scale
+{
+    int factor = 3;
+    int Total(query (Value value) values) { return Sum(values) * factor; }
+}
+void Each(query (Value value) values, Action content)
+{
+    foreach (var row in values) if (row.value.number > 0) content();
+}
+void SumActions(query (ActionValue value) values, mut int total, Action content)
+{
+    foreach (var row in values)
+    {
+        total += row.value.number;
+        content();
+    }
+}
+void MutateActions(query (ActionValue value) values, mut World world, mut ActionChecks checks)
+{
+    SumActions(values, checks.total)
+    {
+        mut var value = world.Get<ActionValue>(checks.last);
+        value.number = 99;
+        world.Set<ActionValue>(checks.last, value);
+    }
+}
+system ExerciseActions(mut ActionChecks checks, mut World world, query (ActionValue value) values)
+{
+    if (checks.ran) return;
+    checks.ran = true;
+    MutateActions(values, world, checks);
+}
+int Replace(Entity target, int number, mut World world)
+{
+    mut var value = world.Get<Value>(target);
+    value.number = number;
+    world.Set<Value>(target, value);
+    return number;
+}
+int First(int a, int b) { return a + b * 0; }
+int Last(int a, int b) { return a * 0 + b; }
+bool CountCall(mut Checks checks, query (Value value) values)
+{
+    checks.calls++;
+    return Sum(values) > 0;
+}
+async void Later(mut Checks checks) { await Wait.Ticks(1); checks.tasks++; }
+void StartLater(query (Value value) values, mut Checks checks)
+{
+    if (Sum(values) > 0) Later(checks);
+}
+void Broadcast(query (Value value) values)
+{
+    foreach (var row in values) if (row.value.number > 0) row.entity.Send(Marked);
+}
+event(Marked) Mark(mut Value value) { value.number++; }
+
+system Exercise(mut Checks checks, mut World world, mut ProbeGrid grid,
+                query (Value candidate, Extra details, with Picked, without Blocked) chosen,
+                query (Value other, with Blocked) blocked,
+                query (Value value, with Missing) empty)
+{
+    if (checks.ran) return;
+    checks.ran = true;
+    checks.total = Forward(chosen);
+    checks.projected = Project(chosen);
+    checks.filtered = Filtered(chosen);
+    checks.method = Scale {}.Total(chosen);
+    checks.pairs = Pairs(chosen, blocked);
+    checks.swapped = Pairs(blocked, chosen);
+    checks.named = Pairs(b: blocked, a: chosen);
+    checks.empty = Sum(empty);
+    checks.sorted = SortedFirst(chosen);
+    foreach (var at in grid.cells) grid.cells[at] = Sum(chosen);
+    foreach (var at in grid.cells) grid.total += grid.cells[at];
+    Each(chosen) { checks.actions++; }
+    checks.before = First(Sum(chosen), Replace(checks.first, 99, world));
+    checks.after = Last(Replace(checks.first, 7, world), Forward(chosen));
+    checks.skipped = false && CountCall(checks, chosen);
+    StartLater(chosen, checks);
+    Broadcast(chosen);
+}

@@ -147,7 +147,7 @@ void Bump(Entity target, mut World world)
     world.Set<Sample>(target, sample);
 }
 
-event(Update) UpdateSamples(mut Seen seen, mut World world,
+void UpdateRows(mut Seen seen, mut World world,
                             query (Sample sample, with Selected, without Excluded) samples)
 {
     foreach (var row in samples)
@@ -161,15 +161,26 @@ event(Update) UpdateSamples(mut Seen seen, mut World world,
     }
 }
 
+event(Update) UpdateSamples(mut Seen seen, mut World world,
+                            query (Sample sample, with Selected, without Excluded) samples)
+{
+    UpdateRows(seen, world, samples);
+}
+
+void ShiftRows(int delta, mut Seen seen, mut World world, query (Sample sample) samples)
+{
+    foreach (var row in samples)
+    {
+        SetValue(row.entity, row.sample.value + delta, world);
+        seen.commandRows++;
+    }
+}
+
 command(Shift shift, PlayerID sender) ShiftAll(mut Seen seen, mut World world,
                                              query (Sample sample, with Selected, without Excluded) samples)
 {
     if (sender != PlayerID(0)) return;
-    foreach (var row in samples)
-    {
-        SetValue(row.entity, row.sample.value + shift.delta, world);
-        seen.commandRows++;
-    }
+    ShiftRows(shift.delta, seen, world, samples);
     Send(Probe { slot = 0 });
 }
 

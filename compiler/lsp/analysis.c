@@ -3079,6 +3079,13 @@ static void describe(const occurrence *o, sb *out)
         code_block(out, code.data);
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->mode == PARAM_QUERY) {
+            if (o->param->function_param) {
+                sb_put(out, "\n\nA read-only query borrowed from the caller for this call. The caller's selection, "
+                            "traversal order and live, blended or recorded data timing are preserved. Bindings match by "
+                            "component type; extra bindings and filters are allowed. It can be forwarded to another "
+                            "synchronous helper, but cannot be stored, returned or kept across await.");
+                break;
+            }
             sb_printf(out, "\n\nA read-only second entity set, independent of the entity this %s runs for. "
                            "`foreach` yields rows with `entity` and the named component values. Traversal follows "
                            "the ECS; it does not sort by entity ID or distance.",
@@ -8927,7 +8934,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
         } else if (kind == T_RBRACE && depth > 0) {
             depth--;
         } else if (kind == T_LPAREN) {
-            const bool query = top == CTX_HEADER && stack[depth].header == HEADER_SYSTEM && before == T_IDENT
+            const bool query = top == CTX_HEADER && (stack[depth].header == HEADER_SYSTEM || stack[depth].header == HEADER_ROUTINE)
+                            && before == T_IDENT
                             && str_eq_c(DOC->toks[i - 1].text, "query");
             const header_kind header = query ? HEADER_QUERY
                 : top == CTX_TOP ? top_header(i) : top == CTX_DATA ? member_header(i) : HEADER_NONE;
@@ -9171,6 +9179,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                     item(&c, "mut", CK_KEYWORD, "The caller's variable itself, which it can change", NULL, NULL);
                     if (!is_async) {
                         item(&c, "World", CK_CLASS, "Its caller's World, passed on: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+                        item(&c, "query", CK_SNIPPET, "Borrow a read-only query from the caller",
+                             "The caller supplies the selection and data timing; this helper declares the row data it needs.",
+                             "query (${1:Component} ${2:value}) ${3:entities}");
                     }
                     // An operator gives one value, and an async function goes on after its call returned
                     if (!is_async) {
