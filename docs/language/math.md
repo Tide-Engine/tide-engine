@@ -51,9 +51,18 @@ And these build values:
 - `quaternion.AxisAngle(axis, angle)`
 - `quaternion.Euler(radians)` takes a `float3`, or `quaternion.Euler(x, y, z)` takes three angles in radians. The scalar form equals `quaternion.Euler(float3(x, y, z))`. Both rotate Z first, then X, then Y, Unity's default order.
 - `quaternion.LookRotation(forward, up)`
+- `quaternion.FromToRotation(from, to)` gives the shortest rotation between two `float3` directions. They need not be normalized. Zero or nonfinite directions give identity; opposite directions use a deterministic perpendicular axis.
 - `float4x4.TRS(translation, rotation, scale)`
 - `float4x4.Translate(translation)`
+- `float4x4.Scale(scale)` builds a scale matrix from a `float3`, with no rotation or translation. Zero and negative scales work too.
 - `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` and `float4x4.Ortho(width, height, near, far)`: projections for a 3D camera, as Unity.Mathematics' (see [Any projection](../game/cameras.md#any-projection))
+
+```csharp
+var aim = quaternion.FromToRotation(float3(0, 0, 1), target - position);
+var size = float4x4.Scale(float3(2, 1, 0.5));
+```
+
+`FromToRotation` accepts finite nonzero directions across the full float range. For an exact half-turn, it crosses normalized `from` with the least-aligned cardinal axis, preferring X, then Y, then Z when tied. Both builders work in frags and verts too, with the GPU's usual float rounding.
 
 ## Operators
 

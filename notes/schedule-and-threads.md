@@ -1,5 +1,15 @@
 # The schedule and the tick on threads
 
+Frame metadata and automatic loops (2026-10-18): Texture.size uses the frame
+host's borrowed resolver, so explicit parallel steps read a precomputed int2
+instead. Direct reads and helper chains give a diagnostic there. After helper
+effects have propagated, the checker revisits automatic grid foreach loops
+with the existing own_cell_only analysis; an indirect C/metadata read keeps the
+loop ordered just as a direct one does. This corrects the earlier premature
+parallel decision without changing the loop's serial semantics. texture_size
+covers direct/helper ordered loops and two negative fixtures pin explicit-step
+diagnostics. No worker receives a platform callback or frame-local pointer.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Determinism

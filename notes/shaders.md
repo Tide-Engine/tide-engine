@@ -1,5 +1,64 @@
 # Code the GPU runs: frags and verts
 
+## Texture-size metadata and payload values (2026-10-18)
+
+Texture.size is lowered to two uniform ints per distinct named image source.
+Compiler-only READ_SIZE flows through the existing helper sampling analysis,
+but shader.sizes is separate from sampled textures: no binding slot, pixel
+capture, mip work or sampler is needed. Metadata sources bind their owning
+component/singleton and attached local fields normally. Helper specialization
+numbers also distinguish size-only sources; metadata shared by stages is
+deduplicated. Actual texture bindings and their runtime enum values are
+unchanged. The normal uniform-size limit still applies. Runtime lookup happens
+when the draw is recorded, so missing Texture metadata stays zero rather than
+reporting the GPU fallback's 1x1 dimensions.
+
+Numeric event/command values use the existing struct-like field lowering in GPU
+helper parameters and factory returns. They grant no dispatch capability. texture_size and platform shader
+pass 23 exercise helper chains, several different textures through one helper,
+direct sources, assets, Raw assets, singleton/attached-local fields, event
+payloads and both stages. Native Vulkan/OpenGL pixels passed; final native/web
+suite results are recorded with the language completion pass.
+
+## FromToRotation and scale matrices (2026-10-18)
+
+The approved math builders `quaternion.FromToRotation(from, to)` and
+`float4x4.Scale(scale)` have CPU and shader implementations together. New
+shared GLSL helper text becomes WGSL through the existing spelling pass and
+SPIR-V through the existing translator; no backend, uniform or runtime ABI
+changed. Helpers are emitted only when used. The FromTo unit helper depends
+on the existing safe float3 normalization; FromTo also uses quaternion
+normalization. Exponent-bit tests reject NaN/infinity before normalization,
+using the existing floatBitsToInt/bitcast spelling.
+
+The formulas mirror `tide/math.h`: max-component rescaling, a shortest-arc
+quaternion, stable half-angle arithmetic near pi, and a deterministic
+least-aligned cardinal axis for exact opposites. Explicit component equality
+recognizes opposite normalized vectors even when a GPU fuses the cross
+product and leaves a small residual. The first Vulkan probe exposed that
+case; the equality branch fixes its axis selection without changing CPU
+result bits. Floats retain the GPU's usual rounding; no shader result enters
+simulation state. Scale directly constructs the diagonal matrix, retaining
+zero and negative scales.
+
+The WebGPU validation run also rejected the helper's initial raw parameter
+name `from`, which WGSL reserves. Internal helper parameters now use `f`/`t`;
+the public Tide argument names remain `from`/`to`. The shared shader golden
+pins these spellings as well.
+
+`compiler/tests/shaders/math` pins both builders in GLSL and WGSL, used in
+both stages and with named arguments. The existing quaternion/matrix probes
+in `platform/tests/shaders.tide` compare CPU, frag and vert results for
+ordinary, opposite, nearly opposite, zero, NaN, huge and tiny directions,
+and zero/negative scale components. The same probes repeat after device
+recreation. CPU accuracy, cross-platform pins and public docs are recorded
+in `notes/language.md`.
+
+Validation: GLSL/WGSL golden checks, native SPIR-V validation and Vulkan pixels
+pass. The corrected helpers pass both WebGL 2 and WebGPU pixels, including
+device recreation. The full native suite and the web suite with its corrected
+WebGPU retest are recorded in `notes/language.md`.
+
 2026-10-15 visibility integration: the `normals` and `place` fixture frags
 formerly named `Shown` are named `Displayed` to avoid the new engine event.
 Their GLSL/WGSL goldens change only that function spelling and its labels;

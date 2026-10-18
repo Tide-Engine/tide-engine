@@ -46,8 +46,9 @@ var level = Scene.Load(Level, LevelSettings { difficulty = 2 });
 Scene.Unload(level);
 ```
 
-Settings are normal root components. Component arguments override only the fields
-they name and can add root components. A bare component argument resets that
+Settings are normal root components. Component literals override only the fields
+they name and can add root components. An existing component value replaces the
+whole root component. A bare component argument resets that
 component to its declared defaults. A match scene uses the ordinary root
 `Visibility` component: `Scene.Load(Level, Visibility { group = group })`.
 
@@ -91,7 +92,7 @@ Scene.Unload(arena);
 
 Additional component arguments attach to the loaded root, for example
 `Scene.Load(Arena { size = 30 }, Visibility { group = group })`. They use the
-same component names and literals as `Spawn` and are present before `Spawned`
+same component names, literals and existing values as `Spawn` and are present before `Spawned`
 handlers run. Local scenes can also take root components, using local placement.
 
 Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. A scene is set up by `Spawned` handlers, and its entities get `Destroyed` when it unloads, both within that tick.

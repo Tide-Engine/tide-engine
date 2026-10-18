@@ -2436,7 +2436,7 @@ static void scene_not_component(const expr *arg, const decl *d, const char *fn)
     else diag_note("load it instead: 'Scene.Load(" STR_FMT " { ... })'", STR_ARG(d->name));
 }
 
-// A component argument to Spawn or Add: `Player` (defaults) or `Player { ... }`.
+// A component argument to Spawn or Add: a type's defaults, a literal or a value.
 // Returns the component, or NULL after reporting an error.
 static decl *check_component_arg(checker *c, expr *arg, const char *fn)
 {
@@ -2486,8 +2486,16 @@ static decl *check_component_arg(checker *c, expr *arg, const char *fn)
         }
     }
     const type t = check_expr(c, arg);
+    if (t.kind == TY_COMPONENT) {
+        if (t.decl->is_scene) {
+            scene_not_component(arg, t.decl, fn);
+            return NULL;
+        }
+        arg->type_decl = t.decl;
+        return t.decl;
+    }
     if (t.kind != TY_ERROR) {
-        diag_error(arg->at, "%s takes components, like 'Player' or 'Player { speed = ... }'", fn);
+        diag_error(arg->at, "%s takes component types or values, like 'Player' or 'Player { speed = ... }'", fn);
     }
     return NULL;
 }
@@ -7366,6 +7374,10 @@ static type check_method(checker *c, expr *e)
                 continue;
             }
             decl *d = check_component_arg(c, arg, "Remove");
+            if (d && arg->bind != BIND_TYPE) {
+                diag_error(arg->at, "Remove takes component types, like 'Stunned', not values");
+                continue;
+            }
             if (d) {
                 d = component_placement(c->prog, d, e->local_world, arg->at);
                 arg->type_decl = d;
@@ -8182,6 +8194,21 @@ static type check_member(checker *c, expr *e)
         return (type){TY_MESH, obj.decl->asset_ref_of};
     }
 
+    if (obj.kind == TY_TEXTURE) {
+        if (str_eq_c(e->member, "size")) {
+            e->object->raw_sampled = true; // Metadata does not read or expose Raw pixels.
+            c->prog->uses_texture_size = true;
+            decl *code = reading_code(c);
+            if (code) {
+                code->calls_c = true; // Reads live resource state: keep its place beside Resize/Dispose and C.
+                code->reads_texture_size = true;
+            }
+            return (type){TY_INT2, NULL};
+        }
+        diag_error(e->at, "a Texture has 'size', its int2 pixel dimensions, not '" STR_FMT "'", STR_ARG(e->member));
+        diag_note("Sample(uv[, filter[, wrap]]) reads its pixels on the GPU");
+        return T_ERR;
+    }
     if (obj.kind == TY_RENDER_TARGET) {
         if (gpu_code(c)) {
             gpu_refuses(c, e->at, "read a RenderTarget",
@@ -8895,7 +8922,11 @@ static type check_index(checker *c, expr *e)
 static type check_list_literal(checker *c, expr *e, const type want, const bool checked)
 {
     if (want.kind == TY_MAP) {
-        diag_error(e->at, "a map starts empty; there's no map literal yet");
+        if (e->args.count == 0) {
+            e->type = want;
+            return want;
+        }
+        diag_error(e->at, "a map literal must be empty, '[]'");
         diag_note("add entries one by one: 'scores[key] = value;'");
         for (int i = 0; i < e->args.count; i++) check_expr_want_checked(c, e->args.items[i], T_ERR, checked);
         return T_ERR;
@@ -10039,7 +10070,7 @@ static type check_expr_any_raw(checker *c, expr *e)
     t = read_type(t); // A field declared T?: the T? it is, whatever it's kept as
     if (c->method && !c->method->makes_text && t.kind != TY_ERROR
         && (optional_text || t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID
-            || (t.kind == TY_STRUCT && decl_holds_text(t.decl)))) {
+            || ((t.kind == TY_STRUCT || t.kind == TY_EVENT) && decl_holds_text(t.decl)))) {
         c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
         c->method->makes_text_at = e->at;
     }
@@ -10221,6 +10252,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             // touches[i], even of a copy
             diag_error(target->at, "devices can only be read");
             diag_note("copy the touch into a 'mut var' to change it");
+            return false;
+        }
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_TEXTURE && str_eq_c(part->member, "size")) {
+            diag_error(target->at, "a Texture's size is read-only: resize its RenderTarget or change its source grid instead");
             return false;
         }
         // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
@@ -10613,9 +10648,29 @@ static bool step_own(const expr *e, const stmt *loop)
     return e->kind == E_NAME && e->bind == BIND_LOCAL && stmt_inside(loop->then_stmt, e->local);
 }
 
+// Helper effects finish propagating after bodies are checked. Revisit automatic
+// grid loops then: a helper may read frame metadata or call C through another helper.
+static void settle_grid_loops(program *prog, stmt *s)
+{
+    if (!s) return;
+    if (s->kind == S_FOREACH && s->value->type.kind == TY_GRID && s->parallel && !own_cell_only(s->then_stmt, s, 0)) {
+        s->parallel = false;
+        prog->uses_text = true; // Ordered grid iteration keeps its row walk in scratch.
+    }
+    for (int i = 0; i < s->stmts.count; i++) settle_grid_loops(prog, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].body.count; k++) settle_grid_loops(prog, s->cases.items[i].body.items[k]);
+    }
+    settle_grid_loops(prog, s->init);
+    settle_grid_loops(prog, s->step);
+    settle_grid_loops(prog, s->then_stmt);
+    settle_grid_loops(prog, s->else_stmt);
+}
+
 static bool own_cell_only_expr(const expr *e, const stmt *loop)
 {
     if (!e) return true;
+    if (e->kind == E_MEMBER && e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) return false;
     if (e->io_operation || e->storage_flush || e->web_fetch) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
@@ -10763,6 +10818,7 @@ static void check_step_expr(checker *c, const expr *e)
 {
     if (!e) return;
     const char *what = e->io_operation ? "access the filesystem" : NULL;
+    if (e->kind == E_MEMBER && e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) what = "read frame image metadata";
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "add, remove or destroy"; break;
@@ -13383,9 +13439,9 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
         diag_error(at, "functions and methods can't return singletons");
         return T_ERR;
     case TY_EVENT:
+        return t;
     case TY_INPUT:
-        diag_error(at, "methods take and return built-in types, structs, enums and components, not %s",
-                   t.kind == TY_EVENT ? "events" : "inputs");
+        diag_error(at, "methods take and return built-in types, structs, enums and components, not inputs");
         return T_ERR;
     case TY_WORLD:
         world_misplaced(str_from("World"), at);
@@ -17754,6 +17810,10 @@ static void check_render_resource_calls(const checker *c)
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
+            if (site->to->reads_texture_size && !site->from->reads_texture_size) {
+                site->from->reads_texture_size = true;
+                changed = true;
+            }
             if (!site->to->render_resources || site->from->render_resources) continue;
             site->from->render_resources = true;
             site->from->render_resources_at = site->call->at;
@@ -17762,6 +17822,10 @@ static void check_render_resource_calls(const checker *c)
     }
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
+        if (site->parallel && site->to->reads_texture_size) {
+            diag_error(site->call->at, "'" STR_FMT "' reads frame image metadata, so it can't run in a parallel loop", STR_ARG(site->to->name));
+            diag_note("read Texture.size before the loop and pass its int2 value to the step");
+        }
         if (!site->to->render_resources || site->from->kind == DECL_FUNCTION || site->from->kind == DECL_METHOD
             || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
         diag_error(site->call->at, "'" STR_FMT "' uses rendering resources, which belong to this machine: the match can't call it",
@@ -19475,6 +19539,9 @@ bool check(program *prog)
     check_world_passing(&c);
     if (diag_error_count() == 0) plan_shaders(prog);
     mark_c_callers(&c);
+    for (int i = 0; i < prog->decls.count; i++) {
+        if (prog->decls.items[i]->kind == DECL_SYSTEM) settle_grid_loops(prog, prog->decls.items[i]->body);
+    }
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
     collect_device_uses(&c);

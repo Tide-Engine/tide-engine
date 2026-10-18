@@ -1,5 +1,107 @@
 # Language features, as tidec builds them
 
+## Conventional API completions (2026-10-18)
+
+The owner asked to clear the remaining gaps that follow existing APIs and make
+game code easier, without returning for routine language/API choices.
+
+- Contextual `[]` initializes an empty `Map<K, V>` in fields, locals, assignments,
+  arguments and returns. It emits the existing zero map handle. Nonempty map
+  literals still explain adding entries by key; untyped `var value = []` gains
+  no inference rule. `maps` covers nested values, retaining a copied map after
+  reassignment, arguments and returns; `map_nonempty_literal` pins rejection.
+- Spawn/Add and Scene.Load extra root components accept existing values and
+  helper results. Existing argument hoisting evaluates once in written order;
+  deferred commands own their copied lists/maps. Sparse presence, placement,
+  duplicate-type checks and scene restrictions remain in the existing checker.
+  Bare types still apply defaults, local sidecars are not copied, and Remove
+  remains type-only. `component_values` checks source mutation, nested map/list
+  retention, sparse and added components, scene roots, effectful factories,
+  snapshots/packing, local spawning and fresh attached-local defaults. Prefab
+  root overrides also accept whole values; literals retain field-wise override
+  behavior, while values replace the whole component. The same fixture covers
+  prefab Spawn and Scene.Load alongside the existing prefabs regressions.
+- Ordinary functions/methods take and return events and commands. Payloads use
+  existing value/mut and heap-retention rules; they provide no implicit World,
+  entity or authenticated sender. `component_values`,
+  `maps` and the existing wire-level `commands` fixture forward complete
+  payloads through helpers and retained factory returns, including a local event.
+  Numeric payload helper values also work on GPU; nonnumeric fields retain
+  normal GPU restrictions. Owned payload reads/returns contribute to the
+  existing scratch-use analysis, as ordinary records do.
+  Recorded local match-event payloads still omit heap data, as recorded
+  component copies already did; forwarding cannot recover omitted values.
+- `Texture.size` is a machine-local read-only int2 on CPU and GPU. Metadata-only
+  shader planning/capture and runtime contracts are in `notes/textures.md` and
+  `notes/shaders.md`. New errors pin assignment and match access rejection.
+
+Input parameters are still deferred for a concrete boundary: `.down`/`.up`
+need the previous input and tick context. Simply allowing a value parameter
+would generate an unavailable previous-input pointer and lose transitive
+input-field usage. No input edge or borrowing semantics were inferred here.
+
+Validation: warning-free Windows native and web debug builds, all 2,383 native
+and 2,293 web CTests, and the docs production build pass on the final source.
+Vulkan/OpenGL and WebGL/WebGPU pixel checks cover the metadata/payload paths;
+WebGPU repeats them after device recreation. Existing determinism pins are
+unchanged. An earlier serial native run had one audio-device state-cleanup
+timing failure; it passed in isolation and both subsequent full native runs
+passed, with no audio change in this task. The clean origin/dev merge then
+brought the owning thread's audio completion fix and browser-runner fixes,
+alongside unrelated Gravewake work. Rebuilt affected targets and reran five
+native platform checks (audio, device, new forget regression, Vulkan/OpenGL
+shaders) and eight web checks (audio/forget, WebGL/WebGPU shaders, rooms,
+handover, ended rooms and threads); all passed. Unrelated game changes needed
+no repeated playtest. Linux/macOS/MinGW/Android and sanitizers remain CI
+coverage; no workflow was dispatched.
+
+## Conventional math API completions (2026-10-18)
+
+The owner approved `quaternion.FromToRotation(float3 from, float3 to)` and
+`float4x4.Scale(float3 scale)` as clear wins following the existing API style,
+and clarified that routine completions and edge cases should be handled within
+the assigned task without approval questions. Substantive language/behavior
+and ownership decisions still belong to the owner; `AGENTS.md` records this
+distinction.
+
+Both signatures live in the shared builtins table, so ordinary checking,
+named arguments, C generation, editor completion/hover/signature help and
+shader-call checking use the existing paths. Generated CPU calls are
+`tide_fromto_q` and `tide_scaling_f4x4`, inline in `tide/math.h`. No parser,
+capability, evaluation-order or storage rule changes. The existing C matrix
+scalar-multiplication helper `tide_scale_f4x4(matrix, scalar)` is unchanged.
+
+FromToRotation normalizes arbitrary finite nonzero directions after dividing
+by their largest absolute component, avoiding overflow and squared-length
+underflow, including subnormals. Invalid or zero directions return identity.
+The ordinary shortest-arc formula is used for nonnegative dot products. Near
+pi, cosine of the half-angle is derived from cross-product length rather than
+`1 + dot`, preserving small deviations from an opposite direction. Exact
+opposites cross normalized `from` with its least-aligned cardinal axis (ties
+X, then Y, then Z), and return a unit quaternion with w = 0. Quaternion output
+is finite and chooses w >= 0. The scale builder directly sets the diagonal
+and homogeneous 1, leaving other entries zero; negative and zero scales work.
+
+Runtime accuracy tests compare independently normalized double-precision
+directions after rotation, exercise 10,000 direction pairs, unit lengths,
+nearly/exactly opposite directions, axis ties, zero/nonfinite inputs and the
+smallest subnormal/largest finite magnitudes. The new
+`crossplatform_direction_rotation_and_scale` hashes 100,000 arbitrary float
+direction pairs (including invalid values and opposites), plus scaled points;
+its pin is `A40EAB68989DC773`. Existing pins are unchanged. The math E2E fixture
+checks defaults, positional and reordered named arguments and resulting
+rotations/transforms. GPU coverage is recorded in `notes/shaders.md`; public
+contracts are in `docs/spec.md` and `docs/language/math.md`.
+
+Validation: full native debug passed all 2,374 tests. The full web debug run
+covered 2,284 tests; its one WebGPU shader failure (reserved helper parameter)
+was fixed, and focused engine, math E2E, shader golden, WebGL and WebGPU tests
+then all passed. Focused native engine/E2E/golden/SPIR-V/Vulkan checks also
+passed after the fix. Both native and WASI release engine suites and math E2E
+passed, retaining the new exact-bit pin across all four configurations and
+all prior pins. The docs production build passed. Other platforms remain CI
+coverage; CI was not dispatched.
+
 ## Attached local arrays: final prototype compiler audit (2026-10-18)
 
 GRAVEWAKE's `local Shard[4] pieces` report still reproduced: the parser's

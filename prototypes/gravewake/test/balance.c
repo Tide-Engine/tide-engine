@@ -4,7 +4,7 @@
 // when it's safe; using each survivor's skills as a player would; reviving a
 // friend; lighting the night's beacon once its chests are found, or the night
 // has gone on a while, or a friend has bled out; keeping by it through the
-// vigil and shooting its Brute), and each run's numbers are printed: how long
+// vigil and shooting its boss), and each run's numbers are printed: how long
 // it lasted, how many nights were kept, kills, downs, when each level came,
 // the items taken (at levels and from chests). Not a test: run it from a
 // release build.
@@ -55,7 +55,7 @@ typedef struct Bot {
     tide_float3 lastFeet;
     float pickWait;
     bool blinkTurn;           // Turned away from the dead to blink clear
-    bool targetBoss;          // The target's a Brute
+    bool targetBoss;          // The target's a boss
 } Bot;
 
 static Bot bots[SEATS_MOST];
@@ -168,7 +168,7 @@ static Hands think(int seat, float dt)
             best = e;
         }
     }
-    // A Brute in range, and nothing on top of us (or it's close, or the beacon's full and it's what's keeping the dawn
+    // A boss in range, and nothing on top of us (or it's close, or the beacon's full and it's what's keeping the dawn
     // off): it first
     bool bestBoss = false;
     bool full = false;

@@ -1,71 +1,162 @@
-// The Brutes: one of the dead three times the size of the rest, with a bar of
-// health across the top of the screen. Each night's rise as its beacon is
-// lit (nights.tide: one, two from the fourth night, three from the seventh),
-// and the night isn't kept till they're down; felled, each gives every
-// survivor an item to pick. A night left unlit grows impatient: a Brute
-// every BOSS_EVERY seconds of it, which brings no prize. A Brute walks at
-// the nearest survivor and, every couple of seconds, does one of three
-// things, each shown before it lands: a slam (it raises its arms; a red ring
-// on the ground is where it comes down, throwing back everyone and
-// everything in it), a charge (it lowers its head; a line on the ground is
-// where it'll run, through anyone on it) or, every third time, a roar that
-// raises the dead all round it. Each night's come harder.
+// The bosses: three mutants, each its own shape (art/mutants, grown from the
+// dead's bodies), its own moves and its own weak spot, a growth that glows:
+// a round there does several times as much (the owner, 2026-10-18: "it would
+// also be nice being able to be strategic about where we shoot maybe? if they
+// have some glowing back or whatever and that deals more damage").
+//
+// - The Mauler: a hulk with arms like trunks and a little head sunk between
+//   its shoulders. It slams (a red ring on the ground is where it comes
+//   down) and charges (a line on the ground is where it'll run), and after a
+//   charge it staggers a moment, its back to whoever stepped aside: the sores
+//   on its back take three times as much.
+// - The Broodmother: a great egg sac on spindly legs. She lobs bile in a
+//   spread, and crouches to birth a pack of runners: her sac takes twice as
+//   much, four times while she births.
+// - The Stalker: stilt-legged, long-necked, spined. It crouches and leaps at
+//   a survivor (a ring is where it lands), swipes close in, and shrieks,
+//   frenzying the dead near it: the sac at its throat takes four times as
+//   much while it shrieks, and enough there cuts the shriek short.
+//
+// Each night's rise as its beacon is lit (nights.tide: one, two from the
+// fourth night, three from the seventh), the nights taking them in turn, and
+// the night isn't kept till they're down; felled, each gives every survivor
+// an item to pick. A night left unlit grows impatient: one every BOSS_EVERY
+// seconds of it, which brings no prize. While one stands, fewer of the dead
+// come (rounds.tide's BOSS_THIN). Each night's come harder.
 
-enum BossMove { Coming, Walk, SlamWindup, ChargeWindup, Charge, Roar, Dying }
+enum BossKind { Mauler, Brood, Stalker }
+
+const int BOSS_KINDS = 3;
+
+enum BossMove { Coming, Walk, SlamWindup, ChargeWindup, Charge, Recover, VolleyWindup, Birth, LeapWindup, Leap, Shriek, Stagger, Dying }
 
 component Boss
 {
     [Position] float3 at;
     [Rotation] float yaw;
+    BossKind kind;
     float health;
     float healthMost;
     BossMove move;
     float timer;                // Seconds into its move
-    float3 aim;                 // Where a slam comes down; which way a charge runs
+    float3 aim;                 // Where a slam comes down or a leap lands; which way a charge runs
+    float3 from;                // Where a leap began
     float cooldown;             // Seconds till it does something again
-    int attacks;                // How many it has done: every third a roar
+    int attacks;                // How many it has done: every third its own
     int struck;                 // A bit per seat: who this charge has hit
+    float hurt;                 // What it has taken in this move (a shriek's, to cut it short)
     float stride;               // Metres walked: the walk's clock
-    int number;                 // Which Brute of the run it is, from 1
-    int night;                  // The night it rose in: its blows and roars are that night's
+    int number;                 // Which of the run it is, from 1
+    int night;                  // The night it rose in: its blows are that night's
     bool vigil;                 // Risen at the beacon's lighting: the night's own, with a prize
     int slot = -1;              // Where it is in the Herd this tick
     local float flash;
 }
 
-const float BOSS_SIZE = 2.8;
-const float BOSS_RADIUS = 1.0;
-const float BOSS_SPEED = 2.3;
+// What each kind is: how big it's drawn (its mesh is about a man's height), how wide it is to bump into, how fast it
+// walks, how tough against the others; where its head, chest, hips and weak spot are on its mesh (make_mutants.py's
+// marks in art/mutants/mutants.json: rebaking the mutants means reading them again), how wide its head, chest and weak
+// spot are to a round (the chest ball of one of the dead had buried the Stalker's throat) and how much more a round
+// there does.
+struct Mutant
+{
+    string name;
+    float size;
+    float radius;
+    float speed;
+    float health;
+    float3 head;
+    float3 chest;
+    float3 hips;
+    float3 weak;
+    float weakRadius;
+    float weakTimes;
+    float headRadius;
+    float chestRadius;
+    float3 tint;
+    string hint;
+}
+
+Mutant MutantOf(BossKind kind)
+{
+    switch (kind)
+    {
+        case BossKind.Brood:
+            return Mutant { name = "THE BROODMOTHER", size = 2.2, radius = 1.1, speed = 1.7, health = 1.1, head = float3(0, 1.45, 0.38), chest = float3(0, 1.375, 0.17),
+                            hips = float3(0, 0.99, 0.07), weak = float3(0, 1.03, 0.39), weakRadius = 0.36, weakTimes = 2, headRadius = 0.2, chestRadius = 0.36, tint = float3(0.9, 1.0, 0.75),
+                            hint = "Her glowing sac: wide open as she births" };
+        case BossKind.Stalker:
+            return Mutant { name = "THE STALKER", size = 2.0, radius = 0.7, speed = 4.2, health = 0.75, head = float3(0, 1.71, 0.61), chest = float3(0, 1.66, 0.33),
+                            hips = float3(0, 1.23, 0.05), weak = float3(0, 1.51, 0.44), weakRadius = 0.13, weakTimes = 1.5, headRadius = 0.13, chestRadius = 0.25, tint = float3(0.8, 0.85, 1.0),
+                            hint = "The sac at its throat, as it shrieks" };
+    }
+    return Mutant { name = "THE MAULER", size = 2.3, radius = 1.0, speed = 2.4, health = 1.0, head = float3(0, 1.17, 0.46), chest = float3(0, 1.14, 0.32),
+                    hips = float3(0, 0.78, 0.05), weak = float3(0, 1.29, 0.19), weakRadius = 0.3, weakTimes = 3, headRadius = 0.13, chestRadius = 0.36, tint = float3(1.0, 0.75, 0.68),
+                    hint = "The sores on its back" };
+}
+
+// How much more a round to its weak spot does now: the Broodmother's sac most as she births, the Stalker's throat as it
+// shrieks.
+float WeakTimes(Boss boss)
+{
+    var m = MutantOf(boss.kind);
+    if (boss.kind == BossKind.Brood && boss.move == BossMove.Birth) return 4;
+    if (boss.kind == BossKind.Stalker && boss.move == BossMove.Shriek) return 4;
+    return m.weakTimes;
+}
+
+const float BOSS_SIZE = 2.3;            // The widest a boss is to the wading (hands.tide)
 const float BOSS_RISE = 2.5;
 const float SLAM_WINDUP = 1.1;
 const float SLAM_RADIUS = 6.5;
 const float SLAM_DAMAGE = 45;
+const float SWIPE_WINDUP = 0.55;        // The Stalker's slam: quicker, closer
+const float SWIPE_RADIUS = 3.2;
+const float SWIPE_DAMAGE = 30;
 const float CHARGE_WINDUP = 0.9;
 const float CHARGE_SPEED = 15;
 const float CHARGE_SECONDS = 1.3;
 const float CHARGE_DAMAGE = 35;
-const float ROAR_SECONDS = 1.6;
+const float RECOVER_SECONDS = 1.6;      // The Mauler, after a charge: turned slowly, its back open
+const float VOLLEY_WINDUP = 0.9;
+const int VOLLEY_GLOBS = 5;
+const float BIRTH_SECONDS = 2.4;
+const float LEAP_WINDUP = 0.75;
+const float LEAP_SECONDS = 0.8;
+const float LEAP_RADIUS = 4.2;
+const float LEAP_DAMAGE = 40;
+const float SHRIEK_SECONDS = 1.8;
+const float SHRIEK_CUT = 0.1;           // Of its health, to the throat in a shriek, cuts it short
+const float SHRIEK_REACH = 18;
+const float FRENZY_SECONDS = 7;
+const float STAGGER_SECONDS = 1.3;
 
-// A Brute's health: a great deal, more with the danger, and with the party (Crowd).
-float BossHealth(float danger, float crowd)
+// A boss's health: a great deal, more with the danger, and with the party (Crowd); each kind its share.
+float BossHealth(float danger, float crowd, BossKind kind)
 {
-    return 2000 * danger * crowd;
+    return 2000 * danger * crowd * MutantOf(kind).health;
 }
 
-// A Brute clawing up `near` to `far` metres from a place: the beacon's (one of the night's own, `vigil`), or a
+// Which kind rises: the nights take them in turn, and two or three at a vigil are each another.
+BossKind KindForNight(int night, int k)
+{
+    return BossKind(((night - 1) + k) % BOSS_KINDS);
+}
+
+// A boss clawing up `near` to `far` metres from a place: the beacon's (one of the night's own, `vigil`), or a
 // survivor's.
-void RaiseBrute(mut Match match, Ashwick ashwick, float3 focus, bool vigil, float near, float far)
+void RaiseBoss(mut Match match, Ashwick ashwick, float3 focus, bool vigil, float near, float far, BossKind kind)
 {
     var at = RisingPlace(ashwick, focus, near, far);
     if (at.y < -100) return;
     match.bosses += 1;
-    var health = BossHealth(match.danger, match.crowd);
-    Spawn(Boss { at = at, yaw = YawTo(at, focus), health = health, healthMost = health, move = BossMove.Coming, number = match.bosses, night = match.night, vigil = vigil,
-                 cooldown = 1.5 });
-    Send(BossCame { at = at, number = match.bosses, vigil = vigil });
+    var health = BossHealth(match.danger, match.crowd, kind);
+    Spawn(Boss { at = at, yaw = YawTo(at, focus), kind = kind, health = health, healthMost = health, move = BossMove.Coming, number = match.bosses, night = match.night,
+                 vigil = vigil, cooldown = 1.5 });
+    Send(BossCame { at = at, number = match.bosses, vigil = vigil, kind = kind });
 }
 
-// A night not yet lit grows impatient: a Brute every BOSS_EVERY seconds of it, 22 to 34 m from one of the survivors.
+// A night not yet lit grows impatient: a boss every BOSS_EVERY seconds of it, 22 to 34 m from one of the survivors.
 [Stage(Tick.Rounds, 3)]
 system BossCome(mut Match match, Ashwick ashwick, query (Survivor survivor) survivors)
 {
@@ -77,7 +168,9 @@ system BossCome(mut Match match, Ashwick ashwick, query (Survivor survivor) surv
     if (near.count == 0) return;
     match.bossNext += BOSS_EVERY;
     var pick = Random.NextInt(near.count);
-    RaiseBrute(match, ashwick, near[pick], false, 22, 34);
+    var kind = Random.NextInt(BOSS_KINDS);
+    RaiseBoss(match, ashwick, near[pick], false, 22, 34, BossKind(match.devBoss >= 0 ? match.devBoss : kind));
+    match.devBoss = -1;
 }
 
 [Stage(Tick.Zombies)]
@@ -94,7 +187,9 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
         BossTo(boss, BossMove.Dying);
         return;
     }
-    var later = boss.night - 1;     // Nights past the first: each one's Brutes hit harder and come faster
+    var m = MutantOf(boss.kind);
+    var later = boss.night - 1;     // Nights past the first: each one's come faster
+    var harm = Harm(match.danger);
     switch (boss.move)
     {
         case BossMove.Coming:
@@ -107,6 +202,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
     // Whom it's after: the nearest survivor on their feet
     mut Entity target = default;
     mut var targetAt = float3(0);
+    mut var targetGoes = float3(0);
     mut var nearest = 1000.0;
     foreach (var row in survivors)
     {
@@ -117,6 +213,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
         nearest = far;
         target = row.entity;
         targetAt = s.feet;
+        targetGoes = s.velocity;
     }
     var toTarget = Flatten(targetAt - boss.at);
     switch (boss.move)
@@ -124,59 +221,39 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
         case BossMove.Walk:
         {
             if (target == default) return;
-            // Its next move, when it's ready: every third a roar, else a slam close in or a charge from further off
-            if (boss.cooldown <= 0)
-            {
-                if (boss.attacks % 3 == 2)
-                {
-                    BossTo(boss, BossMove.Roar);
-                    Send(Cue { sound = Sfx.BossRoar, at = boss.at + float3(0, 4, 0) });
-                    return;
-                }
-                if (nearest < 7)
-                {
-                    boss.aim = boss.at + Flat(boss.yaw) * 2.5;
-                    BossTo(boss, BossMove.SlamWindup);
-                    return;
-                }
-                if (nearest < 26)
-                {
-                    boss.aim = toTarget;
-                    BossTo(boss, BossMove.ChargeWindup);
-                    Send(Cue { sound = Sfx.BossCharge, at = boss.at + float3(0, 4, 0) });
-                    return;
-                }
-            }
+            if (boss.cooldown <= 0 && NextMove(boss, nearest, toTarget, targetAt, targetGoes)) return;
             // On its way: straight at them where nothing's between, else downhill on the dead's way
             mut var wish = toTarget;
             if (nearest > 18 || !ClearPath(ashwick, boss.at, targetAt)) wish = Downhill(ashwick, boss.at);
             Turn(boss, wish, 2.5 * dt);
-            Step(boss, ashwick, Flat(boss.yaw) * BOSS_SPEED * (1 + 0.08 * later) * dt, dt);
+            Step(boss, ashwick, Flat(boss.yaw) * m.speed * (1 + 0.06 * later) * dt, dt);
             return;
         }
         case BossMove.SlamWindup:
+        {
+            // The Mauler's slam, or the Stalker's quicker swipe: everyone in the ring hurt and thrown back, the dead in
+            // it knocked over
+            var mauler = boss.kind == BossKind.Mauler;
+            var reach = mauler ? SLAM_RADIUS : SWIPE_RADIUS;
             Turn(boss, toTarget, 1.5 * dt);
-            if (boss.timer < SLAM_WINDUP) return;
-            // Down it comes: everyone in the ring is hurt and thrown back, the dead in it knocked over
+            if (boss.timer < (mauler ? SLAM_WINDUP : SWIPE_WINDUP)) return;
             foreach (var row in survivors)
             {
                 var s = row.survivor;
                 if (!s.ready || s.life != Life.Standing) continue;
-                var off = Flatten(s.feet - boss.aim);
-                if (Math.Length((s.feet - boss.aim).xz) > SLAM_RADIUS) continue;
-                row.entity.Send(Hurt { damage = SLAM_DAMAGE * (1 + 0.15 * later), from = boss.aim });
-                row.entity.Send(Shoved { velocity = off * 11 + float3(0, 6, 0) });
+                if (Math.Length((s.feet - boss.aim).xz) > reach) continue;
+                row.entity.Send(Hurt { damage = (mauler ? SLAM_DAMAGE : SWIPE_DAMAGE) * harm, from = boss.aim });
+                row.entity.Send(Shoved { velocity = Flatten(s.feet - boss.aim) * 11 + float3(0, 6, 0) });
             }
-            foreach (var z in Near(herd, boss.aim, SLAM_RADIUS))
+            foreach (var z in Near(herd, boss.aim, reach))
             {
-                if (!z.hittable || z.entity == this || Math.Length((z.at - boss.aim).xz) > SLAM_RADIUS) continue;
+                if (!z.hittable || z.entity == this || Math.Length((z.at - boss.aim).xz) > reach) continue;
                 z.entity.Send(Wound { seat = -1, from = boss.aim, knock = 7, down = true, blow = Blow.Shove });
             }
-            Send(Blast { at = boss.aim, reach = SLAM_RADIUS, element = Element.Blast, kind = Shot.Quake });
-            boss.attacks += 1;
-            boss.cooldown = 2.2;
-            BossTo(boss, BossMove.Walk);
+            Send(Blast { at = boss.aim, reach = reach, element = Element.Blast, kind = Shot.Quake });
+            Done(boss, mauler ? 2.2 : 1.4);
             return;
+        }
         case BossMove.ChargeWindup:
             // It lines up on them till the last moment
             if (boss.timer < CHARGE_WINDUP * 0.6 && Math.Length(toTarget) > 0.1) boss.aim = toTarget;
@@ -197,7 +274,7 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
                 if (Math.Length((s.feet - boss.at).xz) > 1.9) continue;
                 boss.struck |= 1 << s.seat;
                 var side = Flatten(s.feet - boss.at);
-                row.entity.Send(Hurt { damage = CHARGE_DAMAGE * (1 + 0.15 * later), from = boss.at });
+                row.entity.Send(Hurt { damage = CHARGE_DAMAGE * harm, from = boss.at });
                 row.entity.Send(Shoved { velocity = boss.aim * 12 + side * 6 + float3(0, 5, 0) });
             }
             foreach (var z in Near(herd, boss.at, 2.2))
@@ -208,36 +285,188 @@ system BossThink(mut Boss boss, Match match, Ashwick ashwick, Herd herd, Time ti
             if (boss.timer >= CHARGE_SECONDS || !moved)
             {
                 boss.attacks += 1;
-                boss.cooldown = 2.5;
-                BossTo(boss, BossMove.Walk);
+                BossTo(boss, BossMove.Recover);
             }
             return;
         }
-        case BossMove.Roar:
-            // Half a second in, the dead claw up all round it
-            if (boss.timer - dt < 0.6 && boss.timer >= 0.6)
+        case BossMove.Recover:
+            // Spent: it turns back slowly, its back to whoever stepped aside
+            Turn(boss, toTarget, 0.6 * dt);
+            if (boss.timer >= RECOVER_SECONDS) Done(boss, 0.8);
+            return;
+        case BossMove.VolleyWindup:
+        {
+            // The Broodmother rears and lobs bile, a spread of it at them
+            Turn(boss, toTarget, 2.5 * dt);
+            if (boss.timer < VOLLEY_WINDUP) return;
+            if (target != default)
             {
-                var count = 14 + 6 * boss.night;
-                for (var k = 0; k < count; k++)
+                var mouth = boss.at + Math.Rotate(quaternion.AxisAngle(float3(0, 1, 0), boss.yaw), m.head * m.size);
+                var side = Flat(boss.yaw + Math.PI * 0.5);
+                for (var k = 0; k < VOLLEY_GLOBS; k++)
                 {
-                    var at = RisingPlace(ashwick, boss.at, 3, 11);
-                    if (at.y < -100) break;
-                    Spawn(Zombie { at = at, yaw = Random.NextFloat(Math.TAU), health = ZombieHealth(match.danger), gait = GaitFor(match.danger + 2), look = Random.NextInt(ZOMBIE_LOOKS),
-                                   state = ZombieState.Rising, pace = Random.NextFloat(0.9, 1.1), phase = Random.NextInt(64) });
+                    var spread = (k - (VOLLEY_GLOBS - 1) * 0.5) * 1.8;
+                    Lob(mouth, targetAt + side * spread, targetGoes, SPIT_HURT * 1.3 * harm);
                 }
+                Send(Cue { sound = Sfx.Spit, at = mouth });
             }
-            if (boss.timer < ROAR_SECONDS) return;
-            boss.attacks += 1;
-            boss.cooldown = 2.0;
-            BossTo(boss, BossMove.Walk);
+            Done(boss, 2.4);
+            return;
+        }
+        case BossMove.Birth:
+        {
+            // She crouches, her sac glowing and wide open, and a pack of runners spills out of it
+            if (boss.timer < BIRTH_SECONDS) return;
+            var turn = quaternion.AxisAngle(float3(0, 1, 0), boss.yaw);
+            var sac = boss.at + Math.Rotate(turn, float3(0, 0, 0.6) * m.size);
+            var count = 6 + 2 * boss.night;
+            for (var k = 0; k < count; k++)
+            {
+                var way = Flat(boss.yaw + (k - count * 0.5) * 0.35);
+                var at = On(sac.x + way.x * 0.8, sac.z + way.z * 0.8);
+                var look = Random.NextInt(ZOMBIE_LOOKS);
+                var pace = Random.NextFloat(1.0, 1.2);
+                Spawn(Zombie { at = at, yaw = boss.yaw, health = ZombieHealth(match.danger) * 0.5, gait = Gait.Sprint, look = look, state = ZombieState.Hunting, pace = pace,
+                               phase = k, shove = way * 6, kind = ZombieKind.Walker });
+            }
+            Send(Blast { at = sac + float3(0, 1, 0), reach = 3, element = Element.None, kind = Shot.Bile });
+            Done(boss, 3);
+            return;
+        }
+        case BossMove.LeapWindup:
+            // The Stalker crouches, turned on where it'll land (where they'll be)
+            Turn(boss, Flatten(boss.aim - boss.at), 6 * dt);
+            if (boss.timer < LEAP_WINDUP) return;
+            boss.from = boss.at;
+            BossTo(boss, BossMove.Leap);
+            Send(Cue { sound = Sfx.BossCharge, at = boss.at + float3(0, 3, 0) });
+            return;
+        case BossMove.Leap:
+        {
+            var t = Math.Saturate(boss.timer / LEAP_SECONDS);
+            var flat = Math.Lerp(boss.from, boss.aim, t);
+            boss.at = float3(flat.x, Math.Lerp(boss.from.y, boss.aim.y, t) + Math.Sin(t * Math.PI) * 6, flat.z);
+            if (t < 1) return;
+            boss.at = boss.aim;
+            // Down: everyone in the ring hurt and thrown, the dead in it knocked over
+            foreach (var row in survivors)
+            {
+                var s = row.survivor;
+                if (!s.ready || s.life != Life.Standing || Math.Length((s.feet - boss.aim).xz) > LEAP_RADIUS) continue;
+                row.entity.Send(Hurt { damage = LEAP_DAMAGE * harm, from = boss.aim });
+                row.entity.Send(Shoved { velocity = Flatten(s.feet - boss.aim) * 9 + float3(0, 5, 0) });
+            }
+            foreach (var z in Near(herd, boss.aim, LEAP_RADIUS))
+            {
+                if (!z.hittable || z.entity == this || Math.Length((z.at - boss.aim).xz) > LEAP_RADIUS) continue;
+                z.entity.Send(Wound { seat = -1, from = boss.aim, knock = 7, down = true, blow = Blow.Shove });
+            }
+            Send(Blast { at = boss.aim, reach = LEAP_RADIUS, element = Element.Blast, kind = Shot.Quake });
+            Done(boss, 1.6);
+            return;
+        }
+        case BossMove.Shriek:
+            // Its throat swelling: at the end, the dead near it frenzied
+            if (boss.timer < SHRIEK_SECONDS) return;
+            foreach (var z in Near(herd, boss.at, SHRIEK_REACH))
+            {
+                if (!z.hittable || z.entity == this || Math.Length((z.at - boss.at).xz) > SHRIEK_REACH) continue;
+                z.entity.Send(Frenzied { seconds = FRENZY_SECONDS });
+            }
+            Send(Cue { sound = Sfx.BossRoar, at = boss.at + float3(0, 4, 0) });
+            Done(boss, 2);
+            return;
+        case BossMove.Stagger:
+            if (boss.timer >= STAGGER_SECONDS) Done(boss, 1.2);
             return;
     }
+}
+
+// Its next move, when it's ready: the Mauler's every third a charge from close in too, else a slam close or a charge
+// further off; the Broodmother's every third a birth, else a volley; the Stalker's every third a shriek, else a leap
+// from further off or a swipe close in. False if it walks on.
+bool NextMove(mut Boss boss, float nearest, float3 toTarget, float3 targetAt, float3 targetGoes)
+{
+    var third = boss.attacks % 3 == 2;
+    switch (boss.kind)
+    {
+        case BossKind.Mauler:
+            if (nearest < 7 && !third)
+            {
+                boss.aim = boss.at + Flat(boss.yaw) * 2.5;
+                BossTo(boss, BossMove.SlamWindup);
+                return true;
+            }
+            if (nearest < 26)
+            {
+                boss.aim = toTarget;
+                BossTo(boss, BossMove.ChargeWindup);
+                Send(Cue { sound = Sfx.BossCharge, at = boss.at + float3(0, 4, 0) });
+                return true;
+            }
+            return false;
+        case BossKind.Brood:
+            if (third)
+            {
+                BossTo(boss, BossMove.Birth);
+                Send(Cue { sound = Sfx.Swell, at = boss.at + float3(0, 2, 0) });
+                return true;
+            }
+            if (nearest < 26)
+            {
+                BossTo(boss, BossMove.VolleyWindup);
+                Send(Cue { sound = Sfx.Retch, at = boss.at + float3(0, 3, 0) });
+                return true;
+            }
+            return false;
+    }
+    // The Stalker
+    if (third)
+    {
+        BossTo(boss, BossMove.Shriek);
+        Send(Cue { sound = Sfx.BossRoar, at = boss.at + float3(0, 4, 0) });
+        return true;
+    }
+    if (nearest < 5)
+    {
+        boss.aim = boss.at + Flat(boss.yaw) * 1.6;
+        BossTo(boss, BossMove.SlamWindup);
+        return true;
+    }
+    if (nearest < 30)
+    {
+        // Where they'll be when it lands, near enough
+        var lead = targetAt + float3(targetGoes.x, 0, targetGoes.z) * (LEAP_WINDUP + LEAP_SECONDS) * 0.6;
+        boss.aim = On(lead.x, lead.z);
+        BossTo(boss, BossMove.LeapWindup);
+        return true;
+    }
+    return false;
+}
+
+// A move done: it walks again, and does nothing more for `rest` seconds.
+void Done(mut Boss boss, float rest)
+{
+    boss.attacks += 1;
+    boss.cooldown = rest;
+    BossTo(boss, BossMove.Walk);
 }
 
 void BossTo(mut Boss boss, BossMove move)
 {
     boss.move = move;
     boss.timer = 0;
+    boss.hurt = 0;
+}
+
+// Bile lobbed from a place to land at another, a little ahead of how they go (as a Spitter's: zombies.tide's Spit).
+void Lob(float3 from, float3 target, float3 goes, float damage)
+{
+    var aim = target + float3(0, 1.0, 0);
+    var flight = Math.Clamp(Math.Length((aim - from).xz) / SPIT_SPEED, 0.4, 1.8);
+    var to = aim + float3(goes.x, 0, goes.z) * flight * SPIT_LEAD;
+    var velocity = (to - from) / flight + float3(0, 0.5 * SPIT_GRAVITY * flight, 0);
+    Spawn(Missile { kind = Shot.Spit, at = from, velocity = velocity, gravity = SPIT_GRAVITY, damage = damage, splash = SPIT_REACH, seat = -1, life = 4 });
 }
 
 float3 Flatten(float3 v)
@@ -259,7 +488,7 @@ void Turn(mut Boss boss, float3 way, float most)
 bool Step(mut Boss boss, Ashwick ashwick, float3 by, float dt)
 {
     var before = boss.at;
-    mut var at = PushOut(ashwick, boss.at + by, BOSS_RADIUS, 3);
+    mut var at = PushOut(ashwick, boss.at + by, MutantOf(boss.kind).radius, 3);
     if (!Walkable(ashwick, CellOf(at)) && Walkable(ashwick, CellOf(before))) at = before;
     at = Climbed(ashwick, before, at, CLIMB_RATE, dt);
     at.y = Ground(at.x, at.z);
@@ -268,7 +497,8 @@ bool Step(mut Boss boss, Ashwick ashwick, float3 by, float dt)
     return Math.Length((at - before).xz) > Math.Length(by.xz) * 0.4;
 }
 
-// Each tick, the Brute among the dead the herd holds: its head, chest and hips three times as high and as wide.
+// Each tick, the boss among the dead the herd holds: its head, chest, hips and weak spot where its mesh has them, at
+// its size.
 [Stage(Tick.Zombies, 3)]
 system BossMuster(mut Boss boss, mut Herd herd)
 {
@@ -277,38 +507,44 @@ system BossMuster(mut Boss boss, mut Herd herd)
         boss.slot = -1;
         return;
     }
+    var m = MutantOf(boss.kind);
     var turn = quaternion.AxisAngle(float3(0, 1, 0), boss.yaw);
-    var low = BossSink(boss);
+    var low = float3(0, BossSink(boss), 0);
     var body = Body
     {
-        entity = this, at = boss.at, yaw = boss.yaw, risen = 1, hittable = true, size = BOSS_SIZE,
-        head = boss.at + Math.Rotate(turn, float3(0, 1.5, 0.2) * BOSS_SIZE) - float3(0, low, 0),
-        chest = boss.at + Math.Rotate(turn, float3(0, 1.15, 0.12) * BOSS_SIZE) - float3(0, low, 0),
-        hips = boss.at + Math.Rotate(turn, float3(0, 0.92, 0) * BOSS_SIZE) - float3(0, low, 0),
+        entity = this, at = boss.at, yaw = boss.yaw, risen = 1, hittable = true, size = m.size,
+        head = boss.at + Math.Rotate(turn, m.head * m.size) - low,
+        chest = boss.at + Math.Rotate(turn, m.chest * m.size) - low,
+        hips = boss.at + Math.Rotate(turn, m.hips * m.size) - low, boss = herd.bosses.count,
     };
+    herd.bosses.Add(Spots { headRadius = m.headRadius * m.size, chestRadius = m.chestRadius * m.size, weak = boss.at + Math.Rotate(turn, m.weak * m.size) - low,
+                            weakRadius = m.weakRadius * m.size, weakTimes = WeakTimes(boss) });
     boss.slot = herd.bodies.count;
     var cell = HerdCell(boss.at);
     herd.bodies.Add(body);
     herd.feet.Add(boss.at);
+    herd.lifts.Add(0);
     herd.next.Add(herd.first[cell]);
     herd.first[cell] = boss.slot;
 }
 
-// How far below its feet the Brute is drawn: rising out of the ground.
+// How far below its feet a boss is drawn: rising out of the ground, sinking away dead.
 float BossSink(Boss boss)
 {
-    if (boss.move == BossMove.Coming) return (1 - Math.SmoothStep(0, 1, boss.timer / BOSS_RISE)) * 1.9 * BOSS_SIZE;
+    var size = MutantOf(boss.kind).size;
+    if (boss.move == BossMove.Coming) return (1 - Math.SmoothStep(0, 1, boss.timer / BOSS_RISE)) * 1.9 * size;
     if (boss.move == BossMove.Dying && boss.timer > 3) return (boss.timer - 3) * 1.5;
     return 0;
 }
 
-// A blow to a Brute: no knocking it over, no freezing it. Felled, a great orb; one of the night's own gives every
-// survivor an item to pick.
+// A blow to a boss: no knocking it over, no freezing it. In a shriek, enough to its throat cuts it short. Felled, a
+// great orb; one of the night's own gives every survivor an item to pick.
 event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
 {
     if (boss.move == BossMove.Dying || wound.seat < 0) return;
     var damage = wound.damage;
     boss.health -= damage;
+    boss.hurt += wound.weak ? damage : 0;
     var killed = boss.health <= 0;
     if (killed)
     {
@@ -320,9 +556,16 @@ event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
                 if (party.taken[seat]) party.survivors[seat].Send(BossFelled { by = wound.seat });
         Send(Cue { sound = Sfx.BossDeath, at = boss.at + float3(0, 3, 0) });
     }
+    else if (boss.move == BossMove.Shriek && boss.hurt >= boss.healthMost * SHRIEK_CUT)
+    {
+        // Choked off: no frenzy
+        BossTo(boss, BossMove.Stagger);
+        Send(Cue { sound = Sfx.BossDeath, at = boss.at + float3(0, 3, 0) });
+    }
+    var m = MutantOf(boss.kind);
     var turn = quaternion.AxisAngle(float3(0, 1, 0), boss.yaw);
-    this.Send(Struck { at = boss.at + Math.Rotate(turn, float3(0, 1.15, 0.12) * BOSS_SIZE), from = wound.from, head = wound.head, killed = killed, element = wound.element,
-                       seat = wound.seat, blow = wound.blow, crit = wound.crit });
+    this.Send(Struck { at = boss.at + Math.Rotate(turn, (wound.weak ? m.weak : m.chest) * m.size), from = wound.from, head = wound.head, killed = killed,
+                       element = wound.element, seat = wound.seat, blow = wound.blow, crit = wound.crit, weak = wound.weak });
 }
 
 // A blow's flash, on this machine.
@@ -331,13 +574,13 @@ local event(Struck struck) FlashBoss(mut Boss boss)
     boss.flash = 0.6;
 }
 
-// A Brute felled: an item for each survivor, picked as a level's is.
+// One of the night's own felled: an item for each survivor, picked as a level's is.
 event(BossFelled felled) TakeFelled(mut Survivor survivor)
 {
     survivor.pending += 1;
 }
 
-// Thrown by a Brute.
+// Thrown by a boss.
 event(Shoved shoved) TakeShoved(mut Survivor survivor)
 {
     if (survivor.life != Life.Standing) return;
@@ -350,6 +593,7 @@ event BossCame
     float3 at;
     int number;
     bool vigil;
+    BossKind kind;
 }
 
 event BossFelled
@@ -362,31 +606,46 @@ event Shoved
     float3 velocity;
 }
 
-// ---- Drawn: the plague king's body, three times the size, its own dark red ----
+// ---- Drawn: its own mutant's mesh, at its size, in its own tint; the weak spot glowing ----
 
 [Stage(Layers.Gather, 1)]
-view GatherBoss(mut Boss boss, mut Horde horde)
+view GatherBoss(mut Boss boss, mut Mutants mutants, Look look)
 {
     boss.flash = Math.Max(0, boss.flash - Math.Min(Frame.dt, 0.05) * 4);
-    if (!horde.made) return;
-    var mesh = MeshOf(3);
+    if (!mutants.made) return;
+    var m = MutantOf(boss.kind);
+    var mesh = MutantMesh(boss.kind);
+    var pulse = 0.5 + 0.5 * Math.Sin(look.time * 5);
+    var open = WeakTimes(boss) > m.weakTimes ? 1.0 : 0.0;
     mut var one = Shambler
     {
-        transform = float4x4.TRS(boss.at - float3(0, BossSink(boss), 0), quaternion.AxisAngle(float3(0, 1, 0), boss.yaw), float3(BOSS_SIZE)),
+        transform = float4x4.TRS(boss.at - float3(0, BossSink(boss), 0), quaternion.AxisAngle(float3(0, 1, 0), boss.yaw), float3(m.size)),
         flash = boss.flash * 0.6,
-        tint = float3(0.85, 0.55, 0.5),
+        tint = m.tint,
+        weak = 0.6 + 0.4 * pulse + open * (1.4 + pulse),
     };
     var t = boss.timer;
-    var claw = horde.info.clips[int(HordeClip.Claw)].seconds;
     switch (boss.move)
     {
-        case BossMove.Coming: ShowFrame(horde, one, mesh, HordeClip.Rise, Math.Saturate(t / BOSS_RISE) * horde.info.clips[int(HordeClip.Rise)].seconds); break;
-        case BossMove.Walk: ShowFrame(horde, one, mesh, HordeClip.Walk, boss.stride / (1.361 * BOSS_SIZE) * 1.333); break;
-        case BossMove.SlamWindup: ShowFrame(horde, one, mesh, HordeClip.Claw, Math.Saturate(t / SLAM_WINDUP) * claw * 0.55); break;
-        case BossMove.ChargeWindup: ShowFrame(horde, one, mesh, HordeClip.Idle, t * 3); break;
-        case BossMove.Charge: ShowFrame(horde, one, mesh, HordeClip.Sprint, boss.stride / (2.9 * BOSS_SIZE) * 0.667); break;
-        case BossMove.Roar: ShowFrame(horde, one, mesh, HordeClip.Claw, Math.Saturate(t / ROAR_SECONDS) * claw); break;
-        case BossMove.Dying: ShowFrame(horde, one, mesh, HordeClip.Death, t * 0.8); break;
+        case BossMove.Coming: PoseMutant(mutants, one, mesh, MutantClip.Rise, Math.Saturate(t / BOSS_RISE)); break;
+        case BossMove.Walk:
+            if (boss.kind == BossKind.Stalker) PoseMutant(mutants, one, mesh, MutantClip.Run, boss.stride / (2.9 * m.size) * 0.667 / ClipSeconds(mutants, MutantClip.Run));
+            else PoseMutant(mutants, one, mesh, MutantClip.Walk, boss.stride / (1.361 * m.size) * 1.333 / ClipSeconds(mutants, MutantClip.Walk));
+            break;
+        case BossMove.SlamWindup:
+            PoseMutant(mutants, one, mesh, boss.kind == BossKind.Mauler ? MutantClip.Slam : MutantClip.Claw,
+                       Math.Saturate(t / (boss.kind == BossKind.Mauler ? SLAM_WINDUP : SWIPE_WINDUP)) * 0.6);
+            break;
+        case BossMove.ChargeWindup: PoseMutant(mutants, one, mesh, MutantClip.Crouch, t * 2 / ClipSeconds(mutants, MutantClip.Crouch)); break;
+        case BossMove.Charge: PoseMutant(mutants, one, mesh, MutantClip.Run, boss.stride / (2.9 * m.size) * 0.667 / ClipSeconds(mutants, MutantClip.Run)); break;
+        case BossMove.Recover: PoseMutant(mutants, one, mesh, MutantClip.Hit, Math.Saturate(t / RECOVER_SECONDS)); break;
+        case BossMove.VolleyWindup: PoseMutant(mutants, one, mesh, MutantClip.Claw, Math.Saturate(t / VOLLEY_WINDUP) * 0.55); break;
+        case BossMove.Birth: PoseMutant(mutants, one, mesh, MutantClip.Crouch, t / ClipSeconds(mutants, MutantClip.Crouch)); break;
+        case BossMove.LeapWindup: PoseMutant(mutants, one, mesh, MutantClip.Crouch, t * 1.5 / ClipSeconds(mutants, MutantClip.Crouch)); break;
+        case BossMove.Leap: PoseMutant(mutants, one, mesh, MutantClip.Jump, t / ClipSeconds(mutants, MutantClip.Jump)); break;
+        case BossMove.Shriek: PoseMutant(mutants, one, mesh, MutantClip.Hit, 0.35 + 0.1 * Math.Sin(t * 30)); break;
+        case BossMove.Stagger: PoseMutant(mutants, one, mesh, MutantClip.Hit, Math.Saturate(t / STAGGER_SECONDS)); break;
+        case BossMove.Dying: PoseMutant(mutants, one, mesh, MutantClip.Death, Math.Saturate(t * 0.8)); break;
     }
-    horde.bodies[mesh].Add(one);
+    mutants.bodies[mesh].Add(one);
 }

@@ -541,10 +541,15 @@ static void build_signatures(void)
     describe(euler, "x, y, z", "A rotation from Euler angles in radians: Z first, then X, then Y.");
     describe(add("quaternion", "LookRotation", T_Q, "tide_lookrotation_q", 2, T_F3, T_F3, T_NONE),
              "forward, up", "A rotation that looks along `forward`, with `up` as up.");
+    describe(add("quaternion", "FromToRotation", T_Q, "tide_fromto_q", 2, T_F3, T_F3, T_NONE),
+             "from, to", "The shortest rotation between directions of any length. Zero or nonfinite directions give identity; "
+             "opposite directions use a deterministic perpendicular axis.");
     describe(add("float4x4", "TRS", T_F4X4, "tide_trs_f4x4", 3, T_F3, T_Q, T_F3),
              "translation, rotation, scale", "A transform: scale, then rotate, then translate.");
     describe(add("float4x4", "Translate", T_F4X4, "tide_translate_f4x4", 1, T_F3, T_NONE, T_NONE),
              "translation", "A translation matrix.");
+    describe(add("float4x4", "Scale", T_F4X4, "tide_scaling_f4x4", 1, T_F3, T_NONE, T_NONE),
+             "scale", "A scale matrix, without rotation or translation.");
     signature *perspective = add("float4x4", "PerspectiveFov", T_F4X4, "tide_perspectivefov_f4x4", 3, T_F, T_F, T_F);
     perspective->argc = 4;
     perspective->params[3] = T_F;

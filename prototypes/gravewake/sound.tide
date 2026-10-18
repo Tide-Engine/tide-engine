@@ -295,6 +295,8 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
     mut Clip clip = fleshHits[ears.random.NextInt(fleshHits.count)];
     if (struck.blow == Blow.Blunt) clip = hitsBlunt[ears.random.NextInt(hitsBlunt.count)];
     if (struck.blow != Blow.Burst) Audio.Play(clip, struck.at, 0.8, ears.random.NextFloat(0.92, 1.08));
+    // On a boss's weak spot: the head's crack, low and wet
+    if (struck.weak && mine) Audio.Play(headshots[ears.random.NextInt(headshots.count)], struck.at, 0.8, 0.7);
     // On the head: its own crack, every time, louder for the one that takes it off
     if (struck.head) Audio.Play(headshots[ears.random.NextInt(headshots.count)], struck.at, struck.killed ? 1.0 : 0.55, struck.killed ? 1.0 : 1.12);
     if (struck.killed) Audio.Play(gores[ears.random.NextInt(gores.count)], struck.at, struck.head ? 0.9 : 0.7, ears.random.NextFloat(0.9, 1.1));
@@ -375,6 +377,20 @@ local event(Blast blast) HearBlast(mut Ears ears)
     else Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.1));
 }
 
+// A horde clawing up: the ground giving way, and a groan going up from all over its patch, heard from wherever it is.
+local event(HordeRose horde) HearHorde(mut Ears ears)
+{
+    Audio.Play(riseClip, horde.at, 1.0, ears.random.NextFloat(0.6, 0.7));
+    var voices = Math.Clamp(horde.count / 5, 2, 6);
+    for (var k = 0; k < voices; k++)
+    {
+        var turn = ears.random.NextFloat(Math.TAU);
+        var off = ears.random.NextFloat(horde.radius);
+        var at = horde.at + float3(Math.Sin(turn) * off, 1.4, Math.Cos(turn) * off);
+        Audio.Play(groans[ears.random.NextInt(groans.count)], at, 0.75, ears.random.NextFloat(0.7, 0.95));
+    }
+}
+
 local event(Cue cue) HearCue(mut Ears ears, Me me)
 {
     var near = Math.Distance(cue.at, me.eye) < 2.5;
@@ -429,6 +445,14 @@ local event(Unleashed used) HearUnleashed(mut Ears ears, Me me)
     }
 }
 
+// A dash going through the dead: the thump of bodies, at most a few a tick.
+local event(Barged barged) HearBarged(mut Ears ears, Me me)
+{
+    var mine = barged.seat == me.seat;
+    for (var k = 0; k < Math.Min(2, barged.count); k++)
+        PlayAt(hitsBlunt[ears.random.NextInt(hitsBlunt.count)], barged.at + float3(0, 1, 0), mine, 0.8, ears.random.NextFloat(0.7, 0.85));
+}
+
 local event(Chosen chosen) HearChosen(Me me)
 {
     if (chosen.seat == me.seat) Audio.Play(pumpClip, 0.9);
@@ -439,10 +463,10 @@ local event(Levelled levelled) HearLevel()
     Audio.Play(levelClip, 0.6);
 }
 
-// A Brute: its roar coming up out of the ground, and its fall.
+// A boss: its roar coming up out of the ground, and its fall.
 local event(BossCame came) HearBoss(mut Ears ears)
 {
-    Audio.Play(screams[ears.random.NextInt(screams.count)], came.at + float3(0, 4, 0), 1.0, 0.45);
+    Audio.Play(screams[ears.random.NextInt(screams.count)], came.at + float3(0, 4, 0), 1.0, came.kind == BossKind.Stalker ? 0.7 : came.kind == BossKind.Brood ? 0.55 : 0.45);
 }
 
 local event(GameOver over) HearGameOver()

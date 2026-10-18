@@ -254,6 +254,12 @@ target_include_directories(tide_platform_audio PRIVATE "${PROJECT_SOURCE_DIR}/te
 target_link_libraries(tide_platform_audio PRIVATE tide_platform tide_audio_refs) # tests/audio: the Vorbis reference files
 add_test(NAME tide_platform_audio COMMAND tide_platform_audio)
 
+# The forget completion barrier, with a deterministic callback interleaving.
+add_executable(tide_platform_audio_forget tests/audio_forget.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_audio_forget PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_audio_forget PRIVATE tide)
+add_test(NAME tide_platform_audio_forget COMMAND tide_platform_audio_forget)
+
 # The page's microphone lifecycle and worklet bridge, with a fake device:
 # no browser permissions or physical microphone are needed.
 if(TIDE_NODE)
@@ -718,20 +724,23 @@ if(TIDE_WEB)
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_rooms.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_rooms>/tide_platform_web_rooms.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_rooms-browser")
-    set_tests_properties(tide_platform_web_rooms PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_rooms PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     # Host migration in the browser: the host's frame leaves, and the two
     # others carry on in the room, one of them hosting it.
     add_test(NAME tide_platform_web_rooms_handover
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_rooms.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_rooms>/tide_platform_web_rooms.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_rooms_handover-browser" handover)
-    set_tests_properties(tide_platform_web_rooms_handover PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_rooms_handover PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     # ...and a match its host ended stays ended, for a player who missed the goodbye.
     add_test(NAME tide_platform_web_rooms_ended
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_rooms.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_rooms>/tide_platform_web_rooms.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_rooms_ended-browser" ended)
-    set_tests_properties(tide_platform_web_rooms_ended PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_rooms_ended PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
 
     # A page told to play at a slow connection (`Tide.lag`): its lag is the
     # round trip its player gets, what the trip takes already in it. The page
@@ -750,5 +759,6 @@ if(TIDE_WEB)
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_threads.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_threads>/tide_platform_web_threads.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_threads-browser")
-    set_tests_properties(tide_platform_web_threads PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_threads PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
 endif()

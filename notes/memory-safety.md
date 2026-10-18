@@ -1,5 +1,12 @@
 # No Tide code can corrupt memory
 
+Texture metadata (2026-10-18) reads no pixel payload. Grid references reuse
+mesh.c's bounded see_grid directory/record validation, including arbitrary
+stale handles and dimensions; packed names resolve against the current pack;
+managed targets resolve live state and check selected-color validity before
+calling a borrowed local host resolver. Existing malformed-grid texture tests
+retain the same bounds path. No simulation pointer or new owned handle is added.
+
 ## Recipient state decoding (2026-10-15)
 
 The generated visibility decoder builds a temporary world and publishes it only

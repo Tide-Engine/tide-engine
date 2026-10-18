@@ -39,7 +39,7 @@ string RoleLine(Role role)
     switch (role)
     {
         case Role.Gunner: return "A carbine for any range. Rounds through a whole line of the dead, a dash out of trouble, grenades into the thick of them.";
-        case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, shoulders through them, sets the ground alight.";
+        case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, bowls them over shoulder first, sets the ground alight.";
         case Role.Engineer: return "An SMG whose rounds set items off half again as often, mines where they walk, and a turret that fires on its own, carrying your items.";
     }
     return "";
@@ -90,7 +90,7 @@ string SkillLine(Skill skill)
     switch (skill)
     {
         case Skill.PhaseRound: return "A heavy round through every one of the dead in its line";
-        case Skill.Slide: return "A burst of speed the way you're going, through the dead: they're knocked down. Two charges";
+        case Skill.Slide: return "A burst of speed the way you're going, through the dead: they're thrown aside (the Breacher's bowls them over). Two charges";
         case Skill.Frag: return "A grenade that bursts on the dead or after a moment";
         case Skill.Boot: return "Kick the dead in front off their feet; one down is stamped on";
         case Skill.Leap: return "Leap high and far, and knock down the dead where you land";
@@ -108,7 +108,7 @@ float BaseCooldown(Skill skill)
     switch (skill)
     {
         case Skill.PhaseRound: return 3;
-        case Skill.Slide: return 3.5;
+        case Skill.Slide: return 4.5;
         case Skill.Frag: return 7;
         case Skill.Boot: return 3.5;
         case Skill.Leap: return 7;
@@ -159,7 +159,8 @@ void UseSkill(mut Survivor survivor, int slot, float2 move, Ashwick ashwick, Her
         case Skill.Slide:
         {
             if (survivor.dash > 0) return;
-            mut var way = Flat(survivor.yaw) * move.y + Flat(survivor.yaw + Math.PI * 0.5) * move.x;
+            var ahead = MoveYaw(survivor);
+            mut var way = Flat(ahead) * move.y + Flat(ahead + Math.PI * 0.5) * move.x;
             if (Math.Length(way) < 0.1) way = Flat(survivor.yaw);
             survivor.dashWay = Math.Normalize(way);
             survivor.dash = DASH_SECONDS;
@@ -271,20 +272,45 @@ void Kick(Entity self, Survivor survivor, List<Body> bodies)
     self.Send(Kicked { seat = survivor.seat, hits = hits + (stamped ? 1 : 0), stamp = stamped });
 }
 
-// A grenade or a firebomb, thrown.
+// A grenade or a firebomb, thrown along the look; from above, lobbed to land where the cursor is (THROW_MOST at most),
+// a grenade's fuse running out just as it lands, so it bursts there and doesn't bounce on past.
 void Throw(Survivor survivor, Skill skill)
 {
     var eye = EyeOf(survivor);
     var look = LookDirection(survivor.yaw, survivor.pitch + 0.15);
     var right = Flat(survivor.yaw + Math.PI * 0.5);
-    if (skill == Skill.Frag)
-        Spawn(Missile { kind = Shot.Grenade, at = eye + right * 0.2, velocity = look * 17, gravity = 14, damage = 180 * Might(survivor), splash = 5.5, element = Element.Blast,
-                        seat = survivor.seat, life = 1.6 });
+    var from = eye + right * 0.2;
+    var frag = skill == Skill.Frag;
+    mut var velocity = look * (frag ? 17.0 : 15.0);
+    mut var fuse = 1.6;
+    if (survivor.view == View.Above)
+    {
+        velocity = ThrowTo(from, survivor.aim, THROW_GRAVITY, out var flight);
+        fuse = flight + 0.1;
+    }
+    if (frag)
+        Spawn(Missile { kind = Shot.Grenade, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = 180 * Might(survivor), splash = 5.5, element = Element.Blast,
+                        seat = survivor.seat, life = fuse });
     else
-        Spawn(Missile { kind = Shot.Pot, at = eye + right * 0.2, velocity = look * 15, gravity = 14, damage = 90 * Might(survivor), splash = 4.8, element = Element.Fire,
+        Spawn(Missile { kind = Shot.Pot, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = 90 * Might(survivor), splash = 4.8, element = Element.Fire,
                         seat = survivor.seat, life = 5 });
     Send(Cue { sound = Sfx.Throw, at = eye });
 }
+
+// How fast to throw from a place to land on the ground under another (no further than THROW_MOST): an arc whose
+// flight is longer the further it goes.
+float3 ThrowTo(float3 from, float3 aim, float gravity, out float flight)
+{
+    mut var flat = aim.xz - from.xz;
+    var far = Math.Length(flat);
+    if (far > THROW_MOST) flat = flat / far * THROW_MOST;
+    var at = On(from.x + flat.x, from.z + flat.y);
+    flight = Math.Clamp(Math.Length(flat) / 13, 0.35, 1.3);
+    return (at - from) / flight + float3(0, 0.5 * gravity * flight, 0);
+}
+
+const float THROW_GRAVITY = 14;
+const float THROW_MOST = 20;
 
 // ---- The Engineer's turret ----
 
@@ -342,7 +368,7 @@ system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time t
     turret.yaw = Math.Atan2(way.x, way.z);
     turret.pitch = Math.Asin(Math.Clamp(way.y, -1, 1));
     turret.wait = 0.09;
-    Land(turret.arms, best, 11 * turret.arms.might, false, gun, 0.6, TURRET_PROC, herd);
+    Land(turret.arms, best, 11 * turret.arms.might, false, false, gun, 0.6, TURRET_PROC, herd);
     var muzzle = gun + way * 0.45;
     Send(Traced { seat = turret.seat, from = muzzle, to = best.chest, kind = Trace.Turret });
     Send(Loosed { seat = turret.seat, weapon = Weapon.Smg, at = muzzle, way = way, source = Source.Turret });

@@ -4,7 +4,7 @@
 // (nights.tide); how long the run has gone and how dangerous it's got in the
 // top right; the gun and its magazine and the three skills in the bottom
 // right; the crosshair, the mark of a hit landing and where a blow came from;
-// a friend down, a Brute's health across the top, the items offered at a
+// a friend down, a boss's health across the top, the items offered at a
 // level, the survivors to pick from, and the end.
 using Rooms;
 
@@ -15,6 +15,7 @@ local singleton Feed
     bool markerHead;             // On the head: gold, or red and bigger for a kill
     bool markerCrit;             // A Lucky Shot's double: yellow
     bool markerMail;             // Turned by a Warden's mail: grey
+    bool markerWeak;             // On a boss's weak spot: orange and big
     float headshot;              // Seconds left of HEADSHOT over the crosshair
     float dangerFlash;           // Seconds since the danger's words changed
     string dangerShown;
@@ -283,8 +284,45 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         }
     }
 
+    // ---- From above, a ring on the ground round each survivor standing, in their colour, to find them by in a crowd ----
+    if (me.above)
+    {
+        foreach (var row in survivors)
+        {
+            var s = row.survivor;
+            if (!s.ready || s.life == Life.Gone || s.role == Role.None) continue;
+            var hue = HeroColor(s.seat);
+            var ring = Color(hue.r, hue.g, hue.b, s.seat == me.seat ? 0.55 : 0.4);
+            mut var last = float2(0);
+            mut var seen = false;
+            for (var k = 0; k <= 32; k++)
+            {
+                var turn = k * Math.TAU / 32;
+                var at = s.feet + float3(Math.Sin(turn) * 0.75, 0.05, Math.Cos(turn) * 0.75);
+                float4 clip = Math.Mul(look.toClip, float4(at, 1));
+                if (clip.w <= 0.01)
+                {
+                    seen = false;
+                    continue;
+                }
+                var dot = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
+                if (seen) Draw.Line(last, dot, 2 * u, ring);
+                last = dot;
+                seen = true;
+            }
+        }
+    }
+
     // ---- The crosshair and the hit marker ----
     var middle = float2(w * 0.5, h * 0.5);
+    // From above, the crosshair is the cursor, and the blows' arcs go round the survivor
+    var reticle = me.above && me.cursor.x >= 0 ? me.cursor : middle;
+    mut var round = middle;
+    if (me.above)
+    {
+        float4 body = Math.Mul(look.toClip, float4(mine.feet + float3(0, 1, 0), 1));
+        if (body.w > 0.01) round = float2((body.x / body.w * 0.5 + 0.5) * w, (0.5 - body.y / body.w * 0.5) * h);
+    }
     // Where each blow taken came from: a red arc round the crosshair on that side, fading
     for (var i = feed.blows.count - 1; i >= 0; i--)
     {
@@ -302,8 +340,8 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         var ahead = Math.Dot(to, Flat(me.yaw));
         var turn = Math.Atan2(-ahead, side);
         var fade = Math.Saturate(1.4 - feed.blowAges[i]);
-        Draw.Arc(middle, 118 * u, turn - 0.32, 0.64, 7 * u, Color(0.95, 0.12, 0.08, 0.85 * fade));
-        Draw.Arc(middle, 108 * u, turn - 0.18, 0.36, 3 * u, Color(1.0, 0.5, 0.4, 0.6 * fade));
+        Draw.Arc(round, 118 * u, turn - 0.32, 0.64, 7 * u, Color(0.95, 0.12, 0.08, 0.85 * fade));
+        Draw.Arc(round, 108 * u, turn - 0.18, 0.36, 3 * u, Color(1.0, 0.5, 0.4, 0.6 * fade));
     }
     if (mine.life != Life.Gone && mine.role != Role.None)
     {
@@ -313,7 +351,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         // rise, a wall, one of the dead nearer the gun) and it'd stop away from the crosshair, a red ring is where,
         // and the crosshair dims.
         mut var blocked = false;
-        if (me.third && mine.life == Life.Standing)
+        if (me.outside && !me.above && mine.life == Life.Standing)
         {
             var from = AimFrom(mine, info.range, ashwick, herd, out var way);
             var reach = Math.Distance(from, AimedAt(mine, info.range, ashwick, herd));
@@ -330,32 +368,33 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
                 }
             }
         }
-        var c = Color(1, 1, 1, blocked ? 0.3 : 0.75);
-        Draw.Line(middle + float2(gap, 0), middle + float2(gap + tick, 0), 2 * u, c);
-        Draw.Line(middle - float2(gap, 0), middle - float2(gap + tick, 0), 2 * u, c);
-        Draw.Line(middle + float2(0, gap), middle + float2(0, gap + tick), 2 * u, c);
-        Draw.Line(middle - float2(0, gap), middle - float2(0, gap + tick), 2 * u, c);
-        Draw.Circle(middle, 1.5 * u, c);
+        // (from above, warmer on one of the dead)
+        var c = me.above && me.onBody ? Color(1.0, 0.6, 0.45, 0.9) : Color(1, 1, 1, blocked ? 0.3 : 0.75);
+        Draw.Line(reticle + float2(gap, 0), reticle + float2(gap + tick, 0), 2 * u, c);
+        Draw.Line(reticle - float2(gap, 0), reticle - float2(gap + tick, 0), 2 * u, c);
+        Draw.Line(reticle + float2(0, gap), reticle + float2(0, gap + tick), 2 * u, c);
+        Draw.Line(reticle - float2(0, gap), reticle - float2(0, gap + tick), 2 * u, c);
+        Draw.Circle(reticle, 1.5 * u, c);
     }
     feed.marker = Math.Max(0, feed.marker - dt);
     if (feed.marker > 0)
     {
         var a = Math.Saturate(feed.marker * 5);
-        var c = feed.markerMail ? Color(0.55, 0.6, 0.68, a) : feed.markerCrit ? Color(1.0, 0.95, 0.35, a)
+        var c = feed.markerWeak ? Color(1.0, 0.55, 0.1, a) : feed.markerMail ? Color(0.55, 0.6, 0.68, a) : feed.markerCrit ? Color(1.0, 0.95, 0.35, a)
               : feed.markerHead ? (feed.markerKill ? Color(1.0, 0.18, 0.1, a) : Color(1.0, 0.78, 0.25, a)) : feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
-        var s = (feed.markerHead ? (feed.markerKill ? 15 : 11) : feed.markerKill ? 11 : 8) * u;
+        var s = (feed.markerWeak ? 14 : feed.markerHead ? (feed.markerKill ? 15 : 11) : feed.markerKill ? 11 : 8) * u;
         var thick = (feed.markerHead ? 3.5 : 2.5) * u;
-        Draw.Line(middle + float2(-s, -s), middle + float2(-s * 0.4, -s * 0.4), thick, c);
-        Draw.Line(middle + float2(s, -s), middle + float2(s * 0.4, -s * 0.4), thick, c);
-        Draw.Line(middle + float2(-s, s), middle + float2(-s * 0.4, s * 0.4), thick, c);
-        Draw.Line(middle + float2(s, s), middle + float2(s * 0.4, s * 0.4), thick, c);
+        Draw.Line(reticle + float2(-s, -s), reticle + float2(-s * 0.4, -s * 0.4), thick, c);
+        Draw.Line(reticle + float2(s, -s), reticle + float2(s * 0.4, -s * 0.4), thick, c);
+        Draw.Line(reticle + float2(-s, s), reticle + float2(-s * 0.4, s * 0.4), thick, c);
+        Draw.Line(reticle + float2(s, s), reticle + float2(s * 0.4, s * 0.4), thick, c);
     }
     feed.headshot = Math.Max(0, feed.headshot - dt);
     if (feed.headshot > 0)
     {
         var a = Math.Saturate(feed.headshot * 3);
         var rise = (0.9 - feed.headshot) * 14 * u;
-        WriteBold("HEADSHOT", middle + float2(0, -46 * u - rise), 17 * u, Color(1.0, 0.25, 0.12, a), Anchor.MiddleCenter);
+        WriteBold("HEADSHOT", reticle + float2(0, -46 * u - rise), 17 * u, Color(1.0, 0.25, 0.12, a), Anchor.MiddleCenter);
     }
 
     // ---- A friend to raise ----
@@ -487,12 +526,13 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
 }
 
 // Development keys, not in play's interface: F2 six of the next kind of the dead (Bloaters, Spitters, Wardens in turn),
-// F3 a Brute, F4 a horde of two thousand more, F5 a level (and so an offer), F6 a walk to the next place, F7 the night
-// kept (dawn), F10 an item.
+// F3 a boss (the Mauler, the Broodmother, the Stalker in turn), F4 a horde of two thousand more, F5 a level (and so an
+// offer), F6 a walk to the next place, F7 the night kept (dawn), F10 an item.
 local singleton DevWalk
 {
     int next;
     int kind;
+    int boss;
 }
 
 [Stage(Layers.Hud, 21)]
@@ -506,7 +546,11 @@ view DevKeys(Devices devices, Lobby lobby, mut DevWalk walk)
         walk.kind = (walk.kind + 1) % 3;
     }
     if (keys.f7.down) Send(Cheat { what = 8 });
-    if (keys.f3.down) Send(Cheat { what = 6 });
+    if (keys.f3.down)
+    {
+        Send(Cheat { what = 30 + walk.boss });
+        walk.boss = (walk.boss + 1) % BOSS_KINDS;
+    }
     if (keys.f4.down) Send(Cheat { what = 3 });
     if (keys.f5.down) Send(Cheat { what = 4 });
     if (keys.f10.down) Send(Cheat { what = 5 });
@@ -606,6 +650,7 @@ local event(Struck struck) ShowMarker(mut Feed feed, Me me)
     feed.markerKill = struck.killed;
     feed.markerHead = struck.head;
     feed.markerCrit = struck.crit;
+    feed.markerWeak = struck.weak;
     feed.markerMail = struck.mail && !struck.killed;
     if (struck.head && struck.killed) feed.headshot = 0.9;
 }
@@ -779,7 +824,7 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
     Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.5 + size.y * 0.5 + 26 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
 }
 
-// A Brute's health across the top: the nearest of them, if any is about.
+// A boss's health across the top: the nearest of them, if any is about.
 [Stage(Layers.Hud, 4)]
 view BossBar(Lobby lobby, Look look, mut Feed feed, query (Boss boss) bosses)
 {
@@ -808,7 +853,9 @@ view BossBar(Lobby lobby, Look look, mut Feed feed, query (Boss boss) bosses)
     var share = Math.Saturate(shown.health / Math.Max(1, shown.healthMost));
     feed.bossTrail = share > feed.bossTrail ? share : Math.Max(share, feed.bossTrail - Math.Min(Frame.dt, 0.05) * 0.25);
     Draw.Shape(Shape { center = at - float2(0, 8 * u), size = float2(width + 120 * u, 70 * u), radius = 30 * u, color = Color(0, 0, 0, 0.35), soft = 30 * u });
-    WriteBold(shown.number > 1 ? $"THE BRUTE  {shown.number}" : "THE BRUTE", at - float2(0, 24 * u), 20 * u, Color(0.98, 0.32, 0.2), Anchor.MiddleCenter);
+    var m = MutantOf(shown.kind);
+    WriteBold(m.name, at - float2(0, 24 * u), 20 * u, Color(0.98, 0.32, 0.2), Anchor.MiddleCenter);
+    Write($"Weak spot: {m.hint.ToLower()}", at + float2(0, 22 * u), 12 * u, Color(1.0, 0.75, 0.4, 0.85), Anchor.MiddleCenter);
     Bar(at - float2(width * 0.5, 0), float2(width, 12 * u), share, feed.bossTrail, Color(0.85, 0.12, 0.08), Color(0.45, 0.03, 0.02), 10, u);
     // A spike at each end
     Draw.Shape(Shape { center = at - float2(width * 0.5 + 14 * u, 0), size = float2(12, 12) * u, rotation = Math.PI * 0.25, color = Color(0.85, 0.12, 0.08) });
@@ -817,7 +864,7 @@ view BossBar(Lobby lobby, Look look, mut Feed feed, query (Boss boss) bosses)
 
 local event(BossCame came) ShowBoss(mut Feed feed)
 {
-    feed.banner = came.vigil ? "THE NIGHT'S BRUTE CLAWS UP" : "THE NIGHT GROWS IMPATIENT";
+    feed.banner = came.vigil ? $"{MutantOf(came.kind).name} CLAWS UP" : "THE NIGHT GROWS IMPATIENT";
     feed.bannerLeft = 3;
     feed.bannerColor = Color(0.95, 0.3, 0.2);
 }
@@ -825,7 +872,7 @@ local event(BossCame came) ShowBoss(mut Feed feed)
 local event(BossFelled felled) ShowFelled(mut Feed feed)
 {
     if (feed.bannerLeft > 2) return;
-    feed.banner = "THE BRUTE FALLS";
+    feed.banner = "IT FALLS";
     feed.bannerLeft = 2.6;
     feed.bannerColor = Color(0.95, 0.82, 0.45);
 }

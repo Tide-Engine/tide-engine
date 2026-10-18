@@ -64,7 +64,6 @@ local singleton Fx
     List<Corner> quad;
     List<int> quadFaces;
     float emberClock;
-    float ashClock;
     float blasts;             // How many blasts lately (each 1, gone over a second and a half): many at once, each less
     Random random;
     bool made;
@@ -217,17 +216,20 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
                 Murk(fx, Mote { at = m.at, velocity = Scatter(fx, 0.5), life = 0.5, size = 0.04, gravity = 8, color = float3(0.3, 0.34, 0.06), alpha = 1 });
         }
     }
-    // A Brute's warnings: a ring of red where a slam comes down, filling in as it comes; a line where a charge runs
+    // A boss's warnings: a ring of red where a slam comes down, filling in as it comes; a line where a charge runs
     foreach (var row in bosses)
     {
         var b = row.boss;
-        if (b.move == BossMove.SlamWindup)
+        var mauler = b.kind == BossKind.Mauler;
+        if (b.move == BossMove.SlamWindup || b.move == BossMove.LeapWindup)
         {
-            var fill = Math.Saturate(b.timer / SLAM_WINDUP);
+            var leap = b.move == BossMove.LeapWindup;
+            var fill = Math.Saturate(b.timer / (leap ? LEAP_WINDUP : mauler ? SLAM_WINDUP : SWIPE_WINDUP));
+            var ring = leap ? LEAP_RADIUS : mauler ? SLAM_RADIUS : SWIPE_RADIUS;
             for (var k = 0; k < 10; k++)
             {
                 var turn = fx.random.NextFloat(Math.TAU);
-                var r = SLAM_RADIUS * (k < 6 ? 1.0 : fx.random.NextFloat(0, fill));
+                var r = ring * (k < 6 ? 1.0 : fx.random.NextFloat(0, fill));
                 var at = b.aim + float3(Math.Cos(turn) * r, 0, Math.Sin(turn) * r);
                 Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.08, 0), life = 0.12, size = 0.18, color = float3(1.0, 0.12, 0.05), alpha = 2.5 });
             }
@@ -244,6 +246,14 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
         if (b.move == BossMove.Charge)
             Murk(fx, Mote { at = b.at + float3(fx.random.NextFloat(-1, 1), 0.2, fx.random.NextFloat(-1, 1)), velocity = Scatter(fx, 1.5) + float3(0, 1, 0), life = 0.8,
                             size = 0.5, grow = 0.8, color = float3(0.17, 0.14, 0.11), alpha = 0.6, drag = 2 });
+        // A birth coming, a volley, a shriek: the weak spot's glow spilling out of it
+        if (b.move == BossMove.Birth || b.move == BossMove.VolleyWindup || b.move == BossMove.Shriek)
+        {
+            var m = MutantOf(b.kind);
+            var spot = b.at + Math.Rotate(quaternion.AxisAngle(float3(0, 1, 0), b.yaw), m.weak * m.size);
+            var hue = b.kind == BossKind.Stalker ? float3(1.0, 0.3, 0.25) : float3(0.7, 1.0, 0.2);
+            Glow(fx, Mote { at = spot + Scatter(fx, 0.4), velocity = Scatter(fx, 1) + float3(0, 0.6, 0), life = 0.4, size = 0.12, color = hue, alpha = 2.5, drag = 2 });
+        }
     }
 
     fx.blasts = Math.Max(0, fx.blasts - dt / 1.5);
@@ -261,22 +271,8 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
                 Glow(fx, Mote { at = s.feet + float3(fx.random.NextFloat(-0.4, 0.4), fx.random.NextFloat(0.2, 1.2), fx.random.NextFloat(-0.4, 0.4)), velocity = back * 1.5 + float3(0, 1.2, 0),
                                 life = 0.4, size = 0.22, grow = -0.3, color = float3(1.0, 0.45, 0.1), alpha = 1.8, cool = 1 });
     }
-    // Embers and ash on the air from the burning of Ashwick, drifting about the eye
-    fx.ashClock += dt;
-    while (fx.ashClock > 0.06)
-    {
-        fx.ashClock -= 0.06;
-        var turn = fx.random.NextFloat(Math.TAU);
-        var out = fx.random.NextFloat(4, 15);
-        var at = me.eye + float3(Math.Cos(turn) * out, fx.random.NextFloat(-1.5, 6), Math.Sin(turn) * out);
-        var wind = float3(0.5, 0.05, 0.25) + Scatter(fx, 0.25);
-        if (fx.random.NextInt(3) == 0)
-            Glow(fx, Mote { at = at, velocity = wind + float3(0, 0.2, 0), life = fx.random.NextFloat(3, 6), size = fx.random.NextFloat(0.012, 0.022),
-                            color = float3(1.0, 0.45, 0.12), alpha = 2.2, cool = 0.6 });
-        else
-            Murk(fx, Mote { at = at, velocity = wind - float3(0, 0.15, 0), life = fx.random.NextFloat(4, 7), size = fx.random.NextFloat(0.015, 0.03),
-                            color = float3(0.5, 0.48, 0.46), alpha = 0.8 });
-    }
+    // (Embers and ash drifted about the eye once, from the burning of Ashwick: specks over everything, gone for the
+    // picture's sake)
 
     // Moving on
     for (var i = fx.glow.count - 1; i >= 0; i--)
@@ -555,7 +551,7 @@ local event(Spell spell) Conjure(mut Fx fx)
 // stopped; a phase round's wide and pale, a drone's red. And the muzzle's flash.
 local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
 {
-    var own = traced.seat == me.seat && !me.third && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
+    var own = traced.seat == me.seat && !me.outside && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
     var way = Math.Normalize(traced.to - traced.from);
     var gun = traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase;
     var drawn = gun && traced.seat >= 0 && traced.seat < 4 ? grip.muzzles[traced.seat] : float3(0);
@@ -583,7 +579,7 @@ local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
 local event(Loosed loosed) MuzzleFlash(mut Fx fx, Me me, Grip grip)
 {
     if (loosed.source != Source.Gun && loosed.source != Source.Phase && loosed.source != Source.Turret) return;
-    var own = loosed.seat == me.seat && !me.third && loosed.source != Source.Turret;
+    var own = loosed.seat == me.seat && !me.outside && loosed.source != Source.Turret;
     var drawn = loosed.seat >= 0 && loosed.seat < 4 ? grip.muzzles[loosed.seat] : float3(0);
     var at = own ? grip.muzzle : loosed.source != Source.Turret && Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
     var way = loosed.way;
@@ -610,6 +606,20 @@ local event(Cue cue) Dust(mut Fx fx)
     for (var i = 0; i < 22; i++)
         Murk(fx, Mote { at = cue.at + float3(fx.random.NextFloat(-0.4, 0.4), 0.05, fx.random.NextFloat(-0.4, 0.4)), velocity = float3(0, fx.random.NextFloat(1, 3), 0) + Scatter(fx, 1),
                         life = 1.2, size = fx.random.NextFloat(0.03, 0.09), gravity = 7, color = float3(0.18, 0.14, 0.1), alpha = 1 });
+}
+
+// A horde clawing up: earth thrown up all over its patch.
+local event(HordeRose horde) HordeDust(mut Fx fx)
+{
+    var motes = Math.Clamp(horde.count * 4, 40, 160);
+    for (var i = 0; i < motes; i++)
+    {
+        var turn = fx.random.NextFloat(Math.TAU);
+        var off = horde.radius * Math.Sqrt(fx.random.NextFloat());
+        var at = horde.at + float3(Math.Sin(turn) * off, 0, Math.Cos(turn) * off);
+        Murk(fx, Mote { at = On(at.x, at.z) + float3(0, 0.05, 0), velocity = float3(0, fx.random.NextFloat(1, 3.5), 0) + Scatter(fx, 1.2),
+                        life = 1.5, size = fx.random.NextFloat(0.04, 0.12), gravity = 6, color = float3(0.18, 0.14, 0.1), alpha = 1 });
+    }
 }
 
 // An ability used: a leap's landing throws up a ring of earth, frost bursts out in a ring, a war cry's breath of dust,

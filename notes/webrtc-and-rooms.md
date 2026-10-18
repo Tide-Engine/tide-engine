@@ -1,5 +1,22 @@
 # Desktop WebRTC, rooms and their tests
 
+## Custom web runner shutdown (2026-10-18)
+
+`web_rooms.mjs` and `web_threads.mjs` now use Chrome's DevTools pipe to ask
+`Browser.close`, drain its response pipe and wait for the process and pipes
+to close before returning. A browser that exits before its result fails the
+test immediately. Shutdown has a separate 30-second guard; exceeding it fails
+the test and terminates the process tree on Windows (SIGKILL elsewhere).
+The existing 60-second result guards and CTest's 120 seconds remain unchanged.
+
+Repeated two-CPU runs exposed the old `child.kill(); process.exit()` path:
+the first rooms/migration/ended run passed, but each immediate repeat failed
+with EPERM removing its still-open profile. The corrected runners wait for
+the browser to release that profile, matching the other browser harnesses.
+An early-exit control fails both runners immediately with the browser's exit
+code. CTest CPU accounting and remaining hosted uncertainty are documented in
+`notes/testing.md`; full validation is in `notes/releases-and-ci.md`.
+
 Managed service (2026-10-15): hosting/rooms.mjs implements the existing relay
 signaling protocol with node-datachannel 0.33.4, project room/key persistence,
 bounded peers and TURN configuration. Outer protocol 2 checks Simulation ID
