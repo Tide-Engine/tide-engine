@@ -8,16 +8,15 @@ each picks a survivor (a Gunner, a Breacher or an Engineer), a gun to aim and
 three skills on cooldowns, and the dead never stop coming, more and tougher
 the longer it goes and the further into the nights.
 
-Each night, a beacon stands cold at one of the clearing's landmarks, a pale
-column of wake-fire over it, and chests are hidden about the clearing. Look
-about for them as long as you dare, then stand by the beacon to light it.
-That starts the vigil: the dead come thicker, most of them for the beacon,
-and the night's boss claws up, a mutant grown from the dead. Keep near the
-beacon till it's full and its boss is down, and dawn breaks: the dead burn away, whoever's down or bled
-out is up, and a moment later the next night falls, harder, at another
-beacon. The chests not opened by then are gone with the night. While the
-beacon's cold, optional missions come and go: do one in time and everyone
-picks one of the rarer items.
+Each night runs on a clock: three minutes to roam the clearing, kill and
+level up, the dead coming thicker over its last minute, with chests hidden
+about and optional missions coming and going (do one in time and everyone
+picks one of the rarer items). When the clock runs out the night's boss
+claws up near you, a mutant grown from the dead; fell it and dawn breaks:
+the dead burn away, whoever's down or bled out is up, and a moment later the
+next night falls, harder. The chests not opened by then are gone with the
+night. Mind the ground: open plague pits to go round, and fire bursting out
+of it under the dead and under you.
 
 Every kill leaves an orb of experience where the dead fell, worth more the
 tougher they were, the party's once someone goes within a few metres of it;
@@ -51,8 +50,8 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 
 Everything but the gun, the right mouse skill and the roll happens by
 itself: each survivor's special as soon as it's ready and the dead are in
-reach, and standing by a chest opens it, by the beacon lights it, by a friend
-who's down raises them. The guns never run out; only their magazines do.
+reach, and standing by a chest opens it, by a friend who's down raises
+them. The guns never run out; only their magazines do.
 
 The camera is high behind you looking down, north up the screen, and WASD
 moves you up, down and across it whichever way you face; you turn to the
@@ -67,13 +66,11 @@ no jumping.
 
 | | |
 | --- | --- |
-| The beacon | Five great braziers stand at the landmarks: in the cairn, in the chapel's ruin, by the graveyard, among the standing stones and by the dead oak. Each night one of them (never last night's) burns a pale wake-fire; a marker points to it, at the screen's edge when it's off it. Stand by it two and a half seconds to light it. |
+| The clock | Three minutes a night, on the night's panel (BOSS IN 2:41) over a bar running down; over its last minute the dead come thicker, up to twice as fast. A bell and a banner ten seconds before the end. |
 | The chests | Four a night, hidden about the clearing and not marked; the night's panel says how many are found. Stand by one a moment and it opens: everyone picks one of three items, whoever found it. They're gone when the next night falls. |
-| Missions | While the beacon's cold, every half a minute or so an optional mission appears, pointed to in gold: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or hunt down a marked elite, each within 45 to 60 s. Done, everyone picks one of three uncommon or rare items. Lighting the beacon calls off the one going. |
-| The vigil | Lit, the beacon is kept while the survivors standing are within 11 m of it: in 90 s with all of them there, slower with only some, not at all with none. The dead come 1.4 times as fast, most of them rising round it. Lighting it also calls back anyone who bled out. |
-| Its boss | One rises as it's lit (two from the fourth night, three from the seventh), the nights taking the three in turn; dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
+| Missions | Every half a minute or so an optional mission appears, pointed to in gold: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or hunt down a marked elite, each within 45 to 60 s. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
+| Its boss | When the clock runs out one claws up 24 to 32 m from one of you (two from the fourth night, three from the seventh), the nights taking the three in turn, pointed to (BOSS) at the screen's edge; anyone who bled out is back. Dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
 | Dawn | Everything left of the dead burns away, every orb flies in, everyone's up, whole and ready. Ten seconds later the next night falls: more dangerous than the last (the danger climbs with the clock, and each night's is 1.25 times the one before), and each of its kind (mist, a blood moon, starless, the wake). |
-| Waiting | A night that goes on more than four and a half minutes grows impatient (IMPATIENT on its panel): the danger climbs twice as fast till its dawn. While it's unlit, a boss comes every two and a half minutes, with no prize. |
 
 ### The items
 
@@ -93,12 +90,13 @@ yours till the game's over, through going down and bleeding out.
 
 ### The dead
 
-They claw up out of the ground, three a second at first (more with more of
+They claw up out of the ground, four a second at first (more with more of
 you) and many more as the danger climbs (Easy, Medium, Hard, Very Hard,
 Insane, Impossible), tougher and quicker too, up to 4000 at once. Most come
 in hordes: every five to nine seconds the ones due claw up together out of
-one patch of ground 22 to 32 m from one of you (or, in a vigil, mostly from
-the beacon), a groan going up from them, all at one pace; a quarter come
+one patch of ground 22 to 32 m from one of you, each from about the far side
+of you from the last, a groan going up from them, all at one pace; a quarter
+come
 alone, from anywhere. A head hit is gold on the crosshair, a Lucky Shot's
 double yellow. Every one pressed against you slows you; a roll goes through
 them. Their claws hit harder as the danger climbs, and your health comes back only
@@ -127,16 +125,24 @@ charges and leaps.
 
 Down, you fight on from the ground with a pistol, and a friend standing by
 you for three seconds raises you, the gun back in hand as loaded as it was. Alone,
-going down is the end. Bleed out and you're gone till the beacon's lit or
-dawn breaks, watching a friend over their shoulder; then you're back beside
-the beacon with everything you had.
+going down is the end. Bleed out and you're gone for a minute, or till the
+night's boss rises or dawn breaks if that's sooner, watching a friend over
+their shoulder; then you're back beside them with everything you had.
+
+Every hit sprays blood out the far side, the way the round went, and it
+soaks into the ground where it lands; the dead come apart when they die, a
+pool spreading under them, limbs, lumps and gut flying and bleeding through
+the air, and a head shot takes the head off (a fountain from the neck).
+Bloaters and Spitters splash green bile. Old blood dries away in a few
+minutes.
 
 Development keys, not in play's interface: F2 six of the dead of a kind
 (Bloaters, Spitters, Wardens in turn), F3 a boss (the Mauler, the Broodmother,
 the Stalker in turn), F4 two thousand more of the
 dead, F5 a level (and so an offer), F6 walk to the next part of the clearing,
-F7 the night kept (dawn now), F9 a camera over the clearing, F10 a random
-item, F1 a mission (a hold, a cull, a hunt in turn).
+F7 the night on (its end now, its boss rising; again while it stands, dawn),
+F9 a camera over the clearing, F10 a random item, F1 a mission (a hold, a
+cull, a hunt in turn).
 
 ## Ashwick Wood
 
@@ -147,12 +153,24 @@ out of the ground all round you, 16 to 32 m off, from every side.
 | Where | What's there |
 | --- | --- |
 | The middle | The camp's fire, where everyone starts; worn paths out to each landmark |
-| North | The chapel's ruin, its walls half down (a beacon in it) |
-| East | The cairn: a ring of great boulders open toward the fire, a beacon in it |
-| West | The old graveyard: ten graves the dead rise from, their stones small enough to run past; a beacon at its edge |
-| North-west | A ring of standing stones, a beacon in it |
-| South | A great dead oak, a beacon beside it |
-| About the clearing | A few sparse groves and big stones to stand behind |
+| North | The chapel's ruin, its walls half down (a great brazier burning in it) |
+| East | The cairn: a ring of great boulders open toward the fire, a great brazier in it |
+| West | The old graveyard: ten graves the dead rise from, their stones small enough to run past; a great brazier at its edge |
+| North-west | A ring of standing stones, a great brazier in it |
+| South | A great dead oak, a great brazier beside it |
+| About the clearing | A few sparse groves and big stones to stand behind; and eleven plague pits, open graves 4 to 7.5 m long brimming with black blood, a sick light drifting on them, earth heaped at one end. Nobody walks into one, you or the dead (they go round); rounds go over. |
+
+### The ground erupting
+
+Every few seconds (eight on the first night, a second less each night after,
+down to three; oftener for a party) the ground cracks near one of you, 3 to
+12 m off, half the time under the thickest of the dead there: its seams glow
+and a red ring shows how far it'll reach (2.6 m), another growing out to meet
+it. A second and a half later it bursts into fire: up to 24 to anyone in it
+(more as the danger climbs), thrown back, unless they're rolling; the dead
+in it torn apart. It burns on eight seconds, setting the dead that walk into
+it alight (lure them through it) and burning anyone standing in it (12 a
+second).
 
 ## Build and run
 
@@ -183,8 +201,9 @@ this folder.
 | `plan.tide`, `pieces.tide` | Ashwick Wood as one plan: the ground's heights (`Ground`), the clearing's edge, the ruin, the graves, the camp, the forest |
 | `ashwick.tide` | The plan made solid: collision, the ground under feet, the lines rounds and grenades follow, the way to the survivors |
 | `rounds.tide` | The run: the danger with time and the nights, how many of the dead come, of which kinds and how tough, where they rise |
-| `nights.tide` | The nights: the beacons and the vigil, dawn, calling the fallen back, each night's look, the night's panel |
-| `boss.tide` | The bosses: the Mauler, the Broodmother and the Stalker, the night's own and the impatient ones, their moves and weak spots |
+| `nights.tide` | The nights: each one's clock, its bosses at its end, dawn, calling the fallen back, each night's look, the night's panel |
+| `hazards.tide` | The plague pits and the ground erupting: where, what they do, what's seen and heard of them |
+| `boss.tide` | The bosses: the Mauler, the Broodmother and the Stalker, the night's own and the development key's, their moves and weak spots |
 | `kits.tide` | The survivors' kits: the roll, the skills that use themselves and where, the Engineer's turret |
 | `items.tide` | The items: what each does, the offer at a level, what a hit or a kill sets off, the drone and the ember ring, levels |
 | `zombies.tide` | The dead and their kinds: rising, hunting, a Spitter's bile, a Warden's mail, a Bloater's burst, wounds, burning, freezing, going over |
@@ -195,7 +214,7 @@ this folder.
 | `drops.tide` | The cues for what's heard, and a survivor's refill |
 | `crowd.tide` | The horde and the bosses drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
 | `kit.tide`, `look.tide`, `eye.tide` | The clearing's meshes; light, shadows, fog, bloom; the camera |
-| `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide` | The survivors; the gun in hand, grenades, mines, turrets, drones; the graves and braziers; tracers, flames, blood, sparks |
+| `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide`, `gore.tide` | The survivors; the gun in hand, grenades, mines, turrets, drones; the graves and braziers; tracers, flames, blood, sparks; the stains on the ground and the pieces of the dead |
 | `hud.tide`, `sound.tide` | What's written over the picture (the offer and the survivors too), the title; what's heard |
 | `art/` | The forest, ruin, people, mutants, guns and items, with how each was made: see `art/CREDITS.md` |
 | `sfx/` | The sounds, made by `sfx/tools/make_sfx.py`: see `sfx/CREDITS.md` |
