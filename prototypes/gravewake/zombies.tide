@@ -211,6 +211,7 @@ struct Spots
     float3 weak;
     float weakRadius;
     float weakTimes;
+    float3 weakFace;            // ...the way it faces (a round from behind it doesn't reach it), none for any
     float3 base;
     float columnRadius;
     float columnHigh;

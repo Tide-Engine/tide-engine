@@ -349,13 +349,20 @@ static Hands think(int seat, float dt)
     h.move.x = goX;
     h.move.y = goZ;
 
-    // The roll, out of the dead pressing round, the way it's going (the other skills use themselves)
+    // The roll, out of the dead pressing round, the way it's going; the secondary as a player would use it (the special
+    // uses itself)
     bot->blinkTurn = false;
     h.roll = s.life == Life_Standing && s.rolls > 0 && nearest < 2.2f && press > 0.01f && s.roll <= 0;
+    const bool ready0 = s.cooldowns.at[0] <= 0;
+    switch (s.role) {
+    case Role_Gunner: h.secondary = ready0 && onTarget && within20 >= 3; break;          // Phase Round down a line of them
+    case Role_Breacher: h.secondary = ready0 && nearest < 2.2f && onTarget; break;       // The boot
+    case Role_Engineer: h.secondary = ready0 && within8 >= 3; break;                     // A mine at our feet as they come
+    default: break;
+    }
+    if (s.life == Life_Downed) h.secondary = false;
     (void)within4;
-    (void)within8;
     (void)within12;
-    (void)within20;
     return h;
 }
 

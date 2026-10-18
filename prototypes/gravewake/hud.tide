@@ -54,6 +54,60 @@ void Panel(float2 center, float2 size, float u)
                        outlineColor = Color(1, 0.9, 0.75, 0.13) });
 }
 
+// A circle on the ground round a place, drawn over the picture.
+void GroundRing(Look look, float3 at, float radius, float thick, Color c, float w, float h)
+{
+    mut var last = float2(0);
+    mut var seen = false;
+    var sides = radius > 2 ? 48 : 32;
+    for (var k = 0; k <= sides; k++)
+    {
+        var turn = k * Math.TAU / sides;
+        var x = at.x + Math.Sin(turn) * radius;
+        var z = at.z + Math.Cos(turn) * radius;
+        float4 clip = Math.Mul(look.toClip, float4(x, Math.Max(at.y, Ground(x, z)) + 0.05, z, 1));
+        if (clip.w <= 0.01)
+        {
+            seen = false;
+            continue;
+        }
+        var dot = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
+        if (seen) Draw.Line(last, dot, thick, c);
+        last = dot;
+        seen = true;
+    }
+}
+
+// How far a Bloater's burst reaches, and when it'll come (the owner, 2026-10-18: "when the guys explode or are about to
+// explode i have no idea how far or when they will explode"): a faint sick ring round each near, as wide as its burst;
+// swelling, the ring red, and a second growing out from it to meet the first as it bursts.
+[Stage(Layers.Hud, -1)]
+view BloaterRings(Me me, Look look, Lobby lobby, Match match, query (Zombie zombie) zombies)
+{
+    if (lobby.page != Page.Playing || !me.playing || match.phase == Phase.Over) return;
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    foreach (var row in zombies)
+    {
+        var z = row.zombie;
+        if (z.kind != ZombieKind.Bloater || z.popped || z.state == ZombieState.Dying || z.state == ZombieState.Rising) continue;
+        if (Math.Length((z.at - me.ears).xz) > BLOAT_SHOWN) continue;
+        if (z.fuse <= 0)
+        {
+            GroundRing(look, z.at, BLOAT_REACH, 1.5 * u, Color(0.75, 1.0, 0.3, 0.3), w, h);
+            continue;
+        }
+        var near = Math.Saturate(z.fuse / BLOAT_FUSE);
+        var pulse = 0.75 + 0.25 * Math.Sin(look.time * 30);
+        GroundRing(look, z.at, BLOAT_REACH, 3 * u, Color(1.0, 0.2, 0.08, 0.9 * pulse), w, h);
+        GroundRing(look, z.at, BLOAT_REACH * near, 2.5 * u, Color(1.0, 0.55, 0.15, 0.85), w, h);
+    }
+}
+
+const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn
+
 // A mark for a place a survivor's to go: over it, with its name and how far, while it's on the screen; else an arrow at
 // the screen's edge, the way it is (north up the screen), with its name.
 void Pointer(Look look, float3 at, float3 from, string label, Color c, float w, float h, float u, float time)
@@ -323,7 +377,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
             if (ready) Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(EMBER.r, EMBER.g, EMBER.b, 0.18), soft = 10 * u });
             Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(0.1, 0.08, 0.07, 0.86), color2 = Color(0.03, 0.025, 0.02, 0.92), outline = 1.5 * u,
                                outlineColor = ready ? Color(EMBER.r, EMBER.g, EMBER.b, 0.95) : Color(1, 0.9, 0.75, 0.15) });
-            var key = k == 1 ? "SPACE" : "AUTO";
+            var key = k == 0 ? "RMB" : k == 1 ? "SPACE" : "AUTO";
             WriteBold(key, at, 12 * u, ready ? BONE : Color(ASH.r, ASH.g, ASH.b, 0.6), Anchor.MiddleCenter);
             if (!ready)
             {
@@ -351,24 +405,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
             var s = row.survivor;
             if (!s.ready || s.life == Life.Gone || s.role == Role.None) continue;
             var hue = HeroColor(s.seat);
-            var ring = Color(hue.r, hue.g, hue.b, s.seat == me.seat ? 0.55 : 0.4);
-            mut var last = float2(0);
-            mut var seen = false;
-            for (var k = 0; k <= 32; k++)
-            {
-                var turn = k * Math.TAU / 32;
-                var at = s.feet + float3(Math.Sin(turn) * 0.75, 0.05, Math.Cos(turn) * 0.75);
-                float4 clip = Math.Mul(look.toClip, float4(at, 1));
-                if (clip.w <= 0.01)
-                {
-                    seen = false;
-                    continue;
-                }
-                var dot = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
-                if (seen) Draw.Line(last, dot, 2 * u, ring);
-                last = dot;
-                seen = true;
-            }
+            GroundRing(look, s.feet, 0.75, 2 * u, Color(hue.r, hue.g, hue.b, s.seat == me.seat ? 0.55 : 0.4), w, h);
         }
     }
 
@@ -508,7 +545,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     if (feed.played < 45 && match.phase != Phase.Over && mine.role != Role.None && !mine.choosing)
     {
         var fade = Math.Saturate((45 - feed.played) * 0.2);
-        Write("WASD move   Mouse aim and fire   Space roll   R reload   Wheel zoom   (the other skills, chests, the beacon and friends: stand by them)",
+        Write("WASD move   Mouse aim and fire   Right mouse skill   Space roll   R reload   Wheel zoom   (chests, the beacon, friends down: stand by them)",
               float2(w * 0.5, h - 30 * u), 12 * u, Color(ASH.r, ASH.g, ASH.b, fade), Anchor.LowerCenter);
     }
     if (party.joined < 2 && feed.played < 20)
