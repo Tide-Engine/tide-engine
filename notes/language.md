@@ -1,5 +1,28 @@
 # Language features, as tidec builds them
 
+## Shaded drawing functions (2026-10-19)
+
+Ordinary synchronous drawing functions can name frags/verts using the existing
+mesh, instanced, skinned and blit syntax. Shader component/singleton requirements
+match exactly one explicit non-out helper parameter by type, with normal
+read-only value and mutable-pointer behavior. No ambient state lookup or new
+function capability is introduced. Attached local fields use the existing
+actual-parameter/sidecar rules through nested calls and synchronous callbacks;
+plain copies have no sidecar. Methods, tasks, match code and GPU code retain
+their existing drawing restrictions. The spec's former blanket restriction is
+replaced by this completion of explicit helper access; public shader/function
+docs and editor completion agree. Compiler contracts and coverage are in
+notes/shaders.md. No generated-C/runtime API or world layout changes.
+
+Validation: warning-free native/web debug builds pass all 2,431 native CTests
+(150.63 seconds) and 2,340 web CTests (293.82 seconds), including exact-bit
+simulation pins, shader goldens/SPIR-V validation, Vulkan/OpenGL and
+WebGL/WebGPU pixels. The regression with an out parameter beside the real
+input passes on both native and WASI. The docs production build passes. A final editor-only hover
+wording adjustment was rebuilt and passed all 239 language-server tests.
+Validation used Node 24.19.0 and the configured local Vulkan validation SDK.
+Other operating systems, Android and sanitizers were not run; no CI dispatched.
+
 ## Borrowed resource asset collections (2026-10-18)
 
 Implemented as an authorized completion of existing read-only helper access:

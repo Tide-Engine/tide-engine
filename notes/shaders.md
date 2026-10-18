@@ -1,5 +1,35 @@
 # Code the GPU runs: frags and verts
 
+## Shaded drawing functions (2026-10-19)
+
+The existing drawing-function capability now includes naming a frag or vert
+in Mesh, Instanced, SkinnedMesh and Blit, including target draws. This completes
+the existing API under the owner's standing authorization for conventional
+helper access. A function supplies shader component/singleton inputs through
+exactly one explicit non-out parameter of each required type. Missing or
+ambiguous inputs are diagnosed; no implicit entity/singleton lookup is added.
+Read-only values and mutable parameters retain ordinary value/pointer rules.
+Views keep their existing implicit bindings and verified/blended selection.
+
+check_shader_binding checks helper inputs as well as existing struct/texture
+rules. Shader planning marks precisely the attached local fields required by
+those inputs before check_local_field_calls propagates/validates helper
+sidecars. Only views gain inferred bound parameters. Draw codegen selects the
+current routine, including inlined Action bodies, and takes the address of a
+by-value input for the existing shade wrapper. The runtime, shader layout,
+GLSL/WGSL/SPIR-V emission, batching and simulation state are unchanged.
+
+draw_helpers compares direct and helper instance/uniform captures, recursion,
+renamed inputs, an out parameter beside the real input, inlined callbacks and read/write attached-local forwarding
+across frames while checking the world hash. draw_values covers explicit
+singleton forwarding, values, textures, instancing, batching and a vert alone;
+skinned_rest routes a custom-stage rest draw through a helper. Existing shader
+pixel pass 12 now exercises mesh, instanced and blit helpers with unchanged
+pixel expectations. Diagnostics cover missing component/singleton, ambiguous
+and out-only inputs, and copies lacking attached local fields. Editor tests
+cover shader/value completion and the new diagnostics. Validation is recorded
+in notes/language.md with the full suites.
+
 ## Texture-size metadata and payload values (2026-10-18)
 
 Texture.size is lowered to two uniform ints per distinct named image source.
