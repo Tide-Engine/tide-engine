@@ -1,0 +1,13 @@
+// expect: 'Show' uses its 'light''s local fields, and this is a copy of the singleton's value, which has none
+scene Main { }
+singleton Light { local float strength; }
+frag Shade(Vertex vertex, out Color color, Light light) { color = Color.white * light.strength; }
+void Show(Light light)
+{
+    Draw.Mesh([Vertex { }, Vertex { }, Vertex { }], [0, 1, 2], Shade);
+}
+view DrawIt(Light light)
+{
+    var copy = light;
+    Show(copy);
+}

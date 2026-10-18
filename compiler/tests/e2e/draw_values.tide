@@ -122,18 +122,38 @@ view Fill(mut Art art)
     art.spread = RenderTarget(8, 8, 1);
 }
 
-view Blits(Art art)
+void BlurDraw(Texture image, RenderTarget target, BlurParams blur, Light light)
+{
+    Draw.Blit(image, target, Blur, blur);
+}
+
+void PaintDraw(List<Corner3> corners, List<int> faces, float4x4 transform, Look look, Light light)
+{
+    Draw.Mesh(corners, faces, transform, Raise, Paint, look);
+}
+
+void SparkDraw(Art art, Fade fade)
+{
+    Draw.Instanced(art.corners, art.faces, art.sparks, Glow, fade);
+}
+
+void FlatDraw(Art art, Fade fade)
+{
+    Draw.Mesh(art.flat, art.faces, Slide, fade);
+}
+
+view Blits(Art art, Light light)
 {
     // One frag, two values: a run each
-    Draw.Blit(art.bright.color, art.spread, Blur, BlurParams { direction = float2(1, 0) });
+    BlurDraw(art.bright.color, art.spread, BlurParams { direction = float2(1, 0) }, light);
     Draw.Blit(art.spread.color, art.bright, Blend.Add, Blur, BlurParams { direction = float2(0, 1), taps = 5 });
 }
 
-view Meshes(mut Art art)
+view Meshes(mut Art art, Light light)
 {
     var red = Look { tint = Color.red, lift = float3(0, 2, 0), flip = true, finish = Finish { shine = 0.5, layers = 3 } };
     // The same values twice in a row are one run of two instances
-    Draw.Mesh(art.corners, art.faces, float4x4.identity, Raise, Paint, red);
+    PaintDraw(art.corners, art.faces, float4x4.identity, red, light);
     Draw.Mesh(art.corners, art.faces, float4x4.Translate(float3(5, 0, 0)), Raise, Paint, red);
     // ...other values another, though the frag and the mesh are the same
     Draw.Mesh(art.corners, art.faces, float4x4.identity, Raise, Paint, Look { lift = float3(0, 4, 0) });
@@ -147,7 +167,7 @@ view Meshes(mut Art art)
 
 view Sparks(Art art)
 {
-    Draw.Instanced(art.corners, art.faces, art.sparks, Glow, Fade { amount = 0.25, steps = 4 });
+    SparkDraw(art, Fade { amount = 0.25, steps = 4 });
     Draw.Instanced(art.corners, art.faces, art.sparks, Glow, Fade { amount = 0.25, steps = 4 });
     Draw.Instanced(art.corners, art.faces, art.sparks, Glow, Fade { amount = 0.5 });
 }
@@ -155,5 +175,5 @@ view Sparks(Art art)
 view Flat(Art art)
 {
     // A vert alone, in 2D
-    Draw.Mesh(art.flat, art.faces, Slide, Fade { amount = 7 });
+    FlatDraw(art, Fade { amount = 7 });
 }
