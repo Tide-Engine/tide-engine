@@ -1,13 +1,14 @@
 # The docs site
 
-Standalone editor distribution preparation (2026-10-18): README and Editors
-now have package-manager examples for the planned official tide-emacs and
+Standalone editor distribution (2026-10-18): README and Editors
+now have package-manager examples for the public MIT tide-emacs and
 tide-vim repositories, including package-vc-install, vim-plug and lazy.nvim.
 They distinguish direct Git installation from the prepared, not-yet-submitted
 MELPA recipe and the archive's one-month/public-maintenance and human-review
-requirements. Publication is pending the owner's editor-only license choice;
-do not merge the new public repository links until the repositories exist.
-The production docs build passes on Node 24.21.0 with existing allowed
+requirements. The owner approved editor-only MIT; both standalone repositories
+are published and their package-manager installs verified. Bundled-mode links
+also point to the public copies rather than private engine source paths.
+The merged production docs build passes on Node 24.21.0 with existing allowed
 unstaged-example 404s. No deployment or CI was dispatched. Implementation and
 validation are recorded in notes/editors.md.
 
