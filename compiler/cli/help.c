@@ -187,6 +187,11 @@ static const argument_help arguments[] = {
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
      "The output path is relative to the directory where tide was invoked.", RUN | OPEN},
+    {"--data-dir", "--data-dir <folder>", "Use a separate native save directory",
+     "Overrides Application.persistentDataPath and relative file paths. Creates\n"
+     "the directory and parents; paths are relative to where tide was invoked.\n"
+     "With several --players, each uses a player-<number> subdirectory.\n"
+     "Native desktop only. The directory persists until you remove it.", RUN},
     {"--capture-audio", "--capture-audio <file.wav>", "Save all audio from a headless run",
      "Writes 16-bit stereo WAV at 48 kHz. Without sound the file is silent.\n"
      "Native only; add --frames or a script's quit. Paths are relative to\n"

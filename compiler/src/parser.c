@@ -1586,7 +1586,7 @@ static bool at_local_field(const parser *p)
 {
     if (!at(p, T_IDENT) || !str_eq_c(peek(p)->text, "local") || peek_at(p, 1)->kind != T_IDENT) return false;
     const tok_kind after = peek_at(p, 2)->kind;
-    return after == T_IDENT || after == T_DOT || after == T_LT || after == T_QUESTION;
+    return after == T_IDENT || after == T_DOT || after == T_LT || after == T_QUESTION || after == T_LBRACKET;
 }
 
 // [local] Type name; [= default];

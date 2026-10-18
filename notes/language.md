@@ -1,5 +1,152 @@
 # Language features, as tidec builds them
 
+## Conventional math API completions (2026-10-18)
+
+The owner approved `quaternion.FromToRotation(float3 from, float3 to)` and
+`float4x4.Scale(float3 scale)` as clear wins following the existing API style,
+and clarified that routine completions and edge cases should be handled within
+the assigned task without approval questions. Substantive language/behavior
+and ownership decisions still belong to the owner; `AGENTS.md` records this
+distinction.
+
+Both signatures live in the shared builtins table, so ordinary checking,
+named arguments, C generation, editor completion/hover/signature help and
+shader-call checking use the existing paths. Generated CPU calls are
+`tide_fromto_q` and `tide_scaling_f4x4`, inline in `tide/math.h`. No parser,
+capability, evaluation-order or storage rule changes. The existing C matrix
+scalar-multiplication helper `tide_scale_f4x4(matrix, scalar)` is unchanged.
+
+FromToRotation normalizes arbitrary finite nonzero directions after dividing
+by their largest absolute component, avoiding overflow and squared-length
+underflow, including subnormals. Invalid or zero directions return identity.
+The ordinary shortest-arc formula is used for nonnegative dot products. Near
+pi, cosine of the half-angle is derived from cross-product length rather than
+`1 + dot`, preserving small deviations from an opposite direction. Exact
+opposites cross normalized `from` with its least-aligned cardinal axis (ties
+X, then Y, then Z), and return a unit quaternion with w = 0. Quaternion output
+is finite and chooses w >= 0. The scale builder directly sets the diagonal
+and homogeneous 1, leaving other entries zero; negative and zero scales work.
+
+Runtime accuracy tests compare independently normalized double-precision
+directions after rotation, exercise 10,000 direction pairs, unit lengths,
+nearly/exactly opposite directions, axis ties, zero/nonfinite inputs and the
+smallest subnormal/largest finite magnitudes. The new
+`crossplatform_direction_rotation_and_scale` hashes 100,000 arbitrary float
+direction pairs (including invalid values and opposites), plus scaled points;
+its pin is `A40EAB68989DC773`. Existing pins are unchanged. The math E2E fixture
+checks defaults, positional and reordered named arguments and resulting
+rotations/transforms. GPU coverage is recorded in `notes/shaders.md`; public
+contracts are in `docs/spec.md` and `docs/language/math.md`.
+
+Validation: full native debug passed all 2,374 tests. The full web debug run
+covered 2,284 tests; its one WebGPU shader failure (reserved helper parameter)
+was fixed, and focused engine, math E2E, shader golden, WebGL and WebGPU tests
+then all passed. Focused native engine/E2E/golden/SPIR-V/Vulkan checks also
+passed after the fix. Both native and WASI release engine suites and math E2E
+passed, retaining the new exact-bit pin across all four configurations and
+all prior pins. The docs production build passed. Other platforms remain CI
+coverage; CI was not dispatched.
+
+## Attached local arrays: final prototype compiler audit (2026-10-18)
+
+GRAVEWAKE's `local Shard[4] pieces` report still reproduced: the parser's
+lookahead recognized the contextual `local` field modifier before a name,
+qualified/generic type or nullable type, but omitted an array's `[`. It parsed
+`local` as the type and `Shard` as the field name, then failed at the bracket.
+`at_local_field` now includes `[`. This restores the existing array/local-field
+contracts; it adds no type, syntax or runtime function. A type actually named
+`local` remains unambiguous because the modifier still requires a following
+identifier. Match layouts, seeded results and hashes are unchanged.
+
+The existing `local_fields` E2E now keeps a vector array on each match component
+and a nested integer array on a match singleton. It checks nonzero defaults
+before a row exists, helper writes, vector/swizzle and out-of-bounds writes,
+separate entities/machines, disconnect resets and local pack/unpack followed by
+continued frames. Its existing plain-world comparison and packed/hash checks
+ensure these arrays remain outside match state. User docs and the spec clarify
+fixed arrays alongside the other supported local field values.
+
+Whole-singleton replacement was a stale report: current checking/codegen accepts
+ordinary `mut` singleton assignment, and `singleton_params` already executes it
+through `Replace`. A fresh direct-system probe also compiles. The documented
+Resident/grid ownership restrictions still apply. The exhaustive report inventory
+and remaining decisions are in `notes/private-prototypes.md`, Engine gap audit;
+the host save-directory fix is recorded in `notes/standard-host.md`.
+
+Final validation passes all 2,372 native and 2,282 web debug CTests, including
+the expanded local-fields fixture and unchanged world/hash comparisons. Builds
+are warning-free and the docs production build passes. Toolchain, backend
+coverage and unavailable platform checks are recorded with the host fix.
+
+## Follow-up prototype gap audit (2026-10-18)
+
+The first pass was not exhaustive. CRACKED's default singleton Random seeding
+also depended on presentation-only declaration order. A checked match-only
+singleton ordinal now drives both its seed sites and its simulation-graph record;
+details and exact runtime coverage are in `notes/random.md`. No runtime API or
+state layout changes. Explicit singleton declaration order remains a match input.
+
+The regression exposed another implementation detail in compatibility hashing:
+`_ = expression` and `out _` get C storage names containing source line/column,
+and those names were hashed as though authored. The graph now omits discarded
+storage names from statements and their bound expressions. Its typed nodes,
+ordered edges, calls, values and distinct output bindings still participate.
+Formatting/moving discards preserves compatibility; changing their executed
+match code still changes it. `simulation_identity_ignores_discard_storage_source_locations`
+checks both directions, including a discarded result with an `out _` argument.
+Full-suite, optimized parity and docs validation are recorded in `notes/random.md`.
+
+## Compiler gaps found in prototypes (2026-10-18)
+
+This pass fixes three inconsistencies with existing language behavior, without
+new syntax, runtime functions, ABI/layout changes or deterministic hash updates:
+
+- SUNDAY SUPPER's `foreach (var p in kit.placed[model])` generated an address
+  of a returned `tide_list` value. Lists, maps and sets now share receiver
+  lowering that captures the selected indexes/keys once and reads a stored
+  container again each round. It retains no pointer into an enclosing
+  container across a loop body or wait, so growing/replacing outer storage
+  remains safe and inner additions are reached. A computed receiver is
+  evaluated once into an owned value. Existing element-copy, insertion-order,
+  missing-key and bounds rules remain; reading an absent map value adds no key.
+- GRAVEWAKE's integer literals in skinned-draw shader values were captured in
+  temporaries, then emitted again as float literals, leaving the captures
+  unused under `-Werror`. Numeric widening now reads an existing capture,
+  including negative literals and int-to-long conversions; uncaptured
+  constants keep their existing literal output and rounding.
+- CRACKED's `arena.seats[s].velocity.y = 0` was rejected by the element-path
+  checker even though plain stored-field writes and their generated swizzle
+  path already existed (`docs/language/text-and-lists.md` already promised
+  `trail.points[i].x`). Vector lanes and final swizzles now pass that path for
+  list/map/array elements. Readonly/capability, duplicate-lane and intermediate
+  temporary-swizzle checks still apply. Heap-valued field/method/argument
+  restrictions remain unchanged.
+
+`prototype_codegen` reproduces both invalid-C cases with warnings as errors,
+checks live nested list/map/set traversal during inner and outer growth,
+once-only/computed receivers, missing and out-of-range accesses, positive and
+negative numeric captures, vector/compound/swizzle writes and captured draw
+values over repeated local frames. Its waiting match loops replay from both a
+COW snapshot and packed bytes. Two error fixtures retain repeated-lane and
+temporary-swizzle rejection through an indexed element.
+
+This initial pass left the other reports unverified. The completed follow-up
+inventory in `notes/private-prototypes.md`, Engine gap audit, supersedes that
+temporary list: attached arrays and save isolation are addressed, whole-singleton
+replacement already works, and the remaining restrictions/APIs have their actual
+design boundary recorded there. Original observations remain in the game notes.
+
+Validation: complete Windows native/web debug builds are warning-free with
+clang 23.1.2 and checkout-local Node 24.19.0. The full suites exercised 2,369
+native cases (71.65 s, including 31 Vulkan/OpenGL checks) and 2,280 WASI/web
+cases (185.35 s, including WebGL/WebGPU). Their only failures were the two new
+error fixtures using `// error:` instead of the required `// expect:` header.
+After correction, both fixtures and the final expanded `prototype_codegen`
+target pass on native and WASI; every other full-suite case passed. Existing
+math/random/simulation hash pins are unchanged. All runs used `TIDE_HIDDEN=1`
+and browser runners' mute flags. Other OSes, Android, sanitizers and private
+prototype browser playtests were not run; no CI or deployment was requested.
+
 ## One visibility mechanism for scenes, entities and components (2026-10-15)
 
 The owner approved replacing the separate private-scene API with ordinary

@@ -25,7 +25,7 @@ TIDE_TEST(fetch_each_case_against_a_server_on_this_machine)
 {
     const char *port = getenv("TIDE_FETCH_PORT");
     TIDE_REQUIRE(port && *port);
-    const tide_io *io = tide_platform_io_init("tests.tide.fetch");
+    const tide_io *io = tide_platform_io_init("tests.tide.fetch", NULL);
     tide_local local = {0};
     tide_local_set_io(&local, io);
     tide_local_init(&local);
@@ -43,7 +43,7 @@ TIDE_TEST(fetch_tickets_for_what_isnt_a_url_and_for_one_forgotten_in_flight)
 {
     const char *port = getenv("TIDE_FETCH_PORT");
     TIDE_REQUIRE(port && *port);
-    const tide_io *io = tide_platform_io_init("tests.tide.fetch");
+    const tide_io *io = tide_platform_io_init("tests.tide.fetch", NULL);
     // Not a URL: refused by the engine, before any provider is asked
     const uint32_t bad = tide_web_fetch_begin(io, tide_str_from_cstr("file:///etc/passwd"));
     TIDE_CHECK(bad == TIDE_FETCH_INVALID_URL);
@@ -99,7 +99,7 @@ TIDE_TEST(fetch_a_request_past_its_time_limit_is_timed_out_where_its_polled)
 {
     const char *port = getenv("TIDE_FETCH_PORT");
     TIDE_REQUIRE(port && *port);
-    const tide_io *io = tide_platform_io_init("tests.tide.fetch");
+    const tide_io *io = tide_platform_io_init("tests.tide.fetch", NULL);
     char url[64];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/silent", port);
     const tide_list body = {0};

@@ -5,6 +5,7 @@ Working rules and agreed decisions for humans and AI agents. Implementation deta
 ## Working agreement
 
 - The project owner is the lead programmer and writes most of the code. Agents do specific, scoped tasks: do not scaffold systems, widen scope or refactor nearby code without being asked. If code versus discussion is unclear, ask.
+- Within an assigned task, small API completions that follow existing conventions and simplify game code are clear wins: implement and validate them without asking about routine edge cases. Bring substantive language, behavior or ownership decisions to the owner.
 - The owner decides language design. The agent working on a transpiler task implements and maintains its compiler changes, tests and build integration, and proposes language changes for approval. The compiler, CLI and editor integrations are agent-maintained; references to Claude record authorship, not exclusive ownership.
 - The owner writes the runtime, with an existing exception: agents maintain the temporary implementations listed in `notes/runtime-ownership.md` until the owner takes them over. Read that note before changing the generated-C/runtime boundary. Any new runtime function generated code needs is agreed on before either side depends on it.
 - Validate changes locally, commit the relevant notes with the work, then merge directly into `dev` using the procedure below. Do not create pull requests, push feature branches or dispatch CI unless the owner asks.

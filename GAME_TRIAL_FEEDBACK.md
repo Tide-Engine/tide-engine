@@ -2,6 +2,24 @@
 
 2026-10-06. This records the owner's requested test drive of an AI game builder, its observed authoring costs, and feedback left by the builders. It is an internal report, not a public product claim or an approved feature plan.
 
+## Current status (2026-10-18)
+
+The report below is historical, not a current feature backlog. Audio playback,
+Spawn/Send in ordinary helpers and multi-player standard-host scripts were built
+later; their contracts are in `notes/audio.md`, `notes/language.md` and
+`notes/standard-host.md`. Match-handler queries remain an explicit language
+restriction, rather than a compiler defect to lift without design review.
+
+The current prototype audit fixes nested-container foreach lowering, stored
+vector/swizzle writes, captured numeric literals in skinned draws, match Random
+seeding affected by local singletons, and compatibility identities affected by
+discard-storage source positions, and attached local fixed arrays. Native
+`--data-dir` now isolates test saves explicitly. `notes/language.md`,
+`notes/random.md` and `notes/standard-host.md` record their regressions and
+validation. The complete current report inventory and remaining language/API
+decisions are in `notes/private-prototypes.md`, Engine gap audit; an old
+prototype workaround alone does not make it a requirement.
+
 ## What was tried
 
 Twelve initial games were built: nine with Opus 5.5 and three comparison games with Sonnet 5.5. Three further runs changed existing games. The brief required multiplayer games, keyboard and pointer/touch controls, small and wide layouts, and scripted play with pictures before completion. All twelve builders reported a game that built without warnings and played. The saved counters record 151 initial builds with nine failures; including changes, 163 builds with ten failures.

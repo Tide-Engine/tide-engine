@@ -513,6 +513,45 @@ static inline tide_quaternion tide_normalize_q(const tide_quaternion q)
                                        : tide_identity_q();
 }
 
+// Rescale before squaring so every finite, nonzero direction can be normalized,
+// including subnormals and vectors whose ordinary length would overflow.
+static inline tide_float3 tide_fromto_unit_f3(const tide_float3 v)
+{
+    if (!tide_is_finite_f(v.x) || !tide_is_finite_f(v.y) || !tide_is_finite_f(v.z)) return tide_f3_splat(0.0f);
+    const float largest = tide_cmax_f3(tide_abs_f3(v));
+    if (largest == 0.0f) return tide_f3_splat(0.0f);
+    const tide_float3 scaled = tide_div_f3(v, tide_f3_splat(largest));
+    return tide_normalize_f3(scaled);
+}
+
+// The shortest rotation between directions, independent of their lengths.
+// Opposite directions use the least-aligned cardinal axis (X, then Y on ties).
+static inline tide_quaternion tide_fromto_q(const tide_float3 from, const tide_float3 to)
+{
+    const tide_float3 a = tide_fromto_unit_f3(from), b = tide_fromto_unit_f3(to);
+    if (tide_dot_f3(a, a) == 0.0f || tide_dot_f3(b, b) == 0.0f) return tide_identity_q();
+    const float d = tide_clamp_f(tide_dot_f3(a, b), -1.0f, 1.0f);
+    const tide_float3 axis = tide_cross_f3(a, b);
+    if (d >= 0.0f) return tide_normalize_q(tide_q(axis.x, axis.y, axis.z, 1.0f + d));
+    const float largest = tide_cmax_f3(tide_abs_f3(axis));
+    // Equality also recognizes exact opposites on GPUs that fuse the cross
+    // product's arithmetic and leave a small residual instead of zero.
+    if (largest == 0.0f || (a.x == -b.x && a.y == -b.y && a.z == -b.z)) {
+        const tide_float3 absolute = tide_abs_f3(a);
+        const tide_float3 side = absolute.x <= absolute.y && absolute.x <= absolute.z ? tide_f3(1, 0, 0)
+                               : absolute.y <= absolute.z ? tide_f3(0, 1, 0) : tide_f3(0, 0, 1);
+        const tide_float3 perpendicular = tide_fromto_unit_f3(tide_cross_f3(a, side));
+        return tide_q(perpendicular.x, perpendicular.y, perpendicular.z, 0.0f);
+    }
+    // Derive cos(half-angle) from the cross product near pi: 1 + dot would
+    // lose the small angle to cancellation, even for distinct directions.
+    const tide_float3 scaled = tide_div_f3(axis, tide_f3_splat(largest));
+    const float length = tide_length_f3(scaled);
+    const float sine = tide_sqrt_f(0.5f * (1.0f - d));
+    const tide_float3 vector = tide_mul_f3(scaled, tide_f3_splat(sine / length));
+    return tide_normalize_q(tide_q(vector.x, vector.y, vector.z, (largest * length) / (2.0f * sine)));
+}
+
 // Hamilton product: the rotation b followed by a.
 static inline tide_quaternion tide_mul_q(const tide_quaternion qa, const tide_quaternion qb)
 {
@@ -837,6 +876,12 @@ static inline tide_float4x4 tide_f4x4_from_f3x3_f3(const tide_float3x3 rotation,
 static inline tide_float4x4 tide_translate_f4x4(const tide_float3 t)
 {
     return tide_f4x4_from_f3x3_f3(tide_identity_f3x3(), t);
+}
+
+static inline tide_float4x4 tide_scaling_f4x4(const tide_float3 s)
+{
+    return (tide_float4x4){{s.x, 0.0f, 0.0f, 0.0f}, {0.0f, s.y, 0.0f, 0.0f},
+                           {0.0f, 0.0f, s.z, 0.0f}, {0.0f, 0.0f, 0.0f, 1.0f}};
 }
 
 // Translation, rotation and scale combined: scales, then rotates, then translates.

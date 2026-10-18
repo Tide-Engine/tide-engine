@@ -64,6 +64,19 @@ TIDE_TEST(math_constructors_and_swizzles)
     TIDE_CHECK(b.flat.x == 1 && b.flat.y == 3);
 }
 
+TIDE_TEST(math_direction_rotation_and_scale)
+{
+    const Results r = results();
+    const tide_float3 target = tide_normalize_f3(tide_f3(-3, 2, 1));
+    TIDE_CHECK(eq3(r.aimed, target.x, target.y, target.z));
+    const tide_float3 opposite = tide_normalize_f3(tide_f3(-1, -2, -3));
+    TIDE_CHECK(eq3(r.opposite, opposite.x, opposite.y, opposite.z));
+    TIDE_CHECK(eq3(r.scalePoint, -2, 0, 9));
+    const Body b = tide_get_Body(&world, THING);
+    TIDE_CHECK(eq3(tide_rotate_q(b.initialFromTo, tide_f3(1, 0, 0)), 0, 1, 0));
+    TIDE_CHECK(eq3(tide_transform_f4x4(b.initialScale, tide_f3(1, 1, 1)), 2, 3, 4));
+}
+
 TIDE_TEST(math_operators)
 {
     const Results r = results();

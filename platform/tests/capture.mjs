@@ -79,6 +79,8 @@ if (mode === 'refused') {
     refused('a run nothing ends', ['--capture', 'x.png'], 'nothing ends this run', '--frames');
     refused('a script that never quits', ['--script', script('endless.txt', ['3 key d'])], 'nothing ends this run', '`quit`');
     refused('--frames with no number', ['--frames'], '--frames takes how many frames');
+    refused('--data-dir with no directory', ['--data-dir'], '--data-dir takes a save directory');
+    refused('--data-dir with an empty directory', ['--data-dir', ''], '--data-dir takes a nonempty save directory');
     refused('--capture-audio with no file', ['--frames', '2', '--capture-audio'], '--capture-audio takes the file');
     refused('--frames that is no number', ['--frames', 'many'], "not 'many'");
     refused('--size with one number', ['--frames', '2', '--size', '320'], '--size takes');

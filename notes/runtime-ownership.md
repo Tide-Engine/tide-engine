@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Approved math API completions (2026-10-18)
+
+The owner authorized FromToRotation and Scale as conventional additions within
+the existing math maintenance exception. Generated code now calls inline
+`tide_fromto_q(float3, float3)` and `tide_scaling_f4x4(float3)` in `tide/math.h`.
+The former uses a private inline `tide_fromto_unit_f3` to normalize directions
+across the finite float range before building the shortest rotation. The
+existing two-argument `tide_scale_f4x4` still means scalar multiplication of a
+matrix. No runtime data structure, world layout or existing function changed.
+Contracts and validation are in `notes/language.md` and `notes/shaders.md`.
+
 ## Recipient visibility (2026-10-15)
 
 The owner approved entity/component visibility, shared live audience groups,

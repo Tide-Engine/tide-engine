@@ -596,10 +596,11 @@ static void gen_seeding(const gen *g, sb *o, const char *indent_text, const decl
         sb from = {0};
         if (local) sb_put(&from, "0u, 0u");
         else sb_printf(&from, "(uint32_t)%s->Time.seed, (uint32_t)%s->Time.tick", w, w);
-        // Which field it is: its component's or singleton's number (a local part's is the one it's of), then
-        // its place among that one's generators
+        // Match singleton ordinals exclude presentation-only declarations and attached local fields.
+        // Local state and components keep their existing numbering.
         const decl *of = d->part_of ? d->part_of : d;
-        const int place = (d->kind == DECL_SINGLETON ? 0x10000 : 0) | (d->part_of ? 0x20000 : 0) | (of->index << 8);
+        const int index = !local && d->kind == DECL_SINGLETON ? of->match_singleton_index : of->index;
+        const int place = (d->kind == DECL_SINGLETON ? 0x10000 : 0) | (d->part_of ? 0x20000 : 0) | (index << 8);
         sb_printf(o, "%stide_random_seed_place(&%s.%s, %s, %s, %du);\n", indent_text, value, paths.items[i].path, from.data, entity,
                   place + i);
     }
@@ -1591,10 +1592,11 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         return;
     }
     if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
-        if (e->kind == E_INT) {
+        if (e->kind == E_INT && !e->hoisted) {
             // Same rounding as a runtime conversion, but reads as a plain literal.
             sb_printf(o, "%lld.0f", (long long)e->int_value);
-        } else if (e->kind == E_UNARY && e->op == T_MINUS && e->lhs->kind == E_INT && e->lhs->int_value >= 0) {
+        } else if (e->kind == E_UNARY && !e->hoisted && e->op == T_MINUS
+                   && e->lhs->kind == E_INT && !e->lhs->hoisted && e->lhs->int_value >= 0) {
             sb_printf(o, "-%lld.0f", (long long)e->lhs->int_value);
         } else {
             sb_put(o, "(float)(");
@@ -1604,9 +1606,10 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         return;
     }
     if (want.kind == TY_LONG && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) { // An int, byte or char widens to a long
-        if (e->kind == E_INT) {
+        if (e->kind == E_INT && !e->hoisted) {
             gen_long_literal(o, e->int_value);
-        } else if (e->kind == E_UNARY && e->op == T_MINUS && e->lhs->kind == E_INT && e->lhs->int_value >= 0) {
+        } else if (e->kind == E_UNARY && !e->hoisted && e->op == T_MINUS
+                   && e->lhs->kind == E_INT && !e->lhs->hoisted && e->lhs->int_value >= 0) {
             gen_long_literal(o, -e->lhs->int_value);
         } else {
             sb_put(o, "(int64_t)(");
@@ -5673,6 +5676,42 @@ static void gen_query_foreach(gen *g, const stmt *s);
 static void gen_sort_call(gen *g, const expr *sort);
 static uint64_t stmt_cost(const stmt *s);
 
+// Keep a stored foreach receiver's indexes once, but find its container again
+// each round. A pointer into an outer list/map can be invalidated by the body.
+static const expr *foreach_place(gen *g, const expr *e)
+{
+    if (e->hoisted || (e->kind != E_MEMBER && e->kind != E_INDEX)) return e;
+    expr *path = NEW(expr);
+    *path = *e;
+    path->object = (expr *)foreach_place(g, e->object);
+    if (e->kind == E_INDEX) {
+        const char *index = made_up(g, "index");
+        indent(g, &g->c);
+        sb_printf(&g->c, "%s = ", const_decl(e->lhs->type, index));
+        gen_value_of(g, &g->c, e->lhs, e->lhs->type);
+        sb_put(&g->c, ";\n");
+        task_declare(g, index, e->lhs->type);
+        path->lhs = NEW(expr);
+        *path->lhs = *e->lhs;
+        path->lhs->hoisted = index;
+        path->lhs->kept = true;
+    }
+    return path;
+}
+
+static const char *foreach_value(gen *g, expr *e)
+{
+    if (is_place(e) && !e->kept) return expr_text(g, foreach_place(g, e));
+    // A computed container has no live place: evaluate and own its value once.
+    const char *value = made_up(g, "container");
+    indent(g, &g->c);
+    sb_printf(&g->c, "%s = ", const_decl(e->type, value));
+    gen_value_of(g, &g->c, e, e->type);
+    sb_put(&g->c, ";\n");
+    task_declare(g, value, e->type);
+    return value;
+}
+
 // Session.Start(Arena { ... }), Join, Connect, Leave and End, Session.Open and
 // Close, and Session.Kick and KickAll: recorded in the local state, for the
 // host program to act on after the frame. A Start, Join, Connect, Leave or End
@@ -6192,73 +6231,32 @@ static void gen_stmt(gen *g, const stmt *s)
         // The list's count is read each round, so changes to it while it's gone
         // through count; each element is a copy.
         const int k = s->value->type.decl->index;
-        if (g->task) {
-            // In a task, a list that's somewhere is read where it is each
-            // round, so it's found again after a wait, and a list made here is
-            // a local, which waits in the frame.
-            const int mark = task_mark(g);
-            line(g, o, "{");
-            g->indent++;
-            const char *list = expr_text(g, s->value);
-            if (is_fresh(s->value)) {
-                list = made_up(g, "list");
-                line(g, o, "tide_list %s = %s;", list, expr_text(g, s->value));
-                task_declare(g, list, s->value->type);
-            }
-            const char *index = made_up(g, "i");
-            line(g, o, "int32_t %s = 0;", index);
-            task_declare(g, index, (type){TY_INT, NULL});
-            line(g, o, "for (; %s < tide_list_count(%s); %s++) {", index, list, index);
-            g->indent++;
-            const int round = task_mark(g);
-            line(g, o, "%s %s = %stide_list%d_get(%s, %s)%s;", elem_vtype(s->type), local_cname(g, s->name), element_copy_open(s->type), k, list,
-                 index, type_has_list(s->type) ? ")" : "");
-            line(g, o, "(void)%s;", local_cname(g, s->name));
-            task_declare(g, local_cname(g, s->name), s->type);
-            const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
-            vec_push(g->targets, loop);
-            gen_body_stmt(g, s->then_stmt);
-            const gen_target done = g->targets.items[--g->targets.count];
-            if (done.next_used) line(g, o, "%s:;", done.next);
-            task_pop(g, round);
-            g->indent--;
-            line(g, o, "}");
-            if (done.end_used) line(g, o, "%s:;", done.end);
-            g->indent--;
-            line(g, o, "}");
-            task_pop(g, mark);
-            break;
-        }
-        const char *list = made_up(g, "list");
+        const int mark = task_mark(g);
         const char *index = made_up(g, "i");
         line(g, o, "{");
         g->indent++;
-        indent(g, o);
-        if (is_fresh(s->value)) {
-            sb_printf(o, "const tide_list %s_value = ", list);
-            gen_expr(g, o, s->value);
-            sb_printf(o, ";\n");
-            line(g, o, "const tide_list *const %s = &%s_value;", list, list);
-        } else {
-            sb_printf(o, "const tide_list *const %s = &(", list);
-            gen_expr(g, o, s->value);
-            sb_put(o, ");\n");
-        }
-        line(g, o, "for (int32_t %s = 0; %s < tide_list_count(*%s); %s++) {", index, index, list, index);
+        const char *list = foreach_value(g, s->value);
+        line(g, o, "int32_t %s = 0;", index);
+        task_declare(g, index, (type){TY_INT, NULL});
+        line(g, o, "for (; %s < tide_list_count(%s); %s++) {", index, list, index);
         g->indent++;
-        line(g, o, "const %s %s = %stide_list%d_get(*%s, %s)%s;", elem_vtype(s->type), local_cname(g, s->name), element_copy_open(s->type), k,
-             list, index, type_has_list(s->type) ? ")" : "");
+        const int round = task_mark(g);
+        line(g, o, "%s%s %s = %stide_list%d_get(%s, %s)%s;", g->task ? "" : "const ", elem_vtype(s->type), local_cname(g, s->name),
+             element_copy_open(s->type), k, list, index, type_has_list(s->type) ? ")" : "");
         line(g, o, "(void)%s;", local_cname(g, s->name));
+        task_declare(g, local_cname(g, s->name), s->type);
         const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
         vec_push(g->targets, loop);
         gen_body_stmt(g, s->then_stmt);
         const gen_target done = g->targets.items[--g->targets.count];
         if (done.next_used) line(g, o, "%s:;", done.next);
+        task_pop(g, round);
         g->indent--;
         line(g, o, "}");
         if (done.end_used) line(g, o, "%s:;", done.end);
         g->indent--;
         line(g, o, "}");
+        task_pop(g, mark);
         break;
     }
 
@@ -11699,7 +11697,6 @@ static void gen_map_foreach(gen *g, const stmt *s)
     const bool set = m->is_set;
     const type key = m->fields.items[0].type;
     const int mark = task_mark(g);
-    const char *map = made_up(g, "map");
     const char *index = made_up(g, "i");
     const char *entry = made_up(g, "e");
     const char *order = made_up(g, "order");
@@ -11712,36 +11709,12 @@ static void gen_map_foreach(gen *g, const stmt *s)
         task_declare(g, order, (type){TY_LONG, NULL});
         task_declare(g, next, (type){TY_INT, NULL});
     }
-    if (g->task) {
-        const char *at = expr_text(g, s->value);
-        if (is_fresh(s->value)) {
-            line(g, o, "tide_map %s = %s;", map, at);
-            task_declare(g, map, s->value->type);
-            at = map;
-        }
-        line(g, o, "for (;;) {");
-        g->indent++;
-        line(g, o, "const int32_t %s = tide_map_next(%s, &tide_map%d_kind, &%s, &%s);", index, at, m->index, order, next);
-        line(g, o, "if (%s < 0) break;", index);
-        line(g, o, "const tide_map%d_entry *const %s = tide_map_entry(%s, %s, &tide_map%d_kind);", m->index, entry, at, index, m->index);
-    } else {
-        indent(g, o);
-        if (is_fresh(s->value)) {
-            sb_printf(o, "const tide_map %s_value = ", map);
-            gen_expr(g, o, s->value);
-            sb_put(o, ";\n");
-            line(g, o, "const tide_map *const %s = &%s_value;", map, map);
-        } else {
-            sb_printf(o, "const tide_map *const %s = &(", map);
-            gen_expr(g, o, s->value);
-            sb_put(o, ");\n");
-        }
-        line(g, o, "for (;;) {");
-        g->indent++;
-        line(g, o, "const int32_t %s = tide_map_next(*%s, &tide_map%d_kind, &%s, &%s);", index, map, m->index, order, next);
-        line(g, o, "if (%s < 0) break;", index);
-        line(g, o, "const tide_map%d_entry *const %s = tide_map_entry(*%s, %s, &tide_map%d_kind);", m->index, entry, map, index, m->index);
-    }
+    const char *map = foreach_value(g, s->value);
+    line(g, o, "for (;;) {");
+    g->indent++;
+    line(g, o, "const int32_t %s = tide_map_next(%s, &tide_map%d_kind, &%s, &%s);", index, map, m->index, order, next);
+    line(g, o, "if (%s < 0) break;", index);
+    line(g, o, "const tide_map%d_entry *const %s = tide_map_entry(%s, %s, &tide_map%d_kind);", m->index, entry, map, index, m->index);
     const int round = task_mark(g);
     const char *var = local_cname(g, s->name);
     if (set) {
