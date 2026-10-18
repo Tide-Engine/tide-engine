@@ -1,5 +1,26 @@
 # The docs site
 
+Editor setup discovery (2026-10-18): moved the single Editors sidebar entry
+into Get started, between Install and Your first game, labelled Editor setup.
+The route stays /tools/editors for existing links. Its opening table links
+each editor's instructions, shows tide ide commands alongside package-manager
+choices and names the official public repositories. The introduction explains
+copying the generated configuration, choosing one install method, the terminal
+plugins' MIT licensing, separate tidels installation and current non-MELPA
+availability. The detailed configuration examples remain in their sections.
+Install now has an editor-setup section and accurately limits automatic
+extension installation to the VS Code family. Your first game and README
+also link directly to setup. No plugin, CLI, language or licensing behavior
+changed; no public plugin export needs updating.
+
+Validation: production npm run build passes with Node 24.21.0, including the
+existing link/anchor/sidebar checks and allowed unstaged-example 404s. One-off
+checks of generated HTML, navigation and search.json confirm the sidebar order,
+unique editor route, links to both terminal-editor sections/public repositories,
+visible MELPA status, introductory setup links and searchable chooser section.
+git diff --check passes. No persistent text-mirroring test, CI dispatch or
+deployment was added.
+
 Standalone editor distribution (2026-10-18): README and Editors
 now have package-manager examples for the public MIT tide-emacs and
 tide-vim repositories, including package-vc-install, vim-plug and lazy.nvim.

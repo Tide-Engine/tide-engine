@@ -26,6 +26,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Introduction', link: '/guide' },
             { text: 'Install', link: '/guide/install' },
+            { text: 'Editor setup', link: '/tools/editors' },
             { text: 'Your first game', link: '/guide/first-game' },
             { text: 'Playground', link: '/guide/playground' },
             { text: 'Live examples', link: '/guide/examples' },
@@ -108,7 +109,6 @@ export const sidebar: Group[] = [
         text: 'Tools',
         items: [
             { text: 'The tide command', link: '/tools/cli' },
-            { text: 'Editors', link: '/tools/editors' },
             { text: 'Debug views', link: '/tools/debug-views' },
         ],
     },

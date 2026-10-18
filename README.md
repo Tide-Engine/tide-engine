@@ -120,6 +120,10 @@ tide upgrade --stable   # back to stable ones
 
 ## Editors
 
+See [Editor setup](docs/tools/editors.md) for quick setup commands and
+package-manager instructions for each editor. The standalone Emacs and
+Vim/Neovim plugins use MIT; Emacs installs from GitHub and is not on MELPA yet.
+
 Open your game's folder, the one you run `tide run` in, and every `.tide` file
 in it is one game: completion, errors as you type with quick fixes, go to
 definition, rename, formatting, moving a declaration to a file of its own and

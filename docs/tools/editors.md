@@ -4,6 +4,30 @@ description: "Set up Tide in VS Code, JetBrains, Emacs, Vim or Neovim with highl
 
 # Editors
 
+## Choose your editor
+
+[Install Tide](../guide/install.md) first, then choose your setup:
+
+| Editor | Setup with Tide | Install through your editor's package manager |
+|---|---|---|
+| [VS Code, Cursor, VSCodium and Windsurf](#vs-code-cursor-vscodium-and-windsurf) | `tide editors` | Installed by Tide |
+| [JetBrains IDEs](#jetbrains-ides) | Install Tide from **Settings > Plugins > Marketplace** | JetBrains Marketplace |
+| [Emacs 29.1+](#emacs) | `tide ide emacs` | [tide-emacs](https://github.com/Tide-Engine/tide-emacs) with built-in `package-vc` |
+| [Vim 8+](#vim-and-neovim) | `tide ide vim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with vim-plug |
+| [Neovim 0.11+](#vim-and-neovim) | `tide ide neovim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with lazy.nvim |
+
+For Emacs, Vim and Neovim, the `tide ide` commands print configuration to copy
+into your init file; the modes and matching language server already come with
+Tide. If you prefer your existing package manager, follow the install examples
+in [Emacs](#emacs) or [Vim and Neovim](#vim-and-neovim) below instead.
+Choose one installation method per editor.
+
+The standalone Emacs and Vim/Neovim plugins are MIT-licensed. **Emacs users:
+the mode is available directly from GitHub now, but is not listed on MELPA yet.**
+The plugins need Tide installed separately for its `tidels` language server.
+
+## Language server features
+
 Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](../packages/using-and-writing.md). The server provides these features across the game; which appear depends on your editor's language server client:
 
 - Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
