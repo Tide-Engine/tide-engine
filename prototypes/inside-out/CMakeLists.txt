@@ -3,7 +3,7 @@ file(GLOB INSIDE_OUT_SOURCES LIST_DIRECTORIES false CONFIGURE_DEPENDS "${CMAKE_C
 list(SORT INSIDE_OUT_SOURCES)
 set(INSIDE_OUT_ROOMS PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
 
-tide_add_game(inside_out_tests SOURCES game.tide levels.tide test/cues.tide NAME game ${INSIDE_OUT_ROOMS}
+tide_add_game(inside_out_tests SOURCES game.tide levels.tide hall.tide test/cues.tide NAME game ${INSIDE_OUT_ROOMS}
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/simulation.c test/campaign.c)
 target_include_directories(inside_out_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME inside_out_tests COMMAND inside_out_tests)
@@ -35,6 +35,10 @@ if(TIDE_WEB)
     endforeach()
     add_test(NAME inside_out_preview_invalid COMMAND inside_out_invite_test "${invite_fallback}"
         "--inside-out-look=-1" "--inside-out-look=5" "--inside-out-look=1junk" "--expect-look=-1")
+    add_test(NAME inside_out_playtest_argument COMMAND inside_out_invite_test "${invite_fallback}"
+        "--inside-out-playtest" "--expect-playtest=1")
+    add_test(NAME inside_out_playtest_absent COMMAND inside_out_invite_test "${invite_fallback}"
+        "--inside-out-playtestjunk" "--expect-playtest=0")
 endif()
 
 # The puzzle solver and inspector (usage at the top of test/solve.c), a
@@ -42,7 +46,7 @@ endif()
 # handler, so the game's C is optimized with it in every configuration; the
 # engine's float flags (cmake/TideFlags.cmake) come after -O2 and still hold.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
-    tide_add_game(inside_out_solve SOURCES game.tide levels.tide test/solve.tide NAME game ${INSIDE_OUT_ROOMS}
+    tide_add_game(inside_out_solve SOURCES game.tide levels.tide hall.tide test/solve.tide NAME game ${INSIDE_OUT_ROOMS}
         HOST test/solve.c)
     target_compile_options(inside_out_solve PRIVATE -O2)
 endif()

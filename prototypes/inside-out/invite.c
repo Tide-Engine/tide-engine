@@ -1,7 +1,8 @@
-// The web shell passes its origin/path and optional material review choice
-// through ordinary WASI arguments.
+// The web shell passes its origin/path, optional material review choice and
+// playtest switch through ordinary WASI arguments.
 // Native invitations use the published preview until native room links exist.
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(__wasi__)
@@ -9,6 +10,7 @@
 
 static char invite_base[2048];
 static int preview_look = -1;
+static int playtest;
 static int arguments_loaded;
 
 static void read_arguments(void)
@@ -26,6 +28,10 @@ static void read_arguments(void)
     for (size_t i = 0; i < count; i++) {
         const char *const argument = (const char *)arguments[i];
         if (!argument) continue;
+        if (strcmp(argument, "--inside-out-playtest") == 0) {
+            playtest = 1;
+            continue;
+        }
         if (strncmp(argument, look_prefix, sizeof look_prefix - 1) == 0) {
             const char *const value = argument + sizeof look_prefix - 1;
             if (value[0] >= '0' && value[0] <= '4' && value[1] == '\0') preview_look = value[0] - '0';
@@ -64,5 +70,17 @@ int InsideOutPreviewLook(void)
     return preview_look;
 #else
     return -1;
+#endif
+}
+
+// Natively, a nonempty INSIDE_OUT_PLAYTEST other than "0" asks for it.
+int InsideOutPlaytest(void)
+{
+#if defined(__wasi__)
+    read_arguments();
+    return playtest;
+#else
+    const char *const value = getenv("INSIDE_OUT_PLAYTEST");
+    return value && value[0] && strcmp(value, "0") != 0;
 #endif
 }
