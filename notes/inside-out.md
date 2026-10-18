@@ -195,7 +195,13 @@ led to two fixes before the tests above: models framed to their used table
 cells (most showed one tiny box), and the summary waiting for the closed
 aperture.
 
-The WebGPU fixtures are run after the merge with dev, below.
+The clean merge of origin/dev brought compiler, `tide/math.h` and mixer
+changes (no Inside Out overlap). After it, the native and web game targets
+rebuilt warning-free; native passed all four Inside Out entries and WASM the
+aggregate and all fourteen bridge entries again. On the merged code
+`inside_out_play_webgpu` passed in 1,246.2 s, `inside_out_materials_webgpu`
+in 209.0 s and `inside_out_shutters_webgpu` in 533.1 s. Native Vulkan
+validation layers are unavailable here. No CI or deployment was requested.
 
 ### Open
 
