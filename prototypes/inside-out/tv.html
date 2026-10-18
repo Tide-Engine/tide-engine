@@ -43,10 +43,12 @@
   card.onclick = () => { card.style.display = 'none'; };
   document.getElementById('where').textContent = new URL('pad/', game).href.replace(/^https?:\/\//, '');
 
-  // Each view draws at one device pixel to a page pixel unless ?scale says
-  // otherwise (0.75 is lighter still): two views at a TV's full density is
-  // more than most computers draw smoothly.
-  const scale = Number(params.get('scale')) > 0 ? params.get('scale') : '1';
+  // The whole screen draws at about 1080p, each view at most 960x1080 device
+  // pixels, stretched to fit: two views at a 4K TV's full resolution is far
+  // more than most computers draw smoothly, and more than shows from the
+  // couch. ?scale sets the device pixels to a page pixel instead.
+  const fitted = Math.min(window.devicePixelRatio || 1, Math.sqrt(960 * 1080 / Math.max(1, innerWidth / 2 * innerHeight)));
+  const scale = Number(params.get('scale')) > 0 ? params.get('scale') : fitted.toFixed(3);
   // The left view hosts; the right joins its room, and stays quiet.
   views[1].src = new URL('?host&scale=' + scale, game).href;
   const waiting = setInterval(() => {
