@@ -70,6 +70,7 @@ tide_e2e_test(defaults)
 tide_e2e_test(default_value)
 tide_e2e_test(math)
 tide_e2e_test(input)
+tide_e2e_test(input_borrows)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
 tide_e2e_test(prototype_codegen) # Nested foreach receivers, stored vector writes and captured numeric literals

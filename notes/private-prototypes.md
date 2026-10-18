@@ -37,7 +37,7 @@ It does not approve a new feature merely because a game worked around it.
 | `with ownership` in local handlers, local fields through query rows, mutable local query bindings | Explicit current query/handler limitations. Need caller/row ownership and local-write rules. |
 | Spawn accepts component literals, not component values | Fixed as an authorized API completion: Spawn/Add and Scene.Load extra root components copy existing values/helper results through the existing ordered deferred path, including owned containers and sparse presence. Local fields get fresh defaults; Remove stays type-only. `component_values`, `notes/language.md`. |
 | Event/command values cannot be helper parameters | Fixed: ordinary functions/methods take and return whole payloads under existing value/mut, heap and capability rules; no implicit World or authenticated sender. Numeric payload helpers/factories also work on GPU. `component_values`, `maps`, `commands` and shader pass 23. |
-| Input values cannot be helper parameters | Still needs previous-input/tick context through helper chains: allowing a plain value would break `.down`/`.up` lowering and transitive input-field usage. This is distinct from ordinary payload forwarding. |
+| Input values cannot be helper parameters | Fixed with the owner-approved read-only borrow using ordinary parameter syntax. Helpers forward the caller's current/previous input, retaining player selection, nested edges and prediction/replay behavior; no copy or wire change. `input_borrows`, existing input/predict/net/view_time fixtures and `notes/language.md`. |
 | No empty Map literal | Fixed: contextual `[]` initializes an empty map in fields, locals, assignments, arguments and returns. Nonempty map literals remain unsupported; add entries by key. `maps` and `map_nonempty_literal`. |
 | A CPU drawing helper cannot name a frag/vert | Explicit `check_mesh_draw` restriction: shader component/singleton bindings are the view's implicit context. Needs an explicit-binding/helper capability design. Ordinary unshaded drawing helpers already work. |
 | A GPU helper cannot take a singleton containing Cubemap/Random | Spec deliberately requires resource parameters themselves and excludes 64-bit Random values on GPU. Field projection/specialization would be a new contract. Numeric values and direct texture parameters are supported. |
@@ -59,9 +59,9 @@ It does not approve a new feature merely because a game worked around it.
 | Touch controls, missing voice chat, art/NPC detail, campaign mechanics and human/hardware/network checks | Game/content work, a new networking feature or unmeasured coverage. Not compiler defects or implicitly authorized new runtime systems. Proximity voice remains unbuilt; no claim of human playtesting. |
 
 All reproduced inconsistencies with existing contracts above are now addressed.
-The follow-up API, handler-query and borrowed-query passes completed the
-conventional value/metadata gaps and reusable synchronous query access: final
-warning-free builds pass all 2,399 native and 2,309 web debug CTests, plus
+The follow-up API work, synchronous handler queries and helper borrowing
+completed the conventional value/metadata gaps and reusable synchronous access:
+final warning-free builds pass all 2,412 native and 2,321 web debug CTests, plus
 the docs build. Detailed contracts and coverage are in notes/language.md and
 notes/textures.md. No CI was dispatched.
 The remaining rows name the concrete decision/feature boundary; they are not
