@@ -1,0 +1,94 @@
+scene Main { }
+
+component Box
+{
+    float lift = 2;
+    local Color tint = Color.red;
+}
+
+singleton Lamp
+{
+    float strength = 0.5;
+    local float glow = 0.25;
+}
+
+local singleton Art
+{
+    List<Vertex3> vertices = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0) },
+                             Vertex3 { position = float3(0, 1, 0) }];
+    List<int> indices = [0, 1, 2];
+    RenderTarget first;
+    RenderTarget second;
+    bool made;
+}
+
+event(Spawned) Setup(with Main) { Spawn(Box); }
+
+vert Lift(mut Vertex3 vertex, Box box)
+{
+    vertex.position.y += box.lift;
+}
+
+frag Shade(Vertex3 vertex, out Color color, Box box, Lamp lamp)
+{
+    color = box.tint * (lamp.strength + lamp.glow);
+}
+
+void Paint(Art geometry, out Box other, Box object, Lamp light, RenderTarget destination)
+{
+    other = Box { lift = 99 };
+    destination.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Lift, Shade);
+}
+
+void Forward(Art geometry, Box object, Lamp light, RenderTarget destination, int depth)
+{
+    if (depth > 0) Forward(geometry, object, light, destination, depth - 1);
+    else
+    {
+        Paint(geometry, out var ignored, object, light, destination);
+        Debug.Assert(ignored.lift == 99);
+    }
+}
+
+void WithDraw(Art geometry, Box object, Lamp light, RenderTarget destination, Action content)
+{
+    destination.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Lift, Shade);
+    content();
+}
+
+void PaintMutable(Art geometry, mut Box object, Lamp light, RenderTarget destination)
+{
+    object.tint = Color.green;
+    destination.Mesh(geometry.vertices, geometry.indices, float4x4.identity, Lift, Shade);
+}
+
+view Show(Art art, Box box, Lamp lamp)
+{
+    if (!art.made) return;
+    Draw.SetFrustumCulling(false);
+    art.first.SetFrustumCulling(false);
+    art.second.SetFrustumCulling(false);
+    art.first.Mesh(art.vertices, art.indices, float4x4.identity, Lift, Shade);
+    Forward(art, box, lamp, art.second, 2);
+    // An inlined helper's inputs have different names from its caller's.
+    WithDraw(art, box, lamp, Draw.window)
+    {
+        Paint(art, out var ignored, box, lamp, art.second);
+        Debug.Assert(ignored.lift == 99);
+    }
+}
+
+[Before(Show)]
+view Fill(mut Art art)
+{
+    if (art.made) return;
+    art.made = true;
+    art.first = RenderTarget(8, 8, 1);
+    art.second = RenderTarget(8, 8, 1);
+}
+
+[After(Show)]
+view Changed(Art art, mut Box box, Lamp lamp)
+{
+    PaintMutable(art, box, lamp, Draw.window);
+}

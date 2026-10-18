@@ -5634,13 +5634,14 @@ static bool shader_takes_struct(const decl *code, const decl *type)
     return false;
 }
 
-// A view's Draw.Mesh through a frag or a vert: the components they read are
-// those of the entity the view runs for, so it has to have them, and a struct
+// A draw through a frag or vert: a view supplies its entity's components,
+// a function its explicit parameters. A struct
 // its frag reads is its vert's to write, what its instances are, or the
 // values the draw gives after their names.
 static void check_shader_binding(const checker *c, const expr *e, const expr *name, const decl *shader)
 {
-    decl *view = c->system;
+    decl *view = c->method ? c->method : c->system;
+    const bool helper = c->method != NULL;
     const char *draw = e->blit ? "Draw.Blit" : e->targeted ? (e->instanced ? "target.Instanced" : "target.Mesh")
                      : e->instanced ? "Draw.Instanced" : "Draw.Mesh";
     for (int i = 1; i < shader->params.count; i++) {
@@ -5691,12 +5692,23 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
         }
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
         const decl *d = p->type.decl;
+        int matches = 0;
         for (int k = 0; k < view->params.count; k++) { // What a frag reads of it is a use of it
             param *own = &view->params.items[k];
             if (own->type.decl == d && (own->type.kind == TY_COMPONENT || own->type.kind == TY_SINGLETON)
-                && (own->mode == PARAM_READ || own->mode == PARAM_MUT)) {
+                && (own->mode == PARAM_READ || own->mode == PARAM_MUT) && !own->is_out) {
                 own->read = true;
+                matches++;
             }
+        }
+        if (helper) {
+            if (matches != 1) {
+                diag_error(name->at, "function '" STR_FMT "' must take exactly one '" STR_FMT "' parameter for %s '"
+                           STR_FMT "' to read", STR_ARG(view->name), STR_ARG(d->name), shader_word(shader), STR_ARG(shader->name));
+                diag_note("pass the component or singleton explicitly to the function; shader inputs are matched by type, "
+                          "and an out parameter supplies no input");
+            }
+            continue;
         }
         if (p->type.kind != TY_COMPONENT || mask_has(view->need_mask, d->index)) continue;
         diag_error(name->at, "view '" STR_FMT "' doesn't guarantee its entity has a '" STR_FMT "', which %s '" STR_FMT "' reads",
@@ -5820,10 +5832,7 @@ static type check_blit(checker *c, expr *e)
         diag_error(e->args.items[last]->at, "Blit's frag takes its source as a read-only Texture parameter");
         ok = false;
     }
-    if (c->method || c->in_input || !in_view(c)) {
-        diag_error(e->at, "a Blit that names a frag goes in a view");
-        ok = false;
-    } else if (ok) {
+    if (ok) {
         const int errors = diag_error_count();
         check_shader_binding(c, e, e->args.items[last], frag);
         ok = diag_error_count() == errors && check_values_taken(e);
@@ -5835,7 +5844,7 @@ static type check_blit(checker *c, expr *e)
     vec_push(e->arg_want, ((type){TY_TEXTURE, NULL})); // A grid is the texture it is
     vec_push(e->arg_want, e->args.items[1]->type);
     if (count == 4) vec_push(e->arg_want, e->args.items[2]->type);
-    const mesh_draw draw = {e, c->system};
+    const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(c->prog->mesh_draws, draw);
     return T_VOID_;
 }
@@ -6206,12 +6215,7 @@ static type check_mesh_draw(checker *c, expr *e)
             ok = false; // Its declaration said why
         }
     }
-    if (shaded && (c->method || c->in_input || !in_view(c))) {
-        diag_error(e->at, "a %s that names a vert or a frag goes in a view", draw_name);
-        diag_note("the components they read are those of the entity the view runs for; a function can draw the mesh "
-                  "without them");
-        ok = false;
-    } else if (shaded && ok) {
+    if (shaded && ok) {
         const int errors = diag_error_count();
         for (int i = count; i < named_end; i++) check_shader_binding(c, e, e->args.items[i], e->args.items[i]->type_decl);
         ok = diag_error_count() == errors && check_values_taken(e);
@@ -19703,9 +19707,9 @@ bool check(program *prog)
     check_this_calls(&c);
     check_drawing_calls(&c);
     check_raw_uses(&c);
-    check_local_field_calls(&c);
     check_world_passing(&c);
     if (diag_error_count() == 0) plan_shaders(prog);
+    check_local_field_calls(&c); // Shader inputs can require a helper's attached local fields too.
     mark_c_callers(&c);
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_SYSTEM) settle_grid_loops(prog, prog->decls.items[i]->body);

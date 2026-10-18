@@ -1463,6 +1463,27 @@ TIDE_TEST(lsp_draw_values)
 #undef VALUE_TYPES
 }
 
+TIDE_TEST(lsp_shaded_drawing_helpers)
+{
+    start();
+#define HELPER_SHADERS "scene Main { }\nstruct Look { Color tint; }\n" \
+    "singleton Light { float strength; }\n" \
+    "frag Shade(Vertex vertex, out Color color, Look look, Light light) { color = look.tint * light.strength; }\n"
+    open_document(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices, Light light)\n"
+                                "{ Draw.Mesh(vertices, indices, Shade, Look { tint = Color.red }); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *shaders = complete(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices, Light light)\n"
+                                                "{ Draw.Mesh(vertices, indices, $); }\n");
+    TIDE_CHECK(offers(shaders, "Shade"));
+    const char *values = complete(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices, Light light)\n"
+                                               "{ Draw.Mesh(vertices, indices, Shade, $); }\n");
+    TIDE_CHECK(offers(values, "Look") && has(values, "Look { $1 }"));
+    open_document(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices)\n"
+                                "{ Draw.Mesh(vertices, indices, Shade, Look { tint = Color.red }); }\n");
+    TIDE_CHECK(has(last_sent(), "must take exactly one 'Light' parameter"));
+#undef HELPER_SHADERS
+}
+
 // Frags and verts: code the GPU runs for a mesh's pixels and vertices, which a
 // view names last at Draw.Mesh. SHADER_TYPES is 31 lines; in SHADERS the vert
 // is on line 31, the frag on line 35 and the view's Draw.Mesh on line 43.
@@ -1622,8 +1643,8 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Mesh(models.crate, $")), "Shade"));
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Circle(float2(0, 0), 1, $")), "Shade"));
 #undef IN_VIEW
-    // ...nor in a function: the components they read are those of the entity a view runs for
-    TIDE_CHECK(!offers(complete(SHADER_CODE "void Paint(Models models)\n{\n"
+    // Functions can name them too, with their component/singleton inputs passed explicitly.
+    TIDE_CHECK(offers(complete(SHADER_CODE "void Paint(Models models, Box box, Sun sun)\n{\n"
                                             "    Draw.Mesh(models.crate, models.faces, float4x4.identity, $\n}\n"),
                        "Shade"));
     // ...and by its namespace

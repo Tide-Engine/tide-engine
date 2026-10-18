@@ -6430,7 +6430,7 @@ void plan_shaders(program *prog)
         shader *sh = plan(prog, call, vertex, textured, direct_texture);
         if (!sh) continue;
         call->shader = sh;
-        // What the view has to hand over that it doesn't take itself
+        // Views can infer missing inputs. Functions must already take them explicitly.
         decl *view = draw->in;
         for (int b = 0; b < sh->bound.count; b++) {
             decl *d = sh->bound.items[b];
@@ -6438,15 +6438,18 @@ void plan_shaders(program *prog)
             for (int k = 0; k < view->params.count; k++) {
                 param *p = &view->params.items[k];
                 bool takes = p->type.decl == d && (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON)
-                          && (p->mode == PARAM_READ || p->mode == PARAM_MUT);
+                          && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && !p->is_out;
                 // What's drawn is the entity as the view draws it: a component it
                 // takes from the confirmed world beside that isn't the mesh's
                 if (view->verified_join && p->verified && p->type.kind == TY_COMPONENT) takes = false;
-                if (takes && shader_reads_local(sh, d)) p->local_use = true; // Its local fields come with it
+                if (takes && shader_reads_local(sh, d)) {
+                    if (!p->local_use) p->local_use_at = call->at;
+                    p->local_use = true; // Its local fields come with it
+                }
                 has |= takes;
             }
             for (int k = 0; k < view->bound.count; k++) has |= view->bound.items[k] == d;
-            if (!has) vec_push(view->bound, d);
+            if (!has && view->kind == DECL_SYSTEM) vec_push(view->bound, d);
         }
     }
 }

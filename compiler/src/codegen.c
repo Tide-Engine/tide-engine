@@ -3790,7 +3790,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW && e->shader) {
-            // Draw.Mesh through a shader: its values, then what the frag and the vert read of the view's
+            // A shaded draw: its values, then the current view's or function's explicit state inputs.
             const shader *sh = e->shader;
             sb_printf(o, "tide_shade_%d(", sh->index);
             if (sh->blit) sb_put(o, "tide_draw");
@@ -3836,17 +3836,18 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 gen_as(g, o, e->values, e->values->type);
             }
             for (int b = 0; b < sh->bound.count; b++) {
-                // The view's own parameter of it: the one that isn't `verified`, where it takes it both ways
+                // Functions have a unique input; views prefer their non-verified parameter where they take both.
+                const decl *code = g->routine ? g->routine : g->code;
                 const param *from = NULL;
-                for (int k = 0; g->code && k < g->code->params.count; k++) {
-                    const param *p = &g->code->params.items[k];
+                for (int k = 0; code && k < code->params.count; k++) {
+                    const param *p = &code->params.items[k];
                     const bool takes = (p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON)
-                                    && (p->mode == PARAM_READ || p->mode == PARAM_MUT);
+                                    && (p->mode == PARAM_READ || p->mode == PARAM_MUT) && !p->is_out;
                     if (!takes || p->type.decl != sh->bound.items[b]) continue;
                     if (!from || (from->verified && !p->verified)) from = p;
                 }
                 if (!from) continue;
-                sb_printf(o, ", %s", local_cname(g, from->name));
+                sb_printf(o, ", %s%s", is_pointer_param(from) ? "" : "&", local_cname(g, from->name));
                 if (shader_reads_local(sh, sh->bound.items[b])) sb_printf(o, ", %s", fields_name(g, from->name));
             }
             sb_put(o, ")");
