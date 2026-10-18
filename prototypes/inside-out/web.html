@@ -15,6 +15,25 @@
 <body>
 <canvas id="canvas" tabindex="-1" aria-label="Inside Out cooperative puzzle game" oncontextmenu="return false"></canvas>
 <script>
+  // ?quiet keeps this page's sound from ever starting: on the TV page
+  // (tv.html) both players' views share a screen, and one of them sounds.
+  // ?scale=N draws at no more than N device pixels to a page pixel: the TV
+  // page runs two views at once, and a big screen's full density costs more
+  // than it shows from across a room. The browser stretches the rest.
+  const pixelScale = Number(new URLSearchParams(location.search).get('scale'));
+  if (pixelScale > 0) {
+    const native = window.devicePixelRatio || 1;
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get: () => Math.min(native, pixelScale) });
+  }
+  if (new URLSearchParams(location.search).has('quiet') && window.AudioContext) {
+    const Sounding = window.AudioContext;
+    window.AudioContext = class extends Sounding {
+      constructor(...options) { super(...options); super.suspend(); }
+      resume() { return Promise.resolve(); }
+    };
+  }
+</script>
+<script>
   var Tide = {
     canvas: document.getElementById('canvas'),
     arguments: [`--inside-out-invite-base=${new URL(location.pathname, location.origin).href}`],

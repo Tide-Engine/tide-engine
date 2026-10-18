@@ -232,8 +232,9 @@ frag CastCutout(Corner corner, out Color color, Texture source)
     color = Color.white;
 }
 
-// The forest floor: loam, moss and fallen leaves, trodden bare round the fire, in sixteenths of a metre.
-frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens)
+// The forest floor: loam, moss and fallen leaves, trodden bare round the fire, in sixteenths of a metre; the plague
+// pits and the fires on it (hazards.tide).
+frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens, Hazards hazards)
 {
     var at = this.world.xz;
     var t = Math.Floor(at * 16);
@@ -259,13 +260,76 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens)
     var normal = Math.Normalize(corner.normal);
     paint = Math.Lerp(paint, float3(0.16, 0.15, 0.14) * (0.8 + fine * 0.3), Math.SmoothStep(0.8, 0.55, normal.y));
     mut var ground = Linear(paint * 1.45);
-    // Blood soaked in where it fell (gore.tide's stains), and a wet shine on it
+    // Blood soaked in where it fell (gore.tide's stains), and a wet shine on it. Its colour's what the stains' share of
+    // red, green and blue says, at blood's darkness (the stains' own colour over their alpha had blown up where faint
+    // ones lay: blending keeps far less alpha than colour)
     float4 seen = Math.Mul(look.toStain, float4(this.world, 1));
     var blood = lens.stainsColor.Sample(float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5));
-    ground = Math.Lerp(ground, Linear(float3(blood.r, blood.g, blood.b) / Math.Max(blood.a, 0.001)) * 0.9, Math.Saturate(blood.a * 1.15));
+    var hue = float3(blood.r, blood.g, blood.b) / Math.Max(blood.r + blood.g + blood.b, 0.001);
+    ground = Math.Lerp(ground, Linear(hue * (0.3 + 0.12 * fine) * (1.25 - 0.55 * Math.Saturate(blood.a))), Math.Saturate(blood.a * 1.6));
+    mut var wet = blood.a;
+    // The plague pits: black blood to the brim (a box's edge, its corners rounded, frayed a little), darkest deep in,
+    // a bone awash here and there; a lip of heaped earth at its edge, and trodden black mud round that
+    mut var pool = 0.0;
+    mut var deep = 0.0;
+    mut var lip = 0.0;
+    mut var mud = 0.0;
+    foreach (var p in hazards.pits)
+    {
+        var middle = float2((p.x + p.z) * 0.5, (p.y + p.w) * 0.5);
+        var half = float2((p.z - p.x) * 0.5, (p.w - p.y) * 0.5);
+        var q = Math.Abs(at - middle) - half + float2(0.6);
+        var edge = Math.Length(Math.Max(q, float2(0))) + Math.Min(Math.Max(q.x, q.y), 0) - 0.6 + Math.Perlin(at * 1.9) * 0.1;
+        pool = Math.Max(pool, Math.SmoothStep(-0.12, -0.2, edge));
+        deep = Math.Max(deep, Math.Saturate(-edge / 1.1));
+        lip = Math.Max(lip, Math.Saturate(1 - Math.Abs(edge + 0.02) / 0.2));
+        mud = Math.Max(mud, Math.SmoothStep(0.8, 0.1, edge));
+    }
+    if (mud > 0)
+    {
+        ground = Math.Lerp(ground, Linear(float3(0.05, 0.036, 0.028) * (0.8 + fine * 0.3)), mud * 0.85);
+        var stones = Math.Saturate(Math.Perlin(at * 6.5 + float2(3, 9)) * 3 + 0.6);
+        ground = Math.Lerp(ground, Linear(float3(0.36, 0.33, 0.27) * (0.6 + fine * 0.4)), lip * (1 - pool) * stones);
+        wet = Math.Max(wet, mud * 0.4 * (1 - lip));
+    }
+    if (pool > 0)
+    {
+        var bone = Math.Perlin(at * 3.6 + float2(17, 3)) > 0.45 && Math.Perlin(at * 9.0 + float2(2, 7)) > 0.1 ? 1.0 : 0.0;
+        var blackBlood = Linear(Math.Lerp(float3(0.1, 0.012, 0.01), float3(0.018, 0.003, 0.003), Math.Saturate(deep * 1.4 + fine * 0.2)));
+        ground = Math.Lerp(ground, Math.Lerp(blackBlood, Linear(float3(0.4, 0.37, 0.3)), bone * (1 - deep * 0.6)), pool);
+        pool *= 1 - bone;
+    }
+    // The fires: the ground cracking, its seams glowing brighter as it nears bursting; then burning, embers and ash,
+    // brightest at the edge where it starts to burn
+    mut var heat = float3(0);
+    foreach (var f in hazards.fires)
+    {
+        var d = Math.Distance(at, f.xy);
+        if (d > f.z + 1) continue;
+        if (f.w < 0)
+        {
+            var warn = 1 + f.w;
+            var seam = 1 - Math.Saturate(Math.Abs(Math.Perlin(at * 1.8 + f.xy)) * 12);
+            heat += float3(1.0, 0.22, 0.04) * seam * (0.15 + warn * warn * 2.5) * Math.Saturate(1.3 - d / f.z) * Math.Saturate(warn * 4);
+            continue;
+        }
+        var inside = Math.Saturate((f.z - d) / 0.35 + 0.5);
+        ground = Math.Lerp(ground, Linear(float3(0.05, 0.045, 0.042) * (0.7 + fine * 0.5)), inside * 0.9);
+        var ember = Math.Pow(Math.Saturate(Math.Perlin(at * 2.7 + float2(look.time * 0.7, -look.time * 0.45)) * 0.9 + 0.55), 4);
+        var flicker = 0.75 + 0.25 * Math.Perlin(float2(look.time * 6 + f.x, f.y));
+        var rim = Math.Saturate(1 - Math.Abs(d - f.z + 0.2) / 0.3);
+        heat += float3(1.0, 0.32, 0.06) * (ember * 3.5 + 0.25 + rim * 1.6) * inside * f.w * flicker;
+    }
     mut var lit = Shade(ground, this.world, normal, 1, look, lights.list, lens.moonDepth);
     var toEye = Math.Normalize(look.eye - this.world);
-    lit += look.moonColor * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, normal), look.moonWay)), 30) * blood.a * 0.8;
+    // A wet shine on the blood and the mud; on the pits, a glint on the ripples here and there
+    lit += look.moonColor * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, normal), look.moonWay)), 90) * wet * 0.3;
+    var ripple = float3(Math.Perlin(at * 2.3 + float2(look.time * 0.25, 0)), 0, Math.Perlin(at * 2.3 + float2(0, look.time * 0.2))) * 0.15;
+    lit += look.moonColor * float3(0.9, 0.45, 0.4) * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, Math.Normalize(normal + ripple)), look.moonWay)), 60) * pool * 0.12;
+    lit += heat;
+    // A sick light on the pits, from what rots in them: drifting scum, so they're seen in the dark
+    var scum = Math.SmoothStep(0.05, 0.45, Math.Perlin(at * 0.8 + float2(look.time * 0.04, look.time * 0.03)) + Math.Perlin(at * 2.9) * 0.3);
+    lit += float3(0.022, 0.04, 0.009) * (0.2 + scum) * pool;
     color = Color(Hazed(lit, this.world, look), 1);
 }
 
@@ -481,8 +545,7 @@ void Focus(mut Lens lens, mut Look look)
         // The stains: straight down on the clearing, north up, never moving
         lens.stains = RenderTarget(STAIN_PIXELS, STAIN_PIXELS, 1, Format.Rgba8);
         lens.stainsColor = lens.stains.color;
-        lens.stains.SetCamera(float4x4.TRS(float3(NAV_X0 + STAIN_REACH, 120, NAV_Z0 + STAIN_REACH), quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1)), float3(1)),
-                              float4x4.Ortho(STAIN_REACH * 2, STAIN_REACH * 2, 1, 260));
+        AimStains(lens);
         look.toStain = lens.stains.WorldToClip();
     }
     else if (full.x != look.full.x || full.y != look.full.y)
@@ -496,6 +559,13 @@ void Focus(mut Lens lens, mut Look look)
     look.block = block;
     lens.size = size;
     look.pixel = float2(1 / Math.Max(1, size.x), 1 / Math.Max(1, size.y));
+}
+
+// The stains' camera: straight down on the clearing, north up, never moving (set again each time they're drawn into).
+void AimStains(Lens lens)
+{
+    lens.stains.SetCamera(float4x4.TRS(float3(NAV_X0 + STAIN_REACH, 120, NAV_Z0 + STAIN_REACH), quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1)), float3(1)),
+                          float4x4.Ortho(STAIN_REACH * 2, STAIN_REACH * 2, 1, 260));
 }
 
 // The moon's camera: looking down its way at what's round the eye, moved in whole pixels of its map so its shadows

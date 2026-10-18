@@ -1,5 +1,202 @@
 # Inside Out
 
+## Battery halls (2026-10-18, second round)
+
+After playing the first hall the owner found it "doesn't add much other
+than level selection" and asked what else hubs do and whether level
+selection could hold a simple puzzle. The answer given: hubs people
+remember are made of the game's own mechanic (A Monster's Expedition,
+Stephen's Sausage Roll, Baba Is You's map), change physically as you
+solve (The Witness), and hide secrets (Patrick's Parabox). The owner said
+"go with what you'd do"; everything below is the agent's design, so the
+picks are provisional until played. This supersedes the first round's
+hall layout, lift rule, covered challenges and "walking a hall keeps no
+history" below; the lanes, dive, lift doors, return hold, budgets,
+Progress union and playtest switch stand.
+
+### Rules and contracts (`hall.tide`)
+
+- **A hall is a drawn puzzle.** `HallMap` draws each chapter's hall with
+  `levels.tide`'s `Room` (draft level 100 + chapter, so asserts name
+  "Hall n"), without robots. Every hall shares the **gallery**: room 0, a
+  7x7 box clamped at the top of the table, its doorway south; its north
+  wall carries the puzzle posts (`PostColumn`, columns as before) and their
+  lanes. The table's top row is the lifts' lanes either side of where the
+  gallery lets out: down at post (0,1), pads (1,1)/(2,1); up at (6,1),
+  (5,1)/(4,1). `Station.room` says which room a post and its lane are in.
+- **Batteries.** A hall's map draws its chapter's puzzles' batteries first,
+  in post order (`HallBattery(order)`), each active once its puzzle is
+  solved. The yard below the gallery is the chapter's puzzle: the lift up
+  works once `ChapterNeed` batteries (all but one of the chapter's, 1 for
+  Held) are in sockets (`HallSeated`). A socket in a box counts only while
+  that box is on its outline, if it has one. `PowerLift` after each hall
+  move sets `Workshop.unlocked`'s bit for the hall (`opened` = next chapter,
+  cue kind 8: shutter-open and dock sounds) and it never clears.
+- **Gating** (replaces "every puzzle solved"): chapter k is open once the
+  lifts of every hall below it work (`ChapterOpenFor(unlocked, k)`).
+  `Progress` carries `unlocked` too (union, masked to five bits);
+  `Preferences` version 5 saves it. Older saves get
+  `UnlockedBySolving(completed)`: a hall whose puzzles were all solved has
+  its lift working, so nobody loses access.
+- **Kept halls.** Leaving a hall (into a puzzle or by lift) stores its
+  puzzle in `Workshop.halls[chapter]` (`hallKept` bit). Coming back
+  restores it, adds any battery solved since at its starting cell (or the
+  nearest free one), and puts the robots at the arrival cells
+  (`PlaceRobots`, `FreeCellNear`: open floor, no pad, nothing there).
+  Arrivals: 0 the gallery's middle, 1 below the post just left (in its
+  room), 2 by the lift down, 3 by the lift up. A fresh hall with a working
+  lift starts with its sockets full of solved batteries.
+- **Undo and Restart work in halls.** Moves are remembered; Reset is
+  `ResetHall`: the hall set out afresh from progress (kept state dropped),
+  no name hold. Lifts stay working. Full pads still freeze moves, undo and
+  reset (`Leaving`, which borrows the mutable Workshop instead of copying it).
+- **Challenges are found, not unlocked.** Each of the first three halls
+  has room 2, a box in its yard with the challenge's post on the wall
+  across from its doorway. Getting in is the chapter's trick (against an
+  edge; behind a shutter with its own plate in Power). `StationOpen` is
+  always true for a challenge.
+- Performance: `ContinueHall` only builds `HallState` when both robots
+  stand on pads, and match handlers use `Leaving`, not `HallOf`.
+
+### The halls
+
+| Hall | Yard | Lift takes |
+|---|---|---:|
+| Boxes | The socket box, clamped at the yard's foot, has 4 sockets running down from its north doorway: a row pushed in fills them. Five batteries in a cross. Challenge box against the west edge. | 4 of 5 |
+| Each other | The socket box is on its outline between two wall blocks, open floor below: it takes a battery only while something stands below it, the partner or, with all four solved, a spare battery. Pushed down, it is off its outline, and the hall needs a restart. Challenge box against the east edge. | 3 of 4 |
+| Power | Shutter A guards the clamped socket box's doorway; its plate is beside it, so a spare battery on it can be pushed off into the shutter. Challenge box behind shutter B, whose plate is by the socket box. | 4 of 5 |
+| Itself | The sockets are in a 3x3 box inside the clamped 5x5 box's doorway column: the next battery pushed in sends the first on into the inner box. | 2 of 3 |
+| Held | A loose socket box and a clamp. | 1 of 2 |
+| Everything | No lift up; its one battery is decoration. | - |
+
+Three design faults found by the solver were fixed before the tables
+below: a first Power yard with a battery beside the challenge shutter
+dead-ended; the Power plate in the edge column swallowed a spare battery
+for good (nothing can push it back from the wall); and the socket boxes
+of Boxes, Power and Itself could be shoved off their doorway line, so
+they are clamped. Each other's open socket box made the search too large
+until its sides were walled.
+
+### Verification (`inside_out_solve hall`)
+
+`inside_out_solve hall <chapter> [<solved mask>]` opens a hall through a
+solver-only `HallSetup` command (`test/solve.tide`) and searches for the
+lift working. A full breadth-first search is too deep (four deliveries,
+40+ moves), so it searches in stages: the shortest way to one more
+seated battery from where the last stage ended, backing up one stage on a
+dead end. A route found is replayed from the start through the Move
+handler and must leave the lift working. It proves the hall can be done
+with those puzzles solved; it is not a shortest route, and a failed stage
+proves nothing. `--subsets` runs every set of solved puzzles with enough
+batteries. Each step resets the departure and lift state, so lanes never
+fire during a search.
+
+| Hall | Sets of solved puzzles | Route lengths | Largest search |
+|---|---:|---|---:|
+| Boxes | 6 | 36–48 | 61,356 positions |
+| Each other | 5 | 38–47 | 744,758 |
+| Power | 6 | 45–51 | 109,630 |
+| Itself | 4 | 27–33 | 101,889 |
+| Held | 3 | 9–15 | 21,753 |
+
+Every route replayed and powered its lift.
+
+### Tests
+
+`test/campaign.c`: the hall tests now cover batteries appearing for solved
+puzzles; a kept hall coming back as left; `inside_out_batteries_in_the_sockets_power_the_lift`
+(the solver's Boxes route, then undo and restart keep the lift working and
+restart fills its sockets; three of five leave it waiting);
+`inside_out_the_lift_works_once_its_hall_is_powered` (out of the gallery
+to the table lanes, down and back up, and the next hall's own lift idle);
+`inside_out_a_challenge_is_found_in_its_box_and_keeps_its_budget` (in by
+the challenge box's doorway); and `unlocked` in the progress union.
+`inside_out_test_progress` takes `unlocked`.
+
+### Rendering
+
+`RoomScene` draws each room's posts and lanes (`HallRoom`) wherever that
+room is drawn: in the gallery the posts stand on the wall's top, on the
+table on its slab (`PostBase`/`PostTop`), and models under 14 pixels a tile
+are blocks. The lift up's lights count its sockets. Post chips are only
+for posts in the local robot's room, on the side facing the lane. The
+lane note names how many batteries the lift still wants. A general fix:
+the table's raised frame is no longer drawn along an edge cell a box
+stands on, where it cut through the box (here, the gallery's posts).
+
+Posts are drawn from `Workbench` after the rooms, for each drawing
+`RoomScene` recorded (`Sculpture.shown`), not inside `RoomScene`. Inside
+it, both browser players trapped ("memory access out of bounds", stack
+`Workbench > RoomScene > HallRoom > PuzzlePost > ModelScene > ModelRoom >
+Power > TileAt`) the moment the first hall opened: generated C passes
+read-only structs by value and, unoptimized, every call site keeps its own
+40 KB copy of the Workshop in the caller's frame, so a model's drawing
+under RoomScene ran the WASM build past its 1 MB stack. Native builds,
+which have the same 1 MB, did not trap there; the WASI aggregate never
+draws. Moving the call out fixed it without new state.
+
+### Validation
+
+Native debug game, aggregate, solver and invite build warning-free; all
+four native Inside Out CTest entries pass (aggregate 56/56). Web debug
+builds warning-free and the WASM aggregate plus fourteen bridge entries
+pass. `inside_out_solve hall` results are the table above. Bounded hidden
+native captures under ignored `build/io-shots/` (saves seeded and
+restored) show the Boxes, Each other, Power and Itself yards, the gallery
+with its models, and the lane note; they found the table frame cutting
+through the gallery.
+
+Browser: on this round's maps `inside_out_materials_webgl` (224.1 s),
+`inside_out_shutters_webgl` (569.2 s), `inside_out_materials_webgpu`
+(212.3 s) and `inside_out_shutters_webgpu` (523.7 s) passed; both play
+fixtures then trapped as the first hall opened (the stack overflow above).
+After moving the posts' drawing, `inside_out_play_webgl` passed in
+1,284.7 s and `inside_out_play_webgpu` in 1,338.0 s. The material and
+shutter fixtures never open a hall and were not rerun. Node here is
+24.15.0. No CI or deployment was requested.
+
+### Phones as controllers over the relay (website)
+
+Asked to play it from the website rather than a local server, the TV and
+controller pages became static pages staged beside the game
+(`inside_out_page` copies `tv.html` and `pad.html` to `tv/index.html` and
+`pad/index.html`). The TV page hosts a controller room on the relay under
+a random six-letter code and shows it; a phone's `pad/` joins that room,
+says which player it is, and sends each press and release as a `signal`,
+which the relay passes to the room's host unread (at most 50 messages a
+second per connection, far above a d-pad's). The TV page dispatches it as
+a KeyboardEvent into that player's same-origin frame. `?quiet` moved into
+`web.html`, so the shipped page has it. `serve.mjs` now serves the same
+staged pages with its own relay at the requesting host (`window.TideRelay`),
+binding both to every network with `--lan`; its server-sent-events
+forwarding is gone. Checked locally in a muted headless Chrome: both
+frames in one match, a stand-in phone over the relay shown as Amber, and
+its two presses moving Amber two steps on both views.
+
+### Phones as controllers (`serve.mjs --lan`, superseded above)
+
+Asked to play on one TV with phones as controllers, the local server
+gained `--lan`: it listens on this machine's network (the relay stays on
+loopback, since both game windows are on this computer), serves `/pad`, a
+d-pad page with Undo, Restart, Menu and OK, and forwards each press
+(`POST /pad-press`) to the game windows opened with `?pad=1` or `?pad=2`
+over server-sent events (`/pad-events`). A script the server adds to the
+page dispatches them as keyboard events, which `tide.js` reads by
+`event.code` like any key. The published page and the game are unchanged.
+`/tv` is one page of two same-origin frames: the left opens `?pad=1&host`;
+once its `Tide.room` has a code the right opens `?pad=2&quiet&join=<code>`.
+`?quiet` (a script the server adds before the game's) keeps that view's
+AudioContext suspended, so only one side sounds. Checked in a muted
+headless Chrome at 1920x1080: both frames are cross-origin isolated, the
+right joined the left's room by itself, and the right's audio was the
+replaced class. Also checked: the pad page and the game's listener are
+served, and a press reaches a listening view's stream as the right key.
+Not checked: a real phone driving a match, and menu navigation by its
+Menu/OK. The owner suggested this for every game; the agent proposed
+phones paired through the relay as ordinary gamepads in `Devices`, and
+several local players on one machine as a separate engine question, both
+awaiting the owner.
+
 ## The hall, lifts and challenges (2026-10-18)
 
 The owner asked for a meta level to choose puzzles from and come back to

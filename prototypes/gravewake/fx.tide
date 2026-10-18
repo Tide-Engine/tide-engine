@@ -19,6 +19,7 @@ struct Mote
     float drag;
     float alpha = 1;
     float cool;               // How far a glowing one goes toward a dull red over its life (a flame's cooling)
+    float stain;              // Blood or bile: where it lands it soaks into the ground, a stain so wide (gore.tide)
 }
 
 // A streak between two places, facing the eye: a tracer, lightning.
@@ -70,7 +71,7 @@ local singleton Fx
 }
 
 const int GLOW_MOST = 1400;
-const int MURK_MOST = 900;
+const int MURK_MOST = 2600;
 
 void Glow(mut Fx fx, Mote mote)
 {
@@ -152,7 +153,7 @@ void MakeQuad(mut Fx fx)
 
 // Each frame: what burns gives off flames, and every mote moves on.
 [Stage(Layers.Gather, 2)]
-view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, query (Missile missile) missiles,
+view Flicker(mut Fx fx, mut Gore gore, Me me, Village village, query (Zombie zombie) zombies, query (Missile missile) missiles,
              query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
     if (!fx.made) MakeQuad(fx);
@@ -308,6 +309,14 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
             if (m.at.y < floor)
             {
                 m.at.y = floor;
+                // Blood soaks in where it lands, smeared the way it was going, and is gone a moment later
+                if (m.stain > 0)
+                {
+                    var flat = Math.Length(m.velocity.xz);
+                    Stain(gore, m.at, m.stain * (1 + Math.Min(1, flat * 0.1)), 0.6, Math.Atan2(m.velocity.x, m.velocity.z), 1 + Math.Min(2.2, flat * 0.3), m.color * 0.7);
+                    m.stain = 0;
+                    m.life = Math.Min(m.life, m.age + 0.25);
+                }
                 m.velocity = float3(0);
             }
         }
@@ -392,36 +401,52 @@ local event(Struck struck) Bleed(mut Fx fx)
                             alpha = 5, gravity = 8 });
         return;
     }
-    mut var count = struck.killed ? 16 : 7;
-    if (struck.head) count += 8;
+    // The way the blow went, across the ground: what comes out the far side goes on that way
+    mut var away = struck.at - struck.from;
+    away.y = 0;
+    away = Math.Length(away) > 0.01 ? Math.Normalize(away) : float3(1, 0, 0);
+    var blood = float3(0.5, 0.03, 0.03);
+    var slow = struck.blow == Blow.Burning || struck.blow == Blow.Bleeding;
+    mut var count = struck.killed ? 22 : 12;
+    if (struck.head) count += 14;
+    if (slow) count = struck.killed ? 10 : 3;
     // A kill blows it apart: a burst of blood where the blow struck, and bits of what burst
-    var gib = struck.killed && struck.blow != Blow.Burning && struck.blow != Blow.Bleeding;
+    var gib = struck.killed && !slow;
     if (gib)
     {
-        count += 40;
-        for (var i = 0; i < 6; i++)
-            Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 1.5), life = 0.5, size = 0.25, grow = 0.9, color = float3(0.28, 0.01, 0.01), alpha = 0.7 });
-        for (var i = 0; i < 14; i++)
-            Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 5) + float3(0, 2.5, 0), life = fx.random.NextFloat(0.6, 1.2),
-                            size = fx.random.NextFloat(0.04, 0.08), gravity = 10, color = float3(0.35, 0.05, 0.04), alpha = 1 });
+        count += 50;
+        for (var i = 0; i < 8; i++)
+            Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 1.8) + away * 1.2, life = 0.55, size = 0.35, grow = 1.2, color = float3(0.3, 0.01, 0.01), alpha = 0.75 });
+        for (var i = 0; i < 18; i++)
+            Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 5) + away * 2 + float3(0, 2.5, 0), life = fx.random.NextFloat(0.8, 1.4),
+                            size = fx.random.NextFloat(0.07, 0.13), gravity = 10, color = float3(0.35, 0.05, 0.04), alpha = 1, stain = 0.14 });
         for (var i = 0; i < 9; i++)
             Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 4.5) + float3(0, 2.5, 0), life = fx.random.NextFloat(0.6, 1.1),
-                            size = fx.random.NextFloat(0.025, 0.05), gravity = 9, color = float3(0.42, 0.36, 0.3), alpha = 1 });
+                            size = fx.random.NextFloat(0.04, 0.07), gravity = 9, color = float3(0.42, 0.36, 0.3), alpha = 1 });
+        // The spray thrown on the blow's way, far, in a long fan
+        for (var i = 0; i < 26; i++)
+            Murk(fx, Mote { at = struck.at, velocity = away * fx.random.NextFloat(3, 9) + Scatter(fx, 1.6) + float3(0, fx.random.NextFloat(0.5, 2.5), 0),
+                            life = fx.random.NextFloat(0.9, 1.5), size = fx.random.NextFloat(0.06, 0.12), gravity = 10, color = blood, alpha = 0.95, stain = 0.12 });
     }
+    // The drops: out the way the blow went more than back, and every one that lands soaks in (gore.tide)
     for (var i = 0; i < count; i++)
     {
-        Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, struck.head ? 3.5 : 2.4) + float3(0, 1.2, 0), life = fx.random.NextFloat(0.5, 1.0),
-                        size = fx.random.NextFloat(0.04, 0.09), gravity = 9, color = float3(0.5, 0.03, 0.03), alpha = 0.95 });
+        var on = slow ? 0.0 : fx.random.NextFloat(0.5, struck.head ? 5.0 : 3.5);
+        Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, struck.head ? 3.0 : 2.2) + away * on + float3(0, 1.4, 0), life = fx.random.NextFloat(0.6, 1.2),
+                        size = fx.random.NextFloat(0.06, 0.13), gravity = 9, color = blood, alpha = 0.95, stain = i % 2 == 0 ? 0.1 : 0.0 });
     }
+    // A head blown off: a fountain from the neck, high and falling round it
+    if (struck.killed && struck.head && !slow)
+        for (var i = 0; i < 30; i++)
+            Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 1.3) + float3(0, fx.random.NextFloat(3.5, 7), 0) + away * 0.6, life = fx.random.NextFloat(1.0, 1.6),
+                            size = fx.random.NextFloat(0.06, 0.12), gravity = 11, color = blood, alpha = 0.95, stain = 0.11 });
     // A puff of it where the round went in, and a glint of the hit
-    if (struck.blow != Blow.Burning && struck.blow != Blow.Bleeding)
+    if (!slow)
     {
-        Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 0.6), life = 0.35, size = struck.head ? 0.22 : 0.16, grow = 1.1, color = float3(0.45, 0.03, 0.03), alpha = 0.75, drag = 4 });
+        Murk(fx, Mote { at = struck.at, velocity = Scatter(fx, 0.6) + away * 0.8, life = 0.4, size = struck.head ? 0.4 : 0.28, grow = 1.4, color = float3(0.45, 0.03, 0.03), alpha = 0.8,
+                        drag = 4 });
         Glow(fx, Mote { at = struck.at, life = 0.05, size = struck.head ? 0.16 : 0.1, color = float3(1.0, 0.85, 0.6), alpha = 2.5 });
     }
-    // A pool where they fall
-    if (struck.killed)
-        Murk(fx, Mote { at = On(struck.at.x, struck.at.z) + float3(0, 0.02, 0), life = 14, size = 0.1, grow = 0.08, color = float3(0.16, 0.01, 0.01), alpha = 0.8 });
     if (struck.element == Element.Fire)
         for (var i = 0; i < 8; i++) Glow(fx, Mote { at = struck.at, velocity = Scatter(fx, 2.5), life = 0.4, size = 0.09, color = float3(1.0, 0.45, 0.1), alpha = 2.5 });
     if (struck.element == Element.Frost)
@@ -436,9 +461,9 @@ local event(Blast blast) Explode(mut Fx fx)
     {
         // Bile splashing: a sick green flash, a splat of it thrown up and falling
         fx.flashes.Add(Flash { at = blast.at, color = float3(0.6, 0.9, 0.12) * 3, reach = 4, life = 0.2 });
-        for (var i = 0; i < 18; i++)
+        for (var i = 0; i < 24; i++)
             Murk(fx, Mote { at = blast.at + Scatter(fx, 0.2), velocity = Scatter(fx, 3) + float3(0, fx.random.NextFloat(1, 3), 0), life = fx.random.NextFloat(0.5, 0.9),
-                            size = fx.random.NextFloat(0.04, 0.09), gravity = 10, drag = 0.8, color = float3(0.3, 0.34, 0.06), alpha = 1 });
+                            size = fx.random.NextFloat(0.06, 0.12), gravity = 10, drag = 0.8, color = float3(0.3, 0.34, 0.06), alpha = 1, stain = 0.14 });
         Murk(fx, Mote { at = On(blast.at.x, blast.at.z) + float3(0, 0.03, 0), life = 3, size = 0.3, grow = 0.25, color = float3(0.16, 0.19, 0.04), alpha = 0.7 });
         return;
     }
@@ -455,9 +480,10 @@ local event(Blast blast) Explode(mut Fx fx)
     {
         // A Bloater bursting: a sick green flash, bile and blood sprayed out and falling, a foul mist hanging
         fx.flashes.Add(Flash { at = blast.at, color = float3(0.7, 0.9, 0.15) * 6, reach = blast.reach * 2, life = 0.3 });
-        for (var i = 0; i < 40; i++)
+        for (var i = 0; i < 90; i++)
             Murk(fx, Mote { at = blast.at + Scatter(fx, 0.3), velocity = Scatter(fx, blast.reach * 2.2) + float3(0, fx.random.NextFloat(1, 4), 0), life = fx.random.NextFloat(0.6, 1.2),
-                            size = fx.random.NextFloat(0.05, 0.12), gravity = 10, drag = 0.8, color = i % 3 == 0 ? float3(0.2, 0.02, 0.01) : float3(0.3, 0.34, 0.06), alpha = 1 });
+                            size = fx.random.NextFloat(0.07, 0.16), gravity = 10, drag = 0.8, color = i % 3 == 0 ? float3(0.3, 0.02, 0.01) : float3(0.3, 0.34, 0.06), alpha = 1,
+                            stain = 0.2 });
         for (var i = 0; i < 6; i++)
             Murk(fx, Mote { at = blast.at + Scatter(fx, 0.5), velocity = Scatter(fx, 1.0) + float3(0, 0.4, 0), life = fx.random.NextFloat(0.9, 1.4), size = fx.random.NextFloat(0.3, 0.5),
                             grow = 0.6, color = float3(0.16, 0.18, 0.05), alpha = 0.16, drag = 1.5 });
