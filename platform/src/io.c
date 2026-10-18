@@ -26,6 +26,7 @@ typedef struct io_state {
     char *app_id;
     char *persistent;
     char *temporary;
+    bool directory_set;
     tide_io_error persistent_error;
     tide_io_error temporary_error;
 #ifndef __wasm__
@@ -1179,8 +1180,30 @@ static char *temporary_path(const char *app_id)
 #endif
 }
 
-static void native_paths(io_state *io)
+static char *data_directory(const char *path)
 {
+    if (!*path) return duplicate("");
+#ifdef _WIN32
+    wchar_t *wide = wide_path(path);
+    const DWORD size = wide ? GetFullPathNameW(wide, 0, NULL, NULL) : 0;
+    wchar_t *full = size ? tide_alloc((size_t)size * sizeof(wchar_t)) : NULL;
+    const DWORD written = full ? GetFullPathNameW(wide, size, full, NULL) : 0;
+    char *result = written && written < size ? from_wide(full) : NULL;
+    free(full);
+    free(wide);
+    return result ? result : duplicate("");
+#else
+    char *cwd = getcwd(NULL, 0);
+    char *result = absolute(path) || cwd ? resolve(&(io_state){.persistent = cwd}, path) : duplicate("");
+    free(cwd);
+    return result;
+#endif
+}
+
+static void native_paths(io_state *io, char *directory)
+{
+    if (directory) io->persistent = directory;
+    else {
 #ifdef _WIN32
     char *profile = environment(L"USERPROFILE");
     char *base = profile ? join(profile, "AppData/LocalLow") : NULL;
@@ -1206,6 +1229,7 @@ static void native_paths(io_state *io)
     io->persistent = base ? join(base, io->app_id) : duplicate("");
     free(base);
 #endif
+    }
     io->temporary = temporary_path(io->app_id);
     io->persistent_error = io->persistent[0] ? mkdir_parents(io, io->persistent) : TIDE_IO_STORAGE_UNAVAILABLE;
     io->temporary_error = io->temporary[0] ? mkdir_parents(io, io->temporary) : TIDE_IO_STORAGE_UNAVAILABLE;
@@ -1257,11 +1281,25 @@ const char *tide_platform_cache_folder(void)
     return named_cache && named_cache[0] ? named_cache : NULL;
 }
 
-const tide_io *tide_platform_io_init(const char *app_id)
+const tide_io *tide_platform_io_init(const char *app_id, const char *directory)
 {
     if (!app_id || !*app_id) app_id = "dev.tide.game";
+#ifdef __wasm__
+    if (directory) return NULL; // A page's storage roots belong to the browser.
+#else
+    char *root = directory ? data_directory(directory) : NULL;
+#endif
     tide_platform_name_game(app_id);
-    if (state.app_id && strcmp(state.app_id, app_id) == 0) return &state.provider;
+    if (state.app_id && strcmp(state.app_id, app_id) == 0
+#ifndef __wasm__
+        && state.directory_set == (directory != NULL) && (!root || strcmp(state.persistent, root) == 0)
+#endif
+    ) {
+#ifndef __wasm__
+        free(root);
+#endif
+        return &state.provider;
+    }
     // A host has one app at a time. Same-app hot reload never enters here.
     free(state.app_id);
     free(state.persistent);
@@ -1276,7 +1314,8 @@ const tide_io *tide_platform_io_init(const char *app_id)
     state.persistent = web_path(1);
     state.temporary = web_path(2);
 #else
-    native_paths(&state);
+    state.directory_set = directory != NULL;
+    native_paths(&state, root);
 #endif
     state.provider = (tide_io){
         .user = &state,

@@ -1,4 +1,4 @@
-// expect: tick 11: alive 64 text 444 lists 326964 keys 604 big 40000
+// expect: tick 11: alive 64 text 429 lists 366076 keys 566 big 40000
 // ticks: 12
 
 // A world's heap worked hard while snapshots share its pages: text, lists,

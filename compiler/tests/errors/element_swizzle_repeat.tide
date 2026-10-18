@@ -1,0 +1,7 @@
+// expect: 'xx' repeats a component, so it can't be assigned
+singleton Points { float3[2] values; }
+scene Main { }
+system Write(mut Points points)
+{
+    points.values[0].xx = float2(1, 2);
+}

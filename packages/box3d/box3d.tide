@@ -311,14 +311,83 @@ singleton Physics
                         fraction = found.fraction };
     }
 
+    // All-hit queries return each collider's first hit, nearest first. Sensors
+    // are optional; the ignored body includes every shape attached to it.
+    bool AllHits(List<Found> found, out List<RayHit> hits)
+    {
+        hits = [];
+        foreach (var met in found)
+        {
+            hits.Add(Met(met));
+        }
+        return hits.count > 0;
+    }
+
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return RaycastAll(from, to, out hits, default, includeSensors);
+    }
+
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        hits = [];
+        if (!Ready()) return false;
+        CastRayAll(out var found, stamp, from, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        hits = [];
+        if (!Ready()) return false;
+        CastBoxAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        hits = [];
+        if (!Ready()) return false;
+        CastSphereAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        hits = [];
+        if (!Ready()) return false;
+        CastCapsuleAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
     // The first thing on the way from one point to another: whether there's any,
     // and what. A ray says nothing of a shape it starts inside, and passes
     // through sensors.
     bool Raycast(float3 from, float3 to, out RayHit hit)
     {
+        return Raycast(from, to, out hit, default);
+    }
+
+    bool Raycast(float3 from, float3 to, out RayHit hit, Body ignore)
+    {
         hit = default;
         if (!Ready()) return false;
-        Found found = CastRay(stamp, from, to, gone, gone.count, goneShapes, goneShapes.count);
+        Found found = CastRay(stamp, from, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
@@ -331,10 +400,15 @@ singleton Physics
     // normal.
     bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
     {
+        return Cast(shape, from, rotation, to, out hit, default);
+    }
+
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    {
         hit = default;
         if (!Ready()) return false;
         Found found = CastBox(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
-                              goneShapes.count);
+                              goneShapes.count, ignore.id);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
@@ -342,10 +416,15 @@ singleton Physics
 
     bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
     {
+        return Cast(shape, from, rotation, to, out hit, default);
+    }
+
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    {
         hit = default;
         if (!Ready()) return false;
         Found found = CastSphere(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
-                                 goneShapes.count);
+                                 goneShapes.count, ignore.id);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
@@ -353,10 +432,15 @@ singleton Physics
 
     bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
     {
+        return Cast(shape, from, rotation, to, out hit, default);
+    }
+
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    {
         hit = default;
         if (!Ready()) return false;
         Found found = CastCapsule(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
-                                  goneShapes.count);
+                                  goneShapes.count, ignore.id);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
@@ -511,20 +595,32 @@ extern bool FindWorld(long stamp);
 [NativeName("b3t_rebuild")]
 extern void RebuildWorld(in Resident state);
 
+[NativeName("b3t_ray_all")]
+extern void CastRayAll(out List<Found> hits, long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+
+[NativeName("b3t_cast_box_all")]
+extern void CastBoxAll(out List<Found> hits, long stamp, in Box shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+
+[NativeName("b3t_cast_sphere_all")]
+extern void CastSphereAll(out List<Found> hits, long stamp, in Sphere shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+
+[NativeName("b3t_cast_capsule_all")]
+extern void CastCapsuleAll(out List<Found> hits, long stamp, in Capsule shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+
 [NativeName("b3t_ray")]
-extern Found CastRay(long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount);
+extern Found CastRay(long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore);
 
 [NativeName("b3t_cast_box")]
 extern Found CastBox(long stamp, in Box shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
-                     List<long> goneShapes, int goneShapeCount);
+                     List<long> goneShapes, int goneShapeCount, long ignore);
 
 [NativeName("b3t_cast_sphere")]
 extern Found CastSphere(long stamp, in Sphere shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
-                        List<long> goneShapes, int goneShapeCount);
+                        List<long> goneShapes, int goneShapeCount, long ignore);
 
 [NativeName("b3t_cast_capsule")]
 extern Found CastCapsule(long stamp, in Capsule shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
-                         List<long> goneShapes, int goneShapeCount);
+                         List<long> goneShapes, int goneShapeCount, long ignore);
 
 [NativeName("b3t_overlap_box")]
 extern void OverlapBox(out List<long> bodies, long stamp, in Box shape, float3 at, quaternion rotation, List<long> gone,
@@ -880,6 +976,74 @@ struct Query
     List<Collider> colliders;
     List<SceneNode> nodes;
 
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return RaycastAll(from, to, out hits, default, includeSensors);
+    }
+
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(SceneBounds { min = Math.Min(from, to), max = Math.Max(from, to), valid = true }))
+        {
+            var collider = colliders[index];
+            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneRay(collider, from, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(BoxBounds(shape, rotation, from, to)))
+        {
+            var collider = colliders[index];
+            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastBox(collider, shape, from, rotation, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(SphereBounds(shape, rotation, from, to)))
+        {
+            var collider = colliders[index];
+            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastSphere(collider, shape, from, rotation, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(CapsuleBounds(shape, rotation, from, to)))
+        {
+            var collider = colliders[index];
+            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastCapsule(collider, shape, from, rotation, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
     List<int> Candidates(SceneBounds bounds)
     {
         mut List<int> found = [];
@@ -1061,6 +1225,31 @@ struct Query
     }
 }
 
+
+// Temporary query results retain the collider key while sorting. Adjacent
+// candidates of a mesh share that key, so only its nearest triangle is kept.
+struct SceneHit { long shape; RayHit hit; }
+void AddSceneHit(mut List<SceneHit> found, Collider collider, Found met)
+{
+    if (met.body == 0) return;
+    var value = SceneHit { shape = met.shape, hit = RayHit { entity = collider.entity, part = collider.part,
+        point = met.point, normal = met.normal, fraction = met.fraction } };
+    var last = found.count - 1;
+    if (last >= 0 && found[last].shape == met.shape)
+    {
+        if (met.fraction < found[last].hit.fraction) found[last] = value;
+    }
+    else found.Add(value);
+}
+
+bool FinishSceneHits(mut List<SceneHit> found, out List<RayHit> hits)
+{
+    found.Sort(a, b) { return a.hit.fraction < b.hit.fraction || (a.hit.fraction == b.hit.fraction &&
+        a.shape < b.shape); }
+    hits = [];
+    foreach (var value in found) hits.Add(value.hit);
+    return hits.count > 0;
+}
 
 struct SceneLeaf { SceneBounds bounds; int collider; float key; }
 struct SceneBranch { int first; int count; }

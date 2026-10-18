@@ -1,5 +1,21 @@
 # `tide`, packages and the package
 
+## Test save directories (2026-10-18)
+
+`tide run --data-dir <folder>` forwards a full native save-directory path to
+the ordinary/watched host without changing watch/headless selection. Missing,
+empty or option-like directory arguments fail before building; use `./-name`
+for a directory whose name starts with a dash. Web, Android and server modes
+reject it before building. It is a run option, not a build setting. The shared
+help catalog and user CLI/files docs describe it. The fixed argument buffer still
+fits every ordinary host option once (now 27 arguments, within its 32 slots).
+
+`tide_cli_run_exit` checks every forwarded argument, directory absolutization
+from the invoking directory, and windowed dispatch with the override alone.
+`tide_cli_hidden` checks bounded dispatch and early unsupported/missing-value
+errors; `tide_cli_help` discovers the new topic. Host/provider behavior and
+final validation are recorded in `notes/standard-host.md`, Explicit save directory.
+
 ## Focused CLI help (2026-10-17)
 
 `tide` and `tide help` now show only a compact command list with a route to

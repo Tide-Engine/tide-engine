@@ -1,0 +1,19 @@
+settings { appId = "dev.tide.dataDirectoryTest"; maxPlayers = 2; }
+scene Main { }
+local singleton Saved { bool wrote; }
+
+void Save() fails IOError
+{
+    try File.AppendAllText("save.txt", "run\n");
+    var full = Path.Combine(Application.persistentDataPath, "save.txt");
+    Debug.Assert(File.Exists(full));
+    Debug.Assert((try File.ReadAllText("save.txt")) == (try File.ReadAllText(full)));
+    Debug.Log(Application.persistentDataPath);
+}
+
+view SaveOnce(mut Saved saved)
+{
+    if (saved.wrote) return;
+    saved.wrote = true;
+    if (Save() is IOError error) Debug.Assert(false, $"save failed: {error}");
+}

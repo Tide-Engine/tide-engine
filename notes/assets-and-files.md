@@ -1,5 +1,14 @@
 # Assets and local files
 
+2026-10-18 test-save isolation: native `tide_platform_io_init` now takes an
+optional directory after app_id. NULL retains normal app storage; the desktop
+host supplies `--data-dir` when requested. Full native paths are resolved before
+relative I/O or exposing Application.persistentDataPath; app ID/root pairs reuse
+the provider and pending flushes. Changing roots uses the existing app-switch
+cleanup. Unusable overrides fail without fallback; temporary roots and native
+absolute file access are unchanged. Web callers pass NULL. Contracts/tests and
+validation: `notes/standard-host.md`, Explicit save directory for test runs.
+
 Simulation identity (2026-10-15): simulation-read assets contribute source
 digests and canonical imported skinned data/external buffer digests to the new
 Simulation ID. Presentation-only assets do not. Ordinary simulation-read asset

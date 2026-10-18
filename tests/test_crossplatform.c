@@ -158,6 +158,31 @@ TIDE_TEST(crossplatform_geometry)
     expect_hash("geometry", h, 0xA244CB549F91E603ull);
 }
 
+// Direction rotations across the float range, and diagonal scale transforms.
+TIDE_TEST(crossplatform_direction_rotation_and_scale)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    rng = 20261018u;
+    for (int i = 0; i < SAMPLES; i++) {
+        const float x = any_float();
+        const float y = any_float();
+        const float z = any_float();
+        const float u = any_float();
+        const float v = any_float();
+        const float w = any_float();
+        const tide_float3 a = tide_f3(x, y, z);
+        const tide_float3 b = i % 3 == 0 ? tide_neg_f3(a) : tide_f3(u, v, w);
+        const tide_quaternion q = tide_fromto_q(a, b);
+        TIDE_REQUIRE(tide_is_finite_f(q.value.x) && tide_is_finite_f(q.value.y)
+                     && tide_is_finite_f(q.value.z) && tide_is_finite_f(q.value.w));
+        h = hash_float(hash_f3(h, tide_f3(q.value.x, q.value.y, q.value.z)), q.value.w);
+        const tide_float3 scale = game_f3();
+        const tide_float3 point = game_f3();
+        h = hash_f3(h, tide_transform_f4x4(tide_scaling_f4x4(scale), point));
+    }
+    expect_hash("direction rotation and scale", h, 0xA40EAB68989DC773ull);
+}
+
 // Noise (noise.c): every function, at game-sized points and at any float,
 // with seeds of every kind.
 TIDE_TEST(crossplatform_noise)

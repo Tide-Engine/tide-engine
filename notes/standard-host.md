@@ -1,5 +1,44 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Explicit save directory for test runs (2026-10-18)
+
+UNDERFOOT's scripted tests wrote player saves. The desktop standard host now
+takes `--data-dir <folder>` in both bounded and windowed runs. It overrides
+`Application.persistentDataPath` and relative I/O, creating parents when the
+game uses files. It is explicit: existing saves remain the default, the selected
+folder survives exit/repeated runs, absolute file paths still name those files,
+and temporary caches keep their normal paths. It does not select headless mode.
+Several `--players` processes use `player-1`, `player-2`, etc. under that folder;
+one player uses the folder itself. Web, Android and dedicated server runs reject
+the option; the CLI does so before building. Paths forwarded by `tide run` are
+made absolute relative to the invoking directory.
+
+The host passes the directory to `tide_platform_io_init(app_id, directory)`;
+NULL selects normal storage. The provider resolves native roots to full paths
+before use and keys reuse by app ID and selected root. Rebinding the same root
+preserves pending flushes; selecting another root forgets old work through the
+existing app-switch path. An invalid/unwritable root reports ordinary I/O failure
+and never falls back to actual saves. The web C provider requires NULL. Existing
+C callers were migrated to NULL; no generated Tide/runtime function changed.
+
+`tide_platform_data_directory` runs the real host with relative/nested/space and
+absolute roots, repeated/scripted runs and two players, checking actual files
+and the runtime path. It uses only its explicitly created scratch directories.
+`tide_platform_io` checks independent same-app roots, pending flush reuse,
+unusable-root failure and restoring the default. CLI forwarding, help and
+unsupported/missing-argument tests cover dispatch; capture refusal tests cover
+the host parser.
+
+Validation: warning-free full Windows native and web debug builds with Clang
+23.1.2 and Node 24.19.0. All 2,372 native CTests pass (60.54 s, including 32
+GPU tests on Vulkan/OpenGL), and all 2,282 web CTests pass (201.32 s, including
+WebGL/WebGPU). The expanded CLI unsupported-target/missing-directory checks
+also pass afterward. The docs production build and diff checks pass; docs retain
+their existing unstaged-example 404 placeholders. Math/random/world hash pins
+are unchanged. Every run used TIDE_HIDDEN; browser suites retain mute flags.
+Android, other OSes, sanitizers and private prototype playtests were not run;
+no CI was dispatched or deployment made.
+
 Managed hosting (2026-10-15): `managed_run.h` is a separate single-threaded WASI
 reactor launcher without rendering, platform devices or a local client. Ordinary
 host admission copies `tide_game.simulation` into protocol 2 and reports a clear

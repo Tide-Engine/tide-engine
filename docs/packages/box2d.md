@@ -422,7 +422,7 @@ system Weigh(mut Plate plate, Physics physics)
 
 ## Asking the world
 
-A ray, a shape that's moved along a way, a shape that's looked into: functions that ask the world something and change nothing of it. Each takes the `Physics` singleton of the code that asks, returns whether it found anything, and gives what it found through [`out`](../language/functions.md#out-parameters).
+A ray, a shape that's moved along a way, a shape that's looked into: methods on the `Physics` singleton that ask the world something and change nothing of it. Each returns whether it found anything, and gives what it found through [`out`](../language/functions.md#out-parameters).
 
 ```csharp
 struct RayHit
@@ -433,12 +433,6 @@ struct RayHit
     float2 normal;   // The way out of what was met, there
     float fraction;  // How far along the way: 0 at its start, 1 at its end
 }
-
-bool Raycast(Physics physics, float2 from, float2 to, out RayHit hit)
-bool Cast(Physics physics, Box shape, float2 from, float angle, float2 to, out RayHit hit)
-bool Cast(Physics physics, Circle shape, float2 from, float angle, float2 to, out RayHit hit)
-bool Overlap(Physics physics, Box shape, float2 at, float angle, out List<Entity> found)
-bool Overlap(Physics physics, Circle shape, float2 at, float angle, out List<Entity> found)
 ```
 
 **`Raycast`** is the first thing a ray meets on its way from one point to another:
@@ -482,9 +476,33 @@ event(Exploded) Blast(Body body, Physics physics)
 ```
 
 - **One body can be left out.** `Raycast` and `Cast` take a last argument, the `Body` they don't meet: `physics.Raycast(body.position, target, out var hit, ignore: body)`. A ray from a body's own middle meets that body at once otherwise.
-- **Sensors aren't met**, nor found by `Overlap`: they stop nothing. [`Inside`](#sensors) is what asks a sensor.
-- **A ray or a shape that starts in something meets it there**, at `fraction` 0, with no `normal`. A shape that only touches something where it starts is in it, for this: a crate at rest touches the floor, so its own box cast along the floor meets the floor at once. Cast a slightly smaller one to slide it along what it rests on.
+- **Sensors aren't met by default**, nor found by `Overlap`: they stop nothing. The all-hit methods below can include them. [`Inside`](#sensors) asks what's in a sensor.
+- **A ray or a shape that starts in something meets it there**, at `fraction` 0, with no `normal` or unique surface `point`. A shape that only touches something where it starts is in it, for this: a crate at rest touches the floor, so its own box cast along the floor meets the floor at once. Cast a slightly smaller one to slide it along what it rests on.
 - **Of two things as near as each other, the one that was made first is the answer**, and `Overlap` and `Inside` give their entities in the order their bodies were made in: the same on every machine, whatever order Box2D comes to them in.
+
+### All hits and game filtering
+
+`RaycastAll` and `CastAll` return an `out List<RayHit>`, sorted by increasing `fraction`. Equal fractions use the same deterministic shape order as the closest-hit methods. They return true if the list has any hits; otherwise the output is an empty list, replacing its previous contents.
+
+```csharp
+physics.RaycastAll(from, to, out var hits, ignore: body);
+foreach (var hit in hits)
+{
+    if (!world.Has<Target>(hit.entity)) continue;
+    // This is the nearest hit accepted by the game's rules.
+    hit.entity.Send(Struck { at = hit.point });
+    break;
+}
+
+physics.CastAll(Circle { radius = 0.2 }, from, 0, to, out var swept,
+    ignore: body, includeSensors: true);
+```
+
+`CastAll` accepts the same `Box` and `Circle` shapes, `from`, `angle` and `to` as `Cast`. Both all-hit methods accept `ignore: body`, which excludes every shape on that body, including its parts. `includeSensors` defaults to false and can be used with or without an ignored body.
+
+Each collider contributes its first hit. Separate colliders on one body remain separate results, even if their `entity` and `part` are the same; these are not unique-entity lists or entry-and-exit intersections. The ordinary `RayHit` values can be saved in match or local state. The same methods and options work on a rewound `Query`.
+
+Use `Raycast` or `Cast` when only the nearest hit matters: they keep their early-pruning path. There are no query layers or masks; all-hit results let game code apply its own component, team or other rules afterward.
 
 ### What they see
 
@@ -589,7 +607,7 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 ## Not there yet
 
 - Joints, chains, polygons other than boxes, and capsules.
-- Rays and casts give the first thing met, not everything along the way, and leave out one body at the most. Nothing asks by a kind of thing (layers), and a sensor is never met.
+- There are no collision or query layers or masks. Queries can ignore one body; `RaycastAll` and `CastAll` allow further filtering in game code.
 - `Touched` and `Parted` don't say which of an entity's own `Box` and `Circle` it was, and a parting from an entity that was destroyed doesn't say which entity.
 - The fields of a body that are read when it's made don't follow later changes, and a shape's fields don't either: a sensor stays a sensor.
 - Removing `Body` from an entity that stays leaves its body in the world, and removing `Box` or `Circle` leaves the shape on it.
@@ -617,7 +635,7 @@ system Fire(Controls controls, Body body, Physics physics)
 }
 ```
 
-The context has every current query form, including all shape casts, overlaps, sensor `Inside` queries and existing ignore-body overloads. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
+The context has every current query form, including `RaycastAll`, every `CastAll` shape, overlaps, sensor `Inside` queries and ignore-body overloads. All-hit methods also accept `includeSensors: true`. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
 
 `Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
 

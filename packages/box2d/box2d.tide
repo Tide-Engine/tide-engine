@@ -285,6 +285,58 @@ singleton Physics
         return true;
     }
 
+    // All-hit queries return each collider's first hit, nearest first. Sensors
+    // are optional; the ignored body includes every shape attached to it.
+    bool AllHits(List<Met> found, out List<RayHit> hits)
+    {
+        hits = [];
+        foreach (var met in found)
+        {
+            Told(met, out var hit);
+            hits.Add(hit);
+        }
+        return hits.count > 0;
+    }
+
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return RaycastAll(from, to, out hits, default, includeSensors);
+    }
+
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        hits = [];
+        if (!Ask()) return false;
+        CastRayAll(out var found, from, to, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        hits = [];
+        if (!Ask()) return false;
+        CastBoxAll(out var found, shape, from, angle, to, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        hits = [];
+        if (!Ask()) return false;
+        CastCircleAll(out var found, shape, from, angle, to, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
     // The first thing a ray from one place to another meets, if anything. Sensors
     // aren't met. A ray that starts inside a shape meets it there, at fraction 0,
     // with no normal.
@@ -497,6 +549,15 @@ extern void RecallWorld(List<byte> image, int size, long stamp);
 
 [NativeName("b2t_hide")]
 extern void HideGone(List<long> bodies, int bodyCount, List<long> shapes, int shapeCount);
+
+[NativeName("b2t_ray_all")]
+extern void CastRayAll(out List<Met> hits, float2 from, float2 to, long ignore, bool includeSensors);
+
+[NativeName("b2t_cast_box_all")]
+extern void CastBoxAll(out List<Met> hits, in Box shape, float2 from, float angle, float2 to, long ignore, bool includeSensors);
+
+[NativeName("b2t_cast_circle_all")]
+extern void CastCircleAll(out List<Met> hits, in Circle shape, float2 from, float angle, float2 to, long ignore, bool includeSensors);
 
 [NativeName("b2t_ray")]
 extern Met CastRay(float2 from, float2 to, long ignore);
@@ -795,6 +856,57 @@ struct Query
     List<Collider> colliders;
     List<SceneNode> nodes;
 
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return RaycastAll(from, to, out hits, default, includeSensors);
+    }
+
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(SceneBounds { min = Math.Min(from, to), max = Math.Max(from, to), valid = true }))
+        {
+            var collider = colliders[index];
+            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneRay(collider, from, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(BoxBounds(shape, angle, from, to)))
+        {
+            var collider = colliders[index];
+            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastBox(collider, shape, from, angle, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+    }
+
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(CircleBounds(shape, angle, from, to)))
+        {
+            var collider = colliders[index];
+            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastCircle(collider, shape, from, angle, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
     List<int> Candidates(SceneBounds bounds)
     {
         mut List<int> found = [];
@@ -939,6 +1051,30 @@ struct Query
     }
 }
 
+
+// Temporary query results retain the collider key while sorting.
+struct SceneHit { long shape; RayHit hit; }
+void AddSceneHit(mut List<SceneHit> found, Collider collider, Met met)
+{
+    if (!met.any) return;
+    var value = SceneHit { shape = met.shape, hit = RayHit { entity = collider.entity, part = collider.part,
+        point = met.point, normal = met.normal, fraction = met.fraction } };
+    var last = found.count - 1;
+    if (last >= 0 && found[last].shape == met.shape)
+    {
+        if (met.fraction < found[last].hit.fraction) found[last] = value;
+    }
+    else found.Add(value);
+}
+
+bool FinishSceneHits(mut List<SceneHit> found, out List<RayHit> hits)
+{
+    found.Sort(a, b) { return a.hit.fraction < b.hit.fraction || (a.hit.fraction == b.hit.fraction &&
+        (a.shape & 0xFFFF_FFFFL) < (b.shape & 0xFFFF_FFFFL)); }
+    hits = [];
+    foreach (var value in found) hits.Add(value.hit);
+    return hits.count > 0;
+}
 
 struct SceneLeaf { SceneBounds bounds; int collider; float key; }
 struct SceneBranch { int first; int count; }

@@ -106,7 +106,7 @@ static int frame(void *user, float seconds)
 int main(int argc, char **argv)
 {
     phase = argc > 1 ? argv[1] + 2 : "write";
-    io = tide_platform_io_init(!strcmp(phase, "other") ? "dev.tide.io.other" : "dev.tide.io.test");
+    io = tide_platform_io_init(!strcmp(phase, "other") ? "dev.tide.io.other" : "dev.tide.io.test", NULL);
     if (!strcmp(phase, "write")) {
         check(tide_directory_create_directory(io, save_path("saves/sub")).ok, "create parent directories");
         check(tide_directory_create_directory(io, save_path("saves/sub")).ok, "directory creation is idempotent");
@@ -135,7 +135,7 @@ int main(int argc, char **argv)
               "directory deletion requires explicit recursion");
         check(tide_file_write_all_text(io, save_path("../other-game/file"), text("x")).error == TIDE_IO_ACCESS_DENIED,
               "paths cannot escape this game's virtual roots");
-        io = tide_platform_io_init("dev.tide.io.test");
+        io = tide_platform_io_init("dev.tide.io.test", NULL);
         check(tide_file_exists(io, save_path("saves/text.txt")), "reinitializing for hot reload retains pending files");
     } else if (!strcmp(phase, "busy")) {
         tide_web_eval("tideHold = true");

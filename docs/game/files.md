@@ -28,6 +28,11 @@ Without an explicit `appId`, the standard host derives one from the game's folde
 
 Relative paths resolve under the persistent data directory on every platform. Explicit absolute paths are usable on native platforms subject to the OS's permissions. On the web, files stay inside this game's persistent and temporary virtual roots.
 
+For native desktop tests, [`--data-dir <folder>`](../tools/cli.md#without-a-window)
+selects a separate persistent directory. Scripted runs otherwise use the normal
+saves. The override changes relative paths and `Application.persistentDataPath`;
+explicit absolute paths still reach the files they name.
+
 ## Whole-file operations
 
 | Call | Behavior |

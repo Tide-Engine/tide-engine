@@ -41,7 +41,7 @@ TIDE_TEST(lobby_players_meet_through_a_relay_on_this_machine)
     const char *silent = getenv("TIDE_LOBBY_SILENT_PORT");
     TIDE_REQUIRE(port && *port && silent && *silent);
     snprintf(lobby_silent, sizeof lobby_silent, "http://127.0.0.1:%s", silent);
-    const tide_io *io = tide_platform_io_init("tests.tide.lobby");
+    const tide_io *io = tide_platform_io_init("tests.tide.lobby", NULL);
     char origin[64];
     snprintf(origin, sizeof origin, "http://127.0.0.1:%s", port);
     for (int i = 0; i < 4; i++) seat_init(&seats[i], io, origin);

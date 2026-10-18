@@ -210,6 +210,7 @@ Each was met as a compiler error or measured, not read in a doc.
 3. **A field of a vector in an array's element can't be assigned**:
    `arena.seats[s].velocity.y = 0` is an error ("a list's element is a
    copy"), though `arena.seats[s].velocity = ...` is written in place.
+   Fixed 2026-10-18; the compiler regression is in `notes/language.md`.
 4. **A match event handler takes no query**, so `PlayerLeft` finds the
    player's entity through a map the match keeps.
 5. **A local handler can't read the match's lists or maps.** `PadUsed` and
@@ -217,6 +218,8 @@ Each was met as a compiler error or measured, not read in a doc.
 6. **A singleton's `Random` is seeded by the singleton's place in the
    program**, so adding a local singleton in another file changed the
    match's rolls. The game seeds its own from `Random.seed`.
+   Fixed 2026-10-18 by match-only singleton ordinals (`notes/random.md`);
+   the game's explicit seed remains.
 7. **A function a frag calls can't take a singleton that holds a `Cubemap`
    or a `Random`**: the sky and the effects' dice are in singletons of their
    own.
