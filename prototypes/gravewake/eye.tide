@@ -25,6 +25,8 @@ local singleton Me
     float2 cursor = float2(-1, -1);
     float3 pointed;
     bool onBody;
+    bool onHead;
+    bool onWeak;
     bool pad;
     float3 padWay = float3(0, 0, 1);
 }
@@ -194,10 +196,10 @@ const float PAD_REACH = 9;          // How far off a survivor the right stick ai
 const float POINT_FAR = 150;        // How far the cursor's line is followed
 
 // What the cursor's on: the mouse moves the cursor (the lock holds the real one); the right stick, once it's moved,
-// aims its way from the survivor instead, till the mouse moves. On one of the dead, the aim is its chest, or its weak
-// spot when the cursor's on that (a round from the gun then goes into it: from above, every cursor on the dead would
-// otherwise be on a head, and every round a headshot); else where the line crosses the gun's height, so the shots go
-// level and pass under the cursor. Its input sends it (Hands.aim). Before there's a cursor, ahead of the survivor.
+// aims its way from the survivor instead, till the mouse moves. On one of the dead, the aim is its head when the
+// cursor's on its head (and the round's a headshot: hands.tide's Shoot), a boss's weak spot when it's on that, else its
+// chest; on nothing, where the line crosses the gun's height, so the shots go level and pass under the cursor. Its
+// input sends it (Hands.aim). Before there's a cursor, ahead of the survivor.
 [Stage(Layers.Prepare, 1)]
 view Pointing(mut Me me, Look look, Devices devices, Ashwick ashwick, Herd herd, query (Survivor survivor) survivors)
 {
@@ -252,13 +254,16 @@ view Pointing(mut Me me, Look look, Devices devices, Ashwick ashwick, Herd herd,
     var way = Math.Normalize(Math.Rotate(me.turn, float3(across.x * tall * w / Math.Max(1, h), across.y * tall, 1)));
     var to = me.eye + way * POINT_FAR;
     var ground = LongRay(ashwick, me.eye, to, out _);
-    var body = BodyFirst(me.eye, to, herd, out var who);
+    var body = BodyFirst(me.eye, to, herd, out var who, out var part);
+    me.onHead = false;
+    me.onWeak = false;
     if (body <= 1 && body < ground)
     {
-        var at = Math.Lerp(me.eye, to, body);
         var spots = SpotsOf(who, herd);
-        me.pointed = spots.weakRadius > 0 && Math.Length(at - spots.weak) <= spots.weakRadius * WEAK_PATCH ? spots.weak : who.chest;
+        me.pointed = part == 2 ? spots.weak : part == 1 ? who.head : who.chest;
         me.onBody = true;
+        me.onHead = part == 1;
+        me.onWeak = part == 2;
         return;
     }
     // Else where the line crosses the gun's height (so a level shot passes under the cursor), or, where the ground rises
@@ -299,16 +304,9 @@ void AddLight(mut Lights lights, float3 eye, Light light)
 // Kicks to the eye from what happens: a blow taken, a blast near, a shot.
 local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
 {
-    if (survivor.seat != me.seat) return;
+    if (survivor.seat != me.seat || Guarded(survivor)) return;
     me.hurt = 1;
     me.shake = Math.Max(me.shake, 0.6);
-}
-
-// A dash going through the dead: a jolt for the one who made it, harder the more it struck.
-local event(Barged barged) FeelBarged(mut Me me)
-{
-    if (barged.seat != me.seat) return;
-    me.shake = Math.Max(me.shake, Math.Min(0.55, 0.22 + 0.08 * barged.count));
 }
 
 local event(Blast blast) FeelBlast(mut Me me)

@@ -89,6 +89,7 @@ component Zombie
     float fuse;                 // A Bloater: seconds since it began to swell (0, not yet)
     bool popped;                // ...and it has burst
     float frenzy;               // Seconds left frenzied by a Stalker's shriek: faster
+    bool elite;                 // A hunt's quarry (missions.tide)
     float spit;                 // A Spitter: seconds till it can spit again...
     float windup;               // ...seconds into the swelling of its throat (0, none)...
     bool sight;                 // ...and whether it has a clear line to whom it's after (looked for a few times a second)
@@ -200,7 +201,9 @@ struct Body
 }
 
 // How wide a body's head and chest are to a round, and its weak spot: where, how wide (0, none) and how many times a
-// round there does. A boss's are its mesh's (boss.tide's MutantOf); one of the dead's are a man's at its size.
+// round there does; and a boss's bulk, an upright column from its feet to the top of its head that any round into it
+// strikes (the owner, 2026-10-18: "they are so big yet shooting at their feet felt like was always a miss"). A boss's
+// are its mesh's (boss.tide's MutantOf); one of the dead's are a man's at its size, and no column.
 struct Spots
 {
     float headRadius;
@@ -208,6 +211,9 @@ struct Spots
     float3 weak;
     float weakRadius;
     float weakTimes;
+    float3 base;
+    float columnRadius;
+    float columnHigh;
 }
 
 Spots SpotsOf(Body z, Herd herd)
@@ -759,6 +765,9 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         zombie.swing = 0;
         zombie.windup = 0;
         match.killed += 1;
+        // A cull's kills in its circle, a hunt's quarry (missions.tide)
+        if (match.mission == MissionKind.Cull && Math.Length((zombie.at - match.missionAt).xz) <= CULL_REACH) match.missionDone += 1;
+        if (zombie.elite && match.mission == MissionKind.Hunt) match.missionDone = match.missionGoal;
         // The party's experience, and a level when there's enough
         DropOrb(match, zombie.at, KindWorth(zombie.kind) * OrbWorth(match.danger));
     }
