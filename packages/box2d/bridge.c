@@ -1660,7 +1660,9 @@ met b2t_ray(const tide_float2 from, const tide_float2 to, const int64_t ignore)
 {
     search s = {.ignore = ignore};
     if (!asked || !real2(from) || !real2(to)) return s.best;
-    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), (b2Vec2){to.x - from.x, to.y - from.y}, b2DefaultQueryFilter(), nearer,
+    const b2Vec2 along = {to.x - from.x, to.y - from.y};
+    if (!real2((tide_float2){along.x, along.y})) return s.best;
+    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), along, b2DefaultQueryFilter(), nearer,
                     &s);
     return s.best;
 }
@@ -1672,7 +1674,9 @@ met b2t_ray(const tide_float2 from, const tide_float2 to, const int64_t ignore)
 static met cast(const b2ShapeProxy *shape, const tide_float2 from, const tide_float2 to, const int64_t ignore)
 {
     search s = {.ignore = ignore};
-    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, (b2Vec2){to.x - from.x, to.y - from.y}, b2DefaultQueryFilter(),
+    const b2Vec2 along = {to.x - from.x, to.y - from.y};
+    if (!real2((tide_float2){along.x, along.y})) return s.best;
+    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, along, b2DefaultQueryFilter(),
                       nearer, &s);
     return s.best;
 }
@@ -1708,6 +1712,114 @@ met b2t_cast_circle(const circle *shape, const tide_float2 from, const float ang
     b2ShapeProxy proxy;
     if (!asked || !real2(from) || !real2(to) || !circle_proxy(shape, angle, &proxy)) return (met){0};
     return cast(&proxy, from, to, ignore);
+}
+
+// All-hit queries keep a small result on the stack and grow only for actual
+// hits. The native query reports the first hit of each collider.
+typedef struct cast_hits {
+    int64_t ignore;
+    bool include_sensors;
+    met *items;
+    int32_t count, room;
+    met few[32];
+} cast_hits;
+
+static float collect_cast_hit(const b2ShapeId shape, const b2Pos point, const b2Vec2 normal,
+                              const float fraction, void *context)
+{
+    cast_hits *hits = context;
+    if (!hits->include_sensors && b2Shape_IsSensor(shape)) return -1.0f;
+    const int64_t id = shape_handle(shape);
+    const int64_t body = body_handle(b2Shape_GetBody(shape));
+    if (body == hits->ignore || hidden(body, id)) return -1.0f;
+    const int32_t most = (int32_t)(UINT32_C(0x40000000) / sizeof *hits->items);
+    if (hits->count == most) tide_out_of_memory();
+    if (hits->count == hits->room) {
+        const int32_t more = hits->room > most / 2 ? most : hits->room * 2;
+        met *items = tide_alloc((size_t)more * sizeof *items);
+        memcpy(items, hits->items, (size_t)hits->count * sizeof *items);
+        if (hits->items != hits->few) free(hits->items);
+        hits->items = items;
+        hits->room = more;
+    }
+    met *hit = &hits->items[hits->count++];
+    memset(hit, 0, sizeof *hit); // Output list padding is match state too.
+    hit->body = body;
+    hit->shape = id;
+    hit->point = (tide_float2){(float)point.x, (float)point.y};
+    hit->normal = (tide_float2){normal.x, normal.y};
+    hit->fraction = fraction;
+    hit->any = true;
+    return 1.0f; // Keep the entire sweep: a nearer hit never clips the rest.
+}
+
+static int cast_hit_order(const void *a, const void *b)
+{
+    const met *x = a, *y = b;
+    if (x->fraction != y->fraction) return x->fraction < y->fraction ? -1 : 1;
+    if (slot(x->shape) != slot(y->shape)) return slot(x->shape) < slot(y->shape) ? -1 : 1;
+    return x->shape < y->shape ? -1 : x->shape > y->shape;
+}
+
+static void give_cast_hits(cast_hits *hits, tide_list_out *out)
+{
+    if (hits->count > 1) qsort(hits->items, (size_t)hits->count, sizeof *hits->items, cast_hit_order);
+    if (hits->count) {
+        void *room = tide_list_out_room(out, (uint32_t)hits->count);
+        if (!room) tide_out_of_memory();
+        memcpy(room, hits->items, (size_t)hits->count * sizeof *hits->items);
+    }
+    tide_list_out_count(out, (uint32_t)hits->count);
+    if (hits->items != hits->few) free(hits->items);
+}
+
+void b2t_ray_all(tide_list_out *out, const tide_float2 from, const tide_float2 to, const int64_t ignore, const bool include_sensors)
+{
+    tide_list_out_count(out, 0);
+    const b2Vec2 along = {to.x - from.x, to.y - from.y};
+    if (!asked || !real2(from) || !real2(to) || !real2((tide_float2){along.x, along.y})) return;
+    cast_hits hits;
+    hits.ignore = ignore;
+    hits.include_sensors = include_sensors;
+    hits.count = 0;
+    hits.room = 32;
+    hits.items = hits.few;
+    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), along, b2DefaultQueryFilter(), collect_cast_hit, &hits);
+    give_cast_hits(&hits, out);
+}
+
+static void cast_all(tide_list_out *out, const b2ShapeProxy *shape, const tide_float2 from, const tide_float2 to,
+                     const int64_t ignore, const bool include_sensors)
+{
+    tide_list_out_count(out, 0);
+    const b2Vec2 along = {to.x - from.x, to.y - from.y};
+    if (!asked || !real2(from) || !real2(to) || !real2((tide_float2){along.x, along.y})) return;
+    cast_hits hits;
+    hits.ignore = ignore;
+    hits.include_sensors = include_sensors;
+    hits.count = 0;
+    hits.room = 32;
+    hits.items = hits.few;
+    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, along, b2DefaultQueryFilter(), collect_cast_hit, &hits);
+    give_cast_hits(&hits, out);
+}
+
+void b2t_cast_box_all(tide_list_out *out, const box *shape, const tide_float2 from, const float angle,
+                         const tide_float2 to, const int64_t ignore, const bool include_sensors)
+{
+    tide_list_out_count(out, 0);
+    b2ShapeProxy proxy;
+    if (!box_proxy(shape, angle, &proxy)) return;
+    cast_all(out, &proxy, from, to, ignore, include_sensors);
+}
+
+void b2t_cast_circle_all(tide_list_out *out, const circle *shape, const tide_float2 from, const float angle,
+                         const tide_float2 to, const int64_t ignore, const bool include_sensors)
+{
+    tide_list_out_count(out, 0);
+    b2ShapeProxy proxy;
+    if (!circle_proxy(shape, angle, &proxy)) return;
+    cast_all(out, &proxy, from, to, ignore, include_sensors);
 }
 
 static int before(const void *a, const void *b)

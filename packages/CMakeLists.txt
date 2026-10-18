@@ -298,6 +298,20 @@ target_include_directories(tide_box3d_rewind PRIVATE "${PROJECT_SOURCE_DIR}/test
 target_link_libraries(tide_box3d_rewind PRIVATE tide_box3d)
 add_test(NAME tide_box3d_rewind COMMAND tide_box3d_rewind)
 
+foreach(dimension 2 3)
+    tide_add_game(tide_box${dimension}d_query_all
+        SOURCES box${dimension}d/bridge.c box${dimension}d/test/query_all.tide NAME queries
+        PACKAGES Box${dimension}D box${dimension}d/box${dimension}d.tide
+        HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box${dimension}d/test/query_all_test.c)
+    target_include_directories(tide_box${dimension}d_query_all PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tide_box${dimension}d_query_all PRIVATE tide_box${dimension}d)
+    if(TARGET tide_platform)
+        target_compile_definitions(tide_box${dimension}d_query_all PRIVATE QUERY_ALL_JOBS)
+        target_link_libraries(tide_box${dimension}d_query_all PRIVATE tide_platform)
+    endif()
+    add_test(NAME tide_box${dimension}d_query_all COMMAND tide_box${dimension}d_query_all)
+endforeach()
+
 tide_add_game(tide_box3d_mesh SOURCES box3d/bridge.c box3d/test/mesh.tide NAME mesh PACKAGES Box3D box3d/box3d.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/mesh_test.c)
 target_include_directories(tide_box3d_mesh PRIVATE "${PROJECT_SOURCE_DIR}/tests")

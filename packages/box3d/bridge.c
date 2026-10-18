@@ -1746,6 +1746,8 @@ void b3t_rebuild(const tide_resident *state)
 
 // A question, and its answer so far.
 typedef struct asked {
+    int64_t ignore;
+    bool include_sensors;
     const int64_t *gone; // The bodies whose entities are destroyed, which the next step removes
     int32_t gone_count;
     const int64_t *gone_shapes; // ...and the parts' shapes
@@ -1767,16 +1769,17 @@ static bool finite3(const tide_float3 v)
 // more.
 static bool passed(const asked *a, const b3ShapeId shape)
 {
-    if (b3Shape_IsSensor(shape)) return true;
+    if (!a->include_sensors && b3Shape_IsSensor(shape)) return true;
     if (a->gone_shape_count > 0) {
         const int64_t named = handle(shape.index1, shape.generation);
         for (int32_t i = 0; i < a->gone_shape_count; i++) {
             if (a->gone_shapes[i] == named) return true;
         }
     }
-    if (a->gone_count > 0) {
+    if (a->ignore || a->gone_count > 0) {
         const b3BodyId on = b3Shape_GetBody(shape);
         const int64_t named = handle(on.index1, on.generation);
+        if (named == a->ignore) return true;
         for (int32_t i = 0; i < a->gone_count; i++) {
             if (a->gone[i] == named) return true;
         }
@@ -1832,9 +1835,10 @@ static found answer(const world *w, const asked *a)
 // shape, where, the shape's surface there, and how far along. Nothing, for a
 // ray that meets nothing, and of what it starts inside.
 found b3t_ray(const int64_t stamp, const tide_float3 from, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
-              const int64_t *gone_shapes, const int32_t gone_shape_count)
+              const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore)
 {
-    asked a = {.gone = gone, .gone_count = gone_count, .gone_shapes = gone_shapes, .gone_shape_count = gone_shape_count, .ray = true};
+    asked a = {.ignore = ignore, .gone = gone, .gone_count = gone_count, .gone_shapes = gone_shapes,
+               .gone_shape_count = gone_shape_count, .ray = true};
     const world *w = at(stamp);
     if (!w || !finite3(from) || !finite3(to)) return answer(w, &a);
     const b3Vec3 along = b3Sub(vec(to), vec(from));
@@ -1906,9 +1910,9 @@ static bool sound(const tide_quaternion q)
 // the point where the two touch. What the shape is in where it starts is met
 // there, at no way along, and that has no surface to say.
 static found cast(const int64_t stamp, probe p, const tide_float3 from, const tide_float3 to, const int64_t *gone,
-                  const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count)
+                  const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore)
 {
-    asked a = {.gone = gone, .gone_count = gone_count, .gone_shapes = gone_shapes, .gone_shape_count = gone_shape_count};
+    asked a = {.ignore = ignore, .gone = gone, .gone_count = gone_count, .gone_shapes = gone_shapes, .gone_shape_count = gone_shape_count};
     const world *w = at(stamp);
     if (!w || !p.good || !finite3(from) || !finite3(to)) return answer(w, &a);
     const b3Vec3 along = b3Sub(vec(to), vec(from));
@@ -1919,29 +1923,155 @@ static found cast(const int64_t stamp, probe p, const tide_float3 from, const ti
 }
 
 found b3t_cast_box(const int64_t stamp, const box *s, const tide_float3 from, const tide_quaternion rotation, const tide_float3 to,
-                   const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count)
+                   const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count,
+                   const int64_t ignore)
 {
     probe p = box_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count);
+    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore);
 }
 
 found b3t_cast_sphere(const int64_t stamp, const sphere *s, const tide_float3 from, const tide_quaternion rotation,
                       const tide_float3 to, const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes,
-                      const int32_t gone_shape_count)
+                      const int32_t gone_shape_count, const int64_t ignore)
 {
     probe p = sphere_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count);
+    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore);
 }
 
 found b3t_cast_capsule(const int64_t stamp, const capsule *s, const tide_float3 from, const tide_quaternion rotation,
                        const tide_float3 to, const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes,
-                       const int32_t gone_shape_count)
+                       const int32_t gone_shape_count, const int64_t ignore)
 {
     probe p = capsule_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count);
+    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore);
+}
+
+// All-hit queries keep a small result on the stack and grow only for actual
+// hits. The native query reports the first hit of each collider (a mesh too).
+typedef struct cast_hits {
+    asked filter;
+    found *items;
+    int32_t count, room;
+    found few[32];
+} cast_hits;
+
+static float collect_cast_hit(const b3ShapeId shape, const b3Pos point, const b3Vec3 normal,
+                              const float fraction, const uint64_t material, const int triangle, const int child, void *context)
+{
+    (void)material;
+    (void)triangle;
+    (void)child;
+    cast_hits *hits = context;
+    if ((hits->filter.ray && fraction == 0.0f) || passed(&hits->filter, shape)) return -1.0f;
+    const b3BodyId on = b3Shape_GetBody(shape);
+    const int64_t body = handle(on.index1, on.generation);
+    const int64_t id = handle(shape.index1, shape.generation);
+    const int32_t most = (int32_t)(UINT32_C(0x40000000) / sizeof *hits->items);
+    if (hits->count == most) tide_out_of_memory();
+    if (hits->count == hits->room) {
+        const int32_t more = hits->room > most / 2 ? most : hits->room * 2;
+        found *items = tide_alloc((size_t)more * sizeof *items);
+        memcpy(items, hits->items, (size_t)hits->count * sizeof *items);
+        if (hits->items != hits->few) free(hits->items);
+        hits->items = items;
+        hits->room = more;
+    }
+    found *hit = &hits->items[hits->count++];
+    memset(hit, 0, sizeof *hit); // Output list padding is match state too.
+    hit->body = body;
+    hit->shape = id;
+    hit->point = float3(b3ToVec3(point));
+    hit->normal = float3(normal);
+    hit->fraction = fraction;
+    return 1.0f; // Keep the entire sweep: a nearer hit never clips the rest.
+}
+
+static int cast_hit_order(const void *a, const void *b)
+{
+    const found *x = a, *y = b;
+    if (x->fraction != y->fraction) return x->fraction < y->fraction ? -1 : 1;
+    return x->shape < y->shape ? -1 : x->shape > y->shape;
+}
+
+static void give_cast_hits(cast_hits *hits, tide_list_out *out)
+{
+    if (hits->count > 1) qsort(hits->items, (size_t)hits->count, sizeof *hits->items, cast_hit_order);
+    if (hits->count) {
+        void *room = tide_list_out_room(out, (uint32_t)hits->count);
+        if (!room) tide_out_of_memory();
+        memcpy(room, hits->items, (size_t)hits->count * sizeof *hits->items);
+    }
+    tide_list_out_count(out, (uint32_t)hits->count);
+    if (hits->items != hits->few) free(hits->items);
+}
+
+void b3t_ray_all(tide_list_out *out, const int64_t stamp, const tide_float3 from, const tide_float3 to,
+                  const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count,
+                  const int64_t ignore, const bool include_sensors)
+{
+    tide_list_out_count(out, 0);
+    const world *w = at(stamp);
+    if (!w || !finite3(from) || !finite3(to)) return;
+    const b3Vec3 along = b3Sub(vec(to), vec(from));
+    if (!finite3(float3(along))) return;
+    cast_hits hits;
+    hits.filter = (asked){.ignore = ignore, .include_sensors = include_sensors, .gone = gone, .gone_count = gone_count,
+                          .gone_shapes = gone_shapes, .gone_shape_count = gone_shape_count, .ray = true};
+    hits.count = 0;
+    hits.room = 32;
+    hits.items = hits.few;
+    b3World_CastRay(w->id, b3ToPos(vec(from)), along, b3DefaultQueryFilter(), collect_cast_hit, &hits);
+    give_cast_hits(&hits, out);
+}
+
+static void cast_all(tide_list_out *out, const int64_t stamp, probe p, const tide_float3 from, const tide_float3 to,
+                     const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count,
+                     const int64_t ignore, const bool include_sensors)
+{
+    tide_list_out_count(out, 0);
+    const world *w = at(stamp);
+    if (!w || !p.good || !finite3(from) || !finite3(to)) return;
+    const b3Vec3 along = b3Sub(vec(to), vec(from));
+    if (!finite3(float3(along))) return;
+    cast_hits hits;
+    hits.filter = (asked){.ignore = ignore, .include_sensors = include_sensors, .gone = gone, .gone_count = gone_count,
+                          .gone_shapes = gone_shapes, .gone_shape_count = gone_shape_count};
+    hits.count = 0;
+    hits.room = 32;
+    hits.items = hits.few;
+    p.proxy.points = p.points;
+    b3World_CastShape(w->id, b3ToPos(vec(from)), &p.proxy, along, b3DefaultQueryFilter(), collect_cast_hit, &hits);
+    give_cast_hits(&hits, out);
+}
+
+void b3t_cast_box_all(tide_list_out *out, const int64_t stamp, const box *shape, const tide_float3 from,
+                         const tide_quaternion rotation, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
+                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors)
+{
+    probe p = box_probe(shape, rotation);
+    p.good = p.good && sound(rotation);
+    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors);
+}
+
+void b3t_cast_sphere_all(tide_list_out *out, const int64_t stamp, const sphere *shape, const tide_float3 from,
+                         const tide_quaternion rotation, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
+                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors)
+{
+    probe p = sphere_probe(shape, rotation);
+    p.good = p.good && sound(rotation);
+    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors);
+}
+
+void b3t_cast_capsule_all(tide_list_out *out, const int64_t stamp, const capsule *shape, const tide_float3 from,
+                         const tide_quaternion rotation, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
+                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors)
+{
+    probe p = capsule_probe(shape, rotation);
+    p.good = p.good && sound(rotation);
+    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors);
 }
 
 // The bodies a question found, to give back each once, in the order of their
