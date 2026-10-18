@@ -19,6 +19,6 @@ void Refill(mut Survivor survivor)
     if (survivor.gun == Weapon.Pistol) survivor.stowed = MagOf(survivor, RoleWeapon(survivor.role));
     survivor.mag = MagOf(survivor, survivor.gun);
     for (var i = 0; i < 3; i++) survivor.cooldowns[i] = 0;
-    survivor.dashes = DashCharges(survivor);
-    survivor.dashWait = 0;
+    survivor.rolls = RollCharges(survivor);
+    survivor.rollWait = 0;
 }

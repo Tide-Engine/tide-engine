@@ -1,18 +1,19 @@
 using Rooms;
 
-// Chests: each night hides ChestsTonight of them about the clearing as it
+// Chests: each night hides CHESTS_A_NIGHT of them about the clearing as it
 // falls (nights.tide), each somewhere random and open; they're there till the
-// next night falls, and the ones not opened by then are gone with it. The
-// first to hold E by one for CHEST_SECONDS has what's in it: an item, rolled
-// as a level's offer is (rarer ones as the run goes on), no choosing. Nothing
-// points to them: they're found by going about the clearing, a warm glint and
-// the light on the ground round them in the dark. (The owner: "could be fun
-// adding chests around the map with upgrades"; then "lets make the chests be
-// random, but not be pinged; players should discover them by roaming
-// around". A night's set in place of one on a timer is mine, Provisional: so
-// looking for them is weighed against lighting the beacon.)
+// next night falls, and the ones not opened by then are gone with it. Standing
+// by one for CHEST_SECONDS opens it, and every survivor picks one of three
+// items, as at a level: the party's, whoever found it (the owner, 2026-10-18:
+// "i want players to share chests and for them to be an option so we all play
+// together for the same goals"). Nothing points to them: they're found by
+// going about the clearing, a warm glint and the light on the ground round
+// them in the dark. (The owner: "lets make the chests be random, but not be
+// pinged; players should discover them by roaming around". A night's set in
+// place of one on a timer is mine, Provisional: so looking for them is
+// weighed against lighting the beacon.)
 
-const float CHEST_SECONDS = 1.2;     // Held E to open one
+const float CHEST_SECONDS = 1.5;     // Standing by one to open it
 const float CHEST_REACH = 2.5;
 const float CHEST_FROM = 14;         // At least this far from every survivor when it comes
 const float CHEST_APART = 16;        // ...and from the other chests
@@ -23,10 +24,10 @@ component Chest
     float3 at;
     int night;                       // The night it's hidden for
     float yaw;
-    float pried;                     // 0 to 1: how far it's been opened; it shuts again when nobody holds E by it
+    float pried;                     // 0 to 1: how far it's been opened; it shuts again when nobody stands by it
 }
 
-// A tick's share of opening a chest, from a survivor holding E by it.
+// A tick's share of opening a chest, from a survivor standing by it.
 event Prying
 {
     float amount;
@@ -42,7 +43,6 @@ event ChestOpened
 {
     float3 at;
     int seat;
-    Item item;
 }
 
 // The night's chests, one a tick as it falls, each somewhere open in the clearing: flat ground (not a cliff, a wall or
@@ -77,11 +77,11 @@ system ChestComing(mut Match match, Ashwick ashwick, query (Survivor survivor) s
     }
 }
 
-// Holding E by a chest (and not by a friend who's down) pries it open.
+// Standing by a chest (and not by a friend who's down) pries it open.
 [Stage(Tick.Hands, 1)]
-system PryChest(Hands hands, Survivor survivor, Match match, Time time, query (Chest chest) chests)
+system PryChest(Survivor survivor, Match match, Time time, query (Chest chest) chests)
 {
-    if (match.paused || match.phase == Phase.Over || !survivor.ready || survivor.life != Life.Standing || survivor.role == Role.None || !hands.use || survivor.aimed >= 0) return;
+    if (match.paused || match.phase == Phase.Over || !survivor.ready || survivor.life != Life.Standing || survivor.role == Role.None || survivor.aimed >= 0) return;
     mut Entity best = default;
     mut var nearest = CHEST_REACH;
     foreach (var row in chests)
@@ -108,15 +108,15 @@ system ChestShut(mut Chest chest, Match match, Time time)
     chest.pried = Math.Max(0, chest.pried - time.dt / CHEST_SECONDS);
 }
 
-// Open: its item to whoever opened it, and it's gone.
-event(Prying prying) Pry(mut Chest chest, Party party, Match match)
+// Open: every survivor picks an item, and it's gone.
+event(Prying prying) Pry(mut Chest chest, Party party)
 {
     if (chest.pried >= 1) return;
     chest.pried += prying.amount;
     if (chest.pried < 1) return;
-    var item = RollItem(1 + int(match.clock / 60), match.players);
-    if (prying.by >= 0 && prying.by < 4 && party.taken[prying.by]) party.survivors[prying.by].Send(Given { item = item });
-    Send(ChestOpened { at = chest.at, seat = prying.by, item = item });
+    for (var seat = 0; seat < 4; seat++)
+        if (party.taken[seat]) party.survivors[seat].Send(Owed { picks = 1 });
+    Send(ChestOpened { at = chest.at, seat = prying.by });
     this.Destroy();
 }
 
@@ -164,6 +164,13 @@ view ChestGlints(Chest chest, mut Fx fx, Me me)
                     life = fx.random.NextFloat(0.5, 0.9), size = 0.03, color = float3(1.0, 0.8, 0.35), alpha = 3, drag = 0.5 });
 }
 
+local event(ChestOpened opened) ShowChest(mut Feed feed)
+{
+    feed.banner = "A CHEST: EVERYONE PICKS AN ITEM";
+    feed.bannerLeft = 2.4;
+    feed.bannerColor = GOLD;
+}
+
 local event(ChestOpened opened) ChestBurst(mut Fx fx)
 {
     fx.flashes.Add(Flash { at = opened.at + float3(0, 1, 0), color = float3(1.0, 0.8, 0.4) * 8, reach = 9, life = 0.5 });
@@ -172,7 +179,7 @@ local event(ChestOpened opened) ChestBurst(mut Fx fx)
                         color = float3(1.0, 0.8, 0.35), alpha = 4, gravity = 6, drag = 1 });
 }
 
-// By a chest: holding E to open it. (Nothing marks where they are.)
+// By a chest: standing by it opens it. (Nothing marks where they are.)
 [Stage(Layers.Hud, 1)]
 view ChestMarks(Me me, Lobby lobby, Match match, query (Survivor survivor) survivors, query (Chest chest) chests)
 {
@@ -200,7 +207,7 @@ view ChestMarks(Me me, Lobby lobby, Match match, query (Survivor survivor) survi
     if (near >= 0 && mine.life == Life.Standing && mine.aimed < 0)
     {
         var y = h * 0.74;
-        WriteBold("Hold E to open the chest", float2(w * 0.5, y), 18 * u, Color(1.0, 0.85, 0.5), Anchor.MiddleCenter);
+        WriteBold("Stay by the chest to open it: everyone picks an item", float2(w * 0.5, y), 18 * u, Color(1.0, 0.85, 0.5), Anchor.MiddleCenter);
         Draw.Rect(float2(w * 0.5, y + 22 * u), float2(200 * u, 5 * u), Color(0, 0, 0, 0.6));
         if (near > 0) Draw.Rect(float2(w * 0.5 - 100 * u + 100 * u * Math.Saturate(near), y + 22 * u), float2(200 * u * Math.Saturate(near), 5 * u), Color(1.0, 0.8, 0.35));
     }

@@ -19,7 +19,7 @@ scene Main { }
 enum Life { Standing, Downed, Gone }
 
 // What a survivor's hands are busy with.
-enum Act { Idle, Raise, Fire, Reload, Throw, Kick }
+enum Act { Idle, Raise, Fire, Reload }
 
 // A survivor: one of the four, walking, fighting and choosing. `seat` is which: 0 Wat, 1 Maud, 2 Godric, 3 Agnes.
 component Survivor
@@ -48,14 +48,13 @@ component Survivor
     Act act;
     float actTime;                   // Seconds into what the hands do
     float actLength;
-    bool landed;                     // This throw or kick has been dealt
-    Skill throwing;                  // What's thrown
     float steady;                    // Seconds since the last shot, for the spread's bloom and the run
     bool leaping;                    // In the air from a leap: it slams down where it lands
-    float dash;                      // Seconds left of a dash, and which way
-    int dashes = 2;                  // Dash charges ready (DASHES)
-    float dashWait;                  // Seconds till a spent dash comes back
-    float3 dashWay;
+    float roll;                      // Seconds left of a roll, and which way
+    int rolls = 2;                   // Roll charges ready (ROLLS)
+    float rollWait;                  // Seconds till a spent roll comes back
+    float3 rollWay;
+    float kicked = 10;               // Seconds since the boot last came up (for its pose)
     float slimed;                    // Seconds left slowed by a Spitter's bile
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
     float3 aim;                      // What the cursor's on (Hands.aim)
@@ -63,7 +62,8 @@ component Survivor
     int[23] items;
     Item[3] offers;
     bool choosing;
-    int pending;                     // Picks owed: a level's, a boss's, after the one on offer
+    int pending;                     // Picks owed: a level's, a chest's, a boss's, after the one on offer...
+    int boons;                       // ...and a mission's, of the rarer items, before them
     int picks;
     float gone;                      // Seconds since bleeding out: they're back beside the beacon when it's lit, or at dawn
     int level = 1;                   // The party's, as it reached this survivor
@@ -80,8 +80,6 @@ component Survivor
     local Pose pose;                 // This machine's: the frame's pose, sampled once
     local float4x4 place = float4x4.identity;
     local float stride;              // Metres walked, the walk's clock
-    local float bash;                // How far into a shoulder charge the body is (0 to 1): a dash's pose, eased in and out
-    local float bashTurn;            // ...and how far the body turns from the aim for it (side-on, the leading shoulder first)
     local float legYaw;              // How far the legs are turned from the aim, toward the way they're going
     local float feetYaw;             // Which way the feet face, in the world: they stay put while the aim turns, then step round
     local float turning;             // Seconds left of a step round
@@ -96,10 +94,7 @@ input Hands
 {
     [Clamp(-1, 1)] float2 move;      // Across and up the screen
     bool attack;                     // The gun
-    bool secondary;                  // The skills: right mouse, Shift, Q
-    bool utility;
-    bool special;
-    bool use;
+    bool roll;                       // The roll (the other skills, a chest, the beacon, a friend down: all by themselves)
     bool reload;
     bool pick1;                      // An item, or a survivor before the first wave
     bool pick2;
@@ -119,10 +114,8 @@ input Hands
         // The mouse and the right stick move the cursor
         aim = me.pointed;
         attack = devices.mouse.left.pressed || pad.rightTrigger > 0.4;
-        secondary = devices.mouse.right.pressed || pad.leftTrigger > 0.4;
-        utility = keys.leftShift.pressed || pad.leftShoulder.pressed;
-        special = keys.q.pressed || pad.rightShoulder.pressed;
-        use = keys.e.pressed || pad.buttonWest.pressed;
+        roll = keys.space.pressed || keys.leftShift.pressed || devices.mouse.right.pressed || pad.buttonEast.pressed || pad.buttonSouth.pressed
+               || pad.leftTrigger > 0.4;
         reload = keys.r.pressed || pad.buttonWest.pressed;
         pick1 = keys.digit1.pressed || pad.dpad.left.pressed;
         pick2 = keys.digit2.pressed || pad.dpad.up.pressed;
@@ -309,6 +302,14 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
             return;
         case 6:
             match.bossNext = match.nightClock;
+            return;
+        case 40:
+        case 41:
+        case 42:
+            // A mission of a kind, now (the one going called off)
+            match.devMission = cheat.what - 39;
+            if (match.mission != MissionKind.None) match.mission = MissionKind.None;
+            match.missionWait = 0;
             return;
         case 30:
         case 31:

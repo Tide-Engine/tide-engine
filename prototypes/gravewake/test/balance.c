@@ -144,10 +144,10 @@ static Hands think(int seat, float dt)
     bool targetAlive = false;
     tide_entity best = {0};
     float bestScore = 1e9f;
-    for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) {
-        const Zombie z = TIDE_AT(&world, arch6_Zombie, Zombie, r);
+    for (uint32_t r = 0; r < world.arch4_Zombie.count; r++) {
+        const Zombie z = TIDE_AT(&world, arch4_Zombie, Zombie, r);
         if (z.state != ZombieState_Hunting && z.state != ZombieState_Fallen) continue;
-        const tide_entity e = TIDE_ENTITY_AT(&world, arch6_Zombie, r);
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch4_Zombie, r);
         const float d = sqrtf((z.at.x - s.feet.x) * (z.at.x - s.feet.x) + (z.at.y - s.feet.y) * (z.at.y - s.feet.y) + (z.at.z - s.feet.z) * (z.at.z - s.feet.z));
         if (d < nearest) nearest = d;
         if (d < 4) within4++;
@@ -171,8 +171,8 @@ static Hands think(int seat, float dt)
     // off): it first
     bool bestBoss = false;
     bool full = false;
-    for (uint32_t r = 0; r < world.arch4_Beacon.count; r++)
-        if (TIDE_AT(&world, arch4_Beacon, Beacon, r).night == world.Match.night && TIDE_AT(&world, arch4_Beacon, Beacon, r).charge >= 1) full = true;
+    for (uint32_t r = 0; r < world.arch5_Beacon.count; r++)
+        if (TIDE_AT(&world, arch5_Beacon, Beacon, r).night == world.Match.night && TIDE_AT(&world, arch5_Beacon, Beacon, r).charge >= 1) full = true;
     for (uint32_t r = 0; r < world.arch1_Boss.count; r++) {
         const Boss b = TIDE_AT(&world, arch1_Boss, Boss, r);
         if (b.move == BossMove_Dying || b.move == BossMove_Coming) continue;
@@ -229,8 +229,8 @@ static Hands think(int seat, float dt)
     // friend's bled out
     bool lit = false, haveBeacon = false;
     tide_float3 beacon = {0};
-    for (uint32_t r = 0; r < world.arch4_Beacon.count; r++) {
-        const Beacon b = TIDE_AT(&world, arch4_Beacon, Beacon, r);
+    for (uint32_t r = 0; r < world.arch5_Beacon.count; r++) {
+        const Beacon b = TIDE_AT(&world, arch5_Beacon, Beacon, r);
         if (b.night != world.Match.night) continue;
         beacon = b.at;
         lit = b.lit;
@@ -260,10 +260,8 @@ static Hands think(int seat, float dt)
     for (uint32_t r = 0; r < world.arch7_Chest.count; r++)
         if (flat_distance(TIDE_AT(&world, arch7_Chest, Chest, r).at, s.feet) < 2.2f) atChest = true;
     if (atChest && nearest > 2.5f) {
-        h.use = true;
     } else if (lighting && toBeacon < 2.4f) {
         // Held through the hits: lighting it is worth a few
-        h.use = true;
     } else if (lighting) {
         goX = (goal.x - s.feet.x) / fmaxf(toGoal, 0.1f);
         goZ = (goal.z - s.feet.z) / fmaxf(toGoal, 0.1f);
@@ -277,8 +275,8 @@ static Hands think(int seat, float dt)
         bool going = false;
         if (nearest > 5) {
             float orbNear = 12;
-            for (uint32_t r = 0; r < world.arch5_Orb.count; r++) {
-                const Orb o = TIDE_AT(&world, arch5_Orb, Orb, r);
+            for (uint32_t r = 0; r < world.arch6_Orb.count; r++) {
+                const Orb o = TIDE_AT(&world, arch6_Orb, Orb, r);
                 if (o.seat >= 0) continue;
                 const float d = flat_distance(o.at, s.feet);
                 if (d < orbNear) {
@@ -301,7 +299,6 @@ static Hands think(int seat, float dt)
                     going = true;
                     if (d < 2.0f) {
                         goX = goZ = 0;
-                        h.use = true;
                     }
                 }
             }
@@ -312,8 +309,7 @@ static Hands think(int seat, float dt)
             const Survivor f = get(other);
             if (f.life != Life_Downed || nearest < 3.5f) continue;
             const float d = flat_distance(f.feet, s.feet);
-            if (d < 1.8f) h.use = true;
-            else {
+            if (d >= 1.8f) {           // (by them, standing raises them)
                 goX = (f.feet.x - s.feet.x) / d;
                 goZ = (f.feet.z - s.feet.z) / d;
             }
@@ -353,35 +349,13 @@ static Hands think(int seat, float dt)
     h.move.x = goX;
     h.move.y = goZ;
 
-    // The skills, as a player would use them
-    const bool ready0 = s.cooldowns.at[0] <= 0, ready1 = s.cooldowns.at[1] <= 0, ready2 = s.cooldowns.at[2] <= 0;
+    // The roll, out of the dead pressing round, the way it's going (the other skills use themselves)
     bot->blinkTurn = false;
-    switch (s.role) {
-    case Role_Gunner:
-        h.secondary = ready0 && onTarget && within20 >= 3;                          // Phase Round down a line of them
-        h.utility = ready1 && nearest < 2.5f && press > 0.01f;                      // Slide clear (the move's way)
-        h.special = ready2 && onTarget && within12 >= 5 && nearest > 4;             // A grenade into the thick
-        break;
-    case Role_Breacher:
-        h.secondary = ready0 && nearest < 2.2f && onTarget;                         // The boot
-        // Shoulder through a crowd ahead, or out of one pressing round
-        if (ready1 && onTarget && within8 >= 4 && nearest > 1.2f && s.dashes > 0) {
-            h.utility = true;
-            h.move = (tide_float2){0, 0};                                          // No way pressed: the way it faces
-        } else {
-            h.utility = ready1 && nearest < 2.5f && press > 0.01f; (void)within4;
-        }
-        h.special = ready2 && onTarget && within12 >= 5 && nearest > 3.5f;          // Firebomb
-        break;
-    case Role_Engineer:
-        h.secondary = ready0 && within8 >= 3;                                       // A mine at our feet as they come
-        h.utility = ready1 && nearest < 2.5f && press > 0.01f;                      // Dash clear (the move's way)
-        h.special = ready2 && within20 >= 2;                                        // A turret whenever there's work
-        break;
-    default:
-        break;
-    }
-    if (s.life == Life_Downed) h.secondary = h.utility = h.special = false;
+    h.roll = s.life == Life_Standing && s.rolls > 0 && nearest < 2.2f && press > 0.01f && s.roll <= 0;
+    (void)within4;
+    (void)within8;
+    (void)within12;
+    (void)within20;
     return h;
 }
 
@@ -413,7 +387,7 @@ static Run play(const char *roles, unsigned seed, float minutes)
         Survivor s = get(seat);
         for (int i = 0; i < ITEMS; i++) s.items.at[i] += startItems[i];
         s.selfRevives += startItems[Item_SecondWind];
-        s.dashes += startItems[Item_EnergyDrink];
+        s.rolls += startItems[Item_EnergyDrink];
         s.health += 45.0f * (float)startItems[Item_Kevlar];
         tide_set_Survivor(&world, survivor_of(seat), s);
     }
@@ -426,7 +400,7 @@ static Run play(const char *roles, unsigned seed, float minutes)
         const Survivor first = get(0);
         if (first.steady == 0) run.shots++;        // A shot this tick: its steadiness starts again
         if (first.act == Act_Reload) run.reloading++;
-        if ((int)world.arch6_Zombie.count > run.mostAlive) run.mostAlive = (int)world.arch6_Zombie.count;
+        if ((int)world.arch4_Zombie.count > run.mostAlive) run.mostAlive = (int)world.arch4_Zombie.count;
         while (world.Match.level > lastLevel && run.levels < 64) {
             lastLevel++;
             run.levelAt[run.levels++] = world.Match.clock;
@@ -445,8 +419,8 @@ static Run play(const char *roles, unsigned seed, float minutes)
         }
     }
     run.lasted = world.Match.phase == Phase_Over ? world.Match.lasted : world.Match.clock;
-    for (uint32_t r = 0; r < world.arch4_Beacon.count; r++) {
-        const Beacon b = TIDE_AT(&world, arch4_Beacon, Beacon, r);
+    for (uint32_t r = 0; r < world.arch5_Beacon.count; r++) {
+        const Beacon b = TIDE_AT(&world, arch5_Beacon, Beacon, r);
         if (b.night != world.Match.night) continue;
         run.vigil = b.lit;
         run.charge = b.charge;

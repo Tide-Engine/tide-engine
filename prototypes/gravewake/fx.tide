@@ -257,12 +257,12 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
     }
 
     fx.blasts = Math.Max(0, fx.blasts - dt / 1.5);
-    // Dashes: dust kicked up behind each survivor in one
+    // Rolls: dust kicked up behind each survivor in one
     foreach (var row in survivors)
     {
         var s = row.survivor;
-        if (s.dash <= 0 || !s.ready) continue;
-        var back = -s.dashWay;
+        if (s.roll <= 0 || !s.ready) continue;
+        var back = -s.rollWay;
         Murk(fx, Mote { at = s.feet + float3(fx.random.NextFloat(-0.2, 0.2), 0.15, fx.random.NextFloat(-0.2, 0.2)), velocity = back * 2 + float3(0, 0.6, 0), life = 0.45,
                         size = 0.2, grow = 0.7, color = float3(0.17, 0.14, 0.11), alpha = 0.55, drag = 3 });
         // Kerosene: flames off them as they go
@@ -619,8 +619,18 @@ local event(HordeRose horde) HordeDust(mut Fx fx)
     }
 }
 
-// An ability used: a leap's landing throws up a ring of earth, frost bursts out in a ring, a war cry's breath of dust,
-// a dash's streak, a blink's light at both ends.
+// An ability used: a leap's landing throws up a ring of earth, a roll's dust, a blink's light at both ends. And a blow
+// dodged in a roll: a pale ring off the survivor.
+local event(Dodged dodged) DodgeFlash(mut Fx fx)
+{
+    for (var i = 0; i < 16; i++)
+    {
+        var turn = i * Math.TAU / 16;
+        Glow(fx, Mote { at = dodged.at + float3(0, 0.9, 0), velocity = float3(Math.Cos(turn), 0.2, Math.Sin(turn)) * 3, life = 0.3, size = 0.07,
+                        color = float3(0.8, 0.9, 1.0), alpha = 2.5, drag = 4 });
+    }
+}
+
 local event(Unleashed used) Flourish(mut Fx fx)
 {
     switch (used.skill)
@@ -636,7 +646,7 @@ local event(Unleashed used) Flourish(mut Fx fx)
             }
             return;
         case Skill.None:
-        case Skill.Slide:
+        case Skill.Roll:
             for (var i = 0; i < 12; i++)
                 Murk(fx, Mote { at = used.at + float3(0, fx.random.NextFloat(0.1, 0.8), 0), velocity = Scatter(fx, 1), life = 0.5, size = 0.18, grow = 0.4,
                                 color = float3(0.18, 0.16, 0.14), alpha = 0.5, drag = 2 });
