@@ -69,6 +69,53 @@ TIDE_TEST(simulation_identity_tracks_match_helpers_but_not_view_helpers_or_local
     }
 }
 
+TIDE_TEST(simulation_identity_ignores_local_singleton_positions_and_attached_fields)
+{
+    static const char *const sources[] = {
+        "singleton Dice { Random random; } singleton Later { Random random; } scene Main {} "
+        "local singleton Paint { int color; } "
+        "system Roll(mut Dice dice, mut Later later) { _ = dice.random.NextInt(1000); _ = later.random.NextInt(1000); }",
+        "local singleton Paint { int color; } "
+        "singleton Dice { Random random; } singleton Later { Random random; } scene Main {} "
+        "system Roll(mut Dice dice, mut Later later) { _ = dice.random.NextInt(1000); _ = later.random.NextInt(1000); }",
+        "singleton Dice { Random random; local float color; } singleton Later { Random random; } scene Main {} "
+        "local singleton Paint { int color; } "
+        "system Roll(mut Dice dice, mut Later later) { _ = dice.random.NextInt(1000); _ = later.random.NextInt(1000); }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 3; i++) {
+        program *p = checked(sources[i]);
+        TIDE_REQUIRE(p);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else {
+            if (memcmp(first, id, sizeof first) != 0) printf("    local singleton variant %d differs\n", i);
+            TIDE_CHECK(memcmp(first, id, sizeof first) == 0);
+        }
+        done();
+    }
+}
+
+TIDE_TEST(simulation_identity_ignores_discard_storage_source_locations)
+{
+    static const char *const sources[] = {
+        "bool Store(out int value) { value = 1; return true; } scene Main {} system Tick() { _ = Store(out _); }",
+        "\n\nbool Store(out int value) { value = 1; return true; }\nscene Main {}\nsystem Tick() {\n    _ = Store(out _);\n}",
+        "bool Store(out int value) { value = 2; return true; } scene Main {} system Tick() { _ = Store(out _); }"
+    };
+    uint8_t first[32];
+    for (int i = 0; i < 3; i++) {
+        program *p = checked(sources[i]);
+        TIDE_REQUIRE(p);
+        uint8_t id[32];
+        program_simulation_id(p, id, false);
+        if (!i) memcpy(first, id, sizeof first);
+        else TIDE_CHECK((memcmp(first, id, sizeof first) == 0) == (i == 1));
+        done();
+    }
+}
+
 TIDE_TEST(simulation_identity_preserves_recipient_listener_wire_contract)
 {
     static const char prefix[] =

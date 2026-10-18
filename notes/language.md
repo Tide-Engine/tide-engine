@@ -1,5 +1,23 @@
 # Language features, as tidec builds them
 
+## Follow-up prototype gap audit (2026-10-18)
+
+The first pass was not exhaustive. CRACKED's default singleton Random seeding
+also depended on presentation-only declaration order. A checked match-only
+singleton ordinal now drives both its seed sites and its simulation-graph record;
+details and exact runtime coverage are in `notes/random.md`. No runtime API or
+state layout changes. Explicit singleton declaration order remains a match input.
+
+The regression exposed another implementation detail in compatibility hashing:
+`_ = expression` and `out _` get C storage names containing source line/column,
+and those names were hashed as though authored. The graph now omits discarded
+storage names from statements and their bound expressions. Its typed nodes,
+ordered edges, calls, values and distinct output bindings still participate.
+Formatting/moving discards preserves compatibility; changing their executed
+match code still changes it. `simulation_identity_ignores_discard_storage_source_locations`
+checks both directions, including a discarded result with an `out _` argument.
+Full-suite, optimized parity and docs validation are recorded in `notes/random.md`.
+
 ## Compiler gaps found in prototypes (2026-10-18)
 
 This pass fixes three inconsistencies with existing language behavior, without
@@ -34,9 +52,9 @@ values over repeated local frames. Its waiting match loops replay from both a
 COW snapshot and packed bytes. Two error fixtures retain repeated-lane and
 temporary-swizzle rejection through an indexed element.
 
-Left for later review with the owner: broader helper/query/handler capabilities, whole
-singleton assignment and component-value Spawn; random seeding independent of
-declaration order; GUI keyboard ownership and headless save isolation; new
+Left for later review with the owner: broader helper/query/handler capabilities,
+whole singleton assignment and component-value Spawn; GUI keyboard ownership and
+headless save isolation; new
 draw/physics/resource APIs (including skinned instancing, cast filtering, fonts,
 wrapping and texture metadata). These reports need separate reproduction or
 design/API review beyond the three bugs above; they are not assumed to be new

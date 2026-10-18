@@ -584,6 +584,7 @@ typedef struct decl {
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
     int index; // Component bit / singleton index / event index / system order / list, map or grid number. Constants: 1 while checking, 2 once checked.
+    int match_singleton_index; // Match-only ordinal: local singletons/attached fields do not affect seeding or simulation identity.
     int dims;  // Grids: 2 or 3
     bool resized;         // Lists: some code calls Resize, so generated C has its helper
     bool paths;           // Lists and maps: code reaches into an element's fields (`rows[i].x`), so generated C has the helpers that point at one

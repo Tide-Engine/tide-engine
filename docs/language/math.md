@@ -256,6 +256,8 @@ A generator the game leaves alone is seeded by the engine, so there's nothing to
 - A `Random` field of a singleton is seeded as the match starts, from the match's seed.
 - In local state, each gets a sequence of its own too, the same every run: a local component's, a local singleton's, and a `local Random` field of a match component, which is the entity's own on this machine.
 
+Adding or moving local singletons and attached local fields does not change a match singleton's sequence.
+
 `Random(seed)` makes one for a seed of the game's, an `int` or a `long`: the same seed, the same numbers. Seeds next to each other (1, 2, 3) give sequences that have nothing to do with each other.
 
 ```csharp

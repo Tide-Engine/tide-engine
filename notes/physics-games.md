@@ -1,5 +1,13 @@
 # The physics games: Towers and Sumo
 
+Match singleton RNG isolation (2026-10-18): the compiler now excludes local
+singletons and attached local storage from match singleton seed ordinals
+(`notes/random.md`). Sumo's ring generator therefore intentionally starts with
+another stream. Native/WASI debug agree on network world pins `c659a401358bc369`
+at tick 640 and `3b39af7fab9a0826` at tick 880. Only these expected hashes change;
+gameplay, physics, rollback, late-join and zero-resync assertions remain.
+Optimized parity and final validation are recorded in the random note.
+
 Scene visibility unification (2026-10-15): removing the generated scene audience
 fields changes the two network world pins of each game. Native and WASI agree:
 Towers 87e3c4d07d3233f3 at tick 1500 / aab79fc2ab3032d2 at 1800; Sumo

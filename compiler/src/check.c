@@ -19553,6 +19553,11 @@ bool check(program *prog)
     warn_unmatched(prog, (const decl *const *)prog->views.items, prog->views.count);
     warn_unmatched(prog, (const decl *const *)prog->handlers.items, prog->handlers.count);
     warn_unsent(&c);
+    int match_singleton_index = 0;
+    for (int i = 0; i < prog->singletons.count; i++) {
+        decl *d = prog->singletons.items[i];
+        d->match_singleton_index = d->is_local ? -1 : match_singleton_index++;
+    }
     diag_phase("warnings");
     analyze_parallelism(prog);
     diag_phase("scheduling");
