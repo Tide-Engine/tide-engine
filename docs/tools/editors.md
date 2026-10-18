@@ -240,6 +240,32 @@ They're Tide run configurations, which you can also make and edit under **Run > 
 
 ## Emacs
 
+### Install with a package manager
+
+The official [tide-emacs repository](https://github.com/Tide-Engine/tide-emacs)
+can be installed directly with Emacs 29.1+'s package manager. Evaluate this once:
+
+```elisp
+(require 'package-vc)
+(package-vc-install
+ '(tide-lang-mode :url "https://github.com/Tide-Engine/tide-emacs"))
+```
+
+Add this to your init file:
+
+```elisp
+(require 'tide-lang-mode)
+(add-hook 'tide-lang-mode-hook #'eglot-ensure)
+```
+
+Install Tide separately and put `tidels` on Emacs's `exec-path`. The package
+manager updates the mode; `tide upgrade` updates the compiler and server.
+Use **M-x package-vc-upgrade** to update the mode. A MELPA recipe is prepared,
+but the package is not listed there yet: its submission rules require a month
+of public maintenance and human review.
+
+### Use Tide's bundled mode
+
 Tide bundles [tide-lang-mode](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-emacs)
 for Emacs 29.1 or later. Run:
 
@@ -271,6 +297,34 @@ Use **M-.** for definitions, **M-?** for references, **C-M-i** for completion,
 for client configuration.
 
 ## Vim and Neovim
+
+### Install with a plugin manager
+
+The official [tide-vim repository](https://github.com/Tide-Engine/tide-vim)
+works directly with Git-based plugin managers. In an existing vim-plug setup,
+add this between `plug#begin()` and `plug#end()`, then run **:PlugInstall**:
+
+```vim
+Plug 'Tide-Engine/tide-vim'
+```
+
+For lazy.nvim on Neovim 0.11+, add this plugin specification:
+
+```lua
+{
+  'Tide-Engine/tide-vim',
+  lazy = false,
+  config = function()
+    vim.lsp.enable('tidels')
+  end,
+}
+```
+
+Install Tide separately and put `tidels` on `PATH`. Use your plugin manager
+to update the runtime and `tide upgrade` to update the compiler and server.
+Plain Vim still needs a separately configured LSP client.
+
+### Use Tide's bundled runtime
 
 Tide bundles the [Tide Vim runtime](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-vim)
 for Vim 8+ and Neovim. Print the configuration for your editor:
@@ -308,6 +362,8 @@ These [setup helpers](cli.md#ide) print configuration; they do not change your
 init files. If you move Tide, generate the configuration again and replace the
 old paths. `tide editors` installs the VS Code extension. Enable automatic server
 startup only for projects you trust.
+Choose either the package-manager copy or Tide's bundled copy of each mode;
+loading both can make it unclear which version your editor is using.
 Use `tide run` and `tide open` in a terminal for games and prefab editing.
 The terminal integrations do not adapt the VS Code-specific clickable code-lens
 commands or embed the native scene editor.

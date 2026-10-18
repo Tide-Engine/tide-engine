@@ -1,5 +1,16 @@
 # The docs site
 
+Standalone editor distribution preparation (2026-10-18): README and Editors
+now have package-manager examples for the planned official tide-emacs and
+tide-vim repositories, including package-vc-install, vim-plug and lazy.nvim.
+They distinguish direct Git installation from the prepared, not-yet-submitted
+MELPA recipe and the archive's one-month/public-maintenance and human-review
+requirements. Publication is pending the owner's editor-only license choice;
+do not merge the new public repository links until the repositories exist.
+The production docs build passes on Node 24.21.0 with existing allowed
+unstaged-example 404s. No deployment or CI was dispatched. Implementation and
+validation are recorded in notes/editors.md.
+
 Installed terminal editor setup (2026-10-18): the CLI page has an ide section
 and command-table entry. The Emacs and Vim/Neovim sections now start with
 `tide ide <editor>`, explain where to copy its output, matching bundled server

@@ -1,5 +1,8 @@
 ;;; tide-lang-mode-test.el --- Batch tests -*- lexical-binding: t; -*-
 
+;; Author: Tide Engine contributors
+;; Assisted-by: Codex:gpt-6.1-sol
+
 (require 'ert)
 (require 'tide-lang-mode)
 
