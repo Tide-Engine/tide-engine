@@ -1770,7 +1770,8 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
         for (int i = 0; i < p->overrides.count; i++) {
             const expr *value = p->overrides.items[i];
             sb_put(o, ", ");
-            gen_value(g, o, value->type_decl, value->inits.items, value->inits.count);
+            if (value->kind == E_LITERAL || value->bind == BIND_TYPE) gen_value(g, o, value->type_decl, value->inits.items, value->inits.count);
+            else gen_expr(g, o, value);
         }
         sb_put(o, ")");
         return;
@@ -1789,9 +1790,10 @@ static void gen_spawn(gen *g, sb *o, const expr *e)
         // A sparse component is given: the row has it
         if (arg->type_decl->is_sparse) sb_printf(o, "%s.tide_has_%s = 1", written++ ? ", " : "", type_cname(arg->type_decl));
         // A bare component with no declared defaults is all zeros; leave it out.
-        if (arg->kind != E_LITERAL && !has_defaults(arg->type_decl)) continue;
+        if (arg->bind == BIND_TYPE && !has_defaults(arg->type_decl)) continue;
         sb_printf(o, "%s.%s = ", written++ ? ", " : "", type_cname(arg->type_decl));
-        gen_value(g, o, arg->type_decl, arg->inits.items, arg->inits.count);
+        if (arg->kind == E_LITERAL || arg->bind == BIND_TYPE) gen_value(g, o, arg->type_decl, arg->inits.items, arg->inits.count);
+        else gen_expr(g, o, arg);
     }
     if (written == 0) sb_put(o, "0");
     sb_put(o, "})");
@@ -1807,7 +1809,8 @@ static void gen_load(gen *g, sb *o, const expr *e)
         if (i) sb_put(o, ", ");
         if (arg->type_decl->is_sparse) sb_printf(o, ".tide_has_%s = 1, ", type_cname(arg->type_decl));
         sb_printf(o, ".%s = ", type_cname(arg->type_decl));
-        gen_value(g, o, arg->type_decl, arg->inits.items, arg->inits.count);
+        if (arg->kind == E_LITERAL || arg->bind == BIND_TYPE) gen_value(g, o, arg->type_decl, arg->inits.items, arg->inits.count);
+        else gen_expr(g, o, arg);
     }
     sb_put(o, "})");
 }
@@ -3350,6 +3353,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "}})");
             break;
         }
+        if (e->type.kind == TY_MAP) { // Only the empty map literal is allowed.
+            sb_put(o, "((tide_map){0})");
+            break;
+        }
         if (e->type.kind == TY_SET) { // A set's keys, as code has them
             const type key = e->type.decl->fields.items[0].type;
             if (e->args.count == 0) {
@@ -3436,6 +3443,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (e->target_colors) { // target.colors: the target, of whose color images an index reads one (E_INDEX)
             gen_expr(g, o, e->object);
+            break;
+        }
+        if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+            sb_put(o, "tide_texture_size(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ")");
             break;
         }
         if (e->object->type.kind == TY_RENDER_TARGET) { // target.color, target.depth
@@ -3973,7 +3986,8 @@ static void gen_method(gen *g, const expr *e)
         decl *comp = arg->type_decl;
         if (e->call == CALL_ADD) {
             sb_printf(o, " tide_cmd_add_%s(%s, tide_e, ", type_cname(comp), world);
-            gen_value(g, o, comp, arg->inits.items, arg->inits.count);
+            if (arg->kind == E_LITERAL || arg->bind == BIND_TYPE) gen_value(g, o, comp, arg->inits.items, arg->inits.count);
+            else gen_expr(g, o, arg);
             sb_put(o, ");");
         } else {
             sb_printf(o, " %scmd_remove(%s, tide_e, %d);", prefix, world, comp->index);
@@ -5071,6 +5085,10 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         }
         const int had = out->items.count;
         collect_ordered(e->object, out, later);
+        if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+            const ordered_item item = {e, false, false};
+            vec_push(out->items, item);
+        }
         // A swizzle reads each component from its vector, which is written out again for each
         if (e->swizzle_len > 1 && out->items.count > had) out->forced = true;
         break;
@@ -16850,6 +16868,7 @@ static void gen_api(gen *g)
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
     sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n    (void)verified_previous;\n    (void)verified_alpha;\n");
     if (prog->seed_local) sb_put(o, "    local->tide_match_seed = w ? w->Time.seed : 0;\n");
+    if (prog->uses_texture_size) sb_put(o, "    tide_target_pixels_fn tide_previous_pixels = tide_texture_target_pixels(draw->target_pixels);\n");
     // What the frame's draws send for code the GPU runs that rolls or reads the seed: one roll of this
     // machine's generator, which every draw of the frame has (so they still join), and the drawn world's seed
     if (shaders_roll(prog, false)) sb_put(o, "    tide_gpu_rolled = tide_random_next(&local->tide_dice);\n");
@@ -16894,6 +16913,7 @@ static void gen_api(gen *g)
         sb_put(o, "    tide_local_run_tasks(w, local);\n    tide_local_apply_commands(local);\n    local->tide_frames++;\n");
     }
     if (prog->sound->named) sb_put(o, "    tide_local_sounds(local);\n");
+    if (prog->uses_texture_size) sb_put(o, "    tide_texture_target_pixels(tide_previous_pixels);\n");
     sb_put(o, "}\n\n");
     sb_put(o, "void tide_local_events(tide_local *local, tide_event_log *events)\n{\n    (void)local;\n    if (!events) return;\n");
     if (program_hears(prog)) {
@@ -19307,6 +19327,20 @@ static void gen_shaders(gen *g)
                       sh->skin_base_at >= 0 ? "tide_draw_skinned_atlas" : "tide_draw_skinned_data");
             sb_put(o, "    }\n");
             if (sh->skin_base_at >= 0) sb_printf(o, "    tide_instance.i[%d] = tide_skin_info[3];\n", sh->skin_base_at);
+        }
+        for (int t = 0; t < sh->sizes.count; t++) {
+            const shader_texture *texture = &sh->sizes.items[t];
+            sb from = {0};
+            if (texture->asset) sb_put(&from, asset_cname(texture->asset));
+            else if (texture->direct) sb_put(&from, "tide_texture");
+            else {
+                int b = 0;
+                while (sh->bound.items[b] != texture->source) b++;
+                sb_printf(&from, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            }
+            sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"
+                         "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n",
+                      t, from.data, texture->count_at, t, texture->count_at + 1, t);
         }
         // What's read as the Texture it's given says: that texture's filter's and wrap's bits, for the draw's own
         // (a shader with no frag) all of it, and for a Sample what it leaves unsaid of a Texture that's no asset's

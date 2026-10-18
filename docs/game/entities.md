@@ -75,6 +75,8 @@ var e = Spawn(Transform { localScale = float3(1, 1, 1) }, Player);
 
 A component value is written like `Health { max = 200 }`, without `new`. Fields left out take their defaults, and a bare type name, like `Player`, takes every default.
 
+An existing value or a helper's result works too: `Spawn(savedHealth, MakeInventory())` and `e.Add(savedHealth)`. Each argument is evaluated once in written order and copied when the change is recorded, including owned lists and maps. Editing the source afterward leaves that recorded copy intact. A component copy carries ordinary fields; each new entity gets fresh local-field defaults.
+
 An entity has at most one component of each type. When it needs several of something, use a list inside one component, one entity per item that points back at its owner, or separate component types.
 
 ## Changing entities

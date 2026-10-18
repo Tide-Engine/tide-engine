@@ -118,7 +118,11 @@ view Panel(mut Art art)
 - A texture made of a grid is that grid, not a copy: it draws what the grid holds when it's drawn. It lasts as long as the grid does. One kept past its grid (the entity the grid was a field of is gone, the match ended) draws nothing, or whatever took the grid's place: it's a name, as an `Entity` kept past its entity is.
 - The default `Texture`, what a field starts as, is no texture: a mesh drawn with it draws its colors alone.
 - It belongs to this machine: views, local state and the functions they call have them, and the match doesn't.
-- No code reads a `Texture`'s pixels or asks its size. A grid's cells are read as the grid.
+- `texture.size` gives its base-level width and height as an `int2` of physical pixels, in local CPU code and shaders. It reads metadata without copying or uploading pixels. Assets and grids report their image dimensions; render-target aliases follow resize, display scale and the device's size limit. Missing, unloaded or disposed images give `int2(0)`. No code reads a `Texture`'s pixels; a grid's cells are read as the grid.
+
+For example, a shader can use `float2 texel = 1.0 / float2(image.size);` for pixel-sized UV offsets. A CPU helper can return `image.size` through ordinary Texture parameters. Custom C hosts provide `draw.target_pixels = tide_platform_target_pixels` before `tide_frame` to resolve target dimensions; the standard host does this automatically. Without that frame metadata, target sizes are zero.
+
+For an explicit `parallel` loop, read the size before the loop and use that `int2` in each step. CPU metadata queries use the frame thread; an ordinary grid `foreach` that reads them stays ordered.
 
 ### One channel
 

@@ -1,0 +1,4 @@
+// expect: a Texture's size is read-only
+scene Main { }
+local singleton Art { Texture image; }
+view Paint(mut Art art) { art.image.size.x = 3; }

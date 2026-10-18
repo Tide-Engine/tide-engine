@@ -1,0 +1,6 @@
+// expect: 'Forward' reads frame image metadata, so it can't run in a parallel loop
+scene Main { }
+local singleton Art { Grid2<int> cells = Grid2(8, 8); Texture image; }
+int Width(Texture image) { return image.size.x; }
+int Forward(Texture image) { return Width(image); }
+view Read(mut Art art) { parallel (var at in art.cells) art.cells[at] = Forward(art.image); }
