@@ -132,6 +132,13 @@ No CI or deployment was dispatched.
 
 ## Shared language-server updates (2026-10-18)
 
+Borrowed input parameters (2026-10-18) complete in ordinary readonly synchronous
+function/method signatures, excluding mut/out, async and extern contexts. Hover
+describes the explicit caller borrow and paired current/previous tick values.
+Input bool edge completion also follows nested structs, in helpers and systems.
+`lsp_borrowed_input_in_helpers` pins these headers, exclusions, nested edges,
+hover and clean diagnostics for a forwarded input call.
+
 Borrowed helper queries (2026-10-18) complete in ordinary synchronous function
 and method signatures. Nested headers offer component bindings and filters,
 and helper foreach rows offer entity/component members. Hover explains the

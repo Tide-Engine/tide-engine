@@ -8,9 +8,10 @@ event(PlayerJoined joined) Join()
 {
     Spawn(Actor, Owner { player = joined.player });
 }
-system Observe(Controls controls, mut Seen seen, with Actor, with Owner)
+void ReadInput(Controls controls, mut Seen seen)
 {
     seen.fire = controls.fire;
     seen.valid = controls.viewTime.valid;
     seen.last = controls.viewTime;
 }
+system Observe(Controls controls, mut Seen seen, with Actor, with Owner) { ReadInput(controls, seen); }

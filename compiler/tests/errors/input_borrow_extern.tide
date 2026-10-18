@@ -1,0 +1,4 @@
+// expect: input is borrowed by ordinary synchronous Tide functions and methods
+input Controls { bool jump; }
+extern bool Read(Controls controls);
+scene Main { }

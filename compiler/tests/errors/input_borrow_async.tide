@@ -1,0 +1,4 @@
+// expect: input is borrowed by ordinary synchronous Tide functions and methods
+input Controls { bool jump; }
+async void Read(Controls controls) { await Wait.Ticks(1); }
+scene Main { }

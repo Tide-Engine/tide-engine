@@ -53,11 +53,12 @@ event(PlayerLeft left) Leave(mut Players players)
     players.left += 1;
 }
 
-system Move(Controls input, Time time, mut Mover mover, with Owner)
+void MoveInput(Controls input, float dt, mut Mover mover)
 {
-    mover.position += input.move * time.dt * 5;
+    mover.position += input.move * dt * 5;
     if (input.jump.down) mover.jumps += 1;
 }
+system Move(Controls input, Time time, mut Mover mover, with Owner) { MoveInput(input, time.dt, mover); }
 
 system Roll(Time time, mut Ball ball)
 {

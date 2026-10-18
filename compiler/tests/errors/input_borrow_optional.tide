@@ -1,0 +1,4 @@
+// expect: a T?'s value can't be Controls
+input Controls { bool jump; }
+void Read(Controls? controls) { }
+scene Main { }
