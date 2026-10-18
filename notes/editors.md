@@ -1,5 +1,25 @@
 # The language server and the editors
 
+## Installed terminal editor setup (2026-10-18)
+
+The modes now ship as editors/tide-emacs and editors/tide-vim, excluding tests.
+`tide ide emacs`, `tide ide vim` and `tide ide neovim` print configuration using
+the installed runtime and matching absolute tidels path. The user copies it into
+their chosen init file; the helper changes no files or personal settings.
+Emacs/Neovim connect automatically; Vim retains the user's choice of LSP client.
+Moving the installation requires generating the paths again. This replaces the
+source-checkout-only setup described in the first implementation below.
+
+The real generated snippets are exercised by tide_cli_ide's optional host cases:
+set TIDE_TEST_EMACS, TIDE_TEST_VIM and/or TIDE_TEST_NVIM to executable paths.
+They use isolated configuration and the actual installed payload from CMake.
+The comma-path host regression exposed Neovim's unescaped runtimepath: the
+helper now escapes its comma before prepending it. Vim/Neovim glob-character
+installation paths fail with an explicit move/install-path fix instead of
+silently losing runtime discovery. Plain string quoting remains editor-specific.
+The existing mode/LSP/runtime behavior is unchanged. CLI, packaging, tests and
+validation are recorded in notes/cli-and-packages.md.
+
 ## Emacs, Vim and Neovim (2026-10-18)
 
 `tools/tide-emacs/tide-lang-mode.el` adds .tide/.tprefab detection, basic

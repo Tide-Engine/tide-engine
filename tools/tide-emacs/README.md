@@ -5,8 +5,18 @@ highlighting, C-style indentation and comment editing. It registers `tidels`
 with Eglot for completion, diagnostics, navigation, rename and formatting.
 Requires Emacs 29.1 or newer. This is separate from the TypeScript `tide` package.
 
-Download this folder from the Tide repository or use your existing checkout.
-Add its absolute path to your init file:
+Tide includes this mode. Print configuration with the installed paths:
+
+```sh
+tide ide emacs
+```
+
+Copy the result into your init file and restart Emacs. It loads the mode and
+enables Eglot automatically, using the full path to Tide's bundled `tidels`.
+The helper prints configuration without changing files or launching Emacs.
+Regenerate it if you move Tide. Enable automatic LSP only for projects you trust.
+
+For a source checkout or manually downloaded mode, add its absolute path:
 
 ```elisp
 (add-to-list 'load-path "/path/to/tide-engine/tools/tide-emacs")
@@ -29,8 +39,9 @@ Optional automatic connection:
 Use `M-x eglot-format-buffer`, `M-x eglot-rename`, `M-.` for definitions,
 `M-?` for references and `C-M-i` for completion. Which other server features
 appear depends on Eglot. The mode does not launch games or embed the prefab
-editor; use `tide run` or `tide open` in a terminal. Installation is manual;
-`tide editors` currently installs only the VS Code extension.
+editor; use `tide run` or `tide open` in a terminal.
+`tide editors` installs the VS Code extension; `tide ide` prints setup for
+terminal editors.
 
 From the repository root, run the batch checks without loading personal config:
 

@@ -240,24 +240,28 @@ They're Tide run configurations, which you can also make and edit under **Run > 
 
 ## Emacs
 
-The repository's [tide-lang-mode](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-emacs)
-supports Emacs 29.1 or later. Download that folder or use a Tide source checkout,
-then add its absolute path to your init file:
+Tide bundles [tide-lang-mode](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-emacs)
+for Emacs 29.1 or later. Run:
 
-```elisp
-(add-to-list 'load-path "/path/to/tide-engine/tools/tide-emacs")
-(require 'tide-lang-mode)
+```sh
+tide ide emacs
 ```
+
+Copy the result into your Emacs init file (usually `~/.emacs.d/init.el`), then
+restart Emacs. It loads the bundled mode, selects this installation's `tidels`
+by its full path and connects through Eglot when you open a Tide file. Emacs
+does not need `tidels` on its `exec-path` with this configuration.
 
 It detects `.tide` and `.tprefab`, with basic highlighting, four-space C-style
 indentation and comment editing. The name is separate from the TypeScript
 package called `tide`.
 
-With `tidels` on Emacs's `exec-path`, open a Tide file and run **M-x eglot**.
-To select a server explicitly, set `tide-lang-server-command` to a list such as
-`'("/path/to/tide/bin/tidels")`. Optional automatic connection:
+To connect manually instead, omit the generated hook below and use **M-x eglot**
+in a Tide buffer. To select another server, change `tide-lang-server-command`:
 
 ```elisp
+(setq tide-lang-server-command '("/path/to/tide/bin/tidels"))
+;; The helper includes this for automatic connection:
 (add-hook 'tide-lang-mode-hook #'eglot-ensure)
 ```
 
@@ -268,31 +272,27 @@ for client configuration.
 
 ## Vim and Neovim
 
-The repository's [Tide Vim runtime](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-vim)
-supports Vim 8+ and Neovim. Download that folder or use a Tide source checkout.
-Add its absolute path before enabling filetypes in your vimrc:
+Tide bundles the [Tide Vim runtime](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-vim)
+for Vim 8+ and Neovim. Print the configuration for your editor:
 
-```vim
-set runtimepath^=/path/to/tide-engine/tools/tide-vim
-filetype plugin indent on
-syntax enable
+```sh
+tide ide vim
+tide ide neovim
 ```
 
-Escape spaces with `\ ` in that `set` command. Both `.tide` and `.tprefab`
-get highlighting, four-space C-style indentation and comment settings.
-Interpolated strings have string highlighting throughout.
+Copy the Vim output into your vimrc (`~/.vimrc`, or `~/_vimrc` on Windows),
+or the Neovim output into `init.lua` (usually `~/.config/nvim/init.lua`, or
+`%LOCALAPPDATA%/nvim/init.lua` on Windows). Custom configurations can use the
+same output in their own init file. Restart the editor after adding it.
 
-For Neovim 0.11 or later, this `init.lua` setup also enables the supplied
-language server configuration:
+Both `.tide` and `.tprefab` get highlighting, four-space C-style indentation
+and comment settings. Interpolated strings have string highlighting throughout.
 
-```lua
-vim.opt.runtimepath:prepend('/path/to/tide-engine/tools/tide-vim')
-vim.cmd('filetype plugin indent on')
-vim.cmd('syntax enable')
-vim.lsp.enable('tidels')
-```
+The Neovim configuration requires 0.11 or later and enables the supplied
+language server configuration automatically, using this installation's full
+`tidels` path. No `nvim-lspconfig` plugin or server lookup on `PATH` is needed.
 
-Put `tidels` on `PATH`. To select another executable, call
+To select another executable, call
 `vim.lsp.config('tidels', { cmd = { '/path/to/tide/bin/tidels' } })` before
 enabling it. The configuration selects the nearest `tide.packages`, then a
 CMake/Git root, then the source file's folder. Use **K** for hover,
@@ -301,10 +301,13 @@ CMake/Git root, then the source file's folder. Use **K** for hover,
 other client features; see its [LSP guide](https://neovim.io/doc/user/lsp/).
 
 Plain Vim needs a language server client of your choice. Register filetype
-`tide` with command `['tidels']` over stdio. The runtime does not install a client.
+`tide` with the server command printed in the snippet's comments, over stdio.
+The runtime does not install a client.
 
-Emacs and Vim/Neovim setup is manual; `tide editors` installs the VS Code
-extension. Enable automatic server startup only for projects you trust.
+These [setup helpers](cli.md#ide) print configuration; they do not change your
+init files. If you move Tide, generate the configuration again and replace the
+old paths. `tide editors` installs the VS Code extension. Enable automatic server
+startup only for projects you trust.
 Use `tide run` and `tide open` in a terminal for games and prefab editing.
 The terminal integrations do not adapt the VS Code-specific clickable code-lens
 commands or embed the native scene editor.

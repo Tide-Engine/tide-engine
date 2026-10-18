@@ -5,8 +5,21 @@ C-style indentation and comment settings. Vim 8+ and Neovim can use it without
 any other plugin. Interpolated strings have string highlighting; expressions
 inside them do not have separate lexical scopes.
 
-Download this folder from the Tide repository or use your existing checkout.
-Add its absolute path **before** enabling filetypes in your vimrc:
+Tide includes this runtime. Print configuration with the installed paths:
+
+```sh
+tide ide vim
+tide ide neovim
+```
+
+Copy the appropriate result into your vimrc or Neovim init.lua and restart the
+editor. The Neovim snippet enables LSP using the bundled `tidels` by full path.
+Vim's snippet supplies highlighting and names the server for your own client.
+The helper changes no files and launches no editor. Regenerate the configuration
+if you move Tide. Enable automatic LSP only for projects you trust.
+
+For a source checkout or manually downloaded runtime, add its absolute path
+**before** enabling filetypes in your vimrc:
 
 ```vim
 set runtimepath^=/path/to/tide-engine/tools/tide-vim
@@ -40,8 +53,8 @@ not choose or install a Vim LSP client. Server features depend on that client;
 VS Code-specific clickable code-lens commands are not adapted here.
 
 Use `tide run` and `tide open` in a terminal for games and prefab editing.
-Installation is manual; `tide editors` currently installs only the VS Code
-extension.
+`tide editors` installs the VS Code extension; `tide ide` prints setup for
+terminal editors.
 
 Run from the repository root without loading personal config:
 
