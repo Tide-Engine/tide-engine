@@ -700,6 +700,7 @@ typedef struct decl {
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
     bool borrows_queries; // A synchronous helper whose query parameters borrow its callers' selections
+    bool borrows_asset_collections; // CPU-only synchronous borrowing, propagated through helpers
     bool calls_c;        // Code that calls an extern function, itself or through others: its calls run in order
     bool writes_text;    // A system that writes text, lists or grids into its world: its heap, which one system changes at a time
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order

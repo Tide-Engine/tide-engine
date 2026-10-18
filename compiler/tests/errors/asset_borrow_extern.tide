@@ -1,0 +1,3 @@
+// expect: asset collections are borrowed by ordinary synchronous Tide functions and methods
+extern void Keep(List<Clip> values);
+scene Main { }

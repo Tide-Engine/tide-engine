@@ -1,0 +1,8 @@
+// Reusable declarations compile without a game having any matching assets.
+scene Main { }
+int Clips(List<Clip> values) { return values.count; }
+int Sounds(Map<string, Clip> values) { return values.count; }
+int Images(List<Texture> values) { return values.count; }
+int Pictures(Map<string, Texture> values) { return values.count; }
+int Models(List<Mesh<Vertex3>> values) { return values.count; }
+int Meshes(Map<string, Mesh<Vertex3>> values) { return values.count; }

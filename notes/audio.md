@@ -1,5 +1,13 @@
 # Audio
 
+Clip asset collection helpers (2026-10-18) take read-only List<Clip> or
+Map<string, Clip> parameters in synchronous CPU functions/methods. Passing
+copies no collection and creates no voice or decoded-clip ownership; only
+Audio.Play retains its existing playback behavior. Collections cannot escape
+or wait, while selected Clip values retain ordinary local value semantics.
+`asset_borrows` covers playback and pack reload; notes/language.md records
+contracts, diagnostics and full validation. No audio runtime API changed.
+
 ## Forget completion ordering (2026-10-18)
 
 Build run `39128917687` failed Android's `tide_platform_audio_device` only at

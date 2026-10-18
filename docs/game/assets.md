@@ -366,6 +366,8 @@ asset List<Clip> shots = "sfx/shot.wav";             // shots.count is 1, and sh
 asset Map<string, Clip> named = "sfx/shot.wav";      // named["sfx/shot.wav"]
 ```
 
+Synchronous CPU helpers can [borrow resource asset collections](../language/functions.md) through read-only `List<Clip>`, `List<Texture>`, `List<Mesh<V>>` or `Map<string, T>` parameters. Pass the asset directly; the call reads its existing collection without copying it.
+
 That's for a path that changes while the game is made. Start with the one file there is, widen the path to `"sfx/shot*.wav"` or `"sfx/*.wav"` when there are more, or narrow it again, and the type and the code that reads it stay as they are. A map's key for the one file is its path as written, which is the key a glob gives it. A URL in a list or a map is the same: one entry, keyed by the URL.
 
 A frag samples an asset by its own name: it can't index a list of them (`run[1].Sample(uv)` is an error), so declare the one it samples as an asset of its own, or for a `Texture`, give the draw that one as the frag's source: `Draw.Mesh(corners, faces, frames[1], Shade)`.
