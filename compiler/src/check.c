@@ -6447,28 +6447,16 @@ static type check_world_call(checker *c, expr *e, param *world)
         diag_note("work it out before the sort, or in the variables the comparison declares");
         return T_ERR;
     }
-    // Set changes any entity's component, this one's included, which its
-    // parameter would then put back as it was: one way or the other. A
-    // parameter that's only read puts nothing back, so this entity's own can
-    // be set beside it: code that goes through many entities and writes a few
-    // reads them all for what reading costs. The parameter stays as the code
-    // came to the entity. Another entity's is still refused: the rows the code
-    // hasn't come to yet would be read changed or not by whether a snapshot
-    // shares their pages.
+    // A mut parameter would put this entity's component back over a Set.
+    // Read parameters put nothing back: each row reads the current pages,
+    // then keeps its value for the rest of that invocation.
     for (int i = 0; set && !helper && i < code->params.count; i++) {
         const param *q = &code->params.items[i];
-        if (q->type.kind != TY_COMPONENT || q->type.decl != d || (q->mode != PARAM_READ && q->mode != PARAM_MUT)) continue;
-        if (q->mode == PARAM_READ && e->args.items[0]->kind == E_THIS) continue;
+        if (q->type.kind != TY_COMPONENT || q->type.decl != d || q->mode != PARAM_MUT) continue;
         diag_error(e->at, "Set<" STR_FMT "> changes any entity's " STR_FMT ", and the %s takes this entity's too",
                    STR_ARG(d->name), STR_ARG(d->name), system_what(code));
-        if (q->mode == PARAM_READ) {
-            diag_note("this entity's can be set beside '" STR_FMT "', which is only read: '" STR_FMT ".Set<" STR_FMT
-                      ">(this, value)'. For another entity's, send it an event", STR_ARG(q->name), STR_ARG(world->name),
-                      STR_ARG(d->name));
-        } else {
-            diag_note("change this entity's through '" STR_FMT "', and read the others with '" STR_FMT ".Get<" STR_FMT
-                      ">(entity)', or send them an event", STR_ARG(q->name), STR_ARG(world->name), STR_ARG(d->name));
-        }
+        diag_note("change this entity's through '" STR_FMT "', and read the others with '" STR_FMT ".Get<" STR_FMT
+                  ">(entity)', or send them an event", STR_ARG(q->name), STR_ARG(world->name), STR_ARG(d->name));
         return T_ERR;
     }
     e->call = CALL_WORLD;
@@ -18765,18 +18753,12 @@ static void check_world_passing(checker *c)
             const param *own = NULL; // This entity's, which the caller takes too
             for (int j = 0; j < from->params.count; j++) {
                 const param *q = &from->params.items[j];
-                if (q->type.kind == TY_COMPONENT && q->type.decl == d && (q->mode == PARAM_READ || q->mode == PARAM_MUT)) own = q;
+                if (q->type.kind == TY_COMPONENT && q->type.decl == d && q->mode == PARAM_MUT) own = q;
             }
             if (own) {
                 diag_error(at, "'" STR_FMT "' sets any entity's " STR_FMT " through its World, and the %s takes this entity's too",
                            STR_ARG(to->name), STR_ARG(d->name), system_what(from));
-                if (own->mode == PARAM_READ) {
-                    diag_note("this entity's can be set beside '" STR_FMT "', which is only read, in the %s itself: 'world.Set<" STR_FMT
-                              ">(this, value)'. For another entity's, send it an event", STR_ARG(own->name), system_what(from),
-                              STR_ARG(d->name));
-                } else {
-                    diag_note("change this entity's through '" STR_FMT "', and send the others an event", STR_ARG(own->name));
-                }
+                diag_note("change this entity's through '" STR_FMT "', and send the others an event", STR_ARG(own->name));
                 break;
             }
             if (decl_holds_text(d)) from->writes_text = true; // Into the world's heap, which one system changes at a time
