@@ -7,6 +7,7 @@
 // to measure.
 //   gravewake_perf [count] [ticks]
 #include "gravewake_perf.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -59,13 +60,21 @@ int main(int argc, char **argv)
     world.Match.special = ZombieKind_Walker;      // Walkers only: a Bloater bursting through them would thin the horde
     world.Match.specials = 1 << 30;
     world.Match.scattered = true;                 // One a tick, not in hordes
-    for (int i = 0; i < count * 4 && (int)world.arch6_Zombie.count < count; i++) {
+    world.Match.missionWait = 1e9f;               // No missions (a hunt's elite)
+    for (int i = 0; i < count * 4 && (int)world.arch4_Zombie.count < count; i++) {
         world.Match.spawnWait = 1.0f / 60;
+        // The skills that use themselves held back while the horde gathers (they'd thin it)
+        for (int seat = 0; seat < 2; seat++) {
+            const tide_entity e = world.Party.survivors.at[seat];
+            Survivor s = tide_get_Survivor(&world, e);
+            s.cooldowns.at[0] = s.cooldowns.at[2] = 100;
+            tide_set_Survivor(&world, e, s);
+        }
         tick();
     }
     world.Match.spawnWait = 1e9f;
-    for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) {
-        const tide_entity e = TIDE_ENTITY_AT(&world, arch6_Zombie, r);
+    for (uint32_t r = 0; r < world.arch4_Zombie.count; r++) {
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch4_Zombie, r);
         Zombie z = tide_get_Zombie(&world, e);
         z.health = 1e12f;
         tide_set_Zombie(&world, e, z);
@@ -76,12 +85,12 @@ int main(int argc, char **argv)
         s.items.at[Item_GunDrone] = 2;
         s.items.at[Item_EmberRing] = 1;
         s.items.at[Item_LiveWire] = 1;
-        s.pitch = -0.1f;
         tide_set_Survivor(&world, e, s);
         held[seat].attack = true;
+        held[seat].aim = (tide_float3){s.feet.x + sinf(s.yaw) * 20, s.feet.y + 1.0f, s.feet.z + cosf(s.yaw) * 20};    // Out into the horde
     }
     int states[8] = {0};
-    for (uint32_t r = 0; r < world.arch6_Zombie.count; r++) states[TIDE_AT(&world, arch6_Zombie, Zombie, r).state & 7]++;
+    for (uint32_t r = 0; r < world.arch4_Zombie.count; r++) states[TIDE_AT(&world, arch4_Zombie, Zombie, r).state & 7]++;
     printf("spawned: rising %d hunting %d dying %d fallen %d; phase %d\n", states[0], states[1], states[2], states[3], (int)world.Match.phase);
     for (int i = 0; i < 240; i++) tick();
     const double start = now();
@@ -92,7 +101,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < 20; i++) tide_world_copy(&copy, &world);
     const double perCopy = (now() - copied) / 20;
     const uint32_t size = tide_world_pack(&world, NULL, 0);
-    printf("%d of the dead: %.3f ms a tick (%.1f%% of 60 Hz), a world copy %.3f ms, packed %u bytes\n", (int)world.arch6_Zombie.count,
+    printf("%d of the dead: %.3f ms a tick (%.1f%% of 60 Hz), a world copy %.3f ms, packed %u bytes\n", (int)world.arch4_Zombie.count,
            per * 1000, per * 60 * 100, perCopy * 1000, size);
     tide_world_free(&copy);
     tide_world_free(&world);

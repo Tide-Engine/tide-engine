@@ -257,12 +257,12 @@ view Flicker(mut Fx fx, Me me, Village village, query (Zombie zombie) zombies, q
     }
 
     fx.blasts = Math.Max(0, fx.blasts - dt / 1.5);
-    // Dashes: dust kicked up behind each survivor in one
+    // Rolls: dust kicked up behind each survivor in one
     foreach (var row in survivors)
     {
         var s = row.survivor;
-        if (s.dash <= 0 || !s.ready) continue;
-        var back = -s.dashWay;
+        if (s.roll <= 0 || !s.ready) continue;
+        var back = -s.rollWay;
         Murk(fx, Mote { at = s.feet + float3(fx.random.NextFloat(-0.2, 0.2), 0.15, fx.random.NextFloat(-0.2, 0.2)), velocity = back * 2 + float3(0, 0.6, 0), life = 0.45,
                         size = 0.2, grow = 0.7, color = float3(0.17, 0.14, 0.11), alpha = 0.55, drag = 3 });
         // Kerosene: flames off them as they go
@@ -547,15 +547,14 @@ local event(Spell spell) Conjure(mut Fx fx)
     for (var i = 0; i < 4; i++) Glow(fx, Mote { at = spell.to, velocity = Scatter(fx, 3), life = 0.2, size = 0.05, color = float3(0.7, 0.8, 1.0), alpha = 5 });
 }
 
-// A round's line: from the muzzle (this machine's own gun's, where it was drawn), a thin bright streak to where it
-// stopped; a phase round's wide and pale, a drone's red. And the muzzle's flash.
-local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
+// A round's line: from the muzzle (where the gun was drawn), a thin bright streak to where it stopped; a phase round's
+// wide and pale, a drone's red. And the muzzle's flash.
+local event(Traced traced) Tracer(mut Fx fx, Grip grip)
 {
-    var own = traced.seat == me.seat && !me.outside && (traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase);
     var way = Math.Normalize(traced.to - traced.from);
     var gun = traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase;
     var drawn = gun && traced.seat >= 0 && traced.seat < 4 ? grip.muzzles[traced.seat] : float3(0);
-    var from = own ? grip.muzzle : gun && Math.Distance(drawn, traced.from) < 1.5 ? drawn : gun ? traced.from + way * 0.6 : traced.from;
+    var from = gun && Math.Distance(drawn, traced.from) < 1.5 ? drawn : gun ? traced.from + way * 0.6 : traced.from;
     if (Math.Distance(from, traced.to) < 0.3) return;
     switch (traced.kind)
     {
@@ -576,21 +575,19 @@ local event(Traced traced) Tracer(mut Fx fx, Me me, Grip grip)
 
 // A shot's flash at the muzzle, as the gun is drawn: a burst of light and a few tongues of flame along the barrel's way,
 // the light of it on what's round, a wisp of smoke, and the spent case thrown out to the right.
-local event(Loosed loosed) MuzzleFlash(mut Fx fx, Me me, Grip grip)
+local event(Loosed loosed) MuzzleFlash(mut Fx fx, Grip grip)
 {
     if (loosed.source != Source.Gun && loosed.source != Source.Phase && loosed.source != Source.Turret) return;
-    var own = loosed.seat == me.seat && !me.outside && loosed.source != Source.Turret;
     var drawn = loosed.seat >= 0 && loosed.seat < 4 ? grip.muzzles[loosed.seat] : float3(0);
-    var at = own ? grip.muzzle : loosed.source != Source.Turret && Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
+    var at = loosed.source != Source.Turret && Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
     var way = loosed.way;
     var heavy = loosed.weapon == Weapon.Shotgun || loosed.source == Source.Phase;
-    var scale = (own ? 0.5 : 1.0) * (heavy ? 1.5 : 1.0) * (loosed.source == Source.Turret ? 0.7 : 1.0);
+    var scale = (heavy ? 1.5 : 1.0) * (loosed.source == Source.Turret ? 0.7 : 1.0);
     var hot = loosed.source == Source.Phase ? float3(0.6, 0.75, 1.0) : float3(1.0, 0.68, 0.32);
     Glow(fx, Mote { at = at, life = 0.05, size = 0.2 * scale, color = hot, alpha = 4 });
     for (var k = 1; k <= 3; k++)
         Glow(fx, Mote { at = at + way * (0.09 * k * scale), life = 0.04, size = (0.13 - k * 0.025) * scale, color = float3(1.0, 0.8, 0.45), alpha = 3 });
     fx.flashes.Add(Flash { at = at + way * 0.2, color = hot * (heavy ? 7.0 : 4.5), reach = heavy ? 9.0 : 7.0, life = 0.07 });
-    if (own) return;
     Murk(fx, Mote { at = at + way * 0.15, velocity = way * 0.6 + float3(0, 0.4, 0), life = 0.6, size = 0.08 * scale, grow = 0.5, color = float3(0.3, 0.29, 0.28), alpha = 0.3, drag = 2 });
     if (loosed.source == Source.Gun && loosed.weapon != Weapon.Shotgun)
     {
@@ -622,8 +619,18 @@ local event(HordeRose horde) HordeDust(mut Fx fx)
     }
 }
 
-// An ability used: a leap's landing throws up a ring of earth, frost bursts out in a ring, a war cry's breath of dust,
-// a dash's streak, a blink's light at both ends.
+// An ability used: a leap's landing throws up a ring of earth, a roll's dust, a blink's light at both ends. And a blow
+// dodged in a roll: a pale ring off the survivor.
+local event(Dodged dodged) DodgeFlash(mut Fx fx)
+{
+    for (var i = 0; i < 16; i++)
+    {
+        var turn = i * Math.TAU / 16;
+        Glow(fx, Mote { at = dodged.at + float3(0, 0.9, 0), velocity = float3(Math.Cos(turn), 0.2, Math.Sin(turn)) * 3, life = 0.3, size = 0.07,
+                        color = float3(0.8, 0.9, 1.0), alpha = 2.5, drag = 4 });
+    }
+}
+
 local event(Unleashed used) Flourish(mut Fx fx)
 {
     switch (used.skill)
@@ -639,7 +646,7 @@ local event(Unleashed used) Flourish(mut Fx fx)
             }
             return;
         case Skill.None:
-        case Skill.Slide:
+        case Skill.Roll:
             for (var i = 0; i < 12; i++)
                 Murk(fx, Mote { at = used.at + float3(0, fx.random.NextFloat(0.1, 0.8), 0), velocity = Scatter(fx, 1), life = 0.5, size = 0.18, grow = 0.4,
                                 color = float3(0.18, 0.16, 0.14), alpha = 0.5, drag = 2 });

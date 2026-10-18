@@ -1,0 +1,4 @@
+// expect: a borrowed query has no default
+component Body { int x; }
+void Read(query (Body body) rows = default) { }
+scene Main { }

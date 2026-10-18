@@ -21,7 +21,6 @@ struct WeaponInfo
     int pellets = 1;
     float range = 70;
     int pierce = 1;         // How many of the dead a round goes through
-    float kick = 0.02;      // How far the eye kicks up a shot
     float proc = 1;         // How likely a round's items are to go off (a pellet's less)
     bool bottomless;        // Never loaded: it fires on as long as the trigger's held (the owner, of the shotgun: "the extra
                             // reloading just feels bad")
@@ -32,15 +31,15 @@ WeaponInfo Info(Weapon weapon)
     switch (weapon)
     {
         case Weapon.Rifle:
-            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.1, mag = 30, reload = 1.5, spread = 0.008, pierce = 3, kick = 0.012 };
+            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.1, mag = 30, reload = 1.5, spread = 0.008, pierce = 3 };
         case Weapon.Shotgun:
             return WeaponInfo { name = "Pump Shotgun", model = "shotgun", damage = 24, head = 1.5, rate = 0.55, mag = 8, reload = 0.34, shells = true, bottomless = true, spread = 0.065,
-                                pellets = 11, range = 28, pierce = 4, kick = 0.07, proc = 0.3 };
+                                pellets = 11, range = 28, pierce = 4, proc = 0.3 };
         case Weapon.Smg:
             // (its rounds set items off half again as often: the Engineer fights with what they carry)
-            return WeaponInfo { name = "SMG", model = "smg", damage = 15, rate = 0.066, mag = 50, reload = 1.3, spread = 0.028, range = 45, kick = 0.008, proc = 1.5 };
+            return WeaponInfo { name = "SMG", model = "smg", damage = 15, rate = 0.066, mag = 50, reload = 1.3, spread = 0.028, range = 45, proc = 1.5 };
         case Weapon.Pistol:
-            return WeaponInfo { name = "Sidearm", model = "pistol", damage = 26, rate = 0.22, mag = 12, reload = 1.1, spread = 0.01, kick = 0.025 };
+            return WeaponInfo { name = "Sidearm", model = "pistol", damage = 26, rate = 0.22, mag = 12, reload = 1.1, spread = 0.01 };
     }
     return WeaponInfo { name = "", model = "pistol", rate = 1, mag = 1, reload = 1 };
 }

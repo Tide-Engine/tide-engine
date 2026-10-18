@@ -1617,6 +1617,8 @@ static void parse_field(parser *p, decl *d)
     vec_push(d->fields, f);
 }
 
+static void parse_query_params(parser *p, decl *d);
+
 // (Type name, ...): a method's, function's or operator's parameters.
 static void parse_routine_params(parser *p, decl *m)
 {
@@ -1625,6 +1627,30 @@ static void parse_routine_params(parser *p, decl *m)
         do {
             param prm = {0};
             prm.at = peek(p)->at;
+            if ((at(p, T_MUT) || (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out")))
+                && peek_at(p, 1)->kind == T_IDENT && str_eq_c(peek_at(p, 1)->text, "query")
+                && peek_at(p, 2)->kind == T_LPAREN) {
+                diag_error(peek(p)->at, "a borrowed query is read-only and can't be 'mut' or 'out'");
+                longjmp(p->fail, 1);
+            }
+            if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "query") && peek_at(p, 1)->kind == T_LPAREN) {
+                advance(p);
+                prm.mode = PARAM_QUERY;
+                prm.function_param = true;
+                decl nested = {0};
+                parse_query_params(p, &nested);
+                prm.query.items = nested.params.items;
+                prm.query.count = nested.params.count;
+                prm.query.cap = nested.params.cap;
+                prm.name_at = peek(p)->at;
+                prm.name = expect_ident(p, "query parameter name")->text;
+                if (at(p, T_ASSIGN)) {
+                    diag_error(peek(p)->at, "a borrowed query has no default: pass a query explicitly");
+                    longjmp(p->fail, 1);
+                }
+                vec_push(m->params, prm);
+                continue;
+            }
             if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "local")) {
                 prm.placement_at = advance(p)->at;
                 prm.placement_local = true;

@@ -3,33 +3,30 @@
 // the torches on the ruin, the fires, the dead that burn and fireballs.
 using Rooms;
 
-// Which survivor this machine plays, and how its eye moves.
+// Which survivor this machine plays, and where it's seen from: above, the camera high behind them looking down, north
+// up the screen (the owner, 2026-10-18: "remove all other points of views and stick to top down").
 local singleton Me
 {
     int seat = -1;
     float3 eye;
     quaternion turn = quaternion.identity;
-    float yaw;
+    float yaw;                  // Which way the camera faces (TOP_YAW while playing)
     float pitch;
     float dt;
     float clock;
-    float bob;
-    float settle;               // The eye's height, catching up with a step or a landing
-    float dip;                  // A landing's dip
-    float kick;                 // Recoil, radians up
+    float settle;               // The survivor's feet's height, eased, for the camera
     float shake;                // A blast's or a blow's, 0 to 1
     float hurt;                 // The red of a fresh blow
-    bool wasGrounded = true;
-    float3 last;                // Last frame's feet, for footfalls
+    float3 ears;                // Where this machine hears from: the survivor's head while playing, else the eye
     int overhead;               // Development: 1 looks down on the whole clearing (F9), 2 from over the trees
-    bool outside;               // This frame's eye isn't the survivor's own: it's over the shoulder or above (Feel.view)...
-    bool above;                 // ...above
-    float fov = 74;             // The eye's breadth, eased: wider at a run and in a dash
-    // From above (Pointing): the cursor on the screen (from the top left; x below 0 for none yet), what it's on (the
-    // input's aim), whether that's one of the dead, and the right stick's way from the survivor, while it has the aim
+    bool playing;               // Seeing a survivor from above, this frame (not the title, nor F9's views)
+    // The cursor (Pointing): on the screen (from the top left; x below 0 for none yet), what it's on (the input's aim),
+    // whether that's one of the dead, and the right stick's way from the survivor, while it has the aim
     float2 cursor = float2(-1, -1);
     float3 pointed;
     bool onBody;
+    bool onHead;
+    bool onWeak;
     bool pad;
     float3 padWay = float3(0, 0, 1);
 }
@@ -52,7 +49,7 @@ view Mine(Survivor survivor, mut Me me, with ownership)
     me.seat = survivor.seat;
 }
 
-// The eye: this machine's survivor's, or a slow circle round the fire behind the title.
+// The eye: high behind this machine's survivor, or a slow circle round the fire behind the title.
 [Stage(Layers.Prepare)]
 view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit kit, mut Shapes shapes, mut Village village, Match match,
              Lobby lobby, Devices devices, mut Feel feel, query (Survivor survivor) survivors, query (Zombie zombie) zombies, query (Missile missile) missiles)
@@ -69,7 +66,9 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         kit.made = true;
     }
     if (!shapes.made) MakeShapes(shapes);
-    me.dt = Math.Min(Frame.dt, 0.05);
+    // While anyone picks an item, the picture's clock stops with the match's (the owner, 2026-10-18: "when selecting
+    // upgrades i can see and hear my character still animating")
+    me.dt = match.paused ? 0.0 : Math.Min(Frame.dt, 0.05);
     me.clock += me.dt;
     if (me.clock > 3600) me.clock -= 3600;
     Focus(lens, look);
@@ -86,7 +85,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         found = true;
     }
     var playing = lobby.playing && found && mine.ready;
-    // Bled out: watching a friend still standing, over their shoulder, till the beacon calls them back
+    // Bled out: watching a friend still standing, from above, till the beacon calls them back
     mut var watching = false;
     if (playing && mine.life == Life.Gone)
     {
@@ -97,50 +96,28 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
             watching = true;
         }
     }
-    me.kick = Math.Max(0, me.kick - me.dt * 4);
     me.shake = Math.Max(0, me.shake - me.dt * 2.5);
     me.hurt = Math.Max(0, me.hurt - me.dt * 0.9);
     mut var eye = float3(0);
     if (playing)
     {
-        var moving = Math.Length(mine.velocity.xz);
-        if (mine.grounded && moving > 0.5) me.bob += me.dt * moving * 1.9;
-        var bob = Math.Sin(me.bob) * 0.035 * Math.Saturate(moving / 4);
-        if (mine.grounded && !me.wasGrounded) me.dip = 0.12;
-        me.wasGrounded = mine.grounded;
-        me.dip = Math.Max(0, me.dip - me.dt * 0.6);
-        var height = EyeHeight(mine);
-        me.settle += (mine.feet.y + height - me.settle) * Math.Min(1, me.dt * (mine.life == Life.Downed ? 4.0 : 18.0));
-        if (Math.Abs(mine.feet.y + height - me.settle) > 1.2 || mine.placed) me.settle = mine.feet.y + height;
-        eye = float3(mine.feet.x, me.settle + bob - me.dip, mine.feet.z);
-        var wobble = me.shake * 0.04;
-        var shakeYaw = (Math.Perlin(float2(me.clock * 23, 1.7)) * wobble);
-        var shakePitch = (Math.Perlin(float2(me.clock * 21, 7.1)) * wobble);
-        me.yaw = mine.yaw + shakeYaw;
-        me.pitch = mine.pitch + me.kick + shakePitch;
-        var roll = mine.life == Life.Downed ? 0.25 : Math.Sin(me.bob * 0.5) * 0.004 * Math.Saturate(moving / 4);
-        me.turn = Math.Mul(quaternion.Euler(-me.pitch, me.yaw, 0), quaternion.AxisAngle(float3(0, 0, 1), roll));
-        if (feel.view == View.Above)
-        {
-            // From above: high behind them to the south, looking down on them, north up the screen
-            var feet = float3(mine.feet.x, me.settle - height, mine.feet.z);
-            var up = TOP_HIGH * feel.zoom;
-            var back = TOP_BACK * feel.zoom;
-            eye = feet + float3(shakeYaw * 4, up + shakePitch * 4, 0) - Flat(TOP_YAW) * back;
-            me.yaw = TOP_YAW;
-            me.pitch = -Math.Atan2(up - 1, back);
-            me.turn = quaternion.Euler(-me.pitch, me.yaw, 0);
-        }
-        // From over the shoulder: behind the head, up a little, out to the right, pulled in where the ground's in the way
-        else if (feel.view == View.Shoulder || watching) eye = ShoulderFrom(eye, me.yaw, me.pitch);
+        // High behind them to the south, looking down on them, north up the screen; shaken by blasts and blows
+        me.settle += (mine.feet.y - me.settle) * Math.Min(1, me.dt * 8);
+        if (Math.Abs(mine.feet.y - me.settle) > 1.2 || mine.placed) me.settle = mine.feet.y;
+        var wobble = me.shake * 0.16;
+        var up = TOP_HIGH * feel.zoom;
+        var back = TOP_BACK * feel.zoom;
+        eye = float3(mine.feet.x, me.settle, mine.feet.z) + float3(Math.Perlin(float2(me.clock * 23, 1.7)) * wobble, up + Math.Perlin(float2(me.clock * 21, 7.1)) * wobble, 0)
+              - Flat(TOP_YAW) * back;
+        me.yaw = TOP_YAW;
+        me.pitch = -Math.Atan2(up - 1, back);
+        me.turn = quaternion.Euler(-me.pitch, me.yaw, 0);
+        me.ears = EyeOf(mine);
+        look.focus = mine.feet + float3(0, 1, 0);
         look.downed = mine.life == Life.Downed ? 1.0 : 0.0;
         var low = 1 - Math.Saturate(mine.health / MaxHealth(mine));
         look.hurt = Math.Max(me.hurt, mine.life == Life.Standing ? low * low * 0.9 : 0.6);
-        // Wider running, and wider again in a dash: the speed felt
-        var pace = Math.Length(mine.velocity.xz);
-        var wide = 74 + 4 * Math.Saturate((pace - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)) + 9 * Math.Saturate((pace - SPRINT_SPEED) / (DASH_SPEED - SPRINT_SPEED));
-        me.fov += (wide - me.fov) * Math.Min(1, me.dt * (wide > me.fov ? 18 : 6));
-        look.fov = feel.view == View.Above ? TOP_FOV : me.fov;
+        look.fov = TOP_FOV;
     }
     else
     {
@@ -150,15 +127,14 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         me.yaw = YawTo(eye, float3(0)) + 0.35 + Math.Sin(me.clock * 0.07) * 0.15;
         me.pitch = -0.02;
         me.turn = quaternion.Euler(-me.pitch, me.yaw, 0);
+        me.ears = eye;
         look.downed = 0;
         look.hurt = 0;
         look.fov = 70;
     }
     if (devices.keyboard.f9.down) me.overhead = (me.overhead + 1) % 3;
-    if (lobby.playing && (devices.keyboard.v.down || devices.gamepad.rightStickButton.down))
-        feel.view = feel.view == View.Shoulder ? View.Above : feel.view == View.Above ? View.Eyes : View.Shoulder;
-    // From above, the wheel brings the camera in or takes it further off
-    if (lobby.playing && feel.view == View.Above && devices.mouse.scroll.y != 0)
+    // The wheel brings the camera in or takes it further off
+    if (lobby.playing && devices.mouse.scroll.y != 0)
         feel.zoom = Math.Clamp(feel.zoom * (1 - Math.Clamp(devices.mouse.scroll.y, -1, 1) * 0.1), TOP_ZOOM_LEAST, TOP_ZOOM_MOST);
     if (me.overhead == 1)
     {
@@ -173,19 +149,17 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
         look.fov = 62;
     }
     me.eye = eye;
-    me.outside = playing && (feel.view != View.Eyes || watching) && me.overhead == 0;
-    me.above = me.outside && feel.view == View.Above;
+    me.playing = playing && me.overhead == 0;
+    look.see = me.playing ? 1.0 : 0.0;
     look.eye = eye;
     look.time = me.clock;
     look.fade = match.phase == Phase.Over ? Math.Saturate(match.timer * 0.25) * 0.55 : 0.0;
     lens.scene.SetCamera(float4x4.TRS(eye, me.turn, float3(1)), float4x4.PerspectiveFov(Math.Radians(look.fov), lens.size.x / Math.Max(1, lens.size.y), NEAR, FAR));
-    lens.hands.SetCamera(float4x4.TRS(eye, me.turn, float3(1)), float4x4.PerspectiveFov(Math.Radians(look.fov), lens.size.x / Math.Max(1, lens.size.y), NEAR, FAR));
     look.toClip = lens.scene.WorldToClip();
     AimMoon(lens, look);
     CullKit(kit, eye);
-    // From above, the ears are the survivor's, turned as the screen is
-    if (me.above) Audio.SetListener(EyeOf(mine), quaternion.Euler(0, TOP_YAW, 0));
-    else Audio.SetListener(eye, me.turn);
+    // The ears are the survivor's, turned as the screen is
+    Audio.SetListener(me.ears, playing ? quaternion.Euler(0, TOP_YAW, 0) : me.turn);
     Audio.SetFalloff(2, 40);
 
     // The lamps: nearest first, a few dozen at most
@@ -213,23 +187,21 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     }
 }
 
-// From above: how high over the survivor the camera is and how far behind (times Feel.zoom, between the two), and how
-// wide it sees.
+// How high over the survivor the camera is and how far behind (times Feel.zoom, between the two), and how wide it sees.
 const float TOP_HIGH = 11.5;
 const float TOP_BACK = 7;
 const float TOP_FOV = 52;
 const float TOP_ZOOM_LEAST = 0.6;
 const float TOP_ZOOM_MOST = 1.6;
-const float CURSOR_SPEED = 1;       // Screen pixels a pixel of the mouse's moves the cursor from above
-const float PAD_REACH = 9;          // From above, how far off a survivor the right stick aims
+const float CURSOR_SPEED = 1;       // Screen pixels a pixel of the mouse's moves the cursor
+const float PAD_REACH = 9;          // How far off a survivor the right stick aims
 const float POINT_FAR = 150;        // How far the cursor's line is followed
 
-// From above, what the cursor's on: the mouse moves the cursor (the lock holds the real one); the right stick, once
-// it's moved, aims its way from the survivor instead, till the mouse moves. On one of the dead, the aim is its chest,
-// or its weak spot when the cursor's on that (a round from the gun then goes into it, as one from over the shoulder
-// does: from above, every cursor on the dead would otherwise be on a head); else where the line crosses the gun's
-// height, so the shots go level and pass under the cursor. Its input sends it (Hands.aim). Not from above, where the look goes, so a turn to
-// above starts there.
+// What the cursor's on: the mouse moves the cursor (the lock holds the real one); the right stick, once it's moved,
+// aims its way from the survivor instead, till the mouse moves. On one of the dead, the aim is its head when the
+// cursor's on its head (and the round's a headshot: hands.tide's Shoot), a boss's weak spot when it's on that, else its
+// chest; on nothing, where the line crosses the gun's height, so the shots go level and pass under the cursor. Its
+// input sends it (Hands.aim). Before there's a cursor, ahead of the survivor.
 [Stage(Layers.Prepare, 1)]
 view Pointing(mut Me me, Look look, Devices devices, Ashwick ashwick, Herd herd, query (Survivor survivor) survivors)
 {
@@ -242,7 +214,7 @@ view Pointing(mut Me me, Look look, Devices devices, Ashwick ashwick, Herd herd,
         found = true;
     }
     if (!found) return;
-    if (!me.above)
+    if (!me.playing)
     {
         me.cursor = float2(-1, -1);
         me.pointed = mine.feet + Flat(mine.yaw) * 10 + float3(0, GUN_UP, 0);
@@ -252,7 +224,7 @@ view Pointing(mut Me me, Look look, Devices devices, Ashwick ashwick, Herd herd,
     var h = Screen.height;
     if (me.cursor.x < 0)
     {
-        // Where the look was, on the screen
+        // Where the survivor was aiming, on the screen
         float4 was = Math.Mul(look.toClip, float4(me.pointed, 1));
         me.cursor = was.w > 0.01 ? float2((was.x / was.w * 0.5 + 0.5) * w, (0.5 - was.y / was.w * 0.5) * h) : float2(w * 0.5, h * 0.35);
     }
@@ -284,13 +256,16 @@ view Pointing(mut Me me, Look look, Devices devices, Ashwick ashwick, Herd herd,
     var way = Math.Normalize(Math.Rotate(me.turn, float3(across.x * tall * w / Math.Max(1, h), across.y * tall, 1)));
     var to = me.eye + way * POINT_FAR;
     var ground = LongRay(ashwick, me.eye, to, out _);
-    var body = BodyFirst(me.eye, to, herd, out var who);
+    var body = BodyFirst(me.eye, to, herd, out var who, out var part);
+    me.onHead = false;
+    me.onWeak = false;
     if (body <= 1 && body < ground)
     {
-        var at = Math.Lerp(me.eye, to, body);
         var spots = SpotsOf(who, herd);
-        me.pointed = spots.weakRadius > 0 && Math.Length(at - spots.weak) <= spots.weakRadius * WEAK_PATCH ? spots.weak : who.chest;
+        me.pointed = part == 2 ? spots.weak : part == 1 ? who.head : who.chest;
         me.onBody = true;
+        me.onHead = part == 1;
+        me.onWeak = part == 2;
         return;
     }
     // Else where the line crosses the gun's height (so a level shot passes under the cursor), or, where the ground rises
@@ -331,28 +306,20 @@ void AddLight(mut Lights lights, float3 eye, Light light)
 // Kicks to the eye from what happens: a blow taken, a blast near, a shot.
 local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
 {
-    if (survivor.seat != me.seat) return;
+    if (survivor.seat != me.seat || Guarded(survivor)) return;
     me.hurt = 1;
     me.shake = Math.Max(me.shake, 0.6);
-}
-
-// A dash going through the dead: a jolt for the one who made it, harder the more it struck.
-local event(Barged barged) FeelBarged(mut Me me)
-{
-    if (barged.seat != me.seat) return;
-    me.shake = Math.Max(me.shake, Math.Min(0.55, 0.22 + 0.08 * barged.count));
 }
 
 local event(Blast blast) FeelBlast(mut Me me)
 {
     if (blast.kind == Shot.Pop || blast.kind == Shot.Spit) return;
-    var far = Math.Distance(blast.at, me.eye);
+    var far = Math.Distance(blast.at, me.ears);
     me.shake = Math.Max(me.shake, Math.Saturate(1.2 - far / 14));
 }
 
 local event(Loosed loosed) FeelLoosed(mut Me me)
 {
     if (loosed.seat != me.seat || loosed.source == Source.Turret || loosed.source == Source.Drone) return;
-    me.kick += loosed.source == Source.Phase ? 0.05 : Info(loosed.weapon).kick;
     if (loosed.weapon == Weapon.Shotgun || loosed.source == Source.Phase) me.shake = Math.Max(me.shake, loosed.weapon == Weapon.Shotgun ? 0.5 : 0.3);
 }

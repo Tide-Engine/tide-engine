@@ -323,6 +323,26 @@ TIDE_TEST(lsp_complete_input_edges)
     TIDE_CHECK(offers(reply, "up"));
 }
 
+TIDE_TEST(lsp_borrowed_input_in_helpers)
+{
+    start();
+    TIDE_CHECK(offers(complete("input Keys { bool jump; }\nscene Main { }\nbool Pressed($) { return false; }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nasync void Read($) { }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nvoid Read(mut $) { }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nvoid Read(out $) { }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nextern bool Read($);\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\naudio Read($) { }\n"), "Keys"));
+    const char *edges = complete("struct Buttons { bool fire; }\ninput Keys { Buttons buttons; }\nscene Main { }\n"
+                                 "bool Pressed(Keys input) { return input.buttons.fire.$; }\n");
+    TIDE_CHECK(offers(edges, "down") && offers(edges, "up"));
+    open_document("input Keys { bool jump; }\nscene Main { }\n"
+                  "bool Pressed(Keys con$trols) { return controls.jump.down; }\n"
+                  "system Check(Keys input) { if (Pressed(input)) Debug.Log(\"jump\"); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Read-only input borrowed from the caller"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Current and previous tick"));
+}
+
 // Inside Sanitize, the input's fields are in scope; this machine's devices aren't.
 TIDE_TEST(lsp_sanitize)
 {
@@ -7715,10 +7735,12 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *header = complete(QUERY_TYPES "system Hits(Body shot, $) { }\n");
     TIDE_CHECK(offers(header, "query"));
     TIDE_CHECK(has(header, "query (${1:Component} ${2:value}) ${3:entities}"));
-    // Views and local handlers take them too; the match's handlers don't yet
+    // Views and synchronous handlers take them too.
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "event Hit { int damage; }\nlocal event(Hit hit) Show($) { }\n"), "query"));
-    TIDE_CHECK(!offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "command Inspect { }\ncommand(Inspect value, PlayerID sender) InspectAll($) { }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "async event(Spawned) OnSpawn($) { }\n"), "query"));
 
     const char *bindings = complete(QUERY_TYPES "system Hits(Body shot, query ($) fighters) { }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "Fighter"));
@@ -7739,6 +7761,60 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *braceless = complete(QUERY_TYPES "system Hits(query (Body body) fighters)\n{\n"
                                                "    foreach (var fighter in fighters) Debug.Log(fighter.$\n}\n");
     TIDE_CHECK(offers(braceless, "entity") && offers(braceless, "body"));
+}
+
+TIDE_TEST(lsp_entity_query_in_helpers)
+{
+    start();
+    TIDE_CHECK(offers(complete(QUERY_TYPES "float Total($) { return 0; }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "async void Total($) { }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "extern float Total($);\n"), "query"));
+    const char *bindings = complete(QUERY_TYPES "float Total(query ($) bodies) { return 0; }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    const char *rows = complete(QUERY_TYPES "float Total(query (Body body) bodies)\n{\n"
+        "    foreach (var row in bodies) { var x = row.$; }\n    return 0;\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
+    open_document(QUERY_TYPES
+        "float Total(query (Body body) bodies)\n"
+        "{ mut var x = 0.0; foreach (var row in bodies) x += row.body.position.x; return x; }\n"
+        "system Count(mut Score score, query (Body other, with Fighter) bodies)\n"
+        "{ score.value = int(Total(bodies)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 32, ""), "query borrowed from the caller"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 32, ""), "extra bindings and filters"));
+    const char *args = complete(QUERY_TYPES
+        "float Total(query (Body body) values) { return 0; }\n"
+        "system Count(query (Body body) bodies) { Total($); }\n");
+    TIDE_CHECK(offers(args, "bodies"));
+}
+
+TIDE_TEST(lsp_entity_query_in_match_handlers)
+{
+    start();
+    const char *bindings = complete(QUERY_TYPES "event(Spawned) Inspect(query ($) bodies) { }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    const char *rows = complete(QUERY_TYPES "command Inspect { }\n"
+        "command(Inspect value, PlayerID sender) InspectAll(query (Body body) bodies)\n{\n"
+        "    foreach (var row in bodies) Debug.Log(row.$);\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
+    open_document(QUERY_TYPES
+        "event Scan { }\n"
+        "system ScanNow() { Send(Scan); }\n"
+        "event(Scan) Inspect(query (Body body) bodies)\n"
+        "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n"
+        "command InspectCommand { }\n"
+        "command(InspectCommand value, PlayerID sender) InspectAll(query (Body body) bodies)\n"
+        "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *event_query = request_at("file:///test.tide", "textDocument/hover", 9, 40, "");
+    TIDE_CHECK(has(event_query, "current match at this handler's turn in the tick-end queue"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 78, ""),
+                   "current match at this handler's turn in the tick-end queue"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 13, ""),
+                   "Through its queries, it reads any entity's `Body`"));
+    TIDE_CHECK(count(request("textDocument/codeLens"), "Query: reads Body") == 2);
 }
 
 // A view's and a local handler's query: what's offered in it, and what the

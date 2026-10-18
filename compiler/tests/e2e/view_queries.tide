@@ -190,16 +190,49 @@ view Begin(mut Seen seen)
     seen.sparkSelf = 0;
 }
 
+float QuerySumX(query (Body body) bodies, float start = 0)
+{
+    mut var total = start;
+    foreach (var row in bodies) total += row.body.position.x;
+    return total;
+}
+
+int QueryIds(query (Body body) bodies)
+{
+    mut var ids = 0;
+    foreach (var row in bodies) ids |= 1 << row.body.id;
+    return ids;
+}
+
+void QueryNames(query (Body body, Name name) rows, out int named, out int marks, out int words)
+{
+    named = 0;
+    marks = 0;
+    words = 0;
+    foreach (var row in rows)
+    {
+        if (row.name.title == "Ada") named += row.body.id;
+        foreach (var mark in row.name.marks) marks += mark;
+        foreach (var word in row.name.words) if (word == "bc") words++;
+    }
+}
+
+int QuerySparkCount(query (local Spark spark) sparks)
+{
+    mut var count = 0;
+    foreach (var row in sparks) if (row.spark.value > 0) count++;
+    return count;
+}
+
 // A view with only a query runs once a frame
 view Everything(mut Seen seen, query (Body body) bodies)
 {
     seen.runs += 1;
-    seen.sumX = 0;
+    seen.sumX = QuerySumX(bodies);
     seen.sumTurn = 0;
     seen.ids = 0;
     foreach (var row in bodies)
     {
-        seen.sumX += row.body.position.x;
         seen.sumTurn += row.body.turn;
         seen.ids |= 1 << row.body.id;
     }
@@ -208,11 +241,9 @@ view Everything(mut Seen seen, query (Body body) bodies)
 view Filters(mut Seen seen, query (Body body, with Fighter) fighters, query (Body body, without Fighter) others,
     query (with Fighter, without Dead) standing)
 {
-    seen.fighters = 0;
-    seen.others = 0;
+    seen.fighters = QueryIds(fighters);
+    seen.others = QueryIds(others);
     seen.standing = 0;
-    foreach (var row in fighters) seen.fighters |= 1 << row.body.id;
-    foreach (var row in others) seen.others |= 1 << row.body.id;
     foreach (var row in standing)
     {
         if (row.entity != default) seen.standing += 1;
@@ -236,25 +267,8 @@ view Pairs(Body body, mut Seen seen, query (Body other, Fighter fighter) fighter
 // the server confirmed: each is read from its own world's heap
 view Names(mut Seen seen, query (Name name, Body body) named, query (verified Name name, verified Body body) sure)
 {
-    seen.named = 0;
-    seen.marks = 0;
-    seen.sureNamed = 0;
-    seen.sureMarks = 0;
-    seen.sureWords = 0;
-    foreach (var row in named)
-    {
-        if (row.name.title == "Ada") seen.named += row.body.id;
-        foreach (var mark in row.name.marks) seen.marks += mark;
-    }
-    foreach (var row in sure)
-    {
-        if (row.name.title == "Ada") seen.sureNamed += row.body.id;
-        foreach (var mark in row.name.marks) seen.sureMarks += mark;
-        foreach (var word in row.name.words)
-        {
-            if (word == "bc") seen.sureWords += 1;
-        }
-    }
+    QueryNames(named, out seen.named, out seen.marks, out _);
+    QueryNames(sure, out seen.sureNamed, out seen.sureMarks, out seen.sureWords);
 }
 
 // `verified` in a query: the confirmed world's entities, those in both, and filters
@@ -319,12 +333,11 @@ view CountSparks(mut Seen seen, query (local Spark spark) sparks, query (with lo
 local event(Rang) Heard(Body body, mut Seen seen, query (Body other, Fighter fighter) fighters)
 {
     seen.rangs += 1;
-    seen.rangX = body.position.x * 1000;
+    seen.rangX = QuerySumX(fighters, body.position.x * 1000);
     seen.rangY = 0;
     seen.rangIds = 0;
     foreach (var row in fighters)
     {
-        seen.rangX += row.other.position.x;
         seen.rangY += row.other.position.y * row.fighter.number;
         seen.rangIds |= 1 << row.other.id;
     }
@@ -345,21 +358,13 @@ local event(Destroyed) Gone(Body body, mut Seen seen, query (Body other, with Fi
 {
     seen.gone += 1;
     seen.goneIds = 1 << (body.id + 16);
-    foreach (var row in fighters) seen.goneIds |= 1 << row.other.id;
-    seen.goneSparks = 0;
-    foreach (var row in sparks)
-    {
-        if (row.spark.value > 0) seen.goneSparks += 1;
-    }
+    seen.goneIds |= QueryIds(fighters);
+    seen.goneSparks = QuerySparkCount(sparks);
 }
 
 // A local event's handler queries this machine's entities
 local event(Destroyed) Snuffed(local Spark spark, mut Seen seen, query (local Spark other) sparks)
 {
     seen.snuffed += spark.value;
-    seen.snuffedLeft = 0;
-    foreach (var row in sparks)
-    {
-        if (row.other.value > 0) seen.snuffedLeft += 1;
-    }
+    seen.snuffedLeft = QuerySparkCount(sparks);
 }

@@ -252,9 +252,9 @@ float3 PushOut(Ashwick ashwick, float3 feet, float radius, float high)
     return at;
 }
 
-// Where a line from `from` first meets a box or the ground, as a fraction of the way to `to` (2 for nothing on the way),
-// and that box's face.
-float RayHit(Ashwick ashwick, float3 from, float3 to, out float3 normal)
+// Where a line from `from` first meets a box or (with `ground`) the ground, as a fraction of the way to `to` (2 for
+// nothing on the way), and that box's face.
+float RayHit(Ashwick ashwick, float3 from, float3 to, bool ground, out float3 normal)
 {
     normal = float3(0, 1, 0);
     var way = to - from;
@@ -262,7 +262,7 @@ float RayHit(Ashwick ashwick, float3 from, float3 to, out float3 normal)
     mut var hit = false;
     // The ground: the first of a few points along the line that's under it, then halved down to where it goes in
     mut var above = 0.0;
-    for (var step = 1; step <= 4; step++)
+    for (var step = 1; step <= (ground ? 4 : 0); step++)
     {
         var t = step / 4.0;
         var at = from + way * t;
@@ -330,8 +330,20 @@ float RayHit(Ashwick ashwick, float3 from, float3 to, out float3 normal)
     return hit ? best : 2.0;
 }
 
-// RayHit along a line of any length: a few metres at a time, as RayHit looks for the boxes near each piece's middle.
+// RayHit along a line of any length, the ground and the boxes.
 float LongRay(Ashwick ashwick, float3 from, float3 to, out float3 normal)
+{
+    return Ray(ashwick, from, to, true, out normal);
+}
+
+// ...the boxes alone: a round going level over the ground, whatever its rise and fall (hands.tide's Shoot).
+float WallRay(Ashwick ashwick, float3 from, float3 to, out float3 normal)
+{
+    return Ray(ashwick, from, to, false, out normal);
+}
+
+// RayHit along a line of any length: a few metres at a time, as RayHit looks for the boxes near each piece's middle.
+float Ray(Ashwick ashwick, float3 from, float3 to, bool ground, out float3 normal)
 {
     normal = float3(0, 1, 0);
     var steps = Math.Max(1, int(Math.Ceil(Math.Distance(from, to) / 2)));
@@ -339,7 +351,7 @@ float LongRay(Ashwick ashwick, float3 from, float3 to, out float3 normal)
     {
         var a = Math.Lerp(from, to, float(i) / steps);
         var b = Math.Lerp(from, to, float(i + 1) / steps);
-        var t = RayHit(ashwick, a, b, out var n);
+        var t = RayHit(ashwick, a, b, ground, out var n);
         if (t <= 1)
         {
             normal = n;
@@ -412,7 +424,7 @@ void Seed(Ashwick ashwick, mut List<int> sources, float3 feet)
             var middle = CellMiddle(next);
             if (Math.Length((middle - feet).xz) > 1.6) continue;
             var chest = feet + float3(0, 1, 0);
-            if (RayHit(ashwick, chest, float3(middle.x, Ground(middle.x, middle.z) + 1, middle.z), out _) <= 1) continue;
+            if (RayHit(ashwick, chest, float3(middle.x, Ground(middle.x, middle.z) + 1, middle.z), true, out _) <= 1) continue;
             sources.Add(next);
         }
     }

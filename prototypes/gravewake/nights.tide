@@ -23,7 +23,7 @@ using Rooms;
 
 const float NIGHT_STEP = 1.25;       // How much more dangerous each night is than the one before, on top of the clock's climb
 const float DANGER_EVERY = 150;      // Seconds of the run for each step of danger the clock brings
-const float KINDLE_SECONDS = 1.5;    // Holding E by the beacon to light it
+const float KINDLE_SECONDS = 2.5;    // Standing by the beacon to light it (long enough not to by passing it)
 const float KINDLE_REACH = 3;
 const float VIGIL_SECONDS = 90;      // To keep it with every survivor standing near it
 const float VIGIL_REACH = 11;        // How near (across the ground) counts as keeping it
@@ -41,11 +41,8 @@ float Crowd(int players)
     return 1 + 0.8 * (players - 1);
 }
 
-// How many chests a night hides: five, and two more for each survivor beyond the first.
-int ChestsTonight(int players)
-{
-    return 5 + 2 * (players - 1);
-}
+// How many chests a night hides, however many there are: each one's a pick for all of them.
+const int CHESTS_A_NIGHT = 4;
 
 // How many bosses rise at a night's vigil.
 int VigilBosses(int night)
@@ -53,36 +50,36 @@ int VigilBosses(int night)
     return 1 + (night - 1) / 3;
 }
 
-// Where each beacon stands: on the spire's top, in the chapel's ruin, at the graveyard's edge, among the standing
-// stones, down in the ravine.
+// Where each beacon stands: in the cairn, in the chapel's ruin, at the graveyard's edge, among the standing stones,
+// beside the dead oak.
 float3 BeaconPlace(int place)
 {
     switch (place)
     {
-        case 0: return On(BEACON.x, BEACON.y);
+        case 0: return On(CAIRN.x, CAIRN.y);
         case 1: return On(CHAPEL.x, CHAPEL.y - 1);
         case 2: return On(GRAVES.x + 8, GRAVES.y - 0.5);
         case 3: return On(STONES.x, STONES.y);
     }
-    return On((RAVINE_A.x + RAVINE_B.x) * 0.5, (RAVINE_A.y + RAVINE_B.y) * 0.5);
+    return On(OAK.x + 4, OAK.y + 1);
 }
 
 string BeaconPlaceName(int place)
 {
     switch (place)
     {
-        case 0: return "on the spire";
+        case 0: return "in the cairn";
         case 1: return "in the chapel's ruin";
         case 2: return "by the graveyard";
         case 3: return "among the standing stones";
     }
-    return "down in the ravine";
+    return "by the dead oak";
 }
 
-// Another beacon than last night's: the first night's never the spire's top, the narrowest.
+// Another beacon than last night's.
 int NextPlace(int last)
 {
-    if (last < 0) return 1 + Random.NextInt(BEACON_PLACES - 1);
+    if (last < 0) return Random.NextInt(BEACON_PLACES);
     var pick = Random.NextInt(BEACON_PLACES - 1);
     return pick >= last ? pick + 1 : pick;
 }
@@ -159,13 +156,14 @@ event Recalled
 }
 
 // A night falls: its beacon at another landmark, its chests to come, its own clock, and the impatient boss's wait.
-void Nightfall(mut Match match, int players)
+void Nightfall(mut Match match)
 {
     match.night += 1;
     match.nightClock = 0;
     ResetHordes(match);
+    ResetMissions(match);
     match.bossNext = BOSS_EVERY;
-    match.chestsDue = ChestsTonight(players);
+    match.chestsDue = CHESTS_A_NIGHT;
     match.chestsPlaced = 0;
     match.vigil = false;
     var place = NextPlace(match.place);
@@ -175,11 +173,11 @@ void Nightfall(mut Match match, int players)
     Send(NightFell { night = match.night, place = place });
 }
 
-// Holding E by the beacon (not by a friend who's down: raising wins) lights it.
+// Standing by the beacon (not by a friend who's down: raising wins) lights it.
 [Stage(Tick.Hands, 1)]
-system KindleBeacon(Hands hands, Survivor survivor, Match match, Time time, query (Beacon beacon) beacons)
+system KindleBeacon(Survivor survivor, Match match, Time time, query (Beacon beacon) beacons)
 {
-    if (match.paused || match.phase != Phase.Fighting || !survivor.ready || survivor.life != Life.Standing || survivor.role == Role.None || !hands.use || survivor.aimed >= 0) return;
+    if (match.paused || match.phase != Phase.Fighting || !survivor.ready || survivor.life != Life.Standing || survivor.role == Role.None || survivor.aimed >= 0) return;
     foreach (var row in beacons)
     {
         var b = row.beacon;
@@ -414,7 +412,7 @@ view BeaconLight(Beacon beacon, Match match, mut Lights lights, Me me, Look look
     AddLight(lights, me.eye, Light { at = at, color = float3(1.0, 0.45, 0.15) * 7 * flicker, reach = 24 });
 }
 
-// By the beacon: holding E to light it.
+// By the beacon: standing by it lights it.
 [Stage(Layers.Hud, 1)]
 view BeaconPrompt(Me me, Lobby lobby, Match match, query (Survivor survivor) survivors, query (Beacon beacon) beacons)
 {
@@ -437,7 +435,7 @@ view BeaconPrompt(Me me, Lobby lobby, Match match, query (Survivor survivor) sur
         var h = Screen.height;
         var u = Unit();
         var y = h * 0.7;
-        WriteBold("Hold E to light the beacon", float2(w * 0.5, y), 20 * u, Color(0.6, 1.0, 0.8), Anchor.MiddleCenter);
+        WriteBold("Stay by the beacon to light it", float2(w * 0.5, y), 20 * u, Color(0.6, 1.0, 0.8), Anchor.MiddleCenter);
         Write("The dead will come for it. Stay near till dawn.", float2(w * 0.5, y + 24 * u), 13 * u, ASH, Anchor.MiddleCenter);
         Draw.Rect(float2(w * 0.5, y + 44 * u), float2(220 * u, 5 * u), Color(0, 0, 0, 0.6));
         if (b.kindled > 0) Draw.Rect(float2(w * 0.5 - 110 * u + 110 * u * Math.Saturate(b.kindled), y + 44 * u), float2(220 * u * Math.Saturate(b.kindled), 5 * u), Color(1.0, 0.6, 0.25));
@@ -445,8 +443,8 @@ view BeaconPrompt(Me me, Lobby lobby, Match match, query (Survivor survivor) sur
 }
 
 // The night, top left under the menu: which, and what's to do: find and light the beacon (and how many of the night's
-// chests are found), keep it (how full, and who's by it), fell its boss, or dawn. During the vigil, one away from the
-// beacon sees which way it is at the screen's edge.
+// chests are found), keep it (how full, and who's by it), fell its boss, or dawn. (Where it is: missions.tide's
+// Objectives.)
 [Stage(Layers.Hud, 1)]
 view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors, query (Beacon beacon) beacons, query (Chest chest) chests,
                 query (Boss boss) bosses)
@@ -476,8 +474,6 @@ view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
     foreach (var row in bosses)
         if (row.boss.vigil && row.boss.move != BossMove.Dying) brutes += 1;
     Draw.SetScreen();
-    var w = Screen.width;
-    var h = Screen.height;
     var u = Unit();
     var box = float2(34 * u + 150 * u, 92 * u);
     Panel(box, float2(300 * u, 74 * u), u);
@@ -505,25 +501,10 @@ view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
         return;
     }
     var full = b.charge >= 1;
-    WriteBold(full && brutes > 0 ? "FELL THE BRUTE" : "HOLD THE BEACON", float2(left, box.y + 4 * u), 14 * u, EMBER, Anchor.MiddleLeft);
+    WriteBold(full && brutes > 0 ? "FELL THE BOSS" : "HOLD THE BEACON", float2(left, box.y + 4 * u), 14 * u, EMBER, Anchor.MiddleLeft);
     Bar(float2(left, box.y + 22 * u), float2(200 * u, 8 * u), b.charge, 0, EMBER, Color(0.5, 0.2, 0.05), 10, u);
     Write($"{int(b.charge * 100)}%", float2(left + 208 * u, box.y + 22 * u), 12 * u, BONE, Anchor.MiddleLeft);
     if (b.standing > 1) Write($"{b.keepers} of {b.standing} near it", float2(left + 246 * u, box.y + 22 * u), 11 * u, ASH, Anchor.MiddleLeft);
-    // Away from it: which way it is
-    var off = (b.at - mine.feet).xz;
-    if (mine.life == Life.Standing && Math.Length(off) > VIGIL_REACH)
-    {
-        var side = Math.Dot(float3(off.x, 0, off.y), Flat(me.yaw + Math.PI * 0.5));
-        var ahead = Math.Dot(float3(off.x, 0, off.y), Flat(me.yaw));
-        var turn = Math.Atan2(-ahead, side);
-        var middle = float2(w * 0.5, h * 0.5);
-        var reach = float2(w * 0.5 - 70 * u, h * 0.5 - 70 * u);
-        var way = float2(Math.Cos(turn), Math.Sin(turn));
-        var at = middle + float2(way.x * reach.x, way.y * reach.y);
-        var pulse = 0.6 + 0.4 * Math.Sin(look.time * 6);
-        Draw.Shape(Shape { center = at, size = float2(22, 22) * u, rotation = turn + Math.PI * 0.25, color = Color(1.0, 0.5, 0.15, 0.85 * pulse) });
-        WriteBold("BACK TO THE BEACON", at - way * 34 * u, 13 * u, Color(1.0, 0.6, 0.25, pulse), Anchor.MiddleCenter);
-    }
 }
 
 local event(NightFell fell) ShowNightFell(mut Feed feed)

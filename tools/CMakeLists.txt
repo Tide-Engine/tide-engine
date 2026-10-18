@@ -2,6 +2,7 @@
 # editors that read TextMate bundles; JetBrains IDEs get the Marketplace plugin
 # instead (tools/tide-jetbrains). Its test stays here.
 install(DIRECTORY tide-syntax DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
+install(DIRECTORY tide-emacs tide-vim DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 
 # The VS Code extension, for VS Code, Cursor, VSCodium and Windsurf. It needs
 # Node, so only package builds make it.
