@@ -1,10 +1,10 @@
 ---
-description: "Set up Tide in VS Code or JetBrains IDEs with language server support for completion, errors, quick fixes, navigation and refactoring."
+description: "Set up Tide in VS Code, JetBrains, Emacs, Vim or Neovim with highlighting and language server support."
 ---
 
 # Editors
 
-Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](../packages/using-and-writing.md). Across all of them, editors get:
+Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](../packages/using-and-writing.md). The server provides these features across the game; which appear depends on your editor's language server client:
 
 - Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
 - Enum assignments prioritize and preselect the expected enum type: after `zombie.state =`, `ZombieState` comes first, followed by its qualified members. With [enum shorthand](../language/basics.md#enums-and-switch), `zombie.state = .` offers just that enum's members. A leading dot also completes members in typed declarations, returns, comparisons, enum switch cases and arguments whose parameter type is unambiguous.
@@ -149,7 +149,7 @@ new-file creation remain future work.
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
-Both editor integrations recognize `.tprefab` files as Tide. They use the same
+VS Code and JetBrains recognize `.tprefab` files as Tide. They use the same
 game/package context as scripts, report invalid authored components and references,
 and include prefab files when renaming components, fields and named prefabs.
 Authored entity names and paths currently need manual text edits. See
@@ -237,6 +237,77 @@ Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl
 - **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
 They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
+
+## Emacs
+
+The repository's [tide-lang-mode](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-emacs)
+supports Emacs 29.1 or later. Download that folder or use a Tide source checkout,
+then add its absolute path to your init file:
+
+```elisp
+(add-to-list 'load-path "/path/to/tide-engine/tools/tide-emacs")
+(require 'tide-lang-mode)
+```
+
+It detects `.tide` and `.tprefab`, with basic highlighting, four-space C-style
+indentation and comment editing. The name is separate from the TypeScript
+package called `tide`.
+
+With `tidels` on Emacs's `exec-path`, open a Tide file and run **M-x eglot**.
+To select a server explicitly, set `tide-lang-server-command` to a list such as
+`'("/path/to/tide/bin/tidels")`. Optional automatic connection:
+
+```elisp
+(add-hook 'tide-lang-mode-hook #'eglot-ensure)
+```
+
+Use **M-.** for definitions, **M-?** for references, **C-M-i** for completion,
+**M-x eglot-rename** and **M-x eglot-format-buffer**. See
+[Eglot's setup guide](https://www.gnu.org/software/emacs/manual/html_node/eglot/Setting-Up-LSP-Servers.html)
+for client configuration.
+
+## Vim and Neovim
+
+The repository's [Tide Vim runtime](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-vim)
+supports Vim 8+ and Neovim. Download that folder or use a Tide source checkout.
+Add its absolute path before enabling filetypes in your vimrc:
+
+```vim
+set runtimepath^=/path/to/tide-engine/tools/tide-vim
+filetype plugin indent on
+syntax enable
+```
+
+Escape spaces with `\ ` in that `set` command. Both `.tide` and `.tprefab`
+get highlighting, four-space C-style indentation and comment settings.
+Interpolated strings have string highlighting throughout.
+
+For Neovim 0.11 or later, this `init.lua` setup also enables the supplied
+language server configuration:
+
+```lua
+vim.opt.runtimepath:prepend('/path/to/tide-engine/tools/tide-vim')
+vim.cmd('filetype plugin indent on')
+vim.cmd('syntax enable')
+vim.lsp.enable('tidels')
+```
+
+Put `tidels` on `PATH`. To select another executable, call
+`vim.lsp.config('tidels', { cmd = { '/path/to/tide/bin/tidels' } })` before
+enabling it. The configuration selects the nearest `tide.packages`, then a
+CMake/Git root, then the source file's folder. Use **K** for hover,
+`:lua vim.lsp.buf.definition()`, `:lua vim.lsp.buf.rename()` and
+`:lua vim.lsp.buf.format()`. Neovim's **:help lsp** describes completion and
+other client features; see its [LSP guide](https://neovim.io/doc/user/lsp/).
+
+Plain Vim needs a language server client of your choice. Register filetype
+`tide` with command `['tidels']` over stdio. The runtime does not install a client.
+
+Emacs and Vim/Neovim setup is manual; `tide editors` installs the VS Code
+extension. Enable automatic server startup only for projects you trust.
+Use `tide run` and `tide open` in a terminal for games and prefab editing.
+The terminal integrations do not adapt the VS Code-specific clickable code-lens
+commands or embed the native scene editor.
 
 ## Other editors
 

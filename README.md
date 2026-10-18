@@ -134,6 +134,11 @@ more work across all of them.
   Dark color schemes show type names as plain text; see
   [tools/tide-jetbrains/README.md](tools/tide-jetbrains/README.md#colors)
   to color them.
+- **Emacs:** [tide-lang-mode](tools/tide-emacs/README.md) adds highlighting,
+  indentation and Eglot setup for `tidels`.
+- **Vim and Neovim:** [the Tide runtime](tools/tide-vim/README.md) adds
+  highlighting and indentation, with a built-in LSP configuration for
+  Neovim 0.11+. Both integrations are installed manually from this repository.
 
 ## Working on the engine
 
