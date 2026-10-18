@@ -1,16 +1,22 @@
 ;;; tide-lang-mode.el --- Editing Tide Engine source -*- lexical-binding: t; -*-
 
+;; Author: Tide Engine contributors
+;; Assisted-by: Codex:gpt-6.1-sol
+;; Maintainer: Valentin Bordeianu <blenminer123@gmail.com>
+;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: languages
-;; URL: https://github.com/Tide-Engine/tide-engine
+;; URL: https://github.com/Tide-Engine/tide-emacs
 
 ;;; Commentary:
+
 ;; Load this file for .tide/.tprefab editing, then use M-x eglot to connect
 ;; to tidels.  The name avoids the TypeScript package named tide.
 
 ;;; Code:
 
 (require 'cc-mode)
+(require 'eglot)
 
 (defgroup tide-lang nil
   "Editing Tide Engine source."
@@ -61,14 +67,11 @@ Use `eglot' for completion, diagnostics, navigation, rename and formatting."
 (add-to-list 'auto-mode-alist '("\\.tprefab\\'" . tide-lang-mode))
 
 (defun tide-lang--eglot-contact (_interactive)
-  "Return the configured Tide server contact for Eglot."
+  "Return the Tide server contact for Eglot, ignoring _INTERACTIVE."
   tide-lang-server-command)
 
-(defvar eglot-server-programs)
-
-(with-eval-after-load 'eglot
-  (add-to-list 'eglot-server-programs
-               '((tide-lang-mode :language-id "tide") . tide-lang--eglot-contact)))
+(add-to-list 'eglot-server-programs
+             '((tide-lang-mode :language-id "tide") . tide-lang--eglot-contact))
 
 (provide 'tide-lang-mode)
 ;;; tide-lang-mode.el ends here

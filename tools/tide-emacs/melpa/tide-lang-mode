@@ -1,0 +1,1 @@
+(tide-lang-mode :fetcher github :repo "Tide-Engine/tide-emacs")

@@ -1,5 +1,6 @@
--- Run from the repository root with nvim --headless -u NONE -l this-file.
-vim.opt.runtimepath:prepend('tools/tide-vim')
+-- Run with nvim --headless -u NONE -l this-file from either repository.
+local runtime = vim.fs.dirname(vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2)))
+vim.opt.runtimepath:prepend(vim.fn.escape(runtime, ','))
 local config = vim.lsp.config.tidels
 assert(vim.deep_equal(config.cmd, { 'tidels' }))
 assert(vim.deep_equal(config.filetypes, { 'tide' }))

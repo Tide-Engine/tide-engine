@@ -5,6 +5,40 @@ C-style indentation and comment settings. Vim 8+ and Neovim can use it without
 any other plugin. Interpolated strings have string highlighting; expressions
 inside them do not have separate lexical scopes.
 
+## Install with a plugin manager
+
+Install [Tide](https://tide-engine.dev/) separately for `tidels`, and put its
+`bin` folder on `PATH`. The official repository works directly with Git-based
+plugin managers; no registry registration is needed.
+
+With vim-plug, add this between your existing `plug#begin()` and `plug#end()`,
+then run `:PlugInstall`:
+
+```vim
+Plug 'Tide-Engine/tide-vim'
+```
+
+With lazy.nvim on Neovim 0.11+, add this plugin specification:
+
+```lua
+{
+  'Tide-Engine/tide-vim',
+  lazy = false, -- Load file detection before opening a Tide buffer.
+  config = function()
+    vim.lsp.enable('tidels')
+  end,
+}
+```
+
+Use your plugin manager's update command for updates. Plain Vim needs a
+separate LSP client for completion and diagnostics; highlighting and
+indentation work without one. Server selection and controls are below.
+
+## Use the runtime bundled with Tide
+
+This is an alternative to plugin-manager installation. Choose one copy of
+the runtime so your editor does not load competing installations.
+
 Tide includes this runtime. Print configuration with the installed paths:
 
 ```sh
@@ -56,13 +90,21 @@ Use `tide run` and `tide open` in a terminal for games and prefab editing.
 `tide editors` installs the VS Code extension; `tide ide` prints setup for
 terminal editors.
 
-Run from the repository root without loading personal config:
+## Development
+
+This repository is published from `tools/tide-vim` in Tide's engine
+repository. Please report issues or propose changes in this public repository;
+maintainers apply accepted changes to the source before publishing an update.
+
+Run from this standalone repository's root without loading personal config:
 
 ```sh
-vim -Nu NONE -n -es -S tools/tide-vim/test/editor.vim
-nvim --headless -u NONE -S tools/tide-vim/test/editor.vim
-nvim --headless -u NONE -l tools/tide-vim/test/lsp.lua
+vim -Nu NONE -n -es -S test/editor.vim
+nvim --headless -u NONE -S test/editor.vim
+nvim --headless -u NONE -l test/lsp.lua
 ```
+
+In the engine checkout, prefix these test paths with `tools/tide-vim/`.
 
 Set the `TIDELS` environment variable to an absolute path to a freshly built
 server to include real Neovim attachment, hover and shutdown in the Lua test.
