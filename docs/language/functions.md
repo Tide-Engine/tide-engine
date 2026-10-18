@@ -82,8 +82,9 @@ system Regenerate(mut Unit unit)
 }
 ```
 
-- A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
-- Parameters are built-in types, structs, components, singletons and event/command payloads, and an argument's type matches exactly. Return values are built-in types, structs, components and event/command payloads; singleton returns remain unsupported. Input helper parameters remain unsupported.
+- A plain value parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
+- Parameters are built-in types, structs, components, singletons and event/command payloads, and an argument's type matches exactly. Return values are built-in types, structs, components and event/command payloads; singleton returns remain unsupported.
+- Synchronous functions and methods can borrow the caller's [input](../game/input.md#passing-input-to-helpers) with an ordinary parameter, `bool WantsJump(Controls controls)`. Pass the input parameter directly. Its current and previous tick stay together, so `controls.jump.down` and `.up` retain their meaning through helper calls. The input is read-only, has no default and cannot be stored or returned; tasks take individual field values instead.
 - Synchronous functions and methods can also borrow a read-only `query`, as described below.
 - A function returns a value on every path, unless it returns `void`. The check follows conditions known while compiling, including named bool constants and comparisons of constant integers: `if (true) return 1;` covers its only path. A loop whose condition is always true and has no reachable `break` can't end without returning.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).

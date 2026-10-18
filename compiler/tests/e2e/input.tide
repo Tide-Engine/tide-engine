@@ -70,11 +70,14 @@ system Move(PlayerInput input, Time time, mut TestTransform trs)
     trs.position += float3(input.move.x, 0, input.move.y) * input.speed * time.dt;
 }
 
-system Jump(PlayerInput input, mut Jumps jumps)
+bool JumpDown(PlayerInput controls) { return controls.jump.down; }
+bool ForwardJump(PlayerInput input) { return JumpDown(input); }
+void ApplyJump(PlayerInput input, mut Jumps jumps)
 {
-    if (input.jump.down) jumps.count += 1;
+    if (ForwardJump(input)) jumps.count += 1;
     if (input.jump.up) jumps.landings += 1;
 }
+system Jump(PlayerInput input, mut Jumps jumps) { ApplyJump(input, jumps); }
 
 // Hands players 0 and 1 each other's entity.
 system SwapOwners(Swap swap, mut Owner owner)

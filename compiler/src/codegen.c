@@ -998,7 +998,7 @@ static bool is_pointer_param(const param *p)
 {
     if (p->mode == PARAM_SENDER) return true;
     if (p->task_ref) return true;
-    if (p->function_param) return p->mode == PARAM_MUT || p->type.kind == TY_RECORD;
+    if (p->function_param) return p->mode == PARAM_MUT || p->type.kind == TY_RECORD || p->type.kind == TY_INPUT;
     const type_kind k = p->type.kind;
     return k == TY_COMPONENT || k == TY_SINGLETON || k == TY_INPUT || k == TY_RECORD || k == TY_EVENT;
 }
@@ -1409,7 +1409,7 @@ static void gen_operator_call(gen *g, sb *o, const decl *m, expr *l, expr *r)
     sb_put(o, ")");
 }
 
-// The hidden parameter holding last tick's input, for .pressed and .released.
+// The hidden parameter holding last tick's input, for .down and .up.
 static const char *prev_input_name(const gen *g, const str name)
 {
     sb b = {0};
@@ -3035,6 +3035,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         if (args++) sb_put(o, ", ");
         if (m->params.items[i].type.kind == TY_QUERY) {
             gen_borrow_arg(g, o, e->args.items[i]);
+        } else if (m->params.items[i].type.kind == TY_INPUT) {
+            sb_printf(o, "%s, %s", local_cname(g, e->args.items[i]->name), prev_input_name(g, e->args.items[i]->name));
         } else if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)) {
             gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
         } else if (m->params.items[i].mode == PARAM_MUT && m->params.items[i].type.kind == TY_STRING) {
@@ -5014,6 +5016,8 @@ static void call_operands(expr *e, operand_list *ops)
             const param *p = &m->params.items[i];
             if (p->mode == PARAM_MUT) {
                 role = PLACE;
+            } else if (p->type.kind == TY_INPUT) {
+                role = USED; // The call borrows its tick context; another argument doesn't copy the input.
             } else if (m->is_extern && p->mode == PARAM_IN && arg->type.kind == p->type.kind && arg->type.decl == p->type.decl
                        && addressable(arg)) {
                 role = USED; // C reads it where it is (gen_extern_call)
@@ -5944,6 +5948,15 @@ static void gen_inline(gen *g, const expr *e)
                 line(g, o, "const uint32_t %s = %s;", borrow_count_name(names[i]), borrow_arg_name(g, e->args.items[i], true));
                 line(g, o, "(void)%s;", borrow_count_name(names[i]));
             }
+            continue;
+        }
+        if (p->type.kind == TY_INPUT) {
+            g->frame = &frame;
+            const char *previous = prev_input_name(g, p->name);
+            g->frame = caller;
+            line(g, o, "const %s *const %s = %s;", c_type(p->type), names[i], local_cname(g, e->args.items[i]->name));
+            line(g, o, "const %s *const %s = %s;", c_type(p->type), previous, prev_input_name(g, e->args.items[i]->name));
+            line(g, o, "(void)%s; (void)%s;", names[i], previous);
             continue;
         }
         indent(g, o);
@@ -11248,8 +11261,9 @@ static capture_list sort_captures(gen *g, const expr *sort)
             if (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) continue;
             if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
             else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
-            else if (p->type.kind == TY_RECORD) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
+            else if (p->type.kind == TY_RECORD || p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
             else capture(&out, c_type(p->type), local_cname(g, p->name));
+            if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
             if (takes_where(p)) capture(&out, "uint32_t", where_name(g, p->name));
             if (has_fields_ptr(p)) {
                 capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type))),
@@ -13213,6 +13227,9 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         if (p->type.kind == TY_QUERY) {
             if (n++) sb_put(o, ", ");
             gen_borrow_param(g, o, p, g->borrow->sources[i]);
+        } else if (p->type.kind == TY_INPUT) {
+            sb_printf(o, "%sconst %s *%s, const %s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name),
+                      c_type(p->type), prev_input_name(g, p->name));
         } else if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) sb_printf(o, "%stide_textref %s", n++ ? ", " : "", local_cname(g, p->name));
         else if (p->mode == PARAM_MUT) sb_printf(o, "%s%s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
@@ -13256,6 +13273,7 @@ static void gen_routine(gen *g, const decl *m)
     for (int i = 0; i < m->params.count; i++) {
         if (m->params.items[i].type.kind == TY_WORLD) continue;
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
+        if (m->params.items[i].type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, m->params.items[i].name));
         if (m->params.items[i].type.kind == TY_QUERY && source_query(g->borrow->sources[i])->query_rows)
             line(g, o, "(void)%s;", borrow_count_name(local_cname(g, m->params.items[i].name)));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
