@@ -1,0 +1,4 @@
+// expect: query component bindings are read-only and can't be 'mut'
+component Body { float x; }
+scene Main { }
+event(Spawned) Hits(query (mut Body body) bodies) { }

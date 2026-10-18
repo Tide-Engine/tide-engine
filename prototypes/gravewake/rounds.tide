@@ -55,6 +55,15 @@ singleton Match
     int orbs;                    // Experience orbs lying (orbs.tide)
     int bosses;                  // How many have come
     int devBoss = -1;            // Development: the kind the next impatient one is (the key's), or -1 for any
+    // The missions (missions.tide): the one going (None, none), where, the seconds it has left, what's done of it
+    // against its goal; the seconds till the next; and the development key's kind for the next, or -1 for any
+    MissionKind mission;
+    float3 missionAt;
+    float missionLeft;
+    float missionDone;
+    float missionGoal;
+    float missionWait;
+    int devMission = -1;
     // The end
     float lasted;                // How long the run went
     bool restarting;
@@ -118,6 +127,8 @@ void ResetMatch(mut Match match)
     match.bossNext = BOSS_EVERY;
     match.bosses = 0;
     match.devBoss = -1;
+    ResetMissions(match);
+    match.devMission = -1;
     match.orbs = 0;
     match.lasted = 0;
     match.restarting = false;
@@ -197,7 +208,7 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
             match.timer = 0;
             match.clock = 0;
             match.spawnWait = 1;
-            Nightfall(match, match.players);
+            Nightfall(match);
             match.danger = Danger(match);
             Send(RunBegan { });
             return;
@@ -221,7 +232,7 @@ system RunRounds(mut Match match, Time time, Party party, query (Survivor surviv
             {
                 match.phase = Phase.Fighting;
                 match.timer = 0;
-                Nightfall(match, match.players);
+                Nightfall(match);
                 match.danger = Danger(match);
             }
             if (match.culling && match.alive == 0) match.culling = false;

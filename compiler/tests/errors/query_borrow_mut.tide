@@ -1,0 +1,4 @@
+// expect: a borrowed query is read-only
+component Body { int x; }
+void Read(mut query (Body body) rows) { }
+scene Main { }

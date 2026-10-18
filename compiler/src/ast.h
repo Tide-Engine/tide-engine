@@ -149,7 +149,7 @@ typedef enum type_kind {
     TY_ARRAY,      // T[N]: decl is the array type (DECL_ARRAY), whose one field is its element and array_length N
     TY_MESH,       // Mesh<V>: decl is the mesh type (DECL_MESH), whose one field is its vertex. An asset's vertices and indices, the pack's own
     TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
-    TY_QUERY,      // A system's read-only second entity set; decl is its compiler-only row struct
+    TY_QUERY,      // A read-only entity set, borrowed by helpers; decl is its compiler-only row struct
     TY_COMPONENT,
     TY_SINGLETON,
     TY_INPUT,      // The game's input declaration
@@ -281,7 +281,7 @@ typedef enum param_mode {
     PARAM_EVENT, // An event handler's trigger: `event(Hit hit)`, always its first parameter
     PARAM_SENDER, // A command handler's authenticated PlayerID, following its payload
     PARAM_IN,    // `in Stats stats`, an extern function's: C gets a read-only pointer to the value
-    PARAM_QUERY, // `query (Body body, with Fighter) fighters`: a second candidate set
+    PARAM_QUERY, // `query (Body body, with Fighter) fighters`: a selection, or a helper's borrowed row requirements
 } param_mode;
 
 // One value the devices send, like keyboard.space or gamepad.leftStick.
@@ -699,6 +699,7 @@ typedef struct decl {
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
+    bool borrows_queries; // A synchronous helper whose query parameters borrow its callers' selections
     bool calls_c;        // Code that calls an extern function, itself or through others: its calls run in order
     bool writes_text;    // A system that writes text, lists or grids into its world: its heap, which one system changes at a time
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order

@@ -3079,6 +3079,13 @@ static void describe(const occurrence *o, sb *out)
         code_block(out, code.data);
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->mode == PARAM_QUERY) {
+            if (o->param->function_param) {
+                sb_put(out, "\n\nA read-only query borrowed from the caller for this call. The caller's selection, "
+                            "traversal order and live, blended or recorded data timing are preserved. Bindings match by "
+                            "component type; extra bindings and filters are allowed. It can be forwarded to another "
+                            "synchronous helper, but cannot be stored, returned or kept across await.");
+                break;
+            }
             sb_printf(out, "\n\nA read-only second entity set, independent of the entity this %s runs for. "
                            "`foreach` yields rows with `entity` and the named component values. Traversal follows "
                            "the ECS; it does not sort by entity ID or distance.",
@@ -3100,6 +3107,9 @@ static void describe(const occurrence *o, sb *out)
             } else if (of && of->listens) {
                 sb_printf(out, " Its rows are the match as the tick that sent the event left it%s.",
                           of->listens_verified ? ", once the server confirmed that tick" : "");
+            } else if (of && of->is_handler) {
+                sb_put(out, " Its rows read the current match at this handler's turn in the tick-end queue. "
+                            "Events and structural changes recorded by the handler remain deferred.");
             }
             break;
         }
@@ -3134,7 +3144,13 @@ static void describe(const occurrence *o, sb *out)
                       o->param->mode == PARAM_MUT ? "writable" : "read-only", extern_param_number(of, o->param) + 1);
             break;
         }
-        if (o->param->type.kind == TY_INPUT) sb_put(out, "\n\nThe input of the player who owns the entity.");
+        if (o->param->type.kind == TY_INPUT) {
+            sb_put(out, o->param->function_param
+                ? "\n\nRead-only input borrowed from the caller for this synchronous call. Current and previous tick values "
+                  "stay together, preserving .down and .up through helper calls. Pass the input parameter directly; "
+                  "copy individual fields to retain ordinary values."
+                : "\n\nThe input of the player who owns the entity, or the server's for unowned entities and once-only code.");
+        }
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
         else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
@@ -3881,8 +3897,12 @@ void analysis_code_lenses(jbuf *out)
     // checker only lists once the game has no errors
     for (int i = 0; i < A.prog->handlers.count; i++) {
         const decl *h = A.prog->handlers.items[i];
-        if (h->at.file != A.doc || !h->listens || !h->event) continue;
+        if (h->at.file != A.doc || !h->event) continue;
         sb title = {0};
+        if (!h->listens) {
+            if (put_world_lens(&title, h, "")) write_lens(out, &written, h, title.data);
+            continue;
+        }
         sb_put(&title, "hears ");
         put_decl_name(&title, h->event, "", h);
         sb_put(&title, h->listens_verified ? " once the server confirmed it" : " at the start of a frame");
@@ -6984,8 +7004,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         return;
     }
     for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) t = member_type(t, DOC->toks[ids[k]].text);
-    // input.jump.pressed, in systems
-    const bool edges = n == 2 && p && p->type.kind == TY_INPUT;
+    // input.jump.down or input.aim.fire.down, including borrowed helper input.
+    const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
     list_members(c, t, edges, &sc);
 }
 
@@ -7392,11 +7412,11 @@ static bool complete_asset_type(completion *c, const int last)
 // What a function's or method's parameter can be, as the checker takes it:
 // built-in values, text and lists, structs, enums, components and singletons;
 // after `mut`, what can change. A function's last can be its Action.
-static void complete_routine_param_types(completion *c, const bool after_mut, const bool function)
+static void complete_routine_param_types(completion *c, const bool after_mut, const bool function, const bool input)
 {
     complete_value_types(c, VT_LOCALS | VT_LOCAL_ENTITY);
     complete_structs(c);
-    complete_types(c, true, true, false);
+    complete_types(c, true, true, input && !after_mut);
     complete_namespaces(c, false);
     if (after_mut) return;
     if (function) item(c, "Action", CK_STRUCT, "Action", builtin_type_doc(TY_ACTION), NULL);
@@ -8023,19 +8043,6 @@ static bool local_trigger(const int open)
     for (int k = open - 2; k >= 0 && k >= open - 3 && DOC->toks[k].kind == T_IDENT; k--) {
         if (str_eq_c(DOC->toks[k].text, "local")) return true;
         if (!str_eq_c(DOC->toks[k].text, "async")) return false;
-    }
-    return false;
-}
-
-// Whether the handler whose parameters open at token `open` is local:
-// `local event(Hit hit) ShowHit(`.
-static bool local_handler(const int open)
-{
-    if (open < 2 || DOC->toks[open - 2].kind != T_RPAREN) return false;
-    int depth = 0;
-    for (int k = open - 2; k >= 0; k--) {
-        if (DOC->toks[k].kind == T_RPAREN) depth++;
-        else if (DOC->toks[k].kind == T_LPAREN && --depth == 0) return local_trigger(k);
     }
     return false;
 }
@@ -8933,7 +8940,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
         } else if (kind == T_RBRACE && depth > 0) {
             depth--;
         } else if (kind == T_LPAREN) {
-            const bool query = top == CTX_HEADER && stack[depth].header == HEADER_SYSTEM && before == T_IDENT
+            const bool query = top == CTX_HEADER && (stack[depth].header == HEADER_SYSTEM || stack[depth].header == HEADER_ROUTINE)
+                            && before == T_IDENT
                             && str_eq_c(DOC->toks[i - 1].text, "query");
             const header_kind header = query ? HEADER_QUERY
                 : top == CTX_TOP ? top_header(i) : top == CTX_DATA ? member_header(i) : HEADER_NONE;
@@ -9155,10 +9163,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // extern float Noise(...): what C takes; async handlers also get self
         bool is_extern = false;
         bool is_async = false;
+        bool is_audio = false;
         for (int k = f.open - 1; k >= 0 && DOC->toks[k].at.line == DOC->toks[f.open].at.line; k--) {
             if (DOC->toks[k].kind != T_IDENT || DOC->toks[k].at.col != decl_col_at(DOC->toks[k].at)) continue;
             is_extern = str_eq_c(DOC->toks[k].text, "extern");
             is_async = str_eq_c(DOC->toks[k].text, "async");
+            is_audio = str_eq_c(DOC->toks[k].text, "audio");
         }
         // extern system Move(...): a system's parameters, less what C can't be handed
         const bool extern_system = is_extern && f.header == HEADER_SYSTEM;
@@ -9177,6 +9187,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                     item(&c, "mut", CK_KEYWORD, "The caller's variable itself, which it can change", NULL, NULL);
                     if (!is_async) {
                         item(&c, "World", CK_CLASS, "Its caller's World, passed on: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+                        item(&c, "query", CK_SNIPPET, "Borrow a read-only query from the caller",
+                             "The caller supplies the selection and data timing; this helper declares the row data it needs.",
+                             "query (${1:Component} ${2:value}) ${3:entities}");
                     }
                     // An operator gives one value, and an async function goes on after its call returned
                     if (!is_async) {
@@ -9184,7 +9197,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                              NULL, NULL);
                     }
                 }
-                complete_routine_param_types(&c, pk == T_MUT || after_out, !method);
+                complete_routine_param_types(&c, pk == T_MUT || after_out, !method, !is_async && !is_audio && !operator_);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
@@ -9275,9 +9288,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (!extern_system) {
                     item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
                 }
-                // Systems, views and local handlers take a second set of entities to go through
-                if (f.open >= 2 && !is_async && !extern_system
-                    && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
+                // Systems, views and synchronous handlers take a second entity set.
+                if (f.header == HEADER_SYSTEM && !is_async && !extern_system) {
                     item(&c, "query", CK_SNIPPET, "query (Component value, with Tag) entities",
                          "A read-only second entity set, traversed with foreach independently of the outer entity.",
                          "query (${1:Component} ${2:value}) ${3:entities}");

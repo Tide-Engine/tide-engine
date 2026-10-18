@@ -51,7 +51,7 @@ A view that calls it gets an error, as a view can't send the match's events.
 
 ## Handling
 
-A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's. A match handler takes no [query](./systems.md#another-set-of-entities) yet; a [local handler](#other-entities) does.
+A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's, including read-only [queries](./systems.md#another-set-of-entities) in synchronous handlers.
 
 ```csharp
 // Health and this come from the entity the Hit was sent to.
@@ -72,6 +72,26 @@ event(Hit hit) CountHits(mut Stats stats)
 - A handler that takes no components runs once per event, whether it was sent to an entity or not, and has no `this`.
 - A handler that needs an entity needs every `Send` of its event to name one. The compiler checks: `Send(Hit { ... })` is an error when a `Hit` handler takes components, and says to write `entity.Send(...)`.
 - A handler that doesn't read the event can leave its name out: `event(Spawned) Arm(...)`.
+
+### Querying other entities
+
+A match handler can inspect another set of entities with the same query syntax as a system:
+
+```csharp
+event(RoundOver) ResetPlayers(query (with Player) players)
+{
+    foreach (var player in players)
+        player.entity.Send(Reset {});
+}
+```
+
+This runs once per `RoundOver`. The query selects the players to visit; it does not require the event to target a player. Ordinary component parameters still select the event's target.
+
+Each `foreach` reads the current match at the handler's turn in the tick-end queue. Earlier handlers' completed writes and structural changes already applied are visible. Sends, spawns, adds, removes and destroys recorded by the handler remain deferred, including changes recorded inside a query loop. `Spawned` queries include the new entity; `Destroyed` queries include the entity before it goes.
+
+Rows are read-only. To act on an entity, send it an event or use an explicit `mut World` with the existing `Set` rules. A `Set` is visible to later query reads. The handler's own `mut` component parameter retains its usual copy/write-back behavior: a query reads its stored value until that handler finishes, and following handlers see the written-back value.
+
+Async handlers and tasks cannot take queries yet. Local handlers' [recorded query rows](#other-entities) retain their own timing rules.
 
 ## When they run
 

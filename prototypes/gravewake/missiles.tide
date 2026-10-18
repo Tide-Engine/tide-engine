@@ -87,7 +87,7 @@ system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time ti
         var from = missile.at;
         missile.velocity.y -= missile.gravity * dt;
         var to = from + missile.velocity * dt;
-        mut var first = RayHit(ashwick, from, to, out _);
+        mut var first = RayHit(ashwick, from, to, true, out _);
         foreach (var row in survivors)
         {
             var s = row.survivor;
@@ -142,7 +142,7 @@ system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time ti
     var from = missile.at;
     missile.velocity.y -= missile.gravity * dt;
     var to = from + missile.velocity * dt;
-    var wall = RayHit(ashwick, from, to, out var normal);
+    var wall = RayHit(ashwick, from, to, true, out var normal);
     // The dead on the way: a grenade or a firebomb bursts on the first
     if (missile.kind != Shot.Shell)
     {

@@ -185,16 +185,22 @@ event(Hit hit) TakeHit(mut Health health)
 }
 
 // Reads include earlier rows' writes, as with World reads-own-writes.
+int CounterSum(query (Counter counter) counters)
+{
+    mut var total = 0;
+    foreach (var row in counters) total += row.counter.value;
+    return total;
+}
+
 system Count(mut Counter counter, query (Counter candidate) counters)
 {
     counter.value += 1;
-    counter.seen = 0;
-    foreach (var row in counters) counter.seen += row.candidate.value;
+    counter.seen = CounterSum(counters);
 }
 
 // Setting a component may replace its pages when a snapshot shares them.
 // The next iteration and a nested query must read the replacements.
-system ProbeWorld(mut Probe probe, mut World world, query (Sample sample) values)
+void ProbeValues(mut Probe probe, mut World world, query (Sample sample) values)
 {
     probe.before = 0;
     probe.after = 0;
@@ -210,6 +216,11 @@ system ProbeWorld(mut Probe probe, mut World world, query (Sample sample) values
             if (current.entity == row.entity) probe.after += current.sample.value;
         }
     }
+}
+
+system ProbeWorld(mut Probe probe, mut World world, query (Sample sample) values)
+{
+    ProbeValues(probe, world, values);
 }
 
 // Enough per-entity work for native and web ticks to use multiple threads.
@@ -228,13 +239,19 @@ system QueryWork(mut Work work, query (Body body, Fighter fighter, with Target, 
 
 // The query candidates themselves span two chunks. Continue skips the first
 // row of the second chunk; break stops at the next, after 2048 rows counted.
+int WorkVisits(query (Work work) works)
+{
+    mut var visits = 0;
+    foreach (var row in works) visits += row.work.visits;
+    return visits;
+}
+
 system AuditChunks(mut Stats stats, query (Work work) works,
                    query (Health health, with Ghost) impossible)
 {
-    stats.workVisits = 0;
+    stats.workVisits = WorkVisits(works);
     stats.workPrefix = 0;
     stats.impossibleVisits = 0;
-    foreach (var row in works) stats.workVisits += row.work.visits;
     mut var at = 0;
     foreach (var row in works)
     {

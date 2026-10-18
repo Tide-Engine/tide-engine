@@ -18,12 +18,12 @@ enum Item
     // Common
     HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts,
     // Uncommon
-    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, SpringBoots, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds,
+    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds,
     // Rare
     Mortar, SecondWind, HeRounds, DragonsBreath,
 }
 
-const int ITEM_COUNT = 24;
+const int ITEM_COUNT = 23;          // (Spring Boots, a jump in the air, went with jumping)
 
 enum Rarity { Common, Uncommon, Rare }
 
@@ -52,7 +52,6 @@ string ItemName(Item item)
         case Item.GunDrone: return "Gun Drone";
         case Item.EmberRing: return "Ember Ring";
         case Item.Frostbite: return "Frostbite";
-        case Item.SpringBoots: return "Spring Boots";
         case Item.EnergyDrink: return "Energy Drink";
         case Item.Kerosene: return "Kerosene";
         case Item.SteelToes: return "Steel Toes";
@@ -85,9 +84,8 @@ string ItemLine(Item item)
         case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (faster each)";
         case Item.EmberRing: return "Sets the dead within 3 m of you alight (+0.5 m each)";
         case Item.Frostbite: return "12% chance a hit freezes the dead solid for 2 s (+12% each)";
-        case Item.SpringBoots: return "One more jump in the air (+1 each)";
-        case Item.EnergyDrink: return "One more dash (+1 each)";
-        case Item.Kerosene: return "The dead your dash goes through catch fire (wider each)";
+        case Item.EnergyDrink: return "One more roll (+1 each)";
+        case Item.Kerosene: return "The dead you roll past catch fire (wider each)";
         case Item.SteelToes: return "50% more to the dead on the ground (+50% each)";
         case Item.GasMask: return "Bloaters' bursts can't hurt you, and the ones you kill burst 30% wider (+30% each)";
         case Item.ApRounds: return "Rounds go through one more of the dead (+1 each)";
@@ -139,10 +137,10 @@ int MagOf(Survivor s, Weapon weapon)
     return weapon == Weapon.Pistol ? info.mag : int(info.mag * (1 + 0.5 * Has(s, Item.ExtendedMag)));
 }
 
-// How many dashes a survivor holds: two, and an Energy Drink's each.
-int DashCharges(Survivor s)
+// How many rolls a survivor holds: two, and an Energy Drink's each.
+int RollCharges(Survivor s)
 {
-    return DASHES + Has(s, Item.EnergyDrink);
+    return ROLLS + Has(s, Item.EnergyDrink);
 }
 
 // What a survivor's blows carry, for the rounds and what they set off: whose they are, what they hold, how hard they
@@ -150,7 +148,7 @@ int DashCharges(Survivor s)
 struct Arms
 {
     int seat;
-    int[24] items;
+    int[23] items;
     float might;
     float crit;
 }
@@ -169,14 +167,14 @@ int Holds(Arms arms, Item item)
 
 // Three items for a survivor, `minute` minutes into the run, no two the same: mostly common, uncommon more often as the
 // run goes on, now and then a rare.
-void Offer(mut Survivor survivor, int minute, int players)
+void Offer(mut Survivor survivor, int minute, int players, Rarity least)
 {
     for (var k = 0; k < 3; k++)
     {
         mut var item = Item.HollowPoints;
         for (var tries = 0; tries < 20; tries++)
         {
-            item = RollItem(minute, players);
+            item = RollItem(minute, players, least);
             mut var taken = false;
             for (var j = 0; j < k; j++)
                 if (survivor.offers[j] == item) taken = true;
@@ -189,10 +187,10 @@ void Offer(mut Survivor survivor, int minute, int players)
 
 // One item, `minute` minutes into the run: mostly common, uncommon more often as the run goes on, now and then a rare.
 // Smelling Salts only with a friend to raise.
-Item RollItem(int minute, int players)
+Item RollItem(int minute, int players, Rarity least)
 {
-    var rare = Math.Min(0.12, 0.02 + 0.01 * minute);
-    var uncommon = Math.Min(0.45, 0.18 + 0.03 * minute);
+    var rare = least == Rarity.Common ? Math.Min(0.12, 0.02 + 0.01 * minute) : Math.Min(0.3, 0.12 + 0.01 * minute);
+    var uncommon = least == Rarity.Common ? Math.Min(0.45, 0.18 + 0.03 * minute) : 1 - rare;
     for (var tries = 0; tries < 8; tries++)
     {
         var roll = Random.NextFloat();
@@ -234,8 +232,8 @@ void TakeRole(mut Survivor survivor, Role role)
     survivor.gun = RoleWeapon(role);
     survivor.mag = MagOf(survivor, survivor.gun);
     for (var i = 0; i < 3; i++) survivor.cooldowns[i] = 0;
-    survivor.dashes = DashCharges(survivor);
-    survivor.dashWait = 0;
+    survivor.rolls = RollCharges(survivor);
+    survivor.rollWait = 0;
     survivor.act = Act.Raise;
     survivor.actTime = 0;
     survivor.actLength = 0.5;
@@ -248,7 +246,7 @@ void Take(mut Survivor survivor, Item item)
     if (item == Item.Kevlar) survivor.health = MaxHealth(survivor);
     if (item == Item.ExtendedMag) survivor.mag = MagOf(survivor, survivor.gun);
     if (item == Item.SecondWind) survivor.selfRevives += 1;
-    if (item == Item.EnergyDrink) survivor.dashes += 1;
+    if (item == Item.EnergyDrink) survivor.rolls += 1;
 }
 
 // ---- Procs: what the items do when a round lands, and when the dead die ----
@@ -448,8 +446,22 @@ float LevelSpan(int level, float crowd)
 const float LEVEL_FIRST = 40;
 const float LEVEL_GROWTH = 1.28;
 
+// Picks owed a survivor from a chest (each, a pick for everyone), a mission (a pick of the rarer items) or a boss.
+event Owed
+{
+    int picks;
+    int boons;
+}
+
+event(Owed owed) TakeOwed(mut Survivor survivor)
+{
+    if (!survivor.ready || survivor.role == Role.None) return;
+    survivor.pending += owed.picks;
+    survivor.boons += owed.boons;
+}
+
 // Every kill is the party's: each survivor's level climbs together (Match.xp), each level a pick of three items; the
-// next is offered as soon as the last is taken.
+// next is offered as soon as the last is taken (a mission's boon first: uncommon and rare only).
 [Stage(Tick.Late, 1)]
 system Experience(mut Survivor survivor, Match match)
 {
@@ -462,10 +474,15 @@ system Experience(mut Survivor survivor, Match match)
         // A level's health comes with it
         survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 30 * gained);
     }
-    if (!survivor.choosing && survivor.pending > 0)
+    if (!survivor.choosing && survivor.boons > 0)
+    {
+        survivor.boons -= 1;
+        Offer(survivor, 1 + int(match.clock / 60), match.players, Rarity.Uncommon);
+    }
+    else if (!survivor.choosing && survivor.pending > 0)
     {
         survivor.pending -= 1;
-        Offer(survivor, 1 + int(match.clock / 60), match.players);
+        Offer(survivor, 1 + int(match.clock / 60), match.players, Rarity.Common);
     }
 }
 

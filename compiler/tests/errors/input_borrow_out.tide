@@ -1,0 +1,4 @@
+// expect: input is read-only: a borrowed input parameter can't be 'mut', 'out' or 'in'
+input Controls { bool jump; }
+void Read(out Controls controls) { }
+scene Main { }

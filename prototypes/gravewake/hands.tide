@@ -1,7 +1,7 @@
-// What a survivor does with a tick of their player's hands: turns and runs,
-// jumps (again in the air, with Spring Boots); fires the gun, every round a
-// ray through the dead; loads; uses the kit's three skills; and raises a
-// friend who's down.
+// What a survivor does with a tick of their player's hands: turns to the
+// cursor and runs (there's no jumping: the owner, 2026-10-18, "just not be
+// able to jump"); fires the gun, every round a ray through the dead; loads;
+// uses the kit's three skills; and raises a friend who's down.
 
 const float REVIVE_SECONDS = 3;
 const float BLEED_SECONDS = 30;
@@ -11,19 +11,11 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
 {
     survivor.placed = false;
     survivor.ready = hands.ready;
-    survivor.view = hands.view;
     survivor.aim = hands.aim;
     if (match.paused) return;
     var dt = time.dt;
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over) return;
-    if (survivor.view == View.Above) FaceAim(survivor);
-    else
-    {
-        survivor.yaw += hands.look.x;
-        if (survivor.yaw > Math.PI) survivor.yaw -= Math.TAU;
-        if (survivor.yaw < -Math.PI) survivor.yaw += Math.TAU;
-        survivor.pitch = Math.Clamp(survivor.pitch + hands.look.y, -1.45, 1.45);
-    }
+    FaceAim(survivor);
 
     // Health comes back slowly after a few calm seconds (REGEN_DELAY, REGEN_RATE of it a second: it had come back whole in
     // under two, so a survivor who dashed clear a moment never had to fear a blow); what Leech Rounds may heal comes back
@@ -49,17 +41,14 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
         }
     }
 
-    // Running: whenever they go forward (from above, any way) and haven't fired for a moment
+    // Running: whenever they move and haven't fired for a moment
     var downed = survivor.life == Life.Downed;
-    var busy = survivor.act == Act.Throw || survivor.act == Act.Kick;
-    var forward = survivor.view == View.Above ? Math.Length(hands.move) > 0.3 : hands.move.y > 0.3;
-    var running = forward && survivor.steady > 0.35 && !busy && !downed;
+    var running = Math.Length(hands.move) > 0.3 && survivor.steady > 0.35 && !downed;
     mut var speed = (running ? SPRINT_SPEED : WALK_SPEED) * Fleetness(survivor);
     if (downed) speed = 0.6;
     speed *= Wading(survivor, herd);
     if (survivor.slimed > 0) speed *= SLIME_SLOW;
-    var ahead = MoveYaw(survivor);
-    mut var wish = Flat(ahead) * hands.move.y + Flat(ahead + Math.PI * 0.5) * hands.move.x;
+    mut var wish = Flat(TOP_YAW) * hands.move.y + Flat(TOP_YAW + Math.PI * 0.5) * hands.move.x;
     if (Math.Length(wish) > 1) wish = Math.Normalize(wish);
     // On a slope too steep to stand on, no walking up it
     if (survivor.sliding)
@@ -73,15 +62,16 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
     var blend = Math.Min(1, dt * grip);
     survivor.velocity.x += (target.x - survivor.velocity.x) * blend;
     survivor.velocity.z += (target.z - survivor.velocity.z) * blend;
-    // A dash carries them along whatever they press, through the dead (they don't hold a survivor; Hunt's crowding
-    // doesn't push one), knocking down each it goes through (DashThrough)
-    if (survivor.dash > 0)
+    // A roll carries them its way whatever they press, quick at first and slowing, through the dead (they don't hold
+    // a survivor rolling; Hunt's crowding doesn't push one)
+    if (survivor.roll > 0)
     {
-        survivor.dash -= dt;
-        survivor.velocity.x = survivor.dashWay.x * DASH_SPEED * Fleetness(survivor);
-        survivor.velocity.z = survivor.dashWay.z * DASH_SPEED * Fleetness(survivor);
+        survivor.roll -= dt;
+        var along = 1 - Math.Max(0, survivor.roll) / ROLL_SECONDS;
+        var pace = ROLL_SPEED * Math.Lerp(1.3, 0.5, along) * Fleetness(survivor);
+        survivor.velocity.x = survivor.rollWay.x * pace;
+        survivor.velocity.z = survivor.rollWay.z * pace;
     }
-    if (survivor.grounded) survivor.airJumps = 0;
     // Down a slope too steep to stand on: pulled down it, and no jumping off it (jumping again and again up a hill
     // the feet couldn't climb had walked them up any cliff)
     if (survivor.sliding)
@@ -89,20 +79,6 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
         var downhill = -Uphill(survivor.feet);
         survivor.velocity.x += downhill.x * SLIDE_PULL * dt;
         survivor.velocity.z += downhill.z * SLIDE_PULL * dt;
-    }
-    if (hands.jump.down && !downed && !survivor.sliding)
-    {
-        if (survivor.grounded)
-        {
-            survivor.velocity.y = JUMP_SPEED;
-            survivor.grounded = false;
-        }
-        else if (survivor.airJumps < Has(survivor, Item.SpringBoots))
-        {
-            survivor.airJumps += 1;
-            survivor.velocity.y = JUMP_SPEED;
-            Send(Unleashed { seat = survivor.seat, skill = Skill.None, at = survivor.feet, to = survivor.feet });
-        }
     }
     survivor.velocity.y -= GRAVITY * dt;
     var before = survivor.feet;
@@ -143,7 +119,7 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
     survivor.feet = feet;
 }
 
-// From above: turned to what the cursor's on, the gun's line up or down to it (not when it's right at their feet).
+// Turned to what the cursor's on, the gun's line up or down to it (not when it's right at their feet).
 void FaceAim(mut Survivor survivor)
 {
     var off = survivor.aim - (survivor.feet + float3(0, GUN_UP, 0));
@@ -153,19 +129,13 @@ void FaceAim(mut Survivor survivor)
     survivor.pitch = Math.Clamp(Math.Atan2(off.y, flat), -1.2, 1.2);
 }
 
-// Which way is forward for a survivor's moving: the way they look; from above, up the screen.
-float MoveYaw(Survivor survivor)
-{
-    return survivor.view == View.Above ? TOP_YAW : survivor.yaw;
-}
-
-const float TOP_YAW = 0;            // From above, the camera looks north
+const float TOP_YAW = 0;            // The camera looks north: up the screen is north, and moving goes by it
 
 // How much of their speed a survivor keeps among the dead: each one pressed against them (on its feet, about as high)
-// takes TOUCH_SLOW of it, down to TOUCH_SLOW_MOST. A dash goes through at full speed.
+// takes TOUCH_SLOW of it, down to TOUCH_SLOW_MOST. A roll goes through at full speed.
 float Wading(Survivor survivor, Herd herd)
 {
-    if (survivor.dash > 0) return 1;
+    if (survivor.roll > 0) return 1;
     mut var touching = 0;
     foreach (var z in Near(herd, survivor.feet, BODY_RADIUS + ZOMBIE_RADIUS * BOSS_SIZE))
     {
@@ -253,12 +223,12 @@ system Use(mut Survivor survivor, Match match, Party party, World world)
     survivor.aimed = FindAim(survivor, party, world);
 }
 
-// Raising a friend: hold use on them.
+// Raising a friend: standing by them (no key: the owner, 2026-10-18, everything but the roll and the gun by itself).
 [Stage(Tick.Survivors, 2)]
-system Raise(Hands hands, Survivor survivor, Party party, Match match, Time time)
+system Raise(Survivor survivor, Party party, Match match, Time time)
 {
     if (match.paused) return;
-    if (!survivor.ready || survivor.life != Life.Standing || !hands.use || survivor.aimed < 0) return;
+    if (!survivor.ready || survivor.life != Life.Standing || survivor.roll > 0 || survivor.aimed < 0) return;
     var seat = survivor.aimed;
     // Twice the tick's share: Steer lets it fall back on any tick nobody holds them
     party.survivors[seat].Send(Helped { amount = time.dt / REVIVE_SECONDS * 2 * (1 + 0.5 * Has(survivor, Item.Salts)), by = survivor.seat });
@@ -287,7 +257,7 @@ event Helped
     int by;
 }
 
-// The gun, the kit's skills, and what the hands are in the middle of.
+// The gun, the roll, the secondary, the special that uses itself, and what the hands are in the middle of.
 [Stage(Tick.Hands)]
 system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, Herd herd, Time time)
 {
@@ -299,14 +269,14 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     survivor.shotWait = Math.Max(0, survivor.shotWait - dt);
     survivor.steady += dt;
     survivor.actTime += dt;
+    survivor.kicked += dt;
 
-    // The skills: each as soon as it's ready while its key is held
-    // (The dead are gathered from the herd only when something lands: a horde's worth each tick would be most of one.)
+    // The roll and the secondary on their keys; the special by itself
     if (!downed)
     {
-        if (hands.secondary) UseSkill(survivor, 0, hands.move, ashwick, herd);
-        if (hands.utility) UseSkill(survivor, 1, hands.move, ashwick, herd);
-        if (hands.special) UseSkill(survivor, 2, hands.move, ashwick, herd);
+        if (hands.roll.down) StartRoll(survivor, hands.move);
+        if (hands.secondary) UseSecondary(this, survivor, ashwick, herd);
+        AutoSkill(survivor, 2, ashwick, herd);
     }
     if (survivor.leaping && survivor.grounded)
     {
@@ -319,22 +289,6 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     var holds = MagOf(survivor, survivor.gun);
     switch (survivor.act)
     {
-        case Act.Throw:
-            if (!survivor.landed && survivor.actTime >= 0.2)
-            {
-                survivor.landed = true;
-                Throw(survivor, survivor.throwing);
-            }
-            if (survivor.actTime >= survivor.actLength) survivor.act = Act.Idle;
-            return;
-        case Act.Kick:
-            if (!survivor.landed && survivor.actTime >= 0.16)
-            {
-                survivor.landed = true;
-                Kick(this, survivor, Near(herd, survivor.feet, KICK_REACH + 1.5));
-            }
-            if (survivor.actTime >= survivor.actLength) survivor.act = Act.Idle;
-            return;
         case Act.Reload:
             if (survivor.actTime >= survivor.actLength)
             {
@@ -358,7 +312,8 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
             if (survivor.actTime >= survivor.actLength) survivor.act = Act.Idle;
             break;
     }
-    if (survivor.act == Act.Raise) return;
+    // Rolling, no shot (a load goes on)
+    if (survivor.act == Act.Raise || survivor.roll > 0) return;
 
     // Loading, by choice or when empty
     if (survivor.act != Act.Reload && survivor.mag < holds && (hands.reload.down || survivor.mag <= 0) && survivor.shotWait <= 0)
@@ -375,7 +330,8 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     if (!info.bottomless) survivor.mag -= 1;
     survivor.shotWait = info.rate / Haste(survivor);
     survivor.steady = 0;
-    var from = AimFrom(survivor, info.range, ashwick, herd, out var look);
+    var from = AimFrom(survivor, info.range, out var look);
+    var aimed = AimedAt(survivor, info.range);
     var right = Math.Normalize(Math.Cross(float3(0, 1, 0), look));
     var up = Math.Cross(look, right);
     var trace = info.pellets > 1 ? Trace.Pellet : Trace.Bullet;
@@ -383,7 +339,8 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     {
         var off = Random.NextFloat2Direction() * Random.NextFloat(info.spread);
         var way = Math.Normalize(look + right * off.x + up * off.y);
-        Shoot(ArmsOf(survivor), from, way, info.range, info.damage * Might(survivor), info.head, info.pierce + Has(survivor, Item.ApRounds), ashwick, herd, trace, info.proc);
+        Shoot(ArmsOf(survivor), from, way, info.range, info.damage * Might(survivor), info.head, info.pierce + Has(survivor, Item.ApRounds), ashwick, herd, trace, info.proc,
+              aimed);
     }
     Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Gun });
     survivor.act = Act.Fire;
@@ -391,50 +348,21 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     survivor.actLength = Math.Max(0.12, info.rate / Haste(survivor));
 }
 
-// Where the camera is for one who plays from over the shoulder (eye.tide's, and the aim's): behind the head, up a
-// little, out to the right, pulled in toward the head where the ground would be between them.
-float3 ShoulderFrom(float3 eye, float yaw, float pitch)
-{
-    var look = LookDirection(yaw, pitch);
-    var side = Flat(yaw + Math.PI * 0.5) * SHOULDER_RIGHT + float3(0, SHOULDER_UP, 0);
-    mut var back = SHOULDER_BACK;
-    for (var k = 0; k < 8; k++)
-    {
-        var at = eye + side - look * back;
-        if (at.y > Ground(at.x, at.z) + 0.35) break;
-        back *= 0.75;
-    }
-    mut var camera = eye + side - look * back;
-    camera.y = Math.Max(camera.y, Ground(camera.x, camera.z) + 0.35);
-    return camera;
-}
-
 // Where a survivor's gun's barrel is as their body holds it (people.tide's pose: from the right shoulder along the aim,
-// both hands on it): over the shoulder, the shots leave from here.
+// both hands on it): the shots leave from here.
 float3 GunHand(Survivor survivor)
 {
     var look = LookDirection(survivor.yaw, survivor.pitch);
     return survivor.feet + Flat(survivor.yaw + Math.PI * 0.5) * GUN_RIGHT + float3(0, GUN_UP, 0) + Flat(survivor.yaw) * GUN_AHEAD + look * GUN_REACH;
 }
 
-// What the crosshair is on from over the shoulder: the first of the dead, the ground or a wall along the camera's line,
-// from beside the head on (nothing behind the survivor is aimed at), no further than `range`. From above, what the
-// cursor's on, as its player's machine sent it.
-float3 AimedAt(Survivor survivor, float range, Ashwick ashwick, Herd herd)
+// What the cursor's on, as its player's machine sent it, no further than `range` from the gun.
+float3 AimedAt(Survivor survivor, float range)
 {
-    if (survivor.view == View.Above)
-    {
-        var hand = GunHand(survivor);
-        var off = survivor.aim - hand;
-        var length = Math.Length(off);
-        return length > range ? hand + off / length * range : survivor.aim;
-    }
-    var eye = EyeOf(survivor);
-    var look = LookDirection(survivor.yaw, survivor.pitch);
-    var camera = ShoulderFrom(eye, survivor.yaw, survivor.pitch);
-    var from = camera + look * Math.Max(0, Math.Dot(eye - camera, look));
-    var to = from + look * range;
-    return Math.Lerp(from, to, Math.Min(1, FirstHit(from, to, ashwick, herd)));
+    var hand = GunHand(survivor);
+    var off = survivor.aim - hand;
+    var length = Math.Length(off);
+    return length > range ? hand + off / length * range : survivor.aim;
 }
 
 // How far along a line (0 to 1; more than 1 for nothing) the first wall, ground or one of the dead is.
@@ -446,55 +374,112 @@ float FirstHit(float3 from, float3 to, Ashwick ashwick, Herd herd)
         if (!z.hittable) continue;
         var spots = SpotsOf(z, herd);
         var body = Math.Min(Math.Min(SphereHit(from, to, z.chest, spots.chestRadius), SphereHit(from, to, z.hips, 0.33 * z.size)), LegsHit(from, to, z, 0));
-        first = Math.Min(first, Math.Min(SphereHit(from, to, z.head, spots.headRadius), body));
+        var bulk = ColumnHit(from, to, spots.base, spots.columnRadius, spots.columnHigh);
+        first = Math.Min(first, Math.Min(Math.Min(SphereHit(from, to, z.head, spots.headRadius), body), bulk));
     }
     return first;
 }
 
-// How far along a line (0 to 1; 2 for none) the first of the dead is, and which: eye.tide's Pointing, from above.
-float BodyFirst(float3 from, float3 to, Herd herd, out Body hit)
+// How far along a line (0 to 1; 2 for none) the first of the dead is, which, and what of it: 1 its head, 2 a boss's
+// weak spot, 0 the rest. eye.tide's Pointing, for what the cursor's on.
+float BodyFirst(float3 from, float3 to, Herd herd, out Body hit, out int part)
 {
     mut var first = 2.0;
     mut var found = Body { };
+    mut var which = 0;
     foreach (var z in Along(herd, from, to))
     {
         if (!z.hittable) continue;
         var spots = SpotsOf(z, herd);
-        mut var at = Math.Min(Math.Min(SphereHit(from, to, z.head, spots.headRadius), SphereHit(from, to, z.chest, spots.chestRadius)),
-                              Math.Min(SphereHit(from, to, z.hips, 0.33 * z.size), LegsHit(from, to, z, 0)));
-        if (spots.weakRadius > 0) at = Math.Min(at, SphereHit(from, to, spots.weak, spots.weakRadius));
+        var head = SphereHit(from, to, z.head, spots.headRadius);
+        var weak = spots.weakRadius > 0 ? SphereHit(from, to, spots.weak, spots.weakRadius) : 2.0;
+        var rest = Math.Min(Math.Min(SphereHit(from, to, z.chest, spots.chestRadius), SphereHit(from, to, z.hips, 0.33 * z.size)),
+                            Math.Min(LegsHit(from, to, z, 0), ColumnHit(from, to, spots.base, spots.columnRadius, spots.columnHigh)));
+        var at = Math.Min(Math.Min(head, weak), rest);
         if (at >= first) continue;
         first = at;
         found = z;
+        which = weak <= at ? 2 : head <= at ? 1 : 0;
     }
     hit = found;
+    part = which;
     return first;
 }
 
-// A round landing this near a boss's weak spot (for its size) is on it, even where its body's ball is in front of it.
-const float WEAK_PATCH = 1.15;
+// Where along a segment (0 to 1; 2 for never) it first meets an upright column `radius` round `base` and `high` tall,
+// by its side or, coming down on it, its top (a boss's bulk; none at a radius of 0).
+float ColumnHit(float3 from, float3 to, float3 base, float radius, float high)
+{
+    if (radius <= 0) return 2;
+    var way = to - from;
+    var top = base.y + high;
+    var off = from.xz - base.xz;
+    if (Math.Dot(off, off) <= radius * radius && from.y >= base.y && from.y <= top) return 0;
+    mut var first = 2.0;
+    var a = Math.Dot(way.xz, way.xz);
+    if (a > 0.0000001)
+    {
+        var b = Math.Dot(off, way.xz);
+        var c = Math.Dot(off, off) - radius * radius;
+        var d = b * b - a * c;
+        if (d >= 0)
+        {
+            var t = (-b - Math.Sqrt(d)) / a;
+            var y = from.y + way.y * t;
+            if (t >= 0 && t <= 1 && y >= base.y && y <= top) first = t;
+        }
+    }
+    if (way.y < -0.0000001 && from.y > top)
+    {
+        var t = (top - from.y) / way.y;
+        var across = off + way.xz * t;
+        if (t >= 0 && t < first && t <= 1 && Math.Dot(across, across) <= radius * radius) first = t;
+    }
+    return first;
+}
 
-// Where a survivor's shots start, and which way they go: from the eye along the look; over the shoulder or from above,
-// from the gun in their hand toward what the crosshair or the cursor is on, so a round goes from the gun to where it
-// says (unless something's between: hud.tide marks where it'd stop, over the shoulder).
-float3 AimFrom(Survivor survivor, float range, Ashwick ashwick, Herd herd, out float3 way)
+// The cursor this near a boss's weak spot (for its size) when the round's fired is on it.
+const float WEAK_PATCH = 1.15;
+// How wide one of the dead is to a level round, at its size: round its line from its hips to its head (upright, about
+// one place; lying, along the ground).
+const float BODY_HIT = 0.42;
+
+// Where along a segment across the ground (0 to 1; 2 for never) it first comes within `radius` of the line from `a` to
+// `b` (a body's hips to its head; a boss's column, a point).
+float FlatHit(float2 from, float2 to, float2 a, float2 b, float radius)
+{
+    var way = to - from;
+    var length = Math.Length(way);
+    if (length < 0.0001) return 2;
+    var dir = way / length;
+    mut var best = 2.0;
+    for (var k = 0; k <= 4; k++)
+    {
+        var p = Math.Lerp(a, b, k / 4.0);
+        var along = Math.Dot(p - from, dir);
+        if (along < -radius || along > length + radius) continue;
+        var off = Math.Length(from + dir * along - p);
+        if (off > radius) continue;
+        best = Math.Min(best, Math.Max(0, along - Math.Sqrt(radius * radius - off * off)) / length);
+    }
+    return best;
+}
+// The cursor this near one of the dead's head (for its size) when the round's fired: a headshot, whatever of it the
+// round goes into first.
+const float AIM_HEAD = 1.25;
+
+// Where a survivor's shots start, and which way they go: from the gun in their hand toward what the cursor is on (or,
+// when that's right at the gun, the way they face).
+float3 AimFrom(Survivor survivor, float range, out float3 way)
 {
     var look = LookDirection(survivor.yaw, survivor.pitch);
-    if (survivor.view == View.Eyes)
-    {
-        way = look;
-        return EyeOf(survivor);
-    }
     var hand = GunHand(survivor);
-    var line = AimedAt(survivor, range, ashwick, herd) - hand;
+    var line = AimedAt(survivor, range) - hand;
     var length = Math.Length(line);
     way = length > 0.8 && Math.Dot(line / length, look) > 0.5 ? line / length : look;
     return hand;
 }
 
-const float SHOULDER_BACK = 3.2;
-const float SHOULDER_RIGHT = 0.7;
-const float SHOULDER_UP = 0.35;
 const float GUN_RIGHT = 0.12;
 const float GUN_UP = 1.36;
 const float GUN_AHEAD = 0.08;
@@ -505,16 +490,20 @@ void StartAct(mut Survivor survivor, Act act, float seconds)
     survivor.act = act;
     survivor.actTime = 0;
     survivor.actLength = seconds;
-    survivor.landed = false;
 }
 
 // A round from `from` along `way`: the dead in its line, nearest first, as many as it goes through, then the wall or the
 // ground it ends in. What it hits is wounded through the items (Land); with HE Rounds it bursts on the first (a pellet's
 // as often as it sets items off). What it leaves is a tracer and, in a wall, a chip.
-void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float head, int pierce, Ashwick ashwick, Herd herd, Trace kind, float chance)
+void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float head, int pierce, Ashwick ashwick, Herd herd, Trace kind, float chance, float3 aim)
 {
-    var to = from + way * range;
-    var wall = LongRay(ashwick, from, to, out var normal);
+    // Level, across the ground (the owner, 2026-10-18: "when i shoot from a slight slope i completely miss the zombies,
+    // we should likely ignore elevation"): the round keeps the gun's height, goes over the ground's rise and fall, is
+    // stopped only by what stands up from it, and strikes the dead by where they stand, not how high
+    var flat = Math.Length(way.xz);
+    var level = flat > 0.001 ? float3(way.x / flat, 0, way.z / flat) : way;
+    var to = from + level * range;
+    var wall = WallRay(ashwick, from, to, out var normal);
     var stop = Math.Lerp(from, to, Math.Min(1, wall));
     mut List<Body> struck = [];
     mut List<float> when = [];
@@ -524,19 +513,20 @@ void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float 
     {
         if (!z.hittable) continue;
         var spots = SpotsOf(z, herd);
-        var onHead = SphereHit(from, to, z.head, spots.headRadius);
-        var chest = SphereHit(from, to, z.chest, spots.chestRadius);
-        var hips = SphereHit(from, to, z.hips, 0.33 * z.size);
-        var onWeak = spots.weakRadius > 0 ? SphereHit(from, to, spots.weak, spots.weakRadius) : 2.0;
-        var first = Math.Min(Math.Min(Math.Min(onHead, LegsHit(from, to, z, 0)), Math.Min(chest, hips)), onWeak);
+        var first = spots.columnRadius > 0 ? FlatHit(from.xz, to.xz, spots.base.xz, spots.base.xz, spots.columnRadius)
+                                           : FlatHit(from.xz, to.xz, z.hips.xz, z.head.xz, BODY_HIT * z.size);
         if (first > 1 || first > wall) continue;
         mut var at = struck.count;
         while (at > 0 && when[at - 1] > first) at -= 1;
         struck.Insert(at, z);
         when.Insert(at, first);
-        var weak = spots.weakRadius > 0 && Math.Length(Math.Lerp(from, to, first) - spots.weak) <= spots.weakRadius * WEAK_PATCH;
-        weaks.Insert(at, weak);
-        heads.Insert(at, !weak && onHead <= first + 0.0001);
+        // The cursor on its head makes it a headshot, on a boss's weak spot (on the side of it facing the round) a weak
+        // hit (the owner, 2026-10-18: "if you shoot while aiming at the head it deals a headshot")
+        var aimedWeak = spots.weakRadius > 0 && Math.Length(aim - spots.weak) <= spots.weakRadius * WEAK_PATCH
+                        && Math.Dot(spots.weakFace.xz, (from - spots.base).xz) >= 0;
+        var aimedHead = Math.Length(aim - z.head) <= spots.headRadius * AIM_HEAD;
+        weaks.Insert(at, aimedWeak);
+        heads.Insert(at, !aimedWeak && aimedHead);
     }
     var count = Math.Min(pierce, struck.count);
     var knock = kind == Trace.Phase ? 3.0 : kind == Trace.Pellet ? 1.5 : 1.0;
@@ -609,6 +599,12 @@ List<Body> Along(Herd herd, float3 from, float3 to)
 event(Hurt hurt) TakeHurt(mut Survivor survivor, Match match)
 {
     if (survivor.life != Life.Standing || match.phase == Phase.Over) return;
+    // Rolling: dodged
+    if (Guarded(survivor))
+    {
+        Send(Dodged { seat = survivor.seat, at = survivor.feet });
+        return;
+    }
     survivor.health -= hurt.damage * (1 - Armor(survivor));
     survivor.calm = 0;
     survivor.hurtFrom = YawTo(survivor.feet, hurt.from);
@@ -636,7 +632,7 @@ event(Hurt hurt) TakeHurt(mut Survivor survivor, Match match)
     survivor.actTime = 0;
     survivor.actLength = 0.4;
     survivor.leaping = false;
-    survivor.dash = 0;
+    survivor.roll = 0;
     survivor.velocity = float3(0);
     Send(Cue { sound = Sfx.Downed, at = survivor.feet });
 }
@@ -672,14 +668,6 @@ event Traced
     Trace kind;
 }
 
-// A dash going through the dead, for what's felt and heard: how many it struck this tick.
-event Barged
-{
-    int seat;
-    float3 at;
-    int count;
-}
-
 // Live Wire's arc, from one of the dead to the next.
 event Spell
 {
@@ -688,46 +676,37 @@ event Spell
     float3 to;
 }
 
-// A dash going through the dead: each it passes within a stride of is knocked down and flung aside, off the dash's line
-// (each once: the dash lasts a quarter second and its blow lands as it comes level); and a charge back each cooldown.
+// A roll's charges coming back: when the cooldown's come round with one spent, another's ready (one at a time, each
+// the whole cooldown; with none ready, the roll's cooldown is the wait for the next). With Kerosene, the dead it
+// passes catch fire (it doesn't knock them about: it's a dodge).
 [Stage(Tick.Hands, 2)]
-system DashThrough(mut Survivor survivor, Match match, Herd herd, Time time)
+system Rolling(mut Survivor survivor, Match match, Herd herd, Time time)
 {
     if (match.paused || !survivor.ready || survivor.life != Life.Standing) return;
-    // The second charge back: when the cooldown's come round with one spent, another's ready
-    // (one at a time, each the whole cooldown; with none ready, the skill's cooldown is the wait for the next)
-    var slot = 1;
-    var most = DashCharges(survivor);
-    if (survivor.dashes < most)
+    var most = RollCharges(survivor);
+    if (survivor.rolls < most)
     {
-        survivor.dashWait -= time.dt;
-        if (survivor.dashWait <= 0)
+        survivor.rollWait -= time.dt;
+        if (survivor.rollWait <= 0)
         {
-            survivor.dashes += 1;
-            survivor.dashWait = survivor.dashes < most ? Cooldown(survivor, Skill.Slide) : 0;
+            survivor.rolls += 1;
+            survivor.rollWait = survivor.rolls < most ? Cooldown(survivor, Skill.Roll) : 0;
         }
-        if (survivor.dashes == 0) survivor.cooldowns[slot] = survivor.dashWait;
+        if (survivor.rolls == 0) survivor.cooldowns[1] = survivor.rollWait;
     }
-    if (survivor.dash <= 0) return;
-    var side = float3(-survivor.dashWay.z, 0, survivor.dashWay.x);
     var kerosene = Has(survivor, Item.Kerosene);
-    var breacher = survivor.role == Role.Breacher;
-    var reach = (breacher ? BREACHER_DASH_REACH : 1.1) + 0.4 * kerosene;
-    mut var struck = 0;
-    var hit = DASH_HIT * (survivor.role == Role.Breacher ? BREACHER_DASH_HIT : 1.0) * Might(survivor);
+    if (survivor.roll <= 0 || kerosene == 0) return;
+    var reach = 0.9 + 0.4 * kerosene;
     foreach (var z in Near(herd, survivor.feet, reach + 0.5))
     {
-        // (the dead already knocked down aren't struck again: a dash's blow lands once on each)
-        if (!z.hittable || z.down || z.risen < 1) continue;
-        var off = z.at - survivor.feet;
-        var far = Math.Length(off.xz);
-        if (far > reach * z.size) continue;
-        // Behind the dash already: passed
-        if (Math.Dot(off, survivor.dashWay) < -0.3) continue;
-        var away = Math.Dot(off, side) >= 0 ? side : -side;
-        z.entity.Send(Wound { damage = hit, seat = survivor.seat, from = z.at - away - survivor.dashWay * 0.5, knock = (breacher ? 6 : 8) / z.size,
-                              down = breacher && z.size < 1.5, blow = Blow.Blunt, element = kerosene > 0 ? Element.Fire : Element.None });
-        struck += 1;
+        if (!z.hittable || z.risen < 1 || Math.Length((z.at - survivor.feet).xz) > reach * z.size) continue;
+        z.entity.Send(Wound { damage = 5 * Might(survivor), seat = survivor.seat, from = survivor.feet, blow = Blow.Blunt, element = Element.Fire });
     }
-    if (struck > 0) Send(Barged { seat = survivor.seat, at = survivor.feet, count = struck });
+}
+
+// A blow the roll's guard took instead of a survivor, for what's seen and heard.
+event Dodged
+{
+    int seat;
+    float3 at;
 }

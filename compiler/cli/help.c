@@ -9,7 +9,7 @@ enum {
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
     EDITORS = 1u << 12, OPEN = 1u << 13, UPGRADE = 1u << 14, VERSION = 1u << 15,
-    HELP = 1u << 16, CC = 1u << 17,
+    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18,
     COMPILE = RUN | BUILD | SCHEDULE | SHADERS,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
 };
@@ -79,6 +79,14 @@ static const command_help commands[] = {
     {"editors", "editors", "Install Tide support in supported code editors",
      "Installs Tide support in the VS Code, Cursor, VSCodium and Windsurf\n"
      "installations it finds. JetBrains support is on JetBrains Marketplace.", EDITORS},
+    {"ide", "ide <editor>", "Print setup for Emacs, Vim or Neovim",
+     "Prints configuration to copy into your editor's init file, using this\n"
+     "installation's bundled modes and tidels. Changes no files and starts\n"
+     "no editor. Emacs and Neovim configurations enable automatic LSP startup;\n"
+     "Vim highlighting works alone and LSP needs your chosen client.\n\n"
+     "Examples: tide ide emacs\n"
+     "          tide ide vim\n"
+     "          tide ide neovim", IDE},
     {"open", "open <file.tprefab> [options]", "Open the native scene editor",
      "Opens the desktop editor for an authored prefab or scene. The project\n"
      "is the nearest enclosing tide.packages folder, or the prefab's folder.\n"
@@ -114,6 +122,10 @@ typedef struct argument_help {
 
 // Shared entries are also used in each command's option list.
 static const argument_help arguments[] = {
+    {"editor", "<editor>", "emacs, vim or neovim",
+     "emacs needs Emacs 29.1+ with Eglot; neovim needs Neovim 0.11+.\n"
+     "vim needs Vim 8+ and a separate client for LSP features.\n"
+     "Add the printed configuration to your init file and restart the editor.", IDE},
     {"folder", "[folder]", "Game folder (default: current directory)",
      "Includes .tide and .tprefab files in this folder and its subfolders, plus\n"
      "C/C++ files, libraries and packages from tide.packages. Nested folders\n"

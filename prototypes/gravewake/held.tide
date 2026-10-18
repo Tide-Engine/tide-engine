@@ -1,18 +1,15 @@
 using Rooms;
 
-// What's held, and what's thrown and set down: this machine's survivor's arms
-// (fp.tide) and the gun in them, drawn over the world (firing, loading,
-// throwing, the boot coming up); every survivor's gun in their hand; grenades,
-// firebombs, mines and shells on their way; the Engineer's turrets; the gun
-// drones. The guns are art/guns, each with its grip at the origin (guns.json
-// says where its muzzle is).
+// What's held, and what's thrown and set down: every survivor's gun in their
+// hand; grenades, firebombs, mines and shells on their way; the Engineer's
+// turrets; the gun drones. The guns are art/guns, each with its grip at the
+// origin (guns.json says where its muzzle is).
 
 asset Map<string, Mesh<Corner>> gunMeshes = "art/guns/*.glb";
 asset Map<string, Mesh<Corner>> items = "art/items/*.glb";
 asset string gunsJson = "art/guns/guns.json";
 asset Mesh<Corner> potMesh = "art/weapons/fire_pot.glb";
 asset Mesh<Corner> ballMesh = "art/weapons/cannonball.glb";
-asset Mesh<Corner> legMesh = "art/weapons/kick_leg.glb";
 asset Mesh<Corner> tripodMesh = "art/guns/tripod.glb";
 
 // What guns.json says of a gun: its muzzle, in its own space.
@@ -40,16 +37,10 @@ local singleton Armory
     bool made;
 }
 
-// This machine's hands: how they lag behind a turn, and what they showed last.
+// Where each seat's gun's muzzle was drawn in the world last frame (DrawCarried), for the tracers.
 local singleton Grip
 {
-    float2 sway;
-    float lastYaw;
-    float lastPitch;
-    float sprint;
-    float low;                   // How far the arms hang below the kit's eye (fp.tide's LowFor), eased
-    float3 muzzle;               // Where the gun's muzzle was last frame, in the world, for the tracers
-    float3[4] muzzles;           // Where each seat's gun's muzzle was drawn in the world last frame (DrawCarried)
+    float3[4] muzzles;
 }
 
 Mesh<Corner> GunMesh(Weapon weapon)
@@ -155,109 +146,11 @@ float3 Point(float4x4 m, float3 local)
     return Math.Transform(m, local);
 }
 
-[Stage(Layers.Hands)]
-view DrawHands(Me me, mut Grip grip, mut Armory armory, Lens lens, Look look, Match match, Lobby lobby, query (Survivor survivor) survivors)
+// The guns' data, once.
+[Stage(Layers.Prepare, 2)]
+view ReadyArmory(mut Armory armory)
 {
     if (!armory.made) MakeArmory(armory);
-    if (!lens.made || me.overhead != 0 || me.outside || !lobby.playing) return;
-    mut var found = false;
-    mut var mine = Survivor { };
-    foreach (var row in survivors)
-    {
-        if (row.survivor.seat != me.seat) continue;
-        mine = row.survivor;
-        found = true;
-    }
-    if (!found || !mine.ready || mine.life == Life.Gone || match.phase == Phase.Over || mine.role == Role.None) return;
-    var dt = me.dt;
-    var weapon = mine.gun;
-    var data = DataOf(armory, weapon);
-    var grasp = mine.act == Act.Throw ? Grasp.Thrown : GraspOf(weapon);
-    var eye = float4x4.TRS(me.eye, me.turn, float3(1));
-
-    // How the hands lag a turn, and bob with each step
-    var turnYaw = TurnBetween(grip.lastYaw, me.yaw);
-    var turnPitch = me.pitch - grip.lastPitch;
-    grip.lastYaw = me.yaw;
-    grip.lastPitch = me.pitch;
-    grip.sway += (float2(-turnYaw, -turnPitch) * 0.9 - grip.sway) * Math.Min(1, dt * 9);
-    grip.sway = Math.Clamp(grip.sway, float2(-0.08), float2(0.08));
-    var speed = Math.Length(mine.velocity.xz);
-    var running = speed > WALK_SPEED * 1.1 && mine.grounded && mine.act == Act.Idle;
-    grip.sprint += ((running ? 1.0 : 0.0) - grip.sprint) * Math.Min(1, dt * 8);
-    grip.low += (LowFor(mine.act) - grip.low) * Math.Min(1, dt * 14);
-    var stepping = Math.Saturate(speed / 4) * (mine.grounded ? 1.0 : 0.3);
-    var bob = float3(Math.Sin(me.bob) * 0.014, -Math.Abs(Math.Cos(me.bob)) * 0.018, 0) * stepping * (1 + grip.sprint);
-    var breathe = float3(0, Math.Sin(me.clock * 1.6) * 0.004, 0);
-
-    // The arms taken down out of the way (a gun taken up, the boot), and a shot's kick
-    var t = mine.actTime / Math.Max(0.01, mine.actLength);
-    mut var lowered = 0.0;
-    mut var recoil = 0.0;
-    switch (mine.act)
-    {
-        case Act.Raise:
-            lowered = 1 - EaseOut(t);
-            break;
-        case Act.Kick:
-            lowered = Math.Saturate(Math.Min(t * 4, (1 - t) * 4)) * 0.4;
-            break;
-        case Act.Fire:
-            recoil = Math.Saturate(1 - mine.actTime / 0.09) * (weapon == Weapon.Shotgun ? 2.6 : weapon == Weapon.Pistol ? 1.2 : 0.8);
-            break;
-    }
-
-    // Where the arms hang: from the eye, swaying, bobbing, carried at a run, low when down
-    var wobble = bob + breathe + float3(grip.sway.x, grip.sway.y, 0) * 0.6 + float3(0, -me.dip * 0.5, 0);
-    var carried = float3(0.04, -0.07, -0.05) * grip.sprint + (mine.life == Life.Downed ? float3(0.02, -0.06, 0) : float3(0));
-    var sink = float3(0.05, -0.55, -0.1) * lowered + float3(0, 0.012, -0.06) * recoil;
-    var tilt = Degrees(55 * lowered + 14 * grip.sprint - 5 * recoil, -10 * grip.sprint, -8 * grip.sprint);
-    mut var place = Math.Mul(eye, float4x4.Translate(GraspShift(grasp) - FpEye(grip.low)));
-    var pose = FpPose(mine, grasp, t, me.clock);
-    // The gun laid along the crosshair's line: its bore turned onto the point 30 m ahead of the eye
-    if (grasp != Grasp.Thrown)
-    {
-        var held = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(), float3(1)));
-        var lineAt = Point(held, float3(0, V3(data.muzzle).y, 0));
-        var lineWay = Math.Normalize(Math.Rotate(held, float3(0, 0, 1)));
-        var ahead = Math.Mul(me.turn, float3(0, 0, 1));
-        var wantWay = Math.Normalize(me.eye + ahead * 30 - lineAt);
-        var lay = mine.act == Act.Reload ? 0.3 : 1.0;
-        var turn = Math.Slerp(quaternion.identity, FromTo(lineWay, wantWay), lay);
-        place = Math.Mul(Math.Mul(float4x4.TRS(lineAt, turn, float3(1)), float4x4.Translate(-lineAt)), place);
-    }
-    // ...then swayed, bobbed, carried at a run, lowered and kicked, about the eye
-    place = Math.Mul(Math.Mul(Math.Mul(eye, float4x4.TRS(wobble + carried + sink, tilt, float3(1))), Math.Inverse(eye)), place);
-    var onBone = Math.Mul(Unscaled(Math.Mul(place, pose.Model(fpArms.skeleton.bones.weapon))), float4x4.TRS(float3(0), Seat(), float3(1)));
-    grip.muzzle = Point(onBone, V3(data.muzzle));
-    lens.hands.Cull(Cull.None)
-    {
-        if (lowered < 0.98)
-        {
-            lens.hands.SkinnedMesh(fpArms, place, pose, Wobble, Steel, Finish { });
-            if (mine.act == Act.Throw)
-            {
-                // The grenade or the firebomb, gone from the hand once thrown
-                if (t > 0.06 && t < 0.38)
-                {
-                    if (mine.throwing == Skill.Frag) lens.hands.Mesh(ballMesh, Math.Mul(onBone, float4x4.TRS(float3(0), quaternion.identity, float3(0.32))), Wobble, Steel, Finish { tint = float3(0.45, 0.5, 0.35) });
-                    else lens.hands.Mesh(potMesh, onBone, Wobble, Steel, Finish { });
-                }
-            }
-            else
-            {
-                lens.hands.Mesh(GunMesh(weapon), onBone, Wobble, Steel, Finish { });
-            }
-        }
-        // The boot: it comes up from below and out at the dead, its sole first
-        if (mine.act == Act.Kick)
-        {
-            var out = t < 0.3 ? EaseOut(t / 0.3) : t < 0.42 ? 1.0 : 1 - Ease((t - 0.42) / 0.58);
-            var knee = Math.Lerp(float3(0.2, -1.1, 0.0), float3(0.1, -0.36, 0.26), out);
-            var leg = Math.Mul(eye, float4x4.TRS(knee, Degrees(Math.Lerp(-10, -104, out), Math.Lerp(-20, -18, out), Math.Lerp(14, -4, out)), float3(1.15)));
-            lens.hands.Mesh(legMesh, leg, Wobble, Steel, Finish { });
-        }
-    }
 }
 
 // ---- What's thrown, laid and called down ----
@@ -291,13 +184,13 @@ view DrawMissile(Missile missile, Lens lens, Look look)
     }
 }
 
-// ---- Every other survivor's gun, in their hand ----
+// ---- Every survivor's gun, in their hand ----
 
 // The gun where the pose put it (people.tide's PoseSurvivor: along the line to what it's aimed at, in both hands).
 [Stage(Layers.Scene, 3)]
-view DrawCarried(Survivor survivor, Lens lens, Me me, mut Grip grip, Armory armory)
+view DrawCarried(Survivor survivor, Lens lens, mut Grip grip, Armory armory)
 {
-    if (!lens.made || !armory.made || !survivor.ready || survivor.life == Life.Gone || (survivor.seat == me.seat && !me.outside) || survivor.role == Role.None) return;
+    if (!lens.made || !armory.made || !survivor.ready || survivor.life == Life.Gone || survivor.role == Role.None || survivor.roll > 0) return;
     lens.scene.Mesh(GunMesh(survivor.gun), survivor.held, Wobble, Steel, Finish { });
     if (survivor.seat >= 0 && survivor.seat < 4) grip.muzzles[survivor.seat] = Point(survivor.held, V3(DataOf(armory, survivor.gun).muzzle));
 }

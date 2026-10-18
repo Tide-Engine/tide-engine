@@ -1,0 +1,9 @@
+// expect: a query is borrowed in ordinary control flow
+component Body { int x; }
+singleton Cells { Grid2<int> values = Grid2(2, 2); }
+int Read(query (Body body) rows) { foreach (var row in rows) return row.body.x; return 0; }
+system Test(mut Cells cells, query (Body body) rows)
+{
+    parallel (var at in cells.values) cells.values[at] = Read(rows);
+}
+scene Main { }

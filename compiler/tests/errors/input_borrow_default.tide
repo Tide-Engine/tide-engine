@@ -1,0 +1,4 @@
+// expect: the input context, which the caller passes explicitly: it takes no default
+input Controls { bool jump; }
+void Read(Controls controls = default) { }
+scene Main { }

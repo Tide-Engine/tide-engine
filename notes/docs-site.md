@@ -1,5 +1,57 @@
 # The docs site
 
+Editor setup discovery (2026-10-18): moved the single Editors sidebar entry
+into Get started, between Install and Your first game, labelled Editor setup.
+The route stays /tools/editors for existing links. Its opening table links
+each editor's instructions, shows tide ide commands alongside package-manager
+choices and names the official public repositories. The introduction explains
+copying the generated configuration, choosing one install method, the terminal
+plugins' MIT licensing, separate tidels installation and current non-MELPA
+availability. The detailed configuration examples remain in their sections.
+Install now has an editor-setup section and accurately limits automatic
+extension installation to the VS Code family. Your first game and README
+also link directly to setup. No plugin, CLI, language or licensing behavior
+changed; no public plugin export needs updating.
+
+Validation: production npm run build passes with Node 24.21.0, including the
+existing link/anchor/sidebar checks and allowed unstaged-example 404s. One-off
+checks of generated HTML, navigation and search.json confirm the sidebar order,
+unique editor route, links to both terminal-editor sections/public repositories,
+visible MELPA status, introductory setup links and searchable chooser section.
+git diff --check passes. No persistent text-mirroring test, CI dispatch or
+deployment was added.
+
+Standalone editor distribution (2026-10-18): README and Editors
+now have package-manager examples for the public MIT tide-emacs and
+tide-vim repositories, including package-vc-install, vim-plug and lazy.nvim.
+They distinguish direct Git installation from the prepared, not-yet-submitted
+MELPA recipe and the archive's one-month/public-maintenance and human-review
+requirements. The owner approved editor-only MIT; both standalone repositories
+are published and their package-manager installs verified. Bundled-mode links
+also point to the public copies rather than private engine source paths.
+The merged production docs build passes on Node 24.21.0 with existing allowed
+unstaged-example 404s. No deployment or CI was dispatched. Implementation and
+validation are recorded in notes/editors.md.
+
+Installed terminal editor setup (2026-10-18): the CLI page has an ide section
+and command-table entry. The Emacs and Vim/Neovim sections now start with
+`tide ide <editor>`, explain where to copy its output, matching bundled server
+paths, automatic/manual connections and moving the installation. README and
+the tool READMEs point to the same helper; manual source-checkout instructions
+remain in the tool READMEs for contributors. No navigation or language-spec
+change is needed. The production docs build passes with Node 24.21.0 and the
+existing allowed unstaged-example 404s. CLI/editor/packaging validation is in
+cli-and-packages.md. No deployment or CI was dispatched.
+
+Terminal editor setup (2026-10-18): Editors and the repository README now link
+the new manually installed Emacs mode and Vim/Neovim runtime, with copyable
+configuration and tidels selection. The page distinguishes LSP client support,
+unadapted clickable lenses and IDE-only embedding from basic terminal editing.
+No release installation or tide editors behavior changes. The production docs
+build passes on Node 24.21.0 with the existing allowed unstaged-example 404s;
+editor-host checks and remaining coverage are in notes/editors.md. No deployment
+or CI was requested.
+
 Fly host loss (2026-10-17): the site was down. Its one machine (82d1990b071698,
 release 291) sat on a fra host Fly reported unreachable after its 05:15 UTC
 host-restart incident ("a small number of hosts remain degraded or offline").

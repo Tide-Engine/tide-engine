@@ -1,10 +1,34 @@
 ---
-description: "Set up Tide in VS Code or JetBrains IDEs with language server support for completion, errors, quick fixes, navigation and refactoring."
+description: "Set up Tide in VS Code, JetBrains, Emacs, Vim or Neovim with highlighting and language server support."
 ---
 
 # Editors
 
-Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](../packages/using-and-writing.md). Across all of them, editors get:
+## Choose your editor
+
+[Install Tide](../guide/install.md) first, then choose your setup:
+
+| Editor | Setup with Tide | Install through your editor's package manager |
+|---|---|---|
+| [VS Code, Cursor, VSCodium and Windsurf](#vs-code-cursor-vscodium-and-windsurf) | `tide editors` | Installed by Tide |
+| [JetBrains IDEs](#jetbrains-ides) | Install Tide from **Settings > Plugins > Marketplace** | JetBrains Marketplace |
+| [Emacs 29.1+](#emacs) | `tide ide emacs` | [tide-emacs](https://github.com/Tide-Engine/tide-emacs) with built-in `package-vc` |
+| [Vim 8+](#vim-and-neovim) | `tide ide vim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with vim-plug |
+| [Neovim 0.11+](#vim-and-neovim) | `tide ide neovim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with lazy.nvim |
+
+For Emacs, Vim and Neovim, the `tide ide` commands print configuration to copy
+into your init file; the modes and matching language server already come with
+Tide. If you prefer your existing package manager, follow the install examples
+in [Emacs](#emacs) or [Vim and Neovim](#vim-and-neovim) below instead.
+Choose one installation method per editor.
+
+The standalone Emacs and Vim/Neovim plugins are MIT-licensed. **Emacs users:
+the mode is available directly from GitHub now, but is not listed on MELPA yet.**
+The plugins need Tide installed separately for its `tidels` language server.
+
+## Language server features
+
+Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](../packages/using-and-writing.md). The server provides these features across the game; which appear depends on your editor's language server client:
 
 - Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
 - Enum assignments prioritize and preselect the expected enum type: after `zombie.state =`, `ZombieState` comes first, followed by its qualified members. With [enum shorthand](../language/basics.md#enums-and-switch), `zombie.state = .` offers just that enum's members. A leading dot also completes members in typed declarations, returns, comparisons, enum switch cases and arguments whose parameter type is unambiguous.
@@ -149,7 +173,7 @@ new-file creation remain future work.
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
-Both editor integrations recognize `.tprefab` files as Tide. They use the same
+VS Code and JetBrains recognize `.tprefab` files as Tide. They use the same
 game/package context as scripts, report invalid authored components and references,
 and include prefab files when renaming components, fields and named prefabs.
 Authored entity names and paths currently need manual text edits. See
@@ -237,6 +261,136 @@ Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl
 - **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
 They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
+
+## Emacs
+
+### Install with a package manager
+
+The official [tide-emacs repository](https://github.com/Tide-Engine/tide-emacs)
+can be installed directly with Emacs 29.1+'s package manager. Evaluate this once:
+
+```elisp
+(require 'package-vc)
+(package-vc-install
+ '(tide-lang-mode :url "https://github.com/Tide-Engine/tide-emacs"))
+```
+
+Add this to your init file:
+
+```elisp
+(require 'tide-lang-mode)
+(add-hook 'tide-lang-mode-hook #'eglot-ensure)
+```
+
+Install Tide separately and put `tidels` on Emacs's `exec-path`. The package
+manager updates the mode; `tide upgrade` updates the compiler and server.
+Use **M-x package-vc-upgrade** to update the mode. A MELPA recipe is prepared,
+but the package is not listed there yet: its submission rules require a month
+of public maintenance and human review.
+
+### Use Tide's bundled mode
+
+Tide bundles [tide-lang-mode](https://github.com/Tide-Engine/tide-emacs)
+for Emacs 29.1 or later. Run:
+
+```sh
+tide ide emacs
+```
+
+Copy the result into your Emacs init file (usually `~/.emacs.d/init.el`), then
+restart Emacs. It loads the bundled mode, selects this installation's `tidels`
+by its full path and connects through Eglot when you open a Tide file. Emacs
+does not need `tidels` on its `exec-path` with this configuration.
+
+It detects `.tide` and `.tprefab`, with basic highlighting, four-space C-style
+indentation and comment editing. The name is separate from the TypeScript
+package called `tide`.
+
+To connect manually instead, omit the generated hook below and use **M-x eglot**
+in a Tide buffer. To select another server, change `tide-lang-server-command`:
+
+```elisp
+(setq tide-lang-server-command '("/path/to/tide/bin/tidels"))
+;; The helper includes this for automatic connection:
+(add-hook 'tide-lang-mode-hook #'eglot-ensure)
+```
+
+Use **M-.** for definitions, **M-?** for references, **C-M-i** for completion,
+**M-x eglot-rename** and **M-x eglot-format-buffer**. See
+[Eglot's setup guide](https://www.gnu.org/software/emacs/manual/html_node/eglot/Setting-Up-LSP-Servers.html)
+for client configuration.
+
+## Vim and Neovim
+
+### Install with a plugin manager
+
+The official [tide-vim repository](https://github.com/Tide-Engine/tide-vim)
+works directly with Git-based plugin managers. In an existing vim-plug setup,
+add this between `plug#begin()` and `plug#end()`, then run **:PlugInstall**:
+
+```vim
+Plug 'Tide-Engine/tide-vim'
+```
+
+For lazy.nvim on Neovim 0.11+, add this plugin specification:
+
+```lua
+{
+  'Tide-Engine/tide-vim',
+  lazy = false,
+  config = function()
+    vim.lsp.enable('tidels')
+  end,
+}
+```
+
+Install Tide separately and put `tidels` on `PATH`. Use your plugin manager
+to update the runtime and `tide upgrade` to update the compiler and server.
+Plain Vim still needs a separately configured LSP client.
+
+### Use Tide's bundled runtime
+
+Tide bundles the [Tide Vim runtime](https://github.com/Tide-Engine/tide-vim)
+for Vim 8+ and Neovim. Print the configuration for your editor:
+
+```sh
+tide ide vim
+tide ide neovim
+```
+
+Copy the Vim output into your vimrc (`~/.vimrc`, or `~/_vimrc` on Windows),
+or the Neovim output into `init.lua` (usually `~/.config/nvim/init.lua`, or
+`%LOCALAPPDATA%/nvim/init.lua` on Windows). Custom configurations can use the
+same output in their own init file. Restart the editor after adding it.
+
+Both `.tide` and `.tprefab` get highlighting, four-space C-style indentation
+and comment settings. Interpolated strings have string highlighting throughout.
+
+The Neovim configuration requires 0.11 or later and enables the supplied
+language server configuration automatically, using this installation's full
+`tidels` path. No `nvim-lspconfig` plugin or server lookup on `PATH` is needed.
+
+To select another executable, call
+`vim.lsp.config('tidels', { cmd = { '/path/to/tide/bin/tidels' } })` before
+enabling it. The configuration selects the nearest `tide.packages`, then a
+CMake/Git root, then the source file's folder. Use **K** for hover,
+`:lua vim.lsp.buf.definition()`, `:lua vim.lsp.buf.rename()` and
+`:lua vim.lsp.buf.format()`. Neovim's **:help lsp** describes completion and
+other client features; see its [LSP guide](https://neovim.io/doc/user/lsp/).
+
+Plain Vim needs a language server client of your choice. Register filetype
+`tide` with the server command printed in the snippet's comments, over stdio.
+The runtime does not install a client.
+
+These [setup helpers](cli.md#ide) print configuration; they do not change your
+init files. If you move Tide, generate the configuration again and replace the
+old paths. `tide editors` installs the VS Code extension. Enable automatic server
+startup only for projects you trust.
+Choose either the package-manager copy or Tide's bundled copy of each mode;
+loading both can make it unclear which version your editor is using.
+Use `tide run` and `tide open` in a terminal for games and prefab editing.
+The terminal integrations do not adapt the VS Code-specific clickable code-lens
+commands or embed the native scene editor.
 
 ## Other editors
 
