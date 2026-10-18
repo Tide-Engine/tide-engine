@@ -165,9 +165,19 @@ d-pad page with Undo, Restart, Menu and OK, and forwards each press
 over server-sent events (`/pad-events`). A script the server adds to the
 page dispatches them as keyboard events, which `tide.js` reads by
 `event.code` like any key. The published page and the game are unchanged.
-Checked: the page and its listener are served, and a press reaches a
-listening window's stream as the right key. Not checked: a real phone
-driving a match, and menu navigation by its Menu/OK.
+`/tv` is one page of two same-origin frames: the left opens `?pad=1&host`;
+once its `Tide.room` has a code the right opens `?pad=2&quiet&join=<code>`.
+`?quiet` (a script the server adds before the game's) keeps that view's
+AudioContext suspended, so only one side sounds. Checked in a muted
+headless Chrome at 1920x1080: both frames are cross-origin isolated, the
+right joined the left's room by itself, and the right's audio was the
+replaced class. Also checked: the pad page and the game's listener are
+served, and a press reaches a listening view's stream as the right key.
+Not checked: a real phone driving a match, and menu navigation by its
+Menu/OK. The owner suggested this for every game; the agent proposed
+phones paired through the relay as ordinary gamepads in `Devices`, and
+several local players on one machine as a separate engine question, both
+awaiting the owner.
 
 ## The hall, lifts and challenges (2026-10-18)
 

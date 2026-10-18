@@ -232,13 +232,13 @@ started with `--lan`.
 
 To play on one TV with phones as controllers, run
 `node prototypes/inside-out/serve.mjs --lan` on the computer connected to the
-TV. Open its `?pad=1` and `?pad=2` addresses in two windows side by side,
-host in the first and join from the second. Each phone, on the same
-network, opens the `/pad?player=1` or `/pad?player=2` address the server
-prints: a d-pad, Undo, Restart, Menu and OK, which reach that player's
-window as its keys. The phones only send presses; both games run on the
-computer. Windows may ask to let Node through its firewall on private
-networks. Mute one window's sound in Settings.
+TV and open <http://127.0.0.1:8790/tv> there: both players side by side,
+the left hosting and the right joining by itself, with sound from the left
+only. Each phone, on the same network, opens the `/pad` address the TV
+shows and picks Amber or Teal: a d-pad, Undo, Restart, Menu and OK, which
+reach that player's view as its keys. The phones only send presses; both
+games run on the computer. Windows may ask to let Node through its
+firewall on private networks.
 
 The prototype uses Tide and the existing Rooms package. Its deterministic
 match rules are in `game.tide`; the puzzles, drawn as text maps (their
