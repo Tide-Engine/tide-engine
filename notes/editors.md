@@ -1,5 +1,125 @@
 # The language server and the editors
 
+## Standalone editor publication (2026-10-18)
+
+Published public MIT repositories https://github.com/Tide-Engine/tide-emacs
+and https://github.com/Tide-Engine/tide-vim, both with main and v0.1.0.
+The engine remains private with no root license. Both exports were audited
+through every historical tree: only files from their respective tools/
+directories are reachable. Their trees match the canonical engine directories.
+The Emacs main is 31f1cb13d4d4d0a04ab1284a36d27b5760310147; its initial
+v0.1.0 is aba90c6ee3bcacc2149702558417cfbd7008b332. The later commit only
+corrects the test's compatibility call. Vim main/v0.1.0 is
+015c1b02dd889f52cde4aa341c77b5abe7f3c565. Canonical source changes are
+4c7a69ed, d931ef96 and dcf9e2be on top of the original two editor commits.
+
+Anonymous fresh Git clones work. Emacs 30.2 package-vc-install fetches the
+documented GitHub URL into an isolated profile; a fresh process proves prefab
+autoload detection and all six ERT cases, including real local-server hover
+and clean shutdown. The library and test byte-compile warning-free. Emacs's
+own generated package-vc *-pkg.el emits a missing lexical-binding warning;
+this generated file is outside the plugin and does not prevent installation.
+Native Vim 9.2.1202 vim-plug installation passes detection, syntax and settings.
+Neovim 0.11.5 lazy.nvim installation passes those checks plus automatic tidels
+attachment, hover and shutdown using the documented specification. Both editors'
+standalone runtime checks pass from a fresh public clone too. All profiles,
+package directories and lockfiles are isolated under build/.
+
+MELPA package-build 5.0.3 fetches the public Emacs repository using the prepared
+recipe, builds tide-lang-mode-0.1.0.tar and installs it with working prefab
+autoloads and the MIT text preserved. This is not MELPA acceptance. The public
+repository was created at 2026-10-18T18:11:24Z; the one-month prerequisite
+cannot be met before November 18, and continuing public maintenance and the
+owner's human review of assisted code remain necessary before submission.
+No upstream submission or future task was created. The recipe and checklist
+are public under melpa/ in tide-emacs. Vim/Neovim Git managers need no central
+registry submission.
+
+The freshly rebuilt tidels suite passes 237/237 after merging origin/dev's
+borrowed-input helper work. The merged production docs build passes on Node
+24.21.0 with existing allowed unstaged-example 404s. Docs link the public
+repositories rather than the private source paths. No full engine native/web
+suite is required for these tools/docs changes; no other OS, deployment or
+CI dispatch was run. Emacs 29.1 and Vim 8 remain untested minimum versions.
+
+## Package-vc test compilation correction (2026-10-18)
+
+The public Git installation compiles the test directory too. Its real-server
+test now selects eglot-path-to-uri when available, retaining the former helper
+for the Emacs 29 bundled Eglot without emitting a deprecation warning on Emacs
+30. Both the test and library byte-compile with warnings treated as errors;
+all six ERT checks pass against the freshly rebuilt local tidels. No mode or
+language-server behavior changed. Public download verification is recorded above.
+
+## Editor-only MIT licensing (2026-10-18)
+
+The owner explicitly approved MIT for both standalone editor plugins.
+tools/tide-emacs/LICENSE and tools/tide-vim/LICENSE cover those directories
+only; there is no engine-wide license change. The Emacs library includes the
+MIT boilerplate so an ELPA archive built from just the .el file retains its
+license. Its test carries the same SPDX identifier. The package passes current
+package-lint, checkdoc and warning-as-error byte compilation after the headers
+are added. This resolves the license prerequisite recorded in preparation below.
+Public repository creation and remote-install validation are complete above;
+MELPA's public-maintenance/human-review requirements still apply.
+
+## Standalone package distribution preparation (2026-10-18)
+
+Prepared tools/tide-emacs and tools/tide-vim as standalone repository roots for
+Tide-Engine/tide-emacs and Tide-Engine/tide-vim. They remain canonical in the
+engine source tree; public issues/patches can be applied there before another
+export. The initial license/publication prerequisites are resolved above; the
+engine remains private and has no top-level license. Do not add a license to
+the engine or claim MELPA registration is complete.
+
+Emacs has Version 0.1.0, maintainer metadata, AI-assistance attribution and a
+MELPA recipe at tools/tide-emacs/melpa/tide-lang-mode. Package lint's warning
+about with-eval-after-load in packages is resolved by requiring bundled Eglot
+when the mode loads, then registering directly. No server starts just from
+loading it. The built-in minimum remains Emacs 29.1. Tests/docs now work from
+the standalone root too. Vim tests find their runtime from their own file path
+rather than assuming the engine's tools/ layout. No CLI/compiler/runtime or
+language contract changed.
+
+Public exports use only these two directories. For later updates, commit and
+merge the source first, fetch, then inspect each split's tree before publishing:
+
+```sh
+git fetch origin
+git subtree split --prefix=tools/tide-emacs -b publish/tide-emacs origin/dev
+git subtree split --prefix=tools/tide-vim -b publish/tide-vim origin/dev
+git ls-tree -r --name-only publish/tide-emacs
+git ls-tree -r --name-only publish/tide-vim
+```
+
+The initial exports contain the original two editor-support commits plus
+distribution and license commits; Emacs also has the test correction above.
+Do not publish an engine branch as either standalone repository. Push each
+audited publish branch to main in its matching public repository. Public
+changes need porting to the engine
+source before exporting, rather than diverging the two maintained copies.
+
+README and public Editors docs include package-vc-install, vim-plug and
+lazy.nvim examples, with a separate Tide/tidels installation and a choice of
+one installed copy of each mode. No shared grammar or mode semantics changed.
+MELPA's current pull-request checklist requires at least one month of public
+maintenance and human review of AI-assisted code. Prepare the recipe now, but
+do not submit prematurely or mark either requirement complete. Keep its actual
+registration status separate from direct Git installation availability.
+
+Local validation on Windows: Emacs 30.2 passes package-lint from current
+upstream, checkdoc, warning-as-error byte-compilation and all six ERT tests
+against this checkout's freshly built tidels (Clang 23.1.2, platform off).
+Upstream MELPA package-build 5.0.3 builds the recipe from a local candidate
+with fetching disabled, produces tide-lang-mode-0.1.0.tar, and package-install-file
+installs it in an isolated profile with working prefab autoload detection.
+This is local recipe validation, not proof of a public GitHub fetch. Vim
+9.2.1202 and Neovim 0.11.5 pass engine-root and standalone-root runtime checks;
+Neovim also passes the real server hover/shutdown case. The production docs
+build passes with Node 24.21.0 and the existing allowed unstaged-example 404s.
+No engine suite, other host OS, CI dispatch or deployment ran for this
+tools/docs-only preparation. External publication is recorded above.
+
 ## Installed terminal editor setup (2026-10-18)
 
 The modes now ship as editors/tide-emacs and editors/tide-vim, excluding tests.
