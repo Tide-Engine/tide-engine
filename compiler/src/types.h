@@ -54,6 +54,9 @@ bool type_is_numeric(type t);
 // byte, int or long.
 bool type_is_integer(type t);
 
+// An immutable asset glob's resource references, borrowed by synchronous helpers.
+bool type_is_asset_collection(type t);
+
 // 2, 3 or 4 for float2x2, float3x3, float4x4; 0 otherwise.
 int matrix_dim(type t);
 

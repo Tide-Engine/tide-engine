@@ -1,0 +1,101 @@
+asset List<Clip> clips = "assets/hits/*.wav";
+asset Map<string, Clip> sounds = "assets/hits/*.wav";
+asset List<Texture> frames = "assets/run/*.png";
+asset Map<string, Texture> images = "assets/run/*.png";
+asset List<Mesh<Vertex3>> models = "assets/meshes/*.glb";
+asset Map<string, Mesh<Vertex3>> meshes = "assets/meshes/*.glb";
+
+scene Main { }
+singleton Geometry { int count; int vertices; }
+local singleton Seen
+{
+    int clips;
+    int frames;
+    int entries;
+    int vertices;
+    int misses;
+    int order;
+    int before;
+    int inside;
+    int action;
+    bool found;
+    Clip kept;
+    Texture image;
+    List<int> values;
+}
+
+extern int ScratchMark();
+
+int Count(List<Clip> values) { return values.count; }
+int Count(List<Texture> values) { return values.count; }
+int Count(List<Mesh<Vertex3>> values) { return values.count; }
+
+Clip Pick(List<Clip> values, int index, int depth)
+{
+    return depth > 0 ? Pick(values, index, depth - 1) : values[index];
+}
+
+struct Picker
+{
+    int index;
+    Clip From(List<Clip> values) { return Pick(values, index, 2); }
+}
+
+int Vertices(List<Mesh<Vertex3>> values)
+{
+    mut int sum = 0;
+    foreach (var model in values) sum += model.vertices.count;
+    return sum;
+}
+
+system GeometryCount(mut Geometry geometry)
+{
+    geometry.count = Count(models);
+    geometry.vertices = Vertices(models);
+}
+
+void Inspect(Map<string, Clip> audio, Map<string, Texture> pictures, Map<string, Mesh<Vertex3>> geometry, mut Seen seen)
+{
+    seen.entries = audio.count + pictures.count + geometry.count;
+    if (audio.Has("assets/hits/a.wav") && audio.TryGet("assets/hits/b.wav", out var sound))
+    {
+        seen.found = true;
+        seen.kept = sound;
+    }
+    if (!pictures.TryGet("missing", out _)) seen.misses++;
+    seen.image = pictures["assets/run/1.png"];
+    foreach (var entry in audio) if (entry.key != "") seen.clips++;
+    foreach (var entry in pictures) seen.frames += entry.value.size.x > 0 ? 1 : 0;
+    foreach (var entry in geometry) seen.vertices += entry.value.vertices.count;
+}
+
+int Bump(mut Seen seen) { seen.order++; return seen.order; }
+
+int Observe(List<Clip> values, mut List<int> ordinary, int flag)
+{
+    var mark = ScratchMark();
+    ordinary.Add(flag + values.count);
+    return mark;
+}
+
+void With(List<Clip> values, Action body) { if (values.count > 0) body(); }
+
+void Sort(List<Clip> sounds, mut List<int> values)
+{
+    values.Sort(a, b) { return Count(sounds) > 0 ? a < b : a > b; }
+}
+
+view Exercise(mut Seen seen)
+{
+    seen.clips = Count(clips);
+    seen.frames = Count(frames);
+    seen.vertices = 0;
+    Inspect(geometry: meshes, pictures: images, audio: sounds, seen: seen);
+    seen.kept = Picker { index = 1 }.From(clips);
+    seen.before = ScratchMark();
+    seen.inside = Observe(clips, seen.values, Bump(seen));
+    With(clips) { seen.action = ScratchMark() == seen.inside ? Count(clips) : -1; }
+    Sort(clips, seen.values);
+    Audio.Play(Pick(clips, 0, 1));
+    Audio.Play(seen.kept);
+}

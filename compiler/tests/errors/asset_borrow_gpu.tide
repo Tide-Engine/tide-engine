@@ -1,0 +1,6 @@
+// expect: 'Indirect' borrows asset collections, which synchronous CPU helpers read
+asset List<Texture> images = "../e2e/assets/run/*.png";
+int Count(List<Texture> values) { return values.count; }
+int Indirect() { return Count(images); }
+frag Shade(Vertex vertex, out Color color) { color = Color(Indirect(), vertex.uv.x, 0, 1); }
+scene Main { }

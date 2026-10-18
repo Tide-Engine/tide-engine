@@ -3037,7 +3037,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
             gen_borrow_arg(g, o, e->args.items[i]);
         } else if (m->params.items[i].type.kind == TY_INPUT) {
             sb_printf(o, "%s, %s", local_cname(g, e->args.items[i]->name), prev_input_name(g, e->args.items[i]->name));
-        } else if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)) {
+        } else if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)
+                   && !type_is_asset_collection(m->params.items[i].type)) {
             gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
         } else if (m->params.items[i].mode == PARAM_MUT && m->params.items[i].type.kind == TY_STRING) {
             gen_text_ref(g, o, e->args.items[i]);
@@ -5016,8 +5017,8 @@ static void call_operands(expr *e, operand_list *ops)
             const param *p = &m->params.items[i];
             if (p->mode == PARAM_MUT) {
                 role = PLACE;
-            } else if (p->type.kind == TY_INPUT) {
-                role = USED; // The call borrows its tick context; another argument doesn't copy the input.
+            } else if (p->type.kind == TY_INPUT || type_is_asset_collection(p->type)) {
+                role = USED; // Borrowed context or immutable asset handles: no owned copy beside another argument.
             } else if (m->is_extern && p->mode == PARAM_IN && arg->type.kind == p->type.kind && arg->type.decl == p->type.decl
                        && addressable(arg)) {
                 role = USED; // C reads it where it is (gen_extern_call)
@@ -5984,7 +5985,8 @@ static void gen_inline(gen *g, const expr *e)
             sb_printf(o, "%s = ", const_decl(p->type, names[i]));
             // The Action can change the caller's source, even without a mut
             // parameter, so a read-only list-bearing value needs its own copy.
-            gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
+            if (type_is_asset_collection(p->type)) gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+            else gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
             sb_put(o, ";\n");
         }
         line(g, o, "(void)%s;", names[i]);
@@ -15927,11 +15929,16 @@ static int lone_archetype(const gen *g, const decl *scene)
 static bool write_file(const char *path, const sb *text);
 
 // What kind of entry an asset's type is in the pack.
-// Whether any asset is a Clip: then generated C names tide_clip_ref
+// Clip assets and borrowed collection signatures name tide_clip_ref, even
+// when a reusable helper is declared in a game with no assets of its own.
 static bool program_has_clips(const program *prog)
 {
     for (int i = 0; i < prog->assets.count; i++)
         if (prog->assets.items[i]->asset_kind == ASSET_CLIP) return true;
+    for (int i = 0; i < prog->lists.count; i++)
+        if (list_elem(prog->lists.items[i]).kind == TY_CLIP) return true;
+    for (int i = 0; i < prog->maps.count; i++)
+        if (!prog->maps.items[i]->is_set && prog->maps.items[i]->fields.items[1].type.kind == TY_CLIP) return true;
     return false;
 }
 

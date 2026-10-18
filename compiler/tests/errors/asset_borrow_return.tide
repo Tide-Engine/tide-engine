@@ -1,0 +1,3 @@
+// expect: functions can't return a borrowed asset collection
+List<Clip> Keep(List<Clip> values) { return values; }
+scene Main { }
