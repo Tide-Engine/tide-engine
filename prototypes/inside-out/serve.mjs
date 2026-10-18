@@ -2,9 +2,9 @@
 // web-release first, then run: node prototypes/inside-out/serve.mjs [httpPort] [relayPort] [--lan]
 //
 // --lan also serves this machine's network, for phones as controllers: one
-// computer shows both players' windows on a TV, opened with ?pad=1 and
-// ?pad=2, and each phone opens /pad?player=1 or 2. A phone's presses reach
-// its window as key presses, through this server; the game is unchanged.
+// computer shows /tv on a TV, both players side by side, and each phone
+// opens /pad?player=1 or 2. A phone's presses reach its player's view as
+// key presses, through this server; the game is unchanged.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -28,7 +28,48 @@ const listeners = { 1: new Set(), 2: new Set() };
 const KEYS = { up: ['KeyW', 'w'], down: ['KeyS', 's'], left: ['KeyA', 'a'], right: ['KeyD', 'd'],
     undo: ['KeyZ', 'z'], restart: ['KeyR', 'r'], menu: ['Escape', 'Escape'], ok: ['Enter', 'Enter'] };
 
-// In a window opened with ?pad=N: the phone's presses as the keyboard's.
+// Before the game starts, a view opened with ?quiet never lets its audio
+// start: on the TV, one side plays the sound.
+const quietScript = `<script>
+if (new URLSearchParams(location.search).has('quiet') && window.AudioContext) {
+  const Base = window.AudioContext;
+  window.AudioContext = class extends Base {
+    constructor(...options) { super(...options); super.suspend(); }
+    resume() { return Promise.resolve(); }
+  };
+}
+</script>`;
+
+// Both players side by side on one screen: the left view hosts, and the
+// right joins its room as soon as it has a code.
+const tvPage = addresses => `<!doctype html>
+<html><head><meta charset="utf-8"><title>Inside Out on the TV</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 600 18px system-ui, sans-serif; color: #efe5cc; }
+  iframe { position: absolute; top: 0; width: 50%; height: 100%; border: 0; }
+  #left { left: 0; } #right { right: 0; border-left: 2px solid #3a2e22; box-sizing: border-box; }
+  #help { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: rgba(20, 15, 11, .92);
+    border: 1px solid #5c4a37; border-radius: 12px; padding: 14px 20px; text-align: center; line-height: 1.6; }
+  #help b { color: #c39752; }
+</style></head>
+<body>
+<iframe id="left" allow="autoplay; fullscreen" src="/prototypes/inside-out/?pad=1&host"></iframe>
+<iframe id="right" allow="autoplay; fullscreen"></iframe>
+<div id="help">Phones: <b>${addresses.map(address => `http://${address}:${httpPort}/pad`).join('</b> or <b>')}</b>
+  &mdash; pick Amber or Teal. Press F11 for full screen. Click to hide.</div>
+<script>
+  const left = document.getElementById('left'), right = document.getElementById('right');
+  document.getElementById('help').onclick = event => event.currentTarget.remove();
+  const wait = setInterval(() => {
+    const room = left.contentWindow && left.contentWindow.Tide && left.contentWindow.Tide.room;
+    if (!room) return;
+    clearInterval(wait);
+    right.src = '/prototypes/inside-out/?pad=2&quiet&join=' + room;
+  }, 300);
+</script>
+</body></html>`;
+
+// In a view opened with ?pad=N: the phone's presses as the keyboard's.
 const padListener = `<script>
 (() => {
   const player = new URLSearchParams(location.search).get('pad');
@@ -59,7 +100,7 @@ const padPage = `<!doctype html>
   .pad button { font-size: 34px; }
 </style></head>
 <body>
-<header>Inside Out: <b id="who"></b></header>
+<header>Inside Out: <b id="who"></b> <a id="swap" style="color:#8a7a62;margin-left:8px"></a></header>
 <div class="pad">
   <span></span><button data-key="up">▲</button><span></span>
   <button data-key="left">◀</button><span></span><button data-key="right">▶</button>
@@ -72,6 +113,9 @@ const padPage = `<!doctype html>
 <script>
   const player = new URLSearchParams(location.search).get('player') === '2' ? '2' : '1';
   document.getElementById('who').textContent = player === '1' ? 'Amber, player 1' : 'Teal, player 2';
+  const swap = document.getElementById('swap');
+  swap.textContent = player === '1' ? 'be Teal' : 'be Amber';
+  swap.href = '/pad?player=' + (player === '1' ? 2 : 1);
   document.documentElement.style.setProperty('--seat', player === '1' ? '#d97a45' : '#38877a');
   const send = (key, down) => fetch('/pad-press?player=' + player + '&key=' + key + '&down=' + (down ? 1 : 0),
     { method: 'POST', keepalive: true }).catch(() => {});
@@ -97,6 +141,9 @@ const server = createServer(async (request, response) => {
     };
     if (pathname === '/favicon.ico') return response.writeHead(204, headers).end();
     const player = url.searchParams.get('player') === '2' ? 2 : 1;
+    if (pathname === '/tv') {
+        return response.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8' }).end(tvPage(lanAddresses()));
+    }
     if (pathname === '/pad' || pathname === '/prototypes/inside-out/pad') {
         return response.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8' }).end(padPage);
     }
@@ -120,7 +167,8 @@ const server = createServer(async (request, response) => {
     }
     try {
         const html = (await readFile(page, 'utf8')).replace('var Tide = {',
-            `var Tide = { relay: 'ws://127.0.0.1:${relayPort}',`).replace('</body>', `${padListener}</body>`);
+            `var Tide = { relay: 'ws://127.0.0.1:${relayPort}',`).replace('<body>', `<body>${quietScript}`)
+            .replace('</body>', `${padListener}</body>`);
         response.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8' }).end(html);
     } catch (error) {
         console.error(error.message);
@@ -131,7 +179,15 @@ for (const listener of [relay, server]) listener.on('error', error => {
     console.error(error.message);
     process.exit(1);
 });
-// The game windows stay on this machine, so the relay does too.
+// This machine's addresses a phone on the same home network can reach:
+// 192.168 and 10 ones where there are any, ahead of VPN and VM adapters.
+function lanAddresses() {
+    const all = Object.values(os.networkInterfaces()).flat()
+        .filter(entry => entry && entry.family === 'IPv4' && !entry.internal).map(entry => entry.address);
+    const home = all.filter(address => address.startsWith('192.168.') || address.startsWith('10.'));
+    return home.length ? home : all;
+}
+// The game views stay on this machine, so the relay does too.
 relay.listen(relayPort, '127.0.0.1');
 server.listen(httpPort, lan ? '0.0.0.0' : '127.0.0.1', () => {
     const local = `http://127.0.0.1:${httpPort}/prototypes/inside-out/`;
@@ -139,9 +195,6 @@ server.listen(httpPort, lan ? '0.0.0.0' : '127.0.0.1', () => {
     console.log('Open two tabs. Host a room in one, then join its code in the other.');
     console.log(`Local relay: ws://127.0.0.1:${relayPort}. Press Ctrl+C to stop.`);
     if (!lan) return;
-    const addresses = Object.values(os.networkInterfaces()).flat()
-        .filter(entry => entry && entry.family === 'IPv4' && !entry.internal).map(entry => entry.address);
-    console.log(`\nPhones as controllers: on this computer open ${local}?pad=1 and ${local}?pad=2 side by side,`);
-    for (const address of addresses)
-        console.log(`  and on the phones http://${address}:${httpPort}/pad?player=1 and http://${address}:${httpPort}/pad?player=2`);
+    console.log(`\nOn the TV: http://127.0.0.1:${httpPort}/tv, both players side by side.`);
+    for (const address of lanAddresses()) console.log(`Phones: http://${address}:${httpPort}/pad`);
 });
