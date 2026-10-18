@@ -83,7 +83,12 @@
             (should server)
             (let* ((reply (jsonrpc-request
                            server :textDocument/hover
-                           (list :textDocument (list :uri (eglot--path-to-uri file))
+                           (list :textDocument
+                                 (list :uri
+                                       (funcall (if (fboundp 'eglot-path-to-uri)
+                                                    'eglot-path-to-uri
+                                                  'eglot--path-to-uri)
+                                                file))
                                  :position (list :line 0 :character 12))))
                    (contents (plist-get reply :contents)))
               (should (string-match-p "Health" (plist-get contents :value))))))

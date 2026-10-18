@@ -1,5 +1,14 @@
 # The language server and the editors
 
+## Package-vc test compilation correction (2026-10-18)
+
+The public Git installation compiles the test directory too. Its real-server
+test now selects eglot-path-to-uri when available, retaining the former helper
+for the Emacs 29 bundled Eglot without emitting a deprecation warning on Emacs
+30. Both the test and library byte-compile with warnings treated as errors;
+all six ERT checks pass against the freshly rebuilt local tidels. No mode or
+language-server behavior changed. Public download verification follows below.
+
 ## Editor-only MIT licensing (2026-10-18)
 
 The owner explicitly approved MIT for both standalone editor plugins.

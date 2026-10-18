@@ -266,7 +266,7 @@ of public maintenance and human review.
 
 ### Use Tide's bundled mode
 
-Tide bundles [tide-lang-mode](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-emacs)
+Tide bundles [tide-lang-mode](https://github.com/Tide-Engine/tide-emacs)
 for Emacs 29.1 or later. Run:
 
 ```sh
@@ -326,7 +326,7 @@ Plain Vim still needs a separately configured LSP client.
 
 ### Use Tide's bundled runtime
 
-Tide bundles the [Tide Vim runtime](https://github.com/Tide-Engine/tide-engine/tree/dev/tools/tide-vim)
+Tide bundles the [Tide Vim runtime](https://github.com/Tide-Engine/tide-vim)
 for Vim 8+ and Neovim. Print the configuration for your editor:
 
 ```sh
