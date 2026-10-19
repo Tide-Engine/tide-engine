@@ -1,5 +1,18 @@
 # No Tide code can corrupt memory
 
+Recorded containers (2026-10-19) keep fixed journal heap handles zero and store
+only bounded serialized values in optional tails. Size arithmetic widens before
+the uint32 record limit; tail length and zero padding are checked before reads.
+Recipient fixed-value checks still precede typed decoding, which validates
+counts, UTF-8, map order/keys, grid shapes/records and the existing nesting
+guard in an isolated temporary heap. Failed validation frees that heap without
+touching match/local state. Successful delivery frees its separate heap only
+after handlers have acquired ordinary local ownership of explicit copies.
+Context restoration includes both heap resolvers and scratch state. Source
+world/availability endpoints are resolved explicitly while recording. The
+event_containers and retained visibility_lifecycle forgery cases cover this;
+implementation and final validation are in language.md.
+
 Query local fields (2026-10-19) keep all local-field pointers out of recorded
 rows; only entity/birth values are added when needed. Lookup validates attached
 identity before reading, returning defaults on a birth mismatch. Mutable reset

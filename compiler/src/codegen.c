@@ -123,6 +123,17 @@ typedef struct borrow_variant {
     int index;
 } borrow_variant;
 
+typedef struct client_codec {
+    type *items;
+    int count;
+    int cap;
+} client_codec;
+
+typedef struct heard_read {
+    const void *source; // A parameter/query binding, or a method's receiver declaration.
+    const char *path;   // A selected member path; array indexes use at[*].
+} heard_read;
+
 typedef struct gen {
     program *prog;
     const codegen_options *opts;
@@ -156,6 +167,10 @@ typedef struct gen {
     const char *row_born;  // What the entity a row's local fields are made for was born as, as C; NULL: the view's world says
     const char *row_queries; // Before the view being generated first runs for an entity: its queries' rows, made once (gen_query_fill)
     VEC(const param *) heard_rows; // The rows ticks record for local handlers' queries, one for each shape (collect_heard_rows)
+    VEC(heard_read) heard_reads;
+    client_codec value_codec;
+    uint32_t value_schema;
+    bool heard_heap;
     bool list_caches;      // The function being generated has tide_lc, a run cache for each list it indexes (declare_list_caches)
     VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
     size_t lc_patch;       // ...and where the array's size goes in `lc_sb`, once the body says how many (close_list_caches)
@@ -10494,9 +10509,12 @@ static const char *heard_rows_wants(const gen *g, const int n)
                                                                                            : "TIDE_HEARD_PREDICTED";
 }
 
-// What a recorded event has no use for: the text, lists, maps, sets and grids
-// in `value`, a `d`, which are places in the match's heap as it was. They read
-// as empty (the checker keeps handlers from naming them).
+#include "value_codec_codegen.inc"
+#include "heard_reads_codegen.inc"
+#include "heard_heap_codegen.inc"
+
+// Clear every live heap handle in the fixed record. Selected values have
+// already been encoded into the owned tail; unread containers remain absent.
 static void gen_heard_plain(sb *o, const decl *d, const char *value)
 {
     path_list paths = {0};
@@ -10596,8 +10614,14 @@ static void gen_hear_rows(gen *g)
     }
     sb_put(o, "// Records the rows this tick's events have handlers for, as the tick left them\n");
     sb_put(o, "static void tide_hear_rows(const tide_world *w, tide_event_log *log)\n{\n");
+    bool heap_rows = false;
+    for (int n = 0; n < g->heard_rows.count; n++) heap_rows |= heard_query_heap(g, g->heard_rows.items[n]);
+    if (heap_rows) sb_put(o, "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                             "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                             "    tide_text_use((tide_heap *)(uintptr_t)&w->heap, saved_local);\n");
     for (int n = 0; n < g->heard_rows.count; n++) {
         const param *q = g->heard_rows.items[n];
+        const bool heap = heard_query_heap(g, q);
         sb_printf(o, "    if (tide_rows_wanted[%d]) {\n        tide_rows_wanted[%d] = 0u;\n", n, n);
         sb_put(o, "        uint64_t most = UINT64_C(0)");
         for (int a = 0; a < prog->archetypes.count; a++) {
@@ -10616,9 +10640,14 @@ static void gen_hear_rows(gen *g)
             sb_put(o, "        }\n");
         }
         sb_printf(o, "        if (most > (UINT32_MAX - 64u) / sizeof(tide_heard_rows%d)) tide_out_of_memory();\n", n);
-        sb_printf(o, "        tide_heard *r = tide_event_log_push(log, (uint32_t)(sizeof *r + most * sizeof(tide_heard_rows%d)), "
-                     "TIDE_HEARD_BUILD);\n", n);
-        sb_printf(o, "        tide_heard_rows%d *const rows = (tide_heard_rows%d *)(r + 1);\n        uint32_t count = 0;\n", n, n);
+        if (heap) {
+            sb_put(o, "        tide_writer tide_captured = {.grows = true};\n");
+            sb_printf(o, "        tide_heard_rows%d *const rows = tide_alloc_zeroed(most, sizeof *rows);\n        uint32_t count = 0;\n", n);
+        } else {
+            sb_printf(o, "        tide_heard *r = tide_event_log_push(log, (uint32_t)(sizeof *r + most * sizeof(tide_heard_rows%d)), "
+                         "TIDE_HEARD_BUILD);\n", n);
+            sb_printf(o, "        tide_heard_rows%d *const rows = (tide_heard_rows%d *)(r + 1);\n        uint32_t count = 0;\n", n, n);
+        }
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (!query_admits(g, q, a)) continue;
             const char *columns = arch_columns(g, a);
@@ -10660,17 +10689,27 @@ static void gen_hear_rows(gen *g)
                 sb place = {0};
                 sb_printf(&place, "row->tide_b%d", i);
                 sb_printf(o, "                    tide_gather_%s(&%s, col%d, i);\n", type_cname(p->type.decl), place.data, i);
+                if (heap) gen_heard_capture(g, o, NULL, p->type.decl, place.data, q, i, false);
                 gen_heard_plain(o, p->type.decl, place.data);
                 if (journals_clients(prog)) gen_heard_recipient_plain(g, p->type.decl, place.data);
             }
             sb_put(o, "                }\n            }\n        }\n");
         }
+        if (heap) {
+            sb_printf(o, "        const uint32_t tide_fixed = (uint32_t)(sizeof(tide_heard) + count * sizeof(tide_heard_rows%d));\n", n);
+            gen_heard_tail(o, "tide_fixed");
+            sb_put(o, "        tide_heard *r = tide_event_log_push(log, tide_fixed + 4u + tide_captured.size, TIDE_HEARD_BUILD);\n"
+                      "        if (count) memcpy(r + 1, rows, tide_fixed - sizeof *r);\n        free(rows);\n");
+            gen_heard_tail_copy(o, "tide_fixed");
+        }
         // The tick is done: its events were recorded with its number, before it moved on
         sb_printf(o, "        r->tick = (uint32_t)w->Time.tick - 1u;\n        r->event = TIDE_HEARD_ROWS;\n        r->wants = %s;\n",
                   heard_rows_wants(g, n));
         sb_printf(o, "        r->handlers = %du;\n        r->same = count;\n", n);
-        sb_printf(o, "        tide_event_log_trim(log, r, (uint32_t)(sizeof *r + count * sizeof(tide_heard_rows%d)));\n    }\n", n);
+        if (!heap) sb_printf(o, "        tide_event_log_trim(log, r, (uint32_t)(sizeof *r + count * sizeof(tide_heard_rows%d)));\n", n);
+        sb_put(o, "    }\n");
     }
+    if (heap_rows) sb_put(o, "    tide_text_use(saved_match, saved_local);\n");
     sb_put(o, "}\n\n");
 }
 
@@ -10711,12 +10750,15 @@ static void gen_hear(gen *g)
         if (q->local_use) sb_put(&types, "    uint32_t tide_born;\n");
         sb_printf(&types, "} tide_heard_rows%d;\n\n", n);
     }
+    gen_heard_capture_schema(g, &types);
     // Whose records they are: a build that lays them out another way takes none of them
     uint32_t build = 0x811C9DC5u;
     for (const char *c = types.data ? types.data : ""; *c; c++) build = (build ^ (uint8_t)*c) * 0x01000193u;
+    if (g->heard_heap) build = (build ^ g->value_schema) * 0x01000193u;
     sb_put(o, "// What a tick records for local handlers, after each tide_heard (tide/events.h)\n\n");
     if (types.data) sb_put(o, types.data);
     sb_printf(o, "#define TIDE_HEARD_BUILD 0x%08Xu\n\n", build ? build : 1u);
+    gen_heard_heap_decode(g);
     if (journals_clients(prog) || hears_visibility(prog)) {
         sb_put(o, "static void tide_client_destroyed(tide_world *w, tide_entity target)\n{\n"
                   "    tide_heard *r;\n");
@@ -10757,6 +10799,7 @@ static void gen_hear(gen *g)
         const bool availability = event == prog->shown || event == prog->hidden;
         const bool lifecycle = event == prog->spawned || event == prog->destroyed;
         const bool journal = lifecycle && journals_clients(prog);
+        const bool heap = heard_event_heap(g, event);
         sb_printf(o, "static void tide_hear_%s(tide_world *w, tide_entity target, const %s *event%s)\n{\n", name, name,
                   availability ? ", const uint64_t changes" : "");
         if (journal) {
@@ -10790,7 +10833,7 @@ static void gen_hear(gen *g)
         }
         sb_printf(o, "    uint64_t handlers = UINT64_C(0x%llX);\n", (unsigned long long)always);
         sb_printf(o, "    tide_heard_%s v;\n    memset(&v, 0, sizeof v);\n    v.event = *event;\n", name);
-        gen_heard_plain(o, event, "v.event");
+        if (!heap) gen_heard_plain(o, event, "v.event");
         if (journal) gen_heard_recipient_plain(g, event, "v.event");
         bool cases = false;
         for (int a = 0; a < prog->archetypes.count; a++) {
@@ -10849,9 +10892,19 @@ static void gen_hear(gen *g)
             sb_printf(o, ") {\n        v.tide_has_owner = 1u;\n        v.tide_owner = tide_get_%s(w, target).%s;\n    }\n",
                       type_cname(prog->owner), field_cname(&prog->owner->fields.items[0]));
         }
+        if (heap) {
+            sb_put(o, "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                      "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                      "    tide_text_use(&w->heap, saved_local);\n");
+            sb_put(o, "    tide_writer tide_captured = {.grows = true};\n");
+            gen_heard_capture(g, o, event, event, "v.event", NULL, 0, false);
+            if (heard_value_heap(g, event, event)) sb_put(o, "    const uint32_t tide_event_bytes = tide_captured.size;\n");
+            gen_heard_plain(o, event, "v.event");
+        }
         for (int k = 0; k < comps.count; k++) {
             sb value = {0};
             sb_printf(&value, "v.tide_c_%s", type_cname(comps.items[k]));
+            if (heap) gen_heard_capture(g, o, event, comps.items[k], value.data, NULL, 0, false);
             gen_heard_plain(o, comps.items[k], value.data);
             if (journal) gen_heard_recipient_plain(g, comps.items[k], value.data);
             if (journal) {
@@ -10872,6 +10925,7 @@ static void gen_hear(gen *g)
             sb value = {0};
             sb_printf(&value, "v.tide_s_%s", type_cname(singles.items[k]));
             sb_printf(o, "    %s = w->%s;\n", value.data, type_cname(singles.items[k]));
+            if (heap) gen_heard_capture(g, o, event, singles.items[k], value.data, NULL, 0, false);
             gen_heard_plain(o, singles.items[k], value.data);
             if (journal) gen_heard_recipient_plain(g, singles.items[k], value.data);
         }
@@ -10887,7 +10941,10 @@ static void gen_hear(gen *g)
                 sb_printf(o, "    if (handlers & (UINT64_C(1) << %d)) tide_rows_wanted[%d] = 1u, reads = true;\n", k, heard_rows_of(g, q));
             }
         }
-        sb_put(o, "    tide_heard *r = tide_event_log_push(tide_listening, (uint32_t)(sizeof *r + sizeof v), TIDE_HEARD_BUILD);\n");
+        if (heap) {
+            gen_heard_tail(o, "(sizeof(tide_heard) + sizeof v)");
+            sb_put(o, "    tide_heard *r = tide_event_log_push(tide_listening, (uint32_t)(sizeof *r + sizeof v + 4u + tide_captured.size), TIDE_HEARD_BUILD);\n");
+        } else sb_put(o, "    tide_heard *r = tide_event_log_push(tide_listening, (uint32_t)(sizeof *r + sizeof v), TIDE_HEARD_BUILD);\n");
         sb_printf(o, "    r->tick = (uint32_t)w->Time.tick;\n    r->event = %du;\n    r->wants = %s;\n", event->index, heard_wants(event));
         if (availability) sb_put(o, "    r->wants |= TIDE_HEARD_AVAILABILITY;\n");
         if (lifecycle) sb_put(o, "    r->wants |= TIDE_HEARD_LIFECYCLE;\n");
@@ -10895,7 +10952,11 @@ static void gen_hear(gen *g)
         sb_put(o, "    r->target = target;\n");
         if (entities_born(prog)) sb_put(o, "    r->born = tide_entity_born(&w->entities, target);\n");
         sb_put(o, "    r->handlers = handlers;\n    r->same = tide_hash(&v.event, sizeof v.event);\n");
-        sb_put(o, "    memcpy(r + 1, &v, sizeof v);\n}\n\n");
+        if (heard_value_heap(g, event, event)) sb_put(o, "    r->same ^= tide_hash(tide_captured.data, tide_event_bytes);\n");
+        sb_put(o, "    memcpy(r + 1, &v, sizeof v);\n");
+        if (heap) gen_heard_tail_copy(o, "(sizeof *r + sizeof v)");
+        if (heap) sb_put(o, "    tide_text_use(saved_match, saved_local);\n");
+        sb_put(o, "}\n\n");
     }
     gen_hear_rows(g);
 }
@@ -13318,6 +13379,20 @@ static void gen_heard(gen *g)
 
     sb_put(o, "// Runs the local handlers of what the match sent since the last frame (tide_local_events)\n");
     sb_put(o, "static void tide_local_hear(tide_local *l)\n{\n    uint32_t at = 0;\n");
+    if (g->heard_heap) {
+        sb_put(o, "    if (!l->tide_heard.size) return;\n"
+                  "    tide_heap captured = {0};\n"
+                  "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                  "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                  "    const uint32_t captured_mark = tide_scratch_mark();\n"
+                  "    tide_text_use(&captured, saved_local);\n"
+                  "    uint64_t budget = SIZE_MAX;\n"
+                  "    bool valid = true;\n"
+                  "    for (const tide_heard *r; valid && (r = tide_event_log_next(&l->tide_heard, &at));)\n"
+                  "        valid = tide_heard_heap_decode(*r, (const uint8_t *)r, (uint8_t *)(uintptr_t)r, &budget);\n"
+                  "    if (!valid) tide_event_log_clear(&l->tide_heard);\n"
+                  "    at = 0;\n");
+    }
     sb_put(o, "    for (const tide_heard *r; (r = tide_event_log_next(&l->tide_heard, &at));) {\n");
     if (hears_visibility(prog)) sb_put(o, "        if (r->wants & TIDE_HEARD_AVAILABILITY) continue; // Reconciled from delivered endpoints\n");
     sb_put(o, "        // Straight from a tick, with no session between: what it ran is all there is, and it's certain\n");
@@ -13331,7 +13406,10 @@ static void gen_heard(gen *g)
                      "break;\n", event->index, type_cname(event), type_cname(event),
                   event_reads_rows(event) ? ", &l->tide_heard, at" : "");
     }
-    sb_put(o, "        default: break;\n        }\n    }\n    tide_event_log_clear(&l->tide_heard);\n}\n\n");
+    sb_put(o, "        default: break;\n        }\n    }\n    tide_event_log_clear(&l->tide_heard);\n");
+    if (g->heard_heap) sb_put(o, "    tide_heap_free(&captured);\n    tide_scratch_reset(captured_mark);\n"
+                               "    tide_text_use(saved_match, saved_local);\n");
+    sb_put(o, "}\n\n");
     gen_availability_delivery(g);
 }
 
@@ -18665,7 +18743,10 @@ static void gen_client_event_check(gen *g)
                   "        if (h.event == TIDE_HEARD_ROWS && h.tick == tick && h.handlers == rows) return true;\n"
                   "        at += h.size;\n    }\n    return false;\n}\n\n");
     }
-    sb_put(o, "static bool tide_game_check_client_events(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count)\n{\n"
+    sb_printf(o, "static bool tide_game_check_client_events%s(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count)\n{\n",
+              g->heard_heap ? "_inner" : "");
+    if (g->heard_heap) sb_put(o, "    uint64_t budget = SIZE_MAX;\n");
+    sb_put(o,
               "    if ((!data && size) || (size & 7u)) return false;\n"
               "    uint32_t at = 0, records = 0;\n"
               "    while (at < size) {\n"
@@ -18688,12 +18769,12 @@ static void gen_client_event_check(gen *g)
             if (takes_query_rows(event->listeners.items[k])) row_readers |= UINT64_C(1) << k;
         }
         sb_printf(o, "        case %d:\n"
-                     "            if (h.size != ((sizeof h + sizeof(tide_heard_%s) + 7u) & ~(size_t)7u)\n"
+                     "            if (h.size %s ((sizeof h + sizeof(tide_heard_%s) + 7u) & ~(size_t)7u)\n"
                      "                || tide_entity_is_null(h.target) || !h.handlers\n"
                      "                || (h.handlers & ~UINT64_C(0x%llX))\n"
                      "                || (h.wants & ~(uint8_t)TIDE_HEARD_READS_ROWS) != (%s | TIDE_HEARD_LIFECYCLE)\n"
                      "                || !!(h.wants & TIDE_HEARD_READS_ROWS) != !!(h.handlers & UINT64_C(0x%llX))\n"
-                     "                || h.same != tide_hash(&(%s){0}, sizeof(%s))) return false;\n", event->index, type_cname(event), (unsigned long long)handlers, heard_wants(event),
+                     "                || h.same != tide_hash(&(%s){0}, sizeof(%s))) return false;\n", event->index, heard_event_heap(g, event) ? "<" : "!=", type_cname(event), (unsigned long long)handlers, heard_wants(event),
                   (unsigned long long)row_readers, type_cname(event), type_cname(event));
         gen_client_event_payload_check(g, event);
         if (event_filters_ownership(event)) {
@@ -18723,7 +18804,7 @@ static void gen_client_event_check(gen *g)
             if (!used) continue;
             sb_printf(o, "            case %d:\n"
                          "                if (h.wants != (%s) || h.same > (h.size - sizeof h) / sizeof(tide_heard_rows%d)\n"
-                         "                    || h.size != ((sizeof h + h.same * sizeof(tide_heard_rows%d) + 7u) & ~UINT64_C(7))) return false;\n", n, heard_rows_wants(g, n), n, n);
+                         "                    || h.size %s ((sizeof h + h.same * sizeof(tide_heard_rows%d) + 7u) & ~UINT64_C(7))) return false;\n", n, heard_rows_wants(g, n), n, heard_query_heap(g, g->heard_rows.items[n]) ? "<" : "!=", n);
             const param *q = g->heard_rows.items[n];
             bool checks = false;
             for (int p = 0; p < q->query.count; p++) {
@@ -18745,8 +18826,9 @@ static void gen_client_event_check(gen *g)
         }
         sb_put(o, "            default: return false;\n            }\n            break;\n");
     }
-    sb_put(o, "        default: return false;\n        }\n"
-              "        at += h.size;\n        records++;\n    }\n");
+    sb_put(o, "        default: return false;\n        }\n");
+    if (g->heard_heap) sb_put(o, "        if (!tide_heard_heap_decode(h, data + at, NULL, &budget)) return false;\n");
+    sb_put(o, "        at += h.size;\n        records++;\n    }\n");
     if (g->heard_rows.count) {
         sb_put(o, "    // All spans are validated. Every selected query listener needs its matching row record.\n"
                   "    for (at = 0; at < size;) {\n"
@@ -18770,6 +18852,17 @@ static void gen_client_event_check(gen *g)
         sb_put(o, "        default: break;\n        }\n    }\n");
     }
     sb_put(o, "    if (build) *build = TIDE_HEARD_BUILD;\n    if (count) *count = records;\n    return true;\n}\n\n");
+    if (g->heard_heap) {
+        sb_put(o, "static bool tide_game_check_client_events(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count)\n{\n"
+                  "    tide_heap captured = {0};\n"
+                  "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                  "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                  "    const uint32_t mark = tide_scratch_mark();\n"
+                  "    tide_text_use(&captured, saved_local);\n"
+                  "    const bool ok = tide_game_check_client_events_inner(data, size, build, count);\n"
+                  "    tide_heap_free(&captured);\n    tide_scratch_reset(mark);\n"
+                  "    tide_text_use(saved_match, saved_local);\n    return ok;\n}\n\n");
+    }
 }
 
 // What sessions (tide/session.h) need: the local state's side, the input
@@ -20006,6 +20099,8 @@ bool codegen(program *prog, const codegen_options *opts)
     }
     collect_tasks(&g);
     collect_heard_rows(&g);
+    collect_heard_reads(&g);
+    collect_heard_codecs(&g);
     collect_asset_dependencies(&g);
     if (opts->info && g.asset_dependencies.count) opts->info->assets_affect_match = true;
     if (g.asset_dependencies.count || g.skinned_fingerprints.count) {
@@ -20099,6 +20194,12 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_dispatch_prototypes(&g);
     gen_apply(&g, false);
     gen_apply(&g, true);
+    if (g.value_codec.count) {
+        const size_t start = g.c.len;
+        gen_client_codecs(&g, &g.value_codec);
+        g.value_schema = 0x811C9DC5u;
+        for (size_t i = start; i < g.c.len; i++) g.value_schema = (g.value_schema ^ (uint8_t)g.c.data[i]) * 0x01000193u;
+    }
     gen_hear(&g);
     gen_shaders(&g);
     if (diag_error_count()) { // A shader that didn't become SPIR-V
