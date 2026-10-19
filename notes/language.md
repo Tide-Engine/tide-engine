@@ -1,5 +1,86 @@
 # Language features, as tidec builds them
 
+## World.Set updates active mutable bindings (2026-10-19)
+
+Owner-approved: Set<T> may overlap a mut T parameter. A successful Set of the
+current entity replaces both the stored component and its active mutable
+binding immediately, through synchronous helper/method/recursive/Action calls
+too. Set to another entity leaves that binding alone; absent/stale targets
+remain no-ops. Setting health to 20, then incrementing the parameter, finishes
+at 21. Whole replacement discards unfinished edits. Subsequent parameter
+edits retain normal write-back timing, so Get/query reads keep seeing the
+value published by Set until the invocation puts its later edits back.
+Read-only parameters and explicit copies retain their own captured values.
+
+Generated C passes a private chain of typed component IDs, world/entity keys
+and mutable-copy addresses through synchronous helpers that can Set. Systems,
+handlers and each async-handler resume build that chain on the C stack. It
+never enters a task frame, world, header, snapshot, hash, wire format or reload
+layout. No runtime API or public C ABI changed. Ordinary World capability,
+match/local, view, parallel and comparison restrictions remain. Async ordinary
+functions still cannot take World.
+
+The private Set helper validates the target, takes current container ownership
+from an active mutable copy when present, assigns the replacement through the
+existing ownership helpers, then updates the stored and active values. Set
+arguments retain source order and copy container values before replacing their
+source. Read-only container arguments to a Set-capable helper are copied just
+as beside an explicit mutable argument. Final overlapping row write-back uses
+the current table rather than cached lane addresses, preserving COW snapshots
+and preceding-row visibility. Other component loops retain their normal path.
+
+Access warnings wait for transitive World effects: Set can itself write the
+active binding, so suggesting removal of mut after such a call would change
+the following read. The three old overlap error fixtures are replaced by
+world_set_mut execution coverage, with direct/helper no-warning LSP checks.
+While exercising awaited work, a pre-existing checker gap was corrected:
+async handlers now record their awaited-function dependency as async functions
+already did, so their frame includes the child state, ownership cleanup and
+fingerprint. This is an existing backend contract, not new async syntax.
+
+world_set_mut covers 5,000 rows over chunks/archetypes and sparse selection,
+self/other/missing/stale targets, two mutable bindings, recursive methods,
+by-reference aliases, Actions, expression ordering, read-only copies and nested
+list/map/set ownership, command/event dispatch, async resumes/awaited components,
+local views, threaded ticks, COW immutability, rollback and packed roundtrips.
+Public Systems, Functions, Events and the decided spec describe the new rule.
+
+Validation: warning-free full native/web debug builds, all 2,430 native cases
+(full run plus the corrected matching-entity LSP probe recheck), all 2,340 web
+cases, all 239 editor cases and the production docs build pass. The three old
+overlap rejection targets became one execution target. Coverage includes native
+Vulkan/OpenGL, WebGL/D3D11/WebGPU, the new seven-case fixture and unchanged exact
+math/random/physics/world pins. Node 24.19.0 and clang 23.1.2 were used locally.
+Android, other operating systems and sanitizers remain CI coverage; no CI was
+dispatched and no private prototype browser playtest was run.
+
+## Scalar Clip values without assets (2026-10-19)
+
+Follow-up checking reproduced valid Tide generating invalid C when Clip was
+used without an audio asset, Sound or microphone: tide_clip_ref lacked its
+defining header. The earlier asset-collection fix covered collection element
+types, but scalar signatures, fields and locals still missed it.
+
+The checker now records explicit primitive Clip uses through ordinary type
+resolution, field/local fast paths and Clip members such as Clip.none.
+Built-in Sound's unnamed fields do not activate this flag. Header generation
+includes the existing tide/audio.h definition without enabling asset loading,
+playback, audio devices or any match state. Type/lifetime rules and the public
+API do not change; no runtime function or layout was added.
+
+clip_values compiles and executes scalar parameters/returns, a struct, local
+singleton storage and typed/inferred locals with no assets or audio. Its C
+host checks the stored empty handle, no asset/audio feature macros and an
+unchanged world hash. The asset-usage unit target independently checks empty
+games, unused helper and optional signatures, local and attached fields, and
+inferred/typed locals, so one use cannot hide another missing header path.
+
+Validation: warning-free full native/web debug builds and all 2,432 native
+CTests (85.83 seconds) and 2,341 web CTests (220.63 seconds) pass, including
+unchanged simulation pins and Vulkan/OpenGL/WebGL/WebGPU checks. No public
+semantics or user documentation changed. Other operating systems, Android and
+sanitizers were not run; no CI dispatched.
+
 ## Shaded drawing functions (2026-10-19)
 
 Ordinary synchronous drawing functions can name frags/verts using the existing
@@ -77,11 +158,12 @@ while taking read-only T, including through ordinary helpers, methods,
 recursion and inlined actions. Each invocation reads the current component on
 entry, including preceding invocations' writes, then keeps that value. World
 reads see Set immediately. Tasks get fresh component values on resuming.
-The existing mut T overlap, match/local, view, parallel and comparison rules
-remain in force; no new implicit World capability is introduced.
+Match/local, view, parallel and comparison rules remain in force; no new
+implicit World capability is introduced. Mutable overlap was subsequently
+extended by the owner-approved rule above.
 
-`check_world_call` and `check_world_passing` now reject only mutable overlapping
-component parameters. Existing transitive World effects already provide global
+At this stage check_world_call/check_world_passing still rejected mutable
+overlap; that restriction is superseded above. Transitive World effects provide global
 write dependencies, heap serialization and a single-threaded system traversal.
 Generated rows pass page-slot arrays for components those World effects write,
 and reload their current lane addresses at each row. Structural changes remain
@@ -101,7 +183,7 @@ snapshot immutability, rollback replay, packed round-trips, the threaded
 scheduler, input selection after Owner replacement, local views and heap-bearing
 handler parameters through self/other writes and task resumes. The two former
 read-only rejection fixtures are replaced by this execution coverage. Existing
-mutable-overlap and capability diagnostics remain pinned.
+capability diagnostics remain pinned; mutable overlap is now execution coverage above.
 
 Validation: warning-free full native/web debug builds, all 2,411 native and
 2,320 web CTests, and the docs production build pass. This includes native
@@ -1511,11 +1593,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A parameter typed `World` where no type of the game's has the name is `TY_WORLD` (`check_signature`, `check_world_param`): one a function at most, `World` or `mut World`, never `out`, with no default; operators, `extern` functions and async functions take none (an async handler takes it itself). As a value it's still nothing: a field, a local or a return type of it is `world_misplaced`.
   - The World is named as a value in one place, a call's argument that a `World` parameter takes (`checker.world_arg`, `world_value_ok`, which `check_name` reads; `check_world_args`), and `mut World` takes a `mut World`, as any `mut` argument. Nothing is passed for it in C: the function gets the worlds it reaches as hidden parameters, where its other hidden ones go, `tide_w` when it reaches the match's components (`decl.world_match`, `takes_world` in `compiler/src/codegen.c`; `const` unless it sets, `decl.world_sets`) and `tide_l` when it reaches local ones (`decl.world_local`, through `takes_local`), which are the names its caller has them under. So `world.Get` in a function is the code it is in a system.
   - `check_world_call` checks a function's calls as a system's, but for the rules that depend on who calls (`helper`), which wait. `check_world_passing`, once every body is checked, adds what each function reaches (`decl.world_uses`) to its callers', over the checker's list of calls until nothing grows, so a system's `world_uses` are its own whether it calls the World or a function does: the schedule (`accesses_of`), `world_reads_own_writes`, `system_splits`, `tidec --schedule` and the language server's lens need no rule of their own. Then it checks each call a system, view or handler makes: a local component from the match, the match's from a local handler, a view that would change the match, a `Set` in a parallel loop's step or a sort's comparison, and a `Set` of a component the caller takes as a parameter, read or `mut`.
-  - Read-only component parameters permit direct and helper `Set<T>` calls on any target. Each row reloads affected pages, then retains its invocation's value. Mutable component parameters still refuse overlapping Set calls because their write-back could replace the Set.
+  - Read-only component parameters permit direct and helper `Set<T>` calls on any target and retain their invocation's value. Mutable overlap follows the owner-approved active-binding replacement above. Each row reads the current affected pages, including preceding writes.
   - `world.TryGet<T>(entity, out value)` is the engine's own beside `Get` and `Has` (`check_world_call`, its `out` through `check_out_param`): `tide_tryget_<Component>`, only in the C of a game that calls it (`decl.tried`), which gives whether the entity has one and assigns the variable its copy or the component's `default`. A component with a grid has none, as it can't be copied.
   - A program that passes no `World` to a function and calls no `TryGet` generates the C it did, byte for byte: checked by running old and new tidec over every game's source list.
   - `compiler/tests/e2e/world_functions` runs it (functions, methods, a World passed through two functions, `mut World`, local components in a view, `TryGet` of every form) natively and on the web; `compiler/tests/schedule/world_functions` pins that a function's reach is in its system's schedule; `compiler/tests/errors/world_function_*.tide` and `world_try_get_*.tide` have a file for each diagnostic; `lsp_world_in_functions` checks the editor's side.
-  - Provisional, awaiting the owner: `mut World` in functions; methods taking it too; async functions and code the GPU runs taking none; a function that sets a component refused beside the caller's mutable parameter of it; `TryGet` giving the component's `default` where `Get` gives zeros. Read-only overlap is now supported, as recorded above.
+  - Provisional implementation details: `mut World` in functions and methods; async functions and code the GPU runs taking none; `TryGet` giving the component's `default` where `Get` gives zeros. Read-only overlap and mutable active-binding replacement are owner-approved, as recorded above.
 - **Functions and methods send, spawn and change entities as the code that calls them could** (the owner, 2026-10-08: "it should inherit their ability; if you say `Send` it should mean that what calls us can `Send` otherwise is a compiler error ONLY when its called from a place it can't"; `docs/spec.md`, Functions, with the picks made to build it Provisional under Functions and blocks). It was a recurring ask of the agent-written games (`GAME_TRIAL_FEEDBACK.md`), and Two Forks compared two copies of its board after a move to learn what to send. `Send`, `entity.Send`, `Spawn`, `Add`, `Remove` and `Destroy` are written in a function or a method as in a system. What's built, and what code relies on:
   - **A function records what it does, and nothing is wrong with it there** (`inherits`, `note_act` in `compiler/src/check.c`): `decl.acts[2]`, the match's ([0]) and this machine's ([1]), with where and what for the messages (`acts_at`, `acts_what`: "sends 'Hit'"), `acts_spawn[2]` and `acts_text`. Which world is told by what's written, as an async function's is: an event's own (a command is this machine's), the entity's type (`Entity`, `LocalEntity`), the components'; `same_world` is the one error in the function, a `Spawn`'s, an `Add`'s or a `Remove`'s components of two worlds, and an event sent to an entity of the other. A `Spawn` with no components is the match's. `check_component_side` and `check_entity_side` let an inheriting function through, where they check a system's or a view's against its own world.
   - **`refuse_act`** is what still refuses where it's written: frags and verts (the old messages), a struct's operators and a component's `Interpolate` (messages of their own), and the input's code. `passes_acts` says which declarations inherit: plain functions and methods, not async ones (their world is what they do), not operators (an operator's call is handed its operands, the dice and the seed and nothing else: `gen_operator_call`), not `Interpolate`.

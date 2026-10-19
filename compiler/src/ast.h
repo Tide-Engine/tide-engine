@@ -596,6 +596,7 @@ typedef struct decl {
     struct decl *stored;      // A T?: the struct a field of it is kept as (optional_of), once a field is one
     bool tries;           // Maps: some code calls TryGet, so generated C has its helper
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
+    bool world_set_used;  // Components: World.Set needs the owned-value/active-binding helper
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity
@@ -1404,6 +1405,7 @@ typedef struct program {
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
     bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
+    bool uses_clip_values; // Clip values need their C type even without assets or audio playback.
     bool uses_texture_size; // Local frames borrow the host's physical target-size resolver
     bool uses_resident;  // A match singleton has a Resident field: the worlds carry its pages, the local state the arenas' registry
     bool quiet_names;    // While a built-in struct's own fields resolve: what they name isn't the game naming it

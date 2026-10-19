@@ -138,10 +138,10 @@ static Hands think(int seat, float dt)
     bool targetAlive = false;
     tide_entity best = {0};
     float bestScore = 1e9f;
-    for (uint32_t r = 0; r < world.arch4_Zombie.count; r++) {
-        const Zombie z = TIDE_AT(&world, arch4_Zombie, Zombie, r);
+    for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) {
+        const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, r);
         if (z.state != ZombieState_Hunting && z.state != ZombieState_Fallen) continue;
-        const tide_entity e = TIDE_ENTITY_AT(&world, arch4_Zombie, r);
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch5_Zombie, r);
         const float d = sqrtf((z.at.x - s.feet.x) * (z.at.x - s.feet.x) + (z.at.y - s.feet.y) * (z.at.y - s.feet.y) + (z.at.z - s.feet.z) * (z.at.z - s.feet.z));
         if (d < nearest) nearest = d;
         if (d < 4) within4++;
@@ -258,8 +258,8 @@ static Hands think(int seat, float dt)
         bool going = false;
         if (nearest > 5) {
             float orbNear = 12;
-            for (uint32_t r = 0; r < world.arch5_Orb.count; r++) {
-                const Orb o = TIDE_AT(&world, arch5_Orb, Orb, r);
+            for (uint32_t r = 0; r < world.arch4_Orb.count; r++) {
+                const Orb o = TIDE_AT(&world, arch4_Orb, Orb, r);
                 if (o.seat >= 0) continue;
                 const float d = flat_distance(o.at, s.feet);
                 if (d < orbNear) {
@@ -395,7 +395,7 @@ static Run play(const char *roles, unsigned seed, float minutes)
         const Survivor first = get(0);
         if (first.steady == 0) run.shots++;        // A shot this tick: its steadiness starts again
         if (first.act == Act_Reload) run.reloading++;
-        if ((int)world.arch4_Zombie.count > run.mostAlive) run.mostAlive = (int)world.arch4_Zombie.count;
+        if ((int)world.arch5_Zombie.count > run.mostAlive) run.mostAlive = (int)world.arch5_Zombie.count;
         while (world.Match.level > lastLevel && run.levels < 64) {
             lastLevel++;
             run.levelAt[run.levels++] = world.Match.clock;

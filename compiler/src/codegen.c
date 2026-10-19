@@ -1304,6 +1304,17 @@ static bool changes_world(const decl *m)
     return m->world_sets || m->acts[0] || (takes_task(m) && m->runs_in[0] && !m->runs_in[1]);
 }
 
+// The current invocation's mutable component copies follow World.Set, even
+// through helpers. This context is passed only on the synchronous C stack.
+static bool takes_world_bindings(const decl *code)
+{
+    for (int i = 0; code && i < code->world_uses.count; i++) {
+        const world_use *u = &code->world_uses.items[i];
+        if (u->through_world && u->writes) return true;
+    }
+    return false;
+}
+
 // The match's seed (Random.seed), as the code being generated has it: the
 // match's code reads its world's, local code what its local state kept of the
 // last frame's match, and a function is handed it.
@@ -2970,7 +2981,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     }
     // Read-only lists, including the receiver's, need their own copies when
     // a mut argument or receiver could change them during the call.
-    bool mut_list = false;
+    bool mut_list = takes_world_bindings(m); // Set can change a bound component without an explicit mut argument
     for (int i = 0; m->is_mut_method && i < m->owner->fields.count; i++) {
         mut_list |= type_has_list(m->owner->fields.items[i].type);
     }
@@ -2994,6 +3005,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     }
     // What its World argument stands for
     if (takes_world(m)) sb_printf(o, "%s%s", args++ ? ", " : "", takes_task(m) && !has_world(g) ? "NULL" : "tide_w");
+    if (takes_world_bindings(m)) sb_printf(o, "%stide_bindings", args++ ? ", " : "");
     if (takes_scene(g->prog, m)) { // What it spawns joins the scene of the entity this code runs for, when that's of the same world
         const bool same = g->has_scene && g->scene_local == scene_is_local(g->prog, m);
         sb_printf(o, "%s%s", args++ ? ", " : "", same ? "tide_scene" : "(tide_entity){0}");
@@ -3744,8 +3756,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             // world.Get<Health>(e): that entity's, or its zero when it has none; Has: whether it has one;
             // Set: puts one back, and nothing when it has none
             const bool set = str_eq_c(e->name, "Set");
-            sb_printf(o, "%stide_%s_%s(%s, ", set ? "(void)" : "", set ? "set" : str_eq_c(e->name, "Has") ? "has" : "get",
+            sb_printf(o, "%stide_%s_%s(%s, ", set ? "(void)" : "", set ? "world_set" : str_eq_c(e->name, "Has") ? "has" : "get",
                       type_cname(e->type_decl), e->type_decl->is_local ? "tide_l" : "tide_w");
+            if (set) sb_put(o, "tide_bindings, ");
             gen_expr(g, o, e->args.items[0]);
             if (set) {
                 sb_put(o, ", ");
@@ -6661,9 +6674,9 @@ static void gen_stmt(gen *g, const stmt *s)
             gen_block_run(g);
         } else if (s->value->call == CALL_LIST && s->value->block && str_eq_c(s->value->name, "Sort")) {
             gen_sort_call(g, s->value);
-        } else if (s->value->call == CALL_WORLD && str_eq_c(s->value->name, "Set") && decl_has_text(s->value->type_decl)) {
-            // world.Set<Health>(e, h) of a component with text or lists: they go into the
-            // world's heap as the entity's own, never shared with the value
+        } else if (s->value->call == CALL_WORLD && str_eq_c(s->value->name, "Set")) {
+            // Evaluate the entity and value in source order, with owned containers
+            // copied before the replacement can release their source.
             const expr *set = s->value;
             const decl *d = set->type_decl;
             const char *name = type_cname(d);
@@ -6678,11 +6691,7 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_printf(o, "const %s tide_value = ", name);
             gen_value_of(g, o, set->args.items[1], (type){TY_COMPONENT, (decl *)d});
             sb_put(o, ";\n");
-            line(g, o, "%s tide_row;", name);
-            line(g, o, "if (tide_load_%s(%s, tide_to, &tide_row)) {", name, world);
-            line(g, o, "    tide_assign_%s(&tide_row, tide_value, %s);", name, world_where(d->is_local));
-            line(g, o, "    tide_store_%s(%s, tide_to, &tide_row);", name, world);
-            line(g, o, "}");
+            line(g, o, "tide_world_set_%s(%s, tide_bindings, tide_to, tide_value);", name, world);
             g->indent--;
             line(g, o, "}");
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
@@ -9299,6 +9308,21 @@ static void gen_prelude(gen *g)
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
     sb_put(o, "// Helpers are emitted whether or not this program uses them.\n");
     sb_put(o, "#define TIDE_HELPER static inline __attribute__((unused))\n\n");
+    sb_put(o, "// Active mutable component copies, borrowed only for this synchronous invocation.\n"
+              "typedef struct tide_component_binding {\n"
+              "    const struct tide_component_binding *previous;\n"
+              "    const void *world;\n"
+              "    tide_entity entity;\n"
+              "    void *value;\n"
+              "    uint32_t component;\n"
+              "} tide_component_binding;\n\n"
+              "TIDE_HELPER void *tide_bound_component(const tide_component_binding *binding, const void *world,\n"
+              "                                      const tide_entity entity, const uint32_t component)\n{\n"
+              "    for (; binding; binding = binding->previous) {\n"
+              "        if (binding->world == world && binding->component == component &&\n"
+              "            tide_entity_equal(binding->entity, entity)) return binding->value;\n"
+              "    }\n"
+              "    return NULL;\n}\n\n");
     if (g->prog->uses_title) {
         // Application.title: the game's title setting, or the program's name
         sb_put(o, "// Application.title\nstatic const char tide_game_title[] = ");
@@ -9457,6 +9481,18 @@ static void gen_component_access(gen *g)
         sb_printf(o, "    tide_load_%s(w, e, &v);\n    return v;\n}\n\n", name);
         sb_printf(o, "bool tide_set_%s(%s *w, tide_entity e, %s value)\n{\n    return tide_store_%s(w, e, &value);\n}\n\n", name, w,
                   name, name);
+        if (d->world_set_used) {
+            sb_printf(o, "TIDE_HELPER void tide_world_set_%s(%s *w, const tide_component_binding *bindings,\n"
+                         "                                     const tide_entity e, const %s value)\n{\n"
+                         "    %s row;\n    if (!tide_load_%s(w, e, &row)) return;\n"
+                         "    %s *const active = tide_bound_component(bindings, w, e, %du);\n"
+                         "    if (active) row = *active;\n", name, w, name, name, name, name, c);
+            // A mut copy may own newer container handles than its stored row.
+            // Release/replace the actual owned value, then refresh both copies.
+            if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(&row, value, %s);\n", name, world_where(d->is_local));
+            else sb_put(o, "    row = value;\n");
+            sb_printf(o, "    tide_store_%s(w, e, &row);\n    if (active) *active = row;\n}\n\n", name);
+        }
     }
 }
 
@@ -11898,6 +11934,25 @@ static bool world_sets_component(const decl *code, const decl *component)
     return false;
 }
 
+static void gen_world_bindings(gen *g, const decl *code)
+{
+    if (!takes_world_bindings(code)) return;
+    int last = -1;
+    for (int i = 0; i < code->params.count; i++) {
+        const param *p = &code->params.items[i];
+        if (p->type.kind != TY_COMPONENT || p->mode != PARAM_MUT || !world_sets_component(code, p->type.decl)) continue;
+        sb previous = {0};
+        if (last < 0) sb_put(&previous, "NULL");
+        else sb_printf(&previous, "&tide_binding%d", last);
+        line(g, &g->c, "const tide_component_binding tide_binding%d = {%s, %s, tide_this, %s, %du};", i,
+             previous.data, p->type.decl->is_local ? "tide_l" : "tide_w", local_cname(g, p->name), p->type.decl->index);
+        last = i;
+    }
+    if (last < 0) line(g, &g->c, "const tide_component_binding *const tide_bindings = NULL;");
+    else line(g, &g->c, "const tide_component_binding *const tide_bindings = &tide_binding%d;", last);
+    line(g, &g->c, "(void)tide_bindings;");
+}
+
 static bool query_changes_binding(const gen *g, const param *p)
 {
     // An inlined Action can write through its caller's World between rows.
@@ -12088,6 +12143,7 @@ static void gen_system_body(gen *g, const decl *sys)
     g->call_temps = 0;
     g->routine = NULL;
     g->code = sys;
+    gen_world_bindings(g, sys);
     if (g->has_scene) line(g, o, "(void)tide_scene;");
     if (sys->per_entity) line(g, o, "(void)tide_this;");
     if (sys->is_view || !sys->is_local) line(g, o, "(void)tide_w;");
@@ -12477,6 +12533,7 @@ static void gen_chunk_lanes_end(gen *g, const decl *sys, const int a, const char
     for (int c = prog->components.count; c-- > 0;) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, read_only)) continue;
         const decl *d = prog->components.items[c];
+        if (world_sets_component(sys, d)) continue;
         sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_%s_%s);\n", pad, arch_columns(g, a),
                   arch_column(g, a, c), comp_lanes(d), staged ? "own" : "col", type_cname(d));
     }
@@ -12690,6 +12747,11 @@ static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool re
     for (int i = 0; i < sys->params.count && !read_only; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind != TY_COMPONENT || p->mode != PARAM_MUT) continue;
+        if (world_sets_component(sys, p->type.decl)) {
+            sb_printf(&g->c, "%stide_store_%s(%s, tide_ent[tide_i], &tide_v%d);\n", pad, type_cname(p->type.decl),
+                      p->type.decl->is_local ? "tide_l" : "tide_w", i);
+            continue;
+        }
         sb_printf(&g->c, "%stide_scatter_%s(tide_col_%s, tide_i, &tide_v%d);\n", pad, type_cname(p->type.decl),
                   type_cname(p->type.decl), i);
     }
@@ -13251,6 +13313,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
     if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", changes_world(m) ? "" : "const ");
+    if (takes_world_bindings(m)) sb_printf(o, "%sconst tide_component_binding *tide_bindings", n++ ? ", " : "");
     if (takes_scene(g->prog, m)) sb_printf(o, "%stide_entity tide_scene", n++ ? ", " : "");
     if (takes_task(m)) {
         sb_printf(o, "%sconst tide_entity tide_task_this, const bool tide_task_this_local, const tide_entity tide_task_scene",
@@ -13314,6 +13377,7 @@ static void gen_routine(gen *g, const decl *m)
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
     if (takes_local(m)) line(g, o, "(void)tide_l;");
     if (takes_world(m)) line(g, o, "(void)tide_w;");
+    if (takes_world_bindings(m)) line(g, o, "(void)tide_bindings;");
     if (takes_task(m)) line(g, o, "(void)tide_task_this; (void)tide_task_this_local; (void)tide_task_scene;");
     if (task_either(m)) line(g, o, "(void)tide_task_w; (void)tide_task_local;");
     if (m->rolls) line(g, o, "(void)tide_dice;");
@@ -13387,6 +13451,7 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
     }
     sb_put(o, ")\n{\n");
     g->indent = 1;
+    gen_world_bindings(g, fn);
     line(g, o, "(void)tide_w;");
     if (local) line(g, o, "(void)tide_l;");
     line(g, o, "(void)tide_this;");
@@ -15930,10 +15995,11 @@ static int lone_archetype(const gen *g, const decl *scene)
 static bool write_file(const char *path, const sb *text);
 
 // What kind of entry an asset's type is in the pack.
-// Clip assets and borrowed collection signatures name tide_clip_ref, even
-// when a reusable helper is declared in a game with no assets of its own.
+// Clip assets, signatures, fields and local values need tide_clip_ref, even
+// without any assets or playback. This includes no audio in the match state.
 static bool program_has_clips(const program *prog)
 {
+    if (prog->uses_clip_values) return true;
     for (int i = 0; i < prog->assets.count; i++)
         if (prog->assets.items[i]->asset_kind == ASSET_CLIP) return true;
     for (int i = 0; i < prog->lists.count; i++)

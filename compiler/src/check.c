@@ -37,6 +37,7 @@ typedef struct checker {
     VEC(int) scope_marks;
     const expr *write_root;   // Checking an assignment's target: the name it writes through, which that doesn't read
     VEC(stmt *) unused;       // Locals nothing read by the end of their scope, warned about once every body is checked
+    VEC(decl *) access_warnings; // Systems whose access warnings await transitive World effects
     VEC(const expr *) dropped; // Calls written as statements whose value nothing takes (warn_dropped_values)
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
@@ -234,6 +235,15 @@ static str decl_ns(const decl *d)
 static bool builds(const program *prog)
 {
     return !prog->dry;
+}
+
+// Resolving a primitive can require its C definition without enabling its
+// runtime feature. A built-in Sound's unused fields don't name Clip for a game.
+static bool resolve_builtin_type(const checker *c, const str name, type *out)
+{
+    if (!builtin_type_named(name, out)) return false;
+    if (out->kind == TY_CLIP && !c->prog->quiet_names) c->prog->uses_clip_values = true;
+    return true;
 }
 
 // An override that isn't in place: it declares no name of its own, so no name
@@ -1942,7 +1952,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET,
                                                 place == PLACE_FUNCTION || place == PLACE_RETURN);
-    if (builtin_type_named(name, &t)) {
+    if (resolve_builtin_type(c, name, &t)) {
         if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION) {
             diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one");
             return T_ERR;
@@ -4715,7 +4725,7 @@ static void check_task_call(checker *c, expr *e, decl *fn)
         }
         diag_note("a task gets its components and singletons as they are: a copy would miss what changes while it waits");
     }
-    if (awaited && from && from->kind == DECL_FUNCTION) {
+    if (awaited && from && from->is_async) {
         bool known = false;
         for (int i = 0; i < from->awaits.count; i++) known |= from->awaits.items[i] == fn;
         if (!known) {
@@ -6469,20 +6479,9 @@ static type check_world_call(checker *c, expr *e, param *world)
         diag_note("work it out before the sort, or in the variables the comparison declares");
         return T_ERR;
     }
-    // A mut parameter would put this entity's component back over a Set.
-    // Read parameters put nothing back: each row reads the current pages,
-    // then keeps its value for the rest of that invocation.
-    for (int i = 0; set && !helper && i < code->params.count; i++) {
-        const param *q = &code->params.items[i];
-        if (q->type.kind != TY_COMPONENT || q->type.decl != d || q->mode != PARAM_MUT) continue;
-        diag_error(e->at, "Set<" STR_FMT "> changes any entity's " STR_FMT ", and the %s takes this entity's too",
-                   STR_ARG(d->name), STR_ARG(d->name), system_what(code));
-        diag_note("change this entity's through '" STR_FMT "', and read the others with '" STR_FMT ".Get<" STR_FMT
-                  ">(entity)', or send them an event", STR_ARG(q->name), STR_ARG(world->name), STR_ARG(d->name));
-        return T_ERR;
-    }
     e->call = CALL_WORLD;
     if (ok) note_world_use(c, d, set, e->at);
+    if (set && builds(c->prog)) d->world_set_used = true;
     if (set) note_text_write(c, decl_holds_text(d)); // Its text and lists go into the world's heap
     if (set) return T_VOID_;
     return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
@@ -8203,6 +8202,7 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Application") && str_eq_c(e->member, "title")) c->prog->uses_title = true;
+        if (str_eq_c(e->object->name, "Clip")) c->prog->uses_clip_values = true;
         // Clip.Microphone: the game records, which its Android app's manifest has to say
         if (str_eq_c(e->object->name, "Clip") && str_eq_c(e->member, "Microphone") && builds(c->prog)) c->prog->uses_microphone = true;
         if (builtin_old_draw_owner(e->object->name)) {
@@ -11810,7 +11810,7 @@ static void allow_bindings(expr *cond)
 static type local_type(checker *c, stmt *s)
 {
     type t;
-    if (builtin_type_named(s->type_name, &t)) return t;
+    if (resolve_builtin_type(c, s->type_name, &t)) return t;
     const loc at = s->type_qual_at.line ? s->type_qual_at : s->at;
     const int errors = diag_error_count();
     const type_ref *const r = type_ref_or_text(s->type_ref, s->type_name);
@@ -13230,7 +13230,7 @@ static void resolve_field_types(const checker *c, const decl *d)
         field *f = &d->fields.items[i];
         if (f->hidden && !f->type_name.len && f->type.kind != TY_ERROR) continue;
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-        if (builtin_type_named(f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
+        if (resolve_builtin_type(c, f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
             if (f->type.kind != TY_RESIDENT) continue;
             // Resident state (tide/resident.h): a match singleton's, one of them, for the C of a package that comes with tide
             f->type = T_ERR;
@@ -18728,9 +18728,8 @@ static const param *world_param(const decl *d)
 // the threads a system runs on and generated code go by it as by a system's
 // own calls. Then the rules that depend on who calls are checked at each
 // call a system, view or handler makes: the match can't reach local state, a
-// local handler's World is this machine's, a view changes nothing of the
-// match, and a component the caller takes as a parameter too can't be set
-// through the World, as the parameter would put this entity's back.
+// local handler's World is this machine's, and a view changes nothing of the
+// match. Mutable component bindings follow a Set of their current entity.
 static void check_world_passing(checker *c)
 {
     bool any = false;
@@ -18821,17 +18820,6 @@ static void check_world_passing(checker *c)
                 diag_error(at, "a view reads the match, and '" STR_FMT "' changes '" STR_FMT "' through its World", STR_ARG(to->name),
                            STR_ARG(d->name));
                 diag_note("views draw: a system changes the match");
-                break;
-            }
-            const param *own = NULL; // This entity's, which the caller takes too
-            for (int j = 0; j < from->params.count; j++) {
-                const param *q = &from->params.items[j];
-                if (q->type.kind == TY_COMPONENT && q->type.decl == d && q->mode == PARAM_MUT) own = q;
-            }
-            if (own) {
-                diag_error(at, "'" STR_FMT "' sets any entity's " STR_FMT " through its World, and the %s takes this entity's too",
-                           STR_ARG(to->name), STR_ARG(d->name), system_what(from));
-                diag_note("change this entity's through '" STR_FMT "', and send the others an event", STR_ARG(own->name));
                 break;
             }
             if (decl_holds_text(d)) from->writes_text = true; // Into the world's heap, which one system changes at a time
@@ -19675,7 +19663,7 @@ bool check(program *prog)
         const int outs = c.outs;
         check_stmt(&c, d->body);
         check_body_assigned(&c, NULL, d->body, outs, errors);
-        if (diag_error_count() == errors) warn_unused_params(&c, d); // Errors hide uses
+        if (diag_error_count() == errors) vec_push(c.access_warnings, d); // Transitive Set can write a mutable binding
     }
     for (int i = replaced_before; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
     // Called placements have been checked independently. An unused method is
@@ -19708,6 +19696,18 @@ bool check(program *prog)
     check_drawing_calls(&c);
     check_raw_uses(&c);
     check_world_passing(&c);
+    for (int i = 0; i < c.access_warnings.count; i++) {
+        decl *d = c.access_warnings.items[i];
+        for (int k = 0; k < d->params.count; k++) {
+            param *p = &d->params.items[k];
+            if (p->type.kind != TY_COMPONENT || p->mode != PARAM_MUT) continue;
+            for (int j = 0; j < d->world_uses.count; j++) {
+                const world_use *u = &d->world_uses.items[j];
+                if (u->through_world && u->writes && u->component == p->type.decl) p->written = true;
+            }
+        }
+        warn_unused_params(&c, d);
+    }
     if (diag_error_count() == 0) plan_shaders(prog);
     check_local_field_calls(&c); // Shader inputs can require a helper's attached local fields too.
     mark_c_callers(&c);

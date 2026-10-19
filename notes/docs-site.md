@@ -1,5 +1,11 @@
 # The docs site
 
+Mutable World.Set overlap (2026-10-19): Systems, Functions, Events and the
+decided spec describe owner-approved active-binding replacement through
+helpers, captured read-only/copy values and ordinary subsequent write-back.
+The stale helper-overlap sentence on Systems is corrected too. No site
+navigation or deployment changed. Validation is recorded in notes/language.md.
+
 Editor setup discovery (2026-10-18): moved the single Editors sidebar entry
 into Get started, between Install and Your first game, labelled Editor setup.
 The route stays /tools/editors for existing links. Its opening table links

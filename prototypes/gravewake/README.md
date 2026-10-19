@@ -48,7 +48,7 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | --- | --- | --- | --- |
 | Gunner | Carbine: automatic, through three | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
 | Breacher | Pump Shotgun: eleven pellets, never needs loading; takes a third less from the dead | Boot: kicks the dead in front over; the nearest one down is stamped on | Firebomb: into the thickest of them |
-| Engineer | SMG: sets items off half again as often | Mine: bursts when the dead come near | Turret: set down when the dead are about; fires on its own for fifteen seconds, setting off your items |
+| Engineer | SMG: sets items off half again as often | Mine: bursts when the dead come near | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
 
 Everything but the gun, the right mouse skill and the roll happens by
 itself: each survivor's special as soon as it's ready and the dead are in
@@ -70,7 +70,7 @@ no jumping.
 | --- | --- |
 | The clock | Three minutes a night, on the night's panel (BOSS IN 2:41) over a bar running down; over its last minute the dead come thicker, up to twice as fast. A bell and a banner ten seconds before the end. |
 | The chests | Four a night, hidden about the clearing and not marked; the night's panel says how many are found. Stand by one a moment and it opens: everyone picks one of three items, whoever found it. They're gone when the next night falls. |
-| Missions | Every half a minute or so an optional mission appears, pointed to in gold: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or hunt down a marked elite, each within 45 to 60 s. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
+| Missions | Every half a minute or so an optional mission appears, pointed to in gold: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or catch five wisps (gold flames bobbing waist high, scattered 6 to 18 m round a place; walk through one to catch it), each within 45 to 50 s. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
 | The ring | When the clock runs out, pale wake-fire rises in a ring 17 m round you (round the middle of the party): you can't cross it till dawn; the dead walk straight through, coming three quarters as thick as before (fewer than that while any other boss stands). |
 | Its boss | One claws up in the ring with you (two from the fourth night, three from the seventh), the nights taking the three in turn, pointed to (BOSS) at the screen's edge; anyone who bled out is back, by the ring's middle. Dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
 | Dawn | Everything left of the dead burns away, every orb flies in, everyone's up, whole and ready. Ten seconds later the next night falls: more dangerous than the last (the danger climbs with the clock, and each night's is 1.25 times the one before), and each of its kind (mist, a blood moon, starless, the wake). |
@@ -109,7 +109,7 @@ slowly, once you've gone four seconds unhurt.
 
 | Kind | From | |
 | --- | --- | --- |
-| Bloater | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. A faint ring on the ground round it shows how far its burst reaches. Within 2.4 m of you it swells, its ring red with another growing out to meet it, and bursts a second later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it bursts at once: from far off, that's a weapon. |
+| Bloater | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it stops and swells, shuddering, glowing and hissing gas, and the ground it'll reach burns red, a ring at its edge and another growing out to meet it; it bursts 1.4 s later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it falls and swells the same way, bursting a second later: from far off, that's a weapon; up close, get out of the red. |
 | Spitter | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile that hurts (up to 18) and slows you for 2 s. Find it and shoot it. |
 | Warden | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
 
@@ -147,7 +147,7 @@ the Stalker in turn), F4 two thousand more of the
 dead, F5 a level (and so an offer), F6 walk to the next part of the clearing,
 F7 the night on (its end now, its boss rising; again while it stands, dawn),
 F9 a camera over the clearing, F10 a random item, F1 a mission (a hold, a
-cull, a hunt in turn).
+cull, the wisps in turn).
 
 ## Ashwick Wood
 
@@ -209,12 +209,12 @@ this folder.
 | `nights.tide` | The nights: each one's clock, its bosses at its end, dawn, calling the fallen back, each night's look, the night's panel |
 | `hazards.tide` | The plague pits and the ground erupting: where, what they do, what's seen and heard of them |
 | `boss.tide` | The bosses: the Mauler, the Broodmother and the Stalker, the night's own and the development key's, their moves and weak spots |
-| `kits.tide` | The survivors' kits: the roll, the skills that use themselves and where, the Engineer's turret |
+| `kits.tide` | The survivors' kits: the roll, the skills that use themselves and where, the Engineer's walking turret |
 | `items.tide` | The items: what each does, the offer at a level, what a hit or a kill sets off, the drone and the ember ring, levels |
 | `zombies.tide` | The dead and their kinds: rising, hunting, a Spitter's bile, a Warden's mail, a Bloater's burst, wounds, burning, freezing, going over |
 | `weapons.tide` | The guns' numbers |
 | `hands.tide` | Running, rolling, turning to the cursor, firing (each round a ray through the dead), loading, raising friends, going down |
-| `missions.tide` | The optional missions: a hold, a cull, a hunt; their reward, panel and markers; and where the objectives are |
+| `missions.tide` | The optional missions: a hold, a cull, the wisps; their reward, panel and markers; and where the objectives are |
 | `missiles.tide` | Frag grenades, firebombs, mines, the Mortar Flare's shells, a Spitter's bile |
 | `drops.tide` | The cues for what's heard, and a survivor's refill |
 | `crowd.tide` | The horde and the bosses drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |

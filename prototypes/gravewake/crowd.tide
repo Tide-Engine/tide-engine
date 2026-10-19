@@ -253,17 +253,18 @@ view GatherZombie(mut Zombie zombie, mut Horde horde, Look look)
     var h = Math.Hash(int2(zombie.look, zombie.phase * 7 + int(zombie.pace * 1000)));
     var scale = zombie.look == 3 ? 1.06 : 0.96 + ((h >> 4) & 15) * 0.006;
     var bloater = zombie.kind == ZombieKind.Bloater;
-    // Swelling: faster and faster throbs, bigger each, to the burst
-    var lit = Math.Saturate(zombie.fuse / BLOAT_FUSE);
+    // Swelling: faster and faster throbs, bigger each, shuddering harder, to the burst
+    var lit = bloater ? Math.Saturate(zombie.fuse / BLOAT_FUSE) : 0.0;
     var throb = lit > 0 ? 0.5 + 0.5 * Math.Sin(look.time * (14 + 30 * lit)) : 0.0;
-    var bloat = bloater ? 1 + lit * 0.6 + throb * 0.3 * lit : 0.0;
-    mut var wide = bloater ? float3(1.18 + throb * lit * 0.06, 1.04, 1.16 + throb * lit * 0.06) : float3(1);
+    var bloat = bloater ? 1 + lit * 0.9 + throb * 0.35 * lit : 0.0;
+    mut var wide = bloater ? float3(1.18 + throb * lit * 0.1, 1.04 + lit * 0.05, 1.16 + throb * lit * 0.1) : float3(1);
+    var shudder = lit > 0 ? float3(Math.Sin(look.time * 53 + zombie.phase), 0, Math.Cos(look.time * 61 + zombie.phase)) * 0.045 * lit : float3(0);
     // A Spitter thin and tall, a Warden broad in its mail
     if (zombie.kind == ZombieKind.Spitter) wide = float3(0.9, 1.07, 0.9);
     if (zombie.kind == ZombieKind.Warden) wide = float3(1.13, 1.04, 1.12);
     mut var one = Shambler
     {
-        transform = float4x4.TRS(zombie.at - float3(0, SinkOf(zombie), 0), quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), wide * scale),
+        transform = float4x4.TRS(zombie.at + shudder - float3(0, SinkOf(zombie), 0), quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), wide * scale),
         bloat = bloat,
         spit = zombie.kind == ZombieKind.Spitter ? 1 + Math.Saturate(zombie.windup / SPIT_WINDUP) : 0.0,
         mail = zombie.kind == ZombieKind.Warden ? 1.0 : 0.0,

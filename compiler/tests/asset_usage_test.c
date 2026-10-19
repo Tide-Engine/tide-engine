@@ -543,6 +543,33 @@ TIDE_TEST(asset_usage_all_unused_removes_an_old_pack_and_asset_api)
     }
 }
 
+TIDE_TEST(clip_value_headers_do_not_depend_on_assets_or_playback)
+{
+    static const char *const sources[] = {
+        "scene Main { }",
+        "scene Main { } Clip Keep(Clip clip) { return clip; }",
+        "scene Main { } local singleton Saved { Clip clip; }",
+        "scene Main { } component Saved { local Clip clip; }",
+        "scene Main { } view Check() { var clip = Clip.none; }",
+        "scene Main { } view Check() { Clip clip = default; }",
+        "scene Main { } Clip? Keep(Clip? clip) { return clip; }"
+    };
+    TIDE_REQUIRE(folder_make(ASSET_USAGE_WORK));
+    for (int i = 0; i < (int)(sizeof sources / sizeof sources[0]); i++) {
+        program *p = checked(sources[i]);
+        TIDE_REQUIRE(p);
+        const codegen_options options = {.name = "clip_values", .out_dir = ASSET_USAGE_WORK};
+        TIDE_REQUIRE(codegen(p, &options));
+        size_t length;
+        char *h = read_bytes(ASSET_USAGE_WORK "/clip_values.h", &length);
+        TIDE_REQUIRE(h);
+        TIDE_CHECK((strstr(h, "#include \"tide/audio.h\"") != NULL) == (i != 0));
+        TIDE_CHECK(strstr(h, "TIDE_HAS_AUDIO") == NULL && strstr(h, "TIDE_HAS_ASSETS") == NULL);
+        free(h);
+        done();
+    }
+}
+
 TIDE_TEST(asset_usage_unused_animation_content_does_not_change_the_stripped_header)
 {
     static const char *const sources[] = {

@@ -256,17 +256,21 @@ vec4 tide_q_from_m3(mat3 m) {
     float t = x + y + z;
     if (t > 0.0) {
         float s = sqrt(t + 1.0) * 2.0;
+        if (s == 0.0) { s = 1.0; }
         return vec4((m[1].z - m[2].y) / s, (m[2].x - m[0].z) / s, (m[0].y - m[1].x) / s, 0.25 * s);
     }
     if (x > y && x > z) {
         float s = sqrt(1.0 + x - y - z) * 2.0;
+        if (s == 0.0) { s = 1.0; }
         return vec4(0.25 * s, (m[1].x + m[0].y) / s, (m[2].x + m[0].z) / s, (m[1].z - m[2].y) / s);
     }
     if (y > z) {
         float s = sqrt(1.0 + y - x - z) * 2.0;
+        if (s == 0.0) { s = 1.0; }
         return vec4((m[1].x + m[0].y) / s, 0.25 * s, (m[2].y + m[1].z) / s, (m[2].x - m[0].z) / s);
     }
     float s = sqrt(1.0 + z - x - y) * 2.0;
+    if (s == 0.0) { s = 1.0; }
     return vec4((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);
 }
 vec4 tide_lookrotation_q(vec3 f, vec3 u) {
@@ -333,15 +337,22 @@ mat4 tide_ortho(float w, float h, float n, float f) {
     float r = 1.0 / (f - n);
     return mat4(vec4(2.0 / w, 0.0, 0.0, 0.0), vec4(0.0, 2.0 / h, 0.0, 0.0), vec4(0.0, 0.0, -2.0 * r, 0.0), vec4(0.0, 0.0, -(f + n) * r, 1.0));
 }
+float tide_reciprocal(float value) {
+    float divisor = value;
+    if (divisor == 0.0) { divisor = 1.0; }
+    float result = 1.0 / divisor;
+    if (value == 0.0) { result = intBitsToFloat(floatBitsToInt(value) | 0x7f800000); }
+    return result;
+}
 mat2 tide_inverse2(mat2 m) {
-    float s = 1.0 / (m[0].x * m[1].y - m[1].x * m[0].y);
+    float s = tide_reciprocal(m[0].x * m[1].y - m[1].x * m[0].y);
     return mat2(m[1].y * s, -m[0].y * s, -m[1].x * s, m[0].x * s);
 }
 mat3 tide_inverse3(mat3 m) {
     vec3 a = cross(m[1], m[2]);
     vec3 b = cross(m[2], m[0]);
     vec3 c = cross(m[0], m[1]);
-    return transpose(mat3(a, b, c)) * (1.0 / dot(m[0], a));
+    return transpose(mat3(a, b, c)) * tide_reciprocal(dot(m[0], a));
 }
 mat4 tide_inverse4(mat4 m) {
     float a00 = m[0].x;
@@ -372,7 +383,7 @@ mat4 tide_inverse4(mat4 m) {
     float k2 = a20 * a33 - a30 * a23;
     float k1 = a20 * a32 - a30 * a22;
     float k0 = a20 * a31 - a30 * a21;
-    float d = 1.0 / (s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);
+    float d = tide_reciprocal(s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);
     return mat4((a11 * k5 - a12 * k4 + a13 * k3) * d, (-a10 * k5 + a12 * k2 - a13 * k1) * d, (a10 * k4 - a11 * k2 + a13 * k0) * d, (-a10 * k3 + a11 * k1 - a12 * k0) * d, (-a01 * k5 + a02 * k4 - a03 * k3) * d, (a00 * k5 - a02 * k2 + a03 * k1) * d, (-a00 * k4 + a01 * k2 - a03 * k0) * d, (a00 * k3 - a01 * k1 + a02 * k0) * d, (a31 * s5 - a32 * s4 + a33 * s3) * d, (-a30 * s5 + a32 * s2 - a33 * s1) * d, (a30 * s4 - a31 * s2 + a33 * s0) * d, (-a30 * s3 + a31 * s1 - a32 * s0) * d, (-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, (-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);
 }
 void ts_Blow(inout tt_SkyVertex t_vertex) {
@@ -456,7 +467,17 @@ float tide_saturate1(float a) {
     return clamp(a, 0.0, 1.0);
 }
 float tide_smoothstep1(float a, float b, float c) {
-    float t = tide_saturate1((c - a) / (b - a));
+    float numerator = c - a;
+    float denominator = b - a;
+    float divisor = denominator;
+    if (divisor == 0.0) { divisor = 1.0; }
+    float t = tide_saturate1(numerator / divisor);
+    if (denominator == 0.0) {
+        t = 0.0;
+        if (floatBitsToInt(denominator) < 0) {
+            if (numerator < 0.0) { t = 1.0; }
+        } else if (numerator > 0.0) { t = 1.0; }
+    }
     return t * t * (3.0 - 2.0 * t);
 }
 float tide_pow1(float a, float b) {
@@ -607,7 +628,17 @@ fn tide_saturate1(a: f32) -> f32 {
     return clamp(a, 0.0, 1.0);
 }
 fn tide_smoothstep1(a: f32, b: f32, c: f32) -> f32 {
-    var t: f32 = tide_saturate1((c - a) / (b - a));
+    var numerator: f32 = c - a;
+    var denominator: f32 = b - a;
+    var divisor: f32 = denominator;
+    if (divisor == 0.0) { divisor = 1.0; }
+    var t: f32 = tide_saturate1(numerator / divisor);
+    if (denominator == 0.0) {
+        t = 0.0;
+        if (bitcast<i32>(denominator) < 0) {
+            if (numerator < 0.0) { t = 1.0; }
+        } else if (numerator > 0.0) { t = 1.0; }
+    }
     return t * t * (3.0 - 2.0 * t);
 }
 fn tide_pow1(a: f32, b: f32) -> f32 {
@@ -685,17 +716,21 @@ fn tide_q_from_m3(m: mat3x3f) -> vec4f {
     var t: f32 = x + y + z;
     if (t > 0.0) {
         var s: f32 = sqrt(t + 1.0) * 2.0;
+        if (s == 0.0) { s = 1.0; }
         return vec4f((m[1].z - m[2].y) / s, (m[2].x - m[0].z) / s, (m[0].y - m[1].x) / s, 0.25 * s);
     }
     if (x > y && x > z) {
         var s: f32 = sqrt(1.0 + x - y - z) * 2.0;
+        if (s == 0.0) { s = 1.0; }
         return vec4f(0.25 * s, (m[1].x + m[0].y) / s, (m[2].x + m[0].z) / s, (m[1].z - m[2].y) / s);
     }
     if (y > z) {
         var s: f32 = sqrt(1.0 + y - x - z) * 2.0;
+        if (s == 0.0) { s = 1.0; }
         return vec4f((m[1].x + m[0].y) / s, 0.25 * s, (m[2].y + m[1].z) / s, (m[2].x - m[0].z) / s);
     }
     var s: f32 = sqrt(1.0 + z - x - y) * 2.0;
+    if (s == 0.0) { s = 1.0; }
     return vec4f((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);
 }
 fn tide_lookrotation_q(f: vec3f, u: vec3f) -> vec4f {
@@ -762,15 +797,22 @@ fn tide_ortho(w: f32, h: f32, n: f32, f: f32) -> mat4x4f {
     var r: f32 = 1.0 / (f - n);
     return mat4x4f(vec4f(2.0 / w, 0.0, 0.0, 0.0), vec4f(0.0, 2.0 / h, 0.0, 0.0), vec4f(0.0, 0.0, -2.0 * r, 0.0), vec4f(0.0, 0.0, -(f + n) * r, 1.0));
 }
+fn tide_reciprocal(value: f32) -> f32 {
+    var divisor: f32 = value;
+    if (divisor == 0.0) { divisor = 1.0; }
+    var result: f32 = 1.0 / divisor;
+    if (value == 0.0) { result = bitcast<f32>(bitcast<i32>(value) | 0x7f800000); }
+    return result;
+}
 fn tide_inverse2(m: mat2x2f) -> mat2x2f {
-    var s: f32 = 1.0 / (m[0].x * m[1].y - m[1].x * m[0].y);
+    var s: f32 = tide_reciprocal(m[0].x * m[1].y - m[1].x * m[0].y);
     return mat2x2f(m[1].y * s, -m[0].y * s, -m[1].x * s, m[0].x * s);
 }
 fn tide_inverse3(m: mat3x3f) -> mat3x3f {
     var a: vec3f = cross(m[1], m[2]);
     var b: vec3f = cross(m[2], m[0]);
     var c: vec3f = cross(m[0], m[1]);
-    return transpose(mat3x3f(a, b, c)) * (1.0 / dot(m[0], a));
+    return transpose(mat3x3f(a, b, c)) * tide_reciprocal(dot(m[0], a));
 }
 fn tide_inverse4(m: mat4x4f) -> mat4x4f {
     var a00: f32 = m[0].x;
@@ -801,7 +843,7 @@ fn tide_inverse4(m: mat4x4f) -> mat4x4f {
     var k2: f32 = a20 * a33 - a30 * a23;
     var k1: f32 = a20 * a32 - a30 * a22;
     var k0: f32 = a20 * a31 - a30 * a21;
-    var d: f32 = 1.0 / (s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);
+    var d: f32 = tide_reciprocal(s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);
     return mat4x4f((a11 * k5 - a12 * k4 + a13 * k3) * d, (-a10 * k5 + a12 * k2 - a13 * k1) * d, (a10 * k4 - a11 * k2 + a13 * k0) * d, (-a10 * k3 + a11 * k1 - a12 * k0) * d, (-a01 * k5 + a02 * k4 - a03 * k3) * d, (a00 * k5 - a02 * k2 + a03 * k1) * d, (-a00 * k4 + a01 * k2 - a03 * k0) * d, (a00 * k3 - a01 * k1 + a02 * k0) * d, (a31 * s5 - a32 * s4 + a33 * s3) * d, (-a30 * s5 + a32 * s2 - a33 * s1) * d, (a30 * s4 - a31 * s2 + a33 * s0) * d, (-a30 * s3 + a31 * s1 - a32 * s0) * d, (-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, (-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);
 }
 fn ts_Blow(t_vertex: ptr<function, tt_SkyVertex>) {

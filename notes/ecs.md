@@ -1,5 +1,15 @@
 # ECS and simulation state
 
+Mutable parameters beside World.Set (2026-10-19) follow the owner-approved
+replacement rule: a self Set updates the stored component and active mutable
+copy; later parameter edits use ordinary write-back timing. A private C-stack
+context follows synchronous helper calls and is rebuilt at each handler/task
+resume. No context pointer is stored in ECS/world/task state. Replacement uses
+the active copy's current owned container handles, and final overlapping row
+writes reacquire the table's current pages. Read-only entry values retain their
+existing copy rule. No runtime API, public C ABI, world layout, hash, packing
+or scheduling rule changed. world_set_mut and notes/language.md record coverage.
+
 Read-only parameters beside World.Set (2026-10-18) reload affected component
 lanes from stable chunk page slots before each row. Earlier Set writes are
 visible regardless of snapshot sharing, across chunks and archetypes. The

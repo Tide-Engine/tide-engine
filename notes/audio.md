@@ -1,5 +1,12 @@
 # Audio
 
+Scalar Clip values without assets (2026-10-19) now request their existing C
+definition even when no Sound, microphone or clip asset is declared. The
+checker distinguishes using a Clip type/value from enabling playback; unused
+built-in Sound fields do neither. clip_values and independent header cases in
+the asset-usage unit target cover this omission, with no asset/audio feature
+macros or match-state change. Contracts and full validation: notes/language.md.
+
 Clip asset collection helpers (2026-10-18) take read-only List<Clip> or
 Map<string, Clip> parameters in synchronous CPU functions/methods. Passing
 copies no collection and creates no voice or decoded-clip ownership; only

@@ -63,6 +63,64 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### A Bloater's fuse shown, wisps for the hunt, a walking turret (2026-10-19)
+
+The owner, after playing: "the explody zombies should only display that
+radius when they are going to explode and it shouldnt be instant, they should
+have some animation and the circle should show where it is about to explode.
+right now it shows all the time and the explosion is instant"; "one of the
+missions was killing a scaled zombie with some weird crown of fire; that felt
+awkward"; "the enginner ability (turret) feels weird since it doesnt move
+with me or anything i just leave it and forget about it since im moving away.
+it also seems pretty OP". How each was answered, and the numbers, are mine,
+Provisional.
+
+- **A Bloater's fuse** (zombies.tide's `BLOAT_FUSE`, `BLOAT_DEAD_FUSE`; hud.tide's
+  `BloaterRings`; hazards.tide's `Hazards.fuses`; look.tide's `Earth`; crowd.tide's
+  `GatherZombie`; fx.tide's `Swelling`): nothing's drawn round one till it swells.
+  Near a survivor it stops and swells for 1.4 s (it was 0.9); killed, it no longer
+  bursts at once but falls and swells, bursting a second later (a chain of them
+  ripples out). As it swells: it shudders, its belly and boils swell and glow,
+  foul gas hisses out of it faster and faster, its light goes from sick green to
+  red; the ground its burst will reach glows a dull red, a hard red ring at its
+  edge (drawn over the dead too) and a second growing out from under it to meet
+  the first as it bursts. Red, not the missions' gold (a first try, sick green to
+  red and bright, read as a gold mission circle). Its burst hurts survivors within
+  3.6 m across the ground (it was measured from a metre up, so a lying one's had
+  reached a little less than its ring).
+- **Wisps in place of the hunt** (missions.tide's `MissionKind.Wisps`,
+  `ScatterWisps`, `WispAt`, `WispCaught`; `Match.wisps`): the hunt's elite (a
+  Warden ten times as tough, gold motes circling its head) is gone. In its place:
+  five wisps, gold flames bobbing waist high, each lighting the ground round it,
+  scattered 6 to 18 m round a place (one to each fifth of the way round), on open
+  ground the dead's way reaches, out of the fires; walk within 1.6 m of one to
+  catch it (a burst of sparks, a chime), all five in 45 s. The nearest is pointed
+  to (WISP). A mission that's about roaming, as the owner wants the game to be.
+- **A walking turret** (kits.tide's `Sentry`, `TURRET_HEEL`, `TURRET_SPEED`,
+  `TURRET_LOST`, `TURRET_HURT`, `TURRET_RATE`; held.tide's `TurretFeet`): after
+  Risk of Rain 2's Engineer's walking turrets, it scuttles after its maker,
+  hopping, keeping 2.2 m off (the farther behind, the quicker, to 8.5 m/s: a run's
+  7, so it keeps up; 25 m off, stuck behind something, it's at their heel at
+  once), and fires as it goes, facing the way it walks with nothing to shoot.
+  Weaker: 12 s in place of 15 (on an 18 s cooldown), a round of 10 every 0.14 s in
+  place of 11 every 0.09: 71 a second in place of 122, about 47 on the average in
+  place of 102.
+- **Measured** (`gravewake_balance`, 25 minutes at most): the Engineer, 8 runs,
+  five or more went down before it; the middle run 1182 s (the last round's 1152 of 4); the Gunner
+  at the cap (1463), the Breacher 1308 (1204). Within the noise: the bots stand
+  near the middle, where the turret had stood by them anyway, and it follows them
+  now. Ticks of 2000 of the dead the same as before the change, measured side by
+  side (2.3 to 2.8 ms; the machine's slower today than the last round's 1.81).
+- **Tests**: a Bloater swells 1.40 s before it bursts; shot dead from 8 m it's
+  still there, dying and swelling, 3 ticks after, and bursts 1.03 s after; the
+  turret walks 7.8 m after its maker, to 2.2 m from them; the wisps, 5 of them 8.9
+  to 17.3 m from their place, caught one at a time, all caught, done.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one pass.
+  Looked at in standard-host captures: a Bloater shot down by the turret, lying
+  and swelling, the red ground and its two rings; a wisp; the turret trailing
+  its Engineer as they walk. (The archetypes' numbers moved with the elite's
+  `Spawn` gone: the Orb's 4 and the Zombie's 5 now.)
+
 ### A stand at the night's end: the wake-fire's ring, quicker dead (2026-10-19)
 
 The owner, of the last round's bots never going down: "I haven't had the
