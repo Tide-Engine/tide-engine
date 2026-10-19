@@ -61,6 +61,33 @@ local singleton SceneRender
     // blends in one blurred half-size copy.
     bool lite;
     int lampSize = 4096;
+    // The finished picture, kept: a frame that would light the same scene as
+    // the one before only copies it to the window. A puzzle stands still most
+    // of the time, and the lighting is nearly all of a frame's GPU work.
+    RenderTarget finished;
+    bool kept;
+    List<SceneObject> keptObjects;
+    SceneView keptView;
+    // Seconds since it was drawn. A target loses what was drawn in it when
+    // the display's scale changes, on a hot reload and with a lost device,
+    // none of which a game is told of, so it is drawn again once a second.
+    float keptAge;
+}
+
+// Everything besides the objects that the lit picture depends on.
+struct SceneView
+{
+    float4x4 camera;
+    float4x4 projection;
+    float4 board;
+    float2 focusPixels;
+    float2 focusHalf;
+    float focusTile;
+    float tile;
+    float2 screen;
+    int look;
+    float shadowLow;
+    float shadowHigh;
 }
 
 struct SceneBlurStep { float2 direction; }
@@ -370,12 +397,16 @@ frag SceneComposite(Vertex vertex, out Color color, Texture source, SceneRender 
     if (normal.y > 0.9 && !render.lite)
     {
         // A painted wall colours what lies at its foot: six looks around,
-        // about half a tile away, at whatever stands higher than this.
+        // about half a tile away, at whatever stands higher than this. They
+        // are turned at random for each 2x2 block of pixels, not each pixel:
+        // the GPU reads a block's four together, and the four then read the
+        // same texels (about 2 ms a frame less at 3840x2160).
         mut var spill = float3(0);
         var ring = encoded.a * render.tile * 0.46;
+        var turn = (Math.Hash(int2(pixel.x >> 1, pixel.y >> 1)) & 255) / 255.0;
         for (var index = 0; index < 6; index++)
         {
-            var angle = (speck + index / 6.0) * Math.TAU;
+            var angle = (turn + index / 6.0) * Math.TAU;
             var beside = uv + float2(Math.Cos(angle), Math.Sin(angle)) * ring / render.screenSize;
             var other = render.normals.Sample(beside, Filter.Point);
             if (other.a < 0.005 || other.b > 0.75) continue;
@@ -484,6 +515,44 @@ frag SceneFinish(Vertex vertex, out Color color, Texture source, SceneRender ren
         Math.Min(1, (seen.z + halo.b * 0.32) * dim), 1);
 }
 
+bool SameFloat4(float4 a, float4 b) { return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
+bool SameMatrix(float4x4 a, float4x4 b) { return SameFloat4(a.c0, b.c0) && SameFloat4(a.c1, b.c1) && SameFloat4(a.c2, b.c2) && SameFloat4(a.c3, b.c3); }
+bool SameObject(SceneObject a, SceneObject b)
+{
+    return SameMatrix(a.transform, b.transform) && a.tone.r == b.tone.r && a.tone.g == b.tone.g && a.tone.b == b.tone.b &&
+        a.tone.a == b.tone.a && a.aoScale == b.aoScale && SameFloat4(a.aperture, b.aperture) && a.apertureSide == b.apertureSide &&
+        a.groundHeight == b.groundHeight && a.glow == b.glow && a.surface == b.surface && a.surfaceOrigin.x == b.surfaceOrigin.x &&
+        a.surfaceOrigin.y == b.surfaceOrigin.y && a.surfaceTile == b.surfaceTile;
+}
+bool SameView(SceneView a, SceneView b)
+{
+    return SameMatrix(a.camera, b.camera) && SameMatrix(a.projection, b.projection) && SameFloat4(a.board, b.board) &&
+        a.focusPixels.x == b.focusPixels.x && a.focusPixels.y == b.focusPixels.y && a.focusHalf.x == b.focusHalf.x &&
+        a.focusHalf.y == b.focusHalf.y && a.focusTile == b.focusTile && a.tile == b.tile && a.screen.x == b.screen.x &&
+        a.screen.y == b.screen.y && a.look == b.look && a.shadowLow == b.shadowLow && a.shadowHigh == b.shadowHigh;
+}
+// Whether this frame's scene is the one the kept picture shows; if not, it
+// is kept as the one the picture about to be drawn shows.
+bool SceneUnchanged(mut SceneRender render, List<SceneObject> objects, SceneView view)
+{
+    mut var same = render.kept && render.keptAge < 1 && SameView(render.keptView, view) && render.keptObjects.count == objects.count;
+    for (var index = 0; same && index < objects.count; index++) same = SameObject(render.keptObjects[index], objects[index]);
+    if (same) return true;
+    render.keptObjects.Clear();
+    for (var index = 0; index < objects.count; index++) render.keptObjects.Add(objects[index]);
+    render.keptView = view;
+    render.keptAge = 0;
+    return false;
+}
+
+// The kept picture, as SceneFinish drew it: nothing outside the scene.
+frag SceneKept(Vertex vertex, out Color color, Texture source)
+{
+    var kept = source.Sample(vertex.uv, Filter.Point);
+    if (kept.a < 0.5) this.Discard();
+    color = Color(kept.r, kept.g, kept.b, 1);
+}
+
 void RenderScene(List<SceneVertex> vertices, List<int> indices, List<SceneObject> objects,
     float4x4 cameraTransform, float4x4 projection, Rect clip, float2 focusPixels, float tile, mut SceneRender render)
 {
@@ -522,12 +591,23 @@ view SceneLighting(Sculpture sculpture, Workshop workshop, Time time, Rooms.Lobb
         render.lit = RenderTarget.Window(Format.Rgba8);
         render.glow = RenderTarget.Window(0.5);
         render.glowTurn = RenderTarget.Window(0.5);
+        render.finished = RenderTarget.Window(Format.Rgba8);
         render.normals = render.scene.colors[1];
         render.sceneDepth = render.scene.depth;
         render.shadow = render.lamp.depth;
         render.ready = true;
     }
     render.screenSize = float2(Screen.width, Screen.height);
+    var view = SceneView { camera = render.cameraTransform, projection = render.projection, board = render.board,
+        focusPixels = render.focusPixels, focusHalf = render.focusHalf, focusTile = render.focusTile, tile = render.tile,
+        screen = render.screenSize, look = sculpture.look, shadowLow = sculpture.shadowLow, shadowHigh = sculpture.shadowHigh };
+    render.keptAge += Frame.dt;
+    if (SceneUnchanged(render, sculpture.objects, view))
+    {
+        Draw.Blit(render.finished.color, Draw.window, SceneKept);
+        Draw.SetScreen();
+        return;
+    }
     render.look = sculpture.look;
     render.fillTint = ChapterFill(render.look);
     render.lampTint = ChapterLamp(render.look);
@@ -602,6 +682,9 @@ view SceneLighting(Sculpture sculpture, Workshop workshop, Time time, Rooms.Lobb
         Draw.Blit(render.glowTurn.color, render.glow, SceneGlowBlur, SceneBlurStep { direction = float2(0, 5 / Screen.height) });
     }
     render.bloom = render.glow.color;
-    Draw.Blit(render.lit.color, Draw.window, SceneFinish);
+    render.finished.Clear(Color.none);
+    Draw.Blit(render.lit.color, render.finished, SceneFinish);
+    render.kept = true;
+    Draw.Blit(render.finished.color, Draw.window, SceneKept);
     Draw.SetScreen();
 }

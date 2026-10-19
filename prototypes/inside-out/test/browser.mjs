@@ -695,8 +695,9 @@ try {
         let letters = 0, exposed = 0;
         screenshotPixels(hold, (r, g, b, x, y) => {
             if (x > 200 && x < 1080 && y > 330 && y < 460 && r > 150 && g > 125 && b > 80) letters++;
-            // The Menu action remains accessible during a transition.
-            if ((y < 280 || y > 500) && !(x >= 1180 && y <= 70) && (r > 40 || g > 35 || b > 30)) exposed++;
+            // The Menu action remains accessible during a transition. Below
+            // the name and count are the stars and the moves against par.
+            if ((y < 280 || y > 545) && !(x >= 1180 && y <= 70) && (r > 40 || g > 35 || b > 30)) exposed++;
         });
         assert.ok(letters > 300, 'the solved puzzle is named readably during the hold');
         assert.equal(exposed, 0, 'the hold completely hides the scene and puzzle labels');
