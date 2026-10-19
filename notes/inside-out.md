@@ -53,6 +53,26 @@ the table below: largest searches 65,741 (Boxes), 765,011 (Each other),
 111,905 (Power), 103,944 (Itself) and 21,974 (Held) positions, up from
 the parked robots' extra places.
 
+**Validation rule (the owner's, 2026-10-19).** After this change's web run
+took about an hour twice (once on the change, again after the merge), the
+owner agreed that Inside Out changes skip `inside_out_play_webgl`/`_webgpu`
+(about 22 minutes each) and `inside_out_shutters_webgl`/`_webgpu` (about 9)
+unless they touch rendering, the transitions or networking, or the owner
+asks: run the native entries, the web entries but those
+(`ctest --preset web-debug -R inside_out -E "inside_out_(play|shutters)_"`,
+the WASM aggregate, the bridge entries and both materials fixtures), and
+captures. Building only Inside Out's targets is enough.
+
+Validation of this change: native and web debug build warning-free; all
+four native entries and all 21 web entries passed on the change
+(`inside_out_play_webgl` 1,335 s, `_webgpu` 1,280 s, shutters 518 and
+525 s, materials 207 and 212 s). The merge of origin/dev brought compiler
+changes that alter Inside Out's generated C and shaders: after it the
+native build and its four entries passed again, the web build was
+warning-free, and the web entries but the play and shutter fixtures were
+run under the rule above: all 17 passed (materials 214 and 231 s; the
+play rerun was stopped when the rule was agreed).
+
 Bounded hidden two-player native captures (a seeded save, deleted after)
 were inspected: the note in front of a post, a robot shrinking into it,
 Amber's lamp and then both, the sill filling and the dive. They led to the
