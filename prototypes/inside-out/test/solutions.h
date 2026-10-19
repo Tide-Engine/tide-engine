@@ -26,3 +26,29 @@ static const char *const inside_out_solutions[20] = {
 static const char *const inside_out_challenge_solutions[3] = {
     "ENNWSN wwwwwnneee", "NWWSWS eesenen E w NNW nne", "SS wsnnenwwwsssse NN enne",
 };
+
+// A shortest solution of each campaign puzzle, as `inside_out_solve <n>`
+// found it breadth first through the Move handler: each is its puzzle's par
+// (LevelPar in levels.tide).
+static const char *const inside_out_par_solutions[20] = {
+    "EEEN eeeees",
+    "NWSSENSW eeee",
+    "NNWWWWSSENSW eeeeeeww",
+    "SWWESEEE swwwwsw",
+    "EENN eeeessw",
+    "SSSE eeeeessw EEEWWWW",
+    "EEEWWWWW n EEEESEE",
+    "NWNN ee SW eswneenw EEWW w NNW weeess",
+    "w EENNEEESSWWEESESWWWNWNWWW",
+    "S n EEENE seee NSSWS s",
+    "N ee NNNES w WE w",
+    "EN nne EESE nws",
+    "EE neee EEEEE n E",
+    "WWNE w ENEESS nnn NWEN nwssenwne WE n WESS seswne S e",
+    "E ssssn SSSSSS e SNN wnnn",
+    "SN nwwsessennn SN nsssss",
+    "E s EEEESENNNN n NW s EEEWWW snn",
+    "WSE nn EE nwss EWWWSES nwssw SSENNNNE nnnn",
+    "EEN wwnnwne SESEE eesn E w N w W s WW sesense",
+    "E sese EWWW eennnsssswwwwnennwsn",
+};

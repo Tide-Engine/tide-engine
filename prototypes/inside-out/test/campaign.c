@@ -661,3 +661,56 @@ TIDE_TEST(inside_out_leaving_for_the_hall_and_sharing_progress)
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 5);
     tide_world_free(&world);
 }
+
+// Each puzzle's par (LevelPar in levels.tide), the length of its shortest
+// solution as `inside_out_solve all` found it, breadth first.
+static const int PARS[PUZZLES + CHALLENGES] = {
+    10, 12, 20, 15, 11, 19, 16, 30, 26, 17, 12, 12, 13, 42, 20, 21, 25, 35, 34, 29, 16, 21, 22,
+};
+
+TIDE_TEST(inside_out_a_solve_keeps_the_fewest_moves_and_par_is_reached)
+{
+    for (int level = 0; level < PUZZLES; level++) {
+        // A shortest solution makes the best its par.
+        inside_out_test_start(2);
+        TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, level));
+        int actions = 0;
+        TIDE_REQUIRE(play_witness(level, inside_out_par_solutions[level], &actions));
+        TIDE_CHECK(actions == PARS[level] && world.Workshop.best.at[level] == PARS[level]);
+        // A longer solve after it leaves the best alone.
+        int longer = 0;
+        TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, level));
+        TIDE_REQUIRE(play_witness(level, inside_out_solutions[level], &longer));
+        TIDE_CHECK(longer >= PARS[level] && world.Workshop.best.at[level] == PARS[level]);
+        if (longer > PARS[level]) printf("  Puzzle %2d: par %2d, the authored witness %d.\n", level + 1, PARS[level], longer);
+        tide_world_free(&world);
+    }
+    // A challenge met is met at its budget, which is its par.
+    for (int challenge = 0; challenge < CHALLENGES; challenge++) {
+        inside_out_test_start(2);
+        TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_ChooseLevel, 0, PUZZLES + challenge));
+        TIDE_REQUIRE(play_witness(PUZZLES + challenge, inside_out_challenge_solutions[challenge], NULL));
+        TIDE_CHECK(world.Workshop.best.at[PUZZLES + challenge] == PARS[PUZZLES + challenge]);
+        tide_world_free(&world);
+    }
+}
+
+TIDE_TEST(inside_out_the_room_shares_the_better_best)
+{
+    inside_out_test_start(2);
+    int32_t best[PUZZLES + CHALLENGES] = {0};
+    // A best counts only for a puzzle the room has solved, and never below par.
+    best[0] = PARS[0] + 4;
+    best[1] = PARS[1] - 1;
+    best[2] = PARS[2] + 2;
+    TIDE_REQUIRE(inside_out_test_progress_best(1, 3, 0, false, best));
+    TIDE_CHECK(world.Workshop.best.at[0] == PARS[0] + 4 && world.Workshop.best.at[1] == 0 && world.Workshop.best.at[2] == 0);
+    // The other machine's better best wins, a worse one does not.
+    best[0] = PARS[0] + 6;
+    TIDE_REQUIRE(inside_out_test_progress_best(0, 1, 0, false, best));
+    TIDE_CHECK(world.Workshop.best.at[0] == PARS[0] + 4);
+    best[0] = PARS[0];
+    TIDE_REQUIRE(inside_out_test_progress_best(0, 1, 0, false, best));
+    TIDE_CHECK(world.Workshop.best.at[0] == PARS[0]);
+    tide_world_free(&world);
+}

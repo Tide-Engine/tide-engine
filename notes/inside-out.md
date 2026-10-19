@@ -1,5 +1,57 @@
 # Inside Out
 
+## Stars (2026-10-19)
+
+The owner asked for a scoring system, "like a stars or something", for
+replay value. The agent proposed a par per puzzle with three stars, as pride
+only (nothing gated); the owner said yes. The thresholds, where they show
+and the look are the agent's picks.
+
+- **Par** (`levels.tide`, `LevelPar`): each campaign puzzle's shortest
+  solution as `inside_out_solve all` found it breadth first (663.7 s for
+  all 23 on this machine); a challenge's is its budget, which the search
+  matches (16, 21, 22). Pars: 10, 12, 20, 15, 11, 19, 16, 30, 26, 17, 12,
+  12, 13, 42, 20, 21, 25, 35, 34, 29. A changed puzzle needs its par found
+  again, and saved bests for it cleared with a preferences version, as
+  `completed` bits were.
+- **Stars** (`Stars(solved, best, level)`): 0 unsolved; 1 solved; 2 with a
+  best at most 5/4 of par (`best * 4 <= par * 5`); 3 at par. A puzzle
+  solved before bests were kept has 1.
+- **Bests.** `Workshop.best[PUZZLE_COUNT]`, 0 for none: a solve keeps the
+  lower of it and the solve's `moves` (undo takes moves back, so it is the
+  finished route's length). `Progress` gained `int[PUZZLE_COUNT] best`
+  (23 zigzag varints after `playtest`); `ShareProgress` takes an offered
+  best only for a puzzle the room has solved and only at par or above, and
+  only if lower. `Hands.best` mirrors it; `Roster` offers progress when any
+  of this machine's bests is better than the room's; `SavePreferences`
+  takes the room's better ones. `Preferences` is version 6 with `best`;
+  reading drops a best for an unsolved puzzle or one below par. Older saves
+  have no key, so no bests. `HallState.best` carries them to the hall's
+  drawing.
+- **Where it shows.** The puzzle header reads "n moves / par p" once the
+  puzzle has been solved (never on a first try). The solve's summary adds
+  three stars (`StarMark`: a pentagram of five `Draw.Line` strokes, its
+  middle filled when earned; there is no polygon in `Draw`) and "n moves,
+  par p", or "n moves, best b, par p" when the room had done better. A solved
+  post has three studs along its back edge, brass-white when earned. The
+  hall's header counts the chapter's stars; the post note adds "k of 3
+  stars, best b, par p" (a challenge says "met").
+- **Tests** (`test/campaign.c`): `inside_out_a_solve_keeps_the_fewest_moves_and_par_is_reached`
+  plays a shortest solution of each puzzle (`inside_out_par_solutions` in
+  `test/solutions.h`, from `inside_out_solve <n>`) for a best equal to its
+  par (`PARS`, which repeats `LevelPar`), then the authored witness, which
+  leaves it, and each challenge's witness; `inside_out_the_room_shares_the_better_best`
+  covers the union rules. `inside_out_test_progress_best` sends bests.
+  Three authored witnesses are longer than par: puzzle 8 (50 of 30), 14
+  (46 of 42) and 20 (39 of 29).
+- **Validation.** Native and web debug build warning-free; the four native
+  entries and the web entries but the play and shutter fixtures (the rule
+  below) passed, materials 249 s (WebGL) and 234 s (WebGPU). Bounded hidden
+  two-player captures (a seeded version 6 save, deleted after) showed a
+  par solve's summary with three stars, the save written with its best,
+  the hall header's count and the studs; the first studs (an eighth of a
+  tile) were too faint on blue models and were made larger and lighter.
+
 ## Walking into posts (2026-10-19)
 
 The owner disliked lining up on a lane's two pads to go anywhere ("having to

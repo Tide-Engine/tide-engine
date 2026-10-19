@@ -87,6 +87,29 @@ void SolvedSummary(Workshop workshop, float alpha)
     var waiting = !IsChallenge(workshop.level) && (workshop.unlocked & (1 << chapter)) == 0 && ChapterNeed(chapter) > 0;
     var line = waiting ? $"{count}. Its battery is waiting in the hall." : count;
     Label(line, center + float2(0, 52), 15, Color(MUTED.r, MUTED.g, MUTED.b, alpha), Anchor.MiddleCenter);
+    // Its stars, and this solve's moves against par and the room's best.
+    var level = workshop.level;
+    var best = workshop.best[level];
+    var stars = Stars(true, best, level);
+    for (var star = 0; star < 3; star++)
+        StarMark(center + float2((star - 1) * 34, 92), 13, star < stars ? Color(BRASS.r, BRASS.g, BRASS.b, alpha) :
+            Color(.30, .26, .22, alpha), star < stars);
+    var moves = workshop.puzzle.moves;
+    var detail = moves > best ? $"{moves} moves, best {best}, par {LevelPar(level)}" : $"{moves} moves, par {LevelPar(level)}";
+    Label(detail, center + float2(0, 124), 13, Color(MUTED.r, MUTED.g, MUTED.b, alpha), Anchor.MiddleCenter);
+}
+
+// A five-pointed star drawn as its outline's five strokes, point up, and
+// filled at its middle once earned.
+void StarMark(float2 at, float radius, Color tone, bool earned)
+{
+    if (earned) Draw.Ellipse(at, float2(radius * .45), tone);
+    for (var point = 0; point < 5; point++)
+    {
+        var from = Math.TAU * point / 5 - Math.PI * .5;
+        var to = Math.TAU * (point + 2) / 5 - Math.PI * .5;
+        Draw.Line(at + float2(Math.Cos(from), Math.Sin(from)) * radius, at + float2(Math.Cos(to), Math.Sin(to)) * radius, radius * .26, tone);
+    }
 }
 
 // A lift's two doors meeting in the middle of the screen; reduced motion
