@@ -237,7 +237,12 @@ right joining by itself, with sound from the left only. It shows a code.
 Each phone opens <https://tide-engine.dev/prototypes/inside-out/pad/>,
 enters the code and picks Amber or Teal: a d-pad, Undo, Restart, Menu and
 OK, which reach that player's view as its keys through the relay. The
-phones only send presses; both games run on the TV's computer. Locally,
+phones only send presses; both games run on the TV's computer. Two views
+at once cost more than one, so the TV page draws each at no more than
+1280x1440 and with a cheaper picture (no ambient occlusion or glow, a
+simpler lens). Add `?full` for the whole picture, or `?scale=N` for N
+device pixels to a page pixel (1 for full resolution). Any game page
+takes `?lite` and `?scale=N` too. Locally,
 `node prototypes/inside-out/serve.mjs --lan` serves the same pages at `/tv`
 and `/pad` with its own relay, for phones on this network or on Tailscale;
 Windows may ask to let Node through its firewall on private networks.

@@ -102,6 +102,8 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
         else if (Passable(alongZ, before, survivor.feet.y)) feet = alongZ;
         else feet = before;
     }
+    // The night's end: held in the wake-fire's ring (nights.tide)
+    feet = InRing(match, feet);
     var ground = GroundUnder(ashwick, feet, BODY_RADIUS * 0.6, survivor.feet.y);
     feet.y += survivor.velocity.y * dt;
     if (feet.y <= ground)
