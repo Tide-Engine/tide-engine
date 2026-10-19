@@ -9,7 +9,9 @@ enum ZombieState { Rising, Hunting, Dying, Fallen }
 enum Gait { Shamble, Run, Sprint }
 
 // What kind of the dead: the ordinary walking dead; a Bloater (wider, slower, tougher, swollen with what's rotting in
-// it): near a survivor it swells and bursts, and killed it bursts at once, hurting the dead and the living round it; a
+// it): near a survivor it stops and swells, and killed it falls and swells, then bursts, hurting the dead and the
+// living round it, how far it'll reach burning in the ground as it swells (the owner, 2026-10-19: "it shouldnt be
+// instant, they should have some animation and the circle should show where it is about to explode"); a
 // Spitter (thin, sallow, its throat glowing): it hangs back behind the rest and, with a clear line to a survivor, lobs
 // bile that hurts and slows where it lands; a Warden (the town's watch, still in their mail): rounds, blasts and blows
 // to its body do a quarter as much, so it's its bare head that's shot, or it's knocked down first (on its back its
@@ -17,7 +19,8 @@ enum Gait { Shamble, Run, Sprint }
 enum ZombieKind { Walker, Bloater, Spitter, Warden }
 
 const float BLOAT_NEAR = 2.4;      // How near a survivor sets a Bloater swelling
-const float BLOAT_FUSE = 0.9;      // Seconds from that to its burst
+const float BLOAT_FUSE = 1.4;      // Seconds from that to its burst
+const float BLOAT_DEAD_FUSE = 1.0; // Killed, seconds from its fall to its burst (if it wasn't nearer already)
 const float BLOAT_REACH = 3.6;     // How far its burst reaches
 const float BLOAT_HURT = 45;       // A survivor at its heart takes this (40% of it at the edge)
 const float BLOAT_SIZE = 1.25;     // How much wider it is to hit and to bump into
@@ -89,7 +92,6 @@ component Zombie
     float fuse;                 // A Bloater: seconds since it began to swell (0, not yet)
     bool popped;                // ...and it has burst
     float frenzy;               // Seconds left frenzied by a Stalker's shriek: faster
-    bool elite;                 // A hunt's quarry (missions.tide)
     float spit;                 // A Spitter: seconds till it can spit again...
     float windup;               // ...seconds into the swelling of its throat (0, none)...
     bool sight;                 // ...and whether it has a clear line to whom it's after (looked for a few times a second)
@@ -404,11 +406,16 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     zombie.frozen = Math.Max(0, zombie.frozen - dt);
     zombie.stun = Math.Max(0, zombie.stun - dt);
     zombie.frenzy = Math.Max(0, zombie.frenzy - dt);
-    // A Bloater killed bursts (the tick after the blow); one swelling bursts when its time's up
+    // A Bloater swelling bursts when its time's up; killed, it swells as it falls, sooner
     if (zombie.kind == ZombieKind.Bloater && !zombie.popped)
     {
-        if (zombie.fuse > 0 && zombie.state != ZombieState.Dying) zombie.fuse += dt;
-        if (zombie.state == ZombieState.Dying || zombie.fuse >= BLOAT_FUSE)
+        if (zombie.state == ZombieState.Dying && zombie.fuse < BLOAT_FUSE - BLOAT_DEAD_FUSE)
+        {
+            zombie.fuse = BLOAT_FUSE - BLOAT_DEAD_FUSE;
+            Send(Cue { sound = Sfx.Swell, at = zombie.chestAt });
+        }
+        if (zombie.fuse > 0) zombie.fuse += dt;
+        if (zombie.fuse >= BLOAT_FUSE)
         {
             // The living round it hurt and thrown back, the nearer the more (not one in a Gas Mask); one killed by a
             // survivor in Gas Masks bursts wider
@@ -419,7 +426,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
             {
                 var s = row.survivor;
                 if (!s.ready || s.life != Life.Standing || Has(s, Item.GasMask) > 0) continue;
-                var far = Math.Distance(s.feet + float3(0, 1, 0), zombie.chestAt);
+                var far = Math.Length((s.feet - zombie.chestAt).xz);
                 if (far > BLOAT_REACH) continue;
                 var share = Math.Sqrt(1 - far / BLOAT_REACH);
                 row.entity.Send(Hurt { damage = BLOAT_HURT * Harm(match.danger) * (0.4 + 0.6 * share), from = zombie.chestAt });
@@ -775,9 +782,8 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         zombie.swing = 0;
         zombie.windup = 0;
         match.killed += 1;
-        // A cull's kills in its circle, a hunt's quarry (missions.tide)
+        // A cull's kills in its circle (missions.tide)
         if (match.mission == MissionKind.Cull && Math.Length((zombie.at - match.missionAt).xz) <= CULL_REACH) match.missionDone += 1;
-        if (zombie.elite && match.mission == MissionKind.Hunt) match.missionDone = match.missionGoal;
         // The party's experience, and a level when there's enough
         DropOrb(match, zombie.at, KindWorth(zombie.kind) * OrbWorth(match.danger));
     }

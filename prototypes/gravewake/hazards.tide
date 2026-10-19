@@ -178,17 +178,31 @@ system KeepBlazes(mut Match match, query (Blaze blaze) blazes)
 
 // What the ground's drawn with (look.tide's Earth): the pits, x0, z0, x1, z1; and the fires, x, z, reach, and how far
 // along (below 0, the ground cracking, -1 to 0 as it nears bursting; then its heat, 1 fresh down to 0 as it goes out).
+const int FUSES_SEEN = 16;           // Bloaters swelling drawn on the ground at once, at most
+
 local singleton Hazards
 {
     List<float4> pits;
     List<float4> fires;
     float4 ring;                     // The wake-fire's ring (nights.tide): x, z, reach (0, none)
+    List<float4> fuses;              // Bloaters swelling to burst (zombies.tide): x, z, reach, how near (0 to 1)
 }
 
 // Each frame: the pits (once), the fires, and each fire's light.
 [Stage(Layers.Prepare, 2)]
-view SeeHazards(mut Hazards hazards, mut Lights lights, Village village, Me me, Look look, Match match, query (Blaze blaze) blazes)
+view SeeHazards(mut Hazards hazards, mut Lights lights, Village village, Me me, Look look, Match match, query (Blaze blaze) blazes,
+                query (Zombie zombie) zombies)
 {
+    hazards.fuses.Clear();
+    foreach (var row in zombies)
+    {
+        var z = row.zombie;
+        if (z.kind != ZombieKind.Bloater || z.popped || z.fuse <= 0 || hazards.fuses.count >= FUSES_SEEN) continue;
+        if (Math.Distance(z.at, me.eye) > 60) continue;
+        var near = Math.Saturate(z.fuse / BLOAT_FUSE);
+        hazards.fuses.Add(float4(z.chestAt.x, z.chestAt.z, BLOAT_REACH, near));
+        AddLight(lights, me.eye, Light { at = z.chestAt + float3(0, 0.6, 0), color = Math.Lerp(float3(0.5, 0.9, 0.1), float3(1.0, 0.25, 0.05), near) * (0.5 + 1.5 * near), reach = 5 });
+    }
     hazards.ring = match.phase == Phase.Fighting && match.ringReach > 0 ? float4(match.ringAt.x, match.ringAt.z, match.ringReach, 0) : float4(0);
     if (hazards.pits.count != village.plan.pits.count)
     {

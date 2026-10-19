@@ -687,3 +687,15 @@ local event(Unleashed used) Flourish(mut Fx fx)
     }
 }
 
+
+// A Bloater swelling to burst: foul gas hissing out of it, faster as it nears.
+[Stage(Layers.Gather, 3)]
+view Swelling(Zombie zombie, mut Fx fx, Me me)
+{
+    if (!fx.made || zombie.kind != ZombieKind.Bloater || zombie.popped || zombie.fuse <= 0 || Math.Distance(zombie.at, me.eye) > 45) return;
+    var near = Math.Saturate(zombie.fuse / BLOAT_FUSE);
+    if (fx.random.NextFloat() > Math.Min(Frame.dt, 0.05) * (12 + 40 * near)) return;
+    var out = Scatter(fx, 1.0);
+    Murk(fx, Mote { at = zombie.chestAt + out * 0.35, velocity = out * fx.random.NextFloat(1, 2.5) + float3(0, 0.8, 0), life = fx.random.NextFloat(0.35, 0.7),
+                    size = fx.random.NextFloat(0.12, 0.22), grow = 0.8, color = float3(0.26, 0.32, 0.06), alpha = 0.35, drag = 2 });
+}

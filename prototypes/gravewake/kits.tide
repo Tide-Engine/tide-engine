@@ -7,7 +7,7 @@
 // soul games"). The Gunner carries a carbine, a piercing round and frag
 // grenades; the Breacher a pump shotgun, a boot and a firebomb, and takes less
 // from the dead; the Engineer an SMG whose rounds set items off more, mines and
-// a turret that carries their items. (The Leap and the Blink are kept but
+// a turret that walks after them carrying their items. (The Leap and the Blink are kept but
 // given to nobody.)
 
 enum Role { None, Gunner, Breacher, Engineer }
@@ -42,7 +42,7 @@ string RoleLine(Role role)
     {
         case Role.Gunner: return "A carbine for any range. A heavy round through a whole line of the dead, and grenades into the thick of them by themselves.";
         case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, and sets the ground alight by itself.";
-        case Role.Engineer: return "An SMG whose rounds set items off half again as often. Lays mines, and sets down a turret by itself, carrying your items.";
+        case Role.Engineer: return "An SMG whose rounds set items off half again as often. Lays mines, and by itself sets down a turret that walks after you, carrying your items.";
     }
     return "";
 }
@@ -99,7 +99,7 @@ string SkillLine(Skill skill)
         case Skill.Firebomb: return "Throw a pot of burning fuel";
         case Skill.Mine: return "Lay a mine that bursts when the dead come near";
         case Skill.Blink: return "Step through the air to where you look";
-        case Skill.Turret: return "Set down a turret that fires at the dead on its own a while, setting off your items";
+        case Skill.Turret: return "Set down a turret that walks after you, firing at the dead on its own a while, setting off your items";
     }
     return "";
 }
@@ -133,7 +133,7 @@ const float ROLL_GUARD = 0.36;      // ...and how long from its start nothing th
 const int ROLLS = 2;                // Charges
 const float SLAM_REACH = 4.5;
 const float KICK_REACH = 2.6;
-const float TURRET_SECONDS = 15;
+const float TURRET_SECONDS = 12;
 const float TURRET_REACH = 24;
 const float TURRET_HIGH = 0.95;          // Where its gun turns, above its feet
 
@@ -371,8 +371,11 @@ const float THROW_MOST = 20;
 
 // ---- The Engineer's turret ----
 
-// A turret where it was set down: it turns to the nearest of the dead it can see and fires, till its time is up, each
-// round setting off its maker's items (a little less often than his own).
+// A turret: set down by its maker, it scuttles after them, keeping TURRET_HEEL off (the owner, 2026-10-19: "the
+// enginner ability (turret) feels weird since it doesnt move with me or anything i just leave it and forget about it
+// since im moving away. it also seems pretty OP"; after Risk of Rain 2's Engineer's walking turrets), and turns to the
+// nearest of the dead it can see and fires as it goes, till its time is up, each round setting off its maker's items (a
+// little less often than theirs). It had stood where it was set down for 15 seconds, a round of 11 every 0.09.
 component Turret
 {
     int seat;
@@ -381,22 +384,56 @@ component Turret
     float pitch;
     float life;
     float wait;
+    float stride;           // How far it's walked, for its scuttle...
+    float pace;             // ...and how fast it's going
     Arms arms;              // Its maker's, when it was set down
 }
 
 const float TURRET_PROC = 0.6;
+const float TURRET_HURT = 10;       // A round's, times its maker's might...
+const float TURRET_RATE = 0.14;     // ...one every so often
+const float TURRET_HEEL = 2.2;      // How near its maker it keeps...
+const float TURRET_SPEED = 8.5;     // ...going at most so fast (quicker than a run, not than a roll)
+const float TURRET_LOST = 25;       // So far from its maker (stuck behind something), it's at their heel at once
 
 [Stage(Tick.Missiles, 1)]
-system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time time)
+system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time time, query (Survivor survivor) survivors)
 {
     if (match.paused) return;
-    turret.life -= time.dt;
+    var dt = time.dt;
+    turret.life -= dt;
     if (turret.life <= 0)
     {
         this.Destroy();
         return;
     }
-    turret.wait -= time.dt;
+    // After its maker: the farther behind, the quicker, to TURRET_SPEED
+    turret.pace = 0;
+    mut var goes = float2(0);
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (s.seat != turret.seat || !s.ready) continue;
+        var off = (s.feet - turret.at).xz;
+        var far = Math.Length(off);
+        if (far > TURRET_LOST)
+        {
+            var heel = s.feet - Flat(s.yaw) * TURRET_HEEL;
+            var beside = PushOut(ashwick, On(heel.x, heel.z), 0.4, 1.2);
+            turret.at = On(beside.x, beside.z);
+            continue;
+        }
+        if (far <= TURRET_HEEL) continue;
+        goes = off / far;
+        var speed = Math.Min(TURRET_SPEED, 2 + (far - TURRET_HEEL) * 4);
+        var step = Math.Min(far - TURRET_HEEL, speed * dt);
+        var next = PushOut(ashwick, On(turret.at.x + goes.x * step, turret.at.z + goes.y * step), 0.4, 1.2);
+        var went = Math.Length((next - turret.at).xz);
+        turret.stride += went;
+        turret.pace = went / Math.Max(dt, 0.0001);
+        turret.at = On(next.x, next.z);
+    }
+    turret.wait -= dt;
     if (turret.wait > 0) return;
     var gun = turret.at + float3(0, TURRET_HIGH, 0);
     // The nearest it can see, of a few nearest
@@ -412,7 +449,10 @@ system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time t
     }
     if (best.entity == default)
     {
-        turret.wait = 0.25;
+        // Nothing to shoot: it faces the way it goes
+        if (turret.pace > 0.5) turret.yaw = Math.Atan2(goes.x, goes.y);
+        turret.pitch = 0;
+        turret.wait = 0.1;
         return;
     }
     var to = best.chest - gun;
@@ -424,8 +464,8 @@ system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time t
     }
     turret.yaw = Math.Atan2(way.x, way.z);
     turret.pitch = Math.Asin(Math.Clamp(way.y, -1, 1));
-    turret.wait = 0.09;
-    Land(turret.arms, best, 11 * turret.arms.might, false, false, gun, 0.6, TURRET_PROC, herd);
+    turret.wait = TURRET_RATE;
+    Land(turret.arms, best, TURRET_HURT * turret.arms.might, false, false, gun, 0.6, TURRET_PROC, herd);
     var muzzle = gun + way * 0.45;
     Send(Traced { seat = turret.seat, from = muzzle, to = best.chest, kind = Trace.Turret });
     Send(Loosed { seat = turret.seat, weapon = Weapon.Smg, at = muzzle, way = way, source = Source.Turret });

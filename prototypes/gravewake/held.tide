@@ -201,16 +201,23 @@ view DrawCarried(Survivor survivor, Lens lens, mut Grip grip, Armory armory)
 view DrawTurret(Turret turret, Lens lens, Look look)
 {
     if (!lens.made || Math.Distance(turret.at, look.eye) > 90) return;
-    lens.scene.Mesh(tripodMesh, float4x4.TRS(turret.at, quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), float3(1)), Wobble, Steel, Finish { });
+    var at = TurretFeet(turret);
+    lens.scene.Mesh(tripodMesh, float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), float3(1)), Wobble, Steel, Finish { });
     var aim = Math.Mul(quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), quaternion.AxisAngle(float3(1, 0, 0), -turret.pitch));
-    lens.scene.Mesh(GunMesh(Weapon.Smg), float4x4.TRS(turret.at + float3(0, TURRET_HIGH - 0.1, 0), aim, float3(1.15)), Wobble, Steel, Finish { });
+    lens.scene.Mesh(GunMesh(Weapon.Smg), float4x4.TRS(at + float3(0, TURRET_HIGH - 0.1, 0), aim, float3(1.15)), Wobble, Steel, Finish { });
+}
+
+// Where a turret's feet are seen: hopping as it scuttles after its maker.
+float3 TurretFeet(Turret turret)
+{
+    return turret.at + float3(0, Math.Abs(Math.Sin(turret.stride * 4.5)) * 0.14 * Math.Saturate(turret.pace / 2), 0);
 }
 
 [Stage(Layers.Shadows, 1)]
 view ShadowTurret(Turret turret, Lens lens)
 {
     if (!lens.made) return;
-    lens.moon.Mesh(tripodMesh, float4x4.TRS(turret.at, quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), float3(1)));
+    lens.moon.Mesh(tripodMesh, float4x4.TRS(TurretFeet(turret), quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), float3(1)));
 }
 
 // ---- The gun drones, over their survivors' shoulders ----
