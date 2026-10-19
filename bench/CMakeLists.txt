@@ -11,14 +11,14 @@ target_compile_definitions(tide_bench PRIVATE TIDE_BENCH_RESULTS="${CMAKE_CURREN
 
 tide_add_game(bench_sand SOURCES sand/sand.tide NAME sand HOST sand/main.c)
 target_link_libraries(bench_sand PRIVATE tide_bench)
-add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0xe0e885af116662f5)
+add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x742cb392be44252d)
 # Sand to play, with its views and the mouse: `sand` in a window, sand.html on
 # the web, which the docs site shows (docs/guide/sand.md).
 tide_add_game(sand SOURCES sand/sand.tide sand/play.tide TITLE "Tide sand" STATS)
 
 tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST gallery/main.c)
 target_link_libraries(bench_gallery PRIVATE tide_bench)
-add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xaa539cfdc1935346)
+add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xccd64c3fd8bcbb8b)
 
 # C against Tide: concepts written both ways, as fast as each language allows,
 # timed on the same work (see versus/versus.h).
@@ -44,9 +44,9 @@ if(NOT TIDE_ANDROID)
             QUERY "counts=10&frames=2&warmup=1&repeat=1&modes=gpu&verify-gpu&subframe=0.5" WEBGPU EXPECT "GPU clip reference:")
     else()
         add_test(NAME bench_skinned COMMAND bench_skinned --counts 1,10 --frames 2 --warmup 1 --repeat 1)
-        set_tests_properties(bench_skinned PROPERTIES LABELS gpu)
+        tide_gpu_test(bench_skinned)
         add_test(NAME bench_skinned_gpu_clip COMMAND bench_skinned --counts 10 --modes gpu --frames 2 --warmup 1 --repeat 1 --verify-gpu --subframe 0.5)
-        set_tests_properties(bench_skinned_gpu_clip PROPERTIES LABELS gpu)
+        tide_gpu_test(bench_skinned_gpu_clip)
     endif()
 endif()
 

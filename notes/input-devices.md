@@ -1,5 +1,16 @@
 # Input devices and pixels in the platform layer
 
+## Input borrowing through helpers (2026-10-18)
+
+Ordinary synchronous functions/methods now take the caller's input parameter
+explicitly, forwarding const current/previous pointers. Owner/server selection,
+button edges (including nested bools), prediction suppression and engine-stamped
+ViewTime stay with the source. Sampling, device pruning and wire packing are
+unchanged; custom input fields are already all serialized. No platform/runtime
+API or input layout changes. Borrowed inputs cannot be stored or kept by tasks;
+ordinary field values can. Contracts, regressions and validation are recorded
+in language.md, Borrowed input parameters.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Layout

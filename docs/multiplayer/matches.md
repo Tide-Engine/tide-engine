@@ -155,6 +155,46 @@ local event(Disconnected gone) BackToMenu(mut Menu menu)
 }
 ```
 
+## Dedicated servers
+
+`tide run --server --anonymous` starts a native server with no window, graphics
+context, audio device, views or player of its own. One process can run many
+independent matches of the same game. Matches own separate worlds, players,
+inputs, commands and clocks; they share game code, immutable assets and a worker
+pool. Matches currently update in order, with parallel systems within each match.
+Game C must keep match-specific state in its world or an explicit context;
+process-wide C globals are shared. A native C crash still affects the process.
+
+For quick startup, clients request a match with
+`Session.Connect("localhost:7777/0")`, or `Session.Join("K7QF2M/0")` through the
+server's WebRTC room. Replace `0` with an existing match ID to join that match.
+The command line accepts the same address through `--connect` or `--join`.
+`Session.room` reports the endpoint with its assigned match ID once admitted.
+A match ID identifies a match; it grants no permission by itself.
+
+Anonymous creation and joining are explicit testing policies. Without
+`--anonymous`, configure authentication and admission policy through the
+[server entry point](../c/network.md#dedicated-hosting). Creation and joining
+are authorized separately, so a backend can create reserved matches while
+players only receive permission to join them. Verification can complete
+asynchronously without blocking simulation. Accepted identities bind player
+reconnections; credentials and account metadata stay outside replicated worlds.
+
+The built-in client address form is anonymous. Authenticated clients and trusted
+services use `tide/hosting.h` with a game's verifier and credentials. Credentials
+require WebRTC/DTLS or a custom transport that provides equivalent protection;
+the hosting layer refuses credentials over its plain UDP path. Tide supplies
+the admission interface, not an account database or a particular identity provider.
+
+The server starts matches in match `Main` by default. For a local menu `Main`,
+provide a process entry point that selects the match scene and its typed startup
+parameters. See [server options](../tools/cli.md#dedicated-servers).
+
+Server builds can omit assets reached only from client code. Assets used by
+simulation, including helper calls, defaults and dynamic match asset references,
+remain available. Server and client retain the same match compatibility identity;
+different pack bytes use the existing self-contained snapshot transfer path.
+
 ## Host migration
 
 When the machine running a match leaves, the match ends for everyone, unless the game turns on host migration in its [settings](../language/basics.md#settings):
@@ -176,7 +216,7 @@ Then, when the machine running a room's match leaves or stops answering, another
 - `Session.End()` ends the match for everyone instead: every player gets `Disconnected` with `Ended`, even one who missed the goodbye, as the relay keeps the room as ended for a while. So does a match whose last scene unloads.
 - Only matches in a room change hands, as the room is where the players meet again, or on [a network of the game's own](./own-network.md) that says where its players meet. A closed match stays closed: its players come back, but no one new joins.
 
-The new host takes over the world its machine received. Every player currently receives the whole world, including [private scenes](../game/scenes.md#private-scenes); selective state visibility is not built yet. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
+This migration path requires the full authoritative world. [Visibility-enabled](../game/visibility.md) clients receive partial worlds and cannot currently promote one into a host: Tide refuses that takeover until a trusted complete-state handover exists. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 
 ## Players in the match
 
@@ -223,7 +263,7 @@ settings
 
 `maxPlayers` goes from 1 to 256. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
 
-Pick what the game is built for. Every player's input goes to every other player each tick, so what a match sends grows with the square of its players, and each client runs the whole simulation: 64 players cost sixteen times what 16 do, before the game does anything with them.
+Pick what the game is built for. In a full-world match every player receives every other's input and simulates the whole world, so traffic can grow with the square of its players. [Visibility](../game/visibility.md) restricts state, simulation and owner-input delivery, while the server still simulates the complete match.
 
 ## Limits for now
 

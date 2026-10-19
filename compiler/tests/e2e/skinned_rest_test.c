@@ -30,6 +30,7 @@ TIDE_TEST(skinned_rest_draws_without_clips_and_preserves_operand_order)
     int32_t authored_base = -1, edited_base = -1, animated_base = -1;
     for (uint32_t i = 0; i < draw.run_count; i++) {
         const tide_draw_run *run = &draw.runs[i];
+        TIDE_CHECK(run->shader->bounds_position == 0); // Rest geometry is not a conservative posed bound
         // The omitted and explicit forms capture the same authored palette,
         // including draws with a texture, custom stages and another target.
         uint32_t current = 0;

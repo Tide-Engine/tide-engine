@@ -1,5 +1,6 @@
-// Android's window (see src/window.h): Android's NativeActivity, with OpenGL
-// ES 3 through EGL, and no Java of our own.
+// Android's window (see src/window.h): Android's NativeActivity, drawn in with
+// Vulkan where the device has what the renderer needs (src/gpu_vk.h), else
+// with OpenGL ES 3 through EGL, and no Java of our own.
 //
 // Android starts the app by loading its library and calling
 // ANativeActivity_onCreate on its main thread, which mustn't block. The program
@@ -28,6 +29,7 @@
 #include <android/native_activity.h>
 #include <android/native_window.h>
 #include <EGL/egl.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <jni.h>
 #include <pthread.h>
@@ -36,6 +38,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "gpu_vk.h"
+#include "vulkan/vulkan_android.h"
 
 #define COUNT_OF(array) (sizeof(array) / sizeof((array)[0]))
 
@@ -67,6 +72,8 @@ static struct {
     EGLConfig config;
     EGLContext context;
     EGLSurface surface;
+    bool vulkan;           // What draws is Vulkan, else OpenGL ES
+    void *vulkan_library;  // libvulkan.so, opened where there's one
     float scale;                    // The window's pixels per logical pixel
     int width, height;              // The window's size in logical pixels, as of when it last had one...
     int pixel_width, pixel_height;  // ...and in its own
@@ -226,9 +233,23 @@ const char *tide_android_cache_path(void)
     return cache;
 }
 
+// One of the intent's strings into `text`: false where it has none.
+static bool intent_string(JNIEnv *env, jobject intent, jmethodID get_extra, const char *name, char *text, const size_t size)
+{
+    jstring key = (*env)->NewStringUTF(env, name);
+    jstring value = get_extra ? (jstring)(*env)->CallObjectMethod(env, intent, get_extra, key) : NULL;
+    if (!value) return false;
+    const char *chars = (*env)->GetStringUTFChars(env, value, NULL);
+    snprintf(text, size, "%s", chars ? chars : "");
+    if (chars) (*env)->ReleaseStringUTFChars(env, value, chars);
+    return true;
+}
+
 // What the app was started with, for main: the intent's "tide.args", words
 // apart (as `tide run --android` gives --host, --join or --connect), into
-// `argv` after the program's name. Returns how many arguments that makes.
+// `argv` after the program's name. Returns how many arguments that makes. Its
+// "tide.backend" is TIDE_BACKEND, as a desktop program's environment has it:
+// "vulkan" or "opengl" (`--es tide.backend opengl`).
 static int intent_args(char *text, const size_t size, char **argv, const int max)
 {
     static char name[] = "tide";
@@ -245,12 +266,9 @@ static int intent_args(char *text, const size_t size, char **argv, const int max
         jclass intent_class = (*env)->GetObjectClass(env, intent);
         jmethodID get_extra =
             (*env)->GetMethodID(env, intent_class, "getStringExtra", "(Ljava/lang/String;)Ljava/lang/String;");
-        jstring key = (*env)->NewStringUTF(env, "tide.args");
-        jstring value = get_extra ? (jstring)(*env)->CallObjectMethod(env, intent, get_extra, key) : NULL;
-        if (value) {
-            const char *chars = (*env)->GetStringUTFChars(env, value, NULL);
-            snprintf(text, size, "%s", chars ? chars : "");
-            if (chars) (*env)->ReleaseStringUTFChars(env, value, chars);
+        char backend[32];
+        if (intent_string(env, intent, get_extra, "tide.backend", backend, sizeof backend)) setenv("TIDE_BACKEND", backend, 1);
+        if (intent_string(env, intent, get_extra, "tide.args", text, size)) {
             char *rest = NULL;
             for (char *word = strtok_r(text, " ", &rest); word && argc < max - 1; word = strtok_r(NULL, " ", &rest)) {
                 argv[argc++] = word;
@@ -379,9 +397,15 @@ static void follow_activity(void)
         if (app.queue) AInputQueue_attachLooper(app.queue, app.looper, LOOPER_INPUT, NULL, NULL);
     }
     if (app.window_given != app.window) {
-        drop_surface();
-        app.window = app.window_given;
-        make_surface();
+        if (app.vulkan) { // Its surface goes before the window may, and another is made for the next one
+            app.window = app.window_given;
+            tide_gpu_vk_surface_changed();
+            fit_window();
+        } else {
+            drop_surface();
+            app.window = app.window_given;
+            make_surface();
+        }
     }
     app.window_taken = app.window;
     app.queue_taken = app.queue;
@@ -904,7 +928,7 @@ bool tide_window_should_close(void)
 // function asked, and draw nothing, until the system freezes it.
 bool tide_window_unseen(void)
 {
-    return app.surface == EGL_NO_SURFACE;
+    return app.vulkan ? !app.window : app.surface == EGL_NO_SURFACE;
 }
 
 void tide_window_size(int *width, int *height)
@@ -923,7 +947,9 @@ void tide_window_pixel_size(int *width, int *height)
 
 void tide_window_present(void)
 {
-    if (app.surface != EGL_NO_SURFACE && !eglSwapBuffers(app.display, app.surface)) {
+    if (app.vulkan) {
+        tide_gpu_vk_present();
+    } else if (app.surface != EGL_NO_SURFACE && !eglSwapBuffers(app.display, app.surface)) {
         const EGLint error = eglGetError();
         if (error == EGL_BAD_SURFACE || error == EGL_BAD_NATIVE_WINDOW) drop_surface(); // Gone under us
     }
@@ -936,9 +962,70 @@ void tide_window_wait(const double seconds)
     poll_looper(seconds > 0.0 ? (int)(seconds * 1000.0) + 1 : 0);
 }
 
+// ---------------------------------------------------------------------------
+// Vulkan: libvulkan.so, opened rather than linked, so a device without it
+// runs the app with OpenGL ES all the same.
+
+static PFN_vkGetInstanceProcAddr vulkan_proc;
+
+static VkResult make_vulkan_surface(const VkInstance instance, VkSurfaceKHR *surface)
+{
+    if (!app.window) return VK_ERROR_INITIALIZATION_FAILED; // None to draw in now
+    const PFN_vkCreateAndroidSurfaceKHR create =
+        (PFN_vkCreateAndroidSurfaceKHR)vulkan_proc(instance, "vkCreateAndroidSurfaceKHR");
+    if (!create) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const VkAndroidSurfaceCreateInfoKHR info = {VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR, NULL, 0, app.window};
+    return create(instance, &info, NULL, surface);
+}
+
+static void vulkan_pixel_size(int *width, int *height)
+{
+    *width = app.window ? ANativeWindow_getWidth(app.window) : 0;
+    *height = app.window ? ANativeWindow_getHeight(app.window) : 0;
+}
+
+static bool open_vulkan(const bool say)
+{
+    app.vulkan_library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+    if (!app.vulkan_library) {
+        if (say) fprintf(stderr, "tide: this device has no Vulkan\n");
+        return false;
+    }
+    vulkan_proc = (PFN_vkGetInstanceProcAddr)dlsym(app.vulkan_library, "vkGetInstanceProcAddr");
+    static const char *const extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
+    const tide_vk_window window = {vulkan_proc, extensions, 2, make_vulkan_surface, vulkan_pixel_size, true};
+    if (vulkan_proc && tide_gpu_vk_open(&window, say)) return true;
+    dlclose(app.vulkan_library);
+    app.vulkan_library = NULL;
+    return false;
+}
+
 bool tide_window_open(const tide_window_desc *desc)
 {
     (void)desc; // The system sizes the activity's window, and names it after the app
+    // Vulkan where the device has it, else OpenGL ES; TIDE_BACKEND (the intent's
+    // tide.backend) picks one, and a Vulkan asked for that isn't there is a failure
+    const char *backend = getenv("TIDE_BACKEND");
+    const bool asks_vulkan = backend && strcmp(backend, "vulkan") == 0;
+    const bool asks_gl = backend && strcmp(backend, "opengl") == 0;
+    if (backend && *backend && !asks_vulkan && !asks_gl) {
+        fprintf(stderr, "tide: TIDE_BACKEND is \"%s\", where it's vulkan or opengl\n", backend);
+        return false;
+    }
+    if (!asks_gl) {
+        // The first window, which the surface is of
+        while (!app.window && !tide_window_should_close()) poll_looper(-1);
+        if (!app.window) return false; // The activity went before it had one
+        app.vulkan = open_vulkan(asks_vulkan);
+        if (app.vulkan) {
+            fit_window();
+            return true;
+        }
+        if (asks_vulkan) {
+            fprintf(stderr, "tide: TIDE_BACKEND asks for Vulkan, and this device has none to draw with\n");
+            return false;
+        }
+    }
     app.display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (app.display == EGL_NO_DISPLAY || !eglInitialize(app.display, NULL, NULL)) {
         fprintf(stderr, "tide: no EGL display\n");
@@ -960,22 +1047,26 @@ bool tide_window_open(const tide_window_desc *desc)
         return false;
     }
     app.surface = EGL_NO_SURFACE;
+    make_surface(); // For the window there may be already
 
     // The first window: the renderer needs a context that's current to start.
-    while (!tide_window_should_close()) {
-        poll_looper(-1);
-        if (app.surface != EGL_NO_SURFACE) break;
-    }
+    while (app.surface == EGL_NO_SURFACE && !tide_window_should_close()) poll_looper(-1);
     return app.surface != EGL_NO_SURFACE; // Or the activity went before it had a window
 }
 
 const tide_gpu *tide_window_gpu(void)
 {
-    return &tide_gpu_gl;
+    return app.vulkan ? &tide_gpu_vulkan : &tide_gpu_gl;
 }
 
 void tide_window_close(void)
 {
+    if (app.vulkan) {
+        tide_gpu_vk_close();
+        dlclose(app.vulkan_library);
+        app.vulkan_library = NULL;
+        app.vulkan = false;
+    }
     drop_surface();
     if (app.context != EGL_NO_CONTEXT) eglDestroyContext(app.display, app.context);
     if (app.display != EGL_NO_DISPLAY) eglTerminate(app.display);

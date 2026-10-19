@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "name": "weighbridge",
+  "function": "BuildMapWeighbridge",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -8,
+        0,
+        -16.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        8,
+        5.4,
+        16.1
+      ],
+      "yaw": "SOUTH",
+      "need": [
+        1
+      ],
+      "socket_x": 1
+    }
+  ],
+  "plates": [
+    {
+      "id": "plate_1",
+      "at": [
+        -9,
+        5.4,
+        11.5
+      ],
+      "signal": 1,
+      "heavy": true,
+      "need": 350
+    },
+    {
+      "id": "plate_0",
+      "at": [
+        8,
+        3.6,
+        0
+      ],
+      "signal": 0
+    }
+  ],
+  "machines": [
+    {
+      "id": "machine_0",
+      "from": [
+        8,
+        -0.15,
+        -7
+      ],
+      "to": [
+        8,
+        3.45,
+        -7
+      ],
+      "size": [
+        3,
+        0.3,
+        3
+      ],
+      "need": [],
+      "speed": 1.8,
+      "lamp": [
+        8,
+        -0.38,
+        -7
+      ],
+      "along": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "machine_1",
+      "from": [
+        -9,
+        6.3,
+        4.8
+      ],
+      "to": [
+        -9,
+        13.3,
+        4.8
+      ],
+      "size": [
+        10,
+        5.4,
+        0.35
+      ],
+      "need": [
+        0
+      ],
+      "any": false,
+      "speed": 6.0,
+      "lamp": [
+        -9,
+        10.85,
+        4.465
+      ],
+      "along": [
+        1,
+        0,
+        0
+      ],
+      "lamp_depth": 0.18
+    }
+  ],
+  "anchors": {
+    "wire_1_0": {
+      "at": [
+        -8.2,
+        5.425,
+        11.5
+      ],
+      "support": "scene"
+    },
+    "wire_1_1": {
+      "at": [
+        3.575,
+        5.425,
+        11.5
+      ],
+      "support": "scene"
+    },
+    "wire_1_2": {
+      "at": [
+        4.025,
+        5.425,
+        13.435
+      ],
+      "support": "scene"
+    },
+    "wire_1_3": {
+      "at": [
+        4.025,
+        9.6,
+        13.435
+      ],
+      "support": "scene"
+    },
+    "wire_1_4": {
+      "at": [
+        5.1,
+        9.6,
+        13.435
+      ],
+      "support": "scene"
+    },
+    "wire_1_5": {
+      "at": [
+        7,
+        9.6,
+        13.475
+      ],
+      "support": "scene"
+    },
+    "wire_0_0": {
+      "at": [
+        8.6,
+        3.625,
+        0
+      ],
+      "support": "scene"
+    },
+    "wire_0_1": {
+      "at": [
+        13.965,
+        3.625,
+        0
+      ],
+      "support": "scene"
+    },
+    "wire_0_2": {
+      "at": [
+        13.965,
+        12.565,
+        0
+      ],
+      "support": "scene"
+    },
+    "wire_0_3": {
+      "at": [
+        13.965,
+        12.565,
+        4.465
+      ],
+      "support": "scene"
+    },
+    "wire_0_4": {
+      "at": [
+        -9,
+        12.565,
+        4.465
+      ],
+      "support": "scene"
+    },
+    "wire_0_5": {
+      "at": [
+        -9,
+        10.85,
+        4.465
+      ],
+      "support": "scene"
+    },
+    "wire_1_4_turn": {
+      "at": [
+        5.1,
+        9.6,
+        13.475
+      ],
+      "support": "scene"
+    },
+    "wire_1_1a": {
+      "at": [
+        3.575,
+        5.425,
+        10.975
+      ],
+      "support": "scene"
+    },
+    "wire_1_1b": {
+      "at": [
+        4.025,
+        5.425,
+        10.975
+      ],
+      "support": "scene"
+    }
+  },
+  "wires": [
+    {
+      "id": "wire_1",
+      "signal": 1,
+      "from": "plate_1",
+      "to": "exit",
+      "points": [
+        "wire_1_0",
+        "wire_1_1",
+        "wire_1_1a",
+        "wire_1_1b",
+        "wire_1_2",
+        "wire_1_3",
+        "wire_1_4",
+        "wire_1_4_turn",
+        "wire_1_5"
+      ]
+    },
+    {
+      "id": "wire_0",
+      "signal": 0,
+      "from": "plate_0",
+      "to": "machine_1",
+      "points": [
+        "wire_0_0",
+        "wire_0_1",
+        "wire_0_2",
+        "wire_0_3",
+        "wire_0_4",
+        "wire_0_5"
+      ]
+    }
+  ],
+  "place_ids": [
+    6
+  ],
+  "external_geometry": true,
+  "boxes": [
+    {
+      "id": "shutter_feed_beam",
+      "min": [
+        -14,
+        10.62,
+        4.5
+      ],
+      "max": [
+        -4,
+        12.6,
+        5.1
+      ],
+      "paint": "PANELS"
+    }
+  ]
+}

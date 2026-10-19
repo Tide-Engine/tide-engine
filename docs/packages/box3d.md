@@ -26,7 +26,7 @@ That writes the package's name in the game's `tide.packages`, which is all it ta
 box3d
 ```
 
-Its code is in the namespace `Box3D`, so a file that uses it says `using Box3D;`. From then on `Body`, `Box`, `Sphere`, `Capsule` and `Physics` name the package's. A name the game declares itself still means the game's: one with a `Body` of its own writes the package's in full, `Box3D.Body`.
+Its code is in the namespace `Box3D`, so a file that uses it says `using Box3D;`. From then on `Body`, `Box`, `Sphere`, `Capsule`, `MeshCollider` and `Physics` name the package's. A name the game declares itself still means the game's: one with a `Body` of its own writes the package's in full, `Box3D.Body`.
 
 A game that doesn't list the package compiles and ships none of it. One that does ships Box3D, which is under the MIT license, so it ships Box3D's notice with it: the `LICENSE` file in the package's `box3d` folder, `src/packages/box3d/box3d/LICENSE` of the folder `tide version` says `tide` is installed in.
 
@@ -141,6 +141,29 @@ view Capsules(Body body, Capsule capsule)
     Draw.Sphere(body.position - end, capsule.radius, Color.white);
 }
 ```
+
+### Mesh colliders
+
+`MeshCollider` puts an indexed triangle surface on a static body, including concave geometry and gaps:
+
+```csharp
+Spawn(Body { type = BodyType.Static }, MeshCollider {
+    vertices = [float3(-10, 0, -10), float3(-10, 0, 10), float3(10, 0, 10), float3(10, 0, -10)],
+    indices = [0, 1, 2, 0, 2, 3]
+});
+```
+
+Each triple names zero-based vertex indices, counterclockwise from the front. These triangles face up. `scale` defaults to `float3(1)`; nonuniform and mirrored scales work, but no component may be zero. `offset` is added after scaling in body space, then the body's position and rotation place the surface. `friction` defaults to 0.6 and `bounce` to 0. There is no density or sensor setting.
+
+A mesh can also be a [part](#parts), with `Part { of = terrain }`. Its body must be `BodyType.Static`. A mesh on a dynamic or kinematic body makes no shape; an unsuitable mesh part is destroyed. Once a body has a mesh, a write requesting another body type is reset to `Static`. Position and rotation writes still move it.
+
+The component's geometry and material are read once when attached. Replace its part to change them. Supply positions and indices explicitly, including when they come from an imported rendering mesh; automatic conversion from a rendering mesh isn't provided.
+
+Each collider accepts 3–65,536 vertices and 1–65,536 triangles. Indices must be in range and come in complete triples. Scaled and offset coordinates must be finite and within ±1,000,000 on each axis; friction is finite and nonnegative, bounce finite in [0, 1]. Invalid data makes no shape. Degenerate triangles are discarded, and an entirely degenerate mesh makes no shape. A failed attachment is attempted once.
+
+Current and [rewound](#rewinding-queries) rays, primitive casts and overlaps include meshes. Rays and casts meet triangle fronts; these are thin surfaces with no solid interior. `Body.rewind` includes its meshes. Detached queries retain triangles in their spatial tree, so preparing a scene and keeping mesh history costs memory proportional to triangle count. Ordinary physics ticks capture none with history disabled.
+
+Cooked mesh geometry lives in the match's resident state, shared by identical geometry, and follows snapshots, rollback, joins and reloads. Unused geometry stays until the world is destroyed, as box hulls do.
 
 ### Parts
 
@@ -474,7 +497,7 @@ event(Hit hit) Shatter(with Glass)
 
 ## Asking the world
 
-Functions that ask what's in the world, and change nothing. Each takes the `Physics` singleton, says whether it found anything, and gives what it found through [`out`](../language/functions.md):
+Methods on the `Physics` singleton that ask what's in the world, and change nothing. Each says whether it found anything, and gives what it found through [`out`](../language/functions.md):
 
 ```csharp
 component Walker
@@ -537,10 +560,34 @@ view Aim(Physics physics, Devices devices)
 A few rules hold for all of them:
 
 - **They see the world as the last step left it.** A system after the step is asked of this tick's step, and one that's [before it](#before-the-step) of the last tick's. What code wrote into a body since isn't there yet, nor a body or a shape that was spawned since: each is in the world from the next step. An entity that was destroyed since is found no more, at once.
-- **A sensor is in nothing's way.** A ray and a cast go through sensors, and `Overlap` doesn't list them. What's in one is `Inside`'s to say.
-- **A ray says nothing of a shape it starts inside**, and a cast meets what its shape is in at `from` right there: a `fraction` of 0, and no `normal`. A few millimeters count as touching, so a shape cast from where a body rests is in what the body rests on: start a cast a little off it.
-- **The answer is the same on every machine**, as everything in the match is. Of two things as near, the one whose shape was made first is the one that's met, and lists come in the order of their bodies' `id`.
-- **Everything solid is found**: there's no filter yet, and no way to leave the asking body's own shapes out. A ray from inside a body's own shape says nothing of it, which is what a ray down from a body's middle relies on.
+- **Sensors are skipped by default.** The all-hit methods below can include them. `Overlap` doesn't list sensors; `Inside` asks what's in one.
+- **A ray says nothing of a shape it starts inside**, and a cast meets what its shape is in at `from` right there: a `fraction` of 0, and no `normal` or unique surface `point`. A few millimeters count as touching, so a shape cast from where a body rests is in what the body rests on: start a cast a little off it.
+- **The answer is the same on every machine**, as everything in the match is. Of two things as near, the one whose shape was made first is the one that's met. `Overlap` and `Inside` lists come in the order of their bodies' `id`.
+- **One body can be left out.** `Raycast` and `Cast` accept `ignore: body` after the output, excluding every shape on that body, including its parts: `physics.Raycast(body.position, target, out var hit, ignore: body)`.
+
+### All hits and game filtering
+
+`RaycastAll` and `CastAll` return an `out List<RayHit>`, sorted by increasing `fraction`. Equal fractions use the same deterministic shape order as the closest-hit methods. They return true if the list has any hits; otherwise the output is an empty list, replacing its previous contents.
+
+```csharp
+physics.RaycastAll(from, to, out var hits, ignore: body);
+foreach (var hit in hits)
+{
+    if (!world.Has<Target>(hit.entity)) continue;
+    // This is the nearest hit accepted by the game's rules.
+    hit.entity.Send(Struck { at = hit.point });
+    break;
+}
+
+physics.CastAll(Sphere { radius = 0.2 }, from, quaternion.identity, to, out var swept,
+    ignore: body, includeSensors: true);
+```
+
+`CastAll` accepts the same `Box`, `Sphere` and `Capsule` shapes, `from`, `rotation` and `to` as `Cast`. Both all-hit methods accept `ignore: body`, which excludes every shape on that body, including its parts. `includeSensors` defaults to false and can be used with or without an ignored body.
+
+Each collider contributes its first hit. Separate colliders on one body remain separate results, even if their `entity` and `part` are the same. A mesh collider contributes one hit for the whole mesh, not every triangle or entry-and-exit intersection. The ordinary `RayHit` values can be saved in match or local state. The same methods and options work on a rewound `Query`.
+
+Use `Raycast` or `Cast` when only the nearest hit matters: they keep their early-pruning path. There are no query layers or masks; all-hit results let game code apply its own component, team or other rules afterward.
 
 ## The world
 
@@ -636,11 +683,11 @@ In that implementation the serialized state was 3.5 MB, about a kilobyte and a h
 
 ## Not there yet
 
-- Hulls other than boxes, meshes, height fields, compounds and joints.
+- Hulls other than boxes, height fields, compounds and joints.
 - A parting from an entity that was destroyed doesn't say which entity.
 - A shape's fields don't follow later changes: its size, its `density`, `friction` and `bounce`, and whether it's a sensor. A [part](#parts) that's destroyed and spawned again is how a shape changes.
 - Removing `Body` from an entity that stays leaves its body in the world, and removing a shape's component leaves the shape on it.
-- What's asked of the world takes no filter, and finds the nearest thing only, not everything on the way.
+- There are no collision or query layers or masks. Queries can ignore one body; `RaycastAll` and `CastAll` allow further filtering in game code.
 - Whether one body may fall asleep by itself, and locks on the axes a body moves and turns on.
 - Box3D keeps what a box of each size is made of in its resident arena, and never lets one go: a game that makes boxes of ever new sizes keeps them all.
 - The resident arena has a fixed 64 MiB limit; exhaustion stops the program. There is one Box3D arena per process, so switching between worlds costs a page restore.
@@ -668,7 +715,7 @@ system Fire(Controls controls, Body body, Physics physics)
 }
 ```
 
-The context has every current query form, including all shape casts, overlaps, sensor `Inside` queries and existing ignore-body overloads. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
+The context has every current query form, including `RaycastAll`, every `CastAll` shape, overlaps, sensor `Inside` queries and ignore-body overloads. All-hit methods also accept `includeSensors: true`. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
 
 `Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
 

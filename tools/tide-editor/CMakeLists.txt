@@ -42,7 +42,8 @@ if(TIDE_NODE)
     add_test(NAME tide_editor_client COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/client.test.mjs")
     add_test(NAME tide_editor_embed COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embed.mjs"
         "$<TARGET_FILE:tide_editor>" "${CMAKE_CURRENT_BINARY_DIR}/editor-embed")
-    set_tests_properties(tide_editor_embed PROPERTIES TIMEOUT 120 LABELS gpu)
+    set_tests_properties(tide_editor_embed PROPERTIES TIMEOUT 120)
+    tide_gpu_test(tide_editor_embed)
     foreach(mode cli ui)
         add_test(NAME tide_editor_${mode}
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/editor.mjs"
@@ -50,5 +51,5 @@ if(TIDE_NODE)
                 "${CMAKE_CURRENT_BINARY_DIR}/editor-${mode}" ${mode})
         set_tests_properties(tide_editor_${mode} PROPERTIES TIMEOUT 120)
     endforeach()
-    set_tests_properties(tide_editor_ui PROPERTIES LABELS gpu)
+    tide_gpu_test(tide_editor_ui)
 endif()

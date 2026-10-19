@@ -5,11 +5,16 @@
 #ifndef TIDE_VERSION
 #define TIDE_VERSION "0.0.0-dev"
 #endif
+#ifndef TIDE_SIMULATION_RUNTIME
+#define TIDE_SIMULATION_RUNTIME "unidentified toolchain"
+#endif
 
 const char *tide_version_text(void)
 {
     return TIDE_VERSION;
 }
+
+const char *tide_simulation_runtime(void) { return TIDE_SIMULATION_RUNTIME; }
 
 bool tide_version_parse(const char *text, const int len, int out[3])
 {

@@ -5,6 +5,7 @@ Working rules and agreed decisions for humans and AI agents. Implementation deta
 ## Working agreement
 
 - The project owner is the lead programmer and writes most of the code. Agents do specific, scoped tasks: do not scaffold systems, widen scope or refactor nearby code without being asked. If code versus discussion is unclear, ask.
+- Within an assigned task, small API completions that follow existing conventions and simplify game code are clear wins: implement and validate them without asking about routine edge cases. Bring substantive language, behavior or ownership decisions to the owner.
 - The owner decides language design. The agent working on a transpiler task implements and maintains its compiler changes, tests and build integration, and proposes language changes for approval. The compiler, CLI and editor integrations are agent-maintained; references to Claude record authorship, not exclusive ownership.
 - The owner writes the runtime, with an existing exception: agents maintain the temporary implementations listed in `notes/runtime-ownership.md` until the owner takes them over. Read that note before changing the generated-C/runtime boundary. Any new runtime function generated code needs is agreed on before either side depends on it.
 - Validate changes locally, commit the relevant notes with the work, then merge directly into `dev` using the procedure below. Do not create pull requests, push feature branches or dispatch CI unless the owner asks.
@@ -103,7 +104,7 @@ Do not depend on C's unspecified argument evaluation order. Draw random inputs i
 
 Simulation never includes platform headers. Views read the world and draw without modifying simulation state. Device input enters through `Devices`. Keep generated game headers separate from system/GLFW headers because type names collide; hosts use `tide/platform.h`.
 
-`frag` and `vert` compile to GLSL for OpenGL/OpenGL ES/WebGL and WGSL for WebGPU. GPU results are visual only, never match state. Vulkan is the agreed next backend; read `notes/rendering.md` before changing backend design.
+`frag` and `vert` compile to GLSL for OpenGL/OpenGL ES/WebGL, WGSL for WebGPU, and SPIR-V for Vulkan, which tidec translates from the WGSL. Desktop and Android draw with Vulkan where the device has 1.3 (MoltenVK, which tide ships, on a Mac without a loader), OpenGL 3.3 and OpenGL ES 3 being the fallbacks. GPU results are visual only, never match state. Read `notes/rendering.md` before changing backend design.
 
 ## Networking
 
@@ -114,8 +115,8 @@ Simulation never includes platform headers. Views read the world and draw withou
 - Desktop and web share unordered, unreliable WebRTC channels and rooms. Desktop also supports direct UDP. The relay introduces peers; match traffic uses direct connections first and TURN where necessary. Dedicated servers remain supported. Read `notes/webrtc-and-rooms.md` before changing transport or room behavior.
 - Repair NaN/infinite input fields to their defaults before `Sanitize`. Math should avoid propagating invalid values: preserve forgiving clamp/min/max/normalize behavior in `tide/math.h`.
 - Hash and check the world **every tick, in every build**. Optimize its cost rather than making it periodic. Verified ticks have received required state and corrections; later ticks are predicted.
-- State visibility and partial client simulation are agreed designs, **not implemented**: every client still receives and simulates the whole world. Do not treat private scenes or hidden RNG seeds as protected secrets today. Future visibility is decided dynamically by the server, with ordinary state behind it.
-- Hosted matches are an agreed future direction, **not built**: WebAssembly sandboxing with tick budgets, including any game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views.
+- Visibility is decided dynamically by the server for entities and whole components, with ordinary state behind it; there is no field visibility. Hidden state is absent from the recipient's simulation. Put secrets in restricted components or scenes, not public match singletons or public payloads. Client verification hashes permitted logical values and repairs from an acknowledged authoritative baseline. Availability (Shown/Hidden) is distinct from actual lifetime (Spawned/Destroyed). Current transfer, prediction and migration limitations are in `notes/netcode.md` and `notes/language.md`.
+- Managed hosting runs one bounded WebAssembly instance per match, including game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views. Local artifact builds are the default; remote source builds remain deferred. GitHub sign-in, Stripe monthly subscriptions with included usage and opt-in prepaid extra usage, and Fly.io are selected. Monthly allowance expires; purchased credit carries forward. Contracts, validation and the remaining public-launch work are in `notes/managed-hosting.md`.
 
 ## Modding
 
@@ -170,11 +171,8 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `prototypes/inside-out/` | `notes/inside-out.md` |
 | `prototypes/underfoot/` | `notes/underfoot.md` |
 | `prototypes/foldline/` | `notes/foldline.md` |
-| `prototypes/elsewhere/` | `notes/elsewhere.md` |
-| `prototypes/copper-coil/` | `notes/copper-coil.md` |
-| `prototypes/hot-swap/` | `notes/hot-swap.md` |
-| `prototypes/deadweight/` | `notes/deadweight.md` |
-| `prototypes/swindle/` | `notes/swindle.md` |
+| `prototypes/sunday-supper/` | `notes/sunday-supper.md` |
+| `prototypes/gravewake/` | `notes/gravewake.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
@@ -194,6 +192,8 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Entity/table/page/heap/list/map/grid/text runtime, queries, snapshots and hashes | `notes/ecs.md` |
 | Scheduler analysis, tick threads, parallel loops and temporary handles | `notes/schedule-and-threads.md` |
 | Session/net/delta runtime, inputs, commands, lead, migration and verification | `notes/netcode.md` |
+| Dedicated server builds, multiple matches, match IDs and authentication/admission | `notes/dedicated-servers.md` |
+| Managed WASM hosting, local-build deployment, simulation compatibility, recovery and prepaid billing | `notes/managed-hosting.md` |
 | Verified/local event handlers and generated listeners | `notes/verified-and-local-handlers.md` |
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |

@@ -3,6 +3,28 @@
 file(GLOB TIDEC_SOURCES CONFIGURE_DEPENDS src/*.c)
 list(REMOVE_ITEM TIDEC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
 
+# Compatibility must change for local compiler/runtime edits too, even when
+# TIDE_VERSION is unchanged. Normalize checkout line endings and use relative
+# names so tools built on Windows/Linux/macOS identify the same source revision.
+file(GLOB_RECURSE TIDE_IDENTITY_SOURCES CONFIGURE_DEPENDS LIST_DIRECTORIES false RELATIVE "${PROJECT_SOURCE_DIR}"
+    "${PROJECT_SOURCE_DIR}/compiler/src/*.c" "${PROJECT_SOURCE_DIR}/compiler/src/*.h" "${PROJECT_SOURCE_DIR}/compiler/src/*.inc"
+    "${PROJECT_SOURCE_DIR}/engine/src/*.c" "${PROJECT_SOURCE_DIR}/engine/src/*.h" "${PROJECT_SOURCE_DIR}/engine/include/*.h")
+list(APPEND TIDE_IDENTITY_SOURCES compiler/CMakeLists.txt engine/CMakeLists.txt cmake/TideFlags.cmake)
+list(APPEND TIDE_IDENTITY_SOURCES compiler/cli/build.c platform/include/tide/managed_run.h platform/include/tide/host.h)
+list(SORT TIDE_IDENTITY_SOURCES)
+set(tide_identity_text "Tide compiler/runtime sources 1\n")
+foreach(source IN LISTS TIDE_IDENTITY_SOURCES)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/${source}")
+    file(READ "${PROJECT_SOURCE_DIR}/${source}" content)
+    string(REPLACE "\r\n" "\n" content "${content}")
+    string(SHA256 digest "${content}")
+    string(APPEND tide_identity_text "${source}:${digest}\n")
+endforeach()
+string(SHA256 TIDE_SIMULATION_RUNTIME "${tide_identity_text}")
+set(TIDE_SIMULATION_RUNTIME "${TIDE_SIMULATION_RUNTIME}" PARENT_SCOPE)
+set_source_files_properties(src/version.c PROPERTIES COMPILE_DEFINITIONS
+    "TIDE_VERSION=\"${TIDE_VERSION}\";TIDE_SIMULATION_RUNTIME=\"${TIDE_SIMULATION_RUNTIME}\"")
+
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
@@ -50,7 +72,6 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         DEPENDS src/pack_fingerprint.inc "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
     target_sources(tidec_core PRIVATE "${TIDEC_PACK_FINGERPRINT_C}")
     # `#if TIDE_0_3_OR_NEWER` and packages' `tide 0.3` compare with it (version.h).
-    set_source_files_properties(src/version.c PROPERTIES COMPILE_DEFINITIONS "TIDE_VERSION=\"${TIDE_VERSION}\"")
     target_link_libraries(tidec_core PUBLIC tide_flags)
     # tidec reads the device member lists from tide/devices.h so Tide and C agree.
     target_include_directories(tidec_core PUBLIC src "${PROJECT_SOURCE_DIR}/engine/include")
@@ -68,6 +89,13 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_executable(tide_apk cli/apk_main.c ${TIDE_APK_SOURCES})
     target_include_directories(tide_apk PRIVATE cli "${PROJECT_SOURCE_DIR}/platform/src/rtc" "${PROJECT_SOURCE_DIR}/engine/include")
     target_link_libraries(tide_apk PRIVATE tide_flags)
+
+    # The renderer's own shaders as SPIR-V, for its Vulkan backend, through
+    # tidec's translator: the platform layer's desktop builds run it, with a
+    # native one in cross builds (cmake/HostTidec.cmake), as they do tidec.
+    add_executable(tide_spirv_shaders "${PROJECT_SOURCE_DIR}/platform/tools/spirv_shaders.c" src/spirv.c)
+    target_include_directories(tide_spirv_shaders PRIVATE src "${PROJECT_SOURCE_DIR}/platform/src")
+    target_link_libraries(tide_spirv_shaders PRIVATE tide_flags)
     if(TIDE_TOOLS_ONLY)
         return()
     endif()

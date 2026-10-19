@@ -1,5 +1,42 @@
 # No Tide code can corrupt memory
 
+Texture metadata (2026-10-18) reads no pixel payload. Grid references reuse
+mesh.c's bounded see_grid directory/record validation, including arbitrary
+stale handles and dimensions; packed names resolve against the current pack;
+managed targets resolve live state and check selected-color validity before
+calling a borrowed local host resolver. Existing malformed-grid texture tests
+retain the same bounds path. No simulation pointer or new owned handle is added.
+
+## Recipient state decoding (2026-10-15)
+
+The generated visibility decoder builds a temporary world and publishes it only
+after consuming the exact packet and validating entity handles, duplicate rows,
+presence/bool bytes, container counts, UTF-8, grid records and hierarchy links.
+Lengths and allocation arithmetic widen before bounds checks. Recursive values
+have a 256-level codec nesting guard; encoding stops with a diagnostic advising
+splitting deep data across entities, and decoding rejects excess nesting without
+changing the existing world. Element counts are checked against remaining wire
+bytes where their minimum representation is nonzero. There is no small fixed
+world-size cap: recipient state must support large chunked worlds and sparse
+global entity IDs. Allocation exhaustion follows the existing runtime policy.
+
+Sparse entity raw/delta readers check page span arithmetic, ascending unique page
+indices, packet spans and free-list validity. Missing pages read as absent slots,
+never through a NULL pointer. `test_entity_sparse.c` exercises raw truncations,
+delta/base combinations and COW writes across holes. `visibility_projection`
+rejects truncated canonical state without changing an existing world. Typed
+authoritative lifecycle records are checked for payload size, allowed listener
+bits and query-row shapes before generated handlers cast their bytes. A generated
+plain-value walk then checks raw boolean bytes are 0 or 1 and rejects nonzero
+owned heap handles, Resident bytes and private scene/Visibility fields. It walks
+inline records and fixed arrays in both event union slots and query rows, using
+byte offsets so malformed bool/pointer representations are never read as C
+values. Otherwise a handler forwarding a whole component/singleton to an
+ordinary helper could reach a forged heap offset despite the direct field-read
+restriction on recorded handlers. `visibility_lifecycle` covers malformed spans,
+masks, direct/nested boolean representations, forged list offsets through helper
+indirection, Resident bytes and private metadata, while valid logs still run.
+
 ## Immutable assets and received heap state (2026-10-11)
 
 New immutable descriptors retain owned bytes outside match pages; no raw pointer enters a game list. Generated writes detach with actual ownership before obtaining writable addresses. Refcounted snapshots and retired pools preserve borrows through source release, including helper side effects during evaluation. `_at_mut` rejects immutable descriptor/pack storage. Packing sizes widen before the uint32 limit check. Dictionary decode checks shapes, multiplication/byte limits, unique IDs and content hashes; page patches check asset identity and source slice bounds. Before publication, registered descriptor spans/identities/counts and free/pending chains are validated, including duplicate locations and cycle rejection. A location/identity sum and count enter the world hash so omitted lease records fail authentication. Live grid headers are cell data and are never scanned as allocations. `test_asset_lists.c` covers every truncated reference packet, unknown descriptor IDs, forged and cleanly omitted leases, missing-pack fallback and snapshot lifetime; generated mutations, mixed grid state and lossy-session retry are checked by `asset_sharing`. Native/WASI cross-transfer evidence uses the owner's real project. Sanitizer/other-platform validation remains CI work; CI was not dispatched.

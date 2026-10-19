@@ -183,3 +183,94 @@ int tide_editors(const char *root, const bool only_updates)
     free(vsix);
     return failed > 0 ? 1 : 0;
 }
+
+typedef enum config_language { CONFIG_ELISP, CONFIG_VIM, CONFIG_LUA } config_language;
+
+// Configuration is code, so quote paths for the editor, never for a shell.
+// A Lua decimal escape always has three digits so the next digit stays literal.
+static void config_string(const char *text, const config_language language)
+{
+    putchar('"');
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        if (*p == '\\' || *p == '"') printf("\\%c", *p);
+        else if (*p < 32 || *p == 127) {
+            if (language == CONFIG_ELISP) printf("\\u%04x", (unsigned)*p);
+            else if (language == CONFIG_VIM) printf("\\x%02x", (unsigned)*p);
+            else printf("\\%03u", (unsigned)*p);
+        } else putchar(*p);
+    }
+    putchar('"');
+}
+
+int tide_ide(const char *root, const int count, const char *const *args)
+{
+    if (count != 1 || (strcmp(args[0], "emacs") && strcmp(args[0], "vim") && strcmp(args[0], "neovim"))) {
+        fprintf(stderr, "tide: ide takes emacs, vim or neovim: `tide ide emacs` (see `tide help ide`)\n");
+        return 2;
+    }
+    const bool emacs = strcmp(args[0], "emacs") == 0;
+    const bool neovim = strcmp(args[0], "neovim") == 0;
+    char *runtime = path_join(root, emacs ? "editors/tide-emacs" : "editors/tide-vim");
+#if defined(_WIN32)
+    char *server = path_join(root, "bin/tidels.exe");
+#else
+    char *server = path_join(root, "bin/tidels");
+#endif
+    const char *files[] = {emacs ? "tide-lang-mode.el" : "ftdetect/tide.vim",
+                           emacs ? NULL : "ftplugin/tide.vim",
+                           emacs ? NULL : "syntax/tide.vim",
+                           neovim ? "lsp/tidels.lua" : NULL};
+    char *missing = NULL;
+    for (size_t i = 0; i < sizeof files / sizeof files[0] && !missing; i++) {
+        if (!files[i]) continue;
+        char *path = path_join(runtime, files[i]);
+        if (!sys_exists(path) || sys_is_dir(path)) missing = path;
+        else free(path);
+    }
+    if (!missing && (!sys_exists(server) || sys_is_dir(server))) missing = path_absolute(server);
+    if (missing) {
+        fprintf(stderr, "tide: missing editor support file %s; reinstall tide (or install this build with cmake --install)\n", missing);
+        free(missing); free(runtime); free(server);
+        return 1;
+    }
+    // Vim's runtime search expands glob patterns, including directory names.
+    // Backslash escaping these is not portable to Windows runtime paths.
+    if (!emacs && strpbrk(runtime, "*?[]")) {
+        fprintf(stderr, "tide: Vim/Neovim runtime paths cannot contain *, ?, [ or ]; "
+                        "install tide in a folder without these characters\n");
+        free(runtime); free(server);
+        return 1;
+    }
+
+    if (emacs) {
+        printf(";; Add to your Emacs init file (Emacs 29.1+).\n"
+               ";; Connects to tidels automatically when opening Tide files.\n"
+               "(add-to-list 'load-path ");
+        config_string(runtime, CONFIG_ELISP);
+        printf(")\n(require 'tide-lang-mode)\n(require 'eglot)\n(setq tide-lang-server-command '(");
+        config_string(server, CONFIG_ELISP);
+        printf("))\n(add-hook 'tide-lang-mode-hook #'eglot-ensure)\n");
+    } else if (neovim) {
+        printf("-- Add to init.lua (Neovim 0.11+).\n"
+               "-- Connects to tidels automatically when opening Tide files.\n"
+               "vim.opt.runtimepath:prepend(vim.fn.escape(");
+        config_string(runtime, CONFIG_LUA);
+        printf(", ','))\nvim.cmd('filetype plugin indent on')\nvim.cmd('syntax enable')\n"
+               "vim.lsp.config('tidels', { cmd = { ");
+        config_string(server, CONFIG_LUA);
+        printf(" } })\nvim.lsp.enable('tidels')\n");
+    } else {
+        printf("\" Add to your vimrc (Vim 8+).\n"
+               "\" For LSP, configure your client for filetype tide and this command:\n\" ");
+        config_string(server, CONFIG_VIM);
+        printf("\nlet &runtimepath = escape(");
+        config_string(runtime, CONFIG_VIM);
+        printf(", ',\\') . ',' . &runtimepath\nfiletype plugin indent on\nsyntax enable\n");
+    }
+    free(runtime); free(server);
+    if (fflush(stdout) == EOF || ferror(stdout)) {
+        fprintf(stderr, "tide: couldn't write the editor configuration\n");
+        return 1;
+    }
+    return 0;
+}

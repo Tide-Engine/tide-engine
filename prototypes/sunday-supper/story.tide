@@ -1,0 +1,242 @@
+// The story: a script of steps the match goes through in order, the same on
+// both machines. A step says a line, offers a choice, walks one of the Hales
+// somewhere, opens or locks a door, waits for the travellers to do
+// something, turns the lights down... Steps that take no time follow each
+// other within a tick; the others hold the script where it is until they're
+// done. script.tide is the script itself.
+
+enum Op
+{
+    Mark,        // A place to jump to: `a` is its label
+    Jump,        // Go on from the mark labelled `a`
+    Say,         // `who` says `text`, for `t` seconds (0: long enough to read it)
+    Choose,      // The travellers choose one of `text`'s lines, split by '|'
+    Branch,      // Jump to mark `a` if the last choice was `who`
+    Walk,        // `who` walks to `at`, and the script goes on
+    Go,          // ...and the script waits for them to get there
+    Place,       // `who` is at `at`, facing `t` radians, at once
+    Face,        // `who` turns to face `at`
+    Look,        // `who` looks at a traveller: `a` 0 Sam, 1 Jo, 2 the nearer, -1 nobody, 3 the place `at`
+    Pose,        // `who` stands, sits, prays...: `a` is a Stance
+    Show,        // `who` is there (`a` 1) or not (0)
+    DoorOp,      // Door `who`: `a` 0 shut, 1 open, 2 lock, 3 unlock
+    Wait,        // `t` seconds
+    Until,       // Wait until `a`, a Cond, holds (with `at` and `t` where it needs a place)
+    Objective,   // What the travellers mean to do now, in the corner
+    Card,        // A title over the picture for `t` seconds
+    Fade,        // The picture goes to black (`a` 1) or comes back (0) over `t` seconds
+    Sky,         // The light of the day goes to `t` (0 night, 1 noon) over a few seconds
+    Lights,      // The house's lamps: `a` is the groups lit, a bit each
+    Enable,      // Spot `a` can be used (`who` 1) or not (0)
+    Cue,         // A sound: `a` is a Sfx, at `at`
+    Freeze,      // The travellers can't walk (`a` 1), or can again (0)
+    Put,         // Put the travellers somewhere: `a` 0 in their beds, 1 up beside them
+    Stand,       // Everyone seated gets up
+    Watch,       // Something waits at the edge of the corn: `a` 1 to start it
+    Flag,        // Set flag `a`
+    End,         // The slice is over
+}
+
+enum Cond
+{
+    Ready,       // A traveller's hands are on the game
+    NearAny,     // A traveller is within `t` of `at`
+    NearAll,     // ...every traveller is
+    Used,        // Spot `who` was used, since this step began
+    Seated,      // Every traveller is sitting
+    InBed,       // Every traveller is lying down
+    Sacks,       // Every sack is in the bin
+    Pulled,      // The tarp's off
+    Flagged,     // Flag `who` is set
+}
+
+enum Stance { Stand, Sit, Interact, Wave, Bow, Phone, Lantern, Stare, Carry }
+
+// Sounds the script plays.
+enum Sfx
+{
+    Knock,
+    Unlock,
+    Lock,
+    DoorOpen,
+    DoorShut,
+    Ring,
+    Hangup,
+    Chime,
+    Steps,
+    Knob,
+    Sting,
+    Dog,
+    Coyote,
+    Owl,
+    Clink,
+    Thud,
+    Rustle,
+    Rooster,
+    Creak,
+    Pickup,
+}
+
+struct Step
+{
+    Op op;
+    int who;
+    int a;
+    float t;
+    float3 at;
+    string text;
+}
+
+singleton Script
+{
+    List<Step> steps;
+}
+
+// What the people in the story are called, by who.
+const int WALT = 0;
+const int RUTH = 1;
+const int DALE = 2;
+const int SAM = 3;
+const int JO = 4;
+const int NOBODY = 5;    // A line that's a thought, or a sound written out
+
+singleton Story
+{
+    int step;
+    float held;            // Seconds the current step has held the script
+    long used;             // Spots used since the current step began, a bit each
+    long enabled;          // Spots that can be used, a bit each
+    int flags;
+    // What's being said
+    int speaker = NOBODY;
+    string line;
+    float lineLeft;
+    // A choice being offered, and what was chosen
+    string options;
+    int optionCount;
+    int choice;
+    int chooser;
+    // In the corner, over the picture
+    string objective;
+    string card;
+    float cardLeft;
+    float fade = 0.5;      // 1 black: half, behind the title
+    float fadeGoal = 0.5;
+    float fadeSpeed = 1;
+    float daylight = 0.24; // Dusk
+    float daylightGoal = 0.24;
+    int lights;            // The house's lamps that are lit, a bit each
+    bool frozen;
+    int watch;             // 0 nobody at the corn, 1 someone's there, 2 they've gone
+    float watched;
+    bool ended;
+    float clock;           // Seconds since the story started, for what drifts with it
+    // What each traveller last found by looking at something: a line of their own
+    string remarkSam;
+    string remarkJo;
+    float[2] remarkLeft;
+    // The feed sacks: where each is, who holds it (a bit a traveller), whether it's in the bin
+    float3[3] sacks;
+    int[3] holders;
+    bool[3] binned;
+    bool pulled;           // The tarp off the car in the barn
+    int pullers;
+    float pullTime;
+}
+
+// Lamps of the house, a bit each, for Lights.
+const int LAMP_PORCH = 1;
+const int LAMP_KITCHEN = 2;
+const int LAMP_LIVING = 4;
+const int LAMP_HALL = 8;
+const int LAMP_UPSTAIRS = 16;
+const int LAMP_GUEST = 32;
+const int LAMP_BARN = 64;
+const int LAMP_FIRE = 128;
+
+long SpotBit(Spot spot)
+{
+    return 1L << int(spot);
+}
+
+void ResetStory(mut Story story, Farm farm)
+{
+    story.step = 0;
+    story.held = 0;
+    story.used = 0;
+    story.flags = 0;
+    story.speaker = NOBODY;
+    story.line = "";
+    story.lineLeft = 0;
+    story.options = "";
+    story.optionCount = 0;
+    story.choice = 0;
+    story.chooser = 0;
+    story.objective = "";
+    story.card = "";
+    story.cardLeft = 0;
+    story.fade = 0.5;
+    story.fadeGoal = 0.5;
+    story.fadeSpeed = 1;
+    story.daylight = 0.24;
+    story.daylightGoal = 0.24;
+    story.lights = 0;
+    story.frozen = false;
+    story.watch = 0;
+    story.watched = 0;
+    story.ended = false;
+    story.clock = 0;
+    story.remarkSam = "";
+    story.remarkJo = "";
+    story.remarkLeft[0] = 0;
+    story.remarkLeft[1] = 0;
+    story.binned[0] = false;
+    story.binned[1] = false;
+    story.binned[2] = false;
+    story.pulled = false;
+    story.pullers = 0;
+    story.pullTime = 0;
+    story.enabled = SpotBit(Spot.CarHood) | SpotBit(Spot.CarDoor) | SpotBit(Spot.Mailbox)
+                  | SpotBit(Spot.Photos) | SpotBit(Spot.Clock);
+    story.sacks[0] = float3(BARN_X + 3.2, 0, BARN_Z + 4.2);
+    story.sacks[1] = float3(BARN_X + 3.9, 0, BARN_Z + 4.6);
+    story.sacks[2] = float3(BARN_X + 3.4, 0, BARN_Z + 5.1);
+    story.holders[0] = 0;
+    story.holders[1] = 0;
+    story.holders[2] = 0;
+}
+
+float ReadingTime(string text)
+{
+    return 1.4 + text.length * 0.055;
+}
+
+string SpeakerName(int who)
+{
+    switch (who)
+    {
+        case WALT: return "Walt";
+        case RUTH: return "Ruth";
+        case DALE: return "Dale";
+        case SAM: return "Sam";
+        case JO: return "Jo";
+    }
+    return "";
+}
+
+// The `index`th of a choice's lines.
+string OptionText(string options, int index)
+{
+    var parts = options.Split('|');
+    return index < parts.count ? parts[index] : "";
+}
+
+int FindMark(Script script, int label)
+{
+    for (var i = 0; i < script.steps.count; i++)
+    {
+        var step = script.steps[i];
+        if (step.op == Op.Mark && step.a == label) return i;
+    }
+    return script.steps.count;
+}

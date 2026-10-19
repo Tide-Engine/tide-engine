@@ -66,6 +66,27 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 - **`Physics`** is the world: `gravity` and `substeps`, and how it steps, each a field with Box3D's own value unless a game writes another: `contactStiffness` (30 cycles a second), `contactDamping` (10) and `contactSpeed` (3 meters a second: the fastest two bodies that overlap are pushed apart), `bounceSpeed` (1: slower than this nothing bounces), `hitSpeed` (1) and `sleeping` (true). What's written is the next step's. A gravity that changes wakes every body, and so does `sleeping` turned off.
 - An entity that's destroyed takes its body with it.
 
+### Static mesh colliders
+
+`MeshCollider` accepts indexed triangle geometry on a `BodyType.Static` body, or on a `Part` of one:
+
+```csharp
+Spawn(Body { type = BodyType.Static }, MeshCollider {
+    vertices = [float3(-10, 0, -10), float3(-10, 0, 10), float3(10, 0, 10), float3(10, 0, -10)],
+    indices = [0, 1, 2, 0, 2, 3]
+});
+```
+
+Indices are zero-based triples, counterclockwise from the front (upwards in this example). The collider preserves concave surfaces and gaps. `scale` defaults to `float3(1)` and may be nonuniform or mirrored, with no zero component; `offset` is added after scaling, in body space. The body's position and rotation then place it in the world. `friction` defaults to 0.6 and `bounce` to 0. Mesh colliders have no density or sensor setting.
+
+Geometry and material are read once, like the other shapes. To change one, replace its part. A mesh on a dynamic or kinematic body makes no shape; a mesh part whose body is unsuitable is destroyed. Once a body has a mesh, requests to change its type are reset to `Static`. Its position and rotation can still be written.
+
+Each collider accepts 3–65,536 vertices and 1–65,536 triangles. All indices must be in range, and the index count must be divisible by three. Coordinates after scale and offset must be finite and within ±1,000,000 on each axis; friction must be finite and nonnegative, bounce finite in [0, 1]. Invalid geometry makes no shape. Degenerate triangles are discarded; an entirely degenerate mesh makes no shape. A failed attachment is attempted once, as with other shapes.
+
+Current and rewound rays, primitive casts and overlaps include meshes. Rays and casts meet triangle fronts; a mesh is a surface with no solid interior. `Body.rewind` includes its meshes too. Prepared rewind scenes retain triangle values and index them in their spatial tree, so they survive rollback and native-world replacement. Preparation and retained history cost memory proportional to triangle count; ordinary physics ticks capture none when rewind history is disabled.
+
+Cooked geometry belongs to the match's resident state and is deduplicated by its bytes. As with box hulls, unused geometry remains until the world is destroyed. Imported rendering meshes need their positions and indices supplied explicitly; there is no automatic render-mesh collider conversion.
+
 ### Asking the world
 
 Functions that ask what's in the world and change nothing. Each takes the `Physics` singleton and says whether it found anything, with what it found through `out`:
@@ -87,9 +108,24 @@ system Land(Physics physics, Body body, mut Walker walker)
 They can be asked from a system, a handler, a view, and the functions those call, wherever the system is in the tick.
 
 - **They see the world as the last step left it.** A system after the step is asked of this tick's step, and one that's `[Before(PhysicsStages.Step)]` of the last tick's. What code wrote into a body since isn't there yet, nor a body or a shape that was spawned since: each is in the world from the next step. An entity that was destroyed since is found no more, at once.
-- **Sensors are in nothing's way**: a ray and a cast go through them, and `Overlap` doesn't list them. `Inside` is what's asked of a sensor.
-- **The answer is the same on every machine**, for the same match: of two things as near, the one whose shape was made first is the one that's met, whatever order Box3D has them in, and lists come in the order of their bodies' ids (`Body.id`).
+- **Sensors are skipped by default**: the all-hit methods below can include them. `Overlap` doesn't list sensors; `Inside` asks what's in one.
+- **One body can be left out**: `Raycast` and `Cast` accept `ignore: body` after the output, excluding every shape on that body, including its parts.
+- **The answer is the same on every machine**, for the same match: of two things as near, the one whose shape was made first is the one that's met, whatever order Box3D has them in. `Overlap` and `Inside` lists come in the order of their bodies' ids (`Body.id`).
 - A view is asked of the world it draws. When the arena holds another state (a view of a confirmed world, while this machine runs ahead of it), that world's resident pages are restored before it's asked. The next tick restores its own state: see What it costs.
+
+### All hits and game filtering
+
+```csharp
+physics.RaycastAll(from, to, out var hits, ignore: body);
+physics.CastAll(Sphere { radius = 0.2 }, from, quaternion.identity, to, out var swept,
+    ignore: body, includeSensors: true);
+```
+
+`RaycastAll` and `CastAll` return `out List<RayHit>` in increasing `fraction` order, with deterministic shape ties matching the closest-hit methods. Each collider contributes its first hit; separate colliders on one body stay separate, even when `entity` and `part` match. A mesh collider contributes one hit for the whole mesh, not every triangle or entry-and-exit intersection. They return whether any hit was found, replacing the output with an empty list otherwise.
+
+`CastAll` accepts the same `Box`, `Sphere` or `Capsule` and arguments as `Cast`. Both all-hit methods support `ignore: body` (every shape on that body, including parts) and `includeSensors: true` (false by default), independently or together. Iterate the list to select the first hit accepted by game rules, or process all of them. The results are ordinary values that can be saved in match or local state. Rewound `Query` has the same methods and options. Use `Raycast` or `Cast` for just the closest hit; they retain early pruning. Starting overlaps have fraction 0 and no normal or unique surface point, as with closest-hit casts.
+
+### Step ordering
 
 The package's systems run before the game's, in this order: bodies and shapes that are new are made and what code wrote goes to Box3D, the world steps, bodies' components get where it left them, and the events are sent. So a game's systems read this tick's positions, and what they write is the next step's.
 
@@ -164,25 +200,25 @@ Bodies still go in and out through two systems written in C (`extern system`, `t
 
 ## Provisional
 
-The owner asked for these five things (2026-10-06): shapes on entities of their own, a body's type that can change, queries, what's in a sensor and hits, and tuning as fields of `Physics`. The names and the details are picks they haven't confirmed, made to match what the Box2D package is to get:
+The owner approved the all-hit and ignore-body additions on 2026-10-18. The following earlier choices remain provisional. The owner asked for these five things (2026-10-06): shapes on entities of their own, a body's type that can change, queries, what's in a sensor and hits, and tuning as fields of `Physics`.
 
-- **`Part`**, with `of`; its own handles (`box`, `sphere`, `capsule`) in it. A part with no body to be on, when its shapes would be made or once its body goes, is destroyed: the one way both are handled. An entity with a `Body` and a `Part` has its shapes on the part's body.
+- **`Part`**, with `of`; its own handles (`box`, `sphere`, `capsule`, `mesh`) in it. A part with no body to be on, when its shapes would be made or once its body goes, is destroyed: the one way both are handled. An entity with a `Body` and a `Part` has its shapes on the part's body.
 - **`part` and `otherPart`** in `Touched` and `Parted`, each the entity itself for a shape of its own. The events still go to the bodies' entities, and a part's own entity hears nothing. A part that was destroyed still says its body, with `default` for the part.
 - **A type that changes sends nothing for what still touches**, though Box3D lets go of it and finds it again.
 - **A body's `gravityScale`, `linearDamping`, `angularDamping` and `bullet` follow what's written later too**, with its `type`: they were read when it was made, and silently not after.
-- **`Raycast`, `Cast`, `Overlap`, `Inside`, and `RayHit`**: the names, the `Physics` parameter first, a cast's `from`, `rotation`, `to` order, and a shape passed as its component (`Box { size = ... }`). That they pass sensors by; that a ray says nothing of what it starts in and a cast meets it at 0; that an entity destroyed since the step isn't found; that lists come in the order of `Body.id`.
+- **`Raycast`, `Cast`, `Overlap`, `Inside`, and `RayHit`**: the names, a cast's `from`, `rotation`, `to` order, and a shape passed as its component (`Box { size = ... }`). That closest-hit queries pass sensors by; that a ray says nothing of what it starts in and a cast meets it at 0; that an entity destroyed since the step isn't found; that `Overlap` and `Inside` lists come in the order of `Body.id`.
 - **`Hit`**, with `other`, `point`, `normal` and `speed`, and no parts. `normal` is from the other towards the entity that hears it, as Unity's is. It's on for every shape, at Box3D's own threshold.
 - **`contactStiffness`, `contactDamping`, `contactSpeed`, `bounceSpeed`, `hitSpeed` and `sleeping`**, with Box3D's defaults. A tuning that changes while the world is at rest doesn't step it, but for `sleeping` turned off.
 - **The package's own that a game can see**: `Body`'s `stepType`, `stepGravityScale`, `stepLinearDamping`, `stepAngularDamping` and `stepBullet`, `Physics`' `goneShapes`, `parts` and `sensors`, the structs `Contact`, `Strike`, `Found` and `Sensors`, and the functions `Ready`, `Met`, `Owners` and `PartOf`.
 
 ## Not there yet
 
-- Hulls other than boxes, meshes, height fields, compounds and joints. Box3D's canonical snapshot holds meshes, height fields and joints already, with their geometry, but the package exposes none of them. A world with a compound has no canonical snapshot, as a compound's bytes aren't the same on every machine.
+- Hulls other than boxes, height fields, compounds and joints. Box3D's canonical snapshot holds height fields and joints already, with their geometry, but the package exposes none of them. A world with a compound has no canonical snapshot, as a compound's bytes aren't the same on every machine.
 - A hull no shape has any more stays in the resident arena: a game that makes boxes of ever new sizes keeps them all.
 - A parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
 - A shape's fields don't follow later changes: its size, its `density`, `friction` and `bounce`, and whether it's a sensor are read when it's put on its body. A part that's destroyed and spawned again is how a shape changes.
 - Removing `Body` from an entity that stays leaves its body in the world, and removing a shape's component leaves the shape on its body: destroy the entity, or make the shape a part and destroy that.
-- Queries take no filter: everything solid is found, and every sensor passed by. They find the nearest thing, and not everything on the way.
+- No layers or masks, for collisions or queries. Queries can ignore one body; `RaycastAll` and `CastAll` allow further filtering in game code.
 - A per-body setting for whether it may sleep, locks on the axes a body moves and turns on, and joints.
 - The resident arena is fixed in size (64 MiB for Box3D), and exhaustion stops the program. There is one arena for the package in a process; switching between worlds restores their pages. Resident support for arbitrary user C libraries and deltas of the canonical state against a base aren't built.
 
@@ -209,7 +245,7 @@ system Fire(Controls controls, Body body, Physics physics)
 }
 ```
 
-The context has every current query form, including all shape casts, overlaps, sensor `Inside` queries and existing ignore-body overloads. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
+The context has every current query form, including `RaycastAll`, every `CastAll` shape, overlaps, sensor `Inside` queries and ignore-body overloads. All-hit methods also accept `includeSensors: true`. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
 
 `Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
 

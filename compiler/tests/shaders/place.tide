@@ -79,7 +79,7 @@ vert Depths(mut Corner corner, out Seen seen)
     seen.near = this.clip.z / this.clip.w;
 }
 
-frag Shown(Corner corner, Seen seen, out Color color)
+frag Displayed(Corner corner, Seen seen, out Color color)
 {
     color = Color(seen.near, seen.near, seen.near, 1);
 }
@@ -102,7 +102,7 @@ view Show(Models models)
 {
     Draw.Mesh(models.ball, models.faces, float4x4.identity, Snap);
     Draw.Mesh(models.ball, models.faces, float4x4.identity, Far, Look);
-    Draw.Mesh(models.ball, models.faces, float4x4.identity, Depths, Shown);
+    Draw.Mesh(models.ball, models.faces, float4x4.identity, Depths, Displayed);
     Draw.Instanced(models.ball, models.faces, models.rocks, Lifted);
     Draw.Mesh(models.card, models.faces, Card);
 }

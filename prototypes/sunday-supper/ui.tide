@@ -1,0 +1,201 @@
+// What's written over the picture: what's said, the choice offered, what
+// the travellers mean to do, what a look at something turned up, the hand's
+// prompt, and the phone that never has a signal.
+using Rooms;
+
+local singleton Hud
+{
+    float played;          // Seconds played, for the controls' reminder
+    bool phone;            // The phone is out
+}
+
+const Color INK = Color(0.92, 0.88, 0.78);
+const Color DIM = Color(0.62, 0.58, 0.5);
+const Color SHADOW = Color(0, 0, 0, 0.85);
+
+float Unit()
+{
+    return Math.Max(1, Math.Round(Screen.height / 540));
+}
+
+void Write(string text, float2 at, float size, Color tint, Anchor anchor)
+{
+    Draw.Text(text, at + float2(Unit(), Unit()), size, SHADOW, anchor);
+    Draw.Text(text, at, size, tint, anchor);
+}
+
+Color SpeakerTint(int who)
+{
+    switch (who)
+    {
+        case WALT: return Color(0.86, 0.72, 0.5);
+        case RUTH: return Color(0.86, 0.66, 0.66);
+        case DALE: return Color(0.62, 0.72, 0.6);
+        case SAM: return Color(0.62, 0.78, 0.92);
+        case JO: return Color(0.9, 0.82, 0.55);
+    }
+    return DIM;
+}
+
+string Verb(Spot spot, Story story, Walker walker, Farm farm)
+{
+    switch (spot)
+    {
+        case Spot.FrontDoor:
+            if ((story.enabled & SpotBit(Spot.FrontDoor)) != 0) return "Knock";
+            return farm.doors[int(DoorId.Front)].goal > 0.5 ? "Close" : "Open";
+        case Spot.BackDoor:
+        case Spot.GuestDoor:
+        case Spot.HalesDoor:
+        case Spot.DaleDoor:
+        case Spot.BathDoor:
+        {
+            var door = farm.doors[DoorOfSpot(spot)];
+            return door.goal > 0.5 ? "Close" : "Open";
+        }
+        case Spot.CarHood: return "Look under the hood";
+        case Spot.CarDoor: return "Look inside";
+        case Spot.Mailbox: return "Read";
+        case Spot.Phone: return "Pick up";
+        case Spot.SeatSam:
+        case Spot.SeatJo: return "Sit down";
+        case Spot.BedSam:
+        case Spot.BedJo: return walker.lying >= 0 ? "Get up" : "Lie down";
+        case Spot.Drawer: return "Open the drawer";
+        case Spot.GuestWindow: return "Look out";
+        case Spot.Sack0:
+        case Spot.Sack1:
+        case Spot.Sack2: return walker.holding >= 0 ? "Let go" : "Take hold";
+        case Spot.Tarp: return "Pull the tarp";
+        case Spot.Clock: return "Look";
+        case Spot.Photos: return "Look";
+    }
+    return "Use";
+}
+
+[Stage(Layers.Hud)]
+view Overlay(Story story, Me me, Farm farm, query (Walker walker) walkers, Lobby lobby, Devices devices, mut Hud hud, Party party)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing) return;
+    Cursor.Lock();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    var seat = Math.Max(me.seat, 0);
+    mut var mine = Walker { };
+    foreach (var row in walkers)
+        if (row.walker.seat == seat) mine = row.walker;
+    hud.played += me.dt;
+    hud.phone = devices.keyboard.q.pressed || devices.gamepad.buttonWest.pressed;
+
+    // The title over the picture
+    if (story.cardLeft > 0 && story.card != "")
+    {
+        var alpha = Math.Saturate(story.cardLeft * 0.8) * Math.Saturate((6 - story.cardLeft) * 2 + 0.6);
+        Write(story.card, float2(w * 0.5, h * 0.42), 26 * u, Color(INK.r, INK.g, INK.b, alpha), Anchor.MiddleCenter);
+    }
+
+    // The hand: a dot, and what pressing would do
+    if (story.fade < 0.5)
+    {
+        Draw.Circle(float2(w * 0.5, h * 0.5), 1.6 * u, Color(1, 1, 1, 0.55));
+        if (mine.aimed >= 0) Write("[E] " + Verb(Spot(mine.aimed), story, mine, farm), float2(w * 0.5, h * 0.5 + 18 * u), 15 * u, INK, Anchor.UpperCenter);
+    }
+
+    // What's being said
+    var bottom = h - 46 * u;
+    if (story.lineLeft > 0 && story.line != "")
+    {
+        var name = SpeakerName(story.speaker);
+        var text = name == "" ? story.line : name + ":  " + story.line;
+        var width = Draw.MeasureText(text, 17 * u).x;
+        Draw.Rect(float2(w * 0.5, bottom), float2(width + 36 * u, 34 * u), Color(0, 0, 0, 0.55));
+        if (name == "") Write(story.line, float2(w * 0.5, bottom), 17 * u, Color(0.75, 0.75, 0.8), Anchor.MiddleCenter);
+        else
+        {
+            var left = w * 0.5 - width * 0.5;
+            var label = name + ":  ";
+            Write(label, float2(left, bottom), 17 * u, SpeakerTint(story.speaker), Anchor.MiddleLeft);
+            Write(story.line, float2(left + Draw.MeasureText(label, 17 * u).x, bottom), 17 * u, INK, Anchor.MiddleLeft);
+        }
+    }
+
+    // A choice: either of them answers
+    if (story.options != "" && story.choice == 0)
+    {
+        var count = story.optionCount;
+        for (var i = 0; i < count; i++)
+        {
+            var y = bottom - 50 * u - (count - 1 - i) * 30 * u;
+            var line = $"{i + 1}.  {OptionText(story.options, i)}";
+            var width = Draw.MeasureText(line, 17 * u).x;
+            Draw.Rect(float2(w * 0.5, y), float2(width + 30 * u, 26 * u), Color(0.05, 0.03, 0.02, 0.7));
+            Write(line, float2(w * 0.5, y), 17 * u, Color(1, 0.92, 0.7), Anchor.MiddleCenter);
+        }
+    }
+
+    // What turned up when they looked at something
+    var remark = seat == 0 ? story.remarkSam : story.remarkJo;
+    if (story.remarkLeft[seat] > 0 && remark != "")
+        Write(remark, float2(w * 0.5, bottom - (story.options != "" ? 150 : 44) * u), 15 * u, Color(0.78, 0.8, 0.86), Anchor.MiddleCenter);
+
+    // What they mean to do
+    if (story.objective != "" && story.fade < 0.5) Write(story.objective, float2(22 * u, 22 * u), 14 * u, DIM, Anchor.UpperLeft);
+
+    // How to play, for the first minute
+    if (hud.played < 50 && story.fade < 0.5)
+    {
+        var fade = Math.Saturate((50 - hud.played) * 0.2);
+        Write("WASD walk   Mouse look   E use   F phone light   Shift run   Q phone   1 2 3 answer", float2(w * 0.5, h - 14 * u), 12 * u,
+              Color(DIM.r, DIM.g, DIM.b, fade), Anchor.LowerCenter);
+    }
+
+    // Who's here
+    if (party.joined < 2 && story.fade < 0.5) Write("Alone. Host a room from the menu to play with a friend.", float2(w - 22 * u, 22 * u), 12 * u, Color(DIM.r, DIM.g, DIM.b, 0.7), Anchor.UpperRight);
+
+    if (hud.phone) DrawPhone(story, float2(w - 120 * u, h - 150 * u), u);
+}
+
+// The phone in hand: the time, the battery, and no service.
+void DrawPhone(Story story, float2 at, float u)
+{
+    Draw.RoundRect(at, float2(150 * u, 250 * u), 14 * u, Color(0.06, 0.06, 0.07, 0.95));
+    Draw.RoundRect(at - float2(0, 22 * u), float2(124 * u, 150 * u), 4 * u, Color(0.32, 0.4, 0.26));
+    var minutes = int(story.clock / 60) + (story.daylight > 0.6 ? 7 * 60 + 12 : 20 * 60 + 41);
+    var hour = (minutes / 60) % 24;
+    var minute = minutes % 60;
+    var clock = $"{hour}:{(minute < 10 ? "0" : "")}{minute}";
+    Draw.Text(clock, at - float2(0, 60 * u), 26 * u, Color(0.08, 0.12, 0.06), Anchor.MiddleCenter);
+    Draw.Text("NO SERVICE", at - float2(0, 22 * u), 12 * u, Color(0.08, 0.12, 0.06), Anchor.MiddleCenter);
+    Draw.Text("Batt  ||||", at + float2(0, 12 * u), 11 * u, Color(0.08, 0.12, 0.06), Anchor.MiddleCenter);
+    for (var i = 0; i < 9; i++)
+    {
+        var key = at + float2((i % 3 - 1) * 34 * u, 82 * u + (i / 3) * 20 * u);
+        Draw.RoundRect(key, float2(26 * u, 14 * u), 5 * u, Color(0.2, 0.2, 0.22));
+    }
+}
+
+// A new game from the menu starts over on the road.
+[Stage(Layers.Hud, 20)]
+view Menus(Lobby lobby)
+{
+    if (lobby.newGame) Send(Restart { });
+}
+
+override string Rooms.Tagline()
+{
+    return "A weekend in Kansas, for two.";
+}
+
+[Stage(Layers.Hud, 21)]
+view DevKeys(Devices devices, Lobby lobby)
+{
+    if (!lobby.playing) return;
+    var keys = devices.keyboard;
+    if (keys.f2.down) Send(Skip { label = L_PORCH });
+    if (keys.f3.down) Send(Skip { label = L_SUPPER });
+    if (keys.f4.down) Send(Skip { label = L_NIGHT });
+    if (keys.f5.down) Send(Skip { label = L_MORNING });
+    if (keys.f6.down) Send(Skip { label = L_BARN });
+}

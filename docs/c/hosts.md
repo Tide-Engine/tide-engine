@@ -25,6 +25,8 @@ tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>..
 
 ## The standard host
 
+A custom drawing host calls `tide_draw_screen_size(draw, window_size)` in logical pixels before recording views, so automatic mesh LOD and window [frustum culling](../game/3d.md#frustum-culling) use the current aspect ratio. Without a known destination size, culling keeps the draw. `tide_draw_append` copies a source list's already filtered draws; disable its culling with `tide_draw_set_frustum_culling(draw, false)` if one recorded list must serve several different camera aspects.
+
 `tide/run.h` is what a game without `HOST` uses:
 
 ```c
@@ -104,6 +106,7 @@ The generated header is the API between the game and its host. Namespaced declar
 
 **Sessions**
 
+- Visibility-enabled games supply `tick_client_events(world, jobs, per_player)`: one authoritative tick with an array of `TIDE_GAME_PLAYERS` recipient logs. Only genuine `Spawned`/`Destroyed` and their authorized query snapshots enter those journals; a private zero-handler destruction-cause record supports availability classification even without listeners. `check_client_events(data, size, &build, &count)` validates the complete byte stream before any generated handler casts it. Sessions carry the journal with normal confirmations and repairs; generic custom events are not an authoritative outward channel. A host must not broadcast an unfiltered event log to clients.
 - `tide_game_api` is the game as a session runs it (`tide_game` in `tide/session.h`), with its settings: `tick_rate` and `title`, 0 and `NULL` where it sets none. A session whose desc leaves `tick_rate` at 0 starts its matches at the game's rate, or 60. Most settings are in the generated `.c`, not the header, so they don't change the game's hash. `maxPlayers` also sets `TIDE_GAME_PLAYERS` and the world's input slots: changing it changes the data layout, and builds with different limits can't share a match.
 - With host migration (`tide_game_api.host_migration`), the host that runs a match tells its session the room's code and key every frame (`tide_session_set_room`, with `tide_platform_room_code` and `tide_platform_room_key`). A session whose match lost its server says so (`tide_session_migrating`): the host goes to the room again (`tide_platform_room_migrate`), and once `tide_platform_room_migrated` says whether this machine hosts it now, calls `tide_session_take_over` or `tide_session_join`, or fails the session with `TIDE_DISCONNECT_ENDED` if the match ended there. A match that ends tells its transports (`tide_transport.end`, before they close), which a room passes on to the relay. `tide/host.h` does all of it.
 - A session's ping (`tide_client_status.ping_ms`, Tide's `Session.ping`) is the network's round trip alone: from when this machine sent to when the answer arrived, less what the server held it. No wait for a frame is in it, as the platform's transports say when each datagram arrived (`tide_transport.clock` and `arrived`). A transport of your own that leaves those `NULL` has its datagrams arrive as they're read, and its pings count the waits. `answer_ms` is what an answer takes to be read, waits and all. A web page told to play at a slow connection (`?lag=`) aims at the ping the host tells it every frame: `tide_platform_room_ping(ping_ms, answer_ms)`, with -1 for the ping on the machine that runs the match and before it's in one.
@@ -170,14 +173,18 @@ tide_event_log_free(&events);
 
 With one world and no server, what it ticks is all there is, so a tick's events are heard by both kinds of handler at the next frame, those of `verified` events too. A frame after several ticks hears them all, in order.
 
-The entities a world starts with were spawned in no tick, and a game's local handlers hear every entity's `Spawned`. A session says so for the worlds its machine is sent. A host with a world of its own does it once the world has started:
+The entities a world starts with become available before its first tick. A session records their local `Shown` notifications as it adopts a world. A host with a world of its own does it once the world has started:
 
 ```c
 tide_world_init(&world, 1.0f / 60.0f);
 if (tide_game_api.hear_arrived) tide_game_api.hear_arrived(&world, NULL, &events);
 ```
 
-`hear_arrived(world, had, events)` records a `Spawned` for each entity `world` has that `had` doesn't, or for every one with `NULL`. It's `NULL` itself in a game with no local handler of the match's `Spawned`.
+`hear_arrived(world, had, events)` records `Shown` for each handler whose required entity/components are available in `world` and weren't available in `had`, or for every matching entity with `NULL`. It's `NULL` itself in a game with no `Shown` listener. It doesn't fabricate `Spawned` or `Destroyed`.
+
+For known availability transitions, `hear_visibility(world, had, destroyed, destroyed_count, events)` records `Hidden` from the last permitted `had` state, then `Shown` from `world`. Each phase's queries use that phase's world. The explicit destroyed-entity list distinguishes genuine destruction from concealment, suppressing `Hidden` for those entities; it doesn't manufacture destruction events from old state.
+
+**Provisional generated delivery:** `tide_frame` reconciles availability from the last delivered predicted and verified endpoints, independently. Raw tick/arrival transition hints do not directly invoke availability handlers. Final `Hidden`/`Shown` run before ordinary event handlers and local-field cleanup; intermediate add/remove/re-add operations coalesce, and a canceled predicted conceal prepares the restored presentation. Private COW endpoint snapshots and death-cause metadata are excluded from local packing and cleared on disconnect/free/rebuild. An unchanged tick/hash/birth-page state skips the availability scan and snapshot copy. A rebuilt local state prepares available objects again, so `Shown` must safely reuse or replace retained resources. Custom hosts must forward private genuine-death cause records alongside their event logs; these records are metadata and never invoke game handlers.
 
 ## A game's own network
 

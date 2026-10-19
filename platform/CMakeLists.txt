@@ -1,8 +1,29 @@
 # The platform layer: a window, the frame loop, input devices and the renderer,
-# written against src/gpu.h, with OpenGL (src/gpu_gl.c) and WebGPU
-# (web/gpu_web.c) under it. Hosts and views link it; the simulation never does
-# (see AGENTS.md).
+# written against src/gpu.h, with Vulkan (src/gpu_vk.c, on desktop and Android), OpenGL
+# (src/gpu_gl.c) and WebGPU (web/gpu_web.c) under it. Hosts and views link it;
+# the simulation never does (see AGENTS.md).
 file(GLOB TIDE_PLATFORM_SOURCES CONFIGURE_DEPENDS src/*.c)
+if(TIDE_WEB)
+    list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c") # The web has WebGPU
+else()
+    # Vulkan's SPIR-V of the renderer's own shaders, from their WGSL (tools/spirv_shaders.c)
+    set(TIDE_SPIRV_C "${CMAKE_CURRENT_BINARY_DIR}/shaders_spirv.c")
+    add_custom_command(OUTPUT "${TIDE_SPIRV_C}"
+        COMMAND "${TIDE_SPIRV_SHADERS_PATH}" "${TIDE_SPIRV_C}"
+        DEPENDS ${TIDE_SPIRV_SHADERS_DEPENDS} src/shaders.h
+        COMMENT "The renderer's shaders as SPIR-V"
+        VERBATIM)
+    list(APPEND TIDE_PLATFORM_SOURCES "${TIDE_SPIRV_C}")
+    # The renderer's shaders' SPIR-V passes spirv-val, where there's one (cmake/VulkanTests.cmake)
+    if(TIDE_SPIRV_VAL)
+        add_test(NAME tide_spirv_shaders_valid
+            COMMAND "${CMAKE_COMMAND}" "-DTOOL=${TIDE_SPIRV_SHADERS_PATH}" "-DSPIRV_VAL=${TIDE_SPIRV_VAL}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/spirv_shaders" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/spirv_shaders.cmake")
+    endif()
+    # The prebuilt library is compiled with Khronos's headers (third_party/vulkan), under Apache 2.0
+    install(FILES third_party/vulkan/LICENSE.md third_party/vulkan/Apache-2.0.txt DESTINATION licenses/vulkan-headers
+        COMPONENT tide)
+endif()
 if(NOT TIDE_WEB)
     # WebRTC for rooms on desktop (src/rtc/rtc.h); the web has the browser's.
     file(GLOB TIDE_RTC_SOURCES CONFIGURE_DEPENDS src/rtc/*.c)
@@ -16,6 +37,9 @@ elseif(TIDE_ANDROID)
     list(APPEND TIDE_PLATFORM_SOURCES android/activity.c android/audio.c)
 else()
     include("${PROJECT_SOURCE_DIR}/cmake/GLFW.cmake")
+    if(APPLE)
+        include("${PROJECT_SOURCE_DIR}/cmake/MoltenVK.cmake") # Vulkan on Metal, beside the programs
+    endif()
     list(APPEND TIDE_PLATFORM_SOURCES desktop/glfw.c desktop/gl.c desktop/audio.c)
 endif()
 
@@ -135,6 +159,13 @@ if(TIDE_WEB)
         "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libc.a" "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libm.a"
         DESTINATION wasi/sysroot/lib/${TIDE_WASI_TARGET} COMPONENT tide)
     install(FILES "${TIDE_WASI_BUILTINS}" DESTINATION wasi RENAME libclang_rt.builtins.a COMPONENT tide)
+    # Managed matches are reactors with isolated, non-shared memory, rather
+    # than browser programs using wasi-threads.
+    install(DIRECTORY "${TIDE_WASI_SYSROOT}/include/wasm32-wasip1" DESTINATION wasi/sysroot/include COMPONENT tide
+        PATTERN c++ EXCLUDE)
+    install(FILES "${TIDE_WASI_SYSROOT}/lib/wasm32-wasip1/crt1-reactor.o"
+        "${TIDE_WASI_SYSROOT}/lib/wasm32-wasip1/libc.a" "${TIDE_WASI_SYSROOT}/lib/wasm32-wasip1/libm.a"
+        DESTINATION wasi/sysroot/lib/wasm32-wasip1 COMPONENT tide)
 elseif(MINGW)
     # tide builds Windows games for MinGW, with this C runtime (see
     # cmake/mingw-toolchain.cmake): every C header, since a game's C can include
@@ -191,12 +222,15 @@ endif()
 if(NOT TIDE_ANDROID)
     add_executable(tide_platform_gpu_time tests/gpu_time.c)
     target_link_libraries(tide_platform_gpu_time PRIVATE tide_platform)
+    target_include_directories(tide_platform_gpu_time PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
     if(TIDE_WEB)
         tide_web_page(tide_platform_gpu_time SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_gpu_time TARGET tide_platform_gpu_time WEBGPU)
     else()
         add_test(NAME tide_platform_gpu_time COMMAND tide_platform_gpu_time)
-        set_tests_properties(tide_platform_gpu_time PROPERTIES LABELS gpu)
+        add_test(NAME tide_platform_gpu_time_opengl COMMAND tide_platform_gpu_time)
+        tide_gpu_test(tide_platform_gpu_time)
+        tide_gpu_test(tide_platform_gpu_time_opengl OPENGL)
     endif()
 endif()
 
@@ -219,6 +253,12 @@ add_executable(tide_platform_audio tests/audio.c "${PROJECT_SOURCE_DIR}/tests/te
 target_include_directories(tide_platform_audio PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
 target_link_libraries(tide_platform_audio PRIVATE tide_platform tide_audio_refs) # tests/audio: the Vorbis reference files
 add_test(NAME tide_platform_audio COMMAND tide_platform_audio)
+
+# The forget completion barrier, with a deterministic callback interleaving.
+add_executable(tide_platform_audio_forget tests/audio_forget.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_audio_forget PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_audio_forget PRIVATE tide)
+add_test(NAME tide_platform_audio_forget COMMAND tide_platform_audio_forget)
 
 # The page's microphone lifecycle and worklet bridge, with a fake device:
 # no browser permissions or physical microphone are needed.
@@ -333,10 +373,20 @@ if(NOT TIDE_WEB)
     add_test(NAME tide_platform_udp COMMAND tide_platform_udp)
 endif()
 
+# A test whose shaders are written by hand, in WGSL alone: on desktop it
+# brings tidec's translator, for Vulkan's SPIR-V (tide_gpu_spirv_of).
+function(tide_platform_spirv_of target)
+    if(NOT TIDE_WEB)
+        target_sources(${target} PRIVATE "${PROJECT_SOURCE_DIR}/compiler/src/spirv.c")
+        target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/compiler/src")
+    endif()
+endfunction()
+
 # The renderer: shapes, text and the GUI, read back from an offscreen render.
 # `tide_platform_draw --bench` (`?bench` on the web) times frames of many shapes.
 add_executable(tide_platform_draw tests/draw.c)
 target_link_libraries(tide_platform_draw PRIVATE tide_platform)
+tide_platform_spirv_of(tide_platform_draw)
 target_compile_definitions(tide_platform_draw PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
 if(TIDE_WEB)
     tide_web_page(tide_platform_draw SHELL web/test_shell.html)
@@ -344,15 +394,25 @@ if(TIDE_WEB)
     tide_add_web_test(tide_platform_draw_rgba_fallback TARGET tide_platform_draw QUERY "texture-compression=off"
         WEBGPU EXPECT "BC3 fixture: 65536 upload bytes")
 elseif(NOT TIDE_ANDROID)
-    # A hidden window, so it needs a desktop session with working OpenGL.
+    # A hidden window, so it needs a desktop session with a GPU: drawn with
+    # Vulkan where there's one, and with OpenGL again
+    target_include_directories(tide_platform_draw PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
     add_test(NAME tide_platform_draw COMMAND tide_platform_draw)
-    set_tests_properties(tide_platform_draw PROPERTIES LABELS gpu)
+    add_test(NAME tide_platform_draw_opengl COMMAND tide_platform_draw)
+    tide_gpu_test(tide_platform_draw)
+    tide_gpu_test(tide_platform_draw_opengl OPENGL)
+    # ...and with Vulkan's descriptor sets, as devices without push descriptors draw (Android's emulator, some phones)
+    add_test(NAME tide_platform_draw_vulkan_sets COMMAND tide_platform_draw)
+    tide_gpu_test(tide_platform_draw_vulkan_sets)
+    set_property(TEST tide_platform_draw_vulkan_sets APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan TIDE_VULKAN_DESCRIPTOR_SETS=1)
 else()
     # On Android a renderer needs an app's window: install
     # tide_platform_draw_app.apk, start it, and read what it prints
     # (`adb logcat -s tide`).
     add_library(tide_platform_draw_app SHARED tests/draw.c)
     target_link_libraries(tide_platform_draw_app PRIVATE tide_platform)
+    target_include_directories(tide_platform_draw_app PRIVATE third_party) # Vulkan's headers, for src/gpu_vk.h
+    tide_platform_spirv_of(tide_platform_draw_app)
     target_compile_definitions(tide_platform_draw_app PRIVATE TIDE_BENCH_RESULTS="${PROJECT_SOURCE_DIR}/bench/results")
     tide_android_app(tide_platform_draw_app LABEL "Tide draw")
 endif()
@@ -363,12 +423,15 @@ if(NOT TIDE_ANDROID)
     add_executable(tide_platform_targets tests/targets.c)
     target_include_directories(tide_platform_targets PRIVATE src)
     target_link_libraries(tide_platform_targets PRIVATE tide_platform)
+    tide_platform_spirv_of(tide_platform_targets)
     if(TIDE_WEB)
         tide_web_page(tide_platform_targets SHELL web/test_shell.html)
         tide_add_web_test(tide_platform_targets TARGET tide_platform_targets WEBGPU EXPECT "renderer: WebGPU")
     else()
         add_test(NAME tide_platform_targets COMMAND tide_platform_targets)
-        set_tests_properties(tide_platform_targets PROPERTIES LABELS gpu)
+        add_test(NAME tide_platform_targets_opengl COMMAND tide_platform_targets)
+        tide_gpu_test(tide_platform_targets)
+        tide_gpu_test(tide_platform_targets_opengl OPENGL)
     endif()
 else()
     # As the draw checks, an app: install tide_platform_targets_app.apk, start
@@ -376,6 +439,7 @@ else()
     add_library(tide_platform_targets_app SHARED tests/targets.c)
     target_include_directories(tide_platform_targets_app PRIVATE src)
     target_link_libraries(tide_platform_targets_app PRIVATE tide_platform)
+    tide_platform_spirv_of(tide_platform_targets_app)
     tide_android_app(tide_platform_targets_app LABEL "Tide targets")
 endif()
 
@@ -389,10 +453,12 @@ if(NOT TIDE_ANDROID)
     target_link_libraries(tide_platform_shaders PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_shaders SHELL web/test_shell.html)
-        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders WEBGPU EXPECT "renderer: WebGPU")
+        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders WEBGPU EXPECT "renderer: WebGPU" D3D11)
     else()
         add_test(NAME tide_platform_shaders COMMAND tide_platform_shaders)
-        set_tests_properties(tide_platform_shaders PROPERTIES LABELS gpu)
+        add_test(NAME tide_platform_shaders_opengl COMMAND tide_platform_shaders)
+        tide_gpu_test(tide_platform_shaders)
+        tide_gpu_test(tide_platform_shaders_opengl OPENGL)
     endif()
 else()
     # An app there too, to install and start by hand: OpenGL ES 3 has to
@@ -411,7 +477,9 @@ if(NOT TIDE_ANDROID)
         tide_add_web_test(tide_platform_skinned TARGET tide_platform_skinned WEBGPU EXPECT "renderer: WebGPU")
     else()
         add_test(NAME tide_platform_skinned COMMAND tide_platform_skinned)
-        set_tests_properties(tide_platform_skinned PROPERTIES LABELS gpu)
+        add_test(NAME tide_platform_skinned_opengl COMMAND tide_platform_skinned)
+        tide_gpu_test(tide_platform_skinned)
+        tide_gpu_test(tide_platform_skinned_opengl OPENGL)
     endif()
 endif()
 
@@ -436,7 +504,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload.mjs" $<TARGET_FILE:tide_platform_reload>
                 $<TARGET_FILE:tide_platform_reload_plain> $<TARGET_FILE:tide_platform_reload_game>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run" $<TARGET_FILE:tide_platform_reload_game_next>)
-        set_tests_properties(tide_platform_reload PROPERTIES LABELS gpu TIMEOUT 120)
+        set_tests_properties(tide_platform_reload PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_reload)
     endif()
 
     # A game with no window (tide/run.h's --capture, --frames and --script): a
@@ -445,11 +514,18 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # as tide_platform_draw does. What a run refuses before it opens anything,
     # a flag or a script's line that's wrong, needs none.
     tide_add_game(tide_platform_capture SOURCES tests/capture.tide)
+    tide_add_game(tide_platform_data_directory SOURCES tests/data_directory.tide)
     if(TIDE_NODE)
+        add_test(NAME tide_platform_data_directory
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_directory.mjs" $<TARGET_FILE:tide_platform_data_directory>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_data_directory-run")
+        set_tests_properties(tide_platform_data_directory PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_data_directory)
         add_test(NAME tide_platform_capture
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capture.mjs" $<TARGET_FILE:tide_platform_capture>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_capture-run")
-        set_tests_properties(tide_platform_capture PROPERTIES LABELS gpu TIMEOUT 120)
+        set_tests_properties(tide_platform_capture PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_capture)
         add_test(NAME tide_platform_capture_refused
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capture.mjs" $<TARGET_FILE:tide_platform_capture>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_capture-refused" refused)
@@ -463,7 +539,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_stats
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/stats.mjs" $<TARGET_FILE:tide_platform_stats>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_stats-run")
-        set_tests_properties(tide_platform_stats PROPERTIES LABELS gpu TIMEOUT 120)
+        set_tests_properties(tide_platform_stats PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_stats)
     endif()
 
     # A match started from a menu, in such a run: its first tick reads what's
@@ -473,7 +550,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_first_tick
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/first_tick.mjs" $<TARGET_FILE:tide_platform_first_tick>
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_first_tick-run")
-        set_tests_properties(tide_platform_first_tick PROPERTIES LABELS gpu TIMEOUT 120)
+        set_tests_properties(tide_platform_first_tick PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_first_tick)
     endif()
 
     # Such a run of several players (tide/run.h's --players): each a process of
@@ -499,7 +577,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_players
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
                 $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-run")
-        set_tests_properties(tide_platform_players PROPERTIES LABELS gpu TIMEOUT 180)
+        set_tests_properties(tide_platform_players PROPERTIES TIMEOUT 180)
+        tide_gpu_test(tide_platform_players)
         add_test(NAME tide_platform_players_refused
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
                 $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-refused" refused)
@@ -523,7 +602,40 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_hidden_runs
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hidden.mjs" $<TARGET_FILE:tide_platform_hidden>
                 $<TARGET_FILE:tide_platform_capture> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_hidden-runs" runs)
-        set_tests_properties(tide_platform_hidden_runs PROPERTIES LABELS gpu TIMEOUT 120)
+        set_tests_properties(tide_platform_hidden_runs PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_hidden_runs)
+    endif()
+
+    # The window's images on Vulkan: made again when the window is resized and
+    # when the device is lost, in a hidden window, so it needs a desktop
+    # session with a GPU. It's Vulkan's alone, so it refuses to draw with
+    # anything else.
+    add_executable(tide_platform_swapchain tests/swapchain.c)
+    target_include_directories(tide_platform_swapchain PRIVATE src third_party)
+    target_link_libraries(tide_platform_swapchain PRIVATE tide_platform)
+    add_test(NAME tide_platform_swapchain COMMAND tide_platform_swapchain)
+    set_tests_properties(tide_platform_swapchain PROPERTIES TIMEOUT 120)
+    tide_gpu_test(tide_platform_swapchain)
+    set_property(TEST tide_platform_swapchain APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan)
+
+    # Vulkan's pipelines kept across runs, in the game's temporary cache folder,
+    # and every way the file it reads can be wrong (tests/pipeline_cache.c)
+    add_executable(tide_platform_pipeline_cache tests/pipeline_cache.c)
+    target_include_directories(tide_platform_pipeline_cache PRIVATE src third_party)
+    target_link_libraries(tide_platform_pipeline_cache PRIVATE tide_platform)
+    add_test(NAME tide_platform_pipeline_cache
+        COMMAND "${CMAKE_COMMAND}" -DPROGRAM=$<TARGET_FILE:tide_platform_pipeline_cache>
+            "-DDIR=${CMAKE_CURRENT_BINARY_DIR}/tide_platform_pipeline_cache" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/pipeline_cache.cmake")
+    set_tests_properties(tide_platform_pipeline_cache PROPERTIES TIMEOUT 300)
+    tide_gpu_test(tide_platform_pipeline_cache)
+    set_property(TEST tide_platform_pipeline_cache APPEND PROPERTY ENVIRONMENT TIDE_BACKEND=vulkan)
+
+    if(APPLE)
+        # MoltenVK beside the programs loads and makes a Vulkan instance with the
+        # window's extensions: no window or GPU, so CI's Macs run it
+        add_executable(tide_platform_moltenvk tests/moltenvk.c)
+        target_include_directories(tide_platform_moltenvk PRIVATE third_party)
+        add_test(NAME tide_platform_moltenvk COMMAND tide_platform_moltenvk)
     endif()
 
     # The cursor's lock on desktop: only a window with the focus holds it, and
@@ -532,8 +644,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_executable(tide_platform_cursor tests/cursor.c)
     target_link_libraries(tide_platform_cursor PRIVATE tide_platform)
     add_test(NAME tide_platform_cursor COMMAND tide_platform_cursor)
-    set_tests_properties(tide_platform_cursor PROPERTIES LABELS gpu)
-
+    tide_gpu_test(tide_platform_cursor)
     # What a window with the focus does with it (desktop/cursor.h): Escape gives
     # the cursor back to the player, and a click or a key takes it again. No
     # window, so it runs everywhere.
@@ -613,20 +724,23 @@ if(TIDE_WEB)
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_rooms.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_rooms>/tide_platform_web_rooms.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_rooms-browser")
-    set_tests_properties(tide_platform_web_rooms PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_rooms PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     # Host migration in the browser: the host's frame leaves, and the two
     # others carry on in the room, one of them hosting it.
     add_test(NAME tide_platform_web_rooms_handover
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_rooms.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_rooms>/tide_platform_web_rooms.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_rooms_handover-browser" handover)
-    set_tests_properties(tide_platform_web_rooms_handover PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_rooms_handover PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     # ...and a match its host ended stays ended, for a player who missed the goodbye.
     add_test(NAME tide_platform_web_rooms_ended
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_rooms.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_rooms>/tide_platform_web_rooms.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_rooms_ended-browser" ended)
-    set_tests_properties(tide_platform_web_rooms_ended PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_rooms_ended PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
 
     # A page told to play at a slow connection (`Tide.lag`): its lag is the
     # round trip its player gets, what the trip takes already in it. The page
@@ -645,5 +759,6 @@ if(TIDE_WEB)
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_threads.mjs" "${TIDE_BROWSER}"
             "$<TARGET_FILE_DIR:tide_platform_web_threads>/tide_platform_web_threads.html"
             "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_web_threads-browser")
-    set_tests_properties(tide_platform_web_threads PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    set_tests_properties(tide_platform_web_threads PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120
+        PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
 endif()

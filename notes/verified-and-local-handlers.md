@@ -1,5 +1,158 @@
 # `verified` and local handlers of match events
 
+## Visibility availability and authoritative lifecycle (2026-10-15)
+
+This supersedes the older arrival-through-`Spawned` contract below. `Shown`
+and `Hidden` are engine-generated local notifications, with optional
+`verified`, for match entity/component availability. A handler's complete
+required/excluded component set determines whether it is available. Revealing
+one component does not repeat unrelated initialization. `Shown` initializes
+arrivals, reveals and actual spawns; `Spawned` is now only a genuine spawn.
+`Hidden` reads the previous permitted components/singletons/query rows;
+`Shown` reads the new permitted world. Ordinary replay with unchanged
+availability records nothing. The final implementation reconciles availability
+at local frame/delivery boundaries, rather than dispatching irreversible tick
+transitions. Transient Add/Remove/Add operations coalesce to final availability;
+a canceled predicted removal restores Shown. Replacing a present component does
+not reinitialize it. Predicted and verified endpoints are independent, and
+Hidden's old endpoint/query rows remain available until after its handler runs.
+
+`hear_arrived(world, had, log)` records only `Shown`. The generated
+`hear_visibility(world, had, destroyed, destroyed_count, log)` records old/new
+availability in separate phases, skips `Hidden` for explicitly known permitted
+real destructions and never infers `Destroyed` from missing state. Components
+are the finest policy scope, never fields. Neither new event is game-sendable
+or a match trigger; local-world components are refused, while match local
+fields and local singletons retain their writable local behavior.
+
+Raw tick availability still carries delivered listener masks for replay, but
+it is no longer the presentation source of truth. `availability_codegen.inc`
+generates local predicted/verified COW world snapshots and a private pending
+cause log, only in games with availability listeners. Before ordinary local
+handlers and `tide_local_forget`, each frame compares delivered endpoints using
+the existing component-aware helper, emits Hidden(old) then Shown(new), and
+updates the snapshots. Raw TIDE_HEARD_AVAILABILITY records are ignored during
+local dispatch. Ordinary custom-event occurrence matching, event-time payloads
+and relative ordering remain unchanged. Genuine Spawned/Destroyed retain
+TIDE_HEARD_LIFECYCLE for authoritative replacement of guessed verified payloads.
+
+Unchanged endpoint ticks plus physical world hashes and birth-page COW identity
+skip the component/query scan and snapshot copy. Birth-page comparison matters
+because born identity is intentionally outside the match hash. Same-tick
+corrected state still reconciles. At most two permitted snapshots are retained;
+private pointers/cause logs are zeroed in local pack/unpack and cleared on
+free/disconnect. A local rebuild initializes availability afresh, so Shown
+preparation must safely reuse/replace existing local resources. No stale world
+ABI survives a code swap.
+
+Bulk destruction uses sorted private fixed-header causes, unions duplicate
+endpoint/certification flags, and binary-searches a privately sorted copy of
+the explicit destroyed handles. Callback inputs may be unsorted and stay
+caller-owned. These changes reorder no game events and prevent quadratic
+chunk-unload reconciliation. An ignored scratch harness compiled generated
+lifecycle C with clang -O2 against the debug engine library, timing only
+reconciliation with a monotonic nanosecond clock (best of five). At 1k/4k/16k
+unique causes, collection improved from 0.570/8.160/128.743 ms to
+0.211/0.711/2.689 ms; with duplicate records, 1.106/16.641/259.099 ms became
+0.394/0.888/4.406 ms. With real previous endpoints containing those entities,
+single-record removal improved from 0.819/11.893/194.572 ms to
+0.496/2.615/10.610 ms; duplicate-record removal improved from
+1.314/21.922/360.723 ms to 0.689/3.309/17.775 ms. Construction, tick execution,
+game-handler dispatch and local-field forgetting are outside those timings.
+The 4096-entity regression verifies duplicate union, canceled predicted cause
+pruning, genuine-death conceal suppression, arbitrary callback input order and
+unchanged caller storage. After the independent malformed-journal validator
+follow-up, fresh lifecycle passes 16/16 on native and WASI. Projection,
+local_events and handover targets pass on both too (4/4 CTest each).
+
+Every visibility-enabled generated game supplies `tick_client_events(world,
+jobs, per_player)`, one tick for all `TIDE_GAME_PLAYERS` recipient logs.
+Genuine Spawned/Destroyed select authorized listeners after match handlers
+and before removal. Their union payload clears component slots no authorized
+listener reads. Query records include only permitted rows and use effective
+component presence for both required and excluded filters. Singletons remain
+public, and existing plain-copy heap-handle clearing still applies. Recipient
+snapshots additionally clear hidden scene policy/membership fields, hidden
+Visibility fields and opaque Resident state, recursively through inline values
+and fixed arrays, matching the canonical recipient codec. This covers direct
+component/singleton snapshots and query rows; ordinary local full-world records
+keep their existing behavior.
+`check_client_events(data,size,&build,&count)` validates every header/span,
+exact generated size, flags, listener masks, IDs, row stride/count and required
+matching later row records before handler casts. Before typed reads it also
+checks canonical boolean
+representations and zero owned-container, Resident and private spans recursively,
+including fixed arrays and recorded query rows. Generic custom events are
+not server-journaled: they enter a discarded scratch log on this server path
+and remain local products of projected client simulation. There is no generic
+authoritative outward-event API.
+
+Visibility-enabled spawn birth identities hash only the public spawn tick and
+final entity handle (including generation). Archetype, enclosing scene and
+component values are excluded: even a payload-free cause must not expose a
+brute-forceable digest of a concealed card. This narrows corrected-spawn identity
+to that key for visibility games; changing only a component value on the same
+tick/handle does not replace its local fields. Full-world games retain their
+existing content-derived birth identity. Packed recipient worlds still have
+unknown birth identity and match by handle.
+
+`TIDE_HEARD_DESTROYED_CAUSE` is a private payload-free record for destruction
+permitted at event time, even with no death listeners. It has zero listener
+and wire delivery flags. Normal predicted ticks record it too; the hearing
+pipeline retains it as private predicted/verified metadata. Sessions remove
+guessed causes from verified runs when adopting authoritative journals and
+forward checked causes internally, never to a game handler. Local pending
+causes retain separate endpoint bits until their clocks reach the death. An
+authoritative certification bit survives consuming one endpoint; unconfirmed
+predicted causes expire once an explicit verified endpoint passes their tick,
+including when the server concealed rather than killed the entity. This avoids
+stale guesses suppressing later Hidden notifications. This prevents previous-visible/current-dead inference
+from suppressing concealment when a policy hides and destroys in one tick;
+reveal-then-destroy records a true permitted cause. Sessions derive suppression
+IDs from these records. Missing retained event history permits availability
+cleanup without inventing a death; Forgotten remains the resource-release
+fallback once both endpoints lack the component/entity.
+
+Fixtures: `visibility_lifecycle` covers entity/component/without transitions,
+old/new query snapshots, Add/Remove/replacement, arrival versus true spawn,
+per-listener replay dedup, per-recipient event-time state and private union/query
+scrubbing, malformed/truncated journal rejection, hidden deaths and same-tick
+hide/reveal plus destruction. Additional endpoint regressions pin same-tick
+Add/Remove/Add resource correctness, canceled conceal restoration, independent
+verified query snapshots, delayed verified death causes, no matching Destroyed
+listener, excluded private local-pack state/rebuild reinitialization, and stale
+predicted-cause expiration before a later conceal. Complete recipient-journal
+equality regressions cover hidden-value spawn/death variants, a cause-only death
+with no eligible listener, hidden scene membership in direct/query snapshots,
+and different opaque Resident stamps/digests. At that checkpoint, native/WASI
+lifecycle passed 14/14; the bulk/validator follow-ups bring it to 16/16 above.
+Projection and handover targets pass on both, local_events 4/4 and
+handover 6/6. local_events now counts reappearance
+after a corrected predicted removal, while its shield-at-spawn assertion remains
+a genuine Spawned event-time handler. Existing local_events/handover initializers and
+Duel/tower-defense presentation initializers use Shown. Reserved-name collisions
+in fixtures/prototypes are renamed without changing their simulation formulas.
+The initial five lifecycle tests, local_events, handover and tasks_local passed
+native. The no-local-listener destruction-cause regression also passes in the
+projection fixture, alongside exact scoped anchor placement and hidden-leaf
+no-anchor checks. Fresh native session visibility fixtures pass 6/6: permitted death
+uses final authoritative value 1260 at tick 259 exactly once for predicted and
+verified listeners, unauthorized recipients receive none, private cause markers
+never reach handlers, and history-expired recovery retains honest availability
+semantics. Final native/web integration results are recorded with the visibility
+validation. Before the endpoint follow-up, the full native debug suite passed
+2,369/2,369 in 54.15 seconds, including 34 GPU tests and optional Cracked/Foldline
+prototype tests. The optional web run was interrupted after 2,287 passes; it is
+not a complete-suite pass. The changed Cracked/Foldline native/WASI/browser
+coverage passed. Before the final birth/snapshot privacy follow-up, the fresh
+standard native suite passed 2,356/2,356 in 379.95 seconds, including 31 GPU tests.
+After the birth/snapshot privacy fix and namespace fixture, standard native
+passed 2,357/2,357 in 83.03 seconds. Fresh complete standard native/web suites
+for the final bulk-reconciliation/payload-validator follow-ups are pending.
+User contracts
+are in docs/spec.md, docs/game/events.md, docs/game/visibility.md and
+docs/c/hosts.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Networking

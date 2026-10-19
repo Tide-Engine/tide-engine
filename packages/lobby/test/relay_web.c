@@ -34,7 +34,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "lobby: --port=<the server's port> is missing from the page's address\n");
         return 2;
     }
-    const tide_io *io = tide_platform_io_init("tests.tide.lobby");
+    const tide_io *io = tide_platform_io_init("tests.tide.lobby", NULL);
     char origin[64];
     snprintf(origin, sizeof origin, "http://127.0.0.1:%s", port);
     snprintf(lobby_silent, sizeof lobby_silent, "http://127.0.0.1:%s/silent", port);

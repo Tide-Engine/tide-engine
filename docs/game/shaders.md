@@ -215,11 +215,26 @@ vert Snap(mut Corner corner, out float4 clip, Lens lens)
 
 `this` in a vert has that one field, and it can't be assigned: what a vert writes is `out`. An ordinary function a vert calls has no `this`: pass it `this.clip` as a value.
 
+## Drawing from a helper
+
+An ordinary synchronous function can name a frag or vert with the same draw syntax:
+
+```csharp
+void DrawBox(List<BoxVertex> vertices, List<int> indices, Box box, Sun sun)
+{
+    Draw.Mesh(vertices, indices, float4x4.identity, Shade);
+}
+```
+
+If `Shade` takes `Box` and `Sun`, the function must take exactly one input parameter of each type. Pass them explicitly from the view, and forward them through other helpers normally. A missing input, two parameters of the same required type, or only an `out` parameter is an error. Read-only inputs use their passed values; a `mut` input supplies its current value. When a shader reads attached local fields, pass the actual bound parameter, as for [other local-field helpers](../language/functions.md#functions).
+
+This also works for a target's draws, `Draw.Instanced`, `Draw.SkinnedMesh` and `Draw.Blit`. Textures, per-draw values and instance lists keep their usual syntax. The function draws in its caller's frame and follows the existing drawing restrictions.
+
 ## What they read
 
 After the vertex, and what each writes (a frag's color, the structs a vert hands its frag, where a vert puts its vertex), a frag or vert takes the game's state, as a view does:
 
-- **Components** are those of the entity the view that draws runs for. `box.tint` in the frag above is the tint of the box being drawn: a view that runs for a thousand boxes draws them all at once, each with its own.
+- **Components** are those of the entity the view that draws runs for. `box.tint` in the frag above is the tint of the box being drawn: a view that runs for a thousand boxes draws them all at once, each with its own. In a drawing helper, they come from its explicit parameters instead.
 - **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
 - None is `mut` or `out`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.

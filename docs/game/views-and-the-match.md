@@ -35,7 +35,7 @@ The view's own parameters still pick the entities it runs for, and the query pic
 - **A view that queries the match only runs in a match**, like any view that reads it. What should go on outside one stays in a view of its own.
 - **Going through a lot stays cheap.** A query's rows are made once a frame, however many entities the view runs for: a view over thousands of entities that goes through thousands of others blends those others once, not once for each.
 
-The rest is as in a system: queries and rows are used directly in `foreach`, in the view's own code, and can't be stored or passed on, where a component value like `entry.box` can. The order is the ECS's, not by distance or by entity ID. The editor says what a view's queries read above the view and on hover, as it does for a system.
+The rest is as in a system: queries are iterated directly or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query), which keep the view's blended or verified data. Queries and whole rows can't be stored or returned, and whole rows can't be passed on; a component value like `entry.box` can. The order is the ECS's, not by distance or by entity ID. The editor says what a view's queries read above the view and on hover, as it does for a system.
 
 A view takes a `World` as a system does, to read another entity's component by its handle: `world.Get<Health>(follower.leader)` (see [Other entities](./systems.md#other-entities-the-world)). It reads the match through it and never changes it, and what it gets is the component as of the latest tick, not blended between ticks.
 

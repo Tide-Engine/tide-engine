@@ -10,6 +10,8 @@ description: "Read and write local files in Tide, use persistent save and tempor
 
 `Application.persistentDataPath` is the game's save directory. Its contents survive normal restarts and application updates. `Application.temporaryCachePath` is for disposable files; code must tolerate their disappearance. Both are read-only runtime properties.
 
+The engine keeps a file of its own in the temporary cache folder, `pipelines.vulkan`: the GPU programs it compiled with Vulkan, so the game's next run starts drawing sooner. It's there for every game that draws with Vulkan, whether or not the game uses files. Deleting it is harmless; the next run compiles them again.
+
 Save locations use the game's stable `appId` setting, independently of its window title:
 
 ```csharp
@@ -25,6 +27,11 @@ void WriteSave(string contents) fails IOError
 Without an explicit `appId`, the standard host derives one from the game's folder or target name. Set one before shipping: changing it changes which save directory the game uses.
 
 Relative paths resolve under the persistent data directory on every platform. Explicit absolute paths are usable on native platforms subject to the OS's permissions. On the web, files stay inside this game's persistent and temporary virtual roots.
+
+For native desktop tests, [`--data-dir <folder>`](../tools/cli.md#without-a-window)
+selects a separate persistent directory. Scripted runs otherwise use the normal
+saves. The override changes relative paths and `Application.persistentDataPath`;
+explicit absolute paths still reach the files they name.
 
 ## Whole-file operations
 

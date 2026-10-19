@@ -1537,6 +1537,51 @@ static void run_place_checks(const char *when)
     }
 }
 
+static int metadata_scale;
+
+static tide_int2 metadata_pixels(const tide_target_size size)
+{
+    const float scale = size.scale > 0 ? size.scale : (float)metadata_scale;
+    if (size.window > 0) return tide_i2((int32_t)(SIZE * metadata_scale * size.window + 0.5f),
+                                       (int32_t)(SIZE * metadata_scale * size.window + 0.5f));
+    return tide_i2((int32_t)(size.width * scale + 0.5f), (int32_t)(size.height * scale + 0.5f));
+}
+
+static void run_size_checks(const char *when)
+{
+    const tide_render_target target = tide_render_target_make_scaled(4, 3, 2);
+    const tide_render_target window = tide_render_target_screen(0.5f);
+    local.ImageSizes.kept = tide_render_target_color(target);
+    local.ImageSizes.window = tide_render_target_color(window);
+    const tide_int2 actual = tide_platform_target_pixels(target.size);
+    if (actual.x != 8 || actual.y != 6) { printf("FAIL: platform target size%s\n", when); failures++; }
+    for (int step = 0; step < 3; step++) {
+        if (step == 1) tide_render_target_resize(target, 7, 4);
+        if (step == 2) tide_render_target_dispose(target);
+        local.ImageSizes.expected = step == 0 ? tide_i2(8, 6) : step == 1 ? tide_i2(14, 8) : tide_i2(0, 0);
+        for (metadata_scale = 1; metadata_scale <= 2; metadata_scale++) {
+            local.ImageSizes.expectedWindow = tide_i2(SIZE * metadata_scale / 2, SIZE * metadata_scale / 2);
+            local.Art.targetPass = 23;
+            tide_draw_reset(&list);
+            list.target_pixels = metadata_pixels;
+            tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+            tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &list, &gui);
+            tide_gui_end(&gui, &list);
+            list.target_pixels = NULL;
+            local.Art.targetPass = 0;
+            const tide_float2 point = {64, 64};
+            uint32_t got;
+            tide_platform_read_pixels_as(&list, SIZE, SIZE, (float)metadata_scale, &point, 1, &got);
+            const bool good = got == 0x00FF00FFu && list.run_count > 0
+                           && list.runs[list.run_count - 1].shader->texture_count == 0;
+            printf("%s: CPU/vert/frag image sizes, step %d scale %d%s (0x%08X)\n",
+                   good ? "ok" : "FAIL", step, metadata_scale, when, (unsigned)got);
+            if (!good) failures++;
+        }
+    }
+    tide_render_target_dispose(window);
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -1573,6 +1618,7 @@ static int frame(void *user, const float seconds)
         run_normal_checks(", on another device");
         run_model_checks(", on another device");
         run_place_checks(", on another device");
+        run_size_checks(", on another device");
         return failures;
     }
 #endif
@@ -1612,6 +1658,7 @@ static int frame(void *user, const float seconds)
     run_model_checks(", again");
     run_place_checks("");
     run_place_checks(", again");
+    run_size_checks("");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

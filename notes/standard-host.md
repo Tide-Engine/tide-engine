@@ -1,6 +1,88 @@
 # The standard host: runs with no window, the stats, debug views
 
+Texture metadata (2026-10-18): before calling the generated frame the standard
+host supplies tide_platform_target_pixels in tide_draw_list.target_pixels.
+This borrowed callback crosses the host/game-library boundary explicitly;
+the generated frame saves/restores its thread-local binding. Custom hosts that
+need render-target Texture.size provide the callback too. See notes/textures.md.
+
+## Explicit save directory for test runs (2026-10-18)
+
+UNDERFOOT's scripted tests wrote player saves. The desktop standard host now
+takes `--data-dir <folder>` in both bounded and windowed runs. It overrides
+`Application.persistentDataPath` and relative I/O, creating parents when the
+game uses files. It is explicit: existing saves remain the default, the selected
+folder survives exit/repeated runs, absolute file paths still name those files,
+and temporary caches keep their normal paths. It does not select headless mode.
+Several `--players` processes use `player-1`, `player-2`, etc. under that folder;
+one player uses the folder itself. Web, Android and dedicated server runs reject
+the option; the CLI does so before building. Paths forwarded by `tide run` are
+made absolute relative to the invoking directory.
+
+The host passes the directory to `tide_platform_io_init(app_id, directory)`;
+NULL selects normal storage. The provider resolves native roots to full paths
+before use and keys reuse by app ID and selected root. Rebinding the same root
+preserves pending flushes; selecting another root forgets old work through the
+existing app-switch path. An invalid/unwritable root reports ordinary I/O failure
+and never falls back to actual saves. The web C provider requires NULL. Existing
+C callers were migrated to NULL; no generated Tide/runtime function changed.
+
+`tide_platform_data_directory` runs the real host with relative/nested/space and
+absolute roots, repeated/scripted runs and two players, checking actual files
+and the runtime path. It uses only its explicitly created scratch directories.
+`tide_platform_io` checks independent same-app roots, pending flush reuse,
+unusable-root failure and restoring the default. CLI forwarding, help and
+unsupported/missing-argument tests cover dispatch; capture refusal tests cover
+the host parser.
+
+Validation: warning-free full Windows native and web debug builds with Clang
+23.1.2 and Node 24.19.0. All 2,372 native CTests pass (60.54 s, including 32
+GPU tests on Vulkan/OpenGL), and all 2,282 web CTests pass (201.32 s, including
+WebGL/WebGPU). The expanded CLI unsupported-target/missing-directory checks
+also pass afterward. The docs production build and diff checks pass; docs retain
+their existing unstaged-example 404 placeholders. Math/random/world hash pins
+are unchanged. Every run used TIDE_HIDDEN; browser suites retain mute flags.
+Android, other OSes, sanitizers and private prototype playtests were not run;
+no CI was dispatched or deployment made.
+
+Managed hosting (2026-10-15): `managed_run.h` is a separate single-threaded WASI
+reactor launcher without rendering, platform devices or a local client. Ordinary
+host admission copies `tide_game.simulation` into protocol 2 and reports a clear
+update message on mismatch. The session protocol independently checks it too.
+Typed native entry starts are reused; unsupported native process hooks fail
+closed. Contracts/tests/launch limits: managed-hosting.md.
+
+Dedicated service (2026-10-15): serve.h/server_run.h run authoritative matches
+without the graphics capture host or any local player/view/audio. The ordinary
+host recognizes Connect("host:port/id") and built-in Join("room/id"), with 0
+requesting creation, pumps admission before its session and reports the assigned
+endpoint in Session.room. Game networks retain their Join text. Dedicated
+creation/authentication, ownership, limits and tests: dedicated-servers.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
+
+## Vertex count in the stats (2026-10-15)
+
+The open drawer now has a `vertices` row after the GPU/draw-call row. The
+host passes the current frame's `tide_platform_draw_vertices` through the
+64-bit `tide_stats_values.vertices`; the row also shows zero for an empty
+frame and exists outside a match. Its scope is the game's submitted geometry
+in every pass, excluding the host overlays; see `notes/rendering.md`.
+`TIDE_STATS_LINES` is 16 to leave room for the additional row alongside both
+render timers and all three slow systems. Existing layout/input tests cover
+the added row, small-screen truncation and a value above 32 bits. User-facing
+counting rules are in `docs/tools/cli.md`.
+
+Validation: Windows Clang 23.1.2, Node 24.19.0; the full native debug suite
+(2,337 tests) and web debug suite (2,250) pass after correcting the new blit
+fixture's vertex layout and rerunning the affected draw tests. Native coverage
+includes OpenGL and Vulkan with both descriptor paths under validation; web
+coverage includes WebGL/WebGPU and exact host-to-drawer vertex totals.
+The production docs build and `git diff --check` pass. A 960×540 hidden capture
+was visually checked: a clear plus one rectangle reports 9 vertices, with the
+drawer excluded. Android, other OS builds and sanitizers were not run; no CI
+was dispatched. Hardware vertex-shader invocation counts remain outside this
+submitted-geometry counter's scope.
 
 ## Rendering and platform
 

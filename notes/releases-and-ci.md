@@ -1,11 +1,174 @@
 # Releases, installing and CI
 
+## Audio completion and browser scheduling (2026-10-18)
+
+Run `39128917687`, at `2c4c8e29`, failed Android's audio-device state-reclamation
+assertion and Windows web's hidden-host room session. All other platform
+suites, Windows/macOS package checks, Docs and JetBrains verification passed.
+Linux packaging stopped at its failed Android suite; the aggregate Build gates
+failed/cancelled and Release was skipped. No nightly was published.
+
+The audio completion ordering fix and deterministic old-code failure are in
+`notes/audio.md`. The custom browser tests now use the existing CPU reservation
+and graceful profile shutdown, described in `notes/testing.md` and
+`notes/webrtc-and-rooms.md`. No check, timeout or publication gate was removed.
+
+Local full native debug passes 2,375 tests (436.73 seconds), including the
+audio device and native GPU checks. Full web debug passes 2,285 tests (275.42
+seconds), including WebGL/WebGPU and the new deterministic audio regression.
+Validation used Clang 23.1.2, Node 24.16.0 and Chrome Headless Shell
+154.0.8037.92; hosted Windows uses the separately pinned 155 build.
+
+With CTest and its child browsers restricted to two CPUs, each of the three
+room cases passes three consecutive debug runs and three optimized runs.
+The hidden-host case takes 11.49--11.68 seconds in debug and 11.79--11.99
+optimized, versus 30.23 seconds in the original concurrent schedule. The
+original immediate repeats failed with locked profiles; corrected repeats
+reuse their profiles successfully. These local timings demonstrate scheduling
+and shutdown effects, not the exact cause of the hosted disconnect.
+
+Affinity-only threaded stress still advertises this machine's 24 CPUs to
+Chrome. It reached its unchanged 45-second guard during constrained/load
+checks, then passed three isolated optimized repeats (40.19, 10.47 and 5.57
+seconds). A scratch generated page reporting two CPUs as well as running on
+two passes in 26.48 seconds, with 408 identical ticks, both threads participating
+and a C worker sleep observed. The generated page was restored afterward;
+no worker-count override was added to the repository. Both runners' early-exit
+controls fail immediately as intended. Node syntax and whitespace checks pass.
+Actual Android/AAudio, other operating systems, MinGW and sanitizer confirmation
+remain the next requested CI run's coverage; no workflow was dispatched.
+
+## Nightly package/test fixture corrections (2026-10-15)
+
+Owner-requested run `38761765659` at ea0ad363 completed with four failing
+checks: Linux/macOS package cache comparisons and Windows native/MinGW
+dedicated-server harness shutdown. Windows packaging, Linux native/sanitizers,
+all three web suites, macOS native, Docs deployment and JetBrains verification
+passed. The aggregate Build jobs failed/cancelled and Release was skipped;
+no nightly was published. The two underlying fixture corrections and their
+reproductions are in cli-and-packages.md and dedicated-servers.md. No workflow,
+publication gate, client verification assertion or timeout was removed.
+
+Local full native debug passes all 2,342 tests, including GPU validation and
+both transports (412.07 seconds, Node 24.16.0/Clang 23.1.2). Full web debug
+passes all 2,255 tests, including WebGL/WebGPU (269.88 seconds). The final
+server harness passes its focused transport rerun too.
+
+Merged the current dev work, including visibility and folder deployment links;
+the only conflict was adjacent CLI notes, both retained. The merged full native
+debug suite passes all 2,359 tests (119.78 seconds), and full web debug passes
+all 2,272 (282.54 seconds), including WebGL/WebGPU. The refreshed installed
+CLI also passes the complete native/web cache, stripping, failure-recovery,
+debug/release web-watch and bounded dedicated-server integration cases.
+
+Fresh requested run `38767273771` at a7aae14c found a separate macOS package
+failure before the cache checks: the newer runner image combines standalone
+CLT 27 with default Xcode 26.6, exposing hardcoded SDK discovery inconsistent
+with Apple's selected linker. The fix, native cross-platform discovery fixture
+and remaining actual-Mac validation are in cli-and-packages.md, Selected Apple
+SDK. This changes the CLI's automatic SDK lookup, not the workflow or its gates.
+Local validation after that correction passes all 2,360 native debug and 2,272
+web debug CTests, plus the discovery regression on Windows/Linux. The old code
+fails that regression. Actual Apple linking remains the next package run's gate.
+
+Run `38768886333` confirms the Apple fix on the same newer macOS image:
+all package smoke/C++/cache/watch checks pass, including both repaired-build
+comparisons. Windows native instead failed only tide_cli_installers: the
+partial PowerShell warm-up took 10.2 seconds, but the first timed case still
+spent 18.5 seconds between its release-list return and first mock download,
+using only 0.125 seconds of CPU in that interval. It hit the unchanged
+30-second guard after both mock downloads. The exact assembly/file wait in
+release selection/scratch setup is not identified; the earlier assertion that
+the cmdlet-only warm-up covered all first-load costs was too broad.
+
+The preflight now executes the actual mocked fresh installer with the same
+release fixture, real checksum and isolated modules/TEMP, stopping before
+unpacking. It keeps its existing 300-second startup guard; all nine cases keep
+their 30-second guards and assertions. No real installation, PATH/profile or
+registry write is performed. A temporary one-time 31-second release-selection
+stall fails the old first case and is absorbed by the full preflight; the new
+nine cases then all pass. Ordinary and poisoned inherited module/cache-path
+runs pass all nine cases locally. A separate 31-second stall injected only
+after preflight still fails the first timed case at 30.02 seconds. Full native
+debug passes 2,360 tests (67.65 seconds), and web debug passes 2,272 (178.91
+seconds), including WebGL/WebGPU. The final preflight's release/request/cleanup
+assertions and all nine ordinary cases pass again; Node syntax and whitespace
+checks pass. No installer or workflow behavior changed.
+
+Final requested Build `38772910822`, at 16117bd1, completed successfully and
+published `v0.4.0-nightly.3` at 17:21:26 UTC on 2026-10-15. All native/web,
+MinGW, sanitizer and Android suites, all three packages and their installed
+smoke/C++/incremental checks, Google Play checks, JetBrains verification and
+Docs deployment passed. Windows native passed all 2,292 CTests, including the
+installer fixture in 22.83 seconds. Marketplace was skipped as intended for a
+nightly. The preceding run finished with only that installer fixture failing;
+its other suites and all package integrations passed too.
+
+Verified the published tag names exactly 16117bd1, the release is a nondraft
+prerelease with all five nonempty uploaded assets, and the public release JSON
+reports the same assets. The public SHA256SUMS contains all three platform
+packages, and the deployed docs homepage responds HTTP 200. Both Windows
+(nine cases) and Linux/POSIX (eight cases) installer fixtures pass locally.
+These final notes are unbuilt text; no additional workflow dispatch is needed.
+
+## Managed hosting deployment workflow (2026-10-15)
+
+At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
+from Build and Docs. It runs only through `workflow_dispatch`: every ref runs
+the service's `npm ci`/`npm test` on Ubuntu 24.04 with Node 24.16.0; only `dev`
+validates `hosting/fly.toml` and deploys `tide-hosting` with the remote builder
+and `--ha=false`. The owner confirmed the existing `FLY_API_TOKEN` repository
+secret is shared across apps. It is supplied to Fly validation and deployment;
+provider credentials remain in Fly. Global hosting concurrency serializes runs
+without cancelling an active deployment. No connection to engine publication,
+automatic push trigger or allocation-enabling step was added.
+
+The service tests cover real HTTP/relay/WebRTC, ledger/auth, WASM isolation and
+recovery. Two installed-toolchain/browser cases require staged tools and skip in
+this lightweight deployment workflow. The operator README describes invocation,
+coverage and the existing first-deployment setup boundary. Validation:
+actionlint 1.7.12 passes for the new workflow, the Fly configuration validates,
+and the production Docker image builds. Service tests pass on Windows and in
+the Linux service image with Node 24.16.0: 29 passed, two staged-tool integration
+cases skipped as documented. Dependency installation reports no vulnerabilities;
+the whitespace diff passes. No workflow was dispatched or service deployed.
+
+The owner's first Hosting run, 38754705649 on 4bb7b111, passed dependency
+installation and all ordinary service tests but failed `flyctl config validate`
+with "no access token available". Local validation had inherited CLI login,
+hiding that this command also requires authentication. Supply the same
+`FLY_API_TOKEN` to that step, keeping it outside dependency installation/tests.
+The owner explicitly requested a fresh run after the fix; follow its completed
+result rather than retrying the old commit's unchanged workflow.
+
+Run 38754895170 on 341051c4 then passed validation but deployment was rejected
+as unauthorized. Fly's token list showed the repository credential was scoped
+to `tide-website`. Created one-year deploy credentials for `tide-website` and
+`tide-hosting`, combined their FlyV1 macaroon bundles using Fly's supported
+comma-separated header format, and updated the existing repository
+`FLY_API_TOKEN` secret. Both app API reads succeed and an unrelated app returns
+403. No organization-wide token was created, no prior token was revoked, and
+the website workflow keeps the same secret name. The combined value is held
+outside the repository in the private user-only hosting-setup directory; no
+token values were printed. These credentials expire in October 2027. Retried
+the corrected run after this credential update.
+
+Attempt 2 of 38754895170 passed all steps and deployed 341051c4. Fly reports one
+started shared-cpu-1x/512 MiB machine in `fra`, one encrypted 1 GiB `hosting_data`
+volume and a passing health check. All four OAuth/Stripe secrets now show
+Deployed. An HTTPS request through `tide-hosting.fly.dev` with the configured
+console Host header returns `{"ok":true}`. The console custom domain still does
+not resolve here; no app certificates are configured yet. This is the first
+service deployment, not completion of paid-launch/provider/restore checks.
+Allocation enablement and rates remain unchanged. The checkout@v4 Node 20
+deprecation annotation does not fail the run; other workflows use that action
+too and it was not changed as part of this fix.
+
 ## Stable upgrade fixture failure (2026-10-14)
 
 Build run 38577620235 builds release commit b23c42ff as 0.3.0 on the stable
 channel. All five failed suites in attempt 1 failed only `tide_cli_upgrade`;
-Windows, macOS and Linux native plus MinGW repeat that failure in attempt 2;
-its sanitizer job was still running during investigation. Packages, web
+All five repeated that single failure in attempt 2. Packages, web
 suites, Docs and JetBrains verification passed. The test's local release list
 hardcoded `prerelease: true` and nightly output, so the stable CLI correctly
 reported no stable package. This does not query published releases and is
@@ -13,9 +176,31 @@ unrelated to the age of the previous stable release.
 
 The fixture now follows the built CLI's default channel; implementation and
 local reproduction are in notes/cli-and-packages.md, Upgrade fixture channels.
-An old-run retry still checks out b23c42ff. Hosted validation of the fix requires
-the correction on `release` and a newly requested Build run. No suite or
-publication gate was removed, and no workflow was dispatched for this fix.
+An old-run retry still checks out b23c42ff. The owner approved merging the
+locally tested fix 5cfe6312 into `release` and starting a fresh stable Build.
+Run 38584459544 checks release merge 73bcb33e. No suite or publication gate
+was removed. All native platform and MinGW suites passed 2,263 tests each,
+including `tide_cli_upgrade`; sanitizers passed 2,261. All web suites, Android,
+three package jobs, Docs and JetBrains build/verification passed too.
+
+The Release job published stable v0.3.0 at 15:17:36 UTC with the three platform
+packages, JetBrains ZIP and SHA256SUMS, and committed VERSION on `release`
+(a29162e2). The public `/releases/v0.3.0.json` endpoint confirms all five assets
+and `prerelease: false`.
+
+The overall run completed with failure only in the subsequent JetBrains
+Marketplace job (115935242705). Its plugin build/tests passed; upload of
+`io.github.blenminer.tide` was rejected with "Cannot find plugin" and the
+requirement for a first manual upload. JetBrains' publishing documentation
+requires that initial upload before Gradle publishing. The Tide rename commit
+2a394822 explicitly called for a new Marketplace listing; the previous stable
+run 36837849506 skipped the Marketplace job. The current public plugin-ID lookup
+returns 404. These observations establish a Marketplace setup/access blocker,
+not a compiler failure; do not claim the overall workflow passed or rename the
+plugin ID to work around it. The published engine release remains available.
+The v0.3.0 `tide-jetbrains.zip` release asset is ready for initial manual upload
+under the intended publisher account; account/listing setup remains with the
+owner. No additional workflow or failed-job retry was dispatched.
 
 ## Docs LLVM alignment (2026-10-14)
 
@@ -77,6 +262,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Run `38081597158` passed all 2,044 MinGW tests, including the installer fixture in 12.07 seconds, but its native Windows job still hit the guard in the first two cases. The second had printed `Downloading...`, so module discovery alone does not explain the delay. That fixture started beside the rooms, asset and build-service tests; resource contention remains unproven. The harness now explicitly imports stock Management too and records wall/CPU times around module imports, mock requests/logging, the real SHA256 command and the unpack boundary. It verifies that the request/unpack commands resolve to its functions. On failure the assertion includes partial mock calls, available CPUs and the CTest parallel budget, and preserves the private fixture with stdout/stderr logs. Windows `TEMP`/`TMP` are contained in that fixture as well, including downloads left by a killed process. The 30-second guard, real checksum calculation and all installer assertions remain intact. All eight local cases passed in 0.33–0.40 seconds each; an injected 31-second mock stall hit the unchanged guard at 30.02 seconds and retained the last phase, three partial requests, stdout/stderr and both dummy downloads.
   - Run `38083005042` exposed an error in that new TEMP containment check: Node inherited the runner's `RUNNER~1` short path while PowerShell expanded its long spelling, so string comparison rejected the same private directory before installer execution. Containment now uses a marker stored inside the fixture's scratch directory, read through `GetTempPath`; its value identifies the expected fixture without comparing path spellings. A local NTFS 8.3 path reproduced the previous failure, and all eight cases passed with that same path after the fix, as they did with an ordinary long path. A deliberately different TEMP still fails and reports both actual and expected paths. This repairs the diagnostic fixture; the original hosted cold timeout remains unproven.
   - Final Build run `38085091225` (`ea509d62`) passed the installer fixture on native Windows in 13.99 seconds and MinGW in 14.13 seconds, with the same 30-second guard and installer assertions. These passing results do not establish the cause of the original hosted cold timeout.
+  - The cold timeout came back on 2026-10-14: Build `38623397915` (both of the first two cases, native MinGW), and `38637433618` (the first case on Windows release and on MinGW). The phase timings showed where it goes.
+    - In one case, 8 s went to the first `ConvertTo-Json | Add-Content` and 13.6 s to the first `ConvertFrom-Json`, while the process used 0.03 s of CPU in all. Another case stalled in its first `Import-Module`.
+    - So the time goes to Windows PowerShell's first loads of its assemblies on a fresh runner (modules, `System.Web.Extensions` for JSON, file and hash cmdlets), waiting on the disk and the machine's scanner, not on the installer. Every later case ran in about a second.
+    - The fix: one warm-up process (a `before` hook in `installers_test.mjs`) runs the same module imports, a JSON round trip, `Add-Content`/`Get-Content` and `Get-FileHash` first. It has a 300-second guard of its own against a real hang, its failure fails the file, and it prints how long it took. The cases keep their 30-second guard and assertions, which then measure the installer.
+    - Locally it takes 0.3 s and all nine cases pass in about 0.35 s each. The hosted cold cost should show in the printed warm-up time.
   - The site's built-in admin analytics records successful GET package redirects by version, platform and channel (`createReleases`' optional `onDownload` callback), including cached links. HEAD, checksums, metadata and errors are excluded. The callback runs independently of the response and cannot block a download; counts measure requests, not completed installs. The site's public release JSON and the CLI's contract stay the same (`notes/docs-site.md`, One private analytics dashboard).
 - An upgrade never loses what's installed, and one that stopped says so (`compiler/cli/install.c`):
   - The package's `VERSION` is the installation's version, and an installation is whole when that's its tide's own (`tide_installation_whole`). `cmake/package.cmake` takes it from the native tree, whose tide it is: the other trees install one too, and aren't all configured with the version.

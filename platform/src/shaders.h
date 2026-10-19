@@ -1,12 +1,14 @@
 #pragma once
 
 // The renderer's shaders (platform.c), each written for every backend (see
-// gpu.h): GLSL for OpenGL, without its version line, and on the web WGSL for
-// WebGPU. They draw the same pixels. Until Tide code compiles to them, they're
-// written by hand, so a change to one goes to the other.
+// gpu.h): GLSL for OpenGL, without its version line, and WGSL for WebGPU on
+// the web and, as SPIR-V, for Vulkan on desktop. They draw the same pixels.
+// Until Tide code compiles to them, they're written by hand, so a change to
+// one goes to the other. Vulkan's is the WGSL, translated as the platform
+// layer builds (platform/tools/spirv_shaders.c, into shaders_spirv.h's).
 
-// WGSL is only the web's.
-#ifdef __wasm__
+// WGSL is the web's, and the SPIR-V tool's.
+#if defined(__wasm__) || defined(TIDE_SHADERS_WGSL)
 #define WGSL(source) source
 #else
 #define WGSL(source) NULL

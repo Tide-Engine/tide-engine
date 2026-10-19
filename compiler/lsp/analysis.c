@@ -893,7 +893,17 @@ static void walk_value(const expr *e)
             const type read = e->call == CALL_JSON && e->type.kind == TY_OPTIONAL ? e->type.decl->fields.items[0].type : type_of_decl(e->type_decl);
             type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, read);
         }
-        if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
+        if (e->call == CALL_VISIBILITY) {
+            o.kind = (e->visibility_operation & VISIBILITY_RECEIVER) ? OCC_METHOD : OCC_FUNCTION;
+            if (o.kind == OCC_FUNCTION) {
+                o.owner = e->object->name;
+                if (!builtin_owner(o.owner)) {
+                    add_occ((occurrence){.at = e->object->at, .len = o.owner.len, .kind = OCC_OWNER,
+                                         .owner = o.owner, .name = o.owner});
+                }
+            }
+            add_occ(o);
+        } else if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
             o.kind = OCC_TYPE;
             o.decl = e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
@@ -916,7 +926,7 @@ static void walk_value(const expr *e)
             o.kind = OCC_METHOD;
             if (e->call == CALL_TRANSFORM) o.component = e->type_decl;
             add_occ(o);
-        } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
+        } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
                                  .name = str_from("Scene")});
             o.kind = OCC_FUNCTION;
@@ -1688,6 +1698,16 @@ static const char *builtin_event_doc(const program *prog, const decl *d)
 {
     if (d == prog->spawned) return "Sent to each entity as it's spawned: its handlers set new entities up.";
     if (d == prog->destroyed) return "Sent to each entity as it's destroyed, while its components can still be read.";
+    if (d == prog->shown) {
+        return "A local availability notification: the match entity and the components this handler needs became available "
+               "to this machine. Use it to initialize presentation on joins, reveals and genuine spawns. Existing unrelated "
+               "components aren't shown again when another component appears.";
+    }
+    if (d == prog->hidden) {
+        return "A local availability notification: the match entity or components this handler needs became unavailable "
+               "to this machine. It reads only the last permitted state, before local fields are Forgotten. Concealment "
+               "is distinct from genuine Destroyed; a hidden entity's later destruction is not disclosed.";
+    }
     if (d == prog->player_joined) return "Sent to the world when a player joins.";
     if (d == prog->player_left) return "Sent to the world when a player leaves.";
     if (d == prog->forgotten) {
@@ -1818,11 +1838,33 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
 
 // Scene's functions.
 static const method_form scene_calls[] = {
-    {"Load", "Scene.Load(scene, SceneVisibility visibility = SceneVisibility.Public)",
-     "Loads a scene and returns its entity. Its `Spawned` handlers set it up at the end of the tick; it's public unless it's `SceneVisibility.Private`."},
+    {"Load", "Scene.Load(scene, components...)",
+     "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
     {"Unload", "Scene.Unload(scene)", "Unloads a scene at the end of the tick, destroying every entity in it."},
-    {"AddPlayer", "Scene.AddPlayer(scene, PlayerID player)", "Lets a player see a private scene."},
-    {"RemovePlayer", "Scene.RemovePlayer(scene, PlayerID player)", "Stops a player seeing a private scene."},
+};
+
+#define AUDIENCE_DOC "A set of players permitted to receive state. All and None are values; Only(player) and From(players) select players."
+#define VISIBILITY_DOC "An entity's visibility policy. Its group supplies a shared audience; a scene root's group restricts all entities in that scene. Set<T> restricts a whole component and Reset<T> restores inheritance. Enclosing scene and entity audiences remain limits."
+#define VISIBILITY_GROUP_DOC "A shared visibility audience handle. Visibility.Set(group, audience) updates every member; groups don't own entities or their lifetime."
+
+static const method_form audience_static_calls[] = {
+    {"Only", "Audience.Only(PlayerID player) -> Audience", "An audience containing this player."},
+    {"From", "Audience.From(List<PlayerID> players) -> Audience", "An audience containing the listed players; duplicate players count once."},
+};
+static const method_form visibility_static_calls[] = {
+    {"CreateGroup", "Visibility.CreateGroup(Audience audience) -> VisibilityGroup", "Creates a match-owned shared audience. Group changes are made by match code."},
+    {"Set", "Visibility.Set(VisibilityGroup group, Audience audience)", "Changes the shared group's audience for every member, retaining individual component restrictions."},
+    {"DestroyGroup", "Visibility.DestroyGroup(VisibilityGroup group)", "Releases the shared group. Stale group handles remain restricted rather than becoming public."},
+};
+static const method_form audience_calls[] = {
+    {"Add", "Add(PlayerID player)", "Adds a player to this writable audience value."},
+    {"Remove", "Remove(PlayerID player)", "Removes a player from this writable audience value."},
+    {"Contains", "Contains(PlayerID player) -> bool", "Whether this audience includes the player."},
+};
+static const method_form visibility_calls[] = {
+    {"Set", "Set<T>(Audience audience)", "Restricts whole component T's audience further than the entity and scene permit; fields aren't independent visibility scopes."},
+    {"Set", "Set<T>(VisibilityGroup group)", "Restricts component T to the live audience of a shared group, within the entity and scene limits."},
+    {"Reset", "Reset<T>()", "Removes the component override so its audience follows the entity again."},
 };
 
 // Session's calls, from views and local handlers, and the functions they call.
@@ -1856,6 +1898,7 @@ static const method_form session_calls[] = {
 #define GRID_SIZE_DOC                                                                                                  \
     "A grid of that size, in cells, whose cell type comes from where it goes: 0 or nothing leaves an axis open."
 #define GRID_SIZE_FIELD_DOC "The grid's size, 0 on the axes where it's open."
+#define TEXTURE_SIZE_DOC "Base-level width and height in physical pixels, as int2. Reads metadata without copying or uploading pixels. Missing images give (0, 0); render targets use the current frame's display scale and device limit."
 // The built-in struct Random (its methods' docs are in builtins.c).
 #define RANDOM_DOC                                                                                                     \
     "A random number generator's state, 8 bytes that live where the game puts them: a field of a component (a "       \
@@ -2222,6 +2265,8 @@ static const method_form *methods_of(const type t, size_t *count)
 {
     const method_form *forms = NULL;
     *count = 0;
+    if (t.decl && t.decl == A.prog->audience) { *count = sizeof audience_calls / sizeof audience_calls[0]; return audience_calls; }
+    if (t.decl && t.decl == A.prog->visibility) { *count = sizeof visibility_calls / sizeof visibility_calls[0]; return visibility_calls; }
     if (t.kind == TY_STRUCT && t.decl) {
         switch (t.decl->skin_kind) {
         case SKIN_MESH: forms = skinned_mesh_static_calls; *count = sizeof skinned_mesh_static_calls / sizeof skinned_mesh_static_calls[0]; break;
@@ -2291,7 +2336,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
-                : generic || t.kind == TY_RECORD || (t.decl && t.decl->skin_kind) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
+                : generic || t.kind == TY_RECORD || (t.decl && (t.decl->skin_kind || t.decl == A.prog->audience || t.decl == A.prog->visibility)) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2594,7 +2639,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     sb_put(out, values_param(d, p)        ? "\n\nThe values of the draw: the struct a `Draw.Mesh`, `Draw.Instanced` or `Draw.Blit` "
                                             "gives after its vert and frag, sent to the GPU once for the draw."
               : p->type.kind == TY_STRUCT ? "\n\nAn element of the draw's instance list, sent to the GPU for each instance drawn."
-              : p->type.kind == TY_COMPONENT ? "\n\nA component of the entity the view that draws the mesh runs for, sent "
+              : p->type.kind == TY_COMPONENT ? "\n\nA component supplied by the drawing view or function, sent "
                                                "to the GPU for each instance drawn."
                                              : "\n\nA singleton, sent to the GPU once for each draw.");
     if (!planned) {
@@ -2789,6 +2834,9 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, "\n\nWhat `GUI.Control(rect)` says of a widget the view draws itself: whether it's hovered, "
                             "held, focused and clicked.");
             } else if (o->decl == A.prog->random) sb_put(out, "\n\n" RANDOM_DOC);
+            else if (o->decl == A.prog->audience) sb_put(out, "\n\n" AUDIENCE_DOC);
+            else if (o->decl == A.prog->visibility) sb_put(out, "\n\n" VISIBILITY_DOC);
+            else if (o->decl == A.prog->visibility_group) sb_put(out, "\n\n" VISIBILITY_GROUP_DOC);
             else if (o->decl == A.prog->font) {
                 sb_put(out, "\n\nThe weight `Draw.Text` draws in and `Draw.MeasureText` measures in, after their "
                             "other arguments: `Font.Regular` (what they use without one) or `Font.Bold`, the font's "
@@ -3031,6 +3079,13 @@ static void describe(const occurrence *o, sb *out)
         code_block(out, code.data);
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->mode == PARAM_QUERY) {
+            if (o->param->function_param) {
+                sb_put(out, "\n\nA read-only query borrowed from the caller for this call. The caller's selection, "
+                            "traversal order and live, blended or recorded data timing are preserved. Bindings match by "
+                            "component type; extra bindings and filters are allowed. It can be forwarded to another "
+                            "synchronous helper, but cannot be stored, returned or kept across await.");
+                break;
+            }
             sb_printf(out, "\n\nA read-only second entity set, independent of the entity this %s runs for. "
                            "`foreach` yields rows with `entity` and the named component values. Traversal follows "
                            "the ECS; it does not sort by entity ID or distance.",
@@ -3052,6 +3107,9 @@ static void describe(const occurrence *o, sb *out)
             } else if (of && of->listens) {
                 sb_printf(out, " Its rows are the match as the tick that sent the event left it%s.",
                           of->listens_verified ? ", once the server confirmed that tick" : "");
+            } else if (of && of->is_handler) {
+                sb_put(out, " Its rows read the current match at this handler's turn in the tick-end queue. "
+                            "Events and structural changes recorded by the handler remain deferred.");
             }
             break;
         }
@@ -3086,7 +3144,17 @@ static void describe(const occurrence *o, sb *out)
                       o->param->mode == PARAM_MUT ? "writable" : "read-only", extern_param_number(of, o->param) + 1);
             break;
         }
-        if (o->param->type.kind == TY_INPUT) sb_put(out, "\n\nThe input of the player who owns the entity.");
+        if (o->param->type.kind == TY_INPUT) {
+            sb_put(out, o->param->function_param
+                ? "\n\nRead-only input borrowed from the caller for this synchronous call. Current and previous tick values "
+                  "stay together, preserving .down and .up through helper calls. Pass the input parameter directly; "
+                  "copy individual fields to retain ordinary values."
+                : "\n\nThe input of the player who owns the entity, or the server's for unowned entities and once-only code.");
+        }
+        else if (o->param->function_param && type_is_asset_collection(o->param->type))
+            sb_put(out, "\n\nRead-only asset collection borrowed for this synchronous CPU call. Pass an asset or forward another "
+                        "borrowed parameter; read its count, elements and entries without copying the collection. "
+                        "The borrow can't be stored, returned or retained by a task.");
         else if (o->param->mode == PARAM_EVENT) sb_put(out, of && of->is_command ? "\n\nThe untrusted command payload being handled, read-only." : "\n\nThe event being handled, read-only.");
         else if (o->param->mode == PARAM_SENDER) sb_put(out, "\n\nThe command sender's PlayerID, authenticated by the connection. Check its permissions before changing match state.");
         else if (o->param->mode == PARAM_IN) sb_put(out, "\n\nParameter, read-only: C gets a pointer to the value.");
@@ -3142,7 +3210,9 @@ static void describe(const occurrence *o, sb *out)
     case OCC_OWNER:
         code_block(out, str_to_cstr(o->name));
         // Their calls from the tables completion offers, so the two can't disagree
-        if (str_eq_c(o->name, "Scene")) {
+        if (str_eq_c(o->name, "Audience") || str_eq_c(o->name, "Visibility")) {
+            sb_put(out, str_eq_c(o->name, "Audience") ? "\n\n" AUDIENCE_DOC : "\n\n" VISIBILITY_DOC);
+        } else if (str_eq_c(o->name, "Scene")) {
             sb_put(out, "\n\nLoads and unloads scenes, groups of entities that come and go together: ");
             put_names(out, scene_calls, sizeof scene_calls / sizeof scene_calls[0]);
             sb_put(out, ".");
@@ -3216,7 +3286,20 @@ static void describe(const occurrence *o, sb *out)
             }
             break;
         }
-        if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Scene")) {
+        if (o->call == CALL_VISIBILITY || str_eq_c(o->owner, "Audience")) {
+            if (o->kind == OCC_CONSTANT) {
+                sb_printf(&code, "Audience Audience." STR_FMT, STR_ARG(o->name));
+                code_block(out, code.data);
+                sb_put(out, str_eq_c(o->name, "All") ? "\n\nEvery player, within enclosing visibility restrictions." : "\n\nNo client; the server still has the state.");
+            } else {
+                const bool audience = str_eq_c(o->owner, "Audience");
+                const method_form *forms = audience ? audience_static_calls : visibility_static_calls;
+                const size_t count = audience ? sizeof audience_static_calls / sizeof audience_static_calls[0]
+                                              : sizeof visibility_static_calls / sizeof visibility_static_calls[0];
+                const method_form *form = find_form(forms, count, o->name);
+                if (form) { code_block(out, form->form); sb_printf(out, "\n\n%s", form->doc); }
+            }
+        } else if (o->kind == OCC_FUNCTION && str_eq_c(o->owner, "Scene")) {
             for (size_t i = 0; i < sizeof scene_calls / sizeof scene_calls[0]; i++) {
                 if (!str_eq_c(o->name, scene_calls[i].name)) continue;
                 code_block(out, scene_calls[i].form);
@@ -3360,6 +3443,7 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, "\n\n" DEVICE_ARRAY_COUNT_DOC);
         }
         if (o->object_type.kind == TY_GRID && str_eq_c(o->name, "size")) sb_put(out, "\n\n" GRID_SIZE_FIELD_DOC);
+        if (o->object_type.kind == TY_TEXTURE && str_eq_c(o->name, "size")) sb_put(out, "\n\n" TEXTURE_SIZE_DOC);
         break;
     case OCC_ATTRIBUTE: {
         static const struct {
@@ -3817,8 +3901,12 @@ void analysis_code_lenses(jbuf *out)
     // checker only lists once the game has no errors
     for (int i = 0; i < A.prog->handlers.count; i++) {
         const decl *h = A.prog->handlers.items[i];
-        if (h->at.file != A.doc || !h->listens || !h->event) continue;
+        if (h->at.file != A.doc || !h->event) continue;
         sb title = {0};
+        if (!h->listens) {
+            if (put_world_lens(&title, h, "")) write_lens(out, &written, h, title.data);
+            continue;
+        }
         sb_put(&title, "hears ");
         put_decl_name(&title, h->event, "", h);
         sb_put(&title, h->listens_verified ? " once the server confirmed it" : " at the start of a frame");
@@ -6269,6 +6357,7 @@ static type member_type(const type t, const str member)
         return (type){TY_FLOAT, NULL};
     }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
+    if (t.kind == TY_TEXTURE && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
     if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_RECORD && t.decl->array_of && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_ARRAY && str_eq_c(member, "count")) return (type){TY_INT, NULL};
@@ -6391,6 +6480,7 @@ static void method_snippet(const method_form *form, sb *out)
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
+    if (t.kind == TY_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
         item(c, "Value", CK_PROPERTY, type_name((type){TY_MESH, t.decl->asset_ref_of}),
              "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);
@@ -6408,6 +6498,23 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     // In a frag or vert: the GPU has no text, reads lists, maps and sets and changes none, and a grid there is a texture
     // ...and in a function that takes a grid or samples a texture, which only those call
     const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
+    if (t.decl && (t.decl == A.prog->audience || t.decl == A.prog->visibility)) {
+        if (gpu) return;
+        size_t count;
+        const method_form *forms = methods_of(t, &count);
+        for (size_t i = 0; i < count; i++) {
+            sb detail = {0}, snippet = {0};
+            format_method(&forms[i], t, &detail);
+            if (t.decl == A.prog->visibility && strcmp(forms[i].name, "Set") == 0 && i + 1 < count) {
+                sb_put(&detail, "\n");
+                format_method(&forms[i + 1], t, &detail);
+            }
+            if (t.decl == A.prog->visibility) sb_printf(&snippet, "%s<${1:Component}>(%s)", forms[i].name,
+                                                                       strcmp(forms[i].name, "Reset") == 0 ? "" : "$2");
+            else method_snippet(&forms[i], &snippet);
+            item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
+        }
+    }
     // A function samples a texture it takes: one that doesn't yet is offered what it would write
     const bool samples = gpu || (sc->decl && (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD));
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
@@ -6759,6 +6866,27 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         return;
     }
     if (t.kind == TY_ERROR) {
+        if (n == 1 && (str_eq_c(base, "Audience") || str_eq_c(base, "Visibility"))) {
+            if (gpu) return;
+            const bool audience = str_eq_c(base, "Audience");
+            if (audience) {
+                item(c, "All", CK_CONSTANT, "Audience", "Every player, within enclosing visibility restrictions.", NULL);
+                item(c, "None", CK_CONSTANT, "Audience", "No clients; the server still has the state.", NULL);
+            }
+            const bool routine = sc.decl && (sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD)
+                              && !sc.decl->is_operator && !sc.decl->is_interpolate;
+            const bool match = sc.decl && sc.decl->kind == DECL_SYSTEM && !sc.decl->is_local && !sc.decl->is_view;
+            if (!audience && (sc.in_input || !(routine || match))) return;
+            const method_form *forms = audience ? audience_static_calls : visibility_static_calls;
+            const size_t count = audience ? sizeof audience_static_calls / sizeof audience_static_calls[0]
+                                         : sizeof visibility_static_calls / sizeof visibility_static_calls[0];
+            for (size_t i = 0; i < count; i++) {
+                sb snippet = {0};
+                sb_printf(&snippet, "%s($1)", forms[i].name);
+                item(c, forms[i].name, CK_FUNCTION, forms[i].form, forms[i].doc, snippet.data);
+            }
+            return;
+        }
         // Session.: its calls, where local code runs
         if (n == 1 && str_eq_c(base, "Session") && decides_session(&sc)) {
             for (size_t i = 0; i < sizeof session_calls / sizeof session_calls[0]; i++) {
@@ -6880,8 +7008,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         return;
     }
     for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) t = member_type(t, DOC->toks[ids[k]].text);
-    // input.jump.pressed, in systems
-    const bool edges = n == 2 && p && p->type.kind == TY_INPUT;
+    // input.jump.down or input.aim.fire.down, including borrowed helper input.
+    const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
     list_members(c, t, edges, &sc);
 }
 
@@ -6948,11 +7076,12 @@ static void complete_components_of(completion *c, const bool local)
 }
 
 // Events: what handlers handle and Send sends. `builtin` includes the engine's own.
-static void complete_events(completion *c, const bool builtin, const bool command)
+static void complete_events(completion *c, const bool builtin, const bool command, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind != DECL_EVENT || d->is_command != command || (d->builtin && !builtin)) continue;
+        if (!local && (d == A.prog->shown || d == A.prog->hidden)) continue;
         item(c, name_for(d), CK_EVENT, decl_what(d), d->builtin ? builtin_event_doc(A.prog, d) : NULL, NULL);
     }
 }
@@ -6994,7 +7123,9 @@ static void complete_structs(completion *c)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
-        if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", d == A.prog->random ? RANDOM_DOC : NULL, NULL);
+        if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", d == A.prog->random ? RANDOM_DOC
+                                       : d == A.prog->audience ? AUDIENCE_DOC
+                                       : d == A.prog->visibility_group ? VISIBILITY_GROUP_DOC : NULL, NULL);
         if (d->kind == DECL_ENUM) { // With how a value of it is written: a member, or from its number
             sb doc = {0};
             if (d->members.count > 0) {
@@ -7285,11 +7416,11 @@ static bool complete_asset_type(completion *c, const int last)
 // What a function's or method's parameter can be, as the checker takes it:
 // built-in values, text and lists, structs, enums, components and singletons;
 // after `mut`, what can change. A function's last can be its Action.
-static void complete_routine_param_types(completion *c, const bool after_mut, const bool function)
+static void complete_routine_param_types(completion *c, const bool after_mut, const bool function, const bool input)
 {
     complete_value_types(c, VT_LOCALS | VT_LOCAL_ENTITY);
     complete_structs(c);
-    complete_types(c, true, true, false);
+    complete_types(c, true, true, input && !after_mut);
     complete_namespaces(c, false);
     if (after_mut) return;
     if (function) item(c, "Action", CK_STRUCT, "Action", builtin_type_doc(TY_ACTION), NULL);
@@ -7302,7 +7433,8 @@ static void complete_routine_param_types(completion *c, const bool after_mut, co
 // can't, nor a task, nor what draws or takes a block.
 static bool gpu_callable(const decl *d)
 {
-    return d->kind == DECL_FUNCTION && !d->is_extern && !d->is_async && !d->takes_action && !d->draws;
+    return d->kind == DECL_FUNCTION && !d->is_extern && !d->is_async && !d->takes_action && !d->draws
+        && !d->borrows_asset_collections;
 }
 
 // Names and keywords in a frag or vert, which the GPU runs: what it takes, its
@@ -7916,19 +8048,6 @@ static bool local_trigger(const int open)
     for (int k = open - 2; k >= 0 && k >= open - 3 && DOC->toks[k].kind == T_IDENT; k--) {
         if (str_eq_c(DOC->toks[k].text, "local")) return true;
         if (!str_eq_c(DOC->toks[k].text, "async")) return false;
-    }
-    return false;
-}
-
-// Whether the handler whose parameters open at token `open` is local:
-// `local event(Hit hit) ShowHit(`.
-static bool local_handler(const int open)
-{
-    if (open < 2 || DOC->toks[open - 2].kind != T_RPAREN) return false;
-    int depth = 0;
-    for (int k = open - 2; k >= 0; k--) {
-        if (DOC->toks[k].kind == T_RPAREN) depth++;
-        else if (DOC->toks[k].kind == T_LPAREN && --depth == 0) return local_trigger(k);
     }
     return false;
 }
@@ -8826,7 +8945,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
         } else if (kind == T_RBRACE && depth > 0) {
             depth--;
         } else if (kind == T_LPAREN) {
-            const bool query = top == CTX_HEADER && stack[depth].header == HEADER_SYSTEM && before == T_IDENT
+            const bool query = top == CTX_HEADER && (stack[depth].header == HEADER_SYSTEM || stack[depth].header == HEADER_ROUTINE)
+                            && before == T_IDENT
                             && str_eq_c(DOC->toks[i - 1].text, "query");
             const header_kind header = query ? HEADER_QUERY
                 : top == CTX_TOP ? top_header(i) : top == CTX_DATA ? member_header(i) : HEADER_NONE;
@@ -8867,6 +8987,16 @@ void analysis_completion(const int line, const int character, jbuf *out)
         if (name_type(&sc, DOC->toks[last - 3].text, &world).kind == TY_WORLD) {
             if (!sc.decl->is_local || sc.decl->is_view) complete_components_of(&c, false);
             if (sc.decl->is_local || sc.decl->is_view) complete_components_of(&c, true);
+            complete_namespaces(&c, false);
+            goto done;
+        }
+        const type receiver = name_type(&sc, DOC->toks[last - 3].text, &world);
+        if (receiver.decl && receiver.decl == A.prog->visibility) {
+            for (int i = 0; i < A.prog->components.count; i++) {
+                const decl *component = A.prog->components.items[i];
+                if (!component->is_local && !component->is_scene && component != A.prog->visibility)
+                    item(&c, name_for(component), CK_STRUCT, "component visibility scope", NULL, NULL);
+            }
             complete_namespaces(&c, false);
             goto done;
         }
@@ -9038,10 +9168,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // extern float Noise(...): what C takes; async handlers also get self
         bool is_extern = false;
         bool is_async = false;
+        bool is_audio = false;
         for (int k = f.open - 1; k >= 0 && DOC->toks[k].at.line == DOC->toks[f.open].at.line; k--) {
             if (DOC->toks[k].kind != T_IDENT || DOC->toks[k].at.col != decl_col_at(DOC->toks[k].at)) continue;
             is_extern = str_eq_c(DOC->toks[k].text, "extern");
             is_async = str_eq_c(DOC->toks[k].text, "async");
+            is_audio = str_eq_c(DOC->toks[k].text, "audio");
         }
         // extern system Move(...): a system's parameters, less what C can't be handed
         const bool extern_system = is_extern && f.header == HEADER_SYSTEM;
@@ -9060,6 +9192,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                     item(&c, "mut", CK_KEYWORD, "The caller's variable itself, which it can change", NULL, NULL);
                     if (!is_async) {
                         item(&c, "World", CK_CLASS, "Its caller's World, passed on: world.Get<Health>(e)", builtin_type_doc(TY_WORLD), NULL);
+                        item(&c, "query", CK_SNIPPET, "Borrow a read-only query from the caller",
+                             "The caller supplies the selection and data timing; this helper declares the row data it needs.",
+                             "query (${1:Component} ${2:value}) ${3:entities}");
                     }
                     // An operator gives one value, and an async function goes on after its call returned
                     if (!is_async) {
@@ -9067,7 +9202,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                              NULL, NULL);
                     }
                 }
-                complete_routine_param_types(&c, pk == T_MUT || after_out, !method);
+                complete_routine_param_types(&c, pk == T_MUT || after_out, !method, !is_async && !is_audio && !operator_);
             } else if (pk == T_IDENT) {
                 complete_param_name(&c, prev->text);
             }
@@ -9111,7 +9246,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (hears) {
                     item(&c, "verified", CK_KEYWORD, "Once the server confirmed the tick that sent the event", NULL, NULL);
                 }
-                complete_events(&c, true, command);
+                complete_events(&c, true, command, hears);
                 complete_namespaces(&c, false);
             } else if (hears && before_verified == T_LPAREN) {
                 complete_match_events(&c);
@@ -9158,9 +9293,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 if (!extern_system) {
                     item(&c, "Devices", CK_CLASS, "This machine's frame in views; the entity owner's sample in match code", NULL, NULL);
                 }
-                // Systems, views and local handlers take a second set of entities to go through
-                if (f.open >= 2 && !is_async && !extern_system
-                    && (DOC->toks[f.open - 2].kind == T_SYSTEM || view || local_handler(f.open))) {
+                // Systems, views and synchronous handlers take a second entity set.
+                if (f.header == HEADER_SYSTEM && !is_async && !extern_system) {
                     item(&c, "query", CK_SNIPPET, "query (Component value, with Tag) entities",
                          "A read-only second entity set, traversed with foreach independently of the outer entity.",
                          "query (${1:Component} ${2:value}) ${3:entities}");
@@ -9356,14 +9490,15 @@ void analysis_completion(const int line, const int character, jbuf *out)
         // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
         if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
             const scope sc = scope_at(at);
+            const bool draws = sc.decl && (sc.decl->is_view || (sc.decl->kind == DECL_FUNCTION && !sc.decl->is_async));
             call_args args;
             call_arguments(call, &args);
             const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
             // ...and after them, the values they take
-            for (int a = 2; sc.decl && sc.decl->is_view && a < args.count && a < commas; a++) {
+            for (int a = 2; draws && a < args.count && a < commas; a++) {
                 complete_draw_values(&c, shader_written(args.first[a], args.last[a]));
             }
-            if (sc.decl && sc.decl->is_view) complete_shaders(&c, vertex);
+            if (draws) complete_shaders(&c, vertex);
         } else if (call >= 3 && commas >= 3 && DOC->toks[call - 1].kind == T_IDENT && str_eq_c(DOC->toks[call - 1].text, "Blit")
                    && DOC->toks[call - 2].kind == T_DOT && str_eq_c(DOC->toks[call - 3].text, "Draw")) {
             // Draw.Blit(source, destination, Blur, ...: the values its frag takes
@@ -9643,8 +9778,8 @@ static const char *check_new_name(const occurrence *target, const str name)
                                              "virtual", "override",
                                              "fails", "in", "by", "offset", "void"};
     enum { DECL_WORDS = 14 };
-    static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
-                                           "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
+    static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Visibility", "VisibilityGroup", "Audience", "Spawn", "Send", "Spawned",
+                                           "Destroyed", "Shown", "Hidden", "PlayerJoined", "PlayerLeft", "Scene", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "Json", "List", "Map", "Set", "Grid2", "Grid3",
@@ -10197,6 +10332,17 @@ static int call_param_names(const expr *call, str *names, const int max)
     }
     label_list list = {0};
     switch (call->call) {
+    case CALL_VISIBILITY: {
+        const bool receiver = (call->visibility_operation & VISIBILITY_RECEIVER) != 0u;
+        for (; count < call->args.count && count < max; count++) {
+            const char *name = receiver && call->object->type.decl == A.prog->audience ? "player"
+                : str_eq_c(call->name, "Only") ? "player" : str_eq_c(call->name, "From") ? "players"
+                : receiver ? (call->args.items[count]->type.decl == A.prog->visibility_group ? "group" : "audience")
+                : str_eq_c(call->name, "CreateGroup") ? "audience" : count == 0 ? "group" : "audience";
+            names[count] = str_from(name);
+        }
+        return count;
+    }
     case CALL_BUILTIN: case CALL_DRAW: case CALL_AUDIO: case CALL_GUI: case CALL_TEXT: case CALL_RANDOM: case CALL_ROLL: {
         if (call->resource_operation) {
             if (call->object && call->object->type.kind == TY_RENDER_TARGET) {
@@ -10249,7 +10395,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             if (str_eq_c(call->name, session_calls[i].name)) vec_push(list.labels, session_calls[i].form);
         }
         break;
-    case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER:
+    case CALL_LOAD: case CALL_UNLOAD:
         for (size_t i = 0; i < sizeof scene_calls / sizeof scene_calls[0]; i++) {
             if (str_eq_c(call->name, scene_calls[i].name)) vec_push(list.labels, scene_calls[i].form);
         }
@@ -10457,6 +10603,14 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, STR_FMT "(DeclarationOrPhase, ...)", STR_ARG(name));
             add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
         }
+    } else if (str_eq_c(owner, "Audience") || str_eq_c(owner, "Visibility")) {
+        const bool audience = str_eq_c(owner, "Audience");
+        const method_form *forms = audience ? audience_static_calls : visibility_static_calls;
+        const size_t count = audience ? sizeof audience_static_calls / sizeof audience_static_calls[0]
+                                     : sizeof visibility_static_calls / sizeof visibility_static_calls[0];
+        for (size_t i = 0; i < count; i++) {
+            if (str_eq_c(name, forms[i].name)) add_signature(&s, forms[i].form, forms[i].doc);
+        }
     } else if (str_eq_c(owner, "Json")) { // Json.Read<LobbyInfo>(, Json.Write(
         for (size_t i = 0; i < sizeof json_calls / sizeof json_calls[0]; i++) {
             if (str_eq_c(name, json_calls[i].name)) add_signature(&s, json_calls[i].form, json_calls[i].doc);
@@ -10505,6 +10659,13 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb label = {0};
             format_world_method(form, type_open >= 0 ? component_written(type_open, open - 1) : NULL, &label);
             add_signature(&s, label.data, form->doc);
+        } else if (form && t.decl && (t.decl == A.prog->visibility || t.decl == A.prog->audience)) {
+            for (size_t i = 0; i < count; i++) {
+                if (!str_eq_c(name, forms[i].name)) continue;
+                sb label = {0};
+                format_method(&forms[i], t, &label);
+                add_signature(&s, label.data, forms[i].doc);
+            }
         } else if (form) {
             sb label = {0};
             format_method(form, t, &label);

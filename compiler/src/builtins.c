@@ -541,10 +541,15 @@ static void build_signatures(void)
     describe(euler, "x, y, z", "A rotation from Euler angles in radians: Z first, then X, then Y.");
     describe(add("quaternion", "LookRotation", T_Q, "tide_lookrotation_q", 2, T_F3, T_F3, T_NONE),
              "forward, up", "A rotation that looks along `forward`, with `up` as up.");
+    describe(add("quaternion", "FromToRotation", T_Q, "tide_fromto_q", 2, T_F3, T_F3, T_NONE),
+             "from, to", "The shortest rotation between directions of any length. Zero or nonfinite directions give identity; "
+             "opposite directions use a deterministic perpendicular axis.");
     describe(add("float4x4", "TRS", T_F4X4, "tide_trs_f4x4", 3, T_F3, T_Q, T_F3),
              "translation, rotation, scale", "A transform: scale, then rotate, then translate.");
     describe(add("float4x4", "Translate", T_F4X4, "tide_translate_f4x4", 1, T_F3, T_NONE, T_NONE),
              "translation", "A translation matrix.");
+    describe(add("float4x4", "Scale", T_F4X4, "tide_scaling_f4x4", 1, T_F3, T_NONE, T_NONE),
+             "scale", "A scale matrix, without rotation or translation.");
     signature *perspective = add("float4x4", "PerspectiveFov", T_F4X4, "tide_perspectivefov_f4x4", 3, T_F, T_F, T_F);
     perspective->argc = 4;
     perspective->params[3] = T_F;
@@ -668,6 +673,17 @@ static void build_signatures(void)
                 "way. Only 3D meshes' triangles have a back: the 2D draws draw whichever way they're wound.",
                 1, &T_CULL);
     add_unset("Draw", "SetCull", "tide_draw_unset_cull", "Back to `Cull.Back`, as each frame starts.");
+    add_setting("Draw", "FrustumCulling", "tide_draw_push_frustum_culling", "tide_draw_set_frustum_culling", NULL, "enabled",
+                "Skip 3D instances whose bounds are wholly outside this destination's camera. Enabled each frame. "
+                "Custom verts and skinned meshes need explicit Bounds; unknown bounds keep the draw. "
+                "This changes drawing only, never view execution or match simulation.", 1, &T_BOOL);
+    add_unset("Draw", "SetFrustumCulling", "tide_draw_unset_frustum_culling", "Enable frustum culling, as each frame starts.");
+    add_setting("Draw", "Bounds", "tide_draw_push_bounds", "tide_draw_set_bounds", NULL, "center, size",
+                "A conservative mesh-local box for frustum culling: center and full size, before the instance transform "
+                "and Draw.Transform. Include all skinning or custom vertex displacement. Invalid bounds keep the draw.",
+                2, &T_F3, &T_F3);
+    add_setting("Draw", "Bounds", "tide_draw_push_no_bounds", "tide_draw_unset_bounds", NULL, "",
+                "Use geometry bounds where known; custom verts and skinned meshes remain uncullable without bounds.", 0);
     // Levels of detail (docs/spec.md): a mesh asset marked [LOD] has simpler versions, which a draw picks among
     add_setting("Draw", "LOD", "tide_draw_push_lod", "tide_draw_set_lod", NULL, "level",
                 "Which level of detail the meshes marked `[LOD]` draw at, in place of the one each would pick by how "
@@ -1230,7 +1246,7 @@ bool builtin_owner(const str name)
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Audio")
-        || str_eq_c(name, "Json")
+        || str_eq_c(name, "Json") || str_eq_c(name, "Audience")
         || builtin_type_named(name, &ignored);
 }
 

@@ -1,0 +1,7 @@
+// expect: can't assign through the swizzle 'xy'
+singleton Points { float3[2] values; }
+scene Main { }
+system Write(mut Points points)
+{
+    points.values[0].xy.x = 1;
+}

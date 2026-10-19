@@ -1,4 +1,4 @@
-// expect: queries can't be stored or passed on
+// expect: queries can't be stored or returned
 component Body { float x; }
 scene Main { }
 system Hits(query (Body body) bodies)

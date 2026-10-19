@@ -1,0 +1,427 @@
+// How the travellers move: walking into walls and furniture, up stairs and
+// steps, sitting and lying down; what they're looking at and what using it
+// does; the doors they open; the sacks they carry between them.
+
+// Whether a solid is there to be walked into: a door's slab isn't once the door is open.
+bool SolidThere(Farm farm, Solid solid)
+{
+    return solid.door < 0 || farm.doors[solid.door].open < 0.15;
+}
+
+// The highest floor under a circle, no more than a step above `feet`.
+float GroundUnder(Farm farm, float3 feet, float radius, float current)
+{
+    mut var ground = GROUND;
+    foreach (var solid in farm.solids)
+    {
+        if (!SolidThere(farm, solid)) continue;
+        var top = solid.center.y + solid.half.y;
+        if (top > current + STEP_UP + 0.001 || top <= ground) continue;
+        if (Math.Abs(feet.x - solid.center.x) > solid.half.x + radius || Math.Abs(feet.z - solid.center.z) > solid.half.z + radius) continue;
+        ground = top;
+    }
+    return ground;
+}
+
+// A circle pushed out of every solid its height meets, a few times over.
+float3 PushOut(Farm farm, float3 feet, float radius, float high)
+{
+    mut var at = feet;
+    for (var pass = 0; pass < 3; pass++)
+    {
+        foreach (var solid in farm.solids)
+        {
+            if (!SolidThere(farm, solid)) continue;
+            var bottom = solid.center.y - solid.half.y;
+            var top = solid.center.y + solid.half.y;
+            if (top <= at.y + STEP_UP || bottom >= at.y + high) continue;
+            var lo = solid.center.xz - solid.half.xz;
+            var hi = solid.center.xz + solid.half.xz;
+            var closest = Math.Clamp(at.xz, lo, hi);
+            var off = at.xz - closest;
+            var far = Math.Length(off);
+            if (far >= radius) continue;
+            if (far > 0.0001)
+            {
+                var out = off / far * (radius - far);
+                at.x += out.x;
+                at.z += out.y;
+                continue;
+            }
+            // Inside it: out the nearest side
+            var left = at.x - lo.x;
+            var right = hi.x - at.x;
+            var down = at.z - lo.y;
+            var up = hi.y - at.z;
+            var least = Math.Min(Math.Min(left, right), Math.Min(down, up));
+            if (least == left) at.x = lo.x - radius;
+            else if (least == right) at.x = hi.x + radius;
+            else if (least == down) at.z = lo.y - radius;
+            else at.z = hi.y + radius;
+        }
+    }
+    return at;
+}
+
+// Whether a line of sight from one place to another is clear of every solid but those it starts or ends in, and
+// the one the thing looked at is part of.
+bool ClearSight(Farm farm, float3 from, float3 to, float3 thing)
+{
+    var way = to - from;
+    foreach (var solid in farm.solids)
+    {
+        if (!SolidThere(farm, solid)) continue;
+        var off = Math.Abs(thing - solid.center) - solid.half;
+        if (off.x < 0.05 && off.y < 0.05 && off.z < 0.05) continue;
+        // A slab test: where the line is within the box on every axis
+        mut var enter = 0.0;
+        mut var leave = 1.0;
+        mut var missed = false;
+        for (var axis = 0; axis < 3; axis++)
+        {
+            var o = axis == 0 ? from.x : axis == 1 ? from.y : from.z;
+            var d = axis == 0 ? way.x : axis == 1 ? way.y : way.z;
+            var c = axis == 0 ? solid.center.x : axis == 1 ? solid.center.y : solid.center.z;
+            var h = axis == 0 ? solid.half.x : axis == 1 ? solid.half.y : solid.half.z;
+            if (Math.Abs(d) < 0.000001)
+            {
+                if (Math.Abs(o - c) > h) missed = true;
+                continue;
+            }
+            var a = (c - h - o) / d;
+            var b = (c + h - o) / d;
+            enter = Math.Max(enter, Math.Min(a, b));
+            leave = Math.Min(leave, Math.Max(a, b));
+        }
+        if (!missed && enter < leave && enter > 0.001 && enter < 0.999) return false;
+    }
+    return true;
+}
+
+// The spot a traveller is looking at, if any is in reach and in sight.
+int AimedSpot(Farm farm, Story story, float3 eye, float3 look)
+{
+    mut var best = -1;
+    mut var nearest = 1000.0;
+    foreach (var place in farm.spots)
+    {
+        if ((story.enabled & SpotBit(place.spot)) == 0 && !IsDoorSpot(place.spot)) continue;
+        var to = place.at - eye;
+        var along = Math.Dot(to, look);
+        if (along <= 0 || along > REACH + place.radius) continue;
+        var off = Math.Length(to - look * along);
+        if (off > place.radius) continue;
+        if (along >= nearest) continue;
+        if (!ClearSight(farm, eye, eye + look * along, place.at)) continue;
+        nearest = along;
+        best = int(place.spot);
+    }
+    // The sacks lie where they were put down
+    for (var i = 0; i < 3; i++)
+    {
+        var spot = int(Spot.Sack0) + i;
+        if ((story.enabled & (1L << spot)) == 0 || story.binned[i]) continue;
+        var to = story.sacks[i] + float3(0, 0.35, 0) - eye;
+        var along = Math.Dot(to, look);
+        if (along <= 0 || along > REACH + 0.5) continue;
+        if (Math.Length(to - look * along) > 0.5 || along >= nearest) continue;
+        nearest = along;
+        best = spot;
+    }
+    return best;
+}
+
+bool IsDoorSpot(Spot spot)
+{
+    return spot == Spot.FrontDoor || spot == Spot.BackDoor || spot == Spot.GuestDoor || spot == Spot.HalesDoor || spot == Spot.DaleDoor || spot == Spot.BathDoor;
+}
+
+int DoorOfSpot(Spot spot)
+{
+    switch (spot)
+    {
+        case Spot.FrontDoor: return int(DoorId.Front);
+        case Spot.BackDoor: return int(DoorId.Back);
+        case Spot.GuestDoor: return int(DoorId.Guest);
+        case Spot.HalesDoor: return int(DoorId.Hales);
+        case Spot.DaleDoor: return int(DoorId.Dale);
+        case Spot.BathDoor: return int(DoorId.Bath);
+    }
+    return -1;
+}
+
+// A traveller's turn and walk for a tick.
+system Steer(Hands hands, mut Walker walker, mut Farm farm, mut Story story, Party party, Time time, query (Npc npc) npcs, query (Walker walker) others)
+{
+    if (walker.jumped)
+    {
+        walker.jumped = false;
+        this.Snap();
+    }
+    walker.ready = hands.ready;
+    if (!Present(walker, party)) return;
+    walker.yaw += hands.look.x;
+    // The mouse's and the stick's y are up, as a raised pitch is
+    walker.pitch = Math.Clamp(walker.pitch + hands.look.y, -1.45, 1.45);
+    if (hands.light.down) walker.torch = !walker.torch;
+
+    // A choice: either traveller picks
+    if (story.options != "" && story.choice == 0)
+    {
+        mut var pick = 0;
+        if (hands.pick1.down) pick = 1;
+        if (hands.pick2.down && story.optionCount >= 2) pick = 2;
+        if (hands.pick3.down && story.optionCount >= 3) pick = 3;
+        if (pick > 0)
+        {
+            story.choice = pick;
+            story.chooser = walker.seat;
+        }
+    }
+
+    var eye = walker.feet + float3(0, walker.lying >= 0 ? 0.3 : walker.sitting >= 0 ? 1.15 : EYE_HIGH, 0);
+    walker.aimed = AimedSpot(farm, story, eye, LookDirection(walker.yaw, walker.pitch));
+    if (hands.use.down && walker.aimed >= 0) Use(walker, farm, story, Spot(walker.aimed));
+
+    if (walker.sitting >= 0 || walker.lying >= 0) return;
+    var frozen = story.frozen || story.fade > 0.6;
+    var speed = walker.holding >= 0 ? WALK_SPEED * 0.6 : hands.run ? RUN_SPEED : WALK_SPEED;
+    mut var wish = Flat(walker.yaw) * hands.move.y + Flat(walker.yaw + Math.PI * 0.5) * hands.move.x;
+    if (Math.Length(wish) > 1) wish = Math.Normalize(wish);
+    if (frozen) wish = float3(0);
+    // Quick to start and stop, as feet are
+    var target = wish * speed;
+    var blend = Math.Min(1, time.dt * 12);
+    walker.velocity.x += (target.x - walker.velocity.x) * blend;
+    walker.velocity.z += (target.z - walker.velocity.z) * blend;
+    walker.velocity.y -= GRAVITY * time.dt;
+    var before = walker.feet;
+    mut var feet = walker.feet + float3(walker.velocity.x, 0, walker.velocity.z) * time.dt;
+    feet = PushOut(farm, feet, BODY_RADIUS, BODY_HIGH);
+    // Nobody walks through anybody
+    foreach (var row in npcs)
+    {
+        var npc = row.npc;
+        if (!npc.shown || Math.Abs(npc.at.y - feet.y) > 1.2) continue;
+        var off = feet.xz - npc.at.xz;
+        var far = Math.Length(off);
+        if (far < 0.55 && far > 0.0001) feet = float3(npc.at.x + off.x / far * 0.55, feet.y, npc.at.z + off.y / far * 0.55);
+    }
+    foreach (var row in others)
+    {
+        var other = row.walker;
+        if (other.seat == walker.seat || !Present(other, party) || Math.Abs(other.feet.y - feet.y) > 1.2) continue;
+        var off = feet.xz - other.feet.xz;
+        var far = Math.Length(off);
+        if (far < 0.5 && far > 0.0001) feet = float3(other.feet.x + off.x / far * 0.5, feet.y, other.feet.z + off.y / far * 0.5);
+    }
+    var ground = GroundUnder(farm, feet, BODY_RADIUS * 0.6, walker.feet.y);
+    feet.y += walker.velocity.y * time.dt;
+    if (feet.y <= ground)
+    {
+        feet.y = ground;
+        walker.velocity.y = 0;
+        walker.grounded = true;
+    }
+    else
+    {
+        walker.grounded = feet.y - ground < 0.05;
+    }
+    walker.walked += Math.Length((feet - before).xz);
+    walker.feet = feet;
+}
+
+// What using a spot does. The script hears of it too, through `story.used`.
+void Use(mut Walker walker, mut Farm farm, mut Story story, Spot spot)
+{
+    story.used |= SpotBit(spot);
+    var seat = walker.seat;
+    var door = DoorOfSpot(spot);
+    if (door >= 0)
+    {
+        if (spot == Spot.FrontDoor && (story.enabled & SpotBit(Spot.FrontDoor)) != 0)
+        {
+            Send(Cue { sound = int(Sfx.Knock), at = farm.doors[door].hinge + float3(0, 1.2, 0.5) });
+            return;
+        }
+        mut var d = farm.doors[door];
+        if (d.locked)
+        {
+            Remark(story, seat, door == int(DoorId.Guest) ? "It's locked. From the outside." : "Locked.");
+            Send(Cue { sound = int(Sfx.Knob), at = d.hinge + float3(0, 1, 0) });
+            return;
+        }
+        d.goal = d.goal > 0.5 ? 0 : 1;
+        farm.doors[door] = d;
+        Send(Cue { sound = int(d.goal > 0.5 ? Sfx.DoorOpen : Sfx.DoorShut), at = d.hinge + float3(0, 1, 0) });
+        return;
+    }
+    switch (spot)
+    {
+        case Spot.CarHood:
+            Remark(story, seat, "The engine's dead. Not even a click.");
+            return;
+        case Spot.CarDoor:
+            Remark(story, seat, "Everything we own is in the back. It'll keep till Monday.");
+            return;
+        case Spot.Mailbox:
+            Remark(story, seat, "HALE, painted by hand. The paint's fresh.");
+            return;
+        case Spot.Photos:
+            Remark(story, seat, "Photographs. Couples at this table, smiling. None of them are the Hales.");
+            return;
+        case Spot.Clock:
+            Remark(story, seat, "A cuckoo clock. It's stopped at a quarter to nine.");
+            return;
+        case Spot.Phone:
+            Remark(story, seat, "No dial tone.");
+            return;
+        case Spot.Drawer:
+            Remark(story, seat, "A Bible, and a Polaroid of two strangers asleep in these beds. 'Aug 96' on the back.");
+            Send(Cue { sound = int(Sfx.Creak), at = House(3.6, F2 + 0.6, 3.4) });
+            return;
+        case Spot.GuestWindow:
+            Remark(story, seat, "Corn, all the way to the trees. No other light anywhere.");
+            return;
+        case Spot.SeatSam:
+        case Spot.SeatJo:
+        {
+            var chair = spot == Spot.SeatSam ? 0 : 1;
+            walker.sitting = chair;
+            walker.feet = ChairOf(chair);
+            walker.yaw = ChairFacing(chair);
+            walker.pitch = -0.1;
+            walker.velocity = float3(0);
+            return;
+        }
+        case Spot.BedSam:
+        case Spot.BedJo:
+        {
+            var bed = spot == Spot.BedSam ? 0 : 1;
+            if (walker.lying >= 0)
+            {
+                walker.feet = BesideBed(walker.lying);
+                walker.lying = -1;
+                return;
+            }
+            walker.lying = bed;
+            walker.feet = BedOf(bed);
+            walker.yaw = BedFacing(bed);
+            walker.pitch = 1.2;
+            walker.velocity = float3(0);
+            return;
+        }
+        case Spot.Sack0:
+        case Spot.Sack1:
+        case Spot.Sack2:
+        {
+            var sack = int(spot) - int(Spot.Sack0);
+            if (walker.holding == sack)
+            {
+                walker.holding = -1;
+                story.holders[sack] &= ~(1 << seat);
+                return;
+            }
+            walker.holding = sack;
+            story.holders[sack] |= 1 << seat;
+            return;
+        }
+        case Spot.Tarp:
+            if (story.pulled) return;
+            story.pullers |= 1 << seat;
+            Send(Cue { sound = int(Sfx.Rustle), at = float3(BARN_X + 5, 1, BARN_Z + 10.4) });
+            return;
+    }
+}
+
+void Remark(mut Story story, int seat, string text)
+{
+    if (seat == 0) story.remarkSam = text;
+    else story.remarkJo = text;
+    story.remarkLeft[seat] = ReadingTime(text) + 1;
+}
+
+// Doors swing toward where they're meant to be.
+system SwingDoors(mut Farm farm, Time time)
+{
+    for (var i = 0; i < farm.doorCount; i++)
+    {
+        mut var door = farm.doors[i];
+        if (door.open == door.goal) continue;
+        var step = time.dt * 1.6;
+        door.open = door.open < door.goal ? Math.Min(door.goal, door.open + step) : Math.Max(door.goal, door.open - step);
+        farm.doors[i] = door;
+    }
+}
+
+// The sacks go between whoever holds them: held by both they ride between them, by one alone (or anyone
+// playing by themselves) they drag. Set down by the bin, they go in it.
+[After(Steer)]
+system CarrySacks(mut Story story, Party party, Time time, query (Walker walker) walkers)
+{
+    for (var i = 0; i < 3; i++)
+    {
+        if (story.binned[i] || story.holders[i] == 0) continue;
+        mut var sum = float3(0);
+        mut var count = 0;
+        mut var spread = 0.0;
+        mut var first = float3(0);
+        foreach (var row in walkers)
+        {
+            var w = row.walker;
+            if ((story.holders[i] & (1 << w.seat)) == 0 || w.holding != i) continue;
+            var hand = w.feet + Flat(w.yaw) * 0.6;
+            if (count == 0) first = hand;
+            else spread = Math.Distance(first, hand);
+            sum += hand;
+            count += 1;
+        }
+        if (count == 0)
+        {
+            story.holders[i] = 0;
+            continue;
+        }
+        var alone = party.joined < 2;
+        if (count < 2 && !alone) continue;      // One can't lift it: it waits for the other
+        if (spread > 2.8)
+        {
+            story.holders[i] = 0;               // Pulled apart: it drops
+            continue;
+        }
+        var goal = sum / count;
+        story.sacks[i] += (float3(goal.x, 0, goal.z) - story.sacks[i]) * Math.Min(1, time.dt * 8);
+        var bin = float3(BARN_X + BARN_DEEP - 0.95, 0, BARN_Z + 7.2);
+        if (Math.Distance(story.sacks[i].xz, bin.xz) < 1.6)
+        {
+            story.binned[i] = true;
+            story.holders[i] = 0;
+            Send(Cue { sound = int(Sfx.Thud), at = bin + float3(0, 1, 0) });
+        }
+    }
+}
+
+// Let go of what's no longer held.
+[After(CarrySacks)]
+system LetGo(mut Walker walker, Story story)
+{
+    if (walker.holding >= 0 && (story.binned[walker.holding] || (story.holders[walker.holding] & (1 << walker.seat)) == 0)) walker.holding = -1;
+}
+
+// The tarp takes both of them pulling, or one who's alone, within a moment of each other.
+[After(Steer)]
+system PullTarp(mut Story story, Party party, Time time)
+{
+    if (story.pulled || story.pullers == 0) return;
+    story.pullTime += time.dt;
+    var needed = party.joined < 2 ? 1 : 3;
+    if (story.pullers == needed)
+    {
+        story.pulled = true;
+        return;
+    }
+    if (story.pullTime > 1.5)
+    {
+        story.pullers = 0;
+        story.pullTime = 0;
+    }
+}

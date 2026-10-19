@@ -82,8 +82,10 @@ system Regenerate(mut Unit unit)
 }
 ```
 
-- A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
-- Parameters are built-in types, structs, components and singletons, and an argument's type matches exactly. Return values are built-in types, structs and components; singleton return values aren't supported.
+- A plain value parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
+- Parameters are built-in types, structs, components, singletons and event/command payloads, and an argument's type matches exactly. Return values are built-in types, structs, components and event/command payloads; singleton returns remain unsupported.
+- Synchronous functions and methods can borrow the caller's [input](../game/input.md#passing-input-to-helpers) with an ordinary parameter, `bool WantsJump(Controls controls)`. Pass the input parameter directly. Its current and previous tick stay together, so `controls.jump.down` and `.up` retain their meaning through helper calls. The input is read-only, has no default and cannot be stored or returned; tasks take individual field values instead.
+- Synchronous functions and methods can also borrow a read-only `query`, as described below.
 - A function returns a value on every path, unless it returns `void`. The check follows conditions known while compiling, including named bool constants and comparisons of constant integers: `if (true) return 1;` covers its only path. A loop whose condition is always true and has no reachable `break` can't end without returning.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
 - A parameter can have a default value, a call can pass arguments by name, and functions can share a name: see [Default values, names and overloads](#default-values-names-and-overloads).
@@ -91,6 +93,23 @@ system Regenerate(mut Unit unit)
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
 Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, and start tasks, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
+
+A helper can `Set<T>` when its caller takes a read-only `T` parameter. That parameter keeps the value the caller read on entering the entity's invocation; later world reads see the write immediately. Taking `mut T` still prevents `Set<T>` through the caller's World, because its write-back could overwrite a Set of the same entity.
+
+Resource asset collections can be borrowed by synchronous CPU functions and methods with ordinary read-only parameters: `List<Clip>`, `List<Texture>`, `List<Mesh<V>>`, and their `Map<string, T>` equivalents.
+
+```csharp
+asset List<Clip> hits = "sfx/hit_*.wav";
+
+Clip Pick(List<Clip> clips, int index)
+{
+    return clips[index];
+}
+
+view HitSound() { Audio.Play(Pick(hits, 0)); }
+```
+
+Pass the asset directly, or forward a borrowed parameter through further helpers. Count, indexing, `foreach` and read-only collection methods work as usual; passing copies no collection. Elements keep their ordinary value rules, so a helper can return a selected clip, texture or mesh. The collection borrow itself cannot be stored, returned, optional, mutated or retained by an async declaration, and has no default. Externs, operators, audio declarations and GPU code take no such borrow. Texture and clip collections remain local code's; mesh geometry retains its existing match-read rules.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
@@ -115,6 +134,8 @@ Methods take explicit singleton parameters and receivers by the same value and `
 
 A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
 
+A drawing function can also [name a frag or vert](../game/shaders.md#drawing-from-a-helper). Each component or singleton the shader takes must match exactly one explicit input parameter of the function by type. The shader reads that passed value and, where needed, its forwarded local fields. The helper uses its caller's frame and follows ordinary drawing capabilities.
+
 Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
@@ -130,6 +151,32 @@ _ = request.SetHeader("Accept", "text/plain");        // Drops it, on purpose
 ```
 
 `_ = value;` works anything out and drops it. A call that does something besides giving its value (it sends, spawns, draws, calls C, or changes a `mut` argument or its own value) is a statement as it always was, and so is one that can fail, which has a warning of its own.
+
+## Borrowing a query
+
+A helper uses the same `query (...)` parameter syntax as a system or handler. The caller explicitly passes the selection to inspect:
+
+```csharp
+float TotalMass(query (Body body) bodies)
+{
+    mut var total = 0.0;
+    foreach (var row in bodies) total += row.body.mass;
+    return total;
+}
+
+system Weigh(mut Stats stats, query (Body candidate, with Enemy) enemies)
+{
+    stats.enemyMass = TotalMass(enemies);
+}
+```
+
+`TotalMass` visits the enemies the caller selected. The helper declares the component data each row must provide; names can differ, and the caller can supply extra bindings and filters. Every requested component type needs one unambiguous data binding in the source query. A `with Body` filter alone does not provide Body data. Filters written in a helper's signature are requirements the caller's query must already guarantee, and do not select additional entities.
+
+The source keeps its order and timing. Match queries read the current match, a view passes its blended or verified rows, and local handlers pass their recorded rows. A helper can forward the query to another helper. Passing it allocates no collection and makes no snapshot. Recorded rows retain their existing omitted-data rules. To borrow local entities, use local bindings such as `query (local Spark spark) sparks`.
+
+The query is read-only and valid for the call. It has no `mut`, `out` or default; queries and whole rows cannot be stored or returned, and whole rows cannot be passed as values. Component values read from a row can be copied and passed normally. Keep query iteration and forwarding outside callback blocks and parallel steps. Async functions, externs, operators, audio declarations and shaders take no borrowed queries.
+
+The helper gains the row access its parameter declares. Its other capabilities still come from its caller; explicit `World` access remains separate. Reads and writes preserve the existing scheduling and evaluation-order rules.
 
 ## Sending and spawning
 

@@ -1,0 +1,4 @@
+// expect: Draw.FrustumCulling sets it around a block: 'Draw.FrustumCulling(...) { ... }'
+// expect: to set it for the draws that follow, write 'Draw.SetFrustumCulling(...);'
+scene Main { }
+view Show() { Draw.FrustumCulling(false); }

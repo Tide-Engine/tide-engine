@@ -1,0 +1,3 @@
+// expect: a borrowed asset collection has no default
+void Keep(List<Clip> values = []) { Debug.Log(values.count); }
+scene Main { }

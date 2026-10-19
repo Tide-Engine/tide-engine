@@ -1,5 +1,784 @@
 # Language features, as tidec builds them
 
+## Scalar Clip values without assets (2026-10-19)
+
+Follow-up checking reproduced valid Tide generating invalid C when Clip was
+used without an audio asset, Sound or microphone: tide_clip_ref lacked its
+defining header. The earlier asset-collection fix covered collection element
+types, but scalar signatures, fields and locals still missed it.
+
+The checker now records explicit primitive Clip uses through ordinary type
+resolution, field/local fast paths and Clip members such as Clip.none.
+Built-in Sound's unnamed fields do not activate this flag. Header generation
+includes the existing tide/audio.h definition without enabling asset loading,
+playback, audio devices or any match state. Type/lifetime rules and the public
+API do not change; no runtime function or layout was added.
+
+clip_values compiles and executes scalar parameters/returns, a struct, local
+singleton storage and typed/inferred locals with no assets or audio. Its C
+host checks the stored empty handle, no asset/audio feature macros and an
+unchanged world hash. The asset-usage unit target independently checks empty
+games, unused helper and optional signatures, local and attached fields, and
+inferred/typed locals, so one use cannot hide another missing header path.
+
+Validation: warning-free full native/web debug builds and all 2,432 native
+CTests (85.83 seconds) and 2,341 web CTests (220.63 seconds) pass, including
+unchanged simulation pins and Vulkan/OpenGL/WebGL/WebGPU checks. No public
+semantics or user documentation changed. Other operating systems, Android and
+sanitizers were not run; no CI dispatched.
+
+## Shaded drawing functions (2026-10-19)
+
+Ordinary synchronous drawing functions can name frags/verts using the existing
+mesh, instanced, skinned and blit syntax. Shader component/singleton requirements
+match exactly one explicit non-out helper parameter by type, with normal
+read-only value and mutable-pointer behavior. No ambient state lookup or new
+function capability is introduced. Attached local fields use the existing
+actual-parameter/sidecar rules through nested calls and synchronous callbacks;
+plain copies have no sidecar. Methods, tasks, match code and GPU code retain
+their existing drawing restrictions. The spec's former blanket restriction is
+replaced by this completion of explicit helper access; public shader/function
+docs and editor completion agree. Compiler contracts and coverage are in
+notes/shaders.md. No generated-C/runtime API or world layout changes.
+
+Validation: warning-free native/web debug builds pass all 2,431 native CTests
+(150.63 seconds) and 2,340 web CTests (293.82 seconds), including exact-bit
+simulation pins, shader goldens/SPIR-V validation, Vulkan/OpenGL and
+WebGL/WebGPU pixels. The regression with an out parameter beside the real
+input passes on both native and WASI. The docs production build passes. A final editor-only hover
+wording adjustment was rebuilt and passed all 239 language-server tests.
+Validation used Node 24.19.0 and the configured local Vulkan validation SDK.
+Other operating systems, Android and sanitizers were not run; no CI dispatched.
+
+## Borrowed resource asset collections (2026-10-18)
+
+Implemented as an authorized completion of existing read-only helper access:
+ordinary synchronous CPU functions/methods accept List<Clip>, List<Texture>,
+List<Mesh<V>> and matching Map<string, T> parameters. Arguments name an asset
+directly or forward another borrow of the exact type. Count, indexing, foreach,
+readonly methods, overloads, named arguments, recursion, methods and synchronous
+callbacks retain existing behavior. Individual elements retain ordinary value
+rules and may be returned. The collection itself has no mut/out/in/default,
+optional, return/error-payload, storage or async lifetime. Externs, operators,
+audio declarations and GPU code take no borrow. Clip/Texture retain local-only
+capabilities; numeric Mesh geometry retains its existing match reads.
+
+Header generation includes the Clip reference definition for borrowed Clip
+list/map signatures even with no declared assets. `asset_borrows_unused` compiles
+all six unused collection signatures on native/web without enabling asset
+loading or audio playback. This fixes a type-only header omission found in the
+final review.
+
+The resolver permits these collection types in helper signatures; the checker
+validates borrow uses and direct/forwarded sources. A transitive CPU-only flag
+prevents shader helper chains from reaching a resource-collection borrow.
+Codegen passes the existing list/map handle, including beside mutable arguments,
+in ordered operands and through inlined Action calls. It introduces no owned
+collection copy, allocation, runtime call, pack ownership, persistent state,
+public C ABI or release-pruning rule. Existing asset/element lifetimes and pack
+replacement behavior remain in force. Other resource-collection storage and
+unique grid borrowing are unchanged.
+
+`asset_borrows` executes all six collection forms, recursive/method/named
+forwarding, readonly map methods, foreach, mutable neighboring arguments,
+Action/sort captures, Clip playback, Texture metadata, Mesh geometry, pack
+reload and retained-world immutability. Scratch marks verify no passing copy
+beside an effectful argument, a mutable list or an Action, and normal cleanup.
+Fourteen diagnostic fixtures cover signature/mutation/source/escape/domain
+restrictions; existing persistent-resource collection errors remain pinned.
+Editor hover explains the borrow, collection completion uses the resolved type,
+and GPU completion excludes direct/transitive borrow helpers.
+
+Validation: final warning-free native/web debug builds, all 2,427 native and
+2,336 web CTests, and the docs production build pass. The final suites include
+the declaration-only header regression, execution/diagnostic/editor checks,
+existing exact-bit/network pins, Vulkan/OpenGL and WebGL/WebGPU validation.
+Native took 151.49 seconds and web 246.39 seconds. Other operating systems,
+Android and sanitizers remain CI coverage; no CI was dispatched.
+
+## World.Set beside read-only component parameters (2026-10-18)
+
+The owner approved lifting the read-only overlap restriction as backend work
+on the existing API. Systems, handlers and local views can Set any entity's T
+while taking read-only T, including through ordinary helpers, methods,
+recursion and inlined actions. Each invocation reads the current component on
+entry, including preceding invocations' writes, then keeps that value. World
+reads see Set immediately. Tasks get fresh component values on resuming.
+The existing mut T overlap, match/local, view, parallel and comparison rules
+remain in force; no new implicit World capability is introduced.
+
+`check_world_call` and `check_world_passing` now reject only mutable overlapping
+component parameters. Existing transitive World effects already provide global
+write dependencies, heap serialization and a single-threaded system traversal.
+Generated rows pass page-slot arrays for components those World effects write,
+and reload their current lane addresses at each row. Structural changes remain
+queued, keeping the slots stable while Set replaces pages. The same path covers
+input's implicit Owner read. Other components retain their cached columns and
+normal staged/SIMD behavior; no extra table/entity lookup or eager page copy is
+added. Read-only parameters containing lists/maps/sets use the existing scratch
+value-copy helpers when Set can overlap, because assignment can reuse stored
+container allocations. This preserves the current invocation's values even
+after self Set through a helper. Async handler resumes apply that copy too.
+No runtime API, public C ABI, world layout, queue ordering or protocol changed.
+
+`world_set_read` checks direct and transitive/recursive/method/action writes
+across 5,000 rows, chunks and archetypes, partial and fully matching sparse
+chunks, ordinary mutable companion parameters, preceding-row visibility,
+snapshot immutability, rollback replay, packed round-trips, the threaded
+scheduler, input selection after Owner replacement, local views and heap-bearing
+handler parameters through self/other writes and task resumes. The two former
+read-only rejection fixtures are replaced by this execution coverage. Existing
+mutable-overlap and capability diagnostics remain pinned.
+
+Validation: warning-free full native/web debug builds, all 2,411 native and
+2,320 web CTests, and the docs production build pass. This includes native
+Vulkan/OpenGL, WebGL/WebGPU validation, existing exact-bit/network pins, the
+new snapshot/row/container/task regressions and the existing mutable-overlap
+diagnostics. Native took 133.93 seconds; web took 294.26 seconds. Other operating
+systems, Android and sanitizers remain CI coverage; no CI was dispatched.
+
+## Borrowed input parameters (2026-10-18)
+
+The owner approved ordinary parameter syntax for read-only input context:
+`bool WantsJump(Controls controls)`. A caller passes its input parameter
+directly; helpers forward the same current/previous tick pair. No new owner
+lookup, World/singleton/entity/sender capability, allocation or whole-input
+copy is introduced. Nested bool edges, held/released input, prediction's edge
+suppression, owner changes, server input and replay retain existing behavior.
+
+The checker accepts input parameters in ordinary synchronous functions/methods,
+rejects mut/out/in/default/optional/return/escape and diagnoses constructed or
+copied arguments that lack the caller's tick context. Async declarations,
+including match handlers, cannot retain input; pass ordinary field values.
+Mutation diagnostics explain readonly input instead of suggesting `mut`.
+Generated private helpers receive const current/previous input pointers. Input
+pointer access, calls, action inlining and function-local sort captures preserve
+the pair. Existing synchronous callbacks and parallel steps can forward it.
+Call operand planning treats input arguments as borrowed reads, so effectful
+neighboring arguments preserve source order without making a full input temp.
+Existing whole-input text formatting and comparisons remain value inspections;
+they do not store or forward an input context.
+There is no runtime API, public C ABI, world layout or protocol change.
+
+Correction to the earlier deferred-input note and discussion: custom input
+fields are all serialized already. Use-based pruning is for device leaves;
+there was no custom input-field pruning pass to preserve or add. Existing
+device reachability analysis and custom input packing are unchanged.
+
+`input_borrows` exercises recursion, methods, named/multiple parameters,
+overloads, effectful/named argument ordering, action blocks, nested sort
+captures, parallel steps, event handlers, retained snapshots and replay.
+Existing `input` now reads edges through helper
+chains (owner/server selection and owner swaps); `predict` forwards all reads
+through a helper (nested edges and guessed-input suppression); `net` forwards
+movement/jump reads without changing its bad-network traffic/hash assertions;
+`view_time` forwards engine-stamped timestamps. Eleven diagnostic fixtures pin
+unsupported signatures, mutation, defaults, missing context and escapes.
+Editor completion offers input types in readonly synchronous signatures and
+edges through nested input structs; hover explains the caller's tick context.
+Public contracts are in spec.md, functions.md and the input guide.
+
+Validation: final warning-free native/web debug builds, all 2,412 native and
+2,321 web CTests, and the docs production build pass. Native GPU and WebGL/WebGPU
+validation, existing exact-bit/network traffic pins, input edges and guessed
+edge suppression, snapshot/replay, the effectful-argument regression and full
+LSP/stdio/pipe coverage pass without changing expected values. Other operating
+systems, Android and sanitizers remain CI coverage; no CI was dispatched.
+
+## Borrowed query parameters (2026-10-18)
+
+The owner approved read-only borrowing with the existing `query (...)` syntax.
+Ordinary synchronous functions and methods require explicit query arguments;
+the signature describes row data/filter guarantees, never a new selection.
+Bindings match by component type, independently of names/order, with one
+unambiguous source binding per requested type. Extra bindings/filters remain
+the caller's. Required/excluded filters must already be guaranteed. Local rows
+require local bindings; verified/blended/recorded timing comes from the source.
+No collection, snapshot or whole-set copy is made merely to pass a query.
+Borrowed queries have no mut/out/default, cannot be stored/returned, and remain
+outside callbacks, parallel steps and async signatures. Whole rows still cannot
+be copied/passed/returned; component copies retain ordinary value semantics.
+Recorded rows retain the journal's omitted heap fields, as existing component
+forwarding does. No implicit World, singleton or entity access is introduced.
+
+The parser reuses query binding syntax. The checker validates structural row
+requirements, marks data used through forwarding, and preserves source domains.
+Existing World access propagation now distinguishes explicit World reads from
+query reads so a borrowed query grants no ambient world pointer/capability.
+Query values are unsettled in evaluation-order analysis: reads beside a writer
+remain in their written order. Automatic grid loops that borrow stay serial;
+explicit parallel/callback borrows are diagnosed.
+
+`query_codegen.inc` follows static query sources through calls, forwarding,
+recursion and multiple query arguments. Source-specialized helpers receive the
+existing world pointer or recorded/blended row pointer/count. Iteration reuses
+normal query loops and projects only requested components into helper rows.
+Equivalent live selections share code; recorded layouts retain their sources.
+No runtime API, world layout, container handle or persistent borrow is added.
+World.Set helper writes use the existing replaced-page reads. Action-loop reads
+use the outer routine's World effects too, so callback writes cannot leave a
+cached column on the old snapshot page. Actions with borrowed parameters inline
+with lexical aliases; helpers starting tasks keep ordinary owner/singleton rules
+and retain no query in task frames. Sort blocks
+capture ordinary values, excluding queries. Internal names use reserved tide_
+prefixes for count arguments/specializations.
+
+`query_borrows` covers projection, filters, methods, recursive forwarding,
+multiple/swapped queries, named arguments, empty sets, action blocks (including
+World.Set page replacement under a retained snapshot), sorting,
+read/write operand order, short-circuiting, deferred sends, task starts, COW and
+replay. Existing `queries` now executes helper traversal across chunks and
+threads with its original exact-bit pin; `view_queries` forwards live local,
+blended, verified and recorded rows, including owned text/list values in views;
+`handler_queries` forwards event/command rows through World-writing helpers.
+Thirteen query_borrow error fixtures cover missing/ambiguous bindings, missing
+filter guarantees, domain mismatch, escape, mutation and unsupported lifetimes.
+Editor completion/hover/signature formatting use the same query representation.
+Public contracts are in docs/spec.md, functions.md, systems.md and view docs.
+
+A bounded optimized traversal comparison used 65,536 integer component rows,
+4,000 reductions per round and eight alternating rounds. Generated borrowed
+query traversal and equivalent handwritten table/chunk traversal used the same
+clang 23.1.2 `-O2` strict deterministic flags, with matching sums. Best times
+were 8.119 ms and 8.145 ms respectively (ratio 0.997). This measures these
+optimized loops, not world construction or general engine performance; linked
+engine libraries were the checkout's debug build. Scratch harness/results are
+under ignored `build/query-borrow-perf/`.
+
+Validation: final warning-free native/web debug builds, all 2,399 native and
+2,309 web CTests, and the docs production build pass. This includes native GPU,
+WebGL/WebGPU validation, existing exact-bit/thread/replay pins, the new borrow
+and snapshot/action regressions, thirteen diagnostic fixtures and LSP coverage.
+Linux, macOS, MinGW, Android and sanitizer coverage remain for CI; none was
+dispatched.
+
+Integration with origin/dev retained both editor-note entries at the sole
+conflict. Incoming terminal-editor/CLI and GRAVEWAKE changes touch no shared
+compiler/runtime source. Rebuilt CLI/LSP targets pass eight scoped CLI/LSP
+CTests, including the new installed-editor configuration test; the combined
+docs production build also passes. The full suites above preceded this merge.
+
+## Queries in synchronous match handlers (2026-10-18)
+
+The owner approved extending the existing read-only query functionality to
+match event and command handlers. The prior audit overstated the need for a
+separate ordering design: synchronous handlers already execute serially at
+their existing queue turn and can use the same current-world traversal as
+systems. `check_entity_query` now refuses only async declarations. No new
+runtime function, generated query representation, queue flush, snapshot,
+system dependency or simulation layout was introduced.
+
+Queries do not select the event target. A handler taking only queries and
+singletons runs once and accepts an untargeted event/command. Outer component
+parameters still select a target. Each foreach reads the stored match as it
+iterates, including completed earlier handler writes and applied structural
+changes. Structural work recorded in the handler remains queued. Existing
+World.Set rules and transitive helper access analysis keep query reads current
+after page replacement; each row is still a read-only component copy. An own
+mut component parameter retains normal write-back timing: querying the same
+entity sees its stored value until the handler returns, then subsequent
+handlers see the committed value. Spawned includes its new entity, Destroyed
+includes the entity before removal. Async handlers/tasks, query/row escape and
+match/local access restrictions retain their existing rules.
+
+`handler_queries` covers targeted/world events, query-only handlers, nested
+and empty sets, sparse required/excluded filters, interleaved Send/Spawn/Remove/
+Destroy, lifecycle queries, destruction requested during traversal, own-parameter
+write-back, transitive helper Set calls, heap-bearing rows, COW immutability and
+identical replay. Global/targeted commands exercise actual local submission,
+sender guards, tick deferral and duplicate sequence rejection. Mutation errors
+replace the two old rejection fixtures. The LSP completes handler query headers
+and rows, explains queue-time reads on hover and reports query access in lenses.
+Public contracts are in docs/spec.md and the systems/events/commands pages.
+
+Validation: fresh warning-free native/web debug builds, all 2,385 native and
+2,295 web CTests, and the docs production build pass. The full suites include
+the new handler regressions, editor tests, existing deterministic pins,
+Vulkan/OpenGL and WebGL/WebGPU checks. Native took 49.77 seconds; web took
+262.32 seconds, using Node 24.19.0. Other operating systems, Android and
+sanitizers were not run; no CI was dispatched.
+
+## Conventional API completions (2026-10-18)
+
+The owner asked to clear the remaining gaps that follow existing APIs and make
+game code easier, without returning for routine language/API choices.
+
+- Contextual `[]` initializes an empty `Map<K, V>` in fields, locals, assignments,
+  arguments and returns. It emits the existing zero map handle. Nonempty map
+  literals still explain adding entries by key; untyped `var value = []` gains
+  no inference rule. `maps` covers nested values, retaining a copied map after
+  reassignment, arguments and returns; `map_nonempty_literal` pins rejection.
+- Spawn/Add and Scene.Load extra root components accept existing values and
+  helper results. Existing argument hoisting evaluates once in written order;
+  deferred commands own their copied lists/maps. Sparse presence, placement,
+  duplicate-type checks and scene restrictions remain in the existing checker.
+  Bare types still apply defaults, local sidecars are not copied, and Remove
+  remains type-only. `component_values` checks source mutation, nested map/list
+  retention, sparse and added components, scene roots, effectful factories,
+  snapshots/packing, local spawning and fresh attached-local defaults. Prefab
+  root overrides also accept whole values; literals retain field-wise override
+  behavior, while values replace the whole component. The same fixture covers
+  prefab Spawn and Scene.Load alongside the existing prefabs regressions.
+- Ordinary functions/methods take and return events and commands. Payloads use
+  existing value/mut and heap-retention rules; they provide no implicit World,
+  entity or authenticated sender. `component_values`,
+  `maps` and the existing wire-level `commands` fixture forward complete
+  payloads through helpers and retained factory returns, including a local event.
+  Numeric payload helper values also work on GPU; nonnumeric fields retain
+  normal GPU restrictions. Owned payload reads/returns contribute to the
+  existing scratch-use analysis, as ordinary records do.
+  Recorded local match-event payloads still omit heap data, as recorded
+  component copies already did; forwarding cannot recover omitted values.
+- `Texture.size` is a machine-local read-only int2 on CPU and GPU. Metadata-only
+  shader planning/capture and runtime contracts are in `notes/textures.md` and
+  `notes/shaders.md`. New errors pin assignment and match access rejection.
+
+At this pass input parameters were deferred because `.down`/`.up` needed the
+previous tick context. Borrowed input parameters above now carry that context.
+The earlier concern about losing custom input-field usage was overstated:
+declared custom fields are all packed, with use-based pruning only for devices.
+
+Validation: warning-free Windows native and web debug builds, all 2,383 native
+and 2,293 web CTests, and the docs production build pass on the final source.
+Vulkan/OpenGL and WebGL/WebGPU pixel checks cover the metadata/payload paths;
+WebGPU repeats them after device recreation. Existing determinism pins are
+unchanged. An earlier serial native run had one audio-device state-cleanup
+timing failure; it passed in isolation and both subsequent full native runs
+passed, with no audio change in this task. The clean origin/dev merge then
+brought the owning thread's audio completion fix and browser-runner fixes,
+alongside unrelated Gravewake work. Rebuilt affected targets and reran five
+native platform checks (audio, device, new forget regression, Vulkan/OpenGL
+shaders) and eight web checks (audio/forget, WebGL/WebGPU shaders, rooms,
+handover, ended rooms and threads); all passed. Unrelated game changes needed
+no repeated playtest. Linux/macOS/MinGW/Android and sanitizers remain CI
+coverage; no workflow was dispatched.
+
+## Conventional math API completions (2026-10-18)
+
+The owner approved `quaternion.FromToRotation(float3 from, float3 to)` and
+`float4x4.Scale(float3 scale)` as clear wins following the existing API style,
+and clarified that routine completions and edge cases should be handled within
+the assigned task without approval questions. Substantive language/behavior
+and ownership decisions still belong to the owner; `AGENTS.md` records this
+distinction.
+
+Both signatures live in the shared builtins table, so ordinary checking,
+named arguments, C generation, editor completion/hover/signature help and
+shader-call checking use the existing paths. Generated CPU calls are
+`tide_fromto_q` and `tide_scaling_f4x4`, inline in `tide/math.h`. No parser,
+capability, evaluation-order or storage rule changes. The existing C matrix
+scalar-multiplication helper `tide_scale_f4x4(matrix, scalar)` is unchanged.
+
+FromToRotation normalizes arbitrary finite nonzero directions after dividing
+by their largest absolute component, avoiding overflow and squared-length
+underflow, including subnormals. Invalid or zero directions return identity.
+The ordinary shortest-arc formula is used for nonnegative dot products. Near
+pi, cosine of the half-angle is derived from cross-product length rather than
+`1 + dot`, preserving small deviations from an opposite direction. Exact
+opposites cross normalized `from` with its least-aligned cardinal axis (ties
+X, then Y, then Z), and return a unit quaternion with w = 0. Quaternion output
+is finite and chooses w >= 0. The scale builder directly sets the diagonal
+and homogeneous 1, leaving other entries zero; negative and zero scales work.
+
+Runtime accuracy tests compare independently normalized double-precision
+directions after rotation, exercise 10,000 direction pairs, unit lengths,
+nearly/exactly opposite directions, axis ties, zero/nonfinite inputs and the
+smallest subnormal/largest finite magnitudes. The new
+`crossplatform_direction_rotation_and_scale` hashes 100,000 arbitrary float
+direction pairs (including invalid values and opposites), plus scaled points;
+its pin is `A40EAB68989DC773`. Existing pins are unchanged. The math E2E fixture
+checks defaults, positional and reordered named arguments and resulting
+rotations/transforms. GPU coverage is recorded in `notes/shaders.md`; public
+contracts are in `docs/spec.md` and `docs/language/math.md`.
+
+Validation: full native debug passed all 2,374 tests. The full web debug run
+covered 2,284 tests; its one WebGPU shader failure (reserved helper parameter)
+was fixed, and focused engine, math E2E, shader golden, WebGL and WebGPU tests
+then all passed. Focused native engine/E2E/golden/SPIR-V/Vulkan checks also
+passed after the fix. Both native and WASI release engine suites and math E2E
+passed, retaining the new exact-bit pin across all four configurations and
+all prior pins. The docs production build passed. Other platforms remain CI
+coverage; CI was not dispatched.
+
+## Attached local arrays: final prototype compiler audit (2026-10-18)
+
+GRAVEWAKE's `local Shard[4] pieces` report still reproduced: the parser's
+lookahead recognized the contextual `local` field modifier before a name,
+qualified/generic type or nullable type, but omitted an array's `[`. It parsed
+`local` as the type and `Shard` as the field name, then failed at the bracket.
+`at_local_field` now includes `[`. This restores the existing array/local-field
+contracts; it adds no type, syntax or runtime function. A type actually named
+`local` remains unambiguous because the modifier still requires a following
+identifier. Match layouts, seeded results and hashes are unchanged.
+
+The existing `local_fields` E2E now keeps a vector array on each match component
+and a nested integer array on a match singleton. It checks nonzero defaults
+before a row exists, helper writes, vector/swizzle and out-of-bounds writes,
+separate entities/machines, disconnect resets and local pack/unpack followed by
+continued frames. Its existing plain-world comparison and packed/hash checks
+ensure these arrays remain outside match state. User docs and the spec clarify
+fixed arrays alongside the other supported local field values.
+
+Whole-singleton replacement was a stale report: current checking/codegen accepts
+ordinary `mut` singleton assignment, and `singleton_params` already executes it
+through `Replace`. A fresh direct-system probe also compiles. The documented
+Resident/grid ownership restrictions still apply. The exhaustive report inventory
+and remaining decisions are in `notes/private-prototypes.md`, Engine gap audit;
+the host save-directory fix is recorded in `notes/standard-host.md`.
+
+Final validation passes all 2,372 native and 2,282 web debug CTests, including
+the expanded local-fields fixture and unchanged world/hash comparisons. Builds
+are warning-free and the docs production build passes. Toolchain, backend
+coverage and unavailable platform checks are recorded with the host fix.
+
+## Follow-up prototype gap audit (2026-10-18)
+
+The first pass was not exhaustive. CRACKED's default singleton Random seeding
+also depended on presentation-only declaration order. A checked match-only
+singleton ordinal now drives both its seed sites and its simulation-graph record;
+details and exact runtime coverage are in `notes/random.md`. No runtime API or
+state layout changes. Explicit singleton declaration order remains a match input.
+
+The regression exposed another implementation detail in compatibility hashing:
+`_ = expression` and `out _` get C storage names containing source line/column,
+and those names were hashed as though authored. The graph now omits discarded
+storage names from statements and their bound expressions. Its typed nodes,
+ordered edges, calls, values and distinct output bindings still participate.
+Formatting/moving discards preserves compatibility; changing their executed
+match code still changes it. `simulation_identity_ignores_discard_storage_source_locations`
+checks both directions, including a discarded result with an `out _` argument.
+Full-suite, optimized parity and docs validation are recorded in `notes/random.md`.
+
+## Compiler gaps found in prototypes (2026-10-18)
+
+This pass fixes three inconsistencies with existing language behavior, without
+new syntax, runtime functions, ABI/layout changes or deterministic hash updates:
+
+- SUNDAY SUPPER's `foreach (var p in kit.placed[model])` generated an address
+  of a returned `tide_list` value. Lists, maps and sets now share receiver
+  lowering that captures the selected indexes/keys once and reads a stored
+  container again each round. It retains no pointer into an enclosing
+  container across a loop body or wait, so growing/replacing outer storage
+  remains safe and inner additions are reached. A computed receiver is
+  evaluated once into an owned value. Existing element-copy, insertion-order,
+  missing-key and bounds rules remain; reading an absent map value adds no key.
+- GRAVEWAKE's integer literals in skinned-draw shader values were captured in
+  temporaries, then emitted again as float literals, leaving the captures
+  unused under `-Werror`. Numeric widening now reads an existing capture,
+  including negative literals and int-to-long conversions; uncaptured
+  constants keep their existing literal output and rounding.
+- CRACKED's `arena.seats[s].velocity.y = 0` was rejected by the element-path
+  checker even though plain stored-field writes and their generated swizzle
+  path already existed (`docs/language/text-and-lists.md` already promised
+  `trail.points[i].x`). Vector lanes and final swizzles now pass that path for
+  list/map/array elements. Readonly/capability, duplicate-lane and intermediate
+  temporary-swizzle checks still apply. Heap-valued field/method/argument
+  restrictions remain unchanged.
+
+`prototype_codegen` reproduces both invalid-C cases with warnings as errors,
+checks live nested list/map/set traversal during inner and outer growth,
+once-only/computed receivers, missing and out-of-range accesses, positive and
+negative numeric captures, vector/compound/swizzle writes and captured draw
+values over repeated local frames. Its waiting match loops replay from both a
+COW snapshot and packed bytes. Two error fixtures retain repeated-lane and
+temporary-swizzle rejection through an indexed element.
+
+This initial pass left the other reports unverified. The completed follow-up
+inventory in `notes/private-prototypes.md`, Engine gap audit, supersedes that
+temporary list: attached arrays and save isolation are addressed, whole-singleton
+replacement already works, and the remaining restrictions/APIs have their actual
+design boundary recorded there. Original observations remain in the game notes.
+
+Validation: complete Windows native/web debug builds are warning-free with
+clang 23.1.2 and checkout-local Node 24.19.0. The full suites exercised 2,369
+native cases (71.65 s, including 31 Vulkan/OpenGL checks) and 2,280 WASI/web
+cases (185.35 s, including WebGL/WebGPU). Their only failures were the two new
+error fixtures using `// error:` instead of the required `// expect:` header.
+After correction, both fixtures and the final expanded `prototype_codegen`
+target pass on native and WASI; every other full-suite case passed. Existing
+math/random/simulation hash pins are unchanged. All runs used `TIDE_HIDDEN=1`
+and browser runners' mute flags. Other OSes, Android, sanitizers and private
+prototype browser playtests were not run; no CI or deployment was requested.
+
+## One visibility mechanism for scenes, entities and components (2026-10-15)
+
+The owner approved replacing the separate private-scene API with ordinary
+Visibility groups. A loaded root's Visibility.group limits every entity owned
+by that scene, including later spawns. Its audience intersects the entity group
+and then the component restriction. An inner scope cannot widen its enclosing
+scope. Ordinary transform parenting still does not propagate visibility.
+Groups do not own scene lifetime; destroying a group conceals its members
+without unloading them. A scene with no restriction is public.
+
+Scene.Load(Scene { ... }, Component { ... }, ...) accepts ordinary positional
+root components before Spawned initialization. They use Spawn's component
+defaults, placement, ownership, duplicate checks and written evaluation order.
+A single named scene argument remains supported. Authored prefab Scene.Load
+uses its existing root overrides, including Visibility; its special named
+visibility argument is gone. Local scene loads accept local root components
+but reject Visibility through the ordinary placement diagnostic.
+
+SceneVisibility, Scene.AddPlayer/RemovePlayer, their command kind/payload and
+the generated tide_visibility/tide_players scene fields are removed, without
+aliases. Old membership calls point to Visibility.Set. Scene components now
+contain only authored fields, and the internal prefab scene marker is empty.
+The compiler extends Audience's words directly from maxPlayers. Recipient
+codecs, lifecycle sanitizers and simulation-schema traversal no longer have
+special cases for private fields of scenes. The ordinary private Visibility
+policy and group directory keep their existing treatment. No engine source,
+exported runtime function, tide_game ABI or session protocol changes.
+Generated game layout/build identities change; old world-hash fixture values
+that included the removed fields must be updated deliberately and agree on
+native and web. The older private-scene descriptions below are superseded.
+
+Regressions cover root components/defaults, sparse presence, owned text/list
+values, local placement and source-order side effects before initialization;
+live root/content/later-spawn audiences across multiple mask words, scene/entity/
+component intersection, projected absence, immutable snapshots and raw packing,
+fail-closed destroyed groups, and private root/child Spawned journals. The
+200-player membership fixture uses a shared group. Lifecycle query/payload tests
+vary private scene-root group policy rather than removed scene metadata.
+Removed methods, duplicate root components, extra scenes, wrong component types
+and local group writes have diagnostic fixtures. Editor/docs details and final
+validation are recorded in their notes and below.
+
+Validation: complete warning-free Windows debug builds and full CTest runs cover
+2,364 native tests and 2,276 WASI/web tests, including native Vulkan/OpenGL and
+WebGL/WebGPU. Their only failures were 30 complete-world/hash/serialization
+baseline cases affected by the intentionally removed fields. Native and WASI
+printed identical logical replacement values; all 30 pass on both after updating
+those pins. The eight scene/prefab/visibility/player targets pass again with the
+final privacy and root-policy removal regressions. All 33 affected optimized
+native targets pass too, including every changed physics/game/benchmark pin.
+The physics body/native-image/resident-digest/query-answer pins and runtime
+math/random/pose bit pins are unchanged. LSP 234/234, shared grammar 244/244 and
+the production docs build pass with clang 23.1.2 and local Node 24.21.0. The
+checkout's configured builds use that Node; the owner's installation is untouched.
+No CI, other OS, Android or sanitizer run was requested/performed.
+
+## Entity/component visibility and shared audiences (2026-10-15)
+
+The owner approved client simulation culling for world chunks, individual
+players and private card state. Visibility applies to entities and whole
+components; the field-level proposal was withdrawn. A visible component has
+all its fields, while a withheld component has ordinary absence semantics.
+The server remains authoritative. Games choose spatial/ownership/team policy
+and how to expose interactions with hidden state. The exact API spellings,
+opaque-handle representation and initial codec choices below are implementation
+picks, recorded as Provisional in the spec.
+
+`Visibility { group = group }` is a builtin match component usable through the
+ordinary spawn/Add/Remove/mut machinery. It references a shared opaque
+`VisibilityGroup`. `Visibility.CreateGroup(Audience)` creates a group,
+`Visibility.Set(group, audience)` changes its audience, and
+`Visibility.DestroyGroup(group)` invalidates it. IDs increase monotonically and
+are never reused. The default group inherits an unrestricted audience; a stale,
+destroyed or otherwise invalid nondefault group fails closed. Creating/changing
+groups in a projected client world does not change server policy.
+
+`Audience.All`, `.None`, `.Only(PlayerID)` and `.From(List<PlayerID>)` construct
+value bitsets sized to `maxPlayers`. `mut` audiences have `Add(player)` and
+`Remove(player)`; `Contains(player)` only reads. Invalid/out-of-game player
+indices are ignored and never index outside the mask. A group's audience is a
+live reference, not copied into every member. Per-component restrictions use
+`visibility.Set<Inventory>(group)` or `visibility.Set<Inventory>(audience)`;
+`visibility.Reset<Inventory>()` restores inheritance. They require an ordinary
+writable `Visibility` value and preserve normal helper/caller capabilities.
+These calls target match components, never fields, scenes, Visibility itself,
+or components whose values require local placement.
+
+Scene ownership defines the enclosing scope. Its root Visibility group limits
+the scene contents; entity groups and component override audiences intersect
+that limit. A child override cannot reveal its parent.
+Ordinary transform parenting does not implicitly create a visibility group.
+Static group mutations inherit match effects through helper chains and count
+as heap writes in scheduling; input/local/GPU code cannot mutate the directory.
+Audience value operations need no match capability. The checker uses the new
+`CALL_VISIBILITY` and ordinary writable-place/evaluation-order machinery.
+
+The compiler synthesizes private world-owned directory and policy maps over
+existing checked map/heap helpers (`visibility_check.inc` and
+`visibility_codegen.inc`). No new exported engine function is called by Tide.
+These values participate in server snapshots, hashing, packing and generated
+reload layouts. Component override keys hash qualified type names, so source
+declaration reordering does not silently retarget retained policies; collisions
+are rejected. A renamed type intentionally has another key. Builtin types and
+state activate when visibility is named.
+
+Only match component types targeted by Set/Reset gain automatic sparse presence
+storage. This avoids enumerating every component subset and reuses ordinary
+query/filter/Has/Get/TryGet/task/view presence checks. Such types remain present
+on the server unless normal game code removes them. Generated C-system wrappers
+split filtered rows into contiguous passing runs; the preexisting restriction on
+explicit `[Sparse]` C-system parameters is unchanged. Entity culling omits the
+row entirely. Projected worlds do not restart Main or report the match ended
+merely because no scene is currently available to that recipient.
+
+`client_state_codegen.inc` writes permitted logical values rather than raw heap
+pages. It recursively encodes text, lists, maps, arrays, optional stored values,
+plain structs and input device records; map insertion orders are retained.
+Grid chunks sort by coordinates, and cells use their typed codec. Allocated
+zero chunks are retained: dropping them would change open-grid foreach extent.
+Hierarchy links retain only available direct parents/children/siblings; loading
+validates reciprocal links and rejects cycles. Cutting a hidden parent entity or
+an existing hidden parent Transform detaches the child. If that retained subtree
+has a permitted Transform, private client metadata carries the exact parent
+affine matrix and rotation, while the child's local TRS stays unchanged. The
+prefix uses the server's original multiplication/normalization order, preserving
+shear and nonuniform scale. A subtree with no permitted Transform gets no anchor.
+Explicit reparenting and destruction clear anchors; ordinary snapshots/reload
+retain them. Readers validate booleans, UTF-8,
+counts, duplicate map keys/orders, grid coordinates and packet completion before
+replacing the previous world. Entity IDs remain authoritative even across large
+unseen gaps; their missing slot pages are left absent. Prediction appends beyond
+known IDs instead of reusing concealed slots. Encoding/decoding recursive values
+is bounded at 256 nested typed values; deeper encoding stops with an explicit
+message recommending entity references instead of unbounded value nesting.
+
+Private directory/policy bytes and hidden components' owned data do not enter
+recipient state or hashes. Whole match singletons remain public; secret game
+state belongs in visibility-controlled entities/components. The current physics
+packages need visibility-aware integration before concealing bodies: public
+Box2D.Physics.image contains the complete native snapshot byte list,
+Box3D.Physics.stamp hashes native world operations, and both packages retain
+public collider/rewind lists. Hiding Body/collider entities or omitting Resident
+does not restrict those ordinary singleton fields. Internal command
+delivery state is restricted to the recipient's own sequence/window; other
+players' command activity is withheld. Input audience masks are derived once per
+recipient by walking entities, then reused for all input slots. Remote previous
+input is normalized to its filtered current input; ordinary completed-tick
+endpoints already have equal previous/current input, preserving button edges.
+The session uses the bulk input callback to avoid scanning the world per slot.
+Source task frames
+can contain secrets captured from hidden state, and opaque `Resident` storage
+can contain hidden collision/runtime data. Both remain authoritative server
+state in this implementation. Joining/repairing clients do not receive those
+continuations or resume their server execution; permitted component outcomes
+reconcile through the ordinary correction path. Clients may run the tasks and
+C-side state they can derive locally, but that is prediction, not a private
+server-state transfer. Full-world games retain their existing task/Resident
+snapshot and transfer path. The session protocol and lifecycle contracts are
+recorded in `notes/netcode.md` and `notes/verified-and-local-handlers.md`.
+
+Coverage: `visibility_groups` checks multiword audiences, bounds, shared changes,
+private components, direct overrides/reset, fail-closed destroyed handles,
+scene inheritance, helper capabilities, COW snapshots and raw packing.
+`visibility_projection` checks secret markers absent from payloads, nested
+owned values, canonical equality despite heap/grid insertion history, actual
+component/query/C-row absence, filtered hierarchy destruction, all-hidden scene
+behavior, sparse high entity IDs and raw round trips, malformed truncation
+atomicity, withheld input slots, private command metadata, no-listener destruction
+causes and opaque Resident privacy. Exact affine boundary regressions include
+nonuniform scale/rotation, hidden parent Transform, reparenting and omission of
+anchors for hidden leaf Transforms. Initial recipient state pins canonical hash
+`ed6d2f60242f07d3` across native debug, WASI web debug and native release. Its integrated
+two-recipient loopback case exercises changing chunk/player/card audiences and
+hidden impacts under latency, jitter and loss against retained authoritative
+tick snapshots. `visibility_*` error fixtures pin unsupported scopes, local
+values, readonly receivers and capability propagation. Final full-suite results
+are recorded with the networking/editor changes after validation completes.
+
+Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
+fixture plus 10,000 visible PublicState rows with empty owned fields produced
+1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
+2.12–2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22–3.54 ms. Full-world hashes measured
+4.19–9.76 us with that column dirty and 2.57–11.11 us unchanged. These operations
+do different work: full-world hashing reuses cached page hashes and only rehashes
+the changed integer-column pages, whereas recipient hashing currently traverses
+and serializes every permitted logical value and allocates the temporary byte
+stream each call. This is not a comparison of equivalent serializers or a
+hardware-independent tick budget. Debug/O0 (40 calls) measured 6.08 ms for the
+recipient hash versus 13.88 us for the changed-column full-world hash, and
+8.66 ms versus 36.31 us unchanged, including full-world cache warmup. The
+visibility path's linear work and allocation remain a performance limitation;
+no projection hash cache is implemented. The no-visibility path keeps its
+ordinary cached full-world hash. The focused release projection fixture passes
+all 12 cases and the same canonical pin.
+
+Pre-integration validation: warning-free complete Windows native and WASI web
+debug builds pass all 2,357 native CTests (76.53 s, including 31 GPU tests) and
+2,270 web CTests (212.18 s, including WebGL/WebGPU). The lifecycle fixture passes
+16 cases, covering privacy, rollback, bulk destruction and malformed received
+values. LSP 234/234, shared grammar 244/244, VS Code adapter 28/28 and the
+production docs build pass with Node 24.21 and clang 23.1.2. Earlier opted-in
+Cracked/Foldline native/web targets and tests also passed after the reserved-name
+renames; final incoming integration validation follows below. Android, other
+operating systems and sanitizers were not run; no CI was dispatched.
+
+Final integration validation: both complete standard builds remain warning-free
+after the compiler/session/Box3D overlap through a50f7818. All 2,359 native
+CTests pass (69.54 s, 31 GPU tests), as do all 2,272 web CTests (221.93 s,
+including WebGL/WebGPU). All seven simulation-identity cases pass. Cracked and
+Foldline targets/tests pass on native/web. The subsequent hosting-console and
+Foldline redesign merge through 7aff9694 changes no engine/compiler source;
+the renderer overlap preserves the redesign with eleven Shown-to-Displayed
+helper renames. Fresh scoped Foldline checks pass 2/2 native (10.49 s) and 3/3
+web (92.66 s), including both rendering backends. The final production docs
+build and SEO 3/3 pass with Node 24.21. Both presets finish with optional private
+prototypes disabled. Other-platform/sanitizer coverage remains unavailable here;
+no CI was dispatched.
+
+## Generated simulation identity (2026-10-15)
+
+`asset_usage.c` now also walks an ordered canonical simulation graph for SHA-256
+compatibility. Match schemas/defaults, transitive helpers/tasks, handlers, input
+Sanitize/Predict, scenes/prefabs, settings and simulation asset contents enter;
+local fields/views/presentation helpers do not. Repeated edges and ordering
+participate, with stable numeric node references rather than pointer bytes.
+Wire archetypes remain conservative inputs. Codegen fingerprints before server
+stripping and emits both `TIDE_SIMULATION_ID` and `tide_game.simulation` outside
+the old header-layout hash. CMake normalizes compiler/runtime sources into the
+toolchain identity; custom C/library identity is supplied by CLI. Simulation
+asset edits require regeneration while visual assets can still repack.
+
+Visibility activation, component automatic-presence classification and resolved
+visibility operation modes enter the same graph. An explicit recipient schema
+fingerprints the ordered public match singletons, input and per-archetype codec
+records, including every effective sparse column and its presence byte. Logical
+types have stable numbered records, with fields, container elements and fixed
+array lengths visited in wire order; host pointer padding does not enter this
+logical schema. A Set/Reset target in an otherwise unused helper still changes
+storage and therefore compatibility when it changes the emitted columns.
+
+Visibility games additionally fingerprint the local-listener wire contract:
+listener order/names, event and predicted/verified selection, required/excluded
+component filters, match payload types and ordered query bindings. Global
+listener order matters because it determines shared query-record IDs and the
+generated journal build identity. Local bodies, local singleton/field types,
+presentation helpers and read-versus-mut access to attached local fields stay
+outside this fingerprint when they do not change wire metadata. Games without
+visibility keep local listeners outside simulation identity entirely. This
+preserves local presentation changes while rejecting different recipient state
+or journal layouts before session admission.
+
+Seven compiler regression cases cover helper/view exclusion, ordered shared
+edges, simulation/visual asset bytes, listener payload/filter/query changes,
+global query-record order, ordinary local-listener exclusion and sparse columns
+introduced only by unused visibility helpers. The isolated scratch identity
+tests passed before integration; fresh merged validation follows the full builds.
+No syntax change; contracts, session tests and validation: managed-hosting.md.
+
+## Frustum culling settings (2026-10-15)
+
+The approved rendering work adds `Draw.FrustumCulling(bool)` / `SetFrustumCulling(bool)` and `Draw.Bounds(float3 center, float3 size)` / `SetBounds` through `add_setting`, including reset forms. Target lookup, editor signatures/docs, block/Set diagnostics and early-exit pops use the existing machinery. No parser/checker, capability or evaluation-order rule changes. Generated fragment-only 3D shaders advertise their position offset for automatic bounds; user verts and skinning do not. `draw_frustum` E2E verifies rejected operands still run, and two error fixtures pin the setting forms. API choices are provisional in the spec; runtime and validation are in `notes/drawing.md`, Frustum culling.
+
+## Dedicated server asset selection (2026-10-15)
+
+Server codegen preserves the ordinary client header/game identity before
+selecting simulation assets through asset_usage.c's checked iterative traversal.
+No new Tide syntax or match capability is added. Reachable Asset<Mesh<V>> types
+keep their complete resolver domain for input/command selections. Host metadata
+macros are outside the shared hash. Client-only globals can remain zero in
+unreachable emitted code; loaders/preflight/packs retain only the selected
+closure. Custom C requires conservative retention or explicit opt-in. Full
+contracts, fixtures and validation are in dedicated-servers.md.
+
+CI correction: server codegen skips the asset-array memcpy when the count is
+zero, preserving the asset-free program's NULL array without passing it to a
+nonnull C library parameter. Run `38716371711` caught this with UBSan while
+compiling `server_menu.tide`; validation is recorded in dedicated-servers.md.
+
 ## View inclusion in authored preview (2026-10-13)
 
 The owner approved views-only preview after discussing initialization and the
@@ -759,11 +1538,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A parameter typed `World` where no type of the game's has the name is `TY_WORLD` (`check_signature`, `check_world_param`): one a function at most, `World` or `mut World`, never `out`, with no default; operators, `extern` functions and async functions take none (an async handler takes it itself). As a value it's still nothing: a field, a local or a return type of it is `world_misplaced`.
   - The World is named as a value in one place, a call's argument that a `World` parameter takes (`checker.world_arg`, `world_value_ok`, which `check_name` reads; `check_world_args`), and `mut World` takes a `mut World`, as any `mut` argument. Nothing is passed for it in C: the function gets the worlds it reaches as hidden parameters, where its other hidden ones go, `tide_w` when it reaches the match's components (`decl.world_match`, `takes_world` in `compiler/src/codegen.c`; `const` unless it sets, `decl.world_sets`) and `tide_l` when it reaches local ones (`decl.world_local`, through `takes_local`), which are the names its caller has them under. So `world.Get` in a function is the code it is in a system.
   - `check_world_call` checks a function's calls as a system's, but for the rules that depend on who calls (`helper`), which wait. `check_world_passing`, once every body is checked, adds what each function reaches (`decl.world_uses`) to its callers', over the checker's list of calls until nothing grows, so a system's `world_uses` are its own whether it calls the World or a function does: the schedule (`accesses_of`), `world_reads_own_writes`, `system_splits`, `tidec --schedule` and the language server's lens need no rule of their own. Then it checks each call a system, view or handler makes: a local component from the match, the match's from a local handler, a view that would change the match, a `Set` in a parallel loop's step or a sort's comparison, and a `Set` of a component the caller takes as a parameter, read or `mut`.
-  - `world.Set<T>(this, value)` beside a read parameter is the system's own to write: a function has no `this`, so a function that sets `T` is refused in a system that takes `T` at all, and the note says to write it in the system.
+  - Read-only component parameters permit direct and helper `Set<T>` calls on any target. Each row reloads affected pages, then retains its invocation's value. Mutable component parameters still refuse overlapping Set calls because their write-back could replace the Set.
   - `world.TryGet<T>(entity, out value)` is the engine's own beside `Get` and `Has` (`check_world_call`, its `out` through `check_out_param`): `tide_tryget_<Component>`, only in the C of a game that calls it (`decl.tried`), which gives whether the entity has one and assigns the variable its copy or the component's `default`. A component with a grid has none, as it can't be copied.
   - A program that passes no `World` to a function and calls no `TryGet` generates the C it did, byte for byte: checked by running old and new tidec over every game's source list.
   - `compiler/tests/e2e/world_functions` runs it (functions, methods, a World passed through two functions, `mut World`, local components in a view, `TryGet` of every form) natively and on the web; `compiler/tests/schedule/world_functions` pins that a function's reach is in its system's schedule; `compiler/tests/errors/world_function_*.tide` and `world_try_get_*.tide` have a file for each diagnostic; `lsp_world_in_functions` checks the editor's side.
-  - Provisional, awaiting the owner: `mut World` in functions; methods taking it too; async functions and code the GPU runs taking none; a function that sets a component always refused beside the caller's parameter of it; `TryGet` giving the component's `default` where `Get` gives zeros.
+  - Provisional, awaiting the owner: `mut World` in functions; methods taking it too; async functions and code the GPU runs taking none; a function that sets a component refused beside the caller's mutable parameter of it; `TryGet` giving the component's `default` where `Get` gives zeros. Read-only overlap is now supported, as recorded above.
 - **Functions and methods send, spawn and change entities as the code that calls them could** (the owner, 2026-10-08: "it should inherit their ability; if you say `Send` it should mean that what calls us can `Send` otherwise is a compiler error ONLY when its called from a place it can't"; `docs/spec.md`, Functions, with the picks made to build it Provisional under Functions and blocks). It was a recurring ask of the agent-written games (`GAME_TRIAL_FEEDBACK.md`), and Two Forks compared two copies of its board after a move to learn what to send. `Send`, `entity.Send`, `Spawn`, `Add`, `Remove` and `Destroy` are written in a function or a method as in a system. What's built, and what code relies on:
   - **A function records what it does, and nothing is wrong with it there** (`inherits`, `note_act` in `compiler/src/check.c`): `decl.acts[2]`, the match's ([0]) and this machine's ([1]), with where and what for the messages (`acts_at`, `acts_what`: "sends 'Hit'"), `acts_spawn[2]` and `acts_text`. Which world is told by what's written, as an async function's is: an event's own (a command is this machine's), the entity's type (`Entity`, `LocalEntity`), the components'; `same_world` is the one error in the function, a `Spawn`'s, an `Add`'s or a `Remove`'s components of two worlds, and an event sent to an entity of the other. A `Spawn` with no components is the match's. `check_component_side` and `check_entity_side` let an inheriting function through, where they check a system's or a view's against its own world.
   - **`refuse_act`** is what still refuses where it's written: frags and verts (the old messages), a struct's operators and a component's `Interpolate` (messages of their own), and the input's code. `passes_acts` says which declarations inherit: plain functions and methods, not async ones (their world is what they do), not operators (an operator's call is handed its operands, the dice and the seed and nothing else: `gen_operator_call`), not `Interpolate`.

@@ -1,5 +1,280 @@
 # The language server and the editors
 
+Shaded drawing functions (2026-10-19): mesh/instanced shader and per-draw
+value completion is available in ordinary synchronous functions as in views.
+Shader component hover describes both view and function inputs.
+The shared checker reports missing/ambiguous explicit shader inputs.
+lsp_shaded_drawing_helpers checks clean diagnostics, completion and a missing
+singleton; the former view-only shader completion assertion now covers a
+function with explicit inputs. Contracts and full validation: notes/shaders.md
+and notes/language.md.
+
+Resource asset collection borrows (2026-10-18) resolve in ordinary helper
+signatures, so list/map member completion and signature/type text use existing
+paths. Parameter hover explains read-only synchronous borrowing and no escape;
+shader completion excludes helpers that borrow directly or through helper
+chains. `lsp_borrowed_asset_collections_in_helpers` checks readonly signatures,
+hover and list/map completion, and GPU filtering. Contracts and validation are
+in notes/language.md; no editor configuration or protocol changed.
+
+## Standalone editor publication (2026-10-18)
+
+Published public MIT repositories https://github.com/Tide-Engine/tide-emacs
+and https://github.com/Tide-Engine/tide-vim, both with main and v0.1.0.
+The engine remains private with no root license. Both exports were audited
+through every historical tree: only files from their respective tools/
+directories are reachable. Their trees match the canonical engine directories.
+The Emacs main is 31f1cb13d4d4d0a04ab1284a36d27b5760310147; its initial
+v0.1.0 is aba90c6ee3bcacc2149702558417cfbd7008b332. The later commit only
+corrects the test's compatibility call. Vim main/v0.1.0 is
+015c1b02dd889f52cde4aa341c77b5abe7f3c565. Canonical source changes are
+4c7a69ed, d931ef96 and dcf9e2be on top of the original two editor commits.
+
+Anonymous fresh Git clones work. Emacs 30.2 package-vc-install fetches the
+documented GitHub URL into an isolated profile; a fresh process proves prefab
+autoload detection and all six ERT cases, including real local-server hover
+and clean shutdown. The library and test byte-compile warning-free. Emacs's
+own generated package-vc *-pkg.el emits a missing lexical-binding warning;
+this generated file is outside the plugin and does not prevent installation.
+Native Vim 9.2.1202 vim-plug installation passes detection, syntax and settings.
+Neovim 0.11.5 lazy.nvim installation passes those checks plus automatic tidels
+attachment, hover and shutdown using the documented specification. Both editors'
+standalone runtime checks pass from a fresh public clone too. All profiles,
+package directories and lockfiles are isolated under build/.
+
+MELPA package-build 5.0.3 fetches the public Emacs repository using the prepared
+recipe, builds tide-lang-mode-0.1.0.tar and installs it with working prefab
+autoloads and the MIT text preserved. This is not MELPA acceptance. The public
+repository was created at 2026-10-18T18:11:24Z; the one-month prerequisite
+cannot be met before November 18, and continuing public maintenance and the
+owner's human review of assisted code remain necessary before submission.
+No upstream submission or future task was created. The recipe and checklist
+are public under melpa/ in tide-emacs. Vim/Neovim Git managers need no central
+registry submission.
+
+The freshly rebuilt tidels suite passes 237/237 after merging origin/dev's
+borrowed-input helper work. The merged production docs build passes on Node
+24.21.0 with existing allowed unstaged-example 404s. Docs link the public
+repositories rather than the private source paths. No full engine native/web
+suite is required for these tools/docs changes; no other OS, deployment or
+CI dispatch was run. Emacs 29.1 and Vim 8 remain untested minimum versions.
+
+## Package-vc test compilation correction (2026-10-18)
+
+The public Git installation compiles the test directory too. Its real-server
+test now selects eglot-path-to-uri when available, retaining the former helper
+for the Emacs 29 bundled Eglot without emitting a deprecation warning on Emacs
+30. Both the test and library byte-compile with warnings treated as errors;
+all six ERT checks pass against the freshly rebuilt local tidels. No mode or
+language-server behavior changed. Public download verification is recorded above.
+
+## Editor-only MIT licensing (2026-10-18)
+
+The owner explicitly approved MIT for both standalone editor plugins.
+tools/tide-emacs/LICENSE and tools/tide-vim/LICENSE cover those directories
+only; there is no engine-wide license change. The Emacs library includes the
+MIT boilerplate so an ELPA archive built from just the .el file retains its
+license. Its test carries the same SPDX identifier. The package passes current
+package-lint, checkdoc and warning-as-error byte compilation after the headers
+are added. This resolves the license prerequisite recorded in preparation below.
+Public repository creation and remote-install validation are complete above;
+MELPA's public-maintenance/human-review requirements still apply.
+
+## Standalone package distribution preparation (2026-10-18)
+
+Prepared tools/tide-emacs and tools/tide-vim as standalone repository roots for
+Tide-Engine/tide-emacs and Tide-Engine/tide-vim. They remain canonical in the
+engine source tree; public issues/patches can be applied there before another
+export. The initial license/publication prerequisites are resolved above; the
+engine remains private and has no top-level license. Do not add a license to
+the engine or claim MELPA registration is complete.
+
+Emacs has Version 0.1.0, maintainer metadata, AI-assistance attribution and a
+MELPA recipe at tools/tide-emacs/melpa/tide-lang-mode. Package lint's warning
+about with-eval-after-load in packages is resolved by requiring bundled Eglot
+when the mode loads, then registering directly. No server starts just from
+loading it. The built-in minimum remains Emacs 29.1. Tests/docs now work from
+the standalone root too. Vim tests find their runtime from their own file path
+rather than assuming the engine's tools/ layout. No CLI/compiler/runtime or
+language contract changed.
+
+Public exports use only these two directories. For later updates, commit and
+merge the source first, fetch, then inspect each split's tree before publishing:
+
+```sh
+git fetch origin
+git subtree split --prefix=tools/tide-emacs -b publish/tide-emacs origin/dev
+git subtree split --prefix=tools/tide-vim -b publish/tide-vim origin/dev
+git ls-tree -r --name-only publish/tide-emacs
+git ls-tree -r --name-only publish/tide-vim
+```
+
+The initial exports contain the original two editor-support commits plus
+distribution and license commits; Emacs also has the test correction above.
+Do not publish an engine branch as either standalone repository. Push each
+audited publish branch to main in its matching public repository. Public
+changes need porting to the engine
+source before exporting, rather than diverging the two maintained copies.
+
+README and public Editors docs include package-vc-install, vim-plug and
+lazy.nvim examples, with a separate Tide/tidels installation and a choice of
+one installed copy of each mode. No shared grammar or mode semantics changed.
+MELPA's current pull-request checklist requires at least one month of public
+maintenance and human review of AI-assisted code. Prepare the recipe now, but
+do not submit prematurely or mark either requirement complete. Keep its actual
+registration status separate from direct Git installation availability.
+
+Local validation on Windows: Emacs 30.2 passes package-lint from current
+upstream, checkdoc, warning-as-error byte-compilation and all six ERT tests
+against this checkout's freshly built tidels (Clang 23.1.2, platform off).
+Upstream MELPA package-build 5.0.3 builds the recipe from a local candidate
+with fetching disabled, produces tide-lang-mode-0.1.0.tar, and package-install-file
+installs it in an isolated profile with working prefab autoload detection.
+This is local recipe validation, not proof of a public GitHub fetch. Vim
+9.2.1202 and Neovim 0.11.5 pass engine-root and standalone-root runtime checks;
+Neovim also passes the real server hover/shutdown case. The production docs
+build passes with Node 24.21.0 and the existing allowed unstaged-example 404s.
+No engine suite, other host OS, CI dispatch or deployment ran for this
+tools/docs-only preparation. External publication is recorded above.
+
+## Installed terminal editor setup (2026-10-18)
+
+The modes now ship as editors/tide-emacs and editors/tide-vim, excluding tests.
+`tide ide emacs`, `tide ide vim` and `tide ide neovim` print configuration using
+the installed runtime and matching absolute tidels path. The user copies it into
+their chosen init file; the helper changes no files or personal settings.
+Emacs/Neovim connect automatically; Vim retains the user's choice of LSP client.
+Moving the installation requires generating the paths again. This replaces the
+source-checkout-only setup described in the first implementation below.
+
+The real generated snippets are exercised by tide_cli_ide's optional host cases:
+set TIDE_TEST_EMACS, TIDE_TEST_VIM and/or TIDE_TEST_NVIM to executable paths.
+They use isolated configuration and the actual installed payload from CMake.
+The comma-path host regression exposed Neovim's unescaped runtimepath: the
+helper now escapes its comma before prepending it. Vim/Neovim glob-character
+installation paths fail with an explicit move/install-path fix instead of
+silently losing runtime discovery. Plain string quoting remains editor-specific.
+The existing mode/LSP/runtime behavior is unchanged. CLI, packaging, tests and
+validation are recorded in notes/cli-and-packages.md.
+
+## Emacs, Vim and Neovim (2026-10-18)
+
+`tools/tide-emacs/tide-lang-mode.el` adds .tide/.tprefab detection, basic
+lexical highlighting, four-space BSD-style C indentation and comment editing.
+It derives from c-mode and registers the explicit language id `tide` with
+Eglot when Eglot loads. `tide-lang-server-command` is an executable/argument
+list; it defaults to tidels on exec-path. Connecting is opt-in (M-x eglot or
+the documented eglot-ensure hook). The distinct mode/package name avoids
+colliding with the existing TypeScript tide package. Minimum Emacs is 29.1.
+
+`tools/tide-vim` supplies ftdetect, ftplugin and syntax for both extensions
+on Vim 8+ and Neovim. Its local indentation/comment settings have an undo
+contract when changing filetypes. Highlighting is basic lexical styling;
+interpolated strings retain string styling throughout. These modes do not
+consume the TextMate grammar or promise its contextual highlighting precision.
+Neovim 0.11+ discovers lsp/tidels.lua through runtimepath; users explicitly
+enable it with vim.lsp.enable. Root selection prefers the nearest tide.packages,
+then CMake/Git, then the file's folder, including paths with spaces. Plain Vim
+uses a separately chosen LSP client and the tide filetype over stdio.
+
+Both are manually loaded from a downloaded tools folder or source checkout.
+They are not added to release archives or tide editors automatic installation.
+There are no run controls, embedded prefab canvases or adapters for the server's
+VS Code-specific code-lens commands. Other LSP features use the client's own
+support. The README, public Editors page and each tool README document setup,
+server selection, capabilities and these limits. No compiler, language/runtime,
+build configuration, existing IDE adapter or shared grammar changed.
+
+Validation on Windows: Emacs 30.2 passes all six ERT cases (detection, syntax,
+highlighting, indentation, Eglot registration and a real server connection/hover/
+clean shutdown). Its mode byte-compiles with warnings treated as errors.
+Vim 9.1 and Neovim 0.11.5/0.12.6 pass the headless runtime checks, including
+multiline comments, quoted characters, degree literals and filetype cleanup.
+Both Neovim versions pass root/space-path checks and real tidels attachment,
+hover and shutdown. Tests use isolated configuration and temporary project files;
+set TIDELS to an absolute executable path to include the optional real-server
+checks. The server was freshly built in this checkout with Clang 23.1.2 and
+TIDE_PLATFORM=OFF, not borrowed from another worktree. The production docs build
+passes with Node 24.21.0 and existing allowed unstaged-example 404s. Diff checks
+pass. Full engine native/web suites are outside these tools/docs-only changes;
+Emacs 29.1, Vim 8, other operating systems and interactive GUI use were not run.
+No CI or deployment was dispatched.
+
+## Shared language-server updates (2026-10-18)
+
+Borrowed input parameters (2026-10-18) complete in ordinary readonly synchronous
+function/method signatures, excluding mut/out, async and extern contexts. Hover
+describes the explicit caller borrow and paired current/previous tick values.
+Input bool edge completion also follows nested structs, in helpers and systems.
+`lsp_borrowed_input_in_helpers` pins these headers, exclusions, nested edges,
+hover and clean diagnostics for a forwarded input call.
+
+Borrowed helper queries (2026-10-18) complete in ordinary synchronous function
+and method signatures. Nested headers offer component bindings and filters,
+and helper foreach rows offer entity/component members. Hover explains the
+call lifetime, structural binding requirements and source timing; existing
+recursive signature formatting supplies signature help and declaration text.
+lsp_entity_query_in_helpers checks headers, async/extern exclusions, nested
+binding/member completion, arguments, diagnostics and hover. Query uses in
+helpers count as uses of the caller's bound component data.
+
+Synchronous match event/command queries (2026-10-18) use the existing query
+completion and row members. Header completion now includes every synchronous
+Tide handler, while tasks and extern systems retain their restrictions. Hover
+distinguishes current queue-time match reads from a local listener's recorded
+rows. Non-listener handlers now report World/query access in code lenses too.
+`lsp_entity_query_in_match_handlers` covers both handler kinds, row completion,
+clean diagnostics, hover and access lenses; header tests retain async rejection.
+
+Texture.size (2026-10-18) completes as a read-only int2 in CPU and GPU contexts,
+supports chained vector member completion, and hovers with physical-pixel,
+missing-image and metadata-only semantics. lsp_textures_in_functions checks
+CPU helper diagnostics, view/helper completion and the member hover. Shared
+compiler checking also supplies empty-map, component-value and payload-helper
+behavior; no editor-specific syntax rule is added.
+
+## Scene visibility uses ordinary groups (2026-10-15)
+
+Scene completion now offers only Load/Unload. Its load signature/hover explains
+ordinary root components and their presence before Spawned; Visibility's hover
+explains scene-wide inheritance and intersecting scopes. SceneVisibility is no
+longer a reserved editor name or a shared TextMate builtin. Compiler occurrences,
+signature/inlay routing and GPU rejection no longer retain CALL_SCENE_PLAYER.
+lsp_scenes checks the new root Visibility call, hover and absent membership
+methods; the builtin-enum navigation regression uses Prediction instead.
+All editor clients consume these shared server/grammar changes; no adapter or
+IDE host behavior changes. Final validation is in notes/language.md.
+
+## Visibility APIs and availability events (2026-10-15)
+
+`Shown`/`Hidden` complete only in local event triggers (including verified),
+with hovers distinguishing availability from real Spawned/Destroyed. Their
+names and Audience/Visibility/VisibilityGroup are reserved built-ins. The
+shared TextMate grammar scopes all five as built-ins; the probe retains its
+custom-local-event examples under the unreserved name Displayed.
+
+Audience completion/hover/signature help covers All/None, Only(PlayerID),
+From(List<PlayerID>), and instance Add/Remove/Contains. Visibility supplies
+static CreateGroup/Set/DestroyGroup, its public group field, and instance
+Set<T>(Audience|VisibilityGroup)/Reset<T>(). Internal word/override fields
+never complete. Generic component completion excludes scene and Visibility
+policy types. Static group-writing forms stay out of view/input completion.
+CALL_VISIBILITY carries owner/receiver occurrences and named-argument hint
+metadata; method signatures have both Set overloads rather than relying on
+the ordinary builtin signature table. This updates the common language-server
+analysis and grammar used by all editor clients, not a client-specific API.
+
+`lsp_visibility_policies` pins member/type completion, hidden internals,
+generic targets, pure versus match-only forms, hovers and static/instance
+signature help. Existing local-event completion tests pin Shown/Hidden local
+and verified forms and their absence in match triggers. The full fresh native `tidels_tests` passes 234/234, including the new
+policy test and availability completion assertions. `npm ci`
+in docs installed the pinned dependencies; `npm run test:grammar` passes
+244/244 with Node 24.21.0. A final fresh run after endpoint reconciliation
+passes LSP 234/234, shared grammar 244/244 and VS Code Node adapter tests 28/28
+with no IDE-host launch. Docs production build and all three SEO checks pass
+under that Node too; final merged-doc rebuild is tracked separately.
+
 ## JetBrains prefab tool-window API correction (2026-10-14)
 
 Build run 38471050893 reached plugin verification after successful adapter tests

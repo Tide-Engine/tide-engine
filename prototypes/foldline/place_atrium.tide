@@ -1,0 +1,85 @@
+// A tiny scout crosses to the cargo island through a pipe whose door only the
+// cube holds open, and makes a giant's end for it there. Whoever throws the cube
+// is left behind with the pipe shut: the scout makes them a way over by the
+// quarter frame. Concrete backs keep the island's receptive faces hidden.
+void BuildCargoAtrium(mut Arena arena, mut Place place, mut Fold fold)
+{
+    BuildMapAtrium(arena, place);
+    Fill(arena, -20, -12, -1, 0, -18, 6, CARPET);
+    Fill(arena, -8, 8, -1, 0, 0, 20, CONCRETE);
+    // This cage wall reaches the room's roof. A whole body cannot jump onto
+    // the pipe's low outer roof, including from a partner or a cube.
+    Fill(arena, -12.15, -11.85, .55, 24, -18, 6.6, PANELS, false, 4);
+    Fill(arena, -20, -11.85, 0, 24, 6, 6.6, PANELS);
+    Fill(arena, -12, -8, -.6, 0, 3.55, 4.45, PANELS);
+    Fill(arena, -12.1, -7.9, 0, .9, 3.25, 3.55, PANELS);
+    Fill(arena, -12.1, -7.9, 0, .9, 4.45, 4.75, PANELS);
+    Fill(arena, -12.1, -7.9, .55, .9, 3.55, 4.45, PANELS, false, 2);
+    DigBloodPit(arena, -12, 20, -18, 24);
+    Fill(arena, -21, 21, 24, 25, -19, 25, PANELS, false, 2);
+    var west = Fill(arena, -21, -20, -2, 24, -19, 25, WALLPAPER, true);
+    Fill(arena, 20, 21, -2, 24, -19, 25, CONCRETE);
+    Fill(arena, -12, 21, -2, 24, -19, -18, CONCRETE);
+    Fill(arena, -21, -4, -2, 24, 20, 21, CONCRETE);
+    Fill(arena, 4, 21, -2, 24, 20, 21, CONCRETE);
+    // Over both lifts the walls go on to the roof, flush with their lintels: their doors rise into these.
+    Fill(arena, -20, -12, 4.4, 24, -19, -17.5, CONCRETE);
+    Fill(arena, -4, 4, 4.4, 24, 19.5, 21, CONCRETE);
+    // Beyond the gallery's north wall the blood runs on to the west wall, whose paper there is behind concrete.
+    DigBloodPit(arena, -20, -12, 6.6, 20);
+    Fill(arena, -19.99, -19.8, -2, 4.4, 6.6, 20, CONCRETE);
+    // Concrete strips above the entry gallery leave only approachable low paper.
+    Fill(arena, -19.99, -19.8, 4.4, 24, -19, 20, CONCRETE);
+    PaintFrame(arena, float3(-20, 0, -7), float3(1, 0, 0), .5);
+    PlaceEnd(fold, 0, west, float3(-20, 0, -14), float3(1, 0, 0));
+    PlaceEnd(fold, 1, west, float3(-20, 0, -7), float3(1, 0, 0), .5);
+    PutLoose(arena, fold, float3(-16, .4, -11));
+
+    // Only their north faces can be approached or shot. Reverse and narrow side
+    // faces have actual concrete backing, rather than a special shot rule.
+    Fill(arena, -4.7, 4.7, 0, 12.2, 6.2, 7.2, CONCRETE);
+    // The tower's paper is the big frame's alone: every shot on it goes into the frame, four times the size.
+    Fill(arena, -3, 3, 0, 10.75, 7.2, 8, WALLPAPER, true);
+    Fill(arena, -4.5, -3, 0, 12, 7.2, 8, CONCRETE);
+    Fill(arena, 3, 4.5, 0, 12, 7.2, 8, CONCRETE);
+    Fill(arena, -3, 3, 10.75, 12, 7.2, 8, CONCRETE);
+    Fill(arena, -4.7, -4.5, 0, 12, 7.2, 8.1, CONCRETE);
+    Fill(arena, 4.5, 4.7, 0, 12, 7.2, 8.1, CONCRETE);
+    Fill(arena, -4.7, 4.7, 12, 12.2, 7.2, 8.1, CONCRETE);
+    PaintFrame(arena, float3(0, 0, 8), float3(0, 0, 1), 4);
+    Fill(arena, 4.7, 8.2, 0, 4.5, 6.2, 7.2, CONCRETE);
+    // The service panel's paper is too small for any end but the quarter frame's: no whole-sized way onto the
+    // island, but the one the frame makes.
+    Fill(arena, 6.1, 6.9, 0, 1.2, 7.2, 8, WALLPAPER, true);
+    Fill(arena, 5, 6.1, 0, 4.4, 7.2, 8, CONCRETE);
+    Fill(arena, 6.9, 8, 0, 4.4, 7.2, 8, CONCRETE);
+    Fill(arena, 6.1, 6.9, 1.2, 4.4, 7.2, 8, CONCRETE);
+    Fill(arena, 4.7, 5, 0, 4.4, 7.2, 8.1, CONCRETE);
+    Fill(arena, 8, 8.2, 0, 4.4, 7.2, 8.1, CONCRETE);
+    Fill(arena, 4.7, 8.2, 4.4, 4.5, 7.2, 8.1, CONCRETE);
+    PaintFrame(arena, float3(6.5, 0, 8), float3(0, 0, 1), .25);
+    // The weighing chute is a grille cage: shots can reach the frame through
+    // it, while the giant cube is physically caught above the heavy plate.
+    Fill(arena, -3.5, -3.2, 0, 12.2, 8.1, 16.3, PANELS, false, 4);
+    Fill(arena, 3.2, 3.5, 0, 12.2, 8.1, 16.3, PANELS, false, 4);
+    Fill(arena, -3.5, 3.5, 0, 12.2, 16, 16.3, PANELS, false, 4);
+    SetProp(arena, PropKind.Arrow, float3(-12.113, .25, 3.4), WEST, float3(.4));
+    SetProp(arena, PropKind.Dollhouse, float3(-18, 0, 3), EAST, float3(1.5));
+    SetProp(arena, PropKind.Clock, float3(-19.94, 3, -3), EAST, float3(2));
+    for (int floor = 0; floor < 3; floor++)
+    {
+        // Each office floor spans the east wall to both end walls: it's held by the building, not hung in air.
+        Fill(arena, 14, 20, 6 + floor * 5, 6.4 + floor * 5, -18, 20, CONCRETE, false, 2);
+        for (int desk = 0; desk < 4; desk++)
+            SetProp(arena, PropKind.Desk, float3(17, 6.4 + floor * 5, -10 + desk * 6), WEST);
+    }
+    LampGrid(place, float2(-20, -18), float2(4, 4), 10, 10);
+    OfficeLamps(place, 0, 1, 0, 5, 8, 81);
+    OfficeLamps(place, 3, 6, 4, 8, 16, 82);
+    OfficeLamps(place, 8, 9, 0, 8, 22, 83);
+    HangLamp(place, 5, 8, 16, LampState.Signal, 0, 0);
+    place.light = .68;
+    place.fog = .018;
+    place.grade = float3(1.08, .98, .9);
+    MenuView(place, float3(-16, 8, -14), -.12, .65);
+}

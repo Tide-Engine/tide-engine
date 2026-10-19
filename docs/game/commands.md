@@ -61,11 +61,13 @@ A handler is void. Guard clauses end processing, and writes take effect normally
 
 Components and `this` refer to the target entity, as in an event handler. A handler taking no components runs once for the command. The compiler requires an entity target if the handler needs one. A target that no longer exists, or no longer matches the handler, has no effect.
 
+Synchronous command handlers also take read-only `query` parameters, using the same [query rules as match events](./events.md#querying-other-entities). A query selects a separate set of entities, so a handler taking only queries and singletons requires no entity target. It reads the current match at the command's turn in the tick-end queue; recorded events and structural changes remain deferred. Check the authenticated sender's permissions before acting on queried entities, as with any command target.
+
 ## Delivery and ticks
 
 Commands are queued independently of input. Multiple submissions between ticks remain separate commands, and a late command is not lost because its original input tick passed. The engine resends pending commands and identifies duplicates by a per-player sequence.
 
-The server chooses the tick and order. Handlers run at the end of that tick with the existing event and structural-change queue. Each handler sees the changes made by the commands handled before it. The server sends the recorded commands with its tick history, so every machine replays that order.
+The server chooses the tick and order. Handlers run at the end of that tick with the existing event and structural-change queue. Each handler sees the changes made by the commands handled before it. Full-world games send recorded commands with tick history so every machine replays that order. With [state visibility](./visibility.md), command handlers execute only on the authoritative server; clients receive their permitted state consequences rather than raw command targets or payloads.
 
 Sequence state belongs to the world: snapshots, state hashes and host migration include it. A received command occupies one entry in the authoritative timeline, but its handler can run again during rollback. External side effects must account for replay, as in any simulation code that calls C.
 
@@ -93,7 +95,7 @@ Whatever the ordering, the server picks the tick and every handler runs in the t
 
 A command holds a `List<byte>` too, so a player's file goes into the match as it is: an image's bytes, a text's, any file's, for a handler to keep in a component or decode. Such a command is 4 MiB at most. One that doesn't fit a datagram goes as a numbered transfer in chunks, the way worlds go, resent until acknowledged and paced under the input traffic (16 KB an update, about a megabyte a second), so a transfer never delays a tick. It lands in a later tick, as any command may.
 
-Everything that goes through the match goes player to server to everyone, so a host sends a big command once per player: a few megabytes is fine, and big media is a URL in the match, fetched by each machine. The server sends the bytes to every player in the match before it puts the command in a tick, so no player's tick waits for a download; a player who joins later gets the world as the command left it. Put a big command in a channel of its own, or make it unordered, so nothing waits behind it.
+In full-world games, the server distributes a big command to every player before scheduling it, so no player's tick waits for its download; later joiners receive the resulting world. Visibility-enabled games keep that upload server-side and replicate only permitted state consequences. A few megabytes is fine; larger public media can be a URL fetched by each machine. Put a big command in a channel of its own, or make it unordered, so nothing waits behind it.
 
 ## Untrusted payloads
 

@@ -410,6 +410,31 @@ TIDE_TEST(cli_libraries_universal_dylib)
     TIDE_CHECK(info.dynamic);
 }
 
+// A slice of a universal library, for one CPU: what tide puts beside a macOS game (MoltenVK's)
+TIDE_TEST(cli_libraries_universal_slice)
+{
+    bytes b = {0};
+    be32_at(&b, 0, 0xCAFEBABEul);
+    be32_at(&b, 4, 2);
+    be32_at(&b, 8, 0x01000007ul); // x86_64: 0x20 bytes at 0x100
+    be32_at(&b, 16, 0x100);
+    be32_at(&b, 20, 0x20);
+    be32_at(&b, 28, 0x0100000Cul); // arm64: 0x30 bytes at 0x200
+    be32_at(&b, 36, 0x200);
+    be32_at(&b, 40, 0x30);
+    b.len = 0x230;
+    size_t at = 0, n = 0;
+    TIDE_CHECK(lib_universal_slice(b.data, b.len, LIB_X64, &at, &n) && at == 0x100 && n == 0x20);
+    TIDE_CHECK(lib_universal_slice(b.data, b.len, LIB_ARM64, &at, &n) && at == 0x200 && n == 0x30);
+    TIDE_CHECK(!lib_universal_slice(b.data, b.len, LIB_OTHER_CPU, &at, &n));
+    // A slice past the bytes there are isn't one, nor is what isn't universal
+    TIDE_CHECK(!lib_universal_slice(b.data, 0x22F, LIB_ARM64, &at, &n));
+    TIDE_CHECK(!lib_universal_slice(b.data, 30, LIB_X64, &at, &n));
+    unsigned char thin[32];
+    macho(thin, 0x0100000Cul, 6);
+    TIDE_CHECK(!lib_universal_slice(thin, sizeof thin, LIB_ARM64, &at, &n));
+}
+
 TIDE_TEST(cli_libraries_other_files_are_unknown)
 {
     bytes b = {0};

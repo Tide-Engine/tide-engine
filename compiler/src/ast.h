@@ -149,7 +149,7 @@ typedef enum type_kind {
     TY_ARRAY,      // T[N]: decl is the array type (DECL_ARRAY), whose one field is its element and array_length N
     TY_MESH,       // Mesh<V>: decl is the mesh type (DECL_MESH), whose one field is its vertex. An asset's vertices and indices, the pack's own
     TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
-    TY_QUERY,      // A system's read-only second entity set; decl is its compiler-only row struct
+    TY_QUERY,      // A read-only entity set, borrowed by helpers; decl is its compiler-only row struct
     TY_COMPONENT,
     TY_SINGLETON,
     TY_INPUT,      // The game's input declaration
@@ -281,7 +281,7 @@ typedef enum param_mode {
     PARAM_EVENT, // An event handler's trigger: `event(Hit hit)`, always its first parameter
     PARAM_SENDER, // A command handler's authenticated PlayerID, following its payload
     PARAM_IN,    // `in Stats stats`, an extern function's: C gets a read-only pointer to the value
-    PARAM_QUERY, // `query (Body body, with Fighter) fighters`: a second candidate set
+    PARAM_QUERY, // `query (Body body, with Fighter) fighters`: a selection, or a helper's borrowed row requirements
 } param_mode;
 
 // One value the devices send, like keyboard.space or gamepad.leftStick.
@@ -438,7 +438,8 @@ typedef enum decl_kind {
 // values are tide/draw.h's tide_shader_read's.
 // READ_CUBE is a Cubemap's color, read by a direction.
 // READ_DATA is a list's elements, as numbers: read by their place (shader.c, Lists).
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA } shader_read;
+// READ_SIZE is compiler-only metadata in uniforms, never a runtime texture binding.
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA, READ_SIZE } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -515,6 +516,7 @@ typedef struct decl {
     struct prefab_node *prefab_root;
     struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    bool visibility_optional; // Whole-component visibility needs an independent per-row presence byte on clients.
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
     // their own, its local part: a local one of the same kind and name, which
@@ -583,6 +585,7 @@ typedef struct decl {
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
     int index; // Component bit / singleton index / event index / system order / list, map or grid number. Constants: 1 while checking, 2 once checked.
+    int match_singleton_index; // Match-only ordinal: local singletons/attached fields do not affect seeding or simulation identity.
     int dims;  // Grids: 2 or 3
     bool resized;         // Lists: some code calls Resize, so generated C has its helper
     bool paths;           // Lists and maps: code reaches into an element's fields (`rows[i].x`), so generated C has the helpers that point at one
@@ -644,6 +647,7 @@ typedef struct decl {
     struct asset_value *asset;
     VEC(struct expr *) asset_paths; // Checked path literals, including an AnimationCatalog file list.
     int asset_kind;  // The asset_kind its type says, once checked (asset_files.h)
+    bool server_asset; // Codegen-only membership in the retained simulation asset closure.
     int asset_animation_index; // A singular Animation's checked source clip.
     // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
     // names it doesn't say: 1 + the enum member's number, or 0 for none (declared_sampling)
@@ -680,6 +684,7 @@ typedef struct decl {
     bool plays;          // Plays sounds (Audio), itself or through the functions it calls: local code's
     loc plays_at;
     bool render_resources; // Uses local rendering handles, directly or through its calls
+    bool reads_texture_size; // Frame-host metadata: not available to parallel loop workers
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
     loc io_at;
@@ -694,6 +699,8 @@ typedef struct decl {
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
+    bool borrows_queries; // A synchronous helper whose query parameters borrow its callers' selections
+    bool borrows_asset_collections; // CPU-only synchronous borrowing, propagated through helpers
     bool calls_c;        // Code that calls an extern function, itself or through others: its calls run in order
     bool writes_text;    // A system that writes text, lists or grids into its world: its heap, which one system changes at a time
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
@@ -848,7 +855,6 @@ typedef enum builtin_call {
     CALL_SEND,      // Send(RoundOver { ... }), or target.Send(Hit { ... }): type_decl is the event
     CALL_LOAD,      // Scene.Load(Arena { ... }): a spawn whose entity is its own scene; type_decl is the scene
     CALL_UNLOAD,    // Scene.Unload(scene)
-    CALL_SCENE_PLAYER, // Scene.AddPlayer(scene, player) and Scene.RemovePlayer(scene, player)
     CALL_SESSION,   // Session.Start, Open, Close, Join, Connect and Leave: `name` says which; type_decl is Start's scene
     CALL_CLIPBOARD, // Clipboard.Copy(text)
     CALL_SNAP,      // entity.Snap() or singleton.Snap(): views draw it as it is this tick; type_decl is a singleton's
@@ -868,7 +874,10 @@ typedef enum builtin_call {
     CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
     CALL_JSON,      // Json.Read<T>(text), Json.Write(value), string.FromBytes(bytes) and int.TryParse(text, out value):
                     // calls c_callee with its arguments as values, text a tide_str, and an `out` one by address
+    CALL_VISIBILITY, // Shared audience groups and typed whole-component restrictions.
 } builtin_call;
+
+enum { VISIBILITY_RECEIVER = 1, VISIBILITY_MUT = 2, VISIBILITY_WORLD = 4, VISIBILITY_COMPONENT = 8 };
 
 // What a GUI call needs besides its arguments, and which form of a draw
 // setting a call is (expr.gui).
@@ -947,7 +956,6 @@ typedef struct prefab_instance {
     bool load;
     VEC(prefab_entity) entities;
     VEC(expr *) overrides;
-    expr *visibility;
 } prefab_instance;
 
 struct expr {
@@ -1040,6 +1048,7 @@ struct expr {
     struct expr *skin_mesh;
     struct expr *skin_pose;
     int skin_operation;  // Checked model/pose operation; shared with generated adapters.
+    unsigned visibility_operation; // VISIBILITY_* flags for private generated helpers.
     // E_MEMBER the checker made of a mesh draw's Mesh, 'Draw.Mesh(tree, ...)': 1 for its vertices and 2 for its
     // indices, in the two arguments' places. Both have the Mesh's expression as their object, the same one: it's
     // worked out for the first, and what's written of it again for the second reads what the first left
@@ -1266,6 +1275,7 @@ typedef struct shader {
     const field *instance_list;      // A list its code reads of the instance struct, which no draw can send
     VEC(shader_value) values;
     VEC(shader_texture) textures;
+    VEC(shader_texture) sizes; // Metadata only: two uniform ints, no sampled texture binding
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
     VEC(shader_handed) handed; // What its vert writes for its frag, in the order the vert takes them
     int instance_floats, instance_ints; // Words
@@ -1334,13 +1344,14 @@ typedef struct program {
     VEC(command_channel) channels; // The channels [Channel] names, in order: channel i + 1
     decl *spawned;        // Built-in events
     decl *destroyed;
+    decl *shown;          // Local availability transitions of match entities/components
+    decl *hidden;
     decl *player_joined;
     decl *player_left;
     decl *main;          // The scene named Main, where the program starts
     decl *editor_create; // Private preview factory, present only in an editor build.
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.
-    decl *scene_visibility; // The built-in enum SceneVisibility
     decl *anchor;        // The built-in enum Anchor: where GUILayout.Area goes, and the place of a text's box
     decl *font;          // The built-in enum Font, the weight text is drawn in
     // Whether code names Font.Bold, or makes a Font of a number: only then does
@@ -1393,6 +1404,8 @@ typedef struct program {
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
     bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
+    bool uses_clip_values; // Clip values need their C type even without assets or audio playback.
+    bool uses_texture_size; // Local frames borrow the host's physical target-size resolver
     bool uses_resident;  // A match singleton has a Resident field: the worlds carry its pages, the local state the arenas' registry
     bool quiet_names;    // While a built-in struct's own fields resolve: what they name isn't the game naming it
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
@@ -1423,6 +1436,8 @@ typedef struct program {
     decl *transform;     // Shared Transform component; placement determines its world
     decl *hierarchy[2];  // Private per-world hierarchy state, present only when hierarchy operations are used
     decl *hierarchy_node;
+    decl *visibility, *visibility_group, *audience;
+    decl *visibility_state, *visibility_policy, *visibility_anchor; // Private groups, overrides and exact hierarchy boundary transforms.
     decl *devices;       // The built-in Devices record.
     VEC(decl *) records; // Built-in records: Devices, Keyboard, Mouse, Gamepad, Dpad, Button.
     VEC(device_leaf) device_leaves; // Each value the devices send: a button, stick, trigger, axis, int or bool
@@ -1618,3 +1633,7 @@ const bool *shader_texture_leaves(const shader_texture *t);
 
 // Every shader's sources as text, for `tidec --shaders`.
 void print_shaders(const program *prog, sb *out);
+// ...and each one's SPIR-V into `dir`, as <n>.spv in that order, with a line
+// for each in `out`, for `tidec --spirv`: false, having said why, if one's
+// WGSL didn't become SPIR-V or a file couldn't be written.
+bool write_spirv(const program *prog, const char *dir, sb *out);

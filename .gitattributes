@@ -10,7 +10,6 @@ compiler/tests/e2e/assets/** -text
 
 # The platform's font, and code vendored as it came.
 *.ttf binary
-docs/static/prototypes/copper-coil/*.pdf binary
 
 # Sounds the tests play.
 *.wav binary

@@ -1,0 +1,5 @@
+// expect: 'Shown' describes this machine's visibility: handle it with 'local event(Shown)'
+component Marker { int id; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Marker); }
+event(Shown) Incorrect(Marker marker) { Debug.Assert(marker.id == 0); }

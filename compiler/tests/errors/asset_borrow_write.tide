@@ -1,0 +1,4 @@
+// expect: 'values' is read-only
+// expect: borrowed asset collections are read-only
+void Change(List<Clip> values) { values.Clear(); }
+scene Main { }

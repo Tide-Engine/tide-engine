@@ -135,3 +135,84 @@ The standard host does everything above. A C program with a loop of its own ([C 
 | `tide_network_match_leave(&m)` | When the match is left, ended or replaced by one on no network of the game's |
 
 A game's library has its own copy of the engine under `tide run`, so the standard host asks the game for its network through `tide_host_game.network`, which `tide/run.h` fills with `tide_network_get`.
+
+## Dedicated hosting
+
+`tide/hosting.h` hosts independent matches of one compiled `tide_game` over a
+shared transport. `tide/serve.h` supplies the native service loop, without a
+window, views, audio or local player. `tide/server_run.h` adapts a generated game.
+
+An optional C process entry point configures the standard service:
+
+```c
+#include "game.h"
+#include "tide/hosting.h"
+
+void tide_server_entry(tide_hosting_desc *host)
+{
+    host->max_matches = 32;
+    host->idle_seconds = 120;
+    // Set authorize for your identity provider and admission policy.
+    // Set start to choose each match's scene and startup parameters.
+}
+```
+
+`start(user, request, match)` receives an authorized create request and a
+`tide_server_desc`. Set `match->start` to a normal typed `tide_start`, using the
+scene selector and union member listed in the generated header. Validate the
+request's application-defined parameters and return false to refuse them.
+Use host-owned/static startup storage that survives callback return; startup
+consumes it before the next callback. The host supplies the
+game, transports, shared worker pool and entropy. A local `Main` requires this
+callback. No new Tide orchestration syntax is defined yet.
+
+`ready(user, hosting)` runs once after service creation;
+`poll(user, hosting, now)` runs before each service update, outside ticks. Use
+them to create/stop matches or complete external authentication work.
+
+| Function | Purpose |
+|---|---|
+| `tide_hosting_create`, `tide_hosting_destroy` | Own the host/transport; failed creation leaves transport ownership with the caller |
+| `tide_hosting_update` | Read bounded traffic and advance matches |
+| `tide_hosting_start`, `tide_hosting_stop` | Trusted in-process lifecycle; start returns the match ID |
+| `tide_hosting_world`, `tide_hosting_match_count` | Inspect authoritative state and capacity |
+| `tide_hosting_player_identity` | Read verified player metadata outside simulation |
+| `tide_hosting_resolve` | Complete pending authorization by its host-assigned request handle |
+
+`authorize(user, request, grant)` sees `request->match == 0` for create-and-enter,
+or a match ID for joining. Return `TIDE_HOSTING_ACCEPTED`, `TIDE_HOSTING_DENIED`
+or `TIDE_HOSTING_PENDING`. Acceptance supplies a verified opaque 32-byte identity;
+all zero means anonymous. A verifier takes precedence over anonymous flags.
+Copy any borrowed request data needed by asynchronous work, then complete it
+with `tide_hosting_resolve`. Pending requests expire after ten seconds; stale
+completion handles are rejected. Credentials are cleared after resolution.
+
+The verifier checks validity, expiry, intended server/match and permission using
+its provider's protocol. Tide supplies no JWT implementation, account database or
+platform sign-in. Credentials and create parameters are each bounded to 512 bytes.
+`secure_peer` must confirm transport protection before credentials are accepted;
+the standard service permits them only through WebRTC. Identity metadata stays
+outside world snapshots. Reconnect cookies cannot transfer a different verified
+account's player slot; the original account can resume without a cookie.
+
+Custom clients call `tide_hosting_client_create` with the transport, endpoint,
+match ID (zero to create), fresh nonce and optional credentials/parameters.
+Copy the generated game's `simulation` array into the client description's
+`simulation` field; incompatible requests are rejected before allocation.
+Set `secure` only for a protected transport. Update until accepted, then hand
+`tide_hosting_client_transport` and `tide_hosting_client_address` to an ordinary
+client/session. Keep updating the hosting client before its session, and destroy
+the session first. The virtual address distinguishes matches for reconnects.
+
+Hosting APIs run on one host thread, with matches updating sequentially through
+the shared jobs pool. `ready`/`poll` belong to the service loop, not the
+transport-neutral update function. Match-specific C globals remain the game's
+responsibility. Native crash containment, restart persistence and dedicated-server
+host migration are not supplied by this API.
+
+Managed WASM hosting uses the same `start` callback for scene selection, with
+project admission and trusted creation handled by its service. Guard server C
+with `#ifdef TIDE_SERVER_BUILD` before including `game.h`. Native process/auth
+hooks do not run inside managed guests. See [Managed hosting](../multiplayer/hosting.md)
+for deployment, credentials, lifetime and recovery. The service's optional C
+save/load callbacks are documented in `hosting/README.md` in the repository.

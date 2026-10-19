@@ -1,5 +1,158 @@
 # The Box3D package
 
+## All-hit queries and live ignore-body parity (2026-10-18)
+
+The owner approved `RaycastAll`/`CastAll` and ignore-body overloads after the
+prototype gap review. Live `Physics` and detached rewound `Query` now have
+`RaycastAll(from, to, out List<RayHit> hits, bool includeSensors = false)`
+and an overload with `Body ignore` before the optional sensor flag.
+`CastAll` has the same forms for `Box`, `Sphere` and `Capsule`, retaining
+`shape, from, rotation, to` order. Named arguments are `ignore: body` and
+`includeSensors: true`; sensors are excluded by default. Live closest-hit
+`Raycast` and `Cast` now also support `ignore: body`, matching Box2D and the
+existing rewound overloads. Ignoring uses the whole native handle including
+generation, and excludes all the body's shapes, including parts.
+
+Each collider contributes its first hit. Results sort by increasing fraction,
+then the complete shape-handle tie order used by the closest-hit method.
+Separate colliders on a body remain separate even if their `entity` and `part`
+match. A mesh contributes one hit for the whole collider, not every triangle,
+entry or exit. The methods replace the destination list, return whether it has
+any hits, and give an empty list for an unstepped world, invalid cast inputs
+or an invalid/empty rewind context. Results are ordinary `RayHit` values for
+game filtering and match/local retention, snapshots and packing. Existing
+live deletion exclusions and captured-context retention remain in effect.
+
+The native callback collects actual hits in 32 stack slots and grows only as
+needed, retaining the full sweep by returning 1. Box3D's native mesh query
+already returns the first intersection of each shape. Results are sorted once
+and written through a checked `out List<Found>`; all native record bytes are
+cleared before assignment, including padding. Growth arithmetic is bounded
+by the runtime's 1 GiB output-list byte limit and uses its existing fatal
+allocation failure path, without a smaller hit cap or silent truncation.
+Tide maps records through `Met`. No global query storage, public result field,
+body/physics ABI or resident-world representation changed. The native filter
+gained ignore-body and sensor flags; closest-hit queries retain early pruning.
+
+The detached path reuses the existing BVH candidates and `SceneRay`/`SceneCast`
+narrow phase. Candidates are in collider-array order, with each mesh's
+triangles contiguous. `AddSceneHit` therefore merges those adjacent triangle
+answers in linear time, retaining the nearest one (first triangle on a tie),
+before sorting collider hits by the same fraction/shape keys. A starting cast
+overlap retains fraction 0 and zero normal; no unique surface point is
+specified there. Rays still skip shapes they start inside, with either sensor
+option, as before.
+
+`test/query_all.tide` and `packages/test/query_all_test.h` cover rays and all
+three cast shapes, closest/all-first agreement, equal-fraction order,
+compounds/parts, sensors, old versus reused body handles, gameplay filtering,
+empty/nonfinite/overflow queries, first-step availability, initial overlaps,
+70-hit growth, fractional rewind, deletion and retained contexts, local/match
+result retention, snapshot/pack/restore, and serial/job-pool equivalence. A
+two-plane mesh verifies exactly one hit per collider in both live and detached
+paths. The public-hit digest `f8d8985883f8ec9f` matches native/WASI debug and
+release. Full debug suites passed (native 2374, web 2284); both query fixtures
+passed in native and web release, and the docs build passed. Existing physics
+and resident pins remain unchanged. User references are `README.md` and
+`docs/packages/box3d.md`.
+
+Scene visibility unification (2026-10-15): removal of generated scene audience
+fields changes complete-world/world-sequence pins in stack, course, sleep and
+mesh (mesh sequence now afa0b803e82fedb1). Native and WASI agree. Body, resident
+digest and query-answer pins remain unchanged; no bridge or vendored physics
+implementation changes. Validation is in notes/language.md.
+
+## Static mesh colliders (2026-10-15)
+
+The owner requested mesh collider support. `MeshCollider` now accepts
+`List<float3> vertices`, zero-based triangle `List<int> indices`, `scale`
+(default 1), `offset`, `friction` (0.6) and `bounce` (0). It attaches to a
+static `Body` or its `Part`, preserving concavity. Geometry and material
+are read once, as for other shapes. An unsupported body or invalid mesh
+makes no shape; an unsuccessful mesh part is destroyed. An attachment is
+attempted once. Bodies with attached meshes remain static when another
+type is requested; position/rotation writes still work. Naming, limits and
+these detailed failure policies are implementation picks, provisional with
+the rest of the package API. No language or engine runtime API changed.
+
+Native attachment systems read the actual list handles through rows,
+derive counts and flatten checked source lists internally. There is no
+callable Tide extern taking a caller-supplied buffer length. `MeshMade`
+is a dense one-bool marker because extern systems cannot filter sparse
+components. `PrepareMeshParts` temporarily places the native body handle in
+`Part.mesh`; attachment replaces it with the shape handle and registration
+records its entity. Removal follows the existing part/body lifecycle.
+The step remains one named phase; meshes attach after existing primitives
+and before Simulate. `Part` grows from 32 to 40 bytes.
+
+The cooker validates 3–65,536 vertices, 1–65,536 triangles, complete index
+triples and every index, finite nonzero scale, finite offset and coordinates
+after baking within ±1,000,000 per axis, finite nonnegative friction and
+finite bounce in [0, 1]. These bounds also keep native intermediate area,
+BVH cost and byte/count arithmetic in range on wasm32. Degenerate triangles
+are discarded by Box3D; an entirely degenerate mesh is rejected. Mirroring
+flips input winding when cooking, retaining outward/front orientation.
+There is no sensor/density field, per-triangle material API, mesh query
+probe or automatic rendering-mesh conversion.
+
+`b3World_InternMesh`, a Tide-marked addition to the vendored library, copies
+and deduplicates cooked bytes through the world's existing canonical
+geometry store and hash buckets. It never caches the temporary cooker's
+address, which can be freed and reused. Temporary cooked data is freed;
+retained data belongs to the resident arena and the canonical snapshot.
+Interning/creating meshes conservatively marks all resident pages. Unique
+geometry remains until world destruction, like existing box hulls.
+
+Current queries include meshes through Box3D. Detached query/history scenes
+store one value-only Collider per triangle (`count == 3`), preserving the
+existing 176-byte ABI and BVH. Ray and shape casts use Box3D's mesh narrow
+phase over a stack-owned one-leaf triangle, including front-face rejection;
+overlaps use the existing distance path. No native geometry pointer escapes
+into a scene. Preparation/history memory scales with triangle count;
+disabled history captures none. Expanded counts and output capacity are
+checked before allocation/copy. Existing scene limitations at extreme
+allocation exhaustion remain; the package arena is still 64 MiB.
+
+`tide_box3d_mesh` covers collision versus a gap, all current/rewound primitive
+queries, front/back rays, initial overlap, mirrored/rotated parts and current
+non-opted geometry, historical pose interpolation, retained contexts, source
+edits, type changes, destruction, snapshots, canonical restore, replay,
+chunked vertex/index lists, invalid indices/degenerates and nonfinite data.
+Its simulation sequence is `870764faa96485c3` on Windows and WASI.
+`tide_box3d_mesh_join` reuses the fresh-process full-state/delta host with
+this scene. Network deltas transfer between native and WASI in both
+directions, with initial and ten-ticks-later hashes equal. Full world packs
+remain the existing platform-local raw-header format; the network delta
+format is used for cross-platform transfer.
+
+The course fixture's parts/asking world pins change for the larger Part;
+body, resident-digest and answer pins are unchanged. Sumo's two network pins
+also change: adding the components shifts the compiler's existing automatic
+Brain.dice spawn salt from 3072 to 3584. Generated old/new C confirms that
+cause; native/WASI agree at ticks 640 and 880. Physics rules and RNG algorithms
+are unchanged.
+
+Validation: Windows clang 23.1.2, local Node 24.16.0. The complete debug
+suites ran 2,339 native and 2,252 web tests; their only failures were the two
+explained Sumo hash pins. After updating those pins, all eleven Box3D/Sumo
+targets pass on both platforms, including full-arena checks, original
+determinism/answer pins, fresh-process joins and rewind-network profiles.
+The final four mesh cases additionally pass on both platforms after adding
+chunked/invalid-data and ABI/released-type coverage. Production docs build
+and diff checks pass. Native GPU and WebGL/WebGPU coverage ran in the full
+suites. Android, other operating systems and sanitizers were not run; no CI
+workflow was dispatched.
+
+Merged origin/dev's unrelated frustum-culling work cleanly. Rebuilt both
+complete debug targets against the incoming compiler/draw ABI, then passed
+120 native and 121 web dependency/physics tests: runtime tests, changed
+compiler/render fixtures and diagnostics, native GPU/WebGL/WebGPU drawing,
+all Box3D targets and Sumo. The merged production docs build passes; final
+fresh-process native↔WASI network delta reads also pass in both directions.
+The final native attachment counters use Tide's wrapping integer helper;
+the fifth mesh case checks overflow across both attachments and stability
+afterward, passing on native and WASI.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases

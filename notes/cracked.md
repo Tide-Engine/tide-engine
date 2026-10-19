@@ -210,6 +210,7 @@ Each was met as a compiler error or measured, not read in a doc.
 3. **A field of a vector in an array's element can't be assigned**:
    `arena.seats[s].velocity.y = 0` is an error ("a list's element is a
    copy"), though `arena.seats[s].velocity = ...` is written in place.
+   Fixed 2026-10-18; the compiler regression is in `notes/language.md`.
 4. **A match event handler takes no query**, so `PlayerLeft` finds the
    player's entity through a map the match keeps.
 5. **A local handler can't read the match's lists or maps.** `PadUsed` and
@@ -217,6 +218,8 @@ Each was met as a compiler error or measured, not read in a doc.
 6. **A singleton's `Random` is seeded by the singleton's place in the
    program**, so adding a local singleton in another file changed the
    match's rolls. The game seeds its own from `Random.seed`.
+   Fixed 2026-10-18 by match-only singleton ordinals (`notes/random.md`);
+   the game's explicit seed remains.
 7. **A function a frag calls can't take a singleton that holds a `Cubemap`
    or a `Random`**: the sky and the effects' dice are in singletons of their
    own.
@@ -245,7 +248,7 @@ since: every check is still a scripted run and captures.
   left it: 30 steps a second, and a correction all at once. Each seat now has
   an `Avatar` entity with `[Position]` and `[Rotation]` fields, which `Mirror`
   writes after `Tick` (and `Snap`s when a new avatar spawns, by `Seat.life`).
-  A view copies them into the local `Shown`, and every view that draws or
+  A view copies them into the local `Presentation`, and every view that draws or
   follows a seat reads `Seen(arena, shown, s)`. Bullets are drawn between
   their last two ticks' places, and sliding movers at
   `velocity * (time.t - time.tick * time.dt)`. Measured in a scripted walk:
@@ -280,3 +283,8 @@ The scripted match's hash moved with `Avatar` and the two fields. Validation:
 `cracked_tests` 64 of 64 natively and under WASI with the same new hash; the
 web build compiles; nothing was run in a browser, and the full suites weren't
 run again.
+
+2026-10-15 visibility integration: renamed the local presentation singleton from
+`Shown` to `Presentation`, because `Shown` now names an engine availability event.
+This is a local-only naming change; match layout and deterministic hashes do not change.
+Validation is included in the visibility change's full native/web suites.

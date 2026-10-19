@@ -7,6 +7,9 @@ typedef struct build_options {
     bool release;       // Optimized, no console window on Windows
     bool web;           // One self-contained .html, with clang's WebAssembly target
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
+    bool server;        // Headless native process hosting independent matches.
+    bool managed;       // Internal deploy target: single-match sandboxed WASM reactor.
+    bool server_strip_assets; // Explicit promise that custom C has no hidden asset dependencies.
     bool watch;         // Interactive run: rebuild as the game's files change
     const char *output; // Where the program goes; NULL for <folder>/build/<name>
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name

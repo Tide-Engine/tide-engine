@@ -11,7 +11,7 @@ struct Stats
 
 component Scores
 {
-    Map<int, int> byLevel;
+    Map<int, int> byLevel = [];
     Map<string, Stats> byName;
     Map<Entity, float> distances;
     Map<Team, long> totals;
@@ -58,6 +58,11 @@ int Total(Map<int, int> m)
     return total;
 }
 
+Map<string, Stats> EmptyScores()
+{
+    return [];
+}
+
 Set<int> Doubled(Set<int> keys)
 {
     mut Set<int> out = [];
@@ -68,6 +73,13 @@ Set<int> Doubled(Set<int> keys)
 system Use(mut Scores s, mut Results t, mut Roster roster)
 {
     if (t.checks > 0) return; // Once
+
+    mut Map<int, List<int>> empty = [];
+    empty[7] = [1, 2, 3];
+    var retained = empty;
+    empty = [];
+    Expect(t, empty.count == 0 && retained[7].count == 3);
+    Expect(t, Total([]) == 0 && EmptyScores().count == 0);
 
     // Reading and writing by key
     Expect(t, s.byLevel.count == 0 && s.byLevel[5] == 0 && !s.byLevel.Has(5));
@@ -162,8 +174,13 @@ system Churn(mut Scores s, Results t, Time time)
     s.byLevel.Remove(2 * time.tick);
 }
 
+int TallyTotal(Tally tally)
+{
+    return Total(tally.counts);
+}
+
 event(Tally tally) Count(mut Results t)
 {
-    if (tally.counts.count == 1 && tally.counts[8] == 8) t.passed += 1;
+    if (tally.counts.count == 1 && TallyTotal(tally) == 8) t.passed += 1;
     t.checks += 1;
 }

@@ -1,0 +1,4 @@
+// expect: a task can't take a query yet
+component Body { int x; }
+async void Read(query (Body body) rows) { await Wait.Ticks(1); }
+scene Main { }

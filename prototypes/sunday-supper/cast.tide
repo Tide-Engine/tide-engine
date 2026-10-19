@@ -1,0 +1,128 @@
+// The Hales: Walt, Ruth and their son Dale. The script says where they go,
+// how they stand and whom they look at; this walks them there.
+
+component Npc
+{
+    int who;
+    [Position] float3 at;
+    [Rotation] float yaw;
+    float3 goal;
+    bool walking;
+    float speed = 1.15;
+    Stance pose;
+    float clock;           // Seconds in the current pose, or walking
+    int look = -1;         // Whom they look at: 0 Sam, 1 Jo, 2 the nearer, 3 the place `lookAt`, -1 ahead
+    float3 lookAt;
+    bool shown = true;
+    float faceGoal;
+    bool facing;
+    bool jumped;           // Put somewhere at once: views don't slide them there
+}
+
+singleton Cast
+{
+    Entity walt;
+    Entity ruth;
+    Entity dale;
+}
+
+void ResetCast(mut World world, Cast cast)
+{
+    world.Set<Npc>(cast.walt, Npc { who = WALT, at = HOME_WALT, goal = HOME_WALT, yaw = -Math.PI * 0.5, faceGoal = -Math.PI * 0.5, shown = true, pose = Stance.Sit });
+    world.Set<Npc>(cast.ruth, Npc { who = RUTH, at = HOME_RUTH, goal = HOME_RUTH, yaw = Math.PI, faceGoal = Math.PI, shown = true });
+    world.Set<Npc>(cast.dale, Npc { who = DALE, at = HOME_DALE, goal = HOME_DALE, yaw = Math.PI * 0.5, faceGoal = Math.PI * 0.5, shown = false });
+}
+
+[After(Direct)]
+system WalkNpcs(mut Npc npc, Farm farm, Time time)
+{
+    if (npc.jumped)
+    {
+        npc.jumped = false;
+        this.Snap();
+    }
+    npc.clock += time.dt;
+    if (npc.walking)
+    {
+        var to = npc.goal - npc.at;
+        var flat = float3(to.x, 0, to.z);
+        var far = Math.Length(flat);
+        if (far < 0.05)
+        {
+            npc.at = float3(npc.goal.x, npc.at.y, npc.goal.z);
+            npc.walking = false;
+            npc.clock = 0;
+        }
+        else
+        {
+            var way = flat / far;
+            npc.at += way * Math.Min(far, npc.speed * time.dt);
+            var turn = TurnBetween(npc.yaw, Math.Atan2(way.x, way.z));
+            npc.yaw += Math.Clamp(turn, -6 * time.dt, 6 * time.dt);
+            npc.faceGoal = npc.yaw;
+        }
+        // Up and down stairs: they stand on whatever is under them
+        npc.at.y = GroundUnder(farm, npc.at, 0.2, npc.at.y);
+    }
+    else if (npc.facing)
+    {
+        var turn = TurnBetween(npc.yaw, npc.faceGoal);
+        npc.yaw += Math.Clamp(turn, -4 * time.dt, 4 * time.dt);
+        if (Math.Abs(turn) < 0.01) npc.facing = false;
+    }
+}
+
+// Whoever waits at the edge of the corn as the travellers come up the road: they watch from the rows, and back
+// into them once someone gets near, or looks at them a while.
+[After(Direct)]
+system Watching(mut Story story, Cast cast, Time time, query (Walker walker) walkers, mut World world)
+{
+    if (story.watch == 0) return;
+    mut var npc = world.Get<Npc>(cast.dale);
+    if (story.watch == 1)
+    {
+        if (!npc.shown)
+        {
+            npc = Npc { who = DALE, at = HOME_DALE, goal = HOME_DALE, yaw = Math.PI * 0.5, faceGoal = Math.PI * 0.5, shown = true, pose = Stance.Stare, look = 2 };
+            npc.jumped = true;
+            world.Set<Npc>(cast.dale, npc);
+            return;
+        }
+        mut var seen = false;
+        mut var close = false;
+        foreach (var row in walkers)
+        {
+            var w = row.walker;
+            var eye = w.feet + float3(0, EYE_HIGH, 0);
+            var to = npc.at + float3(0, 1.5, 0) - eye;
+            var far = Math.Length(to);
+            if (far < 26) close = true;
+            if (far < 90 && Math.Dot(to / far, LookDirection(w.yaw, w.pitch)) > 0.985) seen = true;
+        }
+        if (seen) story.watched += time.dt;
+        if (close || story.watched > 1.2)
+        {
+            story.watch = 2;
+            story.watched = 0;
+            npc.goal = HOME_DALE + float3(-9, 0, 2);
+            npc.walking = true;
+            npc.pose = Stance.Stand;
+            npc.speed = 1.6;
+            npc.look = -1;
+            world.Set<Npc>(cast.dale, npc);
+            Send(Cue { sound = int(Sfx.Rustle), at = npc.at });
+        }
+        return;
+    }
+    if (story.watch == 2)
+    {
+        story.watched += time.dt;
+        if (story.watched > 4 && npc.shown)
+        {
+            npc.shown = false;
+            npc.speed = 1.15;
+            world.Set<Npc>(cast.dale, npc);
+            story.watch = 3;
+        }
+    }
+}

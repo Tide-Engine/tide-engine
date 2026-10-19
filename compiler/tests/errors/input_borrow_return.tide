@@ -1,0 +1,4 @@
+// expect: functions and methods can't return input
+input Controls { bool jump; }
+Controls Read(Controls controls) { return controls; }
+scene Main { }

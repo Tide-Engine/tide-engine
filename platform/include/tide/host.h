@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "tide/layout.h"
+#include "tide/hosting.h"
 #include "tide/network.h"
 #include "tide/page.h"
 #include "tide/platform.h"
@@ -170,6 +171,7 @@ static inline void tide_run_load_assets(void)
 }
 static void *tide_run_local;  // The game's tide_local
 static void *tide_run_start;  // A tide_start, for what local code asks
+static const char *tide_run_data_directory;
 static tide_devices tide_run_devices;
 // The watching host's shortcuts, immediately after polling and before the
 // game reads its devices. Plain hosts leave this unset.
@@ -358,6 +360,52 @@ static inline void tide_run_discard_commands(void)
 // Starts, joins or leaves a match, as local code or the command line asked,
 // and copies what it asked to.
 // `start` is a tide_start, or NULL for Main.
+static tide_hosting_client *tide_run_hosting;
+static bool tide_run_hosting_joined;
+static char tide_run_hosting_endpoint[TIDE_NETWORK_ADDRESS_BYTES];
+
+static inline void tide_run_hosting_leave(void)
+{
+    if (!tide_run_hosting) return;
+    tide_session_leave(tide_run_session);
+    tide_hosting_client_destroy(tide_run_hosting);
+    tide_run_hosting = NULL;
+    tide_run_hosting_joined = false;
+}
+
+static inline bool tide_run_hosted_request(const tide_session_request *request)
+{
+    const char *slash = strrchr(request->text, '/');
+    if (!slash || slash == request->text || !slash[1]) return false;
+    uint64_t match = 0;
+    for (const char *p = slash + 1; *p; p++) {
+        if (*p < '0' || *p > '9' || match > UINT64_C(0x0000ffffffffffff) / 10u) return false;
+        match = match * 10u + (unsigned)(*p - '0');
+        if (match > UINT64_C(0x0000ffffffffffff)) return false;
+    }
+    const size_t n = (size_t)(slash - request->text);
+    if (n >= sizeof tide_run_hosting_endpoint) return false;
+    memcpy(tide_run_hosting_endpoint, request->text, n);
+    tide_run_hosting_endpoint[n] = 0;
+    tide_transport transport = {0};
+    tide_address server;
+    const bool room = request->kind == TIDE_REQUEST_JOIN;
+    const bool opened = room ? tide_platform_room_join(tide_run_hosting_endpoint, &transport, &server)
+                            : tide_platform_resolve(tide_run_hosting_endpoint, (uint16_t)request->port, &server)
+                              && tide_platform_udp_open(0, &transport);
+    tide_session_leave(tide_run_session);
+    const uint64_t nonce = tide_platform_entropy();
+    tide_hosting_client_desc d = {.transport = transport, .server = opened ? server : (tide_address){0},
+        .match = match, .nonce = nonce, .secure = room};
+    memcpy(d.simulation, tide_run_game->game->simulation, 32);
+    tide_run_hosting = opened ? tide_hosting_client_create(&d, tide_run_now) : NULL;
+    if (!tide_run_hosting) {
+        if (opened) transport.close(transport.self);
+        tide_session_fail(tide_run_session, TIDE_DISCONNECT_FAILED);
+    }
+    return true;
+}
+
 static inline void tide_run_request(const tide_session_request *request, const void *start)
 {
     tide_session *s = tide_run_session;
@@ -366,6 +414,15 @@ static inline void tide_run_request(const tide_session_request *request, const v
     const bool port_ok = request->port <= 65535u;
     const uint16_t port = port_ok ? (uint16_t)request->port : 0u;
     const tide_network *own = tide_run_registered();
+    if (request->kind == TIDE_REQUEST_START || request->kind == TIDE_REQUEST_JOIN
+        || request->kind == TIDE_REQUEST_CONNECT || request->kind == TIDE_REQUEST_LEAVE) tide_run_hosting_leave();
+    if ((!own || request->kind == TIDE_REQUEST_CONNECT) && !tide_platform_players()
+        && (request->kind == TIDE_REQUEST_JOIN || request->kind == TIDE_REQUEST_CONNECT)
+        && tide_run_hosted_request(request)) {
+        tide_run_discard_commands();
+        tide_network_match_leave(&tide_run_network);
+        return;
+    }
     switch (request->kind) {
     case TIDE_REQUEST_START:
         tide_run_discard_commands();
@@ -518,11 +575,18 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_headless_desc = (tide_headless_desc){0};
     tide_run_seeded = false;
     tide_run_seed = 0;
+    tide_run_data_directory = NULL;
     bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
         const char *arg = tide_run_settings.argv[i];
         if (strcmp(arg, "--debug-views") == 0) {
             tide_run_settings.debug_views = true;
+        } else if (strcmp(arg, "--data-dir") == 0) {
+            tide_run_data_directory = tide_run_value(&i, arg, "a save directory, like --data-dir test-saves");
+            if (!*tide_run_data_directory || *tide_run_data_directory == '-') {
+                fprintf(stderr, "tide: --data-dir takes a nonempty save directory, like --data-dir test-saves\n");
+                exit(2);
+            }
         } else if (strcmp(arg, "--size") == 0) {
             const char *takes = "the window's width and height in pixels, like --size 1280 720";
             tide_run_settings.width = (int)tide_run_number(&i, arg, 1.0, 16384.0, takes);
@@ -594,6 +658,10 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_headless_desc.argc = tide_run_settings.argc;
     tide_run_headless_desc.argv = tide_run_settings.argv;
 #if defined(__wasm__) || defined(__ANDROID__)
+    if (tide_run_data_directory) {
+        fprintf(stderr, "tide: --data-dir overrides native desktop saves, not web or Android storage\n");
+        exit(2);
+    }
     if (tide_run_headless) {
         fprintf(stderr, "tide: --capture, --frames and --script run a game with no window, on desktop only\n");
         tide_run_headless = false;
@@ -683,7 +751,6 @@ static inline tide_session *tide_run_new_session(void)
 // Bind local files before startup handlers or restored tasks can use them.
 static inline void tide_run_bind_io(const tide_host_game *game, void *local)
 {
-    if (!game->set_io) return;
     char fallback[512];
     const char *id = game->game->app_id;
     if (!id) {
@@ -694,7 +761,18 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
                 *p = '_';
         id = fallback;
     }
-    game->set_io(local, tide_platform_io_init(id));
+    tide_platform_name_game(id); // Its folders: the renderer's cache too, whether the game uses files or not
+    if (!game->set_io) return;
+    const char *directory = tide_run_data_directory;
+    char *player_directory = NULL;
+    if (directory && tide_platform_players() > 1u) {
+        const size_t size = strlen(directory) + 32u;
+        player_directory = tide_alloc(size);
+        snprintf(player_directory, size, "%s/player-%u", directory, (unsigned)tide_platform_player());
+        directory = player_directory;
+    }
+    game->set_io(local, tide_platform_io_init(id, directory));
+    free(player_directory);
 }
 
 // Starts tide_run_game: its local state and a session, then the match the
@@ -734,6 +812,7 @@ static inline void tide_run_begin(void)
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
+    tide_run_hosting_leave();
     const bool open = tide_run_drawer.open;
     tide_stats_free(&tide_run_drawer);
     tide_run_drawer.open = open;
@@ -840,6 +919,32 @@ static inline int tide_run_frame(void *user, const float seconds)
     // before the update, so the session records from its first tick
     tide_event_log *heard = game->events ? tide_session_events(s) : NULL;
     tide_network_match_update(&tide_run_network, tide_run_registered());
+    if (tide_run_hosting) {
+        tide_hosting_client_update(tide_run_hosting, tide_run_now);
+        const tide_hosting_result result = tide_hosting_client_result(tide_run_hosting);
+        if (result == TIDE_HOSTING_ACCEPTED && !tide_run_hosting_joined) {
+            const uint64_t match = tide_hosting_client_match(tide_run_hosting);
+            fprintf(stderr, "tide: joining dedicated match %llu\n", (unsigned long long)match);
+            tide_session_join(s, tide_hosting_client_transport(tide_run_hosting),
+                              tide_hosting_client_address(tide_run_hosting), tide_run_now);
+            tide_run_hosting_joined = true;
+        } else if (result != TIDE_HOSTING_PENDING && result != TIDE_HOSTING_ACCEPTED) {
+            const tide_disconnect_reason disconnected = tide_run_hosting_joined && result == TIDE_HOSTING_NOT_FOUND
+                ? TIDE_DISCONNECT_ENDED : result == TIDE_HOSTING_TIMED_OUT ? TIDE_DISCONNECT_TIMED_OUT
+                : result == TIDE_HOSTING_DENIED || result == TIDE_HOSTING_FULL || result == TIDE_HOSTING_WRONG_VERSION ? TIDE_DISCONNECT_REFUSED
+                : TIDE_DISCONNECT_FAILED;
+            const char *reason = disconnected == TIDE_DISCONNECT_ENDED ? "match ended"
+                               : result == TIDE_HOSTING_WRONG_VERSION ? "different simulation; update the client to this game's release"
+                               : result == TIDE_HOSTING_DENIED ? "permission denied"
+                               : result == TIDE_HOSTING_FULL ? "server capacity reached; try again later"
+                               : result == TIDE_HOSTING_NOT_FOUND ? "match ID not found; check the address"
+                               : result == TIDE_HOSTING_TIMED_OUT ? "no admission answer; check the server address"
+                               : "invalid admission request";
+            fprintf(stderr, "tide: dedicated server: %s\n", reason);
+            tide_run_hosting_leave();
+            tide_session_fail_message(s, disconnected, reason);
+        }
+    }
     const uint64_t update_began = measured_netcode ? tide_time_now_ns() : 0;
     tide_session_update(s, tide_run_now);
     const uint64_t update_ns = measured_netcode ? tide_time_now_ns() - update_began : 0;
@@ -859,11 +964,15 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_platform_room_ping(in_match ? (int32_t)status.client.ping_ms : -1, status.client.answer_ms);
     char room[TIDE_NETWORK_ADDRESS_BYTES] = "";
     if (status.open || !status.server) { // A closed room isn't one to join
-        if (tide_run_network.on) tide_network_match_address(&tide_run_network, room);
+        if (tide_run_hosting && tide_run_hosting_joined)
+            snprintf(room, sizeof room, "%s/%llu", tide_run_hosting_endpoint,
+                     (unsigned long long)tide_hosting_client_match(tide_run_hosting));
+        else if (tide_run_network.on) tide_network_match_address(&tide_run_network, room);
         else if (tide_platform_players()) tide_platform_players_code(room, sizeof room);
         else tide_platform_room_code(room, sizeof room);
     }
-    game->set_session(tide_run_local, status.client.state, status.client.player, status.client.ping_ms, status.server,
+    const uint32_t session_state = tide_run_hosting && !tide_run_hosting_joined ? TIDE_SESSION_CONNECTING : status.client.state;
+    game->set_session(tide_run_local, session_state, status.client.player, status.client.ping_ms, status.server,
                       status.open, room);
     tide_profiler_mark(profiler, TIDE_FRAME_MATCH);
 
@@ -872,6 +981,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
+    tide_run_draw.target_pixels = tide_platform_target_pixels;
     tide_audio_reset(&tide_run_audio);
     // The GUI and the views read the devices, less a press that's on the stats
     const tide_devices *seen = &tide_run_devices;
@@ -965,6 +1075,7 @@ static inline int tide_run_frame(void *user, const float seconds)
             .gpu_memory = tide_platform_gpu_memory(),
             .renderer = tide_platform_renderer(),
             .draw_calls = tide_platform_draw_calls(),
+            .vertices = tide_platform_draw_vertices(),
             .match = match != NULL,
             .remote = match && !status.server,
             .ping_ms = status.client.ping_ms,

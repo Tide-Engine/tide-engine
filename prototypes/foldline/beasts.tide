@@ -1,0 +1,210 @@
+// The place owns a creature's movement and animation clock. Drawing samples that
+// clock once, then reuses the same pose in every lamp and fold camera.
+enum BeastKind { Flayed, Crawler, Spider, Figure, Drowned }
+enum BeastSkin { Default, Dark, Mannequin, Shadow }
+
+component Beast
+{
+    int chamber;
+    BeastKind kind;
+    BeastSkin skin;
+    [Position] float3 at;
+    [Rotation] float yaw;
+    float pitch;         // Tipped forward over its feet, a quarter turn up a wall
+    float scale = 1;
+    float stretch = 1;
+    string clip = "Idle";
+    float time;
+    bool loop = true;
+    bool eyes;
+    bool visible = true;
+    bool folded;         // Seen only through a fold: not there to a direct look, nor in any shadow
+}
+
+Entity SpawnBeast(Arena arena, BeastKind kind, float3 at, float yaw = 0, float scale = 1,
+                  BeastSkin skin = BeastSkin.Default, string clip = "Idle", bool loop = true,
+                  float stretch = 1, bool eyes = false, bool folded = false)
+{
+    return Spawn(Beast { chamber = arena.chamber, kind = kind, at = at, yaw = yaw, scale = scale, skin = skin,
+                         clip = clip, loop = loop, stretch = stretch, eyes = eyes, folded = folded });
+}
+
+[After(EvaluatePlace)]
+system RetireBeasts(Beast beast, Arena arena)
+{
+    if (beast.chamber != arena.chamber) this.Destroy();
+}
+
+asset SkinnedMesh<StoneVertex> flayedModel = "art/monsters/flayed.glb";
+asset SkinnedMesh<StoneVertex> crawlerModel = "art/monsters/crawler.glb";
+asset SkinnedMesh<StoneVertex> spiderModel = "art/monsters/spider.glb";
+asset SkinnedMesh<StoneVertex> shadowModel = "art/monsters/figure.glb";
+asset SkinnedMesh<StoneVertex> drownedModel = "art/monsters/zombie.glb";
+[Filter(Filter.Point)] asset Texture flayedSkin = "art/monsters/flayed.png";
+[Filter(Filter.Point)] asset Texture flayedDarkSkin = "art/monsters/flayed_dark.png";
+[Filter(Filter.Point)] asset Texture crawlerSkin = "art/monsters/crawler.png";
+[Filter(Filter.Point)] asset Texture spiderSkin = "art/monsters/spider.png";
+[Filter(Filter.Point)] asset Texture mannequinSkin = "art/monsters/figure_mannequin.png";
+[Filter(Filter.Point)] asset Texture shadowSkin = "art/monsters/figure_shadow.png";
+[Filter(Filter.Point)] asset Texture drownedSkin = "art/monsters/zombie.png";
+
+SkinnedMesh<StoneVertex> BeastModel(BeastKind kind)
+{
+    if (kind == BeastKind.Crawler) return crawlerModel;
+    if (kind == BeastKind.Spider) return spiderModel;
+    if (kind == BeastKind.Figure) return shadowModel;
+    if (kind == BeastKind.Drowned) return drownedModel;
+    return flayedModel;
+}
+
+Texture BeastTexture(BeastKind kind, BeastSkin skin)
+{
+    if (kind == BeastKind.Crawler) return crawlerSkin;
+    if (kind == BeastKind.Spider) return spiderSkin;
+    if (kind == BeastKind.Figure) return skin == BeastSkin.Shadow || skin == BeastSkin.Dark ? shadowSkin : mannequinSkin;
+    if (kind == BeastKind.Drowned) return drownedSkin;
+    return skin == BeastSkin.Dark ? flayedDarkSkin : flayedSkin;
+}
+
+struct BeastPicture
+{
+    BeastKind kind;
+    BeastSkin skin;
+    bool eyes;
+    bool folded;
+    Pose pose;
+    float4x4 transform;
+    float4x4 echo;
+    float4x4 back;
+    int fold;
+    float4x4 head;
+}
+
+BeastPicture BeastPictureOf(Beast beast, Fold fold)
+{
+    var model = BeastModel(beast.kind);
+    mut var pose = model.defaultPose;
+    if (model.animations.TryGetByName(beast.clip, out var clip)) pose.Sample(clip, beast.time, beast.loop ? Playback.Loop : Playback.Clamp);
+    else if (model.animations.TryGetByName("Idle", out var idle)) pose.Sample(idle, 0);
+    var transform = float4x4.TRS(beast.at, Math.Mul(quaternion.Euler(0, beast.yaw, 0), quaternion.Euler(beast.pitch, 0, 0)),
+                                 float3(beast.scale, beast.scale * beast.stretch, beast.scale));
+    mut var picture = BeastPicture { kind = beast.kind, skin = beast.skin, eyes = beast.eyes, folded = beast.folded, pose = pose, transform = transform };
+    // The same opening and light mapping as the operators, including the copy
+    // beyond it. Low creatures use their belly; the others use their chest.
+    float middle = beast.kind == BeastKind.Crawler || beast.kind == BeastKind.Spider ? 0.4 : 0.9;
+    picture.fold = Crossing(fold, beast.at + float3(0, middle * beast.scale * beast.stretch, 0), beast.scale * 0.9);
+    if (picture.fold > 0)
+    {
+        int end = picture.fold - 1;
+        picture.echo = Math.Mul(Across(fold.ends[end], fold.ends[end ^ 1]), transform);
+        picture.back = Across(fold.ends[end ^ 1], fold.ends[end]);
+    }
+    if (beast.kind == BeastKind.Flayed) picture.head = pose.Model(flayedModel.skeleton.bones.head);
+    return picture;
+}
+
+// How high the flayed's lower toe tip is in a pose, in its own metres.
+float LowestToe(Pose pose)
+{
+    float left = Math.Mul(pose.Model(flayedModel.skeleton.bones.toes_end_L), float4(0, 0, 0, 1)).y;
+    float right = Math.Mul(pose.Model(flayedModel.skeleton.bones.toes_end_R), float4(0, 0, 0, 1)).y;
+    return Math.Min(left, right);
+}
+
+// Existing encounters keep their match AI, but use the same creature rendering
+// path as place-authored Beast entities. No presentation clock moves the stalker.
+void LegacyBeastPictures(mut List<BeastPicture> pictures, Arena arena, Watcher watcher, Stalker stalker,
+                         Shade shade, Lurker lurker, Fold fold, float clock)
+{
+    if (watcher.state != Watching.Away && pictures.count < 8)
+    {
+        bool maze = stalker.chamber == arena.chamber;
+        bool shadow = shade.chamber == arena.chamber;
+        mut var beast = Beast { chamber = arena.chamber, kind = maze ? BeastKind.Flayed : BeastKind.Figure,
+                                skin = maze ? BeastSkin.Dark : BeastSkin.Shadow, at = watcher.at, yaw = watcher.yaw,
+                                scale = maze ? 1.35 : 1, stretch = shadow ? 1.5 : 1.12,
+                                clip = maze ? "Run" : watcher.state == Watching.Lunging ? "Punch" : shadow && !shade.lit ? "Creep" : "Stand",
+                                time = maze ? stalker.walked * 0.37 : watcher.state == Watching.Lunging ? watcher.timer : clock,
+                                loop = watcher.state != Watching.Lunging, eyes = maze };
+        mut var picture = BeastPictureOf(beast, fold);
+        if (maze)
+        {
+            // Held mid-stride while it's watched, it stands on its lowest toe rather than hanging over the carpet
+            float lifted = LowestToe(picture.pose) - LowestToe(flayedModel.defaultPose);
+            if (lifted > 0)
+            {
+                beast.at.y -= lifted * beast.scale * beast.stretch;
+                picture = BeastPictureOf(beast, fold);
+            }
+        }
+        pictures.Add(picture);
+    }
+    if (lurker.chamber == arena.chamber && pictures.count < 8)
+    {
+        var beast = Beast { chamber = arena.chamber, kind = BeastKind.Drowned, at = lurker.at - float3(0, 0.38, 0),
+                            yaw = Math.Atan2(lurker.way.x, lurker.way.z), clip = "Crawl", time = clock * (0.5 + lurker.rush), scale = 1.1 };
+        pictures.Add(BeastPictureOf(beast, fold));
+    }
+}
+
+// The spider's eye palette has a dedicated patch, so only the four actual eyes
+// emit. All the other texels keep the scene's complete lighting and fog.
+frag BeastSurface(StoneVertex vertex, Texture skin, Instance instance, Sight sight, Daylight day, out Color color)
+{
+    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < (sight.fold > 0.5 ? 0.0 : 0.025)) this.Discard();
+    float3 p = this.world;
+    if (PastItsFold(p, sight)) this.Discard();
+    Color seen = skin.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    float3 n = instance.Normal(vertex.normal);
+    float4 beams = TorchBeams(p, n, sight, day.torchDepth, day.toTorch);
+    mut float3 lit = Lit(Rgb(seen) * Rgb(seen), p, n, 1, 0.1, false, sight, day.depth, day.toSun, day.sunTexel, day.bulbs, day.layout, FoldSides(p, sight), beams);
+    if (sight.beastEyes && vertex.uv.x >= 0.875 && vertex.uv.y < 0.125) lit = Rgb(seen) * 4;
+    lit = Math.Lerp(lit, sight.fogColor, 1 - Math.Exp(-Math.Distance(p, sight.eye) * sight.fog));
+    color = Displayed(lit, sight.packed);
+}
+
+// Two tiny boxes in the flayed skull's socket space. The head matrix comes from
+// the sampled pose, so the glints follow every twitch and stride.
+void FlayedEyes(mut List<StoneVertex> vertices, mut List<int> indices)
+{
+    for (int eye = 0; eye < 2; eye++)
+    {
+        float3 at = float3(eye == 0 ? -0.048 : 0.048, -0.015, 0.185);
+        for (int face = 0; face < 6; face++)
+        {
+            int axis = face / 2;
+            float sign = (face & 1) == 0 ? -1.0 : 1.0;
+            float3 n = axis == 0 ? float3(sign, 0, 0) : axis == 1 ? float3(0, sign, 0) : float3(0, 0, sign);
+            float3 u = axis == 0 ? float3(0, 0, 1) : float3(1, 0, 0);
+            float3 v = Math.Cross(n, u);
+            int start = vertices.count;
+            for (int corner = 0; corner < 4; corner++)
+            {
+                float x = corner == 0 || corner == 3 ? -1.0 : 1.0;
+                float y = corner < 2 ? -1.0 : 1.0;
+                vertices.Add(StoneVertex { position = at + (n + u * x + v * y) * float3(0.013, 0.008, 0.008), normal = n });
+            }
+            indices.Add(start); indices.Add(start + 1); indices.Add(start + 2);
+            indices.Add(start); indices.Add(start + 2); indices.Add(start + 3);
+        }
+    }
+}
+
+frag BeastGlint(StoneVertex vertex, Sight sight, out Color color)
+{
+    if (sight.clipped && Math.Dot(this.world - sight.clipPoint, sight.clipNormal) < (sight.fold > 0.5 ? 0.0 : 0.025)) this.Discard();
+    if (PastItsFold(this.world, sight)) this.Discard();
+    float3 light = Math.Lerp(float3(3.4, 2.2, 0.9), sight.fogColor, 1 - Math.Exp(-Math.Distance(this.world, sight.eye) * sight.fog));
+    color = Displayed(light, sight.packed);
+}
+
+void DrawBeastShadows(RenderTarget target, List<BeastPicture> creatures)
+{
+    foreach (var picture in creatures)
+    {
+        if (picture.folded) continue;
+        var model = BeastModel(picture.kind);
+        target.SkinnedMesh(model, picture.transform, picture.pose);
+        if (picture.fold > 0) target.SkinnedMesh(model, picture.echo, picture.pose);
+    }
+}

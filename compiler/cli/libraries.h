@@ -49,6 +49,12 @@ typedef size_t (*lib_read_fn)(void *user, uint64_t offset, void *buf, size_t n);
 lib_info lib_identify(lib_read_fn read, void *user);
 lib_info lib_identify_file(const char *path);
 
+// Where a universal macOS library's slice for `cpu` (LIB_X64 or LIB_ARM64) is
+// in its `size` bytes: a library of its own, signed as it was, which a program
+// for that CPU loads as it would the whole. False where the bytes aren't a
+// universal library, or have no slice for it inside them.
+bool lib_universal_slice(const unsigned char *data, size_t size, unsigned cpu, size_t *offset, size_t *length);
+
 // Calls `found` with the name of every function a WebAssembly program or
 // object imports from `module`. An object imports from "env" the functions it
 // calls and doesn't define. False if `wasm` isn't one it can read.

@@ -1,0 +1,168 @@
+// Read parameters capture a row when it is entered; Set is immediate, so
+// following rows see its writes, including a replacement snapshot page.
+component Link { int index; int direct = 1; int helper = 1; }
+component Filtered { int value = 1; }
+component Seen { int direct; int helper; int filtered; }
+component Tail { }
+[Sparse] component Skipped { }
+component Record { int value; string label = "before"; List<int> data = [7, 9]; }
+component Driver { int index; }
+component Driven { int seen; }
+input Controls { int value; }
+
+singleton Roster
+{
+    List<Entity> links;
+    List<Entity> records;
+    List<Entity> drivers;
+}
+
+singleton Results
+{
+    int action;
+    int before;
+    int after;
+    int stale;
+    int resumes;
+    int asyncStale;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Roster roster)
+{
+    for (int i = 0; i < 5000; i++)
+    {
+        mut Entity e;
+        if (i < 4999) e = Spawn(Link { index = i }, Filtered, Seen);
+        else e = Spawn(Link { index = i }, Filtered, Seen, Tail);
+        if (i < 2048 && i % 2 != 0) e.Add(Skipped);
+        roster.links.Add(e);
+    }
+    roster.records.Add(Spawn(Record { value = 10 }));
+    roster.records.Add(Spawn(Record { value = 20 }));
+    for (int i = 0; i < 3; i++)
+        roster.drivers.Add(Spawn(Driver { index = i }, Driven, Owner { player = PlayerID(i == 0 ? 0 : 1) }));
+}
+
+system Direct(Link link, mut Seen seen, Roster roster, mut World world)
+{
+    seen.direct = link.direct;
+    var target = roster.links[(link.index + 1) % roster.links.count];
+    mut var next = world.Get<Link>(target);
+    next.direct = link.direct + 1;
+    world.Set<Link>(target, next);
+}
+
+void SetHelper(Entity target, int value, mut World world)
+{
+    mut var next = world.Get<Link>(target);
+    next.helper = value;
+    world.Set<Link>(target, next);
+}
+
+struct Setter
+{
+    int amount;
+    void Apply(Entity target, int value, mut World world) { SetHelper(target, value + amount, world); }
+}
+
+void Forward(Entity target, int value, int depth, mut World world)
+{
+    if (depth > 0) Forward(target, value, depth - 1, world);
+    else Setter { amount = 1 }.Apply(target, value, world);
+}
+
+void Run(Action body) { body(); }
+
+system Indirect(Link link, mut Seen seen, Roster roster, mut World world)
+{
+    seen.helper = link.helper;
+    Run()
+    {
+        Forward(world: world, depth: 2, value: link.helper,
+                target: roster.links[(link.index + 1) % roster.links.count]);
+    }
+}
+
+// Both mixed and all-matching sparse chunks, with another component written
+// through ordinary mut row write-back while Filtered's pages change via Set.
+system Selected(Filtered counter, Link link, without Skipped, mut Seen seen, Roster roster, mut World world)
+{
+    seen.filtered = counter.value;
+    var next = link.index + (link.index < 2048 ? 2 : 1);
+    world.Set<Filtered>(roster.links[next % roster.links.count], Filtered { value = counter.value + 1 });
+}
+
+// Input reads Owner implicitly: its page must follow preceding Set writes too.
+system Drive(Driver driver, Controls controls, mut Driven driven, Roster roster, mut World world)
+{
+    driven.seen = controls.value;
+    world.Set<Owner>(roster.drivers[(driver.index + 1) % roster.drivers.count], world.Get<Owner>(this));
+}
+
+event Change { Entity target; }
+event Resume { }
+
+void Replace(Entity target, int value, mut World world)
+{
+    world.Set<Record>(target, Record { value = value, label = "after", data = [value, value + 1] });
+}
+
+system Ask(mut Results results, Roster roster)
+{
+    if (results.action == 1)
+    {
+        roster.records[0].Send(Change { target = roster.records[1] });
+        roster.records[1].Send(Change { target = roster.records[0] });
+    }
+    if (results.action == 2) roster.records[0].Send(Resume);
+    results.action = 0;
+}
+
+event(Change change) Apply(Record record, mut Results results, mut World world)
+{
+    var before = record.value;
+    var label = record.label;
+    var first = record.data[0];
+    results.before += before;
+    Replace(change.target, before + 3, world);
+    Replace(this, before + 1, world);
+    results.after += world.Get<Record>(this).value;
+    // Even self Set via a helper leaves this invocation's parameter as it was,
+    // including containers whose stored allocations the replacement may reuse.
+    if (record.value != before || record.label != label || record.data[0] != first) results.stale++;
+}
+
+async event(Resume) Continue(Record record, mut Results results, mut World world)
+{
+    var before = record.value;
+    var first = record.data[0];
+    Replace(this, before + 1, world);
+    if (record.value != before || record.data[0] != first) results.asyncStale++;
+    results.resumes++;
+    await Wait.Ticks(1);
+    var resumed = record.value;
+    var data = record.data[0];
+    Replace(this, resumed + 2, world);
+    if (record.value != resumed || record.data[0] != data) results.asyncStale++;
+    results.resumes++;
+}
+
+component LocalValue { int index; int value = 1; }
+local singleton Viewer { bool ready; LocalEntity first; LocalEntity second; int sum; }
+
+view Make(mut Viewer viewer)
+{
+    if (viewer.ready) return;
+    viewer.ready = true;
+    viewer.first = local Spawn(LocalValue { index = 0 });
+    viewer.second = local Spawn(LocalValue { index = 1 });
+}
+
+view Advance(local LocalValue value, mut Viewer viewer, mut World world)
+{
+    viewer.sum += value.value;
+    world.Set<LocalValue>(value.index == 0 ? viewer.second : viewer.first,
+                         LocalValue { index = 1 - value.index, value = value.value + 1 });
+}

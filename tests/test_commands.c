@@ -157,6 +157,7 @@ static void command_capture_send(void *user, tide_address to, const void *data, 
     (void)tide_read_u8(&r);
     if (tide_read_u8(&r) == 1u) { // HELLO carries this connection attempt's nonce
         (void)tide_read_u64(&r);
+        (void)tide_read_bytes(&r, 32);
         command_nonce = tide_read_u32(&r);
     }
     command_wrapped.send(command_wrapped.self, to, data, size);
@@ -293,7 +294,7 @@ static void command_raw(uint32_t nonce, uint32_t sequence, const uint8_t *data, 
     uint8_t packet[TIDE_NET_MTU];
     tide_writer w = {packet, sizeof packet, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 14); // PROTOCOL
+    tide_write_u8(&w, 15); // PROTOCOL
     tide_write_u8(&w, 9); // MSG_COMMAND: no sender supplied by the packet
     tide_write_u32(&w, nonce);
     tide_write_varint(&w, sequence);

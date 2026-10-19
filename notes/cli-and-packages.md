@@ -1,5 +1,205 @@
 # `tide`, packages and the package
 
+## Terminal editor configuration helper (2026-10-18)
+
+`tide ide emacs|vim|neovim` prints ready-to-copy init configuration from the
+current installation. It writes no dotfiles, runs no editor/server and does no
+package setup, cleanup or update check. main dispatches it before that work;
+the implementation lives with the other editor helpers in editors.c. Help has
+the ide command, editor positional topic and ordinary --help/-h aliases.
+
+Emacs output loads the bundled tide-lang-mode, chooses the sibling tidels and
+adds eglot-ensure. Neovim output adds the bundled runtime, sets the matching
+server command and enables tidels. Vim output sets runtime/comment/indentation
+support and names the server in a comment for the user's own LSP client.
+Executable arguments are lists, with editor-specific string quoting rather than
+shell quoting. Commas in Vim runtime entries are escaped. The helper checks all
+required payload files and the server before printing; incomplete installations
+fail with reinstall/install-build guidance (1). Unsupported editors/counts fail
+with usage guidance (2). Vim/Neovim runtime paths containing glob characters
+(*?[]) are rejected with a move/install-path fix: real Windows runtime lookup
+treated the bracketed directory as a pattern despite ordinary slash escaping.
+Emacs retains support for bracketed paths. Moving Tide requires regenerating
+the copied configuration. No language or generated-runtime contract changed.
+
+tools/CMakeLists.txt now ships tide-emacs and tide-vim under editors/, excluding
+their test directories. This supersedes the initial source-only installation
+record in notes/editors.md. The existing VS Code installer/upgrade helper and
+JetBrains distribution are unchanged. README, both terminal runtime READMEs and
+the CLI/Editors user pages describe the helper, init destinations and client
+requirements. The new tide_cli_ide CTest uses the actual tools install rules in
+an isolated stage with spaces, an apostrophe, dollar sign and comma. It checks
+help/argument failures, repeatability, every missing payload/server, rejected
+wildcard paths, excluded tests and preserved configuration sentinels. Optional
+TIDE_TEST_EMACS, TIDE_TEST_VIM and TIDE_TEST_NVIM executable paths run the printed
+config in real isolated editor processes, with personal plugins disabled.
+
+Validation: warning-free Clang 23.1.2 builds, full native debug 2,386/2,386
+(47.08 s) and web debug 2,295/2,295 (247.43 s), including native GPU and
+WebGL/WebGPU coverage, with Node 24.21.0. The final native suite includes all
+optional generated-config host cases: Emacs 30.2 (all six ERT checks, real
+hover/shutdown), native Windows Vim 9.2.1202 (runtime detection/settings) and
+Neovim 0.11.5 (automatic connection, hover and shutdown). The generated snippet
+also passes on Neovim 0.12.6. The production docs build and diff checks pass;
+existing allowed unstaged-example 404s remain. No compiler/runtime semantics
+changed. Other operating systems, Emacs 29.1, Vim 8, Android, sanitizers and the
+embedded-LLVM package build were not run; no CI or deployment was dispatched.
+
+## Test save directories (2026-10-18)
+
+`tide run --data-dir <folder>` forwards a full native save-directory path to
+the ordinary/watched host without changing watch/headless selection. Missing,
+empty or option-like directory arguments fail before building; use `./-name`
+for a directory whose name starts with a dash. Web, Android and server modes
+reject it before building. It is a run option, not a build setting. The shared
+help catalog and user CLI/files docs describe it. The fixed argument buffer still
+fits every ordinary host option once (now 27 arguments, within its 32 slots).
+
+`tide_cli_run_exit` checks every forwarded argument, directory absolutization
+from the invoking directory, and windowed dispatch with the override alone.
+`tide_cli_hidden` checks bounded dispatch and early unsupported/missing-value
+errors; `tide_cli_help` discovers the new topic. Host/provider behavior and
+final validation are recorded in `notes/standard-host.md`, Explicit save directory.
+
+## Focused CLI help (2026-10-17)
+
+`tide` and `tide help` now show only a compact command list with a route to
+details. `tide help <command>` prints usage, explanation and relevant arguments;
+`tide help <argument>` describes a flag or positional argument, including its
+defaults, limits and commands. `tide help <command> <argument>` selects the
+command's meaning when names overlap (--project, --size and --frames). Exact
+topic names are required; unknown topics, invalid command/argument pairs and
+extra topics return 2 with guidance. Bare tide keeps exit code 2; explicit
+valid help returns 0. --help and -h remain top-level help aliases.
+
+`tide <command> --help` and `-h`, with no other arguments, show command help
+before installation setup, cleanup, update checks or command dispatch, including
+open/login/deploy/upgrade. `tide help --help` describes the help argument itself;
+`tide help help` describes the help command. Embedded Clang retains its own
+`tide cc --help`; only embedded builds advertise cc in Tide's help catalog.
+No operational command parsing or language semantics changed.
+
+`compiler/cli/help.c` owns shared command/argument metadata for the overview,
+command lists and topic details. main.c dispatches help before doing work.
+New CLI arguments need catalog entries as well as their parser cases. README
+and docs/tools/cli.md describe discovery. No spec change is needed.
+
+The tide_cli_help CTest runs a standalone copy without installed sources or a
+sibling editor. It checks compactness, all public commands and argument topics,
+command aliases, relevant-option lists, scoped defaults, failure diagnostics and
+exit codes. Windows validation with Clang 23.1.2 and Node 24.16.0 passes:
+full native debug 2,366/2,366 (63.71 s), full web debug 2,277/2,277 (237.09 s),
+including native GPU and WebGL/WebGPU tests, and the docs production build.
+The embedded-Clang catalog branch also passes strict C17 syntax/warning checks;
+the development CLI uses external Clang. git diff --check passes. Docs retain
+their existing allowed unstaged-example 404s. Other operating systems, Android
+and sanitizers were not run; no CI dispatch or deployment was requested.
+
+## Failed-build cache comparison (2026-10-15)
+
+Build `38761765659` passed Windows packaging but Linux and macOS packaging
+failed the parallel-compilation fixture's comparison after repairing custom C.
+The managed-hosting identity change intentionally keeps ordinary launcher
+objects through identity-only edits to game.h. A Linux reproduction differs
+only in main.o: its DWARF line table retains the failed build's game.h checksum.
+Recompiling against the restored header changes that checksum; stripping debug
+information leaves byte-identical objects. This is debug metadata, not stale
+gameplay code or a changed Simulation ID in the launcher.
+
+The fixture now requires byte-identical reuse of the failed build's launcher
+and clean-build parity for every other file, including generated game code,
+objects and stamps. Missing/extra files and differing objects are named on
+failure. Its clean builds at different parallelism levels still compare every
+file, including main.o. Compiler/cache behavior and public contracts are unchanged.
+The original comparison fails locally under Linux with only main.o named;
+the corrected fixture passes all parallel-build and failure-recovery checks.
+The staged Windows CLI with an external Clang 23.1.2 also passes the full
+native/web cache, stripping, failure recovery, debug/release watch and dedicated
+server integration script with Node 24.16.0.
+
+## Selected Apple SDK (2026-10-15)
+
+The next requested Build, `38767273771`, reached macOS package smoke testing
+on image 20261013.0424.1 and failed in Apple's linker with an unknown
+arm64e.x1 architecture in the standalone Command Line Tools 27 SDK. The
+[image manifest](https://raw.githubusercontent.com/actions/runner-images/macos-26-arm64/20261013.0424/images/macos/macos-26-arm64-Readme.md)
+lists Xcode 26.6 as default alongside those newer standalone tools. Unlike
+the previous run's older image, this exposes find_macos_sdk's hardcoded
+preference for the standalone SDK while /usr/bin/ld follows selected Xcode.
+The prior Apple-linker workaround was active; this is a mismatched SDK/toolchain.
+
+Automatic SDK discovery now captures `/usr/bin/xcrun --sdk macosx
+--show-sdk-path`, trims its line ending and requires an existing absolute
+directory before setting SDKROOT. Thus DEVELOPER_DIR/xcode-select govern both
+SDK and linker, as [Apple's developer-tool selection](https://developer.apple.com/library/archive/technotes/tn2339/_index.html)
+intends. Explicit SDKROOT is preserved. Failed/empty/relative/missing discovery
+or an environment-write failure returns failure; no fallback silently mixes
+two developer installations. README documents the selection contract.
+
+The new tide_cli_toolchain CTest compiles the real Apple discovery branch on
+every native platform with process/environment/directory probes stubbed. It
+checks the selected SDK (including spaces), explicit override and those failure
+paths without changing the machine's tools or environment. Actual Apple
+linking still needs the subsequent requested macOS package job.
+The original discovery fails the selection regression locally; the corrected
+fixture passes 3/3 on Windows and in a separate strict C17 Linux build. Full
+Windows native debug passes 2,360 CTests (119.33 seconds), and web debug passes
+2,272 (259.60 seconds), including WebGL/WebGPU. Node 24.16.0/Clang 23.1.2,
+Node syntax checks for the earlier fixture edits and git diff --check pass.
+Actual macOS confirmation: runs 38768886333 and 38772910822 pass all installed
+native/web/Android smoke, C++ and cache/watch checks. The former uses the same
+20261013.0424.1 image that exposed the mismatched CLT 27/Xcode 26.6 installation.
+
+## Complete Windows installer preflight (2026-10-15)
+
+The installer fixture's startup preflight now uses its real mocked fresh-install
+path, sharing the release list with timed cases and exercising selection,
+scratch creation and the real checksum before stopping at mocked unpacking.
+It verifies the selected release, credential-free requests and temporary-file
+cleanup. Cases retain their 30-second limits, assertions and fresh isolated
+module caches; preflight retains its 300-second cold-start guard and writes no
+user installation, PATH or registry state. Run 38768886333's phase evidence,
+one-time-delay/failure probes and validation are in releases-and-ci.md.
+Run 38772910822 passes the Windows native installer CTest in 22.83 seconds and
+all required release checks, publishing v0.4.0-nightly.3. Local POSIX coverage
+also passes all eight cases; Windows passes all nine. Individual case and
+preflight guards remain 30 and 300 seconds respectively.
+
+Folder deployment link (2026-10-15): `tide deploy` needs no dashboard setup.
+Its existing project auto-creation now normalizes the folder name and saves
+the immutable project ID plus service origin atomically in `tide.deploy.json`.
+The file is portable and contains no credentials. Future deploys use the ID
+after folder renames; `--project <name-or-id>` selects/relinks explicitly.
+Malformed links, service mismatches and inaccessible IDs fail without creating
+another project. Explicit missing names still create a Small/one-match project.
+Bundle-only builds ignore the link. Help, the hosting guide and operator README
+describe this behavior. Installed-CLI coverage exercises first deploy, repeat
+after rename, invalid/mismatched/missing links, name creation and ID selection;
+validation results are recorded in managed-hosting.md.
+
+Managed deployment (2026-10-15): `login`, `logout` and `deploy` are implemented
+in deploy.c, using explicit browser device approval, origin-bound credentials,
+Windows DPAPI/POSIX private files and bounded HTTP responses. Whole-game local
+release builds are default; `--server-only` and offline `--bundle-only` are
+available. The managed WASI reactor has its own cache and no platform library;
+normal web/native targets are preserved. Every build writes an output.simulation
+sidecar. CLI hashes normalized custom C/header contents plus all library target
+variants conservatively. C edits now rebuild game.o to publish the new Simulation
+ID; ordinary launchers still reuse their objects on body/identity-only edits.
+The managed launcher embeds the ID and must rebuild on it. Cache tests pin this
+distinction. Provider setup, wire bundle format, actual CLI/browser deployment
+tests, quotas and remaining launch work: managed-hosting.md, hosting/README.md.
+Custom C also makes asset edits refresh compatibility; the watch regression now
+checks that path, then removes C to verify visual-only pack reload is preserved.
+
+Dedicated service builds (2026-10-15): run/build --server has separate server
+debug/release caches, an ordinary console entry, no watch/reload and section
+collection in both configurations. Server-only runtime options are forwarded
+and incompatible player/capture targets rejected. Closed builds automatically
+strip client-only assets; --strip-server-assets opts custom C in explicitly.
+serve.h/server_run.h ship through existing platform header/archive installation.
+Contracts, entry callbacks, auth and validation: dedicated-servers.md.
+
 ## Upgrade fixture channels (2026-10-14)
 
 `tide_cli_upgrade` reads both the version and default channel from the built
@@ -16,9 +216,11 @@ release, which a stable CLI correctly refused. The original fixture reproduces
 that error locally with a 0.3.0 stable CLI; the corrected fixture passes all
 three cases. The full nightly-default native debug suite passes 2,286 tests
 with Clang 23.1.2 and Node 24.16.0 (43.35 s). Full web debug passes 2,249 tests
-(171.75 s), including WebGL/WebGPU. `git diff --check` passes. Hosted stable
-confirmation on Linux/macOS/MinGW and sanitizers remains for a new Build run;
-none was dispatched for this fix.
+(171.75 s), including WebGL/WebGPU. `git diff --check` passes. Owner-requested
+stable Build run 38584459544 confirms the fixture passes on Windows, macOS,
+Linux, MinGW and sanitizers. All platform tests/package checks passed and
+v0.3.0 published; the separate Marketplace upload failure and remaining setup
+are recorded in notes/releases-and-ci.md.
 
 ## Native editor preview builds (2026-10-13)
 
@@ -145,7 +347,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **What `run` passes on to the game is a list kept by hand** (the options' loop in `compiler/cli/main.c`, into `game_args`): `--host`, `--join`, `--connect`, `--capture`, `--capture-audio`, `--script`, `--microphone`, `--frames`, `--scale`, `--players`, `--size` and `--seed`. An option of the game's own command line (`tide_run_configure` in `tide/host.h`) with no case there is one `run` "doesn't take", whatever the docs say: `--capture-audio` and `--microphone` were so from the day the host got them until 2026-10-08, listed in `docs/tools/cli.md` and refused with exit code 2. So an option the host gains gets a case in that loop (its file through `path_absolute`, and `headless` where the host makes the run one with no window), a line of `tide help`, and a place in `run_exit_test.c`'s run of every option once.
   - **`game_args` has 32 slots, and every option once is 25 arguments.** The loop refuses ("run takes each of its options once") only past 28, which leaves room for the longest option, `--size`'s 3, and the NULL after them, so every option once fits in any order, with the game's folder after them. It was 24 slots and a refusal past 20, which the two audio options would have outgrown: all of them once were refused.
   - **Repeated `--define` flags have no fixed parser cap** (fixed 2026-10-08): `main.c` keeps an argument-sized heap array, with room for `DEBUG`, and `build_options.defines` borrows it until the command returns. The array and its argv strings survive the arena resets of every watched build; `generate` and `tide_schedule` pass its pointer and count to the in-process compiler, so no extra compiler command line or command-length limit is involved. The old 64-slot field rejected the 64th valid symbol as an invalid name. `tide_cli_packages` schedules an offline game with 71 user symbols in debug and release, requiring early, middle and late symbols and the right `DEBUG` value.
-  - **`tide help`'s text is two string literals**, as C promises one of 4095 characters only and `-Wpedantic` makes a longer one an error: 2,629 and 2,405 characters now. The run with no window's options are the second.
+  - **Help text respects C17's 4095-character string-literal guarantee.** The former full usage literals were replaced by the focused command/argument catalog described above; keep each catalog string within that limit for `-Wpedantic` builds.
   - **A file that isn't there yet has a whole path on Linux and macOS too** (found and fixed 2026-10-08). `path_absolute` (`compiler/cli/sys.c`) asked `realpath`, which answers only for what exists, and gave the path back as it was typed otherwise, so `--capture` and `--capture-audio`, whose files a run makes, went to the game by the path typed, into a game that runs in its own folder. Seen with a tide built for Linux under WSL, from a folder beside the game's: `tide run game --frames 2 --capture x.png` wrote `game/x.png`, `--capture-audio x.wav` wrote `game/x.wav`, and a file in a folder (`shots/x.png`, `./shots/x.png`, `../there/shots/x.png`, one through a link) was one it "can't write". `--script` and `--microphone` name files that exist, and Windows' `GetFullPathNameA` needs none to, so both were right. Now, where `realpath` has no answer, it's asked for as much of the path as is there, a name less at a time from the end, down to the current folder for a path that isn't from the root, and the names left follow as they were typed (`absolute_missing`). What code relies on:
     - **A file has the path it will have once it's written:** the part that's there is `realpath`'s, with its links followed and its `.` and `..` gone, as a path that exists always was. Joining the current folder and the path as typed would name the same file, under another path than the next call's (`out/../x.png`, a folder that's a link), and that's what the game says it captured and what `Built` says. Names after one that isn't there stay as typed, a `..` among them too: the system refuses such a path, from the root as from here.
     - **No path stays no path** (`""`, as on Windows), never the current folder: `sys_exe_dir` asks with one when it can't read where tide is.
@@ -153,6 +355,10 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     - Tests: `absolute_path_of_a_file_not_there_yet` (`compiler/cli/tests/sys_test.c`, in `tide_cli_tests`): a file in a folder that's there, a name alone, folders that aren't there, a slash at the end, up from a folder and back, a whole path and no path, each against the path of the folder that's there; the file written through its whole path is the one typed, and has the same path after; on Linux and macOS, a file through a link, there and not. It fails on the `sys.c` before on Linux; Windows, whose side didn't change, passes it. `tide_cli_run_exit` compares what `run` passes on with `path_absolute`'s own answer, so it never pinned this. Run on Windows and under WSL with LLVM 23's clang (`ctest -R tide_cli`, all ten on each), and under WSL `cache_test.mjs` with the installed tide, natively. By hand under WSL with the tide before and the one after, from beside the game's folder: of seven runs (the six above and a whole path) one wrote where it was typed before, and all seven after; and `build`, `schedule`, `shaders`, `fetch`, `publish` and `run` of a folder that isn't there, a package's folder that isn't, and `build -o` four times made the same files with both, and said the same but for five lines, each the whole path where the typed one was. Not run: macOS, and `cpp_test.cmake` (the scratch installation builds no web games).
   - Tests: `tide_cli_run_exit` (`compiler/cli/tests/run_exit_test.c`) runs `main` with every option once and reads what the game would be given, each as typed and the four files as `path_absolute` makes them, has `--capture-audio` and `--microphone` each make a run that isn't watched, and has an option given 16 times refused; `tide_cli_hidden` (`hidden_test.cmake`) has each of the two go on to build by itself where nobody watches, and each file's option say what it takes with no file. Both fail on the `main.c` before. Tried by hand on Windows with an installation made of this checkout's debug and `mingw-release` trees, from a folder beside the game's: `--frames 2 --capture-audio x.wav` wrote the WAV where it was typed (1,600 frames), `--microphone` read a file from there and said so of one that isn't there (exit code 2), and both went through a run of `--players 2`. Not run: Linux and macOS.
 - Packages have clang and lld built into tide (`TIDE_EMBED_LLVM`, `compiler/cli/llvm/cc.cpp`), so users need no compiler: `tide cc` is clang, whose compiles run in tide's process and whose links go to lld in it. tide links the static libraries of LLVM's own release, downloaded once into `build/llvm-<version>` and pinned (`cmake/LLVM.cmake`, which also builds the zlib and zstd they were built with, and on Windows libxml2; unpacking needs the `zstd` program). macOS's release holds them as LLVM bitcode, so tide links there with that release's lld. Builds of this repo without the option use an installed clang (`--web` needs `wasm-ld`, next to it or on `PATH`).
+  - **On a Mac, games link with Apple's linker, not lld** (2026-10-14). `link_apple` (`compiler/cli/llvm/cc.cpp`) runs `/usr/bin/ld`, which runs the linker of the developer folder `xcode-select` names. The command line tools that have it are what tide needs for the SDK anyway (`find_macos_sdk`). clang's driver writes the same ld64 arguments for either linker, since tide passes itself as the linker path and so isn't taken for lld. lld still links where `/usr/bin/ld` can't run.
+    - Why: GitHub's `macos-26-arm64` image of 2026-10-13 (version 20261013.0424.1) has an SDK whose stubs (`.tbd`) list the target `arm64e.x1-macos`. LLVM 23.1.2's lld rejects each such stub as malformed ("unknown target"), and with it every symbol it defines (`libSystem`, Cocoa, IOKit), so the package job's `tide build` of the demo failed (Build run `38634155349`). The same code had passed an hour earlier on version 20260907.0351.1.
+    - It happens to any Mac with that SDK, not only CI. Apple's linker reads Apple's stubs, whichever SDK. Others hit the same with lld 21 (Apple's forums, thread 849269) and with Zig's linker; no lld fix was found.
+    - Checked on Windows by compiling `link_apple` against LLVM 23.1.2's headers. A Mac runs it only in CI's package job.
 - tide is nearly all LLVM, so its size is what of LLVM it links and how (the owner, 2026-10-06: "if we can make it smaller we should"). Only what tide builds with is in it:
   - **The targets tide doesn't build for are left out.** lld's drivers register every target LLVM's release was built with, for link-time optimization (`InitializeAllTargets` and the like, which are inline, so lld's own objects name each target's functions), and naming a target's `LLVMInitialize...` functions links the whole of it: 7 targets in LLVM's Windows release, 20 in its Linux one, which were a third of tide for Linux (AMDGPU alone 28 MB). `cc.cpp` defines those functions, empty, for every target but tide's three (x86-64, arm64 and WebAssembly), from LLVM's own lists (`llvm/Config/Targets.def`, `AsmPrinters.def`, `AsmParsers.def`), so the linker never takes theirs out of the libraries, which stay on the link line. A target a new LLVM adds is left out with no change here. A left-out target's object taken some other way is a duplicate symbol, an error; a kind of function LLVM starts naming for every target (a disassembler's, say) takes the targets' libraries again, which shows as tide growing by tens of megabytes, and gets a line in `cc.cpp`.
   - **The same for Polly,** which LLVM's Linux release builds into every pass pipeline (`llvm/Support/Extension.def`): each extension there is one that registers nothing. tide never asks for it, and `tide cc -mllvm -polly` is an unknown option.
@@ -182,6 +388,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Tests: `atOnceTests` in `compiler/cli/tests/cache_test.mjs`, which CI runs on each platform's package, natively and for the web: one, three and a processor's worth at once leave the same objects, generated files and stamps, byte for byte but for the time a Windows object's header says; with two files that don't compile, every way says exactly what one at a time says, four times over; the build after a failed one compiles only the game's C; `TIDE_JOBS=many` is refused. Run on Windows with both kinds of tide, and on Linux under WSL (the `poll` side); `tide build --android` was tried on Windows, for both CPUs (`cpp_test.cmake` with `-DANDROID=ON`). Not run: macOS.
   - Not built: the engine's objects shared between games (each game's folder compiles its own for each configuration, which is where tide keeps its work: the owner's to decide), and `game.c` in more than one file.
 - The package brings the C library for web games (wasi-libc) and for Windows games, which build for MinGW-w64 (see MinGW builds): Microsoft's C runtime can't ship with tide, and the UCRT is part of Windows, so players need nothing else. Linux games use the system's C development files, and macOS games the SDK of Apple's command-line tools (tide sets `SDKROOT`).
+- On macOS, `tide build` and `tide run` also put MoltenVK beside the game's program (`place_moltenvk`): the package's `lib/native/libMoltenVK.dylib`, of which only the slice for the game's CPU goes (`lib_universal_slice`). See `notes/rendering.md`, MoltenVK on macOS.
 - A game is a folder of `.tide` files. tide keeps its work in `<folder>/.tide/` (hidden on Windows too, and it ignores itself in git) and puts `tide build` output in `<folder>/build/`.
 - A game's packages are what its `tide.packages` lists (`docs/packages/using-and-writing.md`, `docs/spec.md`, Packages): git repositories, each pinned to a commit, folders, and the packages that come with tide (below). No lock file: the game's file lists every package it builds with, those its packages need included, and its line wins. `compiler/lsp/packages.c` reads the file and finds each package's folder (tide and tidels share it). `compiler/cli/fetch.c` downloads a commit as its host's archive, and reads branches and tags from git's `info/refs`, with curl and tar as `tide upgrade` does, so users need no git; commits are kept once for every game (`TIDE_PACKAGES`, or `%LOCALAPPDATA%/Tide/packages` and `~/.tide/packages`). A commit unpacks in a folder of that tide's own, and its files move into the commit's folder one by one, never as a folder (`fetch_place`): Windows renames no folder while a program has anything in it open, as antivirus has each new file for a moment, and a file such a program has open still moves. So a commit's folder is whole when it has `.tide-fetched` (`packages_fetched`), which goes in last, and one without it is downloaded again; a file that's there already is that commit's, so a download goes on from one that stopped and two tides can get a commit at once. `compiler/cli/packages_cmd.c` is `tide add` and `tide update`, which only change the file's commits and add what packages need. Packages' files compile first, each package after those it needs, then the game's (`compile_inputs`), and their C with the game's. A folder with a `tide.packages` is a game or a package of its own, never part of the one around it (`folder_find_own`). Tests stand in for git hosts with `TIDE_GIT_MIRROR` (`compiler/cli/tests/packages_test.cmake`).
   - **Adding a package preserves its whole source** (fixed 2026-10-08): local and built-in sources go directly to `append`; git source/ref/commit lines allocate the exact formatted length. The previous 1024-byte buffer silently truncated accepted sources before saving them, leaving an unusable package line after recognizing the package. `tide_cli_packages` adds a valid local source over 1200 bytes (redundant `./` parts normalize to a short real path on every OS), checks the complete saved line, runs its schedule and adds it again.

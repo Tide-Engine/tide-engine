@@ -1,0 +1,5 @@
+// expect: rendering resources belong to this machine, so the match can't use them
+asset Texture hero = "../e2e/assets/hero.png";
+scene Main { }
+singleton Size { int2 value; }
+system Measure(mut Size size) { size.value = hero.size; }

@@ -1,5 +1,189 @@
 # Code the GPU runs: frags and verts
 
+## ANGLE D3D11 comparisons and shader warnings (2026-10-19)
+
+Inside Out's newer prototype note exposed a backend defect missed by the
+SwiftShader WebGL run: DepthTexture.Compare in a varying loop linked with
+HLSL X3595 on ANGLE D3D11. GLSL now uses textureGrad with explicit zero
+gradients for shadow comparisons. This selects SampleCmpLevelZero in ANGLE
+instead of textureLod's implicit-gradient SampleCmp translation; see
+[ANGLE's shadow sampling translation](https://github.com/google/angle/blob/main/src/compiler/translator/hlsl/TextureFunctionHLSL.cpp).
+Depth targets still have one level and the same reference clamp/filtering.
+WGSL stays textureSampleCompareLevel. No binding, API or runtime changes.
+The prototype's unrolled workaround has not been rewritten or playtested.
+
+Running the whole existing shader fixture on D3D11 also reproduced X4008 in
+constant-folded quaternion-from-matrix candidates, singular matrix inverses
+and equal-edge SmoothStep; X4000 in a bounded struct list read reached from
+a loop; and dynamic-vector-index emulation warnings in packed list/map
+lookups. These are compiler/backend fixes, not new language decisions:
+
+- Guard the unused zero-scale quaternion candidates. A selected finite
+  Shepperd branch already has a nonzero scale.
+- Form a signed infinity by bits for reciprocal zero, retaining ordinary
+  division for nonzero determinants. SmoothStep handles zero denominators
+  explicitly, including their sign, retaining its forgiving saturation.
+  CPU math, ordinary arithmetic order and singular inverse behavior stay the same.
+- GLSL list/grid readers initialize one all-zero result, fill it only inside
+  bounds and return once. Packed GLSL list/map words use static lanes rather
+  than ANGLE's emulated dynamic vector indexing. WGSL container reads are unchanged.
+
+The shader pixel fixture repeats identical depth comparisons two or four
+times according to the varying coordinate, with unchanged shadow pixels.
+Its CPU/vertex/fragment math comparisons now check signed-zero SmoothStep
+edges and singular inverse signs through finite flags. Existing list/grid/map
+pixels cover the other warning regressions. Updated shader goldens pin both
+languages. A Windows-only tide_platform_shaders_d3d11 CTest uses software
+D3D11/WARP, requires a Direct3D11 renderer and keeps every warning fatal;
+the existing SwiftShader WebGL, WebGPU and native Vulkan/OpenGL runs remain.
+
+Validation: warning-free native/web debug builds; all 2,432 native cases
+and the full 2,342-test web suite pass, including exact-bit pins and the
+renderer paths above. The native full run's sole failure was an
+overrides golden regenerated without its package inputs; restoring that
+unchanged fixture and rerunning its package-aware CTest passed. Shader
+golden regeneration must include each fixture's sibling package directories,
+as expect_schedule.cmake does. Android, other operating systems and
+sanitizers remain CI coverage; no CI was dispatched. Public docs and
+language semantics are unchanged.
+
+## Shaded drawing functions (2026-10-19)
+
+The existing drawing-function capability now includes naming a frag or vert
+in Mesh, Instanced, SkinnedMesh and Blit, including target draws. This completes
+the existing API under the owner's standing authorization for conventional
+helper access. A function supplies shader component/singleton inputs through
+exactly one explicit non-out parameter of each required type. Missing or
+ambiguous inputs are diagnosed; no implicit entity/singleton lookup is added.
+Read-only values and mutable parameters retain ordinary value/pointer rules.
+Views keep their existing implicit bindings and verified/blended selection.
+
+check_shader_binding checks helper inputs as well as existing struct/texture
+rules. Shader planning marks precisely the attached local fields required by
+those inputs before check_local_field_calls propagates/validates helper
+sidecars. Only views gain inferred bound parameters. Draw codegen selects the
+current routine, including inlined Action bodies, and takes the address of a
+by-value input for the existing shade wrapper. The runtime, shader layout,
+GLSL/WGSL/SPIR-V emission, batching and simulation state are unchanged.
+
+draw_helpers compares direct and helper instance/uniform captures, recursion,
+renamed inputs, an out parameter beside the real input, inlined callbacks and read/write attached-local forwarding
+across frames while checking the world hash. draw_values covers explicit
+singleton forwarding, values, textures, instancing, batching and a vert alone;
+skinned_rest routes a custom-stage rest draw through a helper. Existing shader
+pixel pass 12 now exercises mesh, instanced and blit helpers with unchanged
+pixel expectations. Diagnostics cover missing component/singleton, ambiguous
+and out-only inputs, and copies lacking attached local fields. Editor tests
+cover shader/value completion and the new diagnostics. Validation is recorded
+in notes/language.md with the full suites.
+
+## Texture-size metadata and payload values (2026-10-18)
+
+Texture.size is lowered to two uniform ints per distinct named image source.
+Compiler-only READ_SIZE flows through the existing helper sampling analysis,
+but shader.sizes is separate from sampled textures: no binding slot, pixel
+capture, mip work or sampler is needed. Metadata sources bind their owning
+component/singleton and attached local fields normally. Helper specialization
+numbers also distinguish size-only sources; metadata shared by stages is
+deduplicated. Actual texture bindings and their runtime enum values are
+unchanged. The normal uniform-size limit still applies. Runtime lookup happens
+when the draw is recorded, so missing Texture metadata stays zero rather than
+reporting the GPU fallback's 1x1 dimensions.
+
+Numeric event/command values use the existing struct-like field lowering in GPU
+helper parameters and factory returns. They grant no dispatch capability. texture_size and platform shader
+pass 23 exercise helper chains, several different textures through one helper,
+direct sources, assets, Raw assets, singleton/attached-local fields, event
+payloads and both stages. Native Vulkan/OpenGL pixels passed; final native/web
+suite results are recorded with the language completion pass.
+
+## FromToRotation and scale matrices (2026-10-18)
+
+The approved math builders `quaternion.FromToRotation(from, to)` and
+`float4x4.Scale(scale)` have CPU and shader implementations together. New
+shared GLSL helper text becomes WGSL through the existing spelling pass and
+SPIR-V through the existing translator; no backend, uniform or runtime ABI
+changed. Helpers are emitted only when used. The FromTo unit helper depends
+on the existing safe float3 normalization; FromTo also uses quaternion
+normalization. Exponent-bit tests reject NaN/infinity before normalization,
+using the existing floatBitsToInt/bitcast spelling.
+
+The formulas mirror `tide/math.h`: max-component rescaling, a shortest-arc
+quaternion, stable half-angle arithmetic near pi, and a deterministic
+least-aligned cardinal axis for exact opposites. Explicit component equality
+recognizes opposite normalized vectors even when a GPU fuses the cross
+product and leaves a small residual. The first Vulkan probe exposed that
+case; the equality branch fixes its axis selection without changing CPU
+result bits. Floats retain the GPU's usual rounding; no shader result enters
+simulation state. Scale directly constructs the diagonal matrix, retaining
+zero and negative scales.
+
+The WebGPU validation run also rejected the helper's initial raw parameter
+name `from`, which WGSL reserves. Internal helper parameters now use `f`/`t`;
+the public Tide argument names remain `from`/`to`. The shared shader golden
+pins these spellings as well.
+
+`compiler/tests/shaders/math` pins both builders in GLSL and WGSL, used in
+both stages and with named arguments. The existing quaternion/matrix probes
+in `platform/tests/shaders.tide` compare CPU, frag and vert results for
+ordinary, opposite, nearly opposite, zero, NaN, huge and tiny directions,
+and zero/negative scale components. The same probes repeat after device
+recreation. CPU accuracy, cross-platform pins and public docs are recorded
+in `notes/language.md`.
+
+Validation: GLSL/WGSL golden checks, native SPIR-V validation and Vulkan pixels
+pass. The corrected helpers pass both WebGL 2 and WebGPU pixels, including
+device recreation. The full native suite and the web suite with its corrected
+WebGPU retest are recorded in `notes/language.md`.
+
+2026-10-15 visibility integration: the `normals` and `place` fixture frags
+formerly named `Shown` are named `Displayed` to avoid the new engine event.
+Their GLSL/WGSL goldens change only that function spelling and its labels;
+no shader expression, binding or expected GPU value changes.
+
+## A view's grown parameters and its queries (2026-10-16)
+
+`bind_views` (codegen) appends a parameter to a view for each component or singleton its frags and verts read that the view doesn't take (`tide_bound<i>`). That can grow `view->params` into a new arena copy after checking, so pointers taken during checking (`stmt.query`, an expression's `param`) point at the old copy, which stays valid and unchanged. Only `gen_query_foreach` compared addresses, to find a query's index among the view's parameters: with the copy moved it never found it and spun forever (GRAVEWAKE's `DrawHands`: eight parameters, one a query, and `Steel` reading `Lights`). It now finds the query by name. `tidec_e2e_view_bound_query` is a view of exactly eight parameters with a query whose frag reads a local singleton the view doesn't take: one instance per row.
+
+## Frustum bounds metadata (2026-10-15)
+
+Generated `tide_shader.bounds_position` is `1 + offsetof(V, position)` only for 3D shaders with neither a user vert nor skinning. Fragment-only custom vertex layouts get automatic culling; a user vert (even one currently leaving position alone), explicit clip output and every skinned shader require explicit conservative `Draw.Bounds` or remain drawn. GLSL/WGSL/SPIR-V are unchanged. The C shader struct grows, so hosts/libraries/games rebuild. `draw_frustum` checks offsets, rejection and opt-in; `skinned_rest` pins zero automatic metadata. Contracts and GPU validation are in `notes/drawing.md`, Frustum culling.
+
+## SPIR-V, for Vulkan (2026-10-14)
+
+tidec writes SPIR-V by translating the WGSL it already writes, rather than with a third emitter over the tree. The WGSL has WebGPU's bindings and its depth conversion already. The same translator takes the renderer's hand-written WGSL too (`notes/rendering.md`, Vulkan). The translator is `compiler/src/spirv.c` (`spirv.h`: `tide_wgsl_to_spirv`), about 3,700 lines of C with no dependency.
+
+- **What it does:** it reads WGSL into a tree and writes SPIR-V 1.3 (Vulkan 1.1 rules) as it works the types out, in one module whose entry points are `vertex` and `fragment`.
+  - It writes no `OpName`s.
+  - It takes what tidec and the renderer write, and WGSL generally as far as frags and verts go:
+    - structs, uniform blocks laid out by WGSL's rules, `var<private>`, textures and samplers;
+    - functions with `ptr<function, T>` parameters;
+    - abstract numbers, folded where both sides are;
+    - constructors, conversions and `bitcast`;
+    - every built-in tidec and the renderer call, and more of GLSL.std.450's;
+    - `textureSample`, `...Level`, `...Grad`, `...Bias`, `...Compare(Level)`, `textureLoad`, `textureDimensions`, levels and samples;
+    - `if`, `for`, `while`, `loop`/`continuing`/`break if`, `switch` with several selectors and `default` among them, `break`, `continue`, `discard` (`OpKill`) and `return`.
+  - It doesn't take storage buffers, atomics, workgroups or compute, `alias`, `override`, or f16.
+- **What's out of range is made safe the way WebGPU (Tint) makes it, so a shader reads the same on both:**
+  - integer `/` and `%` by zero, or the least i32 by -1, go by 1;
+  - shift counts are masked to 5 bits;
+  - float to int saturates (`FClamp` before `OpConvertFToS`/`U`);
+  - an index into a vector, matrix or array that isn't a constant is clamped to the last element (`UMin`), and a constant one is clamped as it's written.
+  - Reads past a buffer's or image's end are the device's robustness features' job (`robustImageAccess`, `robustBufferAccess`, enabled where present).
+- **Structured control flow:** the patterns are glslang's.
+  - A loop is its header (`OpLoopMerge`), a block for its condition (`OpBranchConditional` to the body or the merge), the body, and its continue block, which does a `for`'s step or a `continuing` and branches back.
+  - `&&` and `||` whose right side calls a function of the module's become a selection with an `OpPhi`; otherwise they're `OpLogicalAnd`/`Or`.
+  - Code after a `return`, `break`, `continue` or `discard` is dropped as dead.
+  - A construct whose merge nothing reaches ends in `OpUnreachable`. A `switch`'s merge is reached by any case that falls off its end and by any `break` to it. A first version missed the `break`s; that dropped the code after such a switch, and the `Rest` and `ListSum` probes of `tide_platform_shaders` caught it on Vulkan.
+- **Codegen:**
+  - Each shader's words go in the generated C as `tide_shader_<n>_spirv`, with `.spirv` and `.spirv_words` set in its `tide_shader`, all under `#ifdef TIDE_SPIRV` (`tide/draw.h`: defined off the web and Android).
+  - The shader's id is still the hash of its GLSL and WGSL, which the SPIR-V is made of.
+  - A translation that fails is tidec's bug. It's an error naming the shader, and the build stops: codegen returns false after `gen_shaders`.
+  - `tide_shader` grew two fields, so hosts, libraries and generated games rebuild together.
+- **`tidec --spirv <dir>`** writes each shader's module as `<n>.spv`, in `--shaders`' order. `tidec_spirv_<name>` (`compiler/tests/expect_spirv.cmake`) runs it on every `compiler/tests/shaders/*.tide` and has the SDK's `spirv-val --target-env vulkan1.1` check each module. `tide_spirv_shaders_valid` (`platform/tests/spirv_shaders.cmake`) does the same for the renderer's seven. Both exist where CMake finds `spirv-val` (`cmake/VulkanTests.cmake`).
+- **Tested:** all 81 golden shaders and the 7 built-ins pass `spirv-val`. Every game in the repo builds, so tidec translated every shader it has. The validation layer checks each module again as the GPU tests make their pipelines. `tide_platform_shaders` compares the CPU's and the GPU's results through the SPIR-V on this machine's NVIDIA driver.
+- **Not done:** `OpName`s for debuggers (RenderDoc shows ids); `OpDemoteToHelperInvocation` for `discard`. That would matter only for derivatives taken after a discard in the same quad, which tidec's frags don't do: they ask for theirs as they start.
+
 ## Delayed locals and switch values, 2026-10-11
 
 The CPU's definite-assignment rules also check delayed locals in frags, verts

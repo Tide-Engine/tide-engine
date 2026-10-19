@@ -1,5 +1,40 @@
 # Audio
 
+Scalar Clip values without assets (2026-10-19) now request their existing C
+definition even when no Sound, microphone or clip asset is declared. The
+checker distinguishes using a Clip type/value from enabling playback; unused
+built-in Sound fields do neither. clip_values and independent header cases in
+the asset-usage unit target cover this omission, with no asset/audio feature
+macros or match-state change. Contracts and full validation: notes/language.md.
+
+Clip asset collection helpers (2026-10-18) take read-only List<Clip> or
+Map<string, Clip> parameters in synchronous CPU functions/methods. Passing
+copies no collection and creates no voice or decoded-clip ownership; only
+Audio.Play retains its existing playback behavior. Collections cannot escape
+or wait, while selected Clip values retain ordinary local value semantics.
+`asset_borrows` covers playback and pack reload; notes/language.md records
+contracts, diagnostics and full validation. No audio runtime API changed.
+
+## Forget completion ordering (2026-10-18)
+
+Build run `39128917687` failed Android's `tide_platform_audio_device` only at
+the assertion that no large effect states remain after `tide_mixer_forget`.
+`apply_handed` published `forget_done` before `settled`: the waiting frame
+thread could observe completion, reclaim against the previous settled serial
+and return with retired states still allocated. Direct forget frames now
+publish their settled serial before acknowledging completion. The acquire on
+the waiter then observes everything needed for reclamation. Replacement normal
+frames retain their existing rule: their new states settle after rendering.
+No API, mixer output, allocation policy or wait limit changed.
+
+`tide_platform_audio_forget` instruments only its own compiled copy of the
+mixer and resumes the waiter's reclamation immediately after the actual
+completion store. It checks a rendered voice's and bus's 200 KB states are
+already reclaimable. This deterministically fails with the old mixer and
+passes with the corrected ordering, without a device or scheduler-dependent
+stress loop. The production mixer has no test hook. Full-suite validation is
+recorded in `notes/releases-and-ci.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform

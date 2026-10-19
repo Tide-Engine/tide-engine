@@ -1,0 +1,20 @@
+# The renderer's own shaders as SPIR-V (tide_spirv_shaders --spv), each of
+# which SPIRV_VAL (the Vulkan SDK's spirv-val) checks for Vulkan 1.1's rules.
+file(REMOVE_RECURSE "${WORK}")
+file(MAKE_DIRECTORY "${WORK}")
+execute_process(COMMAND "${TOOL}" --spv "${WORK}" RESULT_VARIABLE result ERROR_VARIABLE stderr)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "tide_spirv_shaders --spv failed:\n${stderr}")
+endif()
+file(GLOB modules "${WORK}/*.spv")
+list(LENGTH modules count)
+if(count LESS 7)
+    message(FATAL_ERROR "tide_spirv_shaders wrote ${count} shaders, where the renderer has 7")
+endif()
+foreach(module IN LISTS modules)
+    execute_process(COMMAND "${SPIRV_VAL}" --target-env vulkan1.1 "${module}" RESULT_VARIABLE result OUTPUT_VARIABLE out
+                    ERROR_VARIABLE err)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "spirv-val refuses ${module}:\n${out}${err}")
+    endif()
+endforeach()

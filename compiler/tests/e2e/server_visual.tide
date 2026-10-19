@@ -1,0 +1,8 @@
+asset Texture picture = "assets/hero.png";
+component Art { Texture image = picture; }
+scene Main { }
+view Show()
+{
+    local Spawn(Art { });
+    Draw.Mesh([Vertex { }, Vertex { }, Vertex { }], [0, 1, 2], picture);
+}

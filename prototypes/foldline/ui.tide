@@ -6,10 +6,11 @@ local singleton Interface
     bool open = true;
     bool looking;
     bool introduced;
-    bool hint;
-    int chamber = -1;
+    bool stops;
     string code;
     string message;
+    FoldShot shot0;      // Read-only placement previews for the current operator's two buttons.
+    FoldShot shot1;
 }
 
 const Color UI_INK = Color(0.87, 0.83, 0.70);
@@ -21,30 +22,6 @@ const Color UI_CYAN = Color(0.21, 0.87, 0.89);
 const Color UI_AMBER = Color(1, 0.65, 0.28);
 const Color UI_ROSE = Color(1, 0.3, 0.55);
 const Color UI_VIOLET = Color(0.62, 0.4, 1);
-
-string ChamberHint(int level)
-{
-    return level switch {
-        0 => "C uncovers the far wall. Your partner crosses and holds D. Together you release the cube.",
-        1 => "A control on each gallery. Keep two routes: you will need to get back off both galleries.",
-        2 => "Throw a block to distract it for seven seconds. Blocks float; it does not eat them.",
-        3 => "A vent room each. Both of you must shrink, get round the baffles, and work C and D together.",
-        4 => "C brakes the drums while your partner finds D on the gallery. Then bring the released cube over.",
-        5 => "C is up on the gallery. D is beyond the small entrance. Either control brakes the drums.",
-        6 => "The device is dead down here. It only moves when neither of you is looking.",
-        7 => "The device is dead down here. The floats mark the shallows. It has nobody in the shallows.",
-        8 => "The device is dead down here. Four of them. Stand between.",
-        9 => "The green plate raises the deck. The slot is for something smaller than the cube is.",
-        10 => "A door is open while its plate is weighted. Mind which side of it you are when it isn't.",
-        11 => "The passage's lamps are the green plate's. It stands still in the light. It follows the nearest of you.",
-        _ => "Green C marks the shallow step. Throw to distract it for 7 seconds. Blocks float; E retrieves."
-    };
-}
-
-string ChamberName(int level)
-{
-    return level switch { 0 => "A SHORTCUT THROUGH SPACE", 1 => "HIGH GROUND", 2 => "THE LURE", 3 => "SMALLER", 4 => "THE DRUMS", 5 => "ALL OF IT", 6 => "BETWEEN", 7 => "THE LONG POOL", 8 => "THE WORKS", 9 => "THE SHAFT", 10 => "LINE OF SIGHT", 11 => "BLACKOUT", _ => "UNDERTOW" };
-}
 
 // One of the picture's big pixels, in the window's: what every edge and shadow here is a multiple of.
 float Dot()
@@ -87,17 +64,11 @@ bool InterfaceChoice(Rect rect, string label, float size)
 [Before(Render)]
 view InterfaceInput(Devices devices, Session session, Arena arena, mut Control control, mut Interface ui)
 {
-    if (ui.chamber != arena.chamber)
-    {
-        ui.chamber = arena.chamber;
-        ui.hint = false;
-    }
-    if (!ui.open && devices.keyboard.h.down) ui.hint = !ui.hint;
     if (arena.joined > 1) control.active = session.player == arena.second ? 1 : 0;
     else if (!ui.open && devices.keyboard.tab.down) control.active = 1 - control.active;
-    if (devices.keyboard.escape.down || (ui.looking && !Cursor.locked && !arena.complete)) ui.open = true;
+    if (devices.keyboard.escape.down || (ui.looking && !Cursor.locked)) ui.open = true;
     ui.looking = Cursor.locked;
-    control.started = !ui.open && !arena.complete;
+    control.started = !ui.open;
     if (control.started) Cursor.Lock();
 }
 
@@ -124,6 +95,25 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     Ink("Nobody has left by the way they came in.", float2(pad, headingY + (compact ? 87 : 122)), Math.Min(19, width / 20), UI_INK, Anchor.UpperLeft);
     if (!compact) Draw.Text("A first-person puzzle for two.\nFold the rooms together. Mind the floor.", float2(pad, headingY + 157), 16, UI_MUTED);
     var top = headingY + (compact ? 126 : 239);
+    if (ui.stops && session.state == SessionState.Connected)
+    {
+        if (InterfaceChoice(Rect(pad, top, width, 36), "BACK", 17)) ui.stops = false;
+        var slotWidth = (width - 12) * .5;
+        for (int stop = 0; stop < DESCENT; stop++)
+        {
+            int id = PlaceAt(stop);
+            if (InterfaceChoice(Rect(pad + (stop % 2) * (slotWidth + 12), top + 46 + (stop / 2) * 36, slotWidth, 32), PlaceLabel(id), 12))
+            {
+                Send(SelectPlace { id = id });
+                ui.stops = false;
+                ui.open = false;
+                ui.introduced = true;
+                control.started = true;
+                Cursor.Lock();
+            }
+        }
+        return;
+    }
     if (InterfaceChoice(Rect(pad, top, width, 46), ui.introduced ? "GO BACK DOWN" : "GO DOWN", 22))
     {
         if (session.state == SessionState.Offline) Session.Start();
@@ -154,28 +144,37 @@ view InterfaceMenu(Session session, mut Interface ui, mut Control control)
     if (session.room != "") Ink($"ROOM  {session.room}", float2(pad + 16, top + 158), 17, UI_AMBER, Anchor.UpperLeft);
     else if (session.state == SessionState.Connecting) Ink("CONNECTING...", float2(pad + 16, top + 158), 15, UI_INK, Anchor.UpperLeft);
     else Draw.Text(ui.message, float2(pad + 16, top + 158), 14, UI_MUTED);
+    mut var keysY = top + 196;
     if (session.state == SessionState.Connected)
     {
-        Ink("DESCENT / CHOOSE A STOP", float2(pad + 16, top + 196), 11, UI_MUTED, Anchor.UpperLeft);
-        for (var i = 0; i < DESCENT - 1; i++)
-        {
-            var level = LevelAt(i);
-            var slotWidth = (width - 40) / 6;
-            var label = Between(level) ? level == BETWEEN ? "MAZE" : level == POOLWAY ? "POOL" : "WORKS" : $"0{RoomNumber(level)}";
-            if (InterfaceChoice(Rect(pad + (i % 6) * (slotWidth + 8), top + 211 + (i / 6) * 34, slotWidth, 30), label, 12))
-            {
-                Send(SelectChamber { level = level });
-                ui.open = false;
-                ui.introduced = true;
-                control.started = true;
-                Cursor.Lock();
-            }
-        }
+        if (InterfaceChoice(Rect(pad, top + 192, width, 32), "CHOOSE A STOP", 14)) ui.stops = true;
+        keysY = top + 232;
     }
-    var foot = Math.Max(top + 290, Screen.height - 82);
+    // The controls, in three columns
+    Ink("CONTROLS", float2(pad + 16, keysY), 11, UI_MUTED, Anchor.UpperLeft);
+    var column = (width - 32) / 3;
+    MenuKey(float2(pad + 16, keysY + 16), "WASD", "MOVE");
+    MenuKey(float2(pad + 16 + column, keysY + 16), "SPACE", "JUMP");
+    MenuKey(float2(pad + 16 + column * 2, keysY + 16), "LMB RMB", "FOLD");
+    MenuKey(float2(pad + 16, keysY + 30), "E", "CARRY");
+    MenuKey(float2(pad + 16 + column, keysY + 30), "F", "THROW");
+    MenuKey(float2(pad + 16 + column * 2, keysY + 30), "Q", "PING");
+    MenuKey(float2(pad + 16, keysY + 44), "TAB", "SWITCH");
+    MenuKey(float2(pad + 16 + column, keysY + 44), "R", "RESTART");
+    MenuKey(float2(pad + 16 + column * 2, keysY + 44), "ESC", "MENU");
+    Draw.Text("AIM: BRACKETS = CLEAR SHOT / SOLID SQUARES = PLACED", float2(pad + 16, keysY + 62), 10, UI_MUTED);
+    var foot = Math.Max(keysY + 84, Screen.height - 82);
     Ink("ALONE", float2(pad, foot), 11, UI_RED, Anchor.UpperLeft);
     Draw.Text("Tab is your other body.\nIt stays where you leave it.", float2(pad, foot + 20), 14, UI_MUTED);
-    Draw.Text("PROTOTYPE 01   /   TIDE", float2(pad, Screen.height - 22), 10, Color(0.36, 0.33, 0.27));
+    // ...and what this is, where there's room for it under all that
+    if (foot + 58 < Screen.height - 22) Draw.Text("PROTOTYPE 01   /   TIDE", float2(pad, Screen.height - 22), 10, Color(0.36, 0.33, 0.27));
+}
+
+// A key and what it does, for the menu's list of controls.
+void MenuKey(float2 at, string key, string label)
+{
+    Ink(key, at, 10, UI_INK, Anchor.UpperLeft);
+    Draw.Text(label, at + float2(58, 0), 11, UI_MUTED);
 }
 
 local event(Connected connected) EnterConnectedRoom(mut Interface ui)
@@ -194,46 +193,59 @@ local event(Disconnected gone) ConnectionEnded(mut Interface ui)
     ui.message = $"Connection ended: {gone.reason}.";
 }
 
-// A circuit's lamp: a square, hollow until its plate is weighted. It gives where the next goes.
-float HudLamp(float2 at, string label, float reach, Color tint, bool lit)
+// Each button has two independent marks: brackets for a clear shot now, and
+// a square below for an end already placed. Neither state hides the other.
+void ReticleEnd(float2 middle, float dot, float side, Color tint, bool ready, bool placed)
 {
-    var side = Dot() * 4;
-    Draw.Rect(at + float2(Dot(), Dot()), float2(side, side), UI_SHADOW);
-    Draw.Rect(at, float2(side, side), lit ? tint : Color(0.3, 0.28, 0.23));
-    if (!lit) Draw.Rect(at, float2(side - Dot() * 2, side - Dot() * 2), Color(0.05, 0.045, 0.04));
-    Ink(label, at + float2(side * 0.5 + 6, 0), 11, lit ? UI_INK : UI_MUTED, Anchor.MiddleLeft);
-    return at.x + side + 18 + reach;
-}
-
-// A key and what it does, as two words. It gives where the next goes.
-float HudKey(float2 at, string key, float wide, string label, float reach)
-{
-    Ink(key, at, 10, UI_INK, Anchor.MiddleLeft);
-    Ink(label, at + float2(wide + 4, 0), 10, Color(0.68, 0.64, 0.53), Anchor.MiddleLeft);
-    return at.x + wide + reach + 20;
+    var at = middle + float2(side * dot * 5, 0);
+    var ink = ready ? tint : Color(tint.r * .4, tint.g * .4, tint.b * .4);
+    var height = ready ? dot * 5 : dot * 2;
+    Draw.Rect(at + float2(dot, dot), float2(dot, height), UI_SHADOW);
+    Draw.Rect(at, float2(dot, height), ink);
+    if (ready)
+    {
+        for (int cap = -1; cap <= 1; cap += 2)
+        {
+            var tip = at + float2(-side * dot, cap * dot * 2);
+            Draw.Rect(tip + float2(dot, dot), float2(dot * 3, dot), UI_SHADOW);
+            Draw.Rect(tip, float2(dot * 3, dot), tint);
+        }
+    }
+    var pip = middle + float2(side * dot * 5, dot * 6);
+    Draw.Rect(pip, float2(dot * 4, dot * 4), UI_SHADOW);
+    Draw.Rect(pip, float2(dot * 3, dot * 3), tint);
+    if (!placed) Draw.Rect(pip, float2(dot, dot), UI_DARK);
 }
 
 [After(Render)]
-view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session session)
+view InterfaceHud(Operator seenViewer, query (FoldFrame frame) frames, Control control, mut Interface ui, Session session,
+                  Arena arena, Place place, Fold fold, Box3D.Physics physics, World world)
 {
+    if (seenViewer.id != control.active) return;
+    ui.shot0 = default;
+    ui.shot1 = default;
     if (ui.open) return;
+    // Use the same eye, frame snapping, clearance and per-end overlap checks
+    // as a real shot. Carrying turns both buttons into a throw instead.
+    if (!place.dead && seenViewer.taken <= 0 && seenViewer.chamber == arena.chamber && fold.holding[control.active] == 0)
+    {
+        mut Mount[16] mounts = default;
+        mut int count = 0;
+        foreach (var row in frames)
+        {
+            if (row.frame.chamber != arena.chamber || count >= 16) continue;
+            mounts[count] = Mount { at = row.frame.at, face = row.frame.face, size = row.frame.size };
+            count += 1;
+        }
+        var eye = seenViewer.position + float3(0, EYE_HIGH * seenViewer.scale, 0);
+        var way = LookDirection(seenViewer.yaw, seenViewer.pitch);
+        ui.shot0 = PreviewFold(fold, control.active * 2, eye, way, mounts, count, physics, world);
+        ui.shot1 = PreviewFold(fold, control.active * 2 + 1, eye, way, mounts, count, physics, world);
+    }
     Draw.SetScreen();
     var pad = Math.Clamp(Screen.width * 0.025, 18, 34);
-    var narrow = Screen.width < 800;
     var middle = float2(Screen.width * 0.5, Screen.height * 0.5);
     var dot = Dot();
-
-    // The room, its name, and its three plates.
-    Draw.Rect(float2(pad + dot * 1.5, 43), float2(dot * 3, 46), UI_RED);
-    Ink(Between(arena.level) ? $"{arena.depth + 1} DOWN" : $"ROOM {RoomNumber(arena.level)}   /   {arena.depth + 1} DOWN", float2(pad + 14, 22), 11, UI_MUTED, Anchor.UpperLeft);
-    Ink(narrow ? "FOLDLINE" : ChamberName(arena.level), float2(pad + 14, 37), 17, UI_INK, Anchor.UpperLeft);
-    mut var lamp = float2(pad + 14 + dot * 2, 78);
-    lamp.x = HudLamp(lamp, "A", 8, UI_AMBER, arena.plateA);
-    lamp.x = HudLamp(lamp, "B", 8, UI_CYAN, arena.plateB);
-    if (PlateCount(arena.level) > 2) lamp.x = HudLamp(lamp, "C", 8, Color(0.45, 1, 0.3), arena.plateC);
-    if (PlateCount(arena.level) > 3) lamp.x = HudLamp(lamp, "D", 8, Color(0.45, 1, 0.3), arena.plateD);
-    lamp.x = HudLamp(lamp, "HELD", 32, UI_INK, arena.hold);
-    if (!narrow) Ink(arena.gate > 0.9 ? "GATE UP" : "GATE DOWN", float2(lamp.x + 10, 78), 11, arena.gate > 0.9 ? UI_INK : UI_MUTED, Anchor.MiddleLeft);
 
     // Whose eyes these are, and the room others join.
     var mark = control.active == 0 ? UI_AMBER : UI_ROSE;
@@ -242,38 +254,12 @@ view InterfaceHud(Arena arena, Fold fold, Control control, Interface ui, Session
     Ink(control.active == 0 ? "OPERATOR A" : "OPERATOR B", float2(Screen.width - pad - dot * 4 - 8, 30), 11, UI_INK, Anchor.MiddleRight);
     if (session.room != "") Ink($"WITH  {session.room}", float2(Screen.width - pad, 52), 10, UI_MUTED, Anchor.MiddleRight);
 
-    // The reticle: a point, with each fold's color either side of it.
+    // The reticle's left/right sides match the two placement buttons. Where the device is dead there's nothing to
+    // place, and nothing over what's out there in the dark but a point to look by.
     Draw.Rect(middle, float2(dot, dot), UI_INK);
-    Draw.Rect(middle - float2(dot * 4, 0), float2(dot * 2, dot), control.active == 0 ? UI_AMBER : UI_ROSE);
-    Draw.Rect(middle + float2(dot * 4, 0), float2(dot * 2, dot), control.active == 0 ? UI_CYAN : UI_VIOLET);
+    if (place.dead) return;
+    ReticleEnd(middle, dot, -1, control.active == 0 ? UI_AMBER : UI_ROSE, ui.shot0.valid, fold.ends[control.active * 2].open);
+    ReticleEnd(middle, dot, 1, control.active == 0 ? UI_CYAN : UI_VIOLET, ui.shot1.valid, fold.ends[control.active * 2 + 1].open);
     Draw.Rect(middle - float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
     Draw.Rect(middle + float2(0, dot * 4), float2(dot, dot * 2), Color(0.87, 0.83, 0.70, 0.6));
-    if (fold.holding[control.active] > 0) Ink("E  DROP      CLICK  THROW", middle + float2(0, 40), 11, UI_INK, Anchor.MiddleCenter);
-
-    // What to do, and the keys that do it.
-    var legend = Screen.width > 960;
-    var hintWidth = Math.Min(680, Screen.width - 36);
-    var hintY = Screen.height - (legend ? 62 : 34);
-    Slab(Rect(middle.x - hintWidth * 0.5, hintY - 15, hintWidth, 30));
-    var objective = !Between(arena.level) && !arena.released ? "Release the cube: one operator on C, the other on D.   H / HINT" : Between(arena.level) ? ChamberHint(arena.level) : arena.level == 0 ? "Weight A and B together. Hold the lift for your partner."
-                  : "Weight A and B together. Reach the lift.   H / HINT";
-    Ink(arena.gate > 0.9 && !Between(arena.level) ? "Hold the lift's plate for your partner. Then both of you, in." : (ui.hint || arena.level == 0 && !arena.released) ? ChamberHint(arena.level) : objective, float2(middle.x, hintY),
-        Math.Min(13, hintWidth / 50), UI_INK, Anchor.MiddleCenter);
-    if (legend)
-    {
-        var solo = arena.joined < 2;
-        var row = solo ? 706.0 : 626.0;
-        mut var at = float2(middle.x - row * 0.5, Screen.height - 24);
-        at.x = HudKey(at, "WASD", 34, "MOVE", 30);
-        at.x = HudKey(at, "SPACE", 38, "JUMP", 28);
-        at.x = HudKey(at, "LMB", 26, "FOLD", 36);
-        at.x = HudKey(at, "RMB", 26, "FOLD", 30);
-        at.x = HudKey(at, "E", 10, "CARRY", 36);
-        at.x = HudKey(at, "F", 10, "THROW", 40);
-        at.x = HudKey(at, "Q", 10, "PING", 26);
-        if (solo) at.x = HudKey(at, "TAB", 24, "SWITCH", 42);
-        at.x = HudKey(at, "H", 10, "HINT", 26);
-        at.x = HudKey(at, "R", 10, "RESET", 34);
-        at.x = HudKey(at, "ESC", 24, "MENU", 30);
-    }
 }

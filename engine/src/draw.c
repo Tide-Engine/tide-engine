@@ -376,6 +376,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->target_count = d->target = 0;
     // Every setting is back where a frame starts
     d->place = d->window = (tide_draw_place){0};
+    d->frustum_ready = false;
     d->unsettled = d->altered = 0;
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
     d->bold = NULL;
@@ -670,6 +671,8 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
             case TIDE_DRAW_SAVED_STENCIL: p->stencil = s->value; break;
             case TIDE_DRAW_SAVED_LOD: p->lod = s->value; break;
             case TIDE_DRAW_SAVED_LOD_CAMERA: p->lod_camera = s->value; break;
+            case TIDE_DRAW_SAVED_FRUSTUM_CULLING: p->no_frustum_culling = s->value; break;
+            case TIDE_DRAW_SAVED_BOUNDS: p->bounds = s->bounds; break;
             case TIDE_DRAW_SAVED_CAMERA_2D: p->camera_2d = s->value; break;
             default: p->camera_3d = s->value; break;
             }
@@ -732,6 +735,54 @@ uint32_t tide_draw_push_cull(tide_draw_list *d, const tide_cull cull)
     const uint32_t mark = d->saved_count;
     save(d, TIDE_DRAW_SAVED_CULL)->value = d->place.cull;
     tide_draw_set_cull(d, cull);
+    return mark;
+}
+
+void tide_draw_set_frustum_culling(tide_draw_list *d, const bool enabled)
+{
+    d->place.no_frustum_culling = !enabled;
+}
+
+void tide_draw_unset_frustum_culling(tide_draw_list *d)
+{
+    d->place.no_frustum_culling = 0;
+}
+
+uint32_t tide_draw_push_frustum_culling(tide_draw_list *d, const bool enabled)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_FRUSTUM_CULLING)->value = d->place.no_frustum_culling;
+    tide_draw_set_frustum_culling(d, enabled);
+    return mark;
+}
+
+void tide_draw_set_bounds(tide_draw_list *d, const tide_float3 center, const tide_float3 size)
+{
+    const bool valid = tide_is_finite_f(center.x) && tide_is_finite_f(center.y) && tide_is_finite_f(center.z)
+        && tide_is_finite_f(size.x) && tide_is_finite_f(size.y) && tide_is_finite_f(size.z)
+        && size.x >= 0.0f && size.y >= 0.0f && size.z >= 0.0f;
+    d->place.bounds = (tide_draw_bounds){.center = center, .extents = tide_mul_f3(size, tide_f3_splat(0.5f)),
+                                       .set = valid ? 1u : 2u};
+}
+
+void tide_draw_unset_bounds(tide_draw_list *d)
+{
+    d->place.bounds = (tide_draw_bounds){0};
+}
+
+uint32_t tide_draw_push_bounds(tide_draw_list *d, const tide_float3 center, const tide_float3 size)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_BOUNDS)->bounds = d->place.bounds;
+    tide_draw_set_bounds(d, center, size);
+    return mark;
+}
+
+uint32_t tide_draw_push_no_bounds(tide_draw_list *d)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_BOUNDS)->bounds = d->place.bounds;
+    tide_draw_unset_bounds(d);
     return mark;
 }
 
@@ -1070,6 +1121,8 @@ void tide_draw_defaults(tide_draw_list *d)
         tide_draw_place *p = i ? &d->targets[i - 1u].place : &d->place;
         p->camera_2d = p->camera_3d = p->clip = p->moved = p->stencil = p->tinted = 0;
         p->lod = p->lod_camera = 0;
+        p->no_frustum_culling = 0;
+        p->bounds = (tide_draw_bounds){0};
         p->blend = TIDE_BLEND_ALPHA;
         p->depth = TIDE_DEPTH_READ_WRITE;
         p->cull = TIDE_CULL_BACK;
@@ -2107,6 +2160,8 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, const uint32_t mesh, const voi
     tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
     m->vertex_count = m->index_count = 0;
     m->vertex_size = vertex_size;
+    m->bounds = (tide_draw_bounds){0};
+    m->bounds_position = 0;
     if (vertex_count == 0 || vertex_size == 0 || index_count < 3u) return;
     m->bytes = grow(m->bytes, 0, &m->vertex_capacity, (uint64_t)vertex_count * vertex_size, 1, 64u * vertex_size);
     memcpy(m->bytes, vertices, (size_t)vertex_count * vertex_size);
@@ -2415,7 +2470,7 @@ static bool instance_mirrors(const uint8_t *instance)
 
 // Instances through a shader as the selected destination's settings have them, of the mesh as it's named: a
 // level of detail is named by whoever picked it.
-static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
+static void shaded_visible(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                           const uint32_t count, const void *uniforms, const uint32_t *textures, const uint32_t sampling)
 {
     const tide_draw_place *p = &d->place;
@@ -2447,6 +2502,142 @@ static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const ui
         first = i;
         mirrored = next;
     }
+}
+
+// Bounds are cached alongside the retained geometry, never read from a game's
+// lists after capture. A shader supplies a position only when it cannot deform it.
+static tide_draw_bounds mesh_bounds(tide_draw_list *d, uint32_t mesh, const uint32_t position)
+{
+    if (!mesh || mesh > d->mesh_count) return (tide_draw_bounds){0};
+    if (d->meshes[mesh - 1u].base) mesh = d->meshes[mesh - 1u].base;
+    if (!mesh || mesh > d->mesh_count) return (tide_draw_bounds){0};
+    tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+    if (m->bounds_position == position && m->bounds.set) return m->bounds;
+    m->bounds_position = position;
+    m->bounds = (tide_draw_bounds){.set = 2};
+    if (!position || m->vertex_size < sizeof(tide_float3) || position - 1u > m->vertex_size - sizeof(tide_float3)
+        || !m->bytes || !m->vertex_count) return m->bounds;
+    float lo[3] = {0}, hi[3] = {0};
+    for (uint32_t i = 0; i < m->vertex_count; i++) {
+        float p[3];
+        memcpy(p, (const uint8_t *)m->bytes + (size_t)i * m->vertex_size + position - 1u, sizeof p);
+        for (uint32_t axis = 0; axis < 3; axis++) {
+            if (!tide_is_finite_f(p[axis])) return m->bounds;
+            if (!i || p[axis] < lo[axis]) lo[axis] = p[axis];
+            if (!i || p[axis] > hi[axis]) hi[axis] = p[axis];
+        }
+    }
+    m->bounds = (tide_draw_bounds){
+        .center = {(float)(((double)lo[0] + hi[0]) * 0.5), (float)(((double)lo[1] + hi[1]) * 0.5),
+                   (float)(((double)lo[2] + hi[2]) * 0.5)},
+        .extents = {(float)(((double)hi[0] - lo[0]) * 0.5), (float)(((double)hi[1] - lo[1]) * 0.5),
+                    (float)(((double)hi[2] - lo[2]) * 0.5)}, .set = 1};
+    return m->bounds;
+}
+
+static const tide_draw_frustum *frustum_camera(tide_draw_list *d)
+{
+    const uint32_t seen[3] = {d->place.camera_3d, d->target, d->epoch};
+    if (!d->frustum_ready || memcmp(d->frustum_seen, seen, sizeof seen) != 0
+        || d->frustum_screen.x != d->screen.x || d->frustum_screen.y != d->screen.y) {
+        const tide_float4x4 matrix = tide_draw_world_to_clip(d, d->screen);
+        float c[16];
+        memcpy(c, &matrix, sizeof c);
+        d->frustum.count = 0;
+        bool valid = true;
+        for (uint32_t i = 0; i < 16; i++) valid &= tide_is_finite_f(c[i]);
+        for (uint32_t plane = 0; valid && plane < 6; plane++) {
+            const uint32_t row = plane / 2u;
+            const double sign = plane & 1u ? -1.0 : 1.0;
+            double *p = d->frustum.plane[d->frustum.count], *error = d->frustum.magnitude[d->frustum.count];
+            for (uint32_t axis = 0; axis < 4; axis++) {
+                const double a = c[axis * 4 + 3], b = c[axis * 4 + row];
+                p[axis] = a + sign * b;
+                error[axis] = (a < 0.0 ? -a : a) + (b < 0.0 ? -b : b);
+            }
+            // Infinite far projections (and an unknown size's zero matrix) have no far rejection plane.
+            if (p[0] != 0.0 || p[1] != 0.0 || p[2] != 0.0 || p[3] < 0.0) d->frustum.count++;
+        }
+        memcpy(d->frustum_seen, seen, sizeof seen);
+        d->frustum_screen = d->screen;
+        d->frustum_ready = true;
+    }
+    return &d->frustum;
+}
+
+// Conservative support test of the transformed box against all six clip
+// planes. Double intermediates avoid overflow for arbitrary finite game values.
+// The error allowance also keeps boxes touching a plane despite GPU rounding.
+static bool bounds_visible(const tide_draw_bounds bounds, const tide_draw_frustum *camera,
+                           const tide_float4x4 *own, const tide_float4x4 *through)
+{
+    if (bounds.set != 1 || !camera->count) return true;
+    tide_float4x4 world = through ? tide_mul_f4x4(*through, *own) : *own;
+    float w[16];
+    memcpy(w, &world, sizeof w);
+    for (uint32_t i = 0; i < 16; i++) {
+        if (!tide_is_finite_f(w[i])) return true;
+    }
+    if (w[3] != 0.0f || w[7] != 0.0f || w[11] != 0.0f || w[15] != 1.0f) return true;
+    const double center[3] = {bounds.center.x, bounds.center.y, bounds.center.z};
+    const double extent[3] = {bounds.extents.x, bounds.extents.y, bounds.extents.z};
+    double at[3], radius[3], magnitude[3];
+    for (uint32_t row = 0; row < 3; row++) {
+        at[row] = w[12 + row];
+        radius[row] = 0.0;
+        magnitude[row] = tide_abs_f(w[12 + row]);
+        for (uint32_t axis = 0; axis < 3; axis++) {
+            const double scale = w[axis * 4 + row];
+            at[row] += scale * center[axis];
+            radius[row] += (scale < 0.0 ? -scale : scale) * extent[axis];
+            const double part = scale * center[axis];
+            magnitude[row] += (part < 0.0 ? -part : part)
+                + (scale < 0.0 ? -scale : scale) * extent[axis];
+        }
+    }
+    for (uint32_t plane = 0; plane < camera->count; plane++) {
+        const double *p = camera->plane[plane], *rounding = camera->magnitude[plane];
+        double distance = p[3];
+        double error = rounding[3];
+        for (uint32_t axis = 0; axis < 3; axis++) {
+            const double n = p[axis];
+            distance += n * at[axis] + (n < 0.0 ? -n : n) * radius[axis];
+            error += rounding[axis] * magnitude[axis];
+        }
+        if (distance < -1e-5 * (error + 1.0)) return false;
+    }
+    return true;
+}
+
+static tide_draw_bounds draw_bounds(tide_draw_list *d, const uint32_t mesh, const uint32_t position)
+{
+    if (d->place.no_frustum_culling) return (tide_draw_bounds){0};
+    return d->place.bounds.set ? d->place.bounds : position ? mesh_bounds(d, mesh, position) : (tide_draw_bounds){0};
+}
+
+static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
+                          const uint32_t count, const void *uniforms, const uint32_t *textures, const uint32_t sampling)
+{
+    const uint32_t size = shader ? tide_shader_instance_size(shader) : 0;
+    const tide_draw_bounds bounds = shader && shader->dims == 3 ? draw_bounds(d, mesh, shader->bounds_position)
+                                                               : (tide_draw_bounds){0};
+    if (bounds.set != 1 || !count || !instances || size < sizeof(tide_float4x4) || shader->instance_floats < 4u) {
+        shaded_visible(d, shader, mesh, instances, count, uniforms, textures, sampling);
+        return;
+    }
+    const tide_draw_frustum *camera = frustum_camera(d);
+    const tide_float4x4 *through = d->place.moved & TIDE_DRAW_MOVED_3D ? &d->place.transform_3d : NULL;
+    uint32_t first = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        tide_float4x4 own;
+        memcpy(&own, (const uint8_t *)instances + (size_t)i * size, sizeof own);
+        if (bounds_visible(bounds, camera, &own, through)) continue;
+        if (i > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
+                                      i - first, uniforms, textures, sampling);
+        first = i + 1u;
+    }
+    if (count > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
+                                      count - first, uniforms, textures, sampling);
 }
 
 void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
@@ -2614,6 +2805,8 @@ void tide_draw_instance(tide_draw_list *d, const uint32_t mesh, const tide_float
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
+    const tide_draw_bounds bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+    if (bounds.set == 1 && !bounds_visible(bounds, frustum_camera(d), &transform, through)) return;
     uint32_t drawn = mesh;
     if (mesh && mesh <= d->mesh_count && d->meshes[mesh - 1u].levels) drawn = one_level(d, mesh, &transform, through);
     mesh_instances(d, drawn, &transform, 1, texture, filter, wrap, (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull,
@@ -2626,8 +2819,18 @@ static void instances_placed(tide_draw_list *d, const uint32_t mesh, const tide_
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    mesh_instances(d, mesh, transforms, count, texture, filter, wrap, (tide_blend)d->place.blend, (tide_depth)p->depth,
-                   p->cull, tide_draw_tint(d), through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
+    const tide_draw_bounds bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+    uint32_t first = 0;
+    for (uint32_t i = 0; bounds.set == 1 && transforms && i < count; i++) {
+        if (bounds_visible(bounds, frustum_camera(d), &transforms[i], through)) continue;
+        if (i > first) mesh_instances(d, mesh, transforms + first, i - first, texture, filter, wrap,
+                                      (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d), through,
+                                      through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
+        first = i + 1u;
+    }
+    if (count > first) mesh_instances(d, mesh, transforms ? transforms + first : NULL, count - first, texture, filter,
+                                     wrap, (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d), through,
+                                     through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
 }
 
 void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transforms, const uint32_t count,

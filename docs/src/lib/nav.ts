@@ -26,6 +26,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Introduction', link: '/guide' },
             { text: 'Install', link: '/guide/install' },
+            { text: 'Editor setup', link: '/tools/editors' },
             { text: 'Your first game', link: '/guide/first-game' },
             { text: 'Playground', link: '/guide/playground' },
             { text: 'Live examples', link: '/guide/examples' },
@@ -45,6 +46,7 @@ export const sidebar: Group[] = [
             { text: 'Commands', link: '/game/commands' },
             { text: 'Assets', link: '/game/assets' },
             { text: 'Scenes', link: '/game/scenes' },
+            { text: 'State visibility', link: '/game/visibility' },
             { text: 'Async and tasks', link: '/game/tasks' },
             { text: 'Input', link: '/game/input' },
         ],
@@ -83,6 +85,7 @@ export const sidebar: Group[] = [
         text: 'Multiplayer',
         items: [
             { text: 'Matches', link: '/multiplayer/matches' },
+            { text: 'Managed hosting', link: '/multiplayer/hosting' },
             { text: 'Your own network and service', link: '/multiplayer/own-network' },
             { text: 'Networking', link: '/multiplayer/networking' },
             { text: 'Determinism', link: '/multiplayer/determinism' },
@@ -106,7 +109,6 @@ export const sidebar: Group[] = [
         text: 'Tools',
         items: [
             { text: 'The tide command', link: '/tools/cli' },
-            { text: 'Editors', link: '/tools/editors' },
             { text: 'Debug views', link: '/tools/debug-views' },
         ],
     },

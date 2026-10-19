@@ -1,0 +1,4 @@
+// expect: Scene.Load root components takes component types or values, like 'Player' or 'Player { speed = ... }'
+scene Hand { }
+scene Main { }
+event(Spawned) Setup(with Main) { Scene.Load(Hand, true); }

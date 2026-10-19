@@ -1,0 +1,4 @@
+// expect: Remove takes component types, like 'Stunned', not values
+scene Main { }
+component Part { int count; }
+system Change(Part part) { this.Remove(part); }

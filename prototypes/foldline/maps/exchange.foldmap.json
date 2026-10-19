@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "name": "exchange",
+  "function": "BuildMapExchange",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -10,
+        0,
+        -14.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        13,
+        0,
+        16.1
+      ],
+      "yaw": "SOUTH",
+      "need": [
+        2
+      ],
+      "socket_x": -1
+    }
+  ],
+  "plates": [
+    {
+      "id": "plate_0",
+      "at": [
+        -10,
+        0,
+        6
+      ],
+      "signal": 0,
+      "heavy": true,
+      "need": 75
+    },
+    {
+      "id": "plate_1",
+      "at": [
+        1,
+        0,
+        -5
+      ],
+      "signal": 1
+    },
+    {
+      "id": "plate_2",
+      "at": [
+        14,
+        0,
+        11
+      ],
+      "signal": 2
+    }
+  ],
+  "machines": [
+    {
+      "id": "machine_0",
+      "from": [
+        -4,
+        2.2,
+        -6
+      ],
+      "to": [
+        -4,
+        6.800000000000001,
+        -6
+      ],
+      "size": [
+        0.3,
+        4.4,
+        4
+      ],
+      "need": [
+        0
+      ],
+      "speed": 6.0,
+      "lamp": [
+        -4.335,
+        3.5,
+        -3.5
+      ],
+      "along": [
+        0,
+        0,
+        1
+      ],
+      "lamp_depth": 0.18
+    },
+    {
+      "id": "machine_1",
+      "from": [
+        8.3,
+        2.2,
+        7.5
+      ],
+      "to": [
+        8.3,
+        6.800000000000001,
+        7.5
+      ],
+      "size": [
+        0.3,
+        4.4,
+        2
+      ],
+      "need": [
+        1
+      ],
+      "speed": 6.0,
+      "lamp": [
+        7.4,
+        3.5,
+        -1.59
+      ],
+      "along": [
+        1,
+        0,
+        0
+      ],
+      "lamp_depth": 0.18
+    }
+  ],
+  "anchors": {
+    "wire_2_0": {
+      "at": [
+        14,
+        0.025,
+        11.6
+      ],
+      "support": "scene"
+    },
+    "wire_2_1": {
+      "at": [
+        16.5,
+        0.025,
+        11.6
+      ],
+      "support": "scene"
+    },
+    "wire_2_2": {
+      "at": [
+        16.5,
+        0.025,
+        13.435
+      ],
+      "support": "scene"
+    },
+    "wire_2_3": {
+      "at": [
+        16.5,
+        4.2,
+        13.435
+      ],
+      "support": "scene"
+    },
+    "wire_2_4": {
+      "at": [
+        15.9,
+        4.2,
+        13.435
+      ],
+      "support": "scene"
+    },
+    "wire_2_5": {
+      "at": [
+        14,
+        4.2,
+        13.475
+      ],
+      "support": "scene"
+    },
+    "wire_0_0": {
+      "at": [
+        -9.2,
+        0.025,
+        6
+      ],
+      "support": "scene"
+    },
+    "wire_0_1": {
+      "at": [
+        -4.335,
+        0.025,
+        6
+      ],
+      "support": "scene"
+    },
+    "wire_0_2": {
+      "at": [
+        -4.335,
+        3.5,
+        6
+      ],
+      "support": "scene"
+    },
+    "wire_0_3": {
+      "at": [
+        -4.335,
+        3.5,
+        -3.5
+      ],
+      "support": "scene"
+    },
+    "wire_1_0": {
+      "at": [
+        1.6,
+        0.025,
+        -5
+      ],
+      "support": "scene"
+    },
+    "wire_1_1": {
+      "at": [
+        7.865,
+        0.025,
+        -5
+      ],
+      "support": "scene"
+    },
+    "wire_1_2": {
+      "at": [
+        7.865,
+        3.5,
+        -5
+      ],
+      "support": "scene"
+    },
+    "wire_1_3": {
+      "at": [
+        7.865,
+        3.5,
+        -1.5275
+      ],
+      "support": "scene"
+    },
+    "wire_2_4_turn": {
+      "at": [
+        15.9,
+        4.2,
+        13.475
+      ],
+      "support": "scene"
+    },
+    "wire_1_3_face": {
+      "at": [
+        7.4,
+        3.5,
+        -1.5275
+      ],
+      "support": "scene"
+    }
+  },
+  "wires": [
+    {
+      "id": "wire_0",
+      "signal": 0,
+      "from": "plate_0",
+      "to": "machine_0",
+      "points": [
+        "wire_0_0",
+        "wire_0_1",
+        "wire_0_2",
+        "wire_0_3"
+      ]
+    },
+    {
+      "id": "wire_1",
+      "signal": 1,
+      "from": "plate_1",
+      "to": "machine_1",
+      "points": [
+        "wire_1_0",
+        "wire_1_1",
+        "wire_1_2",
+        "wire_1_3",
+        "wire_1_3_face"
+      ]
+    },
+    {
+      "id": "wire_2",
+      "signal": 2,
+      "from": "plate_2",
+      "to": "exit",
+      "points": [
+        "wire_2_0",
+        "wire_2_1",
+        "wire_2_2",
+        "wire_2_3",
+        "wire_2_4",
+        "wire_2_4_turn",
+        "wire_2_5"
+      ]
+    }
+  ],
+  "place_ids": [
+    12
+  ],
+  "external_geometry": true
+}

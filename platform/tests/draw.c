@@ -28,9 +28,16 @@
 #include "tide/text.h"
 #include "tide/time.h"
 #include "../src/texture_residency.h"
+#ifdef TIDE_SPIRV
+#include "../src/gpu.h" // tide_gpu_spirv_of
+#include "spirv.h"      // compiler/src's translator, which the test's build adds
+#endif
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
+#else
+#define DRAW_VULKAN // Desktop and Android draw with Vulkan where they can, whose device a test loses
+#include "../src/gpu_vk.h"
 #endif
 
 #define WIDTH 256
@@ -803,10 +810,10 @@ static void primitives(void)
 // Shaders of the game's: meshes of any vertices, drawn through GLSL and WGSL
 // as tidec writes them from Tide's (see tide_shader), here written by hand
 
-#ifdef __wasm__
-#define WGSL(source) source
+#if defined(__wasm__) || defined(TIDE_SPIRV)
+#define WGSL(source) source // The web's, and Vulkan's, which translates it (main)
 #else
-#define WGSL(source) NULL // Only the web's
+#define WGSL(source) NULL
 #endif
 
 // What every shader's uniforms start with, before its own.
@@ -3071,6 +3078,49 @@ static void cull_settings(void)
 }
 
 // ---------------------------------------------------------------------------
+// Frustum rejection must preserve pixels while removing the offscreen runs.
+static void frustum_culling(void)
+{
+    enum { W = 64, H = 64 };
+    static uint32_t reference[W * H], culled[W * H];
+    const tide_vertex3 vertices[] = {
+        {{-0.5f, 0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+        {{0.5f, 0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+        {{0.5f, -0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+        {{-0.5f, -0.5f, 0}, {0, 0}, {1, 0, 0, 1}},
+    };
+    const uint32_t indices[] = {0, 1, 2, 0, 2, 3};
+    const tide_mesh mesh = {vertices, 4, indices, 6, 1};
+    uint32_t calls[2];
+    uint64_t submitted[2];
+    for (int enabled = 0; enabled < 2; enabled++) {
+        tide_draw_reset(&list);
+        tide_draw_screen_size(&list, screen);
+        tide_draw_clear(&list, background);
+        pixel_camera_3d();
+        tide_draw_set_cull(&list, TIDE_CULL_NONE);
+        tide_draw_set_frustum_culling(&list, enabled != 0);
+        tide_float4x4 inside = tide_identity_f4x4();
+        inside.c0.x = inside.c1.y = 32;
+        const tide_float2 center = at(32, 32);
+        inside.c3 = tide_f4(center.x, center.y, 5, 1);
+        tide_draw_mesh_3d(&list, &mesh, inside, NULL, TIDE_FILTER_POINT);
+        // Separate state makes the discarded draw observable in the draw-call count.
+        tide_draw_set_blend(&list, TIDE_BLEND_ADD);
+        tide_float4x4 outside = tide_identity_f4x4();
+        outside.c3.x = screen.x * 20;
+        tide_draw_mesh_3d(&list, &mesh, outside, NULL, TIDE_FILTER_POINT);
+        corner_pixels(enabled ? culled : reference, W, H);
+        calls[enabled] = tide_platform_draw_calls();
+        submitted[enabled] = tide_platform_draw_vertices();
+    }
+    expect(memcmp(reference, culled, sizeof reference) == 0, "frustum culling preserves rendered pixels");
+    expect(near(culled[32 * W + 32], rgba(red), 0), "frustum reference contains visible geometry");
+    expect(calls[0] == calls[1] + 1u, "frustum culling removes an offscreen GPU draw");
+    expect(submitted[0] == submitted[1] + 6u, "frustum-rejected instances are excluded from submitted vertex totals");
+    // Later tests use the host's usual screen size; culling settings reset each frame.
+}
+
 // Levels of detail: a mesh whose levels are other triangles of its corners,
 // so a pixel says which was drawn. The full mesh is two squares side by side,
 // its first level the left one alone, and its second the top right half of
@@ -3208,6 +3258,8 @@ static void levels_of_detail(void)
             }
             check_pixels(checks, LOD_CELLS * 3);
         }
+        expect(tide_platform_draw_vertices() == 135,
+               "submitted vertices count each instance at its selected LOD, through built-in and custom shaders");
     }
     // Four draws alone at three levels, in an order that changes level each time: a draw call a level, and the clear
     for (int kind = 0; kind < 2; kind++) {
@@ -3221,7 +3273,46 @@ static void levels_of_detail(void)
         snprintf(what, sizeof what, "%s drawn four times at three levels of detail is three draw calls, and the clear (%u)",
                  kinds[kind], (unsigned)calls);
         expect(calls == 4u, what);
+        expect(tide_platform_draw_vertices() == 27,
+               "LOD counts submitted indices, including repeats, rather than the mesh's stored corners");
     }
+}
+
+// What the stats read: geometry submitted in every pass, with overlays left out.
+static void vertex_counts(void)
+{
+    static tide_shader blit_shader;
+    blit_shader = flat_shader;
+    blit_shader.id = 0x7E57BE17;
+    blit_shader.vertex_size = sizeof(tide_vertex);
+    const tide_render_target target = tide_render_target_make(16, 16);
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background); // Three vertices
+    tide_draw_rect(&list, at(20, 20), tide_f2(8, 8), white);
+    tide_draw_circle(&list, at(40, 20), 4, white); // Six each, even when batched
+    quad(at(60, 16), at(68, 24), white, white, NULL, TIDE_FILTER_POINT, true); // Six indices, four corners
+    tide_draw_text(&list, "M", at(80, 16), 16, white); // Six for a glyph
+    tide_draw_to(&list, target.id, 16, 16);
+    tide_draw_clear(&list, background);
+    tide_draw_rect(&list, tide_f2(0, 0), tide_f2(8, 8), white); // Nine more in another pass
+    tide_draw_to(&list, 0, 0, 0);
+    tide_draw_blit(&list, &blit_shader, TIDE_BLEND_REPLACE, &white, NULL, NULL, 0); // Six more
+    tide_platform_draw(&list);
+    expect(tide_platform_draw_vertices() == 42,
+           "vertex totals include shapes, 2D meshes, text, clears, render targets and blits");
+    const uint32_t calls = tide_platform_draw_calls();
+    tide_draw_list over = {0};
+    tide_draw_rect(&over, tide_f2(0, 0), tide_f2(8, 8), white);
+    tide_platform_draw_over(&over);
+    tide_platform_draw_overlay("vertices");
+    expect(tide_platform_draw_vertices() == 42 && tide_platform_draw_calls() == calls,
+           "host overlays leave the game's vertex and draw-call totals alone");
+    tide_draw_free(&over);
+    tide_render_target_dispose(target);
+    tide_draw_reset(&list);
+    tide_platform_draw(&list);
+    expect(tide_platform_draw_vertices() == 0 && tide_platform_draw_calls() == 0,
+           "an empty frame resets geometry totals to zero");
 }
 
 // ---------------------------------------------------------------------------
@@ -3870,7 +3961,58 @@ static int bench(void)
     return 0;
 }
 
-static bool benching;
+// --frames-bench: the same scenes, as a game draws them: into the window,
+// shown each frame, nothing read back, so frames overlap with the GPU as a
+// game's do. Per frame: recording, the renderer's CPU time (submission), the
+// time from one frame's start to the next (everything, the display's wait
+// included: a hidden window doesn't wait for one), and the GPU's own time
+// where the backend times it.
+static bench_samples frame_times; // record, render (submission), total (frame to frame)
+static double frame_gpu[BENCH_FRAMES * 4];
+static int frame_gpu_count;
+static uint64_t frame_last;
+
+static int frames_bench(void)
+{
+    const uint64_t start = tide_time_now_ns();
+    if (bench_frame == 0) {
+        tide_platform_gpu_timing(true);
+        frame_gpu_count = 0;
+    }
+    bench_scene();
+    const uint64_t recorded = tide_time_now_ns();
+    tide_platform_draw(&list);
+    const uint64_t submitted = tide_time_now_ns();
+    const double gpu = tide_platform_gpu_ms();
+    if (bench_frame > BENCH_WARMUP) {
+        const int at = bench_frame - BENCH_WARMUP - 1;
+        frame_times.record[at] = (double)(recorded - start) / 1e6;
+        frame_times.render_readback[at] = (double)(submitted - recorded) / 1e6;
+        frame_times.total[at] = (double)(start - frame_last) / 1e6;
+        if (gpu >= 0.0 && frame_gpu_count < (int)(sizeof frame_gpu / sizeof frame_gpu[0])) frame_gpu[frame_gpu_count++] = gpu;
+    }
+    frame_last = start;
+    if (++bench_frame <= BENCH_WARMUP + BENCH_FRAMES) return TIDE_KEEP_RUNNING;
+    const bench_timing recording = bench_summarize(frame_times.record);
+    const bench_timing submitting = bench_summarize(frame_times.render_readback);
+    const bench_timing whole = bench_summarize(frame_times.total);
+    double gpu_median = -1.0;
+    if (frame_gpu_count) {
+        qsort(frame_gpu, (size_t)frame_gpu_count, sizeof frame_gpu[0], bench_compare);
+        gpu_median = frame_gpu[frame_gpu_count / 2];
+    }
+    printf("%s (ms, median / p95): record %.3f / %.3f, submit %.3f / %.3f, frame %.3f / %.3f, gpu %.3f (%d samples)\n",
+           bench_names[bench_kind], recording.median_ms, recording.p95_ms, submitting.median_ms, submitting.p95_ms,
+           whole.median_ms, whole.p95_ms, gpu_median, frame_gpu_count);
+    tide_platform_gpu_timing(false);
+    bench_frame = 0;
+    return ++bench_kind < BENCH_KINDS ? TIDE_KEEP_RUNNING : 0;
+}
+
+static bool benching, frames_benching;
+#ifdef DRAW_VULKAN
+static uint32_t lost_epoch; // The device's before Vulkan's was lost on purpose
+#endif
 static const char *dump_path;
 
 static int frame(void *user, const float seconds)
@@ -3881,16 +4023,20 @@ static int frame(void *user, const float seconds)
     said = true;
     screen = tide_platform_screen_size();
     if (benching) return bench();
+    if (frames_benching) return frames_bench();
     if (dump_path) return dump(dump_path);
-#ifdef __wasm__
-    // WebGPU's device can go away (a driver that starts over), taking what the
-    // renderer made on it. Once everything checked out, the page loses it as
-    // that would, and when it says it found another, everything has to draw
-    // again from what the list and the font keep.
+#if defined(__wasm__) || defined(DRAW_VULKAN)
+    // WebGPU's and Vulkan's devices can go away (a driver that starts over),
+    // taking what the renderer made on them. Once everything checked out, the
+    // page loses WebGPU's as that would, and Vulkan loses its own as the frame
+    // is shown; once there's another, everything has to draw again from what
+    // the list and the font keep.
     static int lost; // 1: lost, and waiting for another; 2: checking again
     if (lost == 1) {
+#ifdef __wasm__
         if (!tide_web_eval("Tide.gpuDevices() > 1")) return TIDE_KEEP_RUNNING;
         printf("the device was lost, and the page found another\n");
+#endif
         lost = 2;
     }
     if (lost == 2) {
@@ -3911,7 +4057,14 @@ static int frame(void *user, const float seconds)
         settings();
         depth_settings();
         cull_settings();
+        frustum_culling();
         levels_of_detail();
+        vertex_counts();
+#ifdef DRAW_VULKAN
+        // The renderer asked for the device as the checks drew: another was made, which they drew with
+        expect(tide_gpu_vulkan.epoch() != lost_epoch, "Vulkan's lost device was made again, and drew everything again");
+        printf("the device was lost, and another was made\n");
+#endif
         return run_checks();
     }
 #endif
@@ -3933,11 +4086,21 @@ static int frame(void *user, const float seconds)
     settings();
     depth_settings();
     cull_settings();
+    frustum_culling();
     levels_of_detail();
+    vertex_counts();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
+        lost = 1;
+        return TIDE_KEEP_RUNNING;
+    }
+#endif
+#ifdef DRAW_VULKAN
+    if (code == 0 && strcmp(tide_platform_renderer(), "Vulkan") == 0) {
+        lost_epoch = tide_gpu_vulkan.epoch();
+        tide_gpu_vk_lose();
         lost = 1;
         return TIDE_KEEP_RUNNING;
     }
@@ -3949,12 +4112,14 @@ int main(const int argc, char **argv)
 {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--bench") == 0) benching = true;
+        else if (strcmp(argv[i], "--frames-bench") == 0) frames_benching = true;
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
         else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];
         else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("usage: tide_platform_draw [--bench [--save <label>]] [--dump <file.ppm>]\n"
+            printf("usage: tide_platform_draw [--bench [--save <label>]] [--frames-bench] [--dump <file.ppm>]\n"
                    "  --bench          20 warmup frames, then 100 measured frames per workload\n"
+                   "  --frames-bench   the same, drawn into the window and shown, as a game's frames are\n"
                    "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
                    "  --dump <file>    write the smooth shapes' scene as an image (a PPM), and check nothing\n"
                    "On the web: ?bench&save=<label> prints the records.\n"
@@ -3977,6 +4142,9 @@ int main(const int argc, char **argv)
             if (!bench_output) printf("couldn't save to " TIDE_BENCH_RESULTS "/draw.jsonl; printing JSONL instead\n");
         }
     }
+#ifdef TIDE_SPIRV
+    tide_gpu_spirv_of = tide_wgsl_to_spirv; // The shaders here have WGSL alone: Vulkan's SPIR-V is made of it
+#endif
     tide_platform_open(&(tide_window_desc){.title = "draw", .width = WIDTH, .height = HEIGHT, .hidden = true});
     tide_platform_run(frame, NULL);
 }
