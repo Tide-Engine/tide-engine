@@ -244,7 +244,7 @@ local event(Blast blast) ShowBlast(mut Fx fx, query (Body body, with Fighter) fi
 
 - **Rows are from the tick that sent the event**, like what the handler takes of the entity the event was sent to: the match as that tick left it, whatever it is by the frame the handler runs in. They aren't blended. A handler of a [`verified`](#verified-handlers) event gets the confirmed tick's.
 - **They're the tick's once it's done**, after all its events and changes. An entity the tick destroyed is in no row, the one the event was sent to included, and an entity it spawned is in them. The handler's own components are still as the event's turn left them.
-- **Nothing in it says `verified`**: the handler's event says which tick. A binding can't be `mut`, and rows have the match's fields, without its text, lists, maps, sets and grids, which aren't heard yet.
+- **Nothing in it says `verified`**: the handler's event says which tick. Match fields stay read-only and omit the match's text, lists, maps, sets and grids, which aren't heard yet. Attached local fields use the entity's current local state when the handler runs. A binding such as `query (mut Fighter fighter) fighters` can write those local fields, including local containers. Local fields are never recorded in the event journal.
 - **A query of this machine's entities**, `query (Spark spark) sparks`, is the local world as it is when the handler runs. It's the only kind a handler of a local event takes.
 - **The entities are recorded once for a tick**, however many of its events have a handler that goes through them, and only for ticks that sent one.
 

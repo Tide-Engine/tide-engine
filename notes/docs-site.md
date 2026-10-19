@@ -1,5 +1,11 @@
 # The docs site
 
+Query local fields (2026-10-19): the decided spec and Views, Functions, Events
+and Systems describe current attached local reads, mutable bindings, helper
+capabilities and verified/recorded match timing. Views includes the approved
+MarkDead example. Remaining local-world component/query lifetime restrictions
+stay explicit. No navigation/deployment change. Validation: language.md.
+
 Recorded-owner event filters (2026-10-19): Events replaces the manual Owner /
 Session guard workaround with with/without ownership, including verified,
 replay and Shown/Hidden endpoint behavior. The decided spec records the owner's

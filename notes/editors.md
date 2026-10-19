@@ -1,5 +1,12 @@
 # The language server and the editors
 
+Query local fields (2026-10-19): local view/listener and helper query headers
+offer mut, and binding/query hover explains current local fields alongside
+read-only match data. Match headers still omit mut. lsp_query_local_fields
+checks members, mutable header completion, clean writes and rejected match
+writes; existing helper/view query assertions reflect the extended contract.
+No editor protocol/package configuration changed. Validation: language.md.
+
 Recorded-owner event filters (2026-10-19): ownership is offered after with and
 without in local match-event handler headers, including verified triggers,
 and remains absent for match handlers and known local-world events. Hover

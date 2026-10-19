@@ -35,7 +35,7 @@ It does not approve a new feature merely because a game worked around it.
 | A system taking one component cannot set another entity's same component | Fixed for both modes. Read-only parameters keep their captured values. Under the owner's 2026-10-19 rule, self Set also replaces the active mut binding immediately, including through helpers, with ordinary later write-back. Other-target Set leaves it unchanged. Current pages, container ownership and snapshots are preserved. `world_set_read`, `world_set_mut`, `notes/language.md`. |
 | Local handlers cannot read match lists/maps/grids | Tick-event journaling intentionally excludes heap payloads, including query rows. The spec says these copies omit them; lifting it needs lifetime/copy-cost design. |
 | `with ownership` in local handlers | Fixed with the owner's recorded-owner rule (2026-10-19): event-turn ownership, including presence, is captured beside the event; verified delivery uses its confirmed recording. Shown/Hidden compare ownership at their delivered endpoints. Recipient journals omit hidden Owner metadata. `ownership_events`, `notes/verified-and-local-handlers.md`. |
-| Local fields through query rows, mutable local query bindings | Explicit current query limitations: caller/row ownership and local-write rules still need decisions. |
+| Local fields through query rows, mutable local query bindings | Fixed with the owner-approved current-local-state rule (2026-10-19): local code reads attached fields and mut bindings write them, retaining read-only match data and caller capabilities through helpers. Verified/event match timing remains unchanged. Local-world whole-component query writes are still absent. `query_local_fields`, `notes/language.md`. |
 | Spawn accepts component literals, not component values | Fixed as an authorized API completion: Spawn/Add and Scene.Load extra root components copy existing values/helper results through the existing ordered deferred path, including owned containers and sparse presence. Local fields get fresh defaults; Remove stays type-only. `component_values`, `notes/language.md`. |
 | Event/command values cannot be helper parameters | Fixed: ordinary functions/methods take and return whole payloads under existing value/mut, heap and capability rules; no implicit World or authenticated sender. Numeric payload helpers/factories also work on GPU. `component_values`, `maps`, `commands` and shader pass 23. |
 | Input values cannot be helper parameters | Fixed with the owner-approved read-only borrow using ordinary parameter syntax. Helpers forward the caller's current/previous input, retaining player selection, nested edges and prediction/replay behavior; no copy or wire change. `input_borrows`, existing input/predict/net/view_time fixtures and `notes/language.md`. |
@@ -65,11 +65,11 @@ All reproduced inconsistencies with existing contracts above are now addressed.
 The follow-up API work, synchronous handler queries, helper borrowing,
 read-only World.Set, resource asset collection parameters and shaded drawing
 helpers cover the conventional value/metadata gaps and reusable synchronous access.
-The mutable World.Set and recorded-owner event-filter follow-ups have
-warning-free builds and pass all 2,434 native and 2,344 web debug CTest cases,
-all 239 editor cases and the docs build. Three old overlap-rejection fixtures
-became one positive execution target; ownership filters add a focused execution
-target and three handler diagnostic fixtures.
+The mutable World.Set, recorded-owner event-filter and attached-local-query
+follow-ups have warning-free builds and pass all 2,440 native and 2,350 web debug
+CTest cases, all 240 editor cases and the docs build. The latest query coverage
+includes eleven runtime cases, a safety fixture and seven capability diagnostics
+replacing three obsolete local-query rejections.
 The preceding scalar Clip and ANGLE regressions remain included.
 Detailed contracts and coverage are in notes/language.md,
 notes/verified-and-local-handlers.md, notes/textures.md and notes/shaders.md.

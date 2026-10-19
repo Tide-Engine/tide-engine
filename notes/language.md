@@ -1,5 +1,69 @@
 # Language features, as tidec builds them
 
+## Query rows reach attached local fields (2026-10-19)
+
+Owner-approved after reviewing the query(mut Fighter fighter) example: local
+code reads current attached local fields through query bindings, and mut
+bindings write only those fields. Match values and entity handles remain
+read-only. This includes verified and recorded match rows: local state has no
+history. Ordinary copies still omit local fields; a direct binding passed to
+an ordinary helper retains its capability. Read-only borrowed queries accept
+mutable sources; mutable helper bindings require mutable sources. Function,
+method and recursive forwarding preserve selection, match timing and local
+permission. Match systems/handlers cannot gain local access through helpers.
+Queries over local-world components still have read-only bindings: this task
+extends attached local fields, not whole-component query writes.
+
+Checker propagation follows nested query bindings and component arguments from
+rows, then derives local query effects for callers and warnings. Access warnings
+run after this propagation, so forwarding a mut binding does not suggest a
+capability-breaking remove-mut fix. Query mut calls count as writers for value
+evaluation order and dropped-call analysis. Views/local handlers keep existing
+serial order and named-phase constraints, without granting a match World write.
+Shader inputs still cause local-field propagation before access warnings.
+
+Generated match rows contain an extra private birth identity only when the
+query reaches local fields, propagated through borrowed source layouts. It is
+plain metadata; event journals never contain local fields or local heap handles.
+Purely read-only access resolves current attached state or borrowed defaults
+without allocating an attached row. A mutable binding that uses local fields prepares
+and borrows its owned cell at row entry, before the body, then keeps that stable
+reference. No lookup/reset is hidden inside a C operand. Mutable
+outer parameters sharing query access use attached storage up front, so pending
+local edits are immediately visible to that query. Read-only outer/row borrows
+also share the cell when their routine can mutate it through a query, preserving
+live aliasing rather than depending on whether defaults were stored already.
+Historical birth mismatches read defaults and mutable access runs
+Forgotten/releases/reinitializes in place;
+moving/removing that cell could invalidate an active outer alias. This follows
+existing listener birth-reset behavior while preserving live cell addresses.
+Private get/mut/reset helpers use existing attached/table/ownership functions;
+no new runtime API, public event header or match layout/hash/packing changed.
+Affected private query/journal layouts and their build identities change.
+
+query_local_fields has eleven runtime cases for borrowed reads/writes, methods,
+inlined Actions, default strings/lists/arrays, live reads after nested writes,
+outer aliases, source operand order, verified/current local state, delayed event
+delivery, birth reuse/Forgotten and an active alias across differing predicted
+and confirmed births, plus a filtered mixed verified/predicted row sharing local
+state, preparation before assignment operands and readonly outer/row aliases
+beside mutable helper queries. Its 5,002-row case preserves
+a COW match snapshot/hash.
+A scalar-only safety fixture exercises the same private helpers without heap
+fields. Seven new diagnostic fixtures replace three obsolete view/listener
+rejections. lsp_query_local_fields and existing query tests cover completion,
+hover and rejected match writes. Public spec, Views, Functions, Events and
+Systems document the contract.
+
+Validation: warning-free native and web debug builds. All 2,440 native CTest
+cases pass, split into 2,408 non-GPU cases (125.38 s) and 32 GPU cases (13.47 s)
+so native graphics did not overlap browser graphics. All 2,350 web debug cases
+pass (294.65 s), including WebGL, D3D11 and WebGPU coverage. These runs include
+all eleven query_local_fields runtime cases, the safety fixture and all 240
+editor cases. The production docs build passes. Exact cross-platform pins are
+unchanged. Linux/macOS/MinGW, Android and sanitizers were not run on this Windows
+machine; no CI or private prototype playtests were dispatched.
+
 Recorded-owner local event filters (2026-10-19): the shared checker accepts
 with/without ownership in local handlers of match events, including verified
 and component-free entity listeners. Spawned/Destroyed infer the match side

@@ -1,0 +1,150 @@
+component Body
+{
+    int id;
+    float position;
+    local int flash = 3;
+    local List<int> trail = [5];
+    local string label = "fresh";
+    local int[2] pair;
+}
+component Small { int id; local int value = 7; }
+component Tag { }
+component Plain { int id; local int value = 7; }
+singleton Actions { bool send; int count; }
+local singleton Control { int mode; }
+local singleton Seen { int total; int before; int after; int heard; int sure; int forgotten; float positions; }
+event Ping { }
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { id = 1, position = 1 }, Tag);
+    Spawn(Body { id = 2, position = 2 });
+    Spawn(Small { id = 3 });
+    Spawn(Small { id = 4 });
+    Spawn(Plain { id = 5 });
+    Spawn(Plain { id = 6 });
+}
+system Move(mut Body body) { body.position += 1; }
+system Emit(Actions actions) { if (actions.send) Send(Ping); }
+system More(Actions actions, with Main)
+{
+    for (mut var i = 0; i < actions.count; i++) Spawn(Body { id = i + 10 });
+}
+
+int Read(Body body) { return body.flash + body.trail.count + body.label.length; }
+void Touch(mut Body body)
+{
+    body.flash += 2;
+    body.trail.Add(body.id);
+    body.pair[0] += 1;
+    body.label = "changed";
+}
+void WriteRows(query (mut Body unit) rows)
+{
+    foreach (var row in rows) Touch(row.unit);
+}
+void Forward(query (mut Body other) rows) { WriteRows(rows); }
+struct Tool
+{
+    void Apply(query (mut Body other) rows) { WriteRows(rows); }
+}
+void WithAction(mut Body body, Action action) { body.flash += 1; action(); }
+int Bump(query (mut Body other) rows)
+{
+    foreach (var row in rows) row.other.flash += 1;
+    return 1;
+}
+int Combine(int a, int b, int c) { return a * 1000 + b * 100 + c; }
+int ReadRows(query (Body unit) rows)
+{
+    mut var sum = 0;
+    foreach (var row in rows) sum += Read(row.unit);
+    return sum;
+}
+view Drive(Control control, mut Seen seen, query (Body body) reads, query (mut Body body) writes)
+{
+    if (control.mode == 1) seen.total = ReadRows(reads);
+    if (control.mode == 2) Forward(writes);
+    if (control.mode == 3)
+    {
+        foreach (var row in reads)
+        {
+            seen.before += row.body.flash;
+            Forward(writes);
+            seen.after += row.body.flash;
+        }
+    }
+    if (control.mode == 6) { var tool = Tool { }; tool.Apply(writes); }
+    if (control.mode == 7) foreach (var row in writes) WithAction(row.body) { seen.total += 1; }
+    if (control.mode == 8) seen.total = Combine(ReadRows(reads), Bump(writes), ReadRows(reads));
+}
+view Confirmed(Control control, mut Seen seen, query (mut verified Body body) bodies)
+{
+    if (control.mode != 4) return;
+    foreach (var row in bodies)
+    {
+        seen.positions += row.body.position;
+        row.body.flash += 1;
+    }
+}
+int ReadSmall(query (Small unit) rows)
+{
+    mut var sum = 0;
+    foreach (var row in rows) sum += row.unit.value;
+    return sum;
+}
+view Outer(Control control, mut Seen seen, mut Small small, query (Small unit) rows)
+{
+    if (control.mode != 5) return;
+    small.value += 1;
+    seen.total = ReadSmall(rows);
+}
+view BirthAlias(Control control, mut Small small, query (mut verified Small old) historic)
+{
+    if (control.mode != 9 || small.id != 3) return;
+    small.value = 9;
+    foreach (var row in historic) if (row.old.id == 3) row.old.value = 4;
+    small.value += 1;
+}
+view Mixed(Control control, mut Seen seen, query (Body body, with Tag, mut verified Body sure) bodies)
+{
+    if (control.mode != 10) return;
+    foreach (var row in bodies)
+    {
+        row.sure.flash += 1;
+        seen.total += row.body.flash;
+        seen.positions += row.sure.position;
+    }
+}
+view InitOrder(Control control, query (mut Small unit) current, query (verified Small unit) historic)
+{
+    if (control.mode != 11) return;
+    foreach (var row in current) if (row.unit.id == 3) row.unit.value = ReadSmall(historic);
+}
+int ReadWhileWriting(Plain plain, query (mut Plain other) rows)
+{
+    var before = plain.value;
+    foreach (var row in rows) row.other.value += 1;
+    return plain.value - before;
+}
+view ReadOnlyRows(Control control, mut Seen seen, query (Plain plain) reads, query (mut Plain plain) writes)
+{
+    if (control.mode != 13) return;
+    foreach (var row in reads) seen.total += ReadWhileWriting(row.plain, writes);
+}
+view ReadOnlyOuter(Control control, mut Seen seen, Plain plain, query (mut Plain other) rows)
+{
+    if (control.mode == 12) seen.total += ReadWhileWriting(plain, rows);
+}
+local event(Ping) Hear(mut Seen seen, query (mut Body body) bodies)
+{
+    foreach (var row in bodies) { seen.heard += row.body.flash; row.body.flash += 10; }
+}
+local event(verified Ping) Sure(mut Seen seen, query (Body body) bodies)
+{
+    foreach (var row in bodies) { seen.sure += row.body.flash; seen.positions += row.body.position; }
+}
+local event(Forgotten) Release(Body body, mut Seen seen)
+{
+    seen.forgotten += body.flash;
+}

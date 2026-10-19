@@ -1,5 +1,14 @@
 # ECS and simulation state
 
+Attached local fields through query rows (2026-10-19) supersede the historical
+read-only/local-field prohibition below. Local code resolves current attached
+state; mut bindings write those fields while match rows keep their existing
+live, blended, verified or recorded timing. Private row birth metadata prevents
+using another entity's fields on a reused handle. Read defaults allocate no row;
+mut bindings borrow owned storage at row entry. Outer mutable aliases share storage, and a
+birth reset reinitializes its cell in place to retain active pointer validity.
+No match state or runtime API changed. Details and validation: language.md.
+
 Mutable parameters beside World.Set (2026-10-19) follow the owner-approved
 replacement rule: a self Set updates the stored component and active mutable
 copy; later parameter edits use ordinary write-back timing. A private C-stack

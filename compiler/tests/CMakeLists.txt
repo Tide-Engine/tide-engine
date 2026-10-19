@@ -54,6 +54,7 @@ tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 tide_e2e_test(handler_queries) # Current-world queries at match event/command turns, with ordinary deferred changes
 tide_e2e_test(query_borrows) # Borrowed helper queries retain selection, row projection, order and caller capabilities
+tide_e2e_test(query_local_fields) # Current attached local fields through read-only and mutable query bindings
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_queries PRIVATE TIDE_QUERY_THREADS=1)

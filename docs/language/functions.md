@@ -132,7 +132,7 @@ system AdvanceRound(mut Round round)
 
 Methods take explicit singleton parameters and receivers by the same value and `mut` rules.
 
-A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
+A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter or a permitted query binding, and can pass that binding through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same component parameter. Method receivers don't receive local fields; a method borrowing a query can reach that query's permitted local fields. The existing restrictions on copying or passing grids and rendering resources still apply.
 
 A drawing function can also [name a frag or vert](../game/shaders.md#drawing-from-a-helper). Each component or singleton the shader takes must match exactly one explicit input parameter of the function by type. The shader reads that passed value and, where needed, its forwarded local fields. The helper uses its caller's frame and follows ordinary drawing capabilities.
 
@@ -174,7 +174,9 @@ system Weigh(mut Stats stats, query (Body candidate, with Enemy) enemies)
 
 The source keeps its order and timing. Match queries read the current match, a view passes its blended or verified rows, and local handlers pass their recorded rows. A helper can forward the query to another helper. Passing it allocates no collection and makes no snapshot. Recorded rows retain their existing omitted-data rules. To borrow local entities, use local bindings such as `query (local Spark spark) sparks`.
 
-The query is read-only and valid for the call. It has no `mut`, `out` or default; queries and whole rows cannot be stored or returned, and whole rows cannot be passed as values. Component values read from a row can be copied and passed normally. Keep query iteration and forwarding outside callback blocks and parallel steps. Async functions, externs, operators, audio declarations and shaders take no borrowed queries.
+The query is valid for the call. The query parameter itself has no `mut`, `out` or default. In local code, a nested binding such as `query (mut Fighter fighter) fighters` can write attached local fields while its match data stays read-only. A mutable helper binding requires a mutable source binding; a read-only helper can borrow either. Local fields always use current local state, including when the source has verified or recorded match values. Match code cannot call a helper that reaches local fields.
+
+Queries and whole rows cannot be stored or returned, and whole rows cannot be passed as values. A component binding passed directly to an ordinary helper retains its local-field access; an explicit component copy has match data only. Keep query iteration and forwarding outside callback blocks and parallel steps. Async functions, externs, operators, audio declarations and shaders take no borrowed queries.
 
 The helper gains the row access its parameter declares. Its other capabilities still come from its caller; explicit `World` access remains separate. Reads and writes preserve the existing scheduling and evaluation-order rules.
 

@@ -1,0 +1,5 @@
+// expect: needs a compatible borrowed query
+component Body { local int flash; }
+scene Main { }
+void Update(query (mut Body body) bodies) { foreach (var row in bodies) row.body.flash = 1; }
+view Show(query (Body body) bodies) { Update(bodies); }
