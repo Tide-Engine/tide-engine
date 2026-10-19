@@ -612,6 +612,46 @@ int ChallengeBudget(int level)
     return 0;
 }
 
+// A puzzle's par: its shortest solution, found by `inside_out_solve`
+// searching every position it can reach (test/campaign.c holds each to a
+// witness that long). A challenge's is its budget.
+int LevelPar(int level)
+{
+    switch (level)
+    {
+        case 0: return 10;
+        case 1: return 12;
+        case 2: return 20;
+        case 3: return 15;
+        case 4: return 11;
+        case 5: return 19;
+        case 6: return 16;
+        case 7: return 30;
+        case 8: return 26;
+        case 9: return 17;
+        case 10: return 12;
+        case 11: return 12;
+        case 12: return 13;
+        case 13: return 42;
+        case 14: return 20;
+        case 15: return 21;
+        case 16: return 25;
+        case 17: return 35;
+        case 18: return 34;
+        case 19: return 29;
+    }
+    return ChallengeBudget(level);
+}
+// A puzzle's stars: one for solving it, two within a quarter more moves than
+// its par, three at par. One solved before bests were kept has one.
+int Stars(bool solved, int best, int level)
+{
+    if (!solved) return 0;
+    if (best <= 0) return 1;
+    var par = LevelPar(level);
+    return best <= par ? 3 : best * 4 <= par * 5 ? 2 : 1;
+}
+
 void LoadLevel(int level, mut LevelLayout layout, mut Puzzle puzzle)
 {
     var chosen = Math.Clamp(level, 0, PUZZLE_COUNT - 1);

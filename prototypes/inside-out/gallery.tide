@@ -210,6 +210,18 @@ void PuzzlePost(mut Sculpture sculpture, HallState workshop, mut Gallery gallery
     FloorOutline(sculpture, at, float2(tile * .90), Math.Max(.8, tile * .035), solved ? SOLVED_GLOW : open ? BRASS : RUBBER, top, tile);
     sculpture.glow = 0;
     if (open) SeatLamps(sculpture, station, at, tile, top, .31, .31, aboard);
+    // A solved puzzle's stars, as three studs along the post's back edge:
+    // brass when earned.
+    var stars = Stars(solved, workshop.best[station.level], station.level);
+    var back = float2(station.post - station.near);
+    var along = float2(-back.y, back.x);
+    for (var star = 0; star < 3 && stars > 0; star++)
+    {
+        sculpture.glow = star < stars ? 1 : 0;
+        Cuboid(sculpture, at + back * tile * .35 + along * tile * (star - 1) * .19, float2(tile * .15), tile * .08,
+            star < stars ? Math.Lerp(BRASS, Color.white, .35) : Color(.22, .19, .17), top, tile);
+        sculpture.glow = 0;
+    }
     if (!open || tile < 14)
     {
         Cuboid(sculpture, at, float2(tile * .70), tile * .08, open ? Color(.42, .40, .38) : Color(.20, .17, .16), top, tile);
