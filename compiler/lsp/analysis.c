@@ -2930,11 +2930,14 @@ static void describe(const occurrence *o, sb *out)
         break;
     case OCC_OWNERSHIP: {
         const bool with = o->param->mode == PARAM_WITH;
+        const bool listener = o->param_of && o->param_of->listens;
         code_block(out, with ? "with ownership" : "without ownership");
-        sb_put(out, with ? "\n\nFilter: the view runs for the entities this machine's player owns: those with an `Owner` "
+        sb_printf(out, "\n\nFilter: the %s runs for ", listener ? "local handler" : "view");
+        sb_put(out, with ? "the entities this machine's player owns: those with an `Owner` "
                            "whose `player` is `Session.player`. For entities any player owns, write `with Owner`."
-                         : "\n\nFilter: the view runs for the entities this machine's player doesn't own: another "
+                         : "the entities this machine's player doesn't own: another "
                            "player's, and those with no `Owner`. With `with Owner` too, only another player's.");
+        if (listener) sb_put(out, "\n\nOwnership is captured at the event's turn, after match handlers; later transfers don't redirect delivery. Shown and Hidden use their delivered availability endpoints.");
         break;
     }
     case OCC_VERIFIED:
@@ -8052,6 +8055,26 @@ static bool local_trigger(const int open)
     return false;
 }
 
+// A local handler's parameter header follows its trigger, even while its
+// incomplete parameters don't parse yet. Known local events have no owners.
+static bool local_match_handler(const int open)
+{
+    if (open < 3 || DOC->toks[open - 2].kind != T_RPAREN) return false;
+    int depth = 1, trigger = open - 3;
+    for (; trigger >= 0; trigger--) {
+        if (DOC->toks[trigger].kind == T_RPAREN) depth++;
+        if (DOC->toks[trigger].kind == T_LPAREN && --depth == 0) break;
+    }
+    if (trigger < 0 || !local_trigger(trigger)) return false;
+    int name = trigger + 1;
+    if (str_eq_c(DOC->toks[name].text, "verified")) name++;
+    for (int i = 0; i < A.prog->events.count; i++) {
+        const decl *event = A.prog->events.items[i];
+        if (str_eq(event->name, DOC->toks[name].text) && event->is_local) return false;
+    }
+    return !str_eq_c(DOC->toks[name].text, "Forgotten");
+}
+
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
 // Sanitize, or a method's (`bool IsDead(`, `Money operator +(`). None for a
 // value, like a field's default.
@@ -9267,10 +9290,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 complete_param_name(&c, prev->text);
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
-            // view Camera(Player player, with ownership): by this machine's player, which only views ask
-            if (view) {
+            // Views and local match-event handlers can filter by this machine's player.
+            if (view || (f.header == HEADER_SYSTEM && local_match_handler(f.open))) {
                 item(&c, "ownership", CK_KEYWORD,
                      pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
+            }
+            if (view) {
                 // ...and with verified Dead: by the world the server has confirmed, which only they see
                 item(&c, "verified", CK_KEYWORD,
                      pk == T_WITH ? "Entities that have it in the world the server has confirmed"

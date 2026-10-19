@@ -365,21 +365,26 @@ local event(Spawned) CrateLanded(Body body, with Crate)
 - **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there. Existing entities that are newly available receive `Shown` as that world arrives; nothing a machine already had is shown again.
 - **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them. The entities it had before aren't new to it, and aren't heard again.
 
+### Ownership filters
+
+Use `with ownership` or `without ownership` as in a view:
+
+```csharp
+// Only this machine's own fighter shakes the screen.
+local event(Hit) Shake(mut Fx fx, with ownership)
+{
+    fx.shake = 0.2;
+}
+```
+
+The filter uses the owner recorded at the event's turn, after its match handlers ran. Transferring ownership later, removing `Owner` or destroying the entity before the next frame doesn't redirect the event. No `Owner` or `Session` parameter is needed. `without ownership` includes other players' entities and entities with no permitted `Owner`; `with Owner, without ownership` additionally requires that component.
+
+The same filters work on `verified` handlers, using their confirmed recording. Ordinary predicted events retain their once-under-replay rule, including when a correction changes only the captured ownership. `Shown` and `Hidden` use their respective delivered endpoints: gaining or losing ownership changes availability for an ownership-filtered handler. A filter alone targets an entity and makes a `Spawned` or `Destroyed` handler hear the match's events. Local-world events, `Forgotten` and query row filters don't accept ownership.
+
 ### What isn't there yet
 
 - **Text, lists, maps, sets and grids of the match** aren't heard. Naming one, in the event or in a component or singleton the handler takes, is an error that says so, and a copy of a component that has one has it empty. Local state has them as ever.
 - **The `World`**, which is the match as it is now and not as the event left it. Nor `Devices` or the input.
-- **`with ownership`.** A handler takes `Owner owner` and `Session session`, and compares:
-
-  ```csharp
-  // Only this machine's own fighter shakes the screen
-  local event(Hit) Shake(Owner owner, Session session, mut Fx fx)
-  {
-      if (owner.player != session.player) return;
-      fx.shake = 0.2;
-  }
-  ```
-
 - **`async`.** A local handler of one of the match's events starts a [task](./tasks.md) instead, by calling an async function with what the task needs.
 - **`verified` components beside a predicted event.** A handler that hears a tick as it's predicted takes the match as that tick left it.
 

@@ -1,5 +1,13 @@
 # Language features, as tidec builds them
 
+Recorded-owner local event filters (2026-10-19): the shared checker accepts
+with/without ownership in local handlers of match events, including verified
+and component-free entity listeners. Spawned/Destroyed infer the match side
+from the filter alone. Local-world events, Forgotten, conflicting filters and
+local-world components remain errors. Generated capture, delivery, availability,
+privacy and replay contracts and validation are in
+notes/verified-and-local-handlers.md. No new runtime function is used.
+
 ## World.Set updates active mutable bindings (2026-10-19)
 
 Owner-approved: Set<T> may overlap a mut T parameter. A successful Set of the

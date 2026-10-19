@@ -1,0 +1,78 @@
+settings { maxPlayers = 2; }
+
+component Target { int id; local int hits; }
+component Gate { }
+singleton Actions { int mode; int owner; bool transfer; bool privateOwner; }
+local singleton Seen
+{
+    int mine; int rest; int ownedRest; int noOwner; int alone; int declared;
+    int sureMine; int sureRest; int rows; int gated;
+    int spawnedMine; int spawnedRest; int destroyedMine; int destroyedRest; int lifecycleAlone;
+    int shownMine; int hiddenMine; int shownRest; int hiddenRest;
+    int sureShown; int sureHidden;
+}
+event Ping { int id; }
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Target { id = 1 }, Owner { player = PlayerID(0) }, Visibility);
+    Spawn(Target { id = 2 }, Owner { player = PlayerID(1) }, Visibility);
+    Spawn(Target { id = 3 }, Visibility);
+    Spawn(Target { id = 4 }, Owner, Visibility);
+}
+
+system Act(Target target, Actions actions)
+{
+    if (actions.mode == 1) this.Send(Ping { id = target.id });
+    if (actions.mode == 2 && target.id == 1) this.Remove(Owner);
+    if (actions.mode == 3) this.Destroy();
+    if (actions.mode == 5 && target.id == 3) this.Add(Owner { player = PlayerID(0) });
+    if (actions.mode == 6 && target.id == 1) this.Add(Gate);
+}
+system Create(Actions actions, with Main)
+{
+    if (actions.mode == 4) Spawn(Target { id = 5 }, Owner { player = PlayerID(actions.owner) }, Visibility);
+}
+event(Spawned) Restrict(mut Visibility visibility, Actions actions, with Target)
+{
+    if (actions.privateOwner) visibility.Set<Owner>(Audience.Only(PlayerID(0)));
+}
+event(Ping) Transfer(mut Owner owner, Actions actions)
+{
+    if (actions.transfer) owner.player = PlayerID(1);
+}
+
+local event(Ping ping) Mine(mut Target target, mut Seen seen, with ownership)
+{
+    seen.mine |= 1 << ping.id;
+    target.hits += 1;
+}
+local event(Ping ping) Rest(mut Seen seen, without ownership) { seen.rest |= 1 << ping.id; }
+local event(Ping ping) OwnedRest(mut Seen seen, with Owner, without ownership) { seen.ownedRest |= 1 << ping.id; }
+local event(Ping ping) NoOwner(mut Seen seen, without Owner, without ownership) { seen.noOwner |= 1 << ping.id; }
+local event(Ping ping) Alone(mut Seen seen, with ownership) { seen.alone |= 1 << ping.id; }
+local event(Ping ping) Declared(Owner owner, Session session, mut Seen seen, with ownership)
+{
+    Debug.Assert(owner.player == session.player);
+    seen.declared |= 1 << ping.id;
+}
+local event(Ping ping) Gated(mut Seen seen, with ownership, without Gate) { seen.gated |= 1 << ping.id; }
+local event(verified Ping ping) SureMine(mut Seen seen, with ownership, query (Target target) targets)
+{
+    seen.sureMine |= 1 << ping.id;
+    foreach (var row in targets) seen.rows += row.target.id;
+}
+local event(verified Ping ping) SureRest(mut Seen seen, without ownership) { seen.sureRest |= 1 << ping.id; }
+
+local event(Spawned) SpawnMine(Target target, mut Seen seen, with ownership) { seen.spawnedMine |= 1 << target.id; }
+local event(Spawned) SpawnRest(Target target, mut Seen seen, without ownership) { seen.spawnedRest |= 1 << target.id; }
+local event(Spawned) SpawnAlone(mut Seen seen, with ownership) { seen.lifecycleAlone += 1; }
+local event(Destroyed) DeathMine(Target target, mut Seen seen, with ownership) { seen.destroyedMine |= 1 << target.id; }
+local event(Destroyed) DeathRest(Target target, mut Seen seen, without ownership) { seen.destroyedRest |= 1 << target.id; }
+local event(Shown) ShowMine(Target target, mut Seen seen, with ownership) { seen.shownMine += 1 << target.id; }
+local event(Hidden) HideMine(Target target, mut Seen seen, with ownership) { seen.hiddenMine += 1 << target.id; }
+local event(Shown) ShowRest(Target target, mut Seen seen, without ownership) { seen.shownRest += 1 << target.id; }
+local event(Hidden) HideRest(Target target, mut Seen seen, without ownership) { seen.hiddenRest += 1 << target.id; }
+local event(verified Shown) SureShown(Target target, mut Seen seen, with ownership) { seen.sureShown += 1 << target.id; }
+local event(verified Hidden) SureHidden(Target target, mut Seen seen, with ownership) { seen.sureHidden += 1 << target.id; }

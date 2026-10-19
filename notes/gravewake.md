@@ -63,6 +63,71 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Torn apart at once, pixelled light, missions you can see (2026-10-19)
+
+The owner, after playing: "when the zombies die i think they should just
+explode, them laying for a while makes it hard to know where I can walk or
+not"; "some of the VFX are very smooth looking, i would like to give them a
+more pixelated look"; "and the missions, would be nice to visually see in the
+ring the progress vs just a HUD thing"; "i also missed a mission, probably my
+fault but i just didnt realize it was active". How each was answered, and the
+numbers, are mine, Provisional.
+
+- **Torn apart** (zombies.tide's `Zombie.torn`, `Hunt`; crowd.tide's
+  `GatherZombie`; gore.tide's `Spill`, `Fling`, `Gore.torn`; fx.tide's `Bleed`,
+  `Fx.kills`): a kill no longer leaves a body lying 4.5 s. It's not drawn from
+  the frame it dies and gone the next tick, and in its place its trunk, two arms,
+  two legs and head fly (a head shot's head furthest), with 4 or 5 lumps and ropes
+  of gut (8 in a burst), the blood as before. Burned to death, it falls apart in
+  embers, ash and charred, bloodless pieces with a scorch under them (it had
+  just fallen). Many kills at once throw fewer lumps and less blood each, so the
+  fight stays in sight and the motes' lists don't fill. The pieces lie 12 s (22
+  before; 1500 at most, 1000 before), and drip less. Kept: a Bloater killed still
+  falls and swells a second under its red ring before it bursts (it's the one
+  thing on the ground to keep off), and at dawn the dead still burn and fall.
+- **Pixelled light** (look.tide's `Develop`, `Earth`; fx.tide's `GlowMote`,
+  `StreakLight`; hud.tide's `GroundRing`): the bloom is read once for each of the
+  picture's big pixels, not smoothly across them, so a glow's halo is in pixels
+  too; a glowing mote's light is in three hard rings (bright middle, nothing past
+  the outer) and a streak's in two, not a smooth falloff; a fire's embers on the
+  ground in four steps. The rings drawn over the picture (a survivor's, a
+  Bloater's, a fire's) are squares on the picture's pixels, not smooth lines.
+  Lamps' light on the ground is still smooth (banding it would change the whole
+  look; the owner's call).
+- **The mission's circle shows what's done** (hazards.tide's `Hazards.mission`;
+  look.tide's `Earth`): the circle burns in the ground, a band at its inside
+  edge in as many pieces as there are to do (12 for a hold's seconds, 25 or more
+  for a cull's dead, 5 for the wisps, round the place they're scattered, 19.5 m),
+  each lit gold as it's done, clockwise from the north, the rest a dim brown;
+  with 15 s left the unlit ones throb red. Its pointer says what's done (HOLD
+  7/12 s), over the circle's far edge from inside it. The gold motes off the
+  circle, a few now. (A first try was too bright: the lit pieces washed out
+  near white, and the unlit ones near as bright.)
+- **Missions you notice** (missions.tide's `MISSION_NEAR`, `MISSION_FAR`,
+  `MISSION_HURRY`, `MISSION_NEW`, `MissionHurry`; hud.tide's `Pointer`): one
+  begins 14 to 28 m off (22 to 40 before: always off the screen), with a louder
+  horn, its banner up 4 s (OPTIONAL MISSION: ...), and its pointer half again as
+  big and throbbing fast its first 6 s; with 15 s left, not done, it's told
+  again (a banner and a horn) and its pointer stays a little big. A banner's
+  fade in is now from when it changed (it had assumed 2.6 s).
+- **Measured** (`gravewake_balance`, 25 minutes at most), against the last round's build on the same seeds, within the noise either
+  way: the Gunner's middle run 1459 s over seeds 5 to 12 (that build's 1460),
+  1257 over 1 to 4 (1463); the Breacher's 1059 over 5 to 12, five or more of
+  the eight going down (1461), and at the cap over 1 to 4 (1308); the Engineer
+  at the cap over 1 to 4 and 5 to 12 (that build's 1182 over 1 to 8). A run
+  still goes down in its first few nights or snowballs to the cap. Nothing in
+  the match counted the bodies lying (the dead alive are counted without
+  them), so only the chances moved. Ticks of 2000 of the dead 1.93 ms, of 4000
+  3.99 ms.
+- **Tests**: a kill leaves nothing (gone 4 ticks after the shot); the checks of
+  a kill take one gone as killed. The ground's burst check holds the party's
+  experience still and lets a level due land first (a level's pick holds the
+  match, and it makes the survivors whole: the run's chances had moved).
+- **Validation**: native debug `gravewake_test` and the web debug WASI one pass.
+  Looked at in standard-host captures: a horde shot into (no bodies left, pieces
+  and blood flying), a fire before and after (its halo and motes in hard steps),
+  the hold's circle 7 of 12 lit, and its big pointer as it begins.
+
 ### A Bloater's fuse shown, wisps for the hunt, a walking turret (2026-10-19)
 
 The owner, after playing: "the explody zombies should only display that

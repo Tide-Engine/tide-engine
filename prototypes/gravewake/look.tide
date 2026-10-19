@@ -315,7 +315,7 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens, 
         }
         var inside = Math.Saturate((f.z - d) / 0.35 + 0.5);
         ground = Math.Lerp(ground, Linear(float3(0.05, 0.045, 0.042) * (0.7 + fine * 0.5)), inside * 0.9);
-        var ember = Math.Pow(Math.Saturate(Math.Perlin(at * 2.7 + float2(look.time * 0.7, -look.time * 0.45)) * 0.9 + 0.55), 4);
+        var ember = Math.Floor(Math.Pow(Math.Saturate(Math.Perlin(at * 2.7 + float2(look.time * 0.7, -look.time * 0.45)) * 0.9 + 0.55), 4) * 4 + 0.5) / 4;
         var flicker = 0.75 + 0.25 * Math.Perlin(float2(look.time * 6 + f.x, f.y));
         var rim = Math.Saturate(1 - Math.Abs(d - f.z + 0.2) / 0.3);
         heat += float3(1.0, 0.32, 0.06) * (ember * 3.5 + 0.25 + rim * 1.6) * inside * f.w * flicker;
@@ -334,6 +334,28 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens, 
         var filled = Math.SmoothStep(b.z * b.w + 0.05, b.z * b.w - 0.05, d);
         var inside = Math.SmoothStep(b.z + 0.05, b.z - 0.05, d);
         heat += hot * (edge * 0.8 * pulse + inside * (0.012 + 0.012 * pulse) + filled * 0.035 + front * 0.3);
+    }
+    // The mission's circle (missions.tide): a band of gold round its inside edge in as many pieces as there are to do
+    // (seconds to hold, the dead to cull, wisps to catch), each lit as it's done, clockwise from the north, the rest
+    // dim and going red in its last seconds; the ground inside a little gold (the owner, 2026-10-19: "would be nice to
+    // visually see in the ring the progress vs just a HUD thing")
+    if (hazards.mission.z > 0)
+    {
+        var off = at - hazards.mission.xy;
+        var d = Math.Length(off);
+        var line = Math.Abs(d - hazards.mission.z + 0.3);
+        if (line < 0.22)
+        {
+            var round = Math.Frac(Math.Atan2(off.x, off.y) / Math.TAU + 1);
+            var pieces = hazards.missionPieces;
+            var gap = 0.3 / (Math.TAU * hazards.mission.z / pieces);
+            var whole = Math.Frac(round * pieces) > gap ? 1.0 : 0.0;
+            var lit = Math.Floor(round * pieces) < Math.Floor(hazards.mission.w * pieces + 0.001) ? 1.0 : 0.0;
+            var pulse = 0.7 + 0.3 * Math.Sin(look.time * 8);
+            var dim = Math.Lerp(float3(0.9, 0.6, 0.15) * 0.05, float3(1.0, 0.12, 0.03) * 0.35 * pulse, hazards.missionLate);
+            heat += whole * Math.Lerp(dim, float3(1.0, 0.65, 0.15) * 0.55, lit);
+        }
+        if (d < hazards.mission.z) heat += float3(1.0, 0.72, 0.2) * 0.01 * hazards.missionFill;
     }
     // The wake-fire's ring: its line burning pale in the ground, a glow either side
     if (hazards.ring.z > 0)
@@ -422,7 +444,9 @@ frag Develop(Vertex vertex, out Color color, Texture source, Lens lens, Look loo
     var block = Math.Max(1, Math.Round(coarse / Fineness(far)));
     var at = (Math.Floor(px / block) + float2(0.5)) * block;
     var picture = Rgb(source.Sample(at / look.full, Filter.Point));
-    var seen = picture + Rgb(lens.glow.Sample(vertex.uv)) * 0.4;
+    // The bloom read once for the whole of the pixel, so a glow's halo is in pixels too, not a smooth haze over them
+    // (the owner, 2026-10-19: "some of the VFX are very smooth looking, i would like to give them a more pixelated look")
+    var seen = picture + Rgb(lens.glow.Sample(at / look.full)) * 0.4;
     var exposed = seen * look.exposure;
     // A filmic curve (Narkowicz's fit of ACES)
     var a = exposed * (exposed * 2.51 + float3(0.03));

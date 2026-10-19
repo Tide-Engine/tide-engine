@@ -374,7 +374,7 @@ typedef struct conflict {
     conflict_kind kind;
 } conflict;
 
-// A view's filter by whether this machine's player owns the entity (decl.ownership).
+// A view's or listener's filter by whether this machine's player owns the entity (decl.ownership).
 // `with ownership`: it has an Owner, whose player is Session.player. `without
 // ownership`: every other entity, with an Owner or without.
 enum {
@@ -759,7 +759,7 @@ typedef struct decl {
     bool verified_join;
     bool verified_entities;
     bool takes_verified; // Some parameter of it is `verified`, a singleton's too: it needs a confirmed world to run
-    int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's `with ownership` or `without ownership`, which its rows are checked for
+    int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's or listener's ownership filter
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
     struct decl *order_enum; // [Stage]: the enum whose declaration order defines the phases
     const enum_member *order_member;

@@ -1,5 +1,12 @@
 # Runtime written by Claude for now
 
+Recorded-owner event filters (2026-10-19) use compiler-private payload metadata
+and optional player parameters on generated private availability helpers.
+No engine runtime API, tide_heard structure, world state or session protocol
+changes. The existing agent-maintained event log/hearing functions retain
+their occurrence deduplication contract. Details and validation are in
+notes/verified-and-local-handlers.md.
+
 ## Conventional resource metadata (2026-10-18)
 
 Within the owner's authorized API-completion pass, generated local code now
