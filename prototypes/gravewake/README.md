@@ -70,7 +70,7 @@ no jumping.
 | --- | --- |
 | The clock | Three minutes a night, on the night's panel (BOSS IN 2:41) over a bar running down; over its last minute the dead come thicker, up to twice as fast. A bell and a banner ten seconds before the end. |
 | The chests | Four a night, hidden about the clearing and not marked; the night's panel says how many are found. Stand by one a moment and it opens: everyone picks one of three items, whoever found it. They're gone when the next night falls. |
-| Missions | Every half a minute or so an optional mission appears, pointed to in gold: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or catch five wisps (gold flames bobbing waist high, scattered 6 to 18 m round a place; walk through one to catch it), each within 45 to 50 s. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
+| Missions | Every half a minute or so an optional mission appears 14 to 28 m off, with a horn, a banner and a big gold pointer: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or catch five wisps (gold flames bobbing waist high, scattered 6 to 18 m round a place; walk through one to catch it), each within 45 to 50 s. Its circle burns in the ground in as many pieces as there are to do (a second held, one of the dead culled, a wisp caught), each lit gold as it's done; with 15 s left you're told again and the unlit pieces go red. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
 | The ring | When the clock runs out, pale wake-fire rises in a ring 17 m round you (round the middle of the party): you can't cross it till dawn; the dead walk straight through, coming three quarters as thick as before (fewer than that while any other boss stands). |
 | Its boss | One claws up in the ring with you (two from the fourth night, three from the seventh), the nights taking the three in turn, pointed to (BOSS) at the screen's edge; anyone who bled out is back, by the ring's middle. Dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
 | Dawn | Everything left of the dead burns away, every orb flies in, everyone's up, whole and ready. Ten seconds later the next night falls: more dangerous than the last (the danger climbs with the clock, and each night's is 1.25 times the one before), and each of its kind (mist, a blood moon, starless, the wake). |
@@ -135,11 +135,14 @@ night's boss rises or dawn breaks if that's sooner, watching a friend over
 their shoulder; then you're back beside them with everything you had.
 
 Every hit sprays blood out the far side, the way the round went, and it
-soaks into the ground where it lands; the dead come apart when they die, a
-pool spreading under them, limbs, lumps and gut flying and bleeding through
-the air, and a head shot takes the head off (a fountain from the neck).
-Bloaters and Spitters splash green bile. Old blood dries away in a few
-minutes.
+soaks into the ground where it lands. The dead are torn apart when they die,
+nothing left lying but the pieces: a pool spreading where they stood, the
+trunk, arms, legs and head, lumps and gut flying and bleeding through the
+air (a head shot throws the head furthest, a fountain after it); burned to
+death, they fall apart in embers and charred pieces. Bloaters and Spitters
+splash green bile. Old blood dries away in a few minutes. The fire, sparks
+and glows are in hard steps of light, and their glow is in the picture's big
+pixels.
 
 Development keys, not in play's interface: F2 six of the dead of a kind
 (Bloaters, Spitters, Wardens in turn), F3 a boss (the Mauler, the Broodmother,

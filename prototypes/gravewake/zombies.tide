@@ -2,7 +2,10 @@
 // at the clearing's edge; then they hunt the nearest survivor on their feet,
 // downhill on the way the field gives, straight at them when nothing's
 // between. Close enough, they swing. Hit, they reel; kicked, they go over;
-// killed, they burst.
+// killed, they're torn apart, gone at once, nothing left lying but the pieces
+// (the owner, 2026-10-19: "when the zombies die i think they should just
+// explode, them laying for a while makes it hard to know where I can walk or
+// not"): only a Bloater lies a moment, swelling, and at dawn they burn and fall.
 
 enum ZombieState { Rising, Hunting, Dying, Fallen }
 
@@ -89,6 +92,7 @@ component Zombie
     bool climbing;              // In a pile against a cliff, or clawing its way up one this tick
     float lift;                 // How high it is off the ground: up a pile
     ZombieKind kind;
+    bool torn;                  // Killed: torn apart, gone the next tick (a Bloater once it's burst)
     float fuse;                 // A Bloater: seconds since it began to swell (0, not yet)
     bool popped;                // ...and it has burst
     float frenzy;               // Seconds left frenzied by a Stalker's shriek: faster
@@ -438,7 +442,13 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     }
     if (zombie.state == ZombieState.Dying)
     {
-        // Off a pile, it drops (and what it held up comes down after it)
+        // Torn apart: gone (its pieces are gore.tide's)
+        if (zombie.torn && zombie.kind != ZombieKind.Bloater)
+        {
+            this.Destroy();
+            return;
+        }
+        // Burning at dawn: off a pile, it drops (and what it held up comes down after it)
         zombie.at.y = Math.Max(Ground(zombie.at.x, zombie.at.z), zombie.at.y - FALL_SPEED * dt);
         if (zombie.timer > DEATH_SECONDS) this.Destroy();
         return;
@@ -769,6 +779,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         var wasDown = zombie.state == ZombieState.Fallen;
         zombie.state = ZombieState.Dying;
         zombie.timer = 0;
+        zombie.torn = true;
         zombie.killer = wound.seat;
         zombie.head = wound.head;
         zombie.fall = Random.NextInt(2);

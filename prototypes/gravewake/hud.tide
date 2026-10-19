@@ -23,6 +23,8 @@ local singleton Feed
     string dangerShown;
     string banner;               // A power-up's name, the item just taken, a level, big in the middle
     float bannerLeft;
+    string bannerShown;          // The banner last drawn, and how long it's been up (to fade it in)
+    float bannerAge;
     Color bannerColor = Color.white;
     float played;                // Seconds played, for the controls' reminder
     float gameOver;
@@ -57,24 +59,31 @@ void Panel(float2 center, float2 size, float u)
 // A circle on the ground round a place, drawn over the picture.
 void GroundRing(Look look, float3 at, float radius, float thick, Color c, float w, float h)
 {
-    mut var last = float2(0);
-    mut var seen = false;
-    var sides = radius > 2 ? 48 : 32;
-    for (var k = 0; k <= sides; k++)
+    // In the picture's own big pixels, one square for each it passes through, so it looks drawn in the world with the
+    // rest, not a smooth line over it (the owner, 2026-10-19: "some of the VFX are very smooth looking"); a pixel
+    // thicker where it's asked for more than one
+    var block = look.block;
+    var size = thick > block * 1.6 ? block * 2 : block;
+    // As many steps round as there are pixels round it on the screen, and half again
+    float4 middle = Math.Mul(look.toClip, float4(at, 1));
+    float4 side = Math.Mul(look.toClip, float4(at + float3(radius, 0, 0), 1));
+    if (middle.w <= 0.01 || side.w <= 0.01) return;
+    var across = Math.Length(float2((side.x / side.w - middle.x / middle.w) * 0.5 * w, (side.y / side.w - middle.y / middle.w) * 0.5 * h));
+    var sides = int(Math.Clamp(across * Math.TAU / block * 1.5, 16, 900));
+    mut var last = float2(-10000);
+    for (var k = 0; k < sides; k++)
     {
         var turn = k * Math.TAU / sides;
         var x = at.x + Math.Sin(turn) * radius;
         var z = at.z + Math.Cos(turn) * radius;
         float4 clip = Math.Mul(look.toClip, float4(x, Math.Max(at.y, Ground(x, z)) + 0.05, z, 1));
-        if (clip.w <= 0.01)
-        {
-            seen = false;
-            continue;
-        }
+        if (clip.w <= 0.01) continue;
         var dot = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
-        if (seen) Draw.Line(last, dot, thick, c);
-        last = dot;
-        seen = true;
+        var cell = (Math.Floor(dot / size) + float2(0.5)) * size;
+        if (cell.x == last.x && cell.y == last.y) continue;
+        last = cell;
+        if (cell.x < -size || cell.y < -size || cell.x > w + size || cell.y > h + size) continue;
+        Draw.Shape(Shape { center = cell, size = float2(size), color = c });
     }
 }
 
@@ -105,12 +114,11 @@ const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn
 
 // A mark for a place a survivor's to go: over it, with its name and how far, while it's on the screen; else an arrow at
 // the screen's edge, the way it is (north up the screen), with its name.
-void Pointer(Look look, float3 at, float3 from, string label, Color c, float w, float h, float u, float time)
+void Pointer(Look look, float3 at, float3 from, string label, Color c, float w, float h, float u, float time, float big, bool far = true)
 {
     var off = (at - from).xz;
-    var far = Math.Length(off);
-    var text = $"{label}  {int(far)} m";
-    var pulse = 0.75 + 0.25 * Math.Sin(time * 5);
+    var text = far ? $"{label}  {int(Math.Length(off))} m" : label;
+    var pulse = 0.75 + 0.25 * Math.Sin(time * (big > 1.05 ? 10 : 5));
     var tint = Color(c.r, c.g, c.b, pulse);
     float4 clip = Math.Mul(look.toClip, float4(at + float3(0, 2.2, 0), 1));
     var seen = clip.w > 0.01 ? float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h) : float2(-1000, -1000);
@@ -118,11 +126,11 @@ void Pointer(Look look, float3 at, float3 from, string label, Color c, float w, 
     if (seen.x > margin && seen.x < w - margin && seen.y > margin && seen.y < h - margin)
     {
         var bob = Math.Sin(time * 4) * 4 * u;
-        Draw.Shape(Shape { center = seen + float2(0, bob), size = float2(16, 16) * u, rotation = Math.PI * 0.25, color = tint });
-        WriteBold(text, seen + float2(0, bob - 22 * u), 13 * u, tint, Anchor.MiddleCenter);
+        Draw.Shape(Shape { center = seen + float2(0, bob), size = float2(16, 16) * u * big, rotation = Math.PI * 0.25, color = tint });
+        WriteBold(text, seen + float2(0, bob - 22 * u * big), 13 * u * big, tint, Anchor.MiddleCenter);
         return;
     }
-    var way = far > 0.01 ? float2(off.x, -off.y) / far : float2(0, -1);
+    var way = Math.Length(off) > 0.01 ? float2(off.x, -off.y) / Math.Length(off) : float2(0, -1);
     var middle = float2(w * 0.5, h * 0.5);
     var reach = float2(w * 0.5 - margin, h * 0.5 - margin);
     var scale = 1 / Math.Max(Math.Abs(way.x) / reach.x, Math.Abs(way.y) / reach.y);
@@ -137,9 +145,9 @@ void Pointer(Look look, float3 at, float3 from, string label, Color c, float w, 
     if (edge.x < 400 * u && edge.y > h - 120 * u) edge.y = h - 120 * u;
     if (edge.x > w - 300 * u && edge.y > h - 200 * u) edge.y = h - 200 * u;
     var turn = Math.Atan2(way.y, way.x);
-    Draw.Shape(Shape { center = edge, size = float2(24, 24) * u, rotation = turn + Math.PI * 0.25, color = Color(0, 0, 0, 0.5), soft = 8 * u });
-    Draw.Shape(Shape { center = edge, size = float2(20, 20) * u, rotation = turn + Math.PI * 0.25, color = tint });
-    WriteBold(text, edge - way * 36 * u, 13 * u, tint, Anchor.MiddleCenter);
+    Draw.Shape(Shape { center = edge, size = float2(24, 24) * u * big, rotation = turn + Math.PI * 0.25, color = Color(0, 0, 0, 0.5), soft = 8 * u });
+    Draw.Shape(Shape { center = edge, size = float2(20, 20) * u * big, rotation = turn + Math.PI * 0.25, color = tint });
+    WriteBold(text, edge - way * (36 + 30 * (big - 1)) * u, 13 * u * big, tint, Anchor.MiddleCenter);
 }
 
 // A bar from `left` (the middle of its left end): a dark track, what's left from `fill` at its top to `fill2` at its
@@ -488,9 +496,15 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
 
     // ---- The banner: a power-up's name, the card taken ----
     feed.bannerLeft = Math.Max(0, feed.bannerLeft - dt);
+    if (feed.banner != feed.bannerShown)
+    {
+        feed.bannerShown = feed.banner;
+        feed.bannerAge = 0;
+    }
+    feed.bannerAge += dt;
     if (feed.bannerLeft > 0 && feed.banner != "" && !mine.choosing && !match.paused)
     {
-        var a = Math.Saturate(feed.bannerLeft * 1.5) * Math.Saturate((2.6 - feed.bannerLeft) * 4);
+        var a = Math.Saturate(feed.bannerLeft * 1.5) * Math.Saturate(feed.bannerAge * 4);
         WriteBold(feed.banner, float2(w * 0.5, h * 0.3), 34 * u, Color(feed.bannerColor.r, feed.bannerColor.g, feed.bannerColor.b, a), Anchor.MiddleCenter);
     }
 

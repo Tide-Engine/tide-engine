@@ -8,9 +8,10 @@
 // pool and a spray thrown the way the blow went, and every piece that flies
 // leaves a trail and a smear where it comes down.
 //
-// A kill by a blow (not burning or bleeding) throws pieces of the dead: limbs
-// and lumps of flesh (the head too, on a head shot), tumbling, bouncing and
-// lying a while in the dirt before they sink away. They're boxes in the PSX
+// A kill tears the dead apart (the body's gone at once: zombies.tide): its
+// trunk, arms, legs and head and lumps of flesh and gut, tumbling, bouncing
+// and lying a while in the dirt before they sink away; burned to death, charred
+// and bloodless. Many kills at once throw fewer lumps each. They're boxes in the PSX
 // way, painted as raw meat, all one instanced draw. All of this is this
 // machine's alone (the owner: "more gore, more blood, body parts flying, maybe
 // decals of blood ... or maybe we just draw to a texture that overlays the
@@ -18,8 +19,8 @@
 
 const int STAIN_PIXELS = 2048;
 const float STAIN_REACH = 78;        // Half the clearing's width the stains cover (NAV_X0, NAV_Z0 to 78)
-const int GIBS_MOST = 1000;
-const float GIB_SECONDS = 22;        // How long a piece lies before it's gone
+const int GIBS_MOST = 1500;
+const float GIB_SECONDS = 12;        // How long a piece lies before it's gone
 const float DRY_EVERY = 2;           // Every so often the stains fade by DRY_SHARE: old blood's gone in a few minutes
 const float DRY_SHARE = 0.025;
 
@@ -34,6 +35,7 @@ struct Gib
     float age;
     bool resting;
     float drip;                      // Seconds till its next drop of blood in the air
+    bool dry;                        // Charred: no blood
 }
 
 // A piece as it's drawn.
@@ -57,6 +59,7 @@ struct Splat
 }
 
 const float3 BLOOD = float3(0.36, 0.025, 0.02);
+const float3 CHAR = float3(0.07, 0.055, 0.045);    // Burned flesh, and the scorch it leaves
 
 // A pool spreading under one of the dead fallen: where, how wide it'll be, and how long it has to get there.
 struct Pool
@@ -78,6 +81,7 @@ local singleton Gore
     Random random;
     bool wipe = true;                // Clear the stains (made, and at each new run)
     float dry;                       // Seconds till they fade again
+    float torn;                      // Kills lately (each 1, gone at TORN_FADE a second): many at once, fewer lumps each
     List<Splat> all;                 // One splat over the whole of them, to fade them by
     bool made;
 }
@@ -115,19 +119,28 @@ void Stain(mut Gore gore, float3 at, float size, float alpha, float turn, float 
     gore.splats.Add(Splat { at = at, size = size, turn = turn, alpha = alpha, seed = gore.random.NextFloat(100), stretch = stretch, tint = tint });
 }
 
-void Throw(mut Gore gore, float3 at, float3 velocity, float3 size, float3 color)
+const float TORN_FADE = 10;
+
+void Throw(mut Gore gore, float3 at, float3 velocity, float3 size, float3 color, bool dry = false)
 {
     if (gore.gibs.count >= GIBS_MOST) gore.gibs.RemoveAt(0);
     var axis = Math.Normalize(gore.random.NextFloat3Direction() + float3(0, 0.0001, 0));
     gore.gibs.Add(Gib { at = at, velocity = velocity, turn = quaternion.AxisAngle(axis, gore.random.NextFloat(Math.TAU)), spin = gore.random.NextFloat3Direction() * gore.random.NextFloat(6, 16),
-                        size = size, color = color, drip = gore.random.NextFloat(0.05) });
+                        size = size, color = color, drip = gore.random.NextFloat(0.07), dry = dry });
+}
+
+// A piece of the dead thrown from a place: out the way the blow went, and every way, and up.
+void Fling(mut Gore gore, float3 at, float3 away, float push, float3 size, float3 color, bool dry)
+{
+    var velocity = away * gore.random.NextFloat(push * 0.3, push) + gore.random.NextFloat3Direction() * push * 0.5 + float3(0, gore.random.NextFloat(2.5, 6), 0);
+    Throw(gore, at + gore.random.NextFloat3Direction() * 0.15, velocity, size, color, dry);
 }
 
 // ---- What a blow leaves ----
 
 local event(Struck struck) Spill(mut Gore gore)
 {
-    if (struck.blow == Blow.Shove || struck.blow == Blow.Burning) return;
+    if (struck.blow == Blow.Shove || (struck.blow == Blow.Burning && !struck.killed)) return;
     var ground = On(struck.at.x, struck.at.z);
     mut var away = struck.at - struck.from;
     away.y = 0;
@@ -141,30 +154,45 @@ local event(Struck struck) Spill(mut Gore gore)
         if (struck.head) Stain(gore, ground + away * gore.random.NextFloat(1.4, 2.8), gore.random.NextFloat(0.25, 0.4), 0.55, turn, 3);
         return;
     }
-    // A kill: a pool where it falls (spreading a while: Pool), a spray thrown far on the way the blow went
-    Stain(gore, ground, gore.random.NextFloat(0.6, 1.0), 0.8, gore.random.NextFloat(Math.TAU), 1.2);
-    if (gore.pools.count < 300) gore.pools.Add(Pool { at = ground + away * 0.5, size = gore.random.NextFloat(1.0, 1.6), left = 2.5 });
-    for (var i = 0; i < 7; i++)
-        Stain(gore, ground + away * gore.random.NextFloat(0.6, 4.5) + gore.random.NextFloat3Direction() * float3(0.5, 0, 0.5), gore.random.NextFloat(0.18, 0.5), 0.65,
-              turn + gore.random.NextFloat(-0.4, 0.4), gore.random.NextFloat(1.5, 3.5));
-    if (struck.blow == Blow.Bleeding) return;
-    // Pieces: limbs, lumps and ropes of gut, the head too on a head shot, a burst many more of them
-    var burst = struck.blow == Blow.Burst || struck.element == Element.Blast;
-    var flesh = float3(0.42, 0.12, 0.1);
-    var skin = float3(0.36, 0.36, 0.3);
-    var gut = float3(0.55, 0.22, 0.2);
-    var count = burst ? 12 : 5 + gore.random.NextInt(3);
-    for (var i = 0; i < count; i++)
+    // A kill: torn apart where it stood. A pool where it was (spreading a while: Pool), a spray thrown far on the way the
+    // blow went; burned to death, a scorch
+    var charred = struck.blow == Blow.Burning;
+    gore.torn += 1;
+    if (charred) Stain(gore, ground, gore.random.NextFloat(0.5, 0.8), 0.6, gore.random.NextFloat(Math.TAU), 1.2, CHAR);
+    else
     {
-        var kind = gore.random.NextInt(4);
-        var size = (kind == 0 ? float3(0.13, 0.13, 0.45) : kind == 1 ? float3(0.2, 0.15, 0.17) : kind == 2 ? float3(0.1, 0.09, 0.12) : float3(0.06, 0.06, 0.55)) * 1.25;
-        var color = kind == 0 ? skin : kind == 3 ? gut : flesh;
-        var push = burst ? 8.0 : 5.0;
-        var velocity = away * gore.random.NextFloat(push * 0.4, push) + gore.random.NextFloat3Direction() * 2.6 + float3(0, gore.random.NextFloat(2.5, 6), 0);
-        Throw(gore, struck.at + gore.random.NextFloat3Direction() * 0.15, velocity, size, color);
+        Stain(gore, ground, gore.random.NextFloat(0.6, 1.0), 0.8, gore.random.NextFloat(Math.TAU), 1.2);
+        if (gore.pools.count < 300) gore.pools.Add(Pool { at = ground + away * 0.5, size = gore.random.NextFloat(1.0, 1.6), left = 2.5 });
+        for (var i = 0; i < 7; i++)
+            Stain(gore, ground + away * gore.random.NextFloat(0.6, 4.5) + gore.random.NextFloat3Direction() * float3(0.5, 0, 0.5), gore.random.NextFloat(0.18, 0.5), 0.65,
+                  turn + gore.random.NextFloat(-0.4, 0.4), gore.random.NextFloat(1.5, 3.5));
+    }
+    // The body in pieces: its trunk, two arms, two legs and its head (a head shot's thrown further), lumps of flesh and
+    // ropes of gut, a burst's thrown harder and more of them
+    var burst = struck.blow == Blow.Burst || struck.element == Element.Blast;
+    var push = burst ? 8.0 : 5.0;
+    var flesh = charred ? CHAR : float3(0.42, 0.12, 0.1);
+    var skin = charred ? CHAR : float3(0.36, 0.36, 0.3);
+    var cloth = charred ? CHAR : float3(0.2, 0.18, 0.15);
+    var gut = charred ? CHAR : float3(0.55, 0.22, 0.2);
+    var middle = ground + float3(0, 1.0, 0);
+    Fling(gore, middle, away, push * 0.6, float3(0.34, 0.42, 0.22), cloth, charred);
+    for (var k = 0; k < 2; k++)
+    {
+        Fling(gore, middle + float3(0, 0.3, 0), away, push, float3(0.1, 0.1, 0.5), skin, charred);
+        Fling(gore, ground + float3(0, 0.5, 0), away, push * 0.7, float3(0.13, 0.13, 0.62), cloth, charred);
+    }
+    if (!struck.head) Fling(gore, middle + float3(0, 0.6, 0), away, push * 0.8, float3(0.22, 0.25, 0.23), skin, charred);
+    var share = 1 - 0.75 * Math.Saturate((gore.torn - 6) / 24);
+    var lumps = int(Math.Round((burst ? 8.0 : 4.0 + gore.random.NextInt(2)) * share));
+    for (var i = 0; i < lumps; i++)
+    {
+        var kind = gore.random.NextInt(3);
+        var size = kind == 0 ? float3(0.25, 0.19, 0.21) : kind == 1 ? float3(0.12, 0.11, 0.15) : float3(0.075, 0.075, 0.7);
+        Fling(gore, middle, away, push, size, kind == 2 ? gut : flesh, charred);
     }
     if (struck.head)
-        Throw(gore, struck.at, away * gore.random.NextFloat(3, 6) + float3(0, gore.random.NextFloat(4, 6.5), 0), float3(0.24, 0.27, 0.25), skin);
+        Throw(gore, struck.at, away * gore.random.NextFloat(3, 6) + float3(0, gore.random.NextFloat(4, 6.5), 0), float3(0.24, 0.27, 0.25), skin, charred);
 }
 
 // A Bloater's burst and a Spitter's bile: green over the ground, and the burst's blood too.
@@ -196,6 +224,7 @@ view Tumble(mut Gore gore, mut Fx fx, Me me)
 {
     if (!gore.made) MakeGore(gore);
     var dt = me.dt;
+    gore.torn = Math.Max(0, gore.torn - dt * TORN_FADE);
     // Each pool a little wider every few tenths of a second, faint, so it creeps out over the ground
     for (var i = gore.pools.count - 1; i >= 0; i--)
     {
@@ -233,9 +262,9 @@ view Tumble(mut Gore gore, mut Fx fx, Me me)
             if (spinRate > 0.01) g.turn = Math.Normalize(Math.Mul(quaternion.AxisAngle(g.spin / spinRate, spinRate * dt), g.turn));
             // Blood on the way, trailing it through the air and spattering where it falls
             g.drip -= dt;
-            if (g.drip <= 0)
+            if (g.drip <= 0 && !g.dry)
             {
-                g.drip = 0.045;
+                g.drip = 0.07;
                 Murk(fx, Mote { at = g.at, velocity = g.velocity * 0.3 + Scatter(fx, 0.4), life = 1.2, size = gore.random.NextFloat(0.05, 0.09), gravity = 10,
                                 color = float3(0.45, 0.03, 0.03), alpha = 0.9, stain = 0.08 });
             }
@@ -246,7 +275,8 @@ view Tumble(mut Gore gore, mut Fx fx, Me me)
                 // A smear where it hits, the way it was going
                 var flat = float3(g.velocity.x, 0, g.velocity.z);
                 var speed = Math.Length(flat);
-                Stain(gore, On(g.at.x, g.at.z) + flat * 0.05, 0.12 + Math.Min(0.25, speed * 0.04), 0.6, Math.Atan2(g.velocity.x, g.velocity.z), 1 + Math.Min(2.5, speed * 0.4));
+                if (!g.dry)
+                    Stain(gore, On(g.at.x, g.at.z) + flat * 0.05, 0.12 + Math.Min(0.25, speed * 0.04), 0.6, Math.Atan2(g.velocity.x, g.velocity.z), 1 + Math.Min(2.5, speed * 0.4));
                 if (-g.velocity.y < 1.5 && speed < 1.2)
                 {
                     g.resting = true;
