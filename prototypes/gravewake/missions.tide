@@ -7,7 +7,10 @@ using Rooms;
 // screen's edge: hold a circle, cull the dead in one, or catch the wisps
 // scattered about a place (in place of hunting down a marked elite, 2026-10-19:
 // "killing a scaled zombie with some weird crown of fire; that felt awkward"),
-// each before its time's up. Done, every survivor picks one of three
+// each before its time's up, its circle on the ground lit round as it's done.
+// Begun near enough to be seen at the screen's edge, a horn, a long banner and
+// a big pointer, and told again with MISSION_HURRY left (the owner, 2026-10-19:
+// "i also missed a mission ... i just didnt realize it was active"). Done, every survivor picks one of three
 // uncommon or rare items (a boon: items.tide's Owed); out of time, nothing.
 // None begins that the night's end would cut short, and its bosses rising
 // calls off any going. Which, where and every number are mine, Provisional.
@@ -17,8 +20,10 @@ enum MissionKind { None, Hold, Cull, Wisps }
 const float MISSION_FIRST = 25;      // Seconds into a night before the first...
 const float MISSION_GAP_LEAST = 20;  // ...and from one's end to the next
 const float MISSION_GAP_MOST = 35;
-const float MISSION_NEAR = 22;       // How far from a survivor one appears
-const float MISSION_FAR = 40;
+const float MISSION_NEAR = 14;       // How far from a survivor one appears
+const float MISSION_FAR = 28;
+const float MISSION_HURRY = 15;      // Seconds left when it's told again (and its circle's unlit pieces go red)
+const float MISSION_NEW = 6;         // Seconds its pointer's big for, begun
 const float MISSION_ROOM = 70;       // None begins with less than so long left till the night's bosses
 const float HOLD_REACH = 6;          // The circle to hold...
 const float HOLD_SECONDS = 12;       // ...for so long, all told, with someone in it (half again as fast for each more)...
@@ -110,7 +115,9 @@ system Missions(mut Match match, Ashwick ashwick, Party party, Time time, query 
         Send(MissionBegan { kind = kind, at = at });
         return;
     }
+    var before = match.missionLeft;
     match.missionLeft -= dt;
+    if (before > MISSION_HURRY && match.missionLeft <= MISSION_HURRY && match.missionDone < match.missionGoal) Send(MissionHurry { kind = match.mission });
     if (match.mission == MissionKind.Hold)
     {
         mut var inside = 0;
@@ -208,10 +215,15 @@ event MissionEnded
     bool done;
 }
 
+event MissionHurry
+{
+    MissionKind kind;
+}
+
 // ---- What's seen and heard ----
 
-// The circle on the ground, in gold motes; the wisps, pale gold flames bobbing waist high, sparks rising off them,
-// each lighting the ground round it.
+// Gold motes rising off the circle (it's drawn in the ground: look.tide's Earth, from Hazards.mission); the wisps,
+// pale gold flames bobbing waist high, sparks rising off them, each lighting the ground round it.
 [Stage(Layers.Gather, 4)]
 view MissionMarks(Match match, mut Fx fx, mut Lights lights, Me me, Look look)
 {
@@ -219,11 +231,11 @@ view MissionMarks(Match match, mut Fx fx, mut Lights lights, Me me, Look look)
     var reach = MissionReach(match.mission);
     if (reach > 0 && Math.Distance(match.missionAt, look.eye) < 90)
     {
-        for (var k = 0; k < 8; k++)
+        for (var k = 0; k < 3; k++)
         {
             var turn = fx.random.NextFloat(Math.TAU);
-            var at = match.missionAt + float3(Math.Cos(turn) * reach, 0, Math.Sin(turn) * reach);
-            Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.1, 0), velocity = float3(0, 0.6, 0), life = 0.4, size = 0.14, color = float3(1.0, 0.8, 0.25), alpha = 1.8 });
+            var at = match.missionAt + float3(Math.Cos(turn) * (reach - 0.35), 0, Math.Sin(turn) * (reach - 0.35));
+            Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.1, 0), velocity = float3(0, 0.8, 0), life = 0.5, size = 0.12, color = float3(1.0, 0.8, 0.25), alpha = 1.8 });
         }
     }
     foreach (var wisp in match.wisps)
@@ -299,9 +311,14 @@ view Objectives(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
     {
         var b = row.boss;
         if (!b.own || b.move == BossMove.Dying) continue;
-        Pointer(look, b.at + float3(0, MutantOf(b.kind).size * 1.4, 0), mine.feet, "BOSS", Color(0.98, 0.32, 0.2), w, h, u, look.time);
+        Pointer(look, b.at + float3(0, MutantOf(b.kind).size * 1.4, 0), mine.feet, "BOSS", Color(0.98, 0.32, 0.2), w, h, u, look.time, 1);
     }
     if (match.mission == MissionKind.None) return;
+    // With what's done of it; big while it's new and in its last seconds
+    var age = MissionTime(match.mission) - match.missionLeft;
+    var big = age < MISSION_NEW ? 1.6 - 0.6 * Math.Saturate((age - MISSION_NEW + 1) / 1) : match.missionLeft < MISSION_HURRY ? 1.3 : 1.0;
+    var label = match.mission == MissionKind.Hold ? $"{MissionMark(match.mission)} {int(match.missionDone)}/{int(match.missionGoal)} s"
+              : $"{MissionMark(match.mission)} {int(match.missionDone)}/{int(match.missionGoal)}";
     // The wisps: the nearest
     if (match.mission == MissionKind.Wisps)
     {
@@ -314,19 +331,33 @@ view Objectives(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
             best = far;
             nearest = wisp;
         }
-        if (match.wisps.count > 0) Pointer(look, WispAt(nearest, look.time) + float3(0, 0.4, 0), mine.feet, MissionMark(match.mission), GOLD, w, h, u, look.time);
+        if (match.wisps.count > 0) Pointer(look, WispAt(nearest, look.time) + float3(0, 0.4, 0), mine.feet, label, GOLD, w, h, u, look.time, big);
         return;
     }
-    var at = match.missionAt;
-    if (Math.Length((at - mine.feet).xz) <= MissionReach(match.mission)) return;
-    Pointer(look, at, mine.feet, MissionMark(match.mission), GOLD, w, h, u, look.time);
+    // The circle: over its middle, or over its far edge from inside it (not over the survivor's head)
+    var reach = MissionReach(match.mission);
+    var inside = Math.Length((match.missionAt - mine.feet).xz) <= reach;
+    var at = inside ? On(match.missionAt.x, match.missionAt.z + reach) : match.missionAt;
+    Pointer(look, at, mine.feet, label, GOLD, w, h, u, look.time, big, !inside);
 }
 
 local event(MissionBegan began) ShowMissionBegan(mut Feed feed)
 {
-    feed.banner = $"OPTIONAL: {MissionName(began.kind)}";
+    feed.banner = $"OPTIONAL MISSION: {MissionName(began.kind)}";
+    feed.bannerLeft = 4;
+    feed.bannerColor = GOLD;
+}
+
+local event(MissionHurry hurry) ShowMissionHurry(mut Feed feed)
+{
+    feed.banner = $"{MissionName(hurry.kind)}: {int(MISSION_HURRY)} s LEFT";
     feed.bannerLeft = 2.6;
     feed.bannerColor = GOLD;
+}
+
+local event(MissionHurry hurry) HearMissionHurry()
+{
+    Audio.Play(levelClip, 0.8, 0.6);
 }
 
 local event(MissionEnded ended) ShowMissionEnded(mut Feed feed)
@@ -339,7 +370,8 @@ local event(MissionEnded ended) ShowMissionEnded(mut Feed feed)
 
 local event(MissionBegan began) HearMissionBegan()
 {
-    Audio.Play(levelClip, 0.6, 0.7);
+    Audio.Play(levelClip, 1.0, 0.7);
+    Audio.Play(itemRare, 0.8, 0.6);
 }
 
 local event(MissionEnded ended) HearMissionEnded()

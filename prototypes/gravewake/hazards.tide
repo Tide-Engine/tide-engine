@@ -186,6 +186,10 @@ local singleton Hazards
     List<float4> fires;
     float4 ring;                     // The wake-fire's ring (nights.tide): x, z, reach (0, none)
     List<float4> fuses;              // Bloaters swelling to burst (zombies.tide): x, z, reach, how near (0 to 1)
+    float4 mission;                  // The mission's circle (missions.tide): x, z, reach (0, none), what's done of it (0 to 1)...
+    float missionPieces;             // ...in how many pieces...
+    float missionLate;               // ...how near its time's up (0, MISSION_HURRY or more left; 1, none)...
+    float missionFill;               // ...and whether the ground inside it's lit
 }
 
 // Each frame: the pits (once), the fires, and each fire's light.
@@ -193,6 +197,16 @@ local singleton Hazards
 view SeeHazards(mut Hazards hazards, mut Lights lights, Village village, Me me, Look look, Match match, query (Blaze blaze) blazes,
                 query (Zombie zombie) zombies)
 {
+    hazards.mission = float4(0);
+    if (match.phase == Phase.Fighting && match.mission != MissionKind.None)
+    {
+        var wisps = match.mission == MissionKind.Wisps;
+        hazards.mission = float4(match.missionAt.x, match.missionAt.z, wisps ? WISP_FAR + 1.5 : MissionReach(match.mission),
+                                 Math.Saturate(match.missionDone / Math.Max(1, match.missionGoal)));
+        hazards.missionPieces = Math.Clamp(match.missionGoal, 1, 60);
+        hazards.missionLate = 1 - Math.Saturate(match.missionLeft / MISSION_HURRY);
+        hazards.missionFill = wisps ? 0.0 : 1.0;
+    }
     hazards.fuses.Clear();
     foreach (var row in zombies)
     {

@@ -205,6 +205,7 @@ struct HallState
     int need;
     // The exhibit each robot is in, or -1.
     int[2] aboard;
+    int[PUZZLE_COUNT] best;
 }
 HallState HallOf(Workshop workshop)
 {
@@ -212,7 +213,7 @@ HallState HallOf(Workshop workshop)
         departStation = workshop.departStation, departTick = workshop.departTick, openedTick = workshop.openedTick,
         introTicks = workshop.introTicks, opened = workshop.opened, completed = workshop.completed, unlocked = workshop.unlocked,
         playtest = workshop.playtest, seated = workshop.inHall ? HallSeated(workshop.layout, workshop.puzzle) : 0,
-        need = ChapterNeed(workshop.hall) };
+        need = ChapterNeed(workshop.hall), best = workshop.best };
     for (var seat = 0; seat < 2; seat++)
         hall.aboard[seat] = workshop.inHall ? AboardStation(workshop.hall, workshop.puzzle.actors[seat]) : -1;
     return hall;

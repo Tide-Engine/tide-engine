@@ -11,3 +11,5 @@ bool inside_out_test_act(uint32_t id, int sender, int value);
 // Sends what a player's machine has solved and which halls' lifts it has
 // seen working, then runs one tick.
 bool inside_out_test_progress(int sender, int completed, int unlocked, bool playtest);
+// The same with its fewest moves for each puzzle (PUZZLE_COUNT of them).
+bool inside_out_test_progress_best(int sender, int completed, int unlocked, bool playtest, const int32_t *best);

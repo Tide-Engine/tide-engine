@@ -107,6 +107,8 @@ singleton Workshop
     int hallKept;
     // Every chapter is open, and puzzles can be chosen from the menu.
     bool playtest;
+    // The fewest moves each puzzle has been solved in, 0 for none yet.
+    int[PUZZLE_COUNT] best;
     Map<PlayerID, int> seats;
     PlayerID[2] players;
     bool[2] present;
@@ -119,9 +121,10 @@ command Undo { int serial; }
 command Reset { int serial; }
 command ChooseLevel { int serial; int level; }
 command ToHall { int serial; }
-// What a player's machine has solved before, and whether it plays with
-// every chapter open. The room's progress is what either of them has solved.
-command Progress { int completed; int unlocked; bool playtest; }
+// What a player's machine has solved before, in how few moves, and whether
+// it plays with every chapter open. The room's progress is what either of
+// them has solved, and the better of their bests.
+command Progress { int completed; int unlocked; bool playtest; int[PUZZLE_COUNT] best; }
 
 int SeatOf(Workshop workshop, PlayerID player)
 {
@@ -675,6 +678,8 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop, Time time)
         workshop.solvedTick = time.tick;
         var earlier = workshop.completed;
         workshop.completed |= 1 << workshop.level;
+        var moves = workshop.puzzle.moves;
+        if (workshop.best[workshop.level] <= 0 || moves < workshop.best[workshop.level]) workshop.best[workshop.level] = moves;
         workshop.finale = !CampaignDone(earlier) && CampaignDone(workshop.completed);
         Send(PuzzleCue { kind = 5, seat = seat });
     }
@@ -712,6 +717,14 @@ command(Progress progress, PlayerID sender) ShareProgress(mut Workshop workshop,
     workshop.completed |= progress.completed & ((1 << PUZZLE_COUNT) - 1);
     workshop.unlocked |= progress.unlocked & ((1 << (CHAPTER_COUNT - 1)) - 1);
     if (progress.playtest) workshop.playtest = true;
+    // A best counts for a puzzle the room has solved, and never below its
+    // par, the shortest solution there is.
+    for (var level = 0; level < PUZZLE_COUNT; level++)
+    {
+        var offered = progress.best[level];
+        if (Solved(workshop.completed, level) && offered >= LevelPar(level) &&
+            (workshop.best[level] <= 0 || offered < workshop.best[level])) workshop.best[level] = offered;
+    }
     // A pair that has solved the first puzzle before starts in the hall
     // they last reached, unless the first puzzle is already under way.
     if (!workshop.inHall && workshop.level == 0 && workshop.puzzle.moves == 0 && !workshop.puzzle.solved && Solved(workshop.completed, 0))

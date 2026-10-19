@@ -292,6 +292,9 @@ static tide_entity sturdy(void)
 
 static Zombie zombie(tide_entity e) { return tide_get_Zombie(&world, e); }
 
+// Whether one of the dead has been killed: torn apart and gone, or (a Bloater) lying swelling to burst.
+static bool killed(tide_entity e) { return !tide_entity_alive(&world.entities, e) || zombie(e).state == ZombieState_Dying; }
+
 // One of the dead moved to open ground near the fire, turned so the 9 m in front of it (where a survivor is stood to
 // face it) is flat and clear of every box, and held there (no pace), so a throw or a leap lands where it was aimed.
 static void to_open(tide_entity e)
@@ -760,8 +763,7 @@ int main(void)
             bool struck = false;
             for (int t = 0; t < 150 && !struck; t++) {
                 tick_safe(1);
-                const Zombie now = zombie(e);
-                struck = k == 1 ? now.burn > 0 : now.state == ZombieState_Fallen || now.state == ZombieState_Dying;
+                struck = killed(e) || (k == 1 ? zombie(e).burn > 0 : zombie(e).state == ZombieState_Fallen);
             }
             if (!struck)
                 fprintf(stderr, "the %s didn't land: at %.1f %.1f %.1f, the zombie at %.1f %.1f %.1f state %d\n", names[k], get(0).feet.x, get(0).feet.y, get(0).feet.z,
@@ -961,7 +963,7 @@ int main(void)
             set(0, s);
             press(&held[0].attack);
             tick_safe(3);
-            if (zombie(ea).state == ZombieState_Dying) burst = zombie(eb).health < 100000;
+            if (killed(ea)) burst = zombie(eb).health < 100000;
         }
         CHECK(burst);
         // The drone and the ember ring: one of the dead near, never shot
@@ -1511,10 +1513,11 @@ int main(void)
             CHECK(tide_set_Zombie(&world, e, z));
             face(0, e, 8);           // Out of an orb's reach
             const Survivor shooter = get(0);
+            const tide_float3 fell = zombie(e).at;
             put(1, shooter.feet, zombie(e).chestAt);
             press(&held[0].attack);
             tick_safe(4);
-            CHECK(zombie(e).state == ZombieState_Dying);
+            CHECK(!tide_entity_alive(&world.entities, e));      // Torn apart: nothing left lying
             CHECK(world.arch4_Orb.count == orbs + 1);
             const float xp = world.Match.xp;
             const int level = world.Match.level;
@@ -1522,7 +1525,6 @@ int main(void)
                 // Lying while nobody's near; taken from 4 m
                 tick_safe(60);
                 CHECK(world.arch4_Orb.count == orbs + 1 && world.Match.xp == xp);
-                const tide_float3 fell = zombie(e).at;
                 put(0, (tide_float3){fell.x + (shooter.feet.x - fell.x) * 0.5f, shooter.feet.y, fell.z + (shooter.feet.z - fell.z) * 0.5f}, fell);
                 int t = 0;
                 for (; t < 120 && world.arch4_Orb.count > orbs; t++) tick_safe(1);
@@ -1919,6 +1921,10 @@ int main(void)
         const float from = fminf(hypotf(bz.at.x - get(0).feet.x, bz.at.z - get(0).feet.z), hypotf(bz.at.x - get(1).feet.x, bz.at.z - get(1).feet.z));
         printf("the ground cracks %.1f m from a survivor\n", from);
         CHECK(!bz.burst && from >= 3.0f && from <= 12.5f);
+        // (no level coming meanwhile: its pick would hold the match, and it makes the survivors whole)
+        world.Match.xp = 0;
+        tick_safe(2);
+        bz = tide_get_Blaze(&world, fire);
         // Moved where it's wanted: a moment from bursting, one of the dead in it, the Breacher standing in it, the Gunner
         // rolling through it
         bz.at = (tide_float3){0, get(0).feet.y, -22};
@@ -1931,12 +1937,15 @@ int main(void)
         roller.rollWay = (tide_float3){0, 0, 1};
         set(0, roller);
         const float stood = get(1).health, rolled = get(0).health;
-        tick(4);
+        for (int t = 0; t < 4; t++) {
+            world.Match.xp = 0;
+            tick(1);
+        }
         CHECK(tide_get_Blaze(&world, fire).burst);
         printf("the ground bursts: %.1f to the one standing in it (thrown at %.1f m/s), %.1f to the one rolling through it\n", stood - get(1).health,
                hypotf(get(1).velocity.x, get(1).velocity.z), rolled - get(0).health);
         CHECK(get(1).health < stood && get(0).health == rolled);
-        CHECK(zombie(torn).state == ZombieState_Dying);
+        CHECK(killed(torn));
         // Burning on: one of the dead walking in set alight, a survivor standing in it burned
         heal();
         const tide_entity walker = sturdy();

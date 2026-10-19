@@ -776,7 +776,11 @@ view WorkbenchLabels(Workshop workshop, Time time, Rooms.Lobby lobby, Picture pi
     {
         Label($"CHAPTER {workshop.hall + 1} / {ChapterName(workshop.hall)}", float2(20, 22), 11, BRASS);
         Draw.Text("The hall", float2(20, 47), narrow ? 17.0 : 24.0, INK, Anchor.MiddleLeft, Font.Bold);
-        Label($"{ChapterSolved(workshop.completed, workshop.hall)} / {ChapterSize(workshop.hall)} solved", corner, 14, MUTED, Anchor.MiddleRight);
+        mut var stars = 0;
+        for (var level = ChapterStart(workshop.hall); level < ChapterStart(workshop.hall + 1); level++)
+            stars += Stars(Solved(workshop.completed, level), workshop.best[level], level);
+        Label($"{ChapterSolved(workshop.completed, workshop.hall)} / {ChapterSize(workshop.hall)} solved, {stars} / {ChapterSize(workshop.hall) * 3} stars",
+            corner, 14, MUTED, Anchor.MiddleRight);
         HallLabels(HallOf(workshop), time, picture, workshop.puzzle.actors[hands.seat >= 0 && hands.seat < 2 ? hands.seat : 0].room);
         return;
     }
@@ -787,7 +791,10 @@ view WorkbenchLabels(Workshop workshop, Time time, Rooms.Lobby lobby, Picture pi
         Anchor.MiddleLeft, Font.Bold);
     var limit = workshop.layout.moveLimit;
     var spent = limit > 0 && workshop.puzzle.moves >= limit && !workshop.puzzle.solved;
-    Label(limit > 0 ? $"{workshop.puzzle.moves} / {limit} moves" : $"{workshop.puzzle.moves} moves", corner, 14, spent ? AMBER : MUTED, Anchor.MiddleRight);
+    // Par shows once a puzzle has been solved: a first try has no number to beat.
+    var moves = limit > 0 ? $"{workshop.puzzle.moves} / {limit} moves" : Solved(workshop.completed, workshop.level) ?
+        $"{workshop.puzzle.moves} moves / par {LevelPar(workshop.level)}" : $"{workshop.puzzle.moves} moves";
+    Label(moves, corner, 14, spent ? AMBER : MUTED, Anchor.MiddleRight);
 }
 
 // Each exhibit's number on a chip at its post, hidden while the view goes

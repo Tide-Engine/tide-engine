@@ -68,6 +68,8 @@ local singleton Hands
     int completed;
     // A bit for each hall whose lift this machine has seen working.
     int unlocked;
+    // This machine's fewest moves for each puzzle, 0 for none.
+    int[PUZZLE_COUNT] best;
     int swipeId = -1;
     bool swipeReady;
     float2 swipeStart;
@@ -200,10 +202,14 @@ view Roster(Workshop workshop, mut Hands hands, mut Rooms.Lobby lobby)
     }
     // What this machine solved before counts for the room. Offered again
     // whenever the room changes, until the match has it all.
+    mut var better = false;
+    for (var level = 0; level < PUZZLE_COUNT; level++)
+        if (hands.best[level] > 0 && (workshop.best[level] <= 0 || hands.best[level] < workshop.best[level])) better = true;
     if (hands.seat >= 0 && workshop.initialized && hands.progressSerial != workshop.serial &&
-        ((hands.completed & ~workshop.completed) != 0 || (hands.unlocked & ~workshop.unlocked) != 0 || hands.playtest && !workshop.playtest))
+        ((hands.completed & ~workshop.completed) != 0 || (hands.unlocked & ~workshop.unlocked) != 0 || hands.playtest && !workshop.playtest ||
+            better))
     {
-        Send(Progress { completed = hands.completed, unlocked = hands.unlocked, playtest = hands.playtest });
+        Send(Progress { completed = hands.completed, unlocked = hands.unlocked, playtest = hands.playtest, best = hands.best });
         hands.progressSerial = workshop.serial;
     }
     if (hands.serial != workshop.serial)
@@ -379,9 +385,12 @@ void PostNote(HallState workshop, Puzzle puzzle, Hands hands, float y)
         mut var text = "";
         if (station.kind == StationKind.Level)
         {
-            var solved = Solved(workshop.completed, station.level) ? " / solved" : "";
+            var best = workshop.best[station.level];
+            var stars = Stars(Solved(workshop.completed, station.level), best, station.level);
+            mut var solved = stars > 0 ? $" / {stars} of 3 stars" : "";
+            if (best > 0 && !IsChallenge(station.level)) solved = $"{solved}, best {best}, par {LevelPar(station.level)}";
             if (!IsChallenge(station.level)) text = $"{station.level + 1:D2}. {LevelName(station.level)}{solved}";
-            else text = $"Challenge: {LevelName(station.level)}, in {ChallengeBudget(station.level)} moves{solved}";
+            else text = $"Challenge: {LevelName(station.level)}, in {ChallengeBudget(station.level)} moves{(stars > 0 ? " / met" : "")}";
         }
         else if (station.kind == StationKind.Down) text = $"Lift down to chapter {workshop.hall}, {ChapterName(workshop.hall - 1)}";
         else if (open) text = $"Lift up to chapter {workshop.hall + 2}, {ChapterName(workshop.hall + 1)}";
@@ -473,7 +482,7 @@ int RenumberVersion3(int completed)
 
 struct Preferences
 {
-    int version = 5;
+    int version = 6;
     float master = 1;
     float music = .8;
     float effects = 1;
@@ -483,13 +492,14 @@ struct Preferences
     bool preview = true;
     int completed;
     int unlocked;
+    int[PUZZLE_COUNT] best;
 }
 
 Preferences CurrentPreferences(Rooms.Lobby lobby, Mixer mixer, Hands hands)
 {
     return Preferences { master = lobby.volume, music = mixer.music, effects = mixer.effects, interface = mixer.interface,
         muted = mixer.muted, reducedMotion = hands.reduceMotion, preview = hands.preview, completed = hands.completed,
-        unlocked = hands.unlocked };
+        unlocked = hands.unlocked, best = hands.best };
 }
 
 void WritePreferences(string text) fails IOError
@@ -527,6 +537,10 @@ view ReadPreferences(mut Rooms.Lobby lobby, mut Hands hands, mut Mixer mixer)
             // Version 5 lifts take batteries. Before, solving every puzzle of
             // a hall made its lift work: those still do.
             hands.unlocked = saved.version < 5 ? UnlockedBySolving(completed) : saved.unlocked & ((1 << (CHAPTER_COUNT - 1)) - 1);
+            // Version 6 keeps bests: one counts for a solved puzzle, at par
+            // or above.
+            for (var level = 0; level < PUZZLE_COUNT; level++)
+                hands.best[level] = Solved(completed, level) && saved.best[level] >= LevelPar(level) ? saved.best[level] : 0;
         }
     }
     hands.savedPreferences = Json.Write(CurrentPreferences(lobby, mixer, hands));
@@ -538,6 +552,8 @@ view SavePreferences(Workshop workshop, Rooms.Lobby lobby, Mixer mixer, mut Hand
     if (!hands.preferencesLoaded) return;
     hands.completed |= workshop.completed;
     hands.unlocked |= workshop.unlocked;
+    for (var level = 0; level < PUZZLE_COUNT; level++)
+        if (workshop.best[level] > 0 && (hands.best[level] <= 0 || workshop.best[level] < hands.best[level])) hands.best[level] = workshop.best[level];
     var text = Json.Write(CurrentPreferences(lobby, mixer, hands));
     if (text == hands.savedPreferences) return;
     hands.savedPreferences = text;

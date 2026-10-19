@@ -249,6 +249,8 @@ view GatherZombie(mut Zombie zombie, mut Horde horde, Look look)
 {
     zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
     if (!horde.made || Math.Distance(zombie.at, look.eye) > 90) return;
+    // Torn apart: not there (the tick it's gone in may come after this frame)
+    if (zombie.torn && zombie.kind != ZombieKind.Bloater) return;
     var mesh = MeshOf(zombie.look);
     var h = Math.Hash(int2(zombie.look, zombie.phase * 7 + int(zombie.pace * 1000)));
     var scale = zombie.look == 3 ? 1.06 : 0.96 + ((h >> 4) & 15) * 0.006;

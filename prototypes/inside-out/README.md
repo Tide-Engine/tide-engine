@@ -119,6 +119,13 @@ first puzzle before starts in the highest hall they have reached.
 - After a puzzle is solved, its name and the chapter's count are shown
   briefly, and you are back in the gallery in front of its post. **Back to
   the hall** in the menu leaves a puzzle without solving it.
+- **Stars.** Every puzzle has a **par**, the fewest moves it can be solved
+  in. Solving it earns one star, solving it within a quarter more moves than
+  par two, and matching par three. Undo takes moves back, so only the route
+  you finish with counts. Once a puzzle is solved, the move count shows its
+  par; the solve shows your stars, and a post carries its stars on top. The
+  hall counts its chapter's stars. Your fewest moves are saved, and a room
+  keeps the better of its two players'. A challenge met is met at par.
 
 For playtesting, `?playtest` on the web page (or `INSIDE_OUT_PLAYTEST=1`
 for a native run) opens every chapter's lift and adds **Choose puzzle** to
