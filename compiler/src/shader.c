@@ -64,7 +64,7 @@ enum {
     H_FADE, H_GRAD2, H_GRAD3, H_PERLIN2, H_PERLIN3, H_SIMPLEX2, H_SIMPLEX3, H_NEAREST, H_CELLULAR2, H_CELLULAR3, // noise.c's
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_FROMTO_UNIT3, H_FROMTO_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
-    H_INVERSE2, H_INVERSE3, H_INVERSE4,
+    H_RECIPROCAL, H_INVERSE2, H_INVERSE3, H_INVERSE4, H_INT4_LANE,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
@@ -693,7 +693,17 @@ static const char *const family_scalars[FAMILY_COUNT] = {
     "}\n",
     // The languages' own is undefined from an edge down to a lower one
     "float tide_smoothstep1(float a, float b, float c) {\n"
-    "    float t = tide_saturate1((c - a) / (b - a));\n"
+    "    float numerator = c - a;\n"
+    "    float denominator = b - a;\n"
+    "    float divisor = denominator;\n"
+    "    if (divisor == 0.0) { divisor = 1.0; }\n"
+    "    float t = tide_saturate1(numerator / divisor);\n"
+    "    if (denominator == 0.0) {\n"
+    "        t = 0.0;\n"
+    "        if (floatBitsToInt(denominator) < 0) {\n"
+    "            if (numerator < 0.0) { t = 1.0; }\n"
+    "        } else if (numerator > 0.0) { t = 1.0; }\n"
+    "    }\n"
     "    return t * t * (3.0 - 2.0 * t);\n"
     "}\n",
     // The languages' own is undefined under 0: a whole power of a number under 0 is that of the number over 0, with its sign
@@ -714,6 +724,9 @@ static const char *const family_scalars[FAMILY_COUNT] = {
 };
 
 static const char *const helper_texts[H_COUNT] = {
+    [H_INT4_LANE] = "int tide_int4_lane(ivec4 value, int index) {\n"
+                    "    return index == 0 ? value.x : index == 1 ? value.y : index == 2 ? value.z : value.w;\n"
+                    "}\n",
     // A texture holds colors times their alpha, so that what's blended between two pixels is right (a clear
     // pixel's color counts for nothing). Code reads the color itself. A pixel with no alpha has none
     [H_STRAIGHT] = "vec4 tide_straight(vec4 c) {\n"
@@ -1072,7 +1085,9 @@ static const char *const helper_texts[H_COUNT] = {
                   "    vec3 c = cos(0.5 * v);\n"
                   "    return tide_mul_q(tide_mul_q(vec4(0.0, s.y, 0.0, c.y), vec4(s.x, 0.0, 0.0, c.x)), vec4(0.0, 0.0, s.z, c.z));\n"
                   "}\n",
-    // Shepperd's method: by the largest term
+    // Shepperd's method: by the largest term. The selected finite branch has
+    // a nonzero scale; guard the other candidates too because ANGLE's HLSL
+    // compiler diagnoses their zero divisors while folding a constant matrix.
     [H_Q_FROM_M3] = "vec4 tide_q_from_m3(mat3 m) {\n"
                     "    float x = m[0].x;\n"
                     "    float y = m[1].y;\n"
@@ -1080,17 +1095,21 @@ static const char *const helper_texts[H_COUNT] = {
                     "    float t = x + y + z;\n"
                     "    if (t > 0.0) {\n"
                     "        float s = sqrt(t + 1.0) * 2.0;\n"
+                    "        if (s == 0.0) { s = 1.0; }\n"
                     "        return vec4((m[1].z - m[2].y) / s, (m[2].x - m[0].z) / s, (m[0].y - m[1].x) / s, 0.25 * s);\n"
                     "    }\n"
                     "    if (x > y && x > z) {\n"
                     "        float s = sqrt(1.0 + x - y - z) * 2.0;\n"
+                    "        if (s == 0.0) { s = 1.0; }\n"
                     "        return vec4(0.25 * s, (m[1].x + m[0].y) / s, (m[2].x + m[0].z) / s, (m[1].z - m[2].y) / s);\n"
                     "    }\n"
                     "    if (y > z) {\n"
                     "        float s = sqrt(1.0 + y - x - z) * 2.0;\n"
+                    "        if (s == 0.0) { s = 1.0; }\n"
                     "        return vec4((m[1].x + m[0].y) / s, 0.25 * s, (m[2].y + m[1].z) / s, (m[2].x - m[0].z) / s);\n"
                     "    }\n"
                     "    float s = sqrt(1.0 + z - x - y) * 2.0;\n"
+                    "    if (s == 0.0) { s = 1.0; }\n"
                     "    return vec4((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);\n"
                     "}\n",
     [H_LOOKROTATION_Q] = "vec4 tide_lookrotation_q(vec3 f, vec3 u) {\n"
@@ -1161,8 +1180,17 @@ static const char *const helper_texts[H_COUNT] = {
                 "    return mat4(vec4(2.0 / w, 0.0, 0.0, 0.0), vec4(0.0, 2.0 / h, 0.0, 0.0), vec4(0.0, 0.0, -2.0 * r, 0.0), "
                 "vec4(0.0, 0.0, -(f + n) * r, 1.0));\n"
                 "}\n",
+    // Keep IEEE signed infinities at zero without a literal zero divisor
+    // after ANGLE/HLSL inlines a constant singular matrix's inverse.
+    [H_RECIPROCAL] = "float tide_reciprocal(float value) {\n"
+                     "    float divisor = value;\n"
+                     "    if (divisor == 0.0) { divisor = 1.0; }\n"
+                     "    float result = 1.0 / divisor;\n"
+                     "    if (value == 0.0) { result = intBitsToFloat(floatBitsToInt(value) | 0x7f800000); }\n"
+                     "    return result;\n"
+                     "}\n",
     [H_INVERSE2] = "mat2 tide_inverse2(mat2 m) {\n"
-                   "    float s = 1.0 / (m[0].x * m[1].y - m[1].x * m[0].y);\n"
+                   "    float s = tide_reciprocal(m[0].x * m[1].y - m[1].x * m[0].y);\n"
                    "    return mat2(m[1].y * s, -m[0].y * s, -m[1].x * s, m[0].x * s);\n"
                    "}\n",
     // Its rows are the cross products of pairs of columns, over the determinant
@@ -1170,7 +1198,7 @@ static const char *const helper_texts[H_COUNT] = {
                    "    vec3 a = cross(m[1], m[2]);\n"
                    "    vec3 b = cross(m[2], m[0]);\n"
                    "    vec3 c = cross(m[0], m[1]);\n"
-                   "    return transpose(mat3(a, b, c)) * (1.0 / dot(m[0], a));\n"
+                   "    return transpose(mat3(a, b, c)) * tide_reciprocal(dot(m[0], a));\n"
                    "}\n",
     // By Laplace expansion over 2 by 2 determinants: a<row><column> of the matrix, and the inverse column by column
     [H_INVERSE4] = "mat4 tide_inverse4(mat4 m) {\n"
@@ -1202,7 +1230,7 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float k2 = a20 * a33 - a30 * a23;\n"
                    "    float k1 = a20 * a32 - a30 * a22;\n"
                    "    float k0 = a20 * a31 - a30 * a21;\n"
-                   "    float d = 1.0 / (s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);\n"
+                   "    float d = tide_reciprocal(s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);\n"
                    "    return mat4((a11 * k5 - a12 * k4 + a13 * k3) * d, (-a10 * k5 + a12 * k2 - a13 * k1) * d, "
                    "(a10 * k4 - a11 * k2 + a13 * k0) * d, (-a10 * k3 + a11 * k1 - a12 * k0) * d, "
                    "(-a01 * k5 + a02 * k4 - a03 * k3) * d, (a00 * k5 - a02 * k2 + a03 * k1) * d, "
@@ -1398,6 +1426,11 @@ static void need(emit *em, const int h)
         return;
     }
     switch (h) {
+    case H_INVERSE2:
+    case H_INVERSE3:
+    case H_INVERSE4:
+        need(em, H_RECIPROCAL);
+        break;
     case H_HASH1:
     case H_HASH2:
     case H_HASH3:
@@ -1524,6 +1557,8 @@ static void put_spelled(sb *o, const lang l, const char *text, const size_t len)
             as = "inverseSqrt";
         } else if (word_is(text + i, n, "floatBitsToInt")) {
             as = "bitcast<i32>";
+        } else if (word_is(text + i, n, "intBitsToFloat")) {
+            as = "bitcast<f32>";
         } else {
             as = wgsl_type(text + i, n);
         }
@@ -2051,16 +2086,27 @@ static void need_data(emit *em, const int texture, const type element, const int
     shader_part_words(element, leaves, &leaf, &floats, &ints);
     const int words = floats + ints;
     const int stride = data_stride(words), pixels = words == 0 ? 0 : stride < 4 ? 1 : stride / 4;
+    if (!wgsl && pixels && stride == 1) need(em, H_INT4_LANE);
     const int count_at = em->sh->textures.items[texture].count_at;
     sb text = {0};
     sb *const out = em->o;
     em->o = &text;
     const char *t = ty(em, element);
+    // One initialized return value avoids FXC's false uninitialized-struct
+    // warning when a bounded read is called from a loop with continue.
+    sb initial = {0};
+    if (!wgsl) {
+        em->o = &initial;
+        sb_printf(&initial, "    %s tide_result = ", t);
+        put_zeros(em, element);
+        sb_put(&initial, ";\n");
+        em->o = &text;
+    }
     if (grid) {
         const char *vec = dims == 3 ? (wgsl ? "vec3i" : "ivec3") : (wgsl ? "vec2i" : "ivec2");
         const char *whole = wgsl ? "u32" : "uint";
         if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: %s) -> %s {\n    let tide_o = ", texture, vec, t);
-        else sb_printf(&text, "%s tide_list%d(%s tide_i) {\n    %s tide_o = ", t, texture, vec, vec);
+        else sb_printf(&text, "%s tide_list%d(%s tide_i) {\n%s    %s tide_o = ", t, texture, vec, initial.data, vec);
         put_words(em, 'v', count_at + dims, dims, vec);
         if (wgsl) sb_put(&text, ";\n    let tide_e = ");
         else sb_printf(&text, ";\n    %s tide_e = ", vec);
@@ -2070,19 +2116,21 @@ static void need_data(emit *em, const int texture, const type element, const int
             const char axis = "xyz"[a];
             sb_printf(&text, "    %s tide_%c = %s(tide_i.%c) - %s(tide_o.%c);\n", wgsl ? "let" : "uint", axis, whole, axis, whole, axis);
         }
-        sb_put(&text, "    if (");
+        sb_put(&text, wgsl ? "    if (" : "    if (!(");
         for (int a = 0; a < dims; a++) {
             const char axis = "xyz"[a];
             sb_printf(&text, "%stide_i.%c < tide_o.%c || tide_%c >= %s(tide_e.%c)", a ? " || " : "", axis, axis, axis, whole, axis);
         }
     } else {
         if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= ", texture, t);
-        else sb_printf(&text, "%s tide_list%d(int tide_i) {\n    if (tide_i < 0 || tide_i >= ", t, texture);
+        else sb_printf(&text, "%s tide_list%d(int tide_i) {\n%s    if (!(tide_i < 0 || tide_i >= ", t, texture, initial.data);
         put_word(em, 'v', count_at);
     }
-    sb_put(&text, ") {\n        return ");
-    put_zeros(em, element);
-    sb_put(&text, ";\n    }\n");
+    if (wgsl) {
+        sb_put(&text, ") {\n        return ");
+        put_zeros(em, element);
+        sb_put(&text, ";\n    }\n");
+    } else sb_put(&text, ")) {\n");
     if (pixels) { // Nothing of it is read, where the code only counts its elements, or asks a grid's size
         const char *number = wgsl ? "let" : "int";
         const char *whole_int = wgsl ? "i32" : "int";
@@ -2109,17 +2157,19 @@ static void need_data(emit *em, const int texture, const type element, const int
         if (wgsl) sb_printf(&text, "    let %s = textureLoad(pixels%d, vec2i(%s), 0);\n", name, texture, at);
         else sb_printf(&text, "    ivec4 %s = texelFetch(pixels%d, ivec2(%s), 0);\n", name, texture, at);
         if (stride < 4) { // Several to a pixel: this one's ints, from where it starts in it
-            sb_printf(&text, wgsl ? "    let tide_q0 = vec4i(tide_r[tide_word & 3], %s, 0, 0);\n"
-                                  : "    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], %s, 0, 0);\n",
-                      stride == 2 ? "tide_r[(tide_word & 3) + 1]" : "0");
+            if (wgsl) sb_printf(&text, "    let tide_q0 = vec4i(tide_r[tide_word & 3], %s, 0, 0);\n",
+                                stride == 2 ? "tide_r[(tide_word & 3) + 1]" : "0");
+            // Static lanes avoid ANGLE's dynamic-vector-index emulation warning.
+            else if (stride == 2) sb_put(&text, "    ivec4 tide_q0 = (tide_word & 2) == 0 ? ivec4(tide_r.xy, 0, 0) : ivec4(tide_r.zw, 0, 0);\n");
+            else sb_put(&text, "    ivec4 tide_q0 = ivec4(tide_int4_lane(tide_r, tide_word & 3), 0, 0, 0);\n");
         }
         if (k * 4 < floats) sb_printf(&text, wgsl ? "    let tide_p%d = bitcast<vec4f>(tide_q%d);\n" : "    vec4 tide_p%d = intBitsToFloat(tide_q%d);\n", k, k);
     }
-    sb_put(&text, "    return ");
+    sb_put(&text, wgsl ? "    return " : "    tide_result = ");
     int f = 0, n = floats;
     leaf = 0;
     put_part(em, element, 'p', 'q', &f, &n, leaves, &leaf);
-    sb_put(&text, ";\n}\n\n");
+    sb_put(&text, wgsl ? ";\n}\n\n" : ";\n    }\n    return tide_result;\n}\n\n");
     em->o = out;
     sb_put(&em->functions, text.data);
 }
@@ -2171,10 +2221,13 @@ static void need_find(emit *em, const data_ref *d)
                              : "        ivec4 %s = texelFetch(pixels%d, ivec2((%s >> 2) & 1023, %s >> 12), 0);\n";
     sb_printf(&text, "        %s tide_w = tide_base + tide_s;\n", let);
     sb_printf(&text, fetch, "tide_slot", texture, "tide_w", "tide_w");
-    sb_printf(&text, "        %s tide_e = tide_slot[tide_w & 3];\n        if (tide_e == 0) {\n            return -1;\n        }\n", let);
+    if (!wgsl) need(em, H_INT4_LANE);
+    sb_printf(&text, wgsl ? "        %s tide_e = tide_slot[tide_w & 3];\n" : "        %s tide_e = tide_int4_lane(tide_slot, tide_w & 3);\n", let);
+    sb_put(&text, "        if (tide_e == 0) {\n            return -1;\n        }\n");
     sb_printf(&text, "        %s tide_k = (tide_e - 1) * %d + %d;\n", let, stride, key_word);
     sb_printf(&text, fetch, "tide_held", texture, "tide_k", "tide_k");
-    sb_put(&text, "        if (tide_held[tide_k & 3] == tide_key) {\n            return tide_e - 1;\n        }\n"
+    sb_put(&text, wgsl ? "        if (tide_held[tide_k & 3] == tide_key) {\n" : "        if (tide_int4_lane(tide_held, tide_k & 3) == tide_key) {\n");
+    sb_put(&text, "            return tide_e - 1;\n        }\n"
                   "        tide_s = (tide_s + 1) & (tide_slots - 1);\n    }\n    return -1;\n}\n\n");
     em->o = out;
     sb_put(&em->functions, text.data);
@@ -3811,11 +3864,13 @@ static void ex_sample(emit *em, const expr *e)
         // What it's compared with is between the near plane and the far limit, as what's stored is:
         // past them, GPUs differ in what they make of it
         if (em->l == WGSL) sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", slot, slot);
-        else sb_printf(em->o, "textureLod(pixels%d, vec3(", slot);
+        // Explicit zero gradients keep ANGLE's D3D11 translation at level
+        // zero too; textureLod on a shadow sampler becomes implicit SampleCmp.
+        else sb_printf(em->o, "textureGrad(pixels%d, vec3(", slot);
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
         sb_put(em->o, ", clamp(");
         ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
-        sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), 0.0)");
+        sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), vec2(0.0), vec2(0.0))");
         return;
     }
     // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
