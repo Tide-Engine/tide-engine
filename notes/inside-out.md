@@ -173,6 +173,43 @@ forwarding is gone. Checked locally in a muted headless Chrome: both
 frames in one match, a stand-in phone over the relay shown as Amber, and
 its two presses moving Amber two steps on both views.
 
+On the owner's 4K TV the two views ran at 15 fps. The page now draws each
+view at no more than 1280x1440 device pixels (`?scale=N` in `web.html`
+caps `devicePixelRatio`; the TV page computes it, and its own `?scale`
+overrides), but at `?scale=0.35` it still ran at only 45 fps, too coarse
+to play. So the TV page also asks for the cheaper picture, `?lite`
+(`--inside-out-lite`, natively `INSIDE_OUT_LITE`, read by
+`InsideOutLite` in `invite.c`); `?full` on the TV page keeps the whole one.
+In `SceneLighting` it skips occlusion and its blurs (the target is cleared
+white) and the glow chain. `SceneComposite` takes half the shadow taps on
+a disc that doesn't turn with the pixel (six turned taps speckled every
+shadow's edge; still ones band a little, which reads better from a sofa),
+and no wall colour on floors. The lamp map is 2,048 square, not 4,096. The lens
+blends the sharp picture with one blurred half-size copy (`SceneHaze`, then
+one pair of `SceneGlowBlur` passes in the glow targets) by `soft / 10`,
+without the colour parting. Twelve rotated taps on four were grainy where
+the picture leaves focus. The full picture is otherwise unchanged. Taking
+one lens tap where `soft` is under 0.01 was tried for both pictures (a
+native capture was byte-identical) and removed: in a loop whose count
+varies by pixel, a filtered read links with warning X3595 on WebGL through
+ANGLE's D3D11, which `checkGL` makes an error.
+
+That check found a warning already on `dev`: ANGLE's D3D11 translation of
+`textureLod` on a `sampler2DShadow` is `SampleCmp`, a gradient instruction
+(seen with `WEBGL_debug_shaders`), so `SceneSun`'s loop of twelve
+`DepthTexture.Compare` taps links with X3595. The web tests never see it:
+their WebGL is SwiftShader (`--use-angle=swiftshader`), and pages without
+`checkGL` only log it. `SceneSun` now writes its taps out
+(`SceneSunTap`, the even six first, which lite uses alone), and a muted
+headless Chrome on this machine's GPU with `checkGL` links every shader of
+both pictures on WebGL (D3D11) and WebGPU. Any game comparing depths in a
+loop has the same warning on D3D11; an engine fix (tidec emitting
+something ANGLE reads at level zero) is not made here. Measured natively here (debug build, two players at 3,840x2,400 each,
+950 frames after settling): 7.4 ms a frame for the full picture, 2.3 ms for
+lite. How fast the TV's computer runs it is for the owner to report.
+`serve.mjs`'s short `/tv` and `/pad` redirects now keep their query; they
+dropped it, so `/tv?full` opened the lite page.
+
 ### Phones as controllers (`serve.mjs --lan`, superseded above)
 
 Asked to play on one TV with phones as controllers, the local server

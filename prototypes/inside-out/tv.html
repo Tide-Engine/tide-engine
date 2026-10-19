@@ -43,19 +43,21 @@
   card.onclick = () => { card.style.display = 'none'; };
   document.getElementById('where').textContent = new URL('pad/', game).href.replace(/^https?:\/\//, '');
 
-  // The whole screen draws at about 1440p, each view at most 1280x1440
-  // device pixels, stretched to fit: two views at a 4K TV's full resolution
-  // is more than most computers draw smoothly, and half of it looked coarse.
-  // ?scale sets the device pixels to a page pixel instead (1 for full).
+  // Two views at a 4K TV's full resolution is more than most computers draw
+  // smoothly. Each view draws the cheaper picture (?lite: no occlusion or
+  // glow, fewer shadow and lens taps), at no more than 1280x1440 device
+  // pixels, stretched to fit. ?scale sets the device pixels to a page pixel
+  // instead (1 for full), and ?full keeps the whole picture.
   const fitted = Math.min(window.devicePixelRatio || 1, Math.sqrt(1280 * 1440 / Math.max(1, innerWidth / 2 * innerHeight)));
   const scale = Number(params.get('scale')) > 0 ? params.get('scale') : fitted.toFixed(3);
+  const look = (params.has('full') ? '' : '&lite') + '&scale=' + scale;
   // The left view hosts; the right joins its room, and stays quiet.
-  views[1].src = new URL('?host&scale=' + scale, game).href;
+  views[1].src = new URL('?host' + look, game).href;
   const waiting = setInterval(() => {
     const room = views[1].contentWindow && views[1].contentWindow.Tide && views[1].contentWindow.Tide.room;
     if (!room) return;
     clearInterval(waiting);
-    views[2].src = new URL('?quiet&scale=' + scale + '&join=' + room, game).href;
+    views[2].src = new URL('?quiet' + look + '&join=' + room, game).href;
   }, 300);
 
   // A press from a phone is that player's key, as the keyboard sends it.
