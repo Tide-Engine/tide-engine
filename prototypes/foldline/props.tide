@@ -1,0 +1,385 @@
+// Set dressing in metres, with its origin on the floor and its front along +z.
+// Furniture's visible structural boxes are also its compound collider shapes.
+// Their presentation stays in the wall list, so folds cut it too.
+using Box3D;
+enum PropKind
+{
+    Desk, Chair, Cabinet, Partition, Shelf, Locker, Vending, Cooler, Clock, Monitor,
+    Bed, Curtain, Lounger, PlasticChair, Plant, CoatRack, Pipe, Ladder, ExitSign,
+    Arrow, HandSign, EyeSign, FigureSign, Switch, Cardboard, Pallet, Cone, Dollhouse, Web, ArrowDown, Silk
+}
+
+component Prop
+{
+    PropKind kind;
+    float3 at;
+    float yaw;
+    float3 scale = float3(1);
+    Color tint = Color(1, 1, 1);
+    int chamber;
+}
+
+struct PropBlock
+{
+    float3 at;
+    float3 size;
+    Color tint;
+    float paint = -1;
+}
+
+PropBlock PropBlockAt(float3 at, float3 size, Color tint, float paint = -1)
+{
+    return PropBlock { at = at, size = size, tint = tint, paint = paint };
+}
+
+PropBlock PropLeg(int leg, float wide, float deep, float high, Color tint)
+{
+    return PropBlockAt(float3((leg & 1) == 0 ? -wide : wide, high * .5, (leg & 2) == 0 ? -deep : deep), float3(.065, high, .065), tint);
+}
+
+// Structural pieces only: handles, painted faces, leaves and cloth are dressing.
+// Open chair legs, desk knees and shelf gaps stay open even for tiny operators.
+int PropBlockCount(PropKind kind)
+{
+    return kind switch
+    {
+        PropKind.Desk => 6, PropKind.Chair => 6, PropKind.PlasticChair => 6,
+        PropKind.Cabinet => 1, PropKind.Locker => 1, PropKind.Partition => 4,
+        PropKind.Shelf => 7, PropKind.Vending => 1, PropKind.Cooler => 2,
+        PropKind.Monitor => 2, PropKind.Bed => 9, PropKind.Lounger => 9,
+        PropKind.Curtain => 1, PropKind.Plant => 2, PropKind.CoatRack => 3,
+        PropKind.Pipe => 3, PropKind.Ladder => 11, PropKind.Cardboard => 1,
+        PropKind.Pallet => 7, PropKind.Cone => 6, PropKind.Dollhouse => 6,
+        _ => 0
+    };
+}
+
+// This one metric description feeds both physics and rendering.
+PropBlock PropBlockPart(PropKind kind, int part)
+{
+    Color wood = Color(.42, .28, .15);
+    Color metal = Color(.29, .34, .32);
+    Color dark = Color(.055, .065, .06);
+    Color pale = Color(.69, .7, .61);
+    switch (kind)
+    {
+        case PropKind.Desk:
+            if (part == 0) return PropBlockAt(float3(0, .76, 0), float3(1.7, .09, .8), wood, PLANKS);
+            if (part == 1) return PropBlockAt(float3(-.53, .42, -.02), float3(.48, .6, .68), metal);
+            return PropLeg(part - 2, .73, .3, .72, metal);
+        case PropKind.Chair:
+        case PropKind.PlasticChair:
+            Color chair = kind == PropKind.Chair ? Color(.2, .24, .25) : pale;
+            if (part == 0) return PropBlockAt(float3(0, .48, 0), float3(.52, .09, .52), chair);
+            if (part == 1) return PropBlockAt(float3(0, .77, -.25), float3(.48, .55, .1), chair);
+            return PropLeg(part - 2, .2, .19, .45, metal);
+        case PropKind.Cabinet:
+        case PropKind.Locker:
+            bool locker = kind == PropKind.Locker;
+            return PropBlockAt(float3(0, locker ? .95 : .7, 0), float3(.64, locker ? 1.9 : 1.4, .62), metal, PANELS);
+        case PropKind.Partition:
+            if (part == 0) return PropBlockAt(float3(0, .7, 0), float3(1.8, 1.4, .09), Color(.4, .43, .39), CARPET);
+            if (part == 1) return PropBlockAt(float3(0, 1.42, 0), float3(1.86, .05, .11), metal);
+            return PropBlockAt(float3(part == 2 ? -.8 : .8, .04, 0), float3(.1, .08, .55), metal);
+        case PropKind.Shelf:
+            if (part < 2) return PropBlockAt(float3(part == 0 ? -.7 : .7, 1, 0), float3(.07, 2, .5), metal);
+            return PropBlockAt(float3(0, .12 + (part - 2) * .45, 0), float3(1.45, .06, .55), metal, RUST);
+        case PropKind.Vending:
+            return PropBlockAt(float3(0, .95, 0), float3(1.1, 1.9, .8), Color(.28, .12, .1), PANELS);
+        case PropKind.Cooler:
+            return part == 0 ? PropBlockAt(float3(0, .48, 0), float3(.47, .96, .47), pale)
+                             : PropBlockAt(float3(0, 1.22, 0), float3(.34, .53, .34), Color(.13, .28, .33));
+        case PropKind.Monitor:
+            return part == 0 ? PropBlockAt(float3(0, .26, 0), float3(.5, .43, .45), pale, PANELS)
+                             : PropBlockAt(float3(0, .03, 0), float3(.36, .06, .34), dark);
+        case PropKind.Bed:
+        case PropKind.Lounger:
+            if (part == 0) return PropBlockAt(float3(0, .38, 0), float3(.95, .17, 2), metal);
+            if (part == 1) return PropBlockAt(float3(0, .51, 0), float3(.9, .15, 1.9), pale);
+            if (part == 2) return PropBlockAt(float3(0, .64, -.66), float3(.68, .12, .4), Color(.82, .81, .7));
+            if (part < 5) return PropBlockAt(float3(0, .62, part == 3 ? -1.02 : 1.02), float3(.9, .67, .08), metal);
+            return PropLeg(part - 5, .4, .85, .3, metal);
+        case PropKind.Curtain:
+            return PropBlockAt(float3(0, 2.2, 0), float3(2.4, .06, .14), metal);
+        case PropKind.Plant:
+            return part == 0 ? PropBlockAt(float3(0, .2, 0), float3(.38, .4, .38), wood)
+                             : PropBlockAt(float3(0, .69, 0), float3(.055, 1, .055), Color(.16, .22, .09));
+        case PropKind.CoatRack:
+            if (part == 0) return PropBlockAt(float3(0, .92, 0), float3(.065, 1.84, .065), wood);
+            if (part == 1) return PropBlockAt(float3(0, 1.62, 0), float3(.65, .07, .07), wood);
+            return PropBlockAt(float3(0, .04, 0), float3(.6, .08, .5), wood);
+        case PropKind.Pipe:
+            return part == 0 ? PropBlockAt(float3(0, 0, 0), float3(.15, .15, 2), metal, RUST)
+                             : PropBlockAt(float3(0, 0, part == 1 ? -.85 : .85), float3(.21, .21, .1), dark);
+        case PropKind.Ladder:
+            return part < 2 ? PropBlockAt(float3(part == 0 ? -.25 : .25, 1.5, 0), float3(.06, 3, .06), metal)
+                            : PropBlockAt(float3(0, .18 + (part - 2) * .32, 0), float3(.5, .045, .055), metal);
+        case PropKind.Cardboard:
+            return PropBlockAt(float3(0, .25, 0), float3(.6, .5, .5), Color(.52, .38, .2));
+        case PropKind.Pallet:
+            return part < 5 ? PropBlockAt(float3(-.48 + part * .24, .16, 0), float3(.18, .06, 1), wood, PLANKS)
+                            : PropBlockAt(float3(0, .07, part == 5 ? -.38 : .38), float3(1.2, .14, .1), wood);
+        case PropKind.Cone:
+            if (part == 0) return PropBlockAt(float3(0, .025, 0), float3(.48, .05, .48), dark);
+            return PropBlockAt(float3(0, .1 + (part - 1) * .11, 0), float3(.31 - (part - 1) * .055, .11, .31 - (part - 1) * .055), part == 3 ? pale : Color(.85, .27, .05));
+        case PropKind.Dollhouse:
+            if (part == 0) return PropBlockAt(float3(0, .04, 0), float3(1.5, .08, 1), wood);
+            if (part == 1) return PropBlockAt(float3(0, .5, -.45), float3(1.32, .92, .08), pale, WALLPAPER);
+            if (part < 4) return PropBlockAt(float3(part == 2 ? -.7 : .7, .5, 0), float3(.08, .92, .9), pale, WALLPAPER);
+            return PropBlockAt(float3(0, part == 4 ? .51 : 1, 0), float3(1.5, part == 4 ? .06 : .08, 1), wood);
+    }
+    return default;
+}
+
+Entity SetProp(Arena arena, PropKind kind, float3 at, float yaw = 0, float3 scale = float3(1))
+{
+    var count = PropBlockCount(kind);
+    if (count == 0) return Spawn(Prop { kind = kind, at = at, yaw = yaw, scale = scale, chamber = arena.chamber });
+    var made = Spawn(Prop { kind = kind, at = at, yaw = yaw, scale = scale, chamber = arena.chamber },
+                     Body { type = BodyType.Static, position = at, rotation = quaternion.Euler(0, yaw, 0) });
+    for (int part = 0; part < count; part++)
+    {
+        var block = PropBlockPart(kind, part);
+        Spawn(Part { of = made }, Box { size = block.size * scale, offset = block.at * scale });
+    }
+    return made;
+}
+
+[After(EvaluatePlace)]
+system RetireProps(Prop prop, Arena arena)
+{
+    if (prop.chamber != arena.chamber) this.Destroy();
+}
+
+void PropBox(mut Optics optics, Prop prop, float3 at, float3 size, Color tint, float paint = -1, float glow = 0)
+{
+    var rotation = quaternion.Euler(0, prop.yaw, 0);
+    mut var part = Turned(prop.at + Math.Rotate(rotation, at * prop.scale), rotation, size * prop.scale,
+                          Color(tint.r * prop.tint.r, tint.g * prop.tint.g, tint.b * prop.tint.b), glow);
+    part.cell = paint;
+    part.tiles = paint < 0 ? 0.0 : .5;
+    optics.architecture.Add(part);
+}
+
+// A thread of silk between two points in a prop's own metres, unscaled: a web's spans are worked out across its way.
+void Thread(mut Optics optics, Prop prop, float3 start, float3 stop)
+{
+    var rotation = quaternion.Euler(0, prop.yaw, 0);
+    var way = stop - start;
+    optics.architecture.Add(Turned(prop.at + Math.Rotate(rotation, (start + stop) * .5), Math.Mul(rotation, quaternion.LookRotation(way, float3(0, 1, 0))),
+                                   float3(.013, .013, Math.Length(way) + .012), Color(.6, .62, .56), .4));
+}
+
+// A wad of silk flat on the wall a thread is fixed to, `side` along the prop's own z.
+void Tuft(mut Optics optics, Prop prop, float3 at, int side)
+{
+    var rotation = quaternion.Euler(0, prop.yaw, 0);
+    optics.architecture.Add(Turned(prop.at + Math.Rotate(rotation, at - float3(0, 0, side * .012)), rotation, float3(.13, .1, .022),
+                                   Color(.55, .57, .52), .3));
+}
+
+void DressProp(mut Optics optics, Prop prop)
+{
+    Color wood = Color(.42, .28, .15);
+    Color metal = Color(.29, .34, .32);
+    Color dark = Color(.055, .065, .06);
+    Color pale = Color(.69, .7, .61);
+    for (int part = 0; part < PropBlockCount(prop.kind); part++)
+    {
+        var block = PropBlockPart(prop.kind, part);
+        PropBox(optics, prop, block.at, block.size, block.tint, block.paint);
+    }
+    switch (prop.kind)
+    {
+        case PropKind.Web:
+            // Strung wall to wall across its way, low: two threads that sag between the walls, spokes from a hub in
+            // the middle out to the walls and down to the floor, rungs between the spokes, and a tuft at each wall
+            float half = .99 * prop.scale.z;
+            float3 hub = float3(0, .26, 0);
+            for (int thread = 0; thread < 2; thread++)
+            {
+                float high = thread == 0 ? .62 : .36;
+                float sag = thread == 0 ? .2 : .14;
+                float across = thread == 0 ? -.04 : .05;
+                for (int piece = 0; piece < 6; piece++)
+                {
+                    float begin = piece / 6.0;
+                    float finish = (piece + 1) / 6.0;
+                    Thread(optics, prop, float3(across, high - sag * 4 * begin * (1 - begin), half * (begin * 2 - 1)),
+                           float3(across, high - sag * 4 * finish * (1 - finish), half * (finish * 2 - 1)));
+                }
+            }
+            for (int side = -1; side <= 1; side += 2)
+            {
+                for (int spoke = 0; spoke < 3; spoke++)
+                {
+                    var wall = float3((spoke - 1) * .12, .66 - spoke * .26, side * half);
+                    Thread(optics, prop, hub, wall);
+                    Tuft(optics, prop, wall, side);
+                    if (spoke == 2) continue;
+                    var next = float3(spoke * .12, .4 - spoke * .26, side * half);
+                    for (int rung = 1; rung < 3; rung++)
+                        Thread(optics, prop, hub + (wall - hub) * (rung * .3), hub + (next - hub) * (rung * .3));
+                }
+                for (int foot = -1; foot <= 1; foot += 2)
+                    Thread(optics, prop, hub, float3(foot * .45, .006, side * half * .4));
+            }
+            return;
+        case PropKind.Silk:
+            // A dull thread along the floor, a metre long before it's scaled: where the spider goes, and nothing else
+            PropBox(optics, prop, float3(0, .012, 0), float3(.012, .006, 1), Color(.42, .43, .4));
+            return;
+        case PropKind.Desk:
+            for (int drawer = 0; drawer < 3; drawer++)
+                PropBox(optics, prop, float3(-.53, .23 + drawer * .19, .333), float3(.18, .025, .035), dark);
+            return;
+        case PropKind.Chair:
+        case PropKind.PlasticChair:
+            return;
+        case PropKind.Cabinet:
+        case PropKind.Locker:
+            bool locker = prop.kind == PropKind.Locker;
+            for (int drawer = 0; drawer < (locker ? 1 : 4); drawer++)
+            {
+                float high = locker ? 1.15 : .22 + drawer * .33;
+                PropBox(optics, prop, float3(0, high, .317), float3(.52, locker ? 1.66 : .28, .024), Color(.37, .4, .36));
+                PropBox(optics, prop, float3(locker ? .17 : 0.0, high, .345), float3(locker ? .025 : .18, .035, .035), dark);
+            }
+            if (locker)
+                for (int vent = 0; vent < 4; vent++)
+                    PropBox(optics, prop, float3(0, 1.65 - vent * .06, .335), float3(.34, .02, .018), dark);
+            return;
+        case PropKind.Partition:
+            return;
+        case PropKind.Shelf:
+            return;
+        case PropKind.Vending:
+            PropBox(optics, prop, float3(-.1, 1.16, .411), float3(.7, 1.1, .026), dark);
+            for (int row = 0; row < 3; row++)
+                for (int col = 0; col < 3; col++)
+                    PropBox(optics, prop, float3(-.32 + col * .23, .82 + row * .32, .43), float3(.12, .2, .035), row == 1 ? Color(.25, .4, .2) : wood);
+            PropBox(optics, prop, float3(.41, 1.1, .43), float3(.13, .35, .045), pale);
+            PropBox(optics, prop, float3(-.1, .26, .43), float3(.7, .17, .05), dark);
+            return;
+        case PropKind.Cooler:
+            PropBox(optics, prop, float3(0, .72, .26), float3(.18, .05, .09), dark);
+            return;
+        case PropKind.Clock:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.44, .44, .06), metal);
+            PropBox(optics, prop, float3(0, 0, .034), float3(.38, .38, .02), pale);
+            PropBox(optics, prop, float3(0, .08, .05), float3(.018, .16, .015), dark);
+            PropBox(optics, prop, float3(.065, 0, .07), float3(.13, .018, .015), dark);
+            return;
+        case PropKind.Monitor:
+            PropBox(optics, prop, float3(0, .28, .233), float3(.39, .29, .026), Color(.04, .11, .075), glow: .3);
+            return;
+        case PropKind.Bed:
+        case PropKind.Lounger:
+            return;
+        case PropKind.Curtain:
+            // Deep pleats, the hollows darker than the ridges
+            for (int fold = 0; fold < 12; fold++)
+                PropBox(optics, prop, float3(-1.1 + fold * .2, 1.245, (fold & 1) * .13), float3(.21, 1.85, .04),
+                        (fold & 1) == 0 ? Color(.22, .3, .26) : Color(.33, .45, .38));
+            // Its rail hangs from a ward's ceiling, 4.4 m up, on a rod at each end
+            for (int end = -1; end <= 1; end += 2)
+                PropBox(optics, prop, float3(end * 1.15, 3.3, 0), float3(.025, 2.2, .025), Color(.29, .34, .32));
+            return;
+        case PropKind.Plant:
+            for (int leaf = 0; leaf < 6; leaf++)
+            {
+                var at = float3(Math.Sin(leaf * 2.4) * .19, .55 + leaf * .11, Math.Cos(leaf * 2.4) * .19);
+                var rotation = quaternion.Euler(0, prop.yaw, 0);
+                var branch = float3(at.x, 0, at.z) * prop.scale;
+                float thin = Math.Min(prop.scale.x, prop.scale.z);
+                var tint = Color(.16 * prop.tint.r, .22 * prop.tint.g, .09 * prop.tint.b);
+                // Each leaf is joined to the trunk; both branch ends enter
+                // their supporting pieces instead of stopping in empty air.
+                optics.architecture.Add(Turned(prop.at + Math.Rotate(rotation, float3(at.x * .5, at.y, at.z * .5) * prop.scale),
+                    Math.Mul(rotation, quaternion.LookRotation(branch, float3(0, 1, 0))),
+                    float3(.022 * thin, .022 * prop.scale.y, Math.Length(branch) + .04 * thin), tint));
+                PropBox(optics, prop, at, float3(.35, .075, .23), Color(.18, .28, .1));
+            }
+            return;
+        case PropKind.CoatRack:
+            return;
+        case PropKind.Pipe:
+            return;
+        case PropKind.Ladder:
+            return;
+        case PropKind.ExitSign:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.95, .32, .065), Color(.025, .26, .08), glow: .35);
+            // EXIT in five rows of pixels: E, I and T three wide, and X five, with true diagonals (a three-wide
+            // X is an H at the picture's resolution). Local +x is the reader's left when looking at the prop's +z
+            // front, so the word runs towards -x: seventeen columns about the middle.
+            mut int start = 0;
+            for (int letter = 0; letter < 4; letter++)
+            {
+                int wide = letter == 1 ? 5 : 3;
+                int face = letter switch { 0 => 29391, 1 => 18157905, 2 => 29847, _ => 9367 };
+                for (int row = 0; row < 5; row++)
+                    for (int column = 0; column < wide; column++)
+                        if ((face & (1 << (row * wide + column))) != 0)
+                            PropBox(optics, prop, float3(.376 - (start + column) * .047, .094 - row * .047, .05),
+                                    float3(.047, .047, .02), Color(.85, .95, .8), glow: .8);
+                start += wide + 1;
+            }
+            return;
+        case PropKind.Arrow:
+        case PropKind.ArrowDown:
+        case PropKind.HandSign:
+        case PropKind.EyeSign:
+        case PropKind.FigureSign:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.64, .4, .065), dark, glow: .35);
+            if (prop.kind == PropKind.EyeSign)
+            {
+                PropBox(optics, prop, float3(0, 0, .044), float3(.36, .1, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(0, 0, .062), float3(.075, .12, .025), dark);
+            }
+            else if (prop.kind == PropKind.HandSign)
+            {
+                PropBox(optics, prop, float3(0, -.03, .044), float3(.16, .16, .025), pale, glow: .6);
+                for (int finger = 0; finger < 4; finger++)
+                    PropBox(optics, prop, float3(-.075 + finger * .05, .1, .044), float3(.03, .1, .025), pale, glow: .6);
+            }
+            else if (prop.kind == PropKind.ArrowDown)
+            {
+                // Straight down, at what's under the sign: a shaft and a head that narrows a step at a time.
+                PropBox(optics, prop, float3(0, .07, .044), float3(.05, .17, .025), pale, glow: .6);
+                for (int step = 0; step < 4; step++)
+                    PropBox(optics, prop, float3(0, -.0325 - step * .035, .044), float3(.2 - step * .05, .035, .025), pale, glow: .6);
+            }
+            else
+            {
+                // A walker, and for an arrow the way to go, towards the reader's left (+x): a shaft and a head that
+                // narrows a step at a time, so it reads as an arrowhead at a few pixels.
+                float walker = prop.kind == PropKind.FigureSign ? 0.0 : -.17;
+                // A head, a body and two legs in a stride, the front one toward the arrow: a person at a few pixels,
+                // where a single foot reads as a letter
+                PropBox(optics, prop, float3(walker, .115, .044), float3(.065, .065, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(walker, .015, .044), float3(.07, .12, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(walker - .04, -.095, .044), float3(.04, .1, .025), pale, glow: .6);
+                PropBox(optics, prop, float3(walker + .05, -.095, .044), float3(.04, .1, .025), pale, glow: .6);
+                if (prop.kind != PropKind.FigureSign)
+                {
+                    PropBox(optics, prop, float3(.03, 0, .044), float3(.18, .04, .025), pale, glow: .6);
+                    for (int step = 0; step < 4; step++)
+                        PropBox(optics, prop, float3(.135 + step * .03, 0, .044), float3(.03, .2 - step * .05, .025), pale, glow: .6);
+                }
+            }
+            return;
+        case PropKind.Switch:
+            PropBox(optics, prop, float3(0, 0, 0), float3(.17, .25, .055), pale);
+            PropBox(optics, prop, float3(0, 0, .055), float3(.06, .12, .06), dark);
+            return;
+        case PropKind.Cardboard:
+            PropBox(optics, prop, float3(0, .505, 0), float3(.06, .015, .51), pale);
+            return;
+        case PropKind.Pallet:
+            return;
+        case PropKind.Cone:
+            return;
+        case PropKind.Dollhouse:
+            return;
+    }
+}

@@ -1,5 +1,5 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only] [--gpu] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
-const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, gpu: false, keep: false };
+const opts = { tide: null, web: false, watchOnly: false, stripOnly: false, serverOnly: false, gpu: false, keep: false };
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -17,10 +17,11 @@ for (let i = 2; i < process.argv.length; i++) {
     else if (process.argv[i] === "--web") opts.web = true;
     else if (process.argv[i] === "--watch-only") opts.watchOnly = true;
     else if (process.argv[i] === "--strip-only") opts.stripOnly = true;
+    else if (process.argv[i] === "--server-only") opts.serverOnly = true;
     else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only] [--gpu] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
@@ -64,6 +65,49 @@ async function run(executable, args, cwd, extra = {}) {
         child.on("error", reject);
         child.on("close", (code) => accept({ code, said }));
     });
+}
+
+async function serverTests(tide, root) {
+    const game = join(root, "server-cache");
+    mkdirSync(game);
+    const source = "asset string rules = \"rules.txt\";\nasset string visual = \"visual.txt\";\n"
+        + "singleton ServerState { int value; }\nscene Main { }\n"
+        + "system Tick(mut ServerState state) { state.value = rules.length; }\n"
+        + "view Show() { Debug.Assert(visual.length > 0); }\n";
+    writeFileSync(join(game, "main.tide"), source);
+    writeFileSync(join(game, "rules.txt"), "simulation");
+    writeFileSync(join(game, "visual.txt"), "presentation");
+    mkdirSync(join(game, "build"));
+    const player = join(game, "build", `server-cache${process.platform === "win32" ? ".exe" : ""}`);
+    writeFileSync(player, "preserve-player");
+    const server = join(game, "build", `server-cache-server${process.platform === "win32" ? ".exe" : ""}`);
+    const pack = join(game, "build", "server-cache-server.pack");
+    const build = async (...flags) => {
+        const result = await run(tide, ["build", game, ...flags], root, { TIDE_HIDDEN: "1" });
+        check(result.code === 0, `server build failed:\n${result.said}`);
+        check(existsSync(server), "server executable has its own output name");
+        check(readFileSync(player, "utf8") === "preserve-player", "server preserves the player executable");
+    };
+    await build("--server");
+    check(readFileSync(pack).readUInt32LE(12) === 1, "Tide-only server retains simulation assets only");
+    writeFileSync(join(game, "entry.c"), '#include "game.h"\n#include "tide/hosting.h"\n'
+        + '_Static_assert(sizeof(ServerState) == 4, "server_header_changed");\n'
+        + 'void tide_server_entry(tide_hosting_desc *host) { host->max_matches = 2; }\n');
+    await build("--server");
+    check(readFileSync(pack).readUInt32LE(12) === 2, "custom C conservatively retains server assets");
+    await build("--strip-server-assets");
+    check(readFileSync(pack).readUInt32LE(12) === 1, "custom C can explicitly opt into simulation pruning");
+    writeFileSync(join(game, "main.tide"), source.replace("int value", "long value"));
+    const changed = await run(tide, ["build", game, "--server"], root, { TIDE_HIDDEN: "1" });
+    check(changed.code !== 0 && changed.said.includes("server_header_changed"),
+        `a generated header edit must rebuild the unchanged server C entry:\n${changed.said}`);
+    writeFileSync(join(game, "main.tide"), source);
+    await build("--server", "--release");
+    const launched = await run(server, ["--anonymous", "--udp-only", "--frames", "2", "--port", "65533"], game,
+        { TIDE_HIDDEN: "1" });
+    check(launched.code === 0 && launched.said.includes("dedicated server listening"),
+        `installed release server failed:\n${launched.said}`);
+    console.log("Dedicated server entry/header cache, asset policy, output isolation and bounded release run passed.");
 }
 
 function objectFiles(cache) {
@@ -192,14 +236,16 @@ int Native(int value)
                     `${target} ${release ? "release" : "debug"}: ${name} ${expected ? "was removed" : "was retained"}`);
             }
             if (target === "native" && process.platform === "win32") {
-                // GLFW's Vulkan termination shares an archive member with
-                // APIs this OpenGL host never calls. Collect their code/data
-                // inside that member, while debug links keep them available.
-                const unusedGlfw = Buffer.from("Vulkan: Loader not found");
+                // GLFW's gamma setter shares an archive member (monitor.c)
+                // with the monitor queries the window makes, and no host
+                // calls it. Collect its code/data inside that member, while
+                // debug links keep it available. (GLFW's Vulkan loader was
+                // the sentinel until desktop drew with Vulkan, which uses it.)
+                const unusedGlfw = Buffer.from("Invalid gamma value");
                 check(readFileSync(join(installation, "lib", "native", "libtide_platform.a")).includes(unusedGlfw),
                     "unused GLFW sentinel missing from the prebuilt platform archive");
                 check(program.includes(unusedGlfw) === !release,
-                    `native ${release ? "release" : "debug"}: unused GLFW Vulkan API ${release ? "was retained" : "was removed"}`);
+                    `native ${release ? "release" : "debug"}: unused GLFW gamma API ${release ? "was retained" : "was removed"}`);
             }
             if (release) {
                 // Both unused bodies/data really entered the link: their
@@ -290,19 +336,19 @@ async function webRunTest(tide, root, release = false) {
         check(generated, "web run's generated object not found");
         put(c, "int Native(int value) { return value + 2; }\n");
         await waitFor(async () => await buildNumber() === 2, "C-only hot reload");
-        expectWrites(cache, before, ["c/native.c.o"], "web C-only reload keeps generated objects");
+        expectWrites(cache, before, ["c/native.c.o", generated], "web C-only reload refreshes simulation identity and keeps launcher");
         before = mark(cache);
         put(source, tideText.replace("+ 1;", "+ 2;"));
         await waitFor(async () => await buildNumber() === 3, "Tide hot reload");
         expectWrites(cache, before, [generated], "web Tide body reload keeps launcher");
 
-        // Ordinary assets still publish only a new pack, without compilation.
+        // Custom C can read every asset, so its asset edits refresh compatibility.
         before = mark(cache);
         const packed = await packNumber();
         put(join(game, "message.txt"), "after");
         await waitFor(async () => await packNumber() > packed, "ordinary asset repack");
-        check(await buildNumber() === 3, "ordinary assets do not rebuild the game");
-        expectWrites(cache, before, [], "ordinary asset repack keeps every object");
+        await waitFor(async () => await buildNumber() === 4, "conservative custom-C asset reload");
+        expectWrites(cache, before, [generated], "custom-C asset edit refreshes identity and keeps launcher");
 
         // Models affect deterministic gameplay: a file or its external buffer
         // must publish a build with a new identity, rather than swapping only
@@ -321,13 +367,13 @@ async function webRunTest(tide, root, release = false) {
         put(buffer, floats, 1600000000.1);
         put(join(game, "actor.gltf"), JSON.stringify(model));
         put(source, tideText.replace("+ 1;", "+ 2;") + 'asset SkinnedMesh<Vertex3> actor = "actor.gltf";\n');
-        await waitFor(async () => await buildNumber() === 4, "adding a gameplay model");
+        await waitFor(async () => await buildNumber() === 5, "adding a gameplay model");
         const generatedFolder = join(cache, dirname(generated), "gen");
         const header = join(generatedFolder, "game.h");
         let identity = readFileSync(header, "utf8");
         model.nodes[0].translation = [2, 0, 0];
         put(join(game, "actor.gltf"), JSON.stringify(model));
-        await waitFor(async () => await buildNumber() === 5, "gameplay model file reload");
+        await waitFor(async () => await buildNumber() === 6, "gameplay model file reload");
         check(readFileSync(header, "utf8") !== identity, "model file changes the generated game identity");
         identity = readFileSync(header, "utf8");
         const bufferBefore = statSync(buffer, { bigint: true });
@@ -337,7 +383,7 @@ async function webRunTest(tide, root, release = false) {
         check(bufferAfter.size === bufferBefore.size && bufferAfter.mtimeNs !== bufferBefore.mtimeNs
             && bufferAfter.mtimeNs / 1000000000n === bufferBefore.mtimeNs / 1000000000n,
             "model buffer edits have equal sizes and distinct timestamps within one second");
-        await waitFor(async () => await buildNumber() === 6, "gameplay model buffer reload");
+        await waitFor(async () => await buildNumber() === 7, "gameplay model buffer reload");
         check(readFileSync(header, "utf8") !== identity, "external model buffer changes the generated game identity");
 
         const failedPack = await packNumber();
@@ -345,17 +391,28 @@ async function webRunTest(tide, root, release = false) {
         put(join(game, "actor.gltf"), "{");
         await waitFor(() => output.split("the page keeps running its last build").length > failuresBefore,
             "invalid gameplay model keeps its last build");
-        check(await buildNumber() === 6 && await packNumber() === failedPack, "invalid model publishes no build or pack");
+        check(await buildNumber() === 7 && await packNumber() === failedPack, "invalid model publishes no build or pack");
         put(join(game, "actor.gltf"), JSON.stringify(model));
-        await waitFor(async () => await buildNumber() === 7, "corrected gameplay model is still watched");
+        await waitFor(async () => await buildNumber() === 8, "corrected gameplay model is still watched");
 
-        // Removing the last model restores the ordinary asset path.
+        // Removing the last model still leaves conservative C asset dependencies.
         put(source, tideText.replace("+ 1;", "+ 2;"));
-        await waitFor(async () => await buildNumber() === 8, "removing the gameplay model");
+        await waitFor(async () => await buildNumber() === 9, "removing the gameplay model");
         const noModelsPacked = await packNumber();
         put(join(game, "message.txt"), "without models");
         await waitFor(async () => await packNumber() > noModelsPacked, "ordinary asset repack after removing models");
-        check(await buildNumber() === 8, "removing models restores pack-only reload");
+        await waitFor(async () => await buildNumber() === 10, "custom-C assets still refresh identity without models");
+
+        // Remove C, then visual-only assets return to pack-only reload.
+        removeOwned(root, c);
+        put(source, 'scene Main {}\nasset string message = "message.txt";\nview Show() { Debug.Log(message); }\n');
+        await waitFor(async () => await buildNumber() === 11, "removing custom C");
+        const visualPack = await packNumber();
+        before = mark(cache);
+        put(join(game, "message.txt"), "view only");
+        await waitFor(async () => await packNumber() > visualPack, "visual-only asset repack");
+        check(await buildNumber() === 11, "visual assets do not rebuild simulation");
+        expectWrites(cache, before, [], "visual-only repack keeps every object");
     } catch (error) {
         throw new Error(`${release ? "release" : "debug"} web hot reload: ${error.message}\n${lastRequest}\n${output}`,
             { cause: error });
@@ -427,7 +484,7 @@ async function targetTests(tide, installation, root, target, embedded) {
     before = mark(cache);
     put(c, originalC.replace("+ 1;", "+ 2;"));
     await build();
-    expectWrites(cache, before, ["c/native.c.o"], "C body edit keeps generated objects");
+    expectWrites(cache, before, ["c/native.c.o", "game.o"], "C body edit refreshes simulation identity and keeps launcher");
 
     before = mark(cache);
     put(source, originalTide.replace("int value;", "int value; int extra;").replace("+ 1;", "+ 2;"));
@@ -624,6 +681,7 @@ async function atOnceTests(tide, root, target) {
     // C come before a game's own C, so once the files are right again only C
     // of the game's is compiled.
     let before = mark(cache);
+    const keptLauncher = contents(cache).get("main.o");
     check([...before.keys()].some((file) => file.startsWith("engine/")) && before.has("game.o") && before.has("main.o"),
         "a build that failed in the game's C still compiled the engine and the generated C");
     put(join(game, `${name(5)}.c`), text(5), headerTime);
@@ -631,8 +689,17 @@ async function atOnceTests(tide, root, target) {
     const fixed = await build(0);
     check(fixed.code === 0, `the build after the fix failed:\n${fixed.said}`);
     const again = written(cache, before);
-    check(!again.some((file) => !file.startsWith("c/")), `the build after the fix compiled more than the game's C: ${again}`);
-    check(JSON.stringify([...contents(cache)].sort()) === JSON.stringify([...built[0].files].sort()), "the build after the fix left other files than a clean build");
+    check(!again.some((file) => !file.startsWith("c/") && file !== "game.o"),
+        `the build after the fix compiled more than the game's C and identity: ${again}`);
+    const repaired = contents(cache);
+    // The launcher intentionally survives identity-only header edits. DWARF
+    // can retain the checksum of game.h from the failed build, so its debug
+    // bytes need not match a clean compile against the restored header.
+    // Require exact reuse of that object, and clean-build parity everywhere else.
+    check(repaired.get("main.o") === keptLauncher, "the build after the fix changed the reused launcher");
+    const differ = [...built[0].files].filter(([path, bytes]) => path !== "main.o" && repaired.get(path) !== bytes).map(([path]) => path);
+    const more = [...repaired.keys()].filter((path) => !built[0].files.has(path));
+    check(!differ.length && !more.length, `the build after the fix left other files than a clean build: ${[...differ, ...more]}`);
     console.log("  a build that failed keeps what compiled, and the next one finishes it");
 
     // A count that's no count
@@ -661,18 +728,20 @@ async function main() {
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
-        if (!opts.watchOnly) {
+        if (opts.serverOnly) await serverTests(tide, root);
+        if (!opts.watchOnly && !opts.serverOnly) {
             for (const target of opts.web ? ["native", "web"] : ["native"]) await strippingTests(tide, installation, root, target, embedded);
             if (!opts.stripOnly) {
                 for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
                 for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
             }
         }
-        if (!opts.stripOnly && (opts.web || opts.watchOnly)) {
+        if (!opts.serverOnly && !opts.stripOnly && (opts.web || opts.watchOnly)) {
             await webRunTest(tide, root);
             await webRunTest(tide, root, true);
         }
-        if (opts.gpu && !opts.watchOnly && !opts.stripOnly) await nativeRunTest(tide, root);
+        if (opts.gpu && !opts.watchOnly && !opts.stripOnly && !opts.serverOnly) await nativeRunTest(tide, root);
+        if (!opts.serverOnly && !opts.watchOnly && !opts.stripOnly) await serverTests(tide, root);
         console.log("Cache integration tests passed.");
     } finally {
         if (opts.keep) console.log(`Kept fixtures: ${root}`);

@@ -38,14 +38,24 @@
   };
   // ?bench is --bench; renderer options belong to the page (see tide.js).
   const words = location.search ? location.search.slice(1).split('&')
-    .filter(word => !word.startsWith('backend=') && !word.startsWith('texture-compression=')) : [];
+    .filter(word => !word.startsWith('backend=') && !word.startsWith('texture-compression=') && !word.startsWith('expect-angle=')) : [];
   var Tide = {
     canvas: document.getElementById('canvas'),
     checkGL: !words.includes('bench'), // Timings can't: each check waits for the GPU
     arguments: words.map(word => '--' + word),
     print: show,
     printErr: show,
-    onExit: code => { step(`the program exited with ${code}`); document.body.dataset.exit = code; result(String(code)); },
+    onExit: code => {
+      const expected = new URLSearchParams(location.search).get('expect-angle');
+      if (expected) {
+        const gl = Tide.canvas.getContext('webgl2');
+        const debug = gl?.getExtension('WEBGL_debug_renderer_info');
+        const renderer = debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : 'unavailable';
+        show(`ANGLE renderer: ${renderer}`);
+        if (!renderer.includes(expected)) { show(`Expected ANGLE renderer ${expected}`); code = 1; }
+      }
+      step(`the program exited with ${code}`); document.body.dataset.exit = code; result(String(code));
+    },
     onAbort: reason => {
       step('the program stopped: ' + reason);
       show('abort: ' + reason); document.body.dataset.exit = 'abort'; result('abort');

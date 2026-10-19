@@ -1,0 +1,104 @@
+component Item
+{
+    int number;
+    List<string> words;
+    Map<int, List<int>> tags = [];
+    local int seen = 7;
+}
+component Other { int number; }
+[Sparse] component Extra { int number; }
+component Picture { int number; List<string> words; }
+singleton Checks
+{
+    int order;
+    int eventTotal;
+    int commandTotal;
+    Entity made;
+    Entity added;
+    Entity loaded;
+    Entity ordered;
+    Entity prefabbed;
+    Entity prefabLoaded;
+}
+local singleton Images { LocalEntity made; bool done; int notices; int seen; int tags; }
+local event Notice { List<string> words; }
+event Shipment { List<string> words; Map<int, List<int>> tags; }
+command Choice { int number; }
+scene Play { }
+scene Main { }
+
+Item Prepared(mut Checks checks)
+{
+    checks.order = checks.order * 10 + 1;
+    return Item { number = checks.order, words = ["ordered"] };
+}
+Other OtherPrepared(mut Checks checks)
+{
+    checks.order = checks.order * 10 + 2;
+    return Other { number = checks.order };
+}
+int ShipmentTotal(Shipment payload)
+{
+    return payload.words.count + payload.tags[3].count;
+}
+int Forward(Shipment payload) { return ShipmentTotal(payload); }
+Shipment Package(List<string> words, Map<int, List<int>> tags)
+{
+    return Shipment { words = words, tags = tags };
+}
+Shipment Relay(Shipment payload) { return payload; }
+int NoticeCount(Notice payload) { return payload.words.count; }
+local event(Notice payload) Noticed(mut Images images) { images.notices += NoticeCount(payload); }
+struct Reader
+{
+    int Read(Choice payload) { return payload.number; }
+}
+void CountChoice(Choice payload, mut Checks checks)
+{
+    var reader = Reader { };
+    checks.commandTotal += reader.Read(payload);
+}
+event(Spawned) Setup(with Main, mut Checks checks)
+{
+    mut var data = Item { number = 42, words = ["original", "second"] };
+    data.tags[3] = [1, 2, 3];
+    var extra = Extra { number = 13 };
+    checks.made = Spawn(data, extra);
+    data.number = 99;
+    data.words[0] = "changed";
+    data.tags[3] = [];
+    checks.added = Spawn(Other);
+    checks.added.Add(data);
+    checks.loaded = Scene.Load(Play, data);
+    checks.prefabbed = Spawn(Parcel, data);
+    checks.prefabLoaded = Scene.Load(Parcel, data);
+    checks.ordered = Spawn(Prepared(checks), OtherPrepared(checks));
+    Send(Relay(Package(data.words, data.tags)));
+    CountChoice(Choice { number = 17 }, checks);
+    data.words.Clear();
+    data.tags[3] = [8, 9];
+}
+event(Shipment payload) Received(mut Checks checks)
+{
+    checks.eventTotal += Forward(payload);
+}
+command(Choice payload, PlayerID sender) Chosen(mut Checks checks)
+{
+    if (sender == default) return;
+    CountChoice(payload, checks);
+}
+view Make(mut Images images)
+{
+    if (images.done) return;
+    images.done = true;
+    mut var value = Picture { number = 5, words = ["local"] };
+    images.made = local Spawn(value);
+    Send(Notice { words = value.words });
+    value.number = 8;
+    value.words[0] = "after";
+}
+view FreshLocalFields(Item item, mut Images images)
+{
+    images.seen = item.seen;
+    if (item.number == 42) images.tags = item.tags[3].count;
+}

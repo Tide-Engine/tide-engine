@@ -1,5 +1,83 @@
 # Runtime written by Claude for now
 
+## Conventional resource metadata (2026-10-18)
+
+Within the owner's authorized API-completion pass, generated local code now
+calls `tide_texture_size(tide_texture_ref)` and borrows/restores a frame resolver
+through `tide_texture_target_pixels(tide_target_pixels_fn)`. Both live in the
+existing temporary draw/mesh maintenance area. The resolver is a borrowed
+machine-local callback, carried by tide_draw_list.target_pixels, not a world
+pointer or a simulation allocation. Hosts and game libraries rebuild together
+for the draw-list C layout change. Asset/grid/target safety and coverage are in
+notes/textures.md; no container layout or simulation ABI changed.
+
+## Approved math API completions (2026-10-18)
+
+The owner authorized FromToRotation and Scale as conventional additions within
+the existing math maintenance exception. Generated code now calls inline
+`tide_fromto_q(float3, float3)` and `tide_scaling_f4x4(float3)` in `tide/math.h`.
+The former uses a private inline `tide_fromto_unit_f3` to normalize directions
+across the finite float range before building the shortest rotation. The
+existing two-argument `tide_scale_f4x4` still means scalar multiplication of a
+matrix. No runtime data structure, world layout or existing function changed.
+Contracts and validation are in `notes/language.md` and `notes/shaders.md`.
+
+## Recipient visibility (2026-10-15)
+
+The owner approved entity/component visibility, shared live audience groups,
+partial client simulation, authoritative corrections and separate availability
+events. This work maintains the existing temporary session/entity/event runtime
+exception. Generated code uses private specialized group/policy and canonical
+value codecs built on existing containers; it calls no new exported runtime
+function. Optional `tide_game` projection, input-filter, lifecycle-journal and
+availability callbacks extend the existing session boundary. Hosts and generated
+games rebuild together through the Session ABI identity marker. Protocol 15's
+simulation identity includes the recipient state and listener journal schemas.
+
+Entity metadata pages may be absent between visible global entity IDs. Dense
+tables keep their previous hash/pack/delta representation; sparse tables have an
+explicit indexed-page representation. Generated local delivery reconciles
+Shown/Hidden against its last presented predicted and verified endpoints, with
+private COW snapshots and destruction-cause tracking. Rollback can restore a
+resource after canceled concealment without replaying unchanged availability.
+Contracts and validation are in ecs.md, netcode.md, memory-safety.md and
+verified-and-local-handlers.md. The Tide API spellings and conservative handling
+of opaque server state are documented
+separately from agreed visibility semantics in docs/spec.md.
+
+## Managed hosting and simulation identity (2026-10-15)
+
+The owner requested implementation of local deployment, isolated WASM matches,
+prepaid billing and durable recovery. The existing temporary session/hosting
+exception includes `tide_game.simulation[32]`, protocol 15 HELLO negotiation,
+hosting envelope 2 and the handwritten managed reactor launcher. New host-only
+`tide_server_recovery`/getter and descriptor identities restore reconnect
+cookies/identities, pending players, seed, dt, start and admission metadata;
+`tide_session_fail_message` provides actionable host admission failures.
+Generated Tide calls no new runtime function. World packing/hashes and game
+save content remain separate from host metadata. Earlier statements below
+about unchanged protocol/ABI describe the original native-host increment.
+Full contracts, ownership, validation and launch gaps: managed-hosting.md.
+
+## Frustum culling (2026-10-15)
+
+The owner approved automatic culling plus developer bounds and disable controls. Generated settings call new agent-maintained draw functions: `tide_draw_set_frustum_culling`, `tide_draw_unset_frustum_culling`, `tide_draw_push_frustum_culling`, `tide_draw_set_bounds`, `tide_draw_unset_bounds`, `tide_draw_push_bounds` and `tide_draw_push_no_bounds`. They use the existing draw-list boundary. Place, mesh-cache, shader and draw-list C layouts grow with visual bounds/plane caches, so hosts/libraries/generated games rebuild together. No simulation layout or hash changes. Contracts, conservative fallbacks, append behavior and validation are in `notes/drawing.md`, Frustum culling.
+
+## Dedicated hosting (2026-10-15)
+
+The owner approved multiple headless matches per process, match IDs, separate
+create/join policies and pluggable authentication. New hosting.h/hosting.c and
+platform serve/server_run hosts are agent-maintained under the temporary runtime
+exception. Optional tide_server_desc.identity and host metadata getters bind
+reconnects to verified identities outside world state. Generated Tide calls no
+new runtime function; the handwritten server launcher/host uses these APIs.
+No inner session protocol, tide_game ABI, snapshot or hash changes. Contracts,
+provisional C entry points and validation are in dedicated-servers.md.
+
+## Vulkan's SPIR-V in tide_shader (2026-10-14)
+
+`tide_shader` (`tide/draw.h`, agent-maintained) has two more fields, `spirv` and `spirv_words`. Generated code fills them under `TIDE_SPIRV`, which the header defines everywhere but the web (Android since 2026-10-14, when it began drawing with Vulkan), with the words tidec translated from the shader's WGSL. No runtime function is new, and generated code calls nothing it didn't. The struct's layout changed, so hosts, game libraries and generated games rebuild together, as with every `tide/draw.h` layout change. The platform's `tide_gpu_pipeline_desc` (`platform/src/gpu.h`) carries the same two fields. Contracts and tests are in `notes/rendering.md` and `notes/shaders.md`, both under Vulkan / SPIR-V.
+
 ## Input prediction callback (2026-10-13)
 
 The owner approved input Predict() and [DontPredict]. Their generated adapter

@@ -1,6 +1,6 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang (see AGENTS.md, Packaging and releases).
-add_executable(tide_cli main.c android.c build.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
+add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
     serve.c sys.c toolchain.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
@@ -12,7 +12,7 @@ target_compile_definitions(tide_cli PRIVATE
     "TIDE_VERSION=\"${TIDE_VERSION}\""
     "TIDE_CHANNEL=\"${TIDE_CHANNEL}\"")
 if(WIN32)
-    target_link_libraries(tide_cli PRIVATE ws2_32) # Serves the page of tide run --web
+    target_link_libraries(tide_cli PRIVATE ws2_32 crypt32) # Web serving and user-bound encrypted hosting credentials.
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(tide_cli PRIVATE Threads::Threads) # Reads the terminal while a game runs
@@ -36,13 +36,23 @@ add_test(NAME tide_cli_tests COMMAND tide_cli_tests)
 # The command must finish when its game does, with the game's exit code.
 # Exercise main's real dispatch with runs and update checks supplied by a
 # fixture, so shutdown order is checked without a game window or network.
-add_executable(tide_cli_run_exit_tests tests/run_exit_test.c sys.c)
+add_executable(tide_cli_run_exit_tests tests/run_exit_test.c help.c sys.c)
 target_include_directories(tide_cli_run_exit_tests PRIVATE . ../lsp)
 target_link_libraries(tide_cli_run_exit_tests PRIVATE tidec_core)
 if(NOT WIN32)
     target_link_libraries(tide_cli_run_exit_tests PRIVATE Threads::Threads)
 endif()
 add_test(NAME tide_cli_run_exit COMMAND tide_cli_run_exit_tests)
+
+# Apple SDK discovery must follow the selected linker even when a newer
+# standalone Command Line Tools package is installed. Stub discovery only.
+add_executable(tide_cli_toolchain_tests tests/toolchain_test.c sys.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_cli_toolchain_tests PRIVATE . "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_cli_toolchain_tests PRIVATE tide tidec_core)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_toolchain_tests PRIVATE Threads::Threads)
+endif()
+add_test(NAME tide_cli_toolchain COMMAND tide_cli_toolchain_tests)
 
 # A download tool can report success without writing its output. Fetching
 # must reject that result before it tries to unpack a nonexistent archive.
@@ -53,6 +63,11 @@ if(NOT WIN32)
     target_link_libraries(tide_cli_fetch_tests PRIVATE Threads::Threads)
 endif()
 add_test(NAME tide_cli_fetch COMMAND tide_cli_fetch_tests)
+
+# Help must be available without a project, installation or side effects.
+add_test(NAME tide_cli_help
+    COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/help_test.cmake")
 
 # Games with packages: in folders, and from git through a folder that stands
 # in for git hosts.
@@ -77,6 +92,11 @@ endif()
 add_test(NAME tide_cli_editors
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/editors_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editors_test.cmake")
+
+add_test(NAME tide_cli_ide
+    COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DTIDELS=$<TARGET_FILE:tidels>"
+            "-DSOURCE=${PROJECT_SOURCE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/ide_test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ide_test.cmake")
 
 # tide upgrade, with a folder that stands in for the site's releases.
 add_test(NAME tide_cli_upgrade

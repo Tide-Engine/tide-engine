@@ -574,6 +574,7 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
+    tide_draw_set_frustum_culling(&d, false); // Inspect depth state on a mesh at the camera origin
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_MESH_3D && last(&d)->depth == TIDE_DEPTH_READ_WRITE);
     const uint32_t block = tide_draw_push_depth(&d, TIDE_DEPTH_NONE);
@@ -772,6 +773,7 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     TIDE_CHECK(d.place.cull == TIDE_CULL_NONE);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK);
+    tide_draw_set_frustum_culling(&d, false); // Inspect face state on a mesh at the camera origin
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_MESH_3D && last(&d)->cull == TIDE_CULL_BACK);
     const uint32_t block = tide_draw_push_cull(&d, TIDE_CULL_FRONT);

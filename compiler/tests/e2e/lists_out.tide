@@ -63,7 +63,7 @@ singleton Job
 }
 
 // ...and of the next frame
-local singleton Shown
+local singleton Displayed
 {
     List<byte> image;
     int op;
@@ -158,7 +158,7 @@ system Run(mut Store store, mut Job job)
 }
 
 // The local world's list, which C makes in a view
-view Show(mut Shown screen)
+view Show(mut Displayed screen)
 {
     var op = screen.op;
     screen.op = 0;

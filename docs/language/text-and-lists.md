@@ -377,6 +377,8 @@ The list is one the world keeps, a component's or a singleton's, and its element
 
 `Map<K, V>` holds values by key, and `Set<K>` holds keys, each once. Both start empty, and `[a, b]` makes a set where one goes:
 
+Use `[]` for an empty map wherever its type is known: `Map<string, Stats> scores = [];`, `scores = [];`, or `return [];` from a function returning that map type. `default` also gives an empty map. Add nonempty entries with `scores[key] = value`.
+
 ```csharp
 component Scoreboard
 {

@@ -12,6 +12,7 @@ static void usage(void)
             "             [--define <SYMBOL>]...\n"
             "       tidec <file.tide>... --schedule [--name <name>]\n"
             "       tidec <file.tide>... --shaders\n"
+            "       tidec <file.tide>... --spirv <dir>\n"
             "\n"
             "Transpiles a Tide program, made of one or more files, to\n"
             "<output-dir>/<name>.h and <name>.c.\n"
@@ -27,12 +28,16 @@ static void usage(void)
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
+            "  --server               preserve the client identity and emit server build metadata\n"
+            "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
             "  --game <dir>   the game's folder, where .tide/ keeps its asset hashes and fetched URLs\n"
             "  --pack-c       also write the assets' pack as C (<name>_pack.c: tide_game_pack), for a host that embeds it\n"
             "  --schedule     print which systems can run at the same time and why the others\n"
             "                 wait, instead of generating code\n"
             "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
-            "                 GLSL and WGSL, instead of generating code\n");
+            "                 GLSL and WGSL, instead of generating code\n"
+            "  --spirv <dir>  write each of those shaders as SPIR-V, Vulkan's, into <dir>\n"
+            "                 as <n>.spv in --shaders' order, instead of generating code\n");
 }
 
 // A game's files as they're named, each with the package it's in.
@@ -150,6 +155,10 @@ int main(const int argc, char **argv)
             opts.name = argv[++i];
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
+        } else if (strcmp(argv[i], "--server") == 0) {
+            opts.server = true;
+        } else if (strcmp(argv[i], "--strip-server-assets") == 0) {
+            opts.server = opts.strip_server_assets = true;
         } else if (strcmp(argv[i], "--no-line") == 0) {
             opts.line_directives = false;
         } else if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
@@ -167,6 +176,10 @@ int main(const int argc, char **argv)
         } else if (strcmp(argv[i], "--shaders") == 0) {
             schedule = true;
             opts.shaders = true;
+        } else if (strcmp(argv[i], "--spirv") == 0 && i + 1 < argc) {
+            schedule = true;
+            opts.shaders = true;
+            opts.spirv_dir = argv[++i];
         } else if (strcmp(argv[i], "--package") == 0 && i + 1 < argc) {
             inputs.package = argv[++i];
         } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {

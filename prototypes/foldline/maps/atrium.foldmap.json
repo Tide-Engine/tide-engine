@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "name": "atrium",
+  "function": "BuildMapAtrium",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -16,
+        0,
+        -20.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        0,
+        0,
+        22.1
+      ],
+      "yaw": "SOUTH",
+      "need": [
+        0
+      ],
+      "socket_x": -1
+    }
+  ],
+  "plates": [
+    {
+      "id": "plate_0",
+      "at": [
+        0,
+        0,
+        13.5
+      ],
+      "signal": 0,
+      "half": [
+        2.3,
+        2.3
+      ],
+      "need": 2500,
+      "heavy": true
+    },
+    {
+      "id": "pipe_plate",
+      "at": [
+        -14.5,
+        0,
+        2
+      ],
+      "signal": 1
+    }
+  ],
+  "machines": [
+    {
+      "id": "pipe_gate",
+      "from": [
+        -12.25,
+        0.275,
+        4
+      ],
+      "to": [
+        -12.25,
+        1.025,
+        4
+      ],
+      "size": [
+        0.2,
+        0.55,
+        1.0
+      ],
+      "need": [
+        1
+      ],
+      "speed": 6.0,
+      "lamp": "pipe_socket",
+      "along": [
+        1,
+        0,
+        0
+      ],
+      "lamp_depth": 0.08
+    }
+  ],
+  "anchors": {
+    "wire_0_0": {
+      "at": [
+        2.3,
+        0.025,
+        13.5
+      ],
+      "support": "scene"
+    },
+    "wire_0_1": {
+      "at": [
+        3.8,
+        0.025,
+        13.5
+      ],
+      "support": "scene"
+    },
+    "wire_0_2": {
+      "at": [
+        3.8,
+        0.025,
+        19.435
+      ],
+      "support": "scene"
+    },
+    "wire_0_3": {
+      "at": [
+        3.8,
+        4.2,
+        19.435
+      ],
+      "support": "scene"
+    },
+    "wire_0_4": {
+      "at": [
+        2.9,
+        4.2,
+        19.435
+      ],
+      "support": "scene"
+    },
+    "wire_0_5": {
+      "at": [
+        1,
+        4.2,
+        19.475
+      ],
+      "support": "scene"
+    },
+    "wire_0_4_turn": {
+      "at": [
+        2.9,
+        4.2,
+        19.475
+      ],
+      "support": "scene"
+    },
+    "pipe_wire_0": {
+      "at": [
+        -13.9,
+        0.025,
+        2
+      ],
+      "support": "scene"
+    },
+    "pipe_wire_1": {
+      "at": [
+        -12.4,
+        0.025,
+        2
+      ],
+      "support": "scene"
+    },
+    "pipe_wire_2": {
+      "at": [
+        -12.4,
+        0.025,
+        5.975
+      ],
+      "support": "scene"
+    },
+    "pipe_wire_3": {
+      "at": [
+        -12.4,
+        1.4,
+        5.975
+      ],
+      "support": "scene"
+    },
+    "pipe_socket": {
+      "at": [
+        -12.6,
+        1.4,
+        5.96
+      ],
+      "support": "scene"
+    }
+  },
+  "wires": [
+    {
+      "id": "wire_0",
+      "signal": 0,
+      "from": "plate_0",
+      "to": "exit",
+      "points": [
+        "wire_0_0",
+        "wire_0_1",
+        "wire_0_2",
+        "wire_0_3",
+        "wire_0_4",
+        "wire_0_4_turn",
+        "wire_0_5"
+      ]
+    },
+    {
+      "id": "pipe_wire",
+      "signal": 1,
+      "from": "pipe_plate",
+      "to": "pipe_gate",
+      "points": [
+        "pipe_wire_0",
+        "pipe_wire_1",
+        "pipe_wire_2",
+        "pipe_wire_3",
+        "pipe_socket"
+      ]
+    }
+  ],
+  "place_ids": [
+    14
+  ],
+  "external_geometry": true
+}

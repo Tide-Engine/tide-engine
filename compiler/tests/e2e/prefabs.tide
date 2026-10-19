@@ -38,7 +38,8 @@ int OverrideValue(mut Probe probe, int value)
 event(Spawned) Setup(with Main, mut Probe probe)
 {
     probe.root = Spawn(Tree, Data { value = OverrideValue(probe, 11) }, LevelSettings { difficulty = 2 });
-    probe.loaded = Scene.Load(Tree, Data { value = OverrideValue(probe, 12) }, LevelSettings { difficulty = 3 }, visibility: SceneVisibility.Private);
+    var group = Visibility.CreateGroup(Audience.None);
+    probe.loaded = Scene.Load(Tree, Data { value = OverrideValue(probe, 12) }, LevelSettings { difficulty = 3 }, Visibility { group = group });
     Spawn(Links); // SceneRequired does not prevent ordinary code-driven construction.
     Spawn(Empty, LevelSettings { });
 }

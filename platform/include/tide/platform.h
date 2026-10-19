@@ -223,7 +223,7 @@ void tide_platform_draw_overlay(const char *text);
 
 // Draws `list` over the frame tide_platform_draw drew, and leaves what that
 // frame left as it is: its camera (tide_platform_world_to_screen) and its
-// count of draw calls. For what a host shows over a game, like its stats
+// vertex and draw-call counts. For what a host shows over a game, like its stats
 // (tide/stats.h), which aren't the game's drawing.
 void tide_platform_draw_over(const tide_draw_list *list);
 
@@ -246,17 +246,32 @@ void tide_platform_gpu_timing(bool enabled);
 double tide_platform_gpu_ms(void);
 
 // Local files, independent of a window or renderer. The app ID identifies
-// saves across versions. Reinitializing the same ID preserves the provider
+// saves across versions. Reinitializing the same ID and directory preserves the provider
 // and pending storage operations, including when the game hot reloads.
 // Relative paths are under persistent_data_path; native absolute paths use
 // the operating system's permissions. Browser paths stay in its app's roots.
-const tide_io *tide_platform_io_init(const char *app_id);
+// directory overrides the native persistent root (relative to the process's
+// working directory); NULL uses the app's normal save folder. Created with its
+// parents. A web provider requires NULL. Same-app/root reloads reuse it.
+const tide_io *tide_platform_io_init(const char *app_id, const char *directory);
+// The game this program runs, by the same app ID, for a game that never uses
+// files too: what names the folder the renderer keeps what it compiled in
+// across runs (Vulkan's pipelines), the game's temporary cache folder, which
+// is only made once something's kept there. tide_platform_io_init names it too.
+void tide_platform_name_game(const char *app_id);
 
 // How many draw calls the last list drawn took (tide_platform_draw), aside
 // from what was drawn over it (tide_platform_draw_overlay,
 // tide_platform_draw_over): a run of shapes, of text, or of one mesh's
 // instances is one.
 uint32_t tide_platform_draw_calls(void);
+
+// Vertices submitted by the last list drawn, with the same scope as draw
+// calls above: all render-target passes, without the host's overlays. Each
+// index counts once per instance, including repeated indices; this isn't a
+// count of unique vertices or of GPU vertex-shader invocations after caching.
+// Includes shapes, text, blits and clear triangles, even if clipped or culled.
+uint64_t tide_platform_draw_vertices(void);
 
 // How much memory the program has, in bytes, as the system counts it: what it
 // keeps in RAM or, on the web, its WebAssembly memory, which only grows. 0
@@ -294,6 +309,7 @@ uint64_t tide_platform_entropy(void);
 
 // The window's size in pixels, which tide_gui_begin takes.
 tide_float2 tide_platform_screen_size(void);
+tide_int2 tide_platform_target_pixels(tide_target_size size);
 
 // How big `text` is drawn `size` tall with the platform's font, in the same
 // units, logical pixels: its widest line's width and its lines' height, on

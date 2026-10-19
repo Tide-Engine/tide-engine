@@ -75,6 +75,8 @@ var e = Spawn(Transform { localScale = float3(1, 1, 1) }, Player);
 
 A component value is written like `Health { max = 200 }`, without `new`. Fields left out take their defaults, and a bare type name, like `Player`, takes every default.
 
+An existing value or a helper's result works too: `Spawn(savedHealth, MakeInventory())` and `e.Add(savedHealth)`. Each argument is evaluated once in written order and copied when the change is recorded, including owned lists and maps. Editing the source afterward leaves that recorded copy intact. A component copy carries ordinary fields; each new entity gets fresh local-field defaults.
+
 An entity has at most one component of each type. When it needs several of something, use a list inside one component, one entity per item that points back at its owner, or separate component types.
 
 ## Changing entities
@@ -133,6 +135,8 @@ event(Spawned) Assemble(with Main)
 After those changes apply, the child's world position is `(12, 0, 0)`. `SetParent(parent)` preserves its world placement by adjusting its local values; `false` keeps its local values. `SetParent(null)` detaches it. These changes apply at the end of the tick or local frame, in recorded order.
 
 Read `world.LocalToWorld(entity)` for its composed `float4x4`, and `world.Parent(entity)` for its parent's handle. They read the latest stored state, as other `World` methods do. An entity without a Transform contributes identity; a missing entity gives identity or a null parent.
+
+With [state visibility](./visibility.md#spatial-parents), a hidden spatial parent does not hide its public child. The projected hierarchy cuts private links and preserves placement only for subtrees containing permitted `Transform` state; a parent can therefore read as null on a client.
 
 Destroying a parent destroys its descendants, children before their parent. A cycle, a dead handle or a parent from the other world is rejected. Runtime rejections print their reason and leave the hierarchy unchanged. Preserving world placement requires a Transform on the child and an invertible parent transform. Nonuniform scales combined with rotation can create shear; three local TRS values cannot preserve that matrix exactly.
 

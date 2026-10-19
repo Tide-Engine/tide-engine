@@ -1,0 +1,1784 @@
+{
+ "arbalest_fire": {
+  "bytes": 50050,
+  "file": "arbalest_fire.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.567
+ },
+ "arbalest_reload": {
+  "bytes": 23804,
+  "file": "arbalest_reload.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg",
+   "oga_medieval_tex1"
+  ],
+  "seconds": 2.155
+ },
+ "arrow_hit_flesh_1": {
+  "bytes": 22018,
+  "file": "arrow_hit_flesh_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.249
+ },
+ "arrow_hit_flesh_2": {
+  "bytes": 20098,
+  "file": "arrow_hit_flesh_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.227
+ },
+ "arrow_hit_flesh_3": {
+  "bytes": 25602,
+  "file": "arrow_hit_flesh_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.29
+ },
+ "arrow_hit_stone_1": {
+  "bytes": 35842,
+  "file": "arrow_hit_stone_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_rpg"
+  ],
+  "seconds": 0.406
+ },
+ "arrow_hit_stone_2": {
+  "bytes": 31490,
+  "file": "arrow_hit_stone_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_rpg"
+  ],
+  "seconds": 0.357
+ },
+ "arrow_hit_wood_1": {
+  "bytes": 39938,
+  "file": "arrow_hit_wood_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "rd_metalwood"
+  ],
+  "seconds": 0.452
+ },
+ "arrow_hit_wood_2": {
+  "bytes": 39810,
+  "file": "arrow_hit_wood_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "rd_metalwood"
+  ],
+  "seconds": 0.451
+ },
+ "bell_lure": {
+  "bytes": 50813,
+  "file": "bell_lure.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 5.001
+ },
+ "bite": {
+  "bytes": 27906,
+  "file": "bite.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "oga_wetsquish",
+   "rd_creature"
+  ],
+  "seconds": 0.316
+ },
+ "bloat_pop_1": {
+  "bytes": 21434,
+  "file": "bloat_pop_1.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_splatter",
+   "oga_wetsquish",
+   "rd_bang",
+   "rd_water"
+  ],
+  "seconds": 1.8
+ },
+ "bloat_pop_2": {
+  "bytes": 21516,
+  "file": "bloat_pop_2.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_splatter",
+   "oga_wetsquish",
+   "rd_bang",
+   "rd_water"
+  ],
+  "seconds": 1.8
+ },
+ "bloat_swell": {
+  "bytes": 87444,
+  "file": "bloat_swell.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_zombie_moans_ds",
+   "rd_water"
+  ],
+  "seconds": 0.991
+ },
+ "board_place_1": {
+  "bytes": 49154,
+  "file": "board_place_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_metalwood"
+  ],
+  "seconds": 0.557
+ },
+ "board_place_2": {
+  "bytes": 42114,
+  "file": "board_place_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_metalwood"
+  ],
+  "seconds": 0.477
+ },
+ "board_place_3": {
+  "bytes": 50946,
+  "file": "board_place_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_metalwood"
+  ],
+  "seconds": 0.577
+ },
+ "board_rip_1": {
+  "bytes": 77826,
+  "file": "board_rip_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "rd_metalwood"
+  ],
+  "seconds": 0.882
+ },
+ "board_rip_2": {
+  "bytes": 78946,
+  "file": "board_rip_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "rd_metalwood"
+  ],
+  "seconds": 0.895
+ },
+ "board_rip_3": {
+  "bytes": 75010,
+  "file": "board_rip_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "rd_metalwood"
+  ],
+  "seconds": 0.85
+ },
+ "bottle_smash": {
+  "bytes": 69890,
+  "file": "bottle_smash.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_breaking"
+  ],
+  "seconds": 0.792
+ },
+ "bow_draw": {
+  "bytes": 70604,
+  "file": "bow_draw.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.8
+ },
+ "bow_release_1": {
+  "bytes": 38018,
+  "file": "bow_release_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.431
+ },
+ "bow_release_2": {
+  "bytes": 35324,
+  "file": "bow_release_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.4
+ },
+ "breath": {
+  "bytes": 30467,
+  "file": "breath.ogg",
+  "kind": "loop",
+  "layers": false,
+  "packs": [
+   "oga_breathing"
+  ],
+  "seconds": 3.062
+ },
+ "bullet_flesh_1": {
+  "bytes": 30850,
+  "file": "bullet_flesh_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_impact_qubodup"
+  ],
+  "seconds": 0.349
+ },
+ "bullet_flesh_2": {
+  "bytes": 30594,
+  "file": "bullet_flesh_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_impact_qubodup"
+  ],
+  "seconds": 0.346
+ },
+ "bullet_flesh_3": {
+  "bytes": 30914,
+  "file": "bullet_flesh_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_wetsquish"
+  ],
+  "seconds": 0.35
+ },
+ "bullet_flesh_4": {
+  "bytes": 30914,
+  "file": "bullet_flesh_4.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_wetsquish"
+  ],
+  "seconds": 0.35
+ },
+ "chain_zap": {
+  "bytes": 61784,
+  "file": "chain_zap.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.7
+ },
+ "chest_close": {
+  "bytes": 60546,
+  "file": "chest_close.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg",
+   "rd_metalwood"
+  ],
+  "seconds": 0.686
+ },
+ "chest_flee": {
+  "bytes": 29520,
+  "file": "chest_flee.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_crow_caw",
+   "oga_evil_cackle"
+  ],
+  "seconds": 3.2
+ },
+ "chest_land": {
+  "bytes": 15629,
+  "file": "chest_land.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "rd_breaking"
+  ],
+  "seconds": 1.976
+ },
+ "chest_open": {
+  "bytes": 30096,
+  "file": "chest_open.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_open_chest"
+  ],
+  "seconds": 2.793
+ },
+ "chest_spin": {
+  "bytes": 51014,
+  "file": "chest_spin.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 4.8
+ },
+ "coins": {
+  "bytes": 67330,
+  "file": "coins.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg",
+   "rd_rpg"
+  ],
+  "seconds": 0.763
+ },
+ "crossbow_fire": {
+  "bytes": 28290,
+  "file": "crossbow_fire.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.32
+ },
+ "crossbow_reload": {
+  "bytes": 83810,
+  "file": "crossbow_reload.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.95
+ },
+ "death_1": {
+  "bytes": 14846,
+  "file": "death_1.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_voice_fx",
+   "rd_creature"
+  ],
+  "seconds": 1.281
+ },
+ "death_2": {
+  "bytes": 12988,
+  "file": "death_2.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_voice_fx",
+   "rd_creature"
+  ],
+  "seconds": 1.092
+ },
+ "death_3": {
+  "bytes": 16384,
+  "file": "death_3.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_voice_fx",
+   "rd_creature"
+  ],
+  "seconds": 1.513
+ },
+ "death_4": {
+  "bytes": 12768,
+  "file": "death_4.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "rd_creature",
+   "rd_creature2"
+  ],
+  "seconds": 1.194
+ },
+ "debris_clear": {
+  "bytes": 17540,
+  "file": "debris_clear.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "rd_breaking",
+   "rd_metalwood"
+  ],
+  "seconds": 1.587
+ },
+ "deny": {
+  "bytes": 38852,
+  "file": "deny.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.44
+ },
+ "door_open": {
+  "bytes": 22482,
+  "file": "door_open.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "oga_rpg_ad",
+   "rd_metalwood"
+  ],
+  "seconds": 2.123
+ },
+ "downed": {
+  "bytes": 19121,
+  "file": "downed.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg"
+  ],
+  "seconds": 3.645
+ },
+ "draw_blade": {
+  "bytes": 44162,
+  "file": "draw_blade.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex2"
+  ],
+  "seconds": 0.5
+ },
+ "draw_wood": {
+  "bytes": 45058,
+  "file": "draw_wood.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg"
+  ],
+  "seconds": 0.51
+ },
+ "drink": {
+  "bytes": 20236,
+  "file": "drink.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_bottle_drink",
+   "rd_creature"
+  ],
+  "seconds": 1.918
+ },
+ "empty": {
+  "bytes": 19938,
+  "file": "empty.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.226
+ },
+ "explode_1": {
+  "bytes": 23591,
+  "file": "explode_1.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "rd_bang",
+   "rd_breaking"
+  ],
+  "seconds": 2.123
+ },
+ "explode_2": {
+  "bytes": 22013,
+  "file": "explode_2.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "rd_bang",
+   "rd_breaking"
+  ],
+  "seconds": 2.104
+ },
+ "fire_burst": {
+  "bytes": 17052,
+  "file": "fire_burst.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_fireball"
+  ],
+  "seconds": 1.567
+ },
+ "fire_loop": {
+  "bytes": 44429,
+  "file": "fire_loop.ogg",
+  "kind": "loop",
+  "layers": true,
+  "packs": [
+   "oga_fire_crackling"
+  ],
+  "seconds": 4.0
+ },
+ "forge": {
+  "bytes": 45767,
+  "file": "forge.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_anvil",
+   "oga_smith_hammer"
+  ],
+  "seconds": 4.8
+ },
+ "forge_ready": {
+  "bytes": 24957,
+  "file": "forge_ready.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 2.526
+ },
+ "freeze": {
+  "bytes": 23082,
+  "file": "freeze.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_freeze"
+  ],
+  "seconds": 1.909
+ },
+ "game_over": {
+  "bytes": 79098,
+  "file": "game_over.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [
+   "oga_dark_cavern"
+  ],
+  "seconds": 11.706
+ },
+ "gore_1": {
+  "bytes": 67970,
+  "file": "gore_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_wetsquish",
+   "rd_water"
+  ],
+  "seconds": 0.77
+ },
+ "gore_2": {
+  "bytes": 84610,
+  "file": "gore_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_wetsquish",
+   "rd_water"
+  ],
+  "seconds": 0.959
+ },
+ "gore_3": {
+  "bytes": 75010,
+  "file": "gore_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_splatter",
+   "rd_water"
+  ],
+  "seconds": 0.85
+ },
+ "groan_1": {
+  "bytes": 27904,
+  "file": "groan_1.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombie_moans_ds"
+  ],
+  "seconds": 2.5
+ },
+ "groan_2": {
+  "bytes": 28119,
+  "file": "groan_2.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombie_moans_ds"
+  ],
+  "seconds": 2.5
+ },
+ "groan_3": {
+  "bytes": 23184,
+  "file": "groan_3.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_hungry_ghoul"
+  ],
+  "seconds": 2.5
+ },
+ "groan_4": {
+  "bytes": 18392,
+  "file": "groan_4.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_hungry_ghoul"
+  ],
+  "seconds": 1.746
+ },
+ "groan_5": {
+  "bytes": 25290,
+  "file": "groan_5.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombie_moans_ep"
+  ],
+  "seconds": 2.252
+ },
+ "groan_6": {
+  "bytes": 19781,
+  "file": "groan_6.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombie_moans_ep"
+  ],
+  "seconds": 1.8
+ },
+ "groan_7": {
+  "bytes": 22598,
+  "file": "groan_7.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_undead_moans"
+  ],
+  "seconds": 2.018
+ },
+ "groan_8": {
+  "bytes": 18865,
+  "file": "groan_8.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombies_ad"
+  ],
+  "seconds": 1.834
+ },
+ "handgonne_fire": {
+  "bytes": 27856,
+  "file": "handgonne_fire.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_cannon",
+   "rd_bang"
+  ],
+  "seconds": 2.713
+ },
+ "handgonne_reload": {
+  "bytes": 21546,
+  "file": "handgonne_reload.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_weapons_apparel"
+  ],
+  "seconds": 2.044
+ },
+ "headshot_1": {
+  "bytes": 29442,
+  "file": "headshot_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_bonebreak",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.333
+ },
+ "headshot_2": {
+  "bytes": 53378,
+  "file": "headshot_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_bonebreak",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.605
+ },
+ "heartbeat": {
+  "bytes": 7697,
+  "file": "heartbeat.ogg",
+  "kind": "loop",
+  "layers": true,
+  "packs": [
+   "oga_heartbeat_slow"
+  ],
+  "seconds": 1.6
+ },
+ "hit_blade_1": {
+  "bytes": 32898,
+  "file": "hit_blade_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.372
+ },
+ "hit_blade_2": {
+  "bytes": 22658,
+  "file": "hit_blade_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.256
+ },
+ "hit_blade_3": {
+  "bytes": 36866,
+  "file": "hit_blade_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.417
+ },
+ "hit_blade_4": {
+  "bytes": 39170,
+  "file": "hit_blade_4.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_wetsquish",
+   "rd_rpg"
+  ],
+  "seconds": 0.444
+ },
+ "hit_blunt_1": {
+  "bytes": 36610,
+  "file": "hit_blunt_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_bonebreak",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.415
+ },
+ "hit_blunt_2": {
+  "bytes": 29442,
+  "file": "hit_blunt_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_bonebreak",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.333
+ },
+ "hit_blunt_3": {
+  "bytes": 34818,
+  "file": "hit_blunt_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_bonebreak",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.394
+ },
+ "hit_blunt_4": {
+  "bytes": 33922,
+  "file": "hit_blunt_4.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact",
+   "oga_bonebreak",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.384
+ },
+ "hit_stone_1": {
+  "bytes": 49794,
+  "file": "hit_stone_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_breaking"
+  ],
+  "seconds": 0.564
+ },
+ "hit_stone_2": {
+  "bytes": 52738,
+  "file": "hit_stone_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_breaking"
+  ],
+  "seconds": 0.597
+ },
+ "hit_wood_1": {
+  "bytes": 27398,
+  "file": "hit_wood_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.31
+ },
+ "hit_wood_2": {
+  "bytes": 27398,
+  "file": "hit_wood_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.31
+ },
+ "hitmarker": {
+  "bytes": 1068,
+  "file": "hitmarker.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.012
+ },
+ "hurt_1": {
+  "bytes": 34818,
+  "file": "hurt_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.394
+ },
+ "hurt_2": {
+  "bytes": 34562,
+  "file": "hurt_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.391
+ },
+ "hurt_3": {
+  "bytes": 38274,
+  "file": "hurt_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.433
+ },
+ "item_rare": {
+  "bytes": 73474,
+  "file": "item_rare.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg"
+  ],
+  "seconds": 0.833
+ },
+ "item_uncommon": {
+  "bytes": 27266,
+  "file": "item_uncommon.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg"
+  ],
+  "seconds": 0.309
+ },
+ "jingle_1": {
+  "bytes": 105349,
+  "file": "jingle_1.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [],
+  "seconds": 10.0
+ },
+ "jingle_2": {
+  "bytes": 81892,
+  "file": "jingle_2.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [],
+  "seconds": 8.367
+ },
+ "jingle_3": {
+  "bytes": 87904,
+  "file": "jingle_3.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [],
+  "seconds": 10.0
+ },
+ "jingle_4": {
+  "bytes": 89832,
+  "file": "jingle_4.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [],
+  "seconds": 8.52
+ },
+ "jingle_5": {
+  "bytes": 90632,
+  "file": "jingle_5.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [],
+  "seconds": 9.353
+ },
+ "jingle_6": {
+  "bytes": 99184,
+  "file": "jingle_6.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [],
+  "seconds": 10.0
+ },
+ "land": {
+  "bytes": 37378,
+  "file": "land.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg"
+  ],
+  "seconds": 0.423
+ },
+ "level_up": {
+  "bytes": 47584,
+  "file": "level_up.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.539
+ },
+ "mag_reload": {
+  "bytes": 16464,
+  "file": "mag_reload.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_reload_springy"
+  ],
+  "seconds": 1.4
+ },
+ "music_high": {
+  "bytes": 928769,
+  "file": "music_high.ogg",
+  "kind": "loop",
+  "layers": false,
+  "packs": [
+   "oga_ancient_grudge"
+  ],
+  "seconds": 120.0
+ },
+ "music_low": {
+  "bytes": 969106,
+  "file": "music_low.ogg",
+  "kind": "loop",
+  "layers": false,
+  "packs": [
+   "oga_junkala_wastelands"
+  ],
+  "seconds": 120.0
+ },
+ "orb_1": {
+  "bytes": 33282,
+  "file": "orb_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.377
+ },
+ "orb_2": {
+  "bytes": 31106,
+  "file": "orb_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.352
+ },
+ "orb_3": {
+  "bytes": 28930,
+  "file": "orb_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_interface"
+  ],
+  "seconds": 0.328
+ },
+ "pain_1": {
+  "bytes": 30850,
+  "file": "pain_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombies_ad"
+  ],
+  "seconds": 0.349
+ },
+ "pain_2": {
+  "bytes": 27266,
+  "file": "pain_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_voice_fx"
+  ],
+  "seconds": 0.309
+ },
+ "pain_3": {
+  "bytes": 40194,
+  "file": "pain_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "rd_creature"
+  ],
+  "seconds": 0.455
+ },
+ "pistol_fire_1": {
+  "bytes": 66178,
+  "file": "pistol_fire_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.75
+ },
+ "pistol_fire_2": {
+  "bytes": 85634,
+  "file": "pistol_fire_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.97
+ },
+ "pistol_fire_3": {
+  "bytes": 67714,
+  "file": "pistol_fire_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.767
+ },
+ "pistol_reload": {
+  "bytes": 18225,
+  "file": "pistol_reload.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_reload_springy"
+  ],
+  "seconds": 1.515
+ },
+ "points_tick": {
+  "bytes": 4454,
+  "file": "points_tick.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.05
+ },
+ "power_on": {
+  "bytes": 37786,
+  "file": "power_on.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_fire_crackling",
+   "rd_rpg"
+  ],
+  "seconds": 4.5
+ },
+ "powerup_grab": {
+  "bytes": 18862,
+  "file": "powerup_grab.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 1.844
+ },
+ "powerup_loop": {
+  "bytes": 21665,
+  "file": "powerup_loop.ogg",
+  "kind": "loop",
+  "layers": false,
+  "packs": [],
+  "seconds": 2.0
+ },
+ "powerup_spawn": {
+  "bytes": 18855,
+  "file": "powerup_spawn.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 1.828
+ },
+ "pu_carpenter": {
+  "bytes": 27958,
+  "file": "pu_carpenter.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "rd_metalwood"
+  ],
+  "seconds": 3.094
+ },
+ "pu_double": {
+  "bytes": 21374,
+  "file": "pu_double.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "rd_rpg"
+  ],
+  "seconds": 2.008
+ },
+ "pu_end": {
+  "bytes": 16949,
+  "file": "pu_end.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 2.084
+ },
+ "pu_instakill": {
+  "bytes": 22229,
+  "file": "pu_instakill.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 3.2
+ },
+ "pu_max_ammo": {
+  "bytes": 24484,
+  "file": "pu_max_ammo.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_weapons_apparel"
+  ],
+  "seconds": 2.459
+ },
+ "pu_nuke": {
+  "bytes": 40099,
+  "file": "pu_nuke.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "rd_sfx100v2"
+  ],
+  "seconds": 4.8
+ },
+ "pump": {
+  "bytes": 37976,
+  "file": "pump.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_reload_springy"
+  ],
+  "seconds": 0.43
+ },
+ "repeater_fire": {
+  "bytes": 23426,
+  "file": "repeater_fire.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.265
+ },
+ "repeater_reload": {
+  "bytes": 20432,
+  "file": "repeater_reload.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "oga_medieval_tex1",
+   "oga_weapons_apparel"
+  ],
+  "seconds": 1.706
+ },
+ "revive": {
+  "bytes": 27709,
+  "file": "revive.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 2.858
+ },
+ "rifle_fire_1": {
+  "bytes": 13282,
+  "file": "rifle_fire_1.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 1.113
+ },
+ "rifle_fire_2": {
+  "bytes": 13280,
+  "file": "rifle_fire_2.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 1.105
+ },
+ "rifle_fire_3": {
+  "bytes": 10452,
+  "file": "rifle_fire_3.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.838
+ },
+ "rise": {
+  "bytes": 19032,
+  "file": "rise.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "rd_breaking",
+   "rd_mud"
+  ],
+  "seconds": 1.683
+ },
+ "round_end": {
+  "bytes": 41747,
+  "file": "round_end.ogg",
+  "kind": "music",
+  "layers": false,
+  "packs": [
+   "oga_dark_cavern"
+  ],
+  "seconds": 6.769
+ },
+ "scream_1": {
+  "bytes": 13015,
+  "file": "scream_1.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "rd_creature"
+  ],
+  "seconds": 1.034
+ },
+ "scream_2": {
+  "bytes": 11919,
+  "file": "scream_2.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "rd_creature"
+  ],
+  "seconds": 0.944
+ },
+ "scream_3": {
+  "bytes": 12337,
+  "file": "scream_3.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "rd_creature2"
+  ],
+  "seconds": 0.957
+ },
+ "scream_4": {
+  "bytes": 8886,
+  "file": "scream_4.ogg",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_voice_fx"
+  ],
+  "seconds": 0.548
+ },
+ "shell_load": {
+  "bytes": 13274,
+  "file": "shell_load.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "kenney_impact"
+  ],
+  "seconds": 0.15
+ },
+ "shotgun_fire_1": {
+  "bytes": 16877,
+  "file": "shotgun_fire_1.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_cannon",
+   "oga_firearms"
+  ],
+  "seconds": 1.583
+ },
+ "shotgun_fire_2": {
+  "bytes": 13802,
+  "file": "shotgun_fire_2.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_cannon",
+   "oga_firearms"
+  ],
+  "seconds": 1.22
+ },
+ "shotgun_fire_3": {
+  "bytes": 16906,
+  "file": "shotgun_fire_3.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_cannon",
+   "oga_firearms"
+  ],
+  "seconds": 1.576
+ },
+ "smg_fire_1": {
+  "bytes": 50562,
+  "file": "smg_fire_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.573
+ },
+ "smg_fire_2": {
+  "bytes": 50562,
+  "file": "smg_fire_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.573
+ },
+ "smg_fire_3": {
+  "bytes": 51714,
+  "file": "smg_fire_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.586
+ },
+ "snarl_1": {
+  "bytes": 61586,
+  "file": "snarl_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombies_ad"
+  ],
+  "seconds": 0.698
+ },
+ "snarl_2": {
+  "bytes": 75758,
+  "file": "snarl_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_monster_growls"
+  ],
+  "seconds": 0.858
+ },
+ "snarl_3": {
+  "bytes": 61746,
+  "file": "snarl_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_zombies_ad"
+  ],
+  "seconds": 0.7
+ },
+ "snarl_4": {
+  "bytes": 70562,
+  "file": "snarl_4.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_monster_growls"
+  ],
+  "seconds": 0.8
+ },
+ "stab": {
+  "bytes": 18946,
+  "file": "stab.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "kenney_rpg",
+   "oga_wetsquish"
+  ],
+  "seconds": 0.214
+ },
+ "staff_fire": {
+  "bytes": 19150,
+  "file": "staff_fire.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "rd_rpg"
+  ],
+  "seconds": 1.555
+ },
+ "staff_frost": {
+  "bytes": 14320,
+  "file": "staff_frost.ogg",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_ice_spells"
+  ],
+  "seconds": 1.044
+ },
+ "staff_storm": {
+  "bytes": 79864,
+  "file": "staff_storm.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.905
+ },
+ "step_dirt_1": {
+  "bytes": 24962,
+  "file": "step_dirt_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.283
+ },
+ "step_dirt_2": {
+  "bytes": 27778,
+  "file": "step_dirt_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.314
+ },
+ "step_dirt_3": {
+  "bytes": 24962,
+  "file": "step_dirt_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.283
+ },
+ "step_dirt_4": {
+  "bytes": 27394,
+  "file": "step_dirt_4.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_rpg",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.31
+ },
+ "step_stone_1": {
+  "bytes": 31490,
+  "file": "step_stone_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.357
+ },
+ "step_stone_2": {
+  "bytes": 31266,
+  "file": "step_stone_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.354
+ },
+ "step_stone_3": {
+  "bytes": 27522,
+  "file": "step_stone_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.312
+ },
+ "step_stone_4": {
+  "bytes": 27246,
+  "file": "step_stone_4.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "oga_fantozzi_steps"
+  ],
+  "seconds": 0.308
+ },
+ "step_wood_1": {
+  "bytes": 17154,
+  "file": "step_wood_1.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_sfx100v2"
+  ],
+  "seconds": 0.194
+ },
+ "step_wood_2": {
+  "bytes": 18562,
+  "file": "step_wood_2.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_sfx100v2"
+  ],
+  "seconds": 0.21
+ },
+ "step_wood_3": {
+  "bytes": 10114,
+  "file": "step_wood_3.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_sfx100v2"
+  ],
+  "seconds": 0.114
+ },
+ "step_wood_4": {
+  "bytes": 21122,
+  "file": "step_wood_4.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "kenney_impact",
+   "rd_sfx100v2"
+  ],
+  "seconds": 0.239
+ },
+ "swing_heavy_1": {
+  "bytes": 46050,
+  "file": "swing_heavy_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex2"
+  ],
+  "seconds": 0.522
+ },
+ "swing_heavy_2": {
+  "bytes": 59328,
+  "file": "swing_heavy_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex2"
+  ],
+  "seconds": 0.672
+ },
+ "swing_heavy_3": {
+  "bytes": 43504,
+  "file": "swing_heavy_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex2"
+  ],
+  "seconds": 0.493
+ },
+ "swing_light_1": {
+  "bytes": 37398,
+  "file": "swing_light_1.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex2"
+  ],
+  "seconds": 0.424
+ },
+ "swing_light_2": {
+  "bytes": 40484,
+  "file": "swing_light_2.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex1"
+  ],
+  "seconds": 0.459
+ },
+ "swing_light_3": {
+  "bytes": 39916,
+  "file": "swing_light_3.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_medieval_tex2"
+  ],
+  "seconds": 0.452
+ },
+ "throw": {
+  "bytes": 37602,
+  "file": "throw.wav",
+  "kind": "sfx",
+  "layers": true,
+  "packs": [
+   "oga_swishes"
+  ],
+  "seconds": 0.426
+ },
+ "turret_fire": {
+  "bytes": 27546,
+  "file": "turret_fire.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [
+   "oga_firearms"
+  ],
+  "seconds": 0.312
+ }
+}

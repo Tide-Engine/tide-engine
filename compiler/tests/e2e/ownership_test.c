@@ -84,12 +84,12 @@ TIDE_TEST(ownership_beside_other_filters)
     frame_as(2);
     TIDE_CHECK(count(TIDE_DRAW_WIRE_CIRCLE) == 3 && !drawn(TIDE_DRAW_WIRE_CIRCLE, 3.0f));
 
-    // `with ownership, without Hidden`: a sparse component's rows too
+    // `with ownership, without Concealed`: a sparse component's rows too
     frame_as(1);
     TIDE_CHECK(count(TIDE_DRAW_LINE) == 1 && drawn(TIDE_DRAW_LINE, 2.0f));
     world.Trick.hide = true;
     tide_world_tick(&world);
-    TIDE_REQUIRE(tide_has_Hidden(&world, SECOND));
+    TIDE_REQUIRE(tide_has_Concealed(&world, SECOND));
     frame_as(1);
     TIDE_CHECK(count(TIDE_DRAW_LINE) == 0);
     TIDE_CHECK(count(TIDE_DRAW_CIRCLE) == 1); // Still its own

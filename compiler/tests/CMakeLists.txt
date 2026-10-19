@@ -16,6 +16,7 @@ function(tide_e2e_test name)
 endfunction()
 
 tide_e2e_test(asset_sharing SOURCES e2e/asset_sharing.tide e2e/asset_sharing_c.c)
+tide_e2e_test(hosting)
 tide_e2e_test(move_clamp)
 tide_e2e_test(map_iteration)
 tide_e2e_test(structural)
@@ -28,14 +29,26 @@ if(TIDE_PLATFORM)
 endif()
 tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
+
+tide_e2e_test(world_set_read) # Read parameters follow preceding cross-entity Set writes and snapshot page replacement
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_world_set_read PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_world_set_read PRIVATE TIDE_SET_READ_THREADS=1)
+endif()
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
 tide_e2e_test(transforms) # Shared component placement, checked parenting and hierarchy state
+tide_e2e_test(visibility_groups) # Shared audiences, whole-component restrictions and scene inheritance
+tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
 tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
 tide_e2e_test(asset_references SOURCES e2e/asset_references.tide e2e/asset_references.tprefab)
 tide_e2e_test(asset_reference_empty)
 tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
+tide_e2e_test(component_values SOURCES e2e/component_values.tide e2e/component_values.tprefab) # Copied component and payload values
+tide_e2e_test(texture_size) # Metadata-only CPU/GPU image dimensions, aliases and resource lifetime
 tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and for their callers' entities
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
+tide_e2e_test(handler_queries) # Current-world queries at match event/command turns, with ordinary deferred changes
+tide_e2e_test(query_borrows) # Borrowed helper queries retain selection, row projection, order and caller capabilities
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_queries PRIVATE TIDE_QUERY_THREADS=1)
@@ -49,9 +62,9 @@ tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
-target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=15321220430701081947ull)
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=12420115232080880287ull)
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
-target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9624744844104527802ull)
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9673056146649414802ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
 tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
@@ -63,10 +76,17 @@ tide_e2e_test(defaults)
 tide_e2e_test(default_value)
 tide_e2e_test(math)
 tide_e2e_test(input)
+tide_e2e_test(input_borrows)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
+tide_e2e_test(prototype_codegen) # Nested foreach receivers, stored vector writes and captured numeric literals
 tide_e2e_test(increments) # ++i and i++ as values, in their turn
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
+tide_e2e_test(random_local_order)
+tide_add_game(tidec_e2e_random_local_first SOURCES e2e/random_local_order.tide NAME game DEFINES LOCAL_FIRST
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/random_local_order_test.c")
+target_include_directories(tidec_e2e_random_local_first PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tidec_e2e_random_local_first COMMAND tidec_e2e_random_local_first)
 tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
 tide_e2e_test(gpu_rolls) # ...and in frags and verts: the frame's number and the seed their draws send, alike for a frame's draws
 tide_e2e_test(views)
@@ -101,12 +121,16 @@ tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the genera
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it
 tide_e2e_test(draw_cull) # ...and which side of their triangles draws, with the instances a transform mirrors told apart
+tide_e2e_test(draw_frustum) # Conservative per-instance frustum culling, explicit bounds and operand effects
 tide_e2e_test(draw_stencil) # ...and stencil: Draw's, for 2D and 3D draws alike, said to a renderer once before the draws it's for
 tide_e2e_test(wrap) # What a uv past a texture's edges reads: a mesh draw's wrap after its filter, and a frag's at Sample
 tide_e2e_test(mipmaps) # Filter.Trilinear, wherever a filter is said: what a draw records, and how a frag reads between a texture's smaller images
 tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
+tide_e2e_test(asset_borrows) # Synchronous helpers borrow resource asset lists/maps without retaining the pack
+tide_e2e_test(asset_borrows_unused) # Collection signatures alone need their C types, without enabling asset loading/audio
+tide_e2e_test(clip_values) # Scalar Clip values need their C type without assets or playback.
 tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Texture and Grid2<Color> assets
 tide_e2e_test(asset_images) # JPEG, TGA and BMP imports through the same pixel/texture assets
 tide_e2e_test(asset_audio_formats) # MP3/FLAC imports as PCM clips, preserving raw byte assets
@@ -121,7 +145,7 @@ tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists aft
 tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
 tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
-target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=16503674684816165460ull)
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=17651989322280626694ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
 tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)
@@ -134,7 +158,7 @@ if(TIDE_NODE)
             "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")
     set_tests_properties(tidec_skinned_default_identity PROPERTIES TIMEOUT 120)
 endif()
-target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=8505980881375789176ull)
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=10246351871245853744ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
@@ -186,11 +210,13 @@ tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
 tide_e2e_test(local_fields_plain) # ...whose match is the same without them
 tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
 tide_e2e_test(local_events) # Local handlers of the match's events: heard once, whatever a client predicted
+tide_e2e_test(visibility_lifecycle) # Local availability differs from genuine match lifecycle
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
 tide_e2e_test(local_events_plain) # ...which is the same without them
 tide_e2e_test(verified_views) # `verified` parameters: what views read of the world the server confirmed
 tide_e2e_test(verified_heap) # ...its text, lists, maps, sets and grids, from its own heap
 tide_e2e_test(view_queries) # Queries in views and local handlers: blended, `verified`, or as an event's tick left them
+tide_e2e_test(view_bound_query) # ...and a view whose frag reads what it doesn't take, its parameters grown after its query was bound
 tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)
@@ -206,7 +232,7 @@ tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch e
 tide_e2e_test(strings)
 # char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
 tide_e2e_test(chars)
-target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=8862496493692366551ull)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=15458773560132745070ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
@@ -217,9 +243,9 @@ tide_e2e_test(lists_out SOURCES e2e/lists_out.tide e2e/lists_out_c.c) # `out Lis
 tide_e2e_test(resident SOURCES e2e/resident.tide e2e/resident_c.c) # A match singleton's Resident field: a C library's state as the world's pages
 tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out` parameters and arguments, as C#'s
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
-target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=7485469572211020663ull)
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=8786489112930409120ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
-target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=7606955030890254320ull)
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=14748397450274180197ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots
@@ -244,6 +270,7 @@ tide_e2e_test(text) # Draw.Text at an anchor and in a weight, and measuring in o
 tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(draw_values) # A draw's values: a struct after its vert and frag, sent once for the draw
+tide_e2e_test(draw_helpers) # Shaded helpers bind only explicit parameters, forwarding attached local fields
 tide_e2e_test(crossplatform_text)
 tide_e2e_test(devices)
 tide_e2e_test(pause)
@@ -463,6 +490,21 @@ foreach(source IN LISTS TIDE_SHADER_TESTS)
             "-DOPTION=--shaders"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
 endforeach()
+
+# ...and their SPIR-V, Vulkan's, which spirv-val takes, where there's one
+# (cmake/VulkanTests.cmake).
+if(TIDE_SPIRV_VAL)
+    foreach(source IN LISTS TIDE_SHADER_TESTS)
+        get_filename_component(name "${source}" NAME_WE)
+        add_test(NAME tidec_spirv_${name}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DTIDEC=${TIDEC_PATH}"
+                "-DSOURCE=${source}"
+                "-DSPIRV_VAL=${TIDE_SPIRV_VAL}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/spirv/${name}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_spirv.cmake")
+    endforeach()
+endif()
 
 # The mesh files' reader on its own (src/mesh_files.c): the numbers it reads,
 # what it refuses, and that a file cut or wrong anywhere is never read past

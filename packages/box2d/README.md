@@ -62,7 +62,7 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 - **`Part`** is a shape on another entity's body: `Spawn(Box { offset = float2(1, 1) }, Part { of = brick });`. The entity has a `Box` or a `Circle` and no `Body`; its shape is on the body of the entity it names from the next step. Destroying the part takes that one shape off, destroying the body's entity takes its parts with it, and a part that names no entity with a body is destroyed. A part can be a sensor.
 - **`Touched`** and **`Parted`** are sent to both entities when their bodies start and stop touching, each with the `other`, once for each pair of shapes, and with which shapes they were: `part` and `otherPart`, the body's own entity for a shape on it and the part's entity for a part. A shape with `sensor` stops nothing, and sends them for the shapes that come into it and leave it, static bodies' too; two sensors say nothing of each other. When the other entity was destroyed while they touched, `Parted` comes with `default` for it; when only a part was, with the right `other` and `default` for the part.
 - **`Hit`** is sent to both entities when their bodies meet faster than `Physics.hitSpeed`: the `other`, the parts, the `point`, the `normal` (from this body into the other) and the `speed` they closed at.
-- **Asking the world**: `physics.Raycast(from, to, out hit)`, `physics.Cast(shape, from, angle, to, out hit)` for a `Box` or a `Circle` moved along a way, `physics.Overlap(shape, at, angle, out found)`, and `physics.Inside(sensor, out found)` for who's in an entity's sensors, a body's or a part's. They return whether they found anything; `RayHit` is the `entity`, its `part`, the `point`, the `normal` and the `fraction` of the way. `Raycast` and `Cast` take one `Body` to leave out, last (`ignore: body`). They work from the match anywhere in a tick, and from views.
+- **Asking the world**: `physics.Raycast(from, to, out hit)`, `physics.Cast(shape, from, angle, to, out hit)` for a `Box` or a `Circle` moved along a way, `physics.Overlap(shape, at, angle, out found)`, and `physics.Inside(sensor, out found)` for who's in an entity's sensors, a body's or a part's. They return whether they found anything; `RayHit` is the `entity`, its `part`, the `point`, the `normal` and the `fraction` of the way. `Raycast` and `Cast` take one `Body` to leave out, last (`ignore: body`). `RaycastAll` and `CastAll` give all hits for game filtering, as described below. They work from the match anywhere in a tick, and from views.
 - **`Physics`** is the world: `gravity`, `substeps`, and how it's tuned: `contactStiffness`, `contactDamping` and `contactSpeed`, `bounceSpeed`, `hitSpeed` and `sleeping`. Each is Box2D's own default, and a change is the next step's. A gravity that changes wakes every body.
 - An entity that's destroyed takes its body with it.
 
@@ -70,7 +70,19 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 
 The world as its last step left it: a system before the step asks of the last tick's world, which is what it reads in the bodies' components too; a system after it, and a handler, of this tick's; a view of the world it draws, as its last tick left it. What code wrote into a body since isn't in the answer, nor a body or a shape made since: they're the next step's. An entity that was destroyed since isn't met any more (the match says which bodies and parts are gone, and the question leaves them out).
 
-Sensors are never met, and `Overlap` doesn't find them. A ray or a shape that starts in something meets it there, at `fraction` 0 with no normal, and a shape that only touches something where it starts counts as in it: Box2D takes two shapes within about 6 mm of each other for touching, so a crate's own box, cast along the floor it rests on, meets the floor at once. A slightly smaller shape slides.
+Sensors are skipped by default, and `Overlap` doesn't find them. A ray or a shape that starts in something meets it there, at `fraction` 0 with no normal or unique surface point, and a shape that only touches something where it starts counts as in it: Box2D takes two shapes within about 6 mm of each other for touching, so a crate's own box, cast along the floor it rests on, meets the floor at once. A slightly smaller shape slides.
+
+### All hits and game filtering
+
+```csharp
+physics.RaycastAll(from, to, out var hits, ignore: body);
+physics.CastAll(Circle { radius = 0.2 }, from, 0, to, out var swept,
+    ignore: body, includeSensors: true);
+```
+
+`RaycastAll` and `CastAll` return `out List<RayHit>` in increasing `fraction` order, with deterministic shape ties matching the closest-hit methods. Each collider contributes its first hit; separate colliders on one body stay separate, even when `entity` and `part` match. They return whether any hit was found, replacing the output with an empty list otherwise.
+
+`CastAll` accepts the same `Box` or `Circle` and arguments as `Cast`. Both all-hit methods support `ignore: body` (every shape on that body, including parts) and `includeSensors: true` (false by default), independently or together. Iterate the list to select the first hit accepted by game rules, or process all of them. The results are ordinary values that can be saved in match or local state. Rewound `Query` has the same methods and options. Use `Raycast` or `Cast` for just the closest hit; they retain early pruning.
 
 ### The same answer on every machine
 
@@ -85,13 +97,12 @@ Systems that ask run on the tick's threads like any others: a question changes n
 
 ### Picks
 
-The owner decided what there is; these are the names and the edges picked while building it, for them to confirm:
+The owner approved the all-hit and ignore-body additions on 2026-10-18. These earlier names and edges remain provisional:
 
 - **Names**: `Part` and its `of`; `Hit`; `RayHit`; `Raycast`, `Cast`, `Overlap`, `Inside`; `part` and `otherPart` on the events; `Physics.contactStiffness`, `contactDamping`, `contactSpeed`, `bounceSpeed`, `hitSpeed`, `sleeping`; `Body.sleepSpeed`. They're the Box3D package's names wherever both have the thing, as the two were built side by side from one list: `Inside` takes the sensor's entity in both, and the three `contact` fields are spelled as Box3D's.
 - **A part that names no body is destroyed**, in the tick that finds it so, with nothing said: an error would stop a match over an entity that went a tick before its part was made.
 - **`Inside` takes the entity whose shape the sensor is**, a body's or a part's, and looks in that entity's own sensors: a body's parts are asked one by one. The match keeps which shapes those are (`Physics.sensors`, an entry for each entity that has a sensor), as a function is handed no `World` to look an entity's components up in.
-- **Where this package has more than Box3D's:** `Hit` says which parts met (`part`, `otherPart`), `Raycast` and `Cast` leave a `Body` out, and a `Body` has `sleepSpeed`. **And less:** of a body, only its `type` follows what's written later; Box3D's `gravityScale`, dampings and `bullet` do too.
-- **One body can be left out of a ray or a cast**, as a `Body` after the `out`. No layers or masks: Towers needed none.
+- **Where this package has more than Box3D's:** `Hit` says which parts met (`part`, `otherPart`), and a `Body` has `sleepSpeed`. **And less:** of a body, only its `type` follows what's written later; Box3D's `gravityScale`, dampings and `bullet` do too.
 - **A body that turns kinematic keeps its `velocity`.**
 - **`Hit` goes to both bodies**, each with the normal pointing from itself, and its threshold is the world's alone.
 - **Tuning is the world's, but for `sleepSpeed`**, which is a body's. Whether one body may sleep at all, and a shape's fields after it's made, were left out.
@@ -161,7 +172,7 @@ So a tick takes 0.51 ms with everything moving, 0.06 with one crate pushed and 0
 ## Not there yet
 
 - Joints, chains, polygons other than boxes, and capsules.
-- Rays and casts give the first thing met, not everything along the way, and leave out one body at the most. No layers or masks, for collisions or for questions, and a sensor is never met.
+- No layers or masks, for collisions or queries. Queries can ignore one body; `RaycastAll` and `CastAll` allow further filtering in game code.
 - `Touched` and `Parted` don't say which of an entity's own `Box` and `Circle` it was, and a parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
 - The fields of a body that are read when it's made don't follow later changes, and a shape's don't either.
 - Removing `Body` from an entity that stays leaves its body in the world, and removing `Box` or `Circle` leaves its shape on.
@@ -189,7 +200,7 @@ system Fire(Controls controls, Body body, Physics physics)
 }
 ```
 
-The context has every current query form, including all shape casts, overlaps, sensor `Inside` queries and existing ignore-body overloads. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
+The context has every current query form, including `RaycastAll`, every `CastAll` shape, overlaps, sensor `Inside` queries and ignore-body overloads. All-hit methods also accept `includeSensors: true`. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
 
 `Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
 

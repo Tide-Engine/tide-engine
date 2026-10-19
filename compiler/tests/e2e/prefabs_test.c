@@ -13,6 +13,12 @@ TIDE_TEST(prefab_complete_tree_and_root_overrides)
     TIDE_CHECK(w.Probe.overrideCalls == 2);
     TIDE_CHECK(tide_get_LevelSettings(&w, w.Probe.root).difficulty == 2);
     TIDE_CHECK(tide_get_LevelSettings(&w, w.Probe.loaded).difficulty == 3);
+    const Links loaded = tide_get_Links(&w, w.Probe.loaded);
+    const tide_player_id player = tide_player_from_index(0);
+    TIDE_CHECK(tide_world_visible(&w, w.Probe.root, player));
+    TIDE_CHECK(!tide_world_visible(&w, w.Probe.loaded, player));
+    TIDE_CHECK(!tide_world_visible(&w, loaded.child, player));
+    TIDE_CHECK(!tide_world_visible(&w, loaded.tip, player));
     tide_world_free(&w);
 }
 

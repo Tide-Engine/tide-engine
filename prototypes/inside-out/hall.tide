@@ -1,0 +1,554 @@
+// The hall: one for each chapter, where the two robots choose what to play,
+// and a small puzzle of its own made of the chapter's idea.
+//
+// A hall is drawn as a puzzle is (levels.tide), and the ordinary rules walk
+// it. Its table holds the gallery, room 0, a box clamped at the top whose
+// north wall carries a post for each of the chapter's puzzles: a model of
+// the puzzle as it starts. In front of each post is a lane of two pads, and
+// both robots standing in one lane go into that puzzle. Below the gallery
+// is the hall's yard. Solving a puzzle puts its battery there, and the
+// yard is the chapter's small puzzle: push enough batteries into the
+// sockets of the box at its foot and the lift up works, for good. The
+// lifts' lanes are beside where the gallery lets out, and each of the first
+// three halls has its challenge's post inside another box.
+//
+// A chapter's puzzles can be played in any order. The lift up needs all but
+// one of their batteries (`ChapterNeed`), so one puzzle nobody can crack
+// never shuts the way on.
+
+enum StationKind { None, Level, Up, Down }
+struct Station
+{
+    StationKind kind;
+    int level = -1;
+    // The room the post and its lane are in: the gallery, the table or a box.
+    int room = -1;
+    int2 post;
+    int2 near;
+    int2 far;
+}
+// 0 to 4 are the gallery's posts by column, then the lift down, the lift up
+// and the challenge.
+const int MAX_STATIONS = 8;
+const int GALLERY = 0;
+// Ticks from both robots standing in a lane to going: the pads fill, then
+// the view closes in on where the lane leads. Stepping off while the pads
+// fill cancels; once they are full, nobody moves until the trip is made.
+const int CHARGE_TICKS = 18;
+const int DIVE_TICKS = 36;
+// From a solve back to the hall: the aperture closes, then holds a moment.
+const int RETURN_HOLD_TICKS = 60;
+const int RETURN_TICKS = CLOSE_TICKS + RETURN_HOLD_TICKS;
+const int ENDING_HOLD_TICKS = 150;
+// Lift doors stay shut this long on a new hall, with its chapter's name.
+const int HALL_NAME_TICKS = 60;
+// How long the view takes to come back out of a puzzle's model.
+const int EMERGE_TICKS = 45;
+
+// Where a chapter's puzzles start in the campaign; chapter CHAPTER_COUNT is
+// the end of it.
+int ChapterStart(int chapter)
+{
+    switch (chapter)
+    {
+        case 0: return 0;
+        case 1: return 5;
+        case 2: return 9;
+        case 3: return 14;
+        case 4: return 17;
+        case 5: return 19;
+    }
+    return chapter < 0 ? 0 : LEVEL_COUNT;
+}
+int ChapterSize(int chapter) { return ChapterStart(chapter + 1) - ChapterStart(chapter); }
+// The batteries the lift up of a chapter's hall takes: all but one of its
+// puzzles'. The last hall has no lift up.
+int ChapterNeed(int chapter)
+{
+    return chapter < 0 || chapter >= CHAPTER_COUNT - 1 ? 0 : Math.Max(1, ChapterSize(chapter) - 1);
+}
+// A chapter's challenge: a puzzle apart from the campaign, with a budget of
+// moves. -1 for a chapter without one.
+int ChapterChallenge(int chapter)
+{
+    return chapter >= 0 && chapter < CHALLENGE_COUNT ? LEVEL_COUNT + chapter : -1;
+}
+bool IsChallenge(int level) { return level >= LEVEL_COUNT && level < PUZZLE_COUNT; }
+
+bool Solved(int completed, int level)
+{
+    return level >= 0 && level < PUZZLE_COUNT && (completed & (1 << level)) != 0;
+}
+int ChapterSolved(int completed, int chapter)
+{
+    mut var count = 0;
+    for (var level = ChapterStart(chapter); level < ChapterStart(chapter + 1); level++)
+        if (Solved(completed, level)) count++;
+    return count;
+}
+bool ChapterDone(int completed, int chapter) { return ChapterSolved(completed, chapter) == ChapterSize(chapter); }
+bool CampaignDone(int completed)
+{
+    for (var chapter = 0; chapter < CHAPTER_COUNT; chapter++)
+        if (!ChapterDone(completed, chapter)) return false;
+    return true;
+}
+// `unlocked` has a bit for each hall whose lift up works. A chapter is open
+// once the lift up of every hall below it does.
+bool ChapterOpenFor(int unlocked, int chapter)
+{
+    if (chapter <= 0) return true;
+    if (chapter >= CHAPTER_COUNT) return false;
+    for (var earlier = 0; earlier < chapter; earlier++)
+        if ((unlocked & (1 << earlier)) == 0) return false;
+    return true;
+}
+// Saves from before lifts took batteries opened a chapter by solving every
+// puzzle below it: those lifts work.
+int UnlockedBySolving(int completed)
+{
+    mut var unlocked = 0;
+    for (var chapter = 0; chapter < CHAPTER_COUNT - 1 && ChapterDone(completed, chapter); chapter++) unlocked |= 1 << chapter;
+    return unlocked;
+}
+
+// A hall's map draws its chapter's puzzles' batteries first, in order:
+// each is there once its puzzle is solved.
+int HallBattery(int order) { return order; }
+
+// Where a puzzle's post stands on the gallery's north wall, by its order in
+// the chapter: five fill it, fewer spread along it.
+int PostColumn(int chapter, int order)
+{
+    var size = ChapterSize(chapter);
+    if (order < 0 || order >= size) return -1;
+    if (size >= 5) return order + 1;
+    if (size == 4) return order < 2 ? order + 1 : order + 2;
+    if (size == 3) return order * 2 + 1;
+    if (size == 2) return order * 2 + 2;
+    return 3;
+}
+Station Exhibit(StationKind kind, int room, int2 post, int2 near, int2 far)
+{
+    return Station { kind = kind, room = room, post = post, near = near, far = far };
+}
+// The lifts' and the challenge's posts and lanes, which each hall's map
+// leaves room for. Lifts stand on the table.
+Station HallSpot(int chapter, StationKind kind)
+{
+    if (kind == StationKind.Up) return Exhibit(kind, -1, int2(6, 1), int2(5, 1), int2(4, 1));
+    if (kind == StationKind.Down) return Exhibit(kind, -1, int2(0, 1), int2(1, 1), int2(2, 1));
+    // The challenge's box, room 2: a post on the wall across from its doorway.
+    mut var spot = Station { };
+    if (chapter == 0 || chapter == 1) spot = Exhibit(kind, 2, int2(2, 0), int2(2, 1), int2(2, 2));
+    else if (chapter == 2) spot = Exhibit(kind, 2, int2(2, 4), int2(2, 3), int2(2, 2));
+    if (spot.kind != StationKind.None) spot.level = ChapterChallenge(chapter);
+    return spot;
+}
+
+// The exhibits of a chapter's hall; a kind of None is nothing there.
+Station HallStation(int chapter, int index)
+{
+    if (index < 0 || index >= MAX_STATIONS || chapter < 0 || chapter >= CHAPTER_COUNT) return Station { };
+    if (index < 5)
+    {
+        var column = index + 1;
+        for (var order = 0; order < ChapterSize(chapter); order++)
+            if (PostColumn(chapter, order) == column)
+                return Station { kind = StationKind.Level, level = ChapterStart(chapter) + order, room = GALLERY,
+                    post = int2(column, 0), near = int2(column, 1), far = int2(column, 2) };
+        return Station { };
+    }
+    if (index == 5) return chapter > 0 ? HallSpot(chapter, StationKind.Down) : Station { };
+    if (index == 6) return chapter < CHAPTER_COUNT - 1 ? HallSpot(chapter, StationKind.Up) : Station { };
+    return ChapterChallenge(chapter) >= 0 ? HallSpot(chapter, StationKind.Level) : Station { };
+}
+int StationOf(int chapter, int level)
+{
+    for (var index = 0; index < MAX_STATIONS; index++)
+    {
+        var station = HallStation(chapter, index);
+        if (station.kind == StationKind.Level && station.level == level) return index;
+    }
+    return -1;
+}
+// Whether a cell is a pad of any exhibit of the hall.
+bool OnPad(int chapter, int room, int2 at)
+{
+    for (var index = 0; index < MAX_STATIONS; index++)
+    {
+        var station = HallStation(chapter, index);
+        if (station.kind != StationKind.None && station.room == room && (CellEqual(at, station.near) || CellEqual(at, station.far)))
+            return true;
+    }
+    return false;
+}
+
+// What the hall's helpers read of the Workshop. A helper is handed a copy of
+// a struct it reads, and the Workshop, with its history, is large.
+struct HallState
+{
+    bool inHall;
+    int hall;
+    int arrival;
+    int level;
+    int departStation = -1;
+    int departTick = -1;
+    int openedTick;
+    int introTicks;
+    int opened = -1;
+    int completed;
+    int unlocked;
+    bool playtest;
+    // Batteries in the hall's sockets, and how many its lift up takes.
+    int seated;
+    int need;
+}
+HallState HallOf(Workshop workshop)
+{
+    return HallState { inHall = workshop.inHall, hall = workshop.hall, arrival = workshop.arrival, level = workshop.level,
+        departStation = workshop.departStation, departTick = workshop.departTick, openedTick = workshop.openedTick,
+        introTicks = workshop.introTicks, opened = workshop.opened, completed = workshop.completed, unlocked = workshop.unlocked,
+        playtest = workshop.playtest, seated = workshop.inHall ? HallSeated(workshop.layout, workshop.puzzle) : 0,
+        need = ChapterNeed(workshop.hall) };
+}
+bool ChapterOpen(HallState workshop, int chapter)
+{
+    return chapter >= 0 && chapter < CHAPTER_COUNT && (workshop.playtest || ChapterOpenFor(workshop.unlocked, chapter));
+}
+bool LiftWorks(HallState workshop, int chapter)
+{
+    return workshop.playtest || (workshop.unlocked & (1 << chapter)) != 0;
+}
+// The highest chapter open, where a returning pair starts.
+int Frontier(HallState workshop)
+{
+    mut var chapter = 0;
+    while (chapter + 1 < CHAPTER_COUNT && ChapterOpen(workshop, chapter + 1)) chapter++;
+    return chapter;
+}
+// A challenge is open once anyone finds the way to its post.
+bool StationOpen(HallState workshop, int chapter, Station station)
+{
+    if (station.kind == StationKind.Down) return true;
+    if (station.kind == StationKind.Up) return LiftWorks(workshop, chapter);
+    if (station.kind != StationKind.Level) return false;
+    return IsChallenge(station.level) || ChapterOpen(workshop, chapter);
+}
+// The open exhibit whose lane both robots stand in, one on each pad; -1 for none.
+int StationUnder(HallState workshop, Puzzle puzzle)
+{
+    var a = puzzle.actors[0];
+    var b = puzzle.actors[1];
+    for (var index = 0; index < MAX_STATIONS; index++)
+    {
+        var station = HallStation(workshop.hall, index);
+        if (station.kind == StationKind.None || a.room != station.room || b.room != station.room ||
+            !StationOpen(workshop, workshop.hall, station)) continue;
+        if (CellEqual(a.position, station.near) && CellEqual(b.position, station.far) ||
+            CellEqual(a.position, station.far) && CellEqual(b.position, station.near)) return index;
+    }
+    return -1;
+}
+
+// The hall's sockets with a battery in them. A socket in a box counts only
+// while that box stands on its outline: it is wired to the lift from there.
+int HallSeated(LevelLayout layout, Puzzle puzzle)
+{
+    mut var seated = 0;
+    for (var room = -1; room < Math.Min(MAX_ROOMS, layout.roomCount); room++)
+    {
+        if (room >= 0 && layout.rooms[room].dock.x >= 0 && !BoxDocked(layout, puzzle, room)) continue;
+        var width = RoomWidth(layout, room);
+        for (var cell = 0; cell < width * RoomHeight(layout, room); cell++)
+        {
+            var at = int2(cell % width, cell / width);
+            if (TileAt(layout, room, at) == Tile.Target && CargoAt(layout, puzzle, room, at) >= 0) seated++;
+        }
+    }
+    return seated;
+}
+
+// The free cell of a room nearest one asked for: open floor, no pad, and
+// nothing standing on it.
+int2 FreeCellNear(LevelLayout layout, Puzzle puzzle, int chapter, int room, int2 wanted)
+{
+    mut var best = wanted;
+    mut var distance = 999;
+    for (var y = 0; y < RoomHeight(layout, room); y++)
+        for (var x = 0; x < RoomWidth(layout, room); x++)
+        {
+            var at = int2(x, y);
+            var tile = TileAt(layout, room, at);
+            if (tile == Tile.Wall || ShutterChannel(tile) >= 0 || PlateChannel(tile) >= 0 || OnPad(chapter, room, at) ||
+                ThingAt(layout, puzzle, room, at).kind >= 0) continue;
+            var away = (Math.Abs(x - wanted.x) + Math.Abs(y - wanted.y)) * 2 + (y > wanted.y ? 1 : 0);
+            if (away < distance)
+            {
+                distance = away;
+                best = at;
+            }
+        }
+    return best;
+}
+
+// Both robots where a hall is come into: 0 the gallery's middle, 1 below the
+// post of the puzzle just left, 2 by the lift down (up from below), 3 by
+// the lift up (down from above).
+void PlaceRobots(LevelLayout layout, mut Puzzle puzzle, int chapter, int arrival, int level)
+{
+    mut var room = GALLERY;
+    mut var first = int2(2, 3);
+    mut var second = int2(4, 3);
+    var station = arrival == 1 ? HallStation(chapter, StationOf(chapter, level)) :
+        arrival == 2 ? HallStation(chapter, 5) : arrival == 3 ? HallStation(chapter, 6) : Station { };
+    if (station.kind != StationKind.None)
+    {
+        room = station.room;
+        var away = station.far - station.near;
+        first = station.far + away;
+        second = first + int2(Math.Abs(away.y), Math.Abs(away.x));
+    }
+    for (var seat = 0; seat < 2; seat++) puzzle.actors[seat] = Traveler { room = -2, position = int2(-16), facing = 2 };
+    puzzle.actors[0] = Traveler { room = room, position = FreeCellNear(layout, puzzle, chapter, room, first), facing = 2 };
+    puzzle.actors[1] = Traveler { room = room, position = FreeCellNear(layout, puzzle, chapter, room, second), facing = 2 };
+    for (var seat = 0; seat < 2; seat++)
+    {
+        mut var actor = puzzle.actors[seat];
+        RebaseTrail(layout, puzzle, actor, actor.room, 0);
+        puzzle.actors[seat] = actor;
+    }
+}
+
+// A hall as it starts, from what is solved: each solved puzzle's battery
+// below its post, or, once its lift works, in the hall's sockets.
+void LoadHall(int chapter, int completed, int unlocked, int arrival, int level, mut LevelLayout layout, mut Puzzle puzzle)
+{
+    mut var draft = Draft { level = 100 + chapter };
+    draft.layout = LevelLayout { width = 7, height = 7 };
+    draft.puzzle = Puzzle { };
+    for (var room = 0; room < MAX_ROOMS; room++) draft.layout.rooms[room] = RoomLayout { };
+    for (var cell = 0; cell < 49; cell++) draft.layout.tiles[cell] = Tile.Wall;
+    HallMap(draft, chapter);
+    layout = draft.layout;
+    puzzle = draft.puzzle;
+    var size = ChapterSize(chapter);
+    Debug.Assert(layout.crateCount >= size, $"Hall {chapter + 1}: draws {layout.crateCount} batteries, one for each of its {size} puzzles first");
+    for (var order = 0; order < Math.Min(size, layout.crateCount); order++)
+        puzzle.crates[HallBattery(order)].active = Solved(completed, ChapterStart(chapter) + order);
+    if ((unlocked & (1 << chapter)) != 0)
+    {
+        // A working lift's sockets are full, of the solved puzzles' batteries.
+        mut var order = 0;
+        for (var room = -1; room < layout.roomCount; room++)
+        {
+            var width = RoomWidth(layout, room);
+            for (var cell = 0; cell < width * RoomHeight(layout, room); cell++)
+            {
+                var at = int2(cell % width, cell / width);
+                if (TileAt(layout, room, at) != Tile.Target || CargoAt(layout, puzzle, room, at) >= 0) continue;
+                while (order < size && !puzzle.crates[HallBattery(order)].active) order++;
+                if (order >= size) continue;
+                var crate = HallBattery(order);
+                puzzle.crates[crate].room = room;
+                puzzle.crates[crate].position = at;
+                order++;
+            }
+        }
+    }
+    PlaceRobots(layout, puzzle, chapter, arrival, level);
+}
+
+// A hall left keeps its arrangement for the rest of the match.
+void KeepHall(mut Workshop workshop)
+{
+    if (!workshop.inHall) return;
+    workshop.halls[workshop.hall] = workshop.puzzle;
+    workshop.hallKept |= 1 << workshop.hall;
+}
+
+void OpenHall(mut Workshop workshop, int chapter, int arrival, int tick)
+{
+    KeepHall(workshop);
+    workshop.inHall = true;
+    workshop.hall = Math.Clamp(chapter, 0, CHAPTER_COUNT - 1);
+    workshop.arrival = arrival;
+    LoadHall(workshop.hall, workshop.completed, workshop.unlocked, arrival, workshop.level, workshop.layout, workshop.puzzle);
+    if ((workshop.hallKept & (1 << workshop.hall)) != 0)
+    {
+        // As it was left, with any battery solved since where it starts.
+        mut var kept = workshop.halls[workshop.hall];
+        for (var order = 0; order < ChapterSize(workshop.hall); order++)
+        {
+            var crate = HallBattery(order);
+            if (kept.crates[crate].active || !Solved(workshop.completed, ChapterStart(workshop.hall) + order)) continue;
+            var start = workshop.puzzle.crates[crate];
+            kept.crates[crate] = Cargo { room = start.room, active = true,
+                position = FreeCellNear(workshop.layout, kept, workshop.hall, start.room, start.position) };
+        }
+        PlaceRobots(workshop.layout, kept, workshop.hall, arrival, workshop.level);
+        kept.moves = 0;
+        kept.solved = false;
+        workshop.puzzle = kept;
+    }
+    workshop.historyCount = 0;
+    workshop.solvedTick = -1;
+    workshop.openedTick = tick;
+    workshop.introTicks = arrival == 1 ? 0 : HALL_NAME_TICKS;
+    workshop.departStation = -1;
+    workshop.departTick = -1;
+    workshop.serial += 1;
+    workshop.initialized = true;
+}
+// Restarting a hall sets it out afresh from what is solved.
+void ResetHall(mut Workshop workshop, int tick)
+{
+    var chapter = workshop.hall;
+    workshop.hallKept &= ~(1 << chapter);
+    workshop.inHall = false;
+    OpenHall(workshop, chapter, 0, tick);
+    workshop.introTicks = 0;
+}
+
+// After a hall move: enough batteries in its sockets and the lift up works.
+void PowerLift(mut Workshop workshop)
+{
+    var need = ChapterNeed(workshop.hall);
+    if (need <= 0 || (workshop.unlocked & (1 << workshop.hall)) != 0 || HallSeated(workshop.layout, workshop.puzzle) < need) return;
+    workshop.unlocked |= 1 << workshop.hall;
+    workshop.opened = workshop.hall + 1;
+    Send(PuzzleCue { kind = 8, seat = -1 });
+}
+
+// Both in a lane fills its pads; full pads go. A partner leaving cancels it.
+void ContinueHall(mut Workshop workshop, int tick)
+{
+    if (!Together(workshop))
+    {
+        workshop.departStation = -1;
+        workshop.departTick = -1;
+        return;
+    }
+    if (workshop.departStation >= 0 && tick - workshop.departTick >= CHARGE_TICKS)
+    {
+        if (tick - workshop.departTick < CHARGE_TICKS + DIVE_TICKS) return;
+        var station = HallStation(workshop.hall, workshop.departStation);
+        if (station.kind == StationKind.Level)
+        {
+            OpenLevel(workshop, station.level, tick);
+            Send(PuzzleCue { kind = 4, seat = -1 });
+        }
+        else OpenHall(workshop, workshop.hall + (station.kind == StationKind.Up ? 1 : -1),
+            station.kind == StationKind.Up ? 2 : 3, tick);
+        return;
+    }
+    // Most ticks nobody stands on a pad: skip the copy the exhibits read.
+    var a = workshop.puzzle.actors[0];
+    var b = workshop.puzzle.actors[1];
+    var under = OnPad(workshop.hall, a.room, a.position) && OnPad(workshop.hall, b.room, b.position) ?
+        StationUnder(HallOf(workshop), workshop.puzzle) : -1;
+    if (under == workshop.departStation) return;
+    workshop.departStation = under;
+    workshop.departTick = under >= 0 ? tick : -1;
+    if (under >= 0) Send(PuzzleCue { kind = 7, seat = -1 });
+}
+// Where the pair is, for whatever changes when that does: a puzzle's number,
+// or below zero a hall.
+int Place(Workshop workshop) { return workshop.inHall ? -1 - workshop.hall : workshop.level; }
+
+// Whether the pads of the lane both stand in are full, so nothing moves.
+bool Departing(HallState workshop, int tick)
+{
+    return workshop.inHall && workshop.departStation >= 0 && tick - workshop.departTick >= CHARGE_TICKS;
+}
+// The same for match code, which can lend the Workshop rather than copy it.
+bool Leaving(mut Workshop workshop, int tick)
+{
+    return workshop.inHall && workshop.departStation >= 0 && tick - workshop.departTick >= CHARGE_TICKS;
+}
+
+// The halls, drawn as the puzzles are (levels.tide's legend), with no robots:
+// they are put where the pair comes in. Every hall's gallery is the same
+// box, clamped at the top of its table, its doorway south. Below it the
+// table's top row is the lifts' lanes either side of where the gallery lets
+// out; the rest is the yard. A hall draws its chapter's puzzles' batteries
+// first, in order: from where each starts, it can be pushed into the
+// sockets. The sockets of the yard's box run down from its doorway, so a
+// row pushed in fills them.
+void HallMap(mut Draft draft, int chapter)
+{
+    Room(draft, GALLERY, [
+        "#######  .......", "#.....#  .......", "#.....#  .......", "#.....#  .......",
+        "#.....#  .......", "#.....#  .......", "###.###  .......",
+    ]);
+    if (chapter == 0) BoxesHall(draft);
+    else if (chapter == 1) EachOtherHall(draft);
+    else if (chapter == 2) PowerHall(draft);
+    else if (chapter == 3) ItselfHall(draft);
+    else if (chapter == 4) HeldHall(draft);
+    else LastHall(draft);
+}
+
+// The socket box is clamped, so it takes whatever is pushed at its
+// doorway. The challenge's box is against the west edge.
+void BoxesHall(mut Draft draft)
+{
+    Room(draft, -1, [
+        "###*###  ...0...", "#.....#  .......", "#.....#  ..+.+..", "#.....#  .2.+...",
+        "#.....#  ..+.+..", "#..*..#  ...1...", "#######  .......",
+    ]);
+    Room(draft, 1, ["##o##  .....", "#.o.#  .....", "#.o.#  .....", "#.o.#  .....", "#####  ....."]);
+    Room(draft, 2, ["#####  .....", "#...#  .....", "#....  .....", "#...#  .....", "#####  ....."]);
+}
+// The socket box has to stay on its outline, walled in at its sides with
+// open floor below: it takes a battery only while the partner holds it
+// from there.
+void EachOtherHall(mut Draft draft)
+{
+    Room(draft, -1, [
+        "###*###  ...0...", "#.....#  .......", "#.....#  ..+.+..", "#.....#  ..+.+..",
+        "#.#1#.#  ...1...", "#.....#  .....2.", "#######  .......",
+    ]);
+    Room(draft, 1, ["##o##  .....", "#.o.#  .....", "#.o.#  .....", "#...#  .....", "#####  ....."]);
+    Room(draft, 2, ["#####  .....", "#...#  .....", "....#  .....", "#...#  .....", "#####  ....."]);
+}
+// A shutter guards the socket box's doorway: a robot on the plate, or a
+// spare battery, holds it open. The challenge's box is behind another
+// shutter, whose plate is out of the way of the batteries.
+void PowerHall(mut Draft draft)
+{
+    Room(draft, -1, [
+        "###*###  ...0...", "#.....#  .......", "#.....#  ..+++..", "#.....#  ..+.+..",
+        "#B.Aa.#  .......", "#..*b.#  .2.1...", "#######  .......",
+    ]);
+    Room(draft, 1, ["##o##  .....", "#.o.#  .....", "#.o.#  .....", "#.o.#  .....", "#####  ....."]);
+    Room(draft, 2, ["##.##  .....", "#...#  .....", "#...#  .....", "#...#  .....", "#####  ....."]);
+}
+// A box inside a box: the sockets are in the inner one, at the foot of the
+// outer one's doorway, and a battery goes on in when the next is pushed.
+void ItselfHall(mut Draft draft)
+{
+    Room(draft, -1, [
+        "###*###  ...0...", "#.....#  .......", "#.....#  ..+.+..", "#.....#  ...+...",
+        "#.....#  .......", "#..*..#  ...1...", "#######  .......",
+    ]);
+    Room(draft, 1, ["##.##  .....", "#...#  .....", "#...#  .....", "#...#  ..2..", "#####  ....."]);
+    Room(draft, 2, ["#o#  ...", "#o#  ...", "###  ..."]);
+}
+// The socket box is loose. On the clamp it never moves, and takes a battery.
+void HeldHall(mut Draft draft)
+{
+    Room(draft, -1, [
+        "###*###  ...0...", "#.....#  .......", "#.....#  ..+.+..", "#.....#  ..1....",
+        "#..*..#  .......", "#.....#  .......", "#######  .......",
+    ]);
+    Room(draft, 1, ["##o##  .....", "#...#  .....", "#...#  .....", "#...#  .....", "#####  ....."]);
+}
+// The last hall has no lift up; its one battery has nowhere it must go.
+void LastHall(mut Draft draft)
+{
+    Room(draft, -1, [
+        "###*###  ...0...", "#.....#  .......", "#.....#  .......", "#.....#  ...+...",
+        "#.....#  .......", "#.....#  .......", "#######  .......",
+    ]);
+}

@@ -1,5 +1,42 @@
 # Textures and how they are sampled
 
+## Texture dimensions (2026-10-18)
+
+The owner's request to clear conventional API gaps adds read-only
+`Texture.size: int2` in local CPU code and shaders. It is base-level physical
+pixels, with `(0, 0)` for missing/unloaded/invalid/disposed images. Packed names
+resolve on every query; C pixels use their dimensions without touching bytes;
+grid references use the existing bounded `see_grid` validation, including the
+16384-side limit and rejection of open axes. No pixels are captured, allocated
+or uploaded by a query. A stale grid reference keeps its existing bounded
+handle semantics rather than gaining lifetime ownership.
+
+Targets resolve their current managed state, selected color validity and size,
+so retained aliases follow resize/dispose. During a generated frame the runtime
+borrows `draw.target_pixels`, a host callback returning the actual extent under
+that frame's window/device. The standard host supplies
+`tide_platform_target_pixels`, reusing `target_extent` (rounding, scale, window
+factor and aspect-preserving device clamp). Its limit query is cached per GPU
+epoch. Without a callback target metadata is zero; custom offscreen hosts must
+provide the resolver for their own draw root. The thread-local borrowed callback
+is restored after a frame, including nested frames; no platform pointer is
+stored in simulation state or permanently registered across reload libraries.
+
+`texture_size` checks assets/Raw assets, grid and helper reads, attached-local
+shader sources, no pixel captures, retained target aliases, context restoration,
+resize/dispose and pack unload/reload. CPU ordering tests read through an
+immutable alias directly and through helper chains before a later argument
+resizes the same target. Metadata reads and
+their helper callers retain source order beside C/resource operations.
+Automatic grid foreach reads remain on the frame thread, including helper
+chains. Explicit parallel steps precompute the int2 before the loop; direct and
+transitive reads diagnose that requirement. No renderer callback runs on workers.
+Platform shader pass 23 checks matching CPU/vert/frag values, missing images,
+multiple size-only helper specializations,
+Raw metadata, numeric event forwarding and scaled window targets. Its shader
+uses zero texture bindings, and device recreation repeats the web checks.
+Final validation is recorded with the language completion pass.
+
 Contextual enum shorthand (2026-10-11): the compiler's fixed Sample argument
 checker supplies Filter/Wrap types to `.Point`, `.Trilinear` and `.Repeat`,
 including named arguments in written order. Texture/grid/cubemap Sample keep

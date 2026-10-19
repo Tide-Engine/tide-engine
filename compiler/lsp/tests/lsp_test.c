@@ -323,6 +323,40 @@ TIDE_TEST(lsp_complete_input_edges)
     TIDE_CHECK(offers(reply, "up"));
 }
 
+TIDE_TEST(lsp_borrowed_input_in_helpers)
+{
+    start();
+    TIDE_CHECK(offers(complete("input Keys { bool jump; }\nscene Main { }\nbool Pressed($) { return false; }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nasync void Read($) { }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nvoid Read(mut $) { }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nvoid Read(out $) { }\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\nextern bool Read($);\n"), "Keys"));
+    TIDE_CHECK(!offers(complete("input Keys { bool jump; }\nscene Main { }\naudio Read($) { }\n"), "Keys"));
+    const char *edges = complete("struct Buttons { bool fire; }\ninput Keys { Buttons buttons; }\nscene Main { }\n"
+                                 "bool Pressed(Keys input) { return input.buttons.fire.$; }\n");
+    TIDE_CHECK(offers(edges, "down") && offers(edges, "up"));
+    open_document("input Keys { bool jump; }\nscene Main { }\n"
+                  "bool Pressed(Keys con$trols) { return controls.jump.down; }\n"
+                  "system Check(Keys input) { if (Pressed(input)) Debug.Log(\"jump\"); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Read-only input borrowed from the caller"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Current and previous tick"));
+}
+
+TIDE_TEST(lsp_borrowed_asset_collections_in_helpers)
+{
+    start();
+    open_document("scene Main { }\nint Count(List<Clip> val$ues) { return values.count; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "List<Clip> values"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Read-only asset collection borrowed"));
+    TIDE_CHECK(offers(complete("scene Main { }\nint Count(List<Texture> values) { return values.$; }\n"), "count"));
+    TIDE_CHECK(offers(complete("scene Main { }\nint Count(Map<string, Clip> values) { return values.$; }\n"), "TryGet"));
+    const char *shader = complete("scene Main { }\nint Count(List<Texture> values) { return values.count; }\n"
+                                 "frag Shade(Vertex vertex, out Color color) { $ }\n");
+    TIDE_CHECK(!offers(shader, "Count"));
+}
+
 // Inside Sanitize, the input's fields are in scope; this machine's devices aren't.
 TIDE_TEST(lsp_sanitize)
 {
@@ -1429,6 +1463,27 @@ TIDE_TEST(lsp_draw_values)
 #undef VALUE_TYPES
 }
 
+TIDE_TEST(lsp_shaded_drawing_helpers)
+{
+    start();
+#define HELPER_SHADERS "scene Main { }\nstruct Look { Color tint; }\n" \
+    "singleton Light { float strength; }\n" \
+    "frag Shade(Vertex vertex, out Color color, Look look, Light light) { color = look.tint * light.strength; }\n"
+    open_document(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices, Light light)\n"
+                                "{ Draw.Mesh(vertices, indices, Shade, Look { tint = Color.red }); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *shaders = complete(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices, Light light)\n"
+                                                "{ Draw.Mesh(vertices, indices, $); }\n");
+    TIDE_CHECK(offers(shaders, "Shade"));
+    const char *values = complete(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices, Light light)\n"
+                                               "{ Draw.Mesh(vertices, indices, Shade, $); }\n");
+    TIDE_CHECK(offers(values, "Look") && has(values, "Look { $1 }"));
+    open_document(HELPER_SHADERS "void Show(List<Vertex> vertices, List<int> indices)\n"
+                                "{ Draw.Mesh(vertices, indices, Shade, Look { tint = Color.red }); }\n");
+    TIDE_CHECK(has(last_sent(), "must take exactly one 'Light' parameter"));
+#undef HELPER_SHADERS
+}
+
 // Frags and verts: code the GPU runs for a mesh's pixels and vertices, which a
 // view names last at Draw.Mesh. SHADER_TYPES is 31 lines; in SHADERS the vert
 // is on line 31, the frag on line 35 and the view's Draw.Mesh on line 43.
@@ -1588,8 +1643,8 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Mesh(models.crate, $")), "Shade"));
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Circle(float2(0, 0), 1, $")), "Shade"));
 #undef IN_VIEW
-    // ...nor in a function: the components they read are those of the entity a view runs for
-    TIDE_CHECK(!offers(complete(SHADER_CODE "void Paint(Models models)\n{\n"
+    // Functions can name them too, with their component/singleton inputs passed explicitly.
+    TIDE_CHECK(offers(complete(SHADER_CODE "void Paint(Models models, Box box, Sun sun)\n{\n"
                                             "    Draw.Mesh(models.crate, models.faces, float4x4.identity, $\n}\n"),
                        "Shade"));
     // ...and by its namespace
@@ -3480,6 +3535,8 @@ TIDE_TEST(lsp_scenes)
     const char *calls = complete("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main)\n{\n    Scene.$\n}\n");
     TIDE_CHECK(offers(calls, "Load"));
     TIDE_CHECK(offers(calls, "Unload"));
+    TIDE_CHECK(!offers(calls, "AddPlayer"));
+    TIDE_CHECK(!offers(calls, "RemovePlayer"));
     const char *fields = complete("scene Arena { int size; }\nscene Main { }\nsystem S(Arena arena)\n{\n    var x = arena.$\n}\n");
     TIDE_CHECK(offers(fields, "size"));
     TIDE_CHECK(!offers(fields, "tide_visibility"));
@@ -3488,6 +3545,14 @@ TIDE_TEST(lsp_scenes)
     const char *symbols = request("textDocument/documentSymbol");
     TIDE_CHECK(has(symbols, "\"name\":\"Arena\",\"detail\":\"scene\""));
     TIDE_CHECK(!has(symbols, "tide_players"));
+    open_document("scene Arena { }\nscene Main { }\n"
+                  "event(Spawned) Setup(with Main) { var group = Visibility.CreateGroup(Audience.None); "
+                  "Scene.Lo$ad(Arena, Visibility { group = group }); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *load = request("textDocument/hover");
+    TIDE_CHECK(has(load, "Scene.Load(scene, components...)"));
+    TIDE_CHECK(has(load, "before its `Spawned` handlers"));
+    TIDE_CHECK(!has(load, "SceneVisibility"));
 }
 
 // Snap: on entities and singletons in match code. A type's Interpolate isn't for calling.
@@ -4555,13 +4620,24 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     // Completion: `verified` where a local handler's event goes, then the match's events
     const char *trigger = complete(GAME_TYPES "event Hit { }\nlocal event Note { }\nlocal event($)\n");
     TIDE_CHECK(offers(trigger, "verified") && offers(trigger, "Hit") && offers(trigger, "Note") && offers(trigger, "Spawned"));
+    TIDE_CHECK(offers(trigger, "Shown") && offers(trigger, "Hidden"));
     TIDE_CHECK(has(trigger, "Once the server confirmed the tick that sent the event"));
     const char *confirmed = complete(GAME_TYPES "event Hit { }\nlocal event Note { }\nlocal event(verified $)\n");
     TIDE_CHECK(offers(confirmed, "Hit") && offers(confirmed, "Spawned") && offers(confirmed, "PlayerJoined"));
+    TIDE_CHECK(offers(confirmed, "Shown") && offers(confirmed, "Hidden"));
     TIDE_CHECK(!offers(confirmed, "Note") && !offers(confirmed, "Forgotten") && !offers(confirmed, "verified"));
     // The match hears nothing confirmed, and a command comes from one machine
     TIDE_CHECK(!offers(complete(GAME_TYPES "event Hit { }\nevent($)\n"), "verified"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Shown"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Hidden"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "command Bump { }\ncommand($)\n"), "verified"));
+
+    open_document(GAME_TYPES "local singleton Seen { int n; }\n"
+                  "local event(Sho$wn) Available(Body body, mut Seen seen) { seen.n += int(body.radius); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "local availability notification"));
+    open_document(GAME_TYPES "local singleton Seen { int n; }\n"
+                  "local event(Hid$den) Concealed(Body body, mut Seen seen) { seen.n += int(body.radius); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "last permitted state"));
 
     // The formatter keeps the trigger's word
     static const char messy[] = GAME_TYPES "event Hit { int damage; }\nlocal singleton Fx { int flashes; }\n"
@@ -4570,6 +4646,52 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     format_reply(messy);
     TIDE_CHECK(has(apply_reply(messy, NULL), "local event(verified Hit hit) SureHit(mut Fx fx) { fx.flashes += hit.damage; }\n"));
 }
+
+#define VISIBILITY_GAME \
+    "component Card { int value; }\n" \
+    "singleton Policies { VisibilityGroup group; }\n" \
+    "scene Main { }\n" \
+    "event(Spawned) Setup(with Main, mut Policies policies)\n" \
+    "{\n" \
+    "    policies.group = Visibility.CreateGroup(Audience.None);\n" \
+    "    Spawn(Card, Visibility { group = policies.group }, Owner);\n" \
+    "}\n"
+
+TIDE_TEST(lsp_visibility_policies)
+{
+    start();
+    const char *audience = complete(VISIBILITY_GAME "system Work() { Audience.$ }\n");
+    TIDE_CHECK(offers(audience, "All") && offers(audience, "None"));
+    TIDE_CHECK(offers(audience, "Only") && offers(audience, "From"));
+    TIDE_CHECK(has(audience, "PlayerID player") && has(audience, "List<PlayerID> players"));
+    const char *groups = complete(VISIBILITY_GAME "system Work() { Visibility.$ }\n");
+    TIDE_CHECK(offers(groups, "CreateGroup") && offers(groups, "Set") && offers(groups, "DestroyGroup"));
+    TIDE_CHECK(!offers(complete(VISIBILITY_GAME "view Work() { Visibility.$ }\n"), "CreateGroup"));
+    const char *members = complete(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.$ }\n");
+    TIDE_CHECK(offers(members, "group") && offers(members, "Set") && offers(members, "Reset"));
+    TIDE_CHECK(has(members, "Set<T>(Audience audience)") && has(members, "Set<T>(VisibilityGroup group)"));
+    TIDE_CHECK(!offers(members, "overrides"));
+    members = complete(VISIBILITY_GAME "system Work() { mut var audience = Audience.None; audience.$ }\n");
+    TIDE_CHECK(offers(members, "Add") && offers(members, "Remove") && offers(members, "Contains"));
+    TIDE_CHECK(!offers(members, "words") && !offers(members, "all"));
+    const char *types = complete(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.Set<$ }\n");
+    TIDE_CHECK(offers(types, "Card") && !offers(types, "Main") && !offers(types, "Visibility"));
+
+    open_document(VISIBILITY_GAME "system Work(Policies policies) { Visibility.Se$t(policies.group, Audience.All); }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Visibility.Set(VisibilityGroup group, Audience audience)"));
+    open_document(VISIBILITY_GAME "system Work() { var audience = Audience.A$ll; Debug.Assert(audience.Contains(default)); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Every player"));
+    open_document(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.Se$t<Card>(Audience.None); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "whole component"));
+    open_document(VISIBILITY_GAME "system Work() { Visibility.Set($); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "VisibilityGroup group, Audience audience"));
+    open_document(VISIBILITY_GAME "system Work(mut Visibility visibility) { visibility.Set<Card>($); }\n");
+    const char *signatures = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(signatures, "Set<T>(Audience audience)") && has(signatures, "Set<T>(VisibilityGroup group)"));
+}
+
+#undef VISIBILITY_GAME
 
 // An error nothing handles: carry on with the default, or pass it on.
 TIDE_TEST(lsp_quick_fixes_for_errors)
@@ -5402,8 +5524,8 @@ TIDE_TEST(lsp_enum_members_and_hovers)
                   "system S(mut Menu menu) { menu.page = Page.Opt$ions; }\n");
     TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":0,\"character\":19}"));
     // The engine's enums have no source to go to, and keep their names.
-    open_document("scene Arena { }\nscene Main { }\n"
-                  "event(Spawned) Setup(with Main) { Scene.Load(Arena, SceneVisibility.Priv$ate); }\n");
+    open_document("scene Arena { Prediction prediction; }\nscene Main { }\n"
+                  "event(Spawned) Setup(with Main) { Scene.Load(Arena { prediction = Prediction.Roll$back }); }\n");
     TIDE_CHECK(has(request("textDocument/definition"), "\"result\":null"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Members of the engine's enums can't be renamed."));
 
@@ -6057,6 +6179,15 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float"));
     snprintf(program, sizeof program, "%sColor Tile(Texture image, float2 uv)\n{\n    return image.$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Sample"));
+    TIDE_CHECK(offers(complete(program), "size"));
+    snprintf(program, sizeof program, "%sint2 Size(Texture image) { return image.size; }\nview V(Lamp lamp) { Debug.Log($$\"{Size(lamp.image)}\"); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { var extent = lamp.image.si$ze; Debug.Log($$\"{extent}\"); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "physical pixels"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.image.$ }\n", types);
+    TIDE_CHECK(offers(complete(program), "size"));
     snprintf(program, sizeof program, "%sColor Above(Cubemap sky, float3 way)\n{\n    return sky.$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Sample"));
     // ...and in one that does, which is the GPU's alone
@@ -7639,10 +7770,12 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *header = complete(QUERY_TYPES "system Hits(Body shot, $) { }\n");
     TIDE_CHECK(offers(header, "query"));
     TIDE_CHECK(has(header, "query (${1:Component} ${2:value}) ${3:entities}"));
-    // Views and local handlers take them too; the match's handlers don't yet
+    // Views and synchronous handlers take them too.
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "event Hit { int damage; }\nlocal event(Hit hit) Show($) { }\n"), "query"));
-    TIDE_CHECK(!offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
+    TIDE_CHECK(offers(complete(QUERY_TYPES "command Inspect { }\ncommand(Inspect value, PlayerID sender) InspectAll($) { }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "async event(Spawned) OnSpawn($) { }\n"), "query"));
 
     const char *bindings = complete(QUERY_TYPES "system Hits(Body shot, query ($) fighters) { }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "Fighter"));
@@ -7663,6 +7796,60 @@ TIDE_TEST(lsp_entity_query_members_and_headers)
     const char *braceless = complete(QUERY_TYPES "system Hits(query (Body body) fighters)\n{\n"
                                                "    foreach (var fighter in fighters) Debug.Log(fighter.$\n}\n");
     TIDE_CHECK(offers(braceless, "entity") && offers(braceless, "body"));
+}
+
+TIDE_TEST(lsp_entity_query_in_helpers)
+{
+    start();
+    TIDE_CHECK(offers(complete(QUERY_TYPES "float Total($) { return 0; }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "async void Total($) { }\n"), "query"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "extern float Total($);\n"), "query"));
+    const char *bindings = complete(QUERY_TYPES "float Total(query ($) bodies) { return 0; }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    const char *rows = complete(QUERY_TYPES "float Total(query (Body body) bodies)\n{\n"
+        "    foreach (var row in bodies) { var x = row.$; }\n    return 0;\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
+    open_document(QUERY_TYPES
+        "float Total(query (Body body) bodies)\n"
+        "{ mut var x = 0.0; foreach (var row in bodies) x += row.body.position.x; return x; }\n"
+        "system Count(mut Score score, query (Body other, with Fighter) bodies)\n"
+        "{ score.value = int(Total(bodies)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 32, ""), "query borrowed from the caller"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 32, ""), "extra bindings and filters"));
+    const char *args = complete(QUERY_TYPES
+        "float Total(query (Body body) values) { return 0; }\n"
+        "system Count(query (Body body) bodies) { Total($); }\n");
+    TIDE_CHECK(offers(args, "bodies"));
+}
+
+TIDE_TEST(lsp_entity_query_in_match_handlers)
+{
+    start();
+    const char *bindings = complete(QUERY_TYPES "event(Spawned) Inspect(query ($) bodies) { }\n");
+    TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
+    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    const char *rows = complete(QUERY_TYPES "command Inspect { }\n"
+        "command(Inspect value, PlayerID sender) InspectAll(query (Body body) bodies)\n{\n"
+        "    foreach (var row in bodies) Debug.Log(row.$);\n}\n");
+    TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
+    open_document(QUERY_TYPES
+        "event Scan { }\n"
+        "system ScanNow() { Send(Scan); }\n"
+        "event(Scan) Inspect(query (Body body) bodies)\n"
+        "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n"
+        "command InspectCommand { }\n"
+        "command(InspectCommand value, PlayerID sender) InspectAll(query (Body body) bodies)\n"
+        "{ foreach (var row in bodies) Debug.Assert(row.body.position.x >= 0); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *event_query = request_at("file:///test.tide", "textDocument/hover", 9, 40, "");
+    TIDE_CHECK(has(event_query, "current match at this handler's turn in the tick-end queue"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 78, ""),
+                   "current match at this handler's turn in the tick-end queue"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 13, ""),
+                   "Through its queries, it reads any entity's `Body`"));
+    TIDE_CHECK(count(request("textDocument/codeLens"), "Query: reads Body") == 2);
 }
 
 // A view's and a local handler's query: what's offered in it, and what the

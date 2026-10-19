@@ -35,7 +35,7 @@ ctest --preset debug -R '^tide_editor_' --output-on-failure
 package/project discovery, external updates, undo, save and recovery conflicts.
 `tide_editor_cli` exercises real CLI dispatch without a GPU. `tide_editor_ui`
 drives the native inspector using a standard input script and reads rendered PNG
-pixels; its `gpu` label requires a desktop OpenGL context. All tests operate on
+pixels; its `gpu` label requires a desktop GPU (Vulkan, or OpenGL 3.3). All tests operate on
 private folders in the configured build directory. Set `TIDE_HIDDEN=1` in agent
 shells; the app requires `--check`, `--frames`, `--capture` or `--script` there.
 

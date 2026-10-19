@@ -1,0 +1,100 @@
+// A freight court worked at two scales: the service operator holds the giant's
+// last shutter, then the grown cargo keeps the upper exit open for both. The
+// exit's low gatehouse turns the giant back: the big frame's end, entered from
+// the ground, is the way up whole.
+void BuildWeighbridge(mut Arena arena, mut Place place, mut Fold fold)
+{
+    BuildMapWeighbridge(arena, place);
+    Fill(arena, -14, 14, -1, 0, -14, 14, PANELS);
+    Fill(arena, -15, 15, 12.6, 13.6, -15, 15, CONCRETE, false, 2);
+    Fill(arena, -15, -14, 0, 12.6, -15, -13, PANELS);
+    Fill(arena, -15, -14, 0, 12.6, -4, 15, PANELS);
+    Fill(arena, -15, -14, 5.6, 12.6, -13, -4, PANELS);
+    Fill(arena, -15, -14.8, 0, 5.6, -13, -4, PANELS);
+    Fill(arena, 14, 15, 0, 12.6, -15, 15, PANELS);
+    Fill(arena, -15, -12, 0, 12.6, -15, -14, PANELS);
+    Fill(arena, -4, 15, 0, 12.6, -15, -14, PANELS);
+    // Over the arrival lift the wall goes on to the roof, flush with its lintel: its door rises into it.
+    Fill(arena, -12, -4, 4.4, 12.6, -15, -13.5, PANELS);
+    // Under the gallery, and either side of the lift out, the back wall runs down to the floor.
+    Fill(arena, -14, 14, -1, 4.4, 14, 15, PANELS);
+    Fill(arena, -14, 4, 4.4, 5.4, 14, 15, PANELS);
+    Fill(arena, 12, 14, 4.4, 5.4, 14, 15, PANELS);
+    // Receptive panels sit before the structural walls. Cover their narrow
+    // side/reverse faces so a distant shot cannot use a hidden upright edge.
+    var west = Fill(arena, -14.8, -14, 0, 5.6, -13, -4, WALLPAPER, true);
+    Fill(arena, -14.85, -13.97, 0, 5.6, -13.4, -13, PANELS);
+    Fill(arena, -14.85, -13.97, 0, 5.6, -4, -3.6, PANELS);
+    // Keep the arrival opening clear: the source wall is beside it, not over
+    // its shutter. Its normal end is on the west panel below the big frame.
+    PlaceEnd(fold, 0, west, float3(-14, 0, -11.5), float3(1, 0, 0));
+    PlaceEnd(fold, 1, west, float3(-14, 0, -8), float3(1, 0, 0), 2);
+    PaintFrame(arena, float3(-14, 0, -8), float3(1, 0, 0), 2);
+
+    // Broad loading terraces. No furniture offers a half step to a whole body.
+    Fill(arena, -14, -4, 0, 1.8, -3, 1, PANELS);
+    Fill(arena, -14, -4, 0, 3.6, 1, 5, PANELS);
+    Fill(arena, -14, -4, 0, 5.4, 5, 10, PANELS);
+    Fill(arena, -14, 14, 4.4, 5.4, 10, 14, PANELS);
+    // This opaque fourth riser spans the gallery, including its east side:
+    // otherwise the service operator can shoot diagonally around its edge.
+    // The giant can jump it; a small stack cannot shoot over.
+    Fill(arena, -14, 14, 5.4, 7.2, 9.8, 10.2, CONCRETE);
+    Fill(arena, -15, -12, 5.4, 12.6, 14, 15, PANELS);
+    Fill(arena, -6, 4, 5.4, 12.6, 14, 15, PANELS);
+    Fill(arena, -12, -6, 8.2, 12.6, 14, 15, PANELS);
+    Fill(arena, 12, 15, 5.4, 12.6, 14, 15, PANELS);
+    Fill(arena, 4, 12, 9.8, 12.6, 14, 15, PANELS);
+    Fill(arena, -12, -6, 5.4, 8.2, 13.99, 14.8, WALLPAPER, true);
+    Fill(arena, -12.4, -12, 5.4, 8.2, 13.96, 14.9, PANELS);
+    Fill(arena, -6, -5.6, 5.4, 8.2, 13.96, 14.9, PANELS);
+    Fill(arena, -12.4, -5.6, 5.4, 8.2, 14.8, 15.2, PANELS);
+    // The way out is a gatehouse with a header 2.4 m over the gallery: a giant doesn't fit under it. Whoever grew
+    // to get up here goes back down and in at the big end again, to come out of the other one whole.
+    Fill(arena, 3.6, 4, 5.4, 12.6, 11.4, 14, CONCRETE);
+    Fill(arena, 4, 14, 7.8, 12.6, 11, 11.4, CONCRETE);
+    // A grille along the terraces' east face, to the roof: nobody is boosted round the end of the shutter.
+    Fill(arena, -4, -3.8, 0, 12.2, 3.4, 10, RUST, false, 4);
+    PutLoose(arena, fold, float3(-6, .4, -9));
+    // A whole person works here; the giant cannot enter beneath the low roof.
+    Fill(arena, 4, 14, 2.8, 3.6, -5.6, 3, PANELS);
+    Fill(arena, 4, 14, 6, 6.6, -5.6, 3, PANELS, false, 2);
+    Fill(arena, 3.7, 4, 3.6, 6, -5.6, 3, RUST, false, 4);
+    Fill(arena, 4, 14, 3.6, 6, 3, 3.3, RUST, false, 4);
+    for (int rack = 0; rack < 3; rack++)
+    {
+        SetProp(arena, PropKind.Shelf, float3(10.8, 0, 5 + rack * 1.6), WEST);
+        Fill(arena, 12.4, 14, 0, 4.1, 4.4 + rack * 1.4, 5.6 + rack * 1.4, RUST);
+    }
+    SetProp(arena, PropKind.Desk, float3(11, 3.6, 0), SOUTH);
+    SetProp(arena, PropKind.Monitor, float3(11, 4.405, 0), SOUTH);
+    SetProp(arena, PropKind.Arrow, float3(-13.935, 1.2, -4.8), EAST, float3(2));
+    // Where the riser's cable goes up through the upper room's roof, a collar under it and over it
+    Fill(arena, 13.86, 14, 5.94, 6, -.1, .1, RUST);
+    Fill(arena, 13.86, 14, 6.6, 6.66, -.1, .1, RUST);
+    // Something runs along the top of the gallery's riser, once, as they arrive, and drops behind it.
+    SpawnBeast(arena, BeastKind.Crawler, float3(-3.5, 7.2, 10), EAST, 1.2, clip: "Run");
+    Fill(arena, -3, 3, 10.4, 12.6, 11.7, 12.1, RUST, false, 4);
+    Fill(arena, -3.2, 3.2, 10.2, 10.4, 11.7, 14, RUST);
+    Fill(arena, -3.2, -3, 10.4, 12.6, 12.1, 14, RUST);
+    Fill(arena, 3, 3.2, 10.4, 12.6, 12.1, 14, RUST);
+    LampGrid(place, float2(-14, -14), float2(4, 4), 7, 7);
+    OfficeLamps(place, 0, 6, 0, 6, 12.6, 61);
+    OfficeLamps(place, 5, 6, 2, 3, 6, 62, dead: 5);
+    HangLamp(place, 6, 6, 12.6, LampState.Stutter);
+    place.light = .7;
+    place.grade = float3(1.1, .84, .67);
+    MenuView(place, float3(10, 9.5, -11), .18, -.6);
+}
+
+system FreightCrawler(mut Beast beast, Arena arena, Place place)
+{
+    if (place.id != WEIGHBRIDGE || beast.chamber != arena.chamber || beast.kind != BeastKind.Crawler) return;
+    // Along the riser's top from past the shutter's end, where the lift sees it, quick, and over its far side
+    float run = Math.Saturate((arena.arrive - 3) / 2.2);
+    float dropping = Math.Max(arena.arrive - 5.2, 0);
+    beast.visible = arena.arrive > 3 && arena.arrive < 5.6;
+    beast.at = float3(-3.5 + run * 9.5, 7.2 - 9.8 * dropping * dropping * .5, 10 + Math.Min(dropping * 4, .8));
+    beast.yaw = dropping > 0 ? NORTH : EAST;
+    beast.time = Math.Max(arena.arrive - 3, 0);
+}

@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "name": "the_slot",
+  "function": "BuildMapTheSlot",
+  "lifts": [
+    {
+      "id": "stop",
+      "role": "stop",
+      "at": [
+        0,
+        0,
+        0
+      ],
+      "yaw": "NORTH",
+      "stay": 8
+    }
+  ],
+  "plates": [],
+  "machines": [
+    {
+      "id": "machine_0",
+      "from": [
+        0,
+        2.23,
+        7
+      ],
+      "to": [
+        0,
+        2.23,
+        7
+      ],
+      "size": [
+        0.15,
+        0.15,
+        0.15
+      ],
+      "need": [],
+      "any": false,
+      "speed": 1,
+      "lamp": [
+        0,
+        0,
+        0
+      ],
+      "along": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "anchors": {},
+  "wires": [],
+  "place_ids": [
+    7
+  ],
+  "external_geometry": true
+}

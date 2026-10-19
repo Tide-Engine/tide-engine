@@ -6,29 +6,14 @@ export const prerender = false;
 // Kept on the server: public search and client bundles contain no catalog.
 const prototypes = [
     {
-        id: 'elsewhere', title: 'Elsewhere', kind: 'Cozy exploration · Impossible gardens', players: '1–2 players',
-        description: 'Wander through brass windows into gardens suspended in clouds. Wake sunlight, water and wind, tend three living seeds, and bring them home to flower a shared conservatory. A first-person journey to explore alone or with a friend, then stay a little longer.',
-        image: '/prototypes/elsewhere/thumbnail.png',
+        id: 'gravewake', title: 'GRAVEWAKE', kind: 'First-person cooperative survival · Roguelike', players: '1–4 players',
+        description: 'Ashwick burned. Pick a Gunner, a Breacher or an Engineer, each a gun and three skills, and hold the fire in a hilly clearing against hordes of the dead in their thousands, drawn like a 1990s console game. After every wave take one of three stacking items: rounds that arc lightning, kills that burst, a drone at your shoulder and more. Up to four together.',
+        image: '/prototypes/gravewake/thumbnail.png',
     },
     {
-        id: 'copper-coil', title: 'Copper & Coil', kind: 'Cooperative puzzle · Logic circuits', players: '1–2 players',
-        description: 'Two maintenance robots restore a forgotten power station. Rewire AND, OR, XOR and NOT consoles, test every signal combination, and commission the bridge together. Six chambers with online, shared-keyboard and solo play.',
-        image: '/prototypes/copper-coil/thumbnail.png',
-    },
-    {
-        id: 'hot-swap', title: 'HOT SWAP', kind: 'Cooperative heist · Machine possession', players: '1–2 players',
-        description: 'Electrical creatures borrow cleaners, forklifts, cameras and door controllers to steal a captive storm. Rearrange the warehouse, split jobs with a friend and improvise an escape through maintenance ducts, loading shutters or the shipping conveyor.',
-        image: '/prototypes/hot-swap/thumbnail.png',
-    },
-    {
-        id: 'deadweight', title: 'DEADWEIGHT', kind: 'Cooperative salvage · Physics', players: '1–2 players',
-        description: 'Two workers extract enormous machinery from an abandoned pumping station. Rig winches, balance lifting lines, walk on your cargo and use a loose ballast as a counterweight. Three physical salvage jobs, online or on a shared keyboard.',
-        image: '/prototypes/deadweight/thumbnail.png',
-    },
-    {
-        id: 'swindle', title: 'SWINDLE', kind: 'Competitive heist · Bluff and steal', players: '1–4 players',
-        description: 'A very civil rooftop robbery. Steal a prism whose value grows while you carry it, dash into a friend to snatch it, and send a fake carrier running while you vanish. Cash out at the moving getaway. Ninety-second duels, free-for-all and two-versus-two, with bots, friend rooms and same-keyboard play.',
-        image: '/prototypes/swindle/thumbnail.png',
+        id: 'sunday-supper', title: 'SUNDAY SUPPER', kind: 'First-person cooperative horror · Story', players: '1–2 players',
+        description: 'Your car dies on a back road in Kansas, and the only light for miles is the Hale farm. Walt and Ruth take you in for the weekend. A first playable slice: the road, supper with the Hales, a night in their guest room and Saturday morning in the barn. Best with a friend.',
+        image: '/prototypes/sunday-supper/thumbnail.png',
     },
     {
         id: 'foldline', title: 'FOLDLINE', kind: 'First-person cooperative puzzle · Portals', players: '1–2 players',

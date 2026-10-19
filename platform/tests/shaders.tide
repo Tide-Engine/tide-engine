@@ -782,6 +782,13 @@ struct Turns
     quaternion eulerDegrees;
     float4 degreeLiterals;
     quaternion look;
+    quaternion fromTo;
+    quaternion fromToOpposite;
+    quaternion fromToNearOpposite;
+    quaternion fromToNone;
+    quaternion fromToBad;
+    quaternion fromToHuge;
+    quaternion fromToTiny;
     quaternion fromSmall;
     quaternion fromX;
     quaternion fromY;
@@ -817,10 +824,12 @@ struct Matrices
     float4x4 fromParts;
     float4x4 trs;
     float4x4 translate;
+    float4x4 scale;
     float4x4 perspective;
     float4x4 ortho;
     float4x4 constant;
-    float2x2 flat; // Of a matrix with no inverse: no numbers, so nothing compares it
+    float2x2 flat; // A singular inverse: compare its infinity signs through finite flags
+    float4 flatSigns;
 }
 
 struct Rest
@@ -843,6 +852,7 @@ struct Rest
     float4 turnedPowers;
     float4 corners;
     float4 edges;
+    float4 zeroEdges;
     float2 wrong;     // Bounds the wrong way around
     int2 wrongInts;
     float4 perlins;   // Noise in each size, with a seed and without
@@ -907,6 +917,13 @@ Turns TurnsOf(Given given)
     turns.eulerDegrees = quaternion.Euler(180deg, -45.5deg, 9e1deg);
     turns.degreeLiterals = float4(180deg, -45.5deg, 1_8e1deg, .5deg);
     turns.look = quaternion.LookRotation(Math.Forward(a), Math.Up(b));
+    turns.fromTo = quaternion.FromToRotation(from: given.point, to: given.angles);
+    turns.fromToOpposite = quaternion.FromToRotation(given.point, -given.point);
+    turns.fromToNearOpposite = quaternion.FromToRotation(float3(1, 0, 0), float3(-1, 0.0001, 0));
+    turns.fromToNone = quaternion.FromToRotation(float3(given.zero), given.point);
+    turns.fromToBad = quaternion.FromToRotation(float3(given.nan, 1, 0), given.point);
+    turns.fromToHuge = quaternion.FromToRotation(given.point * 1e30, given.angles * 1e30);
+    turns.fromToTiny = quaternion.FromToRotation(given.point * 1e-30, given.angles * 1e-30);
     // From a matrix, each of the four ways there are: by its trace, and by each axis it turns nearly half around
     turns.fromSmall = quaternion(float3x3(a));
     turns.fromX = quaternion(float3x3(quaternion.AxisAngle(float3(1, 0, 0), given.wide)));
@@ -968,6 +985,11 @@ bool SameTurns(Turns a, Turns b)
     same = same && CloseTurn(a.slerp, b.slerp) && CloseTurn(a.slerpNear, b.slerpNear) && CloseTurn(a.slerpFar, b.slerpFar);
     same = same && CloseTurn(a.nlerp, b.nlerp) && CloseTurn(a.nlerpFar, b.nlerpFar) && CloseTurn(a.nlerpNone, b.nlerpNone);
     same = same && CloseTurn(a.axisAngle, b.axisAngle) && CloseTurn(a.euler, b.euler) && CloseTurn(a.look, b.look);
+    same = same && CloseTurn(a.fromTo, b.fromTo) && CloseTurn(a.fromToOpposite, b.fromToOpposite)
+                && CloseTurn(a.fromToNearOpposite, b.fromToNearOpposite) && CloseTurn(a.fromToNone, b.fromToNone)
+                && CloseTurn(a.fromToBad, b.fromToBad) && CloseTurn(a.fromToHuge, b.fromToHuge) && CloseTurn(a.fromToTiny, b.fromToTiny);
+    same = same && Close3(Math.Rotate(a.fromTo, Math.Normalize(float3(1, -2, 0.5))), Math.Normalize(float3(0.3, -1.1, 2)))
+                && a.fromToNone.value.w == 1 && a.fromToBad.value.w == 1;
     same = same && CloseTurn(a.eulerScalar, b.eulerScalar) && CloseTurn(a.eulerNamed, b.eulerNamed) && CloseTurn(a.eulerInt, b.eulerInt);
     same = same && CloseTurn(a.eulerScalar, a.euler) && CloseTurn(a.eulerNamed, a.euler)
                 && CloseTurn(a.eulerInt, quaternion.Euler(float3(1, 2, 3)));
@@ -1003,11 +1025,14 @@ Matrices MatricesOf(Given given)
     made.fromParts = float4x4(made.fromTurn, given.point);
     made.trs = float4x4.TRS(given.point, given.other, given.angles);
     made.translate = float4x4.Translate(given.angles);
+    made.scale = float4x4.Scale(scale: float3(given.one, 0, -2));
     made.perspective = float4x4.PerspectiveFov(given.wide / 3, 1.5, given.amount, 100);
     made.ortho = float4x4.Ortho(8, given.wide, given.amount, 50);
     // Of constants, and of a matrix with no inverse: neither may be a shader a compiler refuses
     made.constant = Math.Inverse(float4x4.TRS(float3(1, 2, 3), quaternion.Euler(float3(0.5, 1, 1.5)), float3(2, 1, 0.5)));
     made.flat = Math.Inverse(float2x2(1, 2, 2, 4));
+    made.flatSigns = float4(made.flat.c0.x > 1e30 ? 1 : 0, made.flat.c0.y < -1e30 ? 1 : 0,
+                            made.flat.c1.x < -1e30 ? 1 : 0, made.flat.c1.y > 1e30 ? 1 : 0);
     return made;
 }
 
@@ -1021,7 +1046,8 @@ bool SameMatrices(Matrices a, Matrices b)
     same = same && Close3x3(a.transposed, b.transposed) && Close3(a.moved, b.moved) && Close3(a.turned, b.turned);
     same = same && Close3x3(a.fromTurn, b.fromTurn) && Close4x4(a.fromParts, b.fromParts) && Close4x4(a.trs, b.trs);
     same = same && Close4x4(a.translate, b.translate) && Close4x4(a.perspective, b.perspective) && Close4x4(a.ortho, b.ortho);
-    return same && Close4x4(a.constant, b.constant);
+    same = same && Close4x4(a.scale, b.scale) && Close3(Math.Transform(a.scale, float3(1)), float3(1, 0, -2));
+    return same && Close4x4(a.constant, b.constant) && Close4(a.flatSigns, b.flatSigns) && Close4(a.flatSigns, float4(1));
 }
 
 // What Math does on the GPU as tide/math.h does it, where a shader language's
@@ -1122,6 +1148,8 @@ Rest RestOf(Given given)
     // SmoothStep from an edge down to a lower one, and between two at the same place
     rest.edges = float4(Math.SmoothStep(1, 0, 0.25), Math.SmoothStep(two, two, 1), Math.SmoothStep(two, two, 3),
                         Math.SmoothStep(two, two, two));
+    rest.zeroEdges = float4(Math.SmoothStep(given.zero, given.zero, -1), Math.SmoothStep(given.zero, given.zero, 1),
+                            Math.SmoothStep(given.zero, -given.zero, -1), Math.SmoothStep(given.zero, -given.zero, 1));
     // Clamp with its bounds the wrong way around gives the lower one
     rest.wrong = float2(Math.Clamp(5.0, 3, 1), Math.Clamp(given.wide, two, 1));
     rest.wrongInts = int2(Math.Clamp(5, 3, 1), Math.Clamp(given.one, 7, given.one));
@@ -1168,7 +1196,7 @@ bool SameRest(Rest a, Rest b)
     same = same && Close4(a.powers, b.powers) && Close4(a.arcs, b.arcs) && Close4(a.units, b.units) && Close4(a.ends, b.ends);
     same = same && Close4(a.saturated, b.saturated) && Close2(a.capped, b.capped) && Close4(a.bad, b.bad) && Close4(a.bad2, b.bad2) && Close3(a.badVector, b.badVector);
     same = same && Close4(a.none, b.none) && Close4(a.turnedPowers, b.turnedPowers) && Close4(a.corners, b.corners);
-    same = same && Close4(a.edges, b.edges) && Close2(a.wrong, b.wrong);
+    same = same && Close4(a.edges, b.edges) && Close4(a.zeroEdges, b.zeroEdges) && Close4(a.zeroEdges, float4(0, 1, 1, 0)) && Close2(a.wrong, b.wrong);
     same = same && Close4(a.perlins, b.perlins) && Close4(a.simplexes, b.simplexes) && Close4(a.cells, b.cells) && Close4(a.steps, b.steps);
     same = same && Close4(a.chars, b.chars);
     return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
@@ -1753,7 +1781,12 @@ frag Shadowed(Vertex3 vertex, out Color color, Shadow shadow)
 // a depth is no argument a shader language hands on.
 float Sunlit(DepthTexture depth, float3 at)
 {
-    return depth.Compare(at.xy, at.z - 0.01);
+    // Varying loop counts must not turn a fixed-level comparison into an
+    // implicit-derivative instruction on WebGL's D3D11 translation path.
+    int count = at.x < 0.5 ? 2 : 4;
+    mut float sum = 0;
+    for (var i = 0; i < count; i++) sum += depth.Compare(at.xy, at.z - 0.01);
+    return sum / count;
 }
 
 // ...which another passes on
@@ -2516,6 +2549,21 @@ frag SpeckTint(Vertex vertex, out Color color, Speck speck, Strip strip)
     color = Color(speck.tint.r * strip.gain, speck.tint.g * strip.gain, speck.tint.b * strip.gain);
 }
 
+void RinseDraw(Texture source, RenderTarget destination, Rinse rinse)
+{
+    Draw.Blit(source, destination, Rinsed, rinse);
+}
+
+void PutDraw(List<Vertex> vertices, List<int> indices, Put put)
+{
+    Draw.Mesh(vertices, indices, PutAt, PutTint, put);
+}
+
+void SpeckDraw(List<Vertex> vertices, List<int> indices, List<Speck> specks, Strip strip)
+{
+    Draw.Instanced(vertices, indices, specks, SpeckAt, SpeckTint, strip);
+}
+
 [After(Outputs)]
 view Values(Art art, mut PerDraw given)
 {
@@ -2539,7 +2587,7 @@ view Values(Art art, mut PerDraw given)
     given.second.Clear(Color.black);
 
     // One frag, three blits, each with its own values: none of them is the others'
-    Draw.Blit(given.source.color, given.first, Rinsed, Rinse { tint = Color(1, 0.5, 0.25) });
+    RinseDraw(given.source.color, given.first, Rinse { tint = Color(1, 0.5, 0.25) });
     Draw.Blit(given.source.color, given.second, Rinsed, Rinse { tint = Color(0.25, 0.5, 0.5), steps = 2 });
     Draw.Blit(given.source.color, given.second, Blend.Add, Rinsed, Rinse { tint = Color(0, 0, 0.25) });
 
@@ -2551,7 +2599,7 @@ view Values(Art art, mut PerDraw given)
 
     // Meshes: the vert reads where, the frag which color, of the same values. Two values in a row are two
     // draws; the same values twice are one, of two instances, which add up here
-    Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(0, 64), tint = Color.red });
+    PutDraw(given.square, art.faces, Put { by = float2(0, 64), tint = Color.red });
     Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(32, 64), tint = Color.green, dim = true });
     var gray = Put { by = float2(64, 64), tint = Color(0.25, 0.25, 0.25) };
     Draw.Blend(Blend.Add)
@@ -2561,7 +2609,7 @@ view Values(Art art, mut PerDraw given)
     }
 
     // Instances: each one's own struct, and the draw's for all of them
-    Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 128), gain = 0.5 });
+    SpeckDraw(given.square, art.faces, given.dots, Strip { origin = float2(0, 128), gain = 0.5 });
     Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 160) });
 }
 
@@ -4373,6 +4421,57 @@ view Placing(Art art, mut Places places)
     {
         Draw.Mesh(places.card, art.faces, CardPushed); // Its transform puts it at 160: drawn at 192
     }
+}
+
+// Metadata-only size reads use uniforms, so no image is captured or sampled.
+local singleton ImageSizes
+{
+    Texture grid;
+    Texture missing;
+    Texture kept;
+    Texture window;
+    int2 expected;
+    int2 expectedWindow;
+    bool cpu;
+}
+event ImageDimensions { int2 size; }
+int2 ImageSize(Texture image) { return image.size; }
+int2 ForwardImageSize(Texture image) { return ImageSize(image); }
+int2 PayloadSize(ImageDimensions payload) { return payload.size; }
+ImageDimensions MeasuredDimensions(int2 size) { return ImageDimensions { size = size }; }
+vert SizedImage(mut Vertex vertex, ImageSizes sizes)
+{
+    if (ForwardImageSize(sizes.grid).x != 2) vertex.position += float2(1000);
+}
+frag ImageMetadata(Vertex vertex, out Color color, Texture source, ImageSizes sizes)
+{
+    var direct = ForwardImageSize(source);
+    var grid = ForwardImageSize(sizes.grid);
+    var missing = ForwardImageSize(sizes.missing);
+    var target = ForwardImageSize(sizes.kept);
+    var window = sizes.window.size;
+    var raw = heroNumbers.size;
+    var payload = MeasuredDimensions(heroColors.size);
+    bool good = sizes.cpu && direct.x == 8 && direct.y == 6 && grid.x == 2 && grid.y == 2
+        && missing.x == 0 && missing.y == 0 && raw.x == 8 && raw.y == 6
+        && target.x == sizes.expected.x && target.y == sizes.expected.y
+        && window.x == sizes.expectedWindow.x && window.y == sizes.expectedWindow.y
+        && PayloadSize(payload).x == 8 && PayloadSize(payload).y == 6;
+    color = good ? Color.green : Color.red;
+}
+view ImageMeasurements(Art art, mut ImageSizes sizes)
+{
+    if (art.targetPass != 23) return;
+    sizes.grid = art.four;
+    var target = ForwardImageSize(sizes.kept);
+    var window = sizes.window.size;
+    sizes.cpu = target.x == sizes.expected.x && target.y == sizes.expected.y
+        && window.x == sizes.expectedWindow.x && window.y == sizes.expectedWindow.y
+        && heroColors.size.x == 8 && heroColors.size.y == 6 && heroNumbers.size.x == 8;
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Clear(Color.black);
+    Draw.Mesh(art.targetQuad, art.faces, heroColors, SizedImage, ImageMetadata);
 }
 
 // shaders.c requests independent full-window checks after the existing grid.

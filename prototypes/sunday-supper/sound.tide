@@ -1,0 +1,147 @@
+// What this machine hears: the script's sounds where they happen, the
+// travellers' feet on gravel, boards and dirt, and the night going on
+// outside: crickets and wind out of doors, the house's hum and the fire in it.
+
+asset Clip knockClip = "sfx/knock.wav";
+asset Clip lockClip = "sfx/lock.wav";
+asset Clip unlockClip = "sfx/unlock.wav";
+asset Clip doorOpenClip = "sfx/door_open.wav";
+asset Clip doorShutClip = "sfx/door_shut.wav";
+asset Clip knobClip = "sfx/knob.wav";
+asset Clip creakClip = "sfx/creak.wav";
+asset Clip stepsClip = "sfx/steps.wav";
+asset Clip pickupClip = "sfx/pickup.wav";
+asset Clip hangupClip = "sfx/hangup.wav";
+asset Clip chimeClip = "sfx/chime.wav";
+asset Clip clinkClip = "sfx/clink.wav";
+asset Clip thudClip = "sfx/thud.wav";
+asset Clip rustleClip = "sfx/rustle.wav";
+asset Clip dogClip = "sfx/dog.wav";
+asset Clip coyoteClip = "sfx/coyote.wav";
+asset Clip roosterClip = "sfx/rooster.wav";
+asset Clip stingClip = "sfx/sting.wav";
+asset Clip owlClip = "sfx/owl.wav";
+asset List<Clip> gravelSteps = "sfx/step_gravel*.wav";
+asset List<Clip> woodSteps = "sfx/step_wood*.wav";
+asset List<Clip> dirtSteps = "sfx/step_dirt*.wav";
+asset Clip cricketsClip = "sfx/crickets.wav";
+asset Clip windClip = "sfx/wind.wav";
+asset Clip roomClip = "sfx/room.wav";
+asset Clip fireClip = "sfx/fire.wav";
+asset Clip tickClip = "sfx/tick.wav";
+
+local singleton Ears
+{
+    Sound crickets;
+    Sound wind;
+    Sound room;
+    Sound fire;
+    Sound tick;
+    float[2] stepped;      // Metres walked at each traveller's last footfall
+    int step;
+    Random random;
+    float owl = 40;        // Seconds until the owl
+}
+
+local event(Cue cue) HearCue(mut Ears ears)
+{
+    Clip clip = Sfx(cue.sound) switch
+    {
+        Sfx.Knock => knockClip,
+        Sfx.Unlock => unlockClip,
+        Sfx.Lock => lockClip,
+        Sfx.DoorOpen => doorOpenClip,
+        Sfx.DoorShut => doorShutClip,
+        Sfx.Hangup => hangupClip,
+        Sfx.Chime => chimeClip,
+        Sfx.Steps => stepsClip,
+        Sfx.Knob => knobClip,
+        Sfx.Sting => stingClip,
+        Sfx.Dog => dogClip,
+        Sfx.Coyote => coyoteClip,
+        Sfx.Owl => owlClip,
+        Sfx.Clink => clinkClip,
+        Sfx.Thud => thudClip,
+        Sfx.Rustle => rustleClip,
+        Sfx.Rooster => roosterClip,
+        Sfx.Creak => creakClip,
+        Sfx.Pickup => pickupClip,
+        _ => knockClip,
+    };
+    if (Sfx(cue.sound) == Sfx.Sting) Audio.Play(clip, 0.9);
+    else Audio.Play(clip, cue.at, 1.0, ears.random.NextFloat(0.95, 1.05));
+}
+
+// Footfalls: each traveller's, a step every so far walked, on whatever is underfoot.
+[Stage(Layers.Hud, 10)]
+view Feet(mut Ears ears, Me me, query (Walker walker) walkers, Party party)
+{
+    foreach (var row in walkers)
+    {
+        var w = row.walker;
+        if (!Present(w, party)) continue;
+        var stride = Math.Length(w.velocity.xz) > 2.6 ? 1.5 : 1.15;
+        if (w.walked - ears.stepped[w.seat] < stride)
+        {
+            if (w.walked < ears.stepped[w.seat]) ears.stepped[w.seat] = w.walked;
+            continue;
+        }
+        ears.stepped[w.seat] = w.walked;
+        if (!w.grounded) continue;
+        ears.step += 1;
+        var ground = Underfoot(w.feet);
+        Clip clip = ground == 0 ? gravelSteps[ears.step % gravelSteps.count] : ground == 1 ? woodSteps[ears.step % woodSteps.count] : dirtSteps[ears.step % dirtSteps.count];
+        var mine = w.seat == Math.Max(me.seat, 0);
+        if (mine) Audio.Play(clip, 0.55, ears.random.NextFloat(0.9, 1.1));
+        else Audio.Play(clip, w.feet, 0.8, ears.random.NextFloat(0.9, 1.1));
+    }
+}
+
+// What's underfoot at a place: 0 gravel, 1 boards, 2 dirt and grass.
+int Underfoot(float3 at)
+{
+    if (at.y > 0.3) return 1;
+    if (Math.Abs(at.x) < 2.7) return 0;
+    if (at.x > 2.6 && at.x < 24.4 && at.z > 37.6 && at.z < 41.4) return 0;
+    return 2;
+}
+
+// The night outside and the house inside, by where the eye is and the hour.
+[Stage(Layers.Hud, 11)]
+view Ambience(mut Ears ears, Me me, Story story)
+{
+    var inside = InsideAt(me.eye);
+    var night = 1 - Math.Saturate((story.daylight - 0.3) * 2.5);
+    var out = 1 - inside;
+    ears.crickets.clip = cricketsClip;
+    ears.crickets.loop = true;
+    ears.crickets.volume = (0.18 + 0.5 * out) * night * (1 - story.fade * 0.6);
+    ears.crickets.playing = true;
+    ears.wind.clip = windClip;
+    ears.wind.loop = true;
+    ears.wind.volume = 0.12 + 0.35 * out;
+    ears.wind.playing = true;
+    ears.room.clip = roomClip;
+    ears.room.loop = true;
+    ears.room.volume = 0.35 * inside;
+    ears.room.playing = true;
+    var hearth = House(4.0, F1 + 0.5, 0.6);
+    ears.fire.clip = fireClip;
+    ears.fire.loop = true;
+    ears.fire.spatial = true;
+    ears.fire.position = hearth;
+    ears.fire.volume = (story.lights & LAMP_FIRE) != 0 ? 0.8 : 0.0;
+    ears.fire.playing = true;
+    ears.tick.clip = tickClip;
+    ears.tick.loop = true;
+    ears.tick.spatial = true;
+    ears.tick.position = House(0.12, F1 + 2.2, 8.3);
+    ears.tick.volume = 0.7;
+    ears.tick.playing = true;
+    ears.owl -= me.dt;
+    if (ears.owl < 0 && night > 0.5)
+    {
+        ears.owl = ears.random.NextFloat(45, 90);
+        Audio.Play(owlClip, float3(me.eye.x + ears.random.NextFloat(-40, 40), 8, me.eye.z + ears.random.NextFloat(-40, 40)), 0.7, 1.0);
+    }
+}

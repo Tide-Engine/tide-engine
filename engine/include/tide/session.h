@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "tide/events.h"
+#include "tide/entity.h"
 #include "tide/jobs.h"
 #include "tide/net.h"
 #include "tide/player.h"
@@ -25,6 +26,14 @@
 // world again: the server sends the hashes of its world's pages, and then the
 // pages the client's own world lacks (tide/delta.h).
 //
+// With client_state callbacks, each player instead receives its permitted
+// entity/component projection and filtered inputs. Every tick verifies that
+// projection. A mismatch requests the exact historical endpoint, compressed
+// against its last verified canonical bytes; adopting it replays prediction
+// without counting an exceptional resync. Command payloads stay on the server
+// in this mode, and permitted authoritative lifecycle journals carry their
+// actual event-time state to local listeners.
+//
 // A player joining gets the server's world, whole, then plays on from there,
 // and a cookie: coming back with it, the player gets their PlayerID back. If
 // the server still has them connected, the new connection takes over with no
@@ -41,6 +50,9 @@
 // cookies' digests, getting only what their last worlds lack of its world.
 // The server's player leaves the match. Nothing else
 // changes hands: what the server kept of its own, the others never had.
+// This handover is disabled for games with client_state: a permitted partial
+// world cannot become an authoritative server, and private state is never sent
+// to make it eligible. Source-code reload uses tide_session_migrate separately.
 //
 // A match whose last scene unloads, when Main is local, ends: the server stops
 // ticking and tells every player, who go offline with TIDE_DISCONNECT_ENDED.
@@ -73,7 +85,8 @@ typedef struct tide_game {
     float max_rewind; // Finite seconds of collider history; 0 disables it.
     tide_view_time (*view_time)(const void *input);
     void (*set_view_time)(void *input, tide_view_time time);
-    uint64_t hash;            // Tells builds apart: servers only take players of the same game
+    uint64_t hash;            // Generated layout identity, also used by hot reload.
+    uint8_t simulation[32];   // Simulation compatibility; all zero for handwritten game tables using hash.
     uint32_t world_size;      // sizeof(tide_world): a world starts as that many zeros
     uint32_t input_size;      // sizeof(tide_input), or 0
     uint32_t max_input_bytes; // The most write_input or write_input_delta writes
@@ -90,15 +103,41 @@ typedef struct tide_game {
     // the same as from `tick`. NULL: the game has no local handlers of the
     // match's events, and nothing is recorded for it.
     void (*tick_events)(void *world, const tide_jobs *jobs, tide_event_log *events);
-    // Records into `events` a `Spawned` for each entity `world` has that `had`
-    // doesn't (NULL: every one), for the local handlers that hear the match's:
-    // the entities a world starts with, or arrives with, were spawned in no
-    // tick this machine ran, and are heard as `world` has them, in its
-    // order. An entity is one `had` has by its handle. NULL: no local handler
-    // hears the match's `Spawned`. A host that ticks a world itself calls it
-    // once the world has started, and hands the log to the game's local state
-    // as it does a tick's.
+    // Records Shown for each listener whose required component state is
+    // available in world but not had (NULL: all of it), in world order.
+    // Joining or receiving an existing entity never invents Spawned. A host
+    // ticking a world itself calls this once after starting and delivers the
+    // log to local state as it does a tick's. NULL: no Shown listeners.
     void (*hear_arrived)(const void *world, const void *had, tide_event_log *events);
+    // Optional client projections. Equal permitted values encode identical
+    // bytes, independently of heap offsets and archetype row placement. Bytes
+    // belong to the caller (free). Loading installs an independently owned,
+    // partial simulation world; no hidden values may be encoded or hashed.
+    // These three callbacks are supplied together, or all NULL for ordinary
+    // deterministic whole-world networking.
+    uint8_t *(*client_state)(const void *world, tide_player_id recipient, uint32_t *size);
+    bool (*load_client_state)(void *world, const uint8_t *data, uint32_t size);
+    uint64_t (*client_hash)(const void *world, tide_player_id recipient);
+    // Restrict a copied slot input before sending it to this recipient.
+    void (*filter_client_input)(const void *world, tide_player_id recipient, uint32_t slot, void *input);
+    // The same for all max_players + 1 contiguous input_size slots at once;
+    // the server slot is last. Preferred over the single-slot callback when
+    // supplied, so visibility policy can inspect entities once per recipient.
+    void (*filter_client_inputs)(const void *world, tide_player_id recipient, void *all_slots);
+    // Entities permitted in had that actually died, rather than becoming
+    // hidden. NULL out/zero capacity asks for the count.
+    uint32_t (*client_destroyed)(const void *world, const void *had, tide_player_id recipient,
+                                 tide_entity *out, uint32_t capacity);
+    // Local availability transitions, with permitted genuine destructions
+    // distinguished from concealment. Never changes match simulation.
+    void (*hear_visibility)(const void *world, const void *had, const tide_entity *destroyed,
+                            uint32_t destroyed_count, tide_event_log *events);
+    // One authoritative tick, recording permitted genuine lifecycle events
+    // into a max_players-sized array at their actual event-time state.
+    void (*tick_client_events)(void *world, const tide_jobs *jobs, tide_event_log *per_player);
+    // Check received record kinds, typed payload spans and listener masks
+    // before local handlers can interpret them. Outputs the log's build/count.
+    bool (*check_client_events)(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count);
     // A snapshot: `to` becomes `from`, sharing its pages until one of them
     // changes. The hash covers what's in use, and only reads what changed since
     // it was last taken.
@@ -195,7 +234,7 @@ typedef struct tide_game {
     uint32_t tick_rate;  // tickRate: what servers run its matches at, unless their desc says
     const char *title;   // title: the window's, unless the host says
     const char *app_id;  // appId: stable identity for this game's local saves
-    bool host_migration; // hostMigration: when a room's server goes, another machine takes the match over
+    bool host_migration; // Whole-world games only: another machine can take over a room's match.
     uint8_t prediction;  // prediction: how its clients keep up (tide_prediction)
     bool stats;          // stats: the host shows its stats overlay, though nothing else asked it to
     bool debug_views;    // debugViews: the host shows its debug views over the game when asked (tide/host.h)
@@ -211,6 +250,8 @@ typedef struct tide_game {
 // the way worlds go, paced under the input traffic, and lands in a later
 // tick: the server sends its bytes to every player first, and puts it in a
 // tick once they all have them, so no tick waits for a transfer.
+// With client_state, uploads stay on the server and execute once complete;
+// only permitted outcomes and sequence acknowledgements reach each client.
 #define TIDE_COMMAND_BYTES 1024u
 #define TIDE_COMMAND_LIMIT (4u << 20)
 #define TIDE_COMMAND_PENDING 32u // Pending per player, in each channel
@@ -297,6 +338,7 @@ typedef struct tide_server_desc {
     // Host migration: the digests of the players' cookies (as many as the game
     // takes players, 0 for none), which they come back with. NULL: none.
     const uint64_t *digests;
+    const uint8_t (*identities)[32]; // Trusted same-release recovery metadata, or NULL.
     bool closed;                 // Takes no one new from the start, only players coming back
     const tide_jobs *jobs;       // Threads to run ticks on (tide/jobs.h), or NULL: this one
     // 64 bits nobody could guess, from the system, for the seed of the match
@@ -307,6 +349,11 @@ typedef struct tide_server_desc {
     // With no entropy, the seed of the match it starts (Time.seed): its low 31
     // bits. 0 unless the host picked one.
     uint32_t seed;
+    // Optional admission identity, supplied by a trusted host, outside ticks.
+    // False refuses this peer. A nonzero 32-byte identity binds reconnects to
+    // that account; zero is anonymous. Never sent, snapshotted or hashed.
+    void *identity_user;
+    bool (*identity)(void *user, uint32_t transport, tide_address peer, uint8_t identity[32]);
 } tide_server_desc;
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
@@ -317,6 +364,20 @@ void tide_server_update(tide_server *s, double now);
 const void *tide_server_world(const tide_server *s);
 uint32_t tide_server_tick(const tide_server *s); // Ticks run so far
 uint32_t tide_server_player_count(const tide_server *s);
+// Host recovery metadata, separate from deterministic world bytes. Save together
+// with the world at an update boundary; transport connections are never persisted.
+typedef struct tide_server_recovery {
+    tide_player_set players, leaving;
+    uint64_t digests[TIDE_PLAYERS_MOST];
+    uint8_t identities[TIDE_PLAYERS_MOST][32];
+    uint32_t tick_rate;
+    uint32_t seed;
+    float dt;
+    bool closed, started;
+} tide_server_recovery;
+void tide_server_recovery_state(const tide_server *s, tide_server_recovery *out);
+// Trusted host metadata; false (and zero output) for anonymous/unknown players.
+bool tide_server_player_identity(const tide_server *s, tide_player_id player, uint8_t identity[32]);
 // Sends `player` away: they go offline with TIDE_DISCONNECT_KICKED and
 // `message` (NULL for none), and PlayerLeft follows at the end of the next
 // tick. A goodbye can be lost: one who didn't hear it is told again whenever
@@ -354,7 +415,7 @@ typedef struct tide_client_desc {
     // changed hands (the game's tide_world, copied): the server only sends what
     // it lacks. NULL: the whole world comes. It's a world this machine had, so
     // its entities aren't new to it: with `events`, only the entities the
-    // match's world has beyond it are heard as spawned when that world comes.
+    // match's world makes newly available are heard as Shown when it comes.
     const void *base;
     // The real time, in nanoseconds, to measure what the game's ticks cost:
     // a client predicting (TIDE_PREDICTION_ROLLBACK) keeps running them again
@@ -378,7 +439,7 @@ typedef struct tide_client_desc {
     // server confirmed the tick. The host hands it to the game's local state
     // before each frame (tide_local_events). NULL: nobody listens. The
     // entities a world it's sent has that this machine didn't have are heard
-    // as spawned when the world comes (tide_game.hear_arrived): all of its
+    // as Shown when the world comes (tide_game.hear_arrived): all of its
     // first world's, but for `base`'s, and of one sent again, those its own
     // world at that tick lacked, and for the handlers that hear confirmed
     // ticks, those its last confirmed world lacked.
@@ -558,6 +619,8 @@ void tide_session_leave(tide_session *s);
 // A session that couldn't start, or whose network gave out: leaves the match,
 // if it's in one, and reports Disconnected with the reason.
 void tide_session_fail(tide_session *s, tide_disconnect_reason reason);
+// The same, with bounded user-facing context in Disconnected.message.
+void tide_session_fail_message(tide_session *s, tide_disconnect_reason reason, const char *message);
 // Once per frame, with the host's time in seconds. When this machine runs the
 // server, a long gap since the last update is a pause (a breakpoint, a
 // browser that froze the page): the match goes on from where it stopped.

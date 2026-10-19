@@ -1,0 +1,16 @@
+// Scalar Clip values need no asset declaration or playing voice.
+scene Main { }
+
+local singleton Saved { Clip clip; }
+struct Choice { Clip clip; }
+
+Clip Keep(Clip clip) { return clip; }
+Clip Pick(Choice choice) { return choice.clip; }
+
+view Save(mut Saved saved)
+{
+    Clip typed = default;
+    var inferred = Clip.none;
+    saved.clip = Keep(typed);
+    saved.clip = Keep(Pick(Choice { clip = inferred }));
+}

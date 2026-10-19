@@ -34,7 +34,7 @@ system EndRound(Round round)
 
 The sender isn't recorded. When handlers need it, put it in a field: the entity that sends is often not the one that matters, like a bomb sending a `Hit` for whoever threw it.
 
-An event is a value, so a local can hold one, and a handler can send its event on: `other.Send(hit)`. Fields and parameters can't hold events. The engine's own events, below, are only the engine's to send.
+An event is a value, so a local can hold one, a handler can send its event on (`other.Send(hit)`), and ordinary functions and methods can take or return the whole payload (`int Damage(Hit hit) { return hit.damage; }`). Factories can return `Hit { damage = amount }`; the caller chooses whether to send it. Command payloads follow the same value rules. Passing one grants no world or sending access and supplies no authenticated sender; handlers pass that separately when needed. Payloads cannot be stored fields. Local handlers still receive only the match data their event journal captures. The engine's own events, below, are only the engine's to send.
 
 A [function](../language/functions.md#sending-and-spawning) can send too, for the code that calls it:
 
@@ -51,7 +51,7 @@ A view that calls it gets an error, as a view can't send the match's events.
 
 ## Handling
 
-A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's. A match handler takes no [query](./systems.md#another-set-of-entities) yet; a [local handler](#other-entities) does.
+A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's, including read-only [queries](./systems.md#another-set-of-entities) in synchronous handlers.
 
 ```csharp
 // Health and this come from the entity the Hit was sent to.
@@ -72,6 +72,26 @@ event(Hit hit) CountHits(mut Stats stats)
 - A handler that takes no components runs once per event, whether it was sent to an entity or not, and has no `this`.
 - A handler that needs an entity needs every `Send` of its event to name one. The compiler checks: `Send(Hit { ... })` is an error when a `Hit` handler takes components, and says to write `entity.Send(...)`.
 - A handler that doesn't read the event can leave its name out: `event(Spawned) Arm(...)`.
+
+### Querying other entities
+
+A match handler can inspect another set of entities with the same query syntax as a system:
+
+```csharp
+event(RoundOver) ResetPlayers(query (with Player) players)
+{
+    foreach (var player in players)
+        player.entity.Send(Reset {});
+}
+```
+
+This runs once per `RoundOver`. The query selects the players to visit; it does not require the event to target a player. Ordinary component parameters still select the event's target.
+
+Each `foreach` reads the current match at the handler's turn in the tick-end queue. Earlier handlers' completed writes and structural changes already applied are visible. Sends, spawns, adds, removes and destroys recorded by the handler remain deferred, including changes recorded inside a query loop. `Spawned` queries include the new entity; `Destroyed` queries include the entity before it goes.
+
+Rows are read-only. To act on an entity, send it an event or use an explicit `mut World` with the existing `Set` rules. A `Set` is visible to later query reads. The handler's own `mut` component parameter retains its usual copy/write-back behavior: a query reads its stored value until that handler finishes, and following handlers see the written-back value.
+
+Async handlers and tasks cannot take queries yet. Local handlers' [recorded query rows](#other-entities) retain their own timing rules.
 
 ## When they run
 
@@ -97,6 +117,8 @@ The engine sends these. They cost nothing where no handler takes them. The match
 | `Destroyed` | The entity | It's destroyed, while its components can still be read |
 | `PlayerJoined` | The world | A player joins, with their `PlayerID` in `player` |
 | `PlayerLeft` | The world | A player leaves, with their `PlayerID` in `player` |
+| `Shown` | The entity, on this machine | The entity and the components a local handler needs become available |
+| `Hidden` | The entity, on this machine | The entity or components a local handler needs become unavailable |
 | `Forgotten` | The entity, on this machine | Its [local fields](./local-state.md#letting-go) go: a local event, for local handlers |
 
 ```csharp
@@ -316,7 +338,7 @@ local event(Spawned) CrateLanded(Body body, with Crate)
 
 - **`Spawned` and `Destroyed` are sent in both worlds.** A local handler of one hears the match's when it takes something of the match, a component, a filter or a singleton, or when it's `verified`. One that takes only local state hears this machine's local entities'. One that takes a local component and something of the match is an error.
 - **A machine hears what's sent from the tick it joins in**: its own `PlayerJoined`, and every later one. Nothing is made up for what happened before: the hits, the joins and the entities that came and went.
-- **`Spawned` is the exception: a machine hears it once for every entity it comes to have.** The entities that are in the world a machine is sent, those the match was set up with as it started among them, are new to that machine, so their `Spawned` is heard as the world arrives, with their components as they are by then. That makes it the place to set up what a machine keeps for an entity, like its [local fields](./local-state.md#local-fields):
+- **`Shown` initializes what this machine comes to have.** It runs for newly available entities and components: those in the world when a machine joins, those revealed later, and genuine spawns. `Spawned` describes a genuine spawn in a tick; joining or receiving an existing entity doesn't make up another spawn. Initialize [local fields](./local-state.md#local-fields) in `Shown`:
 
   ```csharp
   asset Texture crate = "art/crate.png";
@@ -329,14 +351,18 @@ local event(Spawned) CrateLanded(Body body, with Crate)
 
   // For every Box this machine comes to have: spawned in a tick, there as
   // the match started, or already in the match it joined
-  local event(Spawned) Dress(mut Box box)
+  local event(Shown) Dress(mut Box box)
   {
       box.skin = crate;
   }
   ```
 
-  A handler that shows something happening, a puff where a crate lands, runs for the crates that were there when a player joins too.
-- **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there. What was spawned meanwhile and is still there is heard as that world arrives, and nothing a machine had is heard again.
+  Keep a puff caused by a genuine spawn in `local event(Spawned)`. That effect doesn't run for crates already present when a player joins.
+- **`Hidden` distinguishes concealment from destruction.** It runs with the last state this machine was permitted to know, before its local fields are discarded. It can hide a model or move presentation data into a game-owned cache. Concealing an entity doesn't invoke match destruction handlers, and destroying an already hidden entity doesn't automatically disclose its destruction.
+- **Availability follows each handler's requirements.** Revealing an `Inventory` on an entity that already has a visible `Body` runs `Shown` handlers needing that inventory. It doesn't run a `Shown(Body body)` handler again. Required and excluded components both count, as they do in ordinary queries. A whole visible component includes all its fields.
+- **Availability is reconciled at presentation delivery boundaries (provisional).** Transient add/remove/re-add changes coalesce to the final state. `Hidden` reads the previously delivered endpoint and its query rows, then `Shown` reads the new endpoint. Predicted and verified endpoints are tracked separately. If a correction restores something that became unavailable, `Shown` prepares it again; unchanged replay emits nothing. A local rebuild starts fresh availability history, so initialization should safely reuse or replace existing local resources.
+- **These are local notifications of match availability.** Write `local event(Shown)` or `local event(Hidden)`, using match components and read-only match singletons, local fields and local singletons as other local handlers do. They can't take local-world components or change the match. `verified Shown` and `verified Hidden` wait for confirmed availability. `Forgotten` remains the resource-release hook when local fields are discarded.
+- **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there. Existing entities that are newly available receive `Shown` as that world arrives; nothing a machine already had is shown again.
 - **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them. The entities it had before aren't new to it, and aren't heard again.
 
 ### What isn't there yet

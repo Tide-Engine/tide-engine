@@ -1,0 +1,100 @@
+using Box3D;
+
+// What the ward's listener last heard, and for how long it goes on after it.
+component Heard
+{
+    float left;
+    float3 at;
+}
+
+// Quiet floor, but for a metal grate before the lift: whatever is out there hears that, as the next place's does.
+void BuildTheWard(Arena arena, mut Place place)
+{
+    BuildMapTheWard(arena, place);
+    place.dead = true;
+    place.light = .25;
+    place.grade = float3(.83, .98, 1.04);
+    Fill(arena, 2.1, 3.9, -1, 0, -4, 4, RUST);
+    Fill(arena, 3.9, 18, -1, 0, -4, 4, MARBLE);
+    Fill(arena, 1.6, 19, -2, 4.4, -5, -4, PLASTER);
+    Fill(arena, 1.6, 19, -2, 4.4, 4, 5, PLASTER);
+    Fill(arena, 18, 19, -2, 4.4, -5, 5, PLASTER);
+    Fill(arena, 1.6, 19, 4.4, 5.4, -5, 5, CEILING_TILE, false, 2);
+    Fill(arena, 3.9, 4.1, 0, 4.4, -4, 4, PANELS, false, 4);
+    for (int bed = 0; bed < 3; bed++)
+    {
+        SetProp(arena, PropKind.Bed, float3(7 + bed * 4, 0, 2.5), SOUTH);
+        SetProp(arena, PropKind.Curtain, float3(8.8 + bed * 4, 0, 2), EAST);
+    }
+    // Behind the last curtain, where nobody in the lift can see it
+    var listener = SpawnBeast(arena, BeastKind.Flayed, float3(17.5, 0, 2), WEST, skin: BeastSkin.Dark, clip: "Twitch");
+    listener.Add(Heard { });
+    LampGrid(place, float2(4.1, -4), float2(3.475, 8), 4, 1);
+    HangLamp(place, 0, 0, 4.4);
+    HangLamp(place, 1, 0, 4.4);
+    HangLamp(place, 2, 0, 4.4, LampState.Stutter);
+    HangLamp(place, 3, 0, 4.4, LampState.Dead);
+    MenuView(place, float3(-.8, 1.7, 0), 0, EAST);
+}
+
+[After(MoveMovers)]
+[Before(PhysicsStages.Step)]
+system WardBedpan(mut Mover mover, mut Body body, Arena arena, Place place, Time time)
+{
+    if (place.id != THE_WARD || mover.chamber != arena.chamber) return;
+    // On the middle bed, until it slides off the edge and down
+    float fallen = Math.Max(arena.arrive - 2.2, 0);
+    float slid = Math.Min(fallen, .25) * 2.4;
+    float dropping = Math.Max(fallen - .25, 0);
+    float3 at = float3(11.2 + slid, Math.Max(.06, .645 - 9.8 * dropping * dropping * .5), 1.9);
+    mover.velocity = (at - mover.at) / time.dt;
+    mover.at = at;
+    body.position = at;
+    body.velocity = float3(0);
+}
+
+// The clatter brings it out from behind the last curtain, round its end and at the pan; then it listens. A step on
+// the grate by the lift brings it at a run, to the bars.
+system WardListener(mut Beast beast, mut Heard heard, Arena arena, Place place, query (Operator pilot) operators, Time time)
+{
+    if (place.id != THE_WARD || beast.chamber != arena.chamber) return;
+    if (arena.arrive < 2.59)
+    {
+        beast.time += time.dt;
+        return;
+    }
+    // Out round the near end of the last curtain, along the aisle past the beds' feet, and over the pan under the
+    // stuttering lamp, where the lift sees it between the curtains
+    mut float3 target = beast.at.x > 16.9 && beast.at.z > .25 ? float3(17.3, 0, .2) : float3(12.1, 0, .45);
+    heard.left = Math.Max(0, heard.left - time.dt);
+    if (arena.arrive > 7.6)
+    {
+        foreach (var row in operators)
+        {
+            float3 at = row.pilot.position;
+            if (row.pilot.grounded && at.x > 2.1 && at.x < 3.9 && Math.Length(row.pilot.velocity.xz) > 1)
+            {
+                heard.at = float3(4.7, 0, Math.Clamp(at.z, -3.4, 3.4));
+                heard.left = 4;
+            }
+        }
+    }
+    // At a run down the aisle, clear of the beds and curtains, and across to the bars
+    if (heard.left > 0) target = beast.at.x > 6.2 ? float3(6, 0, Math.Min(heard.at.z, .3)) : heard.at;
+    float gap = Math.Distance(beast.at, target);
+    string clip = gap > .03 ? "Run" : arena.arrive < 7.6 || heard.left > 0 ? "Lunge" : "Twitch";
+    if (beast.clip != clip)
+    {
+        beast.clip = clip;
+        beast.time = 0;
+    }
+    beast.loop = clip != "Lunge";
+    if (gap > .03)
+    {
+        float3 way = (target - beast.at) / gap;
+        beast.yaw = Math.Atan2(way.x, way.z);
+        beast.at += way * Math.Min(gap, (heard.left > 0 ? 6.0 : 4.5) * time.dt);
+    }
+    else if (heard.left > 0) beast.yaw = WEST;
+    beast.time += time.dt;
+}

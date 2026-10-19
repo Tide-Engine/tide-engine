@@ -18,7 +18,8 @@ set_tests_properties(tide_network_udp PROPERTIES TIMEOUT 120)
 if(TARGET tide_platform AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
     tide_add_game(tide_network_hosted SOURCES game.tide test/hosted.tide udp.c test/hosted.c)
     add_test(NAME tide_network_hosted COMMAND tide_network_hosted --frames 20)
-    set_tests_properties(tide_network_hosted PROPERTIES LABELS gpu TIMEOUT 120
+    set_tests_properties(tide_network_hosted PROPERTIES TIMEOUT 120
         PASS_REGULAR_EXPRESSION "the standard host opened the match on the game's network"
         FAIL_REGULAR_EXPRESSION "didn't open the match")
+    tide_gpu_test(tide_network_hosted)
 endif()

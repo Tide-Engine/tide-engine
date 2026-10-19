@@ -1,5 +1,61 @@
 # The Box2D package
 
+## All-hit queries and game filtering (2026-10-18)
+
+The owner approved `RaycastAll`/`CastAll` and ignore-body overloads after the
+prototype gap review. Live `Physics` and detached rewound `Query` now have
+`RaycastAll(from, to, out List<RayHit> hits, bool includeSensors = false)`
+and an overload with `Body ignore` before the optional sensor flag.
+`CastAll` has the same two forms for `Box` and `Circle`, with the existing
+`shape, from, angle, to` argument order. Named arguments are `ignore: body`
+and `includeSensors: true`. The latter opts into sensors; closest-hit queries
+continue to skip them. The ignore handle includes its generation and excludes
+every collider on the body, including its parts.
+
+These methods replace the output list, return whether it has any hits, and
+give each collider's first hit, sorted by fraction then the existing closest
+query's shape-slot tie order. Separate colliders remain separate even when
+they have the same body and part entities. These are ordinary `RayHit` values
+that the game may filter, save in match/local state, snapshot and pack. An
+unstepped world, an invalid/empty rewind context or invalid cast inputs gives
+an empty list and false. Live queries still omit destroyed bodies/parts;
+an already prepared rewind context retains the geometry it captured.
+
+The bridge uses Box2D's ordinary query callback, returning 1 to keep the whole
+sweep. It collects actual hits in 32 stack slots, growing only when needed,
+sorts once and writes a checked `out List<Met>`. Growth is bounded by the
+runtime's 1 GiB output-list byte limit with overflow-safe arithmetic and the
+existing fatal allocation failure path; there is no smaller hit cap or silent
+truncation. Each native record is cleared before fields are assigned, including
+padding. Tide maps it through `Told`. The rewound path reuses the captured
+scene's BVH candidates and narrow phase, then sorts by the same keys. No new
+process-global query state, world layout, `Body` or public `RayHit` fields were
+introduced. Closest-hit methods retain their clipping path.
+
+The new invalid-input regression also exposed an existing assertion: finite
+endpoints whose subtraction overflows passed an infinite sweep to Box2D.
+Both closest and all-hit paths now reject that displacement. Starting overlaps
+keep fraction 0 and zero normal. Their point has no unique surface meaning;
+the native and detached narrow phases can choose different points there.
+Valid closest-hit answers and existing determinism pins are unchanged.
+
+`test/query_all.tide` and `packages/test/query_all_test.h` cover rays and both
+cast shapes, closest/all-first agreement, equal-fraction order, compounds and
+parts, sensor options, body-generation reuse, gameplay filtering, empty and
+invalid queries, first-step availability, initial overlaps, 70-hit growth,
+fractional rewind, deletion and retained contexts, local/match result storage,
+snapshot/pack/restore, and serial/job-pool equivalence. The public-hit digest
+is `7533602157f73627`, identical in native/WASI debug and release. Full debug
+suites passed (native 2374, web 2284); both query fixtures passed in native and
+web release, and the docs build passed. Existing physics/result pins did not
+change. User references are `README.md` and `docs/packages/box2d.md`.
+
+Scene visibility unification (2026-10-15): removal of generated scene audience
+fields changes only the complete-world and world-sequence pins in stack,
+sensors, kit and sleep. Native and WASI agree on all replacements. Body motion,
+query answers and Box2D's own image-byte pins stay unchanged; no package or
+vendored physics implementation changes. Validation is in notes/language.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases

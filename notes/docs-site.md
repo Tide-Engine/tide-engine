@@ -1,5 +1,179 @@
 # The docs site
 
+Editor setup discovery (2026-10-18): moved the single Editors sidebar entry
+into Get started, between Install and Your first game, labelled Editor setup.
+The route stays /tools/editors for existing links. Its opening table links
+each editor's instructions, shows tide ide commands alongside package-manager
+choices and names the official public repositories. The introduction explains
+copying the generated configuration, choosing one install method, the terminal
+plugins' MIT licensing, separate tidels installation and current non-MELPA
+availability. The detailed configuration examples remain in their sections.
+Install now has an editor-setup section and accurately limits automatic
+extension installation to the VS Code family. Your first game and README
+also link directly to setup. No plugin, CLI, language or licensing behavior
+changed; no public plugin export needs updating.
+
+Validation: production npm run build passes with Node 24.21.0, including the
+existing link/anchor/sidebar checks and allowed unstaged-example 404s. One-off
+checks of generated HTML, navigation and search.json confirm the sidebar order,
+unique editor route, links to both terminal-editor sections/public repositories,
+visible MELPA status, introductory setup links and searchable chooser section.
+git diff --check passes. No persistent text-mirroring test, CI dispatch or
+deployment was added.
+
+Standalone editor distribution (2026-10-18): README and Editors
+now have package-manager examples for the public MIT tide-emacs and
+tide-vim repositories, including package-vc-install, vim-plug and lazy.nvim.
+They distinguish direct Git installation from the prepared, not-yet-submitted
+MELPA recipe and the archive's one-month/public-maintenance and human-review
+requirements. The owner approved editor-only MIT; both standalone repositories
+are published and their package-manager installs verified. Bundled-mode links
+also point to the public copies rather than private engine source paths.
+The merged production docs build passes on Node 24.21.0 with existing allowed
+unstaged-example 404s. No deployment or CI was dispatched. Implementation and
+validation are recorded in notes/editors.md.
+
+Installed terminal editor setup (2026-10-18): the CLI page has an ide section
+and command-table entry. The Emacs and Vim/Neovim sections now start with
+`tide ide <editor>`, explain where to copy its output, matching bundled server
+paths, automatic/manual connections and moving the installation. README and
+the tool READMEs point to the same helper; manual source-checkout instructions
+remain in the tool READMEs for contributors. No navigation or language-spec
+change is needed. The production docs build passes with Node 24.21.0 and the
+existing allowed unstaged-example 404s. CLI/editor/packaging validation is in
+cli-and-packages.md. No deployment or CI was dispatched.
+
+Terminal editor setup (2026-10-18): Editors and the repository README now link
+the new manually installed Emacs mode and Vim/Neovim runtime, with copyable
+configuration and tidels selection. The page distinguishes LSP client support,
+unadapted clickable lenses and IDE-only embedding from basic terminal editing.
+No release installation or tide editors behavior changes. The production docs
+build passes on Node 24.21.0 with the existing allowed unstaged-example 404s;
+editor-host checks and remaining coverage are in notes/editors.md. No deployment
+or CI was requested.
+
+Fly host loss (2026-10-17): the site was down. Its one machine (82d1990b071698,
+release 291) sat on a fra host Fly reported unreachable after its 05:15 UTC
+host-restart incident ("a small number of hosts remain degraded or offline").
+A deploy at about 10:00 (v292, Docs run 39023241585) failed at its Deploy step
+on that host. A machine on a dead host can't be cloned, and its volume can't
+be attached elsewhere. Recovery: a new `access_requests` volume
+(vol_4m3mm6odj5eo97gv, fra) from the latest daily snapshot
+(vs_yGmLzgNyzwn9U19bZabym, about 18 hours old); the dead machine destroyed
+(`machine destroy --force`); a machine run from v291's image on the new volume,
+with fly.toml's env and the `app` process-group metadata. The Docs workflow
+then deployed dev (run 39040810696, release 293) onto it in place, with one
+machine and a passing health check. Its first attempt timed out in the docs
+browser test (`draw3d: starts in view`, 20 s); the rerun of the failed job
+passed. The old volume (vol_4qle7yl3xx90wd6r) is kept: access requests and
+analytics written after the snapshot exist only on it, if the host comes
+back. Delete it once that's settled. The local `fly.exe` points to a
+`flyctl.exe` that a self-upgrade left renamed to `flyctl.exe.old`.
+
+Focused CLI help (2026-10-17): tools/cli.md and the README now describe the
+compact command overview, command/argument topics, scoped lookup and --help/-h
+command aliases. CLI behavior and validation are recorded in cli-and-packages.md.
+No language semantics, site navigation or deployment changed.
+
+Scene visibility unification (2026-10-15): Scenes, State visibility, language
+basics and the spec use ordinary root Visibility groups for scene audiences.
+They describe scene/entity/component intersection, live shared updates,
+server-only scenes with Audience.None, local placement and root policy present
+before initialization. Separate SceneVisibility and scene player-membership
+APIs are removed. Spec Decided records the approved scope model; Provisional
+retains the API/loading details. This supersedes older scene-membership API
+descriptions below. Production docs and 244 shared grammar checks pass with
+Node 24.21.0. No deployment or CI was requested.
+
+Subscription hosting guide (2026-10-15): managed hosting now documents the
+approved monthly included allowance, separate purchased credit, opt-in prepaid
+extra usage, shared purchase cap, cancellation and billing controls. Public
+launch pricing remains undecided; the configured EUR 20 plan is sandbox-only.
+The production docs build passes; console/provider checks are in managed-hosting.md.
+
+Folder deployment guide (2026-10-15): the CLI/managed-hosting pages now start
+with `tide deploy`, explain automatic folder-named project creation and the
+portable `tide.deploy.json` target, explicit relinking and failed target checks.
+The credit guide points to Add credit beside the balance and explains sandbox
+labels and unavailable payments. Console implementation/validation is recorded
+in managed-hosting.md; no docs UI or routing changes.
+
+## Visibility language documentation (2026-10-15)
+
+Added `/game/visibility` to the Simulation sidebar with practical shared-group,
+entity, whole-component and live-audience examples; chunk/player/deck use
+cases, including public Time.seed/default Random versus an authoritative private
+shuffle seed; local availability versus true lifetime; and current custom-event,
+public-singleton, task and Resident limits. Scenes and Networking now describe
+per-recipient projection rather than the previous whole-world-only warning.
+Events, Local state and C hosts document Shown/Hidden, frame endpoint
+reconciliation (including transient add/remove/re-add coalescing and canceled
+prediction restoration), rebuild-safe resource preparation, arrival initialization,
+per-listener transitions and recipient lifecycle journal callbacks. The spec
+keeps owner-agreed scope/lifecycle separate from provisional API names and
+implementation choices. Ordinary Transform parenting does not inherit policy. Scoped derived placement
+anchors preserve permitted Transform subtrees across hidden parents; nonspatial
+subtrees receive no blanket placement disclosure. Networking, Matches and Commands
+qualify full-world page snapshots/host migration/command replay, and document
+recipient logical baselines, server-only commands, normalized remote input history
+and refused partial-world host promotion. The practical FPS guidance explicitly
+identifies Box2D/Box3D public Physics collider/rewind lists as requiring
+visibility-aware package integration; omitting Resident does not protect those
+ordinary public copies.
+
+`npm ci` installed pinned docs dependencies. Node 24.21.0 runs the shared
+grammar tests (244/244), production docs build and SEO checks (3/3)
+successfully, including the new visibility route, sitemap and social image. Prerender
+prints expected 404s for unstaged example pages in this checkout; the build
+still exits successfully. Native/web engine integration validation is tracked
+in the lifecycle/netcode notes. No docs deployment or CI was requested.
+
+Final integration with `origin/dev` `a50f7818` preserves the visibility guide,
+managed-hosting guide, both sidebar entries and their separate spec contracts.
+The merged production docs build and all three SEO checks pass with Node
+24.21.0, including page/link/anchor validation, both routes' metadata, sitemap
+entries and social images. The existing allowed unstaged-example 404s remain.
+
+## Hosting console navigation and DNS (2026-10-15)
+
+The owner requested a Console menu entry on tide-engine.dev, clarifying that
+the homepage itself remains the engine site. Header.svelte links Console to
+https://console.tide-engine.dev/ in both desktop navigation and the mobile menu.
+No homepage redirect or apex DNS change was made. Validation: Node 24.16.0,
+Svelte check with zero errors/warnings, production build and all three SEO tests
+pass. Desktop and 390-pixel mobile browser checks confirm the link target and
+visible menu entry with no horizontal overflow. The collaborative preview
+became unavailable during resizing, so the mobile check used muted headless
+Chrome. No new persistent test was added for the two navigation anchors.
+
+Using the installed synced Cloudflare skill and the owner's browser OAuth,
+registered the official Cloudflare API MCP with DNS read/write and account/zone
+lookup scopes. The active tide-engine.dev zone had no console/play records.
+Created DNS-only A/AAAA records for both subdomains pointing to tide-hosting
+(66.241.125.185 and 2a09:8280:1::1b8:4b3a:0), TTL 300, and registered both Fly
+managed certificates. Added the Fly-provided console ACME CNAME for independent
+DNS validation. Existing apex/www records are unchanged. Play HTTPS is verified;
+console issuance subsequently completed with an active Let's Encrypt certificate.
+Both custom-domain `/health` requests return HTTPS 200 with `{"ok":true}`, and
+the console homepage returns 200 with GitHub sign-in. No provider login/payment
+was performed during these probes.
+
+Source 1f81a312 deployed directly to tide-website as release 282, image
+deployment-01M501F063DS5S441CCCWYX27T, with its existing machine/volume and a
+passing health check. The public homepage now has the Console link; muted
+headless Chrome verifies the live desktop and mobile menu target with no
+horizontal overflow. No CI workflow was dispatched for this navigation change.
+
+Managed hosting guide (2026-10-15): multiplayer/hosting.md and the docs sidebar
+describe login/deploy, server-only bundles, Simulation ID admission and lifetime/
+save controls. The account dashboard is served by hosting/ on a separate origin
+from game pages and the existing docs app. GitHub OAuth/Stripe integration and
+Fly configuration do not deploy or add billing to the docs server. No extra
+main-site header navigation or fake account data was added. Contracts, screenshot
+validation and launch requirements are recorded in managed-hosting.md.
+The browser compiler receives the same source toolchain identity through CMake
+as native tools, rather than using the fallback unidentified-toolchain value.
+
 ## Playground compiler ABI and Docs toolchain (2026-10-14)
 
 Run 38555232799 exposed the cause hidden by the earlier generic timeout:
@@ -147,55 +321,19 @@ the phone capture waits for the existing sidebar's closing transition.
 Real phones, Safari/Firefox, other OS builds and Android are not exercised;
 no CI dispatch or site deployment is part of this task.
 
-Elsewhere catalog addition (2026-10-13): `elsewhere` joins the server-only
-prototype catalog and all three public/retired asset gates, with a gameplay
-thumbnail and normal opt-in `elsewhere_page` staging. The prototype id lists
-and stale-alias/discovery checks cover it. Its cozy restoration journey and
-native/web/GPU validation are recorded in `notes/elsewhere.md`. No deployment
-or CI dispatch is requested. The local docs check is clean, production build
-passes and the eighteen analytics/admin unit checks and production prototype
-HTTP check pass with Node 24.21.0.
-
-Copper & Coil catalog addition (2026-10-13): `copper-coil` is registered in
-the server-only prototype catalog, public root, outside-root asset gates and
-admin/HTTP prototype lists. `copper_coil_page` stages its self-contained page
-at `/prototypes/copper-coil/`; checked-in artwork and the publisher PDF live
-beside it. Public discovery and catalog authentication retain their existing
-contracts. Game rules and validation are in `notes/copper-coil.md`. The docs
-production build, zero-error/warning Svelte check, eighteen analytics/admin
-checks and production HTTP test pass. No deployment or CI dispatch.
-
-
-HOT SWAP addition (2026-10-13): the server-only catalog and public-root/
-outside-root asset gates include `hot-swap`, a solo/two-player warehouse
-possession heist. `hot_swap_page` stages its self-contained, STATS-enabled
-page beneath `/prototypes/hot-swap/`; the thumbnail is captured gameplay.
-Admin and production HTTP fixtures cover the new id and its stale aliases.
-The existing catalog/auth/discovery contract is unchanged. Game validation
-and remaining playtest gaps are in `notes/hot-swap.md`. No deployment or CI.
-
-DEADWEIGHT catalog addition (2026-10-13): the approved cooperative salvage
-prototype adds `deadweight` to the server-only catalog, public-root and
-outside-root asset gates, and both prototype test id lists. Its self-contained
-page stages at `/prototypes/deadweight/` with an actual-gameplay thumbnail.
-Discovery and catalog authentication retain their existing contracts. Game
-rules and validation belong in `notes/deadweight.md`; no site deployment or
-CI dispatch was requested.
-Local production build and Svelte check pass with zero errors/warnings. All
-nineteen analytics/admin and production prototype HTTP checks pass on Node
-24.16.0, including the new public id, outside-root aliases and discovery gates.
-After merging the concurrent SWINDLE catalog addition and NIGHT ROUTE removal,
-the live id lists retain both SWINDLE and DEADWEIGHT. Production build,
-zero-warning Svelte check and all nineteen HTTP/admin checks pass again.
-
-SWINDLE catalog addition (2026-10-13): the owner's competitive heist demo adds
-`swindle` to the server-only catalog, public root and outside-root asset gates.
-`swindle_page` stages its self-contained page and gameplay thumbnail under
-`/prototypes/swindle/`, collected by `private_games`. Admin and production HTTP
-tests include the id and retain omission from Samples/search/sitemap. Rules,
-native/web play evidence and packaging are recorded in `notes/swindle.md`.
-Site check has zero errors/warnings; eighteen analytics/admin tests, production
-build and prototype HTTP test pass with Node 24.21.0. No deployment or CI.
+Removal (2026-10-15): the owner deleted Elsewhere, Copper & Coil, HOT SWAP,
+DEADWEIGHT and SWINDLE. Their sources, assets, tests, game notes, build
+targets, catalog cards and public-id registrations are removed. Their
+implementation and validation records remain in git history. Former public
+pages and assets are ordinary unknown paths; no compatibility routes remain.
+Validation: native/web debug configuration with prototypes enabled succeeds;
+the removed games have no targets or registered tests. Node 24.21.0 passes
+the production docs build, zero-warning Svelte check and all nineteen
+analytics/admin/production HTTP checks. Former pages, thumbnails, WASM,
+packs and publisher PDFs return 404, including encoded ids; the five
+remaining catalog cards and their public assets retain their serving tests.
+Source, static and packaged directories are absent; note references and
+`git diff --check` pass. No engine/compiler/runtime changes, CI or deployment.
 
 NIGHT ROUTE removal (2026-10-13): the owner scrapped the delivery prototype
 after playtesting. Its source, tests, build targets, game note, catalog card,
@@ -405,7 +543,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `server.js` permanently redirects www and the Fly hostname (`tide-website.fly.dev`), plus HTTP requests for the public apex, to the same HTTPS origin, preserving paths and queries. Case and explicit ports on these hostnames are recognized; local previews stay local. It sends `X-Robots-Tag: noindex` on raw playable HTML (`examples/<id>`, `samples/<id>`, Sand, Duel, Towers and Sumo, with their directory and `index.html` forms). Search results should land on the gallery or explanatory docs rather than a canvas with a generic title. These pages remain crawlable so the header can be read; assets and thumbnails are unaffected. SEO tests require the home `WebSite` node and check redirects and the raw-page headers using tiny deployment fixtures, without compiled games.
   - Validation passed on Windows with Node 24.19: `npm run check` (no errors or warnings), `npm run build`, all three SEO tests, and the production access-form and admin HTTP tests. Host probes use `node:http` to send the desired Host explicitly; static fixtures are registered in the temporary deployment's adapter-node asset table, since it serves the closed set recorded at build time.
 - The site doesn't present Tide as C#-like (the owner, 2026-10-06: "we are our own language"): it's about how people find Tide, who shouldn't expect a C# clone and then see a different language. So nothing that says what Tide is calls it C#-like or measures it against C#: the home page, the introduction, a page's opening, the README, an editor extension's description. Saying what inspired it is fine, and so is a rule that names C# where it follows it, as `docs/spec.md`'s do. The pages for users state such rules themselves (operators' precedence, what a shift does), which reads better to someone who doesn't know C#.
-- The header has one link, Docs (`docs` in `docs/src/lib/nav.ts`), which starts at the guide: the categories are the sidebar's, never the header's.
+- The header links Docs (`docs` in `docs/src/lib/nav.ts`) to the guide and Console to https://console.tide-engine.dev/. Both appear in the desktop and mobile menus; documentation categories belong in the sidebar.
 - A page is in the folder of its subject, and the sidebar's groups follow the folders (`spec.md`, beside them, is its Reference):
   - `guide/` (Get started): what a newcomer reads first, and the demos.
   - `game/`: what a game is made of, in two groups: Simulation, the match (components, systems and their schedule, events, scenes, tasks, input), and Presentation, what one machine shows of it (views and the six other pages about drawing, below, then frags and verts, audio, local state, files, the GUI).

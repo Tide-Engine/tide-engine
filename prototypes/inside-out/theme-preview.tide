@@ -1,0 +1,48 @@
+// Proposed chapter materials are local review choices. The ordinary game
+// keeps its existing appearance until a look is explicitly selected.
+local singleton ThemePreview
+{
+    int look = -1;
+    bool open;
+    bool loaded;
+    Rooms.Page from;
+}
+
+extern int InsideOutPreviewLook();
+
+string PreviewLookName(int look)
+{
+    if (look == 0) return "Boxes / Painted wood";
+    if (look == 1) return "Each other / Enamel and aluminium";
+    if (look == 2) return "Power / Industrial metal";
+    if (look == 3) return "Itself / Ceramic";
+    if (look == 4) return "Everything / Finished exhibit";
+    return "Original appearance";
+}
+
+[Stage(ArtStage.Prepare, -2)]
+[Before(PrepareHands, Rooms.Begin, Rooms.Pages)]
+view ReadThemePreview(mut ThemePreview preview)
+{
+    if (preview.loaded) return;
+    preview.loaded = true;
+    preview.look = Math.Clamp(InsideOutPreviewLook(), -1, 4);
+}
+
+void OpenThemePreview(mut ThemePreview preview, mut Rooms.Lobby lobby)
+{
+    preview.from = lobby.page;
+    preview.open = true;
+    if (lobby.page == Rooms.Page.Playing)
+    {
+        lobby.page = Rooms.Page.Room;
+        lobby.resume = true;
+    }
+    UiSound(UiCue.Open);
+}
+
+void CloseThemePreview(mut ThemePreview preview, mut Rooms.Lobby lobby)
+{
+    preview.open = false;
+    lobby.page = preview.from;
+}

@@ -1,0 +1,4 @@
+// expect: query row 'row' is read-only
+component Body { int x; }
+void Read(query (Body body) rows) { foreach (var row in rows) row.body.x = 3; }
+scene Main { }

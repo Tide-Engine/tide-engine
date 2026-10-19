@@ -1,0 +1,3 @@
+// expect: a map literal must be empty, '[]'
+scene Main { }
+singleton Values { Map<int, int> map = [1]; }

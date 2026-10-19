@@ -1,5 +1,28 @@
 # The physics games: Towers and Sumo
 
+Match singleton RNG isolation (2026-10-18): the compiler now excludes local
+singletons and attached local storage from match singleton seed ordinals
+(`notes/random.md`). Sumo's ring generator therefore intentionally starts with
+another stream. Native/WASI debug agree on network world pins `c659a401358bc369`
+at tick 640 and `3b39af7fab9a0826` at tick 880. Only these expected hashes change;
+gameplay, physics, rollback, late-join and zero-resync assertions remain.
+Optimized parity and final validation are recorded in the random note.
+
+Scene visibility unification (2026-10-15): removing the generated scene audience
+fields changes the two network world pins of each game. Native and WASI agree:
+Towers 87e3c4d07d3233f3 at tick 1500 / aab79fc2ab3032d2 at 1800; Sumo
+992012c0dfac1c8f at 640 / 78c067b37a21bc2b at 880. Gameplay, generated RNG salts,
+physics bytes/results and no-resync assertions are unchanged. This is a test
+baseline update only; final validation is in notes/language.md.
+
+Box3D mesh support (2026-10-15) adds two package components, shifting Sumo's
+existing automatic Brain.dice spawn salt from 3072 to 3584 in generated C.
+Its gameplay/RNG algorithms are unchanged, but the new build's bot choices
+and world hashes change. Native and WASI agree on `94146ac68b276d10` at tick
+640 and `7cd1a970663359ea` at tick 880. The two network pins are updated;
+all gameplay, rollback and no-resync assertions remain. Package coverage and
+validation are in notes/box3d.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Building

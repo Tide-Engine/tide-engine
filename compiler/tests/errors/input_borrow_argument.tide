@@ -1,0 +1,5 @@
+// expect: pass the caller's input parameter directly
+input Controls { bool jump; }
+bool Read(Controls controls) { return controls.jump.down; }
+system Check() { if (Read(default)) Debug.Log("jump"); }
+scene Main { }

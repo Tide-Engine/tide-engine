@@ -1,5 +1,82 @@
 # ECS and simulation state
 
+Read-only parameters beside World.Set (2026-10-18) reload affected component
+lanes from stable chunk page slots before each row. Earlier Set writes are
+visible regardless of snapshot sharing, across chunks and archetypes. The
+current invocation keeps its component value; containers that Set could reuse
+are copied through existing scratch value helpers. Input's implicit Owner read
+uses the same page reload. Ordinary cached columns, mutable companion lanes
+and staged/SIMD paths are unchanged. Structural changes remain deferred and
+there is no new runtime API, layout or world state. See notes/language.md and
+`world_set_read` for contracts and validation.
+
+Borrowed helper queries (2026-10-18) retain their caller's selection and data
+timing using source-specialized generated loops. Live sources pass an existing
+world pointer; blended/recorded sources pass their existing row pointer/count,
+projecting requested components without rebuilding the set. Passing allocates
+no collection or snapshot and changes no ECS/runtime/world layout. Bindings
+are read-only; explicit World.Set keeps existing replacement-page semantics.
+Queries/whole rows cannot escape into state or task frames. Contracts and
+native/web coverage are recorded in language.md, Borrowed query parameters.
+
+## Queries in match event/command handlers (2026-10-18)
+
+Synchronous match handlers now use existing current-world query traversal at
+their serial queue turn. The checker restriction was lifted; no ECS storage,
+runtime call, iteration order or deferred-queue behavior changed. Queries are
+independent of target filtering and remain read-only. Earlier completed writes
+and already-applied changes are visible; current mut component parameters keep
+ordinary write-back timing. Nested traversal after helper World.Set uses the
+existing replaced-page path. `handler_queries` checks sparse selection,
+lifecycle visibility, deferred destroys, heap-bearing values, COW and replay,
+plus global/targeted command dispatch. Async queries remain unavailable.
+
+## Recipient projections and sparse entity metadata (2026-10-15)
+
+Visibility is physical absence in a recipient world. Components targeted by a
+typed visibility policy become internally sparse before archetype derivation.
+Existing presence columns therefore drive systems, views, tasks, queries,
+Has/Get and extern-system row filtering without deriving every hidden-component
+combination. Archetype identity cannot reveal which optional component is hidden.
+The server retains the complete world; shared audience groups and component
+policies remain ordinary snapshot/hash/reload state there.
+
+Recipient hashes encode permitted values, not heap offsets, allocator free lists
+or private policy maps. Generated codecs recurse through fields, text, Lists,
+Maps, Sets, arrays and Grids. Map insertion order remains observable and is kept;
+grid chunk records are sorted by coordinates, including allocated all-zero
+chunks because their iteration extent is observable. Only visible entities and
+present permitted components are installed. Hierarchy links skip hidden siblings
+and exclude hidden parents; the decoder validates links and cycles before
+publishing a temporary world. A projected world with no visible scenes neither
+reconstructs Main nor declares that the server match ended.
+
+Cut hierarchy links need permitted spatial consequences as well as local field
+values. A private projected boundary anchor retains the exact affine prefix and
+rotation needed by a subtree with a permitted Transform, including shear from
+nonuniform ancestor scales. It does not materialize hidden parent entities or
+their other components. Source local Transform fields remain unchanged. Omit
+anchors for subtrees without a permitted Transform: merely knowing an entity
+handle does not authorize extra hidden ancestor placement. Reparenting and
+destruction release obsolete anchors. This metadata uses the existing generated
+map/snapshot/reload machinery and exists only in visibility-enabled games.
+
+Global entity IDs can be far apart in chunked worlds. `tide_entities.pages` is now
+a pointer-table span, with NULL pages representing never-materialized metadata.
+Reads return an absent zero slot; writes allocate only the addressed page and
+preserve copy-on-write. Snapshot retain/free, born metadata, physical hashes,
+raw packing, deltas and page repair all support holes. Dense formats remain
+unchanged. Sparse raw/delta state names populated page indices in ascending
+order; sparse page-hash lists carry an explicit sentinel and indexed hashes.
+Unknown gaps are reserved rather than recycled for client prediction.
+
+Coverage: `test_entity_sparse.c` checks high IDs, absence, copy-on-write, birth
+metadata, predicted allocation, raw and delta roundtrips, truncated data and
+page-hash repair. `visibility_projection` checks IDs beyond 1<<20 with absent
+intermediate pages, nested container values, private marker omission, canonical
+hash agreement despite different heap/grid allocation histories, real component
+absence, C/Tide query filtering and filtered hierarchy destruction.
+
 ## Immutable asset descriptors (2026-10-11)
 
 `tide_list` remains a four-byte tagged offset. A `TIDE_LIST_ASSET` block holds logical count and a 32-byte content ID in a 64-byte allocation, not a pointer or pack offset. IDs hash `TideListAsset1`, uint32 count/element shape and exact bytes. An outside-state refcounted heap asset pool retains the immutable payload; each live descriptor contributes one lease. Snapshots retain the pool along with pages. Pool replacement retires its old allocation until heap settle, and lookup includes retired pools so a local borrow remains readable when a helper clears its source during the same expression. Publication and reader lookup use release/acquire. Unique pools update existing lease counts without allocating a pool for every field. The current pack has a separate locked immutable cache, cleared on unload/default geometry writes; retained worlds keep their old bytes.
@@ -12,7 +89,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## ECS and simulation state
 
-- Read-only entity queries are parameters of systems, views and local handlers: `query (Body body, with Fighter, without Shield) fighters`, iterated with `foreach (var fighter in fighters)`. Their nested component bindings and filters select a second set, never the code's outer entity. Each row exposes its `entity` handle and named read-only component values. In ordinary control flow outside parallel loops and callback blocks; no writable bindings, storing or passing queries or whole rows, nested query parameters or singletons. The match's event handlers, command handlers and tasks take none yet. Component values can be copied or passed on. Traversal is normal deterministic ECS order, including sparse presence checks, with no Entity-ID or nearest-hit ordering promise. In a system, query bindings count as global component reads in access analysis, scheduling and tooling, and reuse the `World` reads-own-writes rule when the outer system writes one of them. Structural changes and events remain deferred. A comparison block and a parallel loop's step, which are functions of their own handed the parameters of the code around them, are never handed a query (`sort_captures`, `par_captures` in `compiler/src/codegen.c`): it's no C value, and a row can't be captured either, which the checker says. `compiler/tests/e2e/query_blocks` builds and runs both beside a query.
+- Read-only entity queries are parameters of systems, views and synchronous event and command handlers: `query (Body body, with Fighter, without Shield) fighters`, iterated with `foreach (var fighter in fighters)`. Their nested component bindings and filters select a second set, never the code's outer entity. Each row exposes its `entity` handle and named read-only component values. In ordinary control flow outside parallel loops and callback blocks; no writable bindings, storing queries or whole rows, passing whole rows, nested query parameters or singletons. Queries can be explicitly borrowed by ordinary synchronous functions/methods, retaining the source selection and timing; see Borrowed query parameters in language.md. Async handlers and tasks take none yet. Component values can be copied or passed on. Traversal is normal deterministic ECS order, including sparse presence checks, with no Entity-ID or nearest-hit ordering promise. In a system, query bindings count as global component reads in access analysis, scheduling and tooling, and reuse the `World` reads-own-writes rule when the outer system writes one of them. Structural changes and events remain deferred. A comparison block and a parallel loop's step, which are functions of their own handed the parameters of the code around them, are never handed a query (`sort_captures`, `par_captures` in `compiler/src/codegen.c`): it's no C value, and a row can't be captured either, which the checker says. `compiler/tests/e2e/query_blocks` builds and runs both beside a query.
 - **Queries in views and local handlers** (agreed 2026-10-05; `docs/spec.md`, Read-only entity queries, and its Provisional picks under Views and drawing): local code reads the match, so its queries do too, as that code sees it.
   - A view's rows are what the view sees: blended between ticks like its own parameters, with corrections smoothed, over the entities of the world it draws. `verified` in a query follows the rule for views: all of it `verified`, the confirmed world's entities (`param.query_verified_entities`); some of it, the drawn world's that are the same entity in the confirmed one (`param.query_verified_join`, by `tide_born_same`), filters included. A query is all the match's or all local: a local one reads the local world as it is, through the code a system's query generates.
   - A local handler's rows are the match as the tick that sent its event left it, once the tick is done (Provisional: not as each event's turn left things), and a query of local entities the local world as it is. A handler of a local event takes only those.

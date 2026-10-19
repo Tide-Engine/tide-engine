@@ -1,0 +1,5 @@
+// expect: a task can't take input
+input Controls { bool jump; }
+event Fired { }
+async event(Fired) Read(Controls controls) { await Wait.Ticks(1); }
+scene Main { }

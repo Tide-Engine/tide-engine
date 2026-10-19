@@ -253,6 +253,9 @@ Three things got in the way, each worked round in the game:
 - **A run with no window writes real saves.** `--script` and `--capture` runs
   put `underfoot.txt` in the owner's `AppData/LocalLow`, as play would. The
   ones made while building this were deleted by hand each time.
+  Addressed 2026-10-18: `--data-dir <folder>` selects disposable test saves;
+  several scripted players get separate subdirectories. Normal saves remain the
+  default. Contracts and validation are in `notes/standard-host.md`.
 - **The C test host cannot call a Tide function** (they are `TIDE_HELPER`), so
   a search over the game's own rules needs them stated twice and a test to
   hold the two together.

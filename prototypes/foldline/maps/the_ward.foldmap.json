@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "name": "the_ward",
+  "function": "BuildMapTheWard",
+  "lifts": [
+    {
+      "id": "stop",
+      "role": "stop",
+      "at": [
+        0,
+        0,
+        0
+      ],
+      "yaw": "EAST",
+      "stay": 9
+    }
+  ],
+  "plates": [],
+  "machines": [
+    {
+      "id": "machine_0",
+      "from": [
+        11.2,
+        0.645,
+        1.9
+      ],
+      "to": [
+        11.2,
+        0.645,
+        1.9
+      ],
+      "size": [
+        0.35,
+        0.12,
+        0.25
+      ],
+      "need": [],
+      "any": false,
+      "speed": 1,
+      "lamp": [
+        0,
+        0,
+        0
+      ],
+      "along": [
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "anchors": {},
+  "wires": [],
+  "place_ids": [
+    10
+  ],
+  "external_geometry": true
+}

@@ -68,9 +68,9 @@ vec3 tf_FromLamp(vec3 t_world, mat4 t_toLamp) {
 
 void ts_Lit(tt_Vertex3 t_vertex, inout vec4 t_color) {
     vec3 t_at = tf_FromLamp(tide_world, mat4(tide_u0, tide_u1, tide_u2, tide_u3));
-    float t_lit = textureLod(pixels0, vec3(t_at.xy, clamp((t_at.z - 0.01), 0.0, 1.0)), 0.0);
+    float t_lit = textureGrad(pixels0, vec3(t_at.xy, clamp((t_at.z - 0.01), 0.0, 1.0)), vec2(0.0), vec2(0.0));
     if ((t_lit < 1.0)) {
-        t_lit = ((t_lit * 0.5) + (textureLod(pixels0, vec3((t_at.xy + vec2(0.01, 0.0)), clamp((t_at.z - 0.01), 0.0, 1.0)), 0.0) * 0.5));
+        t_lit = ((t_lit * 0.5) + (textureGrad(pixels0, vec3((t_at.xy + vec2(0.01, 0.0)), clamp((t_at.z - 0.01), 0.0, 1.0)), vec2(0.0), vec2(0.0)) * 0.5));
     }
     float t_far = textureLod(pixels1, t_at.xy, 0.0).r;
     t_color = ((tide_straight(textureLod(pixels2, t_vertex.m_uv, 0.0)) * (0.25 + (0.75 * t_lit))) * ((t_far < 1.0) ? 1.0 : 0.5));
@@ -242,9 +242,9 @@ vec3 tf_FromLamp(vec3 t_world, mat4 t_toLamp) {
 
 void ts_Lit(tt_Vertex3 t_vertex, inout vec4 t_color) {
     vec3 t_at = tf_FromLamp(tide_world, mat4(tide_u0, tide_u1, tide_u2, tide_u3));
-    float t_lit = textureLod(pixels1, vec3(t_at.xy, clamp((t_at.z - 0.01), 0.0, 1.0)), 0.0);
+    float t_lit = textureGrad(pixels1, vec3(t_at.xy, clamp((t_at.z - 0.01), 0.0, 1.0)), vec2(0.0), vec2(0.0));
     if ((t_lit < 1.0)) {
-        t_lit = ((t_lit * 0.5) + (textureLod(pixels1, vec3((t_at.xy + vec2(0.01, 0.0)), clamp((t_at.z - 0.01), 0.0, 1.0)), 0.0) * 0.5));
+        t_lit = ((t_lit * 0.5) + (textureGrad(pixels1, vec3((t_at.xy + vec2(0.01, 0.0)), clamp((t_at.z - 0.01), 0.0, 1.0)), vec2(0.0), vec2(0.0)) * 0.5));
     }
     float t_far = textureLod(pixels0, t_at.xy, 0.0).r;
     t_color = ((tide_straight(textureLod(pixels2, t_vertex.m_uv, 0.0)) * (0.25 + (0.75 * t_lit))) * ((t_far < 1.0) ? 1.0 : 0.5));

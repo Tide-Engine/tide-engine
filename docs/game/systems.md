@@ -78,9 +78,9 @@ Queries use normal deterministic ECS traversal. They do not sort by entity ID, d
 
 Query data reads the current world and participates in [the schedule](./schedule.md). A system that also changes a queried component runs on one thread, following the same rule as reading its own writes through `World`: it sees rows changed earlier in that run. Events and structural changes still wait for the end of the tick, so sending a hit or recording a destroy through `fighter.entity` does not change what this iteration reads.
 
-Queries have read-only component bindings and component filters. Queries and their whole rows are used directly in `foreach` in the system's ordinary control flow, outside parallel loops and callback blocks; they cannot be stored or passed to functions. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
+Queries have read-only component bindings and component filters. Queries are used directly in `foreach`, or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query) with the same `query (...)` parameter syntax. The caller's selection and data timing stay intact. Queries and whole rows cannot be stored or returned; whole rows cannot be passed to functions. Keep iteration and forwarding outside parallel loops and callback blocks. A component value such as `fighter.body` can be copied or passed to a function. It follows the usual component copy rules, so a method that uses `this` needs the entity's own component parameter.
 
-Systems, views and local handlers take queries. A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). The match's own event handlers, command handlers and tasks take none yet.
+Systems, views and synchronous event and command handlers take queries. A match handler reads the current world at its turn in the tick-end queue: see [Events](./events.md#querying-other-entities). A view's rows are the match as it draws it, blended between ticks, or [`verified`](./views-and-the-match.md#confirmed-state): see [Views and the match](./views-and-the-match.md#other-entities). A local handler's are the match as the tick that sent its event left it: see [Events](./events.md#other-entities). Async handlers and tasks take none yet.
 
 ## Other entities: the World
 
@@ -99,7 +99,7 @@ system Attack(Attacker attacker, World world, mut Stats stats)
 - `world.Has<Health>(e)` tells whether it has one.
 - `world.TryGet<Health>(e, out var health)` is both in one: whether it has one, and the copy, or the component's default when it has none (see [Out parameters](../language/functions.md#out-parameters)).
 - `world.Set<Health>(e, value)` puts one back, and needs `mut World`. It does nothing for an entity without one.
-- A system that takes `Health` itself can't `Set<Health>`: its own entity's goes through its parameter. The exception is a parameter it only reads, beside which `world.Set<Health>(this, value)` sets this entity's own. That's for a system that looks at every entity and changes a few: the parameter stays as the system came to the entity.
+- A read-only `Health` parameter allows `Set<Health>` on any entity, directly or through helpers. Each invocation reads the component as it comes to that entity, including preceding invocations' writes, then keeps that value until it returns. `Set` updates the world immediately: a following `Get` or query sees the new value. A system that takes `mut Health` cannot also `Set<Health>`, because its parameter's write-back could overwrite the same entity's `Set`.
 
 What `Get` gives is a copy, as a list's element is, so changing another entity's component is taking it out, changing it and putting it back:
 

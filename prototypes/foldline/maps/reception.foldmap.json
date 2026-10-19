@@ -1,0 +1,521 @@
+{
+  "version": 1,
+  "name": "reception",
+  "function": "BuildMapReception",
+  "place_ids": [
+    2,
+    15
+  ],
+  "boxes": [
+    {
+      "id": "floor",
+      "min": [
+        -12,
+        -1,
+        -8
+      ],
+      "max": [
+        12,
+        0,
+        8
+      ],
+      "paint": "CARPET"
+    },
+    {
+      "id": "ceiling",
+      "min": [
+        -13,
+        4.4,
+        -9
+      ],
+      "max": [
+        13,
+        5.4,
+        9
+      ],
+      "paint": "CEILING_TILE",
+      "kind": 2
+    },
+    {
+      "id": "west",
+      "min": [
+        -13,
+        -2,
+        -9
+      ],
+      "max": [
+        -12,
+        4.4,
+        9
+      ],
+      "paint": "WALLPAPER",
+      "takes": true
+    },
+    {
+      "id": "east",
+      "min": [
+        12,
+        -2,
+        -9
+      ],
+      "max": [
+        13,
+        4.4,
+        9
+      ],
+      "paint": "WALLPAPER",
+      "takes": true
+    },
+    {
+      "id": "south_west",
+      "min": [
+        -13,
+        -2,
+        -9
+      ],
+      "max": [
+        -10,
+        4.4,
+        -8
+      ],
+      "paint": "PANELS"
+    },
+    {
+      "id": "south_east",
+      "min": [
+        -2,
+        -2,
+        -9
+      ],
+      "max": [
+        13,
+        4.4,
+        -8
+      ],
+      "paint": "PANELS"
+    },
+    {
+      "id": "north_west",
+      "min": [
+        -13,
+        -2,
+        8
+      ],
+      "max": [
+        2,
+        4.4,
+        9
+      ],
+      "paint": "PANELS"
+    },
+    {
+      "id": "north_east",
+      "min": [
+        10,
+        -2,
+        8
+      ],
+      "max": [
+        13,
+        4.4,
+        9
+      ],
+      "paint": "PANELS"
+    },
+    {
+      "id": "divider_grille",
+      "min": [
+        -0.2,
+        0,
+        -8
+      ],
+      "max": [
+        0.2,
+        4.4,
+        0
+      ],
+      "paint": "PANELS",
+      "kind": 4
+    },
+    {
+      "id": "divider",
+      "min": [
+        -0.4,
+        0,
+        0
+      ],
+      "max": [
+        0.4,
+        4.4,
+        8
+      ],
+      "paint": "CONCRETE"
+    },
+    {
+      "id": "divider_collar_west",
+      "min": [
+        -0.48,
+        4.27,
+        1.42
+      ],
+      "max": [
+        -0.4,
+        4.4,
+        1.58
+      ],
+      "paint": "RUST"
+    },
+    {
+      "id": "divider_collar_east",
+      "min": [
+        0.4,
+        4.27,
+        1.42
+      ],
+      "max": [
+        0.48,
+        4.4,
+        1.58
+      ],
+      "paint": "RUST"
+    },
+    {
+      "id": "cupboard_west",
+      "min": [
+        9.2,
+        0,
+        2
+      ],
+      "max": [
+        9.8,
+        4.4,
+        6.8
+      ],
+      "paint": "PANELS"
+    },
+    {
+      "id": "cupboard_east",
+      "min": [
+        11.8,
+        0,
+        2
+      ],
+      "max": [
+        12.4,
+        4.4,
+        6.8
+      ],
+      "paint": "PANELS"
+    },
+    {
+      "id": "cupboard_back",
+      "min": [
+        9.8,
+        0,
+        6
+      ],
+      "max": [
+        11.8,
+        4.4,
+        6.8
+      ],
+      "paint": "WALLPAPER",
+      "takes": true
+    },
+    {
+      "id": "cupboard_grille",
+      "min": [
+        9.8,
+        0,
+        1.8
+      ],
+      "max": [
+        11.8,
+        4.4,
+        2
+      ],
+      "paint": "PANELS",
+      "kind": 4
+    },
+    {
+      "id": "cupboard_header",
+      "min": [
+        9.8,
+        3.8,
+        2
+      ],
+      "max": [
+        11.8,
+        4.4,
+        2.6
+      ],
+      "paint": "PANELS"
+    },
+    {
+      "id": "cupboard_rear",
+      "min": [
+        9.2,
+        0,
+        6.8
+      ],
+      "max": [
+        12,
+        4.4,
+        8
+      ],
+      "paint": "PANELS"
+    }
+  ],
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -6,
+        0,
+        -10.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        6,
+        0,
+        10.1
+      ],
+      "yaw": "SOUTH",
+      "need": [
+        1
+      ],
+      "socket_x": 1
+    }
+  ],
+  "anchors": {
+    "cupboard_plate_rim": {
+      "support": "floor",
+      "face": "+y",
+      "uv": [
+        -7.4,
+        4
+      ],
+      "offset": 0.025
+    },
+    "divider_foot": {
+      "support": "floor",
+      "face": "+y",
+      "uv": [
+        -0.43,
+        4
+      ],
+      "offset": 0.025
+    },
+    "divider_top": {
+      "support": "divider",
+      "face": "-x",
+      "uv": [
+        4.35,
+        4
+      ],
+      "offset": 0.03
+    },
+    "ceiling_turn": {
+      "support": "ceiling",
+      "face": "-y",
+      "uv": [
+        -0.43,
+        1.5
+      ],
+      "offset": 0.05
+    },
+    "ceiling_cupboard": {
+      "support": "ceiling",
+      "face": "-y",
+      "uv": [
+        10.8,
+        1.5
+      ],
+      "offset": 0.05
+    },
+    "header_top": {
+      "support": "ceiling",
+      "face": "-y",
+      "uv": [
+        10.8,
+        1.965
+      ],
+      "offset": 0.05
+    },
+    "cupboard_socket": {
+      "support": "cupboard_header",
+      "face": "-z",
+      "uv": [
+        10.8,
+        4.1
+      ],
+      "offset": 0.035
+    },
+    "exit_plate_rim": {
+      "support": "floor",
+      "face": "+y",
+      "uv": [
+        4,
+        6.1
+      ],
+      "offset": 0.025
+    },
+    "exit_floor_turn": {
+      "support": "floor",
+      "face": "+y",
+      "uv": [
+        2.46,
+        6.1
+      ],
+      "offset": 0.025
+    },
+    "exit_jamb_foot": {
+      "support": "scene",
+      "face": "-z",
+      "at": [
+        2.46,
+        0.025,
+        7.435
+      ]
+    },
+    "exit_jamb_top": {
+      "support": "scene",
+      "face": "-z",
+      "at": [
+        2.46,
+        4.2,
+        7.435
+      ]
+    },
+    "exit_header_left": {
+      "support": "scene",
+      "face": "-z",
+      "at": [
+        3.1,
+        4.2,
+        7.435
+      ]
+    },
+    "exit_header_turn": {
+      "support": "scene",
+      "face": "-z",
+      "at": [
+        3.1,
+        4.2,
+        7.475
+      ]
+    },
+    "exit_socket": {
+      "support": "scene",
+      "face": "-z",
+      "at": [
+        5,
+        4.2,
+        7.475
+      ]
+    }
+  },
+  "doors": [
+    {
+      "id": "cupboard_door",
+      "at": [
+        10.8,
+        2.2,
+        5.75
+      ],
+      "size": [
+        2,
+        4.4,
+        0.3
+      ],
+      "need": [
+        0
+      ],
+      "socket": "cupboard_socket",
+      "lamp_depth": 0.18
+    }
+  ],
+  "plates": [
+    {
+      "id": "cupboard_plate",
+      "at": [
+        -8,
+        0,
+        4
+      ],
+      "signal": 0
+    },
+    {
+      "id": "exit_plate",
+      "at": [
+        4,
+        0,
+        5.5
+      ],
+      "signal": 1
+    }
+  ],
+  "wires": [
+    {
+      "id": "cupboard_wire",
+      "signal": 0,
+      "from": "cupboard_plate",
+      "to": "cupboard_door",
+      "points": [
+        "cupboard_plate_rim",
+        "divider_foot",
+        "divider_top",
+        "ceiling_turn",
+        "ceiling_cupboard",
+        "header_top",
+        "cupboard_socket"
+      ]
+    },
+    {
+      "id": "exit_wire",
+      "signal": 1,
+      "from": "exit_plate",
+      "to": "exit",
+      "points": [
+        "exit_plate_rim",
+        "exit_floor_turn",
+        "exit_jamb_foot",
+        "exit_jamb_top",
+        "exit_header_left",
+        "exit_header_turn",
+        "exit_socket"
+      ]
+    }
+  ],
+  "ends": [
+    {
+      "id": "west_fold",
+      "end": 0,
+      "wall": "west",
+      "face": "+x",
+      "foot": [
+        -12,
+        0,
+        -3
+      ],
+      "size": 1
+    },
+    {
+      "id": "east_fold",
+      "end": 1,
+      "wall": "east",
+      "face": "-x",
+      "foot": [
+        12,
+        0,
+        -3
+      ],
+      "size": 1
+    }
+  ]
+}

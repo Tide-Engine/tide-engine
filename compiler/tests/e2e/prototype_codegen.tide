@@ -1,0 +1,206 @@
+scene Main { }
+asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
+
+struct Group
+{
+    List<int> items;
+}
+
+struct Values
+{
+    float positive;
+    float negative;
+}
+
+struct Motion
+{
+    float3 velocity;
+    int4 lanes;
+}
+
+singleton Waiting
+{
+    bool started;
+    bool done;
+    List<List<int>> rows;
+    List<Map<int, int>> maps;
+    int sum;
+    int index;
+}
+
+local singleton Art
+{
+    List<List<int>> rows;
+    List<Group> groups;
+    List<Map<int, int>> maps;
+    List<Set<int>> sets;
+    Map<string, List<int>> named;
+    Map<long, List<int>> longKeys;
+    List<Motion> movers;
+    Map<int, Motion> positions;
+    float3[2] points;
+    int checks;
+    int passed;
+}
+
+Group Computed(mut int calls)
+{
+    calls++;
+    return Group { items = [9, 10] };
+}
+
+async void Visit(mut Waiting state)
+{
+    mut int row = 0;
+    foreach (var x in state.rows[row++])
+    {
+        state.sum += x;
+        await Wait.Ticks(1);
+        if (x == 1)
+        {
+            state.rows[0].Add(3);
+            for (mut int i = 0; i < 80; i++) state.rows.Add([i]);
+        }
+    }
+    state.index = row;
+    foreach (var entry in state.maps[0])
+    {
+        state.sum += entry.value;
+        await Wait.Ticks(1);
+        if (entry.key == 1)
+        {
+            state.maps[0][2] = 20;
+            for (mut int i = 0; i < 80; i++) state.maps.Add(default);
+        }
+    }
+    state.done = true;
+}
+
+system Begin(mut Waiting state)
+{
+    if (state.started) return;
+    state.started = true;
+    state.rows = [[1, 2]];
+    state.maps.Add(default);
+    state.maps[0][1] = 10;
+    Visit(state);
+}
+
+void Expect(mut Art art, bool ok)
+{
+    art.checks++;
+    if (ok) art.passed++;
+}
+
+frag Shade(Vertex3 vertex, Values values, out Color color)
+{
+    color = Color(values.positive + values.negative, vertex.uv);
+}
+
+view Show(mut Art art)
+{
+    art.checks = 0;
+    art.passed = 0;
+    art.rows = [[1, 2], [100]];
+    mut int row = 0;
+    mut int sum = 0;
+    foreach (var x in art.rows[row++])
+    {
+        sum += x;
+        if (x == 1)
+        {
+            // Both the selected list and its enclosing storage can move.
+            art.rows[0].Add(3);
+            for (mut int i = 0; i < 80; i++) art.rows.Add([i]);
+        }
+    }
+    Expect(art, row == 1 && sum == 6);
+    sum = 0;
+    foreach (var x in art.rows[-1]) sum += x;
+    foreach (var x in art.rows[999]) sum += x;
+    Expect(art, sum == 0);
+
+    art.groups = [Group { items = [4, 5] }];
+    foreach (var x in art.groups[0].items) sum += x;
+    Expect(art, sum == 9);
+
+    art.named.Clear();
+    art.named["first"] = [6, 7];
+    sum = 0;
+    foreach (var x in art.named["first"])
+    {
+        sum += x;
+        if (x == 6)
+        {
+            art.named["first"].Add(8);
+            for (mut int i = 0; i < 80; i++) art.named[$"key{i}"] = [i];
+        }
+    }
+    Expect(art, sum == 21);
+    foreach (var x in art.named["absent"]) sum += x;
+    Expect(art, sum == 21 && art.named.count == 81);
+
+    art.longKeys.Clear();
+    art.longKeys[1] = [11];
+    art.longKeys[-1] = [12];
+    sum = 0;
+    foreach (var x in art.longKeys[1]) sum += x;
+    foreach (var x in art.longKeys[-1]) sum += x;
+    Expect(art, sum == 23);
+
+    art.maps.Clear();
+    art.maps.Add(default);
+    art.maps[0][1] = 10;
+    sum = 0;
+    foreach (var entry in art.maps[0])
+    {
+        sum += entry.value;
+        if (entry.key == 1)
+        {
+            art.maps[0][2] = 20;
+            for (mut int i = 0; i < 80; i++) art.maps.Add(default);
+        }
+    }
+    Expect(art, sum == 30);
+    art.sets = [[1]];
+    sum = 0;
+    foreach (var x in art.sets[0])
+    {
+        sum += x;
+        if (x == 1)
+        {
+            art.sets[0].Add(2);
+            for (mut int i = 0; i < 80; i++) art.sets.Add(default);
+        }
+    }
+    Expect(art, sum == 3);
+
+    mut int computed = 0;
+    sum = 0;
+    foreach (var x in Computed(computed).items) sum += x;
+    Expect(art, computed == 1 && sum == 19);
+
+    art.movers = [Motion { velocity = float3(1, 2, 3) }];
+    art.movers[0].velocity.y = 0;
+    art.movers[0].velocity.xz += float2(2, 4);
+    art.movers[0].lanes.wz = int2(6, 5);
+    art.movers[0].velocity.z++;
+    Expect(art, art.movers[0].velocity.x == 3 && art.movers[0].velocity.y == 0 && art.movers[0].velocity.z == 8
+        && art.movers[0].lanes.x == 0 && art.movers[0].lanes.y == 0 && art.movers[0].lanes.z == 5 && art.movers[0].lanes.w == 6);
+    art.positions.Clear();
+    art.positions[7].velocity.y = 8;
+    art.positions[7].lanes.xy = int2(3, 4);
+    Expect(art, art.positions.count == 1 && art.positions[7].velocity.y == 8
+        && art.positions[7].lanes.x == 3 && art.positions[7].lanes.y == 4 && art.positions[7].lanes.z == 0 && art.positions[7].lanes.w == 0);
+    art.points[0].x = 9;
+    art.points[1].yz = float2(2, 3);
+    art.points[-1].x = 100;
+    art.points[2].yz = float2(100, 100);
+    art.movers[99].velocity.y = 100;
+    Expect(art, art.points[0].x == 9 && art.points[0].y == 0 && art.points[0].z == 0
+        && art.points[1].x == 0 && art.points[1].y == 2 && art.points[1].z == 3 && art.movers.count == 1);
+
+    // Draw operands force captures even for literals. Widening must read them.
+    Draw.SkinnedMesh(character, float4x4.identity, Shade, Values { positive = 1, negative = -1 });
+    Expect(art, true);
+}

@@ -4,6 +4,12 @@ description: "Import images, audio and glTF, FBX or OBJ models as Tide assets. S
 
 # Assets
 
+[Dedicated server builds](../tools/cli.md#dedicated-servers) can omit assets used
+only by views and other client code. Assets reached by simulation helpers,
+defaults and dynamic match asset references remain available. Server and client
+retain the same match identity even when their packs differ. Projects with
+custom C retain assets conservatively unless explicitly opting into pruning.
+
 An asset is a file a game is built with: an image, a model, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.
 
 ## Supported formats
@@ -111,7 +117,7 @@ view Show(mut Player player)
 
 - A `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
 - Its exact fallback keeps a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images also have a smaller compressed GPU copy, described below.
-- No code reads it. It has no cells and no size to ask. An image whose pixels or size the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
+- `texture.size` reads its base-level dimensions as an `int2`, without uploading pixels. An image whose pixels the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
@@ -120,7 +126,7 @@ view Show(mut Player player)
 
 Ordinary color `Texture` assets are compressed automatically during the build when both dimensions are powers of two and at least 128 pixels. Opaque images use BC1; images with transparency use BC3. This includes images in asset lists and maps. Compression is lossy, so sampled colors can differ slightly from the source, especially around sharp color changes or faint transparency.
 
-On supported GPUs, a full mip chain takes roughly one eighth of RGBA memory for BC1, or one quarter for BC3. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. OpenGL and WebGL use S3TC when available; WebGPU uses its optional BC feature. Unsupported devices use the exact RGBA fallback.
+On supported GPUs, a full mip chain takes roughly one eighth of RGBA memory for BC1, or one quarter for BC3. Mips are prepared during the build; `Filter.Trilinear` reads them, while Point and Bilinear retain their existing sampling behavior. Vulkan uses BC where the device has it, OpenGL and WebGL use S3TC when available, and WebGPU uses its optional BC feature. Unsupported devices use the exact RGBA fallback.
 
 The pack currently includes both representations, so this reduces GPU memory and upload bytes while increasing pack size. Small images, non-power-of-two images, cubemaps, grids and render targets keep their current representation. [`[Raw]` data textures](./shaders.md#textures-that-are-numbers) remain uncompressed and preserve their channels.
 
@@ -359,6 +365,8 @@ A list or a map can name one file, and is then a list or a map of that one:
 asset List<Clip> shots = "sfx/shot.wav";             // shots.count is 1, and shots[0] is the file
 asset Map<string, Clip> named = "sfx/shot.wav";      // named["sfx/shot.wav"]
 ```
+
+Synchronous CPU helpers can [borrow resource asset collections](../language/functions.md) through read-only `List<Clip>`, `List<Texture>`, `List<Mesh<V>>` or `Map<string, T>` parameters. Pass the asset directly; the call reads its existing collection without copying it.
 
 That's for a path that changes while the game is made. Start with the one file there is, widen the path to `"sfx/shot*.wav"` or `"sfx/*.wav"` when there are more, or narrow it again, and the type and the code that reads it stay as they are. A map's key for the one file is its path as written, which is the key a glob gives it. A URL in a list or a map is the same: one entry, keyed by the URL.
 

@@ -1,4 +1,4 @@
-// expect: a Draw.Mesh that names a vert or a frag goes in a view
+// expect: function 'Show' must take exactly one 'Box' parameter for frag 'Shade' to read
 scene Main { }
 
 struct V

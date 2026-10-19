@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "lamps_out",
+  "function": "BuildMapLampsOut",
+  "lifts": [
+    {
+      "id": "stop",
+      "role": "stop",
+      "at": [
+        0,
+        0,
+        0
+      ],
+      "yaw": "NORTH",
+      "stay": 11
+    }
+  ],
+  "plates": [],
+  "machines": [],
+  "anchors": {},
+  "wires": [],
+  "place_ids": [
+    4
+  ],
+  "external_geometry": true
+}

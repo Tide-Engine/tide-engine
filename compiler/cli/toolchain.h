@@ -17,7 +17,7 @@ char *find_wasm_ld(const char *clang);
 #ifdef __APPLE__
 #include <stdbool.h>
 
-// Apple's SDK, macOS's headers and libraries, from its command line tools or
-// Xcode. Sets SDKROOT, where clang looks for it, unless it's set already.
+// Apple's SDK from xcrun's selected developer tools, matching Apple's linker.
+// Sets SDKROOT, where clang looks for it, unless it's set already.
 bool find_macos_sdk(void);
 #endif

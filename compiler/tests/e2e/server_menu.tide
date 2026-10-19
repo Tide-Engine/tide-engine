@@ -1,0 +1,10 @@
+local scene Main { }
+scene Arena { int amount = 1; }
+singleton State { int amount; }
+local event(Spawned) Menu(with Main)
+{
+    Session.Start(Arena);
+    Debug.Assert(false, "the server ran the menu");
+}
+event(Spawned) Begin(Arena arena, mut State state) { state.amount = arena.amount; }
+view Show() { Debug.Assert(false, "the server ran a view"); }

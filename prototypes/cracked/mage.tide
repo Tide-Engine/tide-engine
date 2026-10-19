@@ -290,7 +290,7 @@ void Slosh(mut Troupe troupe, int s, float3 at, quaternion turned, float dt)
 
 // The seats' clocks move on.
 [Stage(Layers.Prepare, 2)]
-view Paces(Arena arena, Shown shown, Fx fx, mut Troupe troupe)
+view Paces(Arena arena, Presentation shown, Fx fx, mut Troupe troupe)
 {
     troupe.clock += fx.dt;
     if (troupe.clock > 1 / LIQUID_SPEED) troupe.clock -= 1 / LIQUID_SPEED;
@@ -330,7 +330,7 @@ view Paces(Arena arena, Shown shown, Fx fx, mut Troupe troupe)
 
 // The mages in the sun's image and in the eye's depth, after the blocks.
 [Stage(Layers.Shadow, 2)]
-view MageShadows(Arena arena, Shown shown, Air air, Troupe troupe, Shadow shadow, Depths depths)
+view MageShadows(Arena arena, Presentation shown, Air air, Troupe troupe, Shadow shadow, Depths depths)
 {
     for (var s = 0; s < SEATS; s++)
     {
@@ -345,7 +345,7 @@ view MageShadows(Arena arena, Shown shown, Air air, Troupe troupe, Shadow shadow
 // The mages: body and liquid first, then every head's glass over them, which
 // is seen through and hides nothing.
 [Stage(Layers.World, 2)]
-view Mages(Arena arena, Shown shown, Air air, Troupe troupe, Post post)
+view Mages(Arena arena, Presentation shown, Air air, Troupe troupe, Post post)
 {
     for (var pass = 0; pass < 2; pass++)
     {

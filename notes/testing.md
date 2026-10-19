@@ -1,6 +1,51 @@
 # Test infrastructure
 
+## Windows ANGLE D3D11 shader regression (2026-10-19)
+
+tide_add_web_test(... D3D11) adds a Windows-host WebGL run using
+--use-angle=d3d11-warp, currently tide_platform_shaders_d3d11. The ordinary
+WebGL run still uses SwiftShader. run_web_test.cmake accepts ANGLE_BACKEND
+and only gives SwiftShader --enable-unsafe-swiftshader. Both paths retain
+muted audio, isolated scratch profiles, CPU reservations and fatal shader
+warnings. The D3D11 page must report a renderer containing Direct3D11, so
+fallback cannot silently turn this into another SwiftShader pass. The shell's
+expect-angle query is a test-only check, not a Tide program argument.
+
+This covers the varying-loop depth comparison reported by Inside Out and
+the math/container warnings found while exercising its existing full shader
+fixture. See notes/shaders.md. No prototype browser playtest was run.
+
+## Custom browser runners reserve CPUs (2026-10-18)
+
+The three `tide_platform_web_rooms*` tests and `tide_platform_web_threads`
+now reserve `TIDE_WEB_TEST_PROCESSORS`, matching `tide_add_web_test`.
+Their manually registered tests had bypassed the software renderer's CPU
+accounting. Run `39128917687` ran rooms alongside migration/ended rooms and
+threaded-browser work on Windows; the hidden host reported 5.878 seconds
+skipped, followed by its joiner's session timeout. The log does not prove
+the underlying source of that hosted scheduling gap. Reservation prevents
+CTest itself from oversubscribing these pages, without changing session
+timeouts, test deadlines, assertions or browser flags that affect rendering.
+The runners also close Chrome through DevTools before returning, as described
+in `notes/webrtc-and-rooms.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
+
+## GPU tests on Vulkan (2026-10-14)
+
+Native GPU tests are registered through `tide_gpu_test(<test>... [OPENGL])` (`cmake/VulkanTests.cmake`), which gives them the `gpu` label as `set_tests_properties(... LABELS gpu)` did, and an environment:
+
+- `VK_LOADER_LAYERS_DISABLE=~implicit~`, so overlays and capture tools a machine has installed (Steam's, OBS's, Epic's are on this one) stay out of a test's Vulkan.
+- `TIDE_VULKAN_VALIDATION=1` and `VK_ADD_LAYER_PATH`, where CMake found the Khronos validation layer: in `TIDE_VULKAN_SDK`, `VULKAN_SDK`'s `Bin`/`share`/`etc`, or the system's explicit layer folders. Its errors and warnings then stop the test (`notes/rendering.md`, Vulkan). Synchronization validation is on with it, so a missing barrier stops a test too. With no layer, configure says so, and the tests draw with Vulkan unchecked.
+- `OPENGL` adds `TIDE_BACKEND=opengl`. `tide_platform_draw`, `_targets`, `_shaders`, `_skinned` and `_gpu_time` have such a twin, `*_opengl`, so OpenGL keeps its coverage now that Vulkan is the default.
+
+Where CMake finds `spirv-val`, `tidec_spirv_<name>` and `tide_spirv_shaders_valid` check tidec's and the renderer's SPIR-V (`notes/shaders.md`, SPIR-V).
+
+This machine has no SDK installed. The Windows SDK 1.4.350.0 installer (`vulkansdk-windows-X64-1.4.350.0.exe`, SHA-256 `855b27ba05d2d8119c5114c5d4ff870ca38f2c632b11e1bb9923b9b7e6ecfe7b`, as Scoop's manifest pins it) was unpacked with 7-Zip into `%LOCALAPPDATA%/TideDev/VulkanSDK/1.4.350.0` (its `Bin` alone comes out, which holds both tools). The debug preset was configured with `-DTIDE_VULKAN_SDK=C:/Users/blenm/AppData/Local/TideDev/VulkanSDK/1.4.350.0`. Nothing was registered with the system, so a run outside CTest has no layer unless it sets those variables itself.
+
+`tide_platform_swapchain` and `tide_platform_pipeline_cache` are Vulkan's alone, and set `TIDE_BACKEND=vulkan`: on a machine without it they fail, where the others would draw with OpenGL.
+
+CI runs no `gpu` test (its runners have no GPU), so Vulkan's coverage is this machine's.
 
 ## Building
 

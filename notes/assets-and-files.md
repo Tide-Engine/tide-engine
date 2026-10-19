@@ -1,5 +1,40 @@
 # Assets and local files
 
+Resource collection helpers (2026-10-18) borrow existing Clip, Texture and
+Mesh<V> asset lists/maps through ordinary read-only synchronous parameters.
+Direct assets and forwarded borrows pass their current handles without copying
+the collection or retaining pack data. Resource/value lifetimes, reload,
+canonical validation, pack kinds, identities and pruning remain unchanged.
+Collections cannot escape into storage, results, error payloads or tasks.
+`asset_borrows` and fourteen diagnostics cover the completion; contracts and
+validation are in notes/language.md and the public functions/assets pages.
+
+2026-10-18 test-save isolation: native `tide_platform_io_init` now takes an
+optional directory after app_id. NULL retains normal app storage; the desktop
+host supplies `--data-dir` when requested. Full native paths are resolved before
+relative I/O or exposing Application.persistentDataPath; app ID/root pairs reuse
+the provider and pending flushes. Changing roots uses the existing app-switch
+cleanup. Unusable overrides fail without fallback; temporary roots and native
+absolute file access are unchanged. Web callers pass NULL. Contracts/tests and
+validation: `notes/standard-host.md`, Explicit save directory for test runs.
+
+Simulation identity (2026-10-15): simulation-read assets contribute source
+digests and canonical imported skinned data/external buffer digests to the new
+Simulation ID. Presentation-only assets do not. Ordinary simulation-read asset
+edits now set assets_affect_match and trigger regeneration in watch mode;
+pack-only reload remains available for visual-only assets. The server computes
+identity before pruning, so its reduced pack and full client agree. Custom C
+remains conservative for server pack retention and includes every packed asset
+in compatibility, since C reads cannot be inferred. Compiler regression tests cover
+visual/simulation text edits. Full contracts/tests: managed-hosting.md.
+
+Dedicated server packs (2026-10-15): closed server builds keep simulation asset
+dependencies and omit client-only assets after computing the client's unchanged
+compatibility identity. C projects retain all assets unless explicitly opting in.
+Dynamic match Asset<Mesh<V>> types keep every matching declaration and its vertex
+defaults. Different pack digests use self-contained network transfer. Source
+validation still processes all assets. Contracts and tests: dedicated-servers.md.
+
 ## Persistent static model references (2026-10-12)
 
 Approved Asset<Mesh<V>> fields store a checked singular asset declaration's
@@ -174,7 +209,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 - Packed maps use format version 2: each entry starts with a positive signed 64-bit insertion order, `1..count`, as the runtime's maps do. `tide_pack_map_of` and `tide_pack_mesh_map_of` initialize the map's last order from that count; texture and clip maps retain the orders when their values are expanded at load. Copies can then add entries and resume a cursor without reusing old orders. The loader rejects version 1 and leaves a previously loaded pack usable. `tests/test_pack.c` traverses text/grid, texture, clip and mesh maps through `tide_map_next`, adds to a copied clip map, and checks rejection of the old layout. Mesh entry padding stays zero in the builder.
 
-- Local files are `File`, `Directory`, `Path`, and the read-only runtime properties `Application.persistentDataPath` and `Application.temporaryCachePath` (`docs/game/files.md`). File contents are UTF-8 text or `List<byte>`; `byte` is an unsigned 8-bit scalar. File/directory operations, application paths and `await Storage.Flush()` are local only, including functions that reach them; their results reach the match through input. `Path` is pure. Whole-file operations fail with `IOError`, except `Exists`, which is a bool. Directory results are sorted full paths, with recursion off by default; directory creation creates parents, writes do not, and recursive deletion is explicit. Relative paths use the persistent root. Save identity is the stable `appId`, never the window title. Native files use the OS; browser files are an in-memory filesystem loaded from IndexedDB before startup, with automatic background commits and an awaitable flush that confirms preceding changes committed. The page keeps its files and commits across hot reload. Storage failures are reported, and failed commits retain dirty data for retry; temporary storage stays usable when persistence is unavailable. Open file handles and streams are outside this first API.
+- Local files are `File`, `Directory`, `Path`, and the read-only runtime properties `Application.persistentDataPath` and `Application.temporaryCachePath` (`docs/game/files.md`). File contents are UTF-8 text or `List<byte>`; `byte` is an unsigned 8-bit scalar. File/directory operations, application paths and `await Storage.Flush()` are local only, including functions that reach them; their results reach the match through input. `Path` is pure. Whole-file operations fail with `IOError`, except `Exists`, which is a bool. Directory results are sorted full paths, with recursion off by default; directory creation creates parents, writes do not, and recursive deletion is explicit. Relative paths use the persistent root. Save identity is the stable `appId`, never the window title. Native files use the OS; browser files are an in-memory filesystem loaded from IndexedDB before startup, with automatic background commits and an awaitable flush that confirms preceding changes committed. The page keeps its files and commits across hot reload. Storage failures are reported, and failed commits retain dirty data for retry; temporary storage stays usable when persistence is unavailable. Open file handles and streams are outside this first API. The renderer keeps Vulkan's pipeline cache in the temporary cache folder (`pipelines.vulkan`, `notes/rendering.md`, Vulkan). The standard host names the game for that whether the game uses files or not (`tide_platform_name_game`, called by `tide_run_bind_io` before the game's I/O is bound, and by `tide_platform_io_init`). The folder is made only when the cache is first written, so a game that never uses files gets no persistent folder from it.
   - A browser save is one IndexedDB transaction, and the saves of a page go one after another (`saveFiles` and `tree.chain` in `platform/web/tide.js`). A change queues a save for the end of its turn, and a flush is a save too, so a game that changes files and flushes before it returns to the browser asks for two. Each takes what's dirty when its turn comes, never when it's asked for: the second comes once the first committed and finds nothing left, so it opens no transaction. Copied when asked, both wrote every changed file, and the flush was done after the first with the second still on its way, which is what a page that then went elsewhere left behind. What follows from taking it then: a save commits the files as they are when its transaction opens, so a flush may also commit what changed after it was asked for and before its turn, and reports that transaction's failure; what a failed save left dirty, and a file changed again while its save was on its way (its entry in `tree.dirty` is then another object than the one the save wrote, so the save's end leaves it), go with the next save. `tide_platform_web_io` counts the transactions that write in each of its phases, and its `busy` phase changes files while the page holds a save's transaction open.
 
 - Assets are built (agreed 2026-10-06; `docs/spec.md`, Assets, where the picks beyond what was agreed are Provisional; `docs/game/assets.md` for users): `asset Grid2<Color> hero = "art/hero.png";` is a declaration (`DECL_ASSET`) that resolves to a plain type, read-only, read by name wherever a value of its type is, in match code too, as every machine has the same pack. What's built, and what code relies on:

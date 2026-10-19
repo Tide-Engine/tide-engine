@@ -205,6 +205,17 @@ static int atlas_height;
 static int row_x = 1, row_y = 1, row_height;
 static uint32_t atlas_version;
 static bool atlas_full;
+static int changed_first, changed_end; // Rows changed since tide_font_atlas_changed: none when they're equal
+
+static void changed_rows(const int first, const int end)
+{
+    if (changed_first == changed_end) {
+        changed_first = first, changed_end = end;
+        return;
+    }
+    if (first < changed_first) changed_first = first;
+    if (end > changed_end) changed_end = end;
+}
 
 // The glyphs drawn so far, by code point, size and weight: a hash table, a
 // quarter of it free at least.
@@ -720,6 +731,7 @@ bool tide_font_glyph_for(const unsigned char *font, const uint32_t codepoint, co
             g.left = (int16_t)x0;
             g.top = (int16_t)y0; // From the baseline: above it is less than 0
             atlas_version++;
+            changed_rows(g.y, g.y + height);
         }
         free(shape);
         outline_free(&o);
@@ -738,6 +750,13 @@ const uint8_t *tide_font_atlas(int *width, int *height, uint32_t *version)
     return atlas;
 }
 
+void tide_font_atlas_changed(int *first, int *count)
+{
+    *first = changed_first;
+    *count = changed_end - changed_first;
+    changed_first = changed_end = 0;
+}
+
 void tide_font_frame(void)
 {
     if (!atlas_full) return;
@@ -748,4 +767,5 @@ void tide_font_frame(void)
     row_x = row_y = 1;
     row_height = 0;
     atlas_version++;
+    changed_rows(0, atlas_height);
 }

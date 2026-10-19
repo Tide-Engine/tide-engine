@@ -1,0 +1,39 @@
+// Both builds have identical match code. Only local declaration placement and
+// an attached local field differ, neither of which may change the match dice.
+#if LOCAL_FIRST
+local singleton Paint { int color; }
+#endif
+
+struct Bag { Random dice; }
+
+singleton Dice
+{
+    Random first;
+    Bag bag;
+    Random fixed = Random(42);
+    int result;
+#if LOCAL_FIRST
+    local int color;
+#endif
+}
+
+singleton Later
+{
+    Random random;
+    int result;
+}
+
+scene Main { }
+
+system Roll(mut Dice dice, mut Later later)
+{
+    var first = dice.first.NextInt(1000);
+    var second = dice.bag.dice.NextInt(1000);
+    var third = dice.fixed.NextInt(1000);
+    dice.result = first + second + third;
+    later.result = later.random.NextInt(1000);
+}
+
+#if !LOCAL_FIRST
+local singleton Paint { int color; }
+#endif

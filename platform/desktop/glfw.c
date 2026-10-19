@@ -1,5 +1,6 @@
-// Desktop windows (see src/window.h): GLFW's, with an OpenGL 3.3 context, and
-// the keyboard, mouse, gamepads and clipboard through it. Touchscreens are
+// Desktop windows (see src/window.h): GLFW's, drawn in with Vulkan where the
+// machine has it (src/gpu_vk.c; on a Mac, MoltenVK beside the program) and
+// with an OpenGL 3.3 context where it hasn't, and the keyboard, mouse, gamepads and clipboard through it. Touchscreens are
 // Windows' own (src/touch_win32.c): GLFW has no touch, so other desktops have
 // none yet.
 
@@ -11,7 +12,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
+#include "gpu_vk.h" // Before GLFW's header, which declares its Vulkan functions where Vulkan's types are
 #define GLFW_INCLUDE_NONE // Its OpenGL is ours (src/gl.h)
 #include <GLFW/glfw3.h>
 
@@ -23,6 +26,7 @@
 #endif
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #else
 #include <unistd.h>
@@ -108,6 +112,7 @@ static const struct {
 _Static_assert(COUNT_OF(pad_buttons) == TIDE_PAD_COUNT, "every gamepad button needs GLFW's");
 
 static GLFWwindow *window;
+static bool vulkan; // What draws in it is Vulkan, else OpenGL
 static int pixel_width = 1, pixel_height = 1; // The framebuffer's, as of when it last had a size
 static double wheel_x, wheel_y;               // Since the last tide_window_mouse_state
 static bool paste_asked;
@@ -177,23 +182,64 @@ static void on_mouse_button(GLFWwindow *from, const int button, const int action
     else if (action == GLFW_RELEASE) mouse_held &= ~(1u << button);
 }
 
-bool tide_window_open(const tide_window_desc *desc)
+// What Vulkan asks of the window (gpu_vk.h): its functions, through the
+// loader GLFW found, its surface and its size.
+static PFN_vkVoidFunction VKAPI_PTR instance_proc(const VkInstance instance, const char *name)
 {
-    // In a run nobody watches (TIDE_HIDDEN), no window shows, whatever asked for it
-    const bool hidden = desc->hidden || tide_hidden();
-    glfwSetErrorCallback(on_error);
-    if (!glfwInit()) {
-        fprintf(stderr, "tide: no desktop to open a window on\n");
-        return false;
+    return (PFN_vkVoidFunction)glfwGetInstanceProcAddress(instance, name);
+}
+
+static VkResult make_surface(const VkInstance instance, VkSurfaceKHR *surface)
+{
+    return glfwCreateWindowSurface(instance, window, NULL, surface);
+}
+
+static void framebuffer_size(int *width, int *height)
+{
+    glfwGetFramebufferSize(window, width, height);
+}
+
+#ifdef __APPLE__
+// Vulkan on a Mac: a loader the system has (the Vulkan SDK's, which brings
+// its validation layer), else MoltenVK, Vulkan on Metal, which tide puts
+// beside every game it builds, and an app has in its bundle's Frameworks.
+// GLFW is handed the one found, and makes the window's surface with it; with
+// none, it looks where it does by itself, and the window draws with OpenGL.
+static void find_vulkan(void)
+{
+    static void *library;
+    if (library) return;
+    library = dlopen("libvulkan.1.dylib", RTLD_NOW | RTLD_LOCAL);
+    char path[4096];
+    uint32_t size = sizeof path;
+    char *slash = !library && _NSGetExecutablePath(path, &size) == 0 ? strrchr(path, '/') : NULL;
+    static const char *const beside[] = {"libMoltenVK.dylib", "../Frameworks/libMoltenVK.dylib"};
+    for (size_t i = 0; slash && i < COUNT_OF(beside) && !library; i++) {
+        if ((size_t)(slash + 1 - path) + strlen(beside[i]) >= sizeof path) break;
+        strcpy(slash + 1, beside[i]);
+        library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     }
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // The only core contexts macOS makes
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);              // Shown once it's in its place
-    // With depth and stencil, as every render target has: what draws in the window draws the same in one
-    glfwWindowHint(GLFW_DEPTH_BITS, 24);
-    glfwWindowHint(GLFW_STENCIL_BITS, 8);
+    const PFN_vkGetInstanceProcAddr proc = library ? (PFN_vkGetInstanceProcAddr)dlsym(library, "vkGetInstanceProcAddr") : NULL;
+    if (proc) glfwInitVulkanLoader(proc);
+}
+#endif
+
+// A window, not yet shown: one for Vulkan has no OpenGL context.
+static GLFWwindow *make_window(const tide_window_desc *desc, const bool hidden, const bool gl)
+{
+    glfwDefaultWindowHints();
+    if (gl) {
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // The only core contexts macOS makes
+        // With depth and stencil, as every render target has: what draws in the window draws the same in one
+        glfwWindowHint(GLFW_DEPTH_BITS, 24);
+        glfwWindowHint(GLFW_STENCIL_BITS, 8);
+    } else {
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    }
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Shown once it's in its place
     // Tests keep the size they asked for.
     glfwWindowHint(GLFW_RESIZABLE, hidden ? GLFW_FALSE : GLFW_TRUE);
     // Pixels are the display's logical ones (see tide/platform.h): the size
@@ -201,19 +247,65 @@ bool tide_window_open(const tide_window_desc *desc)
     // display is scaled where the system counts windows in its own pixels
     // (Windows, X11). It renders at the display's full resolution either way.
     glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
-    window = glfwCreateWindow(desc->width, desc->height, desc->title ? desc->title : "", NULL, NULL);
-    if (!window) {
-        fprintf(stderr, "tide: no window with OpenGL 3.3 to be had\n");
+    return glfwCreateWindow(desc->width, desc->height, desc->title ? desc->title : "", NULL, NULL);
+}
+
+bool tide_window_open(const tide_window_desc *desc)
+{
+    // In a run nobody watches (TIDE_HIDDEN), no window shows, whatever asked for it
+    const bool hidden = desc->hidden || tide_hidden();
+    glfwSetErrorCallback(on_error);
+#ifdef __APPLE__
+    find_vulkan(); // Before GLFW starts, which looks for Vulkan as it does
+#endif
+    if (!glfwInit()) {
+        fprintf(stderr, "tide: no desktop to open a window on\n");
+        return false;
+    }
+    // Vulkan where the machine has a device for it, else OpenGL; TIDE_BACKEND
+    // picks one, and a Vulkan asked for that isn't there is a failure
+    const char *backend = getenv("TIDE_BACKEND");
+    const bool asks_vulkan = backend && strcmp(backend, "vulkan") == 0;
+    const bool asks_gl = backend && strcmp(backend, "opengl") == 0;
+    if (backend && *backend && !asks_vulkan && !asks_gl) {
+        fprintf(stderr, "tide: TIDE_BACKEND is \"%s\", where it's vulkan or opengl\n", backend);
         glfwTerminate();
         return false;
     }
-    glfwMakeContextCurrent(window);
-    if (!tide_gl_load(glfwGetProcAddress)) {
-        tide_window_close();
+    vulkan = false;
+    if (!asks_gl && glfwVulkanSupported()) {
+        uint32_t count = 0;
+        const char **extensions = glfwGetRequiredInstanceExtensions(&count);
+        window = extensions ? make_window(desc, hidden, false) : NULL;
+        if (window) {
+            const tide_vk_window vk = {instance_proc, extensions, count, make_surface, framebuffer_size, !hidden};
+            vulkan = tide_gpu_vk_open(&vk, asks_vulkan);
+            if (!vulkan) {
+                glfwDestroyWindow(window);
+                window = NULL;
+            }
+        }
+    }
+    if (asks_vulkan && !vulkan) {
+        fprintf(stderr, "tide: TIDE_BACKEND asks for Vulkan, and this machine has none to draw with\n");
+        glfwTerminate();
         return false;
     }
-    // Frames at the display's pace; tests run as fast as they can.
-    glfwSwapInterval(hidden ? 0 : 1);
+    if (!vulkan) {
+        window = make_window(desc, hidden, true);
+        if (!window) {
+            fprintf(stderr, "tide: no window with OpenGL 3.3 to be had\n");
+            glfwTerminate();
+            return false;
+        }
+        glfwMakeContextCurrent(window);
+        if (!tide_gl_load(glfwGetProcAddress)) {
+            tide_window_close();
+            return false;
+        }
+        // Frames at the display's pace; tests run as fast as they can.
+        glfwSwapInterval(hidden ? 0 : 1);
+    }
 
     for (size_t i = 0; i < COUNT_OF(keys); i++) key_of[keys[i].glfw] = (int16_t)(keys[i].key + 1);
     glfwSetCharCallback(window, on_char);
@@ -244,13 +336,22 @@ bool tide_window_open(const tide_window_desc *desc)
     return true;
 }
 
+// The window, for a test that resizes it as a player would (tests/swapchain.c).
+GLFWwindow *tide_glfw_window(void);
+GLFWwindow *tide_glfw_window(void)
+{
+    return window;
+}
+
 const tide_gpu *tide_window_gpu(void)
 {
-    return &tide_gpu_gl;
+    return vulkan ? &tide_gpu_vulkan : &tide_gpu_gl;
 }
 
 void tide_window_close(void)
 {
+    if (vulkan) tide_gpu_vk_close(); // Before the window its surface is of
+    vulkan = false;
     if (window) glfwDestroyWindow(window);
     window = NULL;
     glfwTerminate();
@@ -299,7 +400,8 @@ void tide_window_size(int *width, int *height)
 
 void tide_window_present(void)
 {
-    glfwSwapBuffers(window);
+    if (vulkan) tide_gpu_vk_present();
+    else glfwSwapBuffers(window);
     glfwPollEvents();
 }
 

@@ -14,6 +14,7 @@ component Box
     local List<int> faces;
     local int bakes;
     local float age = 0.5;
+    local float3[2] pieces = [float3(1, 2, 3), float3(4, 5, 6)];
 }
 
 // Only local fields: a tag in the match, which an entity can lose
@@ -39,6 +40,7 @@ singleton Arena
     local int painted;
     local List<float> heights;
     local Map<int, int> tally;
+    local int[2][2] tiles = [[1, 2], [3, 4]];
 }
 
 // What the test's C sets, for the match to do
@@ -120,12 +122,21 @@ int CornersOf(Box box)
     return Corners(box);
 }
 
+void MovePieces(mut Box box)
+{
+    box.pieces[0].x += box.sides;
+    box.pieces[1].yz = float2(box.age, box.bakes);
+    box.pieces[-1].x = 999;
+    box.pieces[2].x = 999;
+}
+
 // Bakes each box's mesh once, into its local fields, and draws from them. The
 // match's fields are a blended copy, as in any view.
 view DrawBox(mut Box box, mut Stats stats)
 {
     if (box.verts.count == 0) Bake(box);
     box.age += 1;
+    MovePieces(box);
     stats.corners += CornersOf(box);
     Draw.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
 }
@@ -164,6 +175,7 @@ view Paint(mut Arena arena)
 {
     if (arena.painted == 0) arena.floor[1, 2] = Color(arena.size, 0, 0, 1);
     arena.painted += 1;
+    arena.tiles[1][0] += 1;
 }
 
 // Loops that run at once, sorts and maps work on local fields as on any

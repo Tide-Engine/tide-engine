@@ -21,11 +21,67 @@ tide <command> [folder] [options]
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
+| `tide ide <editor>` | Prints setup for Emacs, Vim or Neovim using the installed Tide files |
 | `tide open <file.tprefab>` | Opens the native [scene editor](editors.md#native-scene-editor) |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
-| `tide help` | Lists every option |
+| `tide help [command \| argument]` | Lists commands, or shows details for one command or argument |
+| `tide login` / `tide logout` | Authorizes or revokes this CLI's hosting access through the browser |
+| `tide deploy [folder]` | Creates or reuses a project and saves its link in `tide.deploy.json`; builds and uploads locally. `--server-only` omits the client, `--bundle-only` only builds |
 | `tide cc <options>` | clang, built into tide, for C you build yourself (see [Calling C](../c/functions.md#where-the-c-goes)) |
+
+Managed deployment, project selection, prepaid credit and current availability
+are described in [Managed hosting](../multiplayer/hosting.md).
+
+`tide` and `tide help` show a short command list. Ask for a topic to see its
+usage, options, defaults and limits:
+
+```sh
+tide help run
+tide help --frames
+tide help deploy --project
+tide run --help
+```
+
+For commands such as `run` and `build`, `tide <command> --help` (or `-h`)
+shows the same help as `tide help <command>`. `tide cc --help` shows Clang's
+own options in packages with the built-in compiler.
+Arguments shared by commands show each meaning; `tide help open --project`
+selects the editor's project folder, while `tide help deploy --project`
+describes the hosting project. Positional arguments have topics too:
+`tide help folder`, `tide help source`, and `tide help package`.
+Help works without a game or complete installation and performs no command
+actions. Unknown topics or arguments return exit code 2. Bare `tide` keeps
+exit code 2; explicit help returns 0.
+
+## ide
+
+```sh
+tide ide emacs
+tide ide vim
+tide ide neovim
+tide help ide
+```
+
+Copy the printed configuration into your editor's init file, then restart the
+editor. Tide bundles the modes and prints their full installed paths, including
+the matching `tidels` executable. No source checkout or separate mode download
+is needed. The helper prints configuration only; it does not edit files or
+launch an editor.
+
+`emacs` targets Emacs 29.1+ with Eglot; `neovim` targets Neovim 0.11+. Their
+configurations connect to `tidels` automatically when opening Tide files, so
+enable them for projects you trust. `vim` targets Vim 8+ with highlighting and
+indentation; configure a separate LSP client with the server command printed
+in its comments. See [Emacs setup](editors.md#emacs) and
+[Vim and Neovim setup](editors.md#vim-and-neovim) for controls and details.
+
+Missing packaged modes or server files return exit code 1 with reinstall
+guidance. An unsupported editor or extra arguments return 2. If you move your
+Tide installation, run the helper again and replace the old configuration.
+Vim/Neovim setup reports installation paths containing `*`, `?`, `[` or `]`:
+their runtime search treats these as wildcards. Use a Tide installation path
+without those characters.
 
 ## open
 
@@ -73,6 +129,7 @@ still performs only front-end validation, even with a preview flag.
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
+| `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
@@ -89,6 +146,12 @@ Standalone release builds remove unreachable native code and data, and strip deb
 A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
 
 A web page draws with WebGPU where the browser has it on a GPU, and with WebGL 2 where it doesn't; games draw the same with either. Adding `?backend=webgl` (or `?backend=webgpu`) to the page's address picks one, for example to check a problem a player reports with the other.
+
+A desktop game draws with Vulkan where the machine has a Vulkan 1.3 driver, and with OpenGL 3.3 where it doesn't; games draw the same with either, and nothing in a game says which. The `TIDE_BACKEND` environment variable picks one for a run: `TIDE_BACKEND=opengl`, or `TIDE_BACKEND=vulkan`, which ends the program with a message where there's no Vulkan rather than falling back.
+
+On a Mac, Vulkan is MoltenVK, Vulkan on Metal: `tide build` puts `libMoltenVK.dylib` beside the game, which uses it where the Mac has no Vulkan loader of its own. Ship it with the game; its license is in the tide package's `licenses/moltenvk`.
+
+An Android game draws with Vulkan where the device has Vulkan 1.3, and with OpenGL ES 3 where it doesn't. An app started with `adb shell am start` takes the same choice as an extra of its intent: `--es tide.backend opengl` or `--es tide.backend vulkan`.
 
 ### Stats
 
@@ -115,14 +178,15 @@ The list is two columns, a label on the left and its value on the right, in four
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu` | What a frame's work takes on its thread, all of it: the ticks it runs, the views and the drawing, without the wait for the display |
 | `render` | Listed under `cpu` as the part of it that prepares and submits the frame's draw list, including its render targets |
-| `gpu (22 draw calls)` | GPU drawing time, including render targets, on desktop OpenGL and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the backend has no GPU timer (WebGL 2, OpenGL ES 3), the draw calls have a line of their own, `draw calls` |
+| `gpu (22 draw calls)` | GPU drawing time, including render targets, on Vulkan (desktop and Android), desktop OpenGL and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the backend has no GPU timer (WebGL 2, OpenGL ES 3), the draw calls have a line of their own, `draw calls` |
+| `vertices` | Vertices submitted this frame across all render-target passes, counting each index for each instance at its selected LOD. Includes shapes, text, meshes, blits and clear triangles; excludes the host's overlays. A quad counts as six, even with four shared corners. Clipped or culled geometry still counts; this measures submitted geometry, not how many pixels were visible or how often the GPU ran the vertex shader after caching |
 | `ping (delay 3 ticks)` | The network's round trip to the machine running the match, in the list when it's this machine, and in its label the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `network` | What goes over the network each second, up and down: `↑2.0  ↓0.5 KB/s` |
 | `entities` | How many entities the match has |
 | `threads` | The threads ticks run on |
 | `memory` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
 | `vram` | What the game's drawing has on the GPU, by the engine's own count: every texture, mesh and render target it made, by what each holds. Not the window's own framebuffer, nor what the driver keeps beside them, so it's the same number on every backend |
-| `renderer` | What draws: WebGPU, WebGL 2 or OpenGL |
+| `renderer` | What draws: Vulkan, OpenGL 3.3, OpenGL ES 3, WebGPU or WebGL 2 |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
 Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
@@ -201,6 +265,55 @@ When the game gets into a state you don't want, press **Ctrl+R** in the game, or
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
 
+## Dedicated servers
+
+```sh
+tide run --server --anonymous --port 7777 --max-matches 64
+tide build --server --release
+```
+
+`--server` builds a native console service with no window, rendering, audio,
+views or local player. Its cache is separate from ordinary native builds, and
+its default output is `<folder>/build/<name>-server` (with `.exe` on Windows),
+beside its own `<name>-server.pack` when needed. `run` runs it once without hot
+reload. Server executables support:
+
+| Option | Meaning |
+|---|---|
+| `--anonymous` | Allow anonymous match creation and joining for quick startup |
+| `--port <n>` | Listening UDP port, default 7777 |
+| `--max-matches <n>` | Concurrent match limit, default 64, maximum 4096 |
+| `--max-connections <n>` | Admitted/pending connection limit, default 256, maximum 65536 |
+| `--udp-only` | Omit the shared WebRTC room |
+| `--frames <n>` | Bound a test run to this many service iterations |
+
+The service uses wall-clock time and sleeps between iterations, normally about
+one millisecond. `--frames` bounds service iterations; it does not render frames
+or make networking deterministic. `TIDE_HIDDEN` requires this bound. Interactive
+services stop on Ctrl+C or SIGTERM. Empty matches expire after 60 seconds by
+default; a custom host can change that interval.
+
+Clients use `--connect localhost:7777/0` to request a new match, or replace `0`
+with its match ID. `--join K7QF2M/0` does the same through the server's WebRTC
+room. The admitted client prints its match ID and exposes the complete address
+through `Session.room`. Web clients use the room form.
+
+Without anonymous policies, the game supplies
+`void tide_server_entry(tide_hosting_desc *host)` in its C sources to configure
+authentication, match startup and process callbacks. A local menu `Main` requires
+a startup callback selecting a match scene. The C entry point is the first
+implementation; a Tide orchestration declaration has no agreed syntax yet.
+See [dedicated hosting](../c/network.md#dedicated-hosting).
+
+Closed Tide-only server builds automatically retain only simulation assets.
+Games or packages with C/C++ or prebuilt libraries retain all assets because C
+can find entries by name. `--strip-server-assets` explicitly enables server
+pruning for such projects when their C has no additional asset dependencies.
+This option also selects `--server`. Source asset validation still runs for all
+declarations. Standalone server links discard unreachable client code in debug
+and release. `--web`, `--android` and capture/view options do not apply to a
+server executable; browser players still connect through WebRTC.
+
 ## Multiplayer
 
 `tide run` can start a match others join, or join one. For `--host`, the game's `Main` scene must be the match's (see [Scenes](../game/scenes.md)); a game that starts in a menu does the same from code (see [Matches](../multiplayer/matches.md)).
@@ -234,6 +347,20 @@ A page can have the browser download a game before any frame shows it: it loads 
 With `?embedded`, the wheel always scrolls the page around the game. On a touchscreen, a swipe that starts on the game scrolls the page too, until the player taps the game: the tap reaches the game, and from then on so does every touch, swipes included, until the player taps the page somewhere else.
 
 ## Without a window
+
+Scripted runs use the game's normal saves unless you select a separate directory:
+
+```sh
+tide run --frames 300 --data-dir test-saves --capture play.png
+```
+
+`--data-dir` overrides `Application.persistentDataPath` and relative file paths.
+The directory and its parents are created when the game uses files. Reusing it
+keeps those saves; remove it when the test is finished. With several `--players`,
+each process uses `player-1`, `player-2`, and so on inside it. Temporary cache
+paths retain their normal location. The flag also works in a desktop window and
+on a built game's command line; it is unavailable on web, Android and dedicated
+servers.
 
 `tide run` can play a game with no window at all, to see what it draws or to check it still runs: from a script, on a build server, or for an agent that shouldn't open windows on your screen. The game runs once, as it was built, and `tide` ends with the game's exit code. Nothing is watched or reloaded.
 

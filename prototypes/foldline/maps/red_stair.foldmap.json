@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "name": "red_stair",
+  "function": "BuildMapRedStair",
+  "lifts": [
+    {
+      "id": "arrival",
+      "role": "arrival",
+      "at": [
+        -10.5,
+        8,
+        -12.1
+      ],
+      "yaw": "NORTH"
+    },
+    {
+      "id": "exit",
+      "role": "exit",
+      "at": [
+        6,
+        0,
+        -16.1
+      ],
+      "yaw": "NORTH",
+      "need": []
+    }
+  ],
+  "plates": [],
+  "machines": [
+    {
+      "id": "machine_0",
+      "from": [
+        -10.5,
+        5.85,
+        0
+      ],
+      "to": [
+        -10.5,
+        5.85,
+        3
+      ],
+      "size": [
+        3,
+        0.3,
+        3
+      ],
+      "need": [],
+      "speed": 1.6,
+      "lamp": [
+        -10.5,
+        5.62,
+        0
+      ],
+      "along": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "machine_1",
+      "from": [
+        10.5,
+        2.85,
+        1.5
+      ],
+      "to": [
+        10.5,
+        2.85,
+        -1.5
+      ],
+      "size": [
+        3,
+        0.3,
+        3
+      ],
+      "need": [],
+      "speed": 1.6,
+      "lamp": [
+        10.5,
+        2.62,
+        1.5
+      ],
+      "along": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "anchors": {},
+  "wires": [],
+  "place_ids": [
+    13
+  ],
+  "external_geometry": true
+}

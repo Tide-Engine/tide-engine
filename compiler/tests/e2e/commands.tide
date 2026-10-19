@@ -57,9 +57,10 @@ command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name,
 }
 command(Announce announce, PlayerID sender) AnnounceWorld(mut Seen seen)
 {
-    seen.announcement = announce.message;
+    KeepAnnouncement(announce, seen);
     seen.sender = sender;
 }
+void KeepAnnouncement(Announce payload, mut Seen seen) { seen.announcement = payload.message; }
 local event(Submit) SubmitFromHandler(UI ui)
 {
     ui.target.Send(Rename { name = ui.text, detail = Detail { note = "handler", count = 7 } });

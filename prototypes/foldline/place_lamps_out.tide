@@ -1,0 +1,55 @@
+// The first glimpse of the showroom's rule, from behind a physical grille.
+void BuildLampsOut(Arena arena, mut Place place)
+{
+    BuildMapLampsOut(arena, place);
+    place.dead = true;
+    place.light = .35;
+    place.grade = float3(.86, 1, .92);
+    Fill(arena, -4, 4, -1, 0, 2.1, 27, CONCRETE);
+    Fill(arena, -5, -4, -2, 4.4, 1.6, 28, PANELS);
+    Fill(arena, 4, 5, -2, 4.4, 1.6, 28, PANELS);
+    Fill(arena, -5, 5, -2, 4.4, 27, 28, PANELS);
+    Fill(arena, -5, 5, 4.4, 5.4, 1.6, 28, CEILING_TILE, false, 2);
+    Fill(arena, -4, 4, 0, 4.4, 3.9, 4.1, PANELS, false, 4);
+    for (int door = 0; door < 5; door++)
+    {
+        Raise(arena, float3(-3.97, 1.1, 7 + door * 4), float3(.05, 2.2, 1), DOORS, false, 3);
+        Raise(arena, float3(3.97, 1.1, 7 + door * 4), float3(.05, 2.2, 1), DOORS, false, 3);
+    }
+    LampGrid(place, float2(-4, 3), float2(8, 4), 1, 6);
+    for (int row = 0; row < 6; row++) HangLamp(place, 0, row, 4.4, LampState.On, row + 1);
+    SpawnBeast(arena, BeastKind.Flayed, float3(0, 0, 24), SOUTH, 1.35, BeastSkin.Dark, "Run", eyes: true);
+    MenuView(place, float3(0, 1.7, -.8), 0, NORTH);
+}
+
+// Each lamp that fails takes every light with it for a moment, nearest last, and in that dark the figure is nearer:
+// whoever stares sees it stand, and sees it come on in the dark. At the end it reaches for the bars.
+system LampsOutBeat(mut Beast beast, mut Arena arena, Place place, Time time)
+{
+    if (place.id != LAMPS_OUT || beast.chamber != arena.chamber) return;
+    mut int steps = Math.Clamp(int((arena.arrive - 2) / 1.4) + 1, 0, 6);
+    if (arena.arrive < 2) steps = 0;
+    for (int step = 0; step < steps; step++) arena.darkGroups |= 1 << (6 - step);
+    // A lamp failing: half a second of nothing, in which it comes on
+    float since = steps > 0 ? arena.arrive - (2 + (steps - 1) * 1.4) : 10.0;
+    arena.blackout = since < .45;
+    // Its last mark leaves its lunge's reach short of the bars: the hands stop in the gaps, never through them
+    float mark = Math.Max(6.1, 24 - steps * 4);
+    if (arena.arrive >= 10)
+    {
+        if (beast.clip != "Lunge")
+        {
+            beast.clip = "Lunge";
+            beast.time = 0;
+        }
+        beast.loop = false;
+        beast.time += time.dt;
+        arena.blackout = false;
+    }
+    else if (beast.at.z > mark)
+    {
+        float before = beast.at.z;
+        beast.at.z = Math.Max(mark, beast.at.z - time.dt * (arena.blackout ? 20.0 : 0.0));
+        beast.time += (before - beast.at.z) * .37;
+    }
+}

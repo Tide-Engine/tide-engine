@@ -11,6 +11,7 @@
 #include "tide_web.h"
 #else
 #include "../src/gl.h"
+#include "../src/gpu_vk.h"
 #endif
 
 // How many frames a timer that's supported is given to hand back its first
@@ -33,6 +34,7 @@ static bool has_timer(void)
 #ifdef __wasm__
     return strcmp(tide_platform_renderer(), "WebGPU") == 0 && tide_web_eval("Tide.gpuTimingSupported()");
 #else
+    if (strcmp(tide_platform_renderer(), "Vulkan") == 0) return tide_gpu_vk_timestamps();
     if (!tide_gl.GetQueryiv || !tide_gl.GetQueryObjectui64v) return false;
     GLint bits = 0;
     glGetQueryiv(GL_TIME_ELAPSED, GL_QUERY_COUNTER_BITS, &bits);

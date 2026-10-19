@@ -19,12 +19,13 @@
 // as a whole, and when it grows, the old one stays until
 // tide_entities_settle, once only one thread runs.
 //
-// Beside its slots, a table can remember what each entity was spawned as
-// (tide_entity_set_born): a number of what it was spawned with and when, for
-// this machine to tell apart two entities a rollback gave the same handle (a
-// spawn the client predicted, which the server ordered otherwise). It's beside
+// Beside its slots, a table can remember each entity's generated spawn identity
+// (tide_entity_set_born), so this machine can tell apart two entities a rollback
+// gave the same handle (a predicted spawn the server ordered otherwise). It's beside
 // the world, not in it: snapshots share it as they share the slots, but it's
-// never hashed, packed or sent, so the world is the same with it or without.
+// outside the table's hash and packed bytes. Event journals can carry it, so
+// their sender must choose an identity containing only permitted information.
+// The match state is the same with it or without.
 // Only what's spawned on this machine has one, and a table nothing set one in
 // keeps none.
 
@@ -55,7 +56,7 @@ typedef struct tide_entity_slot {
 typedef struct tide_entities {
     uint32_t next_unused; // Slots at or above this were never used.
     uint32_t free_head;   // The last slot freed plus one, or 0: free slots are reused last freed first, so in a deterministic order
-    uint32_t pages;       // Pages of slots it has
+    uint32_t pages;       // Page span; projected client tables may have absent pages
     uint32_t room;        // Pages `page` has room for
     // Before the first, page[-1] holds the table this one replaced, until it's
     // settled. After its `room` pages of slots come as many of what their
@@ -72,9 +73,11 @@ bool tide_entity_destroy(tide_entities *t, tide_entity e);
 // thread may be growing the table (see above).
 static inline const tide_entity_slot *tide_entity_slot_of(const tide_entities *t, const uint32_t index)
 {
+    static const tide_entity_slot absent = {0};
     tide_page *const *pages = __atomic_load_n(&t->page, __ATOMIC_ACQUIRE);
-    const tide_entity_slot *slots = (const tide_entity_slot *)tide_page_data(
-        __atomic_load_n(&pages[index >> TIDE_ENTITY_PAGE_SHIFT], __ATOMIC_ACQUIRE));
+    const tide_page *page = __atomic_load_n(&pages[index >> TIDE_ENTITY_PAGE_SHIFT], __ATOMIC_ACQUIRE);
+    if (!page) return &absent;
+    const tide_entity_slot *slots = (const tide_entity_slot *)tide_page_data(page);
     return &slots[index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u)];
 }
 
@@ -91,9 +94,8 @@ void tide_entity_snap(tide_entities *t, tide_entity e);
 // Its snap count, or 0 if it isn't alive.
 uint32_t tide_entity_snaps(const tide_entities *t, tide_entity e);
 
-// What an entity was spawned as: a number of what it was spawned with and
-// when, which generated code sets as it applies the spawn, on the thread that
-// applies a tick's changes. Never 0.
+// An entity's spawn identity, which generated code sets as it applies the
+// spawn, on the thread that applies a tick's changes. Never 0.
 void tide_entity_set_born(tide_entities *t, tide_entity e, uint32_t born);
 
 // What it was spawned as, or 0 when that isn't known: it isn't alive, or it

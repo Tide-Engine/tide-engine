@@ -1,0 +1,37 @@
+// The game's own items set about the clearing (the braziers, the graves'
+// mounds and stones).
+
+local singleton Dressing
+{
+    List<string> names;          // Each item that dresses the clearing...
+    List<List<Placed>> placed;   // ...and where
+    bool made;
+}
+
+void MakeDressing(mut Dressing dressing, Plan plan)
+{
+    dressing.names.Clear();
+    dressing.placed.Clear();
+    foreach (var put in plan.dressing)
+    {
+        mut var index = dressing.names.IndexOf(put.item);
+        if (index < 0)
+        {
+            dressing.names.Add(put.item);
+            List<Placed> none = [];
+            dressing.placed.Add(none);
+            index = dressing.names.count - 1;
+        }
+        dressing.placed[index].Add(Placed { transform = float4x4.TRS(put.at, quaternion.AxisAngle(float3(0, 1, 0), put.yaw), float3(put.scale)) });
+    }
+    dressing.made = true;
+}
+
+[Stage(Layers.Scene, 4)]
+view DrawSetPieces(mut Dressing dressing, Village village, Lens lens)
+{
+    if (!lens.made || !village.made) return;
+    if (!dressing.made) MakeDressing(dressing, village.plan);
+    for (var i = 0; i < dressing.names.count; i++) lens.scene.Instanced(ItemMesh(dressing.names[i]), dressing.placed[i], Wobble, Steel, Finish { glow = 1 });
+}
+

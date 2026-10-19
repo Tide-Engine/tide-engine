@@ -1,0 +1,288 @@
+using Rooms;
+
+// Missions: optional, on a timer, one at a time while a night's bosses are
+// still to come (the owner, 2026-10-18: "i do like the rotating missions in The
+// Spell Brigade where they just give you an optional extra enhancement").
+// Every so often one appears somewhere in the clearing, pointed to at the
+// screen's edge: hold a circle, cull the dead in one, or hunt down a marked
+// elite, each before its time's up. Done, every survivor picks one of three
+// uncommon or rare items (a boon: items.tide's Owed); out of time, nothing.
+// None begins that the night's end would cut short, and its bosses rising
+// calls off any going. Which, where and every number are mine, Provisional.
+
+enum MissionKind { None, Hold, Cull, Hunt }
+
+const float MISSION_FIRST = 25;      // Seconds into a night before the first...
+const float MISSION_GAP_LEAST = 20;  // ...and from one's end to the next
+const float MISSION_GAP_MOST = 35;
+const float MISSION_NEAR = 22;       // How far from a survivor one appears
+const float MISSION_FAR = 40;
+const float MISSION_ROOM = 70;       // None begins with less than so long left till the night's bosses
+const float HOLD_REACH = 6;          // The circle to hold...
+const float HOLD_SECONDS = 12;       // ...for so long, all told, with someone in it (half again as fast for each more)...
+const float HOLD_TIME = 50;          // ...within so long
+const float CULL_REACH = 9;          // The circle to cull the dead in...
+const float CULL_TIME = 45;          // ...within so long
+const float CULL_EACH = 25;          // ...so many of them for one survivor (times Crowd)
+const float HUNT_TIME = 60;          // The elite to hunt down, within so long...
+const float ELITE_HEALTH = 10;       // ...as tough as so many Wardens
+
+string MissionName(MissionKind kind)
+{
+    switch (kind)
+    {
+        case MissionKind.Hold: return "HOLD THE CIRCLE";
+        case MissionKind.Cull: return "CULL THE DEAD IN THE CIRCLE";
+        case MissionKind.Hunt: return "HUNT THE ELITE";
+    }
+    return "";
+}
+
+string MissionMark(MissionKind kind)
+{
+    switch (kind)
+    {
+        case MissionKind.Hold: return "HOLD";
+        case MissionKind.Cull: return "CULL";
+        case MissionKind.Hunt: return "ELITE";
+    }
+    return "";
+}
+
+float MissionTime(MissionKind kind)
+{
+    return kind == MissionKind.Hold ? HOLD_TIME : kind == MissionKind.Cull ? CULL_TIME : HUNT_TIME;
+}
+
+float MissionReach(MissionKind kind)
+{
+    return kind == MissionKind.Hold ? HOLD_REACH : kind == MissionKind.Cull ? CULL_REACH : 0.0;
+}
+
+// No mission going, the first a while off: a new night's, or a new run's.
+void ResetMissions(mut Match match)
+{
+    match.mission = MissionKind.None;
+    match.missionWait = MISSION_FIRST;
+}
+
+// The mission, each tick: begun when its time comes, kept while it runs (a cull's kills and a hunt's elite are counted
+// in zombies.tide's TakeWound), ended done or out of time.
+[Stage(Tick.Rounds, 3)]
+system Missions(mut Match match, Ashwick ashwick, Party party, Time time, query (Survivor survivor) survivors)
+{
+    if (match.paused || match.phase != Phase.Fighting) return;
+    var dt = time.dt;
+    if (match.reckoning)
+    {
+        if (match.mission != MissionKind.None) EndMission(match, party, false);
+        return;
+    }
+    if (match.mission == MissionKind.None)
+    {
+        match.missionWait -= dt;
+        if (match.missionWait > 0 || (match.devMission < 0 && match.nightEnds - match.nightClock < MISSION_ROOM)) return;
+        mut List<float3> near = [];
+        foreach (var row in survivors)
+            if (row.survivor.ready && row.survivor.life == Life.Standing) near.Add(row.survivor.feet);
+        if (near.count == 0) return;
+        var pick = Random.NextInt(near.count);
+        var roll = Random.NextInt(3);
+        var kind = match.devMission >= 1 && match.devMission <= 3 ? MissionKind(match.devMission) : MissionKind(1 + roll);
+        var at = MissionPlace(match, ashwick, near[pick]);
+        if (at.y < -100)
+        {
+            match.missionWait = 1;
+            return;
+        }
+        match.devMission = -1;
+        match.mission = kind;
+        match.missionAt = at;
+        match.missionLeft = MissionTime(kind);
+        match.missionDone = 0;
+        match.missionGoal = kind == MissionKind.Hold ? HOLD_SECONDS : kind == MissionKind.Cull ? Math.Round(CULL_EACH * match.crowd) : 1.0;
+        if (kind == MissionKind.Hunt) RaiseElite(match, at, near[pick]);
+        Send(MissionBegan { kind = kind, at = at });
+        return;
+    }
+    match.missionLeft -= dt;
+    if (match.mission == MissionKind.Hold)
+    {
+        mut var inside = 0;
+        foreach (var row in survivors)
+            if (row.survivor.ready && row.survivor.life == Life.Standing && Math.Length((row.survivor.feet - match.missionAt).xz) <= HOLD_REACH) inside += 1;
+        if (inside > 0) match.missionDone += dt * (1 + 0.5 * (inside - 1));
+    }
+    if (match.missionDone >= match.missionGoal) EndMission(match, party, true);
+    else if (match.missionLeft <= 0) EndMission(match, party, false);
+}
+
+// Done (every survivor owed a boon) or not, and the next a while off.
+void EndMission(mut Match match, Party party, bool done)
+{
+    if (done)
+        for (var seat = 0; seat < 4; seat++)
+            if (party.taken[seat]) party.survivors[seat].Send(Owed { boons = 1 });
+    Send(MissionEnded { kind = match.mission, at = match.missionAt, done = done });
+    match.mission = MissionKind.None;
+    var gap = Random.NextFloat(MISSION_GAP_LEAST, MISSION_GAP_MOST);
+    match.missionWait = gap;
+}
+
+// Where a mission is: open ground MISSION_NEAR to MISSION_FAR from a survivor, the dead's way from it clear, out of
+// the fires (twenty tries); else nowhere (far below the world).
+float3 MissionPlace(Match match, Ashwick ashwick, float3 focus)
+{
+    for (var tries = 0; tries < 20; tries++)
+    {
+        var turn = Random.NextFloat(Math.TAU);
+        var off = Random.NextFloat(MISSION_NEAR, MISSION_FAR);
+        var there = focus + float3(Math.Sin(turn), 0, Math.Cos(turn)) * off;
+        var cell = CellOf(there);
+        if (cell < 0 || !InClearing(there) || !Open(ashwick, cell) || FieldAt(ashwick, there) >= UNREACHED) continue;
+        if (Afire(match, there, HOLD_REACH)) continue;
+        return On(there.x, there.z);
+    }
+    return float3(0, -1000, 0);
+}
+
+// The hunt's quarry: a Warden ELITE_HEALTH times as tough, running, clawing up where the mission is.
+void RaiseElite(Match match, float3 at, float3 toward)
+{
+    var look = Random.NextInt(ZOMBIE_LOOKS);
+    var phase = Random.NextInt(64);
+    Spawn(Zombie { at = at, yaw = YawTo(at, toward), health = ZombieHealth(match.danger) * KindHealth(ZombieKind.Warden) * ELITE_HEALTH, gait = Gait.Run, look = look,
+                   state = ZombieState.Rising, pace = 1, phase = phase, kind = ZombieKind.Warden, spit = SPIT_EVERY, elite = true });
+}
+
+event MissionBegan
+{
+    MissionKind kind;
+    float3 at;
+}
+
+event MissionEnded
+{
+    MissionKind kind;
+    float3 at;
+    bool done;
+}
+
+// ---- What's seen and heard ----
+
+// The circle on the ground, in gold motes; the elite, a gold ring over its head.
+[Stage(Layers.Gather, 4)]
+view MissionMarks(Match match, mut Fx fx, Look look, query (Zombie zombie) zombies)
+{
+    if (!fx.made || match.phase != Phase.Fighting || match.mission == MissionKind.None) return;
+    var reach = MissionReach(match.mission);
+    if (reach > 0 && Math.Distance(match.missionAt, look.eye) < 90)
+    {
+        for (var k = 0; k < 8; k++)
+        {
+            var turn = fx.random.NextFloat(Math.TAU);
+            var at = match.missionAt + float3(Math.Cos(turn) * reach, 0, Math.Sin(turn) * reach);
+            Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.1, 0), velocity = float3(0, 0.6, 0), life = 0.4, size = 0.14, color = float3(1.0, 0.8, 0.25), alpha = 1.8 });
+        }
+    }
+    if (match.mission != MissionKind.Hunt) return;
+    foreach (var row in zombies)
+    {
+        if (!row.zombie.elite || row.zombie.state == ZombieState.Dying) continue;
+        for (var k = 0; k < 4; k++)
+        {
+            var turn = fx.random.NextFloat(Math.TAU);
+            var at = row.zombie.headAt + float3(Math.Cos(turn) * 0.6, 0.5, Math.Sin(turn) * 0.6);
+            Glow(fx, Mote { at = at, velocity = float3(0, 0.4, 0), life = 0.3, size = 0.1, color = float3(1.0, 0.75, 0.2), alpha = 2.2 });
+        }
+    }
+}
+
+// Under the night's panel: the mission, what's done of it and the time left.
+[Stage(Layers.Hud, 2)]
+view MissionPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors)
+{
+    if (lobby.page != Page.Playing || match.phase != Phase.Fighting || match.mission == MissionKind.None) return;
+    mut var mine = Survivor { };
+    mut var found = false;
+    foreach (var row in survivors)
+    {
+        if (row.survivor.seat != me.seat) continue;
+        mine = row.survivor;
+        found = true;
+    }
+    if (!found || mine.role == Role.None) return;
+    Draw.SetScreen();
+    var u = Unit();
+    var box = float2(34 * u + 150 * u, 172 * u);
+    Panel(box, float2(300 * u, 70 * u), u);
+    var left = box.x - 136 * u;
+    var pulse = 0.8 + 0.2 * Math.Sin(look.time * 4);
+    WriteBold("OPTIONAL", float2(left, box.y - 20 * u), 11 * u, Color(GOLD.r, GOLD.g, GOLD.b, pulse), Anchor.MiddleLeft);
+    WriteBold($"{int(Math.Ceil(Math.Max(0, match.missionLeft)))} s", float2(box.x + 136 * u, box.y - 20 * u), 12 * u, BONE, Anchor.MiddleRight);
+    WriteBold(MissionName(match.mission), float2(left, box.y - 2 * u), 14 * u, GOLD, Anchor.MiddleLeft);
+    Bar(float2(left, box.y + 16 * u), float2(190 * u, 7 * u), match.missionDone / Math.Max(1, match.missionGoal), 0, GOLD, Color(0.55, 0.4, 0.1), 1, u);
+    var done = match.mission == MissionKind.Hold ? $"{int(match.missionDone)} / {int(match.missionGoal)} s" : match.mission == MissionKind.Cull
+             ? $"{int(match.missionDone)} / {int(match.missionGoal)}" : "";
+    Write(done, float2(left + 198 * u, box.y + 16 * u), 11 * u, BONE, Anchor.MiddleLeft);
+    Write("Reward: everyone picks a rarer item", float2(left, box.y + 30 * u), 10 * u, ASH, Anchor.MiddleLeft);
+}
+
+// Where the night's bosses are while they stand, and the mission: over each while it's on the screen, else at the
+// screen's edge the way it is (the owner, 2026-10-18: "objective was not clear, didnt even find it"). Over the panels.
+[Stage(Layers.Hud, 6)]
+view Objectives(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors, query (Boss boss) bosses, query (Zombie zombie) zombies)
+{
+    if (lobby.page != Page.Playing || match.phase != Phase.Fighting || match.paused) return;
+    mut var mine = Survivor { };
+    mut var found = false;
+    foreach (var row in survivors)
+    {
+        if (row.survivor.seat != me.seat) continue;
+        mine = row.survivor;
+        found = true;
+    }
+    if (!found || mine.role == Role.None || mine.choosing || mine.life != Life.Standing) return;
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    foreach (var row in bosses)
+    {
+        var b = row.boss;
+        if (!b.own || b.move == BossMove.Dying) continue;
+        Pointer(look, b.at + float3(0, MutantOf(b.kind).size * 1.4, 0), mine.feet, "BOSS", Color(0.98, 0.32, 0.2), w, h, u, look.time);
+    }
+    if (match.mission == MissionKind.None) return;
+    mut var at = match.missionAt;
+    if (match.mission == MissionKind.Hunt)
+        foreach (var row in zombies)
+            if (row.zombie.elite && row.zombie.state != ZombieState.Dying) at = row.zombie.at;
+    if (match.mission != MissionKind.Hunt && Math.Length((at - mine.feet).xz) <= MissionReach(match.mission)) return;
+    Pointer(look, at, mine.feet, MissionMark(match.mission), GOLD, w, h, u, look.time);
+}
+
+local event(MissionBegan began) ShowMissionBegan(mut Feed feed)
+{
+    feed.banner = $"OPTIONAL: {MissionName(began.kind)}";
+    feed.bannerLeft = 2.6;
+    feed.bannerColor = GOLD;
+}
+
+local event(MissionEnded ended) ShowMissionEnded(mut Feed feed)
+{
+    if (ended.kind == MissionKind.None) return;
+    feed.banner = ended.done ? "MISSION DONE: EVERYONE PICKS A RARER ITEM" : "MISSION LOST";
+    feed.bannerLeft = 2.6;
+    feed.bannerColor = ended.done ? GOLD : ASH;
+}
+
+local event(MissionBegan began) HearMissionBegan()
+{
+    Audio.Play(levelClip, 0.6, 0.7);
+}
+
+local event(MissionEnded ended) HearMissionEnded()
+{
+    if (ended.done) Audio.Play(itemRare, 0.85);
+}

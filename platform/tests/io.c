@@ -42,7 +42,7 @@ static tide_io_error finish_flush(const tide_io *io, const uint32_t ticket)
 TIDE_TEST(io_native_files_and_directories)
 {
     const uint32_t mark = tide_scratch_mark();
-    const tide_io *io = tide_platform_io_init("dev.tide.io.tests");
+    const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     TIDE_REQUIRE(io && io->persistent_data_path[0] && io->temporary_cache_path[0]);
     char folder[80];
 #ifdef _WIN32
@@ -118,7 +118,7 @@ TIDE_TEST(io_native_files_and_directories)
     TIDE_CHECK(tide_file_exists(io, path(root, "renamed/deeper/a.bin")));
     TIDE_CHECK(tide_directory_move(io, path(root, "renamed"), root).error == TIDE_IO_ALREADY_EXISTS);
     TIDE_CHECK(tide_file_exists(io, path(root, "renamed/deeper/a.bin")) && tide_directory_exists(io, root));
-    TIDE_CHECK(tide_platform_io_init("dev.tide.io.tests") == io && tide_file_exists(io, moved));
+    TIDE_CHECK(tide_platform_io_init("dev.tide.io.tests", NULL) == io && tide_file_exists(io, moved));
     const uint32_t ticket = tide_storage_flush_begin(io);
     // Writes made while an earlier snapshot flushes stay dirty for the next
     // flush. Both tickets complete independently and carry their results.
@@ -132,6 +132,46 @@ TIDE_TEST(io_native_files_and_directories)
     TIDE_CHECK(!tide_directory_exists(io, root));
     TIDE_CHECK(tide_file_delete(io, moved).ok);
     TIDE_CHECK(tide_directory_delete(io, root, true).error == TIDE_IO_NOT_FOUND);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(io_native_data_directory_override)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
+    char folder[80];
+#ifdef _WIN32
+    snprintf(folder, sizeof folder, "data-directory-%lu", (unsigned long)GetCurrentProcessId());
+#else
+    snprintf(folder, sizeof folder, "data-directory-%ld", (long)getpid());
+#endif
+    const tide_str root = path(tide_application_temporary_cache_path(io), folder);
+    TIDE_REQUIRE(tide_directory_create_directory(io, root).ok);
+    const tide_str first = path(root, "first/child");
+    const tide_str second = path(root, "second");
+    io = tide_platform_io_init("dev.tide.io.tests", tide_str_c(first));
+    TIDE_CHECK(tide_str_eq(tide_application_persistent_data_path(io), first));
+    TIDE_REQUIRE(tide_file_write_all_text(io, text("save.txt"), text("first")).ok);
+    const uint32_t flush = tide_storage_flush_begin(io);
+    TIDE_CHECK(tide_platform_io_init("dev.tide.io.tests", tide_str_c(first)) == io);
+    TIDE_CHECK(finish_flush(io, flush) == TIDE_IO_NONE); // Reload keeps pending storage work.
+    TIDE_CHECK(contents(io, path(first, "save.txt"), "first"));
+
+    io = tide_platform_io_init("dev.tide.io.tests", tide_str_c(second));
+    TIDE_CHECK(!tide_file_exists(io, text("save.txt")));
+    TIDE_REQUIRE(tide_file_write_all_text(io, text("save.txt"), text("second")).ok);
+    TIDE_CHECK(contents(io, path(first, "save.txt"), "first"));
+    TIDE_CHECK(contents(io, path(second, "save.txt"), "second"));
+    TIDE_CHECK(finish_flush(io, tide_storage_flush_begin(io)) == TIDE_IO_NONE);
+
+    // An unusable override never falls back to the player's actual saves.
+    io = tide_platform_io_init("dev.tide.io.tests", tide_str_c(path(second, "save.txt")));
+    TIDE_CHECK(!tide_file_write_all_text(io, text("must-not-exist.txt"), text("bad root")).ok);
+    io = tide_platform_io_init("dev.tide.io.tests", tide_str_c(first));
+    TIDE_CHECK(contents(io, text("save.txt"), "first"));
+    io = tide_platform_io_init("dev.tide.io.tests", NULL);
+    TIDE_CHECK(!tide_str_eq(tide_application_persistent_data_path(io), first));
+    TIDE_REQUIRE(tide_directory_delete(io, root, true).ok);
     tide_scratch_reset(mark);
 }
 
@@ -159,7 +199,7 @@ TIDE_TEST(io_path_helpers)
 TIDE_TEST(io_native_flush_failure_survives_a_forgotten_waiter)
 {
     const uint32_t mark = tide_scratch_mark();
-    const tide_io *io = tide_platform_io_init("dev.tide.io.tests");
+    const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     char name[80];
     snprintf(name, sizeof name, "locked-flush-%lu.txt", (unsigned long)GetCurrentProcessId());
     const tide_str file = path(tide_application_temporary_cache_path(io), name);
@@ -187,7 +227,7 @@ TIDE_TEST(io_native_flush_failure_survives_a_forgotten_waiter)
 TIDE_TEST(io_recursive_delete_does_not_follow_directory_links)
 {
     const uint32_t mark = tide_scratch_mark();
-    const tide_io *io = tide_platform_io_init("dev.tide.io.tests");
+    const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     char folder[80];
     snprintf(folder, sizeof folder, "links-test-%ld", (long)getpid());
     const tide_str root = path(tide_application_temporary_cache_path(io), folder);
@@ -207,7 +247,7 @@ TIDE_TEST(io_recursive_delete_does_not_follow_directory_links)
 TIDE_TEST(io_flush_only_opens_directories_that_changed)
 {
     const uint32_t mark = tide_scratch_mark();
-    const tide_io *io = tide_platform_io_init("dev.tide.io.tests");
+    const tide_io *io = tide_platform_io_init("dev.tide.io.tests", NULL);
     char folder[80];
     snprintf(folder, sizeof folder, "above-test-%ld", (long)getpid());
     const tide_str root = path(tide_application_temporary_cache_path(io), folder);
