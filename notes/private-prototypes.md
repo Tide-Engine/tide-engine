@@ -42,6 +42,7 @@ It does not approve a new feature merely because a game worked around it.
 | A CPU drawing helper cannot name a frag/vert | Fixed as a conventional completion of explicit helper access: synchronous drawing functions name shaders in mesh/instanced/skinned/blit calls. Shader component/singleton inputs must match unique explicit non-out parameters, with ordinary value/mut and attached-local forwarding rules. No implicit lookup. `draw_helpers`, `draw_values`, `skinned_rest`, shader pixel pass 12 and `notes/shaders.md`. |
 | A GPU helper cannot take a singleton containing Cubemap/Random | Spec deliberately requires resource parameters themselves and excludes 64-bit Random values on GPU. Field projection/specialization would be a new contract. Numeric values and direct texture parameters are supported. |
 | A helper cannot borrow List<Clip> from an asset glob | Fixed as an authorized API completion: synchronous CPU helpers borrow read-only Clip/Texture/Mesh<V> asset lists and string-keyed maps through ordinary parameter syntax, forwarding existing handles without copying or retaining the collection. Elements keep existing value rules; collections cannot escape or wait. `asset_borrows`, fourteen diagnostic fixtures, editor tests and `notes/language.md`. |
+| Scalar Clip values fail C compilation without audio assets | Follow-up reproduction fixed: scalar signatures, fields and inferred/typed locals now include the Clip C definition without enabling assets or playback. `clip_values`, independent asset-usage header cases and `notes/language.md`. |
 | No live shape-cast self/layer filtering | Owner-approved follow-up built: live/rewound `RaycastAll` and `CastAll` in both physics packages give deterministically sorted first hits per collider for game filtering, with optional sensors and ignore-Body overloads. Live Box3D closest queries now also support ignore-Body. Layers/masks remain absent; no layer API was approved. `notes/box2d.md`, `notes/box3d.md`. |
 | No arbitrary hull shapes or joints | Still absent from the package API; triangles are supported. Shape/constraint APIs and runtime boundaries need their own approved task. |
 | No instanced skinned draw | Still a future API, not an existing Draw.Instanced overload. Pose/instance transport and batching need renderer/runtime agreement. |
@@ -62,7 +63,7 @@ All reproduced inconsistencies with existing contracts above are now addressed.
 The follow-up API work, synchronous handler queries, helper borrowing,
 read-only World.Set, resource asset collection parameters and shaded drawing
 helpers cover the conventional value/metadata gaps and reusable synchronous access: final
-warning-free builds pass all 2,431 native and 2,340 web debug CTests, plus
+warning-free builds pass all 2,432 native and 2,341 web debug CTests, plus
 the docs build. Detailed contracts and coverage are in notes/language.md,
 notes/textures.md and notes/shaders.md. No CI was dispatched.
 The old read-only World.Set snapshot-page limitation required no new scheduling

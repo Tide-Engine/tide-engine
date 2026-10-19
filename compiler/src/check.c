@@ -236,6 +236,15 @@ static bool builds(const program *prog)
     return !prog->dry;
 }
 
+// Resolving a primitive can require its C definition without enabling its
+// runtime feature. A built-in Sound's unused fields don't name Clip for a game.
+static bool resolve_builtin_type(const checker *c, const str name, type *out)
+{
+    if (!builtin_type_named(name, out)) return false;
+    if (out->kind == TY_CLIP && !c->prog->quiet_names) c->prog->uses_clip_values = true;
+    return true;
+}
+
 // An override that isn't in place: it declares no name of its own, so no name
 // finds it, and it clashes with none. One that found nothing to replace stays so.
 static bool unplaced_override(const decl *d)
@@ -1942,7 +1951,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET,
                                                 place == PLACE_FUNCTION || place == PLACE_RETURN);
-    if (builtin_type_named(name, &t)) {
+    if (resolve_builtin_type(c, name, &t)) {
         if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION) {
             diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one");
             return T_ERR;
@@ -8203,6 +8212,7 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Application") && str_eq_c(e->member, "title")) c->prog->uses_title = true;
+        if (str_eq_c(e->object->name, "Clip")) c->prog->uses_clip_values = true;
         // Clip.Microphone: the game records, which its Android app's manifest has to say
         if (str_eq_c(e->object->name, "Clip") && str_eq_c(e->member, "Microphone") && builds(c->prog)) c->prog->uses_microphone = true;
         if (builtin_old_draw_owner(e->object->name)) {
@@ -11810,7 +11820,7 @@ static void allow_bindings(expr *cond)
 static type local_type(checker *c, stmt *s)
 {
     type t;
-    if (builtin_type_named(s->type_name, &t)) return t;
+    if (resolve_builtin_type(c, s->type_name, &t)) return t;
     const loc at = s->type_qual_at.line ? s->type_qual_at : s->at;
     const int errors = diag_error_count();
     const type_ref *const r = type_ref_or_text(s->type_ref, s->type_name);
@@ -13230,7 +13240,7 @@ static void resolve_field_types(const checker *c, const decl *d)
         field *f = &d->fields.items[i];
         if (f->hidden && !f->type_name.len && f->type.kind != TY_ERROR) continue;
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-        if (builtin_type_named(f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
+        if (resolve_builtin_type(c, f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
             if (f->type.kind != TY_RESIDENT) continue;
             // Resident state (tide/resident.h): a match singleton's, one of them, for the C of a package that comes with tide
             f->type = T_ERR;

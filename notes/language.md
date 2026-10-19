@@ -1,5 +1,32 @@
 # Language features, as tidec builds them
 
+## Scalar Clip values without assets (2026-10-19)
+
+Follow-up checking reproduced valid Tide generating invalid C when Clip was
+used without an audio asset, Sound or microphone: tide_clip_ref lacked its
+defining header. The earlier asset-collection fix covered collection element
+types, but scalar signatures, fields and locals still missed it.
+
+The checker now records explicit primitive Clip uses through ordinary type
+resolution, field/local fast paths and Clip members such as Clip.none.
+Built-in Sound's unnamed fields do not activate this flag. Header generation
+includes the existing tide/audio.h definition without enabling asset loading,
+playback, audio devices or any match state. Type/lifetime rules and the public
+API do not change; no runtime function or layout was added.
+
+clip_values compiles and executes scalar parameters/returns, a struct, local
+singleton storage and typed/inferred locals with no assets or audio. Its C
+host checks the stored empty handle, no asset/audio feature macros and an
+unchanged world hash. The asset-usage unit target independently checks empty
+games, unused helper and optional signatures, local and attached fields, and
+inferred/typed locals, so one use cannot hide another missing header path.
+
+Validation: warning-free full native/web debug builds and all 2,432 native
+CTests (85.83 seconds) and 2,341 web CTests (220.63 seconds) pass, including
+unchanged simulation pins and Vulkan/OpenGL/WebGL/WebGPU checks. No public
+semantics or user documentation changed. Other operating systems, Android and
+sanitizers were not run; no CI dispatched.
+
 ## Shaded drawing functions (2026-10-19)
 
 Ordinary synchronous drawing functions can name frags/verts using the existing

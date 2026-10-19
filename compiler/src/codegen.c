@@ -15930,10 +15930,11 @@ static int lone_archetype(const gen *g, const decl *scene)
 static bool write_file(const char *path, const sb *text);
 
 // What kind of entry an asset's type is in the pack.
-// Clip assets and borrowed collection signatures name tide_clip_ref, even
-// when a reusable helper is declared in a game with no assets of its own.
+// Clip assets, signatures, fields and local values need tide_clip_ref, even
+// without any assets or playback. This includes no audio in the match state.
 static bool program_has_clips(const program *prog)
 {
+    if (prog->uses_clip_values) return true;
     for (int i = 0; i < prog->assets.count; i++)
         if (prog->assets.items[i]->asset_kind == ASSET_CLIP) return true;
     for (int i = 0; i < prog->lists.count; i++)
