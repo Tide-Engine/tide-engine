@@ -1404,6 +1404,7 @@ typedef struct program {
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
     bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
+    bool uses_clip_values; // Clip values need their C type even without assets or audio playback.
     bool uses_texture_size; // Local frames borrow the host's physical target-size resolver
     bool uses_resident;  // A match singleton has a Resident field: the worlds carry its pages, the local state the arenas' registry
     bool quiet_names;    // While a built-in struct's own fields resolve: what they name isn't the game naming it
