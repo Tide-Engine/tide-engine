@@ -220,6 +220,10 @@ local event(Destroyed) ShotEnded(Body body, mut Fx fx, with Bullet)
 
 An event sent to an entity that's gone by its turn isn't heard, as it isn't handled. Local fields are the entity's whether or not it's still there: what a handler writes for an entity that's gone goes with the rest of its local fields, at that frame.
 
+Text, lists, maps, sets and grids follow the same recorded timing. The journal retains the values a handler may read, including through synchronous helpers, so later edits or destruction can't invalidate them. Unread container fields add no capture cost. A conditional read still counts as a possible read; copying a whole value reads its fields.
+
+Match values stay read-only. You can copy a list, map, set or text into local state using ordinary assignment; grids keep their existing read-only borrowing and copying restrictions. Attached local fields continue to read and write current local state.
+
 ### Other entities
 
 A local handler takes `query` parameters, as a [view](./views-and-the-match.md#other-entities) does, to go through entities other than the one its event was sent to:
@@ -244,7 +248,7 @@ local event(Blast blast) ShowBlast(mut Fx fx, query (Body body, with Fighter) fi
 
 - **Rows are from the tick that sent the event**, like what the handler takes of the entity the event was sent to: the match as that tick left it, whatever it is by the frame the handler runs in. They aren't blended. A handler of a [`verified`](#verified-handlers) event gets the confirmed tick's.
 - **They're the tick's once it's done**, after all its events and changes. An entity the tick destroyed is in no row, the one the event was sent to included, and an entity it spawned is in them. The handler's own components are still as the event's turn left them.
-- **Nothing in it says `verified`**: the handler's event says which tick. A binding can't be `mut`, and rows have the match's fields, without its text, lists, maps, sets and grids, which aren't heard yet.
+- **Nothing in it says `verified`**: the handler's event says which tick. Match fields, including captured text, lists, maps, sets and grids, stay read-only. Attached local fields use the entity's current local state when the handler runs. A binding such as `query (mut Fighter fighter) fighters` can write those local fields, including local containers. Local fields are never recorded in the event journal.
 - **A query of this machine's entities**, `query (Spark spark) sparks`, is the local world as it is when the handler runs. It's the only kind a handler of a local event takes.
 - **The entities are recorded once for a tick**, however many of its events have a handler that goes through them, and only for ticks that sent one.
 
@@ -383,7 +387,7 @@ The same filters work on `verified` handlers, using their confirmed recording. O
 
 ### What isn't there yet
 
-- **Text, lists, maps, sets and grids of the match** aren't heard. Naming one, in the event or in a component or singleton the handler takes, is an error that says so, and a copy of a component that has one has it empty. Local state has them as ever.
+- **Container capture follows possible reads**, including through helpers and borrowed queries. Unread container fields are omitted; explicit whole-value copies read their fields. Captured event-payload containers contribute their contents to replay occurrence identity. Local fields use current local state.
 - **The `World`**, which is the match as it is now and not as the event left it. Nor `Devices` or the input.
 - **`async`.** A local handler of one of the match's events starts a [task](./tasks.md) instead, by calling an async function with what the task needs.
 - **`verified` components beside a predicted event.** A handler that hears a tick as it's predicted takes the match as that tick left it.

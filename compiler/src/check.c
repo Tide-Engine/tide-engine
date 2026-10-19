@@ -4196,11 +4196,12 @@ static bool query_fits(const param *want, const param *source)
         for (int j = 0; j < source->query.count; j++) {
             const param *q = &source->query.items[j];
             if (!same_type(p->type, q->type)) continue;
-            if (p->mode == PARAM_READ) matches += q->mode == PARAM_READ;
+            if (p->mode == PARAM_READ) matches += param_binding(q);
+            else if (p->mode == PARAM_MUT) matches += q->mode == PARAM_MUT;
             else if (p->mode == PARAM_WITH) matches += q->mode != PARAM_WITHOUT;
             else if (p->mode == PARAM_WITHOUT) matches += q->mode == PARAM_WITHOUT;
         }
-        if (p->mode == PARAM_READ ? matches != 1 : matches == 0) return false;
+        if (param_binding(p) ? matches != 1 : matches == 0) return false;
     }
     return true;
 }
@@ -4352,10 +4353,13 @@ static void check_arg_types(checker *c, expr *e, decl *m)
             if (arg->type.kind == TY_QUERY && arg->param) {
                 for (int k = 0; k < p->query.count; k++) {
                     const param *need = &p->query.items[k];
-                    if (need->mode != PARAM_READ) continue;
+                    if (!param_binding(need)) continue;
                     for (int j = 0; j < arg->param->query.count; j++) {
                         param *given = &arg->param->query.items[j];
-                        if (given->mode == PARAM_READ && same_type(need->type, given->type)) given->read = true;
+                        if (param_binding(given) && same_type(need->type, given->type)) {
+                            given->read = true;
+                            if (need->mode == PARAM_MUT && given->mode == PARAM_MUT) given->written = true;
+                        }
                     }
                 }
             }
@@ -8026,8 +8030,13 @@ static decl *named_enum(const checker *c, const expr *e)
 // view's, a Forgotten handler's or a function's, of the component or singleton
 // itself. Anything else of its type is a copy of its value, the match's part,
 // which has no local fields.
+static param *row_binding(const expr *e);
+
 static param *local_fields_param(const expr *object, const decl *d)
 {
+    param *binding = row_binding(object);
+    if (binding && binding->type.decl == d && object->kind == E_MEMBER && object->object->kind == E_NAME
+        && object->object->bind == BIND_LOCAL && object->object->local->query) return binding;
     if (object->kind != E_NAME || object->bind != BIND_PARAM) return NULL;
     param *p = object->param;
     const bool data = p->type.kind == TY_COMPONENT || p->type.kind == TY_SINGLETON;
@@ -8045,48 +8054,20 @@ static bool through_local_field(const expr *target)
 
 // The query binding a value is read through, or NULL: `row.body` and
 // `row.body.position.x`, where `row` is a foreach's row over a query.
-static const param *row_binding(const expr *e)
+static param *row_binding(const expr *e)
 {
-    for (; e->kind == E_MEMBER && !e->local_field; e = e->object) {
+    for (; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) {
+        if (e->kind == E_INDEX) continue;
         const expr *row = e->object;
         if (row->kind != E_NAME || row->bind != BIND_LOCAL || !row->local || !row->local->query) continue;
-        const param *query = row->local->query;
+        param *query = row->local->query;
         for (int i = 0; i < query->query.count; i++) {
-            const param *binding = &query->query.items[i];
-            if (binding->mode == PARAM_READ && str_eq(binding->name, e->member)) return binding;
+            param *binding = &query->query.items[i];
+            if (param_binding(binding) && str_eq(binding->name, e->member)) return binding;
         }
         return NULL;
     }
     return NULL;
-}
-
-// Whether a value is the match's as a local handler hears it: its event, or a
-// component or singleton of the match it takes, or a field of one. They're
-// copies from the event's turn, without what the match keeps in its heap. So
-// are the rows of its queries over the match, from the event's tick.
-static bool heard_value(const checker *c, const expr *e)
-{
-    const decl *sys = c->method ? NULL : c->system;
-    if (!sys || sys->kind != DECL_SYSTEM || !sys->listens) return false;
-    const param *binding = row_binding(e);
-    if (binding) return binding->type.kind == TY_COMPONENT && !binding->type.decl->is_local;
-    while (e->kind == E_MEMBER && !e->local_field) e = e->object;
-    if (e->kind != E_NAME || e->bind != BIND_PARAM) return false;
-    const type t = e->param->type;
-    if (t.kind == TY_EVENT) return true;
-    return (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local;
-}
-
-// Text, a list, a map, a set or a grid: what a world keeps in its heap.
-static bool kept_in_heap(const type t)
-{
-    return t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID;
-}
-
-static const char *heap_what(const type t)
-{
-    if (t.kind == TY_STRING) return "text";
-    return t.kind == TY_LIST ? "a list" : t.kind == TY_MAP ? "a map" : t.kind == TY_SET ? "a set" : "a grid";
 }
 
 // A Forgotten handler's component or singleton: its entity is gone from the
@@ -8119,7 +8100,7 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         diag_note("read and write them in a view, and keep what the task needs in local state of its own");
         return T_ERR;
     }
-    if (c->method && c->method->kind != DECL_FUNCTION && c->method->kind != DECL_SHADER) {
+    if (c->method && c->method->kind != DECL_FUNCTION && c->method->kind != DECL_SHADER && !row_binding(e->object)) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and methods work on values, which have none",
                    STR_ARG(f->name), STR_ARG(d->name));
         diag_note("write a function that takes the component instead: 'void Name(mut " STR_FMT " %s) { ... }'",
@@ -8127,13 +8108,6 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
         return T_ERR;
     }
     param *p = local_fields_param(e->object, d);
-    if (!p && row_binding(e->object)) {
-        diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and a query's rows have the match's fields only",
-                   STR_ARG(f->name), STR_ARG(d->name));
-        diag_note("local fields stay with the entity on this machine: a view that runs for the entity reads and writes "
-                  "them, 'view Name(mut " STR_FMT " %s) { ... }'", STR_ARG(d->name), example_name(d));
-        return T_ERR;
-    }
     if (!p) {
         diag_error(e->at, "'" STR_FMT "' is a local field of '" STR_FMT "', and this is a copy of its value, which has none",
                    STR_ARG(f->name), STR_ARG(d->name));
@@ -8143,7 +8117,7 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
     }
     // Local fields are the entity's, whichever world a parameter's value comes
     // from: a view that takes the component both ways reaches them one way
-    if (p->verified && code && code->kind == DECL_SYSTEM) {
+    if (p->verified && !p->query_source && code && code->kind == DECL_SYSTEM) {
         for (int i = 0; i < code->params.count; i++) {
             const param *twin = &code->params.items[i];
             if (twin == p || twin->verified || twin->type.decl != d || (twin->mode != PARAM_READ && twin->mode != PARAM_MUT)) continue;
@@ -8527,14 +8501,6 @@ static type check_member(checker *c, expr *e)
                     diag_error(e->at, "'" STR_FMT "' is a match field of '" STR_FMT "', and the entity is gone: only its "
                                "local fields are left", STR_ARG(f->name), STR_ARG(obj.decl->name));
                     diag_note("keep what the handler needs of the match in a local field, set while the entity was there");
-                    return T_ERR;
-                }
-                if (heard_value(c, e->object) && kept_in_heap(f->type)) {
-                    diag_error(e->at, "'" STR_FMT "' is %s of the match's, which a local handler doesn't hear yet",
-                               STR_ARG(f->name), heap_what(f->type));
-                    diag_note("a local handler gets what it takes of the match as the event left it, but text, lists, maps, "
-                              "sets and grids stay in the match: send what it needs of them in a field of another type, or "
-                              "read them in a view");
                     return T_ERR;
                 }
                 if (f->type.kind == TY_RESIDENT && e != c->resident_arg) {
@@ -10403,6 +10369,13 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     if (root && root->bind == BIND_LOCAL && root->local->query) {
+        param *binding = row_binding(target);
+        if (binding && binding->mode == PARAM_MUT && through_local_field(target)) {
+            binding->local_written = binding->written = true;
+            return true;
+        }
+        if (binding && binding->mode == PARAM_MUT && arg_of && target->kind == E_MEMBER
+            && target->type.kind == TY_COMPONENT) return true; // The helper's effects are checked after propagation.
         diag_error(root->at, "query row '" STR_FMT "' is read-only", STR_ARG(root->name));
         if (arg_of) diag_note("'" STR_FMT "' %s its '" STR_FMT "'", STR_ARG(called->name), arg_of->is_out ? "makes" : "changes", STR_ARG(arg_of->name));
         else if (called) diag_note("'" STR_FMT "' is a mut method: it changes what it's called on", STR_ARG(called->name));
@@ -15114,13 +15087,8 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             refused_binding(row, p);
             continue;
         }
-        if (p->mode == PARAM_MUT) {
+        if (p->mode == PARAM_MUT && !query->function_param && !is_local_code(sys)) {
             diag_error(p->at, "query component bindings are read-only and can't be 'mut'");
-            if (is_local_code(sys)) {
-                diag_note("a query's rows are copies of the match's fields; an entity's local fields are written by "
-                          "a view that runs for it, 'view Name(mut " STR_FMT " %s) { ... }'", STR_ARG(p->type_name),
-                          p->name.len ? str_to_cstr(p->name) : "value");
-            }
             p->mode = PARAM_READ;
         }
         if (p->verified && !check_verified_binding(sys, p)) p->verified = false;
@@ -15158,6 +15126,10 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
             refused_binding(row, p);
             continue;
         }
+        if (p->mode == PARAM_MUT && (d->is_local || !d->local_part)) {
+            diag_error(p->at, "a mutable query binding writes attached local fields, and '" STR_FMT "' has none", STR_ARG(d->name));
+            p->mode = PARAM_READ;
+        }
         if (!query->function_param && !check_param_side(sys, p, d)) {
             p->type = T_ERR;
             refused_binding(row, p);
@@ -15172,7 +15144,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         p->type = (type){TY_COMPONENT, d};
         if (p->verified) { // Of the entity as the server confirmed it
             // What the confirmed world keeps in its heap is read there, as for a view's own parameter
-            if (p->mode == PARAM_READ && decl_holds_text(d)) c->prog->uses_text = true;
+            if (param_binding(p) && decl_holds_text(d)) c->prog->uses_text = true;
             if (mask_has(seen_verified, d->index)) {
                 diag_error(p->at, "'verified " STR_FMT "' appears twice in the query", STR_ARG(d->name));
             }
@@ -15188,7 +15160,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
         if (side_of && side_of->is_local != d->is_local) {
             diag_error(p->type_at, "a query can't mix local and match components: no entity has both");
         } else if (!side_of) side_of = d;
-        if (p->mode != PARAM_READ) continue;
+        if (!param_binding(p)) continue;
         field binding = {.name = p->name, .type_name = p->type_name, .type = p->type, .at = p->name_at,
                          .type_at = p->type_at, .type_qual_at = p->type_qual_at};
         vec_push(row->fields, binding);
@@ -15612,6 +15584,8 @@ static bool call_acts(const expr *e)
         if (m->acts[0] || m->acts[1] || m->starts_tasks) return true; // It sends, spawns, changes entities or starts tasks, as its caller would
         for (int i = 0; i < m->params.count; i++) {
             if (m->params.items[i].mode == PARAM_MUT) return true; // It changes the caller's variable
+            for (int k = 0; k < m->params.items[i].query.count; k++)
+                if (m->params.items[i].query.items[k].mode == PARAM_MUT) return true;
         }
         return false;
     }
@@ -18368,20 +18342,50 @@ static void check_roll_calls(const checker *c)
 // only code that has them calls it: views, local handlers of Forgotten and
 // functions like it, with a parameter of their own, never a copy. And a view
 // can't pass match state to a function or method that changes its match fields.
+static void mark_query_fields(decl *code, const bool shared)
+{
+    for (int k = 0; k < code->params.count; k++) {
+        param *q = &code->params.items[k];
+        for (int n = 0; n < q->query.count; n++) {
+            const param *p = &q->query.items[n];
+            if (!p->local_use || p->type.kind != TY_COMPONENT) continue;
+            q->local_use = true;
+            code->query_fields = mask_or(code->query_fields, bit(p->type.decl));
+            if (p->mode == PARAM_MUT) code->query_mut_fields = mask_or(code->query_mut_fields, bit(p->type.decl));
+        }
+        if (shared) q->local_shared = q->type.kind == TY_COMPONENT && q->local_use
+            && (q->mode == PARAM_MUT ? mask_has(code->query_fields, q->type.decl->index)
+                                    : mask_has(code->query_mut_fields, q->type.decl->index));
+    }
+    for (int i = 0; i < code->methods.count; i++) mark_query_fields(code->methods.items[i], shared);
+}
+
 static void check_local_field_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
-            if ((site->to->kind != DECL_FUNCTION && site->to->kind != DECL_METHOD)
-                || (site->from->kind != DECL_FUNCTION && site->from->kind != DECL_METHOD) || site->from->is_async) continue;
+            if ((site->to->kind != DECL_FUNCTION && site->to->kind != DECL_METHOD) || site->from->is_async) continue;
             for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
                 const param *q = &site->to->params.items[k];
                 const expr *arg = site->call->args.items[k];
+                if (q->type.kind == TY_QUERY && arg->type.kind == TY_QUERY && arg->param) {
+                    for (int n = 0; n < q->query.count; n++) {
+                        const param *need = &q->query.items[n];
+                        if (!param_binding(need) || !need->local_use) continue;
+                        for (int j = 0; j < arg->param->query.count; j++) {
+                            param *given = &arg->param->query.items[j];
+                            if (!param_binding(given) || !same_type(need->type, given->type)) continue;
+                            if (!given->local_use) { given->local_use = true; given->local_use_at = arg->at; changed = true; }
+                            if (need->local_written && !given->local_written) { given->local_written = given->written = true; changed = true; }
+                        }
+                    }
+                    continue;
+                }
                 if ((q->type.kind != TY_COMPONENT && q->type.kind != TY_SINGLETON) || !q->type.decl->local_part) continue;
-                if (arg->kind != E_NAME || arg->bind != BIND_PARAM || !arg->param->function_param) continue;
-                param *p = arg->param;
+                param *p = local_fields_param(arg, q->type.decl);
+                if (!p) continue;
                 if (p->type.kind != q->type.kind || p->type.decl != q->type.decl) continue;
                 if (q->local_use && !p->local_use) {
                     p->local_use = true;
@@ -18389,7 +18393,7 @@ static void check_local_field_calls(const checker *c)
                     changed = true;
                 }
                 if (q->local_written && !p->local_written) {
-                    p->local_written = true;
+                    p->local_written = p->written = true;
                     changed = true;
                 }
                 if (q->mode == PARAM_MUT && q->match_write && !p->match_write) {
@@ -18421,10 +18425,24 @@ static void check_local_field_calls(const checker *c)
         for (int k = 0; k < site->call->args.count && k < to->params.count; k++) {
             const param *q = &to->params.items[k];
             const expr *arg = site->call->args.items[k];
+            if (q->type.kind == TY_QUERY) {
+                bool local = false;
+                for (int n = 0; n < q->query.count; n++) local |= q->query.items[n].local_use;
+                if (local && from->kind == DECL_SYSTEM && !local_code) {
+                    diag_error(arg->at, "'" STR_FMT "' reads local fields through its query, which the match can't see", STR_ARG(to->name));
+                    diag_note("call it from a view or local handler");
+                }
+                continue;
+            }
             if ((q->type.kind != TY_COMPONENT && q->type.kind != TY_SINGLETON) || !q->type.decl->local_part
                 || arg->type.kind == TY_ERROR) continue;
-            const bool own = arg->kind == E_NAME && arg->bind == BIND_PARAM && !arg->param->task_ref
-                          && arg->param->type.kind == q->type.kind && arg->param->type.decl == q->type.decl;
+            param *bound = local_fields_param(arg, q->type.decl);
+            const bool own = bound && bound->type.kind == q->type.kind;
+            if (q->mode == PARAM_MUT && q->match_write && row_binding(arg)) {
+                diag_error(arg->at, "a query row's match fields are read-only, and '" STR_FMT "' changes them", STR_ARG(to->name));
+                diag_note_at(q->match_write_at, "it does on line %d; copy the component to change its value", q->match_write_at.line);
+                continue;
+            }
             if (q->mode == PARAM_MUT && q->match_write && local_code && own) {
                 diag_error(arg->at, "%s can't change the match, and '" STR_FMT "' changes its '" STR_FMT "''s match fields",
                            local_code_what(from), STR_ARG(to->name), STR_ARG(q->name));
@@ -18443,7 +18461,7 @@ static void check_local_field_calls(const checker *c)
                 diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', and a task can't yet",
                            STR_ARG(to->name), STR_ARG(d->name));
                 diag_note("call it from a view, and keep what the task needs in local state of its own");
-            } else if (from->kind != DECL_SYSTEM && from->kind != DECL_FUNCTION) {
+            } else if (from->kind != DECL_SYSTEM && from->kind != DECL_FUNCTION && !(from->kind == DECL_METHOD && row_binding(arg))) {
                 diag_error(site->call->at, "'" STR_FMT "' uses the local fields of '" STR_FMT "', which only views, local "
                            "handlers and the functions they call have", STR_ARG(to->name), STR_ARG(d->name));
             } else if (!own) {
@@ -18452,12 +18470,26 @@ static void check_local_field_calls(const checker *c)
                            q->type.kind == TY_SINGLETON ? "singleton" : "component");
                 diag_note("pass the parameter of the view, or of the function, itself");
             } else if (from->kind == DECL_SYSTEM) { // The view's own: its local fields go with it
-                if (!arg->param->local_use) arg->param->local_use_at = arg->at;
-                arg->param->local_use = true;
-                arg->param->local_written |= q->local_written;
+                if (!bound->local_use) bound->local_use_at = arg->at;
+                bound->local_use = true;
+                bound->local_written |= q->local_written;
             }
         }
     }
+    // Queries retain local-field capability through forwarding. Overlapping
+    // field borrows share storage, including before their first write.
+    for (int i = 0; i < c->prog->decls.count; i++) mark_query_fields(c->prog->decls.items[i], false);
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            const comp_mask more = mask_or(site->from->query_fields, site->to->query_fields);
+            if (!mask_eq(more, site->from->query_fields)) { site->from->query_fields = more; changed = true; }
+            const comp_mask mut = mask_or(site->from->query_mut_fields, site->to->query_mut_fields);
+            if (!mask_eq(mut, site->from->query_mut_fields)) { site->from->query_mut_fields = mut; changed = true; }
+        }
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) mark_query_fields(c->prog->decls.items[i], true);
 }
 
 // A function or method that sends, spawns or changes entities does it as the
@@ -19697,6 +19729,8 @@ bool check(program *prog)
     check_drawing_calls(&c);
     check_raw_uses(&c);
     check_world_passing(&c);
+    if (diag_error_count() == 0) plan_shaders(prog);
+    check_local_field_calls(&c); // Shader inputs can require a helper's attached local fields too.
     for (int i = 0; i < c.access_warnings.count; i++) {
         decl *d = c.access_warnings.items[i];
         for (int k = 0; k < d->params.count; k++) {
@@ -19709,8 +19743,6 @@ bool check(program *prog)
         }
         warn_unused_params(&c, d);
     }
-    if (diag_error_count() == 0) plan_shaders(prog);
-    check_local_field_calls(&c); // Shader inputs can require a helper's attached local fields too.
     mark_c_callers(&c);
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_SYSTEM) settle_grid_loops(prog, prog->decls.items[i]->body);

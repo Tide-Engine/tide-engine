@@ -63,6 +63,96 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Bosses that last, survivors who can die (2026-10-19)
+
+The owner: "i killed the boss way too quickly with the shotgun; its still
+easy", then "oh its still ahrd to die". The numbers are mine, Provisional.
+
+- **Bosses that last** (boss.tide's `BOSS_HEALTH`, `BOSS_PELLET`; hands.tide's
+  `Shoot`): a boss's health is 8000 a danger (times the party, times its kind's
+  share; it was 2000), and a shotgun pellet does half to one: every one of the
+  eleven finds something that big, so the shotgun had done twice what the carbine
+  and the SMG do to a boss (some 480 a second against their 230 to 250, before
+  items).
+- **Survivors who can die** (items.tide's `LEVEL_HEALTH`): a level adds 18
+  health, and brings 18 back (it was 30). By the last levels a survivor had had
+  eleven times the health they began with against claws only three times as hard
+  (rounds.tide's `Harm`), so the dead couldn't touch them; now it's about six times.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 8; the night's
+  end's fight, from the clock running out to the boss down): the last round's
+  build felled each boss 8 to 13 s after it rose (the middle fight) and the
+  middle runs went 1460 s (the Gunner, at the cap), 900 (the Engineer), 1196 (the
+  Breacher). Tried: a level's 12 and bosses' 8000: fights 19 to 27 s, the runs
+  623, 396 and 572 s, every one but three going down, most in a night's end (too
+  far); 15 and 6000: fights 17 to 23 s, runs 826, 433, 638; 18 and 8000 (kept):
+  fights 19 to 32 s, runs 1462 (the Gunner, three of eight going down), 724 (the
+  Engineer, seven going down) and 580 (the Breacher, all eight). The bots don't
+  roll a boss's slam or keep off it as a player does; they've always done worse
+  than the owner, who found the last round's easy.
+- **Tests**: as before (the survivors' health a level, 18, in the test's
+  `max_health`). Native debug `gravewake_test` and the web debug WASI one pass.
+  Ticks of 2000 of the dead 2.5 ms.
+
+### Runners, Brutes and Howlers, each kind its own colour, the orbs as gems (2026-10-19)
+
+The owner: "the XP orbs are hard to spot now", then "we need more variety of
+enemies and also an easy way to distinguish them, i imagine we might want to
+color code enemies for a high contrast". The kinds, their numbers and colours
+are mine, Provisional.
+
+- **Three more kinds** (zombies.tide's `ZombieKind`, `Hunt`, `TakeWound`;
+  rounds.tide's `KindFor`): a **Runner** (from 25 s; 0.6 as tough, always
+  sprinting and 15% quicker than a sprinter): from 2.2 to 5.5 m off with
+  nothing between, it crouches 0.45 s facing whom it's after, then leaps the way
+  it faces at 13 m/s for 0.35 s (4.5 m) and strikes as it lands (0.8 of a claw;
+  a roll's guard turns it), every 3 s at most. A **Brute** (from 2:30; a third
+  bigger all round, its spots to hit and its reach too, eight times as tough, a
+  shambler 1.35 times as quick): no blow staggers it or throws it down, a blow's
+  push moves it a quarter as far, and its own does 2.5 claws and throws a survivor
+  back at 9 m/s (not one rolling). A **Howler** (from 3:40; tall, thin, 1.5 as
+  tough): it stands back 3 to 11 m off; within 22 m of whom it's after, every 7 s
+  it stands and howls 1.1 s, and at the howl's end every one of the dead within
+  10 m of it is frenzied 5 s (the Stalker's frenzy: 1.6 times as quick). Shares:
+  Runners one in 33 up to one in 12, Brutes one in 200 up to one in 50, Howlers
+  one in 125 up to one in 40, as the danger climbs. Their orbs are worth 1.5, 6
+  and 3 of the ordinary dead's. Heard: a Runner's leap a high snarl, a Brute's
+  swing a low bellow and its blow a heavy thud, a Howler's howl a scream pitched
+  down. F2 now goes through all six kinds.
+- **Each kind its own colour** (crowd.tide's `KindMark`, `CrowdFlesh`): the
+  ordinary dead grey as they were; every other kind its body washed half with its
+  colour, a glow of it all over, its eyes burning it, and a hard edge of it round
+  its outline in place of the pale one: red a Runner, lime a Bloater, yellow a
+  Spitter, blue a Warden, orange a Brute, magenta a Howler. A Runner crouched or
+  a Howler howling burns brighter, its colour streaming up off its head (fx.tide's
+  `Winding`); a howl throws a ring of magenta out over the ground as far as it
+  reaches (`ShowHowl`), and the frenzied throb a magenta edge. Looked at zoomed
+  out over a crowd, every kind's known at a glance.
+- **The orbs as gems** (orbs.tide's `ShowOrb`; fx.tide's `OrbGem`): they'd been
+  small soft glows, and the hard steps of light (the last round) cut them to
+  specks. Now a cyan diamond 0.44 to 0.64 m tall (more for more), turning, lit on
+  one face and shaded on the other, a glint and a dark rim, solid and hard-edged,
+  drawn over the murk, with a glint off it now and then. Cyan is none of the
+  kinds' colours. (Finding them in the captures took a while: in the first ones
+  every orb lay south of the survivor, under the screen's bottom edge, and the
+  ones killed on the screen were within ORB_REACH and gone to them at once.)
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 12): the
+  Gunner at the cap (1460 s, the last round's 1257 and 1459 over seeds 1 to 4
+  and 5 to 12); the Engineer's middle run 1118 s and the Breacher's 977, half of
+  each or more going down (the last round's at the cap, 1059 over 5 to 12 for the
+  Breacher): the new kinds come close, which the shotgun and the SMG are for, and
+  the bots don't roll a Runner's leap or keep off a Brute. Ticks of 2000 of the
+  dead 2.2 to 2.4 ms (1.93 the last round, one run), of 4000 4.6 ms.
+- **Tests**: a Runner 4.5 m off crouches, leaps and lands its blow; a Brute
+  kicked stays on its feet and its blow throws the survivor back at 9 m/s; a
+  Howler 8 m off stands, howls, and the three of the dead behind it are frenzied.
+  The check of the dead never getting stuck leaves the Howlers out, as it does the
+  Spitters (they hang back on purpose).
+- **Validation**: native debug `gravewake_test` and the web debug WASI one pass.
+  Looked at in standard-host captures: all six kinds coming at a Breacher zoomed
+  out (each colour plain), the gems where the dead fell. (A build to look at them
+  in, with the dead's harm made nothing, drew none of the dead at all; not looked
+  into, as it was thrown away: noted in case it's the engine's.)
+
 ### Torn apart at once, pixelled light, missions you can see (2026-10-19)
 
 The owner, after playing: "when the zombies die i think they should just

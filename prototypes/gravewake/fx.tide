@@ -62,7 +62,7 @@ local singleton Fx
     List<Sprite> glowSprites;
     List<Sprite> murkSprites;
     List<Sprite> streakSprites;
-    List<Sprite> orbSprites;     // The experience orbs, gathered each frame (orbs.tide)
+    List<Sprite> orbSprites;     // The experience orbs, gathered each frame (orbs.tide): gems, not glows (OrbGem)
     List<Corner> quad;
     List<int> quadFaces;
     float emberClock;
@@ -130,6 +130,23 @@ frag MurkMote(Corner corner, out Color color, Sprite sprite, Look look, Lights l
     // Smoke and dust by the eye thin away, so they never cover the picture
     var near = Math.Saturate((Math.Distance(sprite.at, look.eye) - 1.0 - sprite.size) / 3.5);
     color = Color(Hazed(lit, sprite.at, look), sprite.color.w * near);
+}
+
+// An experience orb: a gem, a diamond on its point turning (its width with the turn), lit on one face and shaded on the
+// other, a glint and a dark rim, hard-edged and solid, so it's seen among the blood and fire (the owner, 2026-10-19:
+// "the XP orbs are hard to spot now": they'd been small soft glows, which the hard steps of light cut down to specks).
+frag OrbGem(Corner corner, out Color color, Sprite sprite, Look look)
+{
+    var off = corner.uv * 2 - float2(1);
+    var spin = Math.Abs(Math.Cos(look.time * 2.4 + sprite.at.x * 3.1 + sprite.at.z * 1.7));
+    var wide = 0.3 + 0.7 * spin;
+    var d = Math.Abs(off.x) / wide + Math.Abs(off.y);
+    if (d > 1) this.Discard();
+    var hue = float3(sprite.color.x, sprite.color.y, sprite.color.z);
+    mut var c = d > 0.72 ? hue * 0.1 : hue * (off.x < 0 ? 1.7 : 0.8);
+    if (off.y < -0.15 && off.y > -0.55 && off.x < -0.05 * wide && off.x > -0.42 * wide) c = float3(2.6, 2.8, 2.8);
+    var far = Math.Distance(sprite.at, look.eye);
+    color = Color(c * Math.Exp(-far * look.fog * 0.6), sprite.color.w);
 }
 
 frag StreakLight(Corner corner, out Color color, Sprite sprite)
@@ -387,10 +404,13 @@ view DrawFx(Fx fx, Lens lens)
     lens.scene.Cull(Cull.None)
     {
         if (fx.murkSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.murkSprites, Face, MurkMote);
+        lens.scene.Blend(Blend.Alpha)
+        {
+            if (fx.orbSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.orbSprites, Face, OrbGem);
+        }
         lens.scene.Blend(Blend.Add)
         {
             if (fx.glowSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.glowSprites, Face, GlowMote);
-            if (fx.orbSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.orbSprites, Face, GlowMote);
             if (fx.streakSprites.count > 0) lens.scene.Instanced(fx.quad, fx.quadFaces, fx.streakSprites, Face, StreakLight);
         }
     }
@@ -722,4 +742,29 @@ view Swelling(Zombie zombie, mut Fx fx, Me me)
     var out = Scatter(fx, 1.0);
     Murk(fx, Mote { at = zombie.chestAt + out * 0.35, velocity = out * fx.random.NextFloat(1, 2.5) + float3(0, 0.8, 0), life = fx.random.NextFloat(0.35, 0.7),
                     size = fx.random.NextFloat(0.12, 0.22), grow = 0.8, color = float3(0.26, 0.32, 0.06), alpha = 0.35, drag = 2 });
+}
+
+// A Howler's howl rising, a Runner crouched: its colour streaming up off its head, faster as it nears.
+[Stage(Layers.Gather, 3)]
+view Winding(Zombie zombie, mut Fx fx, Me me)
+{
+    if (!fx.made || zombie.windup <= 0 || (zombie.kind != ZombieKind.Howler && zombie.kind != ZombieKind.Runner) || Math.Distance(zombie.at, me.eye) > 45) return;
+    var near = Math.Saturate(zombie.windup / WindupSeconds(zombie.kind));
+    if (fx.random.NextFloat() > Math.Min(Frame.dt, 0.05) * (10 + 40 * near)) return;
+    Glow(fx, Mote { at = zombie.headAt + Scatter(fx, 0.25), velocity = float3(0, 1.5 + 2 * near, 0) + Scatter(fx, 0.6), life = 0.4, size = 0.08 + 0.06 * near, grow = -0.1,
+                    color = KindMark(zombie.kind), alpha = 2.2 });
+}
+
+// A Howler's howl: a flash of its colour, and a ring of it rushing out over the ground as far as the frenzy reaches.
+local event(Howled howled) ShowHowl(mut Fx fx)
+{
+    if (!fx.made) return;
+    var hue = KindMark(ZombieKind.Howler);
+    fx.flashes.Add(Flash { at = howled.at + float3(0, 1.6, 0), color = hue * 4, reach = 7, life = 0.35 });
+    var ground = On(howled.at.x, howled.at.z) + float3(0, 0.15, 0);
+    for (var i = 0; i < 64; i++)
+    {
+        var turn = i * Math.TAU / 64;
+        Glow(fx, Mote { at = ground, velocity = float3(Math.Sin(turn), 0, Math.Cos(turn)) * howled.reach * 2.4, drag = 2.4, life = 0.6, size = 0.14, color = hue, alpha = 2.5 });
+    }
 }

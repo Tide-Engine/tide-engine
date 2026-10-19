@@ -3083,13 +3083,14 @@ static void describe(const occurrence *o, sb *out)
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->mode == PARAM_QUERY) {
             if (o->param->function_param) {
-                sb_put(out, "\n\nA read-only query borrowed from the caller for this call. The caller's selection, "
+                sb_put(out, "\n\nA query borrowed from the caller for this call. The caller's selection, "
                             "traversal order and live, blended or recorded data timing are preserved. Bindings match by "
                             "component type; extra bindings and filters are allowed. It can be forwarded to another "
-                            "synchronous helper, but cannot be stored, returned or kept across await.");
+                            "synchronous helper, but cannot be stored, returned or kept across await. In local code, "
+                            "rows also reach current attached local fields; a mutable binding requires a mutable source binding.");
                 break;
             }
-            sb_printf(out, "\n\nA read-only second entity set, independent of the entity this %s runs for. "
+            sb_printf(out, "\n\nA second entity set, independent of the entity this %s runs for. "
                            "`foreach` yields rows with `entity` and the named component values. Traversal follows "
                            "the ECS; it does not sort by entity ID or distance.",
                       of && of->is_view ? "view" : of && of->is_handler ? "handler" : "system");
@@ -3114,10 +3115,12 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, " Its rows read the current match at this handler's turn in the tick-end queue. "
                             "Events and structural changes recorded by the handler remain deferred.");
             }
+            sb_put(out, " Match fields are read-only. In local code, rows reach current attached local fields, with mut required for writes.");
             break;
         }
         if (o->param->query_source) {
-            sb_put(out, "\n\nRead-only component data from this query row.");
+            sb_put(out, "\n\nRead-only match data from this query row. Attached local fields use this entity's current local state.");
+            if (o->param->mode == PARAM_MUT) sb_put(out, " This binding can write those local fields.");
             if (o->param->verified) sb_put(out, " As the last tick the server confirmed has it.");
             break;
         }
@@ -6663,7 +6666,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         // functions they call, and the frags and verts a view draws through.
         // The match can't see them.
         const bool local_code = sc->decl && !sc->decl->is_async && !sc->in_input
-                             && (sc->decl->kind == DECL_FUNCTION || gpu
+                             && (sc->decl->kind == DECL_FUNCTION || (sc->decl->kind == DECL_METHOD && sc->decl->borrows_queries) || gpu
                                  || (sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local)));
         for (int i = 0; local_code && i < local_field_count(t.decl); i++) {
             const field *f = field_of(t.decl, t.decl->fields.count + i);
@@ -9158,15 +9161,17 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const frame outer = depth >= 1 ? stack[depth - 1] : f;
             const bool in_view = outer.kind == CTX_HEADER && outer.open >= 2 && DOC->toks[outer.open - 2].kind == T_IDENT
                               && str_eq_c(DOC->toks[outer.open - 2].text, "view");
+            const bool local_fields = in_view || outer.header == HEADER_ROUTINE || local_match_handler(outer.open);
             const bool confirmed = in_view && pk == T_IDENT && str_eq_c(prev->text, "verified") && last > f.open;
             const tok_kind marked = confirmed ? DOC->toks[last - 1].kind : T_EOF;
-            if (marked == T_LPAREN || marked == T_COMMA || marked == T_WITH || marked == T_WITHOUT) {
+            if (marked == T_LPAREN || marked == T_COMMA || marked == T_WITH || marked == T_WITHOUT || marked == T_MUT) {
                 complete_match_types(&c, false);
                 complete_namespaces(&c, false);
-            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT) {
+            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT || pk == T_MUT) {
                 if (pk == T_LPAREN || pk == T_COMMA) {
                     item(&c, "with", CK_KEYWORD, "Query entities must have this component", NULL, NULL);
                     item(&c, "without", CK_KEYWORD, "Query entities must not have this component", NULL, NULL);
+                    if (local_fields) item(&c, "mut", CK_KEYWORD, "Write the query binding's attached local fields", NULL, NULL);
                 }
                 if (in_view) {
                     item(&c, "verified", CK_KEYWORD,

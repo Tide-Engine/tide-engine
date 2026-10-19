@@ -18,8 +18,13 @@ enum Gait { Shamble, Run, Sprint }
 // Spitter (thin, sallow, its throat glowing): it hangs back behind the rest and, with a clear line to a survivor, lobs
 // bile that hurts and slows where it lands; a Warden (the town's watch, still in their mail): rounds, blasts and blows
 // to its body do a quarter as much, so it's its bare head that's shot, or it's knocked down first (on its back its
-// mail doesn't help), or burned.
-enum ZombieKind { Walker, Bloater, Spitter, Warden }
+// mail doesn't help), or burned; a Runner (lean, quicker than any): from a few metres off it crouches and leaps at
+// whom it's after (a roll's guard turns it); a Brute (big as a door, slow, eight times as tough): no blow staggers it
+// or throws it down, and its own throws a survivor back; a Howler (tall, thin): it hangs back and now and then stops
+// and howls, and the dead round it are frenzied, quicker, so it's the one to shoot first (the owner, 2026-10-19: "we
+// need more variety of enemies"). Each but the ordinary dead is drawn in its own strong colour (crowd.tide's
+// KindMark).
+enum ZombieKind { Walker, Bloater, Spitter, Warden, Runner, Brute, Howler }
 
 const float BLOAT_NEAR = 2.4;      // How near a survivor sets a Bloater swelling
 const float BLOAT_FUSE = 1.4;      // Seconds from that to its burst
@@ -45,6 +50,32 @@ const float SPITTER_HEALTH = 1.2;
 const float WARDEN_HEALTH = 2;
 const float WARDEN_MAIL = 0.25;    // Of a blow to its body that gets through its mail
 const float WARDEN_HIT = 1.5;      // Its claws, against the ordinary dead's
+
+const float RUNNER_HEALTH = 0.6;
+const float RUNNER_PACE = 1.15;    // Against a sprinter's
+const float POUNCE_FAR = 5.5;      // How far off a Runner pounces from...
+const float POUNCE_NEAR = 2.2;     // ...and how near (nearer, it claws)
+const float POUNCE_CROUCH = 0.45;  // Seconds it crouches first
+const float POUNCE_SECONDS = 0.35; // The leap...
+const float POUNCE_SPEED = 13;     // ...this fast (4.5 m)
+const float POUNCE_HIT = 0.8;      // Landing on a survivor, against a claw
+const float POUNCE_EVERY = 3;      // Seconds between pounces
+
+const float BRUTE_HEALTH = 8;
+const float BRUTE_SIZE = 1.3;      // How much bigger it is all round, and its reach
+const float BRUTE_PACE = 1.35;     // Against a shambler's
+const float BRUTE_HIT = 2.5;       // Its blow, against a claw...
+const float BRUTE_THROW = 9;       // ...throwing a survivor back so fast, metres a second
+const float BRUTE_SHOVE = 0.25;    // Of a blow's push that moves it
+
+const float HOWLER_HEALTH = 1.5;
+const float HOWL_FAR = 22;         // How near whom it's after sets a Howler howling...
+const float HOWL_KEEP = 11;        // ...within this it stands back (nearer than HOWL_CLOSE, it claws)
+const float HOWL_CLOSE = 3;
+const float HOWL_WINDUP = 1.1;     // Seconds its howl rises before the dead are frenzied
+const float HOWL_EVERY = 7;        // Seconds between howls
+const float HOWL_REACH = 10;       // How far round it the dead are frenzied...
+const float HOWL_FRENZY = 5;       // ...so long
 
 const int ZOMBIE_LOOKS = 6;
 const float ZOMBIE_RADIUS = 0.34;
@@ -96,9 +127,10 @@ component Zombie
     float fuse;                 // A Bloater: seconds since it began to swell (0, not yet)
     bool popped;                // ...and it has burst
     float frenzy;               // Seconds left frenzied by a Stalker's shriek: faster
-    float spit;                 // A Spitter: seconds till it can spit again...
-    float windup;               // ...seconds into the swelling of its throat (0, none)...
-    bool sight;                 // ...and whether it has a clear line to whom it's after (looked for a few times a second)
+    float spit;                 // A Spitter, a Runner, a Howler: seconds till it can spit, pounce or howl again...
+    float windup;               // ...seconds into its throat's swelling, its crouch, its howl (0, none)...
+    bool sight;                 // ...and (a Spitter) whether it has a clear line to whom it's after (looked for a few times a second)
+    float leap;                 // A Runner: seconds into its leap (0, none)
     local float flash;          // The flash of a fresh blow
     local float voice = 1;      // Seconds till it groans
 }
@@ -171,7 +203,7 @@ system Muster(mut Zombie zombie, mut Herd herd)
     var lying = LyingOf(zombie);
     var risen = zombie.state == ZombieState.Rising ? Math.SmoothStep(0, 1, zombie.timer / RISE_SECONDS) : 1.0;
     var low = (1 - risen) * 1.9;
-    var big = zombie.look == 3 ? 1.06 : 1.0;
+    var big = (zombie.look == 3 ? 1.06 : 1.0) * KindScale(zombie.kind);
     zombie.headAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.5, 0.2), float3(0, 0.25, -1.35), lying) * big) - float3(0, low, 0);
     zombie.chestAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.15, 0.12), float3(0, 0.25, -0.85), lying) * big) - float3(0, low, 0);
     zombie.hipsAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 0.92, 0), float3(0, 0.2, -0.3), lying) * big) - float3(0, low, 0);
@@ -239,7 +271,7 @@ Body BodyOf(Entity entity, Zombie zombie)
                   head = placed ? zombie.headAt : zombie.at + up * 1.62,
                   chest = placed ? zombie.chestAt : zombie.at + up * 1.15,
                   hips = placed ? zombie.hipsAt : zombie.at + up * 0.6,
-                  down = LyingOf(zombie) > 0.5, size = zombie.kind == ZombieKind.Bloater ? BLOAT_SIZE : 1.0 };
+                  down = LyingOf(zombie) > 0.5, size = zombie.kind == ZombieKind.Bloater ? BLOAT_SIZE : KindScale(zombie.kind) };
 }
 
 // How tough each kind is, against the ordinary dead at the same danger.
@@ -250,16 +282,39 @@ float KindHealth(ZombieKind kind)
         case ZombieKind.Bloater: return BLOAT_HEALTH;
         case ZombieKind.Spitter: return SPITTER_HEALTH;
         case ZombieKind.Warden: return WARDEN_HEALTH;
+        case ZombieKind.Runner: return RUNNER_HEALTH;
+        case ZombieKind.Brute: return BRUTE_HEALTH;
+        case ZombieKind.Howler: return HOWLER_HEALTH;
     }
     return 1;
 }
 
-// How each kind goes: a Bloater and a Warden always shamble; a Spitter runs at most.
+// How each kind goes: a Bloater, a Warden and a Brute always shamble; a Spitter and a Howler run at most; a Runner
+// always sprints.
 Gait KindGait(ZombieKind kind, Gait gait)
 {
-    if (kind == ZombieKind.Bloater || kind == ZombieKind.Warden) return Gait.Shamble;
-    if (kind == ZombieKind.Spitter && gait == Gait.Sprint) return Gait.Run;
+    if (kind == ZombieKind.Bloater || kind == ZombieKind.Warden || kind == ZombieKind.Brute) return Gait.Shamble;
+    if (kind == ZombieKind.Runner) return Gait.Sprint;
+    if ((kind == ZombieKind.Spitter || kind == ZombieKind.Howler) && gait == Gait.Sprint) return Gait.Run;
     return gait;
+}
+
+// How much bigger each kind is all round than the ordinary dead (its spots to hit, and its reach).
+float KindScale(ZombieKind kind)
+{
+    return kind == ZombieKind.Brute ? BRUTE_SIZE : 1.0;
+}
+
+// How hard each kind's claws are, against the ordinary dead's.
+float KindHit(ZombieKind kind)
+{
+    return kind == ZombieKind.Warden ? WARDEN_HIT : kind == ZombieKind.Brute ? BRUTE_HIT : 1.0;
+}
+
+// How long each kind's windup is: a Spitter's throat, a Runner's crouch, a Howler's howl.
+float WindupSeconds(ZombieKind kind)
+{
+    return kind == ZombieKind.Runner ? POUNCE_CROUCH : kind == ZombieKind.Howler ? HOWL_WINDUP : SPIT_WINDUP;
 }
 
 // How much more each kind's orb is worth than the ordinary dead's.
@@ -270,6 +325,9 @@ float KindWorth(ZombieKind kind)
         case ZombieKind.Bloater: return 3;
         case ZombieKind.Spitter: return 2;
         case ZombieKind.Warden: return 3;
+        case ZombieKind.Runner: return 1.5;
+        case ZombieKind.Brute: return 6;
+        case ZombieKind.Howler: return 3;
     }
     return 1;
 }
@@ -337,7 +395,7 @@ event Struck
     bool weak;                  // On a boss's weak spot
 }
 
-// A Stalker's shriek, to each of the dead near it.
+// A Stalker's shriek or a Howler's howl, to each of the dead near it.
 event Frenzied
 {
     float seconds;
@@ -604,6 +662,69 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
             Send(Cue { sound = Sfx.Retch, at = zombie.headAt });
         }
     }
+    // A Runner: from a few metres off, with nothing between, it crouches facing whom it's after, then leaps the way it
+    // faces; landing by them, it strikes (a roll's guard turns it: hands.tide's TakeHurt)
+    var runner = zombie.kind == ZombieKind.Runner;
+    if (runner)
+    {
+        zombie.spit = Math.Max(0, zombie.spit - dt);
+        if (zombie.leap > 0)
+        {
+            zombie.leap += dt;
+            if (!zombie.struck && target != default && nearest < ATTACK_REACH + 0.3)
+            {
+                zombie.struck = true;
+                target.Send(Hurt { damage = ZOMBIE_HIT * POUNCE_HIT * Harm(match.danger), from = zombie.at });
+            }
+            if (zombie.leap >= POUNCE_SECONDS)
+            {
+                zombie.leap = 0;
+                zombie.spit = POUNCE_EVERY;
+            }
+        }
+        else if (zombie.windup > 0)
+        {
+            zombie.windup += dt;
+            if (zombie.windup >= POUNCE_CROUCH)
+            {
+                zombie.windup = 0;
+                zombie.leap = 0.0001;
+                zombie.struck = false;
+                if (target != default) zombie.yaw = YawTo(zombie.at, targetAt + targetGoes * 0.15);
+                Send(Cue { sound = Sfx.Pounce, at = zombie.headAt });
+            }
+        }
+        else if (target != default && zombie.spit <= 0 && nearest < POUNCE_FAR && nearest > POUNCE_NEAR && zombie.frozen <= 0 && zombie.stun <= 0 && zombie.flinch <= 0
+                 && zombie.swing <= 0 && ClearPath(ashwick, zombie.at, targetAt))
+            zombie.windup = 0.0001;
+    }
+    // A Howler: whom it's after near enough, now and then it stands and howls; at the howl's end the dead round it are
+    // frenzied
+    var howler = zombie.kind == ZombieKind.Howler;
+    if (howler)
+    {
+        zombie.spit = Math.Max(0, zombie.spit - dt);
+        if (zombie.windup > 0)
+        {
+            zombie.windup += dt;
+            if (zombie.windup >= HOWL_WINDUP)
+            {
+                zombie.windup = 0;
+                zombie.spit = HOWL_EVERY;
+                foreach (var z in Near(herd, zombie.at, HOWL_REACH))
+                {
+                    if (!z.hittable || z.entity == this || Math.Length((z.at - zombie.at).xz) > HOWL_REACH) continue;
+                    z.entity.Send(Frenzied { seconds = HOWL_FRENZY });
+                }
+                Send(Howled { at = zombie.at, reach = HOWL_REACH });
+            }
+        }
+        else if (target != default && zombie.spit <= 0 && nearest < HOWL_FAR && zombie.frozen <= 0 && zombie.stun <= 0 && zombie.flinch <= 0 && zombie.swing <= 0)
+        {
+            zombie.windup = 0.0001;
+            Send(Cue { sound = Sfx.Howl, at = zombie.headAt });
+        }
+    }
     // A Bloater doesn't swing: near enough a survivor, it stops and swells
     if (zombie.kind == ZombieKind.Bloater)
     {
@@ -624,17 +745,24 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
             {
                 if (row.entity != target || row.survivor.life != Life.Standing) continue;
                 var to = row.survivor.feet - zombie.at;
-                if (Math.Length(to.xz) < ATTACK_REACH + 0.45 && Math.Dot(Math.Normalize(to.xz), Flat(zombie.yaw).xz) > 0.2)
-                    target.Send(Hurt { damage = ZOMBIE_HIT * Harm(match.danger) * (zombie.kind == ZombieKind.Warden ? WARDEN_HIT : 1.0), from = zombie.at });
+                if (Math.Length(to.xz) >= ATTACK_REACH * KindScale(zombie.kind) + 0.45 || Math.Dot(Math.Normalize(to.xz), Flat(zombie.yaw).xz) <= 0.2) continue;
+                target.Send(Hurt { damage = ZOMBIE_HIT * Harm(match.danger) * KindHit(zombie.kind), from = zombie.at });
+                // A Brute's throws them back
+                if (zombie.kind == ZombieKind.Brute && !Guarded(row.survivor))
+                {
+                    target.Send(Shoved { velocity = Flatten(to) * BRUTE_THROW + float3(0, 3, 0) });
+                    Send(Cue { sound = Sfx.Pound, at = row.survivor.feet + float3(0, 1, 0) });
+                }
             }
         }
         if (zombie.swing >= ATTACK_SECONDS) zombie.swing = 0;
     }
-    else if (target != default && nearest < ATTACK_REACH && zombie.flinch <= 0 && zombie.stun <= 0 && zombie.frozen <= 0 && zombie.windup <= 0)
+    else if (target != default && nearest < ATTACK_REACH * KindScale(zombie.kind) && zombie.flinch <= 0 && zombie.stun <= 0 && zombie.frozen <= 0 && zombie.windup <= 0
+             && zombie.leap <= 0)
     {
         zombie.swing = 0.0001;
         zombie.struck = false;
-        Send(Cue { sound = Sfx.Snarl, at = zombie.at + float3(0, 1.6, 0) });
+        Send(Cue { sound = zombie.kind == ZombieKind.Brute ? Sfx.Bellow : Sfx.Snarl, at = zombie.headAt });
     }
 
     // The step
@@ -644,24 +772,32 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     if (zombie.swing > 0) speed *= zombie.gait == Gait.Shamble ? 0.2 : 0.45;
     if (zombie.frozen > 0 || zombie.stun > 0 || zombie.fuse > 0) speed = 0;
     if (zombie.kind == ZombieKind.Bloater) speed *= BLOAT_PACE;
+    if (runner) speed *= RUNNER_PACE;
+    if (zombie.kind == ZombieKind.Brute) speed *= BRUTE_PACE;
     if (zombie.frenzy > 0) speed *= FRENZY_PACE;
-    // A Spitter with a clear line stands its ground and spits
+    // A Spitter with a clear line stands its ground and spits; a Howler stands back, and still as it howls; a Runner
+    // crouched is still
     if (spitter && (zombie.windup > 0 || (zombie.sight && nearest < SPIT_KEEP))) speed = 0;
-    if (target != default && nearest < ATTACK_REACH * 0.8) speed *= 0.1;
+    if (howler && (zombie.windup > 0 || (nearest < HOWL_KEEP && nearest > HOWL_CLOSE))) speed = 0;
+    if (runner && zombie.windup > 0) speed = 0;
+    if (target != default && nearest < ATTACK_REACH * KindScale(zombie.kind) * 0.8) speed *= 0.1;
     var wanted = Math.Length(wish) > 0.001 ? Math.Normalize(wish) : float3(0);
-    if (Math.Length(wanted) > 0.5)
+    if (Math.Length(wanted) > 0.5 && zombie.leap <= 0)
     {
         var turn = TurnBetween(zombie.yaw, Math.Atan2(wanted.x, wanted.z));
         var rate = zombie.gait == Gait.Shamble ? 3.0 : 7.0;
         zombie.yaw += Math.Clamp(turn, -rate * dt, rate * dt);
     }
-    if (target != default && nearest < 2.2)
+    // Close, or winding up, it turns to face them
+    if (target != default && (nearest < 2.2 || zombie.windup > 0) && zombie.leap <= 0)
     {
         var face = TurnBetween(zombie.yaw, YawTo(zombie.at, targetAt));
         zombie.yaw += Math.Clamp(face, -8 * dt, 8 * dt);
     }
     zombie.speed += (speed - zombie.speed) * Math.Min(1, dt * 6);
-    var forward = Flat(zombie.yaw) * Math.Max(0, Math.Dot(Flat(zombie.yaw), wanted)) + wanted * 0.25;
+    // A Runner leaping goes straight the way it faces, at the leap's speed
+    if (zombie.leap > 0) zombie.speed = POUNCE_SPEED;
+    var forward = zombie.leap > 0 ? Flat(zombie.yaw) : Flat(zombie.yaw) * Math.Max(0, Math.Dot(Flat(zombie.yaw), wanted)) + wanted * 0.25;
     var before = zombie.at;
     mut var at = zombie.at + forward * zombie.speed * dt + zombie.shove * dt;
     zombie.shove *= Math.Max(0, 1 - dt * 7);
@@ -739,10 +875,11 @@ void Become(mut Zombie zombie, ZombieState state)
 }
 
 // A blow lands: the damage (a Warden's mail turning most of one to its body), a reel, death; the kill to whoever dealt
-// it.
+// it. A Brute doesn't reel or go over, and is pushed a little.
 event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
 {
     if (zombie.state == ZombieState.Dying) return;
+    var steady = zombie.kind == ZombieKind.Brute;
     // On its back it's open: blows land harder, and a Warden's mail doesn't help
     var over = zombie.state == ZombieState.Fallen && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding;
     var mail = zombie.kind == ZombieKind.Warden && !wound.head && !over && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding && wound.blow != Blow.Shove;
@@ -772,7 +909,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     {
         mut var away = zombie.at - wound.from;
         away.y = 0;
-        zombie.shove = Math.Normalize(away) * wound.knock;
+        zombie.shove = Math.Normalize(away) * wound.knock * (steady ? BRUTE_SHOVE : 1.0);
     }
     if (killed)
     {
@@ -792,6 +929,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
         }
         zombie.swing = 0;
         zombie.windup = 0;
+        zombie.leap = 0;
         match.killed += 1;
         // A cull's kills in its circle (missions.tide)
         if (match.mission == MissionKind.Cull && Math.Length((zombie.at - match.missionAt).xz) <= CULL_REACH) match.missionDone += 1;
@@ -800,7 +938,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     }
     else
     {
-        if (wound.down && zombie.state == ZombieState.Hunting)
+        if (wound.down && zombie.state == ZombieState.Hunting && !steady)
         {
             // Off its feet, falling away from the blow
             Become(zombie, ZombieState.Fallen);
@@ -808,9 +946,11 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
             zombie.yaw = YawTo(zombie.at, wound.from);
             zombie.swing = 0;
             zombie.windup = 0;
+            zombie.leap = 0;
             zombie.flinch = 0;
         }
-        else if (wound.damage >= 1 && zombie.state == ZombieState.Hunting && wound.knock >= 0) zombie.flinch = Math.Max(zombie.flinch, wound.head ? 0.45 : 0.3);
+        else if (wound.damage >= 1 && zombie.state == ZombieState.Hunting && wound.knock >= 0 && !steady)
+            zombie.flinch = Math.Max(zombie.flinch, wound.head ? 0.45 : 0.3);
     }
     if (killed && wound.seat >= 0 && wound.seat < 4 && party.taken[wound.seat])
         party.survivors[wound.seat].Send(Earned { kill = true, head = wound.head, at = zombie.at,
@@ -818,4 +958,11 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     var body = BodyOf(this, zombie);
     this.Send(Struck { at = wound.head ? body.head : body.chest, from = wound.from, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
                        blow = wound.blow, crit = wound.crit, mail = mail && wound.damage >= 1 });
+}
+
+// A Howler's howl, for what's seen: where, and how far the dead round it are frenzied.
+event Howled
+{
+    float3 at;
+    float reach;
 }

@@ -1,0 +1,16 @@
+// expect: local queries ok
+// ticks: 16
+component Marker { int id; local int visits; }
+scene Main { }
+event(Spawned) Setup(with Main)
+{
+    Spawn(Marker { id = 1 }); Spawn(Marker { id = 2 });
+    Debug.Log("local queries ok");
+}
+int Visit(query (mut Marker marker) rows)
+{
+    mut var result = 0;
+    foreach (var row in rows) { row.marker.visits += 1; result += row.marker.id; }
+    return result;
+}
+view Show(query (mut Marker marker) rows) { Debug.Assert(Visit(rows) == 3); }

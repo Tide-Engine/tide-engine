@@ -1,5 +1,18 @@
 # The docs site
 
+Recorded containers (2026-10-19): Events, Functions and the spec describe
+read-driven capture, ordinary copy/borrow rules, event-turn/tick-end/confirmed
+timing and current attached local state. The old omission/error and open-item
+statements are removed. Provisional codec/identity details remain distinguished
+from the owner's decided behavior. No navigation or deployment changes.
+Validation: notes/language.md.
+
+Query local fields (2026-10-19): the decided spec and Views, Functions, Events
+and Systems describe current attached local reads, mutable bindings, helper
+capabilities and verified/recorded match timing. Views includes the approved
+MarkDead example. Remaining local-world component/query lifetime restrictions
+stay explicit. No navigation/deployment change. Validation: language.md.
+
 Recorded-owner event filters (2026-10-19): Events replaces the manual Owner /
 Session guard workaround with with/without ownership, including verified,
 replay and Shown/Hidden endpoint behavior. The decided spec records the owner's

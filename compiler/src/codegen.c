@@ -123,6 +123,17 @@ typedef struct borrow_variant {
     int index;
 } borrow_variant;
 
+typedef struct client_codec {
+    type *items;
+    int count;
+    int cap;
+} client_codec;
+
+typedef struct heard_read {
+    const void *source; // A parameter/query binding, or a method's receiver declaration.
+    const char *path;   // A selected member path; array indexes use at[*].
+} heard_read;
+
 typedef struct gen {
     program *prog;
     const codegen_options *opts;
@@ -156,6 +167,10 @@ typedef struct gen {
     const char *row_born;  // What the entity a row's local fields are made for was born as, as C; NULL: the view's world says
     const char *row_queries; // Before the view being generated first runs for an entity: its queries' rows, made once (gen_query_fill)
     VEC(const param *) heard_rows; // The rows ticks record for local handlers' queries, one for each shape (collect_heard_rows)
+    VEC(heard_read) heard_reads;
+    client_codec value_codec;
+    uint32_t value_schema;
+    bool heard_heap;
     bool list_caches;      // The function being generated has tide_lc, a run cache for each list it indexes (declare_list_caches)
     VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
     size_t lc_patch;       // ...and where the array's size goes in `lc_sb`, once the body says how many (close_list_caches)
@@ -1032,6 +1047,17 @@ static bool has_fields_ptr(const param *p)
     return p->local_use && local_part_of(p->type) != NULL;
 }
 
+static bool query_reaches(const program *prog, const decl *part)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (mask_has(d->query_fields, part->part_of->index)) return true;
+        for (int k = 0; k < d->methods.count; k++)
+            if (mask_has(d->methods.items[k]->query_fields, part->part_of->index)) return true;
+    }
+    return false;
+}
+
 static bool correction_snap(const field *f)
 {
     for (int i = 0; i < f->attributes.count; i++) {
@@ -1284,6 +1310,7 @@ static bool task_either(const decl *m)
 // entities on this machine as its caller would, or starts tasks there.
 static bool takes_local(const decl *m)
 {
+    if (mask_any(m->query_fields)) return true;
     return m->uses_io || m->frame_time || m->world_local || m->plays || m->acts[1] || (takes_task(m) && m->runs_in[1]);
 }
 
@@ -1962,6 +1989,25 @@ static const char *fields_name(const gen *g, const str name)
     sb b = {0};
     sb_printf(&b, "tide_lf_%s", local_cname(g, name));
     return b.data;
+}
+
+static const param *query_component(const expr *e)
+{
+    if (e->kind != E_MEMBER || e->object->kind != E_NAME || e->object->bind != BIND_LOCAL || !e->object->local->query) return NULL;
+    const param *q = e->object->local->query;
+    for (int i = 0; i < q->query.count; i++)
+        if (param_binding(&q->query.items[i]) && str_eq(q->query.items[i].name, e->member)) return &q->query.items[i];
+    return NULL;
+}
+
+static void gen_fields_arg(gen *g, sb *o, const expr *e)
+{
+    const param *p = query_component(e);
+    if (!p) { sb_put(o, fields_name(g, e->name)); return; }
+    const char *row = local_cname(g, e->object->name);
+    if (p->mode == PARAM_MUT) sb_printf(o, "tide_query_mut_%s_%s", row, field_cname(e->field));
+    else sb_printf(o, "tide_query_fields_get_%s(tide_l, %s.entity, %s.tide_born, &tide_query_fresh_%s_%s)",
+                   type_cname(local_part_of(p->type)), row, row, row, field_cname(e->field));
 }
 
 // Where a place's memory is, as C, for its text and lists (see tide/text.h):
@@ -3065,7 +3111,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
             gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
         }
         // Its local fields go with it: the caller's own parameter's
-        if (has_fields_ptr(&m->params.items[i])) sb_printf(o, ", %s", fields_name(g, e->args.items[i]->name));
+        if (has_fields_ptr(&m->params.items[i])) { sb_put(o, ", "); gen_fields_arg(g, o, e->args.items[i]); }
     }
     sb_put(o, ")");
 }
@@ -3557,7 +3603,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         const char *access = object_access(g, e->object);
         if (e->local_field) { // box.verts: in its local part, through the pointer that comes with `box`
-            sb_printf(o, "%s->%s", fields_name(g, e->object->name), field_cname(e->field));
+            gen_fields_arg(g, o, e->object);
+            sb_printf(o, "->%s", field_cname(e->field));
             break;
         }
         if (e->swizzle_len > 1) {
@@ -4747,6 +4794,8 @@ static bool routine_writes(const decl *m)
     if (m->is_mut_method) return true;
     for (int i = 0; i < m->params.count; i++) {
         if (m->params.items[i].mode == PARAM_MUT) return true;
+        for (int k = 0; k < m->params.items[i].query.count; k++)
+            if (m->params.items[i].query.items[k].mode == PARAM_MUT) return true;
     }
     return false;
 }
@@ -6009,8 +6058,10 @@ static void gen_inline(gen *g, const expr *e)
             g->frame = &frame;
             const char *fields = fields_name(g, p->name);
             g->frame = caller_frame;
-            line(g, o, "%s%s *const %s = %s;", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)), fields,
-                 fields_name(g, e->args.items[i]->name));
+            indent(g, o);
+            sb_printf(o, "%s%s *const %s = ", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)), fields);
+            gen_fields_arg(g, o, e->args.items[i]);
+            sb_put(o, ";\n");
             line(g, o, "(void)%s;", fields);
         }
     }
@@ -9552,6 +9603,20 @@ static void gen_local_fields(gen *g)
         gen_seeding(g, o, "    ", part, "(*v)", true, "l", "e"); // Its generators: the entity's own
         sb_put(o, "    return row;\n}\n\n");
 
+        if (query_reaches(prog, part)) {
+            sb_printf(o, "static void tide_query_reset_%s(tide_local *l, uint32_t row, uint32_t born);\n", type);
+            sb_printf(o, "TIDE_HELPER const %s *tide_query_fields_get_%s(const tide_local *l, tide_entity e, uint32_t born, const %s *fresh)\n{\n"
+                         "    const uint32_t row = tide_attached_find(&l->%s, %s, e);\n"
+                         "    if (row == TIDE_ATTACHED_NONE || !tide_born_same(tide_attached_born(&l->%s, %s, row), born)) return fresh;\n"
+                         "    return tide_attached_get(&l->%s, %s, row);\n}\n\n", type, type, type, table, columns, table, columns, table, columns);
+            sb_printf(o, "TIDE_HELPER %s *tide_query_fields_mut_%s(tide_local *l, tide_entity e, uint32_t born)\n{\n"
+                         "    uint32_t row = tide_attached_find(&l->%s, %s, e);\n"
+                         "    if (row != TIDE_ATTACHED_NONE && !tide_born_same(tide_attached_born(&l->%s, %s, row), born)) {\n"
+                         "        tide_query_reset_%s(l, row, born);\n    }\n"
+                         "    if (row == TIDE_ATTACHED_NONE) row = tide_attach_%s(l, e, born);\n"
+                         "    return tide_attached_cell(&l->%s, %s, row);\n}\n\n", type, type, table, columns, table, columns, type, type, table, columns);
+        }
+
         sb_printf(o, "bool tide_has_%s(const tide_local *local, tide_entity e)\n{\n", type);
         sb_printf(o, "    return tide_attached_find(&local->%s, %s, e) != TIDE_ATTACHED_NONE;\n}\n\n", table, columns);
         sb_printf(o, "%s tide_get_%s(const tide_local *local, tide_entity e)\n{\n    %s v;\n", type, type, type);
@@ -10369,10 +10434,11 @@ static bool takes_query_rows(const decl *sys)
 // same entities (their filters), with the same components bound, in order.
 static bool same_rows(const param *a, const param *b)
 {
+    if (a->local_use != b->local_use) return false;
     if (!mask_eq(a->query_need_mask, b->query_need_mask) || !mask_eq(a->query_without_mask, b->query_without_mask)) return false;
     for (int i = 0, k = 0;; i++, k++) {
-        while (i < a->query.count && a->query.items[i].mode != PARAM_READ) i++;
-        while (k < b->query.count && b->query.items[k].mode != PARAM_READ) k++;
+        while (i < a->query.count && !param_binding(&a->query.items[i])) i++;
+        while (k < b->query.count && !param_binding(&b->query.items[k])) k++;
         if (i == a->query.count || k == b->query.count) return i == a->query.count && k == b->query.count;
         if (a->query.items[i].type.decl != b->query.items[k].type.decl) return false;
     }
@@ -10443,9 +10509,12 @@ static const char *heard_rows_wants(const gen *g, const int n)
                                                                                            : "TIDE_HEARD_PREDICTED";
 }
 
-// What a recorded event has no use for: the text, lists, maps, sets and grids
-// in `value`, a `d`, which are places in the match's heap as it was. They read
-// as empty (the checker keeps handlers from naming them).
+#include "value_codec_codegen.inc"
+#include "heard_reads_codegen.inc"
+#include "heard_heap_codegen.inc"
+
+// Clear every live heap handle in the fixed record. Selected values have
+// already been encoded into the owned tail; unread containers remain absent.
 static void gen_heard_plain(sb *o, const decl *d, const char *value)
 {
     path_list paths = {0};
@@ -10545,8 +10614,14 @@ static void gen_hear_rows(gen *g)
     }
     sb_put(o, "// Records the rows this tick's events have handlers for, as the tick left them\n");
     sb_put(o, "static void tide_hear_rows(const tide_world *w, tide_event_log *log)\n{\n");
+    bool heap_rows = false;
+    for (int n = 0; n < g->heard_rows.count; n++) heap_rows |= heard_query_heap(g, g->heard_rows.items[n]);
+    if (heap_rows) sb_put(o, "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                             "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                             "    tide_text_use((tide_heap *)(uintptr_t)&w->heap, saved_local);\n");
     for (int n = 0; n < g->heard_rows.count; n++) {
         const param *q = g->heard_rows.items[n];
+        const bool heap = heard_query_heap(g, q);
         sb_printf(o, "    if (tide_rows_wanted[%d]) {\n        tide_rows_wanted[%d] = 0u;\n", n, n);
         sb_put(o, "        uint64_t most = UINT64_C(0)");
         for (int a = 0; a < prog->archetypes.count; a++) {
@@ -10565,9 +10640,14 @@ static void gen_hear_rows(gen *g)
             sb_put(o, "        }\n");
         }
         sb_printf(o, "        if (most > (UINT32_MAX - 64u) / sizeof(tide_heard_rows%d)) tide_out_of_memory();\n", n);
-        sb_printf(o, "        tide_heard *r = tide_event_log_push(log, (uint32_t)(sizeof *r + most * sizeof(tide_heard_rows%d)), "
-                     "TIDE_HEARD_BUILD);\n", n);
-        sb_printf(o, "        tide_heard_rows%d *const rows = (tide_heard_rows%d *)(r + 1);\n        uint32_t count = 0;\n", n, n);
+        if (heap) {
+            sb_put(o, "        tide_writer tide_captured = {.grows = true};\n");
+            sb_printf(o, "        tide_heard_rows%d *const rows = tide_alloc_zeroed(most, sizeof *rows);\n        uint32_t count = 0;\n", n);
+        } else {
+            sb_printf(o, "        tide_heard *r = tide_event_log_push(log, (uint32_t)(sizeof *r + most * sizeof(tide_heard_rows%d)), "
+                         "TIDE_HEARD_BUILD);\n", n);
+            sb_printf(o, "        tide_heard_rows%d *const rows = (tide_heard_rows%d *)(r + 1);\n        uint32_t count = 0;\n", n, n);
+        }
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (!query_admits(g, q, a)) continue;
             const char *columns = arch_columns(g, a);
@@ -10577,7 +10657,7 @@ static void gen_hear_rows(gen *g)
             sb_printf(o, "                const tide_entity *ent = tide_table_column(t, %s, c, 0);\n", columns);
             for (int i = 0; i < q->query.count; i++) {
                 const param *p = &q->query.items[i];
-                if (p->mode != PARAM_READ) continue;
+                if (!param_binding(p)) continue;
                 const decl *comp = p->type.decl;
                 sb_printf(o, "                const uint8_t *const col%d[%d] = {", i, comp_lanes(comp));
                 for (int k = 0; k < comp_lanes(comp); k++) {
@@ -10602,23 +10682,34 @@ static void gen_hear_rows(gen *g)
                 else if (mask_has(q->query_without_mask, c)) sb_printf(o, "                    if (%spres%d[i]) continue;\n", ordinary, c);
             }
             sb_printf(o, "                    tide_heard_rows%d *const row = &rows[count++];\n                    row->entity = ent[i];\n", n);
+            if (q->local_use) sb_put(o, "                    row->tide_born = tide_entity_born(&w->entities, ent[i]);\n");
             for (int i = 0; i < q->query.count; i++) {
                 const param *p = &q->query.items[i];
-                if (p->mode != PARAM_READ) continue;
+                if (!param_binding(p)) continue;
                 sb place = {0};
                 sb_printf(&place, "row->tide_b%d", i);
                 sb_printf(o, "                    tide_gather_%s(&%s, col%d, i);\n", type_cname(p->type.decl), place.data, i);
+                if (heap) gen_heard_capture(g, o, NULL, p->type.decl, place.data, q, i, false);
                 gen_heard_plain(o, p->type.decl, place.data);
                 if (journals_clients(prog)) gen_heard_recipient_plain(g, p->type.decl, place.data);
             }
             sb_put(o, "                }\n            }\n        }\n");
         }
+        if (heap) {
+            sb_printf(o, "        const uint32_t tide_fixed = (uint32_t)(sizeof(tide_heard) + count * sizeof(tide_heard_rows%d));\n", n);
+            gen_heard_tail(o, "tide_fixed");
+            sb_put(o, "        tide_heard *r = tide_event_log_push(log, tide_fixed + 4u + tide_captured.size, TIDE_HEARD_BUILD);\n"
+                      "        if (count) memcpy(r + 1, rows, tide_fixed - sizeof *r);\n        free(rows);\n");
+            gen_heard_tail_copy(o, "tide_fixed");
+        }
         // The tick is done: its events were recorded with its number, before it moved on
         sb_printf(o, "        r->tick = (uint32_t)w->Time.tick - 1u;\n        r->event = TIDE_HEARD_ROWS;\n        r->wants = %s;\n",
                   heard_rows_wants(g, n));
         sb_printf(o, "        r->handlers = %du;\n        r->same = count;\n", n);
-        sb_printf(o, "        tide_event_log_trim(log, r, (uint32_t)(sizeof *r + count * sizeof(tide_heard_rows%d)));\n    }\n", n);
+        if (!heap) sb_printf(o, "        tide_event_log_trim(log, r, (uint32_t)(sizeof *r + count * sizeof(tide_heard_rows%d)));\n", n);
+        sb_put(o, "    }\n");
     }
+    if (heap_rows) sb_put(o, "    tide_text_use(saved_match, saved_local);\n");
     sb_put(o, "}\n\n");
 }
 
@@ -10654,16 +10745,20 @@ static void gen_hear(gen *g)
         const param *q = g->heard_rows.items[n];
         sb_printf(&types, "typedef struct tide_heard_rows%d {\n    tide_entity entity;\n", n);
         for (int i = 0; i < q->query.count; i++) {
-            if (q->query.items[i].mode == PARAM_READ) sb_printf(&types, "    %s tide_b%d;\n", type_cname(q->query.items[i].type.decl), i);
+            if (param_binding(&q->query.items[i])) sb_printf(&types, "    %s tide_b%d;\n", type_cname(q->query.items[i].type.decl), i);
         }
+        if (q->local_use) sb_put(&types, "    uint32_t tide_born;\n");
         sb_printf(&types, "} tide_heard_rows%d;\n\n", n);
     }
+    gen_heard_capture_schema(g, &types);
     // Whose records they are: a build that lays them out another way takes none of them
     uint32_t build = 0x811C9DC5u;
     for (const char *c = types.data ? types.data : ""; *c; c++) build = (build ^ (uint8_t)*c) * 0x01000193u;
+    if (g->heard_heap) build = (build ^ g->value_schema) * 0x01000193u;
     sb_put(o, "// What a tick records for local handlers, after each tide_heard (tide/events.h)\n\n");
     if (types.data) sb_put(o, types.data);
     sb_printf(o, "#define TIDE_HEARD_BUILD 0x%08Xu\n\n", build ? build : 1u);
+    gen_heard_heap_decode(g);
     if (journals_clients(prog) || hears_visibility(prog)) {
         sb_put(o, "static void tide_client_destroyed(tide_world *w, tide_entity target)\n{\n"
                   "    tide_heard *r;\n");
@@ -10704,6 +10799,7 @@ static void gen_hear(gen *g)
         const bool availability = event == prog->shown || event == prog->hidden;
         const bool lifecycle = event == prog->spawned || event == prog->destroyed;
         const bool journal = lifecycle && journals_clients(prog);
+        const bool heap = heard_event_heap(g, event);
         sb_printf(o, "static void tide_hear_%s(tide_world *w, tide_entity target, const %s *event%s)\n{\n", name, name,
                   availability ? ", const uint64_t changes" : "");
         if (journal) {
@@ -10737,7 +10833,7 @@ static void gen_hear(gen *g)
         }
         sb_printf(o, "    uint64_t handlers = UINT64_C(0x%llX);\n", (unsigned long long)always);
         sb_printf(o, "    tide_heard_%s v;\n    memset(&v, 0, sizeof v);\n    v.event = *event;\n", name);
-        gen_heard_plain(o, event, "v.event");
+        if (!heap) gen_heard_plain(o, event, "v.event");
         if (journal) gen_heard_recipient_plain(g, event, "v.event");
         bool cases = false;
         for (int a = 0; a < prog->archetypes.count; a++) {
@@ -10796,9 +10892,19 @@ static void gen_hear(gen *g)
             sb_printf(o, ") {\n        v.tide_has_owner = 1u;\n        v.tide_owner = tide_get_%s(w, target).%s;\n    }\n",
                       type_cname(prog->owner), field_cname(&prog->owner->fields.items[0]));
         }
+        if (heap) {
+            sb_put(o, "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                      "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                      "    tide_text_use(&w->heap, saved_local);\n");
+            sb_put(o, "    tide_writer tide_captured = {.grows = true};\n");
+            gen_heard_capture(g, o, event, event, "v.event", NULL, 0, false);
+            if (heard_value_heap(g, event, event)) sb_put(o, "    const uint32_t tide_event_bytes = tide_captured.size;\n");
+            gen_heard_plain(o, event, "v.event");
+        }
         for (int k = 0; k < comps.count; k++) {
             sb value = {0};
             sb_printf(&value, "v.tide_c_%s", type_cname(comps.items[k]));
+            if (heap) gen_heard_capture(g, o, event, comps.items[k], value.data, NULL, 0, false);
             gen_heard_plain(o, comps.items[k], value.data);
             if (journal) gen_heard_recipient_plain(g, comps.items[k], value.data);
             if (journal) {
@@ -10819,6 +10925,7 @@ static void gen_hear(gen *g)
             sb value = {0};
             sb_printf(&value, "v.tide_s_%s", type_cname(singles.items[k]));
             sb_printf(o, "    %s = w->%s;\n", value.data, type_cname(singles.items[k]));
+            if (heap) gen_heard_capture(g, o, event, singles.items[k], value.data, NULL, 0, false);
             gen_heard_plain(o, singles.items[k], value.data);
             if (journal) gen_heard_recipient_plain(g, singles.items[k], value.data);
         }
@@ -10834,7 +10941,10 @@ static void gen_hear(gen *g)
                 sb_printf(o, "    if (handlers & (UINT64_C(1) << %d)) tide_rows_wanted[%d] = 1u, reads = true;\n", k, heard_rows_of(g, q));
             }
         }
-        sb_put(o, "    tide_heard *r = tide_event_log_push(tide_listening, (uint32_t)(sizeof *r + sizeof v), TIDE_HEARD_BUILD);\n");
+        if (heap) {
+            gen_heard_tail(o, "(sizeof(tide_heard) + sizeof v)");
+            sb_put(o, "    tide_heard *r = tide_event_log_push(tide_listening, (uint32_t)(sizeof *r + sizeof v + 4u + tide_captured.size), TIDE_HEARD_BUILD);\n");
+        } else sb_put(o, "    tide_heard *r = tide_event_log_push(tide_listening, (uint32_t)(sizeof *r + sizeof v), TIDE_HEARD_BUILD);\n");
         sb_printf(o, "    r->tick = (uint32_t)w->Time.tick;\n    r->event = %du;\n    r->wants = %s;\n", event->index, heard_wants(event));
         if (availability) sb_put(o, "    r->wants |= TIDE_HEARD_AVAILABILITY;\n");
         if (lifecycle) sb_put(o, "    r->wants |= TIDE_HEARD_LIFECYCLE;\n");
@@ -10842,7 +10952,11 @@ static void gen_hear(gen *g)
         sb_put(o, "    r->target = target;\n");
         if (entities_born(prog)) sb_put(o, "    r->born = tide_entity_born(&w->entities, target);\n");
         sb_put(o, "    r->handlers = handlers;\n    r->same = tide_hash(&v.event, sizeof v.event);\n");
-        sb_put(o, "    memcpy(r + 1, &v, sizeof v);\n}\n\n");
+        if (heard_value_heap(g, event, event)) sb_put(o, "    r->same ^= tide_hash(tide_captured.data, tide_event_bytes);\n");
+        sb_put(o, "    memcpy(r + 1, &v, sizeof v);\n");
+        if (heap) gen_heard_tail_copy(o, "(sizeof *r + sizeof v)");
+        if (heap) sb_put(o, "    tide_text_use(saved_match, saved_local);\n");
+        sb_put(o, "}\n\n");
     }
     gen_hear_rows(g);
 }
@@ -11939,6 +12053,7 @@ static void gen_query_row_types(gen *g, const decl *sys)
         for (int k = 0; k < row->fields.count; k++) {
             sb_printf(o, "    %s %s;\n", c_type(row->fields.items[k].type), field_cname(&row->fields.items[k]));
         }
+        if (q->local_use) sb_put(o, "    uint32_t tide_born;\n");
         sb_printf(o, "} %s;\n\n", query_row_type(sys, i));
     }
 }
@@ -11979,6 +12094,23 @@ static bool query_changes_binding(const gen *g, const param *p)
     return world_sets_component(own_routine(g) ? own_routine(g) : g->code, p->type.decl);
 }
 
+static void gen_query_field_refs(gen *g, const param *q, const char *name)
+{
+    const decl *row = q->type.decl;
+    const decl *code = own_routine(g) ? own_routine(g) : g->code;
+    for (int i = 0; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        if (!has_fields_ptr(p) || !param_binding(p)) continue;
+        if (p->mode != PARAM_MUT && !mask_has(code->query_mut_fields, p->type.decl->index)) continue;
+        const field *f = NULL;
+        for (int k = 1; k < row->fields.count; k++) if (str_eq(row->fields.items[k].name, p->name)) f = &row->fields.items[k];
+        const char *type = type_cname(local_part_of(p->type));
+        if (p->mode == PARAM_MUT) line(g, &g->c, "%s *const tide_query_mut_%s_%s = tide_query_fields_mut_%s(tide_l, %s.entity, %s.tide_born);",
+                                     type, name, field_cname(f), type, name, name);
+        else line(g, &g->c, "(void)tide_query_fields_mut_%s(tide_l, %s.entity, %s.tide_born);", type, name, name);
+    }
+}
+
 static void gen_query_foreach(gen *g, const stmt *s)
 {
     sb *o = &g->c;
@@ -11991,6 +12123,17 @@ static void gen_query_foreach(gen *g, const stmt *s)
     const char *name = local_cname(g, s->name);
     const char *end = made_up(g, "query_end");
     bool end_used = false;
+    line(g, o, "{"); g->indent++;
+    for (int i = 0; i < q->query.count; i++) {
+        const param *p = &q->query.items[i];
+        if (!has_fields_ptr(p) || p->mode != PARAM_READ) continue;
+        const field *f = NULL;
+        for (int k = 1; k < row->fields.count; k++) if (str_eq(row->fields.items[k].name, p->name)) f = &row->fields.items[k];
+        indent(g, o);
+        sb_printf(o, "const %s tide_query_fresh_%s_%s = ", type_cname(local_part_of(p->type)), name, field_cname(f));
+        gen_value(g, o, local_part_of(p->type), NULL, 0);
+        sb_put(o, ";\n");
+    }
     if (selection->query_rows) { // The rows it was handed, retaining the caller's timing.
         // Found by name: bind_views may have grown the view's parameters since `q` was taken, leaving it pointing at
         // the old copy
@@ -12005,7 +12148,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
         }
         line(g, o, "for (uint32_t tide_qi = 0; tide_qi < %s; tide_qi++) {", count.data);
         g->indent++;
-        if (!borrowed) line(g, o, "const %s %s = tide_q%d[tide_qi];", query_row_type(g->code, qi), name, qi);
+        if (!borrowed) line(g, o, "%s %s = tide_q%d[tide_qi];", query_row_type(g->code, qi), name, qi);
         else {
             line(g, o, "struct {");
             g->indent++;
@@ -12013,6 +12156,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
                 const field *f = &row->fields.items[i];
                 line(g, o, "%s %s;", c_type(f->type), field_cname(f));
             }
+            if (q->local_use) line(g, o, "uint32_t tide_born;");
             g->indent--;
             line(g, o, "} %s;", name);
             const decl *source_row = selection->type.decl;
@@ -12026,8 +12170,10 @@ static void gen_query_foreach(gen *g, const stmt *s)
                 }
                 line(g, o, "%s.%s = %s[tide_qi].%s;", name, field_cname(f), array.data, field_cname(from));
             }
+            if (q->local_use) line(g, o, "%s.tide_born = %s[tide_qi].tide_born;", name, array.data);
         }
         line(g, o, "(void)%s;", name);
+        gen_query_field_refs(g, q, name);
         const gen_target loop = {g->frame, g->containers.count, true, true, end, false, made_up(g, "next"), false, true};
         vec_push(g->targets, loop);
         gen_body_stmt(g, s->then_stmt);
@@ -12036,6 +12182,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
         g->indent--;
         line(g, o, "}");
         if (done.end_used) line(g, o, "%s:;", end);
+        g->indent--; line(g, o, "}");
         return;
     }
     line(g, o, "{");
@@ -12051,7 +12198,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
         line(g, o, "const tide_entity *tide_qe = tide_table_column(tide_qt, %s, tide_qc, 0);", arch_columns(g, a));
         for (int i = 0; i < q->query.count; i++) {
             const param *p = &q->query.items[i];
-            if (p->mode != PARAM_READ || query_changes_binding(g, p)) continue;
+            if (!param_binding(p) || query_changes_binding(g, p)) continue;
             const decl *comp = p->type.decl;
             indent(g, o);
             sb_printf(o, "const uint8_t *const tide_qcol%d[%d] = {", i, comp_lanes(comp));
@@ -12080,12 +12227,14 @@ static void gen_query_foreach(gen *g, const stmt *s)
             const field *f = &row->fields.items[i];
             line(g, o, "%s %s;", c_type(f->type), field_cname(f));
         }
+        if (q->local_use) line(g, o, "uint32_t tide_born;");
         g->indent--;
         line(g, o, "} %s;", name);
         line(g, o, "%s.%s = tide_qe[tide_qi];", name, field_cname(&row->fields.items[0]));
+        if (q->local_use) line(g, o, "%s.tide_born = tide_entity_born(&%s->entities, tide_qe[tide_qi]);", name, world);
         for (int i = 0, f = 1; i < q->query.count; i++) {
             const param *p = &q->query.items[i];
-            if (p->mode != PARAM_READ) continue;
+            if (!param_binding(p)) continue;
             const field *value = &row->fields.items[f++];
             if (query_changes_binding(g, p)) {
                 line(g, o, "tide_table_gather(tide_qt, %s, (tide_qc << %d) + tide_qi, %d, %du, %du, &%s.%s);",
@@ -12097,6 +12246,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
             }
         }
         line(g, o, "(void)%s;", name);
+        gen_query_field_refs(g, q, name);
         const gen_target loop = {g->frame, g->containers.count, true, true, end, false, made_up(g, "next"), false, true};
         vec_push(g->targets, loop);
         gen_body_stmt(g, s->then_stmt);
@@ -12113,6 +12263,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
     if (end_used) line(g, o, "%s:;", end);
     g->indent--;
     line(g, o, "}");
+    g->indent--; line(g, o, "}");
 }
 
 static void gen_system_body(gen *g, const decl *sys)
@@ -12576,7 +12727,7 @@ static bool heap_defaults(const decl *d)
 // front, rather than a copy of the defaults that's only kept if it changed.
 static bool attaches_first(const param *p)
 {
-    return p->mode == PARAM_MUT && heap_defaults(local_part_of(p->type));
+    return p->local_shared || (p->mode == PARAM_MUT && heap_defaults(local_part_of(p->type)));
 }
 
 // Whether a component's local fields have generators the engine seeds (gen_seeding).
@@ -13108,7 +13259,6 @@ static void gen_heard(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    if (!program_hears(prog)) return;
     for (int i = 0; i < prog->local_parts.count; i++) {
         const decl *part = prog->local_parts.items[i];
         if (part->kind != DECL_COMPONENT || !heard_reaches(prog, part)) continue;
@@ -13125,6 +13275,27 @@ static void gen_heard(gen *g)
         if (decl_has_text(part)) sb_printf(o, "    tide_release_%s(v, TIDE_IN_LOCAL);\n", type);
         sb_printf(o, "    tide_attached_remove(a, %s, row);\n}\n\n", columns);
     }
+
+    for (int i = 0; i < prog->local_parts.count; i++) {
+        const decl *part = prog->local_parts.items[i];
+        if (part->kind != DECL_COMPONENT || !query_reaches(prog, part)) continue;
+        const char *type = type_cname(part), *columns = fields_columns(part);
+        sb_printf(o, "// Reset in place: another live binding may still point at this cell.\n"
+                     "static void tide_query_reset_%s(tide_local *l, const uint32_t row, const uint32_t born)\n{\n"
+                     "    tide_attached *a = &l->%s;\n"
+                     "    const tide_entity e = tide_attached_entity(a, %s, row);\n    (void)e;\n"
+                     "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                     "    %s *v = tide_attached_cell(a, %s, row);\n", type, fields_table(part), columns, type, columns);
+        gen_forgotten_calls(g, part, "    ", "e", "v");
+        if (decl_has_text(part)) sb_printf(o, "    tide_release_%s(v, TIDE_IN_LOCAL);\n", type);
+        sb_put(o, "    *v = "); gen_value(g, o, part, NULL, 0); sb_put(o, ";\n");
+        if (decl_has_text(part)) sb_printf(o, "    tide_own_%s(v, TIDE_IN_LOCAL);\n", type);
+        gen_seeding(g, o, "    ", part, "(*v)", true, "l", "e");
+        sb_printf(o, "    *(uint32_t *)tide_table_cell(&a->rows, %s, row, 2) = born;\n"
+                     "    tide_scratch_reset(tide_mark);\n}\n\n", columns);
+    }
+
+    if (!program_hears(prog)) return;
 
     for (int i = 0; i < prog->events.count; i++) {
         const decl *event = prog->events.items[i];
@@ -13208,6 +13379,20 @@ static void gen_heard(gen *g)
 
     sb_put(o, "// Runs the local handlers of what the match sent since the last frame (tide_local_events)\n");
     sb_put(o, "static void tide_local_hear(tide_local *l)\n{\n    uint32_t at = 0;\n");
+    if (g->heard_heap) {
+        sb_put(o, "    if (!l->tide_heard.size) return;\n"
+                  "    tide_heap captured = {0};\n"
+                  "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                  "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                  "    const uint32_t captured_mark = tide_scratch_mark();\n"
+                  "    tide_text_use(&captured, saved_local);\n"
+                  "    uint64_t budget = SIZE_MAX;\n"
+                  "    bool valid = true;\n"
+                  "    for (const tide_heard *r; valid && (r = tide_event_log_next(&l->tide_heard, &at));)\n"
+                  "        valid = tide_heard_heap_decode(*r, (const uint8_t *)r, (uint8_t *)(uintptr_t)r, &budget);\n"
+                  "    if (!valid) tide_event_log_clear(&l->tide_heard);\n"
+                  "    at = 0;\n");
+    }
     sb_put(o, "    for (const tide_heard *r; (r = tide_event_log_next(&l->tide_heard, &at));) {\n");
     if (hears_visibility(prog)) sb_put(o, "        if (r->wants & TIDE_HEARD_AVAILABILITY) continue; // Reconciled from delivered endpoints\n");
     sb_put(o, "        // Straight from a tick, with no session between: what it ran is all there is, and it's certain\n");
@@ -13221,7 +13406,10 @@ static void gen_heard(gen *g)
                      "break;\n", event->index, type_cname(event), type_cname(event),
                   event_reads_rows(event) ? ", &l->tide_heard, at" : "");
     }
-    sb_put(o, "        default: break;\n        }\n    }\n    tide_event_log_clear(&l->tide_heard);\n}\n\n");
+    sb_put(o, "        default: break;\n        }\n    }\n    tide_event_log_clear(&l->tide_heard);\n");
+    if (g->heard_heap) sb_put(o, "    tide_heap_free(&captured);\n    tide_scratch_reset(captured_mark);\n"
+                               "    tide_text_use(saved_match, saved_local);\n");
+    sb_put(o, "}\n\n");
     gen_availability_delivery(g);
 }
 
@@ -15428,7 +15616,7 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
         sb_printf(o, "            const tide_entity *tide_ent = tide_table_column(tide_t, %s, tide_c, 0);\n", columns);
         for (int i = 0; i < q->query.count; i++) { // What it binds of this world's rows
             const param *p = &q->query.items[i];
-            if (p->mode != PARAM_READ || (p->verified && !confirmed)) continue;
+            if (!param_binding(p) || (p->verified && !confirmed)) continue;
             const decl *comp = p->type.decl;
             sb_printf(o, "            const uint8_t *const tide_col%d[%d] = {", i, comp_lanes(comp));
             for (int k = 0; k < comp_lanes(comp); k++) {
@@ -15475,7 +15663,7 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
                 }
                 for (int i = 0, f = 1; i < q->query.count; i++) {
                     const param *p = &q->query.items[i];
-                    if (p->mode != PARAM_READ) continue;
+                    if (!param_binding(p)) continue;
                     const field *value = &row->fields.items[f++];
                     if (!p->verified) continue;
                     sb place = {0};
@@ -15487,9 +15675,10 @@ static void gen_query_fill(gen *g, const decl *sys, const int qi)
             sb_printf(o, "%sdefault: continue; // It hasn't what the query takes of it there\n%s}\n", pad, pad);
         }
         sb_printf(o, "%stide_row->%s = tide_ent[tide_i];\n", pad, field_cname(&row->fields.items[0]));
+        if (q->local_use) sb_printf(o, "%stide_row->tide_born = tide_entity_born(&%s->entities, tide_ent[tide_i]);\n", pad, world);
         for (int i = 0, f = 1; i < q->query.count; i++) {
             const param *p = &q->query.items[i];
-            if (p->mode != PARAM_READ) continue;
+            if (!param_binding(p)) continue;
             const field *value = &row->fields.items[f++];
             const decl *comp = p->type.decl;
             const char *c = type_cname(comp);
@@ -18554,7 +18743,10 @@ static void gen_client_event_check(gen *g)
                   "        if (h.event == TIDE_HEARD_ROWS && h.tick == tick && h.handlers == rows) return true;\n"
                   "        at += h.size;\n    }\n    return false;\n}\n\n");
     }
-    sb_put(o, "static bool tide_game_check_client_events(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count)\n{\n"
+    sb_printf(o, "static bool tide_game_check_client_events%s(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count)\n{\n",
+              g->heard_heap ? "_inner" : "");
+    if (g->heard_heap) sb_put(o, "    uint64_t budget = SIZE_MAX;\n");
+    sb_put(o,
               "    if ((!data && size) || (size & 7u)) return false;\n"
               "    uint32_t at = 0, records = 0;\n"
               "    while (at < size) {\n"
@@ -18577,12 +18769,12 @@ static void gen_client_event_check(gen *g)
             if (takes_query_rows(event->listeners.items[k])) row_readers |= UINT64_C(1) << k;
         }
         sb_printf(o, "        case %d:\n"
-                     "            if (h.size != ((sizeof h + sizeof(tide_heard_%s) + 7u) & ~(size_t)7u)\n"
+                     "            if (h.size %s ((sizeof h + sizeof(tide_heard_%s) + 7u) & ~(size_t)7u)\n"
                      "                || tide_entity_is_null(h.target) || !h.handlers\n"
                      "                || (h.handlers & ~UINT64_C(0x%llX))\n"
                      "                || (h.wants & ~(uint8_t)TIDE_HEARD_READS_ROWS) != (%s | TIDE_HEARD_LIFECYCLE)\n"
                      "                || !!(h.wants & TIDE_HEARD_READS_ROWS) != !!(h.handlers & UINT64_C(0x%llX))\n"
-                     "                || h.same != tide_hash(&(%s){0}, sizeof(%s))) return false;\n", event->index, type_cname(event), (unsigned long long)handlers, heard_wants(event),
+                     "                || h.same != tide_hash(&(%s){0}, sizeof(%s))) return false;\n", event->index, heard_event_heap(g, event) ? "<" : "!=", type_cname(event), (unsigned long long)handlers, heard_wants(event),
                   (unsigned long long)row_readers, type_cname(event), type_cname(event));
         gen_client_event_payload_check(g, event);
         if (event_filters_ownership(event)) {
@@ -18612,18 +18804,18 @@ static void gen_client_event_check(gen *g)
             if (!used) continue;
             sb_printf(o, "            case %d:\n"
                          "                if (h.wants != (%s) || h.same > (h.size - sizeof h) / sizeof(tide_heard_rows%d)\n"
-                         "                    || h.size != ((sizeof h + h.same * sizeof(tide_heard_rows%d) + 7u) & ~UINT64_C(7))) return false;\n", n, heard_rows_wants(g, n), n, n);
+                         "                    || h.size %s ((sizeof h + h.same * sizeof(tide_heard_rows%d) + 7u) & ~UINT64_C(7))) return false;\n", n, heard_rows_wants(g, n), n, heard_query_heap(g, g->heard_rows.items[n]) ? "<" : "!=", n);
             const param *q = g->heard_rows.items[n];
             bool checks = false;
             for (int p = 0; p < q->query.count; p++) {
                 const param *binding = &q->query.items[p];
-                if (binding->mode == PARAM_READ && client_event_value_checked(prog, binding->type)) checks = true;
+                if (param_binding(binding) && client_event_value_checked(prog, binding->type)) checks = true;
             }
             if (checks) {
                 sb_put(o, "                for (uint64_t tide_row = 0; tide_row < h.same; tide_row++) {\n");
                 for (int p = 0; p < q->query.count; p++) {
                     const param *binding = &q->query.items[p];
-                    if (binding->mode != PARAM_READ) continue;
+                    if (!param_binding(binding)) continue;
                     sb place = {0};
                     sb_printf(&place, "(data + at + sizeof h + (size_t)tide_row * sizeof(tide_heard_rows%d) + offsetof(tide_heard_rows%d, tide_b%d))", n, n, p);
                     gen_client_event_value_check(g, binding->type, place.data, 0);
@@ -18634,8 +18826,9 @@ static void gen_client_event_check(gen *g)
         }
         sb_put(o, "            default: return false;\n            }\n            break;\n");
     }
-    sb_put(o, "        default: return false;\n        }\n"
-              "        at += h.size;\n        records++;\n    }\n");
+    sb_put(o, "        default: return false;\n        }\n");
+    if (g->heard_heap) sb_put(o, "        if (!tide_heard_heap_decode(h, data + at, NULL, &budget)) return false;\n");
+    sb_put(o, "        at += h.size;\n        records++;\n    }\n");
     if (g->heard_rows.count) {
         sb_put(o, "    // All spans are validated. Every selected query listener needs its matching row record.\n"
                   "    for (at = 0; at < size;) {\n"
@@ -18659,6 +18852,17 @@ static void gen_client_event_check(gen *g)
         sb_put(o, "        default: break;\n        }\n    }\n");
     }
     sb_put(o, "    if (build) *build = TIDE_HEARD_BUILD;\n    if (count) *count = records;\n    return true;\n}\n\n");
+    if (g->heard_heap) {
+        sb_put(o, "static bool tide_game_check_client_events(const uint8_t *data, uint32_t size, uint32_t *build, uint32_t *count)\n{\n"
+                  "    tide_heap captured = {0};\n"
+                  "    tide_heap *const saved_match = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_MATCH);\n"
+                  "    tide_heap *const saved_local = (tide_heap *)(uintptr_t)tide_heap_read(TIDE_IN_LOCAL);\n"
+                  "    const uint32_t mark = tide_scratch_mark();\n"
+                  "    tide_text_use(&captured, saved_local);\n"
+                  "    const bool ok = tide_game_check_client_events_inner(data, size, build, count);\n"
+                  "    tide_heap_free(&captured);\n    tide_scratch_reset(mark);\n"
+                  "    tide_text_use(saved_match, saved_local);\n    return ok;\n}\n\n");
+    }
 }
 
 // What sessions (tide/session.h) need: the local state's side, the input
@@ -19895,6 +20099,8 @@ bool codegen(program *prog, const codegen_options *opts)
     }
     collect_tasks(&g);
     collect_heard_rows(&g);
+    collect_heard_reads(&g);
+    collect_heard_codecs(&g);
     collect_asset_dependencies(&g);
     if (opts->info && g.asset_dependencies.count) opts->info->assets_affect_match = true;
     if (g.asset_dependencies.count || g.skinned_fingerprints.count) {
@@ -19988,6 +20194,12 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_dispatch_prototypes(&g);
     gen_apply(&g, false);
     gen_apply(&g, true);
+    if (g.value_codec.count) {
+        const size_t start = g.c.len;
+        gen_client_codecs(&g, &g.value_codec);
+        g.value_schema = 0x811C9DC5u;
+        for (size_t i = start; i < g.c.len; i++) g.value_schema = (g.value_schema ^ (uint8_t)g.c.data[i]) * 0x01000193u;
+    }
     gen_hear(&g);
     gen_shaders(&g);
     if (diag_error_count()) { // A shader that didn't become SPIR-V

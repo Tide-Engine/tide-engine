@@ -121,10 +121,14 @@ float CritChance(Survivor s)
     return Math.Min(1, 0.15 * Has(s, Item.LuckyShot));
 }
 
+// (30 a level till the owner, 2026-10-19: "its still hard to die": by the last levels a survivor had eleven times the
+// health they began with, against claws only three times as hard)
 float MaxHealth(Survivor s)
 {
-    return 100 + 30 * (s.level - 1) + 45 * Has(s, Item.Kevlar);
+    return 100 + LEVEL_HEALTH * (s.level - 1) + 45 * Has(s, Item.Kevlar);
 }
+
+const float LEVEL_HEALTH = 18;
 
 float Fleetness(Survivor s)
 {
@@ -472,7 +476,7 @@ system Experience(mut Survivor survivor, Match match)
         survivor.level = match.level;
         survivor.pending += gained;
         // A level's health comes with it
-        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + 30 * gained);
+        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + LEVEL_HEALTH * gained);
     }
     if (!survivor.choosing && survivor.boons > 0)
     {

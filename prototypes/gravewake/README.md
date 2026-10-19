@@ -20,10 +20,11 @@ next night falls, harder. The chests not opened by then are gone with the
 night. Mind the ground: open plague pits to go round, and fire bursting out
 of it under the dead and under you.
 
-Every kill leaves an orb of experience where the dead fell, worth more the
-tougher they were, the party's once someone goes within a few metres of it;
-at every level each takes one of three items that stack, most of which fight
-on their own. How many nights, and how long, they held out is the score.
+Every kill leaves an orb of experience where the dead fell (a cyan gem,
+turning), worth more the tougher they were, the party's once someone goes
+within a few metres of it; at every level each takes one of three items that
+stack, most of which fight on their own, and 18 more health (a level's worth
+of it back, too). How many nights, and how long, they held out is the score.
 
 Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 **Host a room** and send the code to fight with friends, up to four.
@@ -107,17 +108,26 @@ double yellow. Every one pressed against you slows you; a roll goes through
 them. Their claws hit harder as the danger climbs, and your health comes back only
 slowly, once you've gone four seconds unhurt.
 
+The ordinary dead are grey; every other kind is its own strong colour, its
+body washed with it, its eyes burning it and a hard edge of it round its
+outline, so it's known at a glance in a horde: red a Runner, lime a Bloater,
+yellow a Spitter, blue a Warden, orange a Brute, magenta a Howler.
+
 | Kind | From | |
 | --- | --- | --- |
-| Bloater | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it stops and swells, shuddering, glowing and hissing gas, and the ground it'll reach burns red, a ring at its edge and another growing out to meet it; it bursts 1.4 s later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it falls and swells the same way, bursting a second later: from far off, that's a weapon; up close, get out of the red. |
-| Spitter | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile that hurts (up to 18) and slows you for 2 s. Find it and shoot it. |
-| Warden | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
+| Runner (red) | 25 s | Lean, and quicker than any. From 2 to 5.5 m off, with nothing between, it crouches a moment (its eyes flaring), then leaps 4.5 m at you and strikes as it lands (a roll's guard turns it). Three-fifths as tough as the rest. |
+| Bloater (lime) | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it stops and swells, shuddering, glowing and hissing gas, and the ground it'll reach burns red, a ring at its edge and another growing out to meet it; it bursts 1.4 s later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it falls and swells the same way, bursting a second later: from far off, that's a weapon; up close, get out of the red. |
+| Spitter (yellow) | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile that hurts (up to 18) and slows you for 2 s. Find it and shoot it. |
+| Warden (blue) | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
+| Brute (orange) | 2:30 | A third bigger all round, slow, eight times as tough. Nothing staggers it or throws it down, and blows barely push it. Its blow does two and a half times a claw's and throws you back. |
+| Howler (magenta) | 3:40 | Tall and thin. It hangs back, 3 to 11 m off, and every 7 s or so stands and howls (its colour streaming off its head); at the howl's end every one of the dead within 10 m of it is frenzied for 5 s, quicker, their outlines throbbing magenta. Shoot it first. |
 
 ### The bosses
 
 Mutants twice the size of the rest, their name, health and weak spot across
-the top of the screen. A round anywhere into their bulk strikes them, feet
-and all. Each has a growth that glows: a round there does several times as
+the top of the screen, and a great deal of it: a fight of most of a minute
+alone. A round anywhere into their bulk strikes them, feet and all; a
+shotgun's pellets do half (every one finds something that big). Each has a growth that glows: a round there does several times as
 much (an orange mark on the crosshair), and it glows brighter when it's
 open. While one stands, fewer of the dead come. Roll through their slams,
 charges and leaps.
@@ -145,7 +155,7 @@ and glows are in hard steps of light, and their glow is in the picture's big
 pixels.
 
 Development keys, not in play's interface: F2 six of the dead of a kind
-(Bloaters, Spitters, Wardens in turn), F3 a boss (the Mauler, the Broodmother,
+(Bloaters, Spitters, Wardens, Runners, Brutes, Howlers in turn), F3 a boss (the Mauler, the Broodmother,
 the Stalker in turn), F4 two thousand more of the
 dead, F5 a level (and so an offer), F6 walk to the next part of the clearing,
 F7 the night on (its end now, its boss rising; again while it stands, dawn),

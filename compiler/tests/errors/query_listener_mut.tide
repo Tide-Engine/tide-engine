@@ -1,9 +1,0 @@
-// expect: query component bindings are read-only and can't be 'mut'
-component Body { float x; local float shown; }
-event Hit { int damage; }
-scene Main { }
-event(Spawned) Setup(with Main) { Spawn(Body).Send(Hit { damage = 1 }); }
-local event(Hit hit) Show(query (mut Body body) bodies)
-{
-    foreach (var row in bodies) Debug.Log($"{row.body.x + hit.damage}");
-}

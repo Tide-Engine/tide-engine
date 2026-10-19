@@ -7771,6 +7771,26 @@ TIDE_TEST(lsp_cancelled_requests_are_skipped)
     "scene Main { }\n" \
     "event(Spawned) Setup(with Main) { Spawn(Body, Fighter); Spawn(Body, Bullet); }\n"
 
+TIDE_TEST(lsp_query_local_fields)
+{
+    start();
+#define LOCAL_QUERY "component Body { int health; local int flash; }\nscene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Body); }\n"
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "view Show(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(!offers(complete(LOCAL_QUERY "system Update(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "void Read(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "local event(Shown) Show(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "view Show(query (mut $) bodies) { }\n"), "Body"));
+    const char *members = complete(LOCAL_QUERY "view Show(query (Body body) bodies) { foreach (var row in bodies) Debug.Assert(row.body.$ >= 0); }\n");
+    TIDE_CHECK(offers(members, "flash") && offers(members, "health"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "struct Tool { int Read(query (Body body) rows) { mut var n = 0; foreach (var row in rows) n += row.body.$; return n; } }\n"), "flash"));
+    open_document(LOCAL_QUERY "view Show(query (mut Body bo$dy) bodies) { foreach (var row in bodies) row.body.flash += 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "can write those local fields"));
+    open_document(LOCAL_QUERY "view Show(query (mut Body body) bodies) { foreach (var row in bodies) row.body.health = 0; }\n");
+    TIDE_CHECK(has(last_sent(), "query row 'row' is read-only"));
+#undef LOCAL_QUERY
+}
+
 TIDE_TEST(lsp_entity_query_members_and_headers)
 {
     start();
@@ -7813,7 +7833,7 @@ TIDE_TEST(lsp_entity_query_in_helpers)
     TIDE_CHECK(!offers(complete(QUERY_TYPES "extern float Total($);\n"), "query"));
     const char *bindings = complete(QUERY_TYPES "float Total(query ($) bodies) { return 0; }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
-    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    TIDE_CHECK(offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
     const char *rows = complete(QUERY_TYPES "float Total(query (Body body) bodies)\n{\n"
         "    foreach (var row in bodies) { var x = row.$; }\n    return 0;\n}\n");
     TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
@@ -7866,7 +7886,7 @@ TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
     start();
     const char *bindings = complete(QUERY_TYPES "view Show(query ($) fighters) { }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "verified"));
-    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "Score") && !offers(bindings, "World"));
+    TIDE_CHECK(offers(bindings, "mut") && !offers(bindings, "Score") && !offers(bindings, "World"));
     TIDE_CHECK(!offers(complete(QUERY_TYPES "system Hits(query ($) fighters) { }\n"), "verified")); // Only a view's
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show(query (Body body, with $) fighters) { }\n"), "verified"));
     const char *confirmed = complete(QUERY_TYPES "component Spark { int value; }\n"
@@ -7891,7 +7911,7 @@ TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     // The view's query, its `verified` binding and the word itself
     const char *query = request_at("file:///test.tide", "textDocument/hover", 10, 79, "");
-    TIDE_CHECK(has(query, "read-only second entity set, independent of the entity this view runs for"));
+    TIDE_CHECK(has(query, "second entity set, independent of the entity this view runs for"));
     TIDE_CHECK(has(query, "the same entity in the world the server has confirmed"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 72, ""), "As the last tick the server confirmed has it"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 56, ""),
@@ -7918,7 +7938,7 @@ TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
     // What's refused says so in the editor
     open_document(QUERY_TYPES "view Show(query (mut Body body) bodies)\n{\n"
                   "    foreach (var row in bodies) Debug.Log($\"{row.body.position.x}\");\n}\n");
-    TIDE_CHECK(has(last_sent(), "query component bindings are read-only"));
+    TIDE_CHECK(has(last_sent(), "a mutable query binding writes attached local fields"));
 }
 
 TIDE_TEST(lsp_entity_query_symbols)
@@ -7935,8 +7955,8 @@ TIDE_TEST(lsp_entity_query_symbols)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 8, ""),
                    "query (Body body, Fighter stats, without Ghost) fighters"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 32, ""), "read-only second entity set"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 11, 29, ""), "Read-only component data from this query row"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 32, ""), "second entity set"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 11, 29, ""), "Read-only match data from this query row"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 30, ""), "entity matched by this query row, read-only"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 11, 29, ""),
                    "\"start\":{\"line\":7,\"character\":48}"));

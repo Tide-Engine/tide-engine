@@ -1,5 +1,19 @@
 # Runtime written by Claude for now
 
+Recorded containers (2026-10-19) introduce no runtime API, struct or function
+contract. Compiler-private read analysis and self-contained journal tails reuse
+existing value codecs, tide_writer/reader, heap resolvers/allocation and event
+log ownership operations. The shared generated codec moves from
+client_state_codegen.inc to value_codec_codegen.inc; recipient state retains
+its existing encoding. Delivery/validation uses a temporary heap and restores
+both resolvers/scratch afterward. Details and validation: notes/language.md.
+
+Query local fields (2026-10-19) add private generated get/mut/reset helpers and
+conditional row birth metadata. They use existing tide_attached_*, tide_table_*,
+scratch, seeding and owned-value functions. No runtime declaration or new
+generated-C/runtime function contract is introduced. Mutable mismatched births
+reset in place so active outer field pointers stay valid. See language.md.
+
 Recorded-owner event filters (2026-10-19) use compiler-private payload metadata
 and optional player parameters on generated private availability helpers.
 No engine runtime API, tide_heard structure, world state or session protocol

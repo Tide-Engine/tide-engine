@@ -68,7 +68,7 @@ static void tick(int count)
     }
 }
 
-static float max_health(Survivor s) { return 100.0f + 30.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
+static float max_health(Survivor s) { return 100.0f + 18.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
 
 // Both on their feet and whole, so the dead don't end a test that's about something else.
 static void heal(void)
@@ -478,7 +478,7 @@ int main(void)
         s.selfRevives = 0;
         set(0, s);
         s = take(0, Item_Kevlar);
-        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 30.0f * (float)(s.level - 1));
+        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 18.0f * (float)(s.level - 1));
         s = take(0, Item_ExtendedMag);
         CHECK(s.mag == 45);                             // Half again a carbine's 30, loaded now
         s = take(0, Item_SecondWind);
@@ -1202,6 +1202,127 @@ int main(void)
         }
     }
 
+    // ---- A Runner: 4.5 m off, it crouches, then leaps and lands its blow, sooner than it could have run there. A Brute:
+    // kicked, it stays on its feet; its blow throws the survivor back. A Howler 8 m off: it stands and howls, and the dead
+    // round it are frenzied ----
+    {
+        few(4);
+        become(0, Role_Gunner, Weapon_Rifle);
+        const tide_entity r = sturdy();
+        to_open(r);
+        Zombie z = zombie(r);
+        z.kind = ZombieKind_Runner;
+        z.gait = Gait_Sprint;
+        z.spit = 0;
+        CHECK(tide_set_Zombie(&world, r, z));
+        // (the other survivor well behind it, and the rest of the dead well away)
+        put(1, (tide_float3){z.at.x - sinf(z.yaw) * 15, z.at.y, z.at.z - cosf(z.yaw) * 15}, z.at);
+        for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
+            const tide_entity o = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+            if (o.index == r.index) continue;
+            Zombie away = zombie(o);
+            away.at = (tide_float3){z.at.x + sinf(z.yaw + 1.6f) * 30, z.at.y, z.at.z + cosf(z.yaw + 1.6f) * 30};
+            away.pace = 0;
+            away.kind = ZombieKind_Walker;
+            CHECK(tide_set_Zombie(&world, o, away));
+        }
+        face(0, r, 4.5f);
+        Survivor s = get(0);
+        s.health = 100;
+        set(0, s);
+        bool crouched = false, leapt = false;
+        int t = 0;
+        for (; t < 60 * 3 && get(0).health >= 100; t++) {
+            world.Match.xp = 0;           // (no level: it makes the survivors whole)
+            tick(1);
+            decline();
+            crouched |= zombie(r).windup > 0;
+            leapt |= zombie(r).leap > 0;
+        }
+        printf("a Runner 4.5 m off: crouched %d, leapt %d, its blow %.2f s after, %.0f health left\n", crouched, leapt, t / 60.0f, get(0).health);
+        CHECK(crouched && leapt && get(0).health < 100 && t < 60);
+        heal();
+        // The Brute, kicked by the Breacher, then left to swing
+        become(0, Role_Breacher, Weapon_Shotgun);
+        z = zombie(r);
+        z.kind = ZombieKind_Brute;
+        z.gait = Gait_Shamble;
+        z.health = 100000;
+        z.leap = 0;
+        z.windup = 0;
+        z.spit = 99;
+        z.swing = 0;
+        CHECK(tide_set_Zombie(&world, r, z));
+        to_open(r);
+        face(0, r, 1.5f);
+        only_skill(0, 0);
+        const float hale = zombie(r).health;
+        press(&held[0].secondary);
+        tick_safe(20);
+        only_skill(0, -1);
+        printf("a Brute kicked: %.0f off it, %s\n", hale - zombie(r).health, zombie(r).state == ZombieState_Fallen ? "over" : "on its feet");
+        CHECK(zombie(r).health < hale && zombie(r).state == ZombieState_Hunting);
+        face(0, r, 1.5f);
+        s = get(0);
+        s.health = 400;
+        set(0, s);
+        float thrown = 0;
+        for (t = 0; t < 60 * 3 && get(0).health >= 400; t++) {
+            world.Match.xp = 0;
+            tick(1);
+            decline();
+            thrown = fmaxf(thrown, hypotf(get(0).velocity.x, get(0).velocity.z));
+        }
+        for (int k = 0; k < 6; k++) {
+            tick(1);
+            thrown = fmaxf(thrown, hypotf(get(0).velocity.x, get(0).velocity.z));
+        }
+        printf("a Brute's blow: %.0f, thrown back at %.1f m/s\n", 400 - get(0).health, thrown);
+        CHECK(get(0).health < 400 - 30 && thrown > 5);
+        heal();
+        // The Howler, three of the walking dead round it
+        become(0, Role_Gunner, Weapon_Rifle);
+        z = zombie(r);
+        z.kind = ZombieKind_Howler;
+        z.gait = Gait_Run;
+        z.spit = 0;
+        z.swing = 0;
+        CHECK(tide_set_Zombie(&world, r, z));
+        to_open(r);
+        const tide_float3 howler = zombie(r).at;
+        int round = 0;
+        for (uint32_t row = 0; row < world.arch5_Zombie.count && round < 3; row++) {
+            const tide_entity o = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+            if (o.index == r.index || TIDE_AT(&world, arch5_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
+            Zombie near = zombie(o);
+            // Behind it (the survivor's in front), side by side
+            const float yaw = zombie(r).yaw, side = (float)(round - 1) * 1.2f;
+            near.at = (tide_float3){howler.x - sinf(yaw) * 2.0f + cosf(yaw) * side, howler.y, howler.z - cosf(yaw) * 2.0f - sinf(yaw) * side};
+            near.pace = 0;
+            near.frenzy = 0;
+            near.kind = ZombieKind_Walker;
+            CHECK(tide_set_Zombie(&world, o, near));
+            round++;
+        }
+        CHECK(round == 3);
+        face(0, r, 8);
+        bool howled = false;
+        int frenzied = 0;
+        const tide_float3 stood = zombie(r).at;
+        for (t = 0; t < 60 * 3 && frenzied == 0; t++) {
+            tick_safe(1);
+            howled |= zombie(r).windup > 0;
+            for (uint32_t row = 0; row < world.arch5_Zombie.count; row++)
+                if (TIDE_AT(&world, arch5_Zombie, Zombie, row).frenzy > 0) frenzied++;
+        }
+        const float moved = hypotf(zombie(r).at.x - stood.x, zombie(r).at.z - stood.z);
+        printf("a Howler 8 m off: howled %d, %d of the dead frenzied %.2f s after, it moved %.2f m\n", howled, frenzied, t / 60.0f, moved);
+        CHECK(howled && frenzied >= 3 && moved < 0.3f);
+        z = zombie(r);
+        z.kind = ZombieKind_Walker;
+        CHECK(tide_set_Zombie(&world, r, z));
+    }
+
     // ---- What the newer items do: AP Rounds through one more (four in a row, the carbine going through three); HE Rounds burst on the first they hit, wounding the one
     // beside it; Dragon's Breath sets the dead alight; Kerosene sets the ones a dash goes through alight; a Gas Mask keeps
     // a Bloater's burst off; the Engineer's turret sets off its maker's items (Frostbite, here) ----
@@ -1816,10 +1937,10 @@ int main(void)
                 if (nearest < 20.0f) look_at(seat, at);
                 held[seat].attack = nearest < 20.0f;
             }
-            // How long the oldest of the dead has been about (not a Spitter, which hangs back on purpose)
+            // How long the oldest of the dead has been about (not a Spitter or a Howler, which hang back on purpose)
             for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
                 const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, row);
-                if (z.state == ZombieState_Hunting && z.kind != ZombieKind_Spitter && (int)z.timer > oldest) oldest = (int)z.timer;
+                if (z.state == ZombieState_Hunting && z.kind != ZombieKind_Spitter && z.kind != ZombieKind_Howler && (int)z.timer > oldest) oldest = (int)z.timer;
             }
             // A crowd's claws can land together for more than anyone's health: kept whole, as this is about the dead
             for (int seat = 0; seat < 2; seat++) {
@@ -1833,7 +1954,7 @@ int main(void)
         held[0].attack = held[1].attack = false;
         for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
             const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, row);
-            if (z.state != ZombieState_Hunting || z.timer < 120 || z.kind == ZombieKind_Spitter) continue;
+            if (z.state != ZombieState_Hunting || z.timer < 120 || z.kind == ZombieKind_Spitter || z.kind == ZombieKind_Howler) continue;
             const int cx = (int)floorf(z.at.x + NAV_HALF), cz = (int)floorf(z.at.z + NAV_HALF);
             const int field = *(const uint8_t *)tide_list_read(&world.heap, world.Ashwick.field, cz * NAV_SIDE + cx, 1);
             fprintf(stderr, "stuck for %.0f s at %.2f %.2f %.2f, walkable %d, field %d, kind %d lift %.2f climbing %d speed %.2f yaw %.2f\n", z.timer, z.at.x, z.at.y, z.at.z, walkable(z.at), field,

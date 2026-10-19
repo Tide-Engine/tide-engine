@@ -1,5 +1,31 @@
 # No Tide code can corrupt memory
 
+Recorded containers (2026-10-19) keep fixed journal heap handles zero and store
+only bounded serialized values in optional tails. Size arithmetic widens before
+the uint32 record limit; tail length and zero padding are checked before reads.
+Recipient fixed-value checks still precede typed decoding, which validates
+counts, UTF-8, map order/keys, grid shapes/records and the existing nesting
+guard in an isolated temporary heap. Failed validation frees that heap without
+touching match/local state. Successful delivery frees its separate heap only
+after handlers have acquired ordinary local ownership of explicit copies.
+Context restoration includes both heap resolvers and scratch state. Source
+world/availability endpoints are resolved explicitly while recording. The
+event_containers and retained visibility_lifecycle forgery cases cover this;
+implementation and final validation are in language.md.
+
+Query local fields (2026-10-19) keep all local-field pointers out of recorded
+rows; only entity/birth values are added when needed. Lookup validates attached
+identity before reading, returning defaults on a birth mismatch. Mutable reset
+releases old ownership and initializes defaults in the same cell, preserving an
+outer alias rather than removing/moving its row. All new helpers are generated
+over existing bounded table/attached APIs. Local heap fields retain actual local
+ownership. Mutable references are acquired at row entry, so resets never occur
+in unspecified C operand order. Read-only borrows sharing query writes acquire
+the same cell, avoiding stale default borrows. The eleven
+query_local_fields cases include differing predicted /
+verified births under an active outer alias, containers, COW snapshots and
+5,002 rows; the scalar safety fixture covers repeated host snapshots/frames.
+
 Recorded-owner event filters (2026-10-19) capture only a player value and an
 integer presence flag, never a world pointer or component borrow. Recipient
 lifecycle payload validation checks that flag is 0/1 and absent-owner bytes
