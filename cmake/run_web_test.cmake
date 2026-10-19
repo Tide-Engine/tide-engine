@@ -2,6 +2,7 @@
 # with 0. See WebTest.cmake.
 #
 # cmake -DNODE=<node> -DBROWSER=<Chrome or Edge> -DPAGE=<page.html> [-DQUERY=<query>] -DPROFILE=<scratch dir>
+#       [-DANGLE_BACKEND=swiftshader|d3d11-warp]
 #       -P run_web_test.cmake
 
 if(NOT EXISTS "${BROWSER}")
@@ -18,6 +19,14 @@ if(QUERY)
     string(APPEND url "?${QUERY}")
 endif()
 
+if(NOT ANGLE_BACKEND)
+    set(ANGLE_BACKEND swiftshader)
+endif()
+set(angle_flags "--use-angle=${ANGLE_BACKEND}")
+if(ANGLE_BACKEND STREQUAL "swiftshader")
+    list(APPEND angle_flags --enable-unsafe-swiftshader)
+endif()
+
 file(REMOVE_RECURSE "${PROFILE}")
 # Through browser_dump.mjs, which stops the browser once the page is out.
 # --mute-audio: headless, it still plays through the machine's device once a
@@ -30,8 +39,7 @@ execute_process(
         --disable-extensions
         --mute-audio
         "--user-data-dir=${PROFILE}"
-        --use-angle=swiftshader
-        --enable-unsafe-swiftshader
+        ${angle_flags}
         --virtual-time-budget=60000
         --dump-dom "${url}"
     OUTPUT_VARIABLE dom

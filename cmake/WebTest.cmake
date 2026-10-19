@@ -1,4 +1,4 @@
-# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [WEBGPU [EXPECT <text>]])
+# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [WEBGPU [EXPECT <text>]] [D3D11])
 #
 # Web builds: adds a test that opens <target>'s page in headless Chrome or Edge
 # and passes if the page exits with 0. It draws with WebGL 2 (backend=webgl in
@@ -14,6 +14,8 @@
 # GPU in real time, so the page is served (cmake/run_web_served_test.mjs), and
 # its shell must send its output and exit code back, as test_shell.html does.
 # EXPECT is a line the program has to print.
+# D3D11 adds a Windows-host test through ANGLE's software D3D11/WARP backend,
+# checking its renderer identity as well as the page's existing assertions.
 
 # For web builds' tests, and desktop rooms against a browser (platform/tests/rooms.mjs).
 find_program(TIDE_BROWSER
@@ -39,7 +41,7 @@ if(NOT TIDE_WEB_TEST_PROCESSORS GREATER 0)
 endif()
 
 function(tide_add_web_test name)
-    cmake_parse_arguments(ARG "WEBGPU" "TARGET;QUERY;EXPECT" "" ${ARGN})
+    cmake_parse_arguments(ARG "WEBGPU;D3D11" "TARGET;QUERY;EXPECT" "" ${ARGN})
     set(page "$<TARGET_FILE_DIR:${ARG_TARGET}>/${ARG_TARGET}.html")
     set(query "backend=webgl")
     set(webgpu_query "backend=webgpu")
@@ -57,6 +59,19 @@ function(tide_add_web_test name)
             -P "${PROJECT_SOURCE_DIR}/cmake/run_web_test.cmake")
     set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:"
         PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
+    if(ARG_D3D11 AND CMAKE_HOST_WIN32)
+        add_test(NAME ${name}_d3d11
+            COMMAND "${CMAKE_COMMAND}"
+                "-DNODE=${TIDE_NODE}"
+                "-DBROWSER=${TIDE_BROWSER}"
+                "-DPAGE=${page}"
+                "-DQUERY=${query}&expect-angle=Direct3D11"
+                "-DANGLE_BACKEND=d3d11-warp"
+                "-DPROFILE=${CMAKE_CURRENT_BINARY_DIR}/${name}_d3d11-browser"
+                -P "${PROJECT_SOURCE_DIR}/cmake/run_web_test.cmake")
+        set_tests_properties(${name}_d3d11 PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:"
+            PROCESSORS ${TIDE_WEB_TEST_PROCESSORS} LABELS webgl_d3d11 TIMEOUT 150)
+    endif()
     if(ARG_WEBGPU)
         set(expect "")
         if(ARG_EXPECT)

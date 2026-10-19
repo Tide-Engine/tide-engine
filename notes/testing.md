@@ -1,5 +1,20 @@
 # Test infrastructure
 
+## Windows ANGLE D3D11 shader regression (2026-10-19)
+
+tide_add_web_test(... D3D11) adds a Windows-host WebGL run using
+--use-angle=d3d11-warp, currently tide_platform_shaders_d3d11. The ordinary
+WebGL run still uses SwiftShader. run_web_test.cmake accepts ANGLE_BACKEND
+and only gives SwiftShader --enable-unsafe-swiftshader. Both paths retain
+muted audio, isolated scratch profiles, CPU reservations and fatal shader
+warnings. The D3D11 page must report a renderer containing Direct3D11, so
+fallback cannot silently turn this into another SwiftShader pass. The shell's
+expect-angle query is a test-only check, not a Tide program argument.
+
+This covers the varying-loop depth comparison reported by Inside Out and
+the math/container warnings found while exercising its existing full shader
+fixture. See notes/shaders.md. No prototype browser playtest was run.
+
 ## Custom browser runners reserve CPUs (2026-10-18)
 
 The three `tide_platform_web_rooms*` tests and `tide_platform_web_threads`

@@ -24,16 +24,20 @@ struct tt_Corner {
     vec3 m_position;
     vec2 m_uv;
 };
+int tide_int4_lane(ivec4 value, int index) {
+    return index == 0 ? value.x : index == 1 ? value.y : index == 2 ? value.z : value.w;
+}
 float tide_list0(int tide_i) {
-    if (tide_i < 0 || tide_i >= tide_v0.y) {
-        return 0.0;
-    }
+    float tide_result = 0.0;
+    if (!(tide_i < 0 || tide_i >= tide_v0.y)) {
     int tide_word = tide_i * 1;
     int tide_first = tide_word >> 2;
     ivec4 tide_r = texelFetch(pixels0, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
-    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
+    ivec4 tide_q0 = ivec4(tide_int4_lane(tide_r, tide_word & 3), 0, 0, 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
-    return tide_p0.x;
+    tide_result = tide_p0.x;
+    }
+    return tide_result;
 }
 
 void ts_Raise(inout tt_Corner t_corner) {
@@ -87,21 +91,24 @@ float tide_max1(float a, float b) {
     if (a > b) { return a; }
     return b;
 }
+int tide_int4_lane(ivec4 value, int index) {
+    return index == 0 ? value.x : index == 1 ? value.y : index == 2 ? value.z : value.w;
+}
 vec4 tide_list4(int tide_i) {
-    if (tide_i < 0 || tide_i >= tide_v1.y) {
-        return vec4(0.0);
-    }
+    vec4 tide_result = vec4(0.0);
+    if (!(tide_i < 0 || tide_i >= tide_v1.y)) {
     int tide_word = tide_i * 4;
     int tide_first = tide_word >> 2;
     ivec4 tide_q0 = texelFetch(pixels4, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
-    return tide_p0;
+    tide_result = tide_p0;
+    }
+    return tide_result;
 }
 
 tt_Light tide_list1(int tide_i) {
-    if (tide_i < 0 || tide_i >= tide_v0.z) {
-        return tt_Light(vec3(0.0), vec4(0.0), 0.0, 0, false);
-    }
+    tt_Light tide_result = tt_Light(vec3(0.0), vec4(0.0), 0.0, 0, false);
+    if (!(tide_i < 0 || tide_i >= tide_v0.z)) {
     int tide_word = tide_i * 12;
     int tide_first = tide_word >> 2;
     ivec4 tide_q0 = texelFetch(pixels1, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
@@ -109,7 +116,9 @@ tt_Light tide_list1(int tide_i) {
     ivec4 tide_q1 = texelFetch(pixels1, ivec2((tide_first + 1) & 1023, (tide_first + 1) >> 10), 0);
     vec4 tide_p1 = intBitsToFloat(tide_q1);
     ivec4 tide_q2 = texelFetch(pixels1, ivec2((tide_first + 2) & 1023, (tide_first + 2) >> 10), 0);
-    return tt_Light(tide_p0.xyz, vec4(tide_p0.w, tide_p1.x, tide_p1.y, tide_p1.z), tide_p1.w, tide_q2.x, (tide_q2.y != 0));
+    tide_result = tt_Light(tide_p0.xyz, vec4(tide_p0.w, tide_p1.x, tide_p1.y, tide_p1.z), tide_p1.w, tide_q2.x, (tide_q2.y != 0));
+    }
+    return tide_result;
 }
 
 float tf_Falloff(tt_Light t_light, vec3 t_at) {
@@ -133,26 +142,28 @@ float tf_Falloff(tt_Light t_light, vec3 t_at) {
 }
 
 ivec2 tide_list3(int tide_i) {
-    if (tide_i < 0 || tide_i >= tide_v1.x) {
-        return ivec2(0);
-    }
+    ivec2 tide_result = ivec2(0);
+    if (!(tide_i < 0 || tide_i >= tide_v1.x)) {
     int tide_word = tide_i * 2;
     int tide_first = tide_word >> 2;
     ivec4 tide_r = texelFetch(pixels3, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
-    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], tide_r[(tide_word & 3) + 1], 0, 0);
-    return tide_q0.xy;
+    ivec4 tide_q0 = (tide_word & 2) == 0 ? ivec4(tide_r.xy, 0, 0) : ivec4(tide_r.zw, 0, 0);
+    tide_result = tide_q0.xy;
+    }
+    return tide_result;
 }
 
 float tide_list0(int tide_i) {
-    if (tide_i < 0 || tide_i >= tide_v0.y) {
-        return 0.0;
-    }
+    float tide_result = 0.0;
+    if (!(tide_i < 0 || tide_i >= tide_v0.y)) {
     int tide_word = tide_i * 1;
     int tide_first = tide_word >> 2;
     ivec4 tide_r = texelFetch(pixels0, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
-    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
+    ivec4 tide_q0 = ivec4(tide_int4_lane(tide_r, tide_word & 3), 0, 0, 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
-    return tide_p0.x;
+    tide_result = tide_p0.x;
+    }
+    return tide_result;
 }
 
 float tf_Total_40() {
@@ -169,15 +180,16 @@ float tf_Mean_40(float t_least) {
 }
 
 float tide_list2(int tide_i) {
-    if (tide_i < 0 || tide_i >= tide_v0.w) {
-        return 0.0;
-    }
+    float tide_result = 0.0;
+    if (!(tide_i < 0 || tide_i >= tide_v0.w)) {
     int tide_word = tide_i * 1;
     int tide_first = tide_word >> 2;
     ivec4 tide_r = texelFetch(pixels2, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
-    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
+    ivec4 tide_q0 = ivec4(tide_int4_lane(tide_r, tide_word & 3), 0, 0, 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
-    return tide_p0.x;
+    tide_result = tide_p0.x;
+    }
+    return tide_result;
 }
 
 float tf_Total_42() {
@@ -194,19 +206,20 @@ float tf_Mean_42(float t_least) {
 }
 
 int tide_list5(ivec2 tide_i) {
+    int tide_result = 0;
     ivec2 tide_o = tide_v2.xy;
     ivec2 tide_e = tide_v2.zw;
     uint tide_x = uint(tide_i.x) - uint(tide_o.x);
     uint tide_y = uint(tide_i.y) - uint(tide_o.y);
-    if (tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y)) {
-        return 0;
-    }
+    if (!(tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y))) {
     int tide_word = int(tide_x) * 1;
     int tide_first = tide_word >> 2;
     int tide_row = int(tide_y);
     ivec4 tide_r = texelFetch(pixels5, ivec2(tide_first + 0, tide_row), 0);
-    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
-    return tide_q0.x;
+    ivec4 tide_q0 = ivec4(tide_int4_lane(tide_r, tide_word & 3), 0, 0, 0);
+    tide_result = tide_q0.x;
+    }
+    return tide_result;
 }
 
 int tf_Cell_45(ivec2 t_at) {

@@ -74,7 +74,17 @@ vec4 tide_saturate4(vec4 a) {
     return vec4(tide_saturate1(a.x), tide_saturate1(a.y), tide_saturate1(a.z), tide_saturate1(a.w));
 }
 float tide_smoothstep1(float a, float b, float c) {
-    float t = tide_saturate1((c - a) / (b - a));
+    float numerator = c - a;
+    float denominator = b - a;
+    float divisor = denominator;
+    if (divisor == 0.0) { divisor = 1.0; }
+    float t = tide_saturate1(numerator / divisor);
+    if (denominator == 0.0) {
+        t = 0.0;
+        if (floatBitsToInt(denominator) < 0) {
+            if (numerator < 0.0) { t = 1.0; }
+        } else if (numerator > 0.0) { t = 1.0; }
+    }
     return t * t * (3.0 - 2.0 * t);
 }
 vec4 tide_smoothstep4(vec4 a, vec4 b, vec4 c) {
@@ -170,7 +180,17 @@ fn tide_saturate4(a: vec4f) -> vec4f {
     return vec4f(tide_saturate1(a.x), tide_saturate1(a.y), tide_saturate1(a.z), tide_saturate1(a.w));
 }
 fn tide_smoothstep1(a: f32, b: f32, c: f32) -> f32 {
-    var t: f32 = tide_saturate1((c - a) / (b - a));
+    var numerator: f32 = c - a;
+    var denominator: f32 = b - a;
+    var divisor: f32 = denominator;
+    if (divisor == 0.0) { divisor = 1.0; }
+    var t: f32 = tide_saturate1(numerator / divisor);
+    if (denominator == 0.0) {
+        t = 0.0;
+        if (bitcast<i32>(denominator) < 0) {
+            if (numerator < 0.0) { t = 1.0; }
+        } else if (numerator > 0.0) { t = 1.0; }
+    }
     return t * t * (3.0 - 2.0 * t);
 }
 fn tide_smoothstep4(a: vec4f, b: vec4f, c: vec4f) -> vec4f {

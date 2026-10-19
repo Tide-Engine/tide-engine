@@ -828,7 +828,8 @@ struct Matrices
     float4x4 perspective;
     float4x4 ortho;
     float4x4 constant;
-    float2x2 flat; // Of a matrix with no inverse: no numbers, so nothing compares it
+    float2x2 flat; // A singular inverse: compare its infinity signs through finite flags
+    float4 flatSigns;
 }
 
 struct Rest
@@ -851,6 +852,7 @@ struct Rest
     float4 turnedPowers;
     float4 corners;
     float4 edges;
+    float4 zeroEdges;
     float2 wrong;     // Bounds the wrong way around
     int2 wrongInts;
     float4 perlins;   // Noise in each size, with a seed and without
@@ -1029,6 +1031,8 @@ Matrices MatricesOf(Given given)
     // Of constants, and of a matrix with no inverse: neither may be a shader a compiler refuses
     made.constant = Math.Inverse(float4x4.TRS(float3(1, 2, 3), quaternion.Euler(float3(0.5, 1, 1.5)), float3(2, 1, 0.5)));
     made.flat = Math.Inverse(float2x2(1, 2, 2, 4));
+    made.flatSigns = float4(made.flat.c0.x > 1e30 ? 1 : 0, made.flat.c0.y < -1e30 ? 1 : 0,
+                            made.flat.c1.x < -1e30 ? 1 : 0, made.flat.c1.y > 1e30 ? 1 : 0);
     return made;
 }
 
@@ -1043,7 +1047,7 @@ bool SameMatrices(Matrices a, Matrices b)
     same = same && Close3x3(a.fromTurn, b.fromTurn) && Close4x4(a.fromParts, b.fromParts) && Close4x4(a.trs, b.trs);
     same = same && Close4x4(a.translate, b.translate) && Close4x4(a.perspective, b.perspective) && Close4x4(a.ortho, b.ortho);
     same = same && Close4x4(a.scale, b.scale) && Close3(Math.Transform(a.scale, float3(1)), float3(1, 0, -2));
-    return same && Close4x4(a.constant, b.constant);
+    return same && Close4x4(a.constant, b.constant) && Close4(a.flatSigns, b.flatSigns) && Close4(a.flatSigns, float4(1));
 }
 
 // What Math does on the GPU as tide/math.h does it, where a shader language's
@@ -1144,6 +1148,8 @@ Rest RestOf(Given given)
     // SmoothStep from an edge down to a lower one, and between two at the same place
     rest.edges = float4(Math.SmoothStep(1, 0, 0.25), Math.SmoothStep(two, two, 1), Math.SmoothStep(two, two, 3),
                         Math.SmoothStep(two, two, two));
+    rest.zeroEdges = float4(Math.SmoothStep(given.zero, given.zero, -1), Math.SmoothStep(given.zero, given.zero, 1),
+                            Math.SmoothStep(given.zero, -given.zero, -1), Math.SmoothStep(given.zero, -given.zero, 1));
     // Clamp with its bounds the wrong way around gives the lower one
     rest.wrong = float2(Math.Clamp(5.0, 3, 1), Math.Clamp(given.wide, two, 1));
     rest.wrongInts = int2(Math.Clamp(5, 3, 1), Math.Clamp(given.one, 7, given.one));
@@ -1190,7 +1196,7 @@ bool SameRest(Rest a, Rest b)
     same = same && Close4(a.powers, b.powers) && Close4(a.arcs, b.arcs) && Close4(a.units, b.units) && Close4(a.ends, b.ends);
     same = same && Close4(a.saturated, b.saturated) && Close2(a.capped, b.capped) && Close4(a.bad, b.bad) && Close4(a.bad2, b.bad2) && Close3(a.badVector, b.badVector);
     same = same && Close4(a.none, b.none) && Close4(a.turnedPowers, b.turnedPowers) && Close4(a.corners, b.corners);
-    same = same && Close4(a.edges, b.edges) && Close2(a.wrong, b.wrong);
+    same = same && Close4(a.edges, b.edges) && Close4(a.zeroEdges, b.zeroEdges) && Close4(a.zeroEdges, float4(0, 1, 1, 0)) && Close2(a.wrong, b.wrong);
     same = same && Close4(a.perlins, b.perlins) && Close4(a.simplexes, b.simplexes) && Close4(a.cells, b.cells) && Close4(a.steps, b.steps);
     same = same && Close4(a.chars, b.chars);
     return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
@@ -1775,7 +1781,12 @@ frag Shadowed(Vertex3 vertex, out Color color, Shadow shadow)
 // a depth is no argument a shader language hands on.
 float Sunlit(DepthTexture depth, float3 at)
 {
-    return depth.Compare(at.xy, at.z - 0.01);
+    // Varying loop counts must not turn a fixed-level comparison into an
+    // implicit-derivative instruction on WebGL's D3D11 translation path.
+    int count = at.x < 0.5 ? 2 : 4;
+    mut float sum = 0;
+    for (var i = 0; i < count; i++) sum += depth.Compare(at.xy, at.z - 0.01);
+    return sum / count;
 }
 
 // ...which another passes on

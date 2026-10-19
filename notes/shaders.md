@@ -1,5 +1,52 @@
 # Code the GPU runs: frags and verts
 
+## ANGLE D3D11 comparisons and shader warnings (2026-10-19)
+
+Inside Out's newer prototype note exposed a backend defect missed by the
+SwiftShader WebGL run: DepthTexture.Compare in a varying loop linked with
+HLSL X3595 on ANGLE D3D11. GLSL now uses textureGrad with explicit zero
+gradients for shadow comparisons. This selects SampleCmpLevelZero in ANGLE
+instead of textureLod's implicit-gradient SampleCmp translation; see
+[ANGLE's shadow sampling translation](https://github.com/google/angle/blob/main/src/compiler/translator/hlsl/TextureFunctionHLSL.cpp).
+Depth targets still have one level and the same reference clamp/filtering.
+WGSL stays textureSampleCompareLevel. No binding, API or runtime changes.
+The prototype's unrolled workaround has not been rewritten or playtested.
+
+Running the whole existing shader fixture on D3D11 also reproduced X4008 in
+constant-folded quaternion-from-matrix candidates, singular matrix inverses
+and equal-edge SmoothStep; X4000 in a bounded struct list read reached from
+a loop; and dynamic-vector-index emulation warnings in packed list/map
+lookups. These are compiler/backend fixes, not new language decisions:
+
+- Guard the unused zero-scale quaternion candidates. A selected finite
+  Shepperd branch already has a nonzero scale.
+- Form a signed infinity by bits for reciprocal zero, retaining ordinary
+  division for nonzero determinants. SmoothStep handles zero denominators
+  explicitly, including their sign, retaining its forgiving saturation.
+  CPU math, ordinary arithmetic order and singular inverse behavior stay the same.
+- GLSL list/grid readers initialize one all-zero result, fill it only inside
+  bounds and return once. Packed GLSL list/map words use static lanes rather
+  than ANGLE's emulated dynamic vector indexing. WGSL container reads are unchanged.
+
+The shader pixel fixture repeats identical depth comparisons two or four
+times according to the varying coordinate, with unchanged shadow pixels.
+Its CPU/vertex/fragment math comparisons now check signed-zero SmoothStep
+edges and singular inverse signs through finite flags. Existing list/grid/map
+pixels cover the other warning regressions. Updated shader goldens pin both
+languages. A Windows-only tide_platform_shaders_d3d11 CTest uses software
+D3D11/WARP, requires a Direct3D11 renderer and keeps every warning fatal;
+the existing SwiftShader WebGL, WebGPU and native Vulkan/OpenGL runs remain.
+
+Validation: warning-free native/web debug builds; all 2,432 native cases
+and the full 2,342-test web suite pass, including exact-bit pins and the
+renderer paths above. The native full run's sole failure was an
+overrides golden regenerated without its package inputs; restoring that
+unchanged fixture and rerunning its package-aware CTest passed. Shader
+golden regeneration must include each fixture's sibling package directories,
+as expect_schedule.cmake does. Android, other operating systems and
+sanitizers remain CI coverage; no CI was dispatched. Public docs and
+language semantics are unchanged.
+
 ## Shaded drawing functions (2026-10-19)
 
 The existing drawing-function capability now includes naming a frag or vert
