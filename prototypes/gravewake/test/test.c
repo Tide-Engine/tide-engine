@@ -14,8 +14,9 @@
 // runners; the Stalker leaps, shrieks, and is cut short. Both hold the fire for minutes, every one of the dead
 // finding its way to them. A plague pit's walked round and shot over; the
 // ground erupts under the dead and a survivor, and burns on. Then a night is
-// kept: one bleeds out and stays gone; the night's clock runs out, its boss
-// claws up and the one who bled out is back; its boss down, dawn burns the
+// kept: one bleeds out and stays gone; the night's clock runs out, the
+// wake-fire's ring rises round them (nobody walks out of it), its boss claws
+// up in it and the one who bled out is back; its boss down, dawn burns the
 // dead away; and the next night falls, its clock from the start, with new
 // chests, more dangerous; one who bleeds out then is back a minute later. What they press
 // goes through the input, as a player's does; where they'd stand and look, the
@@ -1940,11 +1941,11 @@ int main(void)
         spawning();
     }
 
-    // ---- A night kept, on its clock: one bleeds out and stays gone; the night's end comes, its boss claws up near the
-    // one standing and the one who bled out is back beside them; not dawn while it stands; down, dawn: the dead burn
-    // away and none rise, the orbs fly in, everyone's up and whole; then the next night falls, its clock from the start,
-    // with new chests, a step more dangerous. One who bleeds out with no boss coming is back beside a friend a minute
-    // later ----
+    // ---- A night kept, on its clock: one bleeds out and stays gone; the night's end comes: the wake-fire's ring rises
+    // round the one standing, its boss claws up in it, and the one who bled out is back by its middle; walking at the
+    // ring, they stop at it; not dawn while the boss stands; down, dawn and the ring's gone: the dead burn away and none
+    // rise, the orbs fly in, everyone's up and whole; then the next night falls, its clock from the start, with new
+    // chests, a step more dangerous. One who bleeds out with no boss coming is back beside a friend a minute later ----
     {
         decline();
         become(0, Role_Gunner, Weapon_Rifle);
@@ -1970,18 +1971,50 @@ int main(void)
         for (int t = 0; t < 60 * 2 && !world.Match.reckoning; t++) tick_safe(1);
         CHECK(world.Match.reckoning);
         tick_safe(2);
-        // Back, beside the one standing, with the shotgun in hand
+        // The ring, round the one standing; back by its middle, with the shotgun in hand
+        const tide_float3 ring = world.Match.ringAt;
+        const float reach = world.Match.ringReach;
+        CHECK(reach > 10 && hypotf(ring.x - get(0).feet.x, ring.z - get(0).feet.z) < 0.5f);
         friend = get(1);
-        CHECK(friend.life == Life_Standing && hypotf(friend.feet.x - get(0).feet.x, friend.feet.z - get(0).feet.z) < 4 && friend.gun == Weapon_Shotgun);
-        // Its boss, one of the night's own, 24 to 32 m off; held off where it rose (this is about the night)
+        CHECK(friend.life == Life_Standing && hypotf(friend.feet.x - ring.x, friend.feet.z - ring.z) < 4 && friend.gun == Weapon_Shotgun);
+        // Its boss, one of the night's own, in the ring with them; held off where it rose (this is about the night)
         tide_float3 rose[4];
         int brutes = 0;
         for (uint32_t r = 0; r < world.arch1_Boss.count && brutes < 4; r++)
             if (TIDE_AT(&world, arch1_Boss, Boss, r).own) rose[brutes++] = TIDE_AT(&world, arch1_Boss, Boss, r).at;
         CHECK(brutes == 1);
-        const float off = hypotf(rose[0].x - get(0).feet.x, rose[0].z - get(0).feet.z);
-        printf("the night's end: its boss claws up %.1f m off\n", off);
-        CHECK(off > 20 && off < 36);
+        const float off = hypotf(rose[0].x - ring.x, rose[0].z - ring.z);
+        printf("the night's end: the wake-fire's ring %.0f m round them, its boss clawing up in it %.1f m from its middle\n", reach, off);
+        CHECK(off > 7.5f && off < reach - 3.5f);
+        // Walking out at the ring from a metre inside it, on open ground, for a second: stopped at it
+        float wx = 1, wz = 0;
+        for (int k = 0; k < 16; k++) {
+            const float turn = (float)k * 0.3926991f;
+            const tide_float3 a = {ring.x + sinf(turn) * (reach - 1), 0, ring.z + cosf(turn) * (reach - 1)};
+            const tide_float3 b = {ring.x + sinf(turn) * (reach + 1.5f), 0, ring.z + cosf(turn) * (reach + 1.5f)};
+            int which = -1;
+            if (!flat_ground(a) || !flat_ground(b) || solid_at(a, 1.0f, &which) || solid_at(b, 1.0f, &which)) continue;
+            wx = sinf(turn);
+            wz = cosf(turn);
+            break;
+        }
+        put(0, (tide_float3){ring.x + wx * (reach - 1), 0, ring.z + wz * (reach - 1)}, (tide_float3){ring.x, 1, ring.z});
+        held[0].move = (tide_float2){wx, wz};
+        float farthest = 0;
+        for (int i = 0; i < 60; i++) {
+            for (uint32_t r = 0; r < world.arch1_Boss.count; r++) {
+                const tide_entity eb = TIDE_ENTITY_AT(&world, arch1_Boss, r);
+                Boss b = tide_get_Boss(&world, eb);
+                b.at = rose[0];
+                b.cooldown = 9;
+                CHECK(tide_set_Boss(&world, eb, b));
+            }
+            tick_safe(1);
+            farthest = fmaxf(farthest, hypotf(get(0).feet.x - ring.x, get(0).feet.z - ring.z));
+        }
+        held[0].move = (tide_float2){0, 0};
+        printf("walking at the ring: %.2f m from its middle at most\n", farthest);
+        CHECK(farthest <= reach && farthest > reach - 1.5f);
         // Not dawn while it stands
         for (int i = 0; i < 30; i++) {
             for (uint32_t r = 0; r < world.arch1_Boss.count; r++) {
@@ -2005,7 +2038,7 @@ int main(void)
             CHECK(tide_set_Boss(&world, eb, b));
         }
         tick_safe(2);
-        CHECK(world.Match.phase == Phase_Dawn && world.Match.kept == night);
+        CHECK(world.Match.phase == Phase_Dawn && world.Match.kept == night && world.Match.ringReach == 0);
         tick_safe(60 * 3);
         int up = 0;
         for (uint32_t r = 0; r < world.arch4_Zombie.count; r++)

@@ -63,6 +63,56 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### A stand at the night's end: the wake-fire's ring, quicker dead (2026-10-19)
+
+The owner, of the last round's bots never going down: "I haven't had the
+chance to test but I'm not sure difficulty being lower is better". The
+levers, and how each was measured, are mine, Provisional.
+
+- **The wake-fire's ring** (nights.tide's `Reckon`, `RING_REACH`, `InRing`,
+  `RingFlames`, `RingRises`; `Match.ringAt`, `Match.ringReach`; hands.tide's
+  `Steer`; look.tide's `Earth`): as the night's clock runs out a ring of pale
+  wake-fire 17 m round rises about the survivors standing (its middle
+  theirs), and the night's bosses claw up in it, 8 m from its middle to 4 m
+  short of its fire. The living can't cross it till dawn (their feet held
+  inside it, a body's width short); the dead walk straight through. So the
+  night's end is a stand, as a Dark Souls boss's arena is, not a chase: the
+  beacon's vigil had been where the bots died, and with nowhere to hold
+  they'd never gone down. Whoever bled out is back by its middle. Drawn: its
+  line burning pale in the ground, a flame standing every 1.5 m of it (the
+  nearest), embers off them, a burst of them as it rises; the night's panel
+  says the wake-fire holds you in till dawn.
+- **Quicker dead** (zombies.tide's `Haste`, `HASTE_MOST`): from danger 4, up
+  to 40% quicker by danger 16. A sprinter (4.8 m/s) then outpaces a survivor
+  walking as they fire (5.6) though not one running (7), so backing off while
+  shooting stops being safe late in a run.
+- **Measured** (`gravewake_balance`, 25 minutes at most): the last round's
+  build, every solo run at the cap with no downs. Closer hordes (16 to 26 m)
+  alone: the same; the ring alone: none of 3 died. Quicker dead (30%) without
+  the ring: 4 of 12 (bosses twice as tough in 9 of them, which changed
+  nothing); with it, 7 of 21, the deaths now mostly in the ring. Both, the
+  dead 40% quicker (what's kept): 5 of 12 solo runs died
+  (the Gunner 1028 s, the Breacher 553 and 950, the Engineer 390 and 850),
+  about half of them in a night's end; the medians: the Gunner 1460 s (the
+  cap), the Breacher 1204, the Engineer 1153; the pair at the cap. Two variations measured the same within the noise and were dropped:
+  the dead three quarters as thick in the ring (in place of `BOSS_THIN`'s
+  0.45, kept for the owner's "a boss's fight lost in the crowd": 7 of 18
+  died) and orbs worth three quarters (to level as fast as before the last
+  round's 4 a second a danger: 6 of 18 died, levels 34 to 36 at the cap
+  against 36 to 37). In all, 18 of 48 solo runs died before the cap; before
+  the last round, the medians were 962 s (the Gunner), 1097 (the Breacher),
+  1176 (the Engineer), so most runs died: still a little easier than that
+  for the bots, who back off from the dead perfectly. A run that gets
+  through the fourth night mostly snowballs to the cap. The levers left:
+  `HASTE_MOST`, `RING_REACH`, `Harm`, `NIGHT_STEP`.
+- **Tests**: the night kept now checks the ring rises round the one standing,
+  the boss claws up in it 7.5 m from its middle to 3.5 m short of its fire,
+  the one who bled out is back by its middle, walking out at it stops 0.32 m
+  short of its line, and it's gone at dawn.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one
+  (100 s) pass. Looked at in standard-host captures: the ring rising as the Mauler
+  claws up, its line and flames, the survivor walking into it and held.
+
 ### Nights on a clock, plague pits and fire, more blood (2026-10-18)
 
 The owner: "the maps need some hazzard to avoid or have to walk around and

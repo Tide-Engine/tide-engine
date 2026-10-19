@@ -355,6 +355,15 @@ event(Slimed slimed) TakeSlimed(mut Survivor survivor)
     if (survivor.life == Life.Standing) survivor.slimed = Math.Max(survivor.slimed, slimed.seconds);
 }
 
+// How much quicker the dead are as the danger climbs: none to danger 4, then up to HASTE_MOST more by danger 16 (a
+// sprinter then outpaces a survivor walking as they fire, though not one running).
+float Haste(float danger)
+{
+    return 1 + HASTE_MOST * Math.Saturate((danger - 4) / 12);
+}
+
+const float HASTE_MOST = 0.4;
+
 float GaitSpeed(Gait gait)
 {
     if (gait == Gait.Sprint) return 4.8;
@@ -612,7 +621,7 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     }
 
     // The step
-    mut var speed = GaitSpeed(zombie.gait) * zombie.pace;
+    mut var speed = GaitSpeed(zombie.gait) * zombie.pace * Haste(match.danger);
     if (zombie.chill > 0) speed *= 0.45;
     if (zombie.flinch > 0) speed *= 0.3;
     if (zombie.swing > 0) speed *= zombie.gait == Gait.Shamble ? 0.2 : 0.45;

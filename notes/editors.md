@@ -1,5 +1,14 @@
 # The language server and the editors
 
+Shaded drawing functions (2026-10-19): mesh/instanced shader and per-draw
+value completion is available in ordinary synchronous functions as in views.
+Shader component hover describes both view and function inputs.
+The shared checker reports missing/ambiguous explicit shader inputs.
+lsp_shaded_drawing_helpers checks clean diagnostics, completion and a missing
+singleton; the former view-only shader completion assertion now covers a
+function with explicit inputs. Contracts and full validation: notes/shaders.md
+and notes/language.md.
+
 Resource asset collection borrows (2026-10-18) resolve in ordinary helper
 signatures, so list/map member completion and signature/type text use existing
 paths. Parameter hover explains read-only synchronous borrowing and no escape;
