@@ -1168,6 +1168,7 @@ int main(void)
             z.spit = 99;
             z.flinch = 0;
             CHECK(tide_set_Zombie(&world, e, z));
+            tick_safe(1);           // Its head and chest where its kind's body has them (a Spitter's head is low, by its chest)
             s = get(0);
             s.shotWait = 0;
             s.mag = 30;

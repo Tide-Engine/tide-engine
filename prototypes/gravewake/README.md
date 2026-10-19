@@ -111,7 +111,10 @@ slowly, once you've gone four seconds unhurt.
 The ordinary dead are grey; every other kind is its own strong colour, its
 body washed with it, its eyes burning it and a hard edge of it round its
 outline, so it's known at a glance in a horde: red a Runner, lime a Bloater,
-yellow a Spitter, blue a Warden, orange a Brute, magenta a Howler.
+yellow a Spitter, blue a Warden, orange a Brute, magenta a Howler. Each has its
+own body too (art/kinds): a Runner hunched with long claws, a Bloater's vast
+belly, a Spitter's throat sac, a Warden's iron shoulders and shield, a Brute's
+bull shoulders, a Howler tall with its neck thrown back.
 
 | Kind | From | |
 | --- | --- | --- |
@@ -155,7 +158,8 @@ and glows are in hard steps of light, and their glow is in the picture's big
 pixels.
 
 Development keys, not in play's interface: F2 six of the dead of a kind
-(Bloaters, Spitters, Wardens, Runners, Brutes, Howlers in turn), F3 a boss (the Mauler, the Broodmother,
+(Bloaters, Spitters, Wardens, Runners, Brutes, Howlers in turn; with Shift, one
+of each lined up in front of you, dazed), F3 a boss (the Mauler, the Broodmother,
 the Stalker in turn), F4 two thousand more of the
 dead, F5 a level (and so an offer), F6 walk to the next part of the clearing,
 F7 the night on (its end now, its boss rising; again while it stands, dawn),
@@ -230,11 +234,11 @@ this folder.
 | `missions.tide` | The optional missions: a hold, a cull, the wisps; their reward, panel and markers; and where the objectives are |
 | `missiles.tide` | Frag grenades, firebombs, mines, the Mortar Flare's shells, a Spitter's bile |
 | `drops.tide` | The cues for what's heard, and a survivor's refill |
-| `crowd.tide` | The horde and the bosses drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
+| `crowd.tide` | The horde, its kinds and the bosses drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
 | `kit.tide`, `look.tide`, `eye.tide` | The clearing's meshes; light, shadows, fog, bloom; the camera |
 | `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide`, `gore.tide` | The survivors; the gun in hand, grenades, mines, turrets, drones; the graves and braziers; tracers, flames, blood, sparks; the stains on the ground and the pieces of the dead |
 | `hud.tide`, `sound.tide` | What's written over the picture (the offer and the survivors too), the title; what's heard |
-| `art/` | The forest, ruin, people, mutants, guns and items, with how each was made: see `art/CREDITS.md` |
+| `art/` | The forest, ruin, people, the kinds of the dead, mutants, guns and items, with how each was made: see `art/CREDITS.md` |
 | `sfx/` | The sounds, made by `sfx/tools/make_sfx.py`: see `sfx/CREDITS.md` |
 | `test/` | The run played with no window (`test.c`), a tick's cost with a horde (`perf.c`, `gravewake_perf`, not a test), whole runs played by bots for the balance (`balance.c`, `gravewake_balance`, not a test), and the browser test |
 | `tools/balance_math.py` | The balance on paper, read from the source: night by night, what the dead bring and the level pace |
