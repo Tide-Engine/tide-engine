@@ -336,10 +336,11 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
             party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
             return;
     }
-    // Six of a kind of the dead, the next six to rise: 20 Bloaters, 21 Spitters, 22 Wardens
-    if (cheat.what >= 20 && cheat.what < 23)
+    // Six of a kind of the dead, the next six to rise: 20 Bloaters, 21 Spitters, 22 Wardens, 23 Runners, 24 Brutes, 25
+    // Howlers
+    if (cheat.what >= 20 && cheat.what < 26)
     {
-        match.special = cheat.what == 20 ? ZombieKind.Bloater : cheat.what == 21 ? ZombieKind.Spitter : ZombieKind.Warden;
+        match.special = ZombieKind(cheat.what - 19);
         match.specials += 6;
         match.rush += 6;
         return;

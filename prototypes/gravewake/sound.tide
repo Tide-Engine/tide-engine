@@ -418,6 +418,10 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
         case Sfx.Spit: Audio.Play(throwClip, cue.at, 0.8, 0.7); return;
         case Sfx.Splat: Audio.Play(bloatPops[ears.random.NextInt(bloatPops.count)], cue.at, 0.6, 1.7); return;
         case Sfx.Clank: Audio.Play(stoneHits[ears.random.NextInt(stoneHits.count)], cue.at, 0.6, 1.7); return;
+        case Sfx.Pounce: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, ears.random.NextFloat(1.4, 1.55)); return;
+        case Sfx.Howl: Audio.Play(screams[ears.random.NextInt(screams.count)], cue.at, 1.0, ears.random.NextFloat(0.62, 0.7)); return;
+        case Sfx.Bellow: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, ears.random.NextFloat(0.5, 0.58)); return;
+        case Sfx.Pound: Audio.Play(hitsBlunt[ears.random.NextInt(hitsBlunt.count)], cue.at, 1.0, 0.6); return;
     }
 }
 

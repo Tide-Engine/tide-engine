@@ -402,24 +402,40 @@ event HordeRose
     float radius;
 }
 
-// What kind of the dead rises, from a roll: none but the walking dead at first; then Bloaters from BLOATERS_FROM (one
-// in 40, up to one in 14 as the danger climbs), Spitters from SPITTERS_FROM (one in 50 up to one in 20) and Wardens
-// from WARDENS_FROM (one in 50 up to one in 12).
+// What kind of the dead rises, from a roll: none but the walking dead at first; then Runners from RUNNERS_FROM (one
+// in 33 up to one in 12 as the danger climbs), Bloaters from BLOATERS_FROM (one in 40 up to one in 14), Spitters from
+// SPITTERS_FROM (one in 50 up to one in 20), Wardens from WARDENS_FROM (one in 50 up to one in 12), Brutes from
+// BRUTES_FROM (one in 200 up to one in 50) and Howlers from HOWLERS_FROM (one in 125 up to one in 40).
 ZombieKind KindFor(Match match, float roll)
 {
     var steps = match.danger - 1;
+    var runners = match.clock < RUNNERS_FROM ? 0 : Math.Min(0.08, 0.03 + 0.008 * steps);
     var bloaters = match.clock < BLOATERS_FROM ? 0 : Math.Min(0.07, 0.025 + 0.01 * steps);
     var spitters = match.clock < SPITTERS_FROM ? 0 : Math.Min(0.05, 0.02 + 0.006 * steps);
     var wardens = match.clock < WARDENS_FROM ? 0 : Math.Min(0.08, 0.02 + 0.008 * steps);
-    if (roll < bloaters) return ZombieKind.Bloater;
-    if (roll < bloaters + spitters) return ZombieKind.Spitter;
-    if (roll < bloaters + spitters + wardens) return ZombieKind.Warden;
+    var brutes = match.clock < BRUTES_FROM ? 0 : Math.Min(0.02, 0.005 + 0.003 * steps);
+    var howlers = match.clock < HOWLERS_FROM ? 0 : Math.Min(0.025, 0.008 + 0.003 * steps);
+    mut var edge = runners;
+    if (roll < edge) return ZombieKind.Runner;
+    edge += bloaters;
+    if (roll < edge) return ZombieKind.Bloater;
+    edge += spitters;
+    if (roll < edge) return ZombieKind.Spitter;
+    edge += wardens;
+    if (roll < edge) return ZombieKind.Warden;
+    edge += brutes;
+    if (roll < edge) return ZombieKind.Brute;
+    edge += howlers;
+    if (roll < edge) return ZombieKind.Howler;
     return ZombieKind.Walker;
 }
 
+const float RUNNERS_FROM = 25;
 const float BLOATERS_FROM = 40;
 const float SPITTERS_FROM = 75;
 const float WARDENS_FROM = 120;
+const float BRUTES_FROM = 150;
+const float HOWLERS_FROM = 220;
 
 // Where one of the dead can claw up near a survivor: `near` to `far` metres off, any side, on open ground the dead can
 // walk and from which their way to the survivors is clear (eight tries); else a riser 7 m or more off; else a place far
