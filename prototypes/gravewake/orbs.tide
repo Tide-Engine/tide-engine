@@ -117,19 +117,23 @@ system OrbPull(mut Orb orb, mut Match match, Time time, query (Survivor survivor
 
 // ---- What's seen and heard ----
 
-// A soft blue-green light bobbing over the ground, bigger for more; blinking before it goes; a streak as it flies.
+// A cyan gem turning and bobbing over the ground, bigger for more (fx.tide's OrbGem); blinking before it goes.
+// (Solid and hard-edged, not glowing: hundreds lie at once in a fight, and big soft glows had drowned what was going
+// on, then small ones were lost)
 [Stage(Layers.Gather, 3)]
 view ShowOrb(Orb orb, mut Fx fx, Look look)
 {
     if (Math.Distance(orb.at, look.eye) > 45) return;
     var left = ORB_SECONDS - orb.age;
     if (orb.seat < 0 && left < 6 && Math.Frac(left * (left < 3 ? 4 : 2)) < 0.35) return;
-    // (quiet: hundreds lie at once in a fight, and big soft glows had drowned what was going on)
-    var size = 0.045 + Math.Min(0.06, Math.Log(1 + orb.value) * 0.015);
-    var bob = orb.seat < 0 ? Math.Sin(look.time * 3 + orb.at.x * 2 + orb.at.z) * 0.04 : 0.0;
-    var at = orb.at + float3(0, bob - 0.15, 0);
-    fx.orbSprites.Add(Sprite { at = at, to = at, size = size * 1.8, color = float4(0.25, 0.8, 0.6, 0.12) });
-    fx.orbSprites.Add(Sprite { at = at, to = at, size = size, color = float4(0.6, 1.0, 0.85, 2.2) });
+    var size = 0.22 + Math.Min(0.1, Math.Log(1 + orb.value) * 0.03);
+    var bob = orb.seat < 0 ? Math.Sin(look.time * 3 + orb.at.x * 2 + orb.at.z) * 0.06 : 0.0;
+    var at = orb.at + float3(0, bob, 0);
+    fx.orbSprites.Add(Sprite { at = at, to = at, size = size, color = float4(0.2, 0.9, 1.0, 1) });
+    // Now and then a glint off it, to catch the eye
+    if (orb.seat < 0 && fx.random.NextFloat() < Math.Min(Frame.dt, 0.05) * 0.8)
+        Glow(fx, Mote { at = at + float3(fx.random.NextFloat(-0.1, 0.1), size * 0.6, 0), velocity = float3(0, 0.6, 0), life = 0.35, size = 0.09, grow = -0.2,
+                        color = float3(0.6, 1.0, 1.0), alpha = 3 });
 }
 
 local event(OrbTaken taken) OrbSpark(mut Fx fx)
