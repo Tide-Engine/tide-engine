@@ -89,7 +89,7 @@ This runs once per `RoundOver`. The query selects the players to visit; it does 
 
 Each `foreach` reads the current match at the handler's turn in the tick-end queue. Earlier handlers' completed writes and structural changes already applied are visible. Sends, spawns, adds, removes and destroys recorded by the handler remain deferred, including changes recorded inside a query loop. `Spawned` queries include the new entity; `Destroyed` queries include the entity before it goes.
 
-Rows are read-only. To act on an entity, send it an event or use an explicit `mut World` with the existing `Set` rules. A `Set` is visible to later query reads. The handler's own `mut` component parameter retains its usual copy/write-back behavior: a query reads its stored value until that handler finishes, and following handlers see the written-back value.
+Rows are read-only. To act on an entity, send it an event or use an explicit `mut World` with the existing `Set` rules. A `Set` is visible to later query reads. Setting the handler's current entity also replaces its active mutable component parameter immediately. Subsequent parameter edits retain usual write-back timing: queries see the value published by Set until the handler finishes, and following handlers see the written-back value.
 
 Async handlers and tasks cannot take queries yet. Local handlers' [recorded query rows](#other-entities) retain their own timing rules.
 

@@ -1,8 +1,0 @@
-// expect: Set<Health> changes any entity's Health, and the system takes this entity's too
-component Health { int value; Entity other; }
-scene Main { }
-system Drain(mut Health own, mut World world)
-{
-    own.value -= 1;
-    world.Set<Health>(own.other, own);
-}

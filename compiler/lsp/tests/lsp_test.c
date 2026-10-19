@@ -9341,6 +9341,22 @@ TIDE_TEST(lsp_world_in_functions)
     const char *fixed = apply_fix(read_only, "Declare 'world' as mut");
     TIDE_REQUIRE(fixed != NULL);
     TIDE_CHECK(has(fixed, "system Mend(Healer healer, mut World world) { Heal(healer.patient, world); }\n"));
+    // Self Set writes the active mut parameter, including through helper chains.
+    // Its following read must not suggest removing mut, which would keep an entry copy.
+    open_document(WORLD_FUNCTION
+        "void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 20 }); }\n"
+        "void Forward(Entity target, mut World world) { Heal(target, world); }\n"
+        "event(Spawned) Both(with Main) { Spawn(Health, Healer); }\n"
+        "system Mend(mut Health health, mut Healer healer, mut World world)\n{\n"
+        "    Forward(this, world);\n    healer.seen = health.value;\n}\n");
+    if (!has(last_sent(), "\"diagnostics\":[]")) printf("%s\n", last_sent());
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(WORLD_FUNCTION
+        "event(Spawned) Both(with Main) { Spawn(Health, Healer); }\n"
+        "system Mend(mut Health health, mut Healer healer, mut World world)\n{\n"
+        "    world.Set<Health>(this, Health { value = 20 });\n    healer.seen = health.value;\n}\n");
+    if (!has(last_sent(), "\"diagnostics\":[]")) printf("%s\n", last_sent());
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 }
 
 // Typing code with `out` parameters and arguments from scratch, and once it's

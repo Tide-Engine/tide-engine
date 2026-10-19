@@ -1,0 +1,187 @@
+component Counter { int index; int value = 1; }
+component Indirect { int value = 1; }
+component Seen { int entered; int own; int other; int helper; int ordered; int stored; }
+component Tail { }
+[Sparse] component Skipped { }
+component Bag { int value; string label = "initial"; List<int> data = [1, 2]; Map<int, List<int>> entries; Set<int> tags; }
+component LocalValue { int value; }
+
+enum Mode { Rows, Heap, Events, Nested, None }
+singleton Settings { Mode mode; }
+singleton Roster { List<Entity> rows; Entity bag; Entity missing; Entity absent; }
+singleton Results { int failures; int copies; int started; int ended; }
+local singleton Viewer { bool ready; LocalEntity entity; int seen; bool submit; Entity target; }
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Roster roster)
+{
+    for (int i = 0; i < 5000; i++)
+    {
+        mut Entity e;
+        if (i < 4999) e = Spawn(Counter { index = i }, Indirect, Seen);
+        else e = Spawn(Counter { index = i }, Indirect, Seen, Tail);
+        if (i < 2048 && i % 2 != 0) e.Add(Skipped);
+        roster.rows.Add(e);
+    }
+    roster.bag = Spawn(Bag);
+    roster.missing = Spawn(Tail);
+}
+
+system Direct(mut Counter counter, mut Seen seen, Roster roster, Settings settings, mut World world)
+{
+    if (settings.mode != Mode.Rows) return;
+    var index = counter.index;
+    var entered = counter.value;
+    counter.value += 100; // An unfinished scalar write is discarded by the whole-value replacement.
+    world.Set<Counter>(this, Counter { index = index, value = 20 });
+    counter.value++;
+    // A second mutable binding is updated by its own component type.
+    world.Set<Seen>(this, Seen { entered = entered, own = counter.value, stored = world.Get<Counter>(this).value });
+    var next = (index + 1) % roster.rows.count;
+    world.Set<Counter>(roster.rows[next], Counter { index = next, value = 22 });
+    seen.other = counter.value;
+}
+
+void Replace(Entity target, int value, mut World world) { world.Set<Indirect>(target, Indirect { value = value }); }
+struct Setter { int value; void Apply(Entity target, mut World world) { Replace(target, value, world); } }
+void Forward(Entity target, int value, int depth, mut World world)
+{
+    if (depth > 0) Forward(target, value, depth - 1, world);
+    else Setter { value = value }.Apply(target, world);
+}
+void Alias(mut Indirect value, Entity target, mut World world) { Forward(target, 40, 2, world); value.value++; }
+int SetAndReturn(Entity target, int value, mut World world) { Replace(target, value, world); return 3; }
+void Run(Action body) { body(); }
+
+system Helpers(mut Indirect value, mut Seen seen, without Skipped, Settings settings, Roster roster, mut World world)
+{
+    if (settings.mode != Mode.Rows) return;
+    Alias(value, this, world);
+    seen.helper = value.value;
+    // Reads on either side of a hidden binding write retain source evaluation order.
+    seen.ordered = value.value + SetAndReturn(this, 50, world);
+    seen.ordered += SetAndReturn(this, 60, world) + value.value;
+    Run() { Forward(this, 70, 1, world); value.value++; }
+    world.Set<Indirect>(roster.missing, Indirect { value = -1 });
+    world.Set<Indirect>(roster.absent, Indirect { value = -1 });
+    value.value++;
+}
+
+void ReplaceBag(Entity target, mut World world)
+{
+    world.Set<Bag>(target, Bag { value = 20, label = "replacement", data = [20, 21] });
+}
+
+int ReadCopy(Bag copy, Entity target, mut World world)
+{
+    var before = copy.data[0];
+    ReplaceBag(target, world);
+    return copy.data[0] == before && copy.label == "pending" && copy.entries[1][0] == 9 && copy.tags.Has(2) ? 1 : 0;
+}
+
+void ListAlias(mut List<int> items, Entity target, mut World world)
+{
+    ReplaceBag(target, world);
+    items.Add(55);
+}
+
+system Containers(mut Bag bag, Settings settings, mut Results results, mut World world)
+{
+    if (settings.mode != Mode.Heap) return;
+    // These handles differ from the component's still-stored row.
+    bag.data = [];
+    for (int i = 0; i < 2100; i++) bag.data.Add(i + 5);
+    bag.entries[1] = [9, 10];
+    bag.tags.Add(2);
+    bag.label = "pending";
+    var copy = bag;
+    results.copies += ReadCopy(bag, this, world);
+    if (bag.value != 20 || bag.label != "replacement" || bag.data.count != 2 || bag.data[0] != 20) results.failures++;
+    if (bag.entries.count != 0 || bag.tags.count != 0 || copy.data.count != 2100 || copy.data[2099] != 2104) results.failures++;
+    bag.data[0]++;
+    bag.entries[2] = [7];
+    bag.tags.Add(3);
+    world.Set<Bag>(this, bag); // Copy its value before releasing/replacing its owned containers.
+    if (bag.data[0] != 21 || bag.entries[2][0] != 7 || !bag.tags.Has(3)) results.failures++;
+    ListAlias(bag.data, this, world);
+    if (bag.data.count != 3 || bag.data[2] != 55 || bag.entries.count != 0) results.failures++;
+    bag.value++;
+    bag.data[0]++;
+}
+
+event Change { }
+event Resume { }
+event AwaitChild { }
+command ChangeCommand { }
+
+// Set is itself a write to the bound parameter: removing mut would change this read.
+event(Change) Apply(mut Bag bag, mut World world, mut Results results)
+{
+    Run() { ReplaceBag(this, world); }
+    if (bag.value != 20) results.failures++;
+}
+command(ChangeCommand change, PlayerID sender) ApplyCommand(mut Bag bag, mut World world)
+{
+    if (sender != PlayerID(0)) return;
+    ReplaceBag(this, world);
+    bag.value += 3;
+}
+
+async event(Resume) Continue(mut Bag bag, mut World world, mut Results results)
+{
+    ReplaceBag(this, world);
+    bag.value++;
+    results.started++;
+    await Wait.Ticks(1);
+    ReplaceBag(this, world);
+    bag.value += 2;
+    results.ended++;
+}
+
+async void Child(mut Bag bag, mut Results results)
+{
+    bag.value += 3;
+    results.started++;
+    await Wait.Ticks(1);
+    bag.value += 4;
+    results.ended++;
+}
+
+async event(AwaitChild) Parent(mut Bag bag, mut World world, mut Results results)
+{
+    ReplaceBag(this, world);
+    bag.value = 10;
+    await Child(bag, results);
+    if (bag.value != 17) results.failures++;
+    ReplaceBag(this, world);
+    bag.value++;
+}
+
+system Ask(Settings settings, Roster roster)
+{
+    if (settings.mode == Mode.Nested) { roster.bag.Send(AwaitChild); return; }
+    if (settings.mode != Mode.Events) return;
+    roster.bag.Send(Change);
+    roster.bag.Send(Resume);
+}
+
+view Make(mut Viewer viewer)
+{
+    if (viewer.ready) return;
+    viewer.ready = true;
+    viewer.entity = local Spawn(LocalValue);
+}
+void SetLocal(LocalEntity target, mut World world) { world.Set<LocalValue>(target, LocalValue { value = 20 }); }
+view Advance(mut local LocalValue value, mut Viewer viewer, mut World world)
+{
+    SetLocal(this, world);
+    value.value++;
+    viewer.seen += value.value;
+}
+
+view Submit(mut Viewer viewer)
+{
+    if (!viewer.submit) return;
+    viewer.submit = false;
+    viewer.target.Send(ChangeCommand);
+}

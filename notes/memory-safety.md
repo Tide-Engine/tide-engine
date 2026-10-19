@@ -1,5 +1,14 @@
 # No Tide code can corrupt memory
 
+Mutable World.Set overlap (2026-10-19) uses compiler-private synchronous
+stack bindings, keyed by world, component and full entity generation. Target
+validation still precedes replacement. Container replacement releases/assigns
+the active mutable copy's current ownership rather than stale stored handles;
+source values and read-only helper arguments retain ordinary deep value copies.
+Final row write-back uses current COW pages. Bindings never escape into a
+world/task frame or survive a wait. world_set_mut checks nested containers,
+stale/missing targets, snapshots, replay and packed state without runtime changes.
+
 Texture metadata (2026-10-18) reads no pixel payload. Grid references reuse
 mesh.c's bounded see_grid directory/record validation, including arbitrary
 stale handles and dimensions; packed names resolve against the current pack;
