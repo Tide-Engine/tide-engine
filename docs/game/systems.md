@@ -99,7 +99,18 @@ system Attack(Attacker attacker, World world, mut Stats stats)
 - `world.Has<Health>(e)` tells whether it has one.
 - `world.TryGet<Health>(e, out var health)` is both in one: whether it has one, and the copy, or the component's default when it has none (see [Out parameters](../language/functions.md#out-parameters)).
 - `world.Set<Health>(e, value)` puts one back, and needs `mut World`. It does nothing for an entity without one.
-- A read-only `Health` parameter allows `Set<Health>` on any entity, directly or through helpers. Each invocation reads the component as it comes to that entity, including preceding invocations' writes, then keeps that value until it returns. `Set` updates the world immediately: a following `Get` or query sees the new value. A system that takes `mut Health` cannot also `Set<Health>`, because its parameter's write-back could overwrite the same entity's `Set`.
+- A read-only `Health` parameter keeps the value captured on entering that entity's invocation, including preceding invocations' writes. `Set` updates the world immediately: a following `Get` or query sees the new value.
+- With `mut Health`, setting the current entity also replaces that active parameter immediately, including through helpers. Setting another entity leaves the parameter unchanged. Whole-value replacement discards unfinished edits; later edits are written back normally.
+
+```csharp
+system Reset(mut Health health, mut World world)
+{
+    world.Set<Health>(this, Health { value = 20 });
+    health.value++; // Finishes at 21.
+}
+```
+
+Between the `Set` and the final write-back, `Get` and queries read the published value of 20. An explicit copy made before `Set` keeps its old value.
 
 What `Get` gives is a copy, as a list's element is, so changing another entity's component is taking it out, changing it and putting it back:
 
@@ -128,7 +139,7 @@ system Aim(mut Attacker attacker, World world)
 }
 ```
 
-What the function reaches through it counts as the system's own, through however many functions it's passed, so nothing about the schedule changes: `Aim` reads every entity's `Health`. A function that calls `Set` takes `mut World`, and so does the system that passes it. The rules above still hold, said at the call: a system that takes `Health` can't call a function that sets `Health`, and a view can't call one that changes the match.
+What the function reaches through it counts as the system's own, through however many functions it's passed, so nothing about the schedule changes: `Aim` reads every entity's `Health`. A function that calls `Set` takes `mut World`, and so does the system that passes it. The parameter rules above apply through helpers too, and a view can't call one that changes the match.
 
 Views and event handlers take a `World` too; a view only reads the match through it, and can change local entities with `mut World`. A [local handler](./events.md#local-handlers) of one of the match's events takes none: it hears the match as the event left it, and the `World` is the match as it is now.
 

@@ -596,6 +596,7 @@ typedef struct decl {
     struct decl *stored;      // A T?: the struct a field of it is kept as (optional_of), once a field is one
     bool tries;           // Maps: some code calls TryGet, so generated C has its helper
     bool tried;           // Components: some code calls world.TryGet of it, so generated C has its helper
+    bool world_set_used;  // Components: World.Set needs the owned-value/active-binding helper
 
     // Events
     bool world_event;        // Built-in events the engine sends to the world, never to an entity

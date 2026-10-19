@@ -1,5 +1,12 @@
 # The language server and the editors
 
+Mutable World.Set overlap (2026-10-19): the shared checker accepts direct and
+transitive helper replacement of active mut component bindings. Access warnings
+wait for World effects so a parameter read after self Set does not suggest
+removing mut. lsp_world_in_functions covers both direct and helper no-warning
+cases; ordinary read-only World/view restrictions remain pinned. No protocol,
+completion or public editor-package change is needed. See notes/language.md.
+
 Shaded drawing functions (2026-10-19): mesh/instanced shader and per-draw
 value completion is available in ordinary synchronous functions as in views.
 Shader component hover describes both view and function inputs.
