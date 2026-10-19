@@ -1,5 +1,11 @@
 # The docs site
 
+Recorded-owner event filters (2026-10-19): Events replaces the manual Owner /
+Session guard workaround with with/without ownership, including verified,
+replay and Shown/Hidden endpoint behavior. The decided spec records the owner's
+event-turn rule and the remaining local-world/query restrictions. No navigation
+or deployment changes. Validation is in notes/verified-and-local-handlers.md.
+
 Mutable World.Set overlap (2026-10-19): Systems, Functions, Events and the
 decided spec describe owner-approved active-binding replacement through
 helpers, captured read-only/copy values and ordinary subsequent write-back.

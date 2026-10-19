@@ -1,0 +1,4 @@
+// expect: handler 'Hear' takes entities both 'with ownership' and 'without ownership', and none is both
+scene Main { }
+event Hit { }
+local event(Hit) Hear(with ownership, without ownership) { }

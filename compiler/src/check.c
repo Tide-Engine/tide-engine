@@ -14868,7 +14868,7 @@ static bool check_param_side(const decl *sys, const param *p, const decl *d)
 
 // `with ownership` and `without ownership`: whether this machine's player owns
 // the entity, by its Owner. Only local code has a machine to ask about, and of
-// it only views run for the match's entities. `with` needs an Owner, as `with
+// it views and listeners run for the match's entities. `with` needs an Owner, as `with
 // Owner` does; `without` takes entities with one and with none, and which
 // rows pass is the loop's to check, like a sparse component (gen_row_filter).
 static void check_ownership(const checker *c, decl *sys, param *p)
@@ -14884,17 +14884,16 @@ static void check_ownership(const checker *c, decl *sys, param *p)
         suggest_replacement(p->type_name, "Owner");
         return;
     }
-    if (!sys->is_view) {
-        diag_error(p->type_at, "'%s ownership' filters the entities a view runs for, and this is a handler", word);
-        diag_note("a local handler of a match event takes the entity's 'Owner owner' and the local 'Session session', and "
-                  "compares 'owner.player' with 'session.player'");
+    if (!sys->is_view && (!sys->is_handler || !sys->event || sys->event->is_local || sys->event == c->prog->forgotten)) {
+        diag_error(p->type_at, "'%s ownership' filters match entities in views and local handlers of match events", word);
+        diag_note("local entities live on this machine, and no player owns them");
         return;
     }
     const int ownership = with ? OWNERSHIP_WITH : OWNERSHIP_WITHOUT;
     if (sys->ownership) {
         if (sys->ownership == ownership) diag_error(p->at, "'%s ownership' appears twice", word);
-        else diag_error(p->at, "view '" STR_FMT "' takes entities both 'with ownership' and 'without ownership', and none is both",
-                        STR_ARG(sys->name));
+        else diag_error(p->at, "%s '" STR_FMT "' takes entities both 'with ownership' and 'without ownership', and none is both",
+                        sys->is_view ? "view" : "handler", STR_ARG(sys->name));
         return;
     }
     sys->ownership = ownership;
@@ -14953,6 +14952,7 @@ static void check_listener(const program *prog, decl *sys)
     const param *of_local = NULL; // A local component: an entity of this machine's
     for (int i = 1; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
+        if (p->ownership && !of_match) of_match = p;
         // A query over the match's entities is something of the match too
         if (p->type.kind == TY_QUERY && p->query_of && !p->query_local && !of_match) of_match = p;
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
@@ -15346,7 +15346,8 @@ static void check_params(const checker *c, decl *sys)
                        STR_ARG(p->type_name));
             suggestion s = suggest_start(p->type_name);
             suggest_decls(&s, prog, true, p->mode != PARAM_WITH && p->mode != PARAM_WITHOUT, true);
-            if (sys->is_view && (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT)) suggest_consider_c(&s, "ownership");
+            if ((sys->is_view || (sys->is_local && sys->is_handler && sys->event && !sys->event->is_local))
+                && (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT)) suggest_consider_c(&s, "ownership");
             suggest_note(&s);
             const fix create = {.kind = FIX_CREATE_COMPONENT, .at = p->type_at.line ? p->type_at : p->at, .name = p->type_name};
             vec_push(c->prog->fixes, create);
@@ -15461,8 +15462,8 @@ static void check_params(const checker *c, decl *sys)
     }
 
     if (sys->ownership == OWNERSHIP_WITH && mask_has(sys->without_mask, prog->owner->index)) {
-        diag_error(sys->at, "view '" STR_FMT "' takes entities 'with ownership' and 'without Owner', and an entity "
-                   "without an Owner is nobody's", STR_ARG(sys->name));
+        diag_error(sys->at, "%s '" STR_FMT "' takes entities 'with ownership' and 'without Owner', and an entity "
+                   "without an Owner is nobody's", sys->is_view ? "view" : "handler", STR_ARG(sys->name));
     } else if (mask_intersects(sys->need_mask, sys->without_mask)) {
         diag_error(sys->at, "system '" STR_FMT "' both requires and excludes the same component", STR_ARG(sys->name));
     }

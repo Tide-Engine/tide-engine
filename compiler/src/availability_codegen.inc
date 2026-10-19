@@ -86,7 +86,7 @@ static void gen_availability_delivery(gen *g)
                      "            const tide_page *was = (*kept)->entities.page[(*kept)->entities.room + p];\n"
                      "            if (now != was) unchanged = false;\n        }\n"
                      "        tide_event_log changes = {0};\n"
-                     "        if (!unchanged) tide_world_hear_availability(world, *kept, destroyed, count, &changes, true);\n"
+                     "        if (!unchanged) tide_world_hear_availability(world, *kept, destroyed, count, &changes, true, &l->Session.player);\n"
                      "        free(destroyed);\n"
                      "        uint32_t change_at = 0;\n"
                      "        for (const tide_heard *r; (r = tide_event_log_next(&changes, &change_at));) {\n"

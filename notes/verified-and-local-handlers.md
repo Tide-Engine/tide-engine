@@ -1,5 +1,52 @@
 # `verified` and local handlers of match events
 
+## Recorded-owner filters (2026-10-19)
+
+Owner-approved: local match-event handlers accept with ownership and without
+ownership, including verified handlers. Their Owner presence and player are
+captured after match handlers at the event's queue turn, before destruction.
+Later transfers/removal/destruction do not redirect an earlier event. No
+explicit Owner/Session parameter is required. Without ownership complements
+with ownership, including missing Owner; filters alone imply an entity target
+and select match lifecycle listeners. Match code, local-world events, Forgotten
+and nested queries retain their existing restrictions.
+
+Generated event payloads add private player/presence metadata only for events
+whose listeners filter ownership. Local dispatch compares that capture with
+Session.player before touching attached local fields or calling the handler.
+Ordinary occurrence identity/dedup stays unchanged: ownership-only corrections
+do not repeat predicted occurrences; confirmed delivery uses its own capture.
+No runtime API, world bytes/hash, C event header or session protocol changed.
+The generated journal layout/build identity changes for affected games.
+
+Shown/Hidden reconcile ownership as part of each listener's eligibility at
+their delivered old/new endpoints. Owner value changes as well as presence
+changes can produce transitions; transient changes still coalesce. Their
+compiler-private availability helper accepts an optional receiving player.
+Raw tick/arrival/visibility logs remain independent of local player identity;
+frame reconciliation supplies Session.player. Hidden uses the prior Owner.
+
+Authoritative recipient lifecycle journals capture Owner only when that whole
+component is permitted to the recipient. A hidden Owner acts absent; metadata
+is zero, and existing required-component masks exclude with-ownership listeners.
+The incoming payload validator checks presence is 0/1 and an absent owner is
+zero before dispatch. The seven ownership_events regressions cover delayed
+delivery after transfer/removal, absent versus empty Owner, event-handler
+changes, sparse filters, local fields, query rows, genuine lifecycle/death,
+replay and confirmation, independent availability endpoints/corrections, and
+complete journal equality across hidden-owner variants plus malformed metadata.
+LSP ownership completion and hover cover local match-event handlers. Public
+Events and the decided spec document the recorded-owner rule.
+
+Validation: warning-free full native/web debug builds; 2,434/2,434 native CTest
+cases (108.46 seconds), including all 239 editor cases and 32 GPU tests;
+2,344/2,344 web cases (256.53 seconds), including WASI, WebGL/D3D11 and WebGPU;
+and the docs production build pass. The final filter-only Spawned assertion and
+corrected local-placement error fixture were also rerun natively. Existing
+determinism pins remain unchanged. Private prototype targets stayed disabled;
+no Gravewake browser run or CI was dispatched. Other OS/sanitizer coverage
+remains CI work.
+
 ## Visibility availability and authoritative lifecycle (2026-10-15)
 
 This supersedes the older arrival-through-`Spawned` contract below. `Shown`
@@ -167,7 +214,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Events only local code handles** cost the match nothing: its bytes, hash, snapshots and traffic are the same without them, and a machine with nobody to show it to does no work for them. `compiler/tests/e2e/local_events_same.h` pins that against the same game without them (`local_events_same`, `local_events_plain`), as `local_fields_same.h` does for local fields: a change to how worlds are kept or sent updates its numbers too.
   - In the compiler, such a handler is a listener: `decl.listens` (`check_listener` in `compiler/src/check.c`), kept in its event's `listeners`, never in its `handlers`, which the tick runs. Nothing of it is in the world. A tick records what listeners take only when it's given a log: generated `tide_world_tick_events` sets the log for the thread that runs the tick (a thread-local of the generated `.c`, `tide_listening`), and as each event's turn comes, after the match's handlers of it, `tide_hear_<Event>` (`gen_hear`) pushes a `tide_heard` (`tide/events.h`) and then a `tide_heard_<Event>`: the event, and the components and singletons its listeners take, gathered then, with a bit for each listener that runs for the entity. `Spawned` is recorded as the spawn applies and `Destroyed` before the row goes. An event with listeners and no match handler isn't even queued while no tick records (`tide_listeners`), unless it holds text, whose heap blocks every machine has to take the same way.
   - The frame runs them from the records (`tide_local_hear`, `gen_heard`), before `tide_local_forget`, so a handler still finds the local fields of an entity that's gone since; a row kept for another entity that had the handle goes first (`tide_let_go_<Component>_local`, by what each was born as). Games with listeners of entity events keep what entities are born as (`entities_born`).
-  - Text, lists, maps, sets and grids of the match aren't recorded yet: a listener that names one is an error, and the copies have them empty. `World`, `Devices`, the input, `with ownership` and `async` are errors there too.
+  - Text, lists, maps, sets and grids of the match aren't recorded yet: a listener that names one is an error, and the copies have them empty. `World`, `Devices`, the input and `async` are errors there too. Ownership filters are supported by the 2026-10-19 rule above.
   - **A machine hears `Spawned` once for every entity of the match it comes to have** (agreed 2026-10-07, after the owner set a `local Texture` field in a `local event(Spawned)` handler for boxes the match's start spawned, and expected them textured: "view events should likely have a way to init themselves on join"; the details are Claude's picks, Provisional in `docs/spec.md`, Events). In the tick that spawns it, as before, or when the world it's in arrives: the entities a match starts with are spawned by `tide_world_start`, outside any tick, and a machine's world is always one it was sent, its own server's too, so neither was ever heard. What's built, and what code relies on:
     - **Generated `tide_world_hear_arrived(w, had, events)`** (`gen_hear_arrived` in `compiler/src/codegen.c`), the game's `tide_game.hear_arrived`: for each archetype some listener of `Spawned` runs for (`heard_for`), each row's entity that isn't alive in `had` by its handle (NULL: every one) goes through `tide_hear_Spawned`, the function a tick's spawn records with, so the handlers' bits, sparse filters and what they take are the same code. Then the rows its handlers' queries read (`tide_hear_rows`), and every record it made says the world's own tick. It's static, in the `.c` alone and only in a game with such a listener (`hears_arrivals`), so no game's header or hash moved: old and new tidec over every game's source list, with `--layout` and without, 256 games the same and the 6 with such a handler (Duel and its tests, two samples, two tests) with only those lines more.
     - **Rows too**: `compiler/tests/e2e/local_events` has `Spawned` handlers of both kinds with a query, whose rows are the arrived world's.

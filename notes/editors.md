@@ -1,5 +1,13 @@
 # The language server and the editors
 
+Recorded-owner event filters (2026-10-19): ownership is offered after with and
+without in local match-event handler headers, including verified triggers,
+and remains absent for match handlers and known local-world events. Hover
+explains captured event-turn ownership and availability endpoints. The existing
+lsp_ownership case checks completion, clean listener diagnostics and hover.
+No editor protocol or extension packaging changed. Full validation is in
+notes/verified-and-local-handlers.md.
+
 Mutable World.Set overlap (2026-10-19): the shared checker accepts direct and
 transitive helper replacement of active mut component bindings. Access warnings
 wait for World effects so a parameter read after self Set does not suggest
