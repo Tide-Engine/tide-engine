@@ -8070,36 +8070,6 @@ static param *row_binding(const expr *e)
     return NULL;
 }
 
-// Whether a value is the match's as a local handler hears it: its event, or a
-// component or singleton of the match it takes, or a field of one. They're
-// copies from the event's turn, without what the match keeps in its heap. So
-// are the rows of its queries over the match, from the event's tick.
-static bool heard_value(const checker *c, const expr *e)
-{
-    const decl *sys = c->method ? NULL : c->system;
-    if (!sys || sys->kind != DECL_SYSTEM || !sys->listens) return false;
-    if (through_local_field(e)) return false;
-    const param *binding = row_binding(e);
-    if (binding) return binding->type.kind == TY_COMPONENT && !binding->type.decl->is_local;
-    while (e->kind == E_MEMBER && !e->local_field) e = e->object;
-    if (e->kind != E_NAME || e->bind != BIND_PARAM) return false;
-    const type t = e->param->type;
-    if (t.kind == TY_EVENT) return true;
-    return (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON) && !t.decl->is_local;
-}
-
-// Text, a list, a map, a set or a grid: what a world keeps in its heap.
-static bool kept_in_heap(const type t)
-{
-    return t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID;
-}
-
-static const char *heap_what(const type t)
-{
-    if (t.kind == TY_STRING) return "text";
-    return t.kind == TY_LIST ? "a list" : t.kind == TY_MAP ? "a map" : t.kind == TY_SET ? "a set" : "a grid";
-}
-
 // A Forgotten handler's component or singleton: its entity is gone from the
 // match, so only its local fields are left to read.
 static bool is_forgotten_param(const checker *c, const param *p)
@@ -8531,14 +8501,6 @@ static type check_member(checker *c, expr *e)
                     diag_error(e->at, "'" STR_FMT "' is a match field of '" STR_FMT "', and the entity is gone: only its "
                                "local fields are left", STR_ARG(f->name), STR_ARG(obj.decl->name));
                     diag_note("keep what the handler needs of the match in a local field, set while the entity was there");
-                    return T_ERR;
-                }
-                if (heard_value(c, e->object) && kept_in_heap(f->type)) {
-                    diag_error(e->at, "'" STR_FMT "' is %s of the match's, which a local handler doesn't hear yet",
-                               STR_ARG(f->name), heap_what(f->type));
-                    diag_note("a local handler gets what it takes of the match as the event left it, but text, lists, maps, "
-                              "sets and grids stay in the match: send what it needs of them in a field of another type, or "
-                              "read them in a view");
                     return T_ERR;
                 }
                 if (f->type.kind == TY_RESIDENT && e != c->resident_arg) {

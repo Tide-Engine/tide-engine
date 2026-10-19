@@ -1,5 +1,12 @@
 # The docs site
 
+Recorded containers (2026-10-19): Events, Functions and the spec describe
+read-driven capture, ordinary copy/borrow rules, event-turn/tick-end/confirmed
+timing and current attached local state. The old omission/error and open-item
+statements are removed. Provisional codec/identity details remain distinguished
+from the owner's decided behavior. No navigation or deployment changes.
+Validation: notes/language.md.
+
 Query local fields (2026-10-19): the decided spec and Views, Functions, Events
 and Systems describe current attached local reads, mutable bindings, helper
 capabilities and verified/recorded match timing. Views includes the approved

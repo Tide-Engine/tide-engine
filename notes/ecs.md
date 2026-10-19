@@ -1,5 +1,13 @@
 # ECS and simulation state
 
+Recorded containers (2026-10-19): local event queries capture their statically
+read container fields at tick end, including reads through borrowed helpers.
+Equal query shapes retain one shared record/tail. Direct parameters still use
+the event turn; availability reads the delivered endpoint. Serialized values
+are decoded once per delivery batch into a separate temporary heap, never a
+match snapshot or live offset. Match bytes/hash/storage are unchanged. Older
+omitted-heap statements below are superseded; contracts/tests: language.md.
+
 Attached local fields through query rows (2026-10-19) supersede the historical
 read-only/local-field prohibition below. Local code resolves current attached
 state; mut bindings write those fields while match rows keep their existing

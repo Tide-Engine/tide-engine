@@ -1,5 +1,17 @@
 # `verified` and local handlers of match events
 
+Recorded containers (2026-10-19): owner-approved text/list/map/set/grid reads
+now follow existing event-turn, tick-end query and verified timing. Private
+read analysis includes helper/query forwarding; unread containers are omitted.
+Self-contained serialized tails use existing journal ownership, then one
+delivery-only heap supplies the batch's read-only values. No live match-heap
+handle survives recording. Captured event payload contents participate in
+occurrence identity; component/query snapshots do not. Recipient validation
+checks both fixed zero-handle values and bounded typed tails before use.
+Availability capture resolves each endpoint's actual heap. This supersedes
+older omitted-heap restrictions below. Implementation, tests and final
+validation: notes/language.md, Recorded containers for local handlers.
+
 Query local fields (2026-10-19): recorded and verified query bindings reach
 current attached local fields at local delivery; mut bindings can write those
 fields, including local containers. Only match data and conditional plain birth

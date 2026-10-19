@@ -1,5 +1,64 @@
 # Language features, as tidec builds them
 
+## Recorded containers for local handlers (2026-10-19)
+
+Owner-approved: local match-event handlers read text, lists, maps, sets and
+grids from their existing recorded endpoints. Direct parameters use the event
+turn; query rows use tick end; verified delivery uses the confirmed recording.
+Attached local fields remain current. Match data stays read-only and existing
+copy restrictions, including grids, are unchanged. This supersedes older
+omitted-heap statements below and in the local-handler/query notes.
+
+Private read analysis follows selected member paths through synchronous
+functions, method receivers, implicit method calls and borrowed queries to a
+fixed point. An explicit whole-value copy reads its fields; conditional reads
+are possible reads, and dynamic fixed-array indexes select the possible
+elements. Unread containers remain zero in the fixed record and have no tail
+encoding. Component/singleton captures use eligible listener masks; event
+payloads use the union of possible local reads, and shared query shapes use
+their readers' union. A container read captures that container's value, rather
+than specializing its representation to an individual count/index operation.
+
+The existing visibility value codec is shared in value_codec_codegen.inc.
+Generated journals append bounded, owned serialized tails after their fixed
+payload/rows. Existing log copy/take/replay/confirmation/clear/free operations
+therefore own the complete value lifetime, with no runtime interface change.
+Before local delivery the log is decoded once into a temporary heap, shared
+across its handlers/query rows and freed after delivery. The match/local heap
+resolvers and scratch mark are restored. Recording explicitly resolves each
+source world's heap, including old availability endpoints. Explicit local
+value assignments acquire their ordinary local ownership before that heap goes.
+
+Recipient validation retains zero-handle, canonical bool and private/Resident
+checks on fixed records, then validates tail spans/padding, presence flags and
+typed values in an isolated temporary heap before dispatch. It preserves
+component visibility and rejects bad data without consulting live heap offsets.
+Delivery tolerates listener subsets already reduced by occurrence deduplication;
+authoritative input validation still requires canonical capture presence.
+Value decoding retains the existing 256-level codec nesting guard. Journal
+build identity includes capture paths, reader masks and codec shape. Observed
+event-payload container contents contribute to occurrence identity; component,
+singleton and query snapshots do not. Unread event containers remain omitted.
+No world layout, allocator, deterministic hash/packing or engine API changed.
+
+event_containers has seven runtime cases: recorded turn versus tick-end data,
+lists/text/nested maps/sets/open grids, helper/method/query forwarding, local
+copies surviving world/journal disposal, chunked values, changed event content,
+replay/confirmation, destruction/log copies, recipient privacy/checked tails,
+old/new availability heaps and byte-identical journals beside three unread
+5,000-element containers. Three obsolete rejection fixtures are removed.
+visibility_lifecycle keeps its forged-handle tests with the now-variable tail.
+Public Events, Functions and the decided/provisional spec document the contract.
+Validation: both full debug builds pass without warnings. All 2,438 native
+CTest cases pass (2,406 non-GPU in 128.78 s, then 32 GPU in 14.94 s), including
+all 240 editor cases. All 2,348 web debug cases pass in 321.89 s, including the
+seven new runtime cases on WASI and WebGL/D3D11/WebGPU coverage. The production
+docs build passes. Final compiler-only comment/indent cleanup was rebuilt on
+both host tools; emitted behavior is unchanged. Exact determinism pins remain
+unchanged. Private prototypes stayed disabled; no Gravewake browser playtest,
+CI or deployment was run. Linux/macOS/MinGW, Android and sanitizer configurations
+were not run on this Windows machine.
+
 ## Query rows reach attached local fields (2026-10-19)
 
 Owner-approved after reviewing the query(mut Fighter fighter) example: local
