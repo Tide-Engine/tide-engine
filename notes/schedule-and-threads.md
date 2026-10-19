@@ -1,5 +1,12 @@
 # The schedule and the tick on threads
 
+Query local fields (2026-10-19): attached local access and mutable-query effects
+propagate through synchronous helpers. Views/local handlers retain their
+existing serial order and named phases; match component data remains read-only
+and no World write is granted. Query mut helpers count as writers when lowering
+source evaluation order, as ordinary mut arguments already do. No match scheduler/thread behavior
+or runtime interface changes. Validation and alias contracts: language.md.
+
 World.Set beside read-only component parameters (2026-10-18) uses the existing
 global write effects and single-thread traversal, including writes propagated
 through helpers. A row reads the current component when entered, then keeps

@@ -1,0 +1,5 @@
+// expect: 'Read' reads local fields through its query, which the match can't see
+component Body { local int flash; }
+scene Main { }
+int Read(query (Body body) bodies) { mut var n = 0; foreach (var row in bodies) n += row.body.flash; return n; }
+system Update(query (Body body) bodies) { Debug.Assert(Read(bodies) >= 0); }

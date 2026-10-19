@@ -31,11 +31,29 @@ The view's own parameters still pick the entities it runs for, and the query pic
 - **Rows are what the view sees.** They're [blended](./views.md#smooth-at-any-tick-rate) between the last two ticks like the view's own parameters, with corrections smoothed the same way: the row of the view's own entity has the values its parameters have. An entity that wasn't there last tick is as it is, and one that's gone is in no row.
 - **`verified` works in a query** as it does on a view's own parameters (see [Confirmed state](#confirmed-state)). `query (verified Health health) confirmed` goes through the confirmed world's entities, at the upper endpoint of its confirmed presentation interval. A query with bindings or filters of both worlds, `query (Body body, verified Health sure) both`, takes the entities that are in both: the same entity, and not only the same handle. `with verified Dead` and `without verified Dead` filter there too.
 - **A query is all the match's or all this machine's.** A view goes through local entities too, like its own sparks: `query (Spark spark) sparks`. Those are as they are now, with what views earlier in the frame wrote, and `entry.entity` is a `LocalEntity`.
-- **Rows are read-only, and have the match's fields.** A binding can't be `mut`, and an entity's [local fields](./local-state.md#local-fields) are read and written by a view that runs for that entity.
+- **Match fields remain read-only.** A row can also read the entity's current [local fields](./local-state.md#local-fields). Use `query (mut Fighter fighter) fighters` to write those local fields; the component's match fields and the row's entity handle stay read-only. This works with verified bindings too: local fields always use current local state. Queries over local-world components still have read-only bindings.
 - **A view that queries the match only runs in a match**, like any view that reads it. What should go on outside one stays in a view of its own.
 - **Going through a lot stays cheap.** A query's rows are made once a frame, however many entities the view runs for: a view over thousands of entities that goes through thousands of others blends those others once, not once for each.
 
 The rest is as in a system: queries are iterated directly or [borrowed by synchronous helpers](../language/functions.md#borrowing-a-query), which keep the view's blended or verified data. Queries and whole rows can't be stored or returned, and whole rows can't be passed on; a component value like `entry.box` can. The order is the ECS's, not by distance or by entity ID. The editor says what a view's queries read above the view and on hover, as it does for a system.
+
+For example, mark the presentation of every dead fighter:
+
+```csharp
+component Fighter
+{
+    int health;
+    local float flash;
+}
+
+view MarkDead(query (mut Fighter fighter) fighters)
+{
+    foreach (var row in fighters)
+        if (row.fighter.health <= 0) row.fighter.flash = 1;
+}
+```
+
+Passing `row.fighter` directly to a helper retains its local fields and the binding's write permission. Copying it into an ordinary variable copies only match data. A helper can borrow the whole query with a mutable binding when the source binding is mutable.
 
 A view takes a `World` as a system does, to read another entity's component by its handle: `world.Get<Health>(follower.leader)` (see [Other entities](./systems.md#other-entities-the-world)). It reads the match through it and never changes it, and what it gets is the component as of the latest tick, not blended between ticks.
 

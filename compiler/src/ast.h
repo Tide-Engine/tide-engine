@@ -338,6 +338,7 @@ typedef struct param {
     bool local_use;      // The code reads or writes its local fields, itself or through a function it passes it to
     loc local_use_at;    // ...where it first does
     bool local_written;  // ...and writes one
+    bool local_shared;   // The outer binding shares live attached storage with local-field queries
     bool match_write;    // A helper's: it changes the match's fields of it, itself or through another helper
     loc match_write_at;  // ...where it first does
     VEC(struct param) query; // PARAM_QUERY's read-only bindings and component filters
@@ -358,6 +359,8 @@ typedef struct param {
     bool query_rows;
     struct param *query_source; // A nested binding or filter's containing query parameter
 } param;
+
+static inline bool param_binding(const param *p) { return p->mode == PARAM_READ || p->mode == PARAM_MUT; }
 
 // Why a system waits for one that runs before it in the tick (see parallel.c).
 typedef enum conflict_kind {
@@ -760,6 +763,8 @@ typedef struct decl {
     bool verified_entities;
     bool takes_verified; // Some parameter of it is `verified`, a singleton's too: it needs a confirmed world to run
     int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's or listener's ownership filter
+    comp_mask query_fields; // Attached local fields reached through queries, including synchronous callees
+    comp_mask query_mut_fields; // Query field references that can change a caller's readonly local-field borrow
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)
     struct decl *order_enum; // [Stage]: the enum whose declaration order defines the phases
     const enum_member *order_member;

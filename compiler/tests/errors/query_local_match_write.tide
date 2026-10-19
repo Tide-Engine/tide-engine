@@ -1,0 +1,4 @@
+// expect: query row 'row' is read-only
+component Body { int health; local int flash; }
+scene Main { }
+view Update(query (mut Body body) bodies) { foreach (var row in bodies) row.body.health = 1; }

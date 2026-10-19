@@ -1,7 +1,0 @@
-// expect: 'shown' is a local field of 'Body', and a query's rows have the match's fields only
-component Body { float x; local float shown; }
-scene Main { }
-view Hits(query (Body body) bodies)
-{
-    foreach (var row in bodies) Debug.Log($"{row.body.shown}");
-}

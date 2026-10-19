@@ -43,7 +43,7 @@ Other parameters:
 - **The input**, or **`Devices`**: what the player who owns the entity does (see [Input](./input.md)).
 
 - **The `World`**: any other entity's components (below).
-- **A read-only `query`**: another set of entities to inspect (below).
+- **A `query`**: another set of entities to inspect (below). Match data stays read-only; [local code](./views-and-the-match.md#other-entities) can also read and write attached local fields.
 
 Views take the same parameters, and one filter more: `with ownership` and `without ownership`, the entities this machine's player owns, or doesn't (see [Your own entities](./views-and-the-match.md#your-own-entities)). It's for views only: a system runs the same on every machine, so there it's an error, which points to `with Owner`, the entities any player owns.
 

@@ -1,0 +1,4 @@
+// expect: a mutable query binding writes attached local fields, and 'Body' has none
+component Body { int health; }
+scene Main { }
+view Update(query (mut Body body) bodies) { foreach (var row in bodies) Debug.Assert(row.body.health >= 0); }
