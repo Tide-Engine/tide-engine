@@ -1,5 +1,64 @@
 # Inside Out
 
+## Walking into posts (2026-10-19)
+
+The owner disliked lining up on a lane's two pads to go anywhere ("having to
+make a line") and asked for something more engaging. The agent proposed
+walking into the post, as into a box (the game's own verb, Patrick's
+Parabox's way into a level), with the post showing who is in; the owner
+said to try it. This supersedes the lanes and pads below; the charge, dive,
+lift doors, arrivals and gating stand. The look is the agent's pick.
+
+- **Rules** (`hall.tide`). A `Station` has its `post` and `near`, the cell
+  in front (`far` is gone). `HallMove`, which `MoveHand` uses in a hall,
+  and the step preview with it: a robot on `near` stepping toward an open
+  post goes into it (its position is the post's wall cell, `Step.Enter`,
+  a move that undo takes back); in a post, its one step is back out to
+  `near`, by the ordinary rule (so it pushes what stands there, or is
+  blocked); every other step is `MovePuzzle`. A closed post bumps. Both
+  robots can be in one post (the same cell; nothing else ever enters a
+  wall). `AboardStation` names the post a robot is in, and `HallState.aboard`
+  each seat's. `ContinueHall` starts the charge when both are in one post;
+  stepping out during `CHARGE_TICKS` cancels, then nothing moves as before.
+  `OnPad` and `StationUnder` are gone; `FreeCellNear` no longer avoids pads
+  and lost its chapter parameter. Arrival cells are unchanged
+  (`near + 2 * (near - post)` is where `far + away` was).
+- **Look** (`gallery.tide`, `paint.tide`). The pads are replaced by a sill
+  on the floor at the post's foot in the old lane paint (amber unsolved,
+  green solved, teal lifts, grey locked), which fills with light from the
+  middle during the charge. A robot shrinks and rises onto the post as it
+  goes in and is not drawn in the hall while in (`HallPostNear`, which
+  takes the hall's chapter rather than the Workshop: `DimensionPieces` is
+  under `RoomScene`, whose frames already hold Workshop copies). A lamp in
+  the robot's paint lights on the post's top while it is in (`SeatLamps`;
+  Amber's on the left as the post is faced), on lifts too. The models now
+  draw a robot only while it is in the post: most puzzles start their
+  robots two boxes deep, a pixel tall in a model, so rings tried for empty
+  places could not be seen and were removed. The note above the names says
+  "Both walk in to go.", "Waiting for Teal." or "Teal is in: walk in to go."
+  (`PostNote`, was `LaneNote`). Going in plays the doorway's enter sound
+  (cue kind 2) and the step ring; stepping out is a step.
+- **Tests.** `inside_out_both_robots_in_a_post_open_its_puzzle` (was `..._in_a_lane_...`):
+  one robot in is not enough, in a post every step but out is refused, both
+  fit, stepping out cancels, then as before. The lift and challenge tests
+  walk into the lifts and the challenge's post; the second hall's
+  unpowered lift up refuses the step into it. The Boxes route of
+  `inside_out_batteries_in_the_sockets_power_the_lift` is unchanged.
+
+Going into a post is a move the hall solver now makes too (in solver mode
+only chapter 1's posts, the challenges and the lifts down are open).
+`inside_out_solve hall <n> --subsets` again finds every set of solved
+puzzles lifting, and every route replays, with the same route lengths as
+the table below: largest searches 65,741 (Boxes), 765,011 (Each other),
+111,905 (Power), 103,944 (Itself) and 21,974 (Held) positions, up from
+the parked robots' extra places.
+
+Bounded hidden two-player native captures (a seeded save, deleted after)
+were inspected: the note in front of a post, a robot shrinking into it,
+Amber's lamp and then both, the sill filling and the dive. They led to the
+lamps (first ones, an eighth of a tile, could not be read) and to dropping
+the model rings.
+
 ## Battery halls (2026-10-18, second round)
 
 After playing the first hall the owner found it "doesn't add much other

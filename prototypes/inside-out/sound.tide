@@ -182,7 +182,7 @@ local event(PuzzleCue cue) HearPuzzle(Workshop workshop, Hands hands, Mixer mixe
         PlayCue(shutterOpen, 0.3);
         PlayCue(boxDock, 0.75);
     }
-    // Both robots in a hall's lane: its pads start to fill.
+    // Both robots in a hall's post: its doorway starts to fill.
     else if (cue.kind == 7)
     {
         PlayCue(plateDown, 0.12);
@@ -212,7 +212,7 @@ view WorkshopChanges(Workshop workshop, Time time, Hands hands, Mixer mixer, mut
 {
     if (!hearing.inGame) return;
     var audible = !mixer.muted && mixer.effects > 0;
-    // A full lane goes: into a model with the doorway's sound, or the lift
+    // A full post goes: into a model with the doorway's sound, or the lift
     // doors shutting.
     var departing = Departing(HallOf(workshop), time.tick);
     if (departing && !hearing.departing && audible)

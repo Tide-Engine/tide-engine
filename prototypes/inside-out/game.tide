@@ -93,7 +93,7 @@ singleton Workshop
     bool inHall;
     int hall;
     int arrival;
-    // The exhibit whose lane both robots stand in, and when they got there.
+    // The exhibit whose post both robots are in, and when they got there.
     int departStation = -1;
     int departTick = -1;
     // A chapter whose lift has just been powered, and whether the last solve
@@ -653,7 +653,10 @@ command(Move move, PlayerID sender) MoveHand(mut Workshop workshop, Time time)
     if (!Authorized(workshop, sender, move.serial) || Leaving(workshop, time.tick)) return;
     var seat = SeatOf(workshop, sender);
     var before = workshop.puzzle;
-    if (!MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction, out var step))
+    mut var step = Step.Blocked;
+    var moved = workshop.inHall ? HallMove(HallOf(workshop), workshop.layout, workshop.puzzle, seat, move.direction, out step) :
+        MovePuzzle(workshop.layout, workshop.puzzle, seat, move.direction, out step);
+    if (!moved)
     {
         Send(PuzzleCue { kind = 6, seat = seat });
         return;

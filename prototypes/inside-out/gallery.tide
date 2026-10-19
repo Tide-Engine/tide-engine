@@ -1,7 +1,8 @@
 // How the hall's exhibits (hall.tide) are drawn: each post carries a model
-// of its puzzle as it starts, a lift, or a covered challenge, with its two
-// pads in front. Entering a puzzle, the view closes in on its model; coming
-// back, it comes out of the model again.
+// of its puzzle as it starts, or a lift, with a lit doorway on the side it
+// is walked into from, and a lamp for each robot that lights while it is in
+// the post. Entering a puzzle, the view closes in on its model; coming back,
+// it comes out of the model again.
 
 // Every puzzle's start, loaded the first time a hall shows its model.
 local singleton Gallery
@@ -60,8 +61,9 @@ MapLens ModelLens(int4 span, float2 at, float tile, float ground, float top)
     return MapLens { origin = center - middle * model, tile = model, floor = ground + tile * top };
 }
 
-// One room of a model, still, as its puzzle starts.
-void ModelRoom(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, int room, MapLens lens, int4 span)
+// One room of a model, still, as its puzzle starts. A robot is drawn where it
+// starts while it is in the post (a bit of `aboard` for each seat).
+void ModelRoom(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, int room, MapLens lens, int4 span, int aboard)
 {
     sculpture.ground = lens.floor;
     sculpture.surfaceOrigin = lens.origin;
@@ -102,14 +104,14 @@ void ModelRoom(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, int r
         Crate(sculpture, MapPoint(float2(cargo.position), lens), lens.tile, BatterySeated(layout, cargo), lens.floor + lens.tile * .004);
     }
     for (var seat = 0; seat < 2; seat++)
-        if (puzzle.actors[seat].room == room)
+        if (puzzle.actors[seat].room == room && (aboard & (1 << seat)) != 0)
             Maker(sculpture, MapPoint(float2(puzzle.actors[seat].position), lens), lens.tile * .90, seat,
                 lens.floor + lens.tile * .004, BotPose { facing = puzzle.actors[seat].facing });
     if (room >= 0) RoomTrim(sculpture, layout, puzzle, room, lens);
 }
 
 // A whole model: its table and the rooms in it, as deep as they show.
-void ModelScene(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, MapLens lens, int4 span)
+void ModelScene(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, MapLens lens, int4 span, int aboard)
 {
     mut SceneLens[16] pending = default;
     pending[0] = SceneLens { room = -1, lens = lens };
@@ -120,7 +122,7 @@ void ModelScene(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, MapL
         var center = MapPoint(RoomCenter(layout, item.room), item.lens);
         var dims = RoomDimensions(layout, item.room);
         if (!InPlayfield(center, Math.Max(dims.x, dims.y) * item.lens.tile, item.lens)) continue;
-        ModelRoom(sculpture, layout, puzzle, item.room, item.lens, span);
+        ModelRoom(sculpture, layout, puzzle, item.room, item.lens, span, aboard);
         for (var box = 0; box < layout.roomCount; box++)
         {
             if (puzzle.rooms[box].room != item.room) continue;
@@ -140,8 +142,8 @@ void ModelScene(mut Sculpture sculpture, LevelLayout layout, Puzzle puzzle, MapL
     }
 }
 
-// How the pads of a lane look: their paint, and whether they glow.
-Color LanePaint(HallState workshop, Station station, bool open)
+// The paint of a post's doorway.
+Color DoorwayPaint(HallState workshop, Station station, bool open)
 {
     if (!open) return LOCKED_PAD;
     if (station.kind == StationKind.Level) return Solved(workshop.completed, station.level) ? SOLVED_GLOW : GLOW_TARGET;
@@ -151,7 +153,7 @@ Color LanePaint(HallState workshop, Station station, bool open)
 // A lift: a cab in the post with its doors shut, and an arrow on its roof.
 // The lift up has a light for each battery it takes, lit as its sockets
 // fill; it works, its arrow lit, once they are full.
-void LiftPost(mut Sculpture sculpture, HallState workshop, Station station, float2 at, float tile, float ground, bool open)
+void LiftPost(mut Sculpture sculpture, HallState workshop, Station station, float2 at, float tile, float ground, bool open, int aboard)
 {
     var floor = ground + tile * PostBase(station.room);
     var top = ground + tile * PostTop(station.room);
@@ -167,6 +169,7 @@ void LiftPost(mut Sculpture sculpture, HallState workshop, Station station, floa
     FloorLine(sculpture, tip, tip + float2(tile * .16, -up * tile * .16), tile * .06, arrow, crown, tile);
     FloorLine(sculpture, tip - float2(0, up * tile * .02), tip - float2(0, up * tile * .30), tile * .06, arrow, crown, tile);
     sculpture.glow = 0;
+    SeatLamps(sculpture, station, at, tile, crown, .13, .30, aboard);
     if (station.kind != StationKind.Up || workshop.need <= 0) return;
     var lit = open ? workshop.need : Math.Min(workshop.need, workshop.seated);
     for (var i = 0; i < workshop.need; i++)
@@ -178,10 +181,25 @@ void LiftPost(mut Sculpture sculpture, HallState workshop, Station station, floa
     }
 }
 
+// A lamp in a robot's paint on a post's top while it is in the post, toward
+// the side it is walked into from: Amber's on the left as it is faced.
+void SeatLamps(mut Sculpture sculpture, Station station, float2 at, float tile, float top, float spread, float reach, int aboard)
+{
+    var front = float2(station.near - station.post);
+    var side = float2(-front.y, front.x);
+    sculpture.glow = 1;
+    for (var seat = 0; seat < 2; seat++)
+        if ((aboard & (1 << seat)) != 0)
+            Cuboid(sculpture, at + front * tile * reach + side * tile * (seat == 0 ? spread : -spread), float2(tile * .18), tile * .06,
+                seat == 0 ? BOT_AMBER : BOT_TEAL, top, tile);
+    sculpture.glow = 0;
+}
+
 // A puzzle's post. Its model shows how the puzzle starts; a ring round the
 // post's top glows green once it is solved. A model too small to read is
 // a plain block.
-void PuzzlePost(mut Sculpture sculpture, HallState workshop, mut Gallery gallery, Station station, float2 at, float tile, float ground, bool open)
+void PuzzlePost(mut Sculpture sculpture, HallState workshop, mut Gallery gallery, Station station, float2 at, float tile, float ground, bool open,
+    int aboard)
 {
     var floor = ground + tile * PostBase(station.room);
     var top = ground + tile * PostTop(station.room);
@@ -191,6 +209,7 @@ void PuzzlePost(mut Sculpture sculpture, HallState workshop, mut Gallery gallery
     sculpture.glow = solved ? 1 : 0;
     FloorOutline(sculpture, at, float2(tile * .90), Math.Max(.8, tile * .035), solved ? SOLVED_GLOW : open ? BRASS : RUBBER, top, tile);
     sculpture.glow = 0;
+    if (open) SeatLamps(sculpture, station, at, tile, top, .31, .31, aboard);
     if (!open || tile < 14)
     {
         Cuboid(sculpture, at, float2(tile * .70), tile * .08, open ? Color(.42, .40, .38) : Color(.20, .17, .16), top, tile);
@@ -204,23 +223,23 @@ void PuzzlePost(mut Sculpture sculpture, HallState workshop, mut Gallery gallery
     var surfaceTile = sculpture.surfaceTile;
     var puzzle = gallery.puzzles[station.level];
     var span = ModelSpan(layout, puzzle);
-    ModelScene(sculpture, layout, puzzle, ModelLens(span, at, tile, ground, PostTop(station.room)), span);
+    ModelScene(sculpture, layout, puzzle, ModelLens(span, at, tile, ground, PostTop(station.room)), span, aboard);
     sculpture.ground = surfaceGround;
     sculpture.surfaceOrigin = origin;
     sculpture.surfaceTile = surfaceTile;
     sculpture.surface = SurfaceRole.Prop;
 }
 
-// The fraction of a lane's charge: from the moment both stand in it to its
-// pads being full.
-float LaneCharge(HallState workshop, int index, float now)
+// The fraction of a post's charge: from the moment both are in it to its
+// doorway being full.
+float PostCharge(HallState workshop, int index, float now)
 {
     if (workshop.departStation != index || workshop.departTick < 0) return 0;
     return Math.Saturate((now - workshop.departTick) / CHARGE_TICKS);
 }
 
-// The posts and pads of the hall that stand in one room, wherever that room
-// is drawn: RoomScene calls this for each drawing.
+// The posts of the hall that stand in one room, wherever that room is drawn:
+// Workbench calls this for each drawing RoomScene recorded.
 void HallRoom(mut Sculpture sculpture, HallState workshop, mut Gallery gallery, int room, MapLens lens, float now)
 {
     if (!workshop.inHall || lens.tile < 3) return;
@@ -235,24 +254,25 @@ void HallRoom(mut Sculpture sculpture, HallState workshop, mut Gallery gallery, 
         sculpture.surfaceOrigin = lens.origin;
         sculpture.surfaceTile = lens.tile;
         sculpture.surface = SurfaceRole.Prop;
-        if (station.kind == StationKind.Level) PuzzlePost(sculpture, workshop, gallery, station, post, lens.tile, lens.floor, open);
-        else LiftPost(sculpture, workshop, station, post, lens.tile, lens.floor, open);
-        // The two pads: an inlay with a line round it that glows while the
-        // lane is open, and fills with light as both stand in it.
-        var paint = LanePaint(workshop, station, open);
-        var charge = LaneCharge(workshop, index, now);
-        for (var pad = 0; pad < 2; pad++)
+        var aboard = (workshop.aboard[0] == index ? 1 : 0) | (workshop.aboard[1] == index ? 2 : 0);
+        if (station.kind == StationKind.Level) PuzzlePost(sculpture, workshop, gallery, station, post, lens.tile, lens.floor, open, aboard);
+        else LiftPost(sculpture, workshop, station, post, lens.tile, lens.floor, open, aboard);
+        // The doorway: a sill on the floor at the post's foot that glows
+        // while it is open, and fills with light once both are in.
+        var front = float2(station.near - station.post);
+        var across = front.x == 0 ? float2(lens.tile * .78, lens.tile * .13) : float2(lens.tile * .13, lens.tile * .78);
+        var sill = post + front * lens.tile * .58;
+        var top = lens.floor + lens.tile * .006;
+        var paint = DoorwayPaint(workshop, station, open);
+        sculpture.glow = open ? 1 : 0;
+        Cuboid(sculpture, sill, across, lens.tile * .004, open ? paint : Math.Lerp(paint, RUBBER, .3), top, lens.tile);
+        var charge = PostCharge(workshop, index, now);
+        if (charge > 0)
         {
-            var at = MapPoint(float2(pad == 0 ? station.near : station.far), lens);
-            var top = lens.floor + lens.tile * .006;
-            Cuboid(sculpture, at, float2(lens.tile * .80), lens.tile * .003, Math.Lerp(PLASTER, RUBBER, .45), top, lens.tile);
-            sculpture.glow = open ? 1 : 0;
-            FloorOutline(sculpture, at, float2(lens.tile * .70), FloorStroke(lens.tile), paint, top + lens.tile * .004, lens.tile);
-            if (charge > 0)
-                Cuboid(sculpture, at, float2(lens.tile * .62 * charge), lens.tile * .004, Math.Lerp(paint, Color.white, .25),
-                    top + lens.tile * .004, lens.tile);
-            sculpture.glow = 0;
+            var fill = front.x == 0 ? float2(across.x * charge, across.y * 1.6) : float2(across.x * 1.6, across.y * charge);
+            Cuboid(sculpture, sill, fill, lens.tile * .006, Math.Lerp(paint, Color.white, .35), top, lens.tile);
         }
+        sculpture.glow = 0;
     }
 }
 
