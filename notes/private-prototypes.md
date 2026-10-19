@@ -39,7 +39,7 @@ It does not approve a new feature merely because a game worked around it.
 | Event/command values cannot be helper parameters | Fixed: ordinary functions/methods take and return whole payloads under existing value/mut, heap and capability rules; no implicit World or authenticated sender. Numeric payload helpers/factories also work on GPU. `component_values`, `maps`, `commands` and shader pass 23. |
 | Input values cannot be helper parameters | Fixed with the owner-approved read-only borrow using ordinary parameter syntax. Helpers forward the caller's current/previous input, retaining player selection, nested edges and prediction/replay behavior; no copy or wire change. `input_borrows`, existing input/predict/net/view_time fixtures and `notes/language.md`. |
 | No empty Map literal | Fixed: contextual `[]` initializes an empty map in fields, locals, assignments, arguments and returns. Nonempty map literals remain unsupported; add entries by key. `maps` and `map_nonempty_literal`. |
-| A CPU drawing helper cannot name a frag/vert | Explicit `check_mesh_draw` restriction: shader component/singleton bindings are the view's implicit context. Needs an explicit-binding/helper capability design. Ordinary unshaded drawing helpers already work. |
+| A CPU drawing helper cannot name a frag/vert | Fixed as a conventional completion of explicit helper access: synchronous drawing functions name shaders in mesh/instanced/skinned/blit calls. Shader component/singleton inputs must match unique explicit non-out parameters, with ordinary value/mut and attached-local forwarding rules. No implicit lookup. `draw_helpers`, `draw_values`, `skinned_rest`, shader pixel pass 12 and `notes/shaders.md`. |
 | A GPU helper cannot take a singleton containing Cubemap/Random | Spec deliberately requires resource parameters themselves and excludes 64-bit Random values on GPU. Field projection/specialization would be a new contract. Numeric values and direct texture parameters are supported. |
 | A helper cannot borrow List<Clip> from an asset glob | Fixed as an authorized API completion: synchronous CPU helpers borrow read-only Clip/Texture/Mesh<V> asset lists and string-keyed maps through ordinary parameter syntax, forwarding existing handles without copying or retaining the collection. Elements keep existing value rules; collections cannot escape or wait. `asset_borrows`, fourteen diagnostic fixtures, editor tests and `notes/language.md`. |
 | No live shape-cast self/layer filtering | Owner-approved follow-up built: live/rewound `RaycastAll` and `CastAll` in both physics packages give deterministically sorted first hits per collider for game filtering, with optional sensors and ignore-Body overloads. Live Box3D closest queries now also support ignore-Body. Layers/masks remain absent; no layer API was approved. `notes/box2d.md`, `notes/box3d.md`. |
@@ -60,11 +60,11 @@ It does not approve a new feature merely because a game worked around it.
 
 All reproduced inconsistencies with existing contracts above are now addressed.
 The follow-up API work, synchronous handler queries, helper borrowing,
-read-only World.Set and resource asset collection parameters cover the
-conventional value/metadata gaps and reusable synchronous access: final
-warning-free builds pass all 2,427 native and 2,336 web debug CTests, plus
-the docs build. Detailed contracts and coverage are in notes/language.md and
-notes/textures.md. No CI was dispatched.
+read-only World.Set, resource asset collection parameters and shaded drawing
+helpers cover the conventional value/metadata gaps and reusable synchronous access: final
+warning-free builds pass all 2,431 native and 2,340 web debug CTests, plus
+the docs build. Detailed contracts and coverage are in notes/language.md,
+notes/textures.md and notes/shaders.md. No CI was dispatched.
 The old read-only World.Set snapshot-page limitation required no new scheduling
 policy. The remaining rows name the concrete decision/feature boundary; they
 are not left as an uninvestigated set of "other possible wins". Private prototype

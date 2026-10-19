@@ -6,9 +6,12 @@ using Rooms;
 // ... i just wanna roam, shoot and level"). As a night falls its chests are
 // hidden about and its clock starts: NIGHT_SECONDS to roam, kill and level,
 // the dead coming thicker over its last minute (NIGHT_RUSH), the boss's
-// coming told WARN_SECONDS before. When it runs out the night's boss (two
-// from the fourth night, three from the seventh) claws up near the
-// survivors, and whoever has bled out is back. Once its bosses are down, dawn
+// coming told WARN_SECONDS before. When it runs out a ring of pale
+// wake-fire rises round the survivors (RING_REACH), which the living can't
+// cross and the dead walk through, and the night's boss (two from the fourth
+// night, three from the seventh) claws up in it with them: a stand, as in a
+// Dark Souls boss's arena, not a chase (with nowhere to hold, the bots had
+// never gone down). Whoever has bled out is back. Once its bosses are down, dawn
 // breaks: the dead burn away, the orbs fly in, whoever's down is up, and a
 // moment later the next night falls, with new chests (the ones not found are
 // gone with the night). One who bleeds out is back beside a friend
@@ -25,6 +28,7 @@ const float NIGHT_RUSH = 2;          // ...the dead come thicker, up to so many 
 const float WARN_SECONDS = 10;       // The boss's coming told so long before
 const float DAWN_SECONDS = 10;       // The breath between one night and the next
 const float BACK_AFTER = 60;         // Bled out: back beside a friend after so long, if nothing's brought them sooner
+const float RING_REACH = 17;         // The wake-fire's ring at the night's end: how far from its middle
 
 // How many more of the dead a party brings than one survivor alone: each beyond the first, most of another's worth.
 // The dead are as tough for four as for one; the experience a level takes grows the same way (items.tide), so each
@@ -116,6 +120,7 @@ void Nightfall(mut Match match)
     match.nightClock = 0;
     match.nightEnds = NIGHT_SECONDS;
     match.reckoning = false;
+    match.ringReach = 0;
     ResetHordes(match);
     ResetMissions(match);
     ResetEruptions(match);
@@ -124,8 +129,9 @@ void Nightfall(mut Match match)
     Send(NightFell { night = match.night });
 }
 
-// The night's clock run out: its bosses claw up, each 24 to 32 m from one of the survivors standing, and whoever bled
-// out is back beside one of them; once its bosses are down (or dying), dawn.
+// The night's clock run out: the wake-fire's ring rises round the survivors standing (its middle theirs), its bosses
+// claw up in it, 8 m from its middle to 4 m short of its fire, and whoever bled out is back by its middle; once its
+// bosses are down (or dying), dawn, and the ring's gone.
 [Stage(Tick.Rounds, 4)]
 system Reckon(mut Match match, Ashwick ashwick, Party party, query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
@@ -138,14 +144,15 @@ system Reckon(mut Match match, Ashwick ashwick, Party party, query (Survivor sur
     {
         if (match.nightClock < match.nightEnds) return;
         match.reckoning = true;
+        mut var middle = float3(0);
+        foreach (var at in near) middle += at;
+        middle /= near.count;
+        match.ringAt = On(middle.x, middle.z);
+        match.ringReach = RING_REACH;
         var count = NightBosses(match.night);
-        for (var k = 0; k < count; k++)
-        {
-            var pick = Random.NextInt(near.count);
-            RaiseBoss(match, ashwick, near[pick], true, 24, 32, KindForNight(match.night, k));
-        }
+        for (var k = 0; k < count; k++) RaiseBoss(match, ashwick, match.ringAt, true, 8, RING_REACH - 4, KindForNight(match.night, k));
         for (var seat = 0; seat < 4; seat++)
-            if (party.taken[seat]) party.survivors[seat].Send(Recalled { at = near[0] });
+            if (party.taken[seat]) party.survivors[seat].Send(Recalled { at = match.ringAt });
         Send(Reckoning { night = match.night, bosses = count });
         return;
     }
@@ -155,6 +162,7 @@ system Reckon(mut Match match, Ashwick ashwick, Party party, query (Survivor sur
     match.phase = Phase.Dawn;
     match.timer = 0;
     match.reckoning = false;
+    match.ringReach = 0;
     match.kept = match.night;
     for (var seat = 0; seat < 4; seat++)
         if (party.taken[seat]) party.survivors[seat].Send(Dawned { at = near[0] });
@@ -176,6 +184,16 @@ system ComeBack(mut Survivor survivor, Match match, Time time, query (Survivor s
         Recall(survivor, other.feet);
         return;
     }
+}
+
+// A survivor's feet kept inside the wake-fire's ring while it stands.
+float3 InRing(Match match, float3 feet)
+{
+    var off = (feet - match.ringAt).xz;
+    var far = Math.Length(off);
+    var most = match.ringReach - BODY_RADIUS;
+    if (match.ringReach <= 0 || far <= most || far < 0.001) return feet;
+    return float3(match.ringAt.x + off.x / far * most, feet.y, match.ringAt.z + off.y / far * most);
 }
 
 // Back beside a friend, as they were when they went, whole: by their seat, a few steps off them.
@@ -315,7 +333,7 @@ view NightPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
         var pulse = 0.75 + 0.25 * Math.Sin(look.time * 5);
         WriteBold(brutes > 1 ? $"FELL THE BOSSES  -  {brutes} LEFT" : "FELL THE BOSS", float2(left, box.y + 6 * u), 15 * u, Color(EMBER.r, EMBER.g, EMBER.b, pulse),
                   Anchor.MiddleLeft);
-        Write("Dawn breaks when it's down", float2(left, box.y + 24 * u), 11 * u, ASH, Anchor.MiddleLeft);
+        Write("The wake-fire holds you in till dawn", float2(left, box.y + 24 * u), 11 * u, ASH, Anchor.MiddleLeft);
         return;
     }
     // The clock to the boss: its time left over a bar running down, red in its last seconds
@@ -371,6 +389,7 @@ local event(DawnBroke broke) ShowDawn(mut Feed feed)
 local event(Reckoning reckoning) HearReckoning(mut Ears ears)
 {
     Audio.Play(bellClip, 1.0, 0.45);
+    Audio.Play(fireBurst, 1.0, 0.5);
     Audio.Play(screams[ears.random.NextInt(screams.count)], 0.7, 0.36);
 }
 
@@ -382,4 +401,37 @@ local event(DawnBroke broke) HearDawn()
 local event(NightFell fell) HearNightFell(mut Ears ears)
 {
     if (fell.night > 1) Audio.Play(screams[ears.random.NextInt(screams.count)], 0.45, 0.32);
+}
+
+// The wake-fire's ring: pale flames standing all round it (the nearest of them, a post every few metres), embers off
+// them, and its line burning in the ground (look.tide's Earth, from Hazards.ring).
+[Stage(Layers.Gather, 3)]
+view RingFlames(Match match, mut Fx fx, Me me, Look look)
+{
+    if (!fx.made || match.ringReach <= 0 || match.phase != Phase.Fighting) return;
+    var posts = 72;
+    for (var k = 0; k < posts; k++)
+    {
+        var turn = k * Math.TAU / posts;
+        var at = On(match.ringAt.x + Math.Sin(turn) * match.ringReach, match.ringAt.z + Math.Cos(turn) * match.ringReach);
+        if (Math.Distance(at, me.eye) > 45) continue;
+        var high = 1.6 + 0.7 * Math.Perlin(float2(look.time * 2.3 + k * 0.7, k));
+        fx.streakSprites.Add(Sprite { at = at, to = at + float3(0, high, 0), size = 0.3, color = float4(0.45, 1.0, 0.75, 0.22) });
+        if (fx.random.NextFloat() < me.dt * 4)
+            Glow(fx, Mote { at = at + float3(fx.random.NextFloat(-0.3, 0.3), 0.2, fx.random.NextFloat(-0.3, 0.3)), velocity = float3(0, fx.random.NextFloat(1.2, 2.4), 0),
+                            life = fx.random.NextFloat(0.4, 0.8), size = 0.22, grow = -0.25, color = float3(0.4, 1.0, 0.7), alpha = 1.4 });
+    }
+}
+
+// Ringed in: a flash of the wake-fire rising all round.
+local event(Reckoning reckoning) RingRises(mut Fx fx, Match match)
+{
+    if (!fx.made) return;
+    for (var i = 0; i < 90; i++)
+    {
+        var turn = fx.random.NextFloat(Math.TAU);
+        var at = On(match.ringAt.x + Math.Sin(turn) * match.ringReach, match.ringAt.z + Math.Cos(turn) * match.ringReach);
+        Glow(fx, Mote { at = at + float3(0, 0.2, 0), velocity = float3(0, fx.random.NextFloat(3, 6), 0), life = fx.random.NextFloat(0.5, 1.0), size = 0.35, grow = -0.3,
+                        color = float3(0.45, 1.0, 0.75), alpha = 2 });
+    }
 }

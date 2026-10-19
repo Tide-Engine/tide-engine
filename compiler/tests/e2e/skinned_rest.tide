@@ -47,6 +47,11 @@ frag Paint(Vertex3 vertex, Shade shade, out Color color)
     color = shade.color * vertex.color;
 }
 
+void DrawRest(Shade shade)
+{
+    Draw.SkinnedMesh(character, float4x4.identity, Place, Paint, shade);
+}
+
 view Show(mut Calls calls)
 {
     var hand = character.skeleton.bones.arm;
@@ -65,7 +70,7 @@ view Show(mut Calls calls)
     Draw.SkinnedMesh(character, float4x4.identity, image);
     Draw.SkinnedMesh(character, float4x4.identity, image, Filter.Point, Wrap.Repeat);
     Draw.SkinnedMesh(character, float4x4.identity, Paint, Shade { color = Color.white });
-    Draw.SkinnedMesh(character, float4x4.identity, Place, Paint, Shade { color = Color.white });
+    DrawRest(Shade { color = Color.white });
     var target = RenderTarget.Window();
     target.SkinnedMesh(character, float4x4.identity, Paint, Shade { color = Color.white });
 

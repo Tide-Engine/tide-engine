@@ -11,8 +11,10 @@ the longer it goes and the further into the nights.
 Each night runs on a clock: three minutes to roam the clearing, kill and
 level up, the dead coming thicker over its last minute, with chests hidden
 about and optional missions coming and going (do one in time and everyone
-picks one of the rarer items). When the clock runs out the night's boss
-claws up near you, a mutant grown from the dead; fell it and dawn breaks:
+picks one of the rarer items). When the clock runs out a ring of pale
+wake-fire rises round you that the living can't cross and the dead walk
+straight through, and the night's boss claws up in it with you, a mutant
+grown from the dead: no running, a stand. Fell it and dawn breaks:
 the dead burn away, whoever's down or bled out is up, and a moment later the
 next night falls, harder. The chests not opened by then are gone with the
 night. Mind the ground: open plague pits to go round, and fire bursting out
@@ -69,7 +71,8 @@ no jumping.
 | The clock | Three minutes a night, on the night's panel (BOSS IN 2:41) over a bar running down; over its last minute the dead come thicker, up to twice as fast. A bell and a banner ten seconds before the end. |
 | The chests | Four a night, hidden about the clearing and not marked; the night's panel says how many are found. Stand by one a moment and it opens: everyone picks one of three items, whoever found it. They're gone when the next night falls. |
 | Missions | Every half a minute or so an optional mission appears, pointed to in gold: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or hunt down a marked elite, each within 45 to 60 s. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
-| Its boss | When the clock runs out one claws up 24 to 32 m from one of you (two from the fourth night, three from the seventh), the nights taking the three in turn, pointed to (BOSS) at the screen's edge; anyone who bled out is back. Dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
+| The ring | When the clock runs out, pale wake-fire rises in a ring 17 m round you (round the middle of the party): you can't cross it till dawn; the dead walk straight through, coming three quarters as thick as before (fewer than that while any other boss stands). |
+| Its boss | One claws up in the ring with you (two from the fourth night, three from the seventh), the nights taking the three in turn, pointed to (BOSS) at the screen's edge; anyone who bled out is back, by the ring's middle. Dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
 | Dawn | Everything left of the dead burns away, every orb flies in, everyone's up, whole and ready. Ten seconds later the next night falls: more dangerous than the last (the danger climbs with the clock, and each night's is 1.25 times the one before), and each of its kind (mist, a blood moon, starless, the wake). |
 
 ### The items
@@ -92,7 +95,9 @@ yours till the game's over, through going down and bleeding out.
 
 They claw up out of the ground, four a second at first (more with more of
 you) and many more as the danger climbs (Easy, Medium, Hard, Very Hard,
-Insane, Impossible), tougher and quicker too, up to 4000 at once. Most come
+Insane, Impossible), tougher and quicker too (from Hard on, up to 40% quicker
+past Impossible: the fastest then outpace you walking as you fire, though not
+running), up to 4000 at once. Most come
 in hordes: every five to nine seconds the ones due claw up together out of
 one patch of ground 22 to 32 m from one of you, each from about the far side
 of you from the last, a groan going up from them, all at one pace; a quarter

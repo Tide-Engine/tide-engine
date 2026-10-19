@@ -1,0 +1,9 @@
+// expect: function 'Show' must take exactly one 'Light' parameter for frag 'Shade' to read
+scene Main { }
+singleton Light { float strength; }
+frag Shade(Vertex vertex, out Color color, Light light) { color = Color.white * light.strength; }
+void Show(out Light light)
+{
+    light = Light { };
+    Draw.Mesh([Vertex { }, Vertex { }, Vertex { }], [0, 1, 2], Shade);
+}

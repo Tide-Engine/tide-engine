@@ -182,12 +182,14 @@ local singleton Hazards
 {
     List<float4> pits;
     List<float4> fires;
+    float4 ring;                     // The wake-fire's ring (nights.tide): x, z, reach (0, none)
 }
 
 // Each frame: the pits (once), the fires, and each fire's light.
 [Stage(Layers.Prepare, 2)]
-view SeeHazards(mut Hazards hazards, mut Lights lights, Village village, Me me, Look look, query (Blaze blaze) blazes)
+view SeeHazards(mut Hazards hazards, mut Lights lights, Village village, Me me, Look look, Match match, query (Blaze blaze) blazes)
 {
+    hazards.ring = match.phase == Phase.Fighting && match.ringReach > 0 ? float4(match.ringAt.x, match.ringAt.z, match.ringReach, 0) : float4(0);
     if (hazards.pits.count != village.plan.pits.count)
     {
         hazards.pits.Clear();
