@@ -1,0 +1,4 @@
+// expect: 'without ownership' filters the match's entities, and 'Spark' is local
+component Spark { }
+scene Main { }
+local event(Spawned) Hear(local Spark spark, without ownership) { }

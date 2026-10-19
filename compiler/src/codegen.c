@@ -9887,7 +9887,7 @@ static void gen_dispatch_prototypes(gen *g)
     if (journals_clients(prog) || hears_visibility(prog)) sb_put(o, "static void tide_client_destroyed(tide_world *w, tide_entity target);\n\n");
     if (hears_visibility(prog)) sb_put(o, "static void tide_world_hear_availability(const tide_world *w, const tide_world *had,\n"
                                         "                                         const tide_entity *destroyed, uint32_t destroyed_count,\n"
-                                        "                                         tide_event_log *events, bool hide);\n\n");
+                                        "                                         tide_event_log *events, bool hide, const tide_player_id *player);\n\n");
     if (world_has_tasks(g, false)) sb_put(o, "// The match's tasks go on, at the end of the tick\nstatic void tide_run_tasks(tide_world *w);\n\n");
     if (prog->handlers.count == 0) return;
     sb_put(o, "// Event dispatchers, defined after the handlers they call\n\n");
@@ -9908,9 +9908,9 @@ static void gen_dispatch_prototypes(gen *g)
                   type_cname(event), availability ? ", uint64_t changes" : "");
         if (!availability) continue;
         sb_printf(o, "static uint64_t tide_available_%s(const tide_world *w, const tide_entity target,\n"
-                     "                                    const int32_t component, const bool present)\n{\n", type_cname(event));
+                     "                                    const int32_t component, const bool present, const tide_player_id *player)\n{\n", type_cname(event));
         sb_put(o, "    if (!w || !tide_entity_alive(&w->entities, target)) return 0;\n    uint64_t handlers = 0;\n");
-        sb_put(o, "    (void)component; (void)present;\n");
+        sb_put(o, "    (void)component; (void)present; (void)player;\n");
         for (int k = 0; k < event->listeners.count; k++) {
             const decl *h = event->listeners.items[k];
             sb when = {0};
@@ -9919,6 +9919,9 @@ static void gen_dispatch_prototypes(gen *g)
                 sb_printf(&when, "%s%s(component == %d ? present : tide_has_%s(w, target))", when.len ? " && " : "",
                           mask_has(h->without_mask, c) ? "!" : "", c, type_cname(prog->components.items[c]));
             }
+            if (h->ownership) sb_printf(&when, "%s(!player || %s(tide_has_%s(w, target) && tide_player_equal(tide_get_%s(w, target).%s, *player)))",
+                                      when.len ? " && " : "", h->ownership == OWNERSHIP_WITH ? "" : "!", type_cname(prog->owner),
+                                      type_cname(prog->owner), field_cname(&prog->owner->fields.items[0]));
             sb_put(o, "    ");
             if (when.len) sb_printf(o, "if (%s) ", when.data);
             sb_printf(o, "handlers |= UINT64_C(1) << %d;\n", k);
@@ -9961,13 +9964,13 @@ static void gen_component_availability(gen *g, const bool before, const bool pre
     if (before) {
         if (prog->shown->listeners.count) {
             sb_printf(o, "    const uint64_t tide_shown = tide_listening\n"
-                         "        ? tide_available_%s(w, c->entity, (int32_t)c->id, %s)\n"
-                         "          & ~tide_available_%s(w, c->entity, -1, false) : 0;\n", shown, present ? "true" : "false", shown);
+                         "        ? tide_available_%s(w, c->entity, (int32_t)c->id, %s, NULL)\n"
+                         "          & ~tide_available_%s(w, c->entity, -1, false, NULL) : 0;\n", shown, present ? "true" : "false", shown);
         }
         if (prog->hidden->listeners.count) {
             sb_printf(o, "    if (tide_listening) {\n"
-                         "        const uint64_t changes = tide_available_%s(w, c->entity, -1, false)\n"
-                         "            & ~tide_available_%s(w, c->entity, (int32_t)c->id, %s);\n"
+                         "        const uint64_t changes = tide_available_%s(w, c->entity, -1, false, NULL)\n"
+                         "            & ~tide_available_%s(w, c->entity, (int32_t)c->id, %s, NULL);\n"
                          "        if (changes) tide_hear_%s(w, c->entity, &(%s){0}, changes);\n    }\n",
                       hidden, hidden, present ? "true" : "false", hidden, hidden);
         }
@@ -10402,6 +10405,16 @@ static bool event_reads_rows(const decl *event)
     return false;
 }
 
+// Ownership is captured at the event's turn, independently of an explicit
+// Owner parameter. Its presence matters: no Owner is different from Owner {}.
+static bool event_filters_ownership(const decl *event)
+{
+    for (int i = 0; i < event->listeners.count; i++) {
+        if (event->listeners.items[i]->ownership != OWNERSHIP_NONE) return true;
+    }
+    return false;
+}
+
 // Which of them a listener's query reads.
 static int heard_rows_of(const gen *g, const param *q)
 {
@@ -10630,6 +10643,7 @@ static void gen_hear(gen *g)
             sb_printf(&types, "%s " STR_FMT, k ? "," : "", STR_ARG(event->listeners.items[k]->qualified));
         }
         sb_printf(&types, "\n    %s event;\n", name);
+        if (event_filters_ownership(event)) sb_put(&types, "    tide_player_id tide_owner;\n    uint32_t tide_has_owner;\n");
         for (int k = 0; k < comps.count; k++) sb_printf(&types, "    %s tide_c_%s;\n", type_cname(comps.items[k]), type_cname(comps.items[k]));
         for (int k = 0; k < singles.count; k++) sb_printf(&types, "    %s tide_s_%s;\n", type_cname(singles.items[k]), type_cname(singles.items[k]));
         sb_printf(&types, "} tide_heard_%s;\n\n", name);
@@ -10776,6 +10790,12 @@ static void gen_hear(gen *g)
         if (cases) sb_put(o, "    default: break;\n    }\n");
         if (availability) sb_put(o, "    handlers &= changes;\n");
         sb_put(o, "    if (!handlers) return; // None of them runs for this entity\n");
+        if (event_filters_ownership(event)) {
+            sb_printf(o, "    if (tide_has_%s(w, target)", type_cname(prog->owner));
+            if (journal) sb_printf(o, " && (tide_client_recipient < 0 || tide_visibility_component(w, target, %du, tide_player_from_index((uint32_t)tide_client_recipient)))", prog->owner->index);
+            sb_printf(o, ") {\n        v.tide_has_owner = 1u;\n        v.tide_owner = tide_get_%s(w, target).%s;\n    }\n",
+                      type_cname(prog->owner), field_cname(&prog->owner->fields.items[0]));
+        }
         for (int k = 0; k < comps.count; k++) {
             sb value = {0};
             sb_printf(&value, "v.tide_c_%s", type_cname(comps.items[k]));
@@ -10845,10 +10865,10 @@ static void gen_hear_availability_phase(gen *g, const decl *event, const bool hi
         sb_printf(o, "                const uint32_t n = tide_table_rows(t, %d, c);\n", arch_shift(g, a));
         sb_printf(o, "                const tide_entity *ent = tide_table_column(t, %s, c, 0);\n", arch_columns(g, a));
         sb_put(o, "                for (uint32_t i = 0; i < n; i++) {\n");
-        sb_printf(o, "                    uint64_t changes = tide_available_%s(from, ent[i], -1, false);\n", name);
+        sb_printf(o, "                    uint64_t changes = tide_available_%s(from, ent[i], -1, false, player);\n", name);
         sb_put(o, "                    if (other && tide_born_same(tide_entity_born(&from->entities, ent[i]),\n"
                   "                                                tide_entity_born(&other->entities, ent[i]))) {\n");
-        sb_printf(o, "                        changes &= ~tide_available_%s(other, ent[i], -1, false);\n                    }\n", name);
+        sb_printf(o, "                        changes &= ~tide_available_%s(other, ent[i], -1, false, player);\n                    }\n", name);
         sb_put(o, "                    if (!changes) continue;\n");
         if (hidden) {
             sb_put(o, "                    uint32_t lo = 0, hi = destroyed_count;\n"
@@ -10885,9 +10905,9 @@ static void gen_hear_arrived(gen *g)
               "// Local availability transitions. The caller supplies actual destruction causes; absence alone is concealment.\n"
               "static void tide_world_hear_availability(const tide_world *w, const tide_world *had,\n"
               "                                         const tide_entity *destroyed, uint32_t destroyed_count,\n"
-              "                                         tide_event_log *events, bool hide)\n{\n"
+              "                                         tide_event_log *events, bool hide, const tide_player_id *player)\n{\n"
               "    if (!events || (!w && !had)) return;\n"
-              "    (void)destroyed; (void)destroyed_count; (void)hide;\n"
+              "    (void)destroyed; (void)destroyed_count; (void)hide; (void)player;\n"
               "    tide_entity *ordered = destroyed_count ? tide_alloc_zeroed(destroyed_count, sizeof *ordered) : NULL;\n"
               "    if (destroyed_count) memcpy(ordered, destroyed, (size_t)destroyed_count * sizeof *ordered);\n"
               "    if (destroyed_count > 1u) qsort(ordered, destroyed_count, sizeof *ordered, tide_available_entity_compare);\n"
@@ -10898,7 +10918,7 @@ static void gen_hear_arrived(gen *g)
     sb_put(o, "    tide_listening = NULL;\n    free(ordered);\n}\n\n");
     if (hears_arrivals(prog)) {
         sb_put(o, "static void tide_world_hear_arrived(const tide_world *w, const tide_world *had, tide_event_log *events)\n{\n"
-                  "    tide_world_hear_availability(w, had, NULL, 0, events, false);\n}\n\n");
+                  "    tide_world_hear_availability(w, had, NULL, 0, events, false, NULL);\n}\n\n");
     }
 }
 
@@ -13125,8 +13145,12 @@ static void gen_heard(gen *g)
         for (int k = 0; k < event->listeners.count; k++) {
             const decl *h = event->listeners.items[k];
             sb_printf(o, "    // " STR_FMT "\n", STR_ARG(h->qualified));
-            sb_printf(o, "    if ((tide_r->handlers & (UINT64_C(1) << %d)) && %s) {\n", k,
+            sb_printf(o, "    if ((tide_r->handlers & (UINT64_C(1) << %d)) && %s", k,
                       h->listens_verified ? "tide_verified" : "tide_predicted");
+            if (h->ownership) sb_printf(o, " && %s(tide_h.tide_has_owner && tide_player_equal(tide_h.tide_owner, tide_l->%s.%s))",
+                                      h->ownership == OWNERSHIP_WITH ? "" : "!", type_cname(prog->session),
+                                      field_cname(&prog->session->fields.items[1]));
+            sb_put(o, ") {\n");
             for (int n = 1; n < h->params.count; n++) {
                 const param *p = &h->params.items[n];
                 if (p->type.kind != TY_COMPONENT || !has_fields_ptr(p)) continue;
@@ -18561,6 +18585,13 @@ static void gen_client_event_check(gen *g)
                      "                || h.same != tide_hash(&(%s){0}, sizeof(%s))) return false;\n", event->index, type_cname(event), (unsigned long long)handlers, heard_wants(event),
                   (unsigned long long)row_readers, type_cname(event), type_cname(event));
         gen_client_event_payload_check(g, event);
+        if (event_filters_ownership(event)) {
+            sb_printf(o, "            {\n                uint32_t present;\n"
+                         "                memcpy(&present, data + at + sizeof h + offsetof(tide_heard_%s, tide_has_owner), sizeof present);\n"
+                         "                if (present > 1u || (!present && !tide_client_event_zero(data + at + sizeof h\n"
+                         "                    + offsetof(tide_heard_%s, tide_owner), sizeof(tide_player_id)))) return false;\n            }\n",
+                      type_cname(event), type_cname(event));
+        }
         sb_put(o, "            break;\n");
     }
     if (g->heard_rows.count) {
@@ -18717,7 +18748,7 @@ static void gen_game_api(gen *g)
     if (hears_visibility(prog)) {
         sb_put(o, "static void tide_game_hear_visibility(const void *w, const void *had, const tide_entity *destroyed,\n"
                   "                                      uint32_t destroyed_count, tide_event_log *events)\n{\n"
-                  "    tide_world_hear_availability(w, had, destroyed, destroyed_count, events, true);\n}\n\n");
+                  "    tide_world_hear_availability(w, had, destroyed, destroyed_count, events, true, NULL);\n}\n\n");
     }
     sb_put(o, "static void tide_game_copy(void *to, const void *from)\n{\n    tide_world_copy(to, from);\n}\n\n");
     sb_put(o, "static uint64_t tide_game_hash(const void *w)\n{\n    return tide_world_hash(w);\n}\n\n");

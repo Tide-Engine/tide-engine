@@ -255,14 +255,17 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
     var together = Together(workshop);
     var overlay = hands.journal || hands.pendingReset || hands.pendingHall || hands.pendingLevel >= 0;
     var playing = lobby.playing && together && hands.seat >= 0 && !overlay;
-    // Nothing moves while a room opens, or once a lane's pads are full.
-    var revealing = time.tick - workshop.openedTick < workshop.introTicks + REVEAL_TICKS || Departing(HallOf(workshop), time.tick);
+    // Nothing moves while a room opens, or once a post the pair is in is full.
+    var hall = HallOf(workshop);
+    var revealing = time.tick - workshop.openedTick < workshop.introTicks + REVEAL_TICKS || Departing(hall, time.tick);
     for (var d = 0; d < 4; d++)
     {
         hands.ahead[d] = Step.Blocked;
         if (!playing || revealing || workshop.puzzle.solved || !hands.preview) continue;
         mut var trial = workshop.puzzle;
-        MovePuzzle(workshop.layout, trial, hands.seat, d, out var step);
+        mut var step = Step.Blocked;
+        if (workshop.inHall) HallMove(hall, workshop.layout, trial, hands.seat, d, out step);
+        else MovePuzzle(workshop.layout, trial, hands.seat, d, out step);
         hands.ahead[d] = step;
     }
     if (overlay) return;
@@ -301,8 +304,8 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
         Label($"{who} / {DimensionName(workshop.inHall, actor.room)}", plate, narrow ? 10.0 : 12.0, seat == 0 ? AMBER : TEAL, Anchor.MiddleCenter);
     }
     var bottom = height - 92;
-    // A hall's lanes say where they lead.
-    if (workshop.inHall && !revealing) LaneNote(HallOf(workshop), workshop.puzzle, hands, height - (narrow ? 190.0 : 72.0));
+    // A hall's posts say where they lead.
+    if (workshop.inHall && !revealing) PostNote(hall, workshop.puzzle, hands, height - (narrow ? 190.0 : 72.0));
     if (PaperButton("Undo", Rect(left, bottom, 82, 40), workshop.historyCount > 0 && playing) || playing && (key.z.down || key.backspace.down))
         Send(Undo { serial = workshop.serial });
     if (PaperButton("Restart", Rect(left + 90, bottom, 82, 40), playing) || playing && key.r.down)
@@ -359,19 +362,19 @@ view WorkshopControls(Workshop workshop, Time time, Session session, Devices dev
     if (!touch.press.pressed) hands.swipeReady = false;
 }
 
-// What the lane this screen's robot stands in leads to, on a chip above the
-// robots' names.
-void LaneNote(HallState workshop, Puzzle puzzle, Hands hands, float y)
+// Where the post this screen's robot is in or stands in front of leads, on
+// a chip above the robots' names, and who is in it.
+void PostNote(HallState workshop, Puzzle puzzle, Hands hands, float y)
 {
     if (hands.seat < 0 || hands.seat > 1) return;
     var me = puzzle.actors[hands.seat].position;
-    var partner = puzzle.actors[1 - hands.seat].position;
     var room = puzzle.actors[hands.seat].room;
-    var together = puzzle.actors[1 - hands.seat].room == room;
+    var partner = hands.seat == 0 ? "Teal" : "Amber";
     for (var index = 0; index < MAX_STATIONS; index++)
     {
         var station = HallStation(workshop.hall, index);
-        if (station.kind == StationKind.None || station.room != room || !CellEqual(me, station.near) && !CellEqual(me, station.far)) continue;
+        var inside = workshop.aboard[hands.seat] == index;
+        if (station.kind == StationKind.None || station.room != room || !inside && !CellEqual(me, station.near)) continue;
         var open = StationOpen(workshop, workshop.hall, station);
         mut var text = "";
         if (station.kind == StationKind.Level)
@@ -383,8 +386,9 @@ void LaneNote(HallState workshop, Puzzle puzzle, Hands hands, float y)
         else if (station.kind == StationKind.Down) text = $"Lift down to chapter {workshop.hall}, {ChapterName(workshop.hall - 1)}";
         else if (open) text = $"Lift up to chapter {workshop.hall + 2}, {ChapterName(workshop.hall + 1)}";
         else text = $"Lift up: it works once {workshop.need} batteries are in the hall's sockets ({Math.Min(workshop.seated, workshop.need)} so far)";
-        var waiting = open && (!together || !CellEqual(partner, station.near) && !CellEqual(partner, station.far));
-        if (waiting) text = $"{text}. Both stand here to go.";
+        var joined = workshop.aboard[1 - hands.seat] == index;
+        if (open && inside && !joined) text = $"{text}. Waiting for {partner}.";
+        else if (open && !inside) text = joined ? $"{text}. {partner} is in: walk in to go." : $"{text}. Both walk in to go.";
         var size = Screen.width < 720 ? 11.0 : 13.0;
         var at = float2(Screen.width * .5, y);
         Chip(at, float2(Math.Min(Screen.width - 24, Draw.MeasureText(text, size).x + 28), size + 16));

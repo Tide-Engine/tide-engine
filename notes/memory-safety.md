@@ -1,5 +1,12 @@
 # No Tide code can corrupt memory
 
+Recorded-owner event filters (2026-10-19) capture only a player value and an
+integer presence flag, never a world pointer or component borrow. Recipient
+lifecycle payload validation checks that flag is 0/1 and absent-owner bytes
+are zero after validating the complete generated span. Ownership is checked
+before attached local fields are created/accessed. ownership_events covers
+forged metadata, destroyed targets and delivery without a current world.
+
 Mutable World.Set overlap (2026-10-19) uses compiler-private synchronous
 stack bindings, keyed by world, component and full entity generation. Target
 validation still precedes replacement. Container replacement releases/assigns

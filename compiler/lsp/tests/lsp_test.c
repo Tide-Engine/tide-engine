@@ -4357,6 +4357,9 @@ TIDE_TEST(lsp_ownership)
     const char *without = complete(GAME_TYPES "view Rest(Body body, without $)\n{\n}\n");
     TIDE_CHECK(offers(without, "ownership"));
     TIDE_CHECK(has(without, "Entities this machine's player doesn't own"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "local event(Spawned) Mine(Body body, with $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "local event(verified Destroyed) Rest(Body body, without $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "local event Blink { }\nlocal event(Blink) Blinked(with $)\n{\n}\n"), "ownership"));
     // ...and nowhere else: the match has no machine of its own
     TIDE_CHECK(!offers(complete(GAME_TYPES "system Move(mut Body body, with $)\n{\n}\n"), "ownership"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "event(Spawned) Grow(mut Body body, without $)\n{\n}\n"), "ownership"));
@@ -4370,6 +4373,10 @@ TIDE_TEST(lsp_ownership)
     // A keyword (11), 11 columns after the parameter `body`
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,11,9,11,0,"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "'ownership' is a keyword after 'with' and 'without'"));
+    open_document(GAME_TYPES "local event(Spawned) Mine(Body body, with owner$ship)\n{\n    Debug.Assert(body.radius > 0);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *listener = request("textDocument/hover");
+    TIDE_CHECK(has(listener, "local handler") && has(listener, "captured at the event's turn"));
     // The view's own hover shows its filter
     open_document(GAME_TYPES "view Re$st(Body body, with Owner, without ownership)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "view Rest(Body body, with Owner, without ownership)"));
