@@ -20,10 +20,11 @@ next night falls, harder. The chests not opened by then are gone with the
 night. Mind the ground: open plague pits to go round, and fire bursting out
 of it under the dead and under you.
 
-Every kill leaves an orb of experience where the dead fell (a cyan gem, turning), worth more the
-tougher they were, the party's once someone goes within a few metres of it;
-at every level each takes one of three items that stack, most of which fight
-on their own. How many nights, and how long, they held out is the score.
+Every kill leaves an orb of experience where the dead fell (a cyan gem,
+turning), worth more the tougher they were, the party's once someone goes
+within a few metres of it; at every level each takes one of three items that
+stack, most of which fight on their own, and 18 more health (a level's worth
+of it back, too). How many nights, and how long, they held out is the score.
 
 Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 **Host a room** and send the code to fight with friends, up to four.
@@ -124,8 +125,9 @@ yellow a Spitter, blue a Warden, orange a Brute, magenta a Howler.
 ### The bosses
 
 Mutants twice the size of the rest, their name, health and weak spot across
-the top of the screen. A round anywhere into their bulk strikes them, feet
-and all. Each has a growth that glows: a round there does several times as
+the top of the screen, and a great deal of it: a fight of most of a minute
+alone. A round anywhere into their bulk strikes them, feet and all; a
+shotgun's pellets do half (every one finds something that big). Each has a growth that glows: a round there does several times as
 much (an orange mark on the crosshair), and it glows brighter when it's
 open. While one stands, fewer of the dead come. Roll through their slams,
 charges and leaps.

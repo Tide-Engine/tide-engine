@@ -63,6 +63,36 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Bosses that last, survivors who can die (2026-10-19)
+
+The owner: "i killed the boss way too quickly with the shotgun; its still
+easy", then "oh its still ahrd to die". The numbers are mine, Provisional.
+
+- **Bosses that last** (boss.tide's `BOSS_HEALTH`, `BOSS_PELLET`; hands.tide's
+  `Shoot`): a boss's health is 8000 a danger (times the party, times its kind's
+  share; it was 2000), and a shotgun pellet does half to one: every one of the
+  eleven finds something that big, so the shotgun had done twice what the carbine
+  and the SMG do to a boss (some 480 a second against their 230 to 250, before
+  items).
+- **Survivors who can die** (items.tide's `LEVEL_HEALTH`): a level adds 18
+  health, and brings 18 back (it was 30). By the last levels a survivor had had
+  eleven times the health they began with against claws only three times as hard
+  (rounds.tide's `Harm`), so the dead couldn't touch them; now it's about six times.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 8; the night's
+  end's fight, from the clock running out to the boss down): the last round's
+  build felled each boss 8 to 13 s after it rose (the middle fight) and the
+  middle runs went 1460 s (the Gunner, at the cap), 900 (the Engineer), 1196 (the
+  Breacher). Tried: a level's 12 and bosses' 8000: fights 19 to 27 s, the runs
+  623, 396 and 572 s, every one but three going down, most in a night's end (too
+  far); 15 and 6000: fights 17 to 23 s, runs 826, 433, 638; 18 and 8000 (kept):
+  fights 19 to 32 s, runs 1462 (the Gunner, three of eight going down), 724 (the
+  Engineer, seven going down) and 580 (the Breacher, all eight). The bots don't
+  roll a boss's slam or keep off it as a player does; they've always done worse
+  than the owner, who found the last round's easy.
+- **Tests**: as before (the survivors' health a level, 18, in the test's
+  `max_health`). Native debug `gravewake_test` and the web debug WASI one pass.
+  Ticks of 2000 of the dead 2.5 ms.
+
 ### Runners, Brutes and Howlers, each kind its own colour, the orbs as gems (2026-10-19)
 
 The owner: "the XP orbs are hard to spot now", then "we need more variety of
