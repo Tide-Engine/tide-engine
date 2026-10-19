@@ -79,8 +79,9 @@ void GroundRing(Look look, float3 at, float radius, float thick, Color c, float 
 }
 
 // How far a Bloater's burst reaches, and when it'll come (the owner, 2026-10-18: "when the guys explode or are about to
-// explode i have no idea how far or when they will explode"): a faint sick ring round each near, as wide as its burst;
-// swelling, the ring red, and a second growing out from it to meet the first as it bursts.
+// explode i have no idea how far or when they will explode"), only as it swells to burst (2026-10-19: "should only
+// display that radius when they are going to explode"): a red ring as wide as its burst, over the dead that stand in it,
+// its ground burning under it (look.tide's Earth).
 [Stage(Layers.Hud, -1)]
 view BloaterRings(Me me, Look look, Lobby lobby, Match match, query (Zombie zombie) zombies)
 {
@@ -92,17 +93,11 @@ view BloaterRings(Me me, Look look, Lobby lobby, Match match, query (Zombie zomb
     foreach (var row in zombies)
     {
         var z = row.zombie;
-        if (z.kind != ZombieKind.Bloater || z.popped || z.state == ZombieState.Dying || z.state == ZombieState.Rising) continue;
+        if (z.kind != ZombieKind.Bloater || z.popped || z.fuse <= 0) continue;
         if (Math.Length((z.at - me.ears).xz) > BLOAT_SHOWN) continue;
-        if (z.fuse <= 0)
-        {
-            GroundRing(look, z.at, BLOAT_REACH, 1.5 * u, Color(0.75, 1.0, 0.3, 0.3), w, h);
-            continue;
-        }
         var near = Math.Saturate(z.fuse / BLOAT_FUSE);
-        var pulse = 0.75 + 0.25 * Math.Sin(look.time * 30);
-        GroundRing(look, z.at, BLOAT_REACH, 3 * u, Color(1.0, 0.2, 0.08, 0.9 * pulse), w, h);
-        GroundRing(look, z.at, BLOAT_REACH * near, 2.5 * u, Color(1.0, 0.55, 0.15, 0.85), w, h);
+        var pulse = 0.7 + 0.3 * Math.Sin(look.time * (12 + 30 * near));
+        GroundRing(look, On(z.chestAt.x, z.chestAt.z), BLOAT_REACH, 2.5 * u, Color(1.0, 0.25, 0.08, (0.45 + 0.45 * near) * pulse), w, h);
     }
 }
 
@@ -606,7 +601,7 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
 // Development keys, not in play's interface: F2 six of the next kind of the dead (Bloaters, Spitters, Wardens in turn),
 // F3 a boss (the Mauler, the Broodmother, the Stalker in turn), F4 a horde of two thousand more, F5 a level (and so an
 // offer), F6 a walk to the next place, F7 the night on (its end, its bosses, now; with them up, dawn), F10 an item, F1
-// a mission (a hold, a cull, a hunt in turn). (F8 is the engine's: its numbers.)
+// a mission (a hold, a cull, the wisps in turn). (F8 is the engine's: its numbers.)
 local singleton DevWalk
 {
     int next;

@@ -87,7 +87,7 @@ string ItemLine(Item item)
         case Item.EnergyDrink: return "One more roll (+1 each)";
         case Item.Kerosene: return "The dead you roll past catch fire (wider each)";
         case Item.SteelToes: return "50% more to the dead on the ground (+50% each)";
-        case Item.GasMask: return "Bloaters' bursts can't hurt you, and the ones you kill burst 30% wider (+30% each)";
+        case Item.GasMask: return "Bloaters' bursts can't hurt you, and the ones you kill burst 30% wider on the dead (+30% each)";
         case Item.ApRounds: return "Rounds go through one more of the dead (+1 each)";
         case Item.Mortar: return "3% chance a hit calls a shell down on it (+3% each)";
         case Item.SecondWind: return "Going down, get straight back up. Used up (one more each)";

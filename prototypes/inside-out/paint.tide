@@ -529,6 +529,10 @@ void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLe
                 continue;
             }
             if (workshop.puzzle.actors[seat].room != room) continue;
+            // In a hall, a robot walking into a post shrinks as it climbs
+            // onto it, and is gone once in: the post's lamp shows it.
+            var inPost = HallPostNear(workshop.inHall, workshop.hall, room, picture.actors[seat]);
+            if (inPost < 0) continue;
             mut var at = MapPoint(picture.actors[seat], lens);
             if (hands.blockTime[seat] > 0)
             {
@@ -537,8 +541,24 @@ void DimensionPieces(mut Sculpture sculpture, Workshop workshop, int room, MapLe
             }
             if (seat == hands.seat && hands.portalTime > 0)
                 FloorOutline(sculpture, at, float2(lens.tile * .92), Math.Max(.8, lens.tile * .025), Color(.33, .61, .54, hands.portalTime * 1.8), lens.floor + lens.tile * .015, lens.tile);
-            Maker(sculpture, at, lens.tile * .90, seat, lens.floor + lens.tile * .004, PoseOf(picture, seat));
+            Maker(sculpture, at, lens.tile * .90 * inPost, seat, lens.floor + lens.tile * (PostTop(room) * (1 - inPost) + .004),
+                PoseOf(picture, seat));
         }
+}
+
+// How far a robot drawn at `at` is from the nearest post of a hall in its
+// room, up to 1: a robot is drawn that much of its size. Below zero, it is
+// hidden: in the post.
+float HallPostNear(bool inHall, int chapter, int room, float2 at)
+{
+    if (!inHall) return 1;
+    mut var near = 1.0;
+    for (var index = 0; index < MAX_STATIONS; index++)
+    {
+        var station = HallStation(chapter, index);
+        if (station.kind != StationKind.None && station.room == room) near = Math.Min(near, Math.Length(at - float2(station.post)));
+    }
+    return near < .06 ? -1 : near;
 }
 
 // The same aperture mask is used by colour, depth and the shadow pass.
@@ -782,7 +802,7 @@ void HallLabels(HallState workshop, Time time, Picture picture, int room)
     {
         var station = HallStation(workshop.hall, index);
         if (station.kind == StationKind.None || station.room != room) continue;
-        // On the post's side that faces its lane.
+        // On the post's side that it is walked into from.
         var at = MapPoint(float2(station.post), lens) + float2(station.near - station.post) * lens.tile * .5;
         mut var text = station.kind == StationKind.Up ? "up" : station.kind == StationKind.Down ? "down" : $"{station.level + 1:D2}";
         if (station.kind == StationKind.Level && IsChallenge(station.level)) text = $"{ChallengeBudget(station.level)} moves";
@@ -1068,7 +1088,7 @@ view Workbench(Workshop workshop, Time time, Rooms.Lobby lobby, Hands hands, The
             var hiddenBox = layer > 0 ? ancestors[layer - 1].box : -1;
             RoomScene(sculpture, workshop, dimensions[layer], contexts[layer], picture, hands, hiddenBox);
         }
-        // A hall's posts and lanes, in every drawing of the rooms they are in.
+        // A hall's posts, in every drawing of the rooms they are in.
         // Drawn here rather than in RoomScene: a model's drawing is deep, and
         // RoomScene's frame already holds copies of the Workshop.
         for (var shown = 0; shown < sculpture.shown.count && hall.inHall; shown++)

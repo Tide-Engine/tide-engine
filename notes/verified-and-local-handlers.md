@@ -47,6 +47,12 @@ determinism pins remain unchanged. Private prototype targets stayed disabled;
 no Gravewake browser run or CI was dispatched. Other OS/sanitizer coverage
 remains CI work.
 
+Integration: origin/dev merged cleanly with unrelated private-prototype work
+and VERSION 0.4.0. Reconfigured native/web tools as 0.4.0-dev, rebuilt the CLI
+and affected compiler fixtures, and passed all 16 selected native CLI / owner /
+version-directive tests plus the three WASI owner/directive fixtures. No
+prototype/browser playtests were added by that integration check.
+
 ## Visibility availability and authoritative lifecycle (2026-10-15)
 
 This supersedes the older arrival-through-`Spawned` contract below. `Shown`

@@ -84,11 +84,13 @@ first puzzle before starts in the highest hall they have reached.
 
 - The **gallery** is a box clamped at the top of the hall's table. On its
   north wall stand the chapter's puzzles, each a model of its rooms as the
-  puzzle starts, with its number; a green ring marks a solved one. In front
-  of each post is a lane of two pads: when both robots stand in it, one on
-  each pad, the pads fill with light and the view closes in on the model,
-  into the puzzle. Step off while they fill to change your mind. Standing in
-  a lane shows its puzzle's name.
+  puzzle starts, with its number; a green ring marks a solved one. Walk
+  into a post from the floor in front of it, as into a box: your robot
+  climbs in and a lamp in its paint lights on the post. Once you are both
+  in, its doorway fills with light and the view closes in on the model,
+  into the puzzle. Step back out while it fills to change your mind. In
+  front of a post, or in it, you see its puzzle's name. The lifts are
+  walked into the same way.
 - Below the gallery's doorway is the hall's **yard**. Every puzzle you solve
   puts its **battery** there. The box at the foot of the yard has the hall's
   sockets in a row down from its doorway: push enough batteries into it and

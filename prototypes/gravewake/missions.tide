@@ -4,13 +4,15 @@ using Rooms;
 // still to come (the owner, 2026-10-18: "i do like the rotating missions in The
 // Spell Brigade where they just give you an optional extra enhancement").
 // Every so often one appears somewhere in the clearing, pointed to at the
-// screen's edge: hold a circle, cull the dead in one, or hunt down a marked
-// elite, each before its time's up. Done, every survivor picks one of three
+// screen's edge: hold a circle, cull the dead in one, or catch the wisps
+// scattered about a place (in place of hunting down a marked elite, 2026-10-19:
+// "killing a scaled zombie with some weird crown of fire; that felt awkward"),
+// each before its time's up. Done, every survivor picks one of three
 // uncommon or rare items (a boon: items.tide's Owed); out of time, nothing.
 // None begins that the night's end would cut short, and its bosses rising
 // calls off any going. Which, where and every number are mine, Provisional.
 
-enum MissionKind { None, Hold, Cull, Hunt }
+enum MissionKind { None, Hold, Cull, Wisps }
 
 const float MISSION_FIRST = 25;      // Seconds into a night before the first...
 const float MISSION_GAP_LEAST = 20;  // ...and from one's end to the next
@@ -24,8 +26,11 @@ const float HOLD_TIME = 50;          // ...within so long
 const float CULL_REACH = 9;          // The circle to cull the dead in...
 const float CULL_TIME = 45;          // ...within so long
 const float CULL_EACH = 25;          // ...so many of them for one survivor (times Crowd)
-const float HUNT_TIME = 60;          // The elite to hunt down, within so long...
-const float ELITE_HEALTH = 10;       // ...as tough as so many Wardens
+const float WISPS_TIME = 45;         // The wisps to catch, within so long...
+const int WISPS = 5;                 // ...so many of them...
+const float WISP_NEAR = 6;           // ...so far from where it is...
+const float WISP_FAR = 18;
+const float WISP_CATCH = 1.6;        // ...each caught by walking so near it
 
 string MissionName(MissionKind kind)
 {
@@ -33,7 +38,7 @@ string MissionName(MissionKind kind)
     {
         case MissionKind.Hold: return "HOLD THE CIRCLE";
         case MissionKind.Cull: return "CULL THE DEAD IN THE CIRCLE";
-        case MissionKind.Hunt: return "HUNT THE ELITE";
+        case MissionKind.Wisps: return "CATCH THE WISPS";
     }
     return "";
 }
@@ -44,14 +49,14 @@ string MissionMark(MissionKind kind)
     {
         case MissionKind.Hold: return "HOLD";
         case MissionKind.Cull: return "CULL";
-        case MissionKind.Hunt: return "ELITE";
+        case MissionKind.Wisps: return "WISP";
     }
     return "";
 }
 
 float MissionTime(MissionKind kind)
 {
-    return kind == MissionKind.Hold ? HOLD_TIME : kind == MissionKind.Cull ? CULL_TIME : HUNT_TIME;
+    return kind == MissionKind.Hold ? HOLD_TIME : kind == MissionKind.Cull ? CULL_TIME : WISPS_TIME;
 }
 
 float MissionReach(MissionKind kind)
@@ -64,10 +69,11 @@ void ResetMissions(mut Match match)
 {
     match.mission = MissionKind.None;
     match.missionWait = MISSION_FIRST;
+    match.wisps.Clear();
 }
 
-// The mission, each tick: begun when its time comes, kept while it runs (a cull's kills and a hunt's elite are counted
-// in zombies.tide's TakeWound), ended done or out of time.
+// The mission, each tick: begun when its time comes, kept while it runs (a cull's kills are counted in zombies.tide's
+// TakeWound), ended done or out of time.
 [Stage(Tick.Rounds, 3)]
 system Missions(mut Match match, Ashwick ashwick, Party party, Time time, query (Survivor survivor) survivors)
 {
@@ -90,7 +96,7 @@ system Missions(mut Match match, Ashwick ashwick, Party party, Time time, query 
         var roll = Random.NextInt(3);
         var kind = match.devMission >= 1 && match.devMission <= 3 ? MissionKind(match.devMission) : MissionKind(1 + roll);
         var at = MissionPlace(match, ashwick, near[pick]);
-        if (at.y < -100)
+        if (at.y < -100 || (kind == MissionKind.Wisps && !ScatterWisps(match, ashwick, at)))
         {
             match.missionWait = 1;
             return;
@@ -100,8 +106,7 @@ system Missions(mut Match match, Ashwick ashwick, Party party, Time time, query 
         match.missionAt = at;
         match.missionLeft = MissionTime(kind);
         match.missionDone = 0;
-        match.missionGoal = kind == MissionKind.Hold ? HOLD_SECONDS : kind == MissionKind.Cull ? Math.Round(CULL_EACH * match.crowd) : 1.0;
-        if (kind == MissionKind.Hunt) RaiseElite(match, at, near[pick]);
+        match.missionGoal = kind == MissionKind.Hold ? HOLD_SECONDS : kind == MissionKind.Cull ? Math.Round(CULL_EACH * match.crowd) : match.wisps.count;
         Send(MissionBegan { kind = kind, at = at });
         return;
     }
@@ -112,6 +117,22 @@ system Missions(mut Match match, Ashwick ashwick, Party party, Time time, query 
         foreach (var row in survivors)
             if (row.survivor.ready && row.survivor.life == Life.Standing && Math.Length((row.survivor.feet - match.missionAt).xz) <= HOLD_REACH) inside += 1;
         if (inside > 0) match.missionDone += dt * (1 + 0.5 * (inside - 1));
+    }
+    if (match.mission == MissionKind.Wisps)
+    {
+        for (var k = match.wisps.count - 1; k >= 0; k--)
+        {
+            var wisp = match.wisps[k];
+            foreach (var row in survivors)
+            {
+                var s = row.survivor;
+                if (!s.ready || s.life != Life.Standing || Math.Length((s.feet - wisp).xz) > WISP_CATCH) continue;
+                match.wisps.RemoveAt(k);
+                match.missionDone += 1;
+                Send(WispCaught { at = wisp, seat = s.seat });
+                break;
+            }
+        }
     }
     if (match.missionDone >= match.missionGoal) EndMission(match, party, true);
     else if (match.missionLeft <= 0) EndMission(match, party, false);
@@ -125,6 +146,7 @@ void EndMission(mut Match match, Party party, bool done)
             if (party.taken[seat]) party.survivors[seat].Send(Owed { boons = 1 });
     Send(MissionEnded { kind = match.mission, at = match.missionAt, done = done });
     match.mission = MissionKind.None;
+    match.wisps.Clear();
     var gap = Random.NextFloat(MISSION_GAP_LEAST, MISSION_GAP_MOST);
     match.missionWait = gap;
 }
@@ -146,13 +168,31 @@ float3 MissionPlace(Match match, Ashwick ashwick, float3 focus)
     return float3(0, -1000, 0);
 }
 
-// The hunt's quarry: a Warden ELITE_HEALTH times as tough, running, clawing up where the mission is.
-void RaiseElite(Match match, float3 at, float3 toward)
+// The wisps to catch: WISPS of them, round where the mission is (one to each share of the way round), WISP_NEAR to
+// WISP_FAR from it, on open ground the dead's way reaches, out of the fires (a dozen tries each); whether three or more
+// were.
+bool ScatterWisps(mut Match match, Ashwick ashwick, float3 at)
 {
-    var look = Random.NextInt(ZOMBIE_LOOKS);
-    var phase = Random.NextInt(64);
-    Spawn(Zombie { at = at, yaw = YawTo(at, toward), health = ZombieHealth(match.danger) * KindHealth(ZombieKind.Warden) * ELITE_HEALTH, gait = Gait.Run, look = look,
-                   state = ZombieState.Rising, pace = 1, phase = phase, kind = ZombieKind.Warden, spit = SPIT_EVERY, elite = true });
+    match.wisps.Clear();
+    for (var k = 0; k < WISPS; k++)
+    {
+        for (var tries = 0; tries < 12; tries++)
+        {
+            var turn = (k + Random.NextFloat(0.8)) * Math.TAU / WISPS;
+            var there = at + float3(Math.Sin(turn), 0, Math.Cos(turn)) * Random.NextFloat(WISP_NEAR, WISP_FAR);
+            var cell = CellOf(there);
+            if (cell < 0 || !InClearing(there) || !Open(ashwick, cell) || FieldAt(ashwick, there) >= UNREACHED || Afire(match, there, 1.5)) continue;
+            match.wisps.Add(On(there.x, there.z));
+            break;
+        }
+    }
+    return match.wisps.count >= 3;
+}
+
+event WispCaught
+{
+    float3 at;
+    int seat;
 }
 
 event MissionBegan
@@ -170,9 +210,10 @@ event MissionEnded
 
 // ---- What's seen and heard ----
 
-// The circle on the ground, in gold motes; the elite, a gold ring over its head.
+// The circle on the ground, in gold motes; the wisps, pale gold flames bobbing waist high, sparks rising off them,
+// each lighting the ground round it.
 [Stage(Layers.Gather, 4)]
-view MissionMarks(Match match, mut Fx fx, Look look, query (Zombie zombie) zombies)
+view MissionMarks(Match match, mut Fx fx, mut Lights lights, Me me, Look look)
 {
     if (!fx.made || match.phase != Phase.Fighting || match.mission == MissionKind.None) return;
     var reach = MissionReach(match.mission);
@@ -185,17 +226,25 @@ view MissionMarks(Match match, mut Fx fx, Look look, query (Zombie zombie) zombi
             Glow(fx, Mote { at = On(at.x, at.z) + float3(0, 0.1, 0), velocity = float3(0, 0.6, 0), life = 0.4, size = 0.14, color = float3(1.0, 0.8, 0.25), alpha = 1.8 });
         }
     }
-    if (match.mission != MissionKind.Hunt) return;
-    foreach (var row in zombies)
+    foreach (var wisp in match.wisps)
     {
-        if (!row.zombie.elite || row.zombie.state == ZombieState.Dying) continue;
-        for (var k = 0; k < 4; k++)
-        {
-            var turn = fx.random.NextFloat(Math.TAU);
-            var at = row.zombie.headAt + float3(Math.Cos(turn) * 0.6, 0.5, Math.Sin(turn) * 0.6);
-            Glow(fx, Mote { at = at, velocity = float3(0, 0.4, 0), life = 0.3, size = 0.1, color = float3(1.0, 0.75, 0.2), alpha = 2.2 });
-        }
+        if (Math.Distance(wisp, look.eye) > 90) continue;
+        var at = WispAt(wisp, look.time);
+        var flicker = 0.85 + 0.3 * Math.Perlin(float2(look.time * 9 + wisp.x, wisp.z));
+        Glow(fx, Mote { at = at, life = 0.05, size = 0.55 * flicker, color = float3(1.0, 0.55, 0.15), alpha = 0.45 });
+        Glow(fx, Mote { at = at, life = 0.05, size = 0.22 * flicker, color = float3(1.0, 0.8, 0.45), alpha = 1.6 });
+        if (fx.random.NextFloat() < Math.Min(Frame.dt, 0.05) * 50)
+            Glow(fx, Mote { at = at + Scatter(fx, 0.12), velocity = float3(0, 1.1, 0) + Scatter(fx, 0.3), life = fx.random.NextFloat(0.3, 0.7), size = 0.08, grow = -0.1,
+                            color = float3(1.0, 0.65, 0.25), alpha = 2 });
+        AddLight(lights, me.eye, Light { at = at, color = float3(1.0, 0.75, 0.35) * 2.5, reach = 6 });
     }
+}
+
+// Where a wisp is seen: bobbing and swaying a little, waist high over its place.
+float3 WispAt(float3 wisp, float time)
+{
+    var phase = wisp.x * 1.7 + wisp.z;
+    return wisp + float3(Math.Sin(time * 1.3 + phase) * 0.15, 1.1 + Math.Sin(time * 2.2 + phase) * 0.15, Math.Cos(time * 1.1 + phase) * 0.15);
 }
 
 // Under the night's panel: the mission, what's done of it and the time left.
@@ -222,8 +271,7 @@ view MissionPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor su
     WriteBold($"{int(Math.Ceil(Math.Max(0, match.missionLeft)))} s", float2(box.x + 136 * u, box.y - 20 * u), 12 * u, BONE, Anchor.MiddleRight);
     WriteBold(MissionName(match.mission), float2(left, box.y - 2 * u), 14 * u, GOLD, Anchor.MiddleLeft);
     Bar(float2(left, box.y + 16 * u), float2(190 * u, 7 * u), match.missionDone / Math.Max(1, match.missionGoal), 0, GOLD, Color(0.55, 0.4, 0.1), 1, u);
-    var done = match.mission == MissionKind.Hold ? $"{int(match.missionDone)} / {int(match.missionGoal)} s" : match.mission == MissionKind.Cull
-             ? $"{int(match.missionDone)} / {int(match.missionGoal)}" : "";
+    var done = match.mission == MissionKind.Hold ? $"{int(match.missionDone)} / {int(match.missionGoal)} s" : $"{int(match.missionDone)} / {int(match.missionGoal)}";
     Write(done, float2(left + 198 * u, box.y + 16 * u), 11 * u, BONE, Anchor.MiddleLeft);
     Write("Reward: everyone picks a rarer item", float2(left, box.y + 30 * u), 10 * u, ASH, Anchor.MiddleLeft);
 }
@@ -231,7 +279,7 @@ view MissionPanel(Me me, Lobby lobby, Match match, Look look, query (Survivor su
 // Where the night's bosses are while they stand, and the mission: over each while it's on the screen, else at the
 // screen's edge the way it is (the owner, 2026-10-18: "objective was not clear, didnt even find it"). Over the panels.
 [Stage(Layers.Hud, 6)]
-view Objectives(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors, query (Boss boss) bosses, query (Zombie zombie) zombies)
+view Objectives(Me me, Lobby lobby, Match match, Look look, query (Survivor survivor) survivors, query (Boss boss) bosses)
 {
     if (lobby.page != Page.Playing || match.phase != Phase.Fighting || match.paused) return;
     mut var mine = Survivor { };
@@ -254,11 +302,23 @@ view Objectives(Me me, Lobby lobby, Match match, Look look, query (Survivor surv
         Pointer(look, b.at + float3(0, MutantOf(b.kind).size * 1.4, 0), mine.feet, "BOSS", Color(0.98, 0.32, 0.2), w, h, u, look.time);
     }
     if (match.mission == MissionKind.None) return;
-    mut var at = match.missionAt;
-    if (match.mission == MissionKind.Hunt)
-        foreach (var row in zombies)
-            if (row.zombie.elite && row.zombie.state != ZombieState.Dying) at = row.zombie.at;
-    if (match.mission != MissionKind.Hunt && Math.Length((at - mine.feet).xz) <= MissionReach(match.mission)) return;
+    // The wisps: the nearest
+    if (match.mission == MissionKind.Wisps)
+    {
+        mut var nearest = float3(0);
+        mut var best = 1e9;
+        foreach (var wisp in match.wisps)
+        {
+            var far = Math.Length((wisp - mine.feet).xz);
+            if (far >= best) continue;
+            best = far;
+            nearest = wisp;
+        }
+        if (match.wisps.count > 0) Pointer(look, WispAt(nearest, look.time) + float3(0, 0.4, 0), mine.feet, MissionMark(match.mission), GOLD, w, h, u, look.time);
+        return;
+    }
+    var at = match.missionAt;
+    if (Math.Length((at - mine.feet).xz) <= MissionReach(match.mission)) return;
     Pointer(look, at, mine.feet, MissionMark(match.mission), GOLD, w, h, u, look.time);
 }
 
@@ -285,4 +345,20 @@ local event(MissionBegan began) HearMissionBegan()
 local event(MissionEnded ended) HearMissionEnded()
 {
     if (ended.done) Audio.Play(itemRare, 0.85);
+}
+
+// A wisp caught: a burst of gold sparks, and a chime.
+local event(WispCaught caught) ShowWispCaught(mut Fx fx, Look look)
+{
+    if (!fx.made) return;
+    var at = WispAt(caught.at, look.time);
+    fx.flashes.Add(Flash { at = at, color = float3(1.0, 0.8, 0.4) * 4, reach = 5, life = 0.25 });
+    for (var i = 0; i < 30; i++)
+        Glow(fx, Mote { at = at, velocity = Scatter(fx, 4) + float3(0, 1.5, 0), life = fx.random.NextFloat(0.3, 0.7), size = 0.06, color = float3(1.0, 0.8, 0.35), alpha = 2.5,
+                        drag = 2, gravity = 2 });
+}
+
+local event(WispCaught caught) HearWispCaught()
+{
+    Audio.Play(powerupGrab, caught.at, 0.8, 1.3);
 }

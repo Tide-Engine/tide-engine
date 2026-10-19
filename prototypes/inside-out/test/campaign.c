@@ -452,7 +452,7 @@ static int active_batteries(void)
     return count;
 }
 
-TIDE_TEST(inside_out_both_robots_in_a_lane_open_its_puzzle)
+TIDE_TEST(inside_out_both_robots_in_a_post_open_its_puzzle)
 {
     inside_out_test_start(2);
     // Teal's machine has solved the first puzzle before: both start in the
@@ -463,22 +463,32 @@ TIDE_TEST(inside_out_both_robots_in_a_lane_open_its_puzzle)
     TIDE_CHECK(robot_at(0, 0, 2, 3) && robot_at(1, 0, 4, 3));
     // Its yard has the solved puzzle's battery, and only that one.
     TIDE_CHECK(active_batteries() == 1 && world.Workshop.puzzle.crates.at[0].active);
-    // Puzzle 2's lane is the second of the gallery's north wall: pads (2,1) and (2,2).
-    TIDE_REQUIRE(walk("NN ww"));
+    // Puzzle 2's post is the second of the gallery's north wall, (2,0): Amber
+    // walks into it from (2,1).
+    TIDE_REQUIRE(walk("NNN"));
+    TIDE_CHECK(robot_at(0, 0, 2, 0));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == -1); // One robot is not enough.
-    TIDE_REQUIRE(walk("n"));
+    // In a post, the only step is back out the way it came.
+    for (int direction = 0; direction < 4; direction += direction == 1 ? 2 : 1) {
+        TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, direction));
+        TIDE_CHECK(robot_at(0, 0, 2, 0));
+    }
+    // Teal comes in after it; a post has room for both.
+    TIDE_REQUIRE(walk("wwnnn"));
+    TIDE_CHECK(robot_at(1, 0, 2, 0));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == 1 && world.Workshop.departTick >= 0);
-    // Stepping off while the pads fill cancels.
+    // Stepping out while the doorway fills cancels.
     TIDE_REQUIRE(walk("s"));
+    TIDE_CHECK(robot_at(1, 0, 2, 1));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == -1 && world.Workshop.departTick == -1);
     TIDE_REQUIRE(walk("n"));
     tide_world_tick(&world);
     const int began = world.Workshop.departTick;
     TIDE_REQUIRE(world.Workshop.departStation == 1 && began >= 0);
-    // Once the pads are full nobody moves, and nothing undoes or restarts.
+    // Once the doorway is full nobody moves, and nothing undoes or restarts.
     while (world.Time.tick <= began + 18) tide_world_tick(&world);
     const Puzzle full = world.Workshop.puzzle;
     const int history = world.Workshop.historyCount;
@@ -490,7 +500,7 @@ TIDE_TEST(inside_out_both_robots_in_a_lane_open_its_puzzle)
     TIDE_CHECK(world.Workshop.historyCount == history);
     TIDE_CHECK(wait_for_place(60) >= 0);
     TIDE_CHECK(!world.Workshop.inHall && world.Workshop.level == 1 && !world.Workshop.puzzle.solved);
-    // CHARGE_TICKS + DIVE_TICKS after both stood in the lane; then its name.
+    // CHARGE_TICKS + DIVE_TICKS after both were in the post; then its name.
     TIDE_CHECK(world.Workshop.openedTick == began + 54 && world.Workshop.introTicks == 114);
     TIDE_CHECK(world.Workshop.puzzle.moves == 0 && world.Workshop.historyCount == 0);
     // Back in the hall, it is as they left it, with both below the post.
@@ -536,9 +546,9 @@ TIDE_TEST(inside_out_the_lift_works_once_its_hall_is_powered)
     // The other machine has seen the first hall's lift working.
     TIDE_REQUIRE(inside_out_test_progress(1, 31, 1, false));
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 1 && world.Workshop.arrival == 0);
-    // Out of the gallery onto the table, into the lift down's lane: pads
-    // (1,1) and (2,1), beside where the gallery lets out.
-    TIDE_REQUIRE(walk("ESSSSWW wssssw"));
+    // Out of the gallery onto the table and into the lift down, (0,1), from
+    // (1,1), beside where the gallery lets out.
+    TIDE_REQUIRE(walk("ESSSSWWW wsssswww"));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == 5);
     TIDE_CHECK(wait_for_place(60) >= 0);
@@ -546,14 +556,16 @@ TIDE_TEST(inside_out_the_lift_works_once_its_hall_is_powered)
     TIDE_CHECK(world.Workshop.introTicks == 60);
     // Down the lift, both stand by the lift up, which works.
     TIDE_CHECK(robot_at(0, -1, 3, 1) && robot_at(1, -1, 3, 2));
-    TIDE_REQUIRE(walk("EE ne"));
+    TIDE_REQUIRE(walk("EEE neee"));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == 6);
     TIDE_CHECK(wait_for_place(60) >= 0);
     TIDE_CHECK(world.Workshop.inHall && world.Workshop.hall == 1 && world.Workshop.arrival == 2);
     TIDE_CHECK(robot_at(0, -1, 3, 1) && robot_at(1, -1, 3, 2));
-    // The second hall's own lift does not work yet: its lane does nothing.
-    TIDE_REQUIRE(walk("EE ne"));
+    // The second hall's own lift does not work yet: it cannot be walked into.
+    TIDE_REQUIRE(walk("EE"));
+    TIDE_REQUIRE(inside_out_test_act(TIDE_COMMAND_ID_Move, 0, 1));
+    TIDE_CHECK(robot_at(0, -1, 5, 1));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == -1);
     tide_world_free(&world);
@@ -564,8 +576,9 @@ TIDE_TEST(inside_out_a_challenge_is_found_in_its_box_and_keeps_its_budget)
     inside_out_test_start(2);
     TIDE_REQUIRE(inside_out_test_progress(0, 1, 0, false));
     // The challenge's post is inside the box against the yard's west edge:
-    // walked into, it cannot move, so they go in by its east doorway.
-    TIDE_REQUIRE(walk("ESSSSSSWWWW wsssssswwwnw"));
+    // walked into, it cannot move, so they go in by its east doorway, then
+    // into the post at (2,0) from (2,1).
+    TIDE_REQUIRE(walk("ESSSSSSWWWW wsssssswwwnwn NN"));
     tide_world_tick(&world);
     TIDE_CHECK(world.Workshop.departStation == 7);
     TIDE_CHECK(wait_for_place(60) >= 0);

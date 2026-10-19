@@ -66,6 +66,7 @@ singleton Match
     float missionDone;
     float missionGoal;
     float missionWait;
+    List<float3> wisps;          // A catch's wisps not yet caught
     int devMission = -1;
     // The end
     float lasted;                // How long the run went

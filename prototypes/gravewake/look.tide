@@ -320,6 +320,21 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens, 
         var rim = Math.Saturate(1 - Math.Abs(d - f.z + 0.2) / 0.3);
         heat += float3(1.0, 0.32, 0.06) * (ember * 3.5 + 0.25 + rim * 1.6) * inside * f.w * flicker;
     }
+    // A Bloater swelling to burst: the ground it'll reach glowing a dull red, a hard red ring at its edge, and a second
+    // growing out from under it to meet the first as it bursts, all throbbing quicker as it nears (red, not the
+    // missions' gold)
+    foreach (var b in hazards.fuses)
+    {
+        var d = Math.Distance(at, b.xy);
+        if (d > b.z + 0.3) continue;
+        var hot = Math.Lerp(float3(1.0, 0.22, 0.05), float3(1.0, 0.06, 0.02), b.w);
+        var pulse = 0.7 + 0.3 * Math.Sin(look.time * (12 + 30 * b.w));
+        var edge = Math.Saturate(1 - Math.Abs(d - b.z + 0.1) / 0.14);
+        var front = Math.Saturate(1 - Math.Abs(d - b.z * b.w) / 0.1);
+        var filled = Math.SmoothStep(b.z * b.w + 0.05, b.z * b.w - 0.05, d);
+        var inside = Math.SmoothStep(b.z + 0.05, b.z - 0.05, d);
+        heat += hot * (edge * 0.8 * pulse + inside * (0.012 + 0.012 * pulse) + filled * 0.035 + front * 0.3);
+    }
     // The wake-fire's ring: its line burning pale in the ground, a glow either side
     if (hazards.ring.z > 0)
     {
