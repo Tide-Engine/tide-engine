@@ -1235,7 +1235,8 @@ static void add_circle(const bool wire, const float x, const float y, const floa
 static void add_plain_run(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
 {
     const uint32_t first = c->plain.first < list->plain_count ? c->plain.first : list->plain_count;
-    const uint32_t count = c->plain.count < list->plain_count - first ? c->plain.count : list->plain_count - first;
+    const uint32_t run = tide_draw_plain_run(list, c);
+    const uint32_t count = run < list->plain_count - first ? run : list->plain_count - first;
     const tide_draw_plain *in = list->plains + first, *const end = in + count;
     const bool gui = cam->gui;
     const float scale = cam->scale, cx = cam->center.x, cy = cam->center.y;

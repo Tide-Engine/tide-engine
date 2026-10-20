@@ -295,17 +295,23 @@ typedef struct tide_vertex {
 // arithmetic), the same byte for every one of the 2^32 floats as
 // (uint8_t)(fminf(fmaxf(v, 0), 1) * 255 + 0.5f), checked exhaustively. The
 // list records plain shapes' colors so, and renderers convert every other
-// color so, so the two are the same bytes.
+// color so, so the two are the same bytes. The whole numbers, 0 to 255, are
+// packed as a vector of bytes is, which takes a shuffle where four shifts took
+// more.
 typedef float tide_draw_color_lanes __attribute__((ext_vector_type(4)));
 typedef int32_t tide_draw_color_ints __attribute__((ext_vector_type(4)));
+typedef uint8_t tide_draw_color_u8 __attribute__((ext_vector_type(4)));
 
 static inline uint32_t tide_draw_color_bytes(const tide_color c)
 {
     const tide_draw_color_lanes v = {c.r, c.g, c.b, c.a};
     const tide_draw_color_lanes kept = __builtin_elementwise_minnum(__builtin_elementwise_maxnum(v, (tide_draw_color_lanes)0.0f),
                                                                     (tide_draw_color_lanes)1.0f);
-    const tide_draw_color_ints bytes = __builtin_convertvector(kept * 255.0f + 0.5f, tide_draw_color_ints);
-    return (uint32_t)bytes.x | (uint32_t)bytes.y << 8 | (uint32_t)bytes.z << 16 | (uint32_t)bytes.w << 24;
+    const tide_draw_color_ints whole = __builtin_convertvector(kept * 255.0f + 0.5f, tide_draw_color_ints);
+    const tide_draw_color_u8 bytes = __builtin_convertvector(whole, tide_draw_color_u8);
+    uint32_t packed;
+    __builtin_memcpy(&packed, &bytes, sizeof packed);
+    return packed;
 }
 
 // A plain shape (TIDE_DRAW_PLAIN's): a rect, a circle, their outlines or a
@@ -1391,6 +1397,12 @@ typedef struct tide_draw_list {
     tide_draw_plain *plains; // The plain shapes (TIDE_DRAW_PLAIN)
     uint32_t plain_count;
     uint32_t plain_capacity;
+    // 1 + the place of the last command where it's a run of plain shapes that
+    // recording goes on with as it is (the blend there is, nothing to settle
+    // or work in), or 0. Its shapes are the list's from its first on, and its
+    // count is written as it closes: anything that records another command or
+    // changes a setting closes it (tide_draw_plain_run).
+    uint32_t plain_open;
     tide_draw_quad *quads; // The meshes that are one quad each (TIDE_DRAW_QUADS)
     uint32_t quad_count;
     uint32_t quad_capacity;
@@ -1449,6 +1461,12 @@ typedef struct tide_draw_list {
     const unsigned char *bold; // The bold weight's file, once a command of the frame draws with it: its renderer's
     uint32_t frame;   // Counts tide_draw_reset
     uint32_t epoch;   // Counts tide_draw_forget
+    // The image of the pack's found last (its name, TIDE_TEXTURE_NAME of a
+    // reference's version) and the list's texture for it, in frame
+    // `pack_frame`: within a frame a name is the same image (pack_slot)
+    uint64_t pack_named;
+    uint32_t pack_slot;
+    uint32_t pack_frame;
     struct tide_skinned_draw_cache *skinned; // Private frame-local palette captures
     // The window's size in logical pixels, supplied before recording (tide_draw_screen_size).
     // With none, window frustum culling and automatic LOD selection are skipped.
@@ -1733,28 +1751,33 @@ static inline tide_color tide_draw_tint(const tide_draw_list *d)
 }
 
 // The plain shapes: rects, circles, their outlines and lines. Recording one
-// where nothing set changes it is a record's stores and the run's count, so
-// that much is inline, in the code that draws: a frame of shapes spends its
-// time here, and a call for each cost as much as the stores (on Windows a color
-// is passed by its address, too). tide_draw_plain_placed does everything else:
-// a tint or a transform worked in, settings to record first, a run of its own,
-// room for more.
+// after another is the record's stores and the list's count, so that much is
+// inline, in the code that draws: a frame of shapes spends its time here, and
+// a call for each cost as much as the stores (on Windows a color is passed by
+// its address, too). tide_draw_plain_placed does everything else: a tint or a
+// transform worked in, settings to record first, a run of its own, room for
+// more.
 void tide_draw_plain_placed(tide_draw_list *d, tide_draw_kind kind, tide_float2 a, tide_float2 b, tide_color color);
 
 static inline __attribute__((always_inline)) void tide_draw_plain_kind(tide_draw_list *d, const tide_draw_kind kind,
                                                                        const tide_float2 a, const tide_float2 b,
                                                                        const tide_color color)
 {
-    // More of the run the last command is, with the blend there is
-    tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
-    if (__builtin_expect((d->altered | d->unsettled) != 0u || !last || last->kind != TIDE_DRAW_PLAIN
-                             || last->blend != (uint8_t)d->place.blend || last->plain.first + last->plain.count != d->plain_count
-                             || d->plain_count == d->plain_capacity, 0)) {
+    // More of the open run, where there's room
+    const uint32_t at = d->plain_count;
+    if (__builtin_expect(!d->plain_open || at == d->plain_capacity, 0)) {
         tide_draw_plain_placed(d, kind, a, b, color);
         return;
     }
-    d->plains[d->plain_count++] = (tide_draw_plain){a, b, tide_draw_color_bytes(color), (uint8_t)kind, {0, 0, 0}};
-    last->plain.count++;
+    d->plains[at] = (tide_draw_plain){a, b, tide_draw_color_bytes(color), (uint8_t)kind, {0, 0, 0}};
+    d->plain_count = at + 1u;
+}
+
+// How many plain shapes TIDE_DRAW_PLAIN command `c` of the list has: the open
+// run's are the list's from its first on.
+static inline uint32_t tide_draw_plain_run(const tide_draw_list *d, const tide_draw_command *c)
+{
+    return d->plain_open && c == &d->commands[d->plain_open - 1u] ? d->plain_count - c->plain.first : c->plain.count;
 }
 
 // A list's commands as they'd be with a command for each plain shape: each
@@ -1842,8 +1865,8 @@ void tide_draw_round_rect_placed(tide_draw_list *d, tide_float2 center, tide_flo
 static inline void tide_draw_round_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
                                         const tide_color color)
 {
-    if (__builtin_expect((d->altered | d->unsettled) != 0u || d->count == d->capacity || d->shape_count == d->shape_capacity
-                             || !(size.x > 0.0f) || !(size.y > 0.0f), 0)) {
+    if (__builtin_expect((d->altered | d->unsettled | d->plain_open) != 0u || d->count == d->capacity
+                             || d->shape_count == d->shape_capacity || !(size.x > 0.0f) || !(size.y > 0.0f), 0)) {
         tide_draw_round_rect_placed(d, center, size, radius, color);
         return;
     }
@@ -1974,6 +1997,82 @@ static inline __attribute__((always_inline)) void tide_draw_mesh(tide_draw_list 
                                   const tide_filter filter)
 {
     tide_draw_mesh_wrapped(d, vertices, vertex_count, indices, index_count, texture, filter, TIDE_WRAP_CLAMP);
+}
+
+// A texture drawn upright over a box (Draw.Sprite): `center` and `size` as
+// tide_draw_rect's, the texture's top left corner at the box's top left (the
+// top being towards the top of the screen, under a camera too), each pixel
+// times `color`, read as the reference says (tide_texture_filter,
+// tide_texture_wrap). A negative width or height mirrors it. Where nothing set
+// changes it, it's a quad (tide_draw_quad), more of the last command's run
+// where that has the same image; otherwise four corners and two triangles,
+// p q r and p r s from the top left round, as tide_draw_mesh_with draws them.
+// More of a run is inline, as a mesh's is; tide_draw_sprite_placed does the
+// rest. `part` is the part of the texture it shows, in uvs: (0, 0) its top left
+// corner and (1, 1) its bottom right. `rotation` turns it about its center, in
+// radians from +x towards +y, as tide_draw_rect_rotated is.
+void tide_draw_sprite_placed(tide_draw_list *d, const tide_texture_ref *texture, tide_float2 center, tide_float2 size,
+                             tide_rect part, float rotation, tide_color color);
+
+// A quad's pattern (tide_draw_quad.pattern) for corners p q r s from its top
+// left round: q takes r's x and u, and s r's y and v.
+#define TIDE_DRAW_QUAD_ROUND (5u << 4 | 15u << 8 | 15u << 16 | 10u << 20)
+
+// Whether `texture` is the image the last command's run draws with, as
+// tide_draw_texture_source would find it: C's pixels as tide_draw_same_image
+// tells them, and an image of the pack's by the name found last this frame.
+// Not a grid or a rendered image, which the list looks at each time.
+static inline __attribute__((always_inline)) bool tide_draw_same_source(const tide_draw_list *d, const tide_draw_command *last,
+                                                                        const tide_texture_ref *texture)
+{
+    if (texture->target.id) return false;
+    if (texture->image.pixels) return tide_draw_same_image(d, last, &texture->image);
+    const uint64_t name = texture->image.version & TIDE_TEXTURE_NAME;
+    return texture->image.height != TIDE_TEXTURE_GRID && name && name == d->pack_named && d->pack_frame == d->frame
+        && last->mesh.texture && last->mesh.texture == d->pack_slot;
+}
+
+static inline __attribute__((always_inline)) void tide_draw_sprite_part(tide_draw_list *d, const tide_texture_ref texture,
+                                                                        const tide_float2 center, const tide_float2 size,
+                                                                        const tide_rect part, const tide_color color)
+{
+    if (d->count && !(d->altered | d->unsettled) && d->quad_count < d->quad_capacity) {
+        tide_draw_command *last = &d->commands[d->count - 1u];
+        if (last->kind == TIDE_DRAW_QUADS && last->blend == d->place.blend && last->mesh.first + last->mesh.count == d->quad_count
+            && last->mesh.filter == (uint16_t)tide_texture_filter(texture) && last->mesh.wrap == (uint16_t)tide_texture_wrap(texture)
+            && tide_draw_same_source(d, last, &texture)) {
+            // Its top towards the top of the screen: up under a camera, down the screen's y on it
+            const uint32_t camera = d->place.camera_2d;
+            const bool down = camera && camera <= d->camera_count && d->cameras[camera - 1u].screen;
+            const float half = size.x * 0.5f, top = down ? size.y * -0.5f : size.y * 0.5f;
+            d->quads[d->quad_count++] = (tide_draw_quad){{center.x - half, center.y + top}, {center.x + half, center.y - top},
+                                                         {part.x, part.y}, {part.x + part.width, part.y + part.height}, color,
+                                                         TIDE_DRAW_QUAD_ROUND};
+            last->mesh.count++;
+            return;
+        }
+    }
+    tide_draw_sprite_placed(d, &texture, center, size, part, 0.0f, color);
+}
+
+static inline __attribute__((always_inline)) void tide_draw_sprite(tide_draw_list *d, const tide_texture_ref texture,
+                                                                   const tide_float2 center, const tide_float2 size,
+                                                                   const tide_color color)
+{
+    tide_draw_sprite_part(d, texture, center, size, (tide_rect){0.0f, 0.0f, 1.0f, 1.0f}, color);
+}
+
+static inline void tide_draw_sprite_rotated(tide_draw_list *d, const tide_texture_ref texture, const tide_float2 center,
+                                            const tide_float2 size, const float rotation, const tide_color color)
+{
+    tide_draw_sprite_placed(d, &texture, center, size, (tide_rect){0.0f, 0.0f, 1.0f, 1.0f}, rotation, color);
+}
+
+static inline void tide_draw_sprite_part_rotated(tide_draw_list *d, const tide_texture_ref texture, const tide_float2 center,
+                                                 const tide_float2 size, const tide_rect part, const float rotation,
+                                                 const tide_color color)
+{
+    tide_draw_sprite_placed(d, &texture, center, size, part, rotation, color);
 }
 
 // The same in two steps, for vertices several meshes share, like a GUI

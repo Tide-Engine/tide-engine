@@ -28,7 +28,7 @@ static inline tide_draw_list tide_test_flat(const tide_draw_list *d)
     flat.count = count;
     flat.capacity = count;
     flat.plains = NULL;
-    flat.plain_count = 0;
+    flat.plain_count = flat.plain_open = 0;
     flat.plain_capacity = 0;
     return flat;
 }
@@ -44,7 +44,7 @@ static inline void tide_test_flatten(tide_draw_list *d)
     d->commands = commands;
     d->count = count;
     d->capacity = count ? count : 1u;
-    d->plain_count = 0;
+    d->plain_count = d->plain_open = 0;
 }
 
 // A color as a plain shape keeps it, a byte a channel: within half of one of

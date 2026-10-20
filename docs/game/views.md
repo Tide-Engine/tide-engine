@@ -99,6 +99,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.MeasureText(text, size)` | Nothing: it returns how big `Draw.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](./meshes-and-textures.md#meshes)) |
 | `Draw.Mesh(vertices, indices, texture)` | Triangles drawn with a texture, read as it says or with the filter and the wrap after it (see [Textures](./meshes-and-textures.md#textures)) |
+| `Draw.Sprite(texture, center, size, color)` | A texture upright over a box, its top left at the box's top left, times `color` (white without one). `Sprite(texture, center, size, part, color)` draws the part of it a `Rect` of uvs covers, and a `rotation` before the color turns it (see [Sprites](./meshes-and-textures.md#sprites)) |
 | `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](./draw-settings.md#blending)) |
 | `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](./draw-settings.md#tints)) |
 | `Draw.Stencil(test, value, operation) { ... }` | What's drawn in the block is drawn only where a number kept for each pixel passes a test, and changes that number where it draws: masks, cut-outs, counting (see [Stencil](./draw-settings.md#stencil)) |

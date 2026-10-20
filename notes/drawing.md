@@ -1,5 +1,57 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## A sprite in one call (2026-10-21)
+
+The owner's "yes do it" (2026-10-20), to a call for sprites, which the third
+round found was what was left of textured quads' recording: the caller's four
+32-byte corners. `Draw.Sprite` is in the spec under Views and drawing,
+Provisional, every rule a pick; the user docs are in
+`docs/game/meshes-and-textures.md`, Sprites, and the Draw table.
+
+- **Forms** (`compiler/src/builtins.c`): `(texture, center, size)`,
+  `(..., color)`, `(..., rotation, color)`, `(..., part, color)` and
+  `(..., part, rotation, color)`, each with an optional filter and wrap after
+  it (`sampled`). `MAX_PARAMS` went from 6 to 8 for the last. Codegen
+  (`gen_expr`, the `tide_draw_sprite` names) writes the texture as a mesh's is
+  (`gen_draw_texture`, the filter and the wrap being the call's only enums),
+  then the rest, and `TIDE_COLOR_WHITE` where there's no color. A `[Raw]`
+  grid is refused as a mesh's is (`check_sprite_args`, which also has the Filter and Wrap resolved). Targets have it as a
+  method through the generic path.
+- **Runtime** (`tide/draw.h`: `tide_draw_sprite`, `_rotated`, `_part`,
+  `_part_rotated`, inline over `tide_draw_sprite_placed` in `draw.c`): the
+  slot from `tide_draw_texture_source`, filter and wrap from the reference.
+  The top is +y under a camera and -y where the destination's 2D camera is
+  `Screen` (`place.camera_2d`'s `screen`). Unturned and not `altered`, it
+  builds the `tide_draw_quad` itself (p top left, r bottom right, pattern
+  `TIDE_DRAW_QUAD_ROUND`) and `quad_placed` records it; otherwise four
+  corners from the top left round, `turn_by(rotation)` applied as
+  `center + (o.x * c - o.y * s, o.x * s + o.y * c)`, through
+  `tide_draw_mesh_with`, which tints and moves them (a turn whose corners
+  come out whole is the quad they are, as any mesh's).
+- **More of a run, inline** (`tide_draw_sprite_part`): where nothing set
+  changes it, the last command is a run of quads with the blend, filter and
+  wrap, its quads end the list's, there's room, and the texture is its run's
+  image (`tide_draw_same_source`: C's pixels as `tide_draw_same_image` tells
+  them, a pack image by the name `pack_slot` found last this frame), the quad
+  is stored there and the run's count raised. Out of line, recording 65,536
+  took 0.98 ms (best of 400, alone), as meshes of four corners 0.38: the quad
+  went to `quad_placed` through memory built a float at a time (a
+  store-forwarding stall), and the texture's slot was looked up each time.
+  Inline, 0.25 ms. `pack_slot` keeps the name it found last and the list's
+  texture for it, for the frame (`tide_draw_list.pack_named`, `pack_slot`,
+  `pack_frame`; `tide_draw_forget` drops it), so a run of sprites, or of
+  meshes, of one asset looks it up once. Grids and rendered images are found
+  each time, as a view can paint a grid between two draws.
+- Tests: `draw_sprites_are_quads_upright` (`tests/test_draw.c`: corners and
+  uvs to the bit under a camera and in Screen, runs, a filter's own run,
+  mirroring, parts, turned and tinted as corners, a zeroed texture);
+  `tidec_e2e_sprites` (each form from Tide, an asset's declared filter, the
+  call's filter and wrap, a grid mirrored, a target's color, into a target,
+  Screen); the platform pixel test `sprites_drawn_as_their_corners`
+  (`platform/tests/draw.c`, in `runs_drawn_alike`: the same pixels as the
+  meshes of their corners, under a camera and in Screen, and the texture's
+  first pixel at the top left).
+
 ## Recording inline and quads as quads (2026-10-20, third round)
 
 The owner asked to close drawing's gap to hand-written C further: recording
@@ -62,12 +114,31 @@ Recorded quads; numbers in notes/benchmarks.md, Drawing, third round).
   `tide_draw_append` carries the records. The GUI moves an area's records
   with it once it's placed, and sizes a plain panel's record
   (`tide_gui_group.panel_plain`, `commands_from`, `plains_from`).
+- **The open run** (`tide_draw_list.plain_open`): built first with the run's
+  count kept as each shape was recorded and the inline path checking the
+  last command (its kind, blend, and that the list's records end with it),
+  recording 65,536 rects took 0.183 ms where 44-byte commands took 0.113
+  (best of 400, alone), more than the renderer saved, so the frame was
+  slower (gated: Vulkan rects 0.463 -> 0.494 ms). Now the list keeps which
+  command is a run recording goes on with as it is (1 + its place), and the
+  inline path asks that and whether there's room, then stores the record and
+  the list's count: 0.108 ms. Everything that records another command or
+  changes a setting closes the run first, writing its count: `push`,
+  `push_state`, `refresh` (which the blend's setters, and
+  `tide_draw_append`'s last blend, now call too; `append` closes it where
+  another list's commands change the blend), and the round rect's inline
+  path, which leaves that to its out-of-line one. An open run's count is
+  the list's records from its first on: whatever reads a run's count asks
+  `tide_draw_plain_run`. `tide_draw_color_bytes` packs its four whole
+  numbers as a vector of bytes (`packuswb`), where shifting each in took
+  about 0.025 ms more for 65,536; the same bytes.
 - Measured (65,536 a frame, Vulkan, totals): rects 0.58 -> 0.47 ms, round
   rects 1.23 -> about 0.7, textured quads 1.46 -> about 1.2, cubes 1.63 ->
   1.35 (see benchmarks.md for the gated numbers). Recording rects 0.27 ->
   0.15 ms, round rects 0.71 -> 0.21, cubes 1.21 -> 0.94; quads' recording is
   now mostly the caller building four 32-byte corners for a call that takes
-  them, which only a call for sprites would avoid (an API question).
+  them, which only a call for sprites would avoid (an API question; built
+  since, A sprite in one call).
 - Tests: `draw_meshes_of_one_quad_are_kept_as_quads` (`tests/test_draw.c`:
   a quad with -0 and 0 told apart, its corners to the bit, quads merging,
   gradients, other corner orders and tints staying corners and triangles,

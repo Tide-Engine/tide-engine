@@ -4069,6 +4069,23 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 if (shader_reads_local(sh, sh->bound.items[b])) sb_printf(o, ", %s", fields_name(g, from->name));
             }
             sb_put(o, ")");
+        } else if (e->call == CALL_DRAW && strncmp(e->c_callee, "tide_draw_sprite", 16) == 0) {
+            // Draw.Sprite(texture, center, size, [part,] [rotation,] [color,] [filter, [wrap]]): the texture as the
+            // Texture it is, sampled as the call says (the filter and the wrap are its only enums), then the rest,
+            // and white where there's no color
+            int given = 1;
+            while (given < e->args.count && e->arg_want.items[given].kind != TY_ENUM) given++;
+            sb_printf(o, "%s(", e->c_callee);
+            gen_draw_list(g, o, e);
+            sb_put(o, ", ");
+            gen_draw_texture(g, o, e->args.items[0], given < e->args.count ? e->args.items[given] : NULL,
+                             given + 1 < e->args.count ? e->args.items[given + 1] : NULL);
+            for (int i = 1; i < given; i++) {
+                sb_put(o, ", ");
+                gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+            }
+            if (e->arg_want.items[given - 1].kind != TY_COLOR) sb_put(o, ", TIDE_COLOR_WHITE");
+            sb_put(o, ")");
         } else if (e->call == CALL_DRAW
                    && (strcmp(e->c_callee, "tide_draw_mesh_texture") == 0 || strcmp(e->c_callee, "tide_draw_mesh3_texture") == 0
                        || strcmp(e->c_callee, "tide_draw_mesh3_instances_texture") == 0)) {

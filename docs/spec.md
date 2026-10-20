@@ -1665,7 +1665,7 @@ asset string credits = "https://example.com/credits.txt";
 
 view Hero(Body body)
 {
-    Draw.Mesh(Quad(body.position), QuadIndices, hero);
+    Draw.Sprite(hero, body.position, float2(1, 1));
 }
 
 command SetBackground { List<byte> png; }
@@ -2526,6 +2526,12 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **The vert writes all of it:** each field, on every path that ends, a field at a time or the whole struct at once, before reading it (see Out parameters). `lamp = default;` fills it where there's nothing to give.
   - **A path that ends in `this.Discard()` owes the frag's color nothing,** as `fail` owes an `out` parameter nothing: no pixel is drawn.
   - **A frag's struct is the vert's or the instances'** (or, since, the draw's values: below). A frag's read-only struct was an element of the list `Instanced` draws; it's now that, or what the draw's vert writes, by its type, and a frag can take one of each. A draw whose vert writes a struct of the type its instances are is an error at the draw, as a frag couldn't tell them apart. A vert's read-only struct is an instance's or the draw's values.
+- **A sprite in one call** (the owner's "yes do it", 2026-10-20, to a call for sprites; built 2026-10-21; each rule here is Claude's pick, to confirm): `Draw.Sprite(texture, center, size, color)` draws a texture upright over a box, where a mesh takes four corners and six indices.
+  - **Its box is a rect's.** `center` and `size` are `Draw.Rect`'s, and the texture's top left corner is at the box's top left. The top is towards the top of the screen, up the world's y under a camera and down the screen's in `Screen`, as text's is. A negative width or height mirrors it.
+  - **Its forms:** `Draw.Sprite(texture, center, size)`, white; `(texture, center, size, color)`; `(texture, center, size, rotation, color)`; `(texture, center, size, part, color)`; and `(texture, center, size, part, rotation, color)`. The texture is first, as text's string is. `part` is a `Rect` of uvs, (0, 0) the texture's top left corner and (1, 1) its bottom right, as Unity's `Graphics.DrawTexture` takes its source rectangle in uvs (with y up there): a sheet's frame or an atlas's picture. `rotation` turns it about its center, in radians from +x towards +y, as `Draw.Rect`'s does.
+  - **It's read as a mesh's texture is:** a filter and a wrap after the rest, the texture's own where the call leaves them out. A render target has it as a method, `target.Sprite(...)`.
+  - **It's the quad it is.** Unturned, and where no tint or transform changes it, it's the record a mesh of one quad is kept as, more of the last command's run where that has the same texture, filter, wrap and blend, whatever their colors. Otherwise it's four corners and two triangles from its top left round, which a tint or a transform changes as a mesh's. Either way, it's the same pixels as the mesh of those corners.
+  - Not built: a pivot other than the center, and a part in the texture's pixels.
 - **A clear of depth alone** (built 2026-10-13; the owner asked for the engine to be fixed where a game had worked around there being none, and each rule is Claude's pick, to confirm): `Draw.ClearDepth()`, and a target's `target.ClearDepth()`, with no arguments.
   - **It sets depth back to the far side and leaves everything else:** every color image as it is, and stencil too, where `Clear` fills the colors and sets stencil to 0. So the 3D meshes drawn after it are in front of everything drawn before.
   - **It's a clear in every other way:** over the whole destination or what the clip leaves of it, whatever blend, tint, transform, depth, cull and stencil are set, and in a target of depth alone too.
@@ -2990,7 +2996,7 @@ view DrawHud(Arena arena)
 - The cameras' matrices (see Provisional, The cameras as matrices): a camera's matrix in code the GPU runs with nothing handed over (`pixel` or a built-in for the draw's own camera); the inverses, from clip space back to the world; whether a 2D camera should also give a `float4x4` to clip space, for a 2D shader's own arithmetic.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
-- Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
+- Layers.
 - Textures: a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
 
 ## GUI

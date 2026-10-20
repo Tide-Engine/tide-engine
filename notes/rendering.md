@@ -23,8 +23,9 @@ binaries).
   what a plain command's was, to the bit, its color copied as recorded (the
   same bytes `to_rgba` made of the float). A circle on a scaled destination
   is still a smooth shape (`add_circle`), between the pieces. Unknown kinds
-  draw nothing, and a run's first and count are kept within the list's
-  records.
+  draw nothing, and a run's first and count (`tide_draw_plain_run`, the open
+  run's being the list's records from its first on) are kept within the
+  list's records.
 - **Solid smooth shapes** (`add_smooth_run`): a shape is tested for being
   solid (`solid_shape`'s test: a box or an ellipse, unturned, no outline, no
   fade, its bottom color's bytes its top's) on the numbers its extra would

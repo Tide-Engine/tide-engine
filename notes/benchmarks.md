@@ -6,6 +6,52 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Drawing: plain records and sprites, 2026-10-21
+
+After the third round (below), the owner's "yes do it" to its two biggest
+remaining items: plain shapes kept as GPU-ready records, and a call for
+sprites (notes/drawing.md, A sprite in one call and Recording inline and
+quads as quads; every frame is the same bytes as the third round's on both
+backends, and the new sprites workload's frame is the textured quads' to the
+byte). `tide_platform_draw --bench` gained workload 13, "65536 sprites": the
+quads of workload 4 through `tide_draw_sprite`, against which C's textured
+quads are the comparison.
+
+Gated, five alternating rounds of the third round's binaries (`833f6fd3`)
+and these, no competing work in any run, then five of `versus_draw` in the
+same sitting (`draw4-final-before`/`-after`, `draw4-final-c`); totals in ms:
+
+| Vulkan | before | after | C | Tide/C before → after |
+| --- | ---: | ---: | ---: | ---: |
+| 65,536 rects | 0.448 | 0.419 | 0.140 | 3.20× → 2.99× |
+| 65,536 circles | 0.431 | 0.401 | 0.140 | 3.08× → 2.86× |
+| 65,536 round rects | 0.682 | 0.647 | 0.151 | 4.52× → 4.28× |
+| 65,536 textured quads | 1.149 | 1.125 | 0.140 | 8.21× → 8.04× |
+| 65,536 sprites (C: its quads) | | 0.654 | 0.140 | 4.67× |
+| 65,536 cube instances | 1.338 | 1.352 | 0.170 | 7.87× → 7.95× |
+
+| OpenGL 3.3 | before | after | C | Tide/C before → after |
+| --- | ---: | ---: | ---: | ---: |
+| 65,536 rects | 0.549 | 0.519 | 0.179 | 3.07× → 2.90× |
+| 65,536 circles | 0.512 | 0.484 | 0.171 | 2.99× → 2.83× |
+| 65,536 round rects | 0.790 | 0.744 | 0.180 | 4.39× → 4.13× |
+| 65,536 textured quads | 1.365 | 1.338 | 0.163 | 8.37× → 8.21× |
+| 65,536 sprites (C: its quads) | | 0.785 | 0.163 | 4.82× |
+
+Rects' recording is as it was (0.143 → 0.147 ms) and their rendering went
+0.305 → 0.272 (Vulkan): the renderer reads 24-byte records and copies their
+colors. Round rects gain from the color conversion's packing. The first build
+of the records (counted per shape, the inline path checking the last command)
+was a loss, rects 0.463 → 0.494, until the open run (drawing.md). A sprite
+records in 0.364 ms where the same quad from four corners takes 0.833, and
+renders the same. C's sitting ran faster than the third round's (rects 0.140
+against 0.171), so the ratios above are this sitting's only.
+
+What's left: recording is still 2.6× C's for rects (C writes the GPU's
+instance where it computes it) and the render about 3.3×, much of which is
+converting into the run's memory and then copying to the GPU's; sprites'
+recording is the 52-byte quad with a float color; cubes are unchanged.
+
 ## Drawing, third round, 2026-10-20
 
 The owner asked to close drawing's gap to hand-written C further, noting that
@@ -55,10 +101,13 @@ read back about 130 (C's whole render 90-115). What's left and why:
   it changes what a list keeps for them, which about 30 test files read.
   Moving the camera's arithmetic to the GPU instead would change pixels'
   last bits between backends (GPU compilers contract to FMAs), so not that.
+  Built since as 24-byte records with colors as bytes (Drawing: plain records
+  and sprites, above): about 7%, not 2×, as recording costs what it did.
 - Textured quads: the call takes four 32-byte corners and six indices,
   which the caller builds and recording reads back and compares; about 36%
   of their recording is the benchmark's own corners. A call for sprites
   (an API question for the owner) would make a sprite one small record.
+  Built since (`Draw.Sprite`, above): 0.65 ms where the corners take 1.13.
 - Cubes: 4 MB of matrices a frame (64 bytes each, an affine one could be 48),
   the double-precision frustum test and the side's determinant, per
   instance.
