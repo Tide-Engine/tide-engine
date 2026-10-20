@@ -21,6 +21,7 @@ TIDE_TEST(skinned_atlas_uses_spare_instance_lane_and_preserves_full_attribute_la
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_draw_prepare(&draw, NULL);
     uint32_t packed = 0, full = 0, full_texture = 0;
+    int32_t base[3] = {-1, -1, -1};
     for (uint32_t r = 0; r < draw.run_count; r++) {
         const tide_draw_run *run = &draw.runs[r];
         const tide_shader *shader = run->shader;
@@ -28,16 +29,14 @@ TIDE_TEST(skinned_atlas_uses_spare_instance_lane_and_preserves_full_attribute_la
         TIDE_CHECK(shader->instance_ints == 11u);
         const bool spare = strstr(shader->name, "Spare") != NULL;
         if (spare) {
-            TIDE_REQUIRE(run->count == 2u);
-            int32_t base[2];
+            TIDE_REQUIRE(packed + run->count <= 3u);
             for (uint32_t n = 0; n < run->count; n++) {
                 const uint8_t *instance = draw.instances + run->first + n * tide_shader_instance_size(shader);
                 int32_t tail[4];
                 memcpy(tail, instance + shader->instance_floats * 16u + 40u * sizeof(int32_t), sizeof tail);
                 TIDE_CHECK(tail[0] == 100 && tail[1] == 101 && tail[2] == 102);
-                base[n] = tail[3];
+                base[packed + n] = tail[3];
             }
-            TIDE_CHECK(base[0] >= 0 && base[1] > base[0]);
             packed += run->count;
         } else {
             TIDE_REQUIRE(strstr(shader->name, "Saturated") != NULL && run->count == 1u);
@@ -46,12 +45,13 @@ TIDE_TEST(skinned_atlas_uses_spare_instance_lane_and_preserves_full_attribute_la
             memcpy(tail, instance + shader->instance_floats * 16u + 40u * sizeof(int32_t), sizeof tail);
             TIDE_CHECK(tail[0] == 200 && tail[1] == 201 && tail[2] == 202 && tail[3] == 203);
             // The full layout keeps immediate, individually captured palettes.
-            if (!full_texture) full_texture = run->textures[0];
-            else TIDE_CHECK(full_texture != run->textures[0]);
+            if (full_texture) TIDE_CHECK(full_texture != run->textures[0]);
+            full_texture = run->textures[0];
             full += run->count;
         }
     }
-    TIDE_CHECK(packed == 2u && full == 2u);
+    TIDE_CHECK(packed == 3u && full == 3u);
+    TIDE_CHECK(base[0] >= 0 && base[1] > base[0] && base[2] == base[0]);
     TIDE_CHECK(tide_scratch_mark() == mark);
     tide_draw_free(&draw);
     tide_local_free(&local);

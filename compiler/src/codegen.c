@@ -3882,13 +3882,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 sb_put(o, ", (");
                 gen_expr(g, o, e->skin_mesh);
                 sb_put(o, ").data");
-                if (e->skin_pose) {
+                if (!sh->instanced && e->skin_pose) {
                     sb_put(o, ", (");
                     gen_expr(g, o, e->skin_pose);
                     sb_put(o, ").data, (");
                     gen_expr(g, o, e->skin_pose);
                     sb_put(o, ").transforms, false");
-                } else sb_put(o, ", (tide_list){0}, (tide_list){0}, true");
+                } else if (!sh->instanced) sb_put(o, ", (tide_list){0}, (tide_list){0}, true");
             }
             if (sh->blit && given < 3) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
             if (sh->values_type) { // What it gives its vert and frag, after their names
@@ -5192,10 +5192,11 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
                 collect_ordered(arg, out, false);
                 if (arg->bind == BIND_SHADER || !can_keep(arg->type)) continue;
                 if (out->items.count > had && out->items.items[out->items.count - 1].e == arg) continue;
-                // Drawing only reads the model and pose, then captures their data in the draw list.
+                // Drawing only reads the model, pose and instance list, then captures their data in the draw list.
                 // Keep the handles without another owned copy when no later operand can change
                 // them. Calls into C and other ordered effects retain the ordinary snapshot.
-                bool borrowed = arg == e->skin_mesh || arg == e->skin_pose;
+                bool borrowed = arg == e->skin_mesh || arg == e->skin_pose
+                             || (e->instanced && e->args.count > 2 && arg == e->args.items[2]);
                 for (int k = i + 1; borrowed && k < ops.count; k++) {
                     if (holds_ordered(ops.items[k].e)) borrowed = false;
                 }
@@ -19590,6 +19591,40 @@ static bool gen_shader_words(sb *o, const char *name, const int floats, const in
     return true;
 }
 
+// Capture one pose before recording its instance. The draw owns the captured data.
+static void gen_shader_skin(sb *o, const shader *sh)
+{
+    sb_printf(o, "    uint32_t tide_skin_textures[2];\n    int32_t tide_skin_info[%d];\n",
+              sh->skin_base_at >= 0 ? 4 : 3);
+    sb_put(o,
+              "    const uint32_t tide_skin_mark = tide_scratch_mark();\n"
+              "    if (tide_default_pose) {\n");
+    sb_printf(o, "        if (!%s(tide_draw, tide_model_data, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); %s; }\n",
+              sh->skin_base_at >= 0 ? "tide_draw_skinned_rest_atlas" : "tide_draw_skinned_rest_data", sh->instanced ? "continue" : "return");
+    sb_put(o, "    } else {\n"
+              "        tide_list tide_skin_transforms = tide_pose_transforms;\n"
+              "        if (!tide_skinned_compatible(tide_model_data, tide_pose_data)) {\n"
+              "            tide_skin_transforms = (tide_list){0};\n");
+    sb_printf(o, "            if (!tide_skinned_pose_into(tide_model_data, tide_pose_data, tide_pose_transforms, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); %s; }\n"
+                 "        }\n", sh->instanced ? "continue" : "return");
+    sb_printf(o, "        if (!%s(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); %s; }\n",
+              sh->skin_base_at >= 0 ? "tide_draw_skinned_atlas" : "tide_draw_skinned_data", sh->instanced ? "continue" : "return");
+    sb_put(o, "    }\n");
+    if (sh->skin_base_at >= 0) sb_printf(o, "    tide_instance.i[%d] = tide_skin_info[3];\n", sh->skin_base_at);
+}
+
+static void gen_shader_skin_bindings(sb *o, const shader *sh)
+{
+    for (int t = 0; t < sh->textures.count; t++) {
+        const shader_texture *texture = &sh->textures.items[t];
+        if (!texture->skin) continue;
+        const int slot = texture->skin - 1;
+        sb_printf(o, "    tide_textures[%d] = tide_skin_textures[%d];\n", t, slot);
+        sb_printf(o, "    tide_uniforms.i[%d] = tide_skin_info[%d];\n", texture->count_at, slot);
+        if (slot == 1) sb_printf(o, "    tide_uniforms.i[%d] = tide_skin_info[2];\n", texture->count_at + 1);
+    }
+}
+
 static void gen_shaders(gen *g)
 {
     const program *prog = g->prog;
@@ -19706,7 +19741,10 @@ static void gen_shaders(gen *g)
         if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
         if (sh->direct_texture || sh->textured) sb_put(o, ", tide_texture_ref tide_texture");
-        if (sh->skinned) sb_put(o, ", tide_list tide_model_data, tide_list tide_pose_data, tide_list tide_pose_transforms, bool tide_default_pose");
+        if (sh->skinned) {
+            sb_put(o, ", tide_list tide_model_data");
+            if (!sh->instanced) sb_put(o, ", tide_list tide_pose_data, tide_list tide_pose_transforms, bool tide_default_pose");
+        }
         if (sh->blit) sb_put(o, ", tide_render_target tide_destination, int32_t tide_over");
         if (sh->values_type) sb_printf(o, ", %s tide_values", type_cname(sh->values_type));
         for (int b = 0; b < sh->bound.count; b++) {
@@ -19753,54 +19791,8 @@ static void gen_shaders(gen *g)
             sb_printf(&access, "tide_%sb%d->%s", value->field->is_local ? "l" : "", b, field_cname(value->field));
             gen_shader_value(o, to, value->field->type, access.data, &f, &i);
         }
-        if (sh->instanced && instance) {
-            sb_put(o, "    const uint64_t tide_bytes = (uint64_t)(uint32_t)tide_count * sizeof tide_instance;\n"
-                      "    if (tide_bytes > UINT32_MAX) tide_out_of_memory();\n"
-                      "    const uint32_t tide_mark = tide_scratch_mark();\n"
-                      "    void *tide_instances = tide_scratch_memory((size_t)tide_bytes);\n");
-            bool reads_item = sh->dims == 3 && (!sh->instance_type || sh->instance_transform);
-            for (int v = 0; v < sh->values.count; v++)
-                reads_item |= sh->instance_type && sh->values.items[v].source == sh->instance_type;
-            if (reads_item) sb_put(o, "    tide_list_cache tide_cache = {0};\n");
-            sb_put(o, "    for (int32_t tide_n = 0; tide_n < tide_count; tide_n++) {\n");
-            if (reads_item) {
-                const char *item = sh->instance_type ? type_cname(sh->instance_type) : "tide_float4x4";
-                sb_printf(o, "        const %s *tide_item = tide_list_cached_at(&tide_cache, tide_items, tide_n, sizeof(%s));\n", item, item);
-            }
-            for (int v = 0; v < sh->values.count; v++) {
-                const shader_value *value = &sh->values.items[v];
-                const bool transform = !value->source && (!sh->instance_type || sh->instance_transform);
-                if (!transform && (!sh->instance_type || value->source != sh->instance_type)) continue;
-                int f = value->float_at, i = value->int_at;
-                sb access = {0};
-                if (transform && !sh->instance_type) sb_put(&access, "*tide_item");
-                else sb_printf(&access, "tide_item->%s", field_cname(transform ? sh->instance_transform : value->field));
-                gen_shader_value(o, "tide_instance", transform ? (type){TY_FLOAT4X4, NULL} : value->field->type,
-                                 access.data, &f, &i);
-            }
-            sb_put(o, "        memcpy((uint8_t *)tide_instances + (size_t)tide_n * sizeof tide_instance,\n"
-                      "               &tide_instance, sizeof tide_instance);\n    }\n");
-        }
         sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
-        if (sh->skinned) {
-            sb_printf(o, "    uint32_t tide_skin_textures[2];\n    int32_t tide_skin_info[%d];\n",
-                      sh->skin_base_at >= 0 ? 4 : 3);
-            sb_put(o,
-                      "    const uint32_t tide_skin_mark = tide_scratch_mark();\n"
-                      "    if (tide_default_pose) {\n");
-            sb_printf(o, "        if (!%s(tide_draw, tide_model_data, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }\n",
-                      sh->skin_base_at >= 0 ? "tide_draw_skinned_rest_atlas" : "tide_draw_skinned_rest_data");
-            sb_put(o, "    } else {\n"
-                      "        tide_list tide_skin_transforms = tide_pose_transforms;\n"
-                      "        if (!tide_skinned_compatible(tide_model_data, tide_pose_data)) {\n"
-                      "            tide_skin_transforms = (tide_list){0};\n"
-                      "            if (!tide_skinned_pose_into(tide_model_data, tide_pose_data, tide_pose_transforms, &tide_skin_transforms, TIDE_IN_SCRATCH)) { tide_scratch_reset(tide_skin_mark); return; }\n"
-                      "        }\n");
-            sb_printf(o, "        if (!%s(tide_draw, tide_model_data, tide_skin_transforms, tide_skin_textures, tide_skin_info)) { tide_scratch_reset(tide_skin_mark); return; }\n",
-                      sh->skin_base_at >= 0 ? "tide_draw_skinned_atlas" : "tide_draw_skinned_data");
-            sb_put(o, "    }\n");
-            if (sh->skin_base_at >= 0) sb_printf(o, "    tide_instance.i[%d] = tide_skin_info[3];\n", sh->skin_base_at);
-        }
+        if (sh->skinned && !sh->instanced) gen_shader_skin(o, sh);
         for (int t = 0; t < sh->sizes.count; t++) {
             const shader_texture *texture = &sh->sizes.items[t];
             sb from = {0};
@@ -19820,13 +19812,7 @@ static void gen_shaders(gen *g)
         sb carried = {0};
         for (int t = 0; t < sh->textures.count; t++) {
             const shader_texture *texture = &sh->textures.items[t];
-            if (texture->skin) {
-                const int slot = texture->skin - 1;
-                sb_printf(o, "    tide_textures[%d] = tide_skin_textures[%d];\n", t, slot);
-                sb_printf(o, "    tide_uniforms.i[%d] = tide_skin_info[%d];\n", texture->count_at, slot);
-                if (slot == 1) sb_printf(o, "    tide_uniforms.i[%d] = tide_skin_info[2];\n", texture->count_at + 1);
-                continue;
-            }
+            if (texture->skin) continue; // Bound after this item's pose is captured
             const bool own = sh->textured && !texture->source && !texture->asset && !texture->direct; // The draw's own
             const bool given = own || (texture->read == READ_COLOR && !texture->asset
                                        && (texture->direct || (texture->field && texture->field->type.kind == TY_TEXTURE)));
@@ -19925,9 +19911,53 @@ static void gen_shaders(gen *g)
         }
         sb sampling = {0};
         sb_printf(&sampling, "0x%xu%s", blended, carried.data ? carried.data : "");
+        if (sh->instanced && instance) {
+            if (!sh->skinned) {
+                sb_put(o, "    const uint64_t tide_bytes = (uint64_t)(uint32_t)tide_count * sizeof tide_instance;\n"
+                          "    if (tide_bytes > UINT32_MAX) tide_out_of_memory();\n"
+                          "    const uint32_t tide_mark = tide_scratch_mark();\n"
+                          "    void *tide_instances = tide_scratch_memory((size_t)tide_bytes);\n");
+            }
+            bool reads_item = sh->instance_pose || (sh->dims == 3 && (!sh->instance_type || sh->instance_transform));
+            for (int v = 0; v < sh->values.count; v++)
+                reads_item |= sh->instance_type && sh->values.items[v].source == sh->instance_type;
+            if (reads_item) sb_put(o, "    tide_list_cache tide_cache = {0};\n");
+            sb_put(o, "    for (int32_t tide_n = 0; tide_n < tide_count; tide_n++) {\n");
+            if (reads_item) {
+                const char *item = sh->instance_type ? type_cname(sh->instance_type) : "tide_float4x4";
+                sb_printf(o, "        const %s *tide_item = tide_list_cached_at(&tide_cache, tide_items, tide_n, sizeof(%s));\n", item, item);
+            }
+            for (int v = 0; v < sh->values.count; v++) {
+                const shader_value *value = &sh->values.items[v];
+                const bool transform = !value->source && (!sh->instance_type || sh->instance_transform);
+                if (!transform && (!sh->instance_type || value->source != sh->instance_type)) continue;
+                int f = value->float_at, i = value->int_at;
+                sb access = {0};
+                if (transform && !sh->instance_type) sb_put(&access, "*tide_item");
+                else sb_printf(&access, "tide_item->%s", field_cname(transform ? sh->instance_transform : value->field));
+                gen_shader_value(o, "tide_instance", transform ? (type){TY_FLOAT4X4, NULL} : value->field->type,
+                                 access.data, &f, &i);
+            }
+            if (sh->skinned) {
+                if (sh->instance_pose) {
+                    sb_printf(o, "        const tide_list tide_pose_data = tide_item->%s.data;\n"
+                                 "        const tide_list tide_pose_transforms = tide_item->%s.transforms;\n",
+                              field_cname(sh->instance_pose), field_cname(sh->instance_pose));
+                } else sb_put(o, "        const tide_list tide_pose_data = {0}, tide_pose_transforms = {0};\n");
+                sb_printf(o, "        const bool tide_default_pose = %s;\n", sh->instance_pose ? "false" : "true");
+                gen_shader_skin(o, sh);
+                gen_shader_skin_bindings(o, sh);
+                sb_printf(o, "        tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, &tide_instance, %s, tide_textures, %s);\n"
+                             "        tide_scratch_reset(tide_skin_mark);\n", s, uniforms ? "&tide_uniforms" : "NULL", sampling.data);
+            } else sb_put(o, "        memcpy((uint8_t *)tide_instances + (size_t)tide_n * sizeof tide_instance,\n"
+                             "               &tide_instance, sizeof tide_instance);\n");
+            sb_put(o, "    }\n");
+        }
+        if (sh->skinned && !sh->instanced) gen_shader_skin_bindings(o, sh);
         if (sh->blit)
             sb_printf(o, "    tide_draw_blit(tide_draw, &tide_shader_%d, (tide_blend)tide_over, %s, %s, tide_textures, %s);\n}\n\n",
                       s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data);
+        else if (sh->instanced && sh->skinned) sb_put(o, "}\n\n");
         else if (sh->instanced)
             sb_printf(o, "    tide_draw_mesh_shaded_instances(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, "
                          "(uint32_t)tide_count, %s, tide_textures, %s);\n%s}\n\n",

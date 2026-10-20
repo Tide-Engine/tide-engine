@@ -44,6 +44,36 @@ view Characters(Character character)
 
 Each draw captures the pose as it is at that call, so later edits or samples do not change characters already drawn. The renderer can batch consecutive compatible draws of an imported model even when their poses differ. Different shaders, textures, shared values or draw settings can separate those batches.
 
+For a list of characters, pass the skinned model to `Draw.Instanced`:
+
+```csharp
+struct CharacterInstance
+{
+    float4x4 transform = float4x4.identity;
+    Pose pose;
+    Color tint = Color.white;
+}
+
+frag CharacterColor(Vertex3 vertex, CharacterInstance item, out Color color)
+{
+    color = vertex.color * item.tint;
+}
+
+view Crowd()
+{
+    Draw.Instanced(hero, [
+        CharacterInstance { pose = hero.defaultPose },
+        CharacterInstance {
+            transform = float4x4.Translate(float3(3, 0, 0)),
+            pose = hero.defaultPose,
+            tint = Color.blue
+        }
+    ], CharacterColor);
+}
+```
+
+The optional `float4x4 transform` field follows the existing 3D instance convention; leaving the field out uses identity. The optional `Pose pose` field supplies that item's animation. Leaving the field out uses authored rest, including on a model with no clips; an explicitly invalid or incompatible pose skips its item. A `List<float4x4>` draws all items at rest. Pose data stays on the CPU, while shaders receive only the ordinary instance fields they read. Textures, custom vertex stages, shared values and render targets use the usual `Instanced` argument order. Each item captures its pose before the call returns.
+
 A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMesh<Vertex3> hero = "art/hero.glb";` has simpler versions of the model made as the game builds, and each draw picks one by how big the character is on screen. The pose, the bones and every lookup are the full model's; only the triangles drawn change. The model's size for the pick is its size at rest. See [Levels of detail](./assets.md#levels-of-detail).
 
 An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.

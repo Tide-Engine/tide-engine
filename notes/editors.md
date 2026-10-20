@@ -1,5 +1,15 @@
 # The language server and the editors
 
+## Skinned instancing signatures (2026-10-20)
+
+Signature help recognizes a `SkinnedMesh<V>` as the whole-model form of
+`Draw.Instanced`, selecting the instance list as argument two. Built-in help and
+instance parameter docs explain optional Pose fields, authored-rest omission and
+invalid-item skipping. `lsp_skinned_static_decode_and_draw_forms` checks valid
+source, model-form signature, active parameter and the new help text. See
+`notes/drawing.md` for validation of the compiler integration.
+
+
 Query local fields (2026-10-19): local view/listener and helper query headers
 offer mut, and binding/query hover explains current local fields alongside
 read-only match data. Match headers still omit mut. lsp_query_local_fields

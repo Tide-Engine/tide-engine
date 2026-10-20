@@ -1,4 +1,5 @@
 asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
+struct Item { Pose pose; }
 
 local singleton Cases
 {
@@ -8,6 +9,7 @@ local singleton Cases
     SkinnedMesh<Vertex3> model;
     Pose pose;
     Bone hand;
+    List<Item> items;
 }
 
 struct Shade { Color color; }
@@ -31,8 +33,16 @@ Shade EditPose(mut Cases cases)
     return Shade { color = Color.white };
 }
 
+Shade ClearItems(mut Cases cases)
+{
+    cases.items.Clear();
+    cases.changes++;
+    return Shade { color = Color.white };
+}
+
 extern void skinned_draw_observe(int step);
 extern Shade skinned_draw_c_edit();
+extern Shade skinned_draw_c_edit_items();
 
 view Show(mut Cases cases)
 {
@@ -41,6 +51,7 @@ view Show(mut Cases cases)
         cases.model = character;
         cases.pose = character.defaultPose;
         cases.hand = character.skeleton.bones.arm;
+        cases.items = [Item { pose = cases.pose }];
         cases.ready = true;
     }
     if (cases.mode == 0)
@@ -50,6 +61,8 @@ view Show(mut Cases cases)
         skinned_draw_observe(1);
         Draw.SkinnedMesh(cases.model, float4x4.identity, cases.pose);
         skinned_draw_observe(2);
+        Draw.Instanced(cases.model, cases.items);
+        skinned_draw_observe(3);
     }
     else if (cases.mode == 1)
     {
@@ -71,6 +84,14 @@ view Show(mut Cases cases)
         Draw.SkinnedMesh(character, float4x4.identity, cases.pose);
         cases.pose[cases.hand].position.x = -17;
         Draw.SkinnedMesh(character, float4x4.identity, cases.pose);
+    }
+    else if (cases.mode == 5)
+    {
+        Draw.Instanced(cases.model, cases.items, Paint, ClearItems(cases));
+    }
+    else if (cases.mode == 6)
+    {
+        Draw.Instanced(cases.model, cases.items, Paint, skinned_draw_c_edit_items());
     }
 }
 

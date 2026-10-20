@@ -29,6 +29,15 @@ Shade skinned_draw_c_edit(void)
     return (Shade){.color = TIDE_COLOR_WHITE};
 }
 
+Shade skinned_draw_c_edit_items(void)
+{
+    const Item *item = tide_list_read(&local.heap, local.Cases.items, 0, sizeof *item);
+    tide_bone_transform *transform = item ? tide_list_at_mut(item->pose.transforms, local.Cases.hand.index, sizeof *transform) : NULL;
+    if (transform) transform->position.x = -11.0f;
+    local.Cases.changes++;
+    return (Shade){.color = TIDE_COLOR_WHITE};
+}
+
 static void start(const int mode)
 {
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
@@ -88,10 +97,31 @@ TIDE_TEST(skinned_draw_borrows_unchanged_model_and_pose_without_owned_copies)
 {
     start(0);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    TIDE_CHECK(observations == 3u && bad_marks == 0u);
-    TIDE_CHECK(instances() == 2u);
+    TIDE_CHECK(observations == 4u && bad_marks == 0u);
+    TIDE_CHECK(instances() == 3u);
     TIDE_CHECK(pose_x() == 0.0f);
     TIDE_CHECK(tide_scratch_mark() == expected_mark);
+    stop();
+}
+
+TIDE_TEST(skinned_instances_snapshot_list_before_later_operand_clears_it)
+{
+    start(5);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    TIDE_CHECK(local.Cases.changes == 1 && tide_list_read_count(&local.heap, local.Cases.items) == 0);
+    TIDE_CHECK(instances() == 1u && palette_x(0) == 0.0f);
+    stop();
+}
+
+TIDE_TEST(skinned_instances_snapshot_nested_pose_before_later_extern_edits_it)
+{
+    start(6);
+    tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    TIDE_CHECK(local.Cases.changes == 1 && tide_list_read_count(&local.heap, local.Cases.items) == 1);
+    TIDE_CHECK(instances() == 1u && palette_x(0) == 0.0f);
+    const Item *item = tide_list_read(&local.heap, local.Cases.items, 0, sizeof *item);
+    const tide_bone_transform *transform = item ? tide_list_read(&local.heap, item->pose.transforms, local.Cases.hand.index, sizeof *transform) : NULL;
+    TIDE_CHECK(transform && transform->position.x == -11.0f);
     stop();
 }
 

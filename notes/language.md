@@ -1,5 +1,18 @@
 # Language features, as tidec builds them
 
+## Explicit skinned instance overload (2026-10-20)
+
+Owner-approved `Draw.Instanced(SkinnedMesh<V>, instances, ...)` follows the existing
+instance struct convention, adding optional CPU `Pose pose` alongside optional
+`float4x4 transform`. Checker expansion preserves written operand order and
+rejects incorrectly typed pose fields; absent pose fields request authored rest.
+Each valid item captures its pose using the existing skinned runtime interface.
+The instance list follows the model/pose argument borrow rule when no later
+operand can change it; later Tide/C effects preserve nested value snapshots.
+No general GPU support for Pose or implicit shader inputs was added. See
+`notes/drawing.md` for the full contract, fixtures and validation.
+
+
 ## Recorded containers for local handlers (2026-10-19)
 
 Owner-approved: local match-event handlers read text, lists, maps, sets and

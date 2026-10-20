@@ -1,5 +1,47 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Explicit skinned instances (2026-10-20)
+
+Owner-approved: `Draw.Instanced(model, instances[, texture/filter/wrap][, vert][, frag][, values])`
+and target receivers accept a `SkinnedMesh<V>`. Existing optional
+`float4x4 transform` instance fields place the mesh (identity when absent).
+An optional `Pose pose` field supplies each item's pose; omission means authored
+rest, including zero-clip models and `List<float4x4>`. A field named `pose` must
+have type Pose. Explicit invalid or incompatible poses skip only their item.
+Ordinary per-item shader fields remain selectively uploaded; pose data stays on
+the CPU and shader code cannot sample/read skeletons.
+
+The compiler adapter uses the existing skinned capture/retargeting functions and
+records each valid item through the ordinary shaded draw path. It owns each pose
+before return, then resets temporary retargeting scratch. Compatible items share
+palette pages and hardware-instanced runs; saturated 16-attribute layouts retain
+individual palettes. No runtime entry point, shader layout rule, deterministic
+pose operation or ownership contract was added. Shared texture/value bindings
+are prepared once per call. Written operands retain left-to-right snapshots.
+Stored instance lists borrow their current handles when no later operand can
+change them, avoiding a full nested-pose copy before capture. Later Tide or C
+effects retain an owned list/pose snapshot; `skinned_draw_borrow` checks both
+those mutations and the unchanged scratch mark for the ordinary borrowed call.
+
+`skinned_instanced` E2E checks separate-file binding, edited/captured poses,
+invalid-item skipping, list edits after capture, zero-clip rest transforms,
+identity without a transform field, texture/target calls, operand order, tint
+upload and two different poses in one run. The attribute-limit fixture covers
+explicit items in both atlas/spare-lane and saturated fallback shaders. Updated
+shader goldens and SPIR-V validation cover the custom vert/frag combination.
+Platform skinned pixels exercise explicit independent poses, per-item red/blue
+tints and depth-target drawing across device recreation. Error fixtures pin pose
+field types and CPU-only operations. Editor signature help identifies the model
+form and explains the conventions. User docs/spec describe the approved API.
+
+Validation: complete warning-free native/web debug builds passed, followed by
+all 2,442 native CTests (2,410 ordinary plus 32 GPU) and all 2,352 web CTests,
+with the production docs build passing. The final instance-list borrowing
+completion additionally passed all four focused skinned E2Es on native/WASI,
+including later list clearing and nested C pose mutation. Final platform pixel
+rechecks passed on Vulkan, OpenGL, WebGL and WebGPU. No private prototype browser playtest
+was run. Android, Linux/macOS, MinGW and sanitizer coverage remains CI work.
+
 ## Frame image metadata (2026-10-18)
 
 tide_draw_list.target_pixels is a borrowed host callback for physical target
@@ -139,4 +181,4 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Pose-index hashing uses the existing four-chain `tide_hash_wide`, with exact owned-TRS comparisons still deciding equality. A contiguous scratch pose is borrowed only during synchronous capture; heap/chunked values are staged as before, and deferred preparation still receives an owned copy. Neither change affects public/world hashes, pose arithmetic, palette layout or shader uploads.
   - **Shared palette pages and preparation jobs** (2026-10-10): generated adapters with instance-attribute room call `tide_draw_skinned_atlas`, recording the same three counts plus a matrix base. The compiler packs that base into a spare instance-int lane or adds one integer attribute, within the existing 16-attribute limit; saturated layouts keep the immediate `tide_draw_skinned_data` path and implicit base zero. Currently proven packed models share retained palette pages, normally at most 65,536 matrices (4 MiB); a larger single valid palette gets its own page within the existing shader-data bound. Different poses can therefore join the ordinary mesh/material run with different per-instance bases. Counts and influence indexing remain per pose. Exact owned validated node/palette dependencies and current local TRS are captured at recording time; only matrix math waits for `tide_draw_prepare`. The renderer calls it with the platform pool, and append finalizes its source serially before copying. Sufficient work uses chunked disjoint output slices and at most three additional workers when `run_some` is available, otherwise the ordinary `run` contract; no pool or small work runs serially. Pose order, matrix arithmetic and bits are unchanged. Pages keep unique identities across frames and versions derived from ordered captured content; reset/forget discard pending work, free releases storage, and append copies receive immutable content identities so later source frames cannot overwrite earlier destination draws. Owned/unregistered/invalidated models retain immediate checked capture with base zero. Four `skinned_atlas_*` runtime regressions pin deferred ownership after scratch/heap/pack disposal, exact palette bits, page growth/splitting, stable frame identities, job dispatch/fallback, reset/forget, repeated append snapshots and checked fallback. The platform fixture also compares serial and real-pool preparation of 2,048 distinct poses; compiler E2Es cover different-pose merging and the attribute-limit fallback.
   - Tests: `tests/test_skinned.c` checks interpolation, hierarchy, aliasing, snapshot storage, malformed inputs, separate-file binding and palette capture, with exact pose bits pinned for native/WASI. `compiler/tests/e2e/skinned_rest` checks zero-clip rest poses, independent edits, omitted and explicit forms with textures/custom stages/targets, operand evaluation order, invalid explicit poses, and matching palettes when a separate animation is sampled into the target or drawn directly. `compiler/tests/shaders/skinned` pins generated GLSL/WGSL. `tide_platform_skinned` reads native/WebGL/WebGPU pixels for eight influences per vertex, independent poses, pre-user-vert deformation, custom fields, explicit clip placement with later world-position edits and matching depth/color passes.
-  - Not built: an explicit `Draw.Instanced` API with a Pose per list item, animation controllers, implicit playback clocks, and automatic shadow passes. Several explicitly posed draws can share the same model and batch automatically through palette pages.
+  - Not built: animation controllers, implicit playback clocks, and automatic shadow passes. Explicit `Draw.Instanced` poses were added 2026-10-20 as recorded above; ordinary posed draws also batch through palette pages.

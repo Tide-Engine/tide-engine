@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Explicit skinned instance adapters (2026-10-20)
+
+The approved `Draw.Instanced` skinned-model overload needs no new runtime API.
+Generated code uses the existing rest/pose atlas or saturated-layout capture,
+separate-rig pose binding, scratch reset and shaded-draw recording interfaces.
+Runtime implementation and ownership stay as recorded below. Pose values are
+captured before return and compatible items batch through existing palette
+pages. Compiler fixtures and platform pixels are recorded in `notes/drawing.md`.
+
+
 Recorded containers (2026-10-19) introduce no runtime API, struct or function
 contract. Compiler-private read analysis and self-contained journal tails reuse
 existing value codecs, tide_writer/reader, heap resolvers/allocation and event

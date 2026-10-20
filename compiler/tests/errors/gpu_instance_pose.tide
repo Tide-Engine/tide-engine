@@ -1,0 +1,13 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't read skeletons or sample animations
+scene Main { }
+struct Item { Pose pose; Color tint; }
+frag Paint(Vertex3 vertex, Item item, out Color color)
+{
+    var pose = item.pose;
+    color = pose.Get(default).position.x * vertex.color * item.tint;
+}
+view Show()
+{
+    SkinnedMesh<Vertex3> model = default;
+    Draw.Instanced(model, [Item { }], Paint);
+}

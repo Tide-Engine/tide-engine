@@ -1,5 +1,20 @@
 # Code the GPU runs: frags and verts
 
+## Skinned instance bindings (2026-10-20)
+
+`Draw.Instanced` now accepts a skinned model. The shader plan retains an optional
+CPU `Pose pose` field beside the existing optional transform binding, while
+ordinary read analysis uploads only the fields read by GPU code. Generated
+adapters share single-pose capture/binding emission with `Draw.SkinnedMesh`,
+loop over the explicit items, skip invalid poses and record compatible palette
+bases through existing batching. Shared uniforms/textures are prepared once. Safe instance-list arguments borrow
+without an intermediate nested-pose copy; later ordered effects preserve
+ordinary snapshots, including through extern calls.
+The existing attribute-limit fallback remains intact. Updated `skinned` and
+`skinned_attribute_limit` goldens, E2E capture checks and platform pixel checks
+cover these paths; contracts and final validation are in `notes/drawing.md`.
+
+
 ## ANGLE D3D11 comparisons and shader warnings (2026-10-19)
 
 Inside Out's newer prototype note exposed a backend defect missed by the

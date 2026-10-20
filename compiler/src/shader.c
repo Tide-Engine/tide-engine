@@ -6310,6 +6310,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     const field *position = field_called(vertex, "position");
     sh->dims = position->type.kind == TY_FLOAT3 ? 3 : 2;
     if (sh->instance_type && sh->dims == 3) sh->instance_transform = field_called(sh->instance_type, "transform");
+    if (sh->instance_type && sh->skinned) sh->instance_pose = field_called(sh->instance_type, "pose");
     sb name = {0}; // A vert or frag that shares its name goes with its parameters' types
     if (sh->vert) {
         if (sh->vert->signature) sb_printf(&name, "%s%s", sh->vert->signature, sh->frag ? " and " : " ");

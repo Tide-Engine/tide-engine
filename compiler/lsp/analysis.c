@@ -10300,12 +10300,13 @@ static const struct {
     [MESH_INSTANCES] = {"instances",
                         {"A List<T> of instance structs, one for each mesh. A vert or frag reads each through a read-only T parameter.",
                          "A List<float4x4> of transforms, or a List<T> of instance structs. A struct's float4x4 transform places "
-                         "the mesh; without one, it uses the identity."}},
+                         "the mesh; without one, it uses the identity. With a SkinnedMesh<V>, an optional Pose pose field "
+                         "animates each instance; without it the model uses authored rest. Invalid poses skip their item."}},
     [MESH_VALUES] = {"values",
                      {"A struct's value, after the vert and the frag: they read it through a read-only parameter of its type. "
                       "It's sent once for the draw, and only the fields they read."}},
     [MESH_WHOLE] = {"mesh", {"A `Mesh<V>`: an asset's vertices and its indices as one, like `asset Mesh<Corner> tree = "
-                             "\"art/tree.glb\";`. A vert and a frag take its vertex struct, V."}},
+                             "\"art/tree.glb\";`. Instanced also accepts a `SkinnedMesh<V>`. A vert and a frag take its vertex struct, V."}},
     [MESH_SKINNED] = {"mesh", {"An immutable `SkinnedMesh<V>` model. A vert and a frag take its ordinary vertex struct, V."}},
     [MESH_POSE] = {"pose", {"An optional Pose: skinning applies its transforms before the user vertex stage. Omit it to draw the model's authored rest pose."}},
 };
@@ -10534,12 +10535,14 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const str owner = str_from("Draw"); // A target's are Draw's too
     const decl *const drawn = mesh_vertex(&sc, args.first[0], args.last[0]);
     const bool skinned = str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh");
+    const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
+    const type model = args.count > 0 ? names_type(&sc, args.first[0], args.last[0]) : (type){0};
     // A Mesh asset where the vertices go: it's its indices too, and always 3D
     const bool whole = args.count > 0 && args.first[0] <= args.last[0] && DOC->toks[args.first[0]].kind == T_IDENT
-                    && names_type(&sc, args.first[0], args.last[0]).kind == TY_MESH;
+                    && (model.kind == TY_MESH || (instanced && model.kind == TY_STRUCT && model.decl
+                                                 && model.decl->skin_kind == SKIN_MESH));
     const bool three_d = skinned || whole || (drawn ? vertex_is_3d(drawn)
                                          : args.count > 2 && mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM);
-    const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
     const int *order = forms[skinned ? 5 : whole ? (instanced ? 4 : 3) : instanced ? 2 : three_d ? 1 : 0];
     const int count = whole ? 8 : instanced || three_d ? 9 : 8;
     const int fixed = skinned || whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances

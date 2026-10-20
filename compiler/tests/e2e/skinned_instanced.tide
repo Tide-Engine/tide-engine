@@ -1,0 +1,58 @@
+asset SkinnedMesh<Vertex3> character = "skinned/rest.gltf";
+asset AnimationCatalog movement = "animations/clips/a.gltf";
+asset Texture image = "assets/hero.png";
+
+struct CharacterInstance
+{
+    float4x4 transform = float4x4.identity;
+    Pose pose;
+    Color tint;
+}
+struct PoseOnly { Pose pose; }
+struct RestInstance { Color tint; }
+struct Shade { float strength; }
+local singleton Calls { int order; }
+
+SkinnedMesh<Vertex3> Model(mut Calls calls)
+{
+    calls.order = calls.order * 10 + 1;
+    return character;
+}
+List<CharacterInstance> Items(mut Calls calls)
+{
+    calls.order = calls.order * 10 + 2;
+    mut var edited = character.defaultPose;
+    edited[character.skeleton.bones.arm].position.x = -7;
+    return [CharacterInstance { transform = float4x4.Translate(float3(23, 0, 0)), pose = edited, tint = Color.red },
+            CharacterInstance { }, // An invalid pose skips only this item.
+            CharacterInstance { pose = movement.move.Sample(0.5), tint = Color.blue }];
+}
+Shade Values(mut Calls calls)
+{
+    calls.order = calls.order * 10 + 3;
+    return Shade { strength = 1 };
+}
+vert Place(mut Vertex3 vertex, out float4 clip) { clip = this.clip; }
+frag Paint(Vertex3 vertex, CharacterInstance item, Shade shade, out Color color)
+{
+    color = vertex.color * item.tint * shade.strength;
+}
+
+view Show(mut Calls calls)
+{
+    Draw.Instanced(Model(calls), Items(calls), Place, Paint, Values(calls));
+    Draw.Instanced(character, [float4x4.identity, float4x4.Translate(float3(29, 0, 0))]);
+    Draw.Instanced(character, [RestInstance { tint = Color.white }], image, Filter.Point, Wrap.Repeat);
+    Draw.Instanced(character, [PoseOnly { pose = movement.move.Sample(0.5) }]);
+    mut var pose = character.defaultPose;
+    pose[character.skeleton.bones.arm].position.x = -7;
+    mut List<PoseOnly> items = [PoseOnly { pose = pose }];
+    var target = RenderTarget.Window();
+    target.Instanced(character, items, image);
+    Draw.Instanced(character, items);
+    // Recording must own the pose before either the list or its source is edited.
+    pose[character.skeleton.bones.arm].position.x = -17;
+    items.Clear();
+    Draw.Instanced(character, []);
+}
+scene Main { }
