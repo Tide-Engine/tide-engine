@@ -45,7 +45,7 @@ typedef struct tide_hosting_desc {
     tide_transport transport;
     const tide_jobs *jobs;
     uint32_t max_matches; // 0: 64; at most 4096.
-    uint32_t max_connections; // 0: 256; at most 65536.
+    uint32_t max_connections; // 0: 256; at most TIDE_PLAYERS_MOST (shared with matches).
     double idle_seconds; // Empty matches expire after this; 0: 60 seconds.
     bool allow_anonymous_create;
     bool allow_anonymous_join;

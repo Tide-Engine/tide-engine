@@ -294,7 +294,7 @@ static void command_raw(uint32_t nonce, uint32_t sequence, const uint8_t *data, 
     uint8_t packet[TIDE_NET_MTU];
     tide_writer w = {packet, sizeof packet, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 15); // PROTOCOL
+    tide_write_u8(&w, 16); // PROTOCOL
     tide_write_u8(&w, 9); // MSG_COMMAND: no sender supplied by the packet
     tide_write_u32(&w, nonce);
     tide_write_varint(&w, sequence);
@@ -486,7 +486,7 @@ TIDE_TEST(commands_sequences_do_not_wrap)
     tide_session *s = tide_session_create(&(tide_session_desc){.game = &command_game});
     command_world world = {0};
     world.sequence[0] = UINT32_MAX;
-    tide_player_set players = {{0}};
+    tide_player_set players = {0};
     tide_players_add(&players, 0);
     tide_session_start_from(s, &world, players, 0);
     for (int i = 0; i < 50; i++) tide_session_update(s, (double)i / 60.0);

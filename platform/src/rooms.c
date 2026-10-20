@@ -119,7 +119,7 @@ static void backend_netcode(const double *values, const uint32_t count)
 #include "rtc/rtc.h"
 
 #define RELAY "wss://relay.tide-engine.dev"
-#define PEERS 256 // The most players a game takes (TIDE_PLAYERS_MOST): a host has a peer for each
+#define PEERS TIDE_PLAYERS_MOST
 
 typedef struct room_peer {
     rtc_peer *peer;
@@ -144,8 +144,8 @@ typedef struct native_room {
     bool announced; // This connection asked the relay for the room already
     double reconnect_at;
     rtc_ice_config ice;
-    room_peer peers[PEERS];
-    int peer_count;
+    room_peer *peers;
+    int peer_count, peer_capacity;
     uint32_t next_number;
     int next_read;
     double arrived; // When the datagram backend_receive last gave arrived
@@ -288,7 +288,14 @@ static void apply_signal(rtc_peer *p, const rtc_json signal)
 
 static room_peer *add_peer(native_room *r, const bool offerer, const uint32_t number, const int relay_id)
 {
-    if (r->peer_count == PEERS) return NULL;
+    if ((uint32_t)r->peer_count == PEERS) return NULL;
+    if (r->peer_count == r->peer_capacity) {
+        const int capacity = r->peer_capacity ? r->peer_capacity * 2 : 8;
+        room_peer *peers = realloc(r->peers, (size_t)capacity * sizeof *peers);
+        if (!peers) return NULL;
+        r->peers = peers;
+        r->peer_capacity = capacity;
+    }
     rtc_peer *p = rtc_peer_new(offerer, &r->ice);
     if (!p) return NULL;
     r->peers[r->peer_count] = (room_peer){p, number, relay_id};
@@ -471,6 +478,7 @@ static void backend_close(const uint32_t number)
     if (!room || room->number != number) return;
     while (room->peer_count) remove_peer(room, room->peer_count - 1);
     relay_close(room);
+    free(room->peers);
     free(room);
     room = NULL;
 }

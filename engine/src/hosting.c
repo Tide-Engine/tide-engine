@@ -394,7 +394,7 @@ tide_hosting *tide_hosting_create(const tide_hosting_desc *desc, const double no
 {
     if (!desc || !desc->game || !desc->transport.send || !desc->transport.receive || !desc->transport.close
         || !desc->entropy || !isfinite(now) || !isfinite(desc->idle_seconds) || desc->idle_seconds < 0
-        || desc->max_matches > 4096u || desc->max_connections > 65536u) return NULL;
+        || desc->max_matches > 4096u || desc->max_connections > TIDE_PLAYERS_MOST) return NULL;
     tide_hosting *h = calloc(1, sizeof *h);
     if (!h) return NULL;
     h->desc = *desc;

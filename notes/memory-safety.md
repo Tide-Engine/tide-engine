@@ -1,5 +1,23 @@
 # No Tide code can corrupt memory
 
+## Shared player ceiling (2026-10-20)
+
+The approved 65,536 ceiling uses uint32/varint player and fragment indices,
+including player index 65,535 and the distinct server input slot 65,536. Frame
+bounds widen input/event arithmetic before accepting allocation sizes, and
+handwritten game tables above the ceiling or supported frame size are refused.
+Kick checks the game's own count before indexing. Wire sets maintain a bounded
+active-word prefix; their wire decoder cannot add bits beyond fixed storage.
+
+Client handover digests and recovery output arrays are sized for their game.
+Managed checkpoints contain game-sized value arrays rather than pointers and
+are staged on the heap; restore bounds its bitset prefixes. Generated raw and
+network serialization headers also move off the stack, preventing two large
+input headers from overflowing the 1 MiB stack. The exact-ceiling fixture checks
+last-slot inputs, Audience membership, delta round-trip and reconnect/leave
+behavior; the 270-session fixture covers actual migration and projection.
+Contracts and final validation: netcode.md and language.md.
+
 Recorded containers (2026-10-19) keep fixed journal heap handles zero and store
 only bounded serialized values in optional tails. Size arithmetic widens before
 the uint32 record limit; tail length and zero padding are checked before reads.

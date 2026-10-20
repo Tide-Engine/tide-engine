@@ -1,5 +1,26 @@
 # Language features, as tidec builds them
 
+## Shared player ceiling (2026-10-20)
+
+The owner approved maxPlayers from 1 through 65,536, sharing the ceiling used
+by dedicated-server connections and native room peers. The default remains 16;
+the setting still determines the world's input layout, generated Audience size
+and build compatibility. Compiler diagnostics use TIDE_PLAYERS_MOST; builtin
+help and user documentation now report the same range. Values above it remain
+compile errors, with the existing full-input-traffic scaling explanation.
+
+Generated Session ABI headers identify player protocol 16. Generated raw-save,
+network-delta and page-hash/need headers use temporary heap buffers, including
+a separate baseline only when needed; all are freed after their synchronous
+codec operation. This avoids stack overflow from a large match's fixed input
+arrays without changing serialized values, padding, hash ordering or runtime
+function calls. No new generated-C runtime function is required.
+
+players_ceiling compiles the exact ceiling and tests input index 65,535, the
+separate server slot, Audience word 2047, snapshot/delta transfer and reconnect
+recovery. players now covers 270 real sessions and a 300-player projected
+Audience. Runtime/protocol contracts and final validation: notes/netcode.md.
+
 ## Explicit skinned instance overload (2026-10-20)
 
 Owner-approved `Draw.Instanced(SkinnedMesh<V>, instances, ...)` follows the existing

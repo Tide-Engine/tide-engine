@@ -1,7 +1,7 @@
-// expect: maxPlayers is from 1 to 256 players, not 1000
+// expect: maxPlayers is from 1 to 65536 players, not 65537
 settings
 {
-    maxPlayers = 1000;
+    maxPlayers = 65537;
 }
 
 scene Main { }

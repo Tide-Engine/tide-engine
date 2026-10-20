@@ -1,5 +1,14 @@
 # The docs site
 
+## Shared player ceiling documentation (2026-10-20)
+
+The language settings table, Matches player-count section and spec report the
+owner-approved 65,536 maxPlayers ceiling, shared with dedicated connections.
+Matches distinguishes per-match capacity from the host's aggregate capacity;
+defaults and the existing layout/restart and workload-scaling guidance remain.
+Compiler help agrees. Validation: production docs build passes; networking
+and compiler validation are recorded in notes/netcode.md.
+
 Recorded containers (2026-10-19): Events, Functions and the spec describe
 read-driven capture, ordinary copy/borrow rules, event-turn/tick-end/confirmed
 timing and current attached local state. The old omission/error and open-item

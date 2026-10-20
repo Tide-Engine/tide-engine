@@ -89,7 +89,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 15u
+#define PROTOCOL 16u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD };
@@ -150,7 +150,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define HISTORY_SECONDS 4.0    // How long the server keeps ticks to send again, and a client keeps ticks ahead
 #define HISTORY_MOST 8u        // ...times this at most, for a player catching up with a world it was sent; past that, the world again
 #define FIRST_RING 8u          // Snapshots a client starts with; more as it runs further ahead
-#define PIECE 1000u                  // Bytes of a tick per piece: a tick takes as many as its inputs make, up to 256
+#define PIECE 1000u                  // Bytes of a tick per piece; piece indices are varints
 #define CHUNK 1000u                  // Bytes of a packed world per chunk
 #define CHUNKS_PER_UPDATE 64u
 // Chunks of a big command an update sends, up and down: 16 KB, under the
@@ -160,7 +160,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define DOWNLOADS_MOST 64u // ...and a client keeps, whole or coming, for the ticks that name them: as many
 #define PACKETS_PER_UPDATE 8u
 #define EVENTS_PER_PLAYER 4u    // Joins and leaves kept before a tick, for each player the game takes
-#define PLAYER_SET_BYTES 46u    // The most a set of players takes, as a varint: 7 of its 320 bits a byte
+#define PLAYER_SET_BYTES ((TIDE_PLAYER_SET_BITS + 6u) / 7u) // Seven bits per wire byte
 #define HANDOVER_PART 1000u     // Bytes of a handover record per datagram
 #define SENT_TIMES 256u         // Times a client sent that it remembers, to measure its ping when one comes back
 #define TIMEOUT 5.0     // Seconds of silence before giving up on the other side
@@ -447,8 +447,10 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
 static uint32_t frame_capacity(const tide_game *g)
 {
     const uint32_t players = tide_game_players(g);
-    return 8u + 1u + 5u + 2u * EVENTS_PER_PLAYER * players + 2u * PLAYER_SET_BYTES + (players + 1u) * (5u + g->max_input_bytes)
-           + (g->command ? 5u + TIDE_COMMANDS_PER_TICK * (15u + TIDE_COMMAND_BYTES) : 0u);
+    const uint64_t size = 8u + 1u + 5u + 4ull * EVENTS_PER_PLAYER * players + 2u * ((players + 7u) / 7u)
+        + (players + 1ull) * (5ull + g->max_input_bytes)
+        + (g->command ? 5u + TIDE_COMMANDS_PER_TICK * (15u + TIDE_COMMAND_BYTES) : 0u);
+    return size <= UINT32_MAX / 2u ? (uint32_t)size : 0u;
 }
 
 // A command waiting: at the server, for its turn in a tick; at a client, to
@@ -589,9 +591,10 @@ static void chunks_had(const uint8_t *have, const uint32_t count, uint32_t *ack,
 // So a set of the first 7 takes a byte, as a 32-bit varint does.
 static void write_players(tide_writer *w, const tide_player_set *set)
 {
-    uint32_t top = 0;
-    for (uint32_t i = 0; i < TIDE_PLAYER_SET_BITS; i++) {
-        if (tide_players_has(set, i)) top = i;
+    uint32_t top = set->words ? (set->words - 1u) * 64u : 0u;
+    if (set->words) {
+        uint64_t last = set->bits[set->words - 1u];
+        while (last >>= 1u) top++;
     }
     const uint32_t groups = top / 7u + 1u;
     for (uint32_t g = 0; g < groups; g++) {
@@ -607,7 +610,7 @@ static void write_players(tide_writer *w, const tide_player_set *set)
 // so bad input can't run on; bits past the set fall off.
 static tide_player_set read_players(tide_reader *r)
 {
-    tide_player_set set = {{0}};
+    tide_player_set set = {0};
     for (uint32_t g = 0; g < PLAYER_SET_BYTES; g++) {
         const uint8_t byte = tide_read_u8(r);
         for (uint32_t b = 0; b < 7u; b++) {
@@ -622,14 +625,14 @@ static tide_player_set read_players(tide_reader *r)
 // whether it's open, the room's code and key, who's in the match and a digest each.
 static uint32_t handover_capacity(const uint32_t players)
 {
-    return 16u + TIDE_ROOM_CODE_LENGTH + TIDE_ROOM_KEY_LENGTH + PLAYER_SET_BYTES + 8u * players;
+    return 16u + TIDE_ROOM_CODE_LENGTH + TIDE_ROOM_KEY_LENGTH + (players + 7u) / 7u + 8u * players;
 }
 
 // Whether `a` has a player `b` hasn't.
 static bool players_beyond(const tide_player_set *a, const tide_player_set *b)
 {
     uint64_t more = 0;
-    for (uint32_t w = 0; w < TIDE_PLAYER_SET_BITS / 64u; w++) more |= a->bits[w] & ~b->bits[w];
+    for (uint32_t w = 0; w < a->words; w++) more |= a->bits[w] & ~b->bits[w];
     return more != 0;
 }
 
@@ -637,7 +640,7 @@ static bool players_beyond(const tide_player_set *a, const tide_player_set *b)
 static bool players_meet(const tide_player_set *a, const tide_player_set *b)
 {
     uint64_t both = 0;
-    for (uint32_t w = 0; w < TIDE_PLAYER_SET_BITS / 64u; w++) both |= a->bits[w] & b->bits[w];
+    for (uint32_t w = 0; w < a->words && w < b->words; w++) both |= a->bits[w] & b->bits[w];
     return both != 0;
 }
 
@@ -672,6 +675,7 @@ typedef struct stored_frame {
 typedef struct sent_mark {
     uint32_t tick;
     double at;
+    uint32_t next; // Continue a frame larger than the per-update packet allowance.
 } sent_mark;
 
 // A tick's whole world, packed to send: every player who joined in that tick
@@ -851,7 +855,7 @@ struct tide_server {
     traffic traffic;
     uint32_t players;        // How many the game takes (tide_game_players): what the arrays by player have
     connection *connections; // Player n is connections[n]
-    uint8_t (*events)[2];    // Joins and leaves before the next tick: EVENTS_PER_PLAYER for each player
+    uint32_t (*events)[2];    // Joins and leaves before the next tick: EVENTS_PER_PLAYER for each player
     uint32_t event_count;
     uint32_t command_player; // Next sender considered, so a busy player cannot starve the others
     published *published;    // Big commands, by number (see `published`): PUBLISHED_MOST at most
@@ -923,7 +927,7 @@ static void add_event(tide_server *s, const uint8_t kind, const uint32_t player)
     assert(s->event_count < most);
     if (s->event_count == most) return;
     s->events[s->event_count][0] = kind;
-    s->events[s->event_count][1] = (uint8_t)player;
+    s->events[s->event_count][1] = player;
     s->event_count++;
 }
 
@@ -1798,7 +1802,7 @@ static void publish_command(tide_server *s, const uint32_t player, pending_comma
     if (!copy) return;
     memcpy(copy, cmd->data, cmd->size);
     const uint32_t number = ++s->next_published;
-    s->published[s->published_count++] = (published){number, player, cmd->channel, cmd->sequence, cmd->size, copy, false, 0, {{0}}};
+    s->published[s->published_count++] = (published){number, player, cmd->channel, cmd->sequence, cmd->size, copy, false, 0, {0}};
     cmd->published = number;
 }
 
@@ -1941,18 +1945,18 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
     const uint8_t source_parts = tide_read_u8(&source);
     const uint32_t events_at = source.at;
     const uint32_t events = source_parts & FRAME_EVENTS ? tide_read_varint(&source) : 0u;
-    for (uint32_t i = 0; i < events; i++) tide_read_u16(&source);
+    for (uint32_t i = 0; i < events && !source.failed; i++) { tide_read_u8(&source); tide_read_varint(&source); }
     const uint32_t events_size = source.at - events_at;
     if (source_parts & FRAME_INPUTS) read_players(&source);
-    tide_player_set late = source_parts & FRAME_LATE ? read_players(&source) : (tide_player_set){{0}};
+    tide_player_set late = source_parts & FRAME_LATE ? read_players(&source) : (tide_player_set){0};
     // A late-input hint is useful only for this machine's real samples.
-    tide_player_set own_late = {{0}};
+    tide_player_set own_late = {0};
     const uint32_t recipient = (uint32_t)(c - s->connections);
     if (tide_players_has(&late, recipient)) tide_players_add(&own_late, recipient);
     if (c->local && tide_players_has(&late, s->players)) tide_players_add(&own_late, s->players);
     late = own_late;
     tide_writer inputs = {.grows = true};
-    tide_player_set mask = {{0}};
+    tide_player_set mask = {0};
     uint8_t *all_inputs = NULL;
     size_t all_size = 0;
     if (g->filter_client_inputs && g->world_input && g->write_input && g->input_size) {
@@ -2022,7 +2026,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
     if (out.overflow) tide_out_of_memory();
     if (out.size > 256u * PIECE) {
         // An arbitrarily large destruction batch travels through the ordinary
-        // chunked correction, rather than overflowing the frame piece index.
+        // chunked correction to bound ordinary projected frame reassembly.
         out.size = 9;
         out.data[8] = FRAME_REPAIR;
     }
@@ -2052,7 +2056,7 @@ static void server_tick(tide_server *s)
         if (s->events[i][0] == EVENT_JOIN) g->player_joined(s->world, player);
         else g->player_left(s->world, player);
         tide_write_u8(&w, s->events[i][0]);
-        tide_write_u8(&w, s->events[i][1]);
+        tide_write_varint(&w, s->events[i][1]);
     }
     const uint8_t events = s->event_count ? FRAME_EVENTS : 0u;
     s->event_count = 0;
@@ -2061,8 +2065,8 @@ static void server_tick(tide_server *s)
     // out: keeping the last input is the same as setting it again. They come
     // after the bits that say which, so they're made apart first.
     tide_writer inputs = {s->frame + frame_capacity(g), frame_capacity(g), 0, false, false};
-    tide_player_set mask = {{0}};
-    tide_player_set late = {{0}};
+    tide_player_set mask = {0};
+    tide_player_set late = {0};
     const uint32_t server_slot = s->players; // The server's input, after the players'
     const uint32_t max = g->max_input_bytes;
     uint8_t *input = s->input;
@@ -2175,7 +2179,7 @@ static void send_welcome(tide_server *s, connection *c)
     tide_writer w = {data, sizeof data, 0, false, false};
     header(&w, MSG_WELCOME);
     tide_write_u32(&w, c->nonce);
-    tide_write_u8(&w, (uint8_t)(c - s->connections));
+    tide_write_varint(&w, (uint32_t)(c - s->connections));
     tide_write_u8(&w, (c->local ? 1u : 0u) | (c->snapshot_stream ? 2u : 0u));
     tide_write_u32(&w, s->desc.tick_rate);
     tide_write_u32(&w, s->tick);
@@ -2301,7 +2305,7 @@ static void send_downloads(tide_server *s, connection *c)
 // tick is, its frame's size, and which piece of it, when it has several.
 static uint32_t piece_header(const tide_server *s, const uint32_t tick, const uint32_t size)
 {
-    return varint_size(s->tick - tick) + varint_size(size) + (size > PIECE ? 1u : 0u);
+    return varint_size(s->tick - tick) + varint_size(size) + (size > PIECE ? varint_size((size - 1u) / PIECE) : 0u);
 }
 
 // The ticks it lacks, in pieces, as many packets as it takes (up to a limit).
@@ -2339,23 +2343,26 @@ static void send_frames(tide_server *s, connection *c)
         const stored_frame *f = &(c->client_frames ? c->client_frames : s->frames)[tick % s->w.history];
         if (f->tick != tick || !f->data) continue;
         const uint32_t count = (f->size + PIECE - 1u) / PIECE;
-        for (uint32_t k = 0; k < count && packets < PACKETS_PER_UPDATE; k++) {
+        uint32_t k = mark->tick == tick ? mark->next : 0u;
+        for (; k < count && packets < PACKETS_PER_UPDATE; k++) {
             const uint32_t from = k * PIECE;
             const uint32_t size = f->size - from < PIECE ? f->size - from : PIECE;
             if (w.size + piece_header(s, tick, f->size) + size > TIDE_NET_MTU || pieces == 255u) {
                 s->packet[count_at] = (uint8_t)pieces;
                 send_packet(t, c->address, &w, &s->traffic);
                 packets++;
+                if (packets == PACKETS_PER_UPDATE) break;
                 start_server_packet(s, c, &w, &count_at);
                 pieces = 0;
             }
             tide_write_varint(&w, s->tick - tick);
             tide_write_varint(&w, f->size);
-            if (count > 1) tide_write_u8(&w, (uint8_t)k);
+            if (count > 1) tide_write_varint(&w, k);
             tide_write_bytes(&w, f->data + from, size);
             pieces++;
         }
-        *mark = (sent_mark){tick, s->now > 0.0 ? s->now : 1e-9};
+        *mark = (sent_mark){.tick = tick, .at = k == count ? (s->now > 0.0 ? s->now : 1e-9) : 0.0,
+                            .next = k == count ? 0u : k};
     }
     s->packet[count_at] = (uint8_t)pieces;
     if (packets < PACKETS_PER_UPDATE) send_packet(t, c->address, &w, &s->traffic); // Always one, for the times and its inputs' wait
@@ -2363,7 +2370,8 @@ static void send_frames(tide_server *s, connection *c)
 
 tide_server *tide_server_create(const tide_server_desc *desc, const double now)
 {
-    if (!desc || !desc->game || (desc->game->client_state
+    if (!desc || !desc->game || tide_game_players(desc->game) > TIDE_PLAYERS_MOST
+        || !frame_capacity(desc->game) || (desc->game->client_state
         && (!desc->game->load_client_state || !desc->game->client_hash
             || (desc->game->tick_client_events && !desc->game->check_client_events)))) return NULL;
     tide_server *s = calloc(1, sizeof *s);
@@ -2526,7 +2534,7 @@ static void send_handover(tide_server *s)
         header(&p, MSG_HANDOVER);
         tide_write_u32(&p, s->handover_version);
         tide_write_varint(&p, w.size);
-        tide_write_u8(&p, (uint8_t)part);
+        tide_write_varint(&p, part);
         const uint32_t from = part * HANDOVER_PART;
         tide_write_bytes(&p, s->handover + from, w.size - from < HANDOVER_PART ? w.size - from : HANDOVER_PART);
         for (uint32_t i = 0; i < s->players; i++) {
@@ -2552,7 +2560,7 @@ void tide_server_update(tide_server *s, const double now)
             add_event(s, EVENT_LEAVE, i);
             s->away_since[i] = now > 0.0 ? now : 1e-9;
         }
-        s->present = (tide_player_set){{0}};
+        s->present = (tide_player_set){0};
     }
     if (s->started && !s->ended) {
         const uint64_t due = (uint64_t)s->clock_base + ticks_in(now - s->clock_start, s->desc.tick_rate);
@@ -2600,7 +2608,9 @@ uint32_t tide_server_player_count(const tide_server *s)
 
 void tide_server_recovery_state(const tide_server *s, tide_server_recovery *out)
 {
-    memset(out, 0, sizeof *out);
+    uint64_t *digests = out->digests;
+    uint8_t (*identities)[32] = out->identities;
+    *out = (tide_server_recovery){.digests = digests, .identities = identities};
     out->players = s->present;
     out->closed = s->closed;
     out->tick_rate = s->desc.tick_rate;
@@ -2635,7 +2645,7 @@ bool tide_server_player_identity(const tide_server *s, const tide_player_id play
 bool tide_server_kick(tide_server *s, const tide_player_id player, const char *message)
 {
     const int32_t index = tide_player_index(player);
-    if (index < 0) return false;
+    if (index < 0 || (uint32_t)index >= s->players) return false;
     connection *c = &s->connections[index];
     if (!c->used || c->local) return false;
     kicked *k = &s->kicks[index];
@@ -2659,7 +2669,7 @@ typedef struct handover {
     char code[TIDE_ROOM_CODE_LENGTH + 1];
     char key[TIDE_ROOM_KEY_LENGTH + 1];
     tide_player_set in_match;
-    uint64_t digests[TIDE_PLAYERS_MOST]; // By player; 0 for those not in the match
+    uint64_t *digests; // Owned, sized to this game; 0 for players outside the match
 } handover;
 
 // A tick's frame as it comes, in pieces. The pieces it has are a bit each,
@@ -3222,7 +3232,7 @@ static void measure(tide_client *c, const uint16_t echo, const uint32_t held_ms)
 static void on_welcome(tide_client *c, tide_reader *r)
 {
     const uint32_t nonce = tide_read_u32(r);
-    const uint8_t player = tide_read_u8(r);
+    const uint32_t player = tide_read_varint(r);
     const uint8_t flags = tide_read_u8(r);
     const uint32_t tick_rate = tide_read_u32(r);
     const uint32_t server_tick = tide_read_u32(r);
@@ -3377,7 +3387,7 @@ static void on_server(tide_client *c, tide_reader *r)
         // No frame is bigger than what the game's inputs can make (frame_capacity)
         const uint32_t most = c->game->client_state ? 256u * PIECE : frame_capacity(c->game);
         if (r->failed || total == 0 || total > most) return; // Where the next piece starts is lost
-        const uint32_t index = count > 1 ? tide_read_u8(r) : 0u;
+        const uint32_t index = count > 1 ? tide_read_varint(r) : 0u;
         if (index >= count) return;
         const uint32_t from = index * PIECE;
         const uint32_t size = total - from < PIECE ? total - from : PIECE;
@@ -3437,9 +3447,9 @@ static void on_handover(tide_client *c, tide_reader *r)
     if (c->game->client_state) return;
     const uint32_t version = tide_read_u32(r);
     const uint32_t size = tide_read_varint(r);
-    const uint8_t part = tide_read_u8(r);
+    const uint32_t part = tide_read_varint(r);
     if (r->failed || version <= c->handover.version || version < c->handover_version) return;
-    if (size == 0 || size > handover_capacity(TIDE_PLAYERS_MOST)) return;
+    if (size == 0 || size > handover_capacity(c->players)) return;
     const uint32_t parts = (size + HANDOVER_PART - 1u) / HANDOVER_PART;
     if (part >= parts) return;
     const uint32_t from = part * HANDOVER_PART;
@@ -3467,6 +3477,8 @@ static void on_handover(tide_client *c, tide_reader *r)
     const uint8_t key = tide_read_u8(&record);
     const uint8_t *key_bytes = key <= TIDE_ROOM_KEY_LENGTH ? tide_read_bytes(&record, key) : NULL;
     h.in_match = read_players(&record);
+    h.digests = calloc(c->players, sizeof *h.digests);
+    if (!h.digests) tide_out_of_memory();
     bool sound = h.own <= c->players;
     for (uint32_t i = 0; i < TIDE_PLAYER_SET_BITS; i++) {
         if (!tide_players_has(&h.in_match, i)) continue;
@@ -3483,19 +3495,20 @@ static void on_handover(tide_client *c, tide_reader *r)
     // Done with the parts, whatever they made: a record that isn't sound waits for the next version
     free(c->handover_bytes);
     c->handover_bytes = NULL;
-    if (!sound) return;
+    if (!sound) { free(h.digests); return; }
     code = (const uint8_t *)letters;
     key_bytes = (const uint8_t *)letters + TIDE_ROOM_CODE_LENGTH;
     // A room's code and key are letters and digits, as the platform layer makes them
     for (uint32_t i = 0; i < TIDE_ROOM_CODE_LENGTH; i++) {
-        if (!strchr(TIDE_ROOM_CODE_LETTERS, code[i]) || !code[i]) return;
+        if (!strchr(TIDE_ROOM_CODE_LETTERS, code[i]) || !code[i]) { free(h.digests); return; }
         h.code[i] = (char)code[i];
     }
     for (uint32_t i = 0; i < key; i++) {
         const char k = (char)key_bytes[i];
-        if (!((k >= '0' && k <= '9') || (k >= 'a' && k <= 'z') || (k >= 'A' && k <= 'Z'))) return;
+        if (!((k >= '0' && k <= '9') || (k >= 'a' && k <= 'z') || (k >= 'A' && k <= 'Z'))) { free(h.digests); return; }
         h.key[i] = k;
     }
+    free(c->handover.digests);
     c->handover = h;
 }
 
@@ -3555,8 +3568,8 @@ static void read_frame_names(const tide_client *c, pending_frame *f)
     tide_read_u64(&r);
     const uint8_t parts = tide_read_u8(&r);
     const uint32_t events = parts & FRAME_EVENTS ? tide_read_varint(&r) : 0u;
-    for (uint32_t i = 0; i < events; i++) tide_read_u16(&r);
-    const tide_player_set none = {{0}};
+    for (uint32_t i = 0; i < events && !r.failed; i++) { tide_read_u8(&r); tide_read_varint(&r); }
+    const tide_player_set none = {0};
     const tide_player_set mask = parts & FRAME_INPUTS ? read_players(&r) : none;
     if (parts & FRAME_LATE) read_players(&r);
     for (uint32_t slot = 0; slot <= c->players; slot++) {
@@ -3638,7 +3651,7 @@ static bool as_predicted(const tide_client *c, const pending_frame *f)
     tide_read_u64(&r);
     const uint8_t parts = tide_read_u8(&r);
     if (parts & (FRAME_EVENTS | FRAME_COMMANDS | FRAME_DESTROYED)) return false;
-    const tide_player_set none = {{0}};
+    const tide_player_set none = {0};
     const tide_player_set mask = parts & FRAME_INPUTS ? read_players(&r) : none;
     const tide_player_set late = parts & FRAME_LATE ? read_players(&r) : none;
     if (!c->game->set_input) return !tide_players_any(&mask);
@@ -3695,7 +3708,7 @@ static bool own_late(const tide_client *c, const pending_frame *f)
     if (!(parts & FRAME_LATE)) return false;
     if (parts & FRAME_EVENTS) {
         const uint32_t events = tide_read_varint(&r);
-        for (uint32_t i = 0; i < events && !r.failed; i++) tide_read_u16(&r); // Which, and whose
+        for (uint32_t i = 0; i < events && !r.failed; i++) { tide_read_u8(&r); tide_read_varint(&r); } // Which, and whose
     }
     if (parts & FRAME_INPUTS) read_players(&r);
     const tide_player_set late = read_players(&r);
@@ -3782,12 +3795,12 @@ static bool apply_frame(tide_client *c, void *world, const pending_frame *f)
     if (events > EVENTS_PER_PLAYER * c->players) return false;
     for (uint32_t i = 0; i < events; i++) {
         const uint8_t kind = tide_read_u8(&r);
-        const uint8_t player = tide_read_u8(&r);
+        const uint32_t player = tide_read_varint(&r);
         if (r.failed || player >= c->players) return false;
         if (kind == EVENT_JOIN) g->player_joined(world, tide_player_from_index(player));
         else g->player_left(world, tide_player_from_index(player));
     }
-    const tide_player_set none = {{0}};
+    const tide_player_set none = {0};
     const tide_player_set mask = parts & FRAME_INPUTS ? read_players(&r) : none;
     if (parts & FRAME_LATE) read_players(&r); // Late ones
     for (uint32_t slot = 0; slot <= c->players; slot++) {
@@ -3900,13 +3913,13 @@ static void run_predicted(tide_client *c, const uint32_t tick)
     void *world = world_at(c, tick + 1u);
     g->copy_world(world, world_at(c, tick));
     if (g->predict_inputs) {
-        tide_player_set mine = {{0}};
+        tide_player_set mine = {0};
         tide_players_add(&mine, (uint32_t)c->player);
         if (c->server_input_mine) tide_players_add(&mine, c->players);
         if (g->predict_inputs(world, &mine) && c->input_guessed == UINT32_MAX) c->input_guessed = tick;
     }
     if (g->let_go_inputs && (c->let_go == UINT32_MAX || g->predict_inputs) && tick - c->verified >= c->guess) {
-        tide_player_set mine = {{0}};
+        tide_player_set mine = {0};
         tide_players_add(&mine, (uint32_t)c->player);
         if (c->server_input_mine) tide_players_add(&mine, c->players);
         if (g->let_go_inputs(world, &mine) && c->let_go == UINT32_MAX) c->let_go = tick;
@@ -5051,7 +5064,8 @@ static void send_commands(tide_client *c)
 
 tide_client *tide_client_create(const tide_client_desc *desc, const double now)
 {
-    if (!desc || !desc->game || (desc->game->client_state
+    if (!desc || !desc->game || tide_game_players(desc->game) > TIDE_PLAYERS_MOST
+        || !frame_capacity(desc->game) || (desc->game->client_state
         && (!desc->game->load_client_state || !desc->game->client_hash
             || (desc->game->tick_client_events && !desc->game->check_client_events)))) return NULL;
     tide_client *c = calloc(1, sizeof *c);
@@ -5106,6 +5120,7 @@ void tide_client_destroy(tide_client *c)
     drop_base(c);
     drop_had(c);
     free(c->handover_bytes);
+    free(c->handover.digests);
     free_commands(&c->commands);
     stop_upload_client(c);
     free_downloads(c);
@@ -5405,7 +5420,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
 
 void tide_session_start(tide_session *s, const void *start, const double now)
 {
-    start_server(s, start, NULL, (tide_player_set){{0}}, now);
+    start_server(s, start, NULL, (tide_player_set){0}, now);
 }
 
 void tide_session_start_from(tide_session *s, const void *world, const tide_player_set players, const double now)
@@ -5688,7 +5703,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
     const tide_client *old = s->stale;
     const handover *h = &old->handover;
     tide_player_set players = h->in_match;
-    tide_player_set leaving = {{0}};
+    tide_player_set leaving = {0};
     if (h->own && tide_players_has(&players, h->own - 1u)) {
         tide_players_remove(&players, h->own - 1u);
         tide_players_add(&leaving, h->own - 1u);
@@ -5828,7 +5843,7 @@ static bool prepare_server(const tide_server *s, const tide_game *g, const tide_
 {
     // A build that takes another number of players keeps its inputs, and the
     // server's after them, elsewhere in its world: the match starts over
-    if (tide_game_players(g) != s->players) return false;
+    if (tide_game_players(g) != s->players || !frame_capacity(g)) return false;
     const uint32_t bytes = g->max_input_bytes ? g->max_input_bytes : 1u;
     m->players = s->players;
     m->inputs = calloc(s->players, sizeof *m->inputs);
@@ -5856,7 +5871,8 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
         free(s->frames[i].world);
         s->frames[i].world = NULL;
     }
-    bool sending[TIDE_PLAYERS_MOST]; // What it was sending was the old build's: it starts again
+    bool *sending = calloc(s->players, sizeof *sending); // The old build's transfers start again
+    if (!sending) tide_out_of_memory();
     for (uint32_t i = 0; i < s->players; i++) {
         sending[i] = s->connections[i].used && s->connections[i].sending;
         if (sending[i]) stop_sending(s, &s->connections[i]);
@@ -5912,12 +5928,13 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
         c->waited_known = false;
         if (sending[i]) start_snapshot(s, c);
     }
+    free(sending);
 }
 
 static bool prepare_client(const tide_client *c, const tide_game *g, const tide_migrate_fn migrate, void *user,
                            client_migration *m)
 {
-    if (tide_game_players(g) != c->players) return false; // Another number of players: the match starts over
+    if (tide_game_players(g) != c->players || !frame_capacity(g)) return false; // Incompatible input layout
     const uint32_t bytes = g->max_input_bytes ? g->max_input_bytes : 1u;
     m->worlds = calloc(c->ring, sizeof *m->worlds);
     bool ok = m->worlds != NULL;
