@@ -6,6 +6,58 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Where the performance pass ended, 2026-10-20
+
+Both rounds of the pass, measured once against the binaries from before it
+(`b27a4d90`), gated and alternating, five rounds (`perf-pass-round2-before`
+/ `-after`, built at `cf6ff8b0`; `perf-pass-round2-only` for the programs
+that didn't exist before). The machine was busier than for the first
+round's table (other sessions' builds between runs), so absolute times are
+higher on both sides; compare ratios within a column. Each round's sections
+below have the causes, the changes and what was tried.
+
+| Tide/C (C way) | 1 thread before → after | 12 threads before → after |
+| --- | ---: | ---: |
+| events | 7.54× → 3.71× | 7.77× → 3.79× |
+| life | 7.69× → 5.49× | 2.75× → 1.75× |
+| lookup, steady | 10.75× → 6.69× | 10.13× → 6.69× |
+| lookup, 1,024 changes | 5.73× → 3.69× | 5.71× → 3.70× |
+| buckets, a list of lists | 11.96× → 7.86× | (C's own time varies 4×) |
+| sand fixture (C, lookup) | 2.42× → 2.35× | 3.31× → 3.04× |
+| churn | 2.86× → 3.02× (noise) | 3.20× → 2.71× |
+| wide | 1.42× → 1.31× | 1.13× → 1.08× |
+| particles | 1.64× → 1.29× | ms 0.239 → 0.151 |
+| n-body (C, SIMD) | 1.71× → 1.72× | 1.79× → 1.71× |
+| rollback, 100k movers (C, dirty blocks) | 1.17× (coverage baseline) → 0.96× | 0.95× |
+| rollback, movers spread (C) | 1.18× → 0.97× | 0.92× |
+| systems, 4,096 / 64 / 0 a kind | 1.12× / 3.13× / 1.50× → 1.10× / 2.60× / 1.67× | |
+
+Sessions: Sand's clients 31.5 → 16.6 ms of simulation per simulated second,
+update median 0.564 → 0.288 ms, p99 1.054 → 0.635, snapshots 0.444 → 0.175
+ms/s, the server 2.93 → 1.64 ms/s; Gallery's clients 3.00 → 2.77 ms/s,
+update 0.119 → 0.109 ms. Replays, bytes and catch-up the same; end hashes
+differ only by the page hash (Page hash, measured).
+
+Drawing, totals in ms, Tide before → after against the hand-written C:
+Vulkan nothing 0.145 → 0.062 (C 0.048), rects 1.129 → 0.603 (0.147),
+circles 1.118 → 0.550 (0.147), textured quads 3.537 → 1.597 (0.148), cubes
+2.371 → 1.740 (0.186), round rects 2.486 → 1.289 (0.159); OpenGL nothing
+0.351 → 0.257 (0.024), rects 1.160 → 0.736 (0.185), circles 1.091 → 0.634
+(0.193), textured quads 3.747 → 1.829 (0.174), cubes 2.538 → 2.508 (0.174;
+the second round's own pairing has 2.217 → 1.954), round rects 2.574 → 1.572
+(0.196).
+
+Left, each with its cause in the sections below: events at 3.7× (a handle
+check, a page-ownership check and a component copy per event, and ordinary
+sends' 24-byte items; a queue-reservation runtime function is proposed),
+lookups (the probe's hash, slot, entry chain the layout and hash pin), Life
+(32-bit compares of a byte-sized count, and its windows), n-body (per-lane
+float3s shuffled to lanes), small worlds' per-task cost, and drawing's
+recorded commands (a sprite call, a ring-room `gpu.h` call and float frustum
+planes would be the next steps). Validation of the merged result: native
+debug 2,480/2,480 (Vulkan SDK checks and GPU tests under validation), web
+debug 2,386/2,386, native release 2,448/2,448, `cracked_tests` 64/64; no CI.
+
 ## Map views and Linux cache groups, 2026-10-20
 
 The pass's second round, after the owner approved list views for generated

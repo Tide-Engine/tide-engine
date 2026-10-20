@@ -1,0 +1,335 @@
+{
+  "label": "perf-pass-round2-only",
+  "revision": "cf6ff8b0d8167f6dc0eb81c92874c52f79638501+local",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T19:52:17.6958953Z",
+  "runs": [
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r1",
+      "backend": null,
+      "name": "versus_rollback",
+      "side": "",
+      "round": 1,
+      "wallSeconds": 1.4658689,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r1",
+      "backend": null,
+      "name": "versus_rollback_spread",
+      "side": "",
+      "round": 1,
+      "wallSeconds": 1.8207628,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "perf-pass-round2-only-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r1",
+      "backend": null,
+      "name": "versus_systems",
+      "side": "",
+      "round": 1,
+      "wallSeconds": 0.2057853,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r1",
+      "backend": null,
+      "name": "versus_systems_empty",
+      "side": "",
+      "round": 1,
+      "wallSeconds": 0.0406185,
+      "arguments": [
+        "--count",
+        "0",
+        "--save",
+        "perf-pass-round2-only-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r1",
+      "backend": null,
+      "name": "versus_systems_small",
+      "side": "",
+      "round": 1,
+      "wallSeconds": 0.0504951,
+      "arguments": [
+        "--count",
+        "64",
+        "--save",
+        "perf-pass-round2-only-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r1",
+      "backend": "opengl",
+      "name": "versus_draw_opengl",
+      "side": "",
+      "round": 1,
+      "wallSeconds": 0.495504,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r1",
+      "backend": "vulkan",
+      "name": "versus_draw_vulkan",
+      "side": "",
+      "round": 1,
+      "wallSeconds": 0.413422,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r1"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r2",
+      "backend": null,
+      "name": "versus_rollback",
+      "side": "",
+      "round": 2,
+      "wallSeconds": 1.3981352,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r2",
+      "backend": null,
+      "name": "versus_rollback_spread",
+      "side": "",
+      "round": 2,
+      "wallSeconds": 1.8635396,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "perf-pass-round2-only-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r2",
+      "backend": null,
+      "name": "versus_systems",
+      "side": "",
+      "round": 2,
+      "wallSeconds": 0.1904107,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r2",
+      "backend": null,
+      "name": "versus_systems_empty",
+      "side": "",
+      "round": 2,
+      "wallSeconds": 0.0421751,
+      "arguments": [
+        "--count",
+        "0",
+        "--save",
+        "perf-pass-round2-only-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r2",
+      "backend": null,
+      "name": "versus_systems_small",
+      "side": "",
+      "round": 2,
+      "wallSeconds": 0.1162285,
+      "arguments": [
+        "--count",
+        "64",
+        "--save",
+        "perf-pass-round2-only-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r2",
+      "backend": "opengl",
+      "name": "versus_draw_opengl",
+      "side": "",
+      "round": 2,
+      "wallSeconds": 0.474649,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r2",
+      "backend": "vulkan",
+      "name": "versus_draw_vulkan",
+      "side": "",
+      "round": 2,
+      "wallSeconds": 0.3934554,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r2"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r3",
+      "backend": null,
+      "name": "versus_rollback",
+      "side": "",
+      "round": 3,
+      "wallSeconds": 1.3893029,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r3",
+      "backend": null,
+      "name": "versus_rollback_spread",
+      "side": "",
+      "round": 3,
+      "wallSeconds": 1.8531347,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "perf-pass-round2-only-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r3",
+      "backend": null,
+      "name": "versus_systems",
+      "side": "",
+      "round": 3,
+      "wallSeconds": 0.1937593,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r3",
+      "backend": null,
+      "name": "versus_systems_empty",
+      "side": "",
+      "round": 3,
+      "wallSeconds": 0.0408127,
+      "arguments": [
+        "--count",
+        "0",
+        "--save",
+        "perf-pass-round2-only-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r3",
+      "backend": null,
+      "name": "versus_systems_small",
+      "side": "",
+      "round": 3,
+      "wallSeconds": 0.0482239,
+      "arguments": [
+        "--count",
+        "64",
+        "--save",
+        "perf-pass-round2-only-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r3",
+      "backend": "opengl",
+      "name": "versus_draw_opengl",
+      "side": "",
+      "round": 3,
+      "wallSeconds": 0.462711,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r3"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "competingWork": false,
+      "label": "perf-pass-round2-only-r3",
+      "backend": "vulkan",
+      "name": "versus_draw_vulkan",
+      "side": "",
+      "round": 3,
+      "wallSeconds": 0.396286,
+      "arguments": [
+        "--save",
+        "perf-pass-round2-only-r3"
+      ]
+    }
+  ],
+  "binaries": [
+    {
+      "name": "versus_draw.exe",
+      "sha256": "451448015bfacf6030f3309a052b73a2442994fe834be6d806641fa6bb496209"
+    },
+    {
+      "name": "versus_rollback.exe",
+      "sha256": "6792368eb9386e221211c54ba1c0122e8a0645bdc15fd77371847b60d0c5344c"
+    },
+    {
+      "name": "versus_systems.exe",
+      "sha256": "de0e4b06f1f520b4ad8632db4879ba3e4b5e07860ba2fd1be90b8a1e661851f2"
+    }
+  ],
+  "finishedUtc": "2026-10-20T19:52:56.5027994Z"
+}
