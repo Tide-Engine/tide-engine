@@ -14,7 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/page.h"
 #include "tide/time.h"
+#include "embedded.h"
 
 // The room this program is in, whichever machine does the work: `number`
 // tells rooms apart, so a transport left over from the last one does nothing.
@@ -114,6 +116,12 @@ static void backend_netcode(const double *values, const uint32_t count)
     tide_web_netcode(values, count);
 }
 
+// A page's relay is its own to say (tide.js: `Tide.relay`).
+void tide_platform_set_relay(const char *url)
+{
+    (void)url;
+}
+
 #else
 
 #include "rtc/rtc.h"
@@ -154,10 +162,24 @@ typedef struct native_room {
 static native_room *room;
 static uint32_t rooms_opened;
 
-// TIDE_RELAY picks another relay, like one on this machine for tests, which
-// can be plain ws://.
+// Another relay, for a program Tide is inside of (tide/embed.h); else
+// TIDE_RELAY picks one, like one on this machine for tests, which can be plain
+// ws://.
+static char *relay_asked;
+
+void tide_platform_set_relay(const char *url)
+{
+    free(relay_asked);
+    relay_asked = NULL;
+    if (!url || !url[0]) return;
+    const size_t size = strlen(url) + 1;
+    relay_asked = tide_alloc(size);
+    memcpy(relay_asked, url, size);
+}
+
 static const char *relay_url(void)
 {
+    if (relay_asked) return relay_asked;
     const char *env = getenv("TIDE_RELAY");
     return env && env[0] ? env : RELAY;
 }

@@ -135,7 +135,7 @@ through function pointers (`DllImport` would lock it until Unity restarts). A
 rebuild packs the world and local state, swaps the library and unpacks them, as
 Tide's hot reload already does (`notes/hot-reload.md`). Users never see this.
 
-### Phase 1 interface draft (2026-10-20, awaiting the owner)
+### Phase 1 interface (owner approved the draft and all five picks, 2026-10-20)
 
 The standard host (`tide/host.h`) already runs everything a front end needs
 except the window: the session, rooms, dedicated-server admission, host
@@ -215,7 +215,7 @@ writer, the command packer and the schema. The web build is the same host
 compiled into the Tide program `tide.js` runs: `pageFrames` calls its frame,
 the `.jslib` copies devices in and the packet out.
 
-Decisions for the owner:
+Decisions, all approved by the owner as picked:
 
 1. The engine-neutral name `tide/embed.h` (pick), or Unity-specific naming.
 2. The view packet (pick), or C# reading world storage directly.
@@ -230,6 +230,16 @@ Decisions for the owner:
 
 Left for later phases: Tide's draw list for Unity's renderer (phase 5), audio,
 Tide GUI input claims.
+
+Built so far (phase 1, step 1, 2026-10-20): `tide/embed.h` on desktop with a
+linked game: create, destroy, frame, status, requests and background, with its
+contracts and tests in `notes/standard-host.md`. One change from the draft:
+the frame takes raw `tide_embed_input` (what a window reports) instead of
+`tide_devices`, so presses latch and movement adds up in the platform's own
+poll. Next: the schema and view packet (tidec), commands, named scene starts,
+loading game libraries (the editor), the web build of the embed, and the Unity
+package. Known gaps: `Clipboard.Copy` and pastes are dropped when embedded, and
+stdout/stderr aren't routed to the other program yet.
 
 ## Web
 

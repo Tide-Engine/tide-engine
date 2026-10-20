@@ -1,0 +1,38 @@
+// platform/tests/embed.c runs this through tide/embed.h, as another program would.
+settings { tickRate = 30; }
+
+scene Main { }
+
+component Counter
+{
+    int ticks;
+    int presses;
+}
+
+input Keys
+{
+    bool space;
+
+    Sample(Devices devices)
+    {
+        space = devices.keyboard.space.pressed;
+    }
+}
+
+event(PlayerJoined joined) Arrive()
+{
+    Spawn(Counter { }, Owner { player = joined.player });
+}
+
+system Count(Keys keys, mut Counter counter)
+{
+    counter.ticks += 1;
+    if (keys.space) counter.presses += 1;
+}
+
+extern void Seen(int ticks, int presses, float width, float height);
+
+view Show(Counter counter)
+{
+    Seen(counter.ticks, counter.presses, Screen.width, Screen.height);
+}

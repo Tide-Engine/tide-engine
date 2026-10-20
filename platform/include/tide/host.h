@@ -206,6 +206,12 @@ static bool tide_run_dropped;
 static double tide_run_migrating_since;
 // The game's own network, while the session's match is on one (tide/network.h)
 static tide_network_match tide_run_network;
+// Inside another program's frame (tide/embed.h), which reads the devices,
+// draws and plays itself: the frame leaves the GPU, the audio device and the
+// stats' drawer alone, and the platform takes the devices from that program
+static bool tide_run_embedded;
+// The room the last frame told local code the match is in (Session.room)
+static char tide_run_room[TIDE_NETWORK_ADDRESS_BYTES];
 
 // The network the game registered, or NULL: its matches are in Tide's rooms.
 static inline const tide_network *tide_run_registered(void)
@@ -881,8 +887,8 @@ static inline int tide_run_frame(void *user, const float seconds)
 {
     (void)user;
     const tide_host_game *game = tide_run_game;
-    // Asked every frame: a reload can bring the setting, or take it away
-    const bool stats = tide_run_stats();
+    // Asked every frame: a reload can bring the setting, or take it away. The other program has stats of its own.
+    const bool stats = !tide_run_embedded && tide_run_stats();
     // What a frame's work takes is in the stats' list: timed while their drawer is open
     const uint64_t began = stats && tide_run_drawer.open ? tide_time_now_ns() : 0;
     // ...and for a page that measures the netcode, with its session's update apart
@@ -900,7 +906,7 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_run_reset_timing(timing);
         tide_run_timing = timing;
     }
-    tide_platform_gpu_timing(timing);
+    if (!tide_run_embedded) tide_platform_gpu_timing(timing);
     // F8 may have changed the drawer after debug_views selected a profile.
     // Bind it before ticks, so a closing press stops measuring at once.
     tide_profile *measured = timing || tide_run_profiling ? &tide_run_profiler.profile : NULL;
@@ -974,6 +980,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     const uint32_t session_state = tide_run_hosting && !tide_run_hosting_joined ? TIDE_SESSION_CONNECTING : status.client.state;
     game->set_session(tide_run_local, session_state, status.client.player, status.client.ping_ms, status.server,
                       status.open, room);
+    memcpy(tide_run_room, room, sizeof tide_run_room);
     tide_profiler_mark(profiler, TIDE_FRAME_MATCH);
 
     // Views draw at the frame rate, the match blended between its last two ticks
@@ -1009,8 +1016,10 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_platform_gpu_timing(true);
     }
     const uint64_t render_began = timing ? tide_time_now_ns() : 0;
-    tide_platform_draw(&tide_run_draw);
-    tide_platform_audio(&tide_run_audio);
+    if (!tide_run_embedded) {
+        tide_platform_draw(&tide_run_draw);
+        tide_platform_audio(&tide_run_audio);
+    }
     const uint64_t rendered = timing ? tide_time_now_ns() : 0;
     tide_profiler_mark(profiler, TIDE_FRAME_RENDER);
     if (measured_netcode) tide_run_netcode(&status, update_ns, tide_time_now_ns() - frame_began);
