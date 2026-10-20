@@ -204,9 +204,9 @@ system Muster(mut Zombie zombie, mut Herd herd)
     var risen = zombie.state == ZombieState.Rising ? Math.SmoothStep(0, 1, zombie.timer / RISE_SECONDS) : 1.0;
     var low = (1 - risen) * 1.9;
     var big = (zombie.look == 3 ? 1.06 : 1.0) * KindScale(zombie.kind);
-    zombie.headAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.5, 0.2), float3(0, 0.25, -1.35), lying) * big) - float3(0, low, 0);
-    zombie.chestAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.15, 0.12), float3(0, 0.25, -0.85), lying) * big) - float3(0, low, 0);
-    zombie.hipsAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 0.92, 0), float3(0, 0.2, -0.3), lying) * big) - float3(0, low, 0);
+    zombie.headAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.5, 0.2) + KindHead(zombie.kind), float3(0, 0.25, -1.35), lying) * big) - float3(0, low, 0);
+    zombie.chestAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 1.15, 0.12) + KindChest(zombie.kind), float3(0, 0.25, -0.85), lying) * big) - float3(0, low, 0);
+    zombie.hipsAt = zombie.at + Math.Rotate(turn, Math.Lerp(float3(0, 0.92, 0) + KindHips(zombie.kind), float3(0, 0.2, -0.3), lying) * big) - float3(0, low, 0);
     if (zombie.state == ZombieState.Dying)
     {
         zombie.slot = -1;
@@ -297,6 +297,47 @@ Gait KindGait(ZombieKind kind, Gait gait)
     if (kind == ZombieKind.Runner) return Gait.Sprint;
     if ((kind == ZombieKind.Spitter || kind == ZombieKind.Howler) && gait == Gait.Sprint) return Gait.Run;
     return gait;
+}
+
+// Where each kind's own body (art/kinds) has its head, chest and hips standing, against one of the ordinary dead's:
+// its marks in kinds.json less those of a body make_kinds.py left as it was (the Howler's head up its long neck, the
+// Brute's sunk between its shoulders, a Runner's and a Spitter's thrust out).
+float3 KindHead(ZombieKind kind)
+{
+    switch (kind)
+    {
+        case ZombieKind.Bloater: return float3(0, -0.13, 0.03);
+        case ZombieKind.Brute: return float3(0, -0.2, 0.09);
+        case ZombieKind.Howler: return float3(0, 0.46, -0.13);
+        case ZombieKind.Runner: return float3(0, -0.17, 0.19);
+        case ZombieKind.Spitter: return float3(0, -0.19, 0.15);
+    }
+    return float3(0);
+}
+
+float3 KindChest(ZombieKind kind)
+{
+    switch (kind)
+    {
+        case ZombieKind.Bloater: return float3(0, -0.07, 0.03);
+        case ZombieKind.Brute: return float3(0, -0.09, 0.08);
+        case ZombieKind.Howler: return float3(0, 0.27, -0.03);
+        case ZombieKind.Runner: return float3(0, -0.03, 0.12);
+        case ZombieKind.Spitter: return float3(0, -0.05, 0.05);
+    }
+    return float3(0);
+}
+
+float3 KindHips(ZombieKind kind)
+{
+    switch (kind)
+    {
+        case ZombieKind.Bloater: return float3(0, -0.1, 0);
+        case ZombieKind.Brute: return float3(0, -0.03, 0);
+        case ZombieKind.Howler: return float3(0, 0.2, 0);
+        case ZombieKind.Runner: return float3(0, 0.1, 0);
+    }
+    return float3(0);
 }
 
 // How much bigger each kind is all round than the ordinary dead (its spots to hit, and its reach).

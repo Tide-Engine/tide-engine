@@ -63,6 +63,83 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Each kind its own body (2026-10-19)
+
+The owner: "also lets give each different enemy type a unique look too; its
+easy to read now with the colors, this is just from an art and polish
+prespective". The shapes are mine, Provisional.
+
+- **Six bodies** (art/kinds, by art/kinds/tools/make_kinds.py: the bosses' way of
+  growing a body from one of the dead of art/people, with the horde's clips):
+  a Runner lean and hunched, long thin limbs and longer claws, its head thrust
+  out, bone through its spine and elbows; a Bloater with a vast sac of a belly
+  hanging out front, pustules glowing on it, fat limbs; a Spitter hunched, its
+  throat a great glowing sac of bile; a Warden squared up, iron on its shoulders
+  and a shield on its back, its head bare (a helmet was tried, and taken off: its
+  bare head is where it's to be shot); a Brute with a bull's shoulders and
+  forearms, a little sunk head, short heavy legs, muscle heaped on its back and
+  bone through its shoulders; a Howler stretched thin and tall, its long neck
+  thrown back, a frill of spines round its throat, its throat and lungs glowing.
+  Each about 1100 triangles, drawn in one more instanced draw a kind (crowd.tide's
+  `Kinds`, `KindMesh`, `ShambleKind`); `ShowFrame` and `ShowState` take the set of
+  clips they play from. The scaling by kind that had stood in for shapes (a
+  Spitter's 0.9 wide, and so on) is gone but the Brute's third bigger; the
+  shader's Spitter throat glow is gone too (its body's sac glows). The growths
+  that glow burn brighter as a kind winds up (a Spitter's throat, a Runner's
+  crouch, a Howler's howl).
+- **Their colours kept, their shapes showing**: the kind's colour washes a third
+  through its body (it was a half), its glow all over a little less, and its
+  outline in the colour is a crisp edge, not a soft one (seen from above, most of a
+  body is turned from the eye, and the soft edge had washed each shape flat in its
+  colour). Looked at zoomed out over a crowd, every kind's still known at a glance
+  by its colour; nearer, by its shape too.
+- **Hit spots** (zombies.tide's `KindHead`, `KindChest`, `KindHips`): where each
+  kind's head, chest and hips are, standing, moved by its body's marks
+  (kinds.json) less those of a body make_kinds.py left as it was: a Howler's head
+  0.46 m higher, a Brute's sunk, a Runner's and a Spitter's low and forward. A
+  hunched one's head is near its chest, so a round at its chest is a head shot
+  more often.
+- **Development**: Shift+F2 lines up one of each kind and one of the ordinary
+  dead 3.5 m in front of you, dazed half a minute and fifty times as tough, your
+  skills held off as long, to look at them by.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one pass
+  (the Warden's mail check now lets the kind's body settle before it aims: it had
+  aimed at the Spitter's chest, which is by its head now). Looked at in Blender
+  (each body front, side and back) and in standard-host captures (the line up
+  zoomed in; Runners at the default zoom; a crowd of all the kinds zoomed out).
+  The kinds' texture of numbers is 2.8 MB, as the horde's and the mutants' are
+  (1.9 and 2.0): the page about 3 MB more. Ticks of 2000 of the dead 2.06 ms.
+
+### Bosses that last, survivors who can die (2026-10-19)
+
+The owner: "i killed the boss way too quickly with the shotgun; its still
+easy", then "oh its still ahrd to die". The numbers are mine, Provisional.
+
+- **Bosses that last** (boss.tide's `BOSS_HEALTH`, `BOSS_PELLET`; hands.tide's
+  `Shoot`): a boss's health is 8000 a danger (times the party, times its kind's
+  share; it was 2000), and a shotgun pellet does half to one: every one of the
+  eleven finds something that big, so the shotgun had done twice what the carbine
+  and the SMG do to a boss (some 480 a second against their 230 to 250, before
+  items).
+- **Survivors who can die** (items.tide's `LEVEL_HEALTH`): a level adds 18
+  health, and brings 18 back (it was 30). By the last levels a survivor had had
+  eleven times the health they began with against claws only three times as hard
+  (rounds.tide's `Harm`), so the dead couldn't touch them; now it's about six times.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 8; the night's
+  end's fight, from the clock running out to the boss down): the last round's
+  build felled each boss 8 to 13 s after it rose (the middle fight) and the
+  middle runs went 1460 s (the Gunner, at the cap), 900 (the Engineer), 1196 (the
+  Breacher). Tried: a level's 12 and bosses' 8000: fights 19 to 27 s, the runs
+  623, 396 and 572 s, every one but three going down, most in a night's end (too
+  far); 15 and 6000: fights 17 to 23 s, runs 826, 433, 638; 18 and 8000 (kept):
+  fights 19 to 32 s, runs 1462 (the Gunner, three of eight going down), 724 (the
+  Engineer, seven going down) and 580 (the Breacher, all eight). The bots don't
+  roll a boss's slam or keep off it as a player does; they've always done worse
+  than the owner, who found the last round's easy.
+- **Tests**: as before (the survivors' health a level, 18, in the test's
+  `max_health`). Native debug `gravewake_test` and the web debug WASI one pass.
+  Ticks of 2000 of the dead 2.5 ms.
+
 ### Runners, Brutes and Howlers, each kind its own colour, the orbs as gems (2026-10-19)
 
 The owner: "the XP orbs are hard to spot now", then "we need more variety of

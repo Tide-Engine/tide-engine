@@ -68,7 +68,7 @@ static void tick(int count)
     }
 }
 
-static float max_health(Survivor s) { return 100.0f + 30.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
+static float max_health(Survivor s) { return 100.0f + 18.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
 
 // Both on their feet and whole, so the dead don't end a test that's about something else.
 static void heal(void)
@@ -478,7 +478,7 @@ int main(void)
         s.selfRevives = 0;
         set(0, s);
         s = take(0, Item_Kevlar);
-        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 30.0f * (float)(s.level - 1));
+        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 18.0f * (float)(s.level - 1));
         s = take(0, Item_ExtendedMag);
         CHECK(s.mag == 45);                             // Half again a carbine's 30, loaded now
         s = take(0, Item_SecondWind);
@@ -1168,6 +1168,7 @@ int main(void)
             z.spit = 99;
             z.flinch = 0;
             CHECK(tide_set_Zombie(&world, e, z));
+            tick_safe(1);           // Its head and chest where its kind's body has them (a Spitter's head is low, by its chest)
             s = get(0);
             s.shotWait = 0;
             s.mag = 30;

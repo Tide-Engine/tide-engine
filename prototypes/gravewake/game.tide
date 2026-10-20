@@ -346,6 +346,12 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
         return;
     }
     if (cheat.what >= 10 && cheat.what < 20) party.survivors[seat].Send(Moved { to = Showplace(cheat.what - 10) });
+    // 26: one of each kind of the dead lined up in front of whoever asked (DevLineup), their skills held off meanwhile
+    if (cheat.what == 26)
+    {
+        match.devLineup = seat;
+        party.survivors[seat].Send(Hushed { });
+    }
 }
 
 // Where each part of the clearing is seen from, for the development walks: x, z and the way to look.
@@ -396,4 +402,33 @@ event(Moved moved) TakeMoved(mut Survivor survivor)
 int Players(Party party)
 {
     return Math.Max(1, party.joined);
+}
+
+// Development: one of each kind of the dead but the ordinary, and one of those, in a row 3.5 m in front of (north of) the
+// survivor who asked, dazed half a minute and as tough as fifty, to look at them by; the survivor's skills held off as
+// long (Hushed), so nothing goes off at them.
+[Stage(Tick.Rounds, 9)]
+system DevLineup(mut Match match, query (Survivor survivor) survivors)
+{
+    if (match.devLineup < 0) return;
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (s.seat != match.devLineup) continue;
+        for (var k = 0; k < 7; k++)
+        {
+            var kind = ZombieKind(k);
+            var spot = On(s.feet.x - 5.4 + 1.8 * k, s.feet.z + 3.5);
+            Spawn(Zombie { at = spot, yaw = YawTo(spot, s.feet), health = ZombieHealth(match.danger) * KindHealth(kind) * 50, gait = KindGait(kind, Gait.Shamble),
+                           look = k % ZOMBIE_LOOKS, state = ZombieState.Hunting, pace = 1, phase = k * 9, kind = kind, spit = 99, stun = 30 });
+        }
+    }
+    match.devLineup = -1;
+}
+
+event Hushed { }
+
+event(Hushed hushed) TakeHushed(mut Survivor survivor)
+{
+    for (var k = 0; k < 3; k++) survivor.cooldowns[k] = Math.Max(survivor.cooldowns[k], 30);
 }

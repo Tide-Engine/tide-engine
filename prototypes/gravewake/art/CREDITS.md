@@ -14,6 +14,7 @@ what was changed.
 | `guns/` | The survivors' guns and the turret's tripod | Ultimate Gun Pack, cut to one GLB each, recoloured and scaled by `guns/tools/make_guns.py` |
 | `crowd/` | The horde: the six zombie bodies cut to about 700 triangles and their clips baked into `anim.png` | Made from `people/` by `crowd/tools/make_crowd.py` |
 | `mutants/` | The three bosses: three of the dead reshaped (bones scaled and bent, growths added), and their clips baked into `anim.png` | Made from `people/` by `mutants/tools/make_mutants.py` (see `mutants/README.md`) |
+| `kinds/` | The six kinds of the dead but the ordinary: six of the dead reshaped the same way, with the horde's clips baked into `anim.png` | Made from `people/` by `kinds/tools/make_kinds.py` (see `kinds/README.md`) |
 
 The packs' pages:
 

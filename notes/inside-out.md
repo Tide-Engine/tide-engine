@@ -1,5 +1,143 @@
 # Inside Out
 
+## Engine gaps (kept list)
+
+The owner asked (2026-10-20) for the engine gaps this game runs into to be
+written down, for a later engine discussion. Each is what the game can't do
+or say, and where it works round it; the language ones were checked against
+tidec on 2026-10-20. Add to it as more turn up.
+
+Rendering:
+- **No way to say a frame is unchanged, or to cap the frame rate** (Unity's
+  `OnDemandRendering`, `Application.targetFrameRate`). Every frame is drawn
+  at the display's rate, 144 Hz on the owner's. Worked round by the kept
+  picture (`SceneUnchanged`, `SceneKept` in `render.tide`).
+- **No word that a target lost its contents** (the display's scale changing,
+  a hot reload, a lost device), and no `Screen.scale` to compare. The kept
+  picture is drawn again once it is a second old (`keptAge`).
+- **A target premultiplies what is written to it**; `[Raw]` is for textures
+  only. The normals target's alpha carries the metric scale, so every read
+  divides it back out (the generated `tide_straight`), a divide per sample,
+  and a byte target would lose precision. Not worked round: the data stays
+  in `Rgba16f`.
+- **`DepthTexture.Compare` in a loop** links with warning X3595 on WebGL
+  through ANGLE's D3D11 (`SampleCmp`), which `checkGL` makes an error.
+  `SceneSun`'s taps are written out (`SceneSunTap`). The web tests use
+  SwiftShader, so they never see D3D11's warnings.
+- **No polygon in 2D `Draw`** (rectangles, ellipses, arcs and lines only):
+  `StarMark` (`transition.tide`) draws a star as five lines and a dot.
+- **Only a frame's whole GPU time is measured** (the stats drawer's `gpu`
+  line), and only as pixels in a capture. The cost of each pass was found by
+  switching passes off in a scratch build and cropping the drawer from
+  `--script` captures.
+
+Language and generated C:
+- **No `==` on vectors or matrices** ("operator '==' can't be used with
+  float4 and float4"; Unity gives a `bool4` and `math.all`): `SameFloat4`,
+  `SameMatrix`, `SameObject` and `SameView` compare field by field.
+- **`Math.Hash` takes no float, and there is no float bit cast** (Unity's
+  `math.asint`): the kept picture compares its scene rather than hashing it.
+- **Read-only structs are passed by value.** Unoptimized, each call keeps a
+  copy of the 40 KB `Workshop` in its caller's frame; nested drawing helpers
+  overflowed WASM's 1 MB stack. Helpers take `HallState` (`HallOf`) or a few
+  fields (`HallPostNear` takes the chapter), and the posts are drawn from
+  `Workbench`, not under `RoomScene`.
+
+Host and tools:
+- **A game can't read its command line or page address** (the spec lists
+  settings from the command line as not built). `invite.c` reads
+  `--inside-out-playtest` and `--inside-out-lite` from WASI's arguments, or
+  the environment natively; `web.html` maps `?playtest`, `?lite`, `?scale`
+  and `?quiet`.
+- **C can't build a command from its struct**: the generated writers
+  (`tide_write_command_*`) are `static`. `test/simulation.c` writes
+  `Progress`'s bits by hand (`inside_out_test_progress_best`), and must
+  change with the command's fields.
+- **A game's functions are `static` in generated C**, so the solver drives
+  `MovePuzzle` through the `Move` handler (`test/solve.c`).
+- **Phones as controllers** have no engine support; Inside Out's TV page
+  relays key presses (`tv.html`, `pad.html`). A general design awaits the
+  owner (phones as ordinary gamepads in `Devices`, below).
+
+## GPU cost: a kept picture and a cheaper spill (2026-10-19)
+
+The owner saw the GPU working hard and asked for benchmarks, then for the
+two changes below with as little visual change as possible, and whether the
+engine is to blame.
+
+**Measured** (RTX 4080 Super, Vulkan, release, `--players 2`, the first
+hall still, the stats drawer's `gpu` line; passes switched off one at a time
+in a scratch build that was not kept; runs differ by about 0.2 ms, and by
+up to 1.5 ms at 3840x2160 between batches as the GPU's clocks change, so only
+numbers from one batch are compared):
+
+| 1920x1080 | ms |
+|---|---:|
+| Whole picture | 2.99 |
+| No occlusion and its blurs | 2.21 |
+| No wall colour on floors (spill) | 1.53 |
+| Lamp map 2,048 rather than 4,096 | 2.53 |
+| No lens | 2.54 |
+| Shadow taps halved | 2.75 |
+| No glow chain / no shadow-map draw | 2.87 / 2.90 |
+| All of it off (fill and interface) | 0.15 |
+| Lite | 0.43 |
+
+At 2560x1440 the whole picture was 5.1 ms, at 3840x2160 11.8 (8.1 without
+the spill, 8.2 without occlusion). The owner's display runs at 144 Hz, and
+every frame drew all of it whether anything had moved or not. The spill's
+cost is its scattered reads: each pixel turned its six taps by its own
+random angle, so neighbouring pixels read unrelated texels. With every
+pixel's taps turned alike it cost about 0.3 ms at 3840x2160 rather than 4;
+with three taps rather than six, 2; without its depth reads, nothing saved.
+
+**Kept picture** (`render.tide`). `SceneLighting` draws the lens into a
+window-sized `finished` target and copies that to the window (`SceneKept`:
+point reads, nothing where it holds nothing). Before lighting, it compares
+this frame's `sculpture.objects` and `SceneView` (camera, projection, board,
+focus, tile, screen, look, shadow depth bounds) with what the kept picture
+was drawn from, field by field (`SceneUnchanged`); if all are the same it
+only copies. The vertices are one unit cube made once, and nothing in the
+lighting shaders depends on time, so the same inputs give the same pixels.
+A target loses its contents when the display's scale changes, on a hot
+reload and with a lost device, and a game is told of none of these, so the
+picture is also drawn again once it is a second old (`keptAge`). A still
+hall then costs 0.04 ms of GPU a frame at 1920x1080 (2.99 before) and 0.12
+at 3840x2160 (11.8); CPU went from 0.4 to 0.3 ms, of it rendering 0.14 to
+0.04. A changed frame costs the extra copy, 0.1 to 0.2 ms at 3840x2160.
+Captures of a still, a moving, a settled hall and the partner's view are
+byte-identical to the code before.
+
+**Spill.** The random turn of the six taps is now one for each 2x2 block of
+pixels (`Math.Hash(pixel >> 1)`), which the GPU shades together: about 2 ms
+less a frame at 3840x2160 (14.8/14.5 to 12.8/12.5 in one batch), 0.3 at
+1920x1080. About 4.5% of pixels change, at most 25 of 255, all within the
+faint tint at a wall's foot and round a robot; side by side it reads the
+same. Four turns in a 2x2 pattern saved less and showed rings; a turn for
+each 4x4 block was no faster than 2x2 and looked blotchy.
+
+**The engine's share.** The generated WGSL is close to what would be written
+by hand; its additions are an unpremultiply divide on every sample and
+NaN-safe min/max, arithmetic, where these passes wait on memory. What a game
+can't do is say a frame is unchanged or cap its frame rate (Unity's
+`OnDemandRendering`, `targetFrameRate`), nor learn that a target lost its
+contents; the kept picture and its once-a-second redraw work round both.
+Not built: occlusion with fewer taps or at half size, a 2,048 lamp map.
+
+**Validation.** Native and web debug and native release build warning-free.
+The four native entries and all 21 web entries passed, the play fixtures
+included (rendering changed). Those took 680 and 674 s, against about
+1,300 before: their software WebGL/WebGPU no longer lights still frames.
+The final release build's still hall: 0.04 ms (1920x1080), 0.06
+(2560x1440), 0.12 (3840x2160).
+
+The first run of the play fixtures failed on the stars change, which had
+been pushed with them skipped under the rule below: its summary adds the
+stars and the moves under the chapter count, down to y 530, and
+`reviewFirstTransition` required nothing lit below y 500 during the hold.
+The band now ends at 545. A change to a summary or hold is a transition's,
+so the rule ran them.
+
 ## Stars (2026-10-19)
 
 The owner asked for a scoring system, "like a stars or something", for
