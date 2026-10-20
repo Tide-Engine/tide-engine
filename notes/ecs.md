@@ -31,6 +31,18 @@ unchanged; measurements in notes/benchmarks.md, Performance pass):
   What's left is the chain of dependent loads a probe makes through a chunked
   list (directory, page, element, twice) on a random pattern: about 8x C.
 
+Lane bookkeeping inline (2026-10-20): `tide_table_lanes_shared`,
+`tide_table_lanes_begin` and `tide_table_lanes_end` are `static inline` in
+`tide/table.h`, with the same names, arguments and behavior, so a chunk whose
+lanes the table alone has (no snapshot shares them) costs no call. What a
+shared lane costs (taking a page, copying rows, comparing and swapping pages)
+stays out of line, in `tide_table_lane_apart` and `tide_table_lane_end_apart`,
+`static inline` `noinline` helpers each file that uses them has a copy of, not
+more code at every call. No exported function was added and generated code
+calls what it called. `versus_systems` with 64 entities of each kind went from
+4.8 to 3.9 µs a tick (median of alternating runs) and with 4,096 from 65.2 to
+63.8 µs; its executable grew 34 KB (6%). Measurements: notes/benchmarks.md.
+
 Recorded containers (2026-10-19): local event queries capture their statically
 read container fields at tick end, including reads through borrowed helpers.
 Equal query shapes retain one shared record/tail. Direct parameters still use

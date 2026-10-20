@@ -19,43 +19,72 @@
 #define TIDE_BENCH_RESULTS "results"
 #endif
 
-enum { MAX_WAYS = 8, MAX_RUNS = 2 };
+enum { MAX_WAYS = 8, MAX_RUNS = 16, MAX_PARTS = 8 };
 
-// The platform's pool, with only its first `threads` threads taking part.
+// The platform's pool, with at most `threads` of its threads at work at once,
+// the caller's among them. Its workers still sleep when they have nothing to
+// do and are asked back as the pool's are (tide_jobs.more), and a round that
+// wants a few of them wakes a few (run_some), so a tick on fewer threads goes
+// as it would on a pool of that many.
 typedef struct limited {
     tide_jobs jobs;
     const tide_jobs *pool;
+    atomic_uint inside; // The pool's workers in the round's work, beside the caller
 } limited;
 
 typedef struct limited_round {
+    limited *l;
     void (*work)(void *context, uint32_t thread);
     void *context;
-    uint32_t threads;
 } limited_round;
 
+// A worker takes part while fewer than `threads` are at it, the caller's
+// included; past that it goes back to the pool at once. Tide's work only
+// tells the caller (thread 0) from the rest, so each keeps the pool's number.
 static void limited_work(void *context, const uint32_t thread)
 {
     const limited_round *r = context;
-    if (thread < r->threads) r->work(r->context, thread);
+    if (thread == 0) {
+        r->work(r->context, 0);
+        return;
+    }
+    if (atomic_fetch_add(&r->l->inside, 1u) + 1u < r->l->jobs.threads) r->work(r->context, thread);
+    atomic_fetch_sub(&r->l->inside, 1u);
+}
+
+static void limited_run_some(void *self, const uint32_t others, void (*work)(void *context, uint32_t thread), void *context)
+{
+    limited *l = self;
+    limited_round r = {l, work, context};
+    const uint32_t most = l->jobs.threads - 1u;
+    if (l->pool->run_some) l->pool->run_some(l->pool->self, others < most ? others : most, limited_work, &r);
+    else l->pool->run(l->pool->self, limited_work, &r);
 }
 
 static void limited_run(void *self, void (*work)(void *context, uint32_t thread), void *context)
 {
-    const limited *l = self;
-    limited_round r = {work, context, l->jobs.threads};
-    l->pool->run(l->pool->self, limited_work, &r);
+    limited_run_some(self, UINT32_MAX, work, context);
 }
 
-static limited the_limited;
+static void limited_more(void *self, const uint32_t count)
+{
+    const limited *l = self;
+    const uint32_t inside = atomic_load(&l->inside);
+    const uint32_t room = inside + 1u < l->jobs.threads ? l->jobs.threads - 1u - inside : 0u;
+    if (room) l->pool->more(l->pool->self, count < room ? count : room);
+}
 
-// Threads to tick on: NULL for this one alone, 0 for every core.
-static const tide_jobs *jobs_for(const uint32_t threads)
+// Threads to tick on: NULL for this one alone, 0 for every core. `l` holds a
+// pool of fewer threads than the platform's, for as long as it's used.
+static const tide_jobs *jobs_for(const uint32_t threads, limited *l)
 {
     const tide_jobs *pool = tide_platform_jobs();
     if (!pool || threads == 1) return NULL;
     if (threads == 0 || threads >= pool->threads) return pool;
-    the_limited = (limited){{&the_limited, threads, limited_run, NULL, NULL, NULL}, pool};
-    return &the_limited.jobs;
+    l->jobs = (tide_jobs){l, threads, limited_run, NULL, pool->more ? limited_more : NULL, limited_run_some};
+    l->pool = pool;
+    atomic_init(&l->inside, 0u);
+    return &l->jobs;
 }
 
 static uint32_t thread_count(const tide_jobs *jobs)
@@ -122,12 +151,17 @@ typedef struct timing {
     double median_ms; // Of a tick
     double mean_ms;
     uint64_t digest;
+    bool parts; // It timed its parts: their medians and means
+    double part_median_ms[MAX_PARTS];
+    double part_mean_ms[MAX_PARTS];
 } timing;
 
 typedef struct options {
     uint32_t warmup, ticks;
     uint32_t threads; // Only this many (0 for every core), when `one_count`
     bool one_count;
+    uint32_t list[MAX_RUNS]; // --threads-list: each of these in turn
+    uint32_t list_count;
 } options;
 
 static int compare_doubles(const void *a, const void *b)
@@ -136,23 +170,36 @@ static int compare_doubles(const void *a, const void *b)
     return x < y ? -1 : x > y ? 1 : 0;
 }
 
-static timing run_way(const versus_way *way, const versus_flag *flags, const options *o, const tide_jobs *jobs, double *ms)
+// Sorts `ms` and gives its median, and its mean.
+static void summarize(double *ms, const uint32_t count, double *median, double *mean)
+{
+    double total = 0.0;
+    for (uint32_t i = 0; i < count; i++) total += ms[i];
+    qsort(ms, count, sizeof *ms, compare_doubles);
+    *median = count % 2u ? ms[count / 2u] : (ms[count / 2u - 1u] + ms[count / 2u]) / 2.0;
+    *mean = total / (double)count;
+}
+
+// `ms` has room for each timed tick, and `part_ms` for each tick's parts.
+static timing run_way(const versus_way *way, const versus_parts parts, const uint32_t part_count, const versus_flag *flags,
+                      const options *o, const tide_jobs *jobs, double *ms, double *part_ms)
 {
     void *state = way->make(flags);
     for (uint32_t i = 0; i < o->warmup; i++) way->tick(state, jobs);
-    double total = 0.0;
+    double these[MAX_PARTS];
     for (uint32_t i = 0; i < o->ticks; i++) {
         const uint64_t start = tide_time_now_ns();
         way->tick(state, jobs);
         ms[i] = (double)(tide_time_now_ns() - start) / 1e6;
-        total += ms[i];
+        if (!parts) continue;
+        parts(state, these);
+        for (uint32_t p = 0; p < part_count; p++) part_ms[(size_t)p * o->ticks + i] = these[p];
     }
-    timing t = {.digest = way->digest(state)};
+    timing t = {.digest = way->digest(state), .parts = parts != NULL};
     way->free(state);
-    if (o->ticks) {
-        qsort(ms, o->ticks, sizeof *ms, compare_doubles);
-        t.median_ms = o->ticks % 2u ? ms[o->ticks / 2u] : (ms[o->ticks / 2u - 1u] + ms[o->ticks / 2u]) / 2.0;
-        t.mean_ms = total / (double)o->ticks;
+    summarize(ms, o->ticks, &t.median_ms, &t.mean_ms);
+    for (uint32_t p = 0; parts && p < part_count; p++) {
+        summarize(part_ms + (size_t)p * o->ticks, o->ticks, &t.part_median_ms[p], &t.part_mean_ms[p]);
     }
     return t;
 }
@@ -225,7 +272,17 @@ static void write_record(FILE *f, const versus_desc *d, const options *o, const 
         for (uint32_t w = 0; w < d->way_count; w++) {
             fprintf(f, "%s", w ? "," : "");
             json_text(f, d->ways[w].name);
-            fprintf(f, ":{\"median_ms\":%.6g,\"mean_ms\":%.6g}", t[r][w].median_ms, t[r][w].mean_ms);
+            fprintf(f, ":{\"median_ms\":%.6g,\"mean_ms\":%.6g", t[r][w].median_ms, t[r][w].mean_ms);
+            if (t[r][w].parts) { // Each part's, for a way that timed them
+                fprintf(f, ",\"parts\":{");
+                for (uint32_t p = 0; p < d->part_count; p++) {
+                    fprintf(f, "%s", p ? "," : "");
+                    json_text(f, d->part_names[p]);
+                    fprintf(f, ":{\"median_ms\":%.6g,\"mean_ms\":%.6g}", t[r][w].part_median_ms[p], t[r][w].part_mean_ms[p]);
+                }
+                fprintf(f, "}");
+            }
+            fprintf(f, "}");
         }
         fprintf(f, "}}");
     }
@@ -256,6 +313,7 @@ static void usage(const versus_desc *d)
     printf("  --ticks <n>         ticks to time (%u)\n", d->ticks);
     printf("  --warmup <n>        ticks to run first, untimed, at least 1 (%u)\n", d->warmup);
     printf("  --threads <n>       only this many threads, 0 for every core (one, then every core)\n");
+    printf("  --threads-list <l>  each count of threads in a list like 1,2,4,8,12 in turn (0: every core)\n");
     printf("  --split             C splits its work across threads however little there is\n");
     printf("  --save <label>      adds the results to bench/results/versus.jsonl\n");
     for (uint32_t i = 0; i < d->flag_count; i++) {
@@ -276,6 +334,22 @@ static bool read_number(const char *text, uint32_t *out)
     return true;
 }
 
+// Counts of threads, with commas between them: 1,2,4,8,12.
+static bool read_list(const char *text, options *o)
+{
+    o->list_count = 0;
+    for (const char *at = text;;) {
+        char number[16];
+        const size_t length = strcspn(at, ",");
+        if (length == 0 || length >= sizeof number || o->list_count == MAX_RUNS) return false;
+        memcpy(number, at, length);
+        number[length] = 0;
+        if (!read_number(number, &o->list[o->list_count++])) return false;
+        if (!at[length]) return true;
+        at += length + 1u;
+    }
+}
+
 static bool parse(const versus_desc *d, const int argc, char **argv, options *o, const char **save)
 {
     bool quick = false;
@@ -283,7 +357,7 @@ static bool parse(const versus_desc *d, const int argc, char **argv, options *o,
         if (strcmp(argv[i], "--quick") == 0) quick = true;
     }
     always_split = quick;
-    *o = (options){quick ? d->quick_warmup : d->warmup, quick ? d->quick_ticks : d->ticks, 0, false};
+    *o = (options){.warmup = quick ? d->quick_warmup : d->warmup, .ticks = quick ? d->quick_ticks : d->ticks};
     for (uint32_t i = 0; i < d->flag_count; i++) d->flags[i].value = quick ? d->flags[i].quick : d->flags[i].full;
 
     for (int i = 1; i < argc; i++) {
@@ -304,6 +378,8 @@ static bool parse(const versus_desc *d, const int argc, char **argv, options *o,
         bool known = true;
         if (strcmp(arg, "--save") == 0) {
             *save = value;
+        } else if (strcmp(arg, "--threads-list") == 0) {
+            known = read_list(value, o);
         } else if (!numeric) {
             known = false;
         } else if (strcmp(arg, "--ticks") == 0) {
@@ -338,6 +414,13 @@ static bool parse(const versus_desc *d, const int argc, char **argv, options *o,
     return true;
 }
 
+// A cell of the tables: milliseconds, to the microsecond, or to a hundredth
+// of one where they're under a tenth of a millisecond, and what's beside them.
+static void print_ms(const double ms, const char *beside)
+{
+    printf(ms < 0.1 ? "  %9.5f %-10s" : "  %9.3f %-10s", ms, beside);
+}
+
 int versus_main(const versus_desc *d, const int argc, char **argv)
 {
     for (int i = 1; i < argc; i++) {
@@ -353,15 +436,25 @@ int versus_main(const versus_desc *d, const int argc, char **argv)
         return 2;
     }
 
+    if (d->part_count > MAX_PARTS || (d->part_count && (!d->parts || !d->part_names))) {
+        fprintf(stderr, "%s: a concept has at most %u parts, with their names and a function for each way\n", d->name,
+                (unsigned)MAX_PARTS);
+        return 2;
+    }
+
     // One thread, then every core; or the threads asked for
+    static limited limits[MAX_RUNS]; // The pools of fewer threads, one for each run that has one
     const tide_jobs *jobs[MAX_RUNS];
     uint32_t threads[MAX_RUNS];
     uint32_t runs = 0;
-    if (o.one_count) {
-        jobs[runs++] = jobs_for(o.threads);
+    if (o.list_count) {
+        for (; runs < o.list_count; runs++) jobs[runs] = jobs_for(o.list[runs], &limits[runs]);
+    } else if (o.one_count) {
+        jobs[runs] = jobs_for(o.threads, &limits[runs]);
+        runs++;
     } else {
         jobs[runs++] = NULL;
-        const tide_jobs *every = jobs_for(0);
+        const tide_jobs *every = jobs_for(0, &limits[runs]);
         if (thread_count(every) > 1u) jobs[runs++] = every;
     }
     for (uint32_t r = 0; r < runs; r++) threads[r] = thread_count(jobs[r]);
@@ -381,20 +474,25 @@ int versus_main(const versus_desc *d, const int argc, char **argv)
     printf("%u ticks timed after %u; %s %s build\n", o.ticks, o.warmup, build, platform);
     fflush(stdout);
 
-    double *ms = malloc((o.ticks ? o.ticks : 1u) * sizeof *ms);
-    if (!ms) {
+    double *ms = malloc((size_t)o.ticks * sizeof *ms);
+    double *part_ms = d->part_count ? malloc((size_t)o.ticks * d->part_count * sizeof *part_ms) : NULL;
+    if (!ms || (d->part_count && !part_ms)) {
         fprintf(stderr, "%s: out of memory\n", d->name);
         return 1;
     }
     timing t[MAX_RUNS][MAX_WAYS];
     bool ok = true;
+    bool parts = false; // Some way timed its parts
     for (uint32_t r = 0; r < runs; r++) {
         for (uint32_t w = 0; w < d->way_count; w++) {
-            t[r][w] = run_way(&d->ways[w], d->flags, &o, jobs[r], ms);
+            const versus_parts way_parts = d->part_count ? d->parts[w] : NULL;
+            t[r][w] = run_way(&d->ways[w], way_parts, d->part_count, d->flags, &o, jobs[r], ms, part_ms);
             ok &= t[r][w].digest == t[0][0].digest;
+            parts |= t[r][w].parts;
         }
     }
     free(ms);
+    free(part_ms);
 
     // Ways down, threads across: each one's milliseconds a tick, and beside
     // the other ways', how many times as long Tide's took
@@ -410,9 +508,35 @@ int versus_main(const versus_desc *d, const int argc, char **argv)
         for (uint32_t r = 0; r < runs; r++) {
             char cell[32] = "";
             if (w) snprintf(cell, sizeof cell, "%.2fx", t[r][0].median_ms / t[r][w].median_ms);
-            printf("  %9.3f %-10s", t[r][w].median_ms, cell);
+            print_ms(t[r][w].median_ms, cell);
         }
         printf("\n");
+    }
+    // Then each part of each way that timed them, beside Tide's the same way
+    if (parts) {
+        printf("\n  %-22s", "ms a tick, by part");
+        for (uint32_t r = 0; r < runs; r++) {
+            char head[32];
+            snprintf(head, sizeof head, "%u thread%s", threads[r], threads[r] == 1u ? "" : "s");
+            printf("  %-20s", head);
+        }
+        printf("\n");
+    }
+    for (uint32_t w = 0; parts && w < d->way_count; w++) {
+        if (!t[0][w].parts) continue;
+        for (uint32_t p = 0; p < d->part_count; p++) {
+            char name[64];
+            snprintf(name, sizeof name, "%s: %s", d->ways[w].name, d->part_names[p]);
+            printf("  %-22s", name);
+            for (uint32_t r = 0; r < runs; r++) {
+                char cell[32] = "";
+                if (w && t[r][0].parts && t[r][w].part_median_ms[p] > 0.0) {
+                    snprintf(cell, sizeof cell, "%.2fx", t[r][0].part_median_ms[p] / t[r][w].part_median_ms[p]);
+                }
+                print_ms(t[r][w].part_median_ms[p], cell);
+            }
+            printf("\n");
+        }
     }
     printf("\n  medians; beside C, how many times as long Tide takes\n");
 

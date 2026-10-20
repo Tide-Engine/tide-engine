@@ -1,0 +1,544 @@
+// Systems: what the schedule costs a tick, and how a tick's systems share
+// out across threads. Sixty-four systems go through sixteen components of two
+// floats each, in four kinds of entity that each have eight of them, so each
+// component is in two kinds. Each system changes one component, every
+// entity's that has it: four steps of sixteen, one system for each component
+// in each step, declared step by step.
+//
+// Twelve of the components' systems read only the component they change, so
+// the twelve go on side by side, each four systems in a row. The first four
+// components' are a band: from the second on, each system reads the component
+// before its own as well, so each waits for the one before it, and the next
+// step's for the reads of this one's. --count sets how many entities of each
+// kind there are, from none (what a tick of 64 systems costs with nothing to
+// do) to as many as make threads pay.
+
+scene Main { }
+
+// The benchmark sets the count before the first tick, which spawns them.
+singleton Setup
+{
+    int count = 64;
+    bool ready;
+}
+
+component C0
+{
+    float a;
+    float b;
+}
+
+component C1
+{
+    float a;
+    float b;
+}
+
+component C2
+{
+    float a;
+    float b;
+}
+
+component C3
+{
+    float a;
+    float b;
+}
+
+component C4
+{
+    float a;
+    float b;
+}
+
+component C5
+{
+    float a;
+    float b;
+}
+
+component C6
+{
+    float a;
+    float b;
+}
+
+component C7
+{
+    float a;
+    float b;
+}
+
+component C8
+{
+    float a;
+    float b;
+}
+
+component C9
+{
+    float a;
+    float b;
+}
+
+component C10
+{
+    float a;
+    float b;
+}
+
+component C11
+{
+    float a;
+    float b;
+}
+
+component C12
+{
+    float a;
+    float b;
+}
+
+component C13
+{
+    float a;
+    float b;
+}
+
+component C14
+{
+    float a;
+    float b;
+}
+
+component C15
+{
+    float a;
+    float b;
+}
+
+system Start(mut Setup setup)
+{
+    if (setup.ready) return;
+    setup.ready = true;
+    for (var i = 0; i < setup.count; i++)
+    {
+        Spawn(C0 { a = float((i + 0) & 255) * (1.0 / 256), b = float((i * 3 + 0) & 255) * (1.0 / 256) },
+              C1 { a = float((i + 1) & 255) * (1.0 / 256), b = float((i * 3 + 1) & 255) * (1.0 / 256) },
+              C2 { a = float((i + 2) & 255) * (1.0 / 256), b = float((i * 3 + 2) & 255) * (1.0 / 256) },
+              C3 { a = float((i + 3) & 255) * (1.0 / 256), b = float((i * 3 + 3) & 255) * (1.0 / 256) },
+              C4 { a = float((i + 4) & 255) * (1.0 / 256), b = float((i * 3 + 4) & 255) * (1.0 / 256) },
+              C5 { a = float((i + 5) & 255) * (1.0 / 256), b = float((i * 3 + 5) & 255) * (1.0 / 256) },
+              C6 { a = float((i + 6) & 255) * (1.0 / 256), b = float((i * 3 + 6) & 255) * (1.0 / 256) },
+              C7 { a = float((i + 7) & 255) * (1.0 / 256), b = float((i * 3 + 7) & 255) * (1.0 / 256) });
+        Spawn(C4 { a = float((i + 4) & 255) * (1.0 / 256), b = float((i * 3 + 4) & 255) * (1.0 / 256) },
+              C5 { a = float((i + 5) & 255) * (1.0 / 256), b = float((i * 3 + 5) & 255) * (1.0 / 256) },
+              C6 { a = float((i + 6) & 255) * (1.0 / 256), b = float((i * 3 + 6) & 255) * (1.0 / 256) },
+              C7 { a = float((i + 7) & 255) * (1.0 / 256), b = float((i * 3 + 7) & 255) * (1.0 / 256) },
+              C8 { a = float((i + 8) & 255) * (1.0 / 256), b = float((i * 3 + 8) & 255) * (1.0 / 256) },
+              C9 { a = float((i + 9) & 255) * (1.0 / 256), b = float((i * 3 + 9) & 255) * (1.0 / 256) },
+              C10 { a = float((i + 10) & 255) * (1.0 / 256), b = float((i * 3 + 10) & 255) * (1.0 / 256) },
+              C11 { a = float((i + 11) & 255) * (1.0 / 256), b = float((i * 3 + 11) & 255) * (1.0 / 256) });
+        Spawn(C8 { a = float((i + 8) & 255) * (1.0 / 256), b = float((i * 3 + 8) & 255) * (1.0 / 256) },
+              C9 { a = float((i + 9) & 255) * (1.0 / 256), b = float((i * 3 + 9) & 255) * (1.0 / 256) },
+              C10 { a = float((i + 10) & 255) * (1.0 / 256), b = float((i * 3 + 10) & 255) * (1.0 / 256) },
+              C11 { a = float((i + 11) & 255) * (1.0 / 256), b = float((i * 3 + 11) & 255) * (1.0 / 256) },
+              C12 { a = float((i + 12) & 255) * (1.0 / 256), b = float((i * 3 + 12) & 255) * (1.0 / 256) },
+              C13 { a = float((i + 13) & 255) * (1.0 / 256), b = float((i * 3 + 13) & 255) * (1.0 / 256) },
+              C14 { a = float((i + 14) & 255) * (1.0 / 256), b = float((i * 3 + 14) & 255) * (1.0 / 256) },
+              C15 { a = float((i + 15) & 255) * (1.0 / 256), b = float((i * 3 + 15) & 255) * (1.0 / 256) });
+        Spawn(C0 { a = float((i + 0) & 255) * (1.0 / 256), b = float((i * 3 + 0) & 255) * (1.0 / 256) },
+              C1 { a = float((i + 1) & 255) * (1.0 / 256), b = float((i * 3 + 1) & 255) * (1.0 / 256) },
+              C2 { a = float((i + 2) & 255) * (1.0 / 256), b = float((i * 3 + 2) & 255) * (1.0 / 256) },
+              C3 { a = float((i + 3) & 255) * (1.0 / 256), b = float((i * 3 + 3) & 255) * (1.0 / 256) },
+              C12 { a = float((i + 12) & 255) * (1.0 / 256), b = float((i * 3 + 12) & 255) * (1.0 / 256) },
+              C13 { a = float((i + 13) & 255) * (1.0 / 256), b = float((i * 3 + 13) & 255) * (1.0 / 256) },
+              C14 { a = float((i + 14) & 255) * (1.0 / 256), b = float((i * 3 + 14) & 255) * (1.0 / 256) },
+              C15 { a = float((i + 15) & 255) * (1.0 / 256), b = float((i * 3 + 15) & 255) * (1.0 / 256) });
+    }
+}
+
+system S0_0(mut C0 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_1(mut C1 x, C0 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S0_2(mut C2 x, C1 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S0_3(mut C3 x, C2 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S0_4(mut C4 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_5(mut C5 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_6(mut C6 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_7(mut C7 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_8(mut C8 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_9(mut C9 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_10(mut C10 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_11(mut C11 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_12(mut C12 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_13(mut C13 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_14(mut C14 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S0_15(mut C15 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_0(mut C0 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_1(mut C1 x, C0 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S1_2(mut C2 x, C1 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S1_3(mut C3 x, C2 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S1_4(mut C4 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_5(mut C5 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_6(mut C6 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_7(mut C7 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_8(mut C8 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_9(mut C9 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_10(mut C10 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_11(mut C11 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_12(mut C12 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_13(mut C13 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_14(mut C14 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S1_15(mut C15 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_0(mut C0 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_1(mut C1 x, C0 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S2_2(mut C2 x, C1 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S2_3(mut C3 x, C2 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S2_4(mut C4 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_5(mut C5 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_6(mut C6 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_7(mut C7 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_8(mut C8 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_9(mut C9 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_10(mut C10 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_11(mut C11 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_12(mut C12 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_13(mut C13 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_14(mut C14 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S2_15(mut C15 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_0(mut C0 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_1(mut C1 x, C0 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S3_2(mut C2 x, C1 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S3_3(mut C3 x, C2 y)
+{
+    x.a = x.a * 0.75 + y.b * 0.25;
+    x.b = x.b * 0.5 + y.a * 0.5;
+}
+
+system S3_4(mut C4 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_5(mut C5 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_6(mut C6 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_7(mut C7 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_8(mut C8 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_9(mut C9 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_10(mut C10 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_11(mut C11 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_12(mut C12 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_13(mut C13 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_14(mut C14 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}
+
+system S3_15(mut C15 x)
+{
+    x.a = x.a * 0.75 + x.b * 0.25;
+    x.b = x.b * 0.5 + 0.25;
+}

@@ -11,7 +11,8 @@ param(
     [string[]]$Only = @(),
     [string]$Bin = 'build/release/bin',
     [int]$QuietSeconds = 60,
-    [int]$QuietDeadlineMinutes = 30
+    [int]$QuietDeadlineMinutes = 30,
+    [string]$BuiltFrom = '' # The revision the binaries were built from, when they are not this checkout's (a frozen earlier build)
 )
 $env:TIDE_HIDDEN = '1'
 $ErrorActionPreference = 'Stop'
@@ -35,7 +36,23 @@ $all = @(
     @{name='versus_lookup'; exe='versus_lookup'; args=@()},
     @{name='versus_lookup_steady'; exe='versus_lookup'; args=@('--changes','0')},
     @{name='versus_rollback'; exe='versus_rollback'; args=@()},
+    @{name='versus_rollback_spread'; exe='versus_rollback'; args=@('--spread','1')},
+    @{name='versus_rollback_scaling'; exe='versus_rollback'; args=@('--movers','1000000','--turrets','40000','--threads-list','1,2,4,8,12')},
     @{name='versus_systems'; exe='versus_systems'; args=@()},
+    @{name='versus_systems_empty'; exe='versus_systems'; args=@('--count','0')},
+    @{name='versus_systems_small'; exe='versus_systems'; args=@('--count','64')},
+    @{name='versus_systems_mid'; exe='versus_systems'; args=@('--count','16384','--threads-list','1,2,4,8,12')},
+    @{name='versus_systems_scaling'; exe='versus_systems'; args=@('--count','65536','--threads-list','1,2,4,8,12')},
+    # Every versus program's ways on 1 to 12 threads
+    @{name='versus_particles_scaling'; exe='versus_particles'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_wide_scaling'; exe='versus_wide'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_sand_scaling'; exe='versus_sand'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_life_scaling'; exe='versus_life'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_churn_scaling'; exe='versus_churn'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_events_scaling'; exe='versus_events'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_nbody_scaling'; exe='versus_nbody'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_buckets_scaling'; exe='versus_buckets'; args=@('--threads-list','1,2,4,8,12')},
+    @{name='versus_lookup_scaling'; exe='versus_lookup'; args=@('--threads-list','1,2,4,8,12')},
     @{name='bench_sand'; exe='bench_sand'; args=@()},
     @{name='bench_gallery'; exe='bench_gallery'; args=@()},
     @{name='draw_opengl'; exe='tide_platform_draw'; args=@('--bench'); backend='opengl'},
@@ -49,7 +66,7 @@ foreach ($exe in ($set | ForEach-Object { $_.exe } | Sort-Object -Unique)) { Cop
 
 $revision = (git rev-parse HEAD).Trim()
 $dirty = @(git status --porcelain --untracked-files=no).Count -gt 0
-$env:TIDE_BENCH_REVISION = if ($dirty) { "$revision+local" } else { $revision }
+$env:TIDE_BENCH_REVISION = if ($BuiltFrom) { $BuiltFrom } elseif ($dirty) { "$revision+local" } else { $revision }
 $env:TIDE_BENCH_MACHINE = 'AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2'
 $meta = [ordered]@{label=$Label; revision=$env:TIDE_BENCH_REVISION; machine=$env:TIDE_BENCH_MACHINE; startedUtc=(Get-Date).ToUniversalTime().ToString('o'); runs=@()
     binaries=@(Get-ChildItem $frozen -File | ForEach-Object { @{name=$_.Name; sha256=(Get-FileHash $_.FullName).Hash.ToLower()} })}
