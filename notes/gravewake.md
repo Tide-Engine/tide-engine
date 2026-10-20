@@ -63,6 +63,14 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### The shotgun's pump gone (2026-10-21)
+
+The owner: "the shotgun should just be a thump sound not a draw back and forth
+one". sound.tide's `Handling` had racked the pump (`pump.ogg`) 0.28 s after every
+blast; the shotgun never loads, and now only its blast is heard (`Ears.lastActTime`
+went with it). The pump is still heard picking a survivor and sending the drone.
+Native debug and web debug WASI `gravewake_test` pass; not heard.
+
 ### The kinds told by what they do, not by cards (2026-10-21)
 
 The owner: "those tooltips about new enemies should not show, we should just
