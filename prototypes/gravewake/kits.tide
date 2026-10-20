@@ -136,7 +136,7 @@ float BaseCooldown(Skill skill)
         case Skill.Firebomb: return 9;
         case Skill.Turret: return 18;
         case Skill.Thumper: return 5;
-        case Skill.Napalm: return 7;
+        case Skill.Napalm: return 8;
     }
     return 5;
 }
@@ -153,9 +153,12 @@ const float THUMP_HURT = 300;       // A Thumper's grenade at its heart, times m
 const float THUMP_REACH = 4;        // ...so wide...
 const float THUMP_SPREAD = 2.2;     // ...and a ranked one's grenades this far apart across the aim
 const float THUMP_PACE = 24;        // How fast its grenades go (metres a second across the ground): a launcher's, not a hand's
-const float NAPALM_HURT = 120;      // A napalm glob's splash at its heart, times might, the dead in it set alight...
-const float NAPALM_SPLASH = 2.4;    // ...so wide
+const float NAPALM_HURT = 100;      // A napalm glob's splash at its heart, times might, the dead in it set alight...
+const float NAPALM_SPLASH = 2.0;    // ...so wide (120 and 2.4, and a fire 2.6 m round for 4 s, burning a quarter of it a bite,
+                                    // till the owner, 2026-10-20: "the napalm ability felt a bit OP and hard to not get myself
+                                    // hit by it": missiles.tide's NapalmReach, NapalmSeconds, NAPALM_BITE)
 const float NAPALM_PACE = 16;
+const float NAPALM_NEAREST = 4.5;   // A glob lands no nearer its thrower than this, wherever the cursor is
 
 const float ROLL_SECONDS = 0.5;     // A roll, start to finish...
 const float ROLL_SPEED = 9.5;       // ...how fast in its middle (quick at first, slowing)...
@@ -225,8 +228,16 @@ void UseSecondary(Entity self, mut Survivor survivor, Ashwick ashwick, Herd herd
             var from = GunHand(survivor) + Flat(survivor.yaw) * 0.4;
             for (var k = 0; k < shots; k++)
             {
-                var side = (k - (shots - 1) * 0.5) * (thump ? THUMP_SPREAD : NAPALM_SPLASH * 1.4);
-                var velocity = ThrowTo(from, survivor.aim + right * side, THROW_GRAVITY, out var flight, thump ? THUMP_PACE : NAPALM_PACE);
+                var side = (k - (shots - 1) * 0.5) * (thump ? THUMP_SPREAD : NAPALM_SPLASH * 1.6);
+                // (napalm never at their feet: as far as NAPALM_NEAREST the cursor's way)
+                mut var mark = survivor.aim + right * side;
+                var off = (mark - survivor.feet).xz;
+                if (!thump && Math.Length(off) < NAPALM_NEAREST)
+                {
+                    var way = Math.Length(off) > 0.1 ? off / Math.Length(off) : Flat(survivor.yaw).xz;
+                    mark = survivor.feet + float3(way.x, 0, way.y) * NAPALM_NEAREST;
+                }
+                var velocity = ThrowTo(from, mark, THROW_GRAVITY, out var flight, thump ? THUMP_PACE : NAPALM_PACE);
                 if (thump)
                     Spawn(Missile { kind = Shot.Grenade, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = THUMP_HURT * Might(survivor) * (1 + 0.25 * (rank - 1)),
                                     splash = THUMP_REACH, element = Element.Blast, seat = survivor.seat, life = flight + 0.05, rank = rank });

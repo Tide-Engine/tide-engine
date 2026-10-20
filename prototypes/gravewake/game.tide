@@ -62,6 +62,7 @@ component Survivor
     Item[3] offers;
     bool choosing;
     int pending;                     // Picks owed: a level's, a chest's, a boss's, after the one on offer...
+    float rewardWait;                // Seconds before the next is offered: a boss's death, a mission's end, a chest's opening seen first
     int boons;                       // ...and a mission's, of the rarer items, before them
     int picks;
     float gone;                      // Seconds since bleeding out: back beside a friend as the night's bosses rise, at dawn, or BACK_AFTER

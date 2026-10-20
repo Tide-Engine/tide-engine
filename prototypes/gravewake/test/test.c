@@ -2085,6 +2085,10 @@ int main(void)
         tick_whole(2);
         CHECK(get(0).pending + (get(0).choosing ? 1 : 0) >= picks0 + 1);
         CHECK(get(1).pending + (get(1).choosing ? 1 : 0) >= picks1 + 1);
+        // Its pick offered only once its fall's been seen (BOSS_REWARD_WAIT, 2.5 s)
+        CHECK(!get(0).choosing && get(0).rewardWait > 2);
+        tick_whole(60 * 3);
+        CHECK(get(0).choosing && get(0).rewardWait <= 0);
         tick_safe(60 * 6);
         CHECK(world.arch1_Boss.count == 0);
 
