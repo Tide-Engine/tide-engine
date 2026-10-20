@@ -1,5 +1,11 @@
 # Benchmarks
 
+Scene visibility unification (2026-10-15): removing generated scene audience
+fields changes the quick-session world pins to 742cb392be44252d for Sand and
+ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
+change; workloads, inputs, convergence assertions and saved measurements are
+untouched. No performance comparison is claimed. Validation: notes/language.md.
+
 ## Rollback, the schedule and thread scaling against C, 2026-10-20
 
 The performance pass asked for what wasn't compared with handwritten C: a
@@ -182,12 +188,6 @@ schedule fixtures, every `versus_*`) pass. The one,
 the release build with this branch's engine changes reverted too, and passes
 on web debug: it predates them. The full native and web debug suites were not
 run here; the coordinator runs them on the merged branch.
-
-Scene visibility unification (2026-10-15): removing generated scene audience
-fields changes the quick-session world pins to 742cb392be44252d for Sand and
-ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
-change; workloads, inputs, convergence assertions and saved measurements are
-untouched. No performance comparison is claimed. Validation: notes/language.md.
 
 ## Drawing against handwritten OpenGL and Vulkan, 2026-10-20
 
