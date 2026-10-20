@@ -1,5 +1,12 @@
 # Runtime written by Claude for now
 
+## Double Position attribute (2026-10-20)
+
+The owner-approved attribute extension changes compiler acceptance and uses
+existing generated correction helpers. Double errors retain the field's type;
+no new generated-C/runtime function, storage contract or runtime implementation
+is introduced. Scope and validation: notes/language.md.
+
 ## Double math and matrices (2026-10-20)
 
 The owner's completion request extends the existing temporary math maintenance

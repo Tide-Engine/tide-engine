@@ -1,5 +1,40 @@
 # Language features, as tidec builds them
 
+## Double Position correction smoothing (2026-10-20)
+
+The owner requested [Position] on double coordinates. The checker now accepts
+double and double2/3/4, alongside existing float types, while retaining the
+match-only, no-arguments, Snap/conflict and custom-Interpolate restrictions.
+Double matrices remain invalid; Rotation still accepts float radians/quaternion.
+
+The existing generated correction path already stores the error in the field's
+declared C type and performs subtraction, accumulation, application and decay
+multiplication in that type. No numeric codegen or runtime helper was changed.
+The float frame interpolation fraction and existing float exponential decay
+coefficient widen for double arithmetic. The same 75 ms half-life and all float
+behavior remain unchanged. Errors remain private local presentation state,
+excluded from match hashes and local/match packing; snaps, identity changes,
+confirmed removal and timeline replacement retain their existing reset rules.
+
+Four double regressions extend view_corrections: all four scalar/vector sizes,
+nested structs and Snap boundaries, component and singleton presentation,
+billion-unit fractional offsets, fractional errors requiring binary64 precision,
+ordinary movement and accumulated corrections, decay, zero-error interpolation,
+two views, unchanged world hash/values/packed bytes and cache resets/lifetime.
+The seven existing float/rotation regressions remain intact. New diagnostics pin
+double matrix rejection and unchanged double Rotation rejection. LSP hover and
+user docs/spec identify the newly accepted types.
+
+Validation: full native debug passes 2,469/2,469, including 34 Vulkan/OpenGL
+GPU tests; full web debug passes 2,378/2,378 (2,367 ordinary/WebGL and 11 WebGPU).
+All 11 view_corrections cases pass native/WASI debug and optimized builds;
+all 16 correction diagnostics and the full LSP suite, including double Position
+hover, pass. Production docs build, all 268 shared grammar cases and the staged
+diff check pass. No determinism pin changed. Debug uses clang 23.1.2 with Node
+24.21.0 and Chrome 155.0.8059.85 for web; native optimized uses clang 18.1.8.
+Linux, macOS, Android, MinGW and sanitizer coverage were not run on this Windows
+machine; CI was not dispatched.
+
 ## Double math and matrix completion (2026-10-20)
 
 The owner corrected the foundation's narrow scope: double trig and matrices

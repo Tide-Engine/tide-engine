@@ -374,7 +374,18 @@ component Body
 }
 ```
 
-`[Position]` on a float or floating-point vector keeps linear tick interpolation and accumulates an additive presentation offset. `[Rotation]` on a float uses the shortest wrapped angular difference, in radians. On a quaternion it uses the shortest relative rotation, for both tick interpolation and correction smoothing.
+`[Position]` accepts `float`, `double` and their vector types. It keeps linear tick interpolation and accumulates an additive presentation offset in the field's own precision. Double positions and correction errors remain double, preserving small offsets at large world coordinates. `[Rotation]` on a float uses the shortest wrapped angular difference, in radians. On a quaternion it uses the shortest relative rotation, for both tick interpolation and correction smoothing.
+
+For a game with its own large-world transform, the same attribute works on double coordinates:
+
+```csharp
+component WorldPosition
+{
+    [Position] double3 position;
+}
+```
+
+This smooths the value views read. Convert to rendering coordinates after subtracting the camera position in double precision; the drawing APIs still take floats.
 
 The error decays exponentially with frame time toward zero, or the identity rotation, with a provisional half-life of 75 ms. Another correction accumulates with whatever error remains. Ordinary movement follows the corrected simulation, so moving and aiming stay responsive. Untagged fields keep ordinary tick interpolation.
 

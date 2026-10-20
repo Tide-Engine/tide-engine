@@ -1,5 +1,12 @@
 # The language server and the editors
 
+## Double Position hover (2026-10-20)
+
+Position attribute hover now identifies float/double scalars and vectors and
+their own correction precision. The existing double LSP regression opens a
+tagged double3 component, checks no diagnostics and verifies attribute hover.
+Completion syntax remains [Position]. Validation: notes/language.md.
+
 ## Double matrices and math tooling (2026-10-20)
 
 The LSP and Vim/Emacs/TextMate grammars recognize double2x2/double3x3/double4x4.

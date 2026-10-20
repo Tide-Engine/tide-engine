@@ -1,5 +1,12 @@
 # The docs site
 
+## Double Position correction documentation (2026-10-20)
+
+Views and the spec document Position on double scalars/vectors, add a custom
+large-world position example, retain float rendering and describe correction
+precision without changing Rotation or the existing smoothing rules.
+Production build/grammar validation: notes/language.md.
+
 ## Double math and matrix completion (2026-10-20)
 
 Basics, Math and the spec now describe complete existing component-wise double

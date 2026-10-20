@@ -12219,6 +12219,9 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
 TIDE_TEST(lsp_double_types_swizzles_parsing_and_signatures)
 {
     start();
+    open_document("component Body { [Pos$ition] double3 position; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float or double scalar/vector"));
     open_document("singleton Data { dou$ble value = 1.25d; double3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "64-bit IEEE float"));
