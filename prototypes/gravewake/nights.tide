@@ -123,7 +123,6 @@ void Nightfall(mut Match match)
     match.ringReach = 0;
     ResetHordes(match);
     ResetMissions(match);
-    ResetEruptions(match);
     match.chestsDue = CHESTS_A_NIGHT;
     match.chestsPlaced = 0;
     Send(NightFell { night = match.night });

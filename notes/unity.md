@@ -106,7 +106,14 @@ Unity object field. At bake tidec maps each GUID to its file through `.meta`:
 
 - When Tide spawns `Enemy`, Unity instantiates `Enemy.prefab` and binds child
   entities to child GameObjects by path. The editor finds prefabs through
-  AssetDatabase; a build step includes them in players without committed files.
+  AssetDatabase.
+- Players include everything Tide can reach because it is referenced, never by
+  name lookup: authored references are real Unity object references (scenes and
+  prefabs keep them), and a scene build processor (`IProcessSceneWithReport`)
+  adds a registry object to the built copy of the first scene referencing every
+  Tide prefab, scene and `.tide` shader sub-asset. Unity's stripping then keeps
+  their assets, shaders and engine modules, with no committed file and no
+  "always included" lists.
 - Loading a Tide scene loads its Unity scene; its `TideEntity` objects bind to
   the entities Tide spawns for it.
 - Views see predicted state blended between ticks (the existing `previous` and
@@ -120,15 +127,109 @@ Unity object field. At bake tidec maps each GUID to its file through `.meta`:
 
 ## Native boundary
 
-One exported function table (working name `tide_unity_api`): schema, start,
-tick and frame, component table reads, devices, commands, events, and world and
-local pack/unpack. It touches the runtime, so its contents are agreed with the
-owner before either side depends on them (`notes/runtime-ownership.md`).
+It touches the runtime, so its contents are agreed with the owner before either
+side depends on them (`notes/runtime-ownership.md`). Draft below.
 
 **Owner:** in the editor the package loads and unloads the library itself
 through function pointers (`DllImport` would lock it until Unity restarts). A
 rebuild packs the world and local state, swaps the library and unpacks them, as
 Tide's hot reload already does (`notes/hot-reload.md`). Users never see this.
+
+### Phase 1 interface draft (2026-10-20, awaiting the owner)
+
+The standard host (`tide/host.h`) already runs everything a front end needs
+except the window: the session, rooms, dedicated-server admission, host
+migration, local requests, commands, local handlers, files and hot reloading of
+game libraries (`platform/src/reload.c`, `tide_host_game`). So the boundary is
+that host with the window, GPU and audio device taken out, called once per
+frame by another program. The name is engine-neutral, as nothing in it is
+Unity's: `platform/include/tide/embed.h`, agent-maintained like the rest of
+`platform/`.
+
+```c
+typedef struct tide_embed tide_embed;
+
+typedef struct tide_embed_desc {
+    const tide_host_game *game; // A game linked in (players, IL2CPP static builds), or NULL with:
+    const char *library_dir;    // ...the folder tide writes game-<n> libraries to: the editor, hot reloading
+    int tick_rate;              // 0 for the game's tickRate
+    int argc;                   // tide/run.h's --host, --join, --connect, --seed
+    char **argv;
+    const char *files_dir;      // Where the game's files live (Application.persistentDataPath)
+    const char *relay;          // NULL for the default relay
+    void (*log)(void *user, int error, const char *text); // stdout/stderr lines, for Debug.Log
+    void *user;
+} tide_embed_desc;
+
+tide_embed *tide_embed_create(const tide_embed_desc *desc);
+void tide_embed_destroy(tide_embed *e);
+
+// One frame of tide/host.h's loop: the session's update, connection events, local handlers, local
+// requests, then the views, recorded with the frame's view packet (below). `devices` is this
+// machine's input as Unity read it. Returns seconds until the match next needs a frame.
+double tide_embed_frame(tide_embed *e, float seconds, const tide_devices *devices, tide_float2 screen_size,
+                        float screen_scale);
+
+// The view packet the last frame wrote: valid until the next frame. Bytes, never pointers.
+const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
+
+// The session as tide_session_status says it, with the room code: what Unity's own UI shows.
+void tide_embed_status(const tide_embed *e, tide_embed_status *out);
+
+// What local code's Session calls do (tide_session_request): start a scene, join a code, connect to
+// an address, leave, open, close, end, kick. False when it can't be asked now.
+bool tide_embed_request(tide_embed *e, tide_session_request_kind kind, const char *argument);
+
+// A typed command from Unity's UI, as local code's Send: `type` and `value` as the schema lays
+// them out; packed and sent as Tide's own commands are. False for an unknown type or bad size.
+bool tide_embed_command(tide_embed *e, uint32_t type, const void *value, uint32_t size);
+
+// The app went to the background (true) or came back. Phones leave the match there, with host
+// migration where enabled, as Tide's mobile hosts do; desktop changes nothing.
+void tide_embed_background(tide_embed *e, bool background);
+
+// The game's schema (JSON): what the Roslyn generator reads, and its hash, which every view packet
+// carries, so stale bindings refuse to read rather than misread.
+const char *tide_embed_schema(const tide_embed *e, uint32_t *size);
+```
+
+The view packet is the main new piece. Each frame, generated code writes what C#
+reads into one flat buffer, laid out by the schema:
+
+- a header: schema hash, frame, tick, verified tick, alpha;
+- the shown entities: ID and generation, prefab, parent, owner and whether it's
+  this machine's, Shown/Spawned flags;
+- for each component, its entities and their values, floats blended exactly as
+  views see them, and singletons;
+- text and lists copied into the packet's own area, named by offset and length;
+- the events this machine's local handlers heard this frame, for `Tide.On<T>`.
+
+Its benefits: C# never depends on ECS storage (archetypes, lanes, pages, heap),
+which stays free to change; C# memory safety is a bounds check against one size
+and a schema hash; the web copies one buffer a frame (option B), desktop reads
+it in place; C# does no blending. Its cost is writing it each frame, which is
+the same work views reading those values do now.
+
+Generated (tidec, per game), as new `tide_host_game` members: the view packet
+writer, the command packer and the schema. The web build is the same host
+compiled into the Tide program `tide.js` runs: `pageFrames` calls its frame,
+the `.jslib` copies devices in and the packet out.
+
+Decisions for the owner:
+
+1. The engine-neutral name `tide/embed.h` (pick), or Unity-specific naming.
+2. The view packet (pick), or C# reading world storage directly.
+3. Which prefab an entity came from must be known to late joiners, so it has to
+   be match state: a compiler-generated prefab ID on entities spawned from
+   prefabs or scenes, snapshotted and hashed (pick). Nothing records it today.
+4. Packet contents for the first version: every match component of shown
+   entities and singletons, blended; local fields; heard events. Confirmed
+   (verified) values only for components C# asks for, as they double the size.
+5. Unity's UI writing local state directly (not just commands and requests):
+   left out of the first version.
+
+Left for later phases: Tide's draw list for Unity's renderer (phase 5), audio,
+Tide GUI input claims.
 
 ## Web
 
@@ -144,6 +245,86 @@ Option A, compiling Tide with Unity's pinned Emscripten for zero-copy reads, is
 the fallback if B fails on something fundamental. It brings another clang, flags
 Unity controls, Unity's thread setting, a port of Tide's web platform layer, and
 determinism to prove again.
+
+### Spike step 1 (2026-10-20): B works
+
+Local branch `unity-spike` (not on `dev`) holds a scratch game
+(`unity/Spike/game`: bodies bouncing, one per player), a Unity 6000.6.0f1
+project with a WebGL template, a `.jslib` and a driver (`drive.mjs`). Nothing in
+the engine changed: the template wraps `WebAssembly.Instance` before `tide.js`
+loads to keep the Tide program's instance (`tide-capture.js`), and the scratch
+game's views hand positions to its C, which Unity copies from Tide's memory each
+frame. An edit to `tide.js` itself trips the release runtime's freshness check
+at configure time, so later steps that need page hooks regenerate it.
+
+Measured in headless Chrome (SwiftShader, `--mute-audio`) with two Unity WebGL
+pages and a plain Tide page in one relay room, 30 s:
+
+- Every page cross-origin isolated, Tide's memory shared (its threads on) while
+  Unity's own threads stay off. Unity needs no thread setting for Tide's.
+- All three in one room through the real relay; clients' verified ticks kept up
+  and resyncs stayed 0. Unity pages interoperate with plain Tide pages.
+- Unity and Tide both ran about 62 frames a second in each page.
+- The per-frame copy (1 KB here) cost about 2 µs. A sumo-sized measurement is
+  still to do.
+- A hidden page is fine: Unity's frames throttle to one a second, while
+  `tide.js` keeps the match going on its tick-rate worker heartbeat (measured:
+  Tide at exactly 30 frames a second, the tick rate, in background tabs). Only
+  measuring view frame rates needs a window per player in headless runs.
+- The spike made its sphere and material in code, which Unity's build stripping
+  can't see (the Standard shader, a primitive's collider class). The design
+  avoids this by reference (Runtime binding), not by workarounds.
+
+Spike step 2 (2026-10-20), on the same branch:
+
+- Unity drives Tide's frame. `tide.js` gained `pageFrames` (spike branch only,
+  with the release runtime regenerated): while the page is shown, its loop
+  schedules nothing and the page calls `Tide.frame()`; hidden, the worker
+  heartbeat runs frames as for any page. Unity's `Update` calls it before
+  copying, so Unity and Tide frames matched exactly (2,930 each in 30 s) with no
+  trailing frame. Tide's whole frame there (session update and views) averaged
+  0.22 ms.
+- A hidden Unity page hosting the match: Unity fell to one frame a second while
+  Tide kept serving at exactly its 30 Hz tick rate on the heartbeat; the other
+  players stayed verified with 0 resyncs.
+- Copying from Tide's shared memory into Unity's heap (`HEAPU8.set`, the
+  `.jslib`'s operation) ran at about 19 GB/s: 16 KB 1.2-1.5 µs, 256 KB 13 µs,
+  1 MB 54-61 µs, 4 MB 205-231 µs a frame. A sumo-sized view state (transforms
+  of a few hundred bodies) is tens of KB, a few µs; even a whole 4 MB world would
+  be about 1% of a 60 Hz frame.
+
+Unity drives Tide's frame only while the page is visible; hidden, `tide.js`'s
+heartbeat keeps driving it, so a throttled Unity never slows the match.
+
+Spike step 3 (2026-10-20): a native player joined the room a Unity WebGL page
+hosted. `game/spike_native.c` is a windowless HOST program on the real clock: a
+session over the generated `tide_game_api`, joined with
+`tide_platform_room_join` (desktop WebRTC through the relay). Two Unity pages,
+a plain Tide page and the native player played 20 s in one match, all four
+bodies in every world, resyncs 0 everywhere, native included (verified 582,
+predicted 584 at its end).
+
+Still open for phase 0: mobile browsers (needs devices).
+
+### IL2CPP and Tide's C
+
+Proposed by the owner (2026-10-20): IL2CPP player builds could compile Tide's
+generated C and runtime with the player, rather than linking a library built
+by tide. Checked on WebGL (Unity 6000.6.0f1, its Emscripten clang):
+`PlayerSettings.SetAdditionalIl2CppArgs("--compiler-flags=...")` reaches C
+sources in `Assets/` (a probe with `#error` unless a define was given failed
+without the argument and built with it). Flags are global: they apply to all
+IL2CPP C++ too. Unity's own flags for a plugin's C include `-O3`,
+`-fno-strict-overflow`, `-msimd128` and no `-ffp-contract`, so Tide's
+`-ffp-contract=off -fno-fast-math` must be added; generated C can also carry
+`#pragma clang fp contract(off)` so a file doesn't depend on build flags.
+
+Open: Windows and Xbox IL2CPP compile with MSVC, which Tide's clang-only C may
+not build; results under each platform's compiler must match the pinned
+cross-platform hashes (the per-tick hash would show a mismatch as a desync);
+FP environment (denormals) on Unity's threads. Alternative: a static library
+tide builds with its own clang per platform, linked with `__Internal`, with
+sources only where tide can't build (console SDKs).
 
 ## Tide drawing in Unity
 

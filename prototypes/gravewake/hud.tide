@@ -132,22 +132,6 @@ view BloaterRings(Me me, Look look, Lobby lobby, Match match, query (Zombie zomb
 
 const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn
 
-// How far your C4 charges' bursts will reach, round each, in red, throbbing: the dead in it are the ones it'll take.
-[Stage(Layers.Hud, -1)]
-view ChargeRings(Me me, Look look, Lobby lobby, Match match, query (Missile missile) missiles)
-{
-    if (lobby.page != Page.Playing || !me.playing || match.phase == Phase.Over) return;
-    Draw.SetScreen();
-    var u = Unit();
-    var pulse = 0.65 + 0.35 * Math.Sin(look.time * 6);
-    foreach (var row in missiles)
-    {
-        var m = row.missile;
-        if (m.kind != Shot.Mine || m.seat != me.seat) continue;
-        GroundRing(look, m.at, m.splash, 2.5 * u, Color(1.0, 0.3, 0.12, 0.75 * pulse), Screen.width, Screen.height);
-    }
-}
-
 // A mark for a place a survivor's to go: over it, with its name and how far, while it's on the screen; else an arrow at
 // the screen's edge, the way it is (north up the screen), with its name.
 void Pointer(Look look, float3 at, float3 from, string label, Color c, float w, float h, float u, float time, float big, bool far = true)
@@ -418,7 +402,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
             if (ready) Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(EMBER.r, EMBER.g, EMBER.b, 0.18), soft = 10 * u });
             Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(0.1, 0.08, 0.07, 0.86), color2 = Color(0.03, 0.025, 0.02, 0.92), outline = 1.5 * u,
                                outlineColor = ready ? Color(EMBER.r, EMBER.g, EMBER.b, 0.95) : Color(1, 0.9, 0.75, 0.15) });
-            var key = k == 0 ? (mine.charges > 0 ? "BLOW" : "RMB") : k == 1 ? "SPACE" : "AUTO";
+            var key = k == 0 ? "RMB" : k == 1 ? "SPACE" : "AUTO";
             WriteBold(key, at, 12 * u, ready ? BONE : Color(ASH.r, ASH.g, ASH.b, 0.6), Anchor.MiddleCenter);
             if (!ready)
             {
@@ -1080,6 +1064,11 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
                 top = $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}";
                 name = $"{ItemName(item)} {Roman(have + 1)}";
                 line = ItemLineAt(item, have + 1);
+            }
+            if (Nozzle(mine, item))
+            {
+                name = have > 0 ? $"Long Nozzle {Roman(have + 1)}" : "Long Nozzle";
+                line = have > 0 ? $"Flames reach {int(FLAME_NOZZLE * (have + 1))} m further" : $"Flames reach {int(FLAME_NOZZLE)} m further (+{int(FLAME_NOZZLE)} m each)";
             }
         }
         Write(top, middle + float2(0, 8 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);

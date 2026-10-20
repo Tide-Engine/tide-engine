@@ -545,7 +545,7 @@ float BossSink(Boss boss)
 event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
 {
     if (boss.move == BossMove.Dying || wound.seat < 0) return;
-    var damage = wound.damage;
+    var damage = wound.damage * (wound.blow == Blow.Flame ? FLAME_BOSS : 1.0);
     boss.health -= damage;
     boss.hurt += wound.weak ? damage : 0;
     var killed = boss.health <= 0;
