@@ -1690,10 +1690,11 @@ static struct {
     VkDeviceSize size;
 } readback;
 
-static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
+static void vk_target_read_part(const tide_gpu_id id, const int x, const int y, const int width, const int height,
+                                uint8_t *rgba)
 {
     const vk_target *t = &vk.targets[id - 1u];
-    const size_t bytes = (size_t)t->width * (size_t)t->height * 4u;
+    const size_t bytes = (size_t)width * (size_t)height * 4u;
     if (vk.lost || !t->bytes) { // Depth alone, or floats first: no bytes to read
         memset(rgba, 0, bytes);
         return;
@@ -1715,8 +1716,8 @@ static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
     const uint32_t layer = t->face ? t->layer : 0u;
     const VkCommandBuffer cb = outside();
     turn(cb, c->image, c->format, 0, 1, layer, 1, c->rest, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    const VkBufferImageCopy copy = {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1}, {0, 0, 0},
-                                    {(uint32_t)t->width, (uint32_t)t->height, 1}};
+    const VkBufferImageCopy copy = {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1}, {x, y, 0},
+                                    {(uint32_t)width, (uint32_t)height, 1}};
     vkCmdCopyImageToBuffer(cb, c->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1, &copy);
     const VkMemoryBarrier seen = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, NULL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT};
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &seen, 0, NULL, 0, NULL);
@@ -1726,14 +1727,23 @@ static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
         memset(rgba, 0, bytes);
         return;
     }
-    const uint8_t *from = readback.memory.mapped;
+    // Apart (restrict), so the loop below takes many pixels at once: done a byte at a time, it took an eighth
+    // of tide_platform_draw --bench's own time when that read whole frames back
+    const uint8_t *restrict from = readback.memory.mapped;
+    uint8_t *restrict to = rgba;
     if (c->format == VK_FORMAT_B8G8R8A8_UNORM) { // Blue first: red first, as it's read back
         for (size_t i = 0; i < bytes; i += 4) {
-            rgba[i] = from[i + 2], rgba[i + 1] = from[i + 1], rgba[i + 2] = from[i], rgba[i + 3] = from[i + 3];
+            to[i] = from[i + 2], to[i + 1] = from[i + 1], to[i + 2] = from[i], to[i + 3] = from[i + 3];
         }
     } else {
         memcpy(rgba, from, bytes);
     }
+}
+
+static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
+{
+    const vk_target *t = &vk.targets[id - 1u];
+    vk_target_read_part(id, 0, 0, t->width, t->height, rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -2784,6 +2794,7 @@ const tide_gpu tide_gpu_vulkan = {
     .resolve_depth = vk_resolve_depth,
     .target_free = vk_target_free,
     .target_read = vk_target_read,
+    .target_read_part = vk_target_read_part,
     .begin = vk_begin,
     .end = vk_end,
     .scissor = vk_scissor,

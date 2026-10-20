@@ -3490,6 +3490,7 @@ enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 // through the smooth shapes' pipeline then, 8 to 12: what a game keeps and the GPU reads, of which a frame
 // changes a little or all (bench_kept)
 static int bench_kind;
+static bool bench_one; // --only: that workload alone
 static int bench_frame;
 static const char *bench_label;
 static FILE *bench_output;
@@ -3976,7 +3977,7 @@ static int bench(void)
     if (bench_label) bench_write_record(recording, rendering, total);
     if (bench_frames_prefix && !bench_dump_frame()) return 1;
     bench_frame = 0;
-    if (++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
+    if (!bench_one && ++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
     if (bench_output) {
         const bool failed = ferror(bench_output) != 0;
         const int closed = fclose(bench_output);
@@ -4145,13 +4146,24 @@ int main(const int argc, char **argv)
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
         else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];
         else if (strcmp(argv[i], "--dump-frames") == 0 && i + 1 < argc) bench_frames_prefix = argv[++i];
+        else if (strcmp(argv[i], "--only") == 0 && i + 1 < argc) {
+            char *end;
+            const long only = strtol(argv[++i], &end, 10);
+            if (*end || end == argv[i] || only < 0 || only >= BENCH_KINDS) {
+                fprintf(stderr, "draw: --only takes a workload's number, 0 to %d\n", BENCH_KINDS - 1);
+                return 2;
+            }
+            bench_kind = (int)only;
+            bench_one = true;
+        }
         else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("usage: tide_platform_draw [--bench [--save <label>] [--dump-frames <prefix>]] [--frames-bench] [--dump <file.ppm>]\n"
+            printf("usage: tide_platform_draw [--bench [--save <label>] [--dump-frames <prefix>] [--only <n>]] [--frames-bench] [--dump <file.ppm>]\n"
                    "  --bench          20 warmup frames, then 100 measured frames per workload\n"
                    "  --frames-bench   the same, drawn into the window and shown, as a game's frames are\n"
                    "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
                    "  --dump-frames <prefix>  after each workload's timing, its last frame as <prefix>-<n>.ppm\n"
+                   "  --only <n>       the workload numbered n alone, from 0 in the order they're printed (for a profiler)\n"
                    "  --dump <file>    write the smooth shapes' scene as an image (a PPM), and check nothing\n"
                    "On the web: ?bench&save=<label> prints the records.\n"
                    "Set TIDE_BENCH_REVISION and TIDE_BENCH_MACHINE to identify the build and CPU/GPU.\n");
@@ -4161,8 +4173,8 @@ int main(const int argc, char **argv)
             return 2;
         }
     }
-    if ((bench_label || bench_frames_prefix) && !benching) {
-        fprintf(stderr, "draw: --save and --dump-frames need --bench\n");
+    if ((bench_label || bench_frames_prefix || bench_one) && !benching) {
+        fprintf(stderr, "draw: --save, --dump-frames and --only need --bench\n");
         return 2;
     }
     if (benching) {

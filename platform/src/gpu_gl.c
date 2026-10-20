@@ -772,18 +772,25 @@ static void gl_resolve_depth(const tide_gpu_id target)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
+static void gl_target_read_part(const tide_gpu_id target, const int x, const int y, const int width, const int height,
+                                uint8_t *rgba)
 {
     const gl_target *t = &targets[target - 1u];
     if (!t->bytes) { // Depth alone, or floats first: no bytes to read
-        memset(rgba, 0, (size_t)t->width * (size_t)t->height * 4u);
+        memset(rgba, 0, (size_t)width * (size_t)height * 4u);
         return;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, t->samples > 1u ? t->resolved[0] : t->framebuffer); // What its samples came to
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, t->width, t->height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    // The vertex wrapper draws the top row into OpenGL's first row, so rows count from the top here too
+    glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // The vertex wrapper draws the top row into OpenGL's first row.
+}
+
+static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
+{
+    const gl_target *t = &targets[target - 1u];
+    gl_target_read_part(target, 0, 0, t->width, t->height, rgba);
 }
 
 static void gl_begin(const tide_gpu_id target, const bool clear)
@@ -1034,6 +1041,7 @@ const tide_gpu tide_gpu_gl = {
     .resolve_depth = gl_resolve_depth,
     .target_free = gl_target_free,
     .target_read = gl_target_read,
+    .target_read_part = gl_target_read_part,
     .begin = gl_begin,
     .end = gl_end,
     .scissor = gl_scissor,
