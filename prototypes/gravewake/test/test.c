@@ -861,20 +861,27 @@ int main(void)
             }
         }
 
-        // The Engineer: a mine at the cursor, and a turret by itself
+        // The Engineer: a C4 charge at the cursor, waiting till it's blown; and a turret by itself
         become(0, Role_Engineer, Weapon_Smg);
         only_skill(0, -1);
         e = sturdy();
         to_open(e);
-        face(0, e, 1.8f);        // The mine goes down 1.2 m ahead: at the feet of this one, held where it is
+        face(0, e, 1.8f);        // The charge goes down 1.2 m ahead: at the feet of this one, held where it is
         const int mines = missiles_of(Shot_Mine);
         only_skill(0, 0);
         press(&held[0].secondary);
-        CHECK(missiles_of(Shot_Mine) == mines + 1);
+        CHECK(missiles_of(Shot_Mine) == mines + 1 && get(0).charges == 1);
         only_skill(0, -1);
-        // It arms, and bursts
-        for (int t = 0; t < 60 * 10 && missiles_of(Shot_Mine) > mines; t++) tick_safe(1);
-        CHECK(missiles_of(Shot_Mine) == mines);
+        // It waits, one of the dead at it or not, till it's blown
+        tick_safe(60 * 2);
+        CHECK(missiles_of(Shot_Mine) == mines + 1 && get(0).charges == 1);
+        const float set = zombie(e).health;
+        only_skill(0, 0);
+        press(&held[0].secondary);
+        only_skill(0, -1);
+        tick_safe(2);
+        printf("a C4 charge blown: %.0f to the one at it\n", set - zombie(e).health);
+        CHECK(missiles_of(Shot_Mine) == mines && get(0).charges == 0 && zombie(e).health < set - 200);
         few(2);                  // (not the mine's, lying where the next is put: the turret takes the nearest)
         e = sturdy();
         to_open(e);

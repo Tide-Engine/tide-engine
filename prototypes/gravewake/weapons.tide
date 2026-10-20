@@ -36,8 +36,10 @@ WeaponInfo Info(Weapon weapon)
         case Weapon.Rifle:
             return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.1, mag = 30, reload = 1.5, spread = 0.008 };
         case Weapon.Shotgun:
-            return WeaponInfo { name = "Pump Shotgun", model = "shotgun", damage = 24, head = 1.5, rate = 0.55, mag = 8, reload = 0.34, shells = true, bottomless = true, spread = 0.065,
-                                pellets = 11, range = 28, proc = 0.3 };
+            // (spread 0.065 and eleven pellets of 24 till the owner, 2026-10-20: "i think the shotgun shots should spread more":
+            // wider, it was more a spray and less a slug, so more pellets)
+            return WeaponInfo { name = "Pump Shotgun", model = "shotgun", damage = 26, head = 1.5, rate = 0.55, mag = 8, reload = 0.34, shells = true, bottomless = true, spread = 0.13,
+                                pellets = 14, range = 28, proc = 0.25 };
         case Weapon.Smg:
             // (its rounds set items off half again as often: the Engineer fights with what they carry)
             return WeaponInfo { name = "SMG", model = "smg", damage = 15, rate = 0.066, mag = 50, reload = 1.3, spread = 0.028, range = 45, proc = 1.5 };

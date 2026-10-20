@@ -63,6 +63,64 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### A wider shotgun, crisp effects, shining blood cleared at dawn, a side kick, C4 (2026-10-20)
+
+The owner: "i think the shotgun shots should spread more"; "the saw VFX look
+very blurry again, i want effects to not look blury, think almost minecraft
+style except a bit more shape to things"; "the blood could shine more, it
+looks fun but it quickly fades away since now everything is red haha, we
+should clear blood between nights i think"; "the "boot" ability feels weak, we
+might want to clearly depict what its hitting and make an animation that makes
+it clear, maybe its a sideways kick for example"; "the "mine" one is also
+boring, its so small, you cant even see it being places ... it also explodes on
+the first enemy which means it misses its highest potential. i wonder if it
+should be remote C4 or something, you place it then you choose to explode it".
+The numbers and shapes are mine, Provisional.
+
+- **The shotgun** (weapons.tide): its spread 0.13 radians (0.065), and wider, it
+  was more a spray than a slug, so fourteen pellets of 26 (eleven of 24), a
+  pellet's items a quarter as likely as a round's (0.3).
+- **Crisp effects** (fx.tide's `GlowMote`; look.tide's `Develop`; held.tide's
+  `DrawSaws`, `Finish.light`): every glowing mote a chunky block, a square with
+  its corners eased, solid with a dim edge and nothing past it (they'd been soft
+  rounds in three steps); the bloom added in tenths, so a halo is a ring or two of
+  light, not a haze. The saw blades lost their soft gleam: their steel lights
+  itself (`Finish.light`, a material's own light, new), and behind each blade four
+  solid slivers of light along its circle, dimmer each, as pixel art draws a swing.
+- **Blood** (look.tide's `Earth`; gore.tide's `Soak`, `WipeNightGore`): the moon's
+  glint off it a tight crimson one (a first try, broad, turned the pools pink), and
+  hard flecks of wet on it, bright red, a few near white, where it's fresh. At dawn
+  it dries eight times as often and three times as much each time, most of it gone
+  in the dawn's ten seconds, and when the next night falls the ground's wiped
+  clean.
+- **The boot** (people.tide's `KickOut`; kits.tide's `Kick`; fx.tide's `Flourish`,
+  `Bleed`; eye.tide's `FeelKick`): a side kick, the body turned side on to the
+  cursor (the right leg's side, whichever side of the hips the rig has it), the
+  knee drawn up, the leg driven out level, the body leaning away; a sweep of pale
+  blocks of light through the whole of where it reaches, its edge a hard line;
+  each of the dead it strikes a white flash and chips of light; the screen jolts
+  when it lands. Harder: 130 a kick (80) and 240 a stamp (160), each thrown back at
+  12 m/s (7), knocking over what it's thrown into.
+- **C4** (kits.tide's `UseSecondary`; missiles.tide's `Fly`, `C4_...`;
+  `Survivor.charges`, `detonations`, `Missile.fuse`; held.tide's `DrawMissile`;
+  hud.tide's `ChargeRings`): the Mine became a C4 charge, set down 1.2 m the cursor's
+  way (two, three side by side a rank), waiting: right mouse again blows them
+  (the slot says BLOW), 320 at the heart in 5 m, the dead in it thrown down; the
+  cooldown after the blowing. Left 90 s it goes off by itself. A block of olive
+  bound in dark tape, a box of wires and a red light blinking on it, lit a little
+  by itself so it's seen at night; round each of yours a throbbing red ring as wide
+  as it'll reach. The Engineer bot sets one as they come and blows it with four in
+  its reach (or after 4 s).
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16): the
+  Engineer's middle run 996 s (966 before); the Breacher's 396 with the wider
+  spread alone, 640 with the fourteen pellets (588 before).
+- **Tests**: a C4 charge waits two seconds with one of the dead at it, and blown,
+  does 592 to it. Native debug `gravewake_test` and (below) the web debug one pass.
+- **Validation**: standard-host captures of the saw blades (crisp blades and
+  slivers), the side kick's sweep, the C4 (set down, its ring, blown), the blood
+  (glistening; at dawn mostly dry; the next night clean). Ticks of 2000 of the
+  dead 2.3 ms.
+
 ### A round stops in the first it strikes (2026-10-20)
 
 The owner: "bulelts seem to travel across zombies and damage all; this is a

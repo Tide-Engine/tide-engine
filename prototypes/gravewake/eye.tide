@@ -311,6 +311,12 @@ local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
     me.shake = Math.Max(me.shake, 0.6);
 }
 
+// A boot landing: a jolt.
+local event(Kicked kicked) FeelKick(mut Me me)
+{
+    if (kicked.seat == me.seat && kicked.hits > 0) me.shake = Math.Max(me.shake, 0.3);
+}
+
 local event(Blast blast) FeelBlast(mut Me me)
 {
     if (blast.kind == Shot.Pop || blast.kind == Shot.Spit) return;

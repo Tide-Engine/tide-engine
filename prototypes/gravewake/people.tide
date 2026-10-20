@@ -311,7 +311,12 @@ view PoseSurvivor(mut Survivor survivor, Look look, Me me)
         TurnBone(pose, bones.torso, bones.abdomen, quaternion.AxisAngle(up, -survivor.legYaw * 0.35));
         TurnBone(pose, bones.chest, bones.torso, quaternion.AxisAngle(up, -survivor.legYaw * 0.25));
     }
-    mut var place = float4x4.TRS(survivor.feet, quaternion.AxisAngle(up, survivor.yaw), float3(1));
+    // The boot: a side kick (the owner, 2026-10-20: "make an animation that makes it clear, maybe its a sideways kick"):
+    // the body turned side on, the right leg's side to what it kicks, the leg driven straight out level, the body leaning
+    // away from it
+    var kickOut = survivor.kicked < KICK_POSE ? KickOut(survivor.kicked / KICK_POSE) : 0.0;
+    var legSide = pose.Model(bones.upperLegR).c3.x >= pose.Model(bones.hips).c3.x ? 1.0 : -1.0;
+    mut var place = float4x4.TRS(survivor.feet, quaternion.AxisAngle(up, survivor.yaw - legSide * Math.PI * 0.5 * kickOut), float3(1));
     if (rolling)
     {
         // Facing the way it rolls, turning about a point at the hips, low
@@ -323,15 +328,16 @@ view PoseSurvivor(mut Survivor survivor, Look look, Me me)
     }
     survivor.place = place;
     var holding = armed && survivor.life != Life.Gone && !rolling;
-    // The boot: the right leg out and up, the body leaning back over it
-    if (survivor.kicked < KICK_POSE)
+    if (kickOut > 0)
     {
-        var kt = survivor.kicked / KICK_POSE;
-        var out = kt < 0.3 ? EaseOut(kt / 0.3) : kt < 0.42 ? 1.0 : 1 - Ease((kt - 0.42) / 0.58);
-        TurnBone(pose, bones.upperLegR, bones.hips, quaternion.AxisAngle(right, -1.75 * out));
-        TurnBone(pose, bones.lowerLegR, bones.upperLegR, quaternion.AxisAngle(right, 0.35 * out * (1 - out)));
-        TurnBone(pose, bones.upperLegL, bones.hips, quaternion.AxisAngle(right, 0.15 * out));
-        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(right, 0.3 * out));
+        var forward = float3(0, 0, 1);
+        // The knee drawn up first, then the leg driven out straight, level
+        var chamber = Math.Saturate(1 - survivor.kicked / (KICK_POSE * 0.3));
+        TurnBone(pose, bones.upperLegR, bones.hips, quaternion.AxisAngle(forward, legSide * 1.5 * kickOut));
+        TurnBone(pose, bones.lowerLegR, bones.upperLegR, quaternion.AxisAngle(right, 1.2 * chamber * kickOut));
+        TurnBone(pose, bones.upperLegL, bones.hips, quaternion.AxisAngle(forward, -legSide * 0.15 * kickOut));
+        TurnBone(pose, bones.abdomen, bones.hips, quaternion.AxisAngle(forward, -legSide * 0.45 * kickOut));
+        TurnBone(pose, bones.chest, bones.torso, quaternion.AxisAngle(forward, -legSide * 0.2 * kickOut));
     }
     if (holding)
     {
@@ -408,7 +414,13 @@ const float CURL_RIGHT = 1.1;     // How far each finger joint bends round what 
 const float CURL_LEFT = 0.7;
 const float ROLL_TURNS = 1;       // Head over heels, so many times a roll
 const float ROLL_MIDDLE = 0.6;    // ...about a point so high over the feet
-const float KICK_POSE = 0.45;     // Seconds the boot's out
+const float KICK_POSE = 0.5;      // Seconds the boot's out
+
+// How far out the boot is, 0 to 1, `t` of the way through it: snapped out, held, drawn back.
+float KickOut(float t)
+{
+    return t < 0.22 ? EaseOut(t / 0.22) : t < 0.5 ? 1.0 : 1 - Ease((t - 0.5) / 0.5);
+}
 const float LEG_TURN = 1.3;   // How far the legs turn from the aim toward the way they go (about 75 degrees)
 const float STAND_TWIST = 1.0;  // Standing, how far the aim turns over the feet before they step round (about 57 degrees)
 const float STEP_TURN = 4.5;    // How fast they step round, radians a second

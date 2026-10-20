@@ -55,6 +55,7 @@ typedef struct Bot {
     float pickWait;
     bool blinkTurn;           // Turned away from the dead to blink clear
     bool targetBoss;          // The target's a boss
+    float c4Held;             // Seconds its C4 charges have waited
 } Bot;
 
 static Bot bots[SEATS_MOST];
@@ -345,7 +346,26 @@ static Hands think(int seat, float dt)
     switch (s.secondary) {
     case Skill_PhaseRound: h.secondary = ready0 && onTarget && within20 >= 3; break;     // Down a line of them
     case Skill_Boot: h.secondary = ready0 && nearest < 2.2f && onTarget; break;          // At the one on us
-    case Skill_Mine: h.secondary = ready0 && within8 >= 3; break;                        // At our feet as they come
+    case Skill_Mine: {
+        // C4: set down as they come, blown once four or more are in its reach (or it's waited 4 s)
+        if (s.charges == 0) {
+            bot->c4Held = 0;
+            h.secondary = ready0 && within8 >= 3;
+            break;
+        }
+        bot->c4Held += dt;
+        int caught = 0;
+        for (uint32_t m = 0; m < world.arch2_Missile.count; m++) {
+            const Missile c4 = TIDE_AT(&world, arch2_Missile, Missile, m);
+            if (c4.kind != Shot_Mine || c4.seat != seat) continue;
+            for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) {
+                const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, r);
+                if (z.state == ZombieState_Hunting && flat_distance(z.at, c4.at) < c4.splash) caught++;
+            }
+        }
+        h.secondary = ready0 && (caught >= 4 || bot->c4Held > 4.0f);
+        break;
+    }
     case Skill_Leap: h.secondary = ready0 && onTarget && within8 >= 4; break;            // Into a knot of them
     default: break;                                                                      // (a blink goes the way it aims: not used)
     }
