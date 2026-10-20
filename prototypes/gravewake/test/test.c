@@ -1369,7 +1369,7 @@ int main(void)
         CHECK(tide_set_Zombie(&world, r, z));
     }
 
-    // ---- What the newer items do: AP Rounds through one more (four in a row, the carbine going through three); HE Rounds burst on the first they hit, wounding the one
+    // ---- What the newer items do: AP Rounds through one more (four in a row, the carbine stopping in the first); HE Rounds burst on the first they hit, wounding the one
     // beside it; Dragon's Breath sets the dead alight; Kerosene sets the ones a dash goes through alight; a Gas Mask keeps
     // a Bloater's burst off; the Engineer's turret sets off its maker's items (Frostbite, here) ----
     {
@@ -1385,7 +1385,7 @@ int main(void)
         put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -16});
         tick_safe(10);
         const tide_float3 feet = get(0).feet;
-        // Four in a row down the carbine's line: it goes through three, and with an AP Round four
+        // Four in a row down the carbine's line: it stops in the first, and with an AP Round goes on into the second
         for (int ap = 0; ap < 2; ap++) {
             float before[4];
             for (int k = 0; k < 4; k++) {
@@ -1411,7 +1411,7 @@ int main(void)
             tick_safe(2);
             int struck = 0;
             for (int k = 0; k < 4; k++) struck += zombie(line[k]).health < before[k];
-            CHECK(struck == 3 + ap);
+            CHECK(struck == 1 + ap);
         }
         // HE Rounds and Dragon's Breath: one shot at the first, the one beside it wounded, the first burning
         {

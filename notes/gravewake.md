@@ -63,6 +63,29 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### A round stops in the first it strikes (2026-10-20)
+
+The owner: "bulelts seem to travel across zombies and damage all; this is a
+satisfying but it makes that "penetrates 1 more zombie" useless and the
+starting weapon too powerful for hordes".
+
+- **Pierce 1, every gun** (weapons.tide's `WeaponInfo.pierce`): the carbine's
+  rounds went through three of the dead and the shotgun's eleven pellets four
+  each; now every gun's round stops in the first it strikes, and AP Rounds take
+  it on into one more each (now doubling what a round strikes, not a third more).
+  The phase round still goes through a whole line, and Ricochet Rounds and HE
+  Rounds reach the others. (The SMG's were one already.)
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16): the
+  Engineer's runs the same, to the second (its SMG unchanged: the seeds hold);
+  the Breacher's middle run 588 s from 868, 14 of 16 going down, its shotgun no
+  longer clearing a crowd; the Gunner's 1248 s from 740, which isn't what one
+  would expect of a weaker carbine, and is likely how a run that gets through its
+  first nights snowballs and one that doesn't is over (its kills a second about
+  the same). The Breacher is where to give back if it's too hard: its pellets'
+  damage, or a pierce of 2 for the shotgun alone.
+- **Tests**: the carbine's round stops in the first of four in a row, and with an
+  AP Round strikes two. Native debug `gravewake_test` passes.
+
 ### More cards, upgrades that show, a right mouse skill to change (2026-10-20)
 
 The owner: "let's work on upgrades. I wonder if the right click ability should

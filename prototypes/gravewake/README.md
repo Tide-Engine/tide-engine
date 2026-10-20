@@ -47,7 +47,7 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 
 | Survivor | Gun | Right mouse | By itself |
 | --- | --- | --- | --- |
-| Gunner | Carbine: automatic, through three | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
+| Gunner | Carbine: automatic, any range | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
 | Breacher | Pump Shotgun: eleven pellets, never needs loading; takes a third less from the dead | Boot: kicks the dead in front over; the nearest one down is stamped on | Firebomb: into the thickest of them |
 | Engineer | SMG: sets items off half again as often | Mine: bursts when the dead come near | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
 
