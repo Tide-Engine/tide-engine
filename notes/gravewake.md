@@ -63,6 +63,53 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Each kind its own body (2026-10-19)
+
+The owner: "also lets give each different enemy type a unique look too; its
+easy to read now with the colors, this is just from an art and polish
+prespective". The shapes are mine, Provisional.
+
+- **Six bodies** (art/kinds, by art/kinds/tools/make_kinds.py: the bosses' way of
+  growing a body from one of the dead of art/people, with the horde's clips):
+  a Runner lean and hunched, long thin limbs and longer claws, its head thrust
+  out, bone through its spine and elbows; a Bloater with a vast sac of a belly
+  hanging out front, pustules glowing on it, fat limbs; a Spitter hunched, its
+  throat a great glowing sac of bile; a Warden squared up, iron on its shoulders
+  and a shield on its back, its head bare (a helmet was tried, and taken off: its
+  bare head is where it's to be shot); a Brute with a bull's shoulders and
+  forearms, a little sunk head, short heavy legs, muscle heaped on its back and
+  bone through its shoulders; a Howler stretched thin and tall, its long neck
+  thrown back, a frill of spines round its throat, its throat and lungs glowing.
+  Each about 1100 triangles, drawn in one more instanced draw a kind (crowd.tide's
+  `Kinds`, `KindMesh`, `ShambleKind`); `ShowFrame` and `ShowState` take the set of
+  clips they play from. The scaling by kind that had stood in for shapes (a
+  Spitter's 0.9 wide, and so on) is gone but the Brute's third bigger; the
+  shader's Spitter throat glow is gone too (its body's sac glows). The growths
+  that glow burn brighter as a kind winds up (a Spitter's throat, a Runner's
+  crouch, a Howler's howl).
+- **Their colours kept, their shapes showing**: the kind's colour washes a third
+  through its body (it was a half), its glow all over a little less, and its
+  outline in the colour is a crisp edge, not a soft one (seen from above, most of a
+  body is turned from the eye, and the soft edge had washed each shape flat in its
+  colour). Looked at zoomed out over a crowd, every kind's still known at a glance
+  by its colour; nearer, by its shape too.
+- **Hit spots** (zombies.tide's `KindHead`, `KindChest`, `KindHips`): where each
+  kind's head, chest and hips are, standing, moved by its body's marks
+  (kinds.json) less those of a body make_kinds.py left as it was: a Howler's head
+  0.46 m higher, a Brute's sunk, a Runner's and a Spitter's low and forward. A
+  hunched one's head is near its chest, so a round at its chest is a head shot
+  more often.
+- **Development**: Shift+F2 lines up one of each kind and one of the ordinary
+  dead 3.5 m in front of you, dazed half a minute and fifty times as tough, your
+  skills held off as long, to look at them by.
+- **Validation**: native debug `gravewake_test` and the web debug WASI one pass
+  (the Warden's mail check now lets the kind's body settle before it aims: it had
+  aimed at the Spitter's chest, which is by its head now). Looked at in Blender
+  (each body front, side and back) and in standard-host captures (the line up
+  zoomed in; Runners at the default zoom; a crowd of all the kinds zoomed out).
+  The kinds' texture of numbers is 2.8 MB, as the horde's and the mutants' are
+  (1.9 and 2.0): the page about 3 MB more. Ticks of 2000 of the dead 2.06 ms.
+
 ### Bosses that last, survivors who can die (2026-10-19)
 
 The owner: "i killed the boss way too quickly with the shotgun; its still

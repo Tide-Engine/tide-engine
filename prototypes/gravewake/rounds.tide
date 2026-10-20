@@ -68,6 +68,7 @@ singleton Match
     float missionWait;
     List<float3> wisps;          // A catch's wisps not yet caught
     int devMission = -1;
+    int devLineup = -1;          // Development: one of each kind of the dead to line up in front of this seat, or -1
     // The end
     float lasted;                // How long the run went
     bool restarting;

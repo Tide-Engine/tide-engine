@@ -613,7 +613,8 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
 }
 
 // Development keys, not in play's interface: F2 six of the next kind of the dead (Bloaters, Spitters, Wardens,
-// Runners, Brutes, Howlers in turn),
+// Runners, Brutes, Howlers in turn; with Shift, one of each and one of the ordinary dead lined up in front of you,
+// dazed),
 // F3 a boss (the Mauler, the Broodmother, the Stalker in turn), F4 a horde of two thousand more, F5 a level (and so an
 // offer), F6 a walk to the next place, F7 the night on (its end, its bosses, now; with them up, dawn), F10 an item, F1
 // a mission (a hold, a cull, the wisps in turn). (F8 is the engine's: its numbers.)
@@ -630,7 +631,8 @@ view DevKeys(Devices devices, Lobby lobby, Match match, mut DevWalk walk)
 {
     if (!lobby.playing) return;
     var keys = devices.keyboard;
-    if (keys.f2.down)
+    if (keys.f2.down && (keys.leftShift.pressed || keys.rightShift.pressed)) Send(Cheat { what = 26 });
+    else if (keys.f2.down)
     {
         Send(Cheat { what = 20 + walk.kind });
         walk.kind = (walk.kind + 1) % 6;

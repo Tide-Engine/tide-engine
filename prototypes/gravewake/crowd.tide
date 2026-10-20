@@ -10,6 +10,13 @@ asset List<Mesh<Corner>> crowdBodies = "art/crowd/*.glb";       // farmer, king,
 [Raw, Filter(Filter.Point)] asset Texture crowdAnim = "art/crowd/anim.png";
 asset string crowdJson = "art/crowd/crowd.json";
 
+// Each kind of the dead but the ordinary its own body (the owner, 2026-10-19: "lets give each different enemy type a
+// unique look too"), grown from the dead of art/people as the bosses are and baked the same way with the horde's clips,
+// by art/kinds/tools/make_kinds.py
+asset List<Mesh<Corner>> kindBodies = "art/kinds/*.glb";        // bloater, brute, howler, runner, spitter, warden
+[Raw, Filter(Filter.Point)] asset Texture kindAnim = "art/kinds/anim.png";
+asset string kindJson = "art/kinds/kinds.json";
+
 // The bosses' mutants (boss.tide), baked the same way by art/mutants/tools/make_mutants.py, with their own clips
 asset List<Mesh<Corner>> mutantBodies = "art/mutants/*.glb";    // brood, mauler, stalker
 [Raw, Filter(Filter.Point)] asset Texture mutantAnim = "art/mutants/anim.png";
@@ -58,7 +65,8 @@ struct Shambler
     float frenzy;       // Frenzied by a Stalker's shriek or a Howler's howl: 1
     float headless;     // Its head blown off (killed by a head shot): 1
     float3 mark;        // Its kind's colour (KindMark); none for the ordinary dead
-    float charge;       // How far into a Runner's crouch or a Howler's howl (1, leaping)
+    float charge;       // How far into its windup (a Spitter's, a Runner's crouch, a Howler's howl; 1, leaping)
+    float3 headRest;    // Where its head is on its body at rest (a kind's own body: KindHead), for a blown off head
 }
 
 // Each kind's colour, strong and its own, so one's known at a glance in a horde from above (the owner, 2026-10-19:
@@ -92,6 +100,48 @@ local singleton Horde
     float pixelV;                        // A row of the texture, in v
     List<List<Shambler>> bodies;         // This frame's, by mesh (the glob's order)
     bool made;
+}
+
+// The kinds' own bodies, as the horde's are.
+local singleton Kinds
+{
+    CrowdInfo info;
+    float3 lo;
+    float3 span;
+    float pixelV;
+    List<List<Shambler>> bodies;         // This frame's, by mesh: bloater, brute, howler, runner, spitter, warden
+    bool made;
+}
+
+// Which of the kinds' bodies a kind's drawn with (the glob's order), or -1: the ordinary dead's own.
+int KindMesh(ZombieKind kind)
+{
+    switch (kind)
+    {
+        case ZombieKind.Bloater: return 0;
+        case ZombieKind.Brute: return 1;
+        case ZombieKind.Howler: return 2;
+        case ZombieKind.Runner: return 3;
+        case ZombieKind.Spitter: return 4;
+        case ZombieKind.Warden: return 5;
+    }
+    return -1;
+}
+
+void MakeKinds(mut Kinds kinds)
+{
+    kinds.info = Json.Read<CrowdInfo>(kindJson) ?? CrowdInfo { };
+    var info = kinds.info;
+    kinds.lo = float3(info.boxLo[0], info.boxLo[1], info.boxLo[2]);
+    kinds.span = float3(info.boxHi[0], info.boxHi[1], info.boxHi[2]) - kinds.lo;
+    kinds.pixelV = 1.0 / Math.Max(1, info.height);
+    kinds.bodies.Clear();
+    for (var b = 0; b < kindBodies.count; b++)
+    {
+        List<Shambler> none = [];
+        kinds.bodies.Add(none);
+    }
+    kinds.made = true;
 }
 
 // The mutants' clips, in mutants.json's order.
@@ -184,71 +234,71 @@ void MakeHorde(mut Horde horde)
 }
 
 // A frame of a clip, as the instance's rows: `t` seconds in (looping where the clip does).
-void ShowFrame(Horde horde, mut Shambler one, int atlas, HordeClip clip, float t)
+void ShowFrame(CrowdInfo info, float pixelV, mut Shambler one, int atlas, HordeClip clip, float t)
 {
-    var c = horde.info.clips[int(clip)];
+    var c = info.clips[int(clip)];
     var at = c.loops ? Math.Frac(t / Math.Max(0.001, c.seconds)) * c.frames : Math.Saturate(t / Math.Max(0.001, c.seconds)) * (c.frames - 1);
     var f0 = int(Math.Floor(at));
     var f1 = c.loops ? (f0 + 1) % c.frames : Math.Min(f0 + 1, c.frames - 1);
-    var base = atlas * horde.info.rowsPerBody;
-    one.row = (base + (c.first + f0) * 2 + 0.5) * horde.pixelV;
-    one.next = (base + (c.first + f1) * 2 + 0.5) * horde.pixelV;
+    var base = atlas * info.rowsPerBody;
+    one.row = (base + (c.first + f0) * 2 + 0.5) * pixelV;
+    one.next = (base + (c.first + f1) * 2 + 0.5) * pixelV;
     one.blend = at - f0;
 }
 
 // What a zombie shows: its clip and how far in, from its state (the same moves people.tide's poses made).
-void ShowState(Horde horde, mut Shambler one, Zombie zombie, int atlas)
+void ShowState(CrowdInfo info, float pixelV, mut Shambler one, Zombie zombie, int atlas)
 {
     var t = zombie.timer;
     switch (zombie.state)
     {
         case ZombieState.Rising:
-            ShowFrame(horde, one, atlas, HordeClip.Rise, Math.Saturate(t / RISE_SECONDS) * horde.info.clips[int(HordeClip.Rise)].seconds);
+            ShowFrame(info, pixelV, one, atlas, HordeClip.Rise, Math.Saturate(t / RISE_SECONDS) * info.clips[int(HordeClip.Rise)].seconds);
             return;
         case ZombieState.Fallen:
         {
             var up = t - KNOCK_SECONDS - zombie.downFor;
-            if (up < 0) ShowFrame(horde, one, atlas, HordeClip.Fall, Math.Min(t, 0.833));
-            else ShowFrame(horde, one, atlas, HordeClip.GetUp, up);
+            if (up < 0) ShowFrame(info, pixelV, one, atlas, HordeClip.Fall, Math.Min(t, 0.833));
+            else ShowFrame(info, pixelV, one, atlas, HordeClip.GetUp, up);
             return;
         }
         case ZombieState.Dying:
-            if (zombie.fall >= 2) ShowFrame(horde, one, atlas, HordeClip.Fall, zombie.fall == 2 ? 0.833 : Math.Min(t, 0.833));
-            else ShowFrame(horde, one, atlas, zombie.fall == 0 ? HordeClip.Death : HordeClip.DeathB, t * 1.15);
+            if (zombie.fall >= 2) ShowFrame(info, pixelV, one, atlas, HordeClip.Fall, zombie.fall == 2 ? 0.833 : Math.Min(t, 0.833));
+            else ShowFrame(info, pixelV, one, atlas, zombie.fall == 0 ? HordeClip.Death : HordeClip.DeathB, t * 1.15);
             return;
     }
     // A Runner's leap: mid-stride, flung out
     if (zombie.leap > 0)
     {
-        ShowFrame(horde, one, atlas, HordeClip.Sprint, horde.info.clips[int(HordeClip.Sprint)].seconds * 0.3);
+        ShowFrame(info, pixelV, one, atlas, HordeClip.Sprint, info.clips[int(HordeClip.Sprint)].seconds * 0.3);
         return;
     }
     if (zombie.swing > 0)
     {
-        ShowFrame(horde, one, atlas, HordeClip.Claw, zombie.swing / ATTACK_SECONDS * horde.info.clips[int(HordeClip.Claw)].seconds);
+        ShowFrame(info, pixelV, one, atlas, HordeClip.Claw, zombie.swing / ATTACK_SECONDS * info.clips[int(HordeClip.Claw)].seconds);
         return;
     }
     // A Spitter's throat swelling, a Runner's crouch, a Howler's howl: the claw's first half, rearing back
     if (zombie.windup > 0)
     {
-        ShowFrame(horde, one, atlas, HordeClip.Claw, Math.Saturate(zombie.windup / WindupSeconds(zombie.kind)) * horde.info.clips[int(HordeClip.Claw)].seconds * 0.45);
+        ShowFrame(info, pixelV, one, atlas, HordeClip.Claw, Math.Saturate(zombie.windup / WindupSeconds(zombie.kind)) * info.clips[int(HordeClip.Claw)].seconds * 0.45);
         return;
     }
     // Up a cliff: clawing its way, the middle of the rise's clip over and over
     if (zombie.climbing)
     {
-        var clip = horde.info.clips[int(HordeClip.Rise)];
-        ShowFrame(horde, one, atlas, HordeClip.Rise, (0.35 + 0.4 * Math.Frac(zombie.timer * 0.9)) * clip.seconds);
+        var clip = info.clips[int(HordeClip.Rise)];
+        ShowFrame(info, pixelV, one, atlas, HordeClip.Rise, (0.35 + 0.4 * Math.Frac(zombie.timer * 0.9)) * clip.seconds);
         return;
     }
     if (zombie.frozen > 0 || zombie.speed < 0.3)
     {
-        ShowFrame(horde, one, atlas, HordeClip.Idle, zombie.frozen > 0 ? 0.0 : t + zombie.phase * 0.37);
+        ShowFrame(info, pixelV, one, atlas, HordeClip.Idle, zombie.frozen > 0 ? 0.0 : t + zombie.phase * 0.37);
         return;
     }
-    if (zombie.gait == Gait.Shamble) ShowFrame(horde, one, atlas, HordeClip.Walk, zombie.stride / 1.361 * 1.333);
-    else if (zombie.gait == Gait.Sprint && zombie.speed > 4) ShowFrame(horde, one, atlas, HordeClip.Sprint, zombie.stride / 2.9 * 0.667);
-    else ShowFrame(horde, one, atlas, HordeClip.Run, zombie.stride / 2.305 * 0.833);
+    if (zombie.gait == Gait.Shamble) ShowFrame(info, pixelV, one, atlas, HordeClip.Walk, zombie.stride / 1.361 * 1.333);
+    else if (zombie.gait == Gait.Sprint && zombie.speed > 4) ShowFrame(info, pixelV, one, atlas, HordeClip.Sprint, zombie.stride / 2.9 * 0.667);
+    else ShowFrame(info, pixelV, one, atlas, HordeClip.Run, zombie.stride / 2.305 * 0.833);
 }
 
 // How far below its feet a zombie is drawn: rising out of the ground, sinking away dead.
@@ -261,17 +311,19 @@ float SinkOf(Zombie zombie)
 
 // Each frame, this machine's lists of the dead are begun again...
 [Stage(Layers.Prepare, 1)]
-view BeginHorde(mut Horde horde, mut Mutants mutants)
+view BeginHorde(mut Horde horde, mut Mutants mutants, mut Kinds kinds)
 {
     if (!horde.made) MakeHorde(horde);
     for (var b = 0; b < horde.bodies.count; b++) horde.bodies[b].Clear();
+    if (!kinds.made) MakeKinds(kinds);
+    for (var b = 0; b < kinds.bodies.count; b++) kinds.bodies[b].Clear();
     if (!mutants.made) MakeMutants(mutants);
     for (var b = 0; b < mutants.bodies.count; b++) mutants.bodies[b].Clear();
 }
 
 // ...each of the dead added to its body's (out to the fog's edge)...
 [Stage(Layers.Gather, 1)]
-view GatherZombie(mut Zombie zombie, mut Horde horde, Look look)
+view GatherZombie(mut Zombie zombie, mut Horde horde, mut Kinds kinds, Look look)
 {
     zombie.flash = Math.Max(0, zombie.flash - Math.Min(Frame.dt, 0.05) * 5);
     if (!horde.made || Math.Distance(zombie.at, look.eye) > 90) return;
@@ -285,17 +337,13 @@ view GatherZombie(mut Zombie zombie, mut Horde horde, Look look)
     var lit = bloater ? Math.Saturate(zombie.fuse / BLOAT_FUSE) : 0.0;
     var throb = lit > 0 ? 0.5 + 0.5 * Math.Sin(look.time * (14 + 30 * lit)) : 0.0;
     var bloat = bloater ? 1 + lit * 0.9 + throb * 0.35 * lit : 0.0;
-    mut var wide = bloater ? float3(1.18 + throb * lit * 0.1, 1.04 + lit * 0.05, 1.16 + throb * lit * 0.1) : float3(1);
+    mut var wide = bloater ? float3(1 + throb * lit * 0.1, 1 + lit * 0.05, 1 + throb * lit * 0.1) : float3(1);
     var shudder = lit > 0 ? float3(Math.Sin(look.time * 53 + zombie.phase), 0, Math.Cos(look.time * 61 + zombie.phase)) * 0.045 * lit : float3(0);
-    // A Spitter thin and tall, a Warden broad in its mail, a Runner lean, a Brute huge, a Howler tall and thinner still
-    if (zombie.kind == ZombieKind.Spitter) wide = float3(0.9, 1.07, 0.9);
-    if (zombie.kind == ZombieKind.Warden) wide = float3(1.13, 1.04, 1.12);
-    if (zombie.kind == ZombieKind.Runner) wide = float3(0.86, 0.96, 0.86);
-    if (zombie.kind == ZombieKind.Brute) wide = float3(1.12, 1.0, 1.1) * BRUTE_SIZE;
-    if (zombie.kind == ZombieKind.Howler) wide = float3(0.82, 1.14, 0.82);
+    // (each kind's shape is its own body's; a Brute's a third bigger all round besides)
+    if (zombie.kind == ZombieKind.Brute) wide = float3(BRUTE_SIZE);
     // A Runner's leap: up off the ground and down again
     var hop = zombie.leap > 0 ? Math.Sin(Math.Saturate(zombie.leap / POUNCE_SECONDS) * Math.PI) * 0.55 : 0.0;
-    var winding = (zombie.kind == ZombieKind.Runner || zombie.kind == ZombieKind.Howler) && zombie.windup > 0 ? Math.Saturate(zombie.windup / WindupSeconds(zombie.kind)) : 0.0;
+    var winding = zombie.windup > 0 ? Math.Saturate(zombie.windup / WindupSeconds(zombie.kind)) : 0.0;
     mut var one = Shambler
     {
         transform = float4x4.TRS(zombie.at + shudder + float3(0, hop, 0) - float3(0, SinkOf(zombie), 0), quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw), wide * scale),
@@ -309,21 +357,35 @@ view GatherZombie(mut Zombie zombie, mut Horde horde, Look look)
         headless = zombie.state == ZombieState.Dying && zombie.head ? 1.0 : 0.0,
         mark = KindMark(zombie.kind),
         charge = zombie.leap > 0 ? 1.0 : winding,
+        headRest = HEAD_REST + KindHead(zombie.kind),
         tint = float3(0.85 + (h & 15) * 0.02, 0.85 + ((h >> 8) & 15) * 0.02, 0.85 + ((h >> 12) & 15) * 0.015),
     };
-    ShowState(horde, one, zombie, mesh);
+    // A kind's own body, or one of the ordinary dead's six
+    var own = KindMesh(zombie.kind);
+    if (own >= 0 && kinds.made)
+    {
+        one.transform = float4x4.TRS(zombie.at + shudder + float3(0, hop, 0) - float3(0, SinkOf(zombie), 0), quaternion.AxisAngle(float3(0, 1, 0), zombie.yaw),
+                                     wide * (0.97 + ((h >> 4) & 15) * 0.004));
+        ShowState(kinds.info, kinds.pixelV, one, zombie, own);
+        kinds.bodies[own].Add(one);
+        return;
+    }
+    ShowState(horde.info, horde.pixelV, one, zombie, mesh);
     horde.bodies[mesh].Add(one);
 }
 
 // ...and drawn: a draw for each body, and its shadows; the bosses' mutants the same way, from their own texture.
 [Stage(Layers.Scene, 3)]
-view DrawHorde(Horde horde, Mutants mutants, Lens lens)
+view DrawHorde(Horde horde, Mutants mutants, Kinds kinds, Lens lens)
 {
     if (!lens.made || !horde.made) return;
     lens.scene.Bounds(float3(0, 1, 0), float3(3, 3.5, 3))
     {
         for (var b = 0; b < horde.bodies.count; b++)
             if (horde.bodies[b].count > 0) lens.scene.Instanced(crowdBodies[b], horde.bodies[b], Shamble, CrowdFlesh);
+        if (kinds.made)
+            for (var b = 0; b < kinds.bodies.count; b++)
+                if (kinds.bodies[b].count > 0) lens.scene.Instanced(kindBodies[b], kinds.bodies[b], ShambleKind, CrowdFlesh);
     }
     if (!mutants.made) return;
     lens.scene.Bounds(float3(0, 1.5, 0), float3(4, 4, 4))
@@ -334,13 +396,16 @@ view DrawHorde(Horde horde, Mutants mutants, Lens lens)
 }
 
 [Stage(Layers.Shadows, 1)]
-view ShadowHorde(Horde horde, Mutants mutants, Lens lens)
+view ShadowHorde(Horde horde, Mutants mutants, Kinds kinds, Lens lens)
 {
     if (!lens.made || !horde.made) return;
     lens.moon.Bounds(float3(0, 1, 0), float3(3, 3.5, 3))
     {
         for (var b = 0; b < horde.bodies.count; b++)
             if (horde.bodies[b].count > 0) lens.moon.Instanced(crowdBodies[b], horde.bodies[b], Shamble);
+        if (kinds.made)
+            for (var b = 0; b < kinds.bodies.count; b++)
+                if (kinds.bodies[b].count > 0) lens.moon.Instanced(kindBodies[b], kinds.bodies[b], ShambleKind);
     }
     if (!mutants.made) return;
     lens.moon.Bounds(float3(0, 1.5, 0), float3(4, 4, 4))
@@ -351,6 +416,32 @@ view ShadowHorde(Horde horde, Mutants mutants, Lens lens)
 }
 
 // A mutant's corner where its clip has it, as Shamble does the horde's, from the mutants' texture and box.
+// A kind's own body, as Shamble does the ordinary dead's: a Bloater's gut swells further only as it swells to burst (its
+// body's fat already).
+vert ShambleKind(mut Corner corner, out float4 clip, Shambler one, Kinds kinds, Instance instance, Look look)
+{
+    var rest = corner.position;
+    var u = corner.uv2.y;
+    var a = kindAnim.Sample(float2(u, one.row));
+    var b = kindAnim.Sample(float2(u, one.next));
+    var na = kindAnim.Sample(float2(u, one.row + kinds.pixelV));
+    var nb = kindAnim.Sample(float2(u, one.next + kinds.pixelV));
+    var pa = kinds.lo + float3(a.r, a.g, a.b) * kinds.span;
+    var pb = kinds.lo + float3(b.r, b.g, b.b) * kinds.span;
+    corner.position = Math.Lerp(pa, pb, one.blend);
+    corner.normal = Math.Lerp(float3(na.r, na.g, na.b), float3(nb.r, nb.g, nb.b), one.blend) * 2 - float3(1);
+    if (one.bloat > 1)
+    {
+        var p = corner.position;
+        var belly = Math.Exp(-((p.y - 0.95) / 0.3) * ((p.y - 0.95) / 0.3));
+        var swell = one.bloat - 1;
+        var out = 1 + swell * 0.3 * belly;
+        corner.position = float3(p.x * out, p.y, p.z * out + 0.06 * swell * belly);
+    }
+    corner.uv = float2(Math.Distance(rest, one.headRest), one.headless);
+    clip = Snapped(Math.Mul(look.toClip, Math.Mul(instance.transform, float4(corner.position, 1))), look);
+}
+
 vert Mutate(mut Corner corner, out float4 clip, Shambler one, Mutants mutants, Instance instance, Look look)
 {
     var u = corner.uv2.y;
@@ -420,19 +511,13 @@ frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance,
     var blood = Math.Perlin(float2(p.x * 3.1 + p.z * 2.3 + 17, p.y * 2.7));
     if (blood > 0.5) albedo = Math.Lerp(albedo, float3(0.12, 0.01, 0.008), Math.Saturate((blood - 0.5) * 5) * 0.75);
     albedo = Math.Lerp(albedo, float3(0.35, 0.5, 0.65), one.frost * 0.6);
-    // Its kind's colour, washed through it
+    // Its kind's colour, washed through it (a third: its own body's shape and growths showing through)
     var marked = one.mark.x + one.mark.y + one.mark.z > 0;
-    if (marked) albedo = Math.Lerp(albedo, Linear(one.mark) * 0.45, 0.5);
+    if (marked) albedo = Math.Lerp(albedo, Linear(one.mark) * 0.5, 0.35);
     var boils = one.bloat > 0 ? Math.Saturate((Math.Perlin(float2(p.x * 13 + p.z * 9, p.y * 15)) - 0.42) * 7) : 0.0;
     mut var lit = Shade(albedo, this.world, normal, 1, look, lights.list, lens.moonDepth);
     // ...that glow, a little at rest and hard as it swells to burst
     if (one.bloat > 0) lit += float3(0.7, 0.95, 0.12) * boils * (0.1 + Math.Saturate(one.bloat - 1) * 1.1);
-    // A Spitter's throat, glowing through its skin, bright as it swells to spit
-    if (one.spit > 0)
-    {
-        var throat = Math.Exp(-((p.y - 1.4) / 0.12) * ((p.y - 1.4) / 0.12)) * Math.Saturate(p.z * 6 + 0.6);
-        lit += float3(0.75, 0.95, 0.15) * throat * (0.25 + Math.Saturate(one.spit - 1) * 2.2);
-    }
     // The mail catches the moon
     if (mailed > 0)
     {
@@ -442,7 +527,7 @@ frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance,
     // The eyes, burning (red-hot in a frenzy); a boss's weak spot, glowing in its own colour, the brighter the more it's
     // open
     if (corner.uv2.x > 0.8) lit = one.frenzy > 0 ? float3(4, 0.5, 0.2) : marked ? Linear(one.mark) * (3 + 4 * one.charge) : float3(2.6, 1.3, 0.25);
-    else if (corner.uv2.x > 0.3) lit = Linear(Rgb(corner.color)) * (0.6 + one.weak * 1.8);
+    else if (corner.uv2.x > 0.3) lit = Linear(Rgb(corner.color)) * (0.6 + (one.weak + one.charge) * 1.8);
     if (one.burn > 0)
     {
         var flame = Math.Perlin(float2(p.x * 9 + look.time * 3, p.y * 8 - look.time * 6)) * 0.5 + 0.5;
@@ -459,13 +544,16 @@ frag CrowdFlesh(Corner corner, out Color color, Shambler one, Instance instance,
     var through = Math.Exp(-Math.Distance(look.eye, this.world) * 0.015);
     lit += albedo * (boss ? float3(0.03) : float3(0.07, 0.08, 0.065));
     // A kind's colour: a glow of it all over, brighter as it winds up, and a hard edge of it round its outline in place
-    // of the pale one; frenzied, a throbbing edge of the Howler's
+    // of the pale one (only the outline: seen from above most of a body is turned from the eye, and a soft edge had
+    // washed its whole shape flat); frenzied, a throbbing edge of the Howler's
     mut var rim = float3(0.1, 0.115, 0.09);
+    mut var edged = Math.Saturate(edge * 1.6);
     if (marked)
     {
-        lit += Linear(one.mark) * (0.06 + 0.6 * one.charge);
-        rim = Linear(one.mark) * 0.7;
+        lit += Linear(one.mark) * (0.035 + 0.6 * one.charge);
+        rim = Linear(one.mark) * 0.85;
+        edged = Math.SmoothStep(0.3, 0.45, edge);
     }
     if (one.frenzy > 0) rim = Math.Lerp(rim, float3(0.8, 0.08, 0.9), 0.6 + 0.4 * Math.Sin(look.time * 12));
-    color = Color(Hazed(lit, this.world, look) + rim * Math.Saturate(edge * 1.6) * through, 1);
+    color = Color(Hazed(lit, this.world, look) + rim * edged * through, 1);
 }
