@@ -6,6 +6,14 @@ The opt-in [GPU clip experiment](results/gpu-clip/README.md) uses `bench_skinned
 
 Simulation benchmarks compare the same deterministic work in Tide and hand-written C. Build and run them with `cmake --build --preset release --target versus`; individual `build/release/bin/versus_<concept>` programs list their options with `--help`. Save repeated measurements with `--save <label>` in `bench/results/versus.jsonl`.
 
+The [October 20 performance pass](../notes/benchmarks.md) added tools for measuring on a machine other agents build and benchmark on, all in `results/perf-pass/` but the profiler. Every timing they make holds the shared `Local\TideClaudeContinuationBenchmark` mutex and waits for a quiet spell with no builds, tests or benchmarks:
+
+- `run.ps1 -Label <label> [-Rounds 3] [-Only a,b]` copies the benchmarks' binaries aside and runs every versus program, the sand and gallery sessions and drawing on OpenGL and Vulkan, saving each run as `<label>-r<round>`. Pass `-Only`'s list through `pwsh -Command "& ./bench/results/perf-pass/run.ps1 ..."`: `-File` would take it as one string.
+- `summarize.mjs <label>...` prints, for each label, the median of its rounds per benchmark and thread count, Tide against the fastest C way.
+- `pairs.ps1 -Before <folder> -After <folder> -Programs a,b` runs two folders of frozen versus binaries in turn (before, after, then after, before), holding the gate throughout: the way to compare a change on a busy machine.
+- `gate.ps1 <program> [arguments]` runs one command under the gate, for a quick timing that isn't saved.
+- `tide_sample` (`profile/sample.c`, Windows, built on request: `cmake --build --preset release --target tide_sample`) is a sampling profiler that needs no administrator rights: `tide_sample [--top n] [--lines n] -- <program> [arguments]` suspends each of the program's threads a few thousand times a second and prints where its own code was, by innermost function, outermost function and line, through `llvm-symbolizer` and the program's PDB. Profile release builds; samples in `ntdll.dll` are mostly threads waiting.
+
 Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the source revision and local changes before saving simulation or session runs, as for drawing below. New rows also record architecture, compiler version and whether C splitting was forced (`--split`, or `--quick`). Comparisons group matching options, machine, compiler and thread counts; older rows without that metadata form separate groups. Unidentified machines are reported as `unknown`; provide the machine label when comparing machines.
 
 ## Coverage and the October 6 audit
