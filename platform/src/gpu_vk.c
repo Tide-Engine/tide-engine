@@ -92,6 +92,7 @@ enum { TIME_PAIRS = 4 };             // Pairs of timestamps waiting to be read
 enum { BLOCK_BYTES = 64u << 20 };    // Device memory is taken in blocks this big...
 enum { DEDICATED_BYTES = 16u << 20 }; // ...and an allocation this big or bigger on its own
 enum { RING_BYTES = 4u << 20 };      // A frame's uploads and uniforms start with this much room
+enum { UPLOAD_LOCAL_BYTES = 32u << 20 }; // ...in the GPU's memory up to this much (allocate)
 
 // A piece of device memory: an allocation's own, or a part of a block's.
 typedef struct vk_alloc {
@@ -406,6 +407,22 @@ static bool allocate(const VkMemoryRequirements needs, const vk_memory_use use, 
     const VkMemoryPropertyFlags want = host_visible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
                                                     : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     uint32_t type = use == USE_READBACK ? memory_type(needs.memoryTypeBits, want | VK_MEMORY_PROPERTY_HOST_CACHED_BIT) : UINT32_MAX;
+    // A frame's uploads and uniforms (its ring) in the GPU's own memory where the host can write that, as a
+    // desktop GPU lets it through its BAR (all of its memory with resizable BAR, else a window of 256 MB) and an
+    // integrated one does anyway: copies out of it and uniforms then don't cross the bus as the GPU runs. A frame
+    // of 65,536 rects took 0.21 -> 0.14-0.18 ms from submission to its pixel read back, 65,536 cubes'
+    // transforms 0.44 -> 0.27. Rings up to UPLOAD_LOCAL_BYTES, so two frames take a fraction of such a window;
+    // bigger ones (a big texture's upload), or where it's full, are in the host's memory as before.
+    if (use == USE_UPLOAD && needs.size <= UPLOAD_LOCAL_BYTES) {
+        const uint32_t local = memory_type(needs.memoryTypeBits, want | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        const VkMemoryAllocateInfo info = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, needs.size, local};
+        if (local != UINT32_MAX && vkAllocateMemory(vk.device, &info, NULL, &out->memory) == VK_SUCCESS) {
+            out->size = needs.size;
+            if (vkMapMemory(vk.device, out->memory, 0, VK_WHOLE_SIZE, 0, &out->mapped) == VK_SUCCESS) return true;
+            vkFreeMemory(vk.device, out->memory, NULL);
+            *out = (vk_alloc){0};
+        }
+    }
     if (type == UINT32_MAX) type = memory_type(needs.memoryTypeBits, want);
     if (type == UINT32_MAX && !host_visible) type = memory_type(needs.memoryTypeBits, 0);
     if (type == UINT32_MAX) return false;

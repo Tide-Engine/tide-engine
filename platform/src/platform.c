@@ -1094,11 +1094,18 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
     }
     s->count += count;
     const uint32_t *indices = list->indices + c->mesh.first;
+    const tide_vertex *const vertices = list->vertices;
+    // to_screen's arithmetic, its camera's numbers read once
+    const bool gui = cam->gui;
+    const float scale = cam->scale, cx = cam->center.x, cy = cam->center.y;
+    const float half_width = (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f;
+    const float half_height = (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f;
     for (uint32_t i = 0; i < count; i++) {
-        const tide_vertex *v = &list->vertices[indices[i]];
-        const tide_float2 p = to_screen(cam, v->position);
+        const tide_vertex *v = &vertices[indices[i]];
+        const float x = gui ? v->position.x * scale : half_width + (v->position.x - cx) * scale;
+        const float y = gui ? v->position.y * scale : half_height - (v->position.y - cy) * scale;
         const rgba color = to_rgba(v->color);
-        out[i] = (mesh_vertex){{p.x, p.y}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
+        out[i] = (mesh_vertex){{x, y}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
     }
     mesh_vertex_count += count;
 }
