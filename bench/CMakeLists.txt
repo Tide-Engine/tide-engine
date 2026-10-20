@@ -72,3 +72,13 @@ if(TIDE_NODE)
             $<TARGET_FILE:bench_sand> $<TARGET_FILE:versus_events>)
     endif()
 endif()
+
+# A sampling profiler for Windows that needs no administrator rights:
+# `tide_sample -- build/release/bin/versus_life.exe --threads 1` prints where a
+# program's own code spent its samples, by function and line (through
+# llvm-symbolizer and the program's PDB: profile release builds).
+if(WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    add_executable(tide_sample EXCLUDE_FROM_ALL profile/sample.c)
+    target_link_libraries(tide_sample PRIVATE psapi)
+    target_compile_definitions(tide_sample PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
