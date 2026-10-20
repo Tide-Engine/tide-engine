@@ -1,5 +1,31 @@
 # Language features, as tidec builds them
 
+## Empty scene shorthand (2026-10-20)
+
+Owner-approved: `scene Name;` is a complete empty scene declaration equivalent
+to `scene Name { }`, including `local scene` and declarations in namespaces.
+Braces remain valid. Only scenes gain this shorthand; other data declarations
+still require braces. `parse_data_decl` receives the scene flag before reading
+the body and records the semicolon as the declaration's end. Checking, generated
+types, startup and scene lifetime use the existing paths, with no runtime change.
+
+The existing scenes_fallback and scenes_local E2E fixtures now exercise shorthand
+match/local Main startup and reloading. lsp_empty_scene_declarations covers
+namespaced loads, local scenes, hover/references/rename, outline/completion,
+formatting/idempotence, declaration boundaries and missing-body diagnostics.
+Shared grammar probes cover both spellings; the all-E2E grammar check recognizes
+that a shorthand scene has no body. The spec and Scenes page document the rule.
+
+Validation: warning-free native/web debug builds; all 2,477 native CTests
+(including 36 Vulkan/OpenGL GPU checks) and all 2,383 web CTests (including
+WebGL, D3D11 and 11 WebGPU checks) pass. The full LSP suite, all 268 grammar
+cases, production docs build and diff check pass. One-off comparisons of match
+fallback, local and namespaced scenes produce byte-identical generated C and
+headers for braced/semicolon forms with --no-line; no determinism pin changed.
+Clang 23.1.2, Node 24.21.0 and Chrome 155.0.8059.85 were used. Other OSes,
+Android, MinGW and sanitizers were not run on this Windows machine; CI was
+not dispatched.
+
 ## Performance pass: list writes and grid windows (2026-10-20)
 
 Two compiler-private changes, no language or runtime-interface change (measured

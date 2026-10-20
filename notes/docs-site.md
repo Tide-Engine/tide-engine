@@ -1,5 +1,11 @@
 # The docs site
 
+## Empty scene shorthand (2026-10-20)
+
+The Scenes page and decided spec document `scene Name;` and `local scene Name;`
+as complete empty declarations equivalent to braces. The Main example uses the
+short form. Production docs/grammar validation is recorded in notes/language.md.
+
 ## Double Position correction documentation (2026-10-20)
 
 Views and the spec document Position on double scalars/vectors, add a custom
