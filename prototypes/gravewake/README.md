@@ -24,7 +24,8 @@ Every kill leaves an orb of experience where the dead fell (a cyan gem,
 turning), worth more the tougher they were, the party's once someone goes
 within a few metres of it; at every level each takes one of three cards: their
 gun a rank stronger, or an item that stacks, most of which fight on their own;
-and a little more damage and 18 more health (a level's worth of it back, too).
+and more damage and 30 more health (a level's worth of it back, too). The
+levels come about a minute apart at first and further apart later.
 How many nights, and how long, they held out is the score.
 
 Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
@@ -99,8 +100,8 @@ no jumping.
 | | |
 | --- | --- |
 | The clock | Three minutes a night, on the night's panel (BOSS IN 2:41) over a bar running down; over its last minute the dead come thicker, up to twice as fast. A bell and a banner ten seconds before the end. |
-| The chests | Four a night, hidden about the clearing and not marked; the night's panel says how many are found. Stand by one a moment and it opens: everyone picks one of three items, whoever found it. They're gone when the next night falls. |
-| Missions | Every half a minute or so an optional mission appears 14 to 28 m off, with a horn, a banner and a big gold pointer: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or catch five wisps (gold flames bobbing waist high, scattered 6 to 18 m round a place; walk through one to catch it), each within 45 to 50 s. Its circle burns in the ground in as many pieces as there are to do (a second held, one of the dead culled, a wisp caught), each lit gold as it's done; with 15 s left you're told again and the unlit pieces go red. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
+| The chests | Two a night, hidden about the clearing and not marked; the night's panel says how many are found. Stand by one a moment and it opens: everyone picks one of three items, whoever found it. They're gone when the next night falls. |
+| Missions | About once a night an optional mission appears 14 to 28 m off, with a horn, a banner and a big gold pointer: hold a circle (12 s with someone in it), cull the dead in one (25 of them, more for a party), or catch five wisps (gold flames bobbing waist high, scattered 6 to 18 m round a place; walk through one to catch it), each within 45 to 50 s. Its circle burns in the ground in as many pieces as there are to do (a second held, one of the dead culled, a wisp caught), each lit gold as it's done; with 15 s left you're told again and the unlit pieces go red. Done, everyone picks one of three uncommon or rare items. None begins in a night's last 70 s. |
 | The ring | When the clock runs out, pale wake-fire rises in a ring 17 m round you (round the middle of the party): you can't cross it till dawn; the dead walk straight through, coming three quarters as thick as before (fewer than that while any other boss stands). |
 | Its boss | One claws up in the ring with you (two from the fourth night, three from the seventh), the nights taking the three in turn, pointed to (BOSS) at the screen's edge; anyone who bled out is back, by the ring's middle. Dawn doesn't come till they're down. Felled, each gives everyone an item to pick. |
 | Dawn | Everything left of the dead burns away, every orb flies in, everyone's up, whole and ready. Ten seconds later the next night falls: more dangerous than the last (the danger climbs with the clock, and each night's is 1.25 times the one before), and each of its kind (mist, a blood moon, starless, the wake). |
@@ -153,18 +154,18 @@ outline, so it's known at a glance in a horde: red a Runner, lime a Bloater,
 yellow a Spitter, blue a Warden, orange a Brute, magenta a Howler. Each has its
 own body too (art/kinds): a Runner hunched with long claws, a Bloater's vast
 belly, a Spitter's throat sac, a Warden's iron shoulders and shield, a Brute's
-bull shoulders, a Howler tall with its neck thrown back. The first time each
-kind comes in a run, a card on the left says what it does and what to do
-about it.
+bull shoulders, a Howler tall with its neck thrown back. What each is about
+to do is drawn on the ground, as a Bloater's ring is: a Runner's leap, a
+Brute's blow, a Howler's reach, where bile will land.
 
 | Kind | From | |
 | --- | --- | --- |
-| Runner (red) | 25 s | Lean, and quicker than any, though slower than you. From 2 to 5.5 m off, with nothing between, it crouches half a second (its eyes flaring), then leaps 4.5 m at you and strikes as it lands (a roll's guard turns it). Three-fifths as tough as the rest. |
+| Runner (red) | 25 s | Lean, and quicker than any, though slower than you. From 2 to 5.5 m off, with nothing between, it crouches half a second (its eyes flaring, a strip of red on the ground where it'll leap, turning with you till the last fifth of a second, then set: step aside), then leaps 4.5 m and strikes as it lands (a roll's guard turns it). Three-fifths as tough as the rest. |
 | Bloater (lime) | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it stops and swells, shuddering, glowing and hissing gas, and the ground it'll reach burns red, a ring at its edge and another growing out to meet it; it bursts 1.4 s later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it falls and swells the same way, bursting a second later: from far off, that's a weapon; up close, get out of the red. |
 | Spitter (yellow) | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile, slow and high (a second or more in the air), that hurts (up to 18) and slows you for 2 s; a yellow ring on the ground is where it'll land. Step out of it, then find it and shoot it. |
-| Warden (blue) | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
-| Brute (orange) | 2:30 | A third bigger all round, slow, eight times as tough. Nothing staggers it or throws it down, and blows barely push it. Its blow does two and a half times a claw's and throws you back. |
-| Howler (magenta) | 3:40 | Tall and thin. It hangs back, 3 to 11 m off, and every 7 s or so stands and howls (its colour streaming off its head); at the howl's end every one of the dead within 10 m of it is frenzied for 5 s, quicker, their outlines throbbing magenta. Shoot it first. |
+| Warden (blue) | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, ARMOR over it, and a spray of sparks); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
+| Brute (orange) | 2:30 | A third bigger all round, slow, eight times as tough. Nothing staggers it or throws it down, and blows barely push it. Its blow does two and a half times a claw's and throws you back: an orange arc on the ground in front of it is where it'll land as it winds up. |
+| Howler (magenta) | 3:40 | Tall and thin. It hangs back, 3 to 11 m off, and every 7 s or so stands and howls (its colour streaming off its head, a magenta ring on the ground as far as it'll reach); at the howl's end every one of the dead within 10 m of it is frenzied for 5 s, quicker, their outlines throbbing magenta. Shoot it first. |
 
 ### The bosses
 

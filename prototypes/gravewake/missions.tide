@@ -18,8 +18,8 @@ using Rooms;
 enum MissionKind { None, Hold, Cull, Wisps }
 
 const float MISSION_FIRST = 25;      // Seconds into a night before the first...
-const float MISSION_GAP_LEAST = 20;  // ...and from one's end to the next
-const float MISSION_GAP_MOST = 35;
+const float MISSION_GAP_LEAST = 45;  // ...and from one's end to the next (20 to 35 till fewer picks were wanted, 2026-10-21: about
+const float MISSION_GAP_MOST = 70;   // one a night now, two or three before)
 const float MISSION_NEAR = 14;       // How far from a survivor one appears
 const float MISSION_FAR = 28;
 const float MISSION_HURRY = 15;      // Seconds left when it's told again (and its circle's unlit pieces go red)

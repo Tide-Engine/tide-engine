@@ -204,6 +204,9 @@ TIDE_TEST(embed_view_packet)
     const uint32_t entity = TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY;
     TIDE_CHECK(u32_at(p, entity + 8) == 3u); // Owned, and by this machine's player
     TIDE_CHECK(u32_at(p, entity + 16) == TIDE_PACKET_NONE); // A root
+    // What it was spawned as: known, as this machine spawned it, and the same frame after frame
+    const uint32_t born = u32_at(p, entity + 20);
+    TIDE_CHECK(born != 0u);
     Counter counter;
     memcpy(&counter, values, sizeof counter);
     TIDE_CHECK(counter.ticks == seen_ticks);
@@ -220,6 +223,12 @@ TIDE_TEST(embed_view_packet)
     float level;
     memcpy(&level, tally + offsetof(Tally, level), sizeof level);
     TIDE_CHECK(level > 0.3f && level < 0.6f); // About half a second of ticks, blended between the last two
+    frames(e, 5, NULL);
+    p = tide_embed_view(e, &size);
+    TIDE_REQUIRE(p != NULL && u32_at(p, 36) == 2u);
+    values = section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows);
+    TIDE_REQUIRE(values != NULL && count == 1u);
+    TIDE_CHECK(u32_at(p, TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY + 20) == born);
     tide_embed_destroy(e);
 }
 
@@ -296,6 +305,15 @@ TIDE_TEST(embed_schema)
     char counter[96];
     snprintf(counter, sizeof counter, "{\"name\":\"Counter\",\"kind\":\"component\",\"size\":%u", (unsigned)sizeof(Counter));
     TIDE_CHECK(strstr(schema, counter) != NULL);
+    // A component's declared defaults, as its bytes: its text and lists empty
+    Counter defaults;
+    memset(&defaults, 0, sizeof defaults);
+    defaults.rate = 2.5f;
+    char hex[sizeof defaults * 2 + 16] = "\"defaults\":\"";
+    for (size_t i = 0; i < sizeof defaults; i++) {
+        snprintf(hex + strlen(hex), 3, "%02x", (unsigned)((const uint8_t *)&defaults)[i]);
+    }
+    TIDE_CHECK(strstr(schema, hex) != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"label\",\"type\":\"string\",\"kind\":\"text\"") != NULL);
     TIDE_CHECK(strstr(schema, "\"name\":\"marks\",\"type\":\"List<int>\",\"kind\":\"list\"") != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"Tally\",\"kind\":\"singleton\"") != NULL);

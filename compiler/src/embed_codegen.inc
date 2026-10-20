@@ -134,14 +134,17 @@ static void gen_embed(gen *g)
                       field_cname(&prog->owner->fields.items[0]), field_cname(&prog->owner->fields.items[0]),
                       field_cname(&prog->owner->fields.items[0]));
         }
-        sb_put(o, "        const uint32_t row[5] = {e.index, e.generation, flags, TIDE_PACKET_NONE, TIDE_PACKET_NONE};\n"
+        // ...and what it was spawned as, which tells another program's object for it from one for another entity a
+        // rollback gave its handle
+        sb_put(o, "        const uint32_t row[6] = {e.index, e.generation, flags, TIDE_PACKET_NONE, TIDE_PACKET_NONE,\n"
+                  "                                 tide_entity_born(&w->entities, e)};\n"
                   "        memcpy(tide_packet_grow(out, TIDE_PACKET_ENTITY, false), row, sizeof row);\n"
                   "        if (e.index < w->entities.next_unused) place[e.index] = n;\n        n++;\n    }\n");
     }
     // Parents, now every entity has its place
     if (prog->hierarchy[0]) {
         sb_put(o, "    for (uint32_t k = 0; k < n; k++) {\n"
-                  "        uint32_t row[5];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
+                  "        uint32_t row[6];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
                   "        memcpy(row, at, sizeof row);\n"
                   "        const tide_entity parent = tide_parent_of(w, (tide_entity){row[0], row[1]});\n"
                   "        if (tide_entity_is_null(parent) || parent.index >= w->entities.next_unused) continue;\n"
@@ -283,6 +286,27 @@ static void gen_embed(gen *g)
     }
     sb_put(o, "    return false;\n}\n\n");
 
+    // Each match component's declared defaults, which an editor shows for a field nothing sets
+    sb_put(o, "static bool tide_embed_defaults(int32_t type, void *out, uint32_t size)\n{\n"
+              "    (void)out;\n    (void)size;\n    switch (type) {\n");
+    for (int c = 0; c < prog->components.count; c++) {
+        const decl *d = prog->components.items[c];
+        if (!embed_component_kept(g, c)) continue;
+        const char *name = type_cname(d);
+        sb_printf(o, "    case %d: { // " STR_FMT "\n        if (size != sizeof(%s)) return false;\n", layout_index(&types, d),
+                  STR_ARG(d->qualified), name);
+        path_list paths = {0};
+        text_paths(d, "", &paths);
+        if (paths.count) sb_put(o, "        const uint32_t mark = tide_scratch_mark();\n");
+        sb_printf(o, "        %s v = ", name);
+        gen_value(g, o, d, NULL, 0);
+        sb_put(o, ";\n");
+        for (int k = 0; k < paths.count; k++) sb_printf(o, "        memset(&v.%s, 0, sizeof v.%s);\n", paths.items[k].path, paths.items[k].path);
+        if (paths.count) sb_put(o, "        tide_scratch_reset(mark);\n");
+        sb_put(o, "        memcpy(out, &v, sizeof v);\n        return true;\n    }\n");
+    }
+    sb_put(o, "    default:\n        return false;\n    }\n}\n\n");
+
     // The tables
     int components = 0;
     for (int c = 0; c < prog->components.count; c++) components += embed_component_kept(g, c);
@@ -376,7 +400,7 @@ static void gen_embed(gen *g)
               "                            tide_game_api.title ? tide_game_api.title : \"\", tide_game_api.tick_rate, out, capacity);\n}\n");
     sb_printf(o, "\nconst tide_embed_game tide_game_embed = {\n"
                  "    %d, %s, %s,\n    %d, %s, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n"
-                 "    tide_embed_view, tide_embed_command, tide_embed_start, tide_embed_schema,\n};\n",
+                 "    tide_embed_view, tide_embed_command, tide_embed_start, tide_embed_schema, tide_embed_defaults,\n};\n",
               components, components ? "tide_embed_components" : "NULL", components ? "tide_embed_component_locals" : "NULL",
               singletons, singletons ? "tide_embed_singletons" : "NULL", singletons ? "tide_embed_singleton_locals" : "NULL",
               prog->command_types.count, prog->command_types.count ? "tide_embed_commands" : "NULL",

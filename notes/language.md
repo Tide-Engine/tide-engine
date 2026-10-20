@@ -183,8 +183,13 @@ layout's types and a dispatcher onto `tide_local_send_<C>` with the target,
 refusing a wrong size and commands holding text or lists; START by scene name
 over `start_scenes` with defaults (text zeroed); tables of components,
 singletons, local parts, commands, scenes, prefabs and non-plain fields (text,
-list with element size and type, map, grid, entity); and `schema`, through the
-engine's `tide_schema_json`. A build without `--embed` generates what it did.
+list with element size and type, map, grid, entity); `schema`, through the
+engine's `tide_schema_json`; and `defaults` (`tide_embed_defaults`), each kept
+match component's `gen_value` with no inits, text and lists zeroed under a
+scratch mark as START's are, which the schema writes as hex. Entity rows end
+with `tide_entity_born`, and `entities_born` is true for any `--embed` build,
+so every spawn there keeps it (notes/unity.md, Identity and pooling). A build
+without `--embed` generates what it did.
 
 Check: every one of the 324 source lists in a debug build generated with
 `--embed` and compiled under `-Wall -Wextra -Wpedantic -Werror`; the first run

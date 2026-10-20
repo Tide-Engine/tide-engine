@@ -259,7 +259,10 @@ as a git URL package with no hard-coded paths. Built:
   is byte-identical with and without it, so Unity builds play with every other
   build of the same game. The packet writer reuses views' `tide_prev_<C>`/
   `tide_blend_<C>`. Schema JSON comes from the game's own layout (C offsets)
-  through the engine's `tide_schema_json`. Details: `notes/language.md`.
+  through the engine's `tide_schema_json`. Each match component's type there
+  has `defaults`, its value with its declared defaults as hex bytes (text and
+  lists empty), from the generated `tide_embed_defaults` (the
+  `tide_embed_game.defaults` hook, 2026-10-20). Details: `notes/language.md`.
 - **`tide unity [folder] -o <path> [--once]`** (`compiler/cli/build.c`): the
   embed host library (`tide_embed`, the installed platform library and engine,
   exporting the ten `tide_embed_*` functions), then `game-<n>`/`pack-<n>`
@@ -315,10 +318,15 @@ entity handle struct the generator maps entity fields to was renamed
 schema's components (Add Tide Component; not `Transform`, which is Unity's, nor
 `UnityEngine.Source`), draws each field by its schema type (numbers, vectors, `Color`,
 `quaternion` as Euler angles, `bool`, `string`, enums, entities as object
-fields; anything else as its literal), shows unset fields faded as defaults,
+fields; anything else as its literal), shows an unset field with its declared
+default from the schema's `defaults` (a text field's default shows empty), editable
+like a set one (it used to be faded, which read as read-only, and showed zero),
 `×` resets one, and "As tide reads it" shows the raw lists. In a prefab
 instance it writes only the fields the instance changes (`Inherited` merges the
-chain of sources), as tide merges.
+chain of sources), as tide merges. In Play it's grayed out: the match has its
+entities already, and an edit there would reach neither the match nor the
+scene (owner, 2026-10-20: what can't be changed at runtime is grayed out).
+Showing the match's live values there instead is a possible next step.
 
 **The converter** (`compiler/cli/unity_assets.c`, owner decision: Unity assets
 are the source of truth, baked at tide time with no files in the project):
@@ -360,6 +368,32 @@ GameObjects stay where Unity's hierarchy has them: their placement is Tide's
 under the parent entity's GameObject, through what's between; gone, they're
 deactivated rather than destroyed. Others use the view rules as before. The
 map is reloaded with each schema and when the file changes.
+
+**Identity and pooling (2026-10-21, owner: "lets deal with that gap and lets
+allow pooling").** Views were keyed by handle alone, and a rollback can give a
+handle to another entity (a predicted spawn where the server had another:
+notes/ecs.md, born), which kept the first entity's GameObject, maybe of
+another prefab, for the second. Now a `--embed` build always keeps what each
+entity was born as (`entities_born` is true for it: a hash per spawn, beside
+the world, not in the hash or the header, so the game's hash is unchanged), the
+view packet's entity row carries it (`born`, 24-byte rows, packet version 2),
+and `TideEntityView` keeps the born and `UnityEngine.Source` it was made for:
+`TideRunner.Same` remakes the view when either changes (born only where both
+are known; 0 is a world another machine sent). A game with visibility state
+borns from tick and handle, which doesn't tell two spawns of one tick and
+handle apart; the Source check still tells their prefabs apart. Releasing goes
+through `Release`: a scene's or an instance's GameObject is deactivated; one
+made from a prefab (`MadeFrom`, a view rule's or a Unity prefab's root) goes to
+`TideRunner.Spawner` (`ITideSpawner.Make/Release`, a game's own pool) if set,
+else to the pool when `pool` is on (inactive under "Tide pool", the runner's
+child, by prefab; taken back out to the active scene, reset by the game in
+`OnDisable`/`OnEnable`), else Destroy. `OnDisable` hands shown views to the
+spawner and destroys the pool, and no longer destroys scenes' GameObjects.
+Tests: `tide_platform_embed` (the row's born is known and stays), the sample's
+`Toss` command (an unowned Roller in and out) with
+`ThePoolKeepsAGameObjectForTheNextEntity` and
+`ASpawnerMakesAndLetsGoOfGameObjects`. Not exercised end to end: a real
+rollback handing a handle over, which needs two machines in the sample's test.
 
 **Generated types and Unity's build cache.** Unity 6 caches compiles in a
 shared cache keyed by an assembly's inputs (`Csc ... [CacheHit ...]` in the

@@ -259,7 +259,7 @@ int GunLevel(Survivor s)
 }
 
 const float BURST_FAN = 0.035;      // Radians between a burst's rounds...
-const float BURST_SHARE = 0.6;      // ...each past the first so much of one
+const float BURST_SHARE = 0.5;      // ...each past the first so much of one (0.6 till the Gunner was found too strong, 2026-10-21)
 const float CALIBER_STEP = 0.2;     // A carbine's rounds harder a rank...
 const float CALIBER_KNOCK = 0.6;    // ...and pushing harder
 const float PISTON_STEP = 0.12;     // Faster a rank, and a fifth more rounds
@@ -365,10 +365,11 @@ int Has(Survivor s, Item item)
 }
 
 // How hard a survivor's shots and skills land: their level, and the hollow points. (24% a level till the gun cards came,
-// 2026-10-20: the power a level brings by itself went in part into what's picked.)
+// 2026-10-20, when the power a level brings by itself went in part into what's picked: 16%; then 40% when the levels
+// came about half as often, LevelSpan: fewer picks, so more from each level; 30% when the owner, 2026-10-21, after playing the Gunner: "i still think we get too many upgrades ... i got OP very quick; we need to make them upgrade slower".)
 float Might(Survivor s)
 {
-    return (1 + 0.16 * (s.level - 1)) * (1 + 0.15 * Has(s, Item.HollowPoints));
+    return (1 + 0.3 * (s.level - 1)) * (1 + 0.15 * Has(s, Item.HollowPoints));
 }
 
 // How much quicker their hands are: shots and loading.
@@ -389,7 +390,7 @@ float MaxHealth(Survivor s)
     return 100 + LEVEL_HEALTH * (s.level - 1) + 45 * Has(s, Item.Kevlar);
 }
 
-const float LEVEL_HEALTH = 18;
+const float LEVEL_HEALTH = 30;      // (18 till the levels came about half as often, 2026-10-20; 36, then 30 when they came less often still)
 
 // How long after a blow health starts coming back, and how much of it a second: REGEN_DELAY and REGEN_RATE, and First
 // Aid Kits' quicker. (4 s and 4% a second, whole in under half a minute, till the owner, 2026-10-20: "health regen should
@@ -970,8 +971,12 @@ float LevelSpan(int level, float crowd)
     return LEVEL_FIRST * Math.Pow(LEVEL_GROWTH, level - 1) * crowd;
 }
 
-const float LEVEL_FIRST = 40;
-const float LEVEL_GROWTH = 1.28;
+// (40 and 1.28 till the owner, 2026-10-20: "upgrades are too quick, we need to space them out more": a level had come
+// about every 25 s all run long, some 34 in 20 minutes; now the first come about every 40 s and the later about a minute
+// apart, some 20 in 20 minutes)
+// Then 50 and 1.5, till the owner, 2026-10-21, after playing the Gunner: "i still think we get too many upgrades ... i got OP very quick; we need to make them upgrade slower".
+const float LEVEL_FIRST = 60;
+const float LEVEL_GROWTH = 1.7;
 
 // Picks owed a survivor from a chest (each, a pick for everyone), a mission (a pick of the rarer items) or a boss, offered
 // `delay` seconds on, so what earned it is seen first (the owner, 2026-10-20: "when an objective is completed or a boss

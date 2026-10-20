@@ -22,6 +22,9 @@ namespace Tide
         public uint Flags;  // TideEntityFlags
         public uint Prefab; // The schema's prefab index, or uint.MaxValue for none
         public uint Parent; // Its parent's index among the packet's entities, or uint.MaxValue for a root
+        // What it was spawned as: another value on the same handle is another entity, which a rollback gave the
+        // handle. 0: not known (it came in a world another machine sent)
+        public uint Born;
 
         public bool Mine => (Flags & 1u) != 0;  // This machine owns it
         public bool Owned => (Flags & 2u) != 0; // Some player owns it
@@ -36,9 +39,9 @@ namespace Tide
     public sealed unsafe class TidePacket
     {
         public const uint Magic = 0x56444954; // "TIDV"
-        public const uint Version = 1;
+        public const uint Version = 2;
         const int HeaderSize = 48;
-        const int EntitySize = 20;
+        const int EntitySize = 24;
         const int SectionHeaderSize = 24;
 
         byte* bytes;
@@ -129,7 +132,7 @@ namespace Tide
         {
             if ((uint)i >= (uint)EntityCount) throw new ArgumentOutOfRangeException(nameof(i));
             var p = (uint*)(bytes + entities + (uint)i * EntitySize);
-            return new TideEntityRow { Index = p[0], Generation = p[1], Flags = p[2], Prefab = p[3], Parent = p[4] };
+            return new TideEntityRow { Index = p[0], Generation = p[1], Flags = p[2], Prefab = p[3], Parent = p[4], Born = p[5] };
         }
 
         int Find(TideSectionKind kind, uint type)
