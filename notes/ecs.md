@@ -1,5 +1,34 @@
 # ECS and simulation state
 
+## Events in runs (2026-10-20)
+
+Internal, with no layout, hash, order or interface change (pinned hashes are
+unchanged; measurements in notes/benchmarks.md, Events, second round):
+
+- The queue (`tide_queue`) has a second shape of event, which only generated
+  code makes and reads: a run, one item of kind `TIDE_CMD_EVENTS` holding many
+  events of one kind, each its target and value, in the order they were sent
+  (notes/language.md, Events in runs). A system whose whole body is one Send
+  records them, 12 bytes an event for an `int` event where a `tide_command`
+  of its own took 24, and the end of the tick takes them in a loop of their
+  own. A run is never in the queue between ticks, so a world's bytes, hash,
+  snapshots and deltas never hold one, and `tide_command_fits` refuses one.
+- Ordinary event items in a row (the same size, kind, event and depth, back
+  to back in a page) are taken together the same way: generated code counts
+  them from the page's `used`, which relies on a page's items being back to
+  back (tide/table.h says so), and moves the queue's place past them.
+- A run's dispatcher, or a row of items', finds its targets in the one table
+  its handlers take (`index - first`, checked against the row's handle, else
+  `tide_entity_location`) with that table's count, page array and first
+  handle read once for them all. That rests on handlers never moving an
+  archetype's rows: structural changes wait in the queue, and what a handler
+  writes changes lane pages only, never the entity column or the page array.
+  Anything that changes that rule changes this.
+- `tide_table_column_mut` (inline, tide/table.h) no longer writes the page
+  pointer back when the page is the table's alone (the case for every write
+  but a snapshot's shared page's first): the same function and results, one
+  store less for each lane a handler writes.
+
 ## Performance pass: lists, maps and grid windows (2026-10-20)
 
 Internal, with no layout, hash, order or interface change (pinned hashes are

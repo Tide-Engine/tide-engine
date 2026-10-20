@@ -200,7 +200,12 @@ void tide_table_lanes_end_pieces(tide_table *t, const tide_columns *c, uint32_t 
 static inline void *tide_table_column_mut(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t column)
 {
     tide_page **p = &t->pages[chunk * c->count + column];
-    *p = tide_page_own(*p, 1, tide_table_rows(t, c->shift, chunk) * c->sizes[column]);
+    tide_page *page = *p;
+    if (__builtin_expect(page->refs == 1u, 1)) { // This table's alone, as tide_page_own leaves it, with nothing written back
+        page->hashed = UINT32_MAX;
+        return tide_page_data(page);
+    }
+    *p = tide_page_own(page, 1, tide_table_rows(t, c->shift, chunk) * c->sizes[column]);
     return tide_page_data(*p);
 }
 void *tide_table_cell(tide_table *t, const tide_columns *c, uint32_t row, uint32_t column);
