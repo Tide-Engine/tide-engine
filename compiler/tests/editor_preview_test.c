@@ -1,5 +1,6 @@
 #include "tide/editor_preview.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 const tide_editor_preview_api *tide_editor_preview(void);
 static int observed;
@@ -13,9 +14,10 @@ TIDE_TEST(editor_preview_authored_tree_and_isolation)
     TIDE_REQUIRE(context);
     TIDE_CHECK(observed == 0); // No Main, Spawned or runtime-only view startup.
     for (int frame = 0; frame < 2; frame++) {
-        const tide_draw_list *draw = api->frame(context, .02f, (tide_rect){50,60,400+frame*100,300},
+        const tide_draw_list *drawn = api->frame(context, .02f, (tide_rect){50,60,400+frame*100,300},
             tide_identity_f4x4(), tide_identity_f4x4(), NULL);
-        TIDE_REQUIRE(draw);
+        TIDE_REQUIRE(drawn);
+        const tide_draw_list shown = tide_test_flat(drawn), *draw = &shown; // Its plain shapes a command each
         int circles = 0;
         for (uint32_t i = 0; i < draw->count; i++) {
             const tide_draw_command *c = &draw->commands[i];

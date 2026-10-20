@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 // Frames of gui.tide's views on a 1920 x 1080 window, played with made-up
 // devices. Widgets are found by their text in the draw list.
@@ -18,6 +19,7 @@ static void frame(void)
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
     tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     devices.keyboard.text.count = 0;
 }
 
@@ -240,7 +242,7 @@ static const tide_draw_command *box_of(const char *text, const int nth)
 
 static bool same_color(const tide_color a, const tide_color b)
 {
-    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    return tide_test_color_is(a, b.r, b.g, b.b, b.a); // As a plain shape keeps it, a byte a channel
 }
 
 static tide_color color_of(const char *text)

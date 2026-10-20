@@ -4,7 +4,7 @@
 
 Generated code calls the same `tide/draw.h` names as before; several are now
 header-inline over out-of-line functions that are the old bodies
-(`tide_draw_plain`, `tide_draw_round_rect_placed`, `tide_draw_mesh_placed`,
+(`tide_draw_plain_placed`, `tide_draw_round_rect_placed`, `tide_draw_mesh_placed`,
 `tide_draw_mesh_3d_placed`, `tide_draw_instance_stored`), and
 `tide_draw_mesh_with` is what `mesh.c` calls for Tide's lists. The draw list
 gained `quads`, `quad_count`, `quad_capacity` and `mesh_last`, and
@@ -12,6 +12,15 @@ gained `quads`, `quad_count`, `quad_capacity` and `mesh_last`, and
 rebuild with the engine, as for any draw-list layout change. The embed packet
 is unchanged (quads go out as meshes). Contracts in drawing.md, Recording
 inline and quads as quads.
+
+Plain shapes as records, after: the list gained `plains`, `plain_count` and
+`plain_capacity`, `tide_draw_kind` `TIDE_DRAW_PLAIN` (after
+`TIDE_DRAW_QUADS`), the command a `plain` member, and `tide/draw.h`
+`tide_draw_plain`, `tide_draw_color_bytes`, `tide_draw_plain_color` and
+`tide_draw_expand` (a list's commands with each plain shape one of its own,
+which the embed packet goes out as). `tide_draw_rect` and the other plain
+shapes keep their names and arguments. `tide_gui_group` gained
+`panel_plain`, `commands_from` and `plains_from`.
 
 ## Map views generated code keeps (2026-10-20)
 

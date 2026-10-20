@@ -5,6 +5,7 @@
 #include "game.h"
 #include "tide/pack.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 // The pack, as C (tide_add_game's --pack-c for HOST programs).
 extern const unsigned char tide_game_pack[];
@@ -53,6 +54,7 @@ static void frame(void)
     for (int i = 0; i < 2; i++) {
         tide_draw_reset(&draw);
         tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+        tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     }
     draw_count = 0;
     uint32_t target = 0;

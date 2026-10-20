@@ -3,6 +3,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world world;
 static tide_local local;
@@ -30,7 +31,7 @@ static bool world_is(const tide_world *w, uint8_t *bytes, const uint32_t size)
 
 static bool same_color(const tide_color a, const tide_color b)
 {
-    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    return tide_test_color_is(a, b.r, b.g, b.b, b.a); // As a plain shape keeps it, a byte a channel
 }
 
 static bool at(const tide_float2 v, const float x, const float y)
@@ -50,6 +51,7 @@ static void draw_frame(void)
     tide_local_init(&local);
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
 }
 
 TIDE_TEST(views_run_in_declaration_order)
@@ -102,7 +104,9 @@ TIDE_TEST(views_leave_the_world_alone)
     tide_local_init(&local);
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     TIDE_CHECK(world_is(&world, before, size));
     TIDE_CHECK(draw.count == 21); // Drawing twice without a reset adds up, but for the camera, set to what it was
 }

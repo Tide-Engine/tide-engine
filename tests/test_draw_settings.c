@@ -7,6 +7,7 @@
 
 #include "tide/draw.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static bool about(const float a, const float b)
 {
@@ -15,12 +16,19 @@ static bool about(const float a, const float b)
 
 static bool color_is(const tide_color c, const float r, const float g, const float b, const float a)
 {
-    return about(c.r, r) && about(c.g, g) && about(c.b, b) && about(c.a, a);
+    return tide_test_color_is(c, r, g, b, a);
+}
+
+// The list as it's drawn, each plain shape a command of its own
+static tide_draw_list shown(const tide_draw_list *d)
+{
+    return tide_test_flat(d);
 }
 
 static const tide_draw_command *last(const tide_draw_list *d)
 {
-    return &d->commands[d->count - 1u];
+    const tide_draw_list flat = shown(d);
+    return &flat.commands[flat.count - 1u];
 }
 
 static const tide_float2 origin = {0.0f, 0.0f}, unit = {1.0f, 1.0f};
@@ -49,8 +57,8 @@ TIDE_TEST(draw_settings_start_over_each_frame)
 {
     tide_draw_list d = {0};
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_RED);
-    TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_RECT);
-    TIDE_CHECK(d.commands[0].blend == TIDE_BLEND_ALPHA && color_is(d.commands[0].color, 1, 0, 0, 1));
+    TIDE_REQUIRE(shown(&d).count == 1 && shown(&d).commands[0].kind == TIDE_DRAW_RECT);
+    TIDE_CHECK(shown(&d).commands[0].blend == TIDE_BLEND_ALPHA && color_is(shown(&d).commands[0].color, 1, 0, 0, 1));
 
     tide_draw_set_blend(&d, TIDE_BLEND_ADD);
     tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
@@ -62,15 +70,15 @@ TIDE_TEST(draw_settings_start_over_each_frame)
     tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
     tide_draw_push_tint(&d, TIDE_COLOR_BLUE); // A block the frame never closed
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD && d.count > 2);
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD && shown(&d).count > 2);
 
     tide_draw_reset(&d);
     TIDE_CHECK(d.place.blend == TIDE_BLEND_ALPHA && !d.place.tinted && !d.place.moved && !d.place.clip && !d.saved_count);
     TIDE_CHECK(!d.place.camera_2d && !d.place.camera_3d && d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_RED);
     // Nothing but the rect, as it was given
-    TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_RECT && d.commands[0].blend == TIDE_BLEND_ALPHA);
-    TIDE_CHECK(color_is(d.commands[0].color, 1, 0, 0, 1) && d.commands[0].a.x == 0.0f && d.commands[0].b.x == 1.0f);
+    TIDE_REQUIRE(shown(&d).count == 1 && shown(&d).commands[0].kind == TIDE_DRAW_RECT && shown(&d).commands[0].blend == TIDE_BLEND_ALPHA);
+    TIDE_CHECK(color_is(shown(&d).commands[0].color, 1, 0, 0, 1) && shown(&d).commands[0].a.x == 0.0f && shown(&d).commands[0].b.x == 1.0f);
     tide_draw_free(&d);
 }
 
@@ -229,10 +237,10 @@ TIDE_TEST(draw_settings_never_split_a_run)
     const uint32_t cameras = d.camera_count;
     tide_draw_set_camera(&d, tide_f2(1.0f, 2.0f), 3.0f);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    const uint32_t count = d.count;
+    const uint32_t count = shown(&d).count;
     tide_draw_set_camera(&d, tide_f2(1.0f, 2.0f), 3.0f);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(d.count == count + 1u && d.camera_count == cameras + 1u);
+    TIDE_CHECK(shown(&d).count == count + 1u && d.camera_count == cameras + 1u);
     tide_draw_free(&d);
 }
 
@@ -381,7 +389,7 @@ TIDE_TEST(draw_tints_multiply_colors)
     TIDE_CHECK(color_is(last(&d)->color, 1, 1, 1, 1));
     tide_draw_circle(&d, origin, 1.0f, TIDE_COLOR_WHITE);
     tide_draw_text(&d, "a", origin, 8.0f, (tide_color){1.0f, 1.0f, 0.0f, 1.0f});
-    TIDE_CHECK(color_is(d.commands[1].color, 0.5f, 1.0f, 0.5f, 0.5f) && color_is(d.commands[2].color, 0.5f, 1.0f, 0.0f, 0.5f));
+    TIDE_CHECK(color_is(shown(&d).commands[1].color, 0.5f, 1.0f, 0.5f, 0.5f) && color_is(shown(&d).commands[2].color, 0.5f, 1.0f, 0.0f, 0.5f));
     tide_shape shape = TIDE_SHAPE_WHITE;
     shape.size = tide_f2(4.0f, 4.0f);
     shape.color2 = TIDE_COLOR_RED;
@@ -851,7 +859,7 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     const tide_stencil mask = tide_stencil_stored(TIDE_STENCIL_ALWAYS, 1, TIDE_STENCIL_REPLACE);
     const tide_stencil inside = tide_stencil_tested(TIDE_STENCIL_EQUAL, 1);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(d.count == 1 && d.place.stencil == 0); // None, as each frame starts: nothing says so
+    TIDE_REQUIRE(shown(&d).count == 1 && d.place.stencil == 0); // None, as each frame starts: nothing says so
 
     // What a value is made of: an enum's number that's no member's is its first, and a draw's number is 0 to 255
     TIDE_CHECK(mask.test == TIDE_STENCIL_ALWAYS && mask.operation == TIDE_STENCIL_REPLACE && mask.value == 1);
@@ -871,24 +879,24 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
 
     // Set, it's said once, before the next command that draws
     tide_draw_set_stencil(&d, mask);
-    TIDE_CHECK(d.count == 1);
+    TIDE_CHECK(shown(&d).count == 1);
     tide_draw_circle(&d, origin, 4.0f, TIDE_COLOR_WHITE);
     tide_draw_circle(&d, unit, 4.0f, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(d.count == 4 && d.commands[1].kind == TIDE_DRAW_STENCIL && d.commands[1].stencil == tide_stencil_packed(mask));
-    TIDE_CHECK(d.commands[2].kind == TIDE_DRAW_CIRCLE && d.commands[3].kind == TIDE_DRAW_CIRCLE);
+    TIDE_REQUIRE(shown(&d).count == 4 && shown(&d).commands[1].kind == TIDE_DRAW_STENCIL && shown(&d).commands[1].stencil == tide_stencil_packed(mask));
+    TIDE_CHECK(shown(&d).commands[2].kind == TIDE_DRAW_CIRCLE && shown(&d).commands[3].kind == TIDE_DRAW_CIRCLE);
     tide_draw_set_stencil(&d, mask); // To what it was: nothing
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(d.count == 5 && last(&d)->kind == TIDE_DRAW_RECT);
+    TIDE_CHECK(shown(&d).count == 5 && last(&d)->kind == TIDE_DRAW_RECT);
 
     // A block puts back what it found, a Set inside it or not
     const uint32_t block = tide_draw_push_stencil(&d, inside);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(d.count == 7 && d.commands[5].kind == TIDE_DRAW_STENCIL && d.commands[5].stencil == tide_stencil_packed(inside));
+    TIDE_REQUIRE(shown(&d).count == 7 && shown(&d).commands[5].kind == TIDE_DRAW_STENCIL && shown(&d).commands[5].stencil == tide_stencil_packed(inside));
     tide_draw_set_stencil(&d, tide_stencil_tested(TIDE_STENCIL_NOT_EQUAL, 1)); // For the rest of the block
     tide_draw_pop(&d, block);
     TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask) && d.saved_count == 0);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(d.count == 9 && d.commands[7].kind == TIDE_DRAW_STENCIL && d.commands[7].stencil == tide_stencil_packed(mask));
+    TIDE_REQUIRE(shown(&d).count == 9 && shown(&d).commands[7].kind == TIDE_DRAW_STENCIL && shown(&d).commands[7].stencil == tide_stencil_packed(mask));
     // Left early from inside two: the outer mark puts back what the outer found, the blend with it
     const uint32_t outer = tide_draw_push_stencil(&d, inside);
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
@@ -896,7 +904,7 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     tide_draw_pop(&d, outer);
     TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask) && d.place.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
     tide_draw_unset_stencil(&d);
-    TIDE_CHECK(d.place.stencil == 0 && d.count == 9);
+    TIDE_CHECK(d.place.stencil == 0 && shown(&d).count == 9);
 
     // The same setting around each of a view's entities' draws: said once, and their shapes are still one run
     tide_draw_reset(&d);
@@ -906,59 +914,59 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
         tide_draw_rect(&d, tide_f2((float)entity, 0.0f), unit, TIDE_COLOR_WHITE);
         tide_draw_pop(&d, mark);
     }
-    TIDE_REQUIRE(d.count == 4 && d.commands[0].kind == TIDE_DRAW_STENCIL);
-    TIDE_CHECK(d.commands[1].kind == TIDE_DRAW_RECT && d.commands[2].kind == TIDE_DRAW_RECT && d.commands[3].kind == TIDE_DRAW_RECT);
+    TIDE_REQUIRE(shown(&d).count == 4 && shown(&d).commands[0].kind == TIDE_DRAW_STENCIL);
+    TIDE_CHECK(shown(&d).commands[1].kind == TIDE_DRAW_RECT && shown(&d).commands[2].kind == TIDE_DRAW_RECT && shown(&d).commands[3].kind == TIDE_DRAW_RECT);
     // Set and put back around nothing: nothing
     tide_draw_pop(&d, tide_draw_push_stencil(&d, mask));
     tide_draw_set_stencil(&d, inside);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(d.count == 5 && last(&d)->kind == TIDE_DRAW_RECT);
+    TIDE_CHECK(shown(&d).count == 5 && last(&d)->kind == TIDE_DRAW_RECT);
     // ...and 3D meshes' instances are still one command, under the same stencil; another is another run
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     tide_draw_pop(&d, tide_draw_push_stencil(&d, mask));
     tide_draw_mesh_3d(&d, &quad, tide_translate_f4x4(tide_f3(1.0f, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
-    TIDE_REQUIRE(d.count == 6 && last(&d)->kind == TIDE_DRAW_MESH_3D && last(&d)->mesh3.count == 2);
+    TIDE_REQUIRE(shown(&d).count == 6 && last(&d)->kind == TIDE_DRAW_MESH_3D && last(&d)->mesh3.count == 2);
     tide_draw_set_stencil(&d, mask);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
-    TIDE_REQUIRE(d.count == 8 && d.commands[6].kind == TIDE_DRAW_STENCIL && last(&d)->mesh3.count == 1);
+    TIDE_REQUIRE(shown(&d).count == 8 && shown(&d).commands[6].kind == TIDE_DRAW_STENCIL && last(&d)->mesh3.count == 1);
     // Text, a clear and a blit are recorded as ever: what a clear and a blit do with it is a renderer's
     static const tide_shader pass = {.dims = 2, .vertex_size = sizeof(tide_vertex)};
     tide_draw_text(&d, "a", origin, 8.0f, TIDE_COLOR_WHITE);
     tide_draw_clear(&d, TIDE_COLOR_BLACK);
     tide_draw_blit(&d, &pass, TIDE_BLEND_REPLACE, NULL, NULL, NULL, 0);
-    TIDE_CHECK(d.count == 11 && d.commands[8].kind == TIDE_DRAW_TEXT && d.commands[9].kind == TIDE_DRAW_CLEAR);
+    TIDE_CHECK(shown(&d).count == 11 && shown(&d).commands[8].kind == TIDE_DRAW_TEXT && shown(&d).commands[9].kind == TIDE_DRAW_CLEAR);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_BLIT && d.place.stencil == tide_stencil_packed(mask));
 
     // It's a destination's own: a target's draws start as a frame does, whatever the window's do
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.stencil == 0);
-    uint32_t count = d.count;
+    uint32_t count = shown(&d).count;
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(d.count == count + 1u && last(&d)->kind == TIDE_DRAW_RECT); // Nothing to say there
+    TIDE_CHECK(shown(&d).count == count + 1u && last(&d)->kind == TIDE_DRAW_RECT); // Nothing to say there
     const uint32_t theirs = tide_draw_push_stencil(&d, inside);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(d.count == count + 3u && d.commands[count + 1u].kind == TIDE_DRAW_STENCIL);
+    TIDE_REQUIRE(shown(&d).count == count + 3u && shown(&d).commands[count + 1u].kind == TIDE_DRAW_STENCIL);
     // ...and the window's is as it was left, while the target's block is open: nothing more is said for it
     tide_draw_to(&d, 0, 0, 0);
     TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask));
-    count = d.count;
+    count = shown(&d).count;
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(d.count == count + 1u && last(&d)->kind == TIDE_DRAW_RECT);
+    TIDE_CHECK(shown(&d).count == count + 1u && last(&d)->kind == TIDE_DRAW_RECT);
     tide_draw_pop(&d, theirs); // The target's block ends while the window is selected: its own is put back
     TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask) && d.saved_count == 0);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.stencil == 0 && d.place.played_stencil == tide_stencil_packed(inside));
-    count = d.count;
+    count = shown(&d).count;
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE); // The target's draws are told it's back
-    TIDE_REQUIRE(d.count == count + 2u && d.commands[count].kind == TIDE_DRAW_STENCIL && d.commands[count].stencil == 0);
+    TIDE_REQUIRE(shown(&d).count == count + 2u && shown(&d).commands[count].kind == TIDE_DRAW_STENCIL && shown(&d).commands[count].stencil == 0);
     tide_draw_set_stencil(&d, inside);
 
     // The GUI's and a host's own start from the defaults, every destination's
     tide_draw_defaults(&d);
     TIDE_CHECK(d.place.stencil == 0 && d.target == 0);
-    count = d.count;
+    count = shown(&d).count;
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(d.count == count + 2u && d.commands[count].kind == TIDE_DRAW_STENCIL && d.commands[count].stencil == 0);
+    TIDE_REQUIRE(shown(&d).count == count + 2u && shown(&d).commands[count].kind == TIDE_DRAW_STENCIL && shown(&d).commands[count].stencil == 0);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.stencil == 0);
 
@@ -972,10 +980,10 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     tide_draw_rect(&from, origin, unit, TIDE_COLOR_WHITE);
     tide_draw_set_stencil(&from, tide_stencil_tested(TIDE_STENCIL_GREATER, 7));
     tide_draw_append(&to, &from);
-    TIDE_REQUIRE(to.count == 7 && to.commands[1].kind == TIDE_DRAW_STENCIL && to.commands[1].stencil == tide_stencil_packed(mask));
-    TIDE_CHECK(to.commands[3].kind == TIDE_DRAW_STENCIL && to.commands[3].stencil == 0 && to.commands[4].kind == TIDE_DRAW_RECT);
-    TIDE_CHECK(to.commands[5].kind == TIDE_DRAW_STENCIL && to.commands[5].stencil == tide_stencil_packed(inside));
-    TIDE_CHECK(to.commands[6].kind == TIDE_DRAW_RECT);
+    TIDE_REQUIRE(shown(&to).count == 7 && shown(&to).commands[1].kind == TIDE_DRAW_STENCIL && shown(&to).commands[1].stencil == tide_stencil_packed(mask));
+    TIDE_CHECK(shown(&to).commands[3].kind == TIDE_DRAW_STENCIL && shown(&to).commands[3].stencil == 0 && shown(&to).commands[4].kind == TIDE_DRAW_RECT);
+    TIDE_CHECK(shown(&to).commands[5].kind == TIDE_DRAW_STENCIL && shown(&to).commands[5].stencil == tide_stencil_packed(inside));
+    TIDE_CHECK(shown(&to).commands[6].kind == TIDE_DRAW_RECT);
     TIDE_CHECK(to.place.stencil == tide_stencil_packed(tide_stencil_tested(TIDE_STENCIL_GREATER, 7)));
     tide_draw_free(&from);
     tide_draw_free(&to);

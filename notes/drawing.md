@@ -15,7 +15,7 @@ Recorded quads; numbers in notes/benchmarks.md, Drawing, third round).
   straight into the list from where the caller has the values (registers, as
   often as not: on Windows a color or a matrix passed to a function goes by
   its address, through memory). Everything else is the functions as they were,
-  renamed `tide_draw_plain`, `tide_draw_round_rect_placed`,
+  renamed `tide_draw_plain_placed`, `tide_draw_round_rect_placed`,
   `tide_draw_mesh_placed` and `tide_draw_mesh_3d_placed`. The mesh paths are
   `always_inline`: clang otherwise kept them as calls. Same names, arguments and
   results for every caller, generated code included.
@@ -42,6 +42,26 @@ Recorded quads; numbers in notes/benchmarks.md, Drawing, third round).
   mesh's. The embed host's packet (`platform/src/embed.c`, `unquad`) shows
   them as the meshes they were, a `TIDE_DRAW_MESH` over their four corners, so
   what reads it is unchanged.
+- **Plain shapes as records** (`tide_draw_plain`, `TIDE_DRAW_PLAIN`,
+  `tide_draw_list.plains`; the owner's "yes do it", 2026-10-20): rects,
+  circles, their outlines and one-pixel lines are kept as 24-byte records (two
+  points, the color as four bytes, the kind), where each was a 44-byte command
+  with a float color. A run of them is one `TIDE_DRAW_PLAIN` command
+  (`plain.first`, `plain.count`) that goes on while the blend is the same and
+  nothing is recorded between; what settles first (a camera, a clip) ends it.
+  A tint or a transform changes the shape as before (`plain_altered`) and then
+  records it. The color is the bytes the GPU gets (`tide_draw_color_bytes`,
+  the renderer's `to_rgba` conversion moved into `tide/draw.h` for both), so
+  every frame is the same bytes; read back (`tide_draw_plain_color`) it's
+  each byte over 255, not the float the call had. `tide_draw_expand` gives a
+  list's commands with each plain shape a command of its own, as they were:
+  the embed packet goes out that way (`unquad`, with its quads as meshes), so
+  what reads it is unchanged, and tests read lists through it
+  (`tests/draw_test.h`: `tide_test_flat`, a copy; `tide_test_flatten`, the
+  list itself; `tide_test_color_is`, within half a byte's step).
+  `tide_draw_append` carries the records. The GUI moves an area's records
+  with it once it's placed, and sizes a plain panel's record
+  (`tide_gui_group.panel_plain`, `commands_from`, `plains_from`).
 - Measured (65,536 a frame, Vulkan, totals): rects 0.58 -> 0.47 ms, round
   rects 1.23 -> about 0.7, textured quads 1.46 -> about 1.2, cubes 1.63 ->
   1.35 (see benchmarks.md for the gated numbers). Recording rects 0.27 ->
@@ -55,7 +75,9 @@ Recorded quads; numbers in notes/benchmarks.md, Drawing, third round).
   (`platform/tests/embed.c`) draws a sprite in Tide and finds it in the packet
   as a mesh over its corners, with no quads command; the platform pixel tests
   (`runs_drawn_alike` mixes recorded quads with meshes both ways) and every
-  draw test as before.
+  draw test as before. With plain records: `draw_list_grows` (100,000 rects
+  are one run and one command, and appended as one), `draw_records_in_order`;
+  the rest read lists through `tests/draw_test.h`, colors to a byte.
 
 ## Recording sprites and 3D instances (2026-10-20, second round)
 

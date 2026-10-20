@@ -713,18 +713,14 @@ typedef struct rgba {
     uint8_t r, g, b, a;
 } rgba;
 
-// A color as bytes: each channel kept from 0 to 1 first, NaN as 0, times 255, plus a half, and what's after the
-// point dropped, the four at once (maxnum and minnum are fmaxf's and fminf's rule; lane by lane, IEEE's arithmetic):
-// the same byte for every one of the 2^32 floats as (uint8_t)(fminf(fmaxf(v, 0), 1) * 255 + 0.5f), checked
-// exhaustively. With no branch: tide_platform_draw --bench spent a seventh of its time here when each channel branched.
-typedef float rgba_lanes __attribute__((ext_vector_type(4)));
-typedef int32_t rgba_ints __attribute__((ext_vector_type(4)));
-
+// A color as the bytes a GPU gets for it: the list's own conversion (tide_draw_color_bytes), which plain shapes are
+// recorded with, so every color is the same bytes whichever converted it.
 static rgba to_rgba(const tide_color c)
 {
-    const rgba_lanes kept = __builtin_elementwise_minnum(__builtin_elementwise_maxnum((rgba_lanes){c.r, c.g, c.b, c.a}, (rgba_lanes)0.0f), (rgba_lanes)1.0f);
-    const rgba_ints bytes = __builtin_convertvector(kept * 255.0f + 0.5f, rgba_ints);
-    return (rgba){(uint8_t)bytes.x, (uint8_t)bytes.y, (uint8_t)bytes.z, (uint8_t)bytes.w};
+    const uint32_t bytes = tide_draw_color_bytes(c);
+    rgba out;
+    memcpy(&out, &bytes, sizeof out);
+    return out;
 }
 
 // Shapes go to the GPU as instances of one quad, each its shape in window
@@ -1232,69 +1228,76 @@ static void add_circle(const bool wire, const float x, const float y, const floa
                              .rim = {color.r, color.g, color.b, color.a}});
 }
 
-// The plain shapes from command `at` on, one after another with one blend
-// (rects, their outlines, lines, and circles where the destination isn't
-// scaled), as the cases of draw_list add each, in one loop: a frame of many
-// shapes spends its time here. Each one's arithmetic is theirs, to the bit.
-// Returns where the run ends: the first command it isn't.
-static uint32_t add_plain_run(const tide_draw_list *list, uint32_t at, const camera *cam)
+// A run of the list's plain shapes (TIDE_DRAW_PLAIN: rects, their outlines, lines, and circles where the
+// destination isn't scaled) into the run of shapes there is, in one loop: a frame of many shapes spends its time
+// here. Each one's arithmetic is what it always was, to the bit, its color as the list has it. A circle on a scaled
+// destination goes as the smooth shape it also is (add_circle), between them.
+static void add_plain_run(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
 {
-    const uint8_t blend = list->commands[at].blend;
-    if (!run_goes_on(STEP_SHAPES)) start_shapes();
-    const uint32_t step = step_count - 1u;
+    const uint32_t first = c->plain.first < list->plain_count ? c->plain.first : list->plain_count;
+    const uint32_t count = c->plain.count < list->plain_count - first ? c->plain.count : list->plain_count - first;
+    const tide_draw_plain *in = list->plains + first, *const end = in + count;
     const bool gui = cam->gui;
     const float scale = cam->scale, cx = cam->center.x, cy = cam->center.y;
     const float half_width = (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f;
     const float half_height = (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f;
-    for (;;) {
-        // In pieces, so a long list with few shapes doesn't keep room for one a command
-        const uint32_t left = list->count - at, piece = left < 4096u ? left : 4096u;
-        shape *const first = shape_room(piece), *out = first;
-        const tide_draw_command *c = &list->commands[at], *const end = c + piece;
-        for (; c < end; c++, out++) {
-            if (c->blend != blend) break;
-            const rgba color = to_rgba(c->color);
+    while (in < end) {
+        if (scaled && (in->kind == TIDE_DRAW_CIRCLE || in->kind == TIDE_DRAW_WIRE_CIRCLE)) {
+            const tide_float2 p = to_screen(cam, in->a);
+            rgba color;
+            memcpy(&color, &in->color, sizeof color);
+            add_circle(in->kind == TIDE_DRAW_WIRE_CIRCLE, p.x, p.y, in->b.x * cam->scale, color);
+            in++;
+            continue;
+        }
+        if (!run_goes_on(STEP_SHAPES)) start_shapes();
+        const uint32_t step = step_count - 1u;
+        // In pieces, so a long run takes room as it goes
+        const uint32_t left = (uint32_t)(end - in), piece = left < 4096u ? left : 4096u;
+        shape *const out_first = shape_room(piece);
+        shape *out = out_first;
+        for (const tide_draw_plain *const stop = in + piece; in < stop; in++) {
             float ax, ay, bx, by;
             int kind;
-            switch ((tide_draw_kind)c->kind) {
+            switch ((tide_draw_kind)in->kind) {
             case TIDE_DRAW_RECT:
             case TIDE_DRAW_WIRE_RECT: { // Its top left corner through to_screen: y goes up in the world, down in the GUI
-                const float x = c->a.x - c->b.x * 0.5f, y = c->a.y + (gui ? -c->b.y * 0.5f : c->b.y * 0.5f);
+                const float x = in->a.x - in->b.x * 0.5f, y = in->a.y + (gui ? -in->b.y * 0.5f : in->b.y * 0.5f);
                 const float left_x = gui ? x * scale : half_width + (x - cx) * scale;
                 const float top_y = gui ? y * scale : half_height - (y - cy) * scale;
-                bx = c->b.x * scale * 0.5f;
-                by = c->b.y * scale * 0.5f;
+                bx = in->b.x * scale * 0.5f;
+                by = in->b.y * scale * 0.5f;
                 ax = left_x + bx;
                 ay = top_y + by;
-                kind = c->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT;
+                kind = in->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT;
                 break;
             }
             case TIDE_DRAW_CIRCLE:
             case TIDE_DRAW_WIRE_CIRCLE:
                 if (scaled) goto done; // A smooth shape there (add_circle)
-                ax = gui ? c->a.x * scale : half_width + (c->a.x - cx) * scale;
-                ay = gui ? c->a.y * scale : half_height - (c->a.y - cy) * scale;
-                bx = by = c->b.x * scale;
-                kind = c->kind == TIDE_DRAW_CIRCLE ? SHAPE_CIRCLE : SHAPE_WIRE_CIRCLE;
+                ax = gui ? in->a.x * scale : half_width + (in->a.x - cx) * scale;
+                ay = gui ? in->a.y * scale : half_height - (in->a.y - cy) * scale;
+                bx = by = in->b.x * scale;
+                kind = in->kind == TIDE_DRAW_CIRCLE ? SHAPE_CIRCLE : SHAPE_WIRE_CIRCLE;
                 break;
             case TIDE_DRAW_LINE:
-                ax = gui ? c->a.x * scale : half_width + (c->a.x - cx) * scale;
-                ay = gui ? c->a.y * scale : half_height - (c->a.y - cy) * scale;
-                bx = gui ? c->b.x * scale : half_width + (c->b.x - cx) * scale;
-                by = gui ? c->b.y * scale : half_height - (c->b.y - cy) * scale;
+                ax = gui ? in->a.x * scale : half_width + (in->a.x - cx) * scale;
+                ay = gui ? in->a.y * scale : half_height - (in->a.y - cy) * scale;
+                bx = gui ? in->b.x * scale : half_width + (in->b.x - cx) * scale;
+                by = gui ? in->b.y * scale : half_height - (in->b.y - cy) * scale;
                 kind = SHAPE_LINE;
                 break;
-            default:
-                goto done;
+            default: // No plain shape: nothing drawn
+                continue;
             }
-            *out = (shape){{ax, ay}, {bx, by}, {color.r, color.g, color.b, color.a}, (float)kind};
+            *out = (shape){{ax, ay}, {bx, by}, {0, 0, 0, 0}, (float)kind};
+            memcpy(out->color, &in->color, sizeof out->color);
+            out++;
         }
     done:;
-        const uint32_t added = (uint32_t)(out - first);
+        const uint32_t added = (uint32_t)(out - out_first);
         shape_count += added;
         steps[step].count += added;
-        at += added;
-        if (c != end || at == list->count) return at;
     }
 }
 
@@ -3999,9 +4002,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         camera *cam = &f->through;
         if (c->kind != TIDE_DRAW_TARGET && !f->valid) continue;
         draw_blend = c->blend;
-        const bool circle = c->kind == TIDE_DRAW_CIRCLE || c->kind == TIDE_DRAW_WIRE_CIRCLE;
-        if (c->kind == TIDE_DRAW_RECT || c->kind == TIDE_DRAW_WIRE_RECT || c->kind == TIDE_DRAW_LINE || (circle && !scaled)) {
-            i = add_plain_run(list, i, cam) - 1u; // It and the plain shapes after it
+        if (c->kind == TIDE_DRAW_PLAIN) {
+            add_plain_run(list, c, cam);
             continue;
         }
         if (c->kind == TIDE_DRAW_SHAPE) {
@@ -4088,18 +4090,15 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             f->stencil = draw_stencil = tide_stencil_packed(tide_stencil_unpacked(c->stencil));
             add_step(STEP_STENCIL);
             break;
-        case TIDE_DRAW_CIRCLE: // On a scaled destination: the others are add_plain_run's, as rects and lines are
-        case TIDE_DRAW_WIRE_CIRCLE: {
-            const tide_float2 p = to_screen(cam, c->a);
-            const float r = c->b.x * cam->scale;
-            add_circle(c->kind == TIDE_DRAW_WIRE_CIRCLE, p.x, p.y, r, color);
-            break;
-        }
         case TIDE_DRAW_SHAPE:
+        case TIDE_DRAW_PLAIN:
+            break; // add_plain_run's and add_smooth_run's, above
+        case TIDE_DRAW_CIRCLE:
+        case TIDE_DRAW_WIRE_CIRCLE:
         case TIDE_DRAW_RECT:
         case TIDE_DRAW_WIRE_RECT:
         case TIDE_DRAW_LINE:
-            break; // add_plain_run's and add_smooth_run's, above
+            break; // Kinds of the list's plain shapes, never of its commands
         case TIDE_DRAW_TEXT: {
             // A command in bold without the bold's file (a list filled by hand) is in the regular weight
             const unsigned char *font = c->words.bold ? list->bold : TIDE_FONT_REGULAR;

@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world before;
 static tide_world now;
@@ -13,6 +14,7 @@ static void frame(const tide_world *previous, const float alpha)
 {
     tide_draw_reset(&draw);
     tide_frame(&now, previous, alpha, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
 }
 
 // The nth command of `kind`'s run.

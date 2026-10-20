@@ -55,6 +55,7 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_SHAPE,     // a = center, b = size, color, shape: a shape with smooth edges
     TIDE_DRAW_STENCIL,   // stencil: what the commands after it do with their destination's stencil
     TIDE_DRAW_QUADS,     // mesh: a run of quads of 2D meshes (tide_draw_list.quads), and the texture they sample
+    TIDE_DRAW_PLAIN,     // plain: a run of plain shapes (tide_draw_list.plains): rects, circles, their outlines, lines
 } tide_draw_kind;
 
 // How what a command draws goes over what's there. Tide's `Blend` has the same
@@ -181,6 +182,10 @@ typedef struct tide_draw_command {
             tide_float2 a;
             tide_float2 b;
         };
+        struct {            // TIDE_DRAW_PLAIN
+            uint32_t first; // Its shapes in tide_draw_list.plains...
+            uint32_t count; // ...and how many
+        } plain;
         struct {              // TIDE_DRAW_MESH, TIDE_DRAW_QUADS
             uint32_t first;   // Its indices in tide_draw_list.indices, three a triangle (its quads in .quads)...
             uint32_t count;   // ...and how many
@@ -283,6 +288,43 @@ typedef struct tide_vertex {
     tide_float2 uv;
     tide_color color;
 } tide_vertex;
+
+// A color as the bytes a GPU gets for it: each channel kept from 0 to 1, NaN as
+// 0, times 255, plus a half, what's after the point dropped. The four at once
+// (maxnum and minnum are fmaxf's and fminf's rule; lane by lane IEEE's
+// arithmetic), the same byte for every one of the 2^32 floats as
+// (uint8_t)(fminf(fmaxf(v, 0), 1) * 255 + 0.5f), checked exhaustively. The
+// list records plain shapes' colors so, and renderers convert every other
+// color so, so the two are the same bytes.
+typedef float tide_draw_color_lanes __attribute__((ext_vector_type(4)));
+typedef int32_t tide_draw_color_ints __attribute__((ext_vector_type(4)));
+
+static inline uint32_t tide_draw_color_bytes(const tide_color c)
+{
+    const tide_draw_color_lanes v = {c.r, c.g, c.b, c.a};
+    const tide_draw_color_lanes kept = __builtin_elementwise_minnum(__builtin_elementwise_maxnum(v, (tide_draw_color_lanes)0.0f),
+                                                                    (tide_draw_color_lanes)1.0f);
+    const tide_draw_color_ints bytes = __builtin_convertvector(kept * 255.0f + 0.5f, tide_draw_color_ints);
+    return (uint32_t)bytes.x | (uint32_t)bytes.y << 8 | (uint32_t)bytes.z << 16 | (uint32_t)bytes.w << 24;
+}
+
+// A plain shape (TIDE_DRAW_PLAIN's): a rect, a circle, their outlines or a
+// line, 24 bytes, its color as the GPU gets it (red first in memory). The list
+// keeps them side by side, a run of them a command, as the renderer draws them.
+typedef struct tide_draw_plain {
+    tide_float2 a;    // A rect's or circle's center, a line's start
+    tide_float2 b;    // A rect's size, a circle's radius (and 0), a line's end
+    uint32_t color;   // tide_draw_color_bytes
+    uint8_t kind;     // TIDE_DRAW_RECT, _WIRE_RECT, _CIRCLE, _WIRE_CIRCLE or _LINE
+    uint8_t zero[3];  // Explicit padding, kept zero
+} tide_draw_plain;
+
+// The color a plain shape is drawn with, as a color: its bytes over 255.
+static inline tide_color tide_draw_plain_color(const tide_draw_plain *p)
+{
+    return (tide_color){(float)(p->color & 255u) / 255.0f, (float)(p->color >> 8 & 255u) / 255.0f,
+                        (float)(p->color >> 16 & 255u) / 255.0f, (float)(p->color >> 24) / 255.0f};
+}
 
 // A 2D mesh of four corners and two triangles, p q r and p r s, whose corners'
 // places and uvs take two numbers at most on each axis, p's and r's, and are of
@@ -1346,6 +1388,9 @@ typedef struct tide_draw_list {
     tide_vertex *vertices; // The meshes' corners
     uint32_t vertex_count;
     uint32_t vertex_capacity;
+    tide_draw_plain *plains; // The plain shapes (TIDE_DRAW_PLAIN)
+    uint32_t plain_count;
+    uint32_t plain_capacity;
     tide_draw_quad *quads; // The meshes that are one quad each (TIDE_DRAW_QUADS)
     uint32_t quad_count;
     uint32_t quad_capacity;
@@ -1687,25 +1732,37 @@ static inline tide_color tide_draw_tint(const tide_draw_list *d)
     return d->place.tinted ? d->place.tint : TIDE_COLOR_WHITE;
 }
 
-// The plain shapes: rects, circles, their outlines and lines. Recording one is
-// a command's stores where nothing set changes it, so that much is inline, in
-// the code that draws: a frame of shapes spends its time here, and a call for
-// each cost as much as the stores (on Windows a color is passed by its address,
-// too). tide_draw_plain does everything else: a tint or a transform worked in,
-// settings to record first, room for more commands.
-void tide_draw_plain(tide_draw_list *d, tide_draw_kind kind, tide_float2 a, tide_float2 b, tide_color color);
+// The plain shapes: rects, circles, their outlines and lines. Recording one
+// where nothing set changes it is a record's stores and the run's count, so
+// that much is inline, in the code that draws: a frame of shapes spends its
+// time here, and a call for each cost as much as the stores (on Windows a color
+// is passed by its address, too). tide_draw_plain_placed does everything else:
+// a tint or a transform worked in, settings to record first, a run of its own,
+// room for more.
+void tide_draw_plain_placed(tide_draw_list *d, tide_draw_kind kind, tide_float2 a, tide_float2 b, tide_color color);
 
 static inline __attribute__((always_inline)) void tide_draw_plain_kind(tide_draw_list *d, const tide_draw_kind kind,
                                                                        const tide_float2 a, const tide_float2 b,
                                                                        const tide_color color)
 {
-    if (__builtin_expect((d->altered | d->unsettled) != 0u || d->count == d->capacity, 0)) {
-        tide_draw_plain(d, kind, a, b, color);
+    // More of the run the last command is, with the blend there is
+    tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
+    if (__builtin_expect((d->altered | d->unsettled) != 0u || !last || last->kind != TIDE_DRAW_PLAIN
+                             || last->blend != (uint8_t)d->place.blend || last->plain.first + last->plain.count != d->plain_count
+                             || d->plain_count == d->plain_capacity, 0)) {
+        tide_draw_plain_placed(d, kind, a, b, color);
         return;
     }
-    tide_draw_command *c = &d->commands[d->count++];
-    *c = (tide_draw_command){.kind = (uint8_t)kind, .blend = (uint8_t)d->place.blend, .a = a, .b = b, .color = color};
+    d->plains[d->plain_count++] = (tide_draw_plain){a, b, tide_draw_color_bytes(color), (uint8_t)kind, {0, 0, 0}};
+    last->plain.count++;
 }
+
+// A list's commands as they'd be with a command for each plain shape: each
+// TIDE_DRAW_PLAIN run's shapes a command of its kind each, with its run's blend
+// and its color (tide_draw_plain_color), and every other command as it is. For
+// what reads a list command by command: tests, and the embed host's packet.
+// Writes as many as `room` takes into `out` and returns how many there are.
+uint32_t tide_draw_expand(const tide_draw_list *d, tide_draw_command *out, uint32_t room);
 
 static inline void tide_draw_circle(tide_draw_list *d, const tide_float2 center, const float radius, const tide_color color)
 {

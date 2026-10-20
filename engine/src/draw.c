@@ -369,6 +369,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->vertex_count = 0;
     d->index_count = 0;
     d->quad_count = 0;
+    d->plain_count = 0;
     d->matrix_count = 0;
     d->run_count = 0;
     d->instance_used = 0;
@@ -438,6 +439,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->vertices);
     free(d->indices);
     free(d->quads);
+    free(d->plains);
     free(d->textures);
     free(d->texture_index);
     free(d->targets);
@@ -1275,6 +1277,31 @@ void tide_draw_clear_depth(tide_draw_list *d)
 static void push_shape(tide_draw_list *d, tide_float2 center, tide_float2 size, tide_color color,
                        tide_draw_shape_data shape);
 
+// A plain shape as it's to be drawn, after the last command's run of them where it can go on with it (the same
+// blend, nothing between them), or a run of its own.
+static void plain_placed(tide_draw_list *d, const tide_draw_plain *shape)
+{
+    if (d->unsettled) settle(d); // What comes before it, which a run of its own goes after
+    d->plains = grow(d->plains, d->plain_count, &d->plain_capacity, 1, sizeof(tide_draw_plain), 1024u);
+    const uint32_t at = d->plain_count++;
+    d->plains[at] = *shape;
+    tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
+    if (last && last->kind == TIDE_DRAW_PLAIN && last->blend == (uint8_t)d->place.blend && last->plain.first + last->plain.count == at) {
+        last->plain.count++;
+        return;
+    }
+    tide_draw_command *c = push(d, TIDE_DRAW_PLAIN, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
+    c->plain.first = at;
+    c->plain.count = 1;
+}
+
+static void plain_recorded(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b,
+                           const tide_color color)
+{
+    const tide_draw_plain shape = {a, b, tide_draw_color_bytes(color), (uint8_t)kind, {0, 0, 0}};
+    plain_placed(d, &shape);
+}
+
 // A shape that fills whole pixels (or a plain circle), as the settings leave
 // it. A frame of them spends its time in the functions that call this, which
 // only do when there's a tint or a transform.
@@ -1305,14 +1332,14 @@ static __attribute__((noinline)) void plain_altered(tide_draw_list *d, const tid
         a = moved_point(t, a);
         b = kind == TIDE_DRAW_LINE ? moved_point(t, b) : circle ? tide_f2(b.x * p->scale, 0.0f) : tide_f2(b.x * t->x.x, b.y * t->y.y);
     }
-    push(d, kind, a, b, color);
+    plain_recorded(d, kind, a, b, color);
 }
 
 // A plain shape where tide_draw_plain_kind's inline stores aren't all there is to it
-void tide_draw_plain(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b, const tide_color color)
+void tide_draw_plain_placed(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b, const tide_color color)
 {
     if (d->altered) plain_altered(d, kind, a, b, color);
-    else push(d, kind, a, b, color);
+    else plain_recorded(d, kind, a, b, color);
 }
 
 // ---------------------------------------------------------------------------
@@ -3337,6 +3364,26 @@ void tide_draw_gather_levels(const tide_draw_list *d)
     }
 }
 
+uint32_t tide_draw_expand(const tide_draw_list *d, tide_draw_command *out, const uint32_t room)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < d->count; i++) {
+        const tide_draw_command *c = &d->commands[i];
+        if (c->kind != TIDE_DRAW_PLAIN) {
+            if (n < room) out[n] = *c;
+            n++;
+            continue;
+        }
+        for (uint32_t k = 0; k < c->plain.count && c->plain.first + k < d->plain_count; k++, n++) {
+            const tide_draw_plain *p = &d->plains[c->plain.first + k];
+            if (n < room) {
+                out[n] = (tide_draw_command){.kind = p->kind, .blend = c->blend, .a = p->a, .b = p->b, .color = tide_draw_plain_color(p)};
+            }
+        }
+    }
+    return n;
+}
+
 void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
 {
     tide_draw_prepare(from, NULL);
@@ -3409,6 +3456,10 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
                              r, NULL);
         } else if (c->kind == TIDE_DRAW_SHAPE) {
             if (c->shape < from->shape_count) push_shape(d, c->a, c->b, c->color, from->shapes[c->shape]);
+        } else if (c->kind == TIDE_DRAW_PLAIN) {
+            for (uint32_t k = 0; k < c->plain.count && c->plain.first + k < from->plain_count; k++) {
+                plain_placed(d, &from->plains[c->plain.first + k]);
+            }
         } else {
             push(d, (tide_draw_kind)c->kind, c->a, c->b, c->color);
         }
