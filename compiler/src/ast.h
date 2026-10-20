@@ -313,6 +313,8 @@ typedef struct param {
     bool written; // The body assigns through it
     bool c_indirect; // Internal CPU ABI: a proven read-only aggregate can borrow its caller's storage
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
+    bool scene;     // `with scene Arena`, `without scene Arena`: by whether the entity is a loaded Arena's; no type, ...
+    struct decl *scene_of; // ...but the scene, once the checker found it
     // `verified Health health`, `with verified Dead`, `event(verified Died died)`: from the world the server has
     // confirmed, in a view; in a local handler's trigger, once the server confirmed the tick that sent the event
     bool verified;
@@ -772,6 +774,9 @@ typedef struct decl {
     bool verified_entities;
     bool takes_verified; // Some parameter of it is `verified`, a singleton's too: it needs a confirmed world to run
     int ownership;       // OWNERSHIP_WITH or OWNERSHIP_WITHOUT: a view's or listener's ownership filter
+    // `with scene`/`without scene` filters: the scenes whose entities it takes, and those it doesn't
+    VEC(struct decl *) in_scenes;
+    VEC(struct decl *) out_scenes;
     comp_mask query_fields; // Attached local fields reached through queries, including synchronous callees
     comp_mask query_mut_fields; // Query field references that can change a caller's readonly local-field borrow
     VEC(struct decl *) after; // Systems or views that must run first ([After], and [Before] on them)

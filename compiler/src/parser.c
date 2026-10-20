@@ -2246,6 +2246,12 @@ static void parse_query_params(parser *p, decl *d)
                 vec_push(d->params, prm);
                 continue;
             }
+            // `with scene Arena`, `without scene Arena`: a word of its own right after them, before a name, and a
+            // name like any other everywhere else (a component named scene, `with scene`)
+            if (filter && at(p, T_IDENT) && str_eq_c(peek(p)->text, "scene") && peek_at(p, 1)->kind == T_IDENT) {
+                advance(p);
+                prm.scene = true;
+            }
             const type_ref *type = parse_decl_type(p, what);
             prm.type_name = type->text;
             prm.type_qual_at = type->at;

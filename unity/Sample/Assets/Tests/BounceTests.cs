@@ -57,6 +57,10 @@ public sealed unsafe class BounceTests
         Assert.IsNotNull(totem, "Unity loaded Bonus as the match did, and the Totem shows its entity");
         Assert.IsTrue(totem.TryGet(out Tide.Game.Spinner spinner) && spinner.speed == 3f, "with the scene's Spinner");
         Assert.IsTrue(SceneManager.GetSceneByPath(Bounce).isLoaded, "beside Bounce");
+        // Spinning is "without scene Bonus": the totem stays as Bonus has it
+        var turn = totem.transform.rotation;
+        yield return Until(() => false, 1f);
+        Assert.Less(Quaternion.Angle(turn, totem.transform.rotation), 0.01f, "Bonus's totem doesn't spin");
         runner.Send(new Tide.Game.ShowBonus { on = false });
         yield return Until(() => !SceneManager.GetSceneByPath(Bonus).isLoaded, 10f);
         Assert.IsFalse(SceneManager.GetSceneByPath(Bonus).isLoaded, "and unloaded it as the match did");

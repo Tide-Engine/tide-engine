@@ -1,0 +1,5 @@
+// expect: 'Spin' is a component, and 'with scene' takes a scene
+// expect: and 'with scene Arena' takes a loaded Arena's entities
+component Spin { float speed; }
+system Spinning(mut Spin spin, with scene Spin) { spin.speed += 1; }
+scene Main { }

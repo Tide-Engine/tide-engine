@@ -435,3 +435,6 @@ VisibilityGroup group = default;
 Visibility policy = default;
 local event(Shown) BecameVisible() { }
 local event(Hidden) BecameHidden() { }
+// Scene filters
+system InArena(mut Counter counter, with scene Arena) { }
+system OutOfArena(mut Counter counter, without scene Arena) { }

@@ -1109,7 +1109,9 @@ static void walk_param(const param *p, const decl *d)
                                  .param_of = d, .name = p->type_name});
             return;
         }
-        type_place(p->type_ref, p->type_qual_at, p->type_at, p->type_name, p->type);
+        // `with scene Arena`: the scene's name, as a type's is, for its hover and its renames
+        const type placed = p->scene && p->scene_of ? (type){TY_COMPONENT, p->scene_of} : p->type;
+        type_place(p->type_ref, p->type_qual_at, p->type_at, p->type_name, placed);
     }
     if (p->name.len > 0) {
         add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
@@ -1145,7 +1147,11 @@ static void signature_refs(const sig_item *items, const int count)
     for (int i = 0; i < count; i++) {
         const sig_item *item = &items[i];
         if (item->mode == PARAM_QUERY) signature_refs(item->query.items, item->query.count);
-        else if (item->param && !item->param->ownership) type_place(item->type_ref, item->type_qual_at, item->type_at, item->type_name, item->param->type);
+        else if (item->param && !item->param->ownership) {
+            const param *p = item->param;
+            type_place(item->type_ref, item->type_qual_at, item->type_at, item->type_name,
+                       p->scene && p->scene_of ? (type){TY_COMPONENT, p->scene_of} : p->type);
+        }
     }
 }
 
@@ -7813,6 +7819,7 @@ static void put_param_here(sb *out, const param *p)
               : p->mode == PARAM_WITHOUT ? "without " : "");
     if (p->verified) sb_put(out, "verified ");
     if (p->ownership) sb_put(out, "ownership");
+    else if (p->scene) sb_printf(out, "scene " STR_FMT, STR_ARG(p->type_name));
     else put_type_here(out, p->type, p->type_name);
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text));

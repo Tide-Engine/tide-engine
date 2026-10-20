@@ -703,10 +703,12 @@ static bool same_param_lists(const param *a, const int a_count, const param *b, 
         if (i == a_count || j == b_count) return i == a_count && j == b_count;
         const param *p = &a[i++];
         const param *q = &b[j++];
-        if (signature_form(p->mode) != signature_form(q->mode) || p->ownership != q->ownership || p->verified != q->verified
-            || p->placement_local != q->placement_local) return false;
+        if (signature_form(p->mode) != signature_form(q->mode) || p->ownership != q->ownership || p->scene != q->scene
+            || p->verified != q->verified || p->placement_local != q->placement_local) return false;
         if (p->mode == PARAM_QUERY) {
             if (!same_param_lists(p->query.items, p->query.count, q->query.items, q->query.count)) return false;
+        } else if (p->scene) {
+            if (p->scene_of != q->scene_of) return false;
         } else if (!p->ownership && !same_type(p->type, q->type)) {
             return false;
         }
@@ -742,7 +744,8 @@ static void put_param_types(sb *out, const param *params, const int count)
         if (p->mode == PARAM_WITH) sb_put(out, "with ");
         if (p->mode == PARAM_WITHOUT) sb_put(out, "without ");
         if (p->verified) sb_put(out, "verified ");
-        if (p->ownership || p->type.kind == TY_ERROR) sb_printf(out, STR_FMT, STR_ARG(p->type_name));
+        if (p->scene) sb_put(out, "scene ");
+        if (p->ownership || p->scene || p->type.kind == TY_ERROR) sb_printf(out, STR_FMT, STR_ARG(p->type_name));
         else sb_put(out, type_name(p->type));
     }
 }
@@ -764,7 +767,8 @@ static void put_c_suffix(sb *out, const param *params, const int count)
             sb_put(out, "_end");
             continue;
         }
-        const char *text = p->ownership || p->type.kind == TY_ERROR ? str_to_cstr(p->type_name) : type_name(p->type);
+        if (p->scene) sb_put(out, "scene_");
+        const char *text = p->ownership || p->scene || p->type.kind == TY_ERROR ? str_to_cstr(p->type_name) : type_name(p->type);
         for (; *text; text++) {
             if (isalnum((unsigned char)*text)) sb_putn(out, text, 1);
             else if (*text == '?') sb_put(out, "_opt");
@@ -15302,6 +15306,43 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
     if (query->query_local) row->fields.items[0].type = (type){TY_LOCAL_ENTITY, NULL};
 }
 
+// `with scene Arena`, `without scene Arena`: whether a loaded Arena owns the entity (a spawn joins the scene of the
+// entity the code runs for). Which rows pass is the loop's to check by the row's scene, like a sparse component
+// (gen_row_filter); a handler's, by its target's. The scene's own entity is one of its entities (its scene is
+// itself); `with Arena` takes it alone.
+static void check_scene_filter(const checker *c, decl *sys, param *p)
+{
+    const bool with = p->mode == PARAM_WITH;
+    const char *word = with ? "with" : "without";
+    p->type = (type){TY_VOID, NULL};
+    decl *d = find_type(c, p->type_name, p->type_at);
+    decl *other_prefab;
+    if (!d || d->kind != DECL_COMPONENT || !d->is_scene) {
+        if (d) diag_error(p->type_at, "'" STR_FMT "' is %s, and '%s scene' takes a scene", STR_ARG(p->type_name), decl_what(d), word);
+        else if (lookup(c->prog, c->unit, p->type_name, NAME_PREFAB, &other_prefab)) {
+            diag_error(p->type_at, "'" STR_FMT "' is a prefab, and '%s scene' takes a scene", STR_ARG(p->type_name), word);
+        } else {
+            diag_error(p->type_at, "unknown scene '" STR_FMT "'", STR_ARG(p->type_name));
+        }
+        diag_note("a scene is declared 'scene Arena { }' (a Unity scene of Tide entities is one, named after its file), "
+                  "and '%s scene Arena' takes %s", word, with ? "a loaded Arena's entities" : "those of no loaded Arena");
+        return;
+    }
+    bool in = false, out = false;
+    for (int i = 0; i < sys->in_scenes.count; i++) in |= sys->in_scenes.items[i] == d;
+    for (int i = 0; i < sys->out_scenes.count; i++) out |= sys->out_scenes.items[i] == d;
+    if (with ? in : out) diag_error(p->at, "'%s scene " STR_FMT "' appears twice", word, STR_ARG(d->name));
+    else if (with ? out : in) {
+        diag_error(p->at, "%s '" STR_FMT "' takes entities both in and not in '" STR_FMT "', and none is both",
+                   system_what(sys), STR_ARG(sys->name), STR_ARG(d->name));
+    } else if (with) {
+        vec_push(sys->in_scenes, d);
+    } else {
+        vec_push(sys->out_scenes, d);
+    }
+    p->scene_of = d;
+}
+
 static void check_params(const checker *c, decl *sys)
 {
     const program *prog = c->prog;
@@ -15317,6 +15358,10 @@ static void check_params(const checker *c, decl *sys)
         param *p = &sys->params.items[i];
         if (p->ownership) {
             check_ownership(c, sys, p);
+            continue;
+        }
+        if (p->scene) {
+            check_scene_filter(c, sys, p);
             continue;
         }
         decl *d = p->mode == PARAM_QUERY ? NULL : find_type(c, p->type_name, p->type_at);
@@ -15569,8 +15614,24 @@ static void check_params(const checker *c, decl *sys)
     } else if (mask_any(seen_verified)) {
         sys->verified_join = true;
     }
-    sys->per_entity = entity || mask_any(seen) || mask_any(seen_verified) || sys->ownership;
-    sys->entity_local = side_of ? side_of->is_local : entity && entity->type.kind == TY_LOCAL_ENTITY;
+    // A scene filter alone runs for every entity of the scenes, as an Entity parameter alone does
+    const bool scened = sys->in_scenes.count || sys->out_scenes.count;
+    sys->per_entity = entity || mask_any(seen) || mask_any(seen_verified) || sys->ownership || scened;
+    sys->entity_local = side_of ? side_of->is_local : entity ? entity->type.kind == TY_LOCAL_ENTITY
+                      : sys->in_scenes.count ? sys->in_scenes.items[0]->is_local
+                      : sys->out_scenes.count && sys->out_scenes.items[0]->is_local;
+    // A scene holds entities of its own side
+    for (int i = 0; scened && i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (!p->scene || p->type.kind != TY_VOID) continue;
+        decl *other;
+        const decl *s = lookup(prog, c->unit, p->type_name, NAME_TYPE, &other);
+        if (s && s->kind == DECL_COMPONENT && s->is_scene && s->is_local != sys->entity_local) {
+            diag_error(p->type_at, "'" STR_FMT "' is a %s scene, and %s '" STR_FMT "' runs for %s entities", STR_ARG(s->name),
+                       s->is_local ? "local" : "match", system_what(sys), STR_ARG(sys->name), sys->entity_local ? "local" : "match");
+            diag_note("a scene only holds entities of its own side");
+        }
+    }
     if (sys->is_handler && sys->is_local && sys->event == prog->forgotten) check_forgotten(sys);
     if (sys->is_handler && sys->is_local && sys->event && !sys->event->is_local && !sys->is_command) check_listener(prog, sys);
     // Whose entities each query goes through. One that names no component is
@@ -17111,6 +17172,14 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
                 char names[512] = "";
                 append_component_names(prog, sys->need_mask, names, sizeof names);
                 diag_note("nothing spawns or adds an entity with %s", names);
+                // A scene's component is on the scene's own entity: its other entities are in it
+                for (int k = 0; k < prog->components.count; k++) {
+                    const decl *scene = prog->components.items[k];
+                    if (!scene->is_scene || !mask_has(sys->need_mask, k)) continue;
+                    diag_note("'with " STR_FMT "' takes the scene's own entity; for the entities in it, write 'with scene " STR_FMT "'",
+                              STR_ARG(scene->name), STR_ARG(scene->name));
+                    break;
+                }
             }
         }
     }
