@@ -390,6 +390,15 @@ notification (`TideBuildService.HasErrors`). Errors coming after a result line
 start the list anew, as tide's stdout and stderr can interleave. Checked by hand
 in batch mode (a broken file, the Console cleared, Play attempted).
 
+**The Console is the user's** (owner, 2026-10-20): logging intrudes and needs a
+good reason. tide's errors and warnings go there; its progress ("building ...
+whenever its files change", "built game-N") doesn't, which Project Settings >
+Tide's status shows instead, nor a player build's output unless it warns. The
+one other line is "the game's errors are fixed", as the errors before it stay
+in the Console. Unity's internal sticky entries (`Debug.LogSticky`,
+`RemoveLogEntriesByEntityId`, keyed by `EntityId` in 6000.6) could take fixed
+errors away instead; not tried.
+
 Tests: the sample's ball is `Assets/Sample/Roller.prefab` (TideEntity with
 `Ball`), spawned by `Spawn(Roller, ...)`; `Bounce.unity` has two pillars named
 Pillar under a plain `Pillars` GameObject, each a `Spinner`, loaded by
