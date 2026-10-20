@@ -79,6 +79,8 @@ component Survivor
     // The right mouse's skill (kits.tide), its kit's at first, another or a rank stronger from a skill card
     Skill secondary;
     int secondaryRank = 1;
+    int charges;                     // C4 charges set down, waiting to be blown (missiles.tide)...
+    int detonations;                 // ...and how many times they've been blown
     int kills;
     int headshots;
     int downs;

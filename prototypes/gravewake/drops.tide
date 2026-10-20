@@ -4,7 +4,7 @@
 // maybe go; in general i dont like the drops from zombies being random abilities". They're gone; items come from
 // levels and chests.)
 
-enum Sfx { Rise, Snarl, Revive, Downed, Hurt, Empty, Throw, Mine, Shell, BossRoar, BossCharge, BossDeath, Swell, Retch, Spit, Splat, Clank, Pounce, Howl, Bellow, Pound, Rocket }
+enum Sfx { Rise, Snarl, Revive, Downed, Hurt, Empty, Throw, Mine, Shell, BossRoar, BossCharge, BossDeath, Swell, Retch, Spit, Splat, Clank, Pounce, Howl, Bellow, Pound, Rocket, Detonate }
 
 event Cue
 {

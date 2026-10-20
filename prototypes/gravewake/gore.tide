@@ -23,6 +23,8 @@ const int GIBS_MOST = 1500;
 const float GIB_SECONDS = 12;        // How long a piece lies before it's gone
 const float DRY_EVERY = 2;           // Every so often the stains fade by DRY_SHARE: old blood's gone in a few minutes
 const float DRY_SHARE = 0.025;
+const float DAWN_DRYING = 8;         // At dawn, drying so many times as often...
+const float DAWN_SHARE = 0.08;       // ...and so much more each time: most of it gone by the next night
 
 struct Gib
 {
@@ -217,6 +219,11 @@ local event(RunBegan began) WipeGore(mut Gore gore)
     gore.gibs.Clear();
 }
 
+local event(NightFell fell) WipeNightGore(mut Gore gore)
+{
+    gore.wipe = true;
+}
+
 // ---- Each frame: the pools spread; the pieces fly, bounce and lie; what they drip and where they land go into the stains ----
 
 [Stage(Layers.Gather, 4)]
@@ -297,9 +304,11 @@ view Tumble(mut Gore gore, mut Fx fx, Me me)
     }
 }
 
-// Into the stains: the ground seen from straight above, every splat this frame laid over what's there.
+// Into the stains: the ground seen from straight above, every splat this frame laid over what's there. At dawn the blood
+// dries away fast, and at nightfall what's left is gone (the owner, 2026-10-20: "it quickly fades away since now
+// everything is red haha, we should clear blood between nights").
 [Stage(Layers.Shadows, 3)]
-view Soak(mut Gore gore, Lens lens)
+view Soak(mut Gore gore, Lens lens, Match match)
 {
     if (!lens.made) return;
     if (gore.wipe)
@@ -307,7 +316,8 @@ view Soak(mut Gore gore, Lens lens)
         lens.stains.Clear(Color(0, 0, 0, 0));
         gore.wipe = false;
     }
-    gore.dry -= Math.Min(Frame.dt, 0.1);
+    var dawn = match.phase == Phase.Dawn;
+    gore.dry -= Math.Min(Frame.dt, 0.1) * (dawn ? DAWN_DRYING : 1.0);
     var drying = gore.dry <= 0;
     if (gore.splats.count == 0 && !drying) return;
     AimStains(lens);
@@ -319,7 +329,7 @@ view Soak(mut Gore gore, Lens lens)
         {
             gore.dry = DRY_EVERY;
             gore.all.Clear();
-            gore.all.Add(Splat { at = float3(NAV_X0 + STAIN_REACH, 0, NAV_Z0 + STAIN_REACH), size = STAIN_REACH * 1.05, stretch = 1, alpha = DRY_SHARE });
+            gore.all.Add(Splat { at = float3(NAV_X0 + STAIN_REACH, 0, NAV_Z0 + STAIN_REACH), size = STAIN_REACH * 1.05, stretch = 1, alpha = dawn ? DAWN_SHARE : DRY_SHARE });
             lens.stains.Instanced(gore.box, gore.boxFaces, gore.all, SplatAt, Dry);
         }
         if (gore.splats.count > 0) lens.stains.Instanced(gore.box, gore.boxFaces, gore.splats, SplatAt, SplatBlood);

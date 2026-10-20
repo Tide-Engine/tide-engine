@@ -48,15 +48,15 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Survivor | Gun | Right mouse | By itself |
 | --- | --- | --- | --- |
 | Gunner | Carbine: automatic, any range | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
-| Breacher | Pump Shotgun: eleven pellets, never needs loading; takes a third less from the dead | Boot: kicks the dead in front over; the nearest one down is stamped on | Firebomb: into the thickest of them |
-| Engineer | SMG: sets items off half again as often | Mine: bursts when the dead come near | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
+| Breacher | Pump Shotgun: fourteen pellets in a wide spread, never needs loading; takes a third less from the dead | Boot: a side kick that sweeps a flash of light through where it reaches, flinging the dead in front back off their feet into the ones behind them (each it strikes flashes white); the nearest one down is stamped on | Firebomb: into the thickest of them |
+| Engineer | SMG: sets items off half again as often | C4 Charge: set down, a red ring round it showing how far it'll reach; right mouse again (BLOW) to set it off, whenever you like | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
 
 The right mouse skill is the survivor's to begin with, and can change: a
 skill card (orange) turns up in some level's offers, another of five
-(Phase Round, Boot, Mine, Leap, Blink) to take in its place, or the one you
-have a rank stronger, to rank III: a phase round becomes three in a fan,
-then five; the boot kicks wider, then all round; a mine becomes two, then
-three; a leap lands wider and harder; a blink bursts where you leave, then
+(Phase Round, Boot, C4 Charge, Leap, Blink) to take in its place, or the one
+you have a rank stronger, to rank III: a phase round becomes three in a fan,
+then five; the boot kicks wider, then all round; a C4 charge becomes two set
+down at once, then three; a leap lands wider and harder; a blink bursts where you leave, then
 where you land too. Pips under the skill show its rank.
 
 Everything but the gun, the right mouse skill and the roll happens by
@@ -166,9 +166,12 @@ nothing left lying but the pieces: a pool spreading where they stood, the
 trunk, arms, legs and head, lumps and gut flying and bleeding through the
 air (a head shot throws the head furthest, a fountain after it); burned to
 death, they fall apart in embers and charred pieces. Bloaters and Spitters
-splash green bile. Old blood dries away in a few minutes. The fire, sparks
-and glows are in hard steps of light, and their glow is in the picture's big
-pixels.
+splash green bile. Fresh blood glistens, the moon catching it and bright flecks
+of wet on it; old blood dries away in a few minutes, and at dawn it all dries
+fast, so each night begins on clean ground. The fire, sparks and glows are
+chunky blocks of light, their halos in the picture's big pixels and in hard
+steps, and what spins and flies (a saw blade, a boot's sweep) leaves solid
+slivers of light behind it, never a soft blur.
 
 Development keys, not in play's interface: F2 six of the dead of a kind
 (Bloaters, Spitters, Wardens, Runners, Brutes, Howlers in turn; with Shift, one

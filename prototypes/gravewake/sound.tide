@@ -425,6 +425,7 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
         case Sfx.Bellow: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, ears.random.NextFloat(0.5, 0.58)); return;
         case Sfx.Pound: Audio.Play(hitsBlunt[ears.random.NextInt(hitsBlunt.count)], cue.at, 1.0, 0.6); return;
         case Sfx.Rocket: Audio.Play(throwClip, cue.at, 0.8, ears.random.NextFloat(1.5, 1.7)); return;
+        case Sfx.Detonate: Audio.Play(emptyClip, cue.at, 1.0, 1.6); return;
     }
 }
 

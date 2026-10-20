@@ -42,7 +42,7 @@ string RoleLine(Role role)
     {
         case Role.Gunner: return "A carbine for any range. A heavy round through a whole line of the dead, and grenades into the thick of them by themselves.";
         case Role.Breacher: return "A pump shotgun up close, and takes a third less from the dead. Kicks them flat, and sets the ground alight by itself.";
-        case Role.Engineer: return "An SMG whose rounds set items off half again as often. Lays mines, and by itself sets down a turret that walks after you, carrying your items.";
+        case Role.Engineer: return "An SMG whose rounds set items off half again as often. Sets C4 charges to blow when you choose, and by itself sets down a turret that walks after you, carrying your items.";
     }
     return "";
 }
@@ -72,7 +72,7 @@ string RankLine(Skill skill, int rank)
     {
         case Skill.PhaseRound: return three ? "Five heavy rounds in a fan, half again as hard" : "Three heavy rounds in a fan, a quarter harder";
         case Skill.Boot: return three ? "Kick the dead all round you, 60% harder" : "Kick wider and further, 30% harder";
-        case Skill.Mine: return three ? "Lay three mines at once" : "Lay two mines at once";
+        case Skill.Mine: return three ? "Set down three charges at once" : "Set down two charges at once";
         case Skill.Leap: return three ? "Land half again as wide, 60% harder" : "Land a quarter wider, 30% harder";
         case Skill.Blink: return three ? "Blast the dead where you leave and where you land" : "Blast the dead where you leave";
     }
@@ -101,7 +101,7 @@ string SkillName(Skill skill)
         case Skill.Boot: return "Boot";
         case Skill.Leap: return "Leap";
         case Skill.Firebomb: return "Firebomb";
-        case Skill.Mine: return "Mine";
+        case Skill.Mine: return "C4 Charge";
         case Skill.Blink: return "Blink";
         case Skill.Turret: return "Turret";
     }
@@ -118,7 +118,7 @@ string SkillLine(Skill skill)
         case Skill.Boot: return "Kick the dead in front off their feet; one down is stamped on";
         case Skill.Leap: return "Leap high and far, and knock down the dead where you land";
         case Skill.Firebomb: return "Throw a pot of burning fuel";
-        case Skill.Mine: return "Lay a mine that bursts when the dead come near";
+        case Skill.Mine: return "Set down a C4 charge; again, and it blows, throwing down the dead round it";
         case Skill.Blink: return "Step through the air to where you look";
         case Skill.Turret: return "Set down a turret that walks after you, firing at the dead on its own a while, setting off your items";
     }
@@ -225,16 +225,29 @@ void UseSecondary(Entity self, mut Survivor survivor, Ashwick ashwick, Herd herd
             break;
         case Skill.Mine:
         {
+            // C4: with charges down, blown (the cooldown after); else set down, one (two, three a rank) side by side the
+            // cursor's way, to be blown a moment later or whenever they like
+            if (survivor.charges > 0)
+            {
+                survivor.detonations += 1;
+                survivor.charges = 0;
+                Send(Cue { sound = Sfx.Detonate, at = survivor.feet + float3(0, 1, 0) });
+                break;
+            }
             for (var k = 0; k < rank; k++)
             {
-                var side = (k - (rank - 1) * 0.5) * 1.4;
+                var side = (k - (rank - 1) * 0.5) * 1.6;
                 var ahead = survivor.feet + Flat(survivor.yaw) * (1.2 + 0.3 * Math.Abs(side)) + Flat(survivor.yaw + Math.PI * 0.5) * side;
                 mut var at = On(ahead.x, ahead.z);
                 if (Math.Distance(PushOut(ashwick, at, 0.2, 0.3), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
-                Spawn(Missile { kind = Shot.Mine, at = at + float3(0, 0.03, 0), damage = 220 * Might(survivor), splash = 4.5, seat = survivor.seat, life = 40 });
+                Spawn(Missile { kind = Shot.Mine, at = at + float3(0, 0.03, 0), damage = C4_HURT * Might(survivor), splash = C4_REACH, element = Element.Blast, seat = survivor.seat,
+                                life = C4_LIFE, fuse = survivor.detonations });
                 Send(Cue { sound = Sfx.Mine, at = at });
             }
-            break;
+            survivor.charges = rank;
+            survivor.cooldowns[0] = C4_SET;
+            Send(Unleashed { seat = survivor.seat, skill = skill, at = survivor.feet, to = survivor.feet, rank = rank });
+            return;
         }
         case Skill.Leap:
         {
@@ -393,8 +406,10 @@ void Slam(Survivor survivor, List<Body> bodies)
     Send(Unleashed { seat = survivor.seat, skill = Skill.Leap, at = survivor.feet, to = survivor.feet, landed = true, rank = rank });
 }
 
-// The boot, toward `yaw`: the dead that way, within a stride, go over backwards (six at most); the nearest one already
-// down is stamped on, on the head. A rank kicks further, wider (all round at the third) and harder, at more.
+// The boot, toward `yaw`: the dead that way, within a stride, thrown back off their feet (six at most), the ones they're
+// thrown into going over too; the nearest one already down is stamped on, on the head. A rank kicks further, wider (all
+// round at the third) and harder, at more. (80 a kick and 7 m/s, 160 a stamp, till the owner, 2026-10-20: "the "boot"
+// ability feels weak")
 void Kick(Entity self, Survivor survivor, List<Body> bodies, float yaw, int rank)
 {
     mut var hits = 0;
@@ -422,11 +437,11 @@ void Kick(Entity self, Survivor survivor, List<Body> bodies, float yaw, int rank
         else if (hits < most)
         {
             hits += 1;
-            z.entity.Send(Wound { damage = 80 * might, seat = survivor.seat, from = survivor.feet, knock = 7 + 2 * (rank - 1), down = true, blow = Blow.Blunt });
+            z.entity.Send(Wound { damage = 130 * might, seat = survivor.seat, from = survivor.feet, knock = 12 + 2 * (rank - 1), down = true, blow = Blow.Blunt });
         }
     }
     if (stampAt >= 0)
-        bodies[stampAt].entity.Send(Wound { damage = 160 * might, seat = survivor.seat, head = true, from = survivor.feet, blow = Blow.Blunt });
+        bodies[stampAt].entity.Send(Wound { damage = 240 * might, seat = survivor.seat, head = true, from = survivor.feet, blow = Blow.Blunt });
     self.Send(Kicked { seat = survivor.seat, hits = hits + (stampAt >= 0 ? 1 : 0), stamp = stampAt >= 0 });
 }
 

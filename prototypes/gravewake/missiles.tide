@@ -22,6 +22,7 @@ component Missile
     float life;                  // Seconds left
     float age;
     bool echo;                  // Set off by an item: what it kills sets off nothing more
+    int fuse;                   // A C4 charge: how many times its survivor had blown theirs when it was set down
 }
 
 // A burst: fire, a grenade's, a mine's, a shell's.
@@ -41,8 +42,11 @@ event Thud
 }
 
 const float HEAD_RADIUS = 0.26;
-const float MINE_ARMS = 0.6;         // Seconds after it's laid
-const float MINE_REACH = 1.8;        // How near the dead come to set it off
+const float MINE_ARMS = 0.6;         // Seconds after a C4 charge is set down that its light blinks
+const float C4_REACH = 5;            // A C4 charge's burst, so wide...
+const float C4_HURT = 320;           // ...so hard at its heart...
+const float C4_LIFE = 90;            // ...and, left so long, it goes off by itself
+const float C4_SET = 0.4;            // Seconds after charges are set down before they can be blown
 
 // Where a segment first comes within `radius` of a point, as a fraction of it (2 for never).
 float SphereHit(float3 from, float3 to, float3 middle, float radius)
@@ -117,15 +121,13 @@ system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time ti
     }
     if (missile.kind == Shot.Mine)
     {
-        // Waiting: the first of the dead near enough sets it off
-        if (missile.age < MINE_ARMS) return;
-        mut var near = missile.life <= 0;
-        if (!near)
-        {
-            foreach (var z in Near(herd, missile.at, MINE_REACH))
-                if (z.hittable && z.risen > 0.5 && Math.Distance(z.at, missile.at) < MINE_REACH) near = true;
-        }
-        if (near)
+        // A C4 charge: blown when the survivor who set it down blows theirs (the owner, 2026-10-20: "i wonder if it
+        // should be remote C4 or something, you place it then you choose to explode it": it had burst on the first of the
+        // dead to come near), or, left too long, by itself
+        mut var blown = missile.life <= 0;
+        foreach (var row in survivors)
+            if (row.survivor.seat == missile.seat && row.survivor.detonations > missile.fuse) blown = true;
+        if (blown)
         {
             Burst(missile, missile.at + float3(0, 0.3, 0), Near(herd, missile.at, missile.splash + 1));
             this.Destroy();

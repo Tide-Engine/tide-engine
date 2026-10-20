@@ -366,8 +366,13 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens, 
     }
     mut var lit = Shade(ground, this.world, normal, 1, look, lights.list, lens.moonDepth);
     var toEye = Math.Normalize(look.eye - this.world);
-    // A wet shine on the blood and the mud; on the pits, a glint on the ripples here and there
-    lit += look.moonColor * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, normal), look.moonWay)), 90) * wet * 0.3;
+    // A wet shine on the blood and the mud: the moon's glint off it, broad, and (the blood, the owner, 2026-10-20: "the
+    // blood could shine more") hard bright flecks of wet on it here and there, crawling a little, as pixel art shows a
+    // pool's gloss; on the pits, a glint on the ripples here and there
+    lit += look.moonColor * float3(1.0, 0.45, 0.4) * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, normal), look.moonWay)), 70) * wet * 0.35;
+    var gloss = Math.Perlin(at * 6.5 + float2(look.time * 0.12, look.time * 0.05)) + Math.Perlin(at * 13 + float2(5, 11)) * 0.4;
+    var fresh = Math.Saturate(blood.a * 2.2 - 0.6);
+    lit += (gloss > 0.86 ? float3(0.5, 0.2, 0.17) : gloss > 0.72 ? float3(0.2, 0.02, 0.015) : float3(0)) * fresh;
     var ripple = float3(Math.Perlin(at * 2.3 + float2(look.time * 0.25, 0)), 0, Math.Perlin(at * 2.3 + float2(0, look.time * 0.2))) * 0.15;
     lit += look.moonColor * float3(0.9, 0.45, 0.4) * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, Math.Normalize(normal + ripple)), look.moonWay)), 60) * pool * 0.12;
     lit += heat;
@@ -446,7 +451,10 @@ frag Develop(Vertex vertex, out Color color, Texture source, Lens lens, Look loo
     var picture = Rgb(source.Sample(at / look.full, Filter.Point));
     // The bloom read once for the whole of the pixel, so a glow's halo is in pixels too, not a smooth haze over them
     // (the owner, 2026-10-19: "some of the VFX are very smooth looking, i would like to give them a more pixelated look")
-    var seen = picture + Rgb(lens.glow.Sample(at / look.full)) * 0.4;
+    // And in steps, so a halo is a ring or two of light round what glows, not a haze (the owner, 2026-10-20: effects "not
+    // blury")
+    var halo = Rgb(lens.glow.Sample(at / look.full)) * 0.4;
+    var seen = picture + float3(Math.Floor(halo.x * 10 + 0.25), Math.Floor(halo.y * 10 + 0.25), Math.Floor(halo.z * 10 + 0.25)) / 10;
     var exposed = seen * look.exposure;
     // A filmic curve (Narkowicz's fit of ACES)
     var a = exposed * (exposed * 2.51 + float3(0.03));
