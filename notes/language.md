@@ -1,5 +1,27 @@
 # Language features, as tidec builds them
 
+## Performance pass: list writes and grid windows (2026-10-20)
+
+Two compiler-private changes, no language or runtime-interface change (measured
+in notes/benchmarks.md, Performance pass):
+
+- A list type's cached write helpers (`tide_list<n>_cset`, `_cslot`) skip
+  `tide_list_prepare` when the function's cache is writable for that same list
+  and still holds (`CACHE_OWNS` in codegen.c, `tide_list_cached_at_mut`'s own
+  test). Only `tide_list_cache_fill_mut` makes a cache writable, after the
+  helper prepared the list; it never caches a scratch or pack list and refuses
+  an asset descriptor, and preparing only ever acts by changing the list's
+  handle, so it would change nothing. Every element a loop wrote used to pay
+  two block lookups and an asset-registry check for it.
+- A windowed parallel loop over a grid of one-cell blocks whose step writes
+  `cells[at]` at the top of its body before anything can end it
+  (`writes_own_cell`, `may_leave_step` in check.c: no return, fail, or
+  continue/break of the step before it; `stmt.writes_own`) no longer copies
+  its whole window into the copy the steps write: every cell put back is
+  written. A tile where the grid has no chunk, whose blocks are checked first
+  and may skip, still copies. `compiler/tests/e2e` grid fixtures and the
+  safety suite cover the loops; versus_life and versus_sand pin the results.
+
 ## Shared player ceiling (2026-10-20)
 
 The owner approved maxPlayers from 1 through 65,536, sharing the ceiling used

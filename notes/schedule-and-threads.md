@@ -1,5 +1,21 @@
 # The schedule and the tick on threads
 
+Grid parallel loops, performance pass (2026-10-20): `tide_par_window` works out a
+row's runs (where each chunk's cells go in the window, and where they start in
+their chunk's row) once for the window, as they're the same for every row that
+doesn't pass the last int, and copies runs up to 256 bytes inline rather than
+through memcpy, which a window called some 17,000 times a tick in versus_life.
+`tide_par_window_put` compares and copies those runs inline too, and a task
+whose own cells are exactly one whole chunk (one-cell blocks, the common case)
+compares its rows and, if any changed, fills a buffer it takes uninitialized
+(`buffer_for` with `whole`, grid.c) with every row of the window, rather than
+copying the chunk into the buffer first and then the rows that changed: rows
+that didn't change are the chunk's as it is, and no other task's own cells are
+in that chunk. With the compiler's `writes_own` (language.md), versus_life
+went from 0.583 to about 0.42 ms a tick on one thread; versus_sand, whose 2x2
+blocks are mostly not chunk-aligned, about 5%. The geometry stays 64-bit where
+it was (memory-safety.md).
+
 Query local fields (2026-10-19): attached local access and mutable-query effects
 propagate through synchronous helpers. Views/local handlers retain their
 existing serial order and named phases; match component data remains read-only
