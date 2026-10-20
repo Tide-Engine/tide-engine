@@ -22,9 +22,10 @@ of it under the dead and under you.
 
 Every kill leaves an orb of experience where the dead fell (a cyan gem,
 turning), worth more the tougher they were, the party's once someone goes
-within a few metres of it; at every level each takes one of three items that
-stack, most of which fight on their own, and 18 more health (a level's worth
-of it back, too). How many nights, and how long, they held out is the score.
+within a few metres of it; at every level each takes one of three cards: their
+gun a rank stronger, or an item that stacks, most of which fight on their own;
+and a little more damage and 18 more health (a level's worth of it back, too).
+How many nights, and how long, they held out is the score.
 
 Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 **Host a room** and send the code to fight with friends, up to four.
@@ -49,7 +50,7 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | --- | --- | --- | --- |
 | Gunner | Carbine: automatic, any range | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
 | Breacher | Pump Shotgun: fourteen pellets in a wide spread, never needs loading; takes a third less from the dead | Thumper: a grenade lobbed with a thump to burst where the cursor is, throwing the dead down | Boot: at the dead pressing in front, a side kick that sweeps a flash of light through where it reaches, flinging them back off their feet into the ones behind them; the nearest one down is stamped on |
-| Engineer | Flamethrower: a jet of fire 4.8 m long, widening as it goes, burning everything in it and now and then setting it alight (bosses take it three and a half times over); ten seconds a tank. AP Rounds are a Long Nozzle to it, a metre more each (Ricochet and HE Rounds aren't offered: it has no rounds) | Napalm: a glob of burning fuel lobbed to the cursor (never nearer you than 4.5 m), splashing into fire on the ground that burns the dead in it for three seconds, and you if you stand in it | Attack Drone: sent up when the dead are about; flies after you, at your shoulder, and fires on its own for twelve seconds, setting off your items |
+| Engineer | Flamethrower: a jet of fire 4.8 m long, widening as it goes, burning everything in it and now and then setting it alight (bosses take it three and a half times over); ten seconds a tank (AP, Ricochet and HE Rounds aren't offered: it has no rounds) | Napalm: a glob of burning fuel lobbed to the cursor (never nearer you than 4.5 m), splashing into fire on the ground that burns the dead in it for three seconds, and you if you stand in it | Attack Drone: sent up when the dead are about; flies after you, at your shoulder, and fires on its own for twelve seconds, setting off your items |
 
 The right mouse skill is the gun's own, and grows: a skill card (orange)
 turns up in some level's offers, the skill a rank stronger, to rank III: a
@@ -58,6 +59,20 @@ three; napalm's fire wider and longer, then two globs. Pips under the skill
 show its rank. Round the crosshair, its arc on the left fills as it comes
 back and lights up (with a chime) when it's ready; the arc on the right is
 your magazine, or your loading as it fills.
+
+### The gun grows
+
+Your gun is where you start, and it grows with you: every offer at a level, a
+chest or a boss has a gun card (violet) first, one of five for your gun, each
+a rank stronger to its last (three, four or five ranks); the card says what
+you'll have, and pips under it show its ranks. The gun's level (one, and every
+rank) is by its name, bottom right.
+
+| Gun | Cards |
+| --- | --- |
+| Carbine | Burst Fire (each shot more rounds in a tight fan), Heavy Caliber (harder, thicker rounds that push the dead back), Gas Piston (faster, more rounds), Marksman (headshots harder, and on through the dead behind), Incendiary Rounds (every third, then every other, then every round sets the dead alight, in red tracers) |
+| Pump Shotgun | Buckshot (more pellets, wider), Slug Core (a heavy slug down the middle of every blast, through several of the dead), Quick Pump (pumps and loads faster), Concussion Shells (pellets throw the dead back, and close in knock them down), Dragon Shells (burning pellets that set the dead alight) |
+| Flamethrower | Long Nozzle (further), Wide Nozzle (a wider cone, reaching more of the dead), Hot Fuel (harder, its fire burning brighter, then blue), Sticky Fuel (sets alight more often, and what it kills sets the nearest alight), Big Tank (more fuel, filling faster) |
 
 Everything but the gun, the right mouse skill and the roll happens by
 itself: each survivor's special as soon as it's ready and the dead are in
@@ -107,6 +122,7 @@ more bolts of lightning, more rockets.
 | Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (a drone each over your head shoots the nearest dead), Ember Ring (a ring of fire round you sets the dead alight), Frostbite (hits freeze), Energy Drink (another roll), Kerosene (the dead you roll past catch fire), Steel Toes (more to the dead on the ground), Bile Bomb (the Bloaters you kill burst wider and harder on the dead), AP Rounds (through one more), Saw Blades (a blade each circles you, cutting what it passes), Tesla Coil (lightning into the nearest dead), Molotov Satchel (firebombs at the thickest of the dead) |
 | Rare | Mortar Flare (hits call a shell down), Second Wind (going down, straight back up, used up), HE Rounds (every round bursts where it lands), Dragon's Breath (hits set the dead alight), Thunder Drum (a shockwave throws down the dead round you), Rocket Pod (rockets at the dead round you) |
 | Skill | Your right mouse skill a rank stronger (above) |
+| Gun | Your gun a rank stronger in one way, first in every offer but a mission's (above) |
 
 Uncommon and rare items turn up more as the run goes on. What you take is
 yours till the game's over, through going down and bleeding out.
@@ -115,9 +131,9 @@ yours till the game's over, through going down and bleeding out.
 
 They claw up out of the ground, two or three a second at first (more with
 more of you) and many more as the danger climbs (Easy, Medium, Hard, Very Hard,
-Insane, Impossible), tougher and quicker too (from Hard on, up to 40% quicker
-past Impossible: the fastest then outpace you walking as you fire, though not
-running), up to 4000 at once. Most come
+Insane, Impossible), tougher, more of them running (half at most, a third of
+those sprinting) and a little quicker late on (a tenth at most: none outpaces
+you walking as you fire), up to 4000 at once. Most come
 in hordes: every five to nine seconds the ones due claw up together out of
 one patch of ground 22 to 32 m from one of you, each from about the far side
 of you from the last, a groan going up from them, all at one pace; a quarter
@@ -135,13 +151,15 @@ outline, so it's known at a glance in a horde: red a Runner, lime a Bloater,
 yellow a Spitter, blue a Warden, orange a Brute, magenta a Howler. Each has its
 own body too (art/kinds): a Runner hunched with long claws, a Bloater's vast
 belly, a Spitter's throat sac, a Warden's iron shoulders and shield, a Brute's
-bull shoulders, a Howler tall with its neck thrown back.
+bull shoulders, a Howler tall with its neck thrown back. The first time each
+kind comes in a run, a card on the left says what it does and what to do
+about it.
 
 | Kind | From | |
 | --- | --- | --- |
-| Runner (red) | 25 s | Lean, and quicker than any. From 2 to 5.5 m off, with nothing between, it crouches a moment (its eyes flaring), then leaps 4.5 m at you and strikes as it lands (a roll's guard turns it). Three-fifths as tough as the rest. |
+| Runner (red) | 25 s | Lean, and quicker than any, though slower than you. From 2 to 5.5 m off, with nothing between, it crouches half a second (its eyes flaring), then leaps 4.5 m at you and strikes as it lands (a roll's guard turns it). Three-fifths as tough as the rest. |
 | Bloater (lime) | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it stops and swells, shuddering, glowing and hissing gas, and the ground it'll reach burns red, a ring at its edge and another growing out to meet it; it bursts 1.4 s later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it falls and swells the same way, bursting a second later: from far off, that's a weapon; up close, get out of the red. |
-| Spitter (yellow) | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile that hurts (up to 18) and slows you for 2 s. Find it and shoot it. |
+| Spitter (yellow) | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile, slow and high (a second or more in the air), that hurts (up to 18) and slows you for 2 s; a yellow ring on the ground is where it'll land. Step out of it, then find it and shoot it. |
 | Warden (blue) | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
 | Brute (orange) | 2:30 | A third bigger all round, slow, eight times as tough. Nothing staggers it or throws it down, and blows barely push it. Its blow does two and a half times a claw's and throws you back. |
 | Howler (magenta) | 3:40 | Tall and thin. It hangs back, 3 to 11 m off, and every 7 s or so stands and howls (its colour streaming off its head); at the howl's end every one of the dead within 10 m of it is frenzied for 5 s, quicker, their outlines throbbing magenta. Shoot it first. |
@@ -185,7 +203,8 @@ Development keys, not in play's interface: F2 six of the dead of a kind
 (Bloaters, Spitters, Wardens, Runners, Brutes, Howlers in turn; with Shift, one
 of each lined up in front of you, dazed), F3 a boss (the Mauler, the Broodmother,
 the Stalker in turn), F4 two thousand more of the
-dead, F5 a level (and so an offer), F6 walk to the next part of the clearing,
+dead, F5 a level (and so an offer; with Shift, a rank of each of your gun's
+cards), F6 walk to the next part of the clearing,
 F7 the night on (its end now, its boss rising; again while it stands, dawn),
 F9 a camera over the clearing, F10 a random item (with Shift, the items that
 fight by themselves, several each), F1 a mission (a hold, a

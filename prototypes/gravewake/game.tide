@@ -57,8 +57,8 @@ component Survivor
     float slimed;                    // Seconds left slowed by a Spitter's bile
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
     float3 aim;                      // What the cursor's on (Hands.aim)
-    // The items (items.tide): stacks of each, the three on offer at a level while `choosing`
-    int[30] items;
+    // The items (items.tide): stacks of each (and the gun cards' ranks), the three on offer at a level while `choosing`
+    int[48] items;
     Item[3] offers;
     bool choosing;
     int pending;                     // Picks owed: a level's, a chest's, a boss's, after the one on offer...
@@ -155,8 +155,10 @@ const float BODY_RADIUS = 0.32;
 const float BODY_HIGH = 1.8;
 const float EYE_HIGH = 1.62;
 const float DOWNED_EYE = 0.55;
-const float WALK_SPEED = 5.6;       // Firing
-const float SPRINT_SPEED = 7.0;     // Running: whenever a survivor moves and hasn't fired for a moment
+// (5.6 and 7 till the owner, 2026-10-20: "in general the game should be slower, we should be a bit slower, the enemies
+// slower ... we need to be able to be more meticulous about our movement": slower, and the run not so much quicker)
+const float WALK_SPEED = 4.5;       // Firing
+const float SPRINT_SPEED = 5.4;     // Running: whenever a survivor moves and hasn't fired for a moment
 const float STEP_UP = 0.45;
 const float GRAVITY = 24;
 const float REACH = 2.4;
@@ -287,8 +289,8 @@ system Restarting(mut Match match)
 }
 
 // Development shortcuts, not in play's interface (hud.tide's DevKeys): a horde of two thousand, a level (and so an
-// offer), an item, the night's end (its bosses) now, a boss, six of one kind of the dead, the night kept, a walk to a
-// place.
+// offer), an item, a rank of each of the gun's cards, the night's end (its bosses) now, a boss, six of one kind of the
+// dead, the night kept, a walk to a place.
 command Cheat
 {
     int what;
@@ -343,6 +345,10 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
             return;
         case 5:
             party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
+            return;
+        case 9:
+            // A rank of each of their gun's cards (as far as each goes)
+            party.survivors[seat].Send(Honed { });
             return;
         case 7:
             // The items that fight by themselves, several of each, to look at (four drones, three saw blades, two Tesla
@@ -402,6 +408,22 @@ event Moved
 event Given
 {
     Item item;
+}
+
+// The development key's gun cards: a rank of each of the survivor's gun's five.
+event Honed { }
+
+event(Honed honed) TakeHoned(mut Survivor survivor)
+{
+    if (survivor.role == Role.None) return;
+    var first = int(FirstGunCard(RoleWeapon(survivor.role)));
+    for (var k = 0; k < GUN_CARDS; k++)
+    {
+        var card = Item(first + k);
+        if (Has(survivor, card) >= CardMost(card)) continue;
+        Take(survivor, card);
+        Send(Picked { seat = survivor.seat, item = card, at = survivor.feet, rank = Has(survivor, card) });
+    }
 }
 
 event(Given given) TakeGiven(mut Survivor survivor)

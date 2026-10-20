@@ -161,7 +161,8 @@ const float NAPALM_PACE = 16;
 const float NAPALM_NEAREST = 4.5;   // A glob lands no nearer its thrower than this, wherever the cursor is
 
 const float ROLL_SECONDS = 0.5;     // A roll, start to finish...
-const float ROLL_SPEED = 9.5;       // ...how fast in its middle (quick at first, slowing)...
+const float ROLL_SPEED = 8.5;       // ...how fast in its middle (quick at first, slowing: 3.8 m; 9.5 and 4.2 m till the game
+                                    // slowed, 2026-10-20)...
 const float ROLL_GUARD = 0.36;      // ...and how long from its start nothing the dead do touches the one rolling
 const int ROLLS = 2;                // Charges
 const float KICK_REACH = 2.6;

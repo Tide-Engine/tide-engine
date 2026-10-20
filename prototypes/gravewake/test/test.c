@@ -80,7 +80,8 @@ static void heal(void)
 }
 
 // Ticks with whoever's standing far too tough to go down (a crowd's claws can land together for more than anyone's
-// health, and the run ends when nobody's standing), and whole after each.
+// health, and the run ends when nobody's standing), and whole after each. (Their health held off coming back meanwhile:
+// it comes back no higher than whole, which had made them whole, not tough, in the tick before the blows.)
 static void tick_whole(int count)
 {
     for (int i = 0; i < count; i++) {
@@ -88,6 +89,7 @@ static void tick_whole(int count)
             Survivor s = get(seat);
             if (s.life != Life_Standing) continue;
             s.health = 1e6f;
+            s.calm = 0;
             set(seat, s);
         }
         tick(1);
@@ -291,6 +293,21 @@ static tide_entity sturdy(void)
 
 static Zombie zombie(tide_entity e) { return tide_get_Zombie(&world, e); }
 
+// Every other one of the dead moved well off to one side of `e` and held there: a round meant for it stops in the first
+// it strikes, and one walking into its line had taken it.
+static void others_away(tide_entity e)
+{
+    const Zombie z = zombie(e);
+    for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+        const tide_entity o = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
+        if (o.index == e.index) continue;
+        Zombie away = zombie(o);
+        away.at = (tide_float3){z.at.x + sinf(z.yaw + 1.6f) * 30, z.at.y, z.at.z + cosf(z.yaw + 1.6f) * 30};
+        away.pace = 0;
+        CHECK(tide_set_Zombie(&world, o, away));
+    }
+}
+
 // Whether one of the dead has been killed: torn apart and gone, or (a Bloater) lying swelling to burst.
 static bool killed(tide_entity e) { return !tide_entity_alive(&world.entities, e) || zombie(e).state == ZombieState_Dying; }
 
@@ -493,8 +510,11 @@ int main(void)
     for (int seat = 0; seat < 2; seat++) {
         const Survivor s = get(seat);
         CHECK(s.choosing);
-        for (int k = 0; k < 3; k++) CHECK((int)s.offers.at[k] >= 0 && (int)s.offers.at[k] < Item_CardNapalm + 1);
-        CHECK((int)s.offers.at[0] < Item_CardPhaseRound && (int)s.offers.at[1] < Item_CardPhaseRound);     // A skill card in the last place only
+        for (int k = 0; k < 3; k++) CHECK((int)s.offers.at[k] >= 0 && (int)s.offers.at[k] < Item_BigTank + 1);
+        // A gun card for their own gun first (the Gunner's carbine, the Breacher's shotgun); a skill card in the last place only
+        const Item cards = s.role == Role_Gunner ? Item_Burst : Item_Buckshot;
+        CHECK((int)s.offers.at[0] >= (int)cards && (int)s.offers.at[0] < (int)cards + 5);
+        CHECK((int)s.offers.at[1] < Item_CardPhaseRound && (int)s.offers.at[2] < Item_Burst);
         CHECK(s.offers.at[0] != s.offers.at[1] && s.offers.at[1] != s.offers.at[2] && s.offers.at[0] != s.offers.at[2]);
     }
     {
@@ -630,6 +650,7 @@ int main(void)
             become(0, roles[k], guns[k]);
             const tide_entity e = sturdy();
             to_open(e);
+            others_away(e);
             face(0, e, 6);
             if (k == 2) look_at(0, (tide_float3){zombie(e).at.x, zombie(e).at.y + 0.35f, zombie(e).at.z});
             const float before = zombie(e).health;
@@ -647,6 +668,7 @@ int main(void)
         become(0, Role_Gunner, Weapon_Rifle);
         const tide_entity e = sturdy();
         to_open(e);
+        others_away(e);
         face(0, e, 6);
         look_at(0, (tide_float3){zombie(e).at.x, zombie(e).at.y + 3.5f, zombie(e).at.z});
         const float before = zombie(e).health;
@@ -1226,17 +1248,26 @@ int main(void)
         s.calm = 0;
         set(0, s);
         bool spat = false, slimed = false;
-        float least = 100;
+        float least = 100, flight = 0, markOff = 1e9f;
         for (int t = 0; t < 60 * 6 && !slimed; t++) {
             if (missiles_of(Shot_Spit) > 0) spat = true;
+            for (uint32_t row = 0; row < world.arch2_Missile.count; row++) {
+                const Missile m = TIDE_AT(&world, arch2_Missile, Missile, row);
+                if (m.kind != Shot_Spit || m.age > 0.02f) continue;
+                flight = m.flight;
+                markOff = hypotf(m.mark.x - get(0).feet.x, m.mark.z - get(0).feet.z);
+            }
             tick(1);        // Not tick_safe: it keeps the survivors whole
             decline();
             least = fminf(least, get(0).health);
             if (get(0).slimed > 0) slimed = true;
         }
-        printf("a Spitter's bile: spat %d, the survivor slimed %d, down to %.0f health\n", spat, slimed, least);
+        printf("a Spitter's bile: spat %d, in the air %.2f s, marked %.2f m from the survivor, the survivor slimed %d, down to %.0f health\n", spat, flight, markOff,
+               slimed, least);
         CHECK(spat && slimed && least < 100);
+        CHECK(flight >= 0.9f && markOff < 1.5f);
         heal();
+        others_away(e);
         // Its body and head as a Warden's, and as one of the walking dead's
         float hits[3] = {0};
         const ZombieKind kinds[3] = {ZombieKind_Warden, ZombieKind_Walker, ZombieKind_Warden};
@@ -1283,7 +1314,17 @@ int main(void)
         }
     }
 
-    // ---- A Runner: 4.5 m off, it crouches, then leaps and lands its blow, sooner than it could have run there. A Brute:
+    // ---- A kind of the dead first come is told, once: a Howler raised, its kind marked seen ----
+    {
+        world.Match.seenKinds &= ~(1 << ZombieKind_Howler);
+        world.Match.special = ZombieKind_Howler;
+        world.Match.specials = 1;
+        world.Match.rush = 1;
+        tick_safe(2);
+        CHECK((world.Match.seenKinds & (1 << ZombieKind_Howler)) != 0);
+    }
+
+    // ---- A Runner: 4.5 m off, it crouches, then leaps and lands its blow, within a second. A Brute:
     // kicked, it stays on its feet; its blow throws the survivor back. A Howler 8 m off: it stands and howls, and the dead
     // round it are frenzied ----
     {
@@ -1321,7 +1362,7 @@ int main(void)
             leapt |= zombie(r).leap > 0;
         }
         printf("a Runner 4.5 m off: crouched %d, leapt %d, its blow %.2f s after, %.0f health left\n", crouched, leapt, t / 60.0f, get(0).health);
-        CHECK(crouched && leapt && get(0).health < 100 && t < 60);
+        CHECK(crouched && leapt && get(0).health < 100 && t < 66);
         heal();
         // The Brute, kicked by the Breacher, then left to swing
         become(0, Role_Breacher, Weapon_Shotgun);
@@ -1518,6 +1559,138 @@ int main(void)
             tick_safe(2);
             CHECK(zombie(line[1]).health < besides);
             CHECK(zombie(line[0]).burn > 0);
+        }
+        // The gun cards: Burst Fire I a second round in a fan, 60% of the first, into the one 5 m off; Incendiary Rounds III
+        // setting it alight; Marksman I taking a headshot on through into the one behind; a Slug Core's slug through three
+        // in a line where the pellets stop in the first; a Long Nozzle II reaching one 6.5 m off; Gas Piston, a magazine a
+        // fifth more, loaded
+        {
+            for (int k = 0; k < 4; k++) {
+                Zombie z = zombie(line[k]);
+                z.at = (tide_float3){feet.x, feet.y, feet.z - 5.0f - 1.2f * (float)k};
+                z.yaw = 0;
+                z.pace = 0;
+                z.health = 100000;
+                z.burn = 0;
+                z.kind = ZombieKind_Walker;
+                z.state = ZombieState_Hunting;
+                CHECK(tide_set_Zombie(&world, line[k], z));
+            }
+            tick_safe(2);
+            float body[2];
+            for (int burst = 0; burst < 2; burst++) {
+                Survivor s = get(0);
+                memset(&s.items, 0, sizeof s.items);
+                s.items.at[Item_Burst] = burst;
+                s.shotWait = 0;
+                s.mag = 30;
+                set(0, s);
+                look_at(0, zombie(line[0]).chestAt);
+                const float before = zombie(line[0]).health;
+                press(&held[0].attack);
+                tick_safe(2);
+                body[burst] = before - zombie(line[0]).health;
+            }
+            Survivor s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.items.at[Item_Incendiary] = 3;
+            s.shotWait = 0;
+            set(0, s);
+            press(&held[0].attack);
+            tick_safe(2);
+            const bool lit = zombie(line[0]).burn > 0;
+            Zombie first = zombie(line[0]);
+            first.burn = 0;
+            CHECK(tide_set_Zombie(&world, line[0], first));
+            // Marksman I: the cursor on the first one's head
+            s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.items.at[Item_Marksman] = 1;
+            s.shotWait = 0;
+            set(0, s);
+            tick_safe(1);
+            float before[4];
+            for (int k = 0; k < 4; k++) before[k] = zombie(line[k]).health;
+            look_at(0, zombie(line[0]).headAt);
+            press(&held[0].attack);
+            tick_safe(2);
+            const float head = before[0] - zombie(line[0]).health;
+            int struck = 0;
+            for (int k = 0; k < 4; k++) struck += zombie(line[k]).health < before[k];
+            printf("gun cards: a round %.0f, with Burst Fire I %.0f; Incendiary III alight %d; Marksman I's headshot %.0f, striking %d\n", body[0], body[1], lit, head,
+                   struck);
+            CHECK(fabsf(body[1] - 1.6f * body[0]) < 0.05f * body[0]);
+            CHECK(lit);
+            CHECK(fabsf(head - 4 * body[0]) < 0.05f * body[0] && struck == 2);
+            // The Breacher's slug
+            become(0, Role_Breacher, Weapon_Shotgun);
+            look_at(0, zombie(line[0]).chestAt);
+            tick_safe(10);
+            int through[2];
+            for (int slug = 0; slug < 2; slug++) {
+                s = get(0);
+                memset(&s.items, 0, sizeof s.items);
+                s.items.at[Item_Slug] = slug;
+                s.shotWait = 0;
+                s.mag = 8;
+                set(0, s);
+                for (int k = 0; k < 4; k++) before[k] = zombie(line[k]).health;
+                look_at(0, zombie(line[0]).chestAt);
+                press(&held[0].attack);
+                tick_safe(2);
+                through[slug] = 0;
+                for (int k = 0; k < 4; k++) through[slug] += zombie(line[k]).health < before[k];
+            }
+            printf("gun cards: a shotgun blast strikes %d in a line, with a Slug Core %d\n", through[0], through[1]);
+            CHECK(through[0] == 1 && through[1] == 3);
+            // The Engineer's nozzle: one 6.5 m off, out of the flames' reach, then in it
+            become(0, Role_Engineer, Weapon_Flamer);
+            for (int k = 1; k < 4; k++) {
+                Zombie z = zombie(line[k]);
+                z.at.x += 20 + 3 * k;
+                CHECK(tide_set_Zombie(&world, line[k], z));
+            }
+            first = zombie(line[0]);
+            first.at = (tide_float3){feet.x, feet.y, feet.z - 6.5f};
+            CHECK(tide_set_Zombie(&world, line[0], first));
+            tick_safe(2);
+            float burned[2];
+            for (int nozzle = 0; nozzle < 2; nozzle++) {
+                s = get(0);
+                memset(&s.items, 0, sizeof s.items);
+                s.items.at[Item_LongNozzle] = 2 * nozzle;
+                s.mag = 140;
+                set(0, s);
+                const float was = zombie(line[0]).health;
+                look_at(0, zombie(line[0]).chestAt);
+                held[0].attack = true;
+                tick_safe(30);
+                held[0].attack = false;
+                tick_safe(1);
+                burned[nozzle] = was - zombie(line[0]).health;
+            }
+            printf("gun cards: one 6.5 m off the flamethrower takes %.0f, with a Long Nozzle II %.0f\n", burned[0], burned[1]);
+            CHECK(burned[0] == 0 && burned[1] > 0);
+            // Gas Piston, taken: a fifth more rounds, loaded
+            become(0, Role_Gunner, Weapon_Rifle);
+            s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.mag = 10;
+            set(0, s);
+            s = take(0, Item_GasPiston);
+            CHECK(s.mag == 36);
+            s.items.at[Item_GasPiston] = 0;
+            s.mag = 30;
+            set(0, s);
+            for (int k = 0; k < 4; k++) {
+                Zombie z = zombie(line[k]);
+                z.at = (tide_float3){feet.x + 20.0f + 3.0f * (float)k, feet.y, feet.z - 5.0f};
+                z.burn = 0;
+                z.health = 100000;
+                CHECK(tide_set_Zombie(&world, line[k], z));
+            }
+            put(0, feet, (tide_float3){0, 1.6f, -16});
+            tick_safe(10);
         }
         // Kerosene: the roll past one of the dead sets it alight
         {
