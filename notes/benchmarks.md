@@ -173,6 +173,16 @@ Remaining gaps, largest first, with the best explanation:
 6. Thread scaling past one CCD: shared by C; the platform pool's topology is
    the coordinator's (platform/src/jobs.c).
 
+Validation on this branch: native release and web debug build every target
+warning-free; 247 native release tests (all `tidec_e2e_*`, `tide_tests`,
+`tide_platform_jobs`, every `versus_*` and `bench_*`) pass but one, and 47 web
+debug tests (`tide_tests`, platform jobs and web threads, rows, world-set and
+schedule fixtures, every `versus_*`) pass. The one,
+`tidec_e2e_query_local_fields` (two checks of attached local fields), fails in
+the release build with this branch's engine changes reverted too, and passes
+on web debug: it predates them. The full native and web debug suites were not
+run here; the coordinator runs them on the merged branch.
+
 Scene visibility unification (2026-10-15): removing generated scene audience
 fields changes the quick-session world pins to 742cb392be44252d for Sand and
 ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
