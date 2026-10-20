@@ -3592,6 +3592,7 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
 
 - A scene is a group of entities that load and unload together: a menu, a level, an arena. Several scenes can be loaded at once, and several copies of the same one.
 - `scene Arena { ... }` declares one. A loaded scene is an entity like any other: the declaration is its component, and its fields are the scene's state. A system that takes `Arena` runs once per loaded arena.
+- An empty scene can end with a semicolon: `scene Main;` means the same as `scene Main { }`. This also applies to `local scene Main;`; braces remain valid.
 - `local scene` declares a local one (see Local state). A scene only holds entities of its own side.
 - `Scene.Load(Arena { size = 30 })` loads a scene into the current world and returns its entity. `Scene.Unload(scene)` unloads it, destroying every entity it owns. `Spawn` of a scene is an error that says to use `Scene.Load`.
 - Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. `Spawned` handlers set a scene up, and its entities get `Destroyed` when it unloads, both within that tick (see Events).

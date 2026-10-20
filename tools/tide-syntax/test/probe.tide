@@ -1,6 +1,9 @@
 // Cases the grammar once colored wrong, which grammar.test.mjs checks by
 // finding their lines. Not a game: some lines are wrong on purpose.
 
+scene Main;
+local scene Menu;
+
 command Rename { string name; }
 command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)
 {

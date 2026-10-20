@@ -3517,6 +3517,41 @@ TIDE_TEST(lsp_format_lists)
 }
 
 
+TIDE_TEST(lsp_empty_scene_declarations)
+{
+    start();
+    open_document("namespace Levels { scene Are$na; }\nscene Main;\n"
+                  "event(Spawned) Setup(with Main) { Scene.Load(Levels.Arena); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "scene Arena"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    TIDE_CHECK(count(request_with("textDocument/rename", "\"newName\":\"Room\""), "\"newText\":\"Room\"") == 2);
+
+    open_document("local scene Main;\nlocal scene Menu;\n"
+                  "local event(Spawned) Open(with Main) { Scene.Load(Menu); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"Main\",\"detail\":\"local scene\""));
+    TIDE_CHECK(has(symbols, "\"name\":\"Menu\",\"detail\":\"local scene\""));
+    const char *scenes = complete("scene Arena;\nscene Main;\nevent(Spawned) Setup(with Main) { Scene.Load($); }\n");
+    TIDE_CHECK(offers(scenes, "Arena"));
+
+    static const char messy[] = "local  scene Main ; // Menu\nnamespace Levels\n{\nscene Arena ;\n}\n";
+    static const char expected[] = "local scene Main; // Menu\nnamespace Levels\n{\n    scene Arena;\n}\n";
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), expected) == 0);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+
+    // A semicolon ends the scene; a following declaration keeps its own body.
+    open_document("scene Main;\ncomponent Body { int value; }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Body); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document("scene Main;\ncomponent Body;\n");
+    TIDE_CHECK(has(last_sent(), "expected '{'"));
+    open_document("scene Main\n");
+    TIDE_CHECK(has(last_sent(), "expected '{'"));
+}
+
 TIDE_TEST(lsp_scenes)
 {
     start();
