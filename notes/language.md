@@ -52,7 +52,7 @@ found an unused `out` (fix helpers of types with only maps/grids) and an unused
 For `tide unity --assets`: `compile_input.text` gives a file's text in place
 of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
 `parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,
-so they hold prefab declarations only (`notes/unity.md`, Authoring as built).
+so they hold prefab declarations only (`notes/unity.md`, Authoring as built). A system's or view's parameter or filter naming a prefab (a Unity scene's too) says it's a prefab and how to filter its entities, rather than "unknown component" (`errors/system_filter_by_prefab`).
 
 ## Double Position correction smoothing (2026-10-20)
 

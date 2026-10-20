@@ -25,6 +25,7 @@ namespace Tide.Editor
             AssemblyReloadEvents.beforeAssemblyReload += Stop;
             EditorApplication.quitting += Stop;
             EditorApplication.update += Drain;
+            EditorApplication.playModeStateChanged += RefusePlayWithErrors;
             EditorApplication.delayCall += () =>
             {
                 if (TideSettings.instance.buildWhileEditing) Start();
@@ -125,23 +126,120 @@ namespace Tide.Editor
             state = "stopped";
         }
 
+        // A message tide is saying: a diagnostic's first line, then its source line, caret and notes, which come as
+        // lines of their own and go in one Console entry.
+        static readonly System.Text.StringBuilder pending = new System.Text.StringBuilder();
+        static double pendingSince;
+
+        // The last build's errors, until a build succeeds: kept in the Console as Unity keeps its compiler errors,
+        // logged again whenever it's cleared, and Play waits for them to be fixed. In SessionState, so a script
+        // reload keeps them.
+        const string ErrorsKey = "Tide.Errors";
+        const string CountKey = "Tide.ConsoleCount";
+        const char Separator = '\u001e';
+        static readonly System.Collections.Generic.List<string> building = new System.Collections.Generic.List<string>();
+        static bool built; // A build ended since the last error
+
+        public static bool HasErrors => SessionState.GetString(ErrorsKey, "").Length > 0;
+
         static void Drain()
         {
             while (lines.TryDequeue(out var entry))
             {
-                // A compiler's error or warning says so; the rest of what tide says is progress
                 var line = entry.line;
-                var context = ContextOf(ref line);
-                if (line.Contains(": error") || line.StartsWith("tide: can't") || line.Contains("FAILED")) Debug.LogError("tide: " + line, context);
-                else if (line.Contains(": warning")) Debug.LogWarning("tide: " + line, context);
-                else if (line.Length > 0) Debug.Log("tide: " + line, context);
+                // A diagnostic's own lines are indented: its source line, its caret and its notes
+                if (pending.Length > 0 && line.Length > 0 && line[0] == ' ')
+                {
+                    pending.Append('\n').Append(line);
+                    continue;
+                }
+                Flush();
+                pending.Append(line);
+                pendingSince = EditorApplication.timeSinceStartup;
             }
+            // A message's lines come together: one that's been alone a moment is whole
+            if (pending.Length > 0 && EditorApplication.timeSinceStartup - pendingSince > 0.15) Flush();
             if (process != null && process.HasExited)
             {
+                Flush();
                 state = $"tide ended with {process.ExitCode}";
                 process.Dispose();
                 process = null;
             }
+            KeepErrorsShown();
+        }
+
+        static void Flush()
+        {
+            if (pending.Length == 0) return;
+            var message = pending.ToString();
+            pending.Clear();
+            var first = message.Split('\n')[0];
+            // A compiler's error or warning says so; the rest of what tide says is progress, and how a build went
+            var isError = first.Contains(": error") || first.StartsWith("tide: can't") || first.Contains("FAILED");
+            if (first.StartsWith("tide: built"))
+            {
+                building.Clear();
+                built = true;
+                if (HasErrors) Debug.Log("tide: the game's errors are fixed");
+                SessionState.SetString(ErrorsKey, "");
+            }
+            else if (first.Contains("keeps running its last build") || first.Contains("will build once its files are fixed"))
+            {
+                built = true; // The errors after this are another build's
+            }
+            else if (isError)
+            {
+                if (built) building.Clear();
+                built = false;
+                building.Add(message);
+                SessionState.SetString(ErrorsKey, string.Join(Separator.ToString(), building));
+            }
+            Log(message, isError);
+        }
+
+        static void Log(string message, bool isError)
+        {
+            var first = message.Split('\n')[0];
+            var context = ContextOf(ref message);
+            if (isError) Debug.LogError("tide: " + message, context);
+            else if (first.Contains(": warning")) Debug.LogWarning("tide: " + message, context);
+            else if (message.Length > 0) Debug.Log("tide: " + message, context);
+        }
+
+        // The Console's entries, through Unity's own (internal) count: fewer than before means it was cleared.
+        static readonly System.Reflection.MethodInfo consoleCount =
+            Type.GetType("UnityEditor.LogEntries, UnityEditor")?.GetMethod("GetCount",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public);
+
+        static void KeepErrorsShown()
+        {
+            if (consoleCount == null) return;
+            int count;
+            try
+            {
+                count = (int)consoleCount.Invoke(null, null);
+            }
+            catch (Exception)
+            {
+                return;
+            }
+            var before = SessionState.GetInt(CountKey, 0);
+            SessionState.SetInt(CountKey, count);
+            if (count >= before || !HasErrors) return;
+            foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true);
+            SessionState.SetInt(CountKey, (int)consoleCount.Invoke(null, null));
+        }
+
+        // Play waits for tide's errors to be fixed, as for a script's.
+        static void RefusePlayWithErrors(PlayModeStateChange change)
+        {
+            if (change != PlayModeStateChange.ExitingEditMode || !HasErrors) return;
+            EditorApplication.isPlaying = false;
+            foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true);
+            const string message = "Fix the game's Tide errors before Play: see the Console";
+            foreach (SceneView view in SceneView.sceneViews) view.ShowNotification(new GUIContent(message));
+            Debug.LogError("tide: the game has errors: fix them before Play (they're above)");
         }
 
         static readonly System.Text.RegularExpressions.Regex located =
@@ -151,7 +249,7 @@ namespace Tide.Editor
         // whose line numbers are of the Tide text tide made of it, which the message then names.
         static UnityEngine.Object ContextOf(ref string line)
         {
-            var match = located.Match(line);
+            var match = located.Match(line.Split('\n')[0]);
             if (!match.Success) return null;
             var path = match.Groups["path"].Value.Replace('\\', '/');
             var project = TideSettings.ProjectFolder.Replace('\\', '/').TrimEnd('/') + "/";

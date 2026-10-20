@@ -380,6 +380,15 @@ package from ever building the game.
 **Diagnostics.** The build service gives tide's messages the asset they name
 as their Console context (a `.tide` file, or a prefab or scene, whose line is
 of `Library/Tide/prefabs/<asset>.tprefab`).
+A diagnostic's lines (source line, caret, notes: indented) are one Console
+entry. The last build's errors persist as Unity's compiler errors do, until a
+build succeeds (`SessionState`, so a script reload keeps them): logged again
+when the Console's count drops (cleared, by hand or on Play or recompile;
+Unity's internal `LogEntries.GetCount`, through reflection, and nothing if it
+isn't there), and Play is refused while they last, with a Scene view
+notification (`TideBuildService.HasErrors`). Errors coming after a result line
+start the list anew, as tide's stdout and stderr can interleave. Checked by hand
+in batch mode (a broken file, the Console cleared, Play attempted).
 
 Tests: the sample's ball is `Assets/Sample/Roller.prefab` (TideEntity with
 `Ball`), spawned by `Spawn(Roller, ...)`; `Bounce.unity` has two pillars named

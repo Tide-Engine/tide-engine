@@ -15416,6 +15416,16 @@ static void check_params(const checker *c, decl *sys)
             p->type = T_ERR;
             continue;
         }
+        // A prefab's name (a Unity prefab's or scene's too): its entities have no component of its name to filter by
+        decl *other_prefab;
+        if (!d && lookup(c->prog, c->unit, p->type_name, NAME_PREFAB, &other_prefab)) {
+            diag_error(p->type_at.line ? p->type_at : p->at, "'" STR_FMT "' is a prefab, and a %s takes components and singletons",
+                       STR_ARG(p->type_name), system_what(sys));
+            diag_note("to run for its entities, give them a component of their own (in Unity, on their TideEntity) and "
+                      "take that, or filter by it: 'with In" STR_FMT "'", STR_ARG(p->type_name));
+            p->type = T_ERR;
+            continue;
+        }
         if (!d) {
             diag_error(p->type_at.line ? p->type_at : p->at, "unknown component or singleton '" STR_FMT "'",
                        STR_ARG(p->type_name));
