@@ -6,7 +6,7 @@
 #include "tide/page.h"
 #include "versus.h"
 
-extern const versus_way events_c;
+extern const versus_way events_c, events_c_deferred;
 
 static versus_flag flags[] = {
     {"targets", "entities that turrets hit", 50000, 500, 0, 1},
@@ -57,7 +57,7 @@ static void destroy(void *world)
 
 int main(int argc, char **argv)
 {
-    const versus_way ways[] = {{"Tide", make, tick, digest, destroy}, events_c};
+    const versus_way ways[] = {{"Tide", make, tick, digest, destroy}, events_c, events_c_deferred};
     const versus_desc desc = {
         .name = "versus_events",
         .about = "turrets send their targets a Hit each tick, which a handler takes",

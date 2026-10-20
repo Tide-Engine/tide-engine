@@ -3,7 +3,8 @@
 # "<Label>-r<round>" in the ledgers of bench/results. Binaries are copied
 # first, so rebuilding while it runs measures nothing new by accident.
 #   pwsh bench/results/perf-pass/run.ps1 -Label perf-pass-baseline -Rounds 3
-#   pwsh bench/results/perf-pass/run.ps1 -Label x -Only versus_life,versus_events
+#   pwsh -Command "& ./bench/results/perf-pass/run.ps1 -Label x -Only versus_life,versus_events"
+#   (-Only takes a list, which -File would pass as one string)
 param(
     [Parameter(Mandatory)][string]$Label,
     [int]$Rounds = 3,
