@@ -899,6 +899,28 @@ int main(void)
         for (int t = 0; t < 60 * 5 && zombie(e).health >= before; t++) tick_safe(1);
         CHECK(zombie(e).health < before);
         only_skill(0, -1);
+        // Held for a pick, it holds its fire: nothing it was shooting is hurt (the owner, 2026-10-20: "i think the drone
+        // kept killing things while game was paused")
+        {
+            Survivor s = get(0);
+            s.offers.at[0] = s.offers.at[1] = s.offers.at[2] = Item_HollowPoints;
+            s.choosing = true;
+            set(0, s);
+            tick_whole(2);
+            CHECK(world.Match.paused);
+            float hurt = 0;
+            for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) hurt += TIDE_AT(&world, arch6_Zombie, Zombie, row).health;
+            const float life = TIDE_AT(&world, arch3_Turret, Turret, 0).life;
+            tick_whole(60 * 2);
+            float after = 0;
+            for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) after += TIDE_AT(&world, arch6_Zombie, Zombie, row).health;
+            printf("held for a pick two seconds: the drone's life %.2f to %.2f, the dead's health %.0f to %.0f\n", life, TIDE_AT(&world, arch3_Turret, Turret, 0).life,
+                   hurt, after);
+            CHECK(after == hurt && TIDE_AT(&world, arch3_Turret, Turret, 0).life == life);
+            s = get(0);
+            s.choosing = false;
+            set(0, s);
+        }
         // Its maker 10 m off: it flies after them, to their shoulder, at its height
         {
             const tide_float3 from = TIDE_AT(&world, arch3_Turret, Turret, 0).at;

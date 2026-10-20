@@ -14,6 +14,7 @@ tide <command> [folder] [options]
 |---|---|
 | `tide run [folder]` | Builds the game, plays it and reloads when you save |
 | `tide build [folder]` | Builds the game into `<folder>/build`, named after the folder |
+| `tide unity [folder] -o <path>` | Builds the game for the [Tide package in a Unity project](#unity), as its files change |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
 | `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
@@ -265,6 +266,38 @@ When the game gets into a state you don't want, press **Ctrl+R** in the game, or
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
 
+## Unity
+
+```sh
+tide unity Assets/Tide -o Library/Tide
+```
+
+Unity's Tide package (`unity/com.tide.unity` in Tide's repository, added to a
+project from its git URL) runs a game's simulation and networking inside the
+Unity editor: Tide simulates, predicts and rolls back, and Unity draws. The
+package starts this command itself while the editor is open, so you rarely type
+it. It builds into the path it's given: the host Unity loads, then a library of
+the game each time its files change, which the running game takes over as
+`tide run` does, and the game's schema, which the package generates its C#
+types from. It ends when its input closes, as the editor's package closes it.
+`--once` builds once and ends. Unity and other Tide builds of the same game
+play in the same matches. This is early, and its details may change.
+
+`--assets Assets` makes the project's prefabs and scenes part of the game:
+each one holding GameObjects with the package's TideEntity component is a Tide
+prefab named after its file, read from its saved file (Unity's Force Text
+serialization) with its prefab instances and variants expanded. A TideEntity is
+an entity of that prefab, Unity's Transform and parent are its own, and its
+Tide components are those the TideEntity lists. A prefab instance's component
+values go over its prefab's field by field. Code spawns them as any prefab:
+`Spawn(Roller)`, or `Scene.Load(Level)` for a scene's. Each such entity gets a
+`Unity.Source` component, by which Unity shows it through its own GameObject.
+A message about a prefab gives lines of the Tide text tide made of it, which it
+writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
+`Packages/com.tide.game` up to date: the game's schema, which the package makes
+its C# types of. Keep that folder in source control, so a fresh clone compiles
+before tide has built anything.
+
 ## Dedicated servers
 
 ```sh
@@ -337,6 +370,7 @@ A game's web page takes the same from its address, so a link can say which match
 | `?lag=100` | The page's player has a ping of 100 milliseconds, the round trip to the match's server, to see a match as on a slow connection with both players at one desk. What the trip takes already counts: the page holds back what it sends and what it receives by half of what's missing each. A page that hosts the match adds nothing |
 | `?embedded` | The game is part of a page that scrolls, in a frame of it, and leaves that page its scrolling: the wheel, and a finger that swipes up or down, until the player taps the game |
 | `?wait` | The game loads, and starts when the page around it says so |
+| `?background-pipelines=off` | Each new shader is ready before the frame that first draws with it, rather than showing a frame or a few later while the browser compiles it in the background. That's for a test that steps frames and compares them; `Tide.backgroundPipelines = false` does the same |
 
 A page that shows a game in a frame of the same site reads the frame's `Tide.room`, the code of the room the game hosts or joined (`""` for none), and can set its `Tide.lag` while the game runs. Its `Tide.minLag` is the least a lag can make the ping: the ping the game measured while its page added nothing, `undefined` until it has measured a few so. A page that wants it starts with no lag, as these docs do. That's how these docs put two players [side by side](../multiplayer/networking.md#prediction-and-rollback): the first frame's address says `?host`, and the second's `?join=` with the code the first one got.
 

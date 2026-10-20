@@ -38,6 +38,8 @@
     let memory = null;
     let exports = null;
     let gl = null;        // The canvas's WebGL 2 context, when the program draws with it...
+    let parallelCompile = false; // ...and whether it compiles shaders in parallel (KHR_parallel_shader_compile)
+    const COMPLETION_STATUS_KHR = 0x91B1;
     let device = null;    // ...or the WebGPU device it draws with instead (see WebGPU, below)
     let gpuFormat = null; // ...and what the canvas's pixels are then
     const wantedBackend = config.backend || new URLSearchParams(location.search).get('backend') || '';
@@ -112,6 +114,9 @@
     const words = [...(config.arguments || [])];
     const address = new URLSearchParams(location.search);
     if (address.get('texture-compression') === 'off') config.textureCompression = false;
+    // A page whose frames are stepped and compared, as a test's are, makes each pipeline before the frame that first
+    // draws with it (`Tide.backgroundPipelines = false`, or `background-pipelines=off` in the address)
+    if (address.get('background-pipelines') === 'off') config.backgroundPipelines = false;
     if (address.has('debug-views') && !words.includes('--debug-views')) {
         words.push('--debug-views');
     }
@@ -749,6 +754,10 @@
             // target's Format.Rgba16f), which it only does once it's asked for. It adds no function, and the
             // program finds out whether it's there by making one (gl_float_targets in gpu_gl.c)
             if (gl && !gl.getExtension('EXT_color_buffer_float')) gl.getExtension('EXT_color_buffer_half_float');
+            // And compiling shaders in parallel, where the browser can: a pipeline made in the background is asked
+            // whether it's done (GL_COMPLETION_STATUS_KHR) without waiting for it. Where it can't, it says done, and
+            // the pipeline's checked then
+            parallelCompile = !!(gl && gl.getExtension('KHR_parallel_shader_compile'));
             return gl ? 1 : 0;
         },
         canvas_width: () => size.width,
@@ -1332,13 +1341,9 @@
         glCheckFramebufferStatus: target => gl.checkFramebufferStatus(target),
         glClear: mask => gl.clear(mask),
         glClearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
-        glCompileShader(s) {
-            const shader = get('shader', s);
-            gl.compileShader(shader);
-            if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { // The program asks about one that didn't
-                shaderWarning('a shader compiled with warnings', gl.getShaderInfoLog(shader), gl.getShaderSource(shader));
-            }
-        },
+        // (Nothing's asked of a shader or a program as it's compiled or linked, which would wait for the browser to
+        // finish: its warnings are looked for when the program asks how it went, in glGetShaderiv and glGetProgramiv)
+        glCompileShader: s => gl.compileShader(get('shader', s)),
         glCreateProgram: () => add('program', gl.createProgram()),
         glCreateShader: type => add('shader', gl.createShader(type)),
         glCullFace: side => gl.cullFace(side),
@@ -1405,18 +1410,24 @@
             for (let i = 0; i < count && i < values.length; i++) i32()[(ptr >> 2) + i] = values[i];
         },
         glGetProgramInfoLog: (p, max, lengthPtr, ptr) => writeLog(gl.getProgramInfoLog(get('program', p)), max, lengthPtr, ptr),
-        glGetProgramiv: (p, pname, ptr) => writeParameter(gl.getProgramParameter(get('program', p), pname), ptr),
+        glGetProgramiv(p, pname, ptr) {
+            if (pname === COMPLETION_STATUS_KHR && (!parallelCompile || config.backgroundPipelines === false))
+                return writeParameter(true, ptr);
+            const program = get('program', p), value = gl.getProgramParameter(program, pname);
+            if (pname === gl.LINK_STATUS && value) shaderWarning('shaders linked with warnings', gl.getProgramInfoLog(program));
+            writeParameter(value, ptr);
+        },
         glGetShaderInfoLog: (s, max, lengthPtr, ptr) => writeLog(gl.getShaderInfoLog(get('shader', s)), max, lengthPtr, ptr),
-        glGetShaderiv: (s, pname, ptr) => writeParameter(gl.getShaderParameter(get('shader', s), pname), ptr),
+        glGetShaderiv(s, pname, ptr) {
+            const shader = get('shader', s), value = gl.getShaderParameter(shader, pname);
+            if (pname === gl.COMPILE_STATUS && value) { // The program asks about one that didn't
+                shaderWarning('a shader compiled with warnings', gl.getShaderInfoLog(shader), gl.getShaderSource(shader));
+            }
+            writeParameter(value, ptr);
+        },
         glGetUniformBlockIndex: (p, name) => gl.getUniformBlockIndex(get('program', p), string(name)),
         glGetUniformLocation: (p, name) => uniformId(p, string(name)),
-        glLinkProgram(p) {
-            const program = get('program', p);
-            gl.linkProgram(program);
-            if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                shaderWarning('shaders linked with warnings', gl.getProgramInfoLog(program));
-            }
-        },
+        glLinkProgram: p => gl.linkProgram(get('program', p)),
         glPixelStorei: (pname, param) => gl.pixelStorei(pname, param),
         glReadPixels(x, y, w, h, format, type, ptr) {
             const [array, offset] = pixels(type, ptr);
@@ -1492,6 +1503,8 @@
     // 'webgpu', which also takes the browser's software device.
 
     const gpuTables = { buffer: [null], texture: [null], pipeline: [null], target: [null] };
+    // Whether pipelines are made in the background (tide_gpu.background): one is drawn with once it's made
+    let backgroundPipelines = false;
     const gpuFree = { buffer: [], texture: [], pipeline: [], target: [] };
     function gpuAdd(kind, object) {
         const id = gpuFree[kind].length ? gpuFree[kind].pop() : gpuTables[kind].length;
@@ -2074,7 +2087,7 @@
                     .map(({ shaderLocation, offset, format }) => ({ shaderLocation, offset, format })),
             }));
             const layout = layoutFor(b.reads);
-            const pipeline = device.createRenderPipeline({
+            const described = {
                 label: b.name,
                 layout: layout.pipeline,
                 vertex: { module, entryPoint: 'vertex', buffers },
@@ -2089,10 +2102,28 @@
                 // Either side of a triangle tests stencil the same way, against all 8 bits
                 depthStencil: { format: depthFormat, ...depths[b.depth], stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
+            };
+            if (!backgroundPipelines) {
+                return gpuAdd('pipeline', { pipeline: device.createRenderPipeline(described), textures: b.textures, reads: b.reads,
+                    layout });
+            }
+            // In the background: the draws that use it are left out till it's made (gpu_pipeline_ready), where the
+            // frame that first drew with it would otherwise wait for the browser to compile it
+            const entry = { pipeline: null, textures: b.textures, reads: b.reads, layout };
+            const id = gpuAdd('pipeline', entry), made = device;
+            device.createRenderPipelineAsync(described).then(pipeline => {
+                if (device === made && gpuTables.pipeline[id] === entry) entry.pipeline = pipeline;
+            }, error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
+                if (device !== made) return;
+                const text = `WebGPU: the pipeline of ${b.name} wasn't made: ${error.message}`;
+                if (config.checkGL) fail(new Error(text));
+                else printErr('tide: ' + text);
             });
-            return gpuAdd('pipeline', { pipeline, textures: b.textures, reads: b.reads, layout });
+            return id;
         },
         gpu_pipeline_free: id => gpuRemove('pipeline', id),
+        gpu_background: on => { backgroundPipelines = !!on && config.backgroundPipelines !== false; },
+        gpu_pipeline_ready: id => gpuTables.pipeline[id]?.pipeline ? 1 : 0,
         gpu_target(format, width, height) {
             // Its color images, in order: none for a target of depth alone (TIDE_GPU_TARGET_DEPTH)
             const formats = colorFormats(format), samples = formats.length ? samplesOf(format) : 1;

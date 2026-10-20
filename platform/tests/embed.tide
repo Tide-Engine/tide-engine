@@ -2,12 +2,23 @@
 settings { tickRate = 30; }
 
 scene Main { }
+scene Arena { int rounds = 3; }
 
 component Counter
 {
     int ticks;
     int presses;
+    string label = "counted";
+    List<int> marks;
 }
+
+singleton Tally
+{
+    float level;
+    int bumps;
+}
+
+command Bump { int by; }
 
 input Keys
 {
@@ -21,7 +32,7 @@ input Keys
 
 event(PlayerJoined joined) Arrive()
 {
-    Spawn(Counter { }, Owner { player = joined.player });
+    Spawn(Counter { marks = [4, 5, 6] }, Owner { player = joined.player });
 }
 
 system Count(Keys keys, mut Counter counter)
@@ -30,9 +41,25 @@ system Count(Keys keys, mut Counter counter)
     if (keys.space) counter.presses += 1;
 }
 
+system Rise(mut Tally tally, Time time)
+{
+    tally.level += time.dt;
+}
+
+command(Bump bump, PlayerID sender) Apply(mut Tally tally)
+{
+    tally.bumps += bump.by;
+}
+
 extern void Seen(int ticks, int presses, float width, float height);
 
 view Show(Counter counter)
 {
     Seen(counter.ticks, counter.presses, Screen.width, Screen.height);
+}
+
+// What makes Arena a scene a match can start in, which the other program can then start by name
+void StartArena()
+{
+    Session.Start(Arena);
 }

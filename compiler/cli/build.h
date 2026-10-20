@@ -21,6 +21,8 @@ typedef struct build_options {
     int define_count;
     const char *editor_prefab, *editor_source, *editor_draft;
     bool editor_local;
+    bool unity; // For Unity's Tide package (tide unity): the game built for another program to run (tidec --embed)
+    const char *unity_assets; // ...and the Unity project's Assets folder, whose prefabs and scenes it has (unity_assets.h)
 } build_options;
 
 // Builds a game with the engine files installed in `root` (see AGENTS.md,
@@ -34,6 +36,13 @@ char *tide_build_editor(const char *root, const build_options *opts);
 // game (--host, --join, --connect, --size, and a run with no window's), ending
 // with NULL. Returns the game's exit code.
 int tide_run_native(const char *root, const build_options *opts, const char *const *args);
+
+// `tide unity`: builds the game for Unity's Tide package into opts->output: the
+// host Unity loads (tide_embed, tide/embed.h), then the game's libraries
+// (game-<n>, with its pack-<n>), numbered on from what's there, a new one each
+// time the game's files change while opts->watch, which the running game swaps
+// in. A watching one ends when its input does. Returns its exit code.
+int tide_unity(const char *root, const build_options *opts);
 
 // Interactive run: the game is a library in a small host program, rebuilt whenever
 // one of its files changes and swapped into the running game (see tide/host.h).

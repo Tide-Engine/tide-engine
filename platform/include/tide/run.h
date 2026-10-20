@@ -71,6 +71,12 @@
 #include "tide/host.h"
 #include "tide/pack.h"
 
+#ifdef TIDE_HAS_EMBED // The game was built for another program to run (tidec --embed): what it generated for that, and its layout
+#include "tide/embed_game.h"
+extern const tide_embed_game tide_game_embed;
+extern const tide_layout tide_game_layout;
+#endif
+
 static inline void tide_run_local_init(void *local)
 {
     tide_local_init(local);
@@ -244,6 +250,10 @@ static const tide_host_game tide_host_game_api = {
     .correct_views = tide_run_local_correct,
 #endif
     .network = tide_network_get,
+#ifdef TIDE_HAS_EMBED
+    .layout = &tide_game_layout,
+    .embed = &tide_game_embed,
+#endif
 };
 
 _Noreturn static inline void tide_run(const tide_run_desc *desc)

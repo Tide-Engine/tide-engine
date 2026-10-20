@@ -2640,7 +2640,10 @@ program *program_new(void)
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
     const size_t path_len = strlen(src->path);
-    const bool prefab_file = path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0;
+    // A Unity prefab or scene is read as the prefab `tide unity` makes of it
+    const bool prefab_file = (path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0) ||
+                             (path_len >= 7 && strcmp(src->path + path_len - 7, ".prefab") == 0) ||
+                             (path_len >= 6 && strcmp(src->path + path_len - 6, ".unity") == 0);
     parser p = {.toks = toks, .recover = recover, .prog = prog};
     p.unit = NEW(unit);
     p.unit->src = src;

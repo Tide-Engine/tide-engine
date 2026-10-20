@@ -1,5 +1,5 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
-#               [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...]
+#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
 #               [DEFINES <SYMBOL>...])
 #
@@ -35,7 +35,10 @@
 # They include the game's generated header, <name>.h (NAME defaults to
 # <target>), and drive the game through its API (see AGENTS.md). LAYOUT also
 # describes the game's data layout, as tide run does for hot reloading
-# (tide_game_layout, see engine/include/tide/layout.h).
+# (tide_game_layout, see engine/include/tide/layout.h). EMBED adds what
+# another program needs to run it (tide_game_embed, tide/embed_game.h, which
+# tide/run.h's table then has: TIDE_HAS_EMBED is defined for the HOST files),
+# and the layout with it.
 #
 # The generated files land in the build tree and are regenerated whenever a
 # .tide file or tidec changes. Every game is also listed in
@@ -117,7 +120,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW;SERVER;STRIP_SERVER_ASSETS" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -204,7 +207,9 @@ function(tide_add_game target)
     endforeach()
 
     set(layout "")
-    if(ARG_LAYOUT)
+    if(ARG_EMBED)
+        set(layout --embed)
+    elseif(ARG_LAYOUT)
         set(layout --layout)
     endif()
     # The symbols the game's #if lines read as defined: DEFINES', and DEBUG in a Debug build, as tide
@@ -290,7 +295,7 @@ function(tide_add_game target)
             list(APPEND server_flags --strip-server-assets)
         endif()
     endif()
-    if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT)
+    if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT AND NOT ARG_EMBED)
         set(strip_assets "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
     endif()
     add_custom_command(
@@ -308,6 +313,9 @@ function(tide_add_game target)
         tide_android_app(${target} LABEL "${title}")
     elseif(ARG_HOST)
         add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
+        if(ARG_EMBED)
+            target_compile_definitions(${target} PRIVATE TIDE_HAS_EMBED=1)
+        endif()
         target_link_libraries(${target} PRIVATE tide tide_font_bold)
     else()
         if(NOT TARGET tide_platform)

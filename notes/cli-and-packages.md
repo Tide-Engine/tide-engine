@@ -1,5 +1,43 @@
 # `tide`, packages and the package
 
+## tide unity (2026-10-20)
+
+`tide unity [folder] -o <path> [--once] [--release] [--define S]` builds a game
+for Unity's Tide package (`notes/unity.md`): `build_options.unity` makes
+`generate` pass `codegen_options.embed`. Into `<path>`: `tide_embed`
+(`tide_embed.dll`, `libtide_embed.so`/`.dylib`), linked from a one-line
+`embed_host.c`, the engine's objects and the installed platform library, its
+ten `tide_embed_*` functions exported (a `.def` file under MinGW, `-u` on ELF
+and Mach-O) and renamed into place whole; then `game-<n>`/`pack-<n>` from
+`build_library` with a library stub defining `TIDE_HAS_EMBED` and exporting
+`tide_unity_schema`, numbered on from the highest already there
+(`highest_numbered`, through `sys_list`), so a game running from the folder
+takes each; and `schema.json`, written whole by loading the new build
+(`sys_library_open`/`_find`/`_close`, new in `sys.c`) and calling its
+`tide_unity_schema`. Watching, it rebuilds as `tide run` does and ends when its
+input ends (`sys_input_ended`, set by the line reader at EOF); a `restart` line
+writes the folder's `restart` file. `--once` builds once. It refuses
+`--web`/`--android`/`--server` and a missing `-o`; `tide help unity` and
+`--once` have help entries; `tide_cli_run_exit_tests` stubs `tide_unity`.
+User docs: `docs/tools/cli.md`, Unity. Checked by hand with a scratch install
+(MinGW release plus debug trees) on `unity/Sample`, and by its play mode test.
+
+`--assets <Assets>` (`build_options.unity_assets`) adds the Unity project's
+prefabs and scenes (`compiler/cli/unity_assets.c`, reading YAML with
+`unity_yaml.c`; the format and rules are in `notes/unity.md`, Authoring as
+built). `generate` appends their Tide text as `compile_input`s with `.text`
+(new: a file's text given rather than read), paths `Assets/...`, after the
+game's own files, and `Library/Tide/Unity.tide` declaring `Unity.Source`; it
+writes each text to `<path>/prefabs/<asset>.tprefab`. The parser treats paths
+ending `.prefab`/`.unity` as `.tprefab` files (prefab declarations only).
+`game_stamp` folds in `unity_assets_stamp` (paths and stamps of every
+`.prefab`, `.unity` and `.meta`), so a saved prefab rebuilds the game. After
+each schema, `unity.json` (the Unity.Source map, kept on `build.unity_map` from
+the last good generate) and `Packages/com.tide.game` beside `Assets`
+(`package.json`, `Tide.Game.asmdef`, `schema.json` and a stub naming the hash,
+each written only when it changes: Unity's shared build cache keys a compile by
+its sources, so the stub is what recompiles the generated types).
+
 ## Terminal editor configuration helper (2026-10-18)
 
 `tide ide emacs|vim|neovim` prints ready-to-copy init configuration from the

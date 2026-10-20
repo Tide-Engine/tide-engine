@@ -267,7 +267,7 @@ try {
             RTCDataChannel.prototype.send = function(...values) { window.__sent++; window.__sentAt = performance.now(); return send.apply(this, values); };
             let configuration;
             Object.defineProperty(window, 'Tide', { configurable:true, get:()=>configuration, set:value=> {
-                configuration=value; value.checkGL=true; value.backend=${JSON.stringify(backend)}; value.relay=${JSON.stringify(relayUrl)};
+                configuration=value; value.checkGL=true; value.backgroundPipelines=false; value.backend=${JSON.stringify(backend)}; value.relay=${JSON.stringify(relayUrl)};
                 value.onAbort=error=>{window.__aborted=String(error); console.error(error);};
                 value.netcode=netcode=> {
                     window.__frames++;

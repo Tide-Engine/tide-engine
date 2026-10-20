@@ -13,6 +13,18 @@ signatures; `buffer_for` is private. Generated list helpers read
 `tide_list_cache`'s fields as `tide_list_cached_at_mut` does. Contracts are in
 ecs.md and schedule-and-threads.md, Performance pass.
 
+## View packets and schemas for tide/embed.h (2026-10-20)
+
+The owner approved the Unity front end's interface (`notes/unity.md`, Phase 1
+interface): a view packet written by generated code, a command packer and a
+schema. Generated code built with `tidec --embed` now calls new agent-maintained
+engine functions in `engine/src/embed_game.c` (`tide/embed_game.h`):
+`tide_packet_begin`, `_grow`, `_section`, `_text`, `_list`, `_places`, `_end`
+and `_free`, and `tide_schema_json`. They grow buffers through `tide_realloc`
+and bound every size; a game built without `--embed` calls none of them, and
+no existing function, struct or the generated header changed. The platform's
+`tide/embed.h` host is agent-maintained with the rest of `platform/`.
+
 ## Double Position attribute (2026-10-20)
 
 The owner-approved attribute extension changes compiler acceptance and uses

@@ -259,6 +259,14 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory);
 // across runs (Vulkan's pipelines), the game's temporary cache folder, which
 // is only made once something's kept there. tide_platform_io_init names it too.
 void tide_platform_name_game(const char *app_id);
+// Whether a GPU pipeline (a shader with how it blends, tests depth and culls)
+// is made in the background where the backend can: WebGPU, and WebGL where
+// the browser compiles shaders in parallel. Making one takes tens of
+// milliseconds; in the background, nothing that draws with it shows till it's
+// made, a frame or a few later, where otherwise the frame that first draws it
+// waits for it. Off at first, so a frame read back draws everything it's
+// given; the standard host turns it on for games.
+void tide_platform_background_pipelines(bool on);
 
 // How many draw calls the last list drawn took (tide_platform_draw), aside
 // from what was drawn over it (tide_platform_draw_overlay,

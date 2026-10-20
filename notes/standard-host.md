@@ -42,11 +42,30 @@ out or calls, so a binding refuses an embed built by another tide.
   default on desktop; a page's is its own (`Tide.relay`), so it does nothing on
   the web.
 
-Tests: `tide_platform_embed` (`platform/tests/embed.c`, `embed.tide`, native
-only: on the web it builds, but needs a page's imports) runs Main at 30 Hz from
-made-up 60 Hz frames, one at a time, a one-frame key tap reaching one tick,
-the screen reaching `Screen.width`, requests (leave, start again, refused
-kinds), bad flags left out, and NaN or negative frames and screens.
+- A game built with `--embed` (`tide_host_game.embed`, `tide/embed_game.h`;
+  `tide/run.h` fills it and `.layout` when `TIDE_HAS_EMBED` is defined) gets
+  its view packet written after every frame from `tide_session_view`'s worlds
+  (`tide_embed_view`), its schema from the game itself
+  (`tide_embed_game.schema`, built again when a new build comes in), commands
+  with an optional target (`tide_embed_command`) and START by a scene's name,
+  limited to the scenes `tide_start` has: those the game's code starts.
+- `desc.library_dir` (desktop): the newest `game-<n>` there and its newest
+  `pack-<n>`, loaded and swapped as `tide run`'s host does, through
+  `platform/src/reload_library.inc`: the helpers moved out of `reload.c` so
+  `embed.c` runs them on its own copy of the host's statics (each file that
+  includes `tide/host.h` has one). Embedded, a failed full restart leaves the
+  game stopped and saying why rather than exiting the program.
+
+Tests: `tide_platform_embed` (`platform/tests/embed.c`, `embed.tide`, built
+with EMBED; native only: on the web it builds, but needs a page's imports)
+runs Main at 30 Hz from made-up 60 Hz frames, one at a time, a one-frame key
+tap reaching one tick, the screen reaching `Screen.width`, requests (leave,
+start again, refused kinds), bad flags left out, NaN or negative frames and
+screens, the packet's bytes as another language reads them (two entities,
+owner flags, a root, blended values, text and a list through STRINGS, a
+singleton), the schema's types and kinds, a command reaching its handler and
+refusals of a wrong size or type, and a scene started by name. The library
+path is covered end to end by `unity/Sample`'s play mode test.
 
 ## Window scale frame metadata (2026-10-20)
 

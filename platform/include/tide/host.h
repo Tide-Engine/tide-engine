@@ -110,6 +110,9 @@ typedef struct tide_host_game {
     // (tide/network.h), which a library keeps in its own copy of the engine.
     // NULL for a table that never has one: its matches are in Tide's rooms.
     const tide_network *(*network)(void);
+    // What another program needs to run the game (tide/embed.h): its view
+    // packet, commands and scenes by name; NULL for a game built without it.
+    const struct tide_embed_game *embed;
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -768,6 +771,9 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
         id = fallback;
     }
     tide_platform_name_game(id); // Its folders: the renderer's cache too, whether the game uses files or not
+    // A game's frames don't wait for a GPU pipeline to be made: what's drawn with one shows once it's made. Not in
+    // a run with no window, whose frames are read back and go the same every time
+    tide_platform_background_pipelines(!tide_run_headless);
     if (!game->set_io) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;

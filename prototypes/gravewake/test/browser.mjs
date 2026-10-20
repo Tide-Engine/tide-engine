@@ -106,7 +106,7 @@ try {
         }
         let configuration;
         Object.defineProperty(window, 'Tide', { configurable:true, get:()=>configuration, set:value=> {
-            configuration=value; value.checkGL=true; value.backend=${JSON.stringify(backend)};
+            configuration=value; value.checkGL=true; value.backgroundPipelines=false; value.backend=${JSON.stringify(backend)};
             value.onAbort=error=>{window.__aborted=String(error); console.error(error);};
             value.netcode=netcode=> {
                 window.__frames++;

@@ -76,6 +76,16 @@ bool sys_process_alive(uint32_t pid); // Whether a process with that ID is runni
 // returns the latest one (without its line break) once it's whole.
 void sys_read_lines(void);
 bool sys_typed_line(char *out, size_t size);
+// ...and whether the input ended (what started tide closed it, or went away), once read up to there.
+bool sys_input_ended(void);
+// Waits `ms` milliseconds.
+void sys_sleep_ms(int ms);
+
+// A shared library loaded into tide, a function of it by name, and letting it go. NULL where it won't load or
+// hasn't the function.
+void *sys_library_open(const char *path);
+void (*sys_library_find(void *library, const char *name))(void);
+void sys_library_close(void *library);
 
 // Opens a page, a file or a URL, in the default browser. False if it couldn't.
 bool sys_open_in_browser(const char *page);

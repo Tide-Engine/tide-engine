@@ -22,6 +22,38 @@ in notes/benchmarks.md, Performance pass):
   and may skip, still copies. `compiler/tests/e2e` grid fixtures and the
   safety suite cover the loops; versus_life and versus_sand pin the results.
 
+## Building a game for another program: --embed (2026-10-20)
+
+`codegen_options.embed` (`tidec --embed`, `tide_add_game(EMBED)`, `tide unity`)
+writes the layout and `tide_game_embed` (`compiler/src/embed_codegen.inc`,
+after `gen_layout`) into the `.c` alone, so the header and the game's hash are
+the same as a plain build's (checked on three games). It holds: the view packet
+writer, modeled on `tide_world_print`'s walk over every match archetype and
+component (sparse presence included), blending each value with views'
+`tide_prev_<C>`/`tide_blend_<C>` (the owned variant where a custom
+interpolator reads the heap), owner flags from `Owner` against `Session.player`,
+parents from `tide_parent_of` where the game has a hierarchy, component and
+singleton local fields, and `TIDE_HELPER tide_embed_fix_<T>` turning text and
+plain-element list fields into STRINGS handles (maps, sets, grids and lists of
+heap-holding elements zeroed); command types' layouts appended after the
+layout's types and a dispatcher onto `tide_local_send_<C>` with the target,
+refusing a wrong size and commands holding text or lists; START by scene name
+over `start_scenes` with defaults (text zeroed); tables of components,
+singletons, local parts, commands, scenes, prefabs and non-plain fields (text,
+list with element size and type, map, grid, entity); and `schema`, through the
+engine's `tide_schema_json`. A build without `--embed` generates what it did.
+
+Check: every one of the 324 source lists in a debug build generated with
+`--embed` and compiled under `-Wall -Wextra -Wpedantic -Werror`; the first run
+found an unused `out` (fix helpers of types with only maps/grids) and an unused
+`place` (games with no component), both fixed. Runtime contract and tests:
+`notes/standard-host.md`, `notes/runtime-ownership.md`.
+
+For `tide unity --assets`: `compile_input.text` gives a file's text in place
+of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
+`parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,
+so they hold prefab declarations only (`notes/unity.md`, Authoring as built).
+
 ## Double Position correction smoothing (2026-10-20)
 
 The owner requested [Position] on double coordinates. The checker now accepts

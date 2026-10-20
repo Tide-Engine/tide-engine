@@ -8,7 +8,7 @@
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--layout]\n"
+            "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--layout] [--embed]\n"
             "             [--define <SYMBOL>]...\n"
             "       tidec <file.tide>... --schedule [--name <name>]\n"
             "       tidec <file.tide>... --shaders\n"
@@ -27,6 +27,7 @@ static void usage(void)
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
+            "  --embed        ...and what another program needs to run the game (tide/embed.h), as tide unity builds it\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
             "  --server               preserve the client identity and emit server build metadata\n"
             "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
@@ -76,7 +77,7 @@ static bool add_input(input_list *inputs, const char *path)
         inputs->items = realloc(inputs->items, (size_t)inputs->room * sizeof(compile_input));
         if (!inputs->items) return false;
     }
-    inputs->items[inputs->count++] = (compile_input){path, inputs->package};
+    inputs->items[inputs->count++] = (compile_input){path, inputs->package, NULL};
     return true;
 }
 
@@ -167,6 +168,8 @@ int main(const int argc, char **argv)
             pack_c = true;
         } else if (strcmp(argv[i], "--layout") == 0) {
             opts.layout = true;
+        } else if (strcmp(argv[i], "--embed") == 0) {
+            opts.embed = true;
         } else if (strcmp(argv[i], "--editor-prefab") == 0 && i + 1 < argc) {
             opts.editor_prefab = argv[++i];
         } else if (strcmp(argv[i], "--editor-local") == 0) {

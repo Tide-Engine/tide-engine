@@ -1,0 +1,12 @@
+{
+  "name": "com.tide.unity",
+  "displayName": "Tide",
+  "version": "0.1.0",
+  "unity": "6000.0",
+  "description": "Runs a Tide game's simulation and networking inside Unity: Tide simulates, predicts and rolls back, and Unity draws, plays audio and authors scenes and prefabs. Needs the tide command installed (tide-engine.dev).",
+  "keywords": ["tide", "netcode", "multiplayer", "deterministic", "rollback"],
+  "author": {
+    "name": "Tide",
+    "url": "https://tide-engine.dev"
+  }
+}

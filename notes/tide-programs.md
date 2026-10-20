@@ -1,5 +1,10 @@
 # `tide_add_game` and the generated header
 
+`EMBED` (2026-10-20): `tide_add_game(... EMBED)` passes `--embed` (which
+implies the layout) and defines `TIDE_HAS_EMBED` for the target, so
+`tide/run.h`'s table has `tide_game_embed` and `tide_game_layout` for
+`tide/embed.h`. It keeps all assets, as LAYOUT does. `notes/standard-host.md`.
+
 Managed deployment (2026-10-15): the installed CLI's internal managed target
 builds a wasm32-wasip1 reactor with imported bounded memory and `managed_run.h`;
 it is distinct from CMake's native SERVER target and the threaded web player.

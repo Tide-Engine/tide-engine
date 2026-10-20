@@ -19,6 +19,19 @@ are unchanged; all new lines are inside the excluded `tide run` markers.
 `tide.release.js` remains 68,931 bytes; its source fingerprint was regenerated.
 The docs compiler worker/bundle and integration checks are in notes/docs-site.md.
 
+Background pipelines (2026-10-20): `tide.js` adds the `gpu_background` and
+`gpu_pipeline_ready` imports. WebGPU uses `createRenderPipelineAsync` while
+background is on. WebGL enables `KHR_parallel_shader_compile`; `glCompileShader`
+and `glLinkProgram` no longer query status, whose warnings moved to
+`glGetShaderiv`/`glGetProgramiv`, and `COMPLETION_STATUS_KHR` answers true
+without the extension. `Tide.backgroundPipelines = false` (or
+`?background-pipelines=off`) keeps pipelines synchronous on both backends. The
+four prototype fixtures that step frames and compare screenshots (GRAVEWAKE,
+Inside Out, SUNDAY SUPPER, Underfoot) set it. Without it,
+`underfoot_play_webgpu` failed once under full-suite load: one player's frame
+was screenshotted before a new puzzle's pipeline was made. Release runtime
+regenerated: 69,585 bytes. Design and tests are in `notes/rendering.md`.
+
 Texture compression (2026-10-11): WebGL enables `WEBGL_compressed_texture_s3tc` before querying supported formats; WebGPU requests `texture-compression-bc` only when advertised, alongside optional timestamps. Timestamp failure retains BC support on a fresh adapter; an adapter without requested optional features still gets a plain device request. BC uploads include physical block extents for tail mips. Missing format support uses the existing RGBA upload path. Test pages can disable compression with `?texture-compression=off` (or `Tide.textureCompression = false`); renderer fallback checks run on both web backends and repeat after WebGPU device loss. The checked-in release runtime was regenerated with the pinned toolchain (66,519 bytes). Contracts and final validation are in `notes/textures.md`.
 
 Multisampled depth (2026-10-13): `gpu_resolve_depth` in `tide.js` and its import in `gpu_web.c` make a multisampled WebGPU target's depth a texture a shader reads (`notes/render-targets.md`). WebGL 2 goes through `gpu_gl.c`'s blit with functions the page already had. The checked-in release runtime was regenerated with `node cmake/web_runtime.mjs --write` (68,931 bytes).
