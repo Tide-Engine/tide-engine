@@ -30,6 +30,15 @@ definition (ecs.md, A page's hash by stripes), and `tide/net.h` gains
 code calls neither directly and nothing new; `tide_page_hash` is unchanged.
 Session `PROTOCOL` is 17 (netcode.md).
 
+## Events in runs (2026-10-20)
+
+No runtime function is new to generated code, and none changed its signature
+or behavior. Generated code that records a system's one Send in runs now
+pushes them with `tide_queue_push` (one item a run, notes/ecs.md, Events in
+runs) and no longer calls `tide_queue_push_run`, which stays in tide/table.h
+with its tests (`tests/test_table.c`). `tide_table_column_mut`'s inline fast
+path skips writing back a page pointer that didn't change.
+
 ## Performance pass (2026-10-20)
 
 No runtime function is new to generated code. `tide/list.h` gains

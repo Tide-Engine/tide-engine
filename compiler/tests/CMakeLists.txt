@@ -205,6 +205,7 @@ tide_e2e_test(operators)
 tide_e2e_test(events)
 tide_e2e_test(events_lookup) # Verified event target rows and fallback after structural changes
 tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
+tide_e2e_test(events_runs) # Runs of events taken in their own loop: found, moved, other and gone targets, against C
 tide_e2e_test(commands)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)

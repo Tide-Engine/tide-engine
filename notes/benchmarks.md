@@ -149,9 +149,9 @@ What changed, and where it's described:
   attached local fields, Correction).
 
 Where Tide stays behind, and why (profiled with `tide_sample`):
-- Events, 7.4×: every hit resolves its target entity to a row (generation,
-  table, chunk, lane) and then follows a chain of dependent loads; C indexes
-  its targets directly. A C way that defers its hits as Tide's events are
+- Events, 7.4× (3.7× since: Events, second round, below): every hit resolves
+  its target entity to a row (generation, table, chunk, lane) and then follows
+  a chain of dependent loads; C indexes its targets directly. A C way that defers its hits as Tide's events are
   (`C, deferred` in versus_events) is 1.6× immediate C, so deferral isn't
   most of it: Tide is about 4.7× deferred C. Record size is about 15%.
   Applying them on threads doesn't help even in C (taking the hits on 4 to 12
@@ -503,6 +503,114 @@ validation layer; all 2,383 web debug CTests pass (WebGL, the D3D11 WebGL run
 and the 11 WebGPU pages, which run `runs_drawn_alike` too). The draw test
 counts 2,975 `ok`s on Vulkan (both devices) and 1,537 on OpenGL. Android,
 Linux, macOS, MinGW and sanitizers were not run; no CI was dispatched.
+
+## Events, second round, 2026-10-20
+
+The pass's largest simulation gap: `versus_events` (200,000 turrets each
+sending a `Hit` a tick to one of 50,000 targets, one handler taking it) at
+7.4× its C. Where the time was, from `tide_sample` and the disassembly of the
+release build at `4a59a73a`:
+
+- Taking the events was 79% of Tide's tick and recording them 19%. Each event
+  went round `tide_apply_from`: `tide_queue_next`, the chain's depth, a switch
+  on the kind and one on the event, then the dispatcher's lookup, which read
+  the target table's count, page array and first handle again for every
+  event (a handler writes through byte pointers, so the C compiler can't keep
+  them), all inlined into one function short of registers: about 60
+  instructions an event (C's loop has 6). 32% of all samples were on the line
+  after the handle check, the instructions behind it waiting.
+- Records of 24 bytes an event (a `tide_command`'s head and the value), each
+  head written by the row that sent it; C, deferred keeps 8.
+- Memory, less than it looked: the handle check is a random read of a 400 KB
+  column, but with 500 targets, all in L1, the tick took 0.40 ms where 50,000
+  took 0.52 (at the third step below), and prefetching never helped.
+
+What changed (notes/language.md and notes/ecs.md, Events in runs), each step
+timed in alternating gated runs of scratch builds, Tide on one thread:
+
+1. A system whose whole body is one Send records runs (an item of the queue,
+   12 bytes an `int` event), taken in a loop of their own: 0.87 → 0.69 ms.
+2. That loop reads the table's count, pages and first handle once, and the
+   dispatcher is split so it calls only what follows finding the target:
+   → 0.52.
+3. Two calls, so the one where the target was found knows its archetype (no
+   switch, no gone check), and `tide_table_column_mut` doesn't write back an
+   unchanged page pointer: → 0.475.
+4. The loop `noinline`, with the registers to itself, and the shared page's
+   copy marked unlikely: → 0.45, about 31 instructions an event.
+5. Ordinary event items back to back in a page through the same kind of loop:
+   versus_events with its Send in an `if` (so not one Send alone, a scratch
+   build): 1.12 → 0.92 ms.
+
+The pair (gated, five rounds alternating before, `4a59a73a`, and after,
+`0ceefae5`; `events-r2-before-r*` and `-after-r*` in the ledgers; runner
+metadata, binaries' SHA-256 and no competing work in
+`bench/results/perf-pass/events-r2-metadata.json`):
+
+| ms a tick | Tide before → after | C | C, deferred | Tide/C | Tide/C, deferred |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 thread | 0.882 → 0.439 | 0.119 | 0.187 | 7.42× → 3.68× | 4.72× → 2.36× |
+| 12 threads | 0.878 → 0.435 | 0.119 | 0.188 | 7.40× → 3.64× | 4.67× → 2.32× |
+
+On 1, 2, 4, 8 and 12 threads (`versus_events_scaling`, medians of five) Tide
+went 0.878, 0.879, 0.886, 0.881, 0.883 → 0.439, 0.445, 0.444, 0.437, 0.431
+ms (two of the after runs on 4 threads read 0.62-0.64), C 0.118-0.120 and C,
+deferred 0.186-0.188 throughout. Churn 1 thread 0.451 → 0.415 and 12 threads
+0.396 → 0.415, its generated C unchanged (12-thread runs 0.38-0.49 on both
+sides). Sand's and Gallery's sessions as they were: client simulation 14.6 →
+14.6 and 1.64 → 1.64 ms a simulated second, updates 0.257 → 0.256 and 0.068 →
+0.069 ms, the same bytes, replays and end hashes (0x953b9562d90bd9bb at tick
+736, 0x365586644fdce54f at 1733).
+
+The other versus programs, three rounds of each in turn (`events-r2-others-*`,
+metadata beside the first; its revision says `+local` for the ledgers the
+first pair had written, the binaries the same): particles 0.448 → 0.447 and
+0.088 → 0.089 ms on 1 and 12 threads, wide 1.468 → 1.396 and 0.809 → 0.753,
+sand 0.956 → 0.981 (one after run 1.104) and 0.221 → 0.219, life 0.420 → 0.419
+and 0.119 → 0.119, n-body 3.42 → 3.40 and 0.410 → 0.382, buckets 0.0619 →
+0.0617 and 0.0619 → 0.0624, lookup 1.312 → 1.331 and 1.313 → 1.339, steady
+lookup 1.350 → 1.339 and 1.345 → 1.343: within their noise. Of these only
+sand's generated C changed, in `PlayerJoined`'s dispatch, which its runs
+never reach.
+
+Tried and dropped:
+
+- Prefetching the targets' rows 8, 16 or 32 events ahead: slower every time,
+  0.80-1.02 ms against 0.69 in the first loop and 0.52-0.54 against 0.46 in
+  the last. The loop is bound by its instructions more than by memory, and
+  working out where to prefetch costs half a lookup.
+- Taking ordinary items one after another as found, the next one's place from
+  `tide_queue_next` each time: 1.25 ms against 1.13 the way it was, on the
+  scratch game with its Send in an `if` (each event waited for its place to be
+  read); counting them first through `tide_queue_next`: 1.15. Counting them
+  from the page's `used` (built): 0.92.
+- A per-run cache of each chunk's lane pages a handler writes, written by hand
+  into the generated C: 0.45 → 0.425 (6%). Not built: the handlers' columns
+  would need a second way of being generated for a few instructions an event.
+
+What's left, 3.7× C and 2.4× C, deferred:
+
+- The loop still takes about 31 instructions an event to C's 6: checking the
+  target's handle against its row (a random read C doesn't make, since C
+  trusts its index, and a handle can be gone or reused by the event's turn),
+  the lane page's ownership for each event (`tide_table_column_mut`: a load, a
+  compare and `hashed` written), gathering and putting back the component, and
+  the handler. Recording is about 0.08 ms of the 0.44.
+- Sends that aren't a system's whole body (in an `if`, a function or a
+  handler) still record 24 bytes each through `tide_cmd_push`, whose page's
+  `used` and queue's `count` go through memory event by event: about 0.46 ms
+  of the 0.92 in the scratch game. Generated code reserving a loop's room in
+  the queue ahead would take most of it, which is a new runtime function
+  generated code calls: a proposal for the owner, not built.
+- The pass's proposals stand: dispatch fused with sending where one handler
+  consumes an event, or applied in parallel by target, both changes to how
+  events are scheduled.
+
+Validation: warning-free native and web debug and native release builds; all
+2,478 native debug CTests (Vulkan SDK checks and 36 GPU tests included), all
+2,384 web debug CTests and the 246 native release `tidec_e2e`, `versus` and
+`tide_tests` tests pass; cross-platform, random and session pins unchanged.
+Linux, macOS, Android, MinGW and sanitizers were not run; no CI was dispatched.
 
 ## Rollback, the schedule and thread scaling against C, 2026-10-20
 

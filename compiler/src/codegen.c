@@ -4293,24 +4293,59 @@ static const expr *batch_event(const decl *sys)
     return send;
 }
 
+// Whether some system's one Send records `event` in runs (batch_event): the
+// events of a chunk's rows go into items of the queue that hold many, each its
+// target and value (TIDE_CMD_EVENTS, tide_sent_<Event>), which the end of the
+// tick takes in a loop of their own (gen_dispatch_each), in the order sent.
+static bool event_batched(const program *prog, const decl *event)
+{
+    for (int i = 0; i < prog->systems.count; i++) {
+        const expr *send = batch_event(prog->systems.items[i]);
+        if (send && send->type_decl == event) return true;
+    }
+    return false;
+}
+
+// Whether the end of a tick takes several of `event` in a row in a loop of its
+// own (gen_dispatch_each): the match's events that handlers or listeners take,
+// but commands (their sender) and those that hold text (each releases its own).
+static bool event_runs(const program *prog, const decl *event)
+{
+    return is_queued(prog, event) && !event->is_local && !event->is_command && !decl_has_text(event)
+        && (has_handlers(event, false) || event->listeners.count > 0);
+}
+
+static bool program_runs(const program *prog)
+{
+    for (int i = 0; i < prog->events.count; i++) {
+        if (event_runs(prog, prog->events.items[i])) return true;
+    }
+    return false;
+}
+
+static bool program_batches(const program *prog)
+{
+    for (int i = 0; i < prog->events.count; i++) {
+        if (event_batched(prog, prog->events.items[i])) return true;
+    }
+    return false;
+}
+
 static void gen_send(gen *g, const expr *e)
 {
     sb *o = &g->c;
     const decl *event = e->type_decl;
     const expr *arg = e->args.items[0];
-    if (g->reserved_send) {
+    if (g->reserved_send) { // Its place in a run its loop pushed (gen_chunk), or NULL
         line(g, o, "if (tide_reserved) {");
         g->indent++;
-        line(g, o, "tide_reserved->kind = TIDE_CMD_EVENT;");
-        line(g, o, "tide_reserved->id = %d;", event->index);
-        line(g, o, "tide_reserved->depth = tide_w->tide_chain;");
         indent(g, o);
-        sb_put(o, "tide_reserved->entity = ");
+        sb_put(o, "tide_reserved->target = ");
         if (e->kind == E_METHOD) gen_expr(g, o, e->object);
         else sb_put(o, "(tide_entity){0}");
         sb_put(o, ";\n");
         indent(g, o);
-        sb_printf(o, "tide_reserved->data.event_%s = ", type_cname(event));
+        sb_put(o, "tide_reserved->value = ");
         gen_expr(g, o, arg);
         sb_put(o, ";\n");
         g->indent--;
@@ -9980,6 +10015,46 @@ static void gen_command_fits(gen *g)
     sb_put(o, "    default: return false;\n    }\n    return c->size >= need;\n}\n\n");
 }
 
+// The runs a system whose one Send is batched records (batch_event, gen_chunk):
+// an item of the match's queue, TIDE_CMD_EVENTS, with the head every change
+// has (its `id` the event's, its `entity` the null one), then how many events
+// it holds, then each one's target and value, in the order they were sent.
+// One holds as many as fit a page of the queue (TIDE_SENT_MOST), so a chunk's
+// rows take a few; an event too big for a page has a run each. A run is only
+// ever in the queue during the tick that sends it: between ticks the queue has
+// the players joining and leaving alone, so a world's bytes, hash and
+// snapshots never hold one, and tide_command_fits refuses one from bytes.
+static void gen_sent_runs(gen *g)
+{
+    const program *prog = g->prog;
+    if (!program_batches(prog)) return;
+    sb *o = &g->c;
+    sb_put(o, "// Where a run's events start in its item, after the head and their count, and how many fit a page\n"
+              "#define TIDE_SENT_AT(T) ((TIDE_COMMAND_HEAD + 4u + (uint32_t)_Alignof(T) - 1u) & ~((uint32_t)_Alignof(T) - 1u))\n"
+              "#define TIDE_SENT_MOST(T) \\\n"
+              "    ((TIDE_QUEUE_PAGE - TIDE_SENT_AT(T)) / (uint32_t)sizeof(T) ? (TIDE_QUEUE_PAGE - TIDE_SENT_AT(T)) / (uint32_t)sizeof(T) : 1u)\n\n");
+    for (int i = 0; i < prog->events.count; i++) {
+        const decl *d = prog->events.items[i];
+        if (!event_batched(prog, d)) continue;
+        const char *name = type_cname(d);
+        sb_printf(o, "typedef struct tide_sent_%s {\n    tide_entity target; // Or the null entity: sent to the world\n    %s value;\n} tide_sent_%s;\n",
+                  name, name, name);
+        sb_printf(o, "_Static_assert(_Alignof(tide_sent_%s) <= 8, \"a queue's items are aligned to 8\");\n\n", name);
+        sb_printf(o, "// A run of `count` " STR_FMT " on the end of the queue, for whoever sends them to fill in order\n",
+                  STR_ARG(d->qualified));
+        sb_printf(o,
+            "TIDE_HELPER tide_sent_%s *tide_sent_push_%s(tide_queue *q, const uint32_t depth, const uint32_t count)\n{\n"
+            "    tide_command *c = tide_queue_push(q, TIDE_SENT_AT(tide_sent_%s) + count * (uint32_t)sizeof(tide_sent_%s));\n"
+            "    c->kind = TIDE_CMD_EVENTS;\n"
+            "    c->id = %d;\n"
+            "    c->depth = depth;\n"
+            "    memcpy((uint8_t *)c + TIDE_COMMAND_HEAD, &count, sizeof count);\n"
+            "    return (tide_sent_%s *)(void *)((uint8_t *)c + TIDE_SENT_AT(tide_sent_%s));\n"
+            "}\n\n",
+            name, name, name, name, d->index, name, name);
+    }
+}
+
 static void gen_command_recorders(gen *g)
 {
     const program *prog = g->prog;
@@ -9994,7 +10069,9 @@ static void gen_command_recorders(gen *g)
               "       TIDE_CMD_SNAP");
     if (prog->hierarchy[0] || prog->hierarchy[1]) sb_put(o, ", TIDE_CMD_PARENT");
     if (prog->prefab_sites.count) sb_put(o, ", TIDE_CMD_PREFAB_READY");
+    if (program_batches(prog)) sb_put(o, ", TIDE_CMD_EVENTS");
     sb_put(o, " };\n\n");
+    gen_sent_runs(g);
 
     // Where a tick records what local handlers hear (tide_world_tick_events):
     // beside the world, so the world is the same with it or without. The log
@@ -10033,7 +10110,8 @@ static void gen_command_recorders(gen *g)
     sb_put(o, "    const char *what = \"a structural change\";\n");
     sb_put(o, "    if (c->kind == TIDE_CMD_SPAWN) what = \"a spawn\";\n");
     if (prog->events.count) {
-        sb_put(o, "    if (c->kind == TIDE_CMD_EVENT) {\n        switch (c->id) {\n");
+        sb_printf(o, "    if (c->kind == TIDE_CMD_EVENT%s) {\n        switch (c->id) {\n",
+                  program_batches(prog) ? " || c->kind == TIDE_CMD_EVENTS" : "");
         for (int i = 0; i < prog->events.count; i++) {
             const decl *d = prog->events.items[i];
             if (is_queued(prog, d)) sb_printf(o, "        case %d: what = \"" STR_FMT "\"; break;\n", d->index, STR_ARG(d->qualified));
@@ -10159,6 +10237,25 @@ static const char *dispatch_signature(const decl *event, const bool local)
     return b.data;
 }
 
+// The match's dispatcher of a run of `event` (TIDE_CMD_EVENTS, gen_dispatch_each).
+static const char *run_dispatch_signature(const decl *event)
+{
+    sb b = {0};
+    sb_printf(&b, "static __attribute__((noinline)) void tide_dispatch_run_%s(tide_world *tide_w, const tide_sent_%s *tide_sent, uint32_t tide_n)",
+              type_cname(event), type_cname(event));
+    return b.data;
+}
+
+// The match's dispatcher of an item of `event` and those like it right after
+// it in the queue, which moves the queue's place `tide_at` past them (gen_dispatch_each).
+static const char *items_dispatch_signature(const decl *event)
+{
+    sb b = {0};
+    sb_printf(&b, "static __attribute__((noinline)) void tide_dispatch_items_%s(tide_world *tide_w, const tide_command *tide_c, tide_queue_place *tide_at)",
+              type_cname(event));
+    return b.data;
+}
+
 static void gen_dispatch_prototypes(gen *g)
 {
     const program *prog = g->prog;
@@ -10168,6 +10265,10 @@ static void gen_dispatch_prototypes(gen *g)
                                         "                                         const tide_entity *destroyed, uint32_t destroyed_count,\n"
                                         "                                         tide_event_log *events, bool hide, const tide_player_id *player);\n\n");
     if (world_has_tasks(g, false)) sb_put(o, "// The match's tasks go on, at the end of the tick\nstatic void tide_run_tasks(tide_world *w);\n\n");
+    for (int i = 0; i < prog->events.count; i++) {
+        if (event_batched(prog, prog->events.items[i])) sb_printf(o, "%s;\n", run_dispatch_signature(prog->events.items[i]));
+        if (event_runs(prog, prog->events.items[i])) sb_printf(o, "%s;\n", items_dispatch_signature(prog->events.items[i]));
+    }
     if (prog->handlers.count == 0) return;
     sb_put(o, "// Event dispatchers, defined after the handlers they call\n\n");
     for (int i = 0; i < prog->events.count; i++) {
@@ -10519,14 +10620,23 @@ static void gen_apply(gen *g, const bool local)
     }
     sb_put(o, "}\n\n");
 
-    // Event: its handlers, in order. Events nothing handles do nothing.
-    sb_printf(o, "TIDE_HELPER void %sapply_event(%s *w, tide_command *c)\n{\n    (void)w;\n    switch (c->id) {\n", p, world);
+    // Event: its handlers, in order. Events nothing handles do nothing. In the
+    // match, it and the ones like it right after it (sent one after another,
+    // as a system's loop does) are taken in a loop of their own
+    // (gen_dispatch_each), which moves `at`, just past `c`, past them.
+    const bool item_runs = !local && program_runs(prog);
+    sb_printf(o, "TIDE_HELPER void %sapply_event(%s *w, tide_command *c%s)\n{\n    (void)w;\n%s    switch (c->id) {\n", p, world,
+              item_runs ? ", tide_queue_place *at" : "", item_runs ? "    (void)at;\n" : "");
     for (int i = 0; i < prog->events.count; i++) {
         const decl *d = prog->events.items[i];
         const bool handled = has_handlers(d, local);
         const bool heard = !local && d->listeners.count > 0;
         if (!is_queued(prog, d) || d->is_local != local || (!handled && !heard && !decl_has_text(d))) continue;
         sb_printf(o, "    case %d:", d->index);
+        if (item_runs && event_runs(prog, d)) {
+            sb_printf(o, " tide_dispatch_items_%s(w, c, at); break;\n", type_cname(d));
+            continue;
+        }
         if (handled) sb_printf(o, " %sdispatch_%s(w, c->entity, &c->data.event_%s%s);", p, type_cname(d), type_cname(d),
                               d->is_command ? ", &c->sender" : "");
         // Its local handlers hear it as its turn left things
@@ -10535,6 +10645,20 @@ static void gen_apply(gen *g, const bool local)
         sb_put(o, " break;\n");
     }
     sb_put(o, "    default: break;\n    }\n}\n\n");
+
+    // A run of events (gen_sent_runs): each in turn, as tide_apply_event takes one.
+    const bool runs = !local && program_batches(prog);
+    if (runs) {
+        sb_put(o, "TIDE_HELPER void tide_apply_events(tide_world *w, tide_command *c)\n{\n    uint32_t n;\n"
+                  "    memcpy(&n, (const uint8_t *)c + TIDE_COMMAND_HEAD, sizeof n);\n    switch (c->id) {\n");
+        for (int i = 0; i < prog->events.count; i++) {
+            const decl *d = prog->events.items[i];
+            if (!event_batched(prog, d)) continue;
+            sb_printf(o, "    case %d: tide_dispatch_run_%s(w, (const tide_sent_%s *)(const void *)((const uint8_t *)c + TIDE_SENT_AT(tide_sent_%s)), n); break;\n",
+                      d->index, type_cname(d), type_cname(d), type_cname(d));
+        }
+        sb_put(o, "    default: break;\n    }\n}\n\n");
+    }
 
     // Commands apply in the order they were recorded, which is deterministic:
     // systems run in a fixed order and iterate entities in a fixed order. What
@@ -10557,6 +10681,7 @@ static void gen_apply(gen *g, const bool local)
         }
         sb_put(&parent_case, "            default: break;\n            }\n            break;\n");
     }
+    if (runs) sb_put(&parent_case, "        case TIDE_CMD_EVENTS: tide_apply_events(w, c); break;\n");
     sb_printf(o,
         "static void %sapply_from(%s *w, tide_queue_place at)\n"
         "{\n"
@@ -10568,7 +10693,7 @@ static void gen_apply(gen *g, const bool local)
         "        case TIDE_CMD_ADD: %sapply_add(w, c); break;\n"
         "        case TIDE_CMD_REMOVE: %sapply_remove(w, c); break;\n"
         "        case TIDE_CMD_DESTROY: %sapply_destroy(w, c); break;\n"
-        "        case TIDE_CMD_EVENT: %sapply_event(w, c); break;\n"
+        "        case TIDE_CMD_EVENT: %sapply_event(w, c%s); break;\n"
         "        case TIDE_CMD_UNLOAD: %sapply_unload(w, c); break;\n"
         "        case TIDE_CMD_SNAP: tide_entity_snap(&w->entities, c->entity); break;\n"
         "%s"
@@ -10577,7 +10702,7 @@ static void gen_apply(gen *g, const bool local)
         "    }\n"
         "    w->tide_chain = 0;\n"
         "}\n\n",
-        p, world, local ? "frame" : "tick", p, p, p, p, p, p, parent_case.data ? parent_case.data : "");
+        p, world, local ? "frame" : "tick", p, p, p, p, p, item_runs ? ", &at" : "", p, parent_case.data ? parent_case.data : "");
     sb_printf(o, "static void %sapply_commands(%s *w)\n{\n    %sapply_from(w, (tide_queue_place){0, 0});\n", p, world, p);
     // The match's tasks go on once the tick's changes are in, and what they do applies after
     if (!local && world_has_tasks(g, false)) {
@@ -12533,7 +12658,7 @@ static void gen_system_body(gen *g, const decl *sys)
     g->scene_local = sys->entity_local;
     if (g->has_scene) sb_put(o, ", tide_entity tide_scene");
     g->reserved_send = batch_event(sys) != NULL;
-    if (g->reserved_send) sb_put(o, ", tide_command *tide_reserved");
+    if (g->reserved_send) sb_printf(o, ", tide_sent_%s *tide_reserved", type_cname(batch_event(sys)->type_decl));
     sb_put(o, ")\n{\n");
     g->indent = 1;
     g->spawn_temps = 0;
@@ -13211,28 +13336,10 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
     if (batch_event(sys)) sb_put(o, ", tide_reserved");
 }
 
-// Runs an event's handlers of one world in order. One that takes data from the
-// entity the event was sent to runs if that entity matches its parameters; one
-// that takes nothing from it runs once. An event sent to an entity that's gone
-// by its turn is dropped.
-static void gen_dispatcher(gen *g, const decl *event, const bool local)
+// The one archetype an event's handlers in a world take entities of, whose
+// table its dispatcher looks a target up in first, or -1 for several or none.
+static int dispatch_candidate(const program *prog, const decl *event, const bool local)
 {
-    const program *prog = g->prog;
-    sb *o = &g->c;
-    const char *world = local ? "tide_l" : "tide_w";
-    sb_printf(o, "// " STR_FMT "'s %shandlers, in the order they run\n", STR_ARG(event->qualified), local ? "local " : "");
-    sb_printf(o, "%s\n{\n", dispatch_signature(event, local));
-    if (g->opts->editor_prefab) {
-        sb_printf(o, "    (void)%s; (void)tide_target; (void)tide_event;\n", world);
-        if (event->is_command) sb_put(o, "    (void)tide_sender;\n");
-        sb_put(o, "}\n\n");
-        return;
-    }
-    bool text = false; // A handler of it makes text or changes the heap
-    for (int i = 0; i < event->handlers.count; i++) {
-        if (event->handlers.items[i]->is_local == local) text |= touches_text(event->handlers.items[i]);
-    }
-    if (prog->uses_text && text) sb_put(o, "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n");
     int candidate = -1;
     for (int a = 0; a < prog->archetypes.count; a++) {
         bool admitted = false;
@@ -13241,9 +13348,16 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
             if (h->is_local == local && h->per_entity && handler_runs_for(prog, h, a)) admitted = true;
         }
         if (!admitted) continue;
-        if (candidate >= 0) { candidate = -1; break; }
+        if (candidate >= 0) return -1;
         candidate = a;
     }
+    return candidate;
+}
+
+// A dispatcher's tide_loc: where its tide_target is.
+static void gen_dispatch_locate(gen *g, const char *world, const int candidate)
+{
+    sb *o = &g->c;
     if (candidate < 0) {
         sb_printf(o, "    const tide_location tide_loc = tide_entity_location(&%s->entities, tide_target);\n", world);
     } else {
@@ -13263,6 +13377,15 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
         sb_printf(o, "    if (tide_loc.archetype == TIDE_ARCHETYPE_NONE) tide_loc = tide_entity_location(&%s->entities, tide_target);\n",
                   world);
     }
+}
+
+// A dispatcher's handlers of an event sent to tide_target, at tide_loc, in
+// order: none if it's gone by its turn.
+static void gen_dispatch_handlers(gen *g, const decl *event, const bool local)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    const char *world = local ? "tide_l" : "tide_w";
     sb_put(o, "    if (!tide_entity_is_null(tide_target) && tide_loc.archetype == TIDE_ARCHETYPE_NONE) return; // Gone by its turn\n");
     for (int i = 0; i < event->handlers.count; i++) {
         const decl *h = event->handlers.items[i];
@@ -13338,7 +13461,118 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
         }
         sb_put(o, "    default: break;\n    }\n");
     }
+}
+
+// Runs an event's handlers of one world in order. One that takes data from the
+// entity the event was sent to runs if that entity matches its parameters; one
+// that takes nothing from it runs once. An event sent to an entity that's gone
+// by its turn is dropped. A match event taken several in a row (event_runs)
+// has what comes once its target is found as a function of its own,
+// tide_dispatch_at_<Event>, which those loops call with the targets they find
+// themselves (gen_dispatch_each).
+static void gen_dispatcher(gen *g, const decl *event, const bool local)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    const char *world = local ? "tide_l" : "tide_w";
+    bool text = false; // A handler of it makes text or changes the heap
+    for (int i = 0; i < event->handlers.count; i++) {
+        if (event->handlers.items[i]->is_local == local) text |= touches_text(event->handlers.items[i]);
+    }
+    const char *mark = prog->uses_text && text ? "    const uint32_t tide_mark = tide_scratch_mark();\n    (void)tide_mark;\n" : "";
+    const bool split = !local && !g->opts->editor_prefab && event_runs(prog, event);
+    if (split) {
+        sb_printf(o, "// " STR_FMT "'s handlers, in the order they run, for its target where it is (TIDE_ARCHETYPE_NONE: nowhere)\n",
+                  STR_ARG(event->qualified));
+        sb_printf(o, "TIDE_HELPER void tide_dispatch_at_%s(tide_world *tide_w, const tide_entity tide_target, const tide_location tide_loc,\n"
+                     "                                     const %s *tide_event)\n{\n%s",
+                  type_cname(event), type_cname(event), mark);
+        gen_dispatch_handlers(g, event, local);
+        sb_put(o, "}\n\n");
+    }
+    sb_printf(o, "// " STR_FMT "'s %shandlers, in the order they run\n", STR_ARG(event->qualified), local ? "local " : "");
+    // Split, its several in a row (gen_dispatch_each) may be all that's left to call it
+    sb_printf(o, "%s%s\n{\n", split ? "__attribute__((unused)) " : "", dispatch_signature(event, local));
+    if (g->opts->editor_prefab) {
+        sb_printf(o, "    (void)%s; (void)tide_target; (void)tide_event;\n", world);
+        if (event->is_command) sb_put(o, "    (void)tide_sender;\n");
+        sb_put(o, "}\n\n");
+        return;
+    }
+    if (!split) sb_put(o, mark);
+    gen_dispatch_locate(g, world, dispatch_candidate(prog, event, local));
+    if (split) sb_printf(o, "    tide_dispatch_at_%s(tide_w, tide_target, tide_loc, tide_event);\n", type_cname(event));
+    else gen_dispatch_handlers(g, event, local);
     sb_put(o, "}\n\n");
+}
+
+// Several of an event, one after another (event_runs): a run of them
+// (gen_sent_runs), or items of the queue each like the one before. Each in
+// turn, as tide_apply_event takes one: its handlers, then what a tick that
+// records hears. They were all sent before any is taken and nothing a handler
+// does moves an archetype's rows (structural changes wait in the queue), so
+// where the targets' table has its rows and handles holds for all of them:
+// the lookup of each target in it (gen_dispatch_locate) reads them once.
+// tide_dispatch_run_<Event> takes a run, and tide_dispatch_items_<Event> an
+// item and those right after it in its page with its head (size, kind, event
+// and depth), counted before any is taken (a page's items are back to back),
+// moving the queue's place past them. Neither is inlined, so its loop has the
+// registers to itself, and their next one's place is no load away.
+static void gen_dispatch_each(gen *g, const decl *event)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    const char *name = type_cname(event);
+    const bool handled = has_handlers(event, false);
+    const bool heard = event->listeners.count > 0;
+    const bool batched = event_batched(prog, event);
+    if (!handled && !heard) { // A run that nothing takes
+        if (batched) sb_printf(o, "%s\n{\n    (void)tide_w;\n    (void)tide_sent;\n    (void)tide_n;\n}\n\n", run_dispatch_signature(event));
+        return;
+    }
+    const int candidate = handled && !g->opts->editor_prefab ? dispatch_candidate(prog, event, false) : -1;
+    sb hoist = {0}; // What the lookup reads once
+    if (candidate >= 0) {
+        sb_printf(&hoist, "    const tide_table *const tide_guess = &tide_w->%s;\n", arch_name(g, candidate));
+        sb_put(&hoist, "    const uint32_t tide_count = tide_guess->count;\n    tide_page *const *const tide_pages = tide_guess->pages;\n");
+        sb_put(&hoist, "    const uint32_t tide_first = tide_count ? ((const tide_entity *)tide_page_data(tide_pages[0]))->index : 0u;\n");
+    }
+    sb one = {0}; // One of them: tide_target and tide_event
+    if (candidate >= 0) {
+        const int shift = arch_shift(g, candidate);
+        sb_put(&one, "        const uint32_t tide_row = tide_target.index - tide_first;\n");
+        // Two calls, so the one where it's found knows the archetype
+        sb_printf(&one, "        if (tide_row < tide_count && tide_entity_equal(((const tide_entity *)tide_page_data(tide_pages[(tide_row >> %d) * %du]))[tide_row & %du],\n"
+                        "                                                      tide_target)) {\n",
+                  shift, arch_column_count(g, candidate), (1 << shift) - 1);
+        sb_printf(&one, "            tide_dispatch_at_%s(tide_w, tide_target, (tide_location){%du, tide_row}, tide_event);\n", name, candidate);
+        sb_printf(&one, "        } else {\n            tide_dispatch_at_%s(tide_w, tide_target, tide_entity_location(&tide_w->entities, tide_target), "
+                        "tide_event);\n        }\n", name);
+    } else if (handled) {
+        sb_printf(&one, "        tide_dispatch_%s(tide_w, tide_target, tide_event);\n", name);
+    }
+    if (heard) sb_printf(&one, "        if (tide_listening) tide_hear_%s(tide_w, tide_target, tide_event);\n", name);
+    const char *hoisted = hoist.data ? hoist.data : "";
+    if (batched) {
+        sb_printf(o, "%s\n{\n%s    for (uint32_t tide_k = 0; tide_k < tide_n; tide_k++) {\n"
+                     "        const tide_entity tide_target = tide_sent[tide_k].target;\n"
+                     "        const %s *const tide_event = &tide_sent[tide_k].value;\n%s    }\n}\n\n",
+                  run_dispatch_signature(event), hoisted, name, one.data);
+    }
+    // The items after it in its page, back to back, whose head is its own
+    sb_printf(o, "%s\n{\n"
+                 "    const uint32_t tide_size = tide_c->size;\n"
+                 "    const uint32_t tide_left = (tide_w->commands.page[tide_at->page]->used - tide_at->offset) / tide_size;\n"
+                 "    uint32_t tide_n = 1;\n"
+                 "    while (tide_n <= tide_left\n"
+                 "           && memcmp((const uint8_t *)tide_c + (size_t)tide_n * tide_size, tide_c, offsetof(tide_command, entity)) == 0) tide_n++;\n"
+                 "    tide_at->offset += (tide_n - 1u) * tide_size;\n"
+                 "%s    for (uint32_t tide_k = 0; tide_k < tide_n; tide_k++) {\n"
+                 "        const tide_command *const tide_item = (const tide_command *)(const void *)((const uint8_t *)tide_c + (size_t)tide_k * tide_size);\n"
+                 "        const tide_entity tide_target = tide_item->entity;\n"
+                 "        const %s *const tide_event = &tide_item->data.event_%s;\n%s"
+                 "    }\n}\n\n",
+              items_dispatch_signature(event), hoisted, name, name, one.data);
 }
 
 // A local singleton's defaults, into `l->`: as tide_local_init sets them.
@@ -15107,14 +15341,15 @@ static void gen_chunk(gen *g, const decl *sys, const int a, const char *call, co
     gen_chunk_columns(g, sys, a, pad, read_only, staged, staged ? "false" : NULL);
     if (staged) gen_lanes_places(g, sys, a, pad, read_only, false, -1);
     if (rows_batched(g, sys, a)) {
-        const expr *send = batch_event(sys);
+        const char *event = type_cname(batch_event(sys)->type_decl);
         sb_printf(o, "%stide_queue *restrict const tide_queue_out = tide_recording(&tide_w->commands);\n", pad);
-        sb_printf(o, "%sconst uint32_t tide_record_size = (TIDE_COMMAND_SIZE(event_%s) + 7u) & ~7u;\n", pad, type_cname(send->type_decl));
         sb_printf(o, "%sfor (uint32_t tide_i = tide_from; tide_i < tide_to;) {\n", pad);
-        sb_printf(o, "%s    uint32_t tide_run_count = tide_to - tide_i;\n", pad);
-        sb_printf(o, "%s    uint8_t *const tide_records = tide_queue_push_run(tide_queue_out, tide_record_size, &tide_run_count);\n", pad);
+        sb_printf(o, "%s    const uint32_t tide_run_count = tide_to - tide_i < TIDE_SENT_MOST(tide_sent_%s) ? tide_to - tide_i : TIDE_SENT_MOST(tide_sent_%s);\n",
+                  pad, event, event);
+        sb_printf(o, "%s    tide_sent_%s *const tide_run = tide_sent_push_%s(tide_queue_out, tide_w->tide_chain, tide_run_count);\n", pad,
+                  event, event);
         sb_printf(o, "%s    for (uint32_t tide_record = 0; tide_record < tide_run_count; tide_record++, tide_i++) {\n", pad);
-        sb_printf(o, "%s        tide_command *const tide_reserved = (tide_command *)(tide_records + tide_record * tide_record_size);\n", pad);
+        sb_printf(o, "%s        tide_sent_%s *const tide_reserved = &tide_run[tide_record];\n", pad, event);
         sb inner_batch = {0};
         sb_printf(&inner_batch, "%s        ", pad);
         gen_row_columns(g, sys, a, inner_batch.data);
@@ -15367,7 +15602,9 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
         if (!comp_sparse(g, c) || !arch_stores(g, a, c) || (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c))) continue;
         sb_printf(o, "    (void)tide_pres_%s;\n", type_cname(prog->components.items[c]));
     }
-    if (batch_event(sys)) sb_put(o, "    tide_command *const tide_reserved = NULL;\n"); // Its sends aren't a run here (rows_batched)
+    if (batch_event(sys)) { // Its sends aren't a run here (rows_batched)
+        sb_printf(o, "    tide_sent_%s *const tide_reserved = NULL;\n", type_cname(batch_event(sys)->type_decl));
+    }
     g->lanes_in = staged;
     // Apart, a loop that leaves rows out puts those back as they were: every
     // row's copies of what it changes are made and put back, and what's
@@ -15802,6 +16039,26 @@ static void gen_settle_item(gen *g)
         sb_put(o, "            break;\n");
     }
     sb_put(o, "        default: break;\n        }\n        break;\n");
+    // Runs of events (gen_sent_runs): each one's target and values
+    if (program_batches(prog)) {
+        sb_put(o, "    case TIDE_CMD_EVENTS: {\n        uint32_t n;\n        memcpy(&n, (const uint8_t *)c + TIDE_COMMAND_HEAD, sizeof n);\n"
+                  "        switch (c->id) {\n");
+        for (int i = 0; i < prog->events.count; i++) {
+            const decl *d = prog->events.items[i];
+            if (!event_batched(prog, d)) continue;
+            const char *name = type_cname(d);
+            sb_printf(o, "        case %d: {\n            tide_sent_%s *e = (tide_sent_%s *)(void *)((uint8_t *)c + TIDE_SENT_AT(tide_sent_%s));\n"
+                         "            for (uint32_t k = 0; k < n; k++) {\n                e[k].target = tide_settled(tide_m, e[k].target);\n",
+                      d->index, name, name, name);
+            path_list paths = {0};
+            entity_paths(d, "value.", &paths);
+            for (int k = 0; k < paths.count; k++) {
+                sb_printf(o, "                e[k].%s = tide_settled(tide_m, e[k].%s);\n", paths.items[k].path, paths.items[k].path);
+            }
+            sb_put(o, "            }\n            break;\n        }\n");
+        }
+        sb_put(o, "        default: break;\n        }\n        break;\n    }\n");
+    }
     sb_put(o, "    default: break;\n    }\n}\n\n");
 }
 
@@ -20524,6 +20781,9 @@ bool codegen(program *prog, const codegen_options *opts)
         for (int side = 0; side < 2; side++) {
             if (has_handlers(prog->events.items[i], side == 1)) gen_dispatcher(&g, prog->events.items[i], side == 1);
         }
+    }
+    for (int i = 0; i < prog->events.count; i++) {
+        if (event_runs(prog, prog->events.items[i]) || event_batched(prog, prog->events.items[i])) gen_dispatch_each(&g, prog->events.items[i]);
     }
     gen_heard(&g);
     gen_forget(&g);
