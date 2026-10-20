@@ -188,12 +188,12 @@ void Burst(Missile missile, float3 at, List<Body> bodies)
 // How wide a napalm glob's fire burns on the ground, and how long, at its skill's rank.
 float NapalmReach(int rank)
 {
-    return 2.6 * (rank >= 2 ? 1.25 : 1.0) * (rank >= 3 ? 1.1 : 1.0);
+    return 2.0 * (rank >= 2 ? 1.25 : 1.0) * (rank >= 3 ? 1.1 : 1.0);
 }
 
 float NapalmSeconds(int rank)
 {
-    return 4 * (rank >= 2 ? 1.5 : 1.0) * (rank >= 3 ? 1.2 : 1.0);
+    return 3 * (rank >= 2 ? 1.5 : 1.0) * (rank >= 3 ? 1.2 : 1.0);
 }
 
-const float NAPALM_BITE = 0.25;     // A napalm fire's bite, every BLAZE_BITE, against its glob's splash
+const float NAPALM_BITE = 0.18;     // A napalm fire's bite, every BLAZE_BITE, against its glob's splash

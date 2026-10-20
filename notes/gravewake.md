@@ -63,6 +63,38 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### A reward after its cause is seen, chests shut, napalm smaller (2026-10-20)
+
+The owner: "when an objective is completed or a boss killed the reward shows
+instantly before i even see the boss die; we need some delay there. also chests
+should be closed lol. / the napalm ability felt a bit OP and hard to not get
+myself hit by it; i dont hate it i dont love it". The numbers are mine,
+Provisional.
+
+- **A reward's pick waits** (items.tide's `Owed.delay`, `Experience`;
+  `Survivor.rewardWait`; boss.tide's `TakeFelled`): a boss's pick is offered 2.5 s
+  after it falls (`BOSS_REWARD_WAIT`), a mission's 1.5 s after it's done, a chest's
+  1 s after it bursts open; nothing's offered meanwhile (a level's waits too), and
+  the wait doesn't run while the match is held for a pick.
+- **Chests shut** (art/kit/tools/close_chest.py, run once over the kit's two chest
+  parts, `Chest_Wood~furniture.glb` and `~metal.glb`): the kit's chest is modelled
+  with its lid flung open; the script finds the lid's loose parts (starting behind
+  the box, or rising above its top) and swings them 122.3 degrees shut about the
+  hinge along the box's back top edge (found from where the lid's front and back
+  edges are open against where they lie shut), and writes the parts back as
+  split_kit.py exports them. Looked at in Blender renders of both parts.
+- **Napalm smaller** (kits.tide, missiles.tide): its fire 2.0 m round (2.6) for
+  3 s (4), biting 0.18 of its splash (0.25); its splash 100 (120) in 2.0 m (2.4);
+  every 8 s (7); and it lands at least 4.5 m from its thrower whatever the cursor
+  is on (`NAPALM_NEAREST`), so a glob aimed at the dead on top of you doesn't burn
+  you. The ranks' wider and longer as before.
+- **Measured** (`gravewake_balance`, seeds 1 to 16): the Gunner's middle run 1458
+  s, the Breacher's 581, the Engineer's 206 (most Engineers still die in the first
+  night's end, in the Mauler's slam: the bots don't roll).
+- **Tests**: the Mauler felled, its pick not on offer (2.5 s to wait), then on offer
+  three seconds on; napalm's splash 141, its fire 2.0 m for 3 s. Native debug
+  `gravewake_test` and the web debug WASI one pass.
+
 ### Napalm burns its maker; what's coming back, round the crosshair (2026-10-20)
 
 The owner: "my own napalm fire should hurt me"; "we need some indicator on the

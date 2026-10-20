@@ -770,11 +770,14 @@ float LevelSpan(int level, float crowd)
 const float LEVEL_FIRST = 40;
 const float LEVEL_GROWTH = 1.28;
 
-// Picks owed a survivor from a chest (each, a pick for everyone), a mission (a pick of the rarer items) or a boss.
+// Picks owed a survivor from a chest (each, a pick for everyone), a mission (a pick of the rarer items) or a boss, offered
+// `delay` seconds on, so what earned it is seen first (the owner, 2026-10-20: "when an objective is completed or a boss
+// killed the reward shows instantly before i even see the boss die; we need some delay there").
 event Owed
 {
     int picks;
     int boons;
+    float delay;
 }
 
 event(Owed owed) TakeOwed(mut Survivor survivor)
@@ -782,14 +785,21 @@ event(Owed owed) TakeOwed(mut Survivor survivor)
     if (!survivor.ready || survivor.role == Role.None) return;
     survivor.pending += owed.picks;
     survivor.boons += owed.boons;
+    survivor.rewardWait = Math.Max(survivor.rewardWait, owed.delay);
 }
 
+const float BOSS_REWARD_WAIT = 2.5;     // A boss's fall, seen before its pick...
+const float MISSION_REWARD_WAIT = 1.5;  // ...a mission's end...
+const float CHEST_REWARD_WAIT = 1;      // ...and a chest bursting open
+
 // Every kill is the party's: each survivor's level climbs together (Match.xp), each level a pick of three items; the
-// next is offered as soon as the last is taken (a mission's boon first: uncommon and rare only).
+// next is offered as soon as the last is taken (a mission's boon first: uncommon and rare only), and none while a reward's
+// wait runs.
 [Stage(Tick.Late, 1)]
-system Experience(mut Survivor survivor, Match match)
+system Experience(mut Survivor survivor, Match match, Time time)
 {
     if (!survivor.ready || survivor.role == Role.None) return;
+    if (!match.paused) survivor.rewardWait = Math.Max(0, survivor.rewardWait - time.dt);
     if (survivor.level < match.level)
     {
         var gained = match.level - survivor.level;
@@ -798,6 +808,7 @@ system Experience(mut Survivor survivor, Match match)
         // A level's health comes with it
         survivor.health = Math.Min(MaxHealth(survivor), survivor.health + LEVEL_HEALTH * gained);
     }
+    if (survivor.rewardWait > 0) return;
     if (!survivor.choosing && survivor.boons > 0)
     {
         survivor.boons -= 1;
