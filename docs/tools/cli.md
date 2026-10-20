@@ -289,12 +289,14 @@ prefab named after its file, read from its saved file (Unity's Force Text
 serialization) with its prefab instances and variants expanded. A TideEntity is
 an entity of that prefab, Unity's Transform and parent are its own, and its
 Tide components are those the TideEntity lists. A prefab instance's component
-values go over its prefab's field by field. Code spawns a prefab's as any
-prefab, `Spawn(Roller)`; a Unity scene is a Tide scene of its name, so
-`Scene.Load(Level)` loads its entities and `with scene Level` filters by it.
+values go over its prefab's field by field. Everything from Unity is under the
+`UnityEngine` namespace: a prefab is `UnityEngine.Prefabs.Roller`, which code
+spawns as any prefab, and a scene `UnityEngine.Scenes.Level`, so
+`Scene.Load(Level)` loads its entities and `with scene Level` filters by it,
+after `using UnityEngine.Prefabs;` and `using UnityEngine.Scenes;`.
 Build Settings' first scene loads as Main starts, as a player build starts with
 it, and Unity loads and unloads each scene as the match does. Each such entity gets a
-`Unity.Source` component, by which Unity shows it through its own GameObject.
+`UnityEngine.Source` component, by which Unity shows it through its own GameObject.
 A message about a prefab gives lines of the Tide text tide made of it, which it
 writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
 `Packages/com.tide.game` up to date: the game's schema, which the package makes

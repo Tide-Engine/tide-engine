@@ -1,7 +1,10 @@
 // The Tide package's sample: each player is a ball in a box, rolled with WASD or a stick, Space to jump.
-// Tide simulates, predicts and rolls back; Unity draws. The balls are Roller (Assets/Sample/Roller.prefab) and the
-// pillars are Bounce's (Assets/Sample/Bounce.unity, Build Settings' first scene, which the match loads as Main starts):
-// Unity's prefab and scene, whose TideEntity objects are Tide's.
+// Tide simulates, predicts and rolls back; Unity draws. Unity's prefabs and scenes holding TideEntity objects are
+// Tide's, under UnityEngine: the ball is UnityEngine.Prefabs.Roller (Assets/Sample/Roller.prefab), the pillars are the
+// scene UnityEngine.Scenes.Bounce's (Bounce.unity, Build Settings' first scene, which the match loads as Main starts).
+using UnityEngine.Prefabs;
+using UnityEngine.Scenes;
+
 settings { title = "Bounce"; tickRate = 30; maxPlayers = 8; }
 
 scene Main { }

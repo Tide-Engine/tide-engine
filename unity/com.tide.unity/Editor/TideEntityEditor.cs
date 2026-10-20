@@ -35,7 +35,8 @@ namespace Tide.Editor
             }
         }
 
-        // The match components an entity can be given in Unity: not Unity.Source, which tide gives each, nor
+        // The match components an entity can be given in Unity: not tide's UnityEngine ones (Source, which tide gives
+        // each, and the scenes, which are their own entities), nor
         // Transform, which is the GameObject's.
         public static IEnumerable<TideSchemaType> Components(TideSchema s)
         {
@@ -43,7 +44,7 @@ namespace Tide.Editor
             foreach (var index in s.components)
             {
                 var t = s.Type(index);
-                if (t != null && t.name != "Unity.Source" && t.name != "Transform") yield return t;
+                if (t != null && !t.name.StartsWith("UnityEngine.") && t.name != "Transform") yield return t;
             }
         }
     }

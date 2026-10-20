@@ -95,7 +95,7 @@ namespace Tide
 
         // Which GameObject shows an entity of the project's prefabs and scenes
         public TideUnityMap Map { get; private set; } = new TideUnityMap();
-        int sourceType = -1, sourceAsset = -1, sourceNode = -1; // Unity.Source in the schema, and its fields' offsets
+        int sourceType = -1, sourceAsset = -1, sourceNode = -1; // UnityEngine.Source in the schema, and its fields' offsets
         readonly Dictionary<string, GameObject> prefabByGuid = new Dictionary<string, GameObject>();
         int makingRow = -1;
 
@@ -208,7 +208,7 @@ namespace Tide
         void LoadMap()
         {
             Map = !Application.isEditor && !string.IsNullOrEmpty(map) ? TideUnityMap.Parse(map) : TideUnityMap.Load(TideLibrary.BuildFolder);
-            sourceType = Schema?.TypeIndex("Unity.Source") ?? -1;
+            sourceType = Schema?.TypeIndex("UnityEngine.Source") ?? -1;
             var t = sourceType >= 0 ? Schema.Type(sourceType) : null;
             sourceAsset = (int?)t?.Field("asset")?.offset ?? -1;
             sourceNode = (int?)t?.Field("node")?.offset ?? -1;
@@ -235,7 +235,7 @@ namespace Tide
             return found;
         }
 
-        // The packet entity's Unity.Source, if it has one.
+        // The packet entity's UnityEngine.Source, if it has one.
         bool SourceOf(int row, out int asset, out int node)
         {
             asset = node = -1;
@@ -338,7 +338,7 @@ namespace Tide
             }
         }
 
-        // The view of the packet's entity `row`, made or found the first time it's seen: by its Unity.Source if it
+        // The view of the packet's entity `row`, made or found the first time it's seen: by its UnityEngine.Source if it
         // has one, else by the view rules.
         TideEntityView ViewOf(int row)
         {
@@ -478,9 +478,9 @@ namespace Tide
             moved.localScale = new Vector3(Divide(size.x, between.x), Divide(size.y, between.y), Divide(size.z, between.z));
         }
 
-        // The project's scenes the match has (their entities' roots, Unity.Source's node 0 of a scene's asset): each
+        // The project's scenes the match has (their entities' roots, UnityEngine.Source's node 0 of a scene's asset): each
         // loaded beside the others as its root comes, if it isn't open already, and unloaded as it goes. Build
-        // Settings' first is one, which the match loads as Main starts (tide unity's Unity.Begin).
+        // Settings' first is one, which the match loads as Main starts (tide unity's UnityEngine.Begin).
         readonly HashSet<int> scenesWanted = new HashSet<int>();
         readonly HashSet<string> scenesLoading = new HashSet<string>();
         readonly HashSet<string> scenesShown = new HashSet<string>(); // ...that the match has had while this ran
@@ -540,13 +540,13 @@ namespace Tide
         }
 
         // In the editor, the match has the scenes the editor has open, of those holding Tide entities, rather than
-        // Build Settings' first: Unity.Open, which the match takes from its first player alone, the server's as it
+        // Build Settings' first: UnityEngine.OpenScene, which the match takes from its first player alone, the server's as it
         // started. Sent once, as this machine runs the match.
         void OpenEditorScenes()
         {
             if (!Application.isEditor || openSent || status.server == 0 || State != TideSessionState.Connected) return;
             openSent = true;
-            var type = Schema.TypeIndex("Unity.Open");
+            var type = Schema.TypeIndex("UnityEngine.OpenScene");
             var t = Schema.Type(type);
             var assetField = t?.Field("asset");
             var onlyField = t?.Field("only");

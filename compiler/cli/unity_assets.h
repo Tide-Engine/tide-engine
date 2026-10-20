@@ -5,11 +5,13 @@
 // entities, their Tide components what TideEntity holds, their Transform and
 // parent Unity's. Prefab instances and variants are expanded as Unity expands
 // them, an instance's component values layered over its source's field by
-// field. Each asset becomes one prefab named after its file; a scene's roots
-// go under an entity of its own. The text is Tide's .tprefab syntax, which
+// field. Each prefab becomes the Tide prefab UnityEngine.Prefabs.<Name>, after
+// its file; each scene the Tide scene UnityEngine.Scenes.<Name>, whose
+// entities are the prefab UnityEngine.SceneContents.<Name>, its roots under an
+// entity of its own. The text is Tide's .tprefab syntax, which
 // tidec checks as any authored prefab.
 //
-// Each entity also gets Unity.Source { asset, node }, a component declared in
+// Each entity also gets UnityEngine.Source { asset, node }, a component declared in
 // a source of its own (UNITY_SOURCE_PATH): match state like any other, by
 // which Unity's package finds the GameObject showing the entity through the
 // map (unity_sources.map): for each asset its GUID, its path, whether it's a
@@ -18,10 +20,11 @@
 // for a scene's own entity, which no GameObject is).
 //
 // With scenes among them, that source also has the match's Unity scenes:
-// Unity.Scenes (which it loaded, by asset number), Build Settings' first scene
-// (ProjectSettings/EditorBuildSettings.asset) loaded as Main starts, as a
-// player build starts with it, and Unity.Open, the editor's command to have
-// the scenes it has open instead, taken from the match's first player alone.
+// UnityEngine.LoadedScenes (which it loaded, by asset number), Build
+// Settings' first scene (ProjectSettings/EditorBuildSettings.asset) loaded as
+// Main starts, as a player build starts with it, and UnityEngine.OpenScene,
+// the editor's command to have the scenes it has open instead, taken from the
+// match's first player alone.
 
 #include <stdbool.h>
 
@@ -34,12 +37,12 @@ typedef struct unity_source {
 } unity_source;
 
 typedef struct unity_sources {
-    unity_source *items; // Unity.Source's declaration first, when there are any
+    unity_source *items; // UnityEngine.Source's declaration first, when there are any
     int count;
     char *map; // JSON: {"assets": [{"guid": "...", "path": "Assets/...", "scene": false, "nodes": ["", "Body"]}]}
 } unity_sources;
 
-#define UNITY_SOURCE_PATH "Library/Tide/Unity.tide" // Where messages say Unity.Source is declared
+#define UNITY_SOURCE_PATH "Library/Tide/Unity.tide" // Where messages say UnityEngine.Source is declared
 
 // The prefabs and scenes under `assets` (a Unity project's Assets folder) that hold TideEntity objects, as Tide
 // source. False after saying what's wrong: an asset in binary serialization, one that doesn't read, two prefabs of

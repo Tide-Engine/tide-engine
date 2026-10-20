@@ -1,2 +1,2 @@
 // Written by tide unity. The game's C# types are generated from schema.json beside this,
-// by Tide's package (Tide.Generator), whenever this hash changes: 185262FC64D97292
+// by Tide's package (Tide.Generator), whenever this hash changes: 01FE3BF539776D94
