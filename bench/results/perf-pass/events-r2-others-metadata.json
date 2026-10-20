@@ -1,0 +1,754 @@
+{
+  "label": "events-r2-others",
+  "revision": "0ceefae5814eb5ad9c1b278197d95131def02e4d+local",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T19:03:45.2981013Z",
+  "runs": [
+    {
+      "round": 1,
+      "wallSeconds": 0.4828271,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_particles",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.4869411,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_particles",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 1.0008994,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_wide",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.9615392,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_wide",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.6532401,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_sand",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.660953,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_sand",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.1462195,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_life",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.1466487,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_life",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.4947704,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.4906755,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.1351992,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.1444959,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.8350179,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.8581787,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.6895768,
+      "side": "before",
+      "label": "events-r2-others-before-r1",
+      "exitCode": 0,
+      "name": "versus_lookup_steady",
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "events-r2-others-before-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 1,
+      "wallSeconds": 0.6829801,
+      "side": "after",
+      "label": "events-r2-others-after-r1",
+      "exitCode": 0,
+      "name": "versus_lookup_steady",
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "events-r2-others-after-r1"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.4595556,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_particles",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.484747,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_particles",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 1.0297699,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_wide",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 1.0047205,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_wide",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.6455133,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_sand",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.6589011,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_sand",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.1449588,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_life",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.1452446,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_life",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.4930211,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.4945469,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.1324582,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.130145,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.8243101,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.8259413,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.6720718,
+      "side": "after",
+      "label": "events-r2-others-after-r2",
+      "exitCode": 0,
+      "name": "versus_lookup_steady",
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "events-r2-others-after-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 2,
+      "wallSeconds": 0.6909918,
+      "side": "before",
+      "label": "events-r2-others-before-r2",
+      "exitCode": 0,
+      "name": "versus_lookup_steady",
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "events-r2-others-before-r2"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.4656515,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_particles",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.4745575,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_particles",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.959197,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_wide",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.9485549,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_wide",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.6569751,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_sand",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.752637,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_sand",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.1500869,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_life",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.1563203,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_life",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.5120345,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.5000847,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_nbody",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.1298369,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.1319175,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_buckets",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.8875379,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "arguments": [
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.8607309,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_lookup",
+      "arguments": [
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.6638184,
+      "side": "before",
+      "label": "events-r2-others-before-r3",
+      "exitCode": 0,
+      "name": "versus_lookup_steady",
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "events-r2-others-before-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    },
+    {
+      "round": 3,
+      "wallSeconds": 0.6842238,
+      "side": "after",
+      "label": "events-r2-others-after-r3",
+      "exitCode": 0,
+      "name": "versus_lookup_steady",
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "events-r2-others-after-r3"
+      ],
+      "competingWork": false,
+      "backend": null
+    }
+  ],
+  "binaries": [
+    {
+      "sha256": "d0af8e1f3966f0f380f1fab38e82b6b7ea130032bfb70d56cc04c536b6f7c911",
+      "name": "versus_buckets.exe"
+    },
+    {
+      "sha256": "417de0fc87ab1e938e1dbefdd7a5c6ee731dbb6ad352d6d954cba157d2d7f6fb",
+      "name": "versus_life.exe"
+    },
+    {
+      "sha256": "7276d5ebaed283fca7cf9da2bcdfcacab48ca1c0fcbadde73482c8994d3836c1",
+      "name": "versus_lookup.exe"
+    },
+    {
+      "sha256": "025d2c325463cf11aa8e8dbac9295b3a0ac9c3fae8f6d3764bbad6794a6add2d",
+      "name": "versus_nbody.exe"
+    },
+    {
+      "sha256": "acf22b601f628e4bbb2535304cefd5b6f49612ec5c9b00ad0e07f9195e5cfd67",
+      "name": "versus_particles.exe"
+    },
+    {
+      "sha256": "0f69cbdee76e0c0a57ca986f19f11cdea957fd7f0054c2fd8ab29800bdd483e6",
+      "name": "versus_sand.exe"
+    },
+    {
+      "sha256": "f6e2f0ff22942100c4d369f9dd4df3c0fb836a14e017e31d3c030cf1bb1df3a3",
+      "name": "versus_wide.exe"
+    }
+  ],
+  "beforeRevision": "4a59a73a",
+  "beforeBinaries": [
+    {
+      "sha256": "3913844bed0b3713ae3f5939e789bbf1aba227a5895cdb5ef63cd7148f05e2f5",
+      "name": "versus_buckets.exe"
+    },
+    {
+      "sha256": "bdcc37a9ceca5c97122aef7ccb072a71112285ac341938f7cf896be597fc83ef",
+      "name": "versus_life.exe"
+    },
+    {
+      "sha256": "5b55f666dc2d5ccc0eedeb2d4f4956ab4bd702bb05d28a19a5c22b2c81ed7846",
+      "name": "versus_lookup.exe"
+    },
+    {
+      "sha256": "e044db2b1d8f5d366a24f9a11d027b99784c9390eaebdd0fd31409dabefbfd9f",
+      "name": "versus_nbody.exe"
+    },
+    {
+      "sha256": "0764a508b0424af484a6752fbe5c18d9524abf62629d67d55812feff6d4bb171",
+      "name": "versus_particles.exe"
+    },
+    {
+      "sha256": "b0242aaf653a1b9da25d6c940e62f3745587722a6a078432522b483aafa53c68",
+      "name": "versus_sand.exe"
+    },
+    {
+      "sha256": "181658e66d4ad10af9c066511a3d4427362ed45b58471f416bc6c491850abc9b",
+      "name": "versus_wide.exe"
+    }
+  ],
+  "finishedUtc": "2026-10-20T19:05:58.1137885Z"
+}
