@@ -17,6 +17,7 @@ typedef enum tide_layout_kind {
     TIDE_LAYOUT_ENUM,   // An enum's member (`decl`), by its name
     TIDE_LAYOUT_STRUCT, // Another type (`decl`), field by field
     TIDE_LAYOUT_BYTE,   // byte (`dim` 1): also to ints, longs and floats
+    TIDE_LAYOUT_DOUBLE, // double and double vectors; byte/int/long/float widen into these
 } tide_layout_kind;
 
 typedef struct tide_layout_field {

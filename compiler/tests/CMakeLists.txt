@@ -65,6 +65,7 @@ tide_e2e_test(query_blocks) # ...beside a comparison block and a parallel loop, 
 tide_e2e_test(world_local) # ...in views and local handlers
 tide_e2e_test(debug)
 tide_e2e_test(long)
+tide_e2e_test(double)
 tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)

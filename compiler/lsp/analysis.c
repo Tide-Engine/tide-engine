@@ -1541,6 +1541,8 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_INT: return "A 32-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0.";
     case TY_LONG: return "A 64-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0. An int converts to it "
                          "by itself; floats convert with long(x) and float(x), and int(x) keeps its low 32 bits.";
+    case TY_DOUBLE: return "A 64-bit IEEE float. Use d literals for full precision; float(x) explicitly narrows for rendering.";
+    case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: return "A vector of 64-bit doubles: x, y, z, w, with ordinary swizzles. Convert to a float vector before drawing.";
     case TY_FLOAT: return "A 32-bit float. Results are identical on every platform.";
     case TY_INT2: case TY_INT3: case TY_INT4: return "A vector of ints: x, y, z, w.";
     case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: return "A vector of floats: x, y, z, w. Swizzles like `v.xz` work.";
@@ -2372,7 +2374,7 @@ static void describe_default(const type t, sb *out)
 {
     switch (t.kind) {
     case TY_BOOL: sb_put(out, "`false`"); break;
-    case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: sb_put(out, "`0`"); break;
+    case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_DOUBLE: sb_put(out, "`0`"); break;
     case TY_CHAR: sb_put(out, "`'\\0'`, which is no character"); break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: sb_put(out, "The null entity"); break;
     case TY_PLAYER: sb_put(out, "No player"); break;
@@ -5822,7 +5824,7 @@ static bool is_keyword_type(const type t)
 {
     switch (t.kind) {
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
-    case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
         return true;
     default:
         return false;
@@ -6356,7 +6358,7 @@ static type member_type(const type t, const str member)
         }
     }
     const int dim = type_dim(t);
-    if (dim >= 2 && is_swizzle(member, dim)) return vector_type(type_is_float_based(t), member.len);
+    if (dim >= 2 && is_swizzle(member, dim)) return type_is_double_based(t) ? double_vector_type(member.len) : vector_type(type_is_float_based(t), member.len);
     if (t.kind == TY_COLOR && member.len == 1 && strchr("rgba", member.ptr[0])) return (type){TY_FLOAT, NULL};
     if (t.kind == TY_RECT && (str_eq_c(member, "x") || str_eq_c(member, "y") || str_eq_c(member, "width")
                               || str_eq_c(member, "height"))) {
@@ -6697,12 +6699,12 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (dim >= 2) {
         static const char *const components[] = {"x", "y", "z", "w"};
         static const char *const swizzles[] = {"xy", "xz", "yz", "xyz"};
-        const char *scalar = type_name(vector_type(type_is_float_based(t), 1));
+        const char *scalar = type_name(type_scalar(t));
         for (int i = 0; i < dim; i++) item(c, components[i], CK_PROPERTY, scalar, NULL, NULL);
         for (size_t i = 0; i < sizeof swizzles / sizeof swizzles[0]; i++) {
             const str s = str_from(swizzles[i]);
             if (is_swizzle(s, dim) && s.len < dim) {
-                item(c, swizzles[i], CK_PROPERTY, type_name(vector_type(type_is_float_based(t), s.len)), NULL, NULL);
+                item(c, swizzles[i], CK_PROPERTY, type_name(type_is_double_based(t) ? double_vector_type(s.len) : vector_type(type_is_float_based(t), s.len)), NULL, NULL);
             }
         }
     }
@@ -7269,7 +7271,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 
 static const char *const value_types[] = {
     "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
-    "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
+    "double", "double2", "double3", "double4", "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
     "Texture", "DepthTexture", "Cubemap", "RenderTarget", "Clip",
 };
 
@@ -7296,7 +7298,7 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
+        if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
                                  || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP)) continue; // A depth and a cube are read where they're a field, never a parameter
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
@@ -10083,13 +10085,17 @@ static const struct {
      "its code point."},
     {"long", {"long(float value)", "long(int value)"}, "From a float: truncates toward zero and saturates at the long range; NaN gives 0. "
                                                      "An int converts by itself."},
-    {"float", {"float(int value)", "float(long value)"}, "A long rounds to the nearest float."},
+    {"float", {"float(int value)", "float(long value)", "float(double value)"}, "A long rounds to the nearest float."},
     {"int2", {"int2(int x, int y)", "int2(int value)", "int2(float2 value)"}, NULL},
     {"int3", {"int3(int x, int y, int z)", "int3(int2 xy, int z)", "int3(int value)"}, NULL},
     {"int4", {"int4(int x, int y, int z, int w)", "int4(int3 xyz, int w)", "int4(int value)"}, NULL},
     {"float2", {"float2(float x, float y)", "float2(float value)", "float2(int2 value)"}, NULL},
     {"float3", {"float3(float x, float y, float z)", "float3(float2 xy, float z)", "float3(float value)"}, NULL},
     {"float4", {"float4(float x, float y, float z, float w)", "float4(float3 xyz, float w)", "float4(float value)"}, NULL},
+    {"double", {"double(float value)", "double(int value)", "double(long value)"}, "Widens a number to binary64. Use a d-suffixed literal to retain decimal precision before conversion."},
+    {"double2", {"double2(double x, double y)", "double2(double value)", "double2(float2 value)", "double2(int2 value)"}, NULL},
+    {"double3", {"double3(double x, double y, double z)", "double3(double2 xy, double z)", "double3(double value)", "double3(float3 value)"}, NULL},
+    {"double4", {"double4(double x, double y, double z, double w)", "double4(double3 xyz, double w)", "double4(double value)", "double4(float4 value)"}, NULL},
     {"quaternion", {"quaternion(float x, float y, float z, float w)", "quaternion(float4 value)", "quaternion(float3x3 rotation)"}, NULL},
     {"float2x2", {"float2x2(float2 c0, float2 c1)", "float2x2(float m00, float m01, float m10, float m11)"}, "Columns, or numbers row by row."},
     {"float3x3", {"float3x3(float3 c0, float3 c1, float3 c2)", "float3x3(quaternion rotation)"}, NULL},

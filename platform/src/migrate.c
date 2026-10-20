@@ -41,6 +41,8 @@ static bool carries(const tide_layout_field *to, const tide_layout_field *from)
 {
     if (strcmp(to->type, from->type) == 0) return to->kind != TIDE_LAYOUT_PLAIN || to->size == from->size;
     if (from->dim != to->dim) return false;
+    if (to->kind == TIDE_LAYOUT_DOUBLE) return from->kind == TIDE_LAYOUT_BYTE || from->kind == TIDE_LAYOUT_INT
+        || from->kind == TIDE_LAYOUT_LONG || from->kind == TIDE_LAYOUT_FLOAT;
     if (from->kind == TIDE_LAYOUT_BYTE) return to->kind == TIDE_LAYOUT_INT || to->kind == TIDE_LAYOUT_LONG || to->kind == TIDE_LAYOUT_FLOAT;
     if (from->kind == TIDE_LAYOUT_INT) return to->kind == TIDE_LAYOUT_FLOAT || to->kind == TIDE_LAYOUT_LONG;
     return from->kind == TIDE_LAYOUT_LONG && to->kind == TIDE_LAYOUT_FLOAT;
@@ -102,7 +104,24 @@ static void carry_field(const carry *c, const tide_layout_field *tf, uint8_t *to
     if (!carries(tf, ff)) return;
     if (strcmp(tf->type, ff->type) != 0) { // A number converting (see carries)
         for (uint32_t i = 0; i < tf->dim; i++) {
-            if (ff->kind == TIDE_LAYOUT_BYTE) {
+            if (tf->kind == TIDE_LAYOUT_DOUBLE) {
+                double value;
+                if (ff->kind == TIDE_LAYOUT_BYTE) value = from[i];
+                else if (ff->kind == TIDE_LAYOUT_INT) {
+                    int32_t n;
+                    memcpy(&n, from + 4u * i, sizeof n);
+                    value = (double)n;
+                } else if (ff->kind == TIDE_LAYOUT_LONG) {
+                    int64_t n;
+                    memcpy(&n, from + 8u * i, sizeof n);
+                    value = (double)n;
+                } else {
+                    float n;
+                    memcpy(&n, from + 4u * i, sizeof n);
+                    value = (double)n;
+                }
+                memcpy(to + 8u * i, &value, sizeof value);
+            } else if (ff->kind == TIDE_LAYOUT_BYTE) {
                 const int32_t n = from[i];
                 if (tf->kind == TIDE_LAYOUT_LONG) {
                     const int64_t l = n;

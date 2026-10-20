@@ -1,0 +1,4 @@
+// expect: operator '%' can't be used with double and double
+singleton Data { double value; }
+scene Main { }
+system S(mut Data data) { data.value = 3d % 2d; }

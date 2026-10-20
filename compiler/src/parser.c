@@ -435,6 +435,19 @@ static expr *parse_primary(parser *p)
         advance(p);
         expr *e = new_expr(E_FLOAT, t->at);
         e->text = t->text;
+        e->is_double = t->text.len > 0 && (t->text.ptr[t->text.len - 1] == 'd' || t->text.ptr[t->text.len - 1] == 'D');
+        if (e->is_double) {
+            char *digits = arena_alloc((size_t)t->text.len);
+            int count = 0;
+            for (int i = 0; i < t->text.len - 1; i++) {
+                if (t->text.ptr[i] != '_') digits[count++] = t->text.ptr[i];
+            }
+            digits[count] = '\0';
+            if (!isfinite(strtod(digits, NULL))) {
+                diag_error(t->at, "double literal '" STR_FMT "' is too large for double", STR_ARG(t->text));
+                longjmp(p->fail, 1);
+            }
+        }
         if (t->text.len >= 3 && memcmp(t->text.ptr + t->text.len - 3, "deg", 3) == 0) {
             // Read directly as binary32, then use the same binary32 multiply
             // as Math.Radians. Keep the result, so C and shaders get one value

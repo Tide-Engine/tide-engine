@@ -42,6 +42,29 @@ static void done(void)
     lex_symbols_reset();
 }
 
+TIDE_TEST(lexer_double_literals_preserve_suffixes_without_changing_float_defaults)
+{
+    static const char *const valid[] = {"1d", ".5D", "1.25d", "1e300D", "1_000.000_125d", "5e-324d"};
+    for (size_t i = 0; i < sizeof valid / sizeof valid[0]; i++) {
+        lexer_diagnostics out = {0};
+        source src;
+        input(&src, valid[i], &out);
+        token *tokens = lex(&src);
+        TIDE_REQUIRE(tokens && !out.errors);
+        TIDE_CHECK(tokens[0].kind == T_FLOAT && str_eq_c(tokens[0].text, valid[i]));
+        TIDE_CHECK(tokens[1].kind == T_EOF);
+        done();
+    }
+    static const char *const invalid[] = {"1df", "1fd", "1ddeg", "1degd", "1dL", ".5d_suffix"};
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        lexer_diagnostics out = {0};
+        source src;
+        input(&src, invalid[i], &out);
+        TIDE_CHECK(!lex(&src) && out.errors > 0);
+        done();
+    }
+}
+
 TIDE_TEST(lexer_degree_literals_keep_the_entire_float_token)
 {
     static const char *const valid[] = {"180deg", ".5deg", "0.5deg", "1e2deg", "1E+2deg", "1e-2deg", "1_8__0deg",

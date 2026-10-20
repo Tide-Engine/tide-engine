@@ -18,7 +18,8 @@ float2 flat = trs.position.xz;
 
 | Type | What it is |
 |---|---|
-| `float2`, `float3`, `float4` | Float vectors |
+| `float2`, `float3`, `float4` | 32-bit float vectors |
+| `double2`, `double3`, `double4` | 64-bit double vectors |
 | `int2`, `int3`, `int4` | Int vectors |
 | `quaternion` | A rotation |
 | `float2x2`, `float3x3`, `float4x4` | Matrices, stored column by column |
@@ -34,6 +35,24 @@ For a constant angle, add lowercase `deg` to a decimal number: `quaternion.Euler
 - An int vector converts to a float vector of the same size by itself, like `int` to `float`.
 - `quaternion(x, y, z, w)`, `quaternion(float4)` and `quaternion(float3x3)`.
 - Matrices take one vector per column, `float3x3(c0, c1, c2)`, or all their numbers row by row: in `float2x2(1, 2, 3, 4)`, `1, 2` is the first row. Also `float3x3(quaternion)`, and `float4x4(rotation, translation)` from a `float3x3` and a `float3`.
+
+## Double precision
+
+Use `double` and `double2`/`double3`/`double4` for high precision values. They support ordinary construction, swizzles and component-wise `+ - * /`. Integers and floats widen when mixed with doubles; converting back requires an explicit constructor.
+
+```csharp
+double3 objectPosition = double3(1_000_000_000.125d, 2d, 3d);
+double3 cameraPosition = double3(1_000_000_000d, 0d, 0d);
+float3 nearby = float3(objectPosition - cameraPosition);
+```
+
+Subtract in double precision **before** converting to float. This example preserves the 0.125 offset. It is an explicit conversion pattern; the camera and `Transform` APIs still take floats.
+
+Double math includes `Abs`, `Sign`, `Min`, `Max`, `Clamp`, `Floor`, `Ceil`, `Round`, `Trunc`, `Frac`, `Sqrt`, `Rsqrt`, `Saturate`, `Radians`, `Degrees`, `Step`, `Lerp`, `Unlerp` and `SmoothStep`, component by component. Vector geometry includes `Dot`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize`, `Reflect`, `Csum`, `Cmin`, `Cmax` and three-dimensional `Cross`. `Math.Hash` hashes all 64 bits of each component.
+
+The same deterministic arithmetic rules apply. `Normalize` gives zero when the squared length is NaN or at or below the smallest normal double (about 2.23e-308); otherwise it uses `v * (1 / Sqrt(Dot(v, v)))`.
+
+Double trigonometric, exponential, logarithmic and noise functions, double matrices and double quaternions are not part of this first addition. Existing `Math.PI`, `Math.TAU`, `Math.E`, matrices and rotations remain floats. Doubles are CPU values: convert to floats in local code before supplying shader data.
 
 ## Members
 

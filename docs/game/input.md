@@ -294,7 +294,7 @@ The match can't read positions on the screen either, the mouse's, a touch's or t
 
 Inputs come from other players' machines, so the engine doesn't trust them:
 
-- NaN and infinite floats become the field's default.
+- NaN and infinite floats and doubles become the field's default. Double fields retain their full 64 bits in input packets and deltas.
 - Fields can declare bounds, `[Clamp(lo, hi)]`, `[Min(x)]` and `[Max(x)]`, which the engine applies to every input. A number bounds every component of a vector.
 - Then the input's `Sanitize` method runs, if it has one, for what bounds can't say.
 

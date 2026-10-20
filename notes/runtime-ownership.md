@@ -1,5 +1,21 @@
 # Runtime written by Claude for now
 
+## Double numeric values (2026-10-20)
+
+The owner-approved scalar/vector addition extends the existing temporary math,
+text/JSON and migration maintenance areas. Generated basic math/conversion/hash
+calls use inline tide_*_d/d2/d3/d4 in tide/math.h. Text calls
+`tide_str_add_double`, `tide_str_add_d2/d3/d4`, `tide_str_parse_double`,
+`tide_json_double` and `tide_json_add_double`, following their float counterparts.
+The feature is authorized; these helper shapes and narrowing/literal choices
+are first-build implementation picks, recorded provisionally in the spec.
+
+No world/container/session runtime structure or exported networking function
+changes. Input doubles reuse two ordered tide_bits_put/get calls. Layout metadata
+appends TIDE_LAYOUT_DOUBLE; generated games and migration hosts rebuild together.
+Full contracts, gaps, safety and validation: notes/language.md and
+notes/memory-safety.md.
+
 ## Shared player ceiling (2026-10-20)
 
 The owner approved the shared 65,536-player/connection ceiling. This maintains

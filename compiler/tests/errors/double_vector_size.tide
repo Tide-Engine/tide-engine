@@ -1,0 +1,4 @@
+// expect: operator '+' can't be used with double2 and double3
+singleton Data { double2 value; }
+scene Main { }
+system S(mut Data data) { data.value = double2(1d) + double3(2d); }
