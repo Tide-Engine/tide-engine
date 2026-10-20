@@ -1,5 +1,29 @@
 # The schedule and the tick on threads
 
+Cache groups in the desktop pool (2026-10-20, platform/src/jobs.c): cores that
+share a last-level cache are a group, found on Windows from
+GetLogicalProcessorInformationEx (the largest unified cache level; only where
+there are several groups, each of two cores or more, between them every core,
+at most 8). A Ryzen 9 7900X has two of six. Data moves between groups slowly:
+a million particles tick in 0.086 ms on six threads pinned to one group, 0.38
+on three of each and 0.27 on all twelve, the C as much as Tide, while N-body,
+which is arithmetic, wants all twelve (0.43 against 0.62). So each worker is
+pinned to its group (SetThreadGroupAffinity), the pool's home group is the one
+it was made on, a thread that runs rounds is pinned to it from its first
+round (unpinned, the system moved it between groups and the world with it:
+0.13 ms where pinned was 0.086), and `run` takes either the home group's
+threads or every group's, per work function (`choice`): its first six rounds
+take each in turn, then the one whose last three rounds' middle time is
+lower, and every 64th round the other one, so a work that changes is found
+out. `run_some` and `more` stay in the home group first. Results never
+depend on which threads run. Paired against the pool before, gated, two
+rounds each on 12 threads: versus_particles 0.236 to about 0.09 ms, versus_life
+0.21 to 0.13, versus_wide 10-15% less, versus_sand as it was, versus_nbody
+within 5-10% (a few of its 32 rounds try the home group). Linux, macOS,
+Android and the web keep one group: finding them there (sysfs's
+cache/index3/shared_cpu_list and pthread_setaffinity_np on Linux) is left to
+do, as nothing here could test it.
+
 Grid parallel loops, performance pass (2026-10-20): `tide_par_window` works out a
 row's runs (where each chunk's cells go in the window, and where they start in
 their chunk's row) once for the window, as they're the same for every row that
