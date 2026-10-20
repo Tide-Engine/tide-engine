@@ -6,6 +6,46 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Map views and Linux cache groups, 2026-10-20
+
+The pass's second round, after the owner approved list views for generated
+code and asked for cache groups on Linux and Android with CI as their check
+(notes/ecs.md, Map views across a function; notes/schedule-and-threads.md,
+Linux and Android). Gated and alternating as above, five rounds, the first
+round's final binaries (`45733126`) against `c02addd8`
+(`perf-pass-views-before`/`-after`):
+
+| ms a tick, 1 thread (C way) | before | after | Tide/C after |
+| --- | ---: | ---: | ---: |
+| lookup, 16k keys, 1,024 changes (C) | 1.365 | 1.161 | 3.70× |
+| lookup, 16k keys, steady (C) | 1.379 | 1.137 | 8.6× |
+| buckets, a list of lists (C) | 0.0627 | 0.0575 | 7.9× |
+
+12 threads alike (lookups run on one). Sand's session clients 18.1 → 16.6 ms
+of simulation per second (no map in its hot path; within noise), Gallery as it
+was; end hashes the same. Every other versus program moved within noise; a
+focused eight-round pairing of wide, churn and events
+(`perf-pass-views-wide-*`), as wide's first pairing read 1.61 → 1.86 ms
+under heavy machine load, has wide at 1.30× and 1.29× its C, events 7.58×
+and 7.59×: no change, as their generated code has no map and they call no
+changed function.
+
+Taken a step at a time on the lookup benchmark (single gated runs):
+holding views per function but calling `tide_list_view_hold` out of line
+saved 2% (clang didn't inline it); forcing the hold and element reads inline
+saved 7%; setting an existing key's value through the view instead of
+`tide_map_insert` (two prepares, a lookup of its own, a fresh block lookup to
+write) another 10%. What's left, profiled: the probe's own chain, hash (four
+64-bit multiplies) → slot → entry → key compare, about 14 ns a lookup
+against C's 2 ns, whose keys sit in a 64 KB array of their own and whose
+hash is two 32-bit multiplies. Shortening it would change the hash or the
+entry layout, which every snapshot and world hash pins, or the chunk size
+(the element-to-chunk division is on the chain).
+
+Linux cache groups have no number here: WSL2 shows one L3 for all 24 CPUs,
+so the pool there is as it was. Its parsing and pinning were checked on
+made-up trees (notes/schedule-and-threads.md).
+
 ## Performance pass against handwritten C, 2026-10-20
 
 The owner asked for a performance pass over everything (threading, GPU,
