@@ -3923,6 +3923,34 @@ static void bench_scene(void)
     }
 }
 
+// --dump-frames <prefix>: each workload's last frame, drawn again and read
+// whole into <prefix>-<workload>.ppm, after its timing, to compare with
+// another renderer's (bench/draw/versus_draw --compare <prefix>).
+static const char *bench_frames_prefix;
+
+static bool bench_dump_frame(void)
+{
+    enum { PIXELS = WIDTH * HEIGHT };
+    static tide_float2 points[PIXELS];
+    static uint32_t pixels[PIXELS];
+    for (int i = 0; i < PIXELS; i++) points[i] = tide_f2((float)(i % WIDTH), (float)(i / WIDTH));
+    tide_platform_read_pixels(&list, points, PIXELS, pixels);
+    char path[1024];
+    snprintf(path, sizeof path, "%s-%d.ppm", bench_frames_prefix, bench_kind);
+    FILE *f = fopen(path, "wb");
+    bool ok = f != NULL;
+    if (f) {
+        fprintf(f, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
+        for (int i = 0; i < PIXELS; i++) {
+            const uint8_t rgb[3] = {(uint8_t)(pixels[i] >> 24), (uint8_t)(pixels[i] >> 16), (uint8_t)(pixels[i] >> 8)};
+            ok &= fwrite(rgb, 1, 3, f) == 3;
+        }
+        ok &= fclose(f) == 0;
+    }
+    if (!ok) fprintf(stderr, "draw: couldn't write %s\n", path);
+    return ok;
+}
+
 static int bench(void)
 {
     const uint64_t start = tide_time_now_ns();
@@ -3946,6 +3974,7 @@ static int bench(void)
            bench_names[bench_kind], recording.median_ms, recording.p95_ms, rendering.median_ms, rendering.p95_ms,
            total.median_ms, total.p95_ms);
     if (bench_label) bench_write_record(recording, rendering, total);
+    if (bench_frames_prefix && !bench_dump_frame()) return 1;
     bench_frame = 0;
     if (++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
     if (bench_output) {
@@ -4115,12 +4144,14 @@ int main(const int argc, char **argv)
         else if (strcmp(argv[i], "--frames-bench") == 0) frames_benching = true;
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
         else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];
+        else if (strcmp(argv[i], "--dump-frames") == 0 && i + 1 < argc) bench_frames_prefix = argv[++i];
         else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("usage: tide_platform_draw [--bench [--save <label>]] [--frames-bench] [--dump <file.ppm>]\n"
+            printf("usage: tide_platform_draw [--bench [--save <label>] [--dump-frames <prefix>]] [--frames-bench] [--dump <file.ppm>]\n"
                    "  --bench          20 warmup frames, then 100 measured frames per workload\n"
                    "  --frames-bench   the same, drawn into the window and shown, as a game's frames are\n"
                    "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
+                   "  --dump-frames <prefix>  after each workload's timing, its last frame as <prefix>-<n>.ppm\n"
                    "  --dump <file>    write the smooth shapes' scene as an image (a PPM), and check nothing\n"
                    "On the web: ?bench&save=<label> prints the records.\n"
                    "Set TIDE_BENCH_REVISION and TIDE_BENCH_MACHINE to identify the build and CPU/GPU.\n");
@@ -4130,8 +4161,8 @@ int main(const int argc, char **argv)
             return 2;
         }
     }
-    if (bench_label && !benching) {
-        fprintf(stderr, "draw: --save needs --bench\n");
+    if ((bench_label || bench_frames_prefix) && !benching) {
+        fprintf(stderr, "draw: --save and --dump-frames need --bench\n");
         return 2;
     }
     if (benching) {

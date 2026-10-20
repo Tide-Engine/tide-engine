@@ -50,6 +50,11 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
+# Tide's drawing benchmark's workloads by hand in OpenGL and Vulkan, timed the same way
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    add_subdirectory(draw)
+endif()
+
 # Sumo's real-time native delay measurement; invoked explicitly, never a
 # timing assertion in CTest. Its machines share a pool capped at four threads.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)

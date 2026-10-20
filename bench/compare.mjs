@@ -2,8 +2,12 @@
 // <label>): runs with the same options and thread counts, on the same kind
 // of machine, side by side. Session metrics compare with the first passing
 // run; versus shows each implementation's time and Tide's ratio to C.
+// `draw` puts tide_platform_draw --bench's rows beside versus_draw's (C by
+// hand in the same API), each renderer's workloads with Tide's ratio to C:
+// --tide and --c pick their labels (a label, or what came before -r<round>
+// for every round of it), else the newest of each.
 //
-//   node bench/compare.mjs [benchmark...] [--last <n>]
+//   node bench/compare.mjs [benchmark...] [--last <n>] [--tide <label>] [--c <label>]
 
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -12,11 +16,16 @@ import { fileURLToPath } from "node:url";
 const results = join(dirname(fileURLToPath(import.meta.url)), "results");
 
 function options(args) {
-    let last = 6;
+    let last = 6, tide, c;
     const names = [];
     for (let i = 0; i < args.length; i++) {
         if (args[i] === "--help" || args[i] === "-h") return null;
-        if (args[i] === "--last") {
+        if (args[i] === "--tide" || args[i] === "--c") {
+            const value = args[++i];
+            if (!value || value.startsWith("-")) throw new Error(`${args[i - 1]} needs a label`);
+            if (args[i - 1] === "--tide") tide = value;
+            else c = value;
+        } else if (args[i] === "--last") {
             const value = args[++i];
             if (!value || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) < 1) {
                 throw new Error("--last needs a positive integer");
@@ -25,7 +34,7 @@ function options(args) {
         } else if (args[i].startsWith("-")) throw new Error(`unknown option ${args[i]}`);
         else names.push(args[i]);
     }
-    return { last, names };
+    return { last, names, tide, c };
 }
 
 // Options written in a different property order still describe the same work.
@@ -86,7 +95,69 @@ function printVersus(shown, width) {
     console.log("  medians; ratios show how many times as long Tide takes as that C implementation");
 }
 
-export function compareResults(directory = results, { last = 6, names = [] } = {}) {
+const median = (values) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = sorted.length >> 1;
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+
+// A label's runs: itself, or each round of it (`<label>-r<round>`).
+const roundOf = (label) => label.replace(/-r\d+$/, "");
+const ofLabel = (row, label) => row.label === label || roundOf(row.label) === label;
+
+// Rows of tide_platform_draw --bench (Tide's) beside rows of versus_draw (C by
+// hand in the same API, competitive_baseline), for each renderer: the median
+// of the runs' medians of each part of a frame, and how many times as long
+// Tide's whole frame takes.
+export function compareDraw(rows, { tide, c } = {}) {
+    const isC = (r) => r.competitive_baseline === true;
+    const newest = (kind) => {
+        let found;
+        for (const r of rows) if (kind(r) && (!found || r.date >= found.date)) found = r;
+        return found && roundOf(found.label);
+    };
+    const tideLabel = tide ?? newest((r) => !isC(r)), cLabel = c ?? newest(isC);
+    if (!tideLabel || !cLabel) {
+        console.log("\ndraw: no runs of both Tide's (tide_platform_draw --bench) and C's (versus_draw) to compare");
+        return;
+    }
+    const renderers = [...new Set(rows.filter((r) => isC(r) && ofLabel(r, cLabel)).map((r) => r.renderer))];
+    if (!renderers.some((renderer) => rows.some((r) => !isC(r) && ofLabel(r, tideLabel) && r.renderer === renderer))) {
+        console.log(`\ndraw: no renderer has runs of both Tide's '${tideLabel}' and C's '${cLabel}'`);
+        return;
+    }
+    const ms = (v) => (v == null ? "-" : v.toFixed(3));
+    const columns = [32, 9, 9, 10, 10, 9, 9, 8];
+    const line = (cells) => console.log(cells.map((cell, i) => (i ? String(cell).padStart(columns[i]) : String(cell).padEnd(columns[i]))).join(""));
+    for (const renderer of renderers) {
+        const of = (kind, label) => rows.filter((r) => kind(r) && ofLabel(r, label) && r.renderer === renderer);
+        const tideRows = of((r) => !isC(r), tideLabel), cRows = of(isC, cLabel);
+        if (!tideRows.length) continue;
+        const runs = (list) => new Set(list.map((r) => r.label)).size;
+        console.log(`\ndraw, ${renderer}: Tide '${tideLabel}' (${runs(tideRows)} run${runs(tideRows) === 1 ? "" : "s"}) against C by hand `
+            + `'${cLabel}' (${runs(cRows)} run${runs(cRows) === 1 ? "" : "s"}); ${tideRows[0].width}x${tideRows[0].height}, `
+            + `${tideRows[0].frames} frames; medians of the runs' medians, ms`);
+        const machines = [...new Set([...tideRows, ...cRows].map((r) => r.machine ?? "machine unknown"))];
+        console.log(`  ${machines.join(" / ")}${cRows[0].device ? `; ${cRows[0].device}` : ""}`);
+        line(["", "record", "", "render+", "readback", "total", "", "Tide/C"]);
+        line(["workload", "Tide", "C", "Tide", "C", "Tide", "C", ""]);
+        const workloads = [...new Set([...tideRows, ...cRows].map((r) => r.workload))];
+        for (const workload of workloads) {
+            const part = (list, key) => {
+                const values = list.filter((r) => r.workload === workload).map((r) => r[key]?.median).filter((v) => v != null);
+                return values.length ? median(values) : undefined;
+            };
+            const t = ["record_ms", "render_readback_ms", "total_ms"].map((key) => part(tideRows, key));
+            const k = ["record_ms", "render_readback_ms", "total_ms"].map((key) => part(cRows, key));
+            const ratio = t[2] != null && k[2] > 0 ? `${(t[2] / k[2]).toFixed(2)}x` : "-";
+            line([workload.length > 31 ? `${workload.slice(0, 30)}…` : workload, ms(t[0]), ms(k[0]), ms(t[1]), ms(k[1]), ms(t[2]), ms(k[2]), ratio]);
+        }
+        console.log("  C's record writes its instances where the GPU reads them; Tide's uploads them in its render part,"
+            + " so compare totals. C reads back one pixel, Tide the pixels it's asked for.");
+    }
+}
+
+export function compareResults(directory = results, { last = 6, names = [], tide, c } = {}) {
     const files = readdirSync(directory).filter((f) => f.endsWith(".jsonl"));
     for (const file of files) {
         const benchmark = file.slice(0, -".jsonl".length);
@@ -95,6 +166,10 @@ export function compareResults(directory = results, { last = 6, names = [] } = {
             .filter((line) => line.trim())
             .map((line) => JSON.parse(line))
             .filter((r) => !names.length || names.includes(benchmark) || names.includes(r.benchmark));
+        if (benchmark === "draw" && (names.includes("draw") || tide || c)) {
+            compareDraw(selected, { tide, c });
+            continue;
+        }
         // Compile and draw reports have their own metrics and reporting commands.
         // Only the session and versus record formats belong in this comparison.
         const records = selected.filter((r) => r.options && ((r.server && r.client)
@@ -144,7 +219,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     try {
         const opts = options(process.argv.slice(2));
         if (opts) compareResults(results, opts);
-        else console.log("Usage: node bench/compare.mjs [benchmark...] [--last <n>]");
+        else console.log("Usage: node bench/compare.mjs [benchmark...] [--last <n>] [--tide <label>] [--c <label>]");
     } catch (error) {
         console.error(error.message);
         process.exitCode = 1;
