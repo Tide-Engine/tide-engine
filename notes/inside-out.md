@@ -1,5 +1,64 @@
 # Inside Out
 
+## Engine gaps (kept list)
+
+The owner asked (2026-10-20) for the engine gaps this game runs into to be
+written down, for a later engine discussion. Each is what the game can't do
+or say, and where it works round it; the language ones were checked against
+tidec on 2026-10-20. Add to it as more turn up.
+
+Rendering:
+- **No way to say a frame is unchanged, or to cap the frame rate** (Unity's
+  `OnDemandRendering`, `Application.targetFrameRate`). Every frame is drawn
+  at the display's rate, 144 Hz on the owner's. Worked round by the kept
+  picture (`SceneUnchanged`, `SceneKept` in `render.tide`).
+- **No word that a target lost its contents** (the display's scale changing,
+  a hot reload, a lost device), and no `Screen.scale` to compare. The kept
+  picture is drawn again once it is a second old (`keptAge`).
+- **A target premultiplies what is written to it**; `[Raw]` is for textures
+  only. The normals target's alpha carries the metric scale, so every read
+  divides it back out (the generated `tide_straight`), a divide per sample,
+  and a byte target would lose precision. Not worked round: the data stays
+  in `Rgba16f`.
+- **`DepthTexture.Compare` in a loop** links with warning X3595 on WebGL
+  through ANGLE's D3D11 (`SampleCmp`), which `checkGL` makes an error.
+  `SceneSun`'s taps are written out (`SceneSunTap`). The web tests use
+  SwiftShader, so they never see D3D11's warnings.
+- **No polygon in 2D `Draw`** (rectangles, ellipses, arcs and lines only):
+  `StarMark` (`transition.tide`) draws a star as five lines and a dot.
+- **Only a frame's whole GPU time is measured** (the stats drawer's `gpu`
+  line), and only as pixels in a capture. The cost of each pass was found by
+  switching passes off in a scratch build and cropping the drawer from
+  `--script` captures.
+
+Language and generated C:
+- **No `==` on vectors or matrices** ("operator '==' can't be used with
+  float4 and float4"; Unity gives a `bool4` and `math.all`): `SameFloat4`,
+  `SameMatrix`, `SameObject` and `SameView` compare field by field.
+- **`Math.Hash` takes no float, and there is no float bit cast** (Unity's
+  `math.asint`): the kept picture compares its scene rather than hashing it.
+- **Read-only structs are passed by value.** Unoptimized, each call keeps a
+  copy of the 40 KB `Workshop` in its caller's frame; nested drawing helpers
+  overflowed WASM's 1 MB stack. Helpers take `HallState` (`HallOf`) or a few
+  fields (`HallPostNear` takes the chapter), and the posts are drawn from
+  `Workbench`, not under `RoomScene`.
+
+Host and tools:
+- **A game can't read its command line or page address** (the spec lists
+  settings from the command line as not built). `invite.c` reads
+  `--inside-out-playtest` and `--inside-out-lite` from WASI's arguments, or
+  the environment natively; `web.html` maps `?playtest`, `?lite`, `?scale`
+  and `?quiet`.
+- **C can't build a command from its struct**: the generated writers
+  (`tide_write_command_*`) are `static`. `test/simulation.c` writes
+  `Progress`'s bits by hand (`inside_out_test_progress_best`), and must
+  change with the command's fields.
+- **A game's functions are `static` in generated C**, so the solver drives
+  `MovePuzzle` through the `Move` handler (`test/solve.c`).
+- **Phones as controllers** have no engine support; Inside Out's TV page
+  relays key presses (`tv.html`, `pad.html`). A general design awaits the
+  owner (phones as ordinary gamepads in `Devices`, below).
+
 ## GPU cost: a kept picture and a cheaper spill (2026-10-19)
 
 The owner saw the GPU working hard and asked for benchmarks, then for the
