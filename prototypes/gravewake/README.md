@@ -24,7 +24,8 @@ Every kill leaves an orb of experience where the dead fell (a cyan gem,
 turning), worth more the tougher they were, the party's once someone goes
 within a few metres of it; at every level each takes one of three cards: their
 gun a rank stronger, or an item that stacks, most of which fight on their own;
-and a little more damage and 18 more health (a level's worth of it back, too).
+and more damage and 36 more health (a level's worth of it back, too). The
+levels come about every 40 s at first and a minute apart later.
 How many nights, and how long, they held out is the score.
 
 Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;

@@ -728,6 +728,7 @@ event(Hurt hurt) TakeHurt(mut Survivor survivor, Match match)
         survivor.items[int(Item.SecondWind)] -= 1;
         survivor.health = MaxHealth(survivor);
         Send(Cue { sound = Sfx.Revive, at = survivor.feet });
+        Send(Winded { seat = survivor.seat, at = survivor.feet, left = survivor.selfRevives });
         return;
     }
     survivor.health = 0;
@@ -752,6 +753,15 @@ event Revived
 {
     int seat;
     int by;
+}
+
+// A Second Wind used: a survivor who'd have gone down straight back up, whole, for what's seen and heard (the owner,
+// 2026-10-20: "second wind needs to be clear when it was used"). `left`: how many more they have.
+event Winded
+{
+    int seat;
+    float3 at;
+    int left;
 }
 
 // What fired: the gun, a phase round, a turret, a drone.

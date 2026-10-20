@@ -474,6 +474,13 @@ local event(HordeRose horde) HearHorde(mut Ears ears)
     }
 }
 
+// A Second Wind used: the rare item's chord over the revive's (Cue), so it's heard as more than being raised.
+local event(Winded winded) HearWinded(Me me)
+{
+    if (winded.seat == me.seat) Audio.Play(itemRare, 1.0);
+    else Audio.Play(itemRare, winded.at, 0.7, 1.0);
+}
+
 local event(Cue cue) HearCue(mut Ears ears, Me me)
 {
     var near = Math.Distance(cue.at, me.ears) < 2.5;

@@ -37,6 +37,8 @@ local singleton Feed
     List<float3> blows;          // Where the blows taken came from...
     List<float> blowAges;        // ...and how long ago
     List<Tally> tallies;         // The numbers of hits rising off the dead
+    float winded = 10;           // Seconds since this machine's survivor's Second Wind went (the flash and the ring out)
+    float3 windAt;
     ZombieKind newKind;          // A kind of the dead first come this run, told on the left (NewKind)...
     float newKindLeft;           // ...so many seconds more
     float readyFlash;            // Seconds since the right mouse's skill came back (a flare round the crosshair)...
@@ -636,6 +638,17 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     for (var i = 0; i < feed.news.count; i++)
         Write(feed.news[i], float2(w - 34 * u, 140 * u + i * 20 * u), 14 * u, Color(BONE.r, BONE.g, BONE.b, Math.Saturate(6 - feed.newsAge[i])), Anchor.MiddleRight);
 
+    // ---- A Second Wind gone: the screen flashes gold-white and a ring of light rushes out over the ground ----
+    feed.winded += dt;
+    if (feed.winded < WIND_SHOWN && me.playing)
+    {
+        var t = feed.winded / WIND_SHOWN;
+        Draw.Rect(float2(w * 0.5, h * 0.5), float2(w, h), Color(1.0, 0.9, 0.6, 0.45 * Math.Saturate(1 - feed.winded / 0.35)));
+        var gold = Color(1.0, 0.85, 0.4, 0.9 * (1 - t));
+        GroundRing(look, feed.windAt, 0.8 + 6 * Math.Sqrt(t), 3 * u, gold, w, h);
+        GroundRing(look, feed.windAt, 0.5 + 4 * Math.Sqrt(t), 2 * u, Color(1, 1, 0.85, 0.7 * (1 - t)), w, h);
+    }
+
     // ---- The banner: a power-up's name, the card taken ----
     feed.bannerLeft = Math.Max(0, feed.bannerLeft - dt);
     if (feed.banner != feed.bannerShown)
@@ -988,6 +1001,26 @@ local event(Picked picked) ShowPicked(mut Feed feed, Me me)
         return;
     }
     feed.news.Add($"{HeroName(picked.seat)} took {title}");
+    feed.newsAge.Add(0);
+}
+
+const float WIND_SHOWN = 1.2;       // Seconds a Second Wind's flash and ring last
+
+// A Second Wind used: this machine's a banner with how many are left, a flash and a ring (Overlay); a friend's a line in
+// the corner.
+local event(Winded winded) ShowWinded(mut Feed feed, Me me)
+{
+    var left = winded.left == 0 ? "NONE LEFT" : $"{winded.left} LEFT";
+    if (winded.seat == me.seat)
+    {
+        feed.banner = $"SECOND WIND  -  {left}";
+        feed.bannerLeft = 3;
+        feed.bannerColor = Color(1.0, 0.85, 0.4);
+        feed.winded = 0;
+        feed.windAt = winded.at;
+        return;
+    }
+    feed.news.Add($"{HeroName(winded.seat)}'s Second Wind ({left.ToLower()})");
     feed.newsAge.Add(0);
 }
 

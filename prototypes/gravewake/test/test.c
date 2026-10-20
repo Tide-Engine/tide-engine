@@ -66,7 +66,7 @@ static void tick(int count)
     }
 }
 
-static float max_health(Survivor s) { return 100.0f + 18.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
+static float max_health(Survivor s) { return 100.0f + 36.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
 
 // Both on their feet and whole, so the dead don't end a test that's about something else.
 static void heal(void)
@@ -540,7 +540,7 @@ int main(void)
         s.selfRevives = 0;
         set(0, s);
         s = take(0, Item_Kevlar);
-        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 18.0f * (float)(s.level - 1));
+        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 36.0f * (float)(s.level - 1));
         s = take(0, Item_ExtendedMag);
         CHECK(s.mag == 45);                             // Half again a carbine's 30, loaded now
         s = take(0, Item_SecondWind);
@@ -573,6 +573,14 @@ int main(void)
         few(0);
         float gained[2];
         for (int k = 0; k < 2; k++) {
+            // (the few left about held well off, unmoving)
+            for (uint32_t row = 0; row < world.arch6_Zombie.count; row++) {
+                const tide_entity o = TIDE_ENTITY_AT(&world, arch6_Zombie, row);
+                Zombie away = zombie(o);
+                away.at = (tide_float3){get(0).feet.x + 30, away.at.y, get(0).feet.z};
+                away.pace = 0;
+                CHECK(tide_set_Zombie(&world, o, away));
+            }
             Survivor s = get(0);
             s.items.at[Item_FirstAid] = 2 * k;
             s.health = 40;
@@ -1518,9 +1526,9 @@ int main(void)
             for (int k = 0; k < 4; k++) struck += zombie(line[k]).health < before[k];
             CHECK(struck == 1 + ap);
         }
-        // The Engineer's flamethrower: held two seconds, it burns the two in its cone (3 m ahead, and 4 m ahead 1.2 m
-        // aside), through each other, and sets at least one alight (a puff in 25 does); not the one past its 4.8 m, nor
-        // the one behind
+        // The Engineer's flamethrower: held three seconds, it burns the two in its cone (3 m ahead, and 4 m ahead 1.2 m
+        // aside), through each other, and sets at least one alight (a puff in 17 does: in two seconds, none did one
+        // time in thirty); not the one past its 4.8 m, nor the one behind
         {
             become(0, Role_Engineer, Weapon_Flamer);
             Survivor s = get(0);
@@ -1542,16 +1550,16 @@ int main(void)
             for (int k = 0; k < 4; k++) before[k] = zombie(line[k]).health;
             look_at(0, (tide_float3){feet.x, feet.y + 1.3f, feet.z - 6.0f});
             held[0].attack = true;
-            tick_safe(120);
+            tick_safe(180);
             held[0].attack = false;
             tick_safe(1);
-            printf("a flamethrower held two seconds: %.0f and %.0f to the two in its cone (burning %d, %d), %.0f past it, %.0f behind, %d of its tank used\n",
+            printf("a flamethrower held three seconds: %.0f and %.0f to the two in its cone (burning %d, %d), %.0f past it, %.0f behind, %d of its tank used\n",
                    before[0] - zombie(line[0]).health, before[1] - zombie(line[1]).health, zombie(line[0]).burn > 0, zombie(line[1]).burn > 0,
                    before[2] - zombie(line[2]).health, before[3] - zombie(line[3]).health, 140 - get(0).mag);
             CHECK(zombie(line[0]).health < before[0] && zombie(line[1]).health < before[1]);
             CHECK(zombie(line[0]).burn > 0 || zombie(line[1]).burn > 0);
             CHECK(zombie(line[2]).health == before[2] && zombie(line[3]).health == before[3]);
-            CHECK(get(0).mag < 120 && get(0).mag > 100);
+            CHECK(get(0).mag < 105 && get(0).mag > 85);
             for (int k = 0; k < 4; k++) {
                 Zombie z = zombie(line[k]);
                 z.at = (tide_float3){feet.x, feet.y, feet.z - 5.0f - 1.2f * (float)k};

@@ -110,7 +110,7 @@ static float carbine_hits(void)
         if (z.kind == ZombieKind_Walker && z.state == ZombieState_Hunting && z.health > most) most = z.health;
     }
     const Survivor s = get(0);
-    const float might = (1 + 0.16f * (float)(s.level - 1)) * (1 + 0.15f * (float)s.items.at[Item_HollowPoints]);
+    const float might = (1 + 0.4f * (float)(s.level - 1)) * (1 + 0.15f * (float)s.items.at[Item_HollowPoints]);
     return most > 0 ? most / (25 * might) : -1;
 }
 

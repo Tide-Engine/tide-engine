@@ -63,6 +63,42 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Levels further apart, a Second Wind you see (2026-10-20)
+
+The owner: "upgrades are too quick, we need to space them out more"; then
+"second wind needs to be clear when it was used". The numbers and the look are
+mine, Provisional.
+
+- **Levels further apart** (items.tide's `LEVEL_FIRST` 50, was 40;
+  `LEVEL_GROWTH` 1.5, was 1.28): picks had come about one every 25 s all run (33
+  of a run's 36 were levels; the bots took some 1.9 a minute); now about 1.25 a
+  minute, the first levels some 40 s apart and the later about a minute (level 17
+  at about 12 minutes, 6.5 before). Fewer picks, so more from each level: `Might`
+  40% a level (16%), `LEVEL_HEALTH` 36 (18). A first try, 55 and 1.55 with 28%
+  and 30 (as strong at a minute of the run as before, by the level alone), had
+  most runs dying at the first night's end: the picks themselves (the drones,
+  the blades, the gun cards) had been doing much of the early killing.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16): the
+  Gunner's middle run 805 s (1242 before), the Breacher's 585 (694), the
+  Engineer's 193 (180); the first try 298, 394 and 188.
+- **A Second Wind seen** (hands.tide's `Winded`, sent as one's used, with how
+  many are left; hud.tide's `ShowWinded`, `Feed.winded`, `WIND_SHOWN`; fx.tide's
+  `Rewind`; sound.tide's `HearWinded`): it had been only the revive's sound and
+  the health bar full again. Now this machine's own: SECOND WIND - 1 LEFT (or
+  NONE LEFT) in gold as a banner, the screen flashing gold-white a third of a
+  second, two rings of light rushing out over the ground from where they stood
+  (1.2 s); everyone's: a burst of gold-white light, motes rushing up and a ring
+  of them flung out, the rare item's chord over the revive's; a friend's a line
+  in the corner ("Maud's Second Wind (none left)"). Looked at in a standard-host
+  capture (a local build whose development item was always a Second Wind, in a
+  horde): plain at a glance. In a horde it's soon spent: the crowd claws a
+  survivor straight back down (38 of 100 a moment later), as before.
+- **Tests**: the flamethrower's check holds it three seconds (two: none of
+  the puffs caught one time in thirty, and the change of random rolls hit it); the
+  regen check holds the few dead left well off (they'd reached and clawed the
+  survivor in its second half). Native debug and web debug WASI `gravewake_test`
+  pass.
+
 ### Health back slowly, First Aid Kits (2026-10-20)
 
 The owner: "health regen should be scarcer and cards should allow to upgrade it;

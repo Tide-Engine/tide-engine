@@ -896,6 +896,28 @@ local event(Picked picked) Anoint(mut Fx fx)
     }
 }
 
+// A Second Wind used: a burst of gold-white light off the survivor, motes rushing up and a ring of them flung out over
+// the ground.
+local event(Winded winded) Rewind(mut Fx fx)
+{
+    if (!fx.made) return;
+    var hue = float3(1.0, 0.85, 0.45);
+    fx.flashes.Add(Flash { at = winded.at + float3(0, 1.2, 0), color = hue * 12, reach = 10, life = 0.6 });
+    for (var i = 0; i < 90; i++)
+    {
+        var turn = fx.random.NextFloat(Math.TAU);
+        var r = fx.random.NextFloat(0.1, 0.7);
+        Glow(fx, Mote { at = winded.at + float3(Math.Sin(turn) * r, fx.random.NextFloat(0, 1.6), Math.Cos(turn) * r), velocity = float3(0, fx.random.NextFloat(4, 10), 0),
+                        life = fx.random.NextFloat(0.6, 1.1), size = fx.random.NextFloat(0.08, 0.16), grow = -0.1, color = i % 3 == 0 ? float3(1, 1, 0.9) : hue, alpha = 3.5,
+                        drag = 1 });
+    }
+    for (var i = 0; i < 60; i++)
+    {
+        var turn = i * Math.TAU / 60;
+        Glow(fx, Mote { at = winded.at + float3(0, 0.15, 0), velocity = float3(Math.Sin(turn), 0, Math.Cos(turn)) * 11, drag = 2.5, life = 0.7, size = 0.14, color = hue, alpha = 3 });
+    }
+}
+
 // The saw blades and the drones, seen in the dark: sparks flung off each blade's edge, a red light under each drone.
 [Stage(Layers.Gather, 3)]
 view Gleams(Survivor survivor, mut Fx fx, Me me)
