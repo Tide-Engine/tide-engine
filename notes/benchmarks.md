@@ -184,10 +184,12 @@ warning-free; 247 native release tests (all `tidec_e2e_*`, `tide_tests`,
 `tide_platform_jobs`, every `versus_*` and `bench_*`) pass but one, and 47 web
 debug tests (`tide_tests`, platform jobs and web threads, rows, world-set and
 schedule fixtures, every `versus_*`) pass. The one,
-`tidec_e2e_query_local_fields` (two checks of attached local fields), fails in
+`tidec_e2e_query_local_fields` (two checks of attached local fields) failed in
 the release build with this branch's engine changes reverted too, and passes
-on web debug: it predates them. The full native and web debug suites were not
-run here; the coordinator runs them on the merged branch.
+on web debug: it predates them (a `restrict` on attached local fields that
+query rows also write; fixed on the merged branch, notes/language.md, Query
+rows reach attached local fields, Correction). The full native and web debug
+suites were not run here; the coordinator ran them on the merged branch.
 
 ## Drawing against handwritten OpenGL and Vulkan, 2026-10-20
 

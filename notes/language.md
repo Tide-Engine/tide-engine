@@ -375,6 +375,16 @@ editor cases. The production docs build passes. Exact cross-platform pins are
 unchanged. Linux/macOS/MinGW, Android and sanitizers were not run on this Windows
 machine; no CI or private prototype playtests were dispatched.
 
+Correction (2026-10-20): a view's or handler's pointer to a parameter's
+attached local fields was `restrict`, while its query rows reach the same cell
+and write it (the outer aliases above). That is undefined, and optimized builds
+acted on it: in release, query_local_fields failed two checks (the birth-reset
+outer alias read 4 rather than 5; ReadWhileWriting saw no change), passing in
+debug only because nothing took `restrict` at its word. The fields pointer is
+no longer `restrict` (`gen_system_body`'s signature; match-data pointers keep
+it, as local code never writes match data). All eleven cases pass in release.
+Release CTest wasn't in the validation above, which is how it went unnoticed.
+
 Recorded-owner local event filters (2026-10-19): the shared checker accepts
 with/without ownership in local handlers of match events, including verified
 and component-free entity listeners. Spawned/Destroyed infer the match side

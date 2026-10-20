@@ -12431,9 +12431,11 @@ static void gen_system_body(gen *g, const decl *sys)
         if (p->type.kind == TY_INPUT) {
             sb_printf(o, ", const %s *restrict %s", c_type(p->type), prev_input_name(g, p->name));
         }
-        // Its local fields, where the local world keeps them: read and written in place
+        // Its local fields, where the local world keeps them: read and written in place.
+        // Not `restrict`: a query's rows reach the same entity's fields, and write them while
+        // this pointer is live, so an optimizer taking `restrict` at its word reads stale ones.
         if (has_fields_ptr(p)) {
-            sb_printf(o, ", %s%s *restrict %s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
+            sb_printf(o, ", %s%s *%s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
                       fields_name(g, p->name));
         }
     }
