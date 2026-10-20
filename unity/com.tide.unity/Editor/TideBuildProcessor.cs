@@ -59,7 +59,7 @@ namespace Tide.Editor
             process.WaitForExit();
             var said = (output.Result + errors).Trim();
             if (process.ExitCode != 0) throw new BuildFailedException("Tide: the game didn't build for the player:\n" + said);
-            if (said.Length > 0) Debug.Log("tide: " + said);
+            if (said.Contains(": warning")) Debug.LogWarning("tide: " + said);
             // A player loads only the scenes it was built with, and the match may load any of these
             var built = new HashSet<string>(EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path));
             foreach (var asset in TideUnityMap.Load(Built).assets)

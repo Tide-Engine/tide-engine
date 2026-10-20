@@ -6668,6 +6668,23 @@ static void start_in(const char *folder)
     handle(message);
 }
 
+// `with scene Arena` names the scene as a type does: renaming the scene renames it there too, and it has the scene's
+// hover; nothing in it is an error.
+TIDE_TEST(lsp_scene_filter_names_its_scene)
+{
+    start();
+    open_document("scene Main { }\nscene $Arena { int round; }\ncomponent Spin { float speed; }\n"
+                  "system Spinning(mut Spin spin, with scene Arena) { spin.speed += 1; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1")); // No error (it never runs: nothing spawns a Spin)
+    const char *renamed = request_with("textDocument/rename", "\"newName\":\"Level\"");
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":1,\"character\":6},\"end\":{\"line\":1,\"character\":11}},\"newText\":\"Level\"}"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":3,\"character\":42},\"end\":{\"line\":3,\"character\":47}},\"newText\":\"Level\"}"));
+    open_document("scene Main { }\nscene Arena { int round; }\ncomponent Spin { float speed; }\n"
+                  "system Spinning(mut Spin spin, with scene $Arena) { spin.speed += 1; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Arena"));
+    lsp_free(&server);
+}
+
 // A game in a Unity project's Assets (tide unity --assets): renaming a component renames it where the project's
 // prefabs and scenes list it in a TideEntity, and where a prefab instance changes one's type; renaming its field
 // renames it in that component's values, and not in another component's of the same field name.

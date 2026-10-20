@@ -23,27 +23,43 @@
 // sure"): a skill card turns up in some offers, another skill to take in its
 // place, or the one you have, a rank stronger (three ranks), each rank showing
 // (more rounds, more mines, a wider slam). Mine, Provisional.
+//
+// And the gun grows (the owner, 2026-10-20: "we need a way to upgrade our main weapon more; i really like how in `The
+// Spell Brigade` we add skills and keep upgrading them and out base stats ... characters just start with a main ability,
+// this is where I think our weapons come into play. we need to feel the advancement"): every offer at a level, a chest
+// or a boss has a gun card first, one of five for the survivor's own gun, each its gun a rank stronger in one way you
+// see (more rounds in a burst, more pellets, a slug, fire in the rounds, a wider or hotter flame) to three, four or five
+// ranks (GunMod). The gun's level is one and its ranks. Mine, Provisional.
 
 enum Item
 {
     // Common
-    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts, Ricochet, Splinters,
+    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts, Ricochet, Splinters, FirstAid,
     // Uncommon
     LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, BileBomb, ApRounds, SawBlades, TeslaCoil, Molotovs,
     // Rare
     Mortar, SecondWind, HeRounds, DragonsBreath, Shockwave, RocketPod,
     // Skill cards: not items, the right mouse's skill a rank stronger (SkillCard): each gun's own
     CardPhaseRound, CardThumper, CardNapalm,
+    // Gun cards: the survivor's gun a rank stronger (GunMod), five for each gun. The carbine's...
+    Burst, Caliber, GasPiston, Marksman, Incendiary,
+    // ...the shotgun's...
+    Buckshot, Slug, QuickPump, Concussion, DragonShells,
+    // ...and the flamethrower's
+    LongNozzle, WideNozzle, HotFuel, StickyFuel, BigTank,
 }
 
-const int ITEM_COUNT = 30;          // The items: the skill cards come after (Spring Boots, a jump in the air, went with jumping)
+const int ITEM_COUNT = 31;          // The items: the skill cards come after (Spring Boots, a jump in the air, went with jumping)
+const int ITEM_KINDS = 49;          // ...and the gun cards after them (a survivor's `items` counts each, and the gun cards' ranks)
+const int GUN_CARDS = 5;            // Each gun's
 const int SKILL_RANKS = 3;
 const float SKILL_CARD_CHANCE = 0.3; // Of a level's offers that have a skill card among them
 
-enum Rarity { Common, Uncommon, Rare, Skill }
+enum Rarity { Common, Uncommon, Rare, Skill, Gun }
 
 Rarity RarityOf(Item item)
 {
+    if (int(item) >= int(Item.Burst)) return Rarity.Gun;
     if (int(item) >= ITEM_COUNT) return Rarity.Skill;
     if (int(item) >= int(Item.Mortar)) return Rarity.Rare;
     if (int(item) >= int(Item.LiveWire)) return Rarity.Uncommon;
@@ -87,6 +103,7 @@ string ItemName(Item item)
         case Item.Salts: return "Smelling Salts";
         case Item.Ricochet: return "Ricochet Rounds";
         case Item.Splinters: return "Bone Splinters";
+        case Item.FirstAid: return "First Aid Kit";
         case Item.LiveWire: return "Live Wire";
         case Item.PowderKeg: return "Powder Keg";
         case Item.GunDrone: return "Gun Drone";
@@ -106,6 +123,21 @@ string ItemName(Item item)
         case Item.DragonsBreath: return "Dragon's Breath";
         case Item.Shockwave: return "Thunder Drum";
         case Item.RocketPod: return "Rocket Pod";
+        case Item.Burst: return "Burst Fire";
+        case Item.Caliber: return "Heavy Caliber";
+        case Item.GasPiston: return "Gas Piston";
+        case Item.Marksman: return "Marksman";
+        case Item.Incendiary: return "Incendiary Rounds";
+        case Item.Buckshot: return "Buckshot";
+        case Item.Slug: return "Slug Core";
+        case Item.QuickPump: return "Quick Pump";
+        case Item.Concussion: return "Concussion Shells";
+        case Item.DragonShells: return "Dragon Shells";
+        case Item.LongNozzle: return "Long Nozzle";
+        case Item.WideNozzle: return "Wide Nozzle";
+        case Item.HotFuel: return "Hot Fuel";
+        case Item.StickyFuel: return "Sticky Fuel";
+        case Item.BigTank: return "Big Tank";
     }
     var skill = CardSkill(item);
     return skill != Skill.None ? SkillName(skill) : "";
@@ -127,6 +159,7 @@ string ItemLine(Item item)
         case Item.Salts: return "Raise a friend who's down 50% faster (+50% each)";
         case Item.Ricochet: return "A round that hits bounces on to one more of the dead near it, for 60% (+1 bounce each)";
         case Item.Splinters: return "Your kills burst into 3 shards of bone that strike the dead round them (+2 each)";
+        case Item.FirstAid: return "Health comes back twice as fast (+1x each), and a second sooner after a blow (-1 s each)";
         case Item.LiveWire: return "15% chance a hit arcs to 3 more of the dead (+2 each)";
         case Item.PowderKeg: return "Your kills burst, hurting the 2 nearest for a quarter of what one of the dead can take (+10% each, +1 every second)";
         case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (one more drone each)";
@@ -168,6 +201,7 @@ string ItemLineAt(Item item, int count)
         case Item.Salts: return $"Raise a friend who's down {50 * n}% faster";
         case Item.Ricochet: return $"A round that hits bounces on to {n} more of the dead near it, for 60%";
         case Item.Splinters: return $"Your kills burst into {1 + 2 * n} shards of bone that strike the dead round them";
+        case Item.FirstAid: return $"Health comes back {n + 1} times as fast, {int(REGEN_DELAY - RegenDelay(n))} s sooner after a blow";
         case Item.LiveWire: return $"15% chance a hit arcs to {1 + 2 * n} more of the dead";
         case Item.GunDrone: return n > DRONES_SHOWN ? $"{DRONES_SHOWN} drones round you shoot the nearest dead, {n} drones' worth" : $"{n} drones round you shoot the nearest dead";
         case Item.Frostbite: return $"{Math.Min(100, 12 * n)}% chance a hit freezes the dead solid for 2 s";
@@ -186,6 +220,143 @@ string ItemLineAt(Item item, int count)
     return ItemLine(item);
 }
 
+// ---- The gun cards: each gun's five ways to grow ----
+
+// The first of a gun's five cards (the rest follow it).
+Item FirstGunCard(Weapon weapon)
+{
+    switch (weapon)
+    {
+        case Weapon.Shotgun: return Item.Buckshot;
+        case Weapon.Flamer: return Item.LongNozzle;
+    }
+    return Item.Burst;
+}
+
+// How many ranks a gun card has.
+int CardMost(Item item)
+{
+    switch (item)
+    {
+        case Item.Caliber: return 5;
+        case Item.HotFuel: return 5;
+        case Item.GasPiston: return 4;
+        case Item.Buckshot: return 4;
+        case Item.QuickPump: return 4;
+        case Item.LongNozzle: return 4;
+        case Item.WideNozzle: return 4;
+    }
+    return 3;
+}
+
+// A gun's level: one, and every rank of its cards.
+int GunLevel(Survivor s)
+{
+    var first = int(FirstGunCard(RoleWeapon(s.role)));
+    mut var level = 1;
+    for (var k = 0; k < GUN_CARDS; k++) level += s.items[first + k];
+    return level;
+}
+
+const float BURST_FAN = 0.035;      // Radians between a burst's rounds...
+const float BURST_SHARE = 0.6;      // ...each past the first so much of one
+const float CALIBER_STEP = 0.2;     // A carbine's rounds harder a rank...
+const float CALIBER_KNOCK = 0.6;    // ...and pushing harder
+const float PISTON_STEP = 0.12;     // Faster a rank, and a fifth more rounds
+const int INCENDIARY_EVERY = 4;     // Every so many rounds less a rank is incendiary (every one at III, a tenth harder)
+const float SLUG_HURT = 90;         // A slug's, times might, half again a rank past the first
+const float PUMP_STEP = 0.15;       // A pump and a shell's loading faster a rank
+const float CONCUSS_NEAR = 5;       // Within this, a concussion shell's pellet may knock one of the dead over...
+const float CONCUSS_DOWN = 0.12;    // ...this likely a rank...
+const float CONCUSS_KNOCK = 2.5;    // ...and pushes this much harder a rank
+const float DRAGON_CHANCE = 0.08;   // A dragon shell's pellet's chance a rank to set one alight
+const float NOZZLE_STEP = 0.8;      // Metres further a flamethrower reaches a rank
+const float WIDE_STEP = 0.25;       // Its cone wider a rank...
+const int WIDE_MOST = 3;            // ...reaching so many more of the dead a puff
+const float HOT_STEP = 0.2;         // Its flame harder a rank
+const float TANK_STEP = 0.5;        // More fuel a rank, filling a quarter faster
+const float STICKY_REACH = 2.5;     // How far a body your flames kill sets the nearest alight
+
+// What a gun card gives at a rank: what you'll have with it, as a card says.
+string GunCardLine(Item item, int rank)
+{
+    var n = rank;
+    switch (item)
+    {
+        case Item.Burst: return $"Each shot is {n + 1} rounds in a tight fan, each past the first {int(BURST_SHARE * 100)}% as hard";
+        case Item.Caliber: return $"Rounds {int(Math.Round(CALIBER_STEP * 100 * n))}% harder, thicker, and pushing the dead back";
+        case Item.GasPiston: return $"Fires {int(Math.Round(PISTON_STEP * 100 * n))}% faster, {20 * n}% more rounds";
+        case Item.Marksman: return $"Headshots do {3 + n} times, and go on through {n} more of the dead";
+        case Item.Incendiary:
+            if (n >= 3) return "Every round is incendiary, setting the dead alight, and a tenth harder";
+            return n == 2 ? "Every other round is incendiary, setting the dead alight" : "Every third round is incendiary, setting the dead alight";
+        case Item.Buckshot: return $"{Info(Weapon.Shotgun).pellets + 3 * n} pellets a blast, spread a little wider";
+        case Item.Slug: return $"A heavy slug down the middle of every blast, through {1 + 2 * n} of the dead";
+        case Item.QuickPump: return $"Pumps and loads {int(Math.Round(PUMP_STEP * 100 * n))}% faster";
+        case Item.Concussion: return $"Pellets throw the dead back; within {int(CONCUSS_NEAR)} m each has a {int(Math.Round(CONCUSS_DOWN * 100 * n))}% chance to knock one down";
+        case Item.DragonShells: return $"Burning pellets: each has a {int(Math.Round(DRAGON_CHANCE * 100 * n))}% chance to set the dead alight";
+        case Item.LongNozzle: return $"Flames reach {Math.Round(NOZZLE_STEP * n * 10) / 10} m further";
+        case Item.WideNozzle: return $"The flames' cone {int(Math.Round(WIDE_STEP * 100 * n))}% wider, reaching {WIDE_MOST * n} more of the dead";
+        case Item.HotFuel: return n >= 3 ? $"Flames {int(Math.Round(HOT_STEP * 100 * n))}% hotter, burning blue" : $"Flames {int(Math.Round(HOT_STEP * 100 * n))}% hotter, burning brighter";
+        case Item.StickyFuel: return $"Sets the dead alight {n + 1} times as often, and one your flames kill sets the {n + 1} nearest alight";
+        case Item.BigTank: return $"{int(Math.Round(TANK_STEP * 100 * n))}% more fuel, filling {25 * n}% faster";
+    }
+    return "";
+}
+
+// A survivor's gun as their gun cards have made it (any other, the pistol they fight on with down, as it is).
+WeaponInfo GunOf(Survivor s, Weapon weapon)
+{
+    mut var info = Info(weapon);
+    if (weapon != RoleWeapon(s.role)) return info;
+    switch (weapon)
+    {
+        case Weapon.Rifle:
+        {
+            var piston = Has(s, Item.GasPiston);
+            info.damage *= 1 + CALIBER_STEP * Has(s, Item.Caliber);
+            info.rate /= 1 + PISTON_STEP * piston;
+            info.mag = int(info.mag * (1 + 0.2 * piston));
+            info.head += Has(s, Item.Marksman);
+            break;
+        }
+        case Weapon.Shotgun:
+        {
+            var buck = Has(s, Item.Buckshot);
+            var pump = 1 + PUMP_STEP * Has(s, Item.QuickPump);
+            info.pellets += 3 * buck;
+            info.spread *= 1 + 0.06 * buck;
+            info.rate /= pump;
+            info.reload /= pump;
+            break;
+        }
+        case Weapon.Flamer:
+        {
+            var tank = Has(s, Item.BigTank);
+            info.range += NOZZLE_STEP * Has(s, Item.LongNozzle);
+            info.cone *= 1 + WIDE_STEP * Has(s, Item.WideNozzle);
+            info.damage *= 1 + HOT_STEP * Has(s, Item.HotFuel);
+            info.mag = int(info.mag * (1 + TANK_STEP * tank));
+            info.reload /= 1 + 0.25 * tank;
+            break;
+        }
+    }
+    return info;
+}
+
+// A gun card for a survivor's gun with a rank still to take, at random; `found` false with every one at its last rank.
+Item RollGunCard(Survivor s, out bool found)
+{
+    var first = int(FirstGunCard(RoleWeapon(s.role)));
+    mut List<int> open = [];
+    for (var k = 0; k < GUN_CARDS; k++)
+        if (s.items[first + k] < CardMost(Item(first + k))) open.Add(first + k);
+    found = open.count > 0;
+    if (!found) return Item.HollowPoints;
+    var pick = Random.NextInt(open.count);
+    return Item(open[pick]);
+}
+
 // ---- What the items make of a survivor ----
 
 int Has(Survivor s, Item item)
@@ -193,10 +364,11 @@ int Has(Survivor s, Item item)
     return s.items[int(item)];
 }
 
-// How hard a survivor's shots and skills land: their level, and the hollow points.
+// How hard a survivor's shots and skills land: their level, and the hollow points. (24% a level till the gun cards came,
+// 2026-10-20: the power a level brings by itself went in part into what's picked.)
 float Might(Survivor s)
 {
-    return (1 + 0.24 * (s.level - 1)) * (1 + 0.15 * Has(s, Item.HollowPoints));
+    return (1 + 0.16 * (s.level - 1)) * (1 + 0.15 * Has(s, Item.HollowPoints));
 }
 
 // How much quicker their hands are: shots and loading.
@@ -219,6 +391,24 @@ float MaxHealth(Survivor s)
 
 const float LEVEL_HEALTH = 18;
 
+// How long after a blow health starts coming back, and how much of it a second: REGEN_DELAY and REGEN_RATE, and First
+// Aid Kits' quicker. (4 s and 4% a second, whole in under half a minute, till the owner, 2026-10-20: "health regen should
+// be scarcer and cards should allow to upgrade it; right now being damaged means nothing": 6 s and 1.2%, most of a
+// minute and a half from nothing, a kit a second sooner and as much again each.)
+float RegenDelay(int kits)
+{
+    return Math.Max(REGEN_SOONEST, REGEN_DELAY - kits);
+}
+
+float RegenRate(int kits)
+{
+    return REGEN_RATE * (1 + kits);
+}
+
+const float REGEN_DELAY = 6;        // Seconds unhurt before health comes back...
+const float REGEN_RATE = 0.012;     // ...and how much of it a second...
+const float REGEN_SOONEST = 2;      // ...and the soonest it comes back, with First Aid Kits
+
 float Fleetness(Survivor s)
 {
     return 1 + 0.12 * Has(s, Item.Sneakers);
@@ -226,7 +416,7 @@ float Fleetness(Survivor s)
 
 int MagOf(Survivor s, Weapon weapon)
 {
-    var info = Info(weapon);
+    var info = GunOf(s, weapon);
     return weapon == Weapon.Pistol ? info.mag : int(info.mag * (1 + 0.5 * Has(s, Item.ExtendedMag)));
 }
 
@@ -241,7 +431,7 @@ int RollCharges(Survivor s)
 struct Arms
 {
     int seat;
-    int[30] items;
+    int[49] items;
     float might;
     float crit;
 }
@@ -258,14 +448,21 @@ int Holds(Arms arms, Item item)
 
 // ---- The offer at a level ----
 
-// Three items for a survivor, `minute` minutes into the run, no two the same: mostly common, uncommon more often as the
-// run goes on, now and then a rare; and now and then (a level's offer) a skill card in the last place: another skill for
-// the right mouse, or the one they have a rank stronger.
+// Three cards for a survivor, `minute` minutes into the run, no two the same: first a gun card (a level's, a chest's or a
+// boss's offer, while their gun has a rank to take), then items, mostly common, uncommon more often as the run goes on,
+// now and then a rare; and now and then a skill card in the last place: the right mouse's skill a rank stronger.
 void Offer(mut Survivor survivor, int minute, int players, Rarity least)
 {
     var card = least == Rarity.Common && Random.NextFloat() < SKILL_CARD_CHANCE && survivor.secondaryRank < SKILL_RANKS;
+    var gunCard = RollGunCard(survivor, out var gunOpen);
+    var gun = least == Rarity.Common && gunOpen;
     for (var k = 0; k < 3; k++)
     {
+        if (gun && k == 0)
+        {
+            survivor.offers[k] = gunCard;
+            continue;
+        }
         if (card && k == 2)
         {
             survivor.offers[k] = SkillCard(SecondaryOf(survivor));
@@ -286,16 +483,10 @@ void Offer(mut Survivor survivor, int minute, int players, Rarity least)
 }
 
 // An item that would do nothing for a survivor's gun, so isn't offered them: what a round does, to the Engineer's
-// flamethrower (it has no rounds). (AP Rounds are its longer nozzle: Nozzle.)
+// flamethrower (it has no rounds; AP Rounds had been its longer nozzle till its gun cards had one, 2026-10-20).
 bool Useless(Survivor survivor, Item item)
 {
-    return Info(RoleWeapon(survivor.role)).cone > 0 && (item == Item.Ricochet || item == Item.HeRounds);
-}
-
-// AP Rounds, to a flamethrower: a longer nozzle, its flames reaching a metre further each (hands.tide's FLAME_NOZZLE).
-bool Nozzle(Survivor survivor, Item item)
-{
-    return item == Item.ApRounds && Info(RoleWeapon(survivor.role)).cone > 0;
+    return Info(RoleWeapon(survivor.role)).cone > 0 && (item == Item.Ricochet || item == Item.HeRounds || item == Item.ApRounds);
 }
 
 // One item, `minute` minutes into the run: mostly common, uncommon more often as the run goes on, now and then a rare.
@@ -365,7 +556,9 @@ void Take(mut Survivor survivor, Item item)
     }
     survivor.items[int(item)] += 1;
     if (item == Item.Kevlar) survivor.health = MaxHealth(survivor);
-    if (item == Item.ExtendedMag) survivor.mag = MagOf(survivor, survivor.gun);
+    // A bigger magazine or tank, filled (the pistol's, down, is as it was: the gun's rounds are kept for when they're up)
+    if ((item == Item.ExtendedMag || item == Item.GasPiston || item == Item.BigTank) && survivor.gun == RoleWeapon(survivor.role))
+        survivor.mag = MagOf(survivor, survivor.gun);
     if (item == Item.SecondWind) survivor.selfRevives += 1;
     if (item == Item.EnergyDrink) survivor.rolls += 1;
 }
@@ -375,16 +568,17 @@ void Take(mut Survivor survivor, Item item)
 // A round's hit on one of the dead: a crit, perhaps; more if it's down; then what the items set off, `chance` times as
 // likely as a whole round's (a shotgun's pellet sets off less, an SMG's round more). What the items set off themselves
 // sets off nothing more. `aimed`: a round of the survivor's own (Wound.aimed), not a drone's or a turret's. A flamethrower's
-// puff lands as a Blow.Flame, and `ignite` sets it alight.
+// puff lands as a Blow.Flame, `ignite` sets it alight, and `down` knocks it over (a concussion shell).
 void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd, bool aimed, Blow blow = Blow.Missile,
-          bool ignite = false)
+          bool ignite = false, bool down = false)
 {
     var crit = Random.NextFloat() < arms.crit;
     var frozen = Holds(arms, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Holds(arms, Item.Frostbite) * chance;
     var lit = Holds(arms, Item.DragonsBreath) > 0 && Random.NextFloat() < 0.25 * Holds(arms, Item.DragonsBreath) * chance;
     var toes = z.down ? 1 + 0.5 * Holds(arms, Item.SteelToes) : 1.0;
     z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, weak = weak, from = from, knock = knock, blow = blow,
-                          aimed = aimed, crit = crit, element = frozen ? Element.Frost : lit || ignite ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
+                          aimed = aimed, crit = crit, element = frozen ? Element.Frost : lit || ignite ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0,
+                          down = down });
     var wire = Holds(arms, Item.LiveWire);
     if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(arms, z, 1 + 2 * wire, damage * 0.6, herd);
     var mortar = Holds(arms, Item.Mortar);
@@ -485,6 +679,15 @@ event(Earned earned) Earn(mut Survivor survivor, Herd herd, Match match)
             z.entity.Send(Wound { damage = ZombieHealth(match.danger) * (0.15 + 0.1 * keg), seat = survivor.seat, element = Element.None, from = earned.at, blow = Blow.Burst,
                                   echo = true });
         Send(Blast { at = earned.at + float3(0, 0.8, 0), reach = reach, element = Element.Fire, kind = Shot.Keg });
+    }
+    // Sticky Fuel: one the flames kill sets the nearest round it alight (not those it sets alight in turn, which die
+    // burning: the fire spreads a step, not through the whole horde)
+    var sticky = Has(survivor, Item.StickyFuel);
+    if (sticky > 0 && earned.flamed)
+    {
+        foreach (var z in NearestOf(Near(herd, earned.at, STICKY_REACH), earned.at, STICKY_REACH, 1 + sticky))
+            z.entity.Send(Wound { damage = 1, seat = survivor.seat, from = earned.at, knock = -1, blow = Blow.Burning, element = Element.Fire, echo = true });
+        Send(Blast { at = earned.at + float3(0, 0.5, 0), reach = STICKY_REACH * 0.6, element = Element.Fire, kind = Shot.Pop });
     }
     // Bone Splinters: shards from the kill into the nearest dead round it, one each
     var shards = Has(survivor, Item.Splinters);

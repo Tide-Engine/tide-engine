@@ -10,6 +10,14 @@ TextMate's existing declaration matcher already scopes both forms; new probes
 pin that behavior and the all-E2E grammar check skips their nonexistent bodies.
 Validation is recorded in notes/language.md.
 
+## Scene filters in the editor (2026-10-20)
+
+`with scene Arena` names the scene as a type does: its parameter's `scene_of` is
+placed as the scene's type (`type_place`), so hover and renames reach it, and
+signatures print `with scene Arena`. The grammar scopes `scene` right after
+with/without and before a name as `keyword.other.scene`. Tests:
+`lsp_scene_filter_names_its_scene`, and the grammar test's case.
+
 ## Renames reaching Unity assets (2026-10-20)
 
 Renaming a component, or a component's field, of a game whose folder is inside a

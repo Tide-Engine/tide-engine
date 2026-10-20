@@ -497,7 +497,7 @@ typedef struct build {
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
     game_packages packages; // Found again by each build of the game
-    char *unity_map;        // With opts->unity_assets: the map of its Unity.Source numbers, from its last generate (unity_assets.h)
+    char *unity_map;        // With opts->unity_assets: the map of its UnityEngine.Source numbers, from its last generate (unity_assets.h)
 } build;
 
 static uint64_t header_stamp(const char *folder);

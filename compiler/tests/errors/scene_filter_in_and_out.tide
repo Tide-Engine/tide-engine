@@ -1,0 +1,5 @@
+// expect: system 'Spinning' takes entities both in and not in 'Arena', and none is both
+scene Main { }
+scene Arena { }
+component Spin { float speed; }
+system Spinning(mut Spin spin, with scene Arena, without scene Arena) { spin.speed += 1; }

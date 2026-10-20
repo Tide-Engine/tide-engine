@@ -313,7 +313,7 @@ entity field's value `@n` names `references[n]`'s entity, `this` its own). The
 entity handle struct the generator maps entity fields to was renamed
 `TideEntityId` for it. The inspector (`Editor/TideEntityEditor.cs`) lists the
 schema's components (Add Tide Component; not `Transform`, which is Unity's, nor
-`Unity.Source`), draws each field by its schema type (numbers, vectors, `Color`,
+`UnityEngine.Source`), draws each field by its schema type (numbers, vectors, `Color`,
 `quaternion` as Euler angles, `bool`, `string`, enums, entities as object
 fields; anything else as its literal), shows unset fields faded as defaults,
 `×` resets one, and "As tide reads it" shows the raw lists. In a prefab
@@ -340,18 +340,18 @@ them; a GameObject without TideEntity passes its placement on (composed TRS).
 Entity names are the GameObject's, sanitized (letters, digits, `_`; keywords
 and leading digits get `_`), a second sibling of one name `_2`. Each entity
 gets `Transform` (Unity's, with a TideEntity `Transform` component's fields
-over it) and `Unity.Source { asset, node }`. References resolve to entity
+over it) and `UnityEngine.Source { asset, node }`. References resolve to entity
 paths, `this`, or an error (an object without TideEntity, an asset, the root
 from below).
 
-**Prefab identity** (owner decision 3): `Unity.Source` is ordinary match state
+**Prefab identity** (owner decision 3): `UnityEngine.Source` is ordinary match state
 declared by the converter's own source, so snapshots, hashes, late joiners and
 other builds of the same sources have it with no compiler change; the packet's
 prefab column stays unused. The map `unity.json` gives each asset's GUID, path,
 whether it's a scene, and each node's GameObject path (names from the root,
 `Name#k` for the kth of a name among siblings).
 
-**Binding** (`TideRunner`): an entity with `Unity.Source` shows through its
+**Binding** (`TideRunner`): an entity with `UnityEngine.Source` shows through its
 own GameObject: a scene's (found by path in the open scene of that path), or for
 a prefab's root, an instance of the Unity prefab (by GUID: the runner's
 `prefabs` links in a player, `AssetDatabase` in the editor), whose descendants
@@ -390,6 +390,15 @@ notification (`TideBuildService.HasErrors`). Errors coming after a result line
 start the list anew, as tide's stdout and stderr can interleave. Checked by hand
 in batch mode (a broken file, the Console cleared, Play attempted).
 
+**The Console is the user's** (owner, 2026-10-20): logging intrudes and needs a
+good reason. tide's errors and warnings go there; its progress ("building ...
+whenever its files change", "built game-N") doesn't, which Project Settings >
+Tide's status shows instead, nor a player build's output unless it warns. The
+one other line is "the game's errors are fixed", as the errors before it stay
+in the Console. Unity's internal sticky entries (`Debug.LogSticky`,
+`RemoveLogEntriesByEntityId`, keyed by `EntityId` in 6000.6) could take fixed
+errors away instead; not tried.
+
 Tests: the sample's ball is `Assets/Sample/Roller.prefab` (TideEntity with
 `Ball`), spawned by `Spawn(Roller, ...)`; `Bounce.unity` has two pillars named
 Pillar under a plain `Pillars` GameObject, each a `Spinner`, loaded by
@@ -410,12 +419,12 @@ Unity's start; after it, the match's code loads scenes; in the editor, the
 editor tells the match which scenes it has open, editor only.
 
 - **The converter** (`unity_declarations`) adds to `Unity.tide`, when the
-  project has scenes of Tide entities: `singleton Unity.Scenes { Map<int,
+  project has scenes of Tide entities: `singleton UnityEngine.LoadedScenes { Map<int,
   Entity> loaded; PlayerID opener; bool heard; bool opened; }`;
   `event(Spawned) Begin(with Main, ...)` loading Build Settings' first enabled
   scene (`ProjectSettings/EditorBuildSettings.asset`, whose stamp is the
-  game's too), unless the editor's command came first; `command Open { int
-  asset; bool only; }`, taken only from the match's first player (set by its
+  game's too), unless the editor's command came first; `command OpenScene {
+  int asset; bool only; }`, taken only from the match's first player (set by its
   `PlayerJoined`, or by the command when it comes first in the first tick):
   `only` unloads the scenes it loaded but that one, then it loads the asset's
   scene by a `switch` over the scenes. Order-independent: Begin then Open, or
@@ -443,6 +452,23 @@ editor tells the match which scenes it has open, editor only.
   tests: the match loads and unloads Bonus with Unity; the editor's open
   Bounce and Bonus are the match's; Bonus open alone is the match's and Bounce,
   loaded as Main started, goes. Players checked as before.
+
+**Unity scenes are Tide scenes** (owner, 2026-10-20): a scene asset `N` is
+`scene N { }` in `Unity.tide`, its authored tree the prefab
+`UnityEngine.SceneContents.N` (`namespace UnityEngine.SceneContents;` at the
+top of its text), and `UnityEngine.Fill<N>` (`event(Spawned) ... (with
+UnityEngine.Scenes.N)`) spawns that prefab into each loaded N, so every entity
+of it is N's for `with scene N` (`notes/language.md`, Scene filters). The
+sample's `Spinning` is `without scene Bonus`, and the play mode test checks
+Bonus's totem stays still.
+
+**Everything from Unity is under `UnityEngine`** (owner, 2026-10-20, so the
+link is clear): scenes are `UnityEngine.Scenes.N`, prefabs
+`UnityEngine.Prefabs.N`, a scene's tree `UnityEngine.SceneContents.N`, and the
+converter's own declarations `UnityEngine.Source`, `UnityEngine.LoadedScenes`
+and `UnityEngine.OpenScene`. Game code writes `using UnityEngine.Scenes;` and
+`using UnityEngine.Prefabs;` for the short names. The entity editor's menu
+leaves out `UnityEngine.` names.
 
 Gaps: what the editor opens while playing isn't sent; a client in the editor
 sends nothing (the server decides); `Scene.Load` of the same Unity scene twice

@@ -27,12 +27,12 @@ prefabs and scenes (`compiler/cli/unity_assets.c`, reading YAML with
 `unity_yaml.c`; the format and rules are in `notes/unity.md`, Authoring as
 built). `generate` appends their Tide text as `compile_input`s with `.text`
 (new: a file's text given rather than read), paths `Assets/...`, after the
-game's own files, and `Library/Tide/Unity.tide` declaring `Unity.Source`; it
+game's own files, and `Library/Tide/Unity.tide` declaring `UnityEngine.Source`; it
 writes each text to `<path>/prefabs/<asset>.tprefab`. The parser treats paths
 ending `.prefab`/`.unity` as `.tprefab` files (prefab declarations only).
 `game_stamp` folds in `unity_assets_stamp` (paths and stamps of every
 `.prefab`, `.unity` and `.meta`), so a saved prefab rebuilds the game. After
-each schema, `unity.json` (the Unity.Source map, kept on `build.unity_map` from
+each schema, `unity.json` (the UnityEngine.Source map, kept on `build.unity_map` from
 the last good generate) and `Packages/com.tide.game` beside `Assets`
 (`package.json`, `Tide.Game.asmdef`, `schema.json` and a stub naming the hash,
 each written only when it changes: Unity's shared build cache keys a compile by

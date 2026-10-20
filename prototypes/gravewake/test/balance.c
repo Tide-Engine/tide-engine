@@ -60,9 +60,9 @@ typedef struct Bot {
 static Bot bots[SEATS_MOST];
 
 // Items every survivor starts the run with (the harness's last argument: "GD2,PK1"), to weigh what one is worth.
-#define ITEMS 30
+#define ITEMS 31
 static int startItems[ITEMS];
-static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "RR", "BS", "LW", "PK", "GD", "ER", "FR", "ED", "KE", "ST", "BB",
+static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "RR", "BS", "FA", "LW", "PK", "GD", "ER", "FR", "ED", "KE", "ST", "BB",
                                        "AP", "SB", "TC", "MS", "MF", "SW", "HE", "DB", "TD", "RP"};
 
 static void parse_items(const char *list)
@@ -110,7 +110,7 @@ static float carbine_hits(void)
         if (z.kind == ZombieKind_Walker && z.state == ZombieState_Hunting && z.health > most) most = z.health;
     }
     const Survivor s = get(0);
-    const float might = (1 + 0.24f * (float)(s.level - 1)) * (1 + 0.15f * (float)s.items.at[Item_HollowPoints]);
+    const float might = (1 + 0.16f * (float)(s.level - 1)) * (1 + 0.15f * (float)s.items.at[Item_HollowPoints]);
     return most > 0 ? most / (25 * might) : -1;
 }
 

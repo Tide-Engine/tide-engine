@@ -35,32 +35,36 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
 {
     unity_sources s;
     TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_FIXTURE, &s));
-    TIDE_CHECK(s.count == 5); // Unity.Source's declaration and the four assets
-    // Unity.Source, and the scenes the match has: Build Settings' first one on (Level) loaded as Main starts, and
+    TIDE_CHECK(s.count == 5); // UnityEngine.Source's declaration and the four assets
+    // UnityEngine.Source, and the scenes the match has: Build Settings' first one on (Level) loaded as Main starts, and
     // the editor's command to have the scenes it has open
     const char *declared = text_of(&s, UNITY_SOURCE_PATH);
     TIDE_REQUIRE(declared != NULL);
     TIDE_CHECK(strstr(declared, "    component Source\n") != NULL);
-    TIDE_CHECK(strstr(declared, "    event(Spawned) Begin(with Main, mut Scenes scenes)\n    {\n"
+    TIDE_CHECK(strstr(declared, "    event(Spawned) Begin(with Main, mut LoadedScenes scenes)\n    {\n"
                                 "        if (scenes.opened) return; // The editor's command came first\n"
-                                "        scenes.loaded[1] = Scene.Load(Level);\n") != NULL);
-    TIDE_CHECK(strstr(declared, "    command Open\n") != NULL);
-    TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(Level); break;\n") != NULL);
+                                "        scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Level);\n") != NULL);
+    TIDE_CHECK(strstr(declared, "    command OpenScene\n") != NULL);
+    TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Level); break;\n") != NULL);
     TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
+    // A Unity scene is a Tide scene, whose entities are its prefab's, spawned into it as it loads
+    TIDE_CHECK(strstr(declared, "namespace UnityEngine.Scenes\n{\n    scene Level { } // Level.unity\n}\n") != NULL);
+    TIDE_CHECK(strstr(declared, "    event(Spawned) FillLevel(with UnityEngine.Scenes.Level)\n    {\n        Spawn(UnityEngine.SceneContents.Level);\n    }\n") != NULL);
     // The Tip goes under Thing through Visual, which is no entity: Visual's placement (up 1, twice the size) is the
     // Tip's. The inactive Off isn't there.
     TIDE_CHECK(reads(&s, "Assets/Fixture/Thing.prefab",
         "// From Assets/Fixture/Thing.prefab, as Tide's package for Unity writes it (TideEntity)\n"
+        "namespace UnityEngine.Prefabs;\n\n"
         "prefab Thing\n{\n"
-        "    Unity.Source { asset = 2, node = 0 };\n"
+        "    UnityEngine.Source { asset = 2, node = 0 };\n"
         "    Transform { localPosition = float3(0, 0, 0), " IDENTITY " };\n"
         "    Health { hp = 10, armor = 1 };\n"
         "    entity Arm // Arm\n    {\n"
-        "        Unity.Source { asset = 2, node = 1 };\n"
+        "        UnityEngine.Source { asset = 2, node = 1 };\n"
         "        Transform { localPosition = float3(1, 0, 0), " IDENTITY " };\n"
         "        Part;\n    }\n"
         "    entity Tip // Tip\n    {\n"
-        "        Unity.Source { asset = 2, node = 2 };\n"
+        "        UnityEngine.Source { asset = 2, node = 2 };\n"
         "        Transform { localPosition = float3(0, 2, 0), localRotation = quaternion(0, 0, 0, 1), localScale = float3(2, 2, 2) };\n"
         "        Part { length = 2 };\n    }\n"
         "}\n"));
@@ -72,28 +76,29 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     // Holder's reference to that Tip as a path from the scene's own entity; the Mark of the scene's own
     TIDE_CHECK(reads(&s, "Assets/Fixture/Level.unity",
         "// From Assets/Fixture/Level.unity, as Tide's package for Unity writes it (TideEntity)\n"
+        "namespace UnityEngine.SceneContents;\n\n"
         "prefab Level\n{\n"
-        "    Unity.Source { asset = 1, node = 0 };\n"
+        "    UnityEngine.Source { asset = 1, node = 0 };\n"
         "    entity Holder // Holder\n    {\n"
-        "        Unity.Source { asset = 1, node = 1 };\n"
+        "        UnityEngine.Source { asset = 1, node = 1 };\n"
         "        Transform { localPosition = float3(2, 0, 0), " IDENTITY " };\n"
         "        Link { target = Holder.Variant.Tip, self = this };\n"
         "        entity Variant // Variant\n        {\n"
-        "            Unity.Source { asset = 1, node = 2 };\n"
+        "            UnityEngine.Source { asset = 1, node = 2 };\n"
         "            Transform { localPosition = float3(5, 0, 0), " IDENTITY " };\n"
         "            Health { hp = 20, armor = 5 };\n"
         "            entity Arm // Arm\n            {\n"
-        "                Unity.Source { asset = 1, node = 3 };\n"
+        "                UnityEngine.Source { asset = 1, node = 3 };\n"
         "                Transform { localPosition = float3(1, 0, 0), " IDENTITY " };\n"
         "                Part;\n            }\n"
         "            entity Tip // Tip\n            {\n"
-        "                Unity.Source { asset = 1, node = 4 };\n"
+        "                UnityEngine.Source { asset = 1, node = 4 };\n"
         "                Transform { localPosition = float3(0, 2, 0), localRotation = quaternion(0, 0, 0, 1), localScale = float3(2, 2, 2) };\n"
         "                Part { length = 3 };\n            }\n"
         "        }\n"
         "    }\n"
         "    entity Mark // Mark\n    {\n"
-        "        Unity.Source { asset = 1, node = 5 };\n"
+        "        UnityEngine.Source { asset = 1, node = 5 };\n"
         "        Transform { localPosition = float3(0, 0, 7), " IDENTITY " };\n"
         "        Part { length = 9 };\n    }\n"
         "}\n"));

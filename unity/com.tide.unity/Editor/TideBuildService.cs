@@ -198,13 +198,16 @@ namespace Tide.Editor
             Log(message, isError);
         }
 
+        // The Console is the user's: only what needs fixing goes there, an error or a warning. Progress is the status
+        // Project Settings > Tide shows.
         static void Log(string message, bool isError)
         {
-            var first = message.Split('\n')[0];
+            var warning = message.Split('\n')[0].Contains(": warning");
+            if (!isError && !warning) return;
             var context = ContextOf(ref message);
-            if (isError) Debug.LogError("tide: " + message, context);
-            else if (first.Contains(": warning")) Debug.LogWarning("tide: " + message, context);
-            else if (message.Length > 0) Debug.Log("tide: " + message, context);
+            if (!message.StartsWith("tide: ")) message = "tide: " + message;
+            if (isError) Debug.LogError(message, context);
+            else Debug.LogWarning(message, context);
         }
 
         // The Console's entries, through Unity's own (internal) count: fewer than before means it was cleared.

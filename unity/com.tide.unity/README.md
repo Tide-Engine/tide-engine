@@ -39,9 +39,18 @@ field names another TideEntity's GameObject. The GameObject's Transform is the
 entity's, and its parent the entity's parent (through GameObjects that aren't
 entities).
 
-Each prefab or scene holding TideEntity objects is a Tide prefab named after
-its file: `Spawn(Enemy)` spawns `Enemy.prefab`'s entities, and
-`Scene.Load(Level)` loads `Level.unity`'s. Prefab instances, nested prefabs and
+Each prefab holding TideEntity objects is a Tide prefab named after its file,
+`UnityEngine.Prefabs.Enemy`: `Spawn(Enemy)` spawns `Enemy.prefab`'s entities.
+Each such scene is a Tide scene named after its file,
+`UnityEngine.Scenes.Level`: `Scene.Load(Level)` loads `Level.unity`'s
+entities, and `with scene Level` runs a system for them alone.
+
+```tide
+using UnityEngine.Prefabs;
+using UnityEngine.Scenes;
+```
+
+Prefab instances, nested prefabs and
 variants work as in Unity: what an instance changes goes over its prefab's,
 field by field. tide reads saved files, so save a prefab or scene to put it in
 the game.

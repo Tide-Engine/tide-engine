@@ -6,7 +6,7 @@ namespace Tide
 {
     // What `tide unity` writes beside each build as unity.json: the prefabs and
     // scenes it read from the project, in the numbers of each entity's
-    // Unity.Source { asset, node }, and each node's GameObject as a path of names
+    // UnityEngine.Source { asset, node }, and each node's GameObject as a path of names
     // from the asset's root ("Body/Arm", "Arm#1" for a second Arm under one
     // parent; "" for the root, and for a scene's own entity, which no GameObject
     // is).

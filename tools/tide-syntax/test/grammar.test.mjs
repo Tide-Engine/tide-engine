@@ -381,6 +381,10 @@ const cases = {
         ['world.Set<Health>(', [['Set', 'support.function'], ['Health', 'entity.name.type']]],
         ['var lookup =', [['lookup', '!storage'], ['<', 'keyword.operator.comparison']]],
     ],
+    "scene is a keyword right after with and without, before a scene's name": [
+        ['system InArena(', [['with', 'storage.modifier'], ['scene', 'keyword.other.scene'], ['Arena', 'entity.name.type']]],
+        ['system OutOfArena(', [['without', 'storage.modifier'], ['scene', 'keyword.other.scene']]],
+    ],
     'ownership is a keyword only right after with and without': [
         ['view Mine(', [['with', 'storage.modifier'], ['ownership', 'keyword.other.ownership']]],
         ['view Rest(', [

@@ -63,6 +63,162 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Health back slowly, First Aid Kits (2026-10-20)
+
+The owner: "health regen should be scarcer and cards should allow to upgrade it;
+right now being damaged means nothing". The numbers are mine, Provisional.
+
+- **Scarcer** (items.tide's `RegenDelay`, `RegenRate`, `REGEN_DELAY`,
+  `REGEN_RATE`, `REGEN_SOONEST`; hands.tide's `Steer`): health comes back 6 s
+  after a blow (4), at 1.2% of it a second (4%): most of a minute and a half from
+  nothing, where it had been under half a minute. A level's 18, Leech Rounds and
+  dawn heal as before.
+- **First Aid Kit** (`Item.FirstAid`, the twelfth common; `ITEM_COUNT` 31,
+  `ITEM_KINDS` 49, `int[49]`): each makes it come back a second sooner (2 s at
+  the soonest) and as fast again ("Health comes back 3 times as fast, 2 s sooner
+  after a blow" at two). The balance tool's code for it is FA.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16, the bots
+  taking any of the three): the Gunner's middle run 1242 s (1106 with the old
+  regen, within the runs' spread), the Breacher's 694 (1216: up close, it was
+  living on regen), the Engineer's 180 (196).
+- **Tests**: 10 s after a blow, 4.8% of health back, 21.6% with two kits. The
+  frag's check (thrown by itself into a knot of the dead gathered round one)
+  now lets a tick pass after gathering them: the herd's grid is made each tick,
+  and the throw had aimed at where they'd stood before, which on the web, once
+  this check moved what ran before it, was metres off. Native debug and web
+  debug WASI `gravewake_test` pass.
+
+### The gun grows, a slower game, each kind told (2026-10-20)
+
+The owner: "i feel like we need a way to upgrade our main weapon more; i really
+like how in `The Spell Brigade` we add skills and keep upgrading them and out
+base stats. The farther we go into the game the stronger our abilities become.
+And characters just start with a main ability, this is where I think our
+weapons come into play. we need to feel the advancement. / in general the game
+should be slower, we should be a bit slower, the enemies slower. / the nights
+increase their speed TOO MUCH, it becomes hard to understand what is
+happening. / the shooter guys that spit green balls at us, those projectiles
+move so fast its hard to see them coming. / we need to be able to be more
+meticulous about our movement. / also some of the enemy types (color based),
+im not sure what they all do haha. are they special in some way? ... if they
+are just normal zombies but tankier we can likely just visually make them more
+distinct rather than a different color entirely." What was made of it, and
+every number, are mine, Provisional.
+
+- **Gun cards** (items.tide's `Item.Burst` to `Item.BigTank`, `Rarity.Gun`,
+  `FirstGunCard`, `CardMost`, `GunLevel`, `GunCardLine`, `GunOf`, `RollGunCard`;
+  `ITEM_KINDS` 48, so `Survivor.items` and `Arms.items` are `int[48]`, a gun
+  card's rank kept as an item's count): every offer but a mission's (a level's, a
+  chest's, a boss's) has a gun card in its first place, one of five for the
+  survivor's own gun with a rank still to take, at random; the items after it, a
+  skill card still sometimes last. The gun's level is one and its cards' ranks,
+  by its name on the HUD (violet, `GUN_CARD`); a card says the gun's level it
+  makes, its rank (Roman) and what you'll have, pips under it for its ranks.
+  `GunOf` is the gun as its cards make it (the pistol, down, as it is), which
+  `Fight` and `MagOf` read. The cards:
+  - The carbine: **Burst Fire** (3 ranks: each shot one more round a rank in a
+    fan 0.035 rad apart, alternate sides, each past the first 60%:
+    `BURST_FAN`, `BURST_SHARE`), **Heavy Caliber** (5: 20% harder a rank, the
+    tracer a quarter thicker, pushing 60% harder: `Traced.weight`), **Gas
+    Piston** (4: 12% faster a rank, a fifth more rounds), **Marksman** (3: the
+    head one more times a rank, and a headshot goes on through one more of the
+    dead a rank: `Shoot`'s `headPierce`), **Incendiary Rounds** (3: every
+    third, every other, then every round sets what it strikes alight, the last
+    a tenth harder; a red tracer shedding embers, `Trace.Fire`).
+  - The shotgun: **Buckshot** (4: three more pellets a rank, the spread 6%
+    wider), **Slug Core** (3: a slug down the aim each blast, 90 times might
+    and half again a rank past the first, through 3, 5 or 7 of the dead, head
+    3 times, half again the gun's reach; a white-hot bar, `Trace.Slug`),
+    **Quick Pump** (4: pumps and loads 15% faster a rank), **Concussion
+    Shells** (3: pellets push 2.5 times harder a rank, and within 5 m each one
+    that strikes knocks one down 12% of the time a rank: `Land`'s new `down`),
+    **Dragon Shells** (3: a pellet sets one alight 8% of the time a rank; the
+    pellets burning, `Trace.Ember`).
+  - The flamethrower: **Long Nozzle** (4: 0.8 m further a rank; AP Rounds had
+    been its nozzle, and aren't offered it now), **Wide Nozzle** (4: the cone a
+    quarter wider and three more of the dead a puff, a rank), **Hot Fuel** (5:
+    20% harder a rank; its hottest fire, by the nozzle, a hotter yellow at I and
+    II and blue from III, `Loosed.heat`, flames.tide's `Blob.fuel` and
+    `FuelHue`), **Sticky Fuel** (3: sets alight one more times as often a rank,
+    and one the flames kill sets the one more a rank nearest within 2.5 m alight,
+    `Earned.flamed`: those dying burning spread nothing, so it's a step, not a
+    wildfire), **Big Tank** (3: half again the fuel and a quarter faster filling a
+    rank). `Loosed.cone` draws the wider cone.
+- **Seen**: a burst's rounds each a tracer; heavy rounds thicker; incendiary
+  rounds and dragon pellets red-orange, longer lived, embers falling off them;
+  the slug a thick white bar and an orange afterglow; the flame bluer. Iterated
+  in captures: Hot Fuel's hot part went toward white first, then halfway to blue
+  (the blobs over each other added up to a pale grey like smoke); now a dimmer
+  full blue at III and on, fading to orange as it cools. The slug's first bar was
+  a hairline from above (0.11 m): 0.2 now.
+- **Development**: Shift+F5 a rank of each of the survivor's gun's cards
+  (`Cheat` 9, `Honed`).
+- **Slower** (game.tide, kits.tide, zombies.tide, rounds.tide, boss.tide): a
+  survivor walks firing at 4.5 m/s (5.6) and runs at 5.4 (7: the run is only a
+  fifth quicker, so the pace changes less when firing stops); the roll 8.5 m/s
+  (9.5), 3.8 m. The dead: a shambler 1.0 (1.15), a runner 2.6 (3.3), a sprinter
+  3.7 (4.8), a Runner a sprinter's 1.15, all slower than a survivor firing.
+  The nights: the danger's haste is 10% at most, from danger 6 to 18 (40% from 4
+  to 16); runners half the dead at most (nine in ten by danger 4.5), of them a
+  third sprinting at most (six in ten); a frenzy 1.35 times (1.6). A Runner
+  crouches 0.55 s (0.45) and leaps 0.4 s at 11.25 m/s (0.35 at 13), still 4.5
+  m. The Mauler 2.1 m/s (2.4), its charge 12 (15); the Broodmother 1.5 (1.7);
+  the Stalker 3.5 (4.2).
+- **Bile you see coming** (zombies.tide's `SPIT_SPEED`, `SPIT_SOONEST`,
+  `SPIT_LONGEST`, `SPIT_GRAVITY`, `SPIT_LEAD`; boss.tide's `Lob`;
+  `Missile.mark`, `flight`; hud.tide's `SpitMarks`): 6.5 m/s across the ground
+  (13), in the air 0.9 to 2.6 s (0.4 to 1.6), a lower arc (gravity 6, 12), aimed
+  less ahead (0.3 of the way the survivor's going, 0.5). Where it'll land is a
+  yellow ring as wide as its splash on the ground, a second growing out to meet
+  it as it comes down. The Broodmother's volley the same.
+- **What the kinds do** (the answer to the owner: every kind is special, none
+  just tankier): a Runner leaps at you from a few metres; a Bloater swells and
+  bursts near you or after it dies; a Spitter lobs bile from range; a Warden's
+  mail turns three quarters of a body shot (its head takes all of it, and fire);
+  a Brute is eight times as tough, never staggers and throws you; a Howler
+  frenzies the dead round it. The Warden and the Brute are the nearest to "just
+  tankier", and what makes each different wasn't being told. Now the first time
+  a kind rises in a run (rounds.tide's `RaiseOne`, `Match.seenKinds`, a bit a
+  kind; `KindSeen`), a card slides in on the left for 8 s (hud.tide's
+  `NewKind`, `NEW_KIND_SECONDS`): its colour as a gem, NEW KIND OF THE DEAD, its
+  name (zombies.tide's `KindName`) and a line of what it does and what to do
+  (`KindTell`). The colours stay: the owner asked for them (2026-10-19), and
+  each marks a kind that does something.
+- **A level's own damage less** (items.tide's `Might`): 16% a level (24%), part
+  of what a level brought by itself now what's picked.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16; the bots
+  take any of the three, so a gun card a third of the time). The gun cards and
+  the slower pace with 24% a level: the Gunner at the cap in all sixteen, none
+  down, its night's end fights 14 s; the Breacher's middle run 1046 s (581 the
+  last round), the Engineer's 210 (206). With 16% (kept): the Gunner 1106 s, the
+  Breacher 1216, the Engineer 196 (still dying at the first night's end: the bots
+  don't roll); fights 16 to 17 s (the Engineer's 28); carbine rounds to the body
+  for one of the dead 3.4, 3.9, 5.9 and 9.1 at 2, 5, 10 and 15 minutes (2.4 to
+  6.8 before), the gun cards' more not counted in that. Most runs end in a death
+  again. The bots back off from the slower dead perfectly, which a player won't.
+- **Tests**: the offer has a gun card for the survivor's own gun first (the
+  Gunner's, the Breacher's), and no skill card but last; Burst Fire I does 78
+  to one 5 m off where a round does 49 (1.6 times); Incendiary Rounds III sets it
+  alight; Marksman I's headshot 196 (four times) strikes two in a line; a
+  shotgun blast strikes one of four in a line, with a Slug Core three; one 6.5 m
+  off takes nothing from the flamethrower, 82 with a Long Nozzle II; Gas
+  Piston taken loads 36 rounds; a Howler raised marks its kind seen; a Spitter's
+  bile is 1.26 s in the air, marked at the survivor's feet; the Runner's blow
+  within 1.1 s (1 s). Two of the harness's own faults showed: `tick_whole` gave
+  a million health a tick, which health's coming back cut to whole in the same
+  tick, so a crowd's claws downed one in the 90 s run (its `calm` is held at
+  nothing now); and with every round stopping in the first it strikes, one of
+  the dead wandering into the line took the shots meant for another on the web
+  (`others_away`).
+- **Validation**: native debug `gravewake_test` and the web debug WASI one pass;
+  the release web page builds. Looked at in standard-host captures: an offer
+  with the gun card first (Heavy Caliber III, carbine level 12, its pips), each
+  gun with three ranks of every card firing into the line-up (the burst's fan,
+  the red incendiary tracer, the slug's bar and dragon pellets' embers, Hot
+  Fuel III's blue jet), the Bloater's card on the left, Spitters' bile in the
+  air and its rings round a survivor. Not run: the browser tests (the owner
+  asked not to). Not played: the feel of the slower pace.
+
 ### A reward after its cause is seen, chests shut, napalm smaller (2026-10-20)
 
 The owner: "when an objective is completed or a boss killed the reward shows
@@ -2541,9 +2697,9 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 - **Kinds of the dead**: walkers; Bloaters from 40 s, Spitters from 75 s,
   Wardens from 2 min (Phase 3, above).
 - **Levels** (`items.tide`): every kill leaves an orb (`orbs.tide`), the
-  party's experience when one of them comes near; each level is an item to
-  pick for every survivor, and the run waits till all have. Chests (`chests.tide`)
-  give one at random.
+  party's experience when one of them comes near; each level is a pick for
+  every survivor (a gun card first, then items: 2026-10-20, above), and the run
+  waits till all have. Chests (`chests.tide`) give everyone a pick.
 - **The score** is the nights kept and the time; the HUD counts each one's
   kills (there are no points).
 - **The dead** walk a flow field to the nearest standing survivor and claw.
@@ -2617,7 +2773,7 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   the survivors.
 - **Seats**: `Party` holds four seats (0 Wat, 1 Maud, 2 Godric, 3 Agnes).
   A joiner takes the first free seat; a leaver's survivor is destroyed.
-- **Items**: `Survivor.items` (a count of each, `int[24]`), `offers` and
+- **Items**: `Survivor.items` (a count of each, and each gun card's rank, `int[48]`), `offers` and
   `choosing`, `pending` (picks owed). `Survivor.role` is `None` till a
   survivor is picked; `Fight` does nothing until then. `Choose` (at
   `Tick.Survivors`) takes one on `pick1`..`pick3` and sends `Picked`. What a
