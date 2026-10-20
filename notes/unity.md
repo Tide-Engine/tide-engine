@@ -1,8 +1,12 @@
-# Unity as a front end (proposal)
+# Unity as a front end
 
-Proposal of 2026-10-20. Nothing here is built and none of it is an approved
-requirement until the owner confirms a phase. Decisions the owner made in the
-discussion are marked **Owner**; everything else is a pick to confirm.
+Proposed and built 2026-10-20, early: the owner asked for every phase "most of
+the way there" to test and then list tweaks. What's built is in the "as built"
+sections below; the proposal's text above them is the design they follow.
+Decisions the owner made in the discussion are marked **Owner**; everything
+else is a pick to confirm. One pick the owner hasn't seen and should:
+`Packages/com.tide.game`, a generated folder in the project (Authoring as
+built, "Generated types and Unity's build cache").
 
 Tide stays the simulation, networking and determinism: the match code, its
 session, prediction, rollback, hashing and transports run as they do today.
@@ -457,7 +461,10 @@ meshes through Unity's renderer remain.
   edits its key in that component's `values` (plain or single-quoted).
   Instances' changes of values aren't renamed: their YAML doesn't say whose
   they are. Test: `lsp_rename_reaches_unity_assets`.
-- Not built: gizmos.
+- Gizmos (`Editor/TideGizmos.cs`): a selected TideEntity's components as a
+  Scene view label; in Play mode, each shown entity's index, generation and
+  whether it's this machine's (unselected ones within 40 units of the Scene
+  view's camera).
 
 ### Player builds as built (2026-10-20)
 
