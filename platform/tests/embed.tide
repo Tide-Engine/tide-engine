@@ -10,6 +10,7 @@ component Counter
     int presses;
     string label = "counted";
     List<int> marks;
+    float rate = 2.5;
 }
 
 singleton Tally

@@ -60,7 +60,20 @@ namespace Tide
         public string kind;  // "component", "singleton", "struct", "input", "command", "event" or "local"
         public uint size;
         public int local = -1; // A match component's or singleton's local fields: their type's index, or -1
+        public string defaults; // A component's value with its declared defaults, its bytes as hex (text and lists empty)
         public TideSchemaField[] fields = Array.Empty<TideSchemaField>();
+
+        // `defaults` as bytes: null without them.
+        public byte[] DefaultBytes()
+        {
+            if (string.IsNullOrEmpty(defaults) || defaults.Length != size * 2) return null;
+            var bytes = new byte[size];
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                if (!byte.TryParse(defaults.Substring(i * 2, 2), System.Globalization.NumberStyles.HexNumber, null, out bytes[i])) return null;
+            }
+            return bytes;
+        }
 
         public TideSchemaField Field(string fieldName)
         {

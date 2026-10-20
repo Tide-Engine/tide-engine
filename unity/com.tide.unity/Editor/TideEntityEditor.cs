@@ -76,21 +76,28 @@ namespace Tide.Editor
             var entity = (TideEntity)target;
             var components = serializedObject.FindProperty("components");
             var references = serializedObject.FindProperty("references");
-            for (var i = 0; i < components.arraySize; i++)
+            // In Play the match has its entities already: what's here is what a match starts with, edited outside Play
+            var playing = EditorApplication.isPlayingOrWillChangePlaymode;
+            if (playing) EditorGUILayout.LabelField("What a match starts with: edit it outside Play", EditorStyles.miniLabel);
+            using (new EditorGUI.DisabledScope(playing))
             {
-                if (!DrawComponent(entity, schema, components, references, i)) break; // Removed: the rest next time
-            }
-            EditorGUILayout.Space();
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Add Tide Component", GUILayout.Width(200))) AddMenu(schema, components);
-                GUILayout.FlexibleSpace();
+                for (var i = 0; i < components.arraySize; i++)
+                {
+                    if (!DrawComponent(entity, schema, components, references, i)) break; // Removed: the rest next time
+                }
+                EditorGUILayout.Space();
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("Add Tide Component", GUILayout.Width(200))) AddMenu(schema, components);
+                    GUILayout.FlexibleSpace();
+                }
             }
             raw = EditorGUILayout.Foldout(raw, "As tide reads it", true);
             if (raw)
             {
                 using (new EditorGUI.IndentLevelScope())
+                using (new EditorGUI.DisabledScope(playing))
                 {
                     EditorGUILayout.PropertyField(components, true);
                     EditorGUILayout.PropertyField(references, true);
@@ -167,11 +174,12 @@ namespace Tide.Editor
                     if (EditorGUI.EndChangeCheck()) valuesProperty.stringValue = edited;
                     return true;
                 }
+                var defaults = type.DefaultBytes();
                 foreach (var field in type.fields)
                 {
                     var literal = TideLiterals.Get(values, field.name);
                     var instanceSets = patching && TideLiterals.Get(own, field.name) != null;
-                    var changed = DrawField(schema, field, literal, references, instanceSets, out var next);
+                    var changed = DrawField(schema, field, literal, Default(schema, field, defaults), references, instanceSets, out var next);
                     if (!changed) continue;
                     // A prefab instance keeps the fields it sets; anything else keeps them all
                     var basis = instance ? (patching ? own : "") : own;
@@ -194,8 +202,42 @@ namespace Tide.Editor
             return values.prefabOverride ? TideLiterals.Merge(inherited, own) : inherited;
         }
 
-        // One field, from its literal (null: its default): true with `next` the literal written, null to unset it.
-        static bool DrawField(TideSchema schema, TideSchemaField field, string literal, SerializedProperty references,
+        // A field's declared default as a literal, from its component's default bytes: null where it can't say.
+        static string Default(TideSchema schema, TideSchemaField field, byte[] defaults)
+        {
+            if (defaults == null || field.offset + field.size > defaults.Length) return null;
+            var at = (int)field.offset;
+            float F(int i) => BitConverter.ToSingle(defaults, at + i * 4);
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            switch (field.type)
+            {
+            case "float": return TideLiterals.Number(F(0));
+            case "int": return BitConverter.ToInt32(defaults, at).ToString(invariant);
+            case "uint": return BitConverter.ToUInt32(defaults, at).ToString(invariant);
+            case "long": return BitConverter.ToInt64(defaults, at).ToString(invariant);
+            case "bool": return defaults[at] != 0 ? "true" : "false";
+            case "float2": return TideLiterals.Call("float2", F(0), F(1));
+            case "float3": return TideLiterals.Call("float3", F(0), F(1), F(2));
+            case "float4": return TideLiterals.Call("float4", F(0), F(1), F(2), F(3));
+            case "int2": return TideLiterals.Call("int2", BitConverter.ToInt32(defaults, at), BitConverter.ToInt32(defaults, at + 4));
+            case "int3":
+                return TideLiterals.Call("int3", BitConverter.ToInt32(defaults, at), BitConverter.ToInt32(defaults, at + 4),
+                                         BitConverter.ToInt32(defaults, at + 8));
+            case "Color": return TideLiterals.Call("Color", F(0), F(1), F(2), F(3));
+            case "quaternion": return TideLiterals.Call("quaternion", F(0), F(1), F(2), F(3));
+            }
+            if (field.kind == "enum" && field.@ref >= 0 && field.@ref < schema.enums.Length)
+            {
+                var e = schema.enums[field.@ref];
+                var i = Array.IndexOf(e.values, BitConverter.ToInt32(defaults, at));
+                return i >= 0 ? e.name + "." + e.members[i] : null;
+            }
+            return null;
+        }
+
+        // One field, from its literal (null: its default, `shown`, which a field nothing sets shows): true with `next`
+        // the literal written, null to unset it.
+        static bool DrawField(TideSchema schema, TideSchemaField field, string literal, string shown, SerializedProperty references,
                               bool instanceSets, out string next)
         {
             next = literal;
@@ -206,14 +248,7 @@ namespace Tide.Editor
             var before = EditorStyles.label.font;
             if (bold != null) EditorStyles.label.font = bold;
             EditorGUI.BeginChangeCheck();
-            using (new EditorGUI.DisabledScope(false))
-            {
-                var faded = !set;
-                var color = GUI.color;
-                if (faded) GUI.color = new Color(color.r, color.g, color.b, 0.6f);
-                next = FieldWidget(schema, field, label, literal, references);
-                GUI.color = color;
-            }
+            next = FieldWidget(schema, field, label, set ? literal : shown, references);
             var changed = EditorGUI.EndChangeCheck();
             if (bold != null) EditorStyles.label.font = before;
             if (set && GUILayout.Button(new GUIContent("×", "Back to its default"), EditorStyles.miniButton, GUILayout.Width(20)))

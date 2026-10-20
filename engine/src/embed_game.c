@@ -244,7 +244,17 @@ static void put_type(json *j, const tide_embed_game *embed, const tide_layout_ty
 {
     put(j, "{\"name\":", 8);
     put_string(j, t->name);
-    putf(j, ",\"kind\":\"%s\",\"size\":%u,\"local\":%d,\"fields\":[", kind, (unsigned)t->size, (int)local);
+    putf(j, ",\"kind\":\"%s\",\"size\":%u,\"local\":%d", kind, (unsigned)t->size, (int)local);
+    if (embed && embed->defaults && strcmp(kind, "component") == 0 && t->size > 0) {
+        uint8_t *value = tide_realloc(NULL, 0, t->size);
+        if (embed->defaults(index, value, t->size)) {
+            put(j, ",\"defaults\":\"", 13);
+            for (uint32_t i = 0; i < t->size; i++) putf(j, "%02x", (unsigned)value[i]);
+            put(j, "\"", 1);
+        }
+        free(value);
+    }
+    put(j, ",\"fields\":[", 11);
     for (uint32_t i = 0; i < t->field_count; i++) {
         const tide_layout_field *f = &t->fields[i];
         const tide_embed_field *said = field_said(embed, index, f->name);

@@ -134,11 +134,14 @@ typedef struct tide_embed_game {
     bool (*start)(void *start, const char *scene);
     // The game's schema as JSON (tide_schema_json) into `out`, as much as `capacity` holds with its NUL: its length
     uint32_t (*schema)(char *out, uint32_t capacity);
+    // A match component's value with its fields' declared defaults into `out`, its text and lists empty: false for
+    // a type that's none of the match's components or a size that isn't its.
+    bool (*defaults)(int32_t type, void *out, uint32_t size);
 } tide_embed_game;
 
 // The schema another program binds a game by, as JSON: the layout's types with their fields' offsets, what each
 // is (a component, a singleton, a component's or singleton's local fields, a command after the layout's, or a
-// struct), its enums, commands, prefabs and scenes. Into `out`, as much as `capacity` holds with a NUL; returns its
+// struct), a component's default value (its bytes as hex), its enums, commands, prefabs and scenes. Into `out`, as much as `capacity` holds with a NUL; returns its
 // whole length, so a call with no room says how much to make.
 #define TIDE_SCHEMA_ABI 1u
 uint32_t tide_schema_json(const tide_layout *layout, const tide_embed_game *embed, uint64_t hash, const char *game,

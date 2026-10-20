@@ -259,7 +259,10 @@ as a git URL package with no hard-coded paths. Built:
   is byte-identical with and without it, so Unity builds play with every other
   build of the same game. The packet writer reuses views' `tide_prev_<C>`/
   `tide_blend_<C>`. Schema JSON comes from the game's own layout (C offsets)
-  through the engine's `tide_schema_json`. Details: `notes/language.md`.
+  through the engine's `tide_schema_json`. Each match component's type there
+  has `defaults`, its value with its declared defaults as hex bytes (text and
+  lists empty), from the generated `tide_embed_defaults` (the
+  `tide_embed_game.defaults` hook, 2026-10-20). Details: `notes/language.md`.
 - **`tide unity [folder] -o <path> [--once]`** (`compiler/cli/build.c`): the
   embed host library (`tide_embed`, the installed platform library and engine,
   exporting the ten `tide_embed_*` functions), then `game-<n>`/`pack-<n>`
@@ -315,10 +318,15 @@ entity handle struct the generator maps entity fields to was renamed
 schema's components (Add Tide Component; not `Transform`, which is Unity's, nor
 `UnityEngine.Source`), draws each field by its schema type (numbers, vectors, `Color`,
 `quaternion` as Euler angles, `bool`, `string`, enums, entities as object
-fields; anything else as its literal), shows unset fields faded as defaults,
+fields; anything else as its literal), shows an unset field with its declared
+default from the schema's `defaults` (a text field's default shows empty), editable
+like a set one (it used to be faded, which read as read-only, and showed zero),
 `×` resets one, and "As tide reads it" shows the raw lists. In a prefab
 instance it writes only the fields the instance changes (`Inherited` merges the
-chain of sources), as tide merges.
+chain of sources), as tide merges. In Play it's grayed out: the match has its
+entities already, and an edit there would reach neither the match nor the
+scene (owner, 2026-10-20: what can't be changed at runtime is grayed out).
+Showing the match's live values there instead is a possible next step.
 
 **The converter** (`compiler/cli/unity_assets.c`, owner decision: Unity assets
 are the source of truth, baked at tide time with no files in the project):
