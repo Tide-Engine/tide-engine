@@ -405,7 +405,7 @@ event Wound
 }
 
 // What dealt a blow.
-enum Blow { Blade, Blunt, Missile, Burst, Burning, Bleeding, Shove }
+enum Blow { Blade, Blunt, Missile, Burst, Burning, Bleeding, Shove, Flame }    // (Flame: a flamethrower's puff)
 
 // A kill, to the survivor who made it (or a blow that wasn't one, for nothing).
 event Earned
@@ -928,7 +928,9 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     var steady = zombie.kind == ZombieKind.Brute;
     // On its back it's open: blows land harder, and a Warden's mail doesn't help
     var over = zombie.state == ZombieState.Fallen && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding;
-    var mail = zombie.kind == ZombieKind.Warden && !wound.head && !over && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding && wound.blow != Blow.Shove;
+    // (Flames lick in under the mail)
+    var mail = zombie.kind == ZombieKind.Warden && !wound.head && !over && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding && wound.blow != Blow.Shove
+               && wound.blow != Blow.Flame;
     var damage = wound.damage * (over ? 1.5 : 1.0) * (mail ? WARDEN_MAIL : 1.0);
     zombie.health -= damage;
     var killed = zombie.health <= 0;

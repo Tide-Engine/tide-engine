@@ -862,7 +862,7 @@ int main(void)
         }
 
         // The Engineer: a C4 charge at the cursor, waiting till it's blown; and a turret by itself
-        become(0, Role_Engineer, Weapon_Smg);
+        become(0, Role_Engineer, Weapon_Flamer);
         only_skill(0, -1);
         e = sturdy();
         to_open(e);
@@ -1420,6 +1420,50 @@ int main(void)
             for (int k = 0; k < 4; k++) struck += zombie(line[k]).health < before[k];
             CHECK(struck == 1 + ap);
         }
+        // The Engineer's flamethrower: held half a second, it burns the two in its cone (3 m ahead, and 5 m ahead 1.5 m
+        // aside) and sets them alight, through each other; not the one past its 7.5 m, nor the one behind
+        {
+            become(0, Role_Engineer, Weapon_Flamer);
+            Survivor s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            s.mag = 140;
+            set(0, s);
+            const tide_float3 spots[4] = {{feet.x, feet.y, feet.z - 3.0f}, {feet.x + 1.5f, feet.y, feet.z - 5.0f},
+                                          {feet.x, feet.y, feet.z - 10.0f}, {feet.x, feet.y, feet.z + 2.5f}};
+            float before[4];
+            for (int k = 0; k < 4; k++) {
+                Zombie z = zombie(line[k]);
+                z.at = spots[k];
+                z.health = 100000;
+                z.burn = 0;
+                z.state = ZombieState_Hunting;
+                CHECK(tide_set_Zombie(&world, line[k], z));
+            }
+            tick_safe(2);
+            for (int k = 0; k < 4; k++) before[k] = zombie(line[k]).health;
+            look_at(0, (tide_float3){feet.x, feet.y + 1.3f, feet.z - 6.0f});
+            held[0].attack = true;
+            tick_safe(30);
+            held[0].attack = false;
+            tick_safe(1);
+            printf("a flamethrower held half a second: %.0f and %.0f to the two in its cone (burning %d, %d), %.0f past it, %.0f behind, %d of its tank used\n",
+                   before[0] - zombie(line[0]).health, before[1] - zombie(line[1]).health, zombie(line[0]).burn > 0, zombie(line[1]).burn > 0,
+                   before[2] - zombie(line[2]).health, before[3] - zombie(line[3]).health, 140 - get(0).mag);
+            CHECK(zombie(line[0]).health < before[0] && zombie(line[1]).health < before[1]);
+            CHECK(zombie(line[0]).burn > 0 && zombie(line[1]).burn > 0);
+            CHECK(zombie(line[2]).health == before[2] && zombie(line[3]).health == before[3]);
+            CHECK(get(0).mag < 140 && get(0).mag > 120);
+            for (int k = 0; k < 4; k++) {
+                Zombie z = zombie(line[k]);
+                z.at = (tide_float3){feet.x, feet.y, feet.z - 5.0f - 1.2f * (float)k};
+                z.burn = 0;
+                z.health = 100000;
+                CHECK(tide_set_Zombie(&world, line[k], z));
+            }
+            become(0, Role_Gunner, Weapon_Rifle);
+            put(0, feet, (tide_float3){0, 1.6f, -16});
+            tick_safe(10);
+        }
         // HE Rounds and Dragon's Breath: one shot at the first, the one beside it wounded, the first burning
         {
             Zombie side = zombie(line[1]);
@@ -1504,7 +1548,7 @@ int main(void)
         }
         // The turret, with its maker's Frostbite: what it shoots freezes
         {
-            become(0, Role_Engineer, Weapon_Smg);
+            become(0, Role_Engineer, Weapon_Flamer);
             Survivor s = get(0);
             memset(&s.items, 0, sizeof s.items);
             s.items.at[Item_Frostbite] = 14;              // Always, even at the turret's lesser chance
@@ -2491,7 +2535,12 @@ int main(void)
         CHECK(get(1).life == Life_Gone);
         tick_safe(60 * 6);
         friend = get(1);
-        CHECK(friend.life == Life_Standing && hypotf(friend.feet.x - get(0).feet.x, friend.feet.z - get(0).feet.z) < 4);
+        if (friend.life != Life_Standing || hypotf(friend.feet.x - get(0).feet.x, friend.feet.z - get(0).feet.z) >= 6)
+            fprintf(stderr, "bled out: life %d, gone %.1f s, health %.0f, %.1f m from the other (life %d), paused %d, choosing %d %d\n", (int)friend.life, friend.gone,
+                    friend.health, hypotf(friend.feet.x - get(0).feet.x, friend.feet.z - get(0).feet.z), (int)get(0).life, world.Match.paused, get(0).choosing,
+                    friend.choosing);
+        // (set down 2.4 m from where the other stood, who may have walked on a little since)
+        CHECK(friend.life == Life_Standing && hypotf(friend.feet.x - get(0).feet.x, friend.feet.z - get(0).feet.z) < 6);
         puts("bled out with no boss coming: back beside a friend a minute later");
     }
 

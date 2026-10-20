@@ -1535,6 +1535,30 @@ def hitmarker(rng):
     return trim(highpass(at_onset(S('kenney_interface', 'click_002.ogg')), 800), -50, fade_out=0.01)
 
 
+# The Engineer's flamethrower, made from nothing: a jet's roar to loop while the trigger's held, and its lighting
+@sound('flamer_loop', kind='loop', peak_db=-3.0)
+def flamer_loop(rng):
+    # A gas jet tearing through air (a broad hiss, rough and quick-flickering), a low roar under it, a few crackles
+    sec = 2.4
+    n = n_of(sec)
+    flick = 1 + 0.35 * lowpass(rng.standard_normal(n), 14) / 0.05
+    jet = bandpass(colored(sec, rng, -2.0), 500, 6500) * np.clip(flick, 0.4, 1.8)
+    roar = lowpass(highpass(colored(sec, rng, -5.0), 45), 420) * np.clip(1 + 0.3 * lowpass(rng.standard_normal(n), 5) / 0.03, 0.5, 1.6)
+    bed = fire_bed(sec, rng, crackle_rate=18, roar=0.6)
+    y = mix((unit(jet), 0, -3), (unit(roar), 0, 0), (unit(bed), 0, -8))
+    return loopify(y, 0.3)
+
+
+@sound('flamer_start', layers=False)
+def flamer_start(rng):
+    # The jet lit: a quick rush of fire through air and a soft thump of the gas catching
+    tt = t(0.6)
+    w = roar_whoosh(0.6, rng, peak_at=0.08)
+    thump = lowpass(colored(0.6, rng, -5), 300) * np.exp(-tt * 12) * np.minimum(1, tt / 0.004)
+    y = mix((unit(w), 0, 0), (unit(thump), 0, -3))
+    return trim(y, -45, fade_out=0.15)
+
+
 # A hit of your own landing, made from nothing: crisp enough to hear over the gun, short enough for an SMG's rate
 @sound('hit_tick')
 def hit_tick(rng):

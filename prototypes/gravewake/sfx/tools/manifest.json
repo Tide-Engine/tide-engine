@@ -581,6 +581,22 @@
   ],
   "seconds": 4.0
  },
+ "flamer_loop": {
+  "bytes": 23363,
+  "file": "flamer_loop.ogg",
+  "kind": "loop",
+  "layers": false,
+  "packs": [],
+  "seconds": 2.1
+ },
+ "flamer_start": {
+  "bytes": 52226,
+  "file": "flamer_start.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.592
+ },
  "forge": {
   "bytes": 45767,
   "file": "forge.ogg",

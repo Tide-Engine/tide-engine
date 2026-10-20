@@ -63,6 +63,71 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### The Engineer's flamethrower (2026-10-20)
+
+The owner: "i wonder if we should change the engineer's weapon; its too similar
+to the rifle. maybe a flamethrower could be a fun change. so rifle is long
+range, shotgun is close/long mix and the flames is mostly close range
+thingy." The numbers, the look and the sound are mine, Provisional.
+
+- **The gun** (weapons.tide's `Weapon.Flamer`, `WeaponInfo.cone`; kits.tide's
+  `RoleWeapon`): the Engineer's in the SMG's place (the turret and the drones still
+  carry an SMG). A puff every 0.07 s while it's held, 13 a puff times might, to
+  every one of the dead in a cone 7.5 m long across the ground and 0.4 m either
+  side of the aim a metre out (3 m wide at its end), and any in front within 1.3 m
+  (`FLAME_NEAR`), the 14 nearest (`FLAME_MOST`), short of what stands in the way;
+  each puff sets one alight one time in three (`FLAME_IGNITE`), so a body in the
+  flames burns within about a fifth of a second. A tank is 140 puffs (ten seconds),
+  1.8 s to fill; an Extended Mag half again. No headshots, no shove or reel (the
+  dead walk on through it: the risk of close range). Flames lick in under a
+  Warden's mail. Items go off a puff in eight as often as a round's (`proc` 0.12),
+  each one the puff reaches.
+- **How** (hands.tide's `Scorch`, from `Fight` when `cone > 0`; items.tide's `Land`
+  takes a `Blow` and `ignite`, defaulting to a round's): its puffs are
+  `Blow.Flame`, aimed (the hit marker, the numbers), drawn and heard apart:
+  no blood or flesh sound a puff, an ember now and then; burned to death in it,
+  the dead fall apart charred, as burning ones do; the marker stays up through a
+  stream without popping each puff, and a body's numbers add up in orange while the
+  puffs keep coming (`Tally.flame`, `FLAME_MERGE` 0.3 s); the dead flash a little
+  (0.3), bosses 0.25.
+- **Offers** (items.tide's `Useless`): AP Rounds, Ricochet Rounds and HE Rounds,
+  what a round does, aren't offered a survivor whose gun is the flamethrower.
+- **Seen** (fx.tide's `MuzzleFlash`): no flash; each puff throws eight blocks of
+  flame down the cone, 14 to 19 m/s, as far as it reaches, swelling and cooling
+  from orange to red and rising a little, two hotter yellow ones near the nozzle,
+  now and then smoke off its end, its orange light along the way. (A first try,
+  pale blocks half again as big at alpha 1.5, bloomed to white.)
+- **The model** (art/guns/flamer.glb, `art/guns/tools/make_flamer.py`, Blender, from
+  primitives in the guns' palette; guns.json's line put in by it): a steel body
+  over a red fuel tank with a brass band, a hose from its valve up into the barrel,
+  a slotted heat shield, a flared nozzle with a glowing pilot light under it, a fore
+  grip (people.tide's `ForeGrip` 0.44) and a short stock; 808 triangles.
+- **Heard** (sfx/tools/make_sfx.py, synthesized): `flamer_start`, a rush of fire
+  through air and a soft thump as it lights; `flamer_loop`, 2.1 s, a gas jet's
+  rough hiss over a low roar and crackles, looped while it's held (sound.tide's
+  `Ears.flame`, and `othersFlame` for the last other heard, where they are; they stop
+  0.15 s after the last puff and while the run's held for a pick). A kill of yours in
+  it gives the kill's knock, quieter. CREDITS.md and manifest.json got their rows
+  by hand (the tool rewrites CREDITS.md's names as `.wav`).
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16; the bot
+  fires within 8.5 m and goes to the night's boss till 6 m off): at 11 a puff the
+  Engineer's middle run 860 s and the night's end fights 28 to 29 s (the SMG's 972
+  and 22 to 26); at 13 (kept), 1147 and 1182 s over the two halves, fights 28 and
+  29 s, against the Gunner's 990 and the Breacher's 849: within the runs' spread
+  (150 to 1460 s a seed). The fights are longer: flames don't find a weak spot,
+  and a boss has to be stood near.
+- **Tests**: the Engineer's checks hold the flamethrower; new, held half a second
+  it burns the two in its cone (3 m ahead, 5 m ahead 1.5 m aside: 493 and 314) and
+  sets both alight, not one 10 m off nor one behind, six puffs of its tank. The
+  check that one bled out is back beside a friend a minute later allows 6 m (they're
+  set 2.4 m from where the friend stood, and the run's changed path had the friend
+  walk on to 4.2 m). Native debug `gravewake_test` and the web debug WASI one pass.
+- **Validation**: looked at in standard-host captures: the jet into the line-up
+  (Shift+F2), the three in it burning, their numbers growing; the model in Blender
+  from the side and three quarters. Not heard: the roar's loudness is my guess.
+- **Gaps**: the flamethrower's own items: nothing uses its being a flame (a wider
+  cone, a longer one); the bots don't roll, so they stand in the dead it doesn't stop.
+
 ### Hits you feel, the dead harder to kill (2026-10-20)
 
 The owner: "i want you to polish the experience; VFX, SFX, balancing etc. ...

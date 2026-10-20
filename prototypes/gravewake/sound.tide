@@ -65,6 +65,8 @@ asset Clip hitmarkerClip = "sfx/hitmarker.ogg";
 asset Clip hitTick = "sfx/hit_tick.ogg";
 asset Clip hitKill = "sfx/hit_kill.ogg";
 asset Clip hitHead = "sfx/hit_head.ogg";
+asset Clip flamerLoop = "sfx/flamer_loop.ogg";
+asset Clip flamerStart = "sfx/flamer_start.ogg";
 
 // The master's limiter: whatever piles up (a bell over two dozen groans) is held under full scale, at once, and let back
 // up over a tenth of a second.
@@ -97,6 +99,11 @@ local singleton Ears
     Sound breath;
     Sound brazier;
     Sound torch;
+    Sound flame;              // This machine's flamethrower's roar, while it's held...
+    Sound othersFlame;        // ...and the others' (the last heard), where they are
+    float flaming;            // Seconds the roars go on unless another puff's heard
+    float othersFlaming;
+    float3 othersFlameAt;
     Random random;
     float stepped;            // Metres walked at this machine's last footfall
     float[4] othersStepped;
@@ -198,6 +205,21 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, Haz
     ears.brazier.pitch = 0.8;
     ears.brazier.bus = Bus.Ambience;
     ears.brazier.playing = brazierFar < 25;
+    // The flamethrowers' roars, while they're held (not while the run's held for a pick)
+    ears.flaming = Math.Max(0, ears.flaming - dt);
+    ears.othersFlaming = Math.Max(0, ears.othersFlaming - dt);
+    ears.flame.clip = flamerLoop;
+    ears.flame.loop = true;
+    ears.flame.volume = 0.75;
+    ears.flame.bus = Bus.Effects;
+    ears.flame.playing = ears.flaming > 0 && !match.paused && playing;
+    ears.othersFlame.clip = flamerLoop;
+    ears.othersFlame.loop = true;
+    ears.othersFlame.spatial = true;
+    ears.othersFlame.position = ears.othersFlameAt;
+    ears.othersFlame.volume = 0.65;
+    ears.othersFlame.bus = Bus.Effects;
+    ears.othersFlame.playing = ears.othersFlaming > 0 && !match.paused && playing;
     ears.voices = Math.Min(4, ears.voices + dt * 8);
 }
 
@@ -288,9 +310,15 @@ local event(Kicked kicked) HearKick(mut Ears ears, Me me, Survivor survivor)
 local event(Struck struck) HearStruck(mut Ears ears, Me me)
 {
     var mine = struck.seat == me.seat && struck.seat >= 0;
-    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding)
+    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Flame)
     {
         if (struck.killed) Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.8, ears.random.NextFloat(0.9, 1.1));
+        // A flamethrower's kill of your own: the kill's knock, quieter (the roar's the rest)
+        if (struck.killed && mine && struck.aimed && ears.knocked < 1)
+        {
+            ears.knocked += 1;
+            Audio.Play(hitKill, 0.5, ears.random.NextFloat(0.88, 0.95));
+        }
         return;
     }
     if (struck.blow == Blow.Shove) return;
@@ -340,6 +368,20 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
 local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
 {
     var mine = loosed.seat == me.seat;
+    // A flamethrower: no shot, but a rush of fire as it's lit and its roar while it's held (Listen)
+    if (loosed.weapon == Weapon.Flamer && loosed.source == Source.Gun)
+    {
+        if (mine)
+        {
+            if (ears.flaming <= 0) Audio.Play(flamerStart, 0.8, ears.random.NextFloat(0.95, 1.05));
+            ears.flaming = FLAME_HELD;
+            return;
+        }
+        if (ears.othersFlaming <= 0) Audio.Play(flamerStart, loosed.at, 0.7, ears.random.NextFloat(0.95, 1.05));
+        ears.othersFlaming = FLAME_HELD;
+        ears.othersFlameAt = loosed.at;
+        return;
+    }
     mut Clip clip = rifleShots[ears.random.NextInt(rifleShots.count)];
     mut var volume = 1.0;
     mut var pitch = ears.random.NextFloat(0.96, 1.04);
@@ -369,6 +411,8 @@ local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
     var near = mine && loosed.source != Source.Turret;
     PlayAt(clip, loosed.at, near, volume, pitch);
 }
+
+const float FLAME_HELD = 0.15;      // A flamethrower's roar goes on so long after a puff (it puffs every 0.07 s)
 
 local event(Spell spell) HearSpell(mut Ears ears)
 {

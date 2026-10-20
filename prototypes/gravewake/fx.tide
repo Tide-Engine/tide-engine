@@ -453,8 +453,16 @@ local event(Struck struck) Bleed(mut Fx fx)
     away.y = 0;
     away = Math.Length(away) > 0.01 ? Math.Normalize(away) : float3(1, 0, 0);
     var blood = float3(0.5, 0.03, 0.03);
-    // Burned to death: it falls apart in a burst of embers and ash (gore.tide's charred pieces)
-    if (struck.killed && struck.blow == Blow.Burning)
+    // A flamethrower's puff: no blood (it comes fourteen times a second), now and then an ember off it
+    if (struck.blow == Blow.Flame && !struck.killed)
+    {
+        if (fx.random.NextFloat() < 0.35)
+            Glow(fx, Mote { at = struck.at + Scatter(fx, 0.2), velocity = Scatter(fx, 1.5) + float3(0, 1.8, 0), life = 0.35, size = 0.05, color = float3(1.0, 0.5, 0.12),
+                            alpha = 2.5, cool = 1 });
+        return;
+    }
+    // Burned to death, by burning or in the flames: it falls apart in a burst of embers and ash (gore.tide's charred pieces)
+    if (struck.killed && (struck.blow == Blow.Burning || struck.blow == Blow.Flame))
     {
         fx.kills += 1;
         fx.flashes.Add(Flash { at = struck.at, color = float3(1.0, 0.45, 0.1) * 3, reach = 4, life = 0.2 });
@@ -705,6 +713,35 @@ local event(Loosed loosed) MuzzleFlash(mut Fx fx, Grip grip)
     var drawn = loosed.seat >= 0 && loosed.seat < 4 ? grip.muzzles[loosed.seat] : float3(0);
     var at = loosed.source != Source.Turret && Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
     var way = loosed.way;
+    // A flamethrower: no flash but a jet of flame, blocks of it thrown down the cone as far as it reaches, white-gold at
+    // the nozzle, swelling and cooling to red as they go, rising a little; smoke off its end, and its light along the way
+    if (loosed.weapon == Weapon.Flamer && loosed.source == Source.Gun)
+    {
+        var info = Info(Weapon.Flamer);
+        var level = Math.Normalize(float3(way.x, 0, way.z));
+        var right = Math.Normalize(Math.Cross(float3(0, 1, 0), level));
+        for (var k = 0; k < 8; k++)
+        {
+            var aside = fx.random.NextFloat(-1, 1) * info.cone * 0.8;
+            var dir = Math.Normalize(level + right * aside + float3(0, fx.random.NextFloat(-0.04, 0.06), 0));
+            var speed = fx.random.NextFloat(14, 19);
+            Glow(fx, Mote { at = at + dir * fx.random.NextFloat(0, 0.6), velocity = dir * speed, life = info.range / speed * fx.random.NextFloat(0.75, 1.02),
+                            size = fx.random.NextFloat(0.07, 0.11), grow = fx.random.NextFloat(0.7, 1.1), color = float3(1.0, 0.42, 0.08), alpha = 0.85, cool = 1,
+                            gravity = -2.5 });
+        }
+        // Its core, hottest near the nozzle
+        for (var k = 0; k < 2; k++)
+        {
+            var dir = Math.Normalize(level + right * fx.random.NextFloat(-0.08, 0.08));
+            Glow(fx, Mote { at = at + dir * fx.random.NextFloat(0, 0.3), velocity = dir * fx.random.NextFloat(12, 16), life = 0.14, size = 0.08, grow = 0.4,
+                            color = float3(1.0, 0.8, 0.35), alpha = 1.2, cool = 1 });
+        }
+        if (fx.random.NextFloat() < 0.5)
+            Murk(fx, Mote { at = at + level * info.range * fx.random.NextFloat(0.6, 0.9) + float3(0, 0.4, 0), velocity = level * 2 + float3(0, 1.2, 0),
+                            life = fx.random.NextFloat(0.6, 1.0), size = 0.3, grow = 0.9, color = float3(0.12, 0.1, 0.09), alpha = 0.35, drag = 1.5 });
+        fx.flashes.Add(Flash { at = at + level * 3 + float3(0, 0.3, 0), color = float3(1.0, 0.5, 0.15) * 3.5, reach = 8, life = 0.09 });
+        return;
+    }
     var heavy = loosed.weapon == Weapon.Shotgun || loosed.source == Source.Phase;
     var scale = (heavy ? 1.5 : 1.0) * (loosed.source == Source.Turret ? 0.7 : 1.0);
     var hot = loosed.source == Source.Phase ? float3(0.6, 0.75, 1.0) : float3(1.0, 0.68, 0.32);

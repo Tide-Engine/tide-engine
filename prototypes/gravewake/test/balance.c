@@ -152,7 +152,7 @@ static Hands think(int seat, float dt)
     const tide_float3 gun = {s.feet.x, s.feet.y + 1.36f, s.feet.z};       // Where the shots leave from (hands.tide's GUN_UP)
     const WeaponInfo info = (WeaponInfo){0};
     (void)info;
-    const float range = s.gun == Weapon_Shotgun ? 18.0f : s.gun == Weapon_Smg ? 35.0f : 55.0f;
+    const float range = s.gun == Weapon_Shotgun ? 18.0f : s.gun == Weapon_Flamer ? 8.0f : s.gun == Weapon_Smg ? 35.0f : 55.0f;
 
     // The dead about: the nearest, how many near, which way they press from
     float nearest = 1e9f;
@@ -242,7 +242,7 @@ static Hands think(int seat, float dt)
     const float level = cosf(wantPitch);
     h.aim = (tide_float3){gun.x + sinf(wantYaw) * level * far, gun.y + sinf(wantPitch) * far, gun.z + cosf(wantYaw) * level * far};
     const bool onTarget = aiming && fabsf(wrap(wantYaw - s.yaw)) < 0.3f && !bot->blinkTurn;
-    h.attack = onTarget;
+    h.attack = onTarget && (s.gun != Weapon_Flamer || far < 8.5f);
     h.reload = s.mag == 0;
 
     // The fires on the ground: out of any we're in or by (burning, or cracking to burst), and a roll out of one about to
@@ -259,7 +259,8 @@ static Hands think(int seat, float dt)
         if (!b.burst && b.timer > 1.0f && d < b.reach + 0.4f) bursting = true;
     }
     // The night's boss: to it, when it's up and far off
-    const bool hunting = world.Match.phase == Phase_Fighting && world.Match.reckoning && toOwn < 1e8f && toOwn > 22;
+    // (a flamethrower's within its reach of it)
+    const bool hunting = world.Match.phase == Phase_Fighting && world.Match.reckoning && toOwn < 1e8f && toOwn > (s.gun == Weapon_Flamer ? 6.0f : 22.0f);
 
     // Where to go: out of a fire; else away from the dead pressing close; else for an orb or a chest when it's safe;
     // else to the night's boss; else round the clearing's middle, side to side

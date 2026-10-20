@@ -575,7 +575,7 @@ event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
 // A blow's flash, on this machine.
 local event(Struck struck) FlashBoss(mut Boss boss)
 {
-    boss.flash = 0.6;
+    boss.flash = struck.blow == Blow.Flame ? Math.Max(boss.flash, 0.25) : 0.6;
 }
 
 // One of the night's own felled: an item for each survivor, picked as a level's is.

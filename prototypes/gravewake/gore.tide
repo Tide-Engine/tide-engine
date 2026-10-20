@@ -142,7 +142,7 @@ void Fling(mut Gore gore, float3 at, float3 away, float push, float3 size, float
 
 local event(Struck struck) Spill(mut Gore gore)
 {
-    if (struck.blow == Blow.Shove || (struck.blow == Blow.Burning && !struck.killed)) return;
+    if (struck.blow == Blow.Shove || ((struck.blow == Blow.Burning || struck.blow == Blow.Flame) && !struck.killed)) return;
     var ground = On(struck.at.x, struck.at.z);
     mut var away = struck.at - struck.from;
     away.y = 0;
@@ -158,7 +158,7 @@ local event(Struck struck) Spill(mut Gore gore)
     }
     // A kill: torn apart where it stood. A pool where it was (spreading a while: Pool), a spray thrown far on the way the
     // blow went; burned to death, a scorch
-    var charred = struck.blow == Blow.Burning;
+    var charred = struck.blow == Blow.Burning || struck.blow == Blow.Flame;
     gore.torn += 1;
     if (charred) Stain(gore, ground, gore.random.NextFloat(0.5, 0.8), 0.6, gore.random.NextFloat(Math.TAU), 1.2, CHAR);
     else

@@ -49,7 +49,7 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | --- | --- | --- | --- |
 | Gunner | Carbine: automatic, any range | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
 | Breacher | Pump Shotgun: fourteen pellets in a wide spread, never needs loading; takes a third less from the dead | Boot: a side kick that sweeps a flash of light through where it reaches, flinging the dead in front back off their feet into the ones behind them (each it strikes flashes white); the nearest one down is stamped on | Firebomb: into the thickest of them |
-| Engineer | SMG: sets items off half again as often | C4 Charge: set down, a red ring round it showing how far it'll reach; right mouse again (BLOW) to set it off, whenever you like | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
+| Engineer | Flamethrower: a jet of fire 7.5 m long, widening as it goes, burning everything in it and setting it alight; ten seconds a tank (AP, Ricochet and HE Rounds aren't offered: it has no rounds) | C4 Charge: set down, a red ring round it showing how far it'll reach; right mouse again (BLOW) to set it off, whenever you like | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
 
 The right mouse skill is the survivor's to begin with, and can change: a
 skill card (orange) turns up in some level's offers, another of five
