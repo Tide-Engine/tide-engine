@@ -145,6 +145,38 @@ the fallback if B fails on something fundamental. It brings another clang, flags
 Unity controls, Unity's thread setting, a port of Tide's web platform layer, and
 determinism to prove again.
 
+### Spike step 1 (2026-10-20): B works
+
+Local branch `unity-spike` (not on `dev`) holds a scratch game
+(`unity/Spike/game`: bodies bouncing, one per player), a Unity 6000.6.0f1
+project with a WebGL template, a `.jslib` and a driver (`drive.mjs`). Nothing in
+the engine changed: the template wraps `WebAssembly.Instance` before `tide.js`
+loads to keep the Tide program's instance (`tide-capture.js`), and the scratch
+game's views hand positions to its C, which Unity copies from Tide's memory each
+frame. An edit to `tide.js` itself trips the release runtime's freshness check
+at configure time, so later steps that need page hooks regenerate it.
+
+Measured in headless Chrome (SwiftShader, `--mute-audio`) with two Unity WebGL
+pages and a plain Tide page in one relay room, 30 s:
+
+- Every page cross-origin isolated, Tide's memory shared (its threads on) while
+  Unity's own threads stay off. Unity needs no thread setting for Tide's.
+- All three in one room through the real relay; clients' verified ticks kept up
+  and resyncs stayed 0. Unity pages interoperate with plain Tide pages.
+- Unity and Tide both ran about 62 frames a second in each page.
+- The per-frame copy (1 KB here) cost about 2 µs. A sumo-sized measurement is
+  still to do.
+- Each player needs its own window in headless runs: background tabs count as
+  hidden, where Unity falls back to one frame a second and `tide.js` to its
+  tick-rate worker heartbeat.
+- Unity strips the Standard shader and primitives' colliders from builds with
+  nothing referencing them: spike visuals use a saved unlit material prefab.
+
+Still open for phase 0: a native Tide player in the same room (headless native
+runs fake their clock, so it needs a windowed or real-clock run), mobile
+browsers, the sumo-sized copy, and frames driven by Unity rather than two
+animation-frame loops (Tide's frame can trail Unity's by one).
+
 ## Tide drawing in Unity
 
 **Owner:** both C# views and Tide drawing are wanted. Tide's draw list goes to
