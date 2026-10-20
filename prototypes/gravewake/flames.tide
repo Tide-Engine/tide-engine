@@ -18,6 +18,7 @@ struct Blob
     int seat = -1;            // Whose jet it's from, for its light
     bool pooled;              // Landed and burning on the ground
     bool smoked;              // Has given off its smoke
+    float fuel;               // How hot its fuel burns (Hot Fuel's ranks, a fifth each): brighter at its hottest, then blue
 }
 
 local singleton Flames
@@ -45,7 +46,7 @@ local event(Loosed loosed) Gout(mut Flames flames, mut Fx fx, Grip grip)
     var at = Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
     var level = Math.Normalize(float3(loosed.way.x, 0, loosed.way.z));
     var right = Math.Normalize(Math.Cross(float3(0, 1, 0), level));
-    var cone = Info(Weapon.Flamer).cone;
+    var cone = loosed.cone > 0 ? loosed.cone : Info(Weapon.Flamer).cone;
     // As fast as carries it about as far as it reaches (the air's drag and its life)
     var reach = loosed.reach > 0 ? loosed.reach : Info(Weapon.Flamer).range;
     var thrown = (reach + 0.4) * FLAME_DRAG / 0.86;
@@ -61,7 +62,7 @@ local event(Loosed loosed) Gout(mut Flames flames, mut Fx fx, Grip grip)
         // Spread over the time till the next puff, as though it had come out all along: a stream, not clumps
         var early = flames.random.NextFloat(Info(Weapon.Flamer).rate);
         flames.blobs.Add(Blob { at = at + dir * speed * early, velocity = dir * speed * (1 - FLAME_DRAG * early), age = early, life = flames.random.NextFloat(0.7, 1.0),
-                                size = size, seed = seed, seat = loosed.seat });
+                                size = size, seed = seed, seat = loosed.seat, fuel = Math.Saturate(loosed.heat / 5.0) });
     }
     fx.streaks.Add(Streak { from = at, to = at + level * 1.5, life = 0.05, width = 0.045, color = float3(1.0, 0.82, 0.45) });
 }
@@ -158,8 +159,23 @@ view FlowFire(mut Flames flames, mut Fx fx, mut Gore gore, Me me, query (Missile
         // White-gold, yellow, orange, red, as it cools; brightest hot, and a pool's flickering
         var flicker = b.pooled ? 0.65 + 0.35 * Math.Perlin(float2(flames.clock * 9, b.seed)) : 1.0;
         var bright = Math.Saturate(b.heat * 1.5) * flicker;
-        flames.sprites.Add(Sprite { at = b.at, to = b.at, size = b.size, color = float4(FireHue(b.heat), 0.22 * bright) });
+        var hue = FuelHue(b.heat, b.fuel);
+        flames.sprites.Add(Sprite { at = b.at, to = b.at, size = b.size, color = float4(hue.xyz, 0.22 * bright * hue.w) });
     }
+}
+
+// The colour of a blob of fuel burning as hot as `fuel` (Hot Fuel), and how bright against the rest: its hottest part,
+// near the nozzle, a hotter yellow at the first two ranks and blue from the third, cooling to orange and red as any fire
+// does; the blue dimmer, as a gas flame's is, so the blobs over each other add up to blue and not to white. (A first try
+// went toward white, then halfway to blue: the blobs added up into a pale grey cloud like smoke.)
+float4 FuelHue(float heat, float fuel)
+{
+    var hue = FireHue(heat);
+    if (fuel <= 0 || heat < 0.55) return float4(hue, 1);
+    var hot = Math.Saturate((heat - 0.55) / 0.3);
+    if (fuel < 0.5) return float4(Math.Lerp(hue, float3(1.0, 0.82, 0.2), Math.Saturate(fuel * 3) * hot * 0.8), 1);
+    var blue = hot * Math.Saturate(0.7 + fuel * 0.3);
+    return float4(Math.Lerp(hue, float3(0.08, 0.28, 1.0), blue), 1 - 0.5 * blue);
 }
 
 // The colour of fire as hot as `heat`: white-gold at 1, through yellow and orange, to a dull red near nothing.

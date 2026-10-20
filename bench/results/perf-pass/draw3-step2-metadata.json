@@ -1,0 +1,202 @@
+{
+  "label": "draw3-step2",
+  "revision": "95da256d165607c04f3cc8e5b1d093f4a30e571a+local",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T21:12:10.3032269Z",
+  "runs": [
+    {
+      "side": "before",
+      "wallSeconds": 2.821056,
+      "backend": "opengl",
+      "competingWork": false,
+      "label": "draw3-step2-before-r1",
+      "exitCode": 0,
+      "round": 1,
+      "name": "draw_opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-before-r1"
+      ]
+    },
+    {
+      "side": "after",
+      "wallSeconds": 2.2820783,
+      "backend": "opengl",
+      "competingWork": false,
+      "label": "draw3-step2-after-r1",
+      "exitCode": 0,
+      "round": 1,
+      "name": "draw_opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-after-r1"
+      ]
+    },
+    {
+      "side": "before",
+      "wallSeconds": 1.6614251,
+      "backend": "vulkan",
+      "competingWork": false,
+      "label": "draw3-step2-before-r1",
+      "exitCode": 0,
+      "round": 1,
+      "name": "draw_vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-before-r1"
+      ]
+    },
+    {
+      "side": "after",
+      "wallSeconds": 1.4388087,
+      "backend": "vulkan",
+      "competingWork": false,
+      "label": "draw3-step2-after-r1",
+      "exitCode": 0,
+      "round": 1,
+      "name": "draw_vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-after-r1"
+      ]
+    },
+    {
+      "side": "after",
+      "wallSeconds": 2.4314039,
+      "backend": "opengl",
+      "competingWork": false,
+      "label": "draw3-step2-after-r2",
+      "exitCode": 0,
+      "round": 2,
+      "name": "draw_opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-after-r2"
+      ]
+    },
+    {
+      "side": "before",
+      "wallSeconds": 2.7859122,
+      "backend": "opengl",
+      "competingWork": false,
+      "label": "draw3-step2-before-r2",
+      "exitCode": 0,
+      "round": 2,
+      "name": "draw_opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-before-r2"
+      ]
+    },
+    {
+      "side": "after",
+      "wallSeconds": 1.4406638,
+      "backend": "vulkan",
+      "competingWork": false,
+      "label": "draw3-step2-after-r2",
+      "exitCode": 0,
+      "round": 2,
+      "name": "draw_vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-after-r2"
+      ]
+    },
+    {
+      "side": "before",
+      "wallSeconds": 1.8344458,
+      "backend": "vulkan",
+      "competingWork": false,
+      "label": "draw3-step2-before-r2",
+      "exitCode": 0,
+      "round": 2,
+      "name": "draw_vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-before-r2"
+      ]
+    },
+    {
+      "side": "before",
+      "wallSeconds": 2.6035688,
+      "backend": "opengl",
+      "competingWork": false,
+      "label": "draw3-step2-before-r3",
+      "exitCode": 0,
+      "round": 3,
+      "name": "draw_opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-before-r3"
+      ]
+    },
+    {
+      "side": "after",
+      "wallSeconds": 2.5800362,
+      "backend": "opengl",
+      "competingWork": false,
+      "label": "draw3-step2-after-r3",
+      "exitCode": 0,
+      "round": 3,
+      "name": "draw_opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-after-r3"
+      ]
+    },
+    {
+      "side": "before",
+      "wallSeconds": 1.6651667,
+      "backend": "vulkan",
+      "competingWork": false,
+      "label": "draw3-step2-before-r3",
+      "exitCode": 0,
+      "round": 3,
+      "name": "draw_vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-before-r3"
+      ]
+    },
+    {
+      "side": "after",
+      "wallSeconds": 1.5299087,
+      "backend": "vulkan",
+      "competingWork": false,
+      "label": "draw3-step2-after-r3",
+      "exitCode": 0,
+      "round": 3,
+      "name": "draw_vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "draw3-step2-after-r3"
+      ]
+    }
+  ],
+  "binaries": [
+    {
+      "sha256": "781529a668d51428bff657c1e55effb0614722e3b6164c2295ff48e5cdcfd4e4",
+      "name": "tide_platform_draw.exe"
+    }
+  ],
+  "beforeRevision": "cf6ff8b0d8167f6dc0eb81c92874c52f79638501",
+  "beforeBinaries": [
+    {
+      "sha256": "097c3bba3c3eb28656612933a4d85bd937993ec9e0dcd1abd54949748651fbf1",
+      "name": "tide_platform_draw.exe"
+    }
+  ],
+  "finishedUtc": "2026-10-20T21:13:05.8525326Z"
+}

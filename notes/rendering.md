@@ -1,5 +1,43 @@
 # The platform layer and the renderer
 
+## Recorded quads and faster conversion (2026-10-20, third round)
+
+The owner asked to close drawing's gap to hand-written C further, recording
+being where most of it was (notes/drawing.md, Recording inline and quads as
+quads, for the list's side; notes/benchmarks.md, Drawing, third round, for the
+numbers). Every benchmark frame, all 13 workloads, is the same bytes before
+and after on Vulkan and OpenGL (`--dump-frames`, compared with round two's
+binaries).
+
+- **TIDE_DRAW_QUADS** (`add_quads`): a run of the list's quads
+  (`tide_draw_quad`) goes into a mesh step as the quads `add_mesh` makes of
+  the same two triangles: `make_quad_across`'s box of p and r through the
+  camera, a lane each as there, their uvs' bits, `to_rgba` of their color, and
+  the pattern as recorded. A step a mesh command already turned to triangles
+  takes them as `corner_of`'s corners of `tide_draw_quad_corner`'s vertices.
+  So a run that mixes recorded quads and meshes is one step, as before:
+  quads then a triangle that isn't one turn back (`triangles_instead`), and
+  quads after triangles go on as triangles.
+- **Solid smooth shapes** (`add_smooth_run`): a shape is tested for being
+  solid (`solid_shape`'s test: a box or an ellipse, unturned, no outline, no
+  fade, its bottom color's bytes its top's) on the numbers its extra would
+  have before the extra is made, converting the bottom color only where its
+  float bits differ from the top's; the extra and its outline's color are
+  made only for one that isn't. Converting 65,536 round rects took about a
+  third less.
+- **`to_rgba`** converts a color's four channels in one vector (maxnum and
+  minnum, a multiply, an add, a truncating conversion), where four calls of
+  `color_channel` did each: the same byte for each of the 2^32 floats, checked
+  exhaustively with the engine's flags (`-O2 -ffp-contract=off`).
+- Measured and not built: converting straight into GPU-visible memory. Upload
+  is write-combined memory at about 19 GB/s either way (65,536 rects' 1.5 MB
+  took 78 µs), so fusing conversion with it saves only their overlap, about
+  70 µs of a rects frame; skipping the GPU-side copy measured about 10 µs.
+  It would also need Vulkan memory kept past a mid-list flush (`flush_if_full`
+  at a pass's start) until the frame's done. A per-phase timing (temporary)
+  found no fixed per-frame cost in the upload phase: its first frame makes the
+  pipelines.
+
 ## Quads, solid shapes and a fenced flush (2026-10-20, second round)
 
 Round 2 of the performance pass against the handwritten drawing baseline

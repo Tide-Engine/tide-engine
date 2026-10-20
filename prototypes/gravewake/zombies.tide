@@ -39,9 +39,13 @@ const float SPIT_NEAR = 4;         // ...and how near it comes before it claws i
 const float SPIT_KEEP = 13;        // Within this, with a clear line, it stands its ground and spits
 const float SPIT_WINDUP = 0.8;     // Seconds its throat swells before the bile comes
 const float SPIT_EVERY = 3.2;      // Seconds between spits
-const float SPIT_SPEED = 13;       // How fast its bile flies, across the ground
-const float SPIT_GRAVITY = 12;
-const float SPIT_LEAD = 0.5;       // How much of the way a survivor's going it aims ahead
+const float SPIT_SPEED = 6.5;      // How fast its bile flies, across the ground (13, in the air 0.4 to 1.6 s, till the owner,
+                                   // 2026-10-20: "those projectiles move so fast its hard to see them coming"; where it'll land
+                                   // is marked on the ground meanwhile, hud.tide's SpitMarks)...
+const float SPIT_SOONEST = 0.9;    // ...in the air at least so long...
+const float SPIT_LONGEST = 2.6;    // ...and at most
+const float SPIT_GRAVITY = 6;      // A lower arc for the longer flight
+const float SPIT_LEAD = 0.3;       // How much of the way a survivor's going it aims ahead
 const float SPIT_HURT = 18;        // Bile's harm at its heart (half at the edge)...
 const float SPIT_REACH = 1.6;      // ...and how far it splashes
 const float SLIME_SECONDS = 2;     // Slowed by it, so long
@@ -55,9 +59,10 @@ const float RUNNER_HEALTH = 0.6;
 const float RUNNER_PACE = 1.15;    // Against a sprinter's
 const float POUNCE_FAR = 5.5;      // How far off a Runner pounces from...
 const float POUNCE_NEAR = 2.2;     // ...and how near (nearer, it claws)
-const float POUNCE_CROUCH = 0.45;  // Seconds it crouches first
-const float POUNCE_SECONDS = 0.35; // The leap...
-const float POUNCE_SPEED = 13;     // ...this fast (4.5 m)
+const float POUNCE_CROUCH = 0.55;  // Seconds it crouches first (0.45, a leap 0.35 s at 13 m/s, till the game slowed, 2026-10-20)
+const float POUNCE_LOCK = 0.2;     // ...the last so long of it not turning, its leap's way set...
+const float POUNCE_SECONDS = 0.4;  // The leap...
+const float POUNCE_SPEED = 11.25;  // ...this fast (4.5 m)
 const float POUNCE_HIT = 0.8;      // Landing on a survivor, against a claw
 const float POUNCE_EVERY = 3;      // Seconds between pounces
 
@@ -414,6 +419,7 @@ event Earned
     bool head;
     float3 at;                  // Where it died
     bool echo;                  // Killed by what an item set off
+    bool flamed;                // By a flamethrower's puff (Sticky Fuel spreads from it)
 }
 
 // A blow to a survivor.
@@ -451,7 +457,7 @@ event(Frenzied frenzied) TakeFrenzied(mut Zombie zombie)
     if (zombie.state != ZombieState.Dying) zombie.frenzy = Math.Max(zombie.frenzy, frenzied.seconds);
 }
 
-const float FRENZY_PACE = 1.6;     // How much faster the frenzied go
+const float FRENZY_PACE = 1.35;    // How much faster the frenzied go (1.6 till the game slowed, 2026-10-20)
 
 // A Spitter's bile on a survivor: slowed a while.
 event Slimed
@@ -464,20 +470,23 @@ event(Slimed slimed) TakeSlimed(mut Survivor survivor)
     if (survivor.life == Life.Standing) survivor.slimed = Math.Max(survivor.slimed, slimed.seconds);
 }
 
-// How much quicker the dead are as the danger climbs: none to danger 4, then up to HASTE_MOST more by danger 16 (a
-// sprinter then outpaces a survivor walking as they fire, though not one running).
+// How much quicker the dead are as the danger climbs: none to danger 6, then up to HASTE_MOST more by danger 18. (It was
+// 40% from danger 4 to 16, a sprinter outpacing a survivor firing, till the owner, 2026-10-20: "the nights increase their
+// speed TOO MUCH, it becomes hard to understand what is happening": the nights grow harder in numbers and toughness,
+// hardly in pace.)
 float Haste(float danger)
 {
-    return 1 + HASTE_MOST * Math.Saturate((danger - 4) / 12);
+    return 1 + HASTE_MOST * Math.Saturate((danger - 6) / 12);
 }
 
-const float HASTE_MOST = 0.4;
+const float HASTE_MOST = 0.1;
 
+// (4.8, 3.3 and 1.15 till the game slowed, 2026-10-20: a sprinter, a Runner too, is still slower than a survivor firing)
 float GaitSpeed(Gait gait)
 {
-    if (gait == Gait.Sprint) return 4.8;
-    if (gait == Gait.Run) return 3.3;
-    return 1.15;
+    if (gait == Gait.Sprint) return 3.7;
+    if (gait == Gait.Run) return 2.6;
+    return 1.0;
 }
 
 [Stage(Tick.Zombies)]
@@ -736,7 +745,8 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
                 zombie.windup = 0;
                 zombie.leap = 0.0001;
                 zombie.struck = false;
-                if (target != default) zombie.yaw = YawTo(zombie.at, targetAt + targetGoes * 0.15);
+                // (the way it faced as its aim locked: it had turned to where they'd be at the last moment, which
+                // nothing on the ground could show)
                 Send(Cue { sound = Sfx.Pounce, at = zombie.headAt });
             }
         }
@@ -834,8 +844,10 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
         var rate = zombie.gait == Gait.Shamble ? 3.0 : 7.0;
         zombie.yaw += Math.Clamp(turn, -rate * dt, rate * dt);
     }
-    // Close, or winding up, it turns to face them
-    if (target != default && (nearest < 2.2 || zombie.windup > 0) && zombie.leap <= 0)
+    // Close, or winding up, it turns to face them (a Runner not in its crouch's last POUNCE_LOCK: its leap's way is set,
+    // and shown on the ground, hud.tide's KindTells, so a step aside then takes one out of it)
+    var locked = runner && zombie.windup > POUNCE_CROUCH - POUNCE_LOCK;
+    if (target != default && (nearest < 2.2 || zombie.windup > 0) && zombie.leap <= 0 && !locked)
     {
         var face = TurnBetween(zombie.yaw, YawTo(zombie.at, targetAt));
         zombie.yaw += Math.Clamp(face, -8 * dt, 8 * dt);
@@ -907,10 +919,11 @@ void Spit(Zombie zombie, float3 target, float3 goes, float danger)
 {
     var from = zombie.headAt + Flat(zombie.yaw) * 0.3;
     var aim = target + float3(0, 1.0, 0);
-    var flight = Math.Clamp(Math.Length((aim - from).xz) / SPIT_SPEED, 0.4, 1.6);
+    var flight = Math.Clamp(Math.Length((aim - from).xz) / SPIT_SPEED, SPIT_SOONEST, SPIT_LONGEST);
     var to = aim + float3(goes.x, 0, goes.z) * flight * SPIT_LEAD;
     var velocity = (to - from) / flight + float3(0, 0.5 * SPIT_GRAVITY * flight, 0);
-    Spawn(Missile { kind = Shot.Spit, at = from, velocity = velocity, gravity = SPIT_GRAVITY, damage = SPIT_HURT * Harm(danger), splash = SPIT_REACH, seat = -1, life = 4 });
+    Spawn(Missile { kind = Shot.Spit, at = from, velocity = velocity, gravity = SPIT_GRAVITY, damage = SPIT_HURT * Harm(danger), splash = SPIT_REACH, seat = -1, life = 5,
+                    mark = On(to.x, to.z), flight = flight });
     Send(Cue { sound = Sfx.Spit, at = from });
 }
 
@@ -1002,7 +1015,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     }
     if (killed && wound.seat >= 0 && wound.seat < 4 && party.taken[wound.seat])
         party.survivors[wound.seat].Send(Earned { kill = true, head = wound.head, at = zombie.at,
-                                                  echo = wound.echo || wound.blow == Blow.Burning || wound.blow == Blow.Bleeding });
+                                                  echo = wound.echo || wound.blow == Blow.Burning || wound.blow == Blow.Bleeding, flamed = wound.blow == Blow.Flame });
     var body = BodyOf(this, zombie);
     this.Send(Struck { at = wound.head ? body.head : body.chest, from = wound.from, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
                        blow = wound.blow, crit = wound.crit, mail = mail && wound.damage >= 1, damage = damage, aimed = wound.aimed });

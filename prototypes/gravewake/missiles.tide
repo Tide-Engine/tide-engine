@@ -24,6 +24,8 @@ component Missile
     float age;
     bool echo;                  // Set off by an item: what it kills sets off nothing more
     int rank = 1;               // A Thumper's grenade's or a napalm glob's skill's rank (how wide and long its fire burns)
+    float3 mark;                // Where bile will land, on the ground (marked there while it flies: hud.tide's SpitMarks)...
+    float flight;               // ...and how long it'll take
 }
 
 // A burst: fire, a grenade's, a mine's, a shell's.

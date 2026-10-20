@@ -17,14 +17,16 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over) return;
     FaceAim(survivor);
 
-    // Health comes back slowly after a few calm seconds (REGEN_DELAY, REGEN_RATE of it a second: it had come back whole in
-    // under two, so a survivor who dashed clear a moment never had to fear a blow); what Leech Rounds may heal comes back
-    // all the time
+    // Health comes back slowly after a few calm seconds (items.tide's RegenDelay, RegenRate: it had come back whole in
+    // under two, so a survivor who dashed clear a moment never had to fear a blow), sooner and faster with First Aid Kits;
+    // what Leech Rounds may heal comes back all the time
     survivor.calm += dt;
     survivor.slimed = Math.Max(0, survivor.slimed - dt);
     var leechMost = MaxHealth(survivor) * 0.08 * Has(survivor, Item.Leech);
     survivor.leech = Math.Min(leechMost, survivor.leech + leechMost * dt);
-    if (survivor.life == Life.Standing && survivor.calm > REGEN_DELAY) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * REGEN_RATE);
+    var kits = Has(survivor, Item.FirstAid);
+    if (survivor.life == Life.Standing && survivor.calm > RegenDelay(kits))
+        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * RegenRate(kits));
 
     // Down: bleeding out, crawling, unless someone comes
     if (survivor.life == Life.Downed)
@@ -150,8 +152,6 @@ float Wading(Survivor survivor, Herd herd)
 }
 
 const float SLIME_SLOW = 0.6;       // Of their speed a survivor keeps while a Spitter's bile is on them (zombies.tide)
-const float REGEN_DELAY = 4;        // Seconds unhurt before health comes back...
-const float REGEN_RATE = 0.04;      // ...and how much of it a second
 const float GRIP = 22;              // How fast feet on the ground take up the way they're asked to go (a second's share)
 const float TOUCH_SLOW = 0.22;      // Speed lost to each of the dead pressed against a survivor
 const float TOUCH_SLOW_MOST = 0.6;  // ...and the most lost to them all
@@ -283,8 +283,8 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
         AutoSkill(this, survivor, 2, ashwick, herd);
     }
 
-    // Finishing what the hands were doing
-    var info = Info(survivor.gun);
+    // Finishing what the hands were doing (the gun as its cards have made it)
+    var info = GunOf(survivor, survivor.gun);
     var holds = MagOf(survivor, survivor.gun);
     switch (survivor.act)
     {
@@ -325,7 +325,8 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     // fired each shell as it went in, and never filled); a magazine's has to finish
     if (survivor.act == Act.Reload && (!info.shells || !hands.attack.down)) return;
 
-    // A shot: each pellet a ray
+    // A shot: each pellet a ray (the gun's cards' rounds besides: items.tide's GunOf for the rest)
+    var round = survivor.mag;
     if (!info.bottomless) survivor.mag -= 1;
     survivor.shotWait = info.rate / Haste(survivor);
     survivor.steady = 0;
@@ -333,17 +334,62 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     var aimed = AimedAt(survivor, info.range);
     var right = Math.Normalize(Math.Cross(float3(0, 1, 0), look));
     var up = Math.Cross(look, right);
-    var trace = info.pellets > 1 ? Trace.Pellet : Trace.Bullet;
-    var reach = info.cone > 0 ? info.range + FLAME_NOZZLE * Has(survivor, Item.ApRounds) : info.range;
-    if (info.cone > 0) Scorch(ArmsOf(survivor), from, look, reach, info.cone, info.damage * Might(survivor), info.proc, ashwick, herd);
-    for (var p = 0; p < info.pellets && info.cone <= 0; p++)
+    var own = survivor.gun == RoleWeapon(survivor.role);
+    var arms = ArmsOf(survivor);
+    var might = Might(survivor);
+    var pierce = info.pierce + Has(survivor, Item.ApRounds);
+    if (info.cone > 0)
     {
-        var off = Random.NextFloat2Direction() * Random.NextFloat(info.spread);
-        var way = Math.Normalize(look + right * off.x + up * off.y);
-        Shoot(ArmsOf(survivor), from, way, info.range, info.damage * Might(survivor), info.head, info.pierce + Has(survivor, Item.ApRounds), ashwick, herd, trace, info.proc,
-              aimed);
+        var sticky = own ? Has(survivor, Item.StickyFuel) : 0;
+        Scorch(arms, from, look, info.range, info.cone, info.damage * might, info.proc, ashwick, herd, FLAME_MOST + WIDE_MOST * (own ? Has(survivor, Item.WideNozzle) : 0),
+               FLAME_IGNITE * (1 + sticky));
     }
-    Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Gun, reach = reach });
+    else if (info.pellets > 1)
+    {
+        // The shotgun: its pellets (Concussion Shells pushing harder and knocking down near, Dragon Shells burning), and a
+        // Slug Core's slug down the middle
+        var concussion = own ? Has(survivor, Item.Concussion) : 0;
+        var dragon = own ? Has(survivor, Item.DragonShells) : 0;
+        var trace = dragon > 0 ? Trace.Ember : Trace.Pellet;
+        for (var p = 0; p < info.pellets; p++)
+        {
+            var off = Random.NextFloat2Direction() * Random.NextFloat(info.spread);
+            var way = Math.Normalize(look + right * off.x + up * off.y);
+            var lit = dragon > 0 && Random.NextFloat() < DRAGON_CHANCE * dragon;
+            Shoot(arms, from, way, info.range, info.damage * might, info.head, pierce, ashwick, herd, trace, info.proc, aimed, ignite: lit,
+                  push: 1 + CONCUSS_KNOCK * concussion, down: CONCUSS_DOWN * concussion);
+        }
+        var slug = own ? Has(survivor, Item.Slug) : 0;
+        if (slug > 0)
+            Shoot(arms, from, look, info.range * 1.5, SLUG_HURT * might * (1 + 0.5 * (slug - 1)), 3, 1 + 2 * slug, ashwick, herd, Trace.Slug, 1, aimed, push: 3);
+    }
+    else
+    {
+        // A round (the carbine's cards: a burst's more in a fan, heavier rounds, a marksman's headshots going on, now and
+        // then an incendiary one)
+        var burst = own ? Has(survivor, Item.Burst) : 0;
+        var caliber = own ? Has(survivor, Item.Caliber) : 0;
+        var incendiary = own ? Has(survivor, Item.Incendiary) : 0;
+        var lit = incendiary > 0 && round % Math.Max(1, INCENDIARY_EVERY - incendiary) == 0;
+        var damage = info.damage * might * (incendiary >= 3 ? 1.1 : 1.0);
+        var trace = lit ? Trace.Fire : Trace.Bullet;
+        var weight = 1 + 0.25 * caliber;
+        var knock = 1 + CALIBER_KNOCK * caliber;
+        var headPierce = own ? Has(survivor, Item.Marksman) : 0;
+        // (each past the first on alternate sides, the side flipping a shot: two rounds don't always lean one way)
+        var flip = round % 2 == 0 ? 1.0 : -1.0;
+        for (var k = 0; k <= burst; k++)
+        {
+            var turn = k == 0 ? 0.0 : flip * (k % 2 == 1 ? 1.0 : -1.0) * ((k + 1) / 2) * BURST_FAN;
+            var off = Random.NextFloat2Direction() * Random.NextFloat(info.spread);
+            var straight = Math.Normalize(look + right * off.x + up * off.y);
+            var way = turn == 0 ? straight : Math.Rotate(quaternion.AxisAngle(float3(0, 1, 0), turn), straight);
+            Shoot(arms, from, way, info.range, damage * (k == 0 ? 1.0 : BURST_SHARE), info.head, pierce, ashwick, herd, trace, info.proc, aimed, headPierce: headPierce,
+                  ignite: lit, weight: weight, push: knock);
+        }
+    }
+    Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Gun, reach = info.range, cone = info.cone,
+                  heat = own ? Has(survivor, Item.HotFuel) : 0, rank = own ? GunLevel(survivor) : 1 });
     survivor.act = Act.Fire;
     survivor.actTime = 0;
     survivor.actLength = Math.Max(0.12, info.rate / Haste(survivor));
@@ -503,8 +549,12 @@ void StartAct(mut Survivor survivor, Act act, float seconds)
 
 // A round from `from` along `way`: the dead in its line, nearest first, as many as it goes through, then the wall or the
 // ground it ends in. What it hits is wounded through the items (Land); with HE Rounds it bursts on the first (a pellet's
-// as often as it sets items off). What it leaves is a tracer and, in a wall, a chip.
-void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float head, int pierce, Ashwick ashwick, Herd herd, Trace kind, float chance, float3 aim)
+// as often as it sets items off). What it leaves is a tracer and, in a wall, a chip. The gun's cards: a headshot goes on
+// through `headPierce` more (Marksman), `ignite` sets what it strikes alight (an incendiary round, a dragon shell), its
+// tracer `weight` times as thick (Heavy Caliber), pushing `push` times as hard, and within CONCUSS_NEAR knocking one down
+// `down` of the time (Concussion Shells).
+void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float head, int pierce, Ashwick ashwick, Herd herd, Trace kind, float chance, float3 aim,
+           int headPierce = 0, bool ignite = false, float weight = 1, float push = 1, float down = 0)
 {
     // Level, across the ground (the owner, 2026-10-18: "when i shoot from a slight slope i completely miss the zombies,
     // we should likely ignore elevation"): the round keeps the gun's height, goes over the ground's rise and fall, is
@@ -537,17 +587,23 @@ void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float 
         weaks.Insert(at, aimedWeak);
         heads.Insert(at, !aimedWeak && aimedHead);
     }
-    var count = Math.Min(pierce, struck.count);
-    var knock = kind == Trace.Phase ? 3.0 : kind == Trace.Pellet ? 1.5 : 1.0;
+    var knock = (kind == Trace.Phase ? 3.0 : kind == Trace.Pellet || kind == Trace.Ember ? 1.5 : 1.0) * push;
     mut var end = Math.Min(1, wall);
-    for (var i = 0; i < count; i++)
+    // So many of the dead in its line as it goes through (a headshot, with Marksman, taking it on through more)
+    mut var left = pierce;
+    mut var count = 0;
+    for (var i = 0; i < struck.count && left > 0; i++)
     {
         mut var dealt = weaks[i] ? damage * SpotsOf(struck[i], herd).weakTimes : heads[i] ? damage * head : damage;
         // A boss takes a pellet at half: every one of a shotgun's eleven finds something that big, and it had done twice
         // what the carbine and the SMG do to one (boss.tide's BOSS_PELLET)
-        if (kind == Trace.Pellet && struck[i].boss >= 0) dealt *= BOSS_PELLET;
-        Land(arms, struck[i], dealt, heads[i], weaks[i], from, knock, chance, herd, true);
-        if (i == pierce - 1) end = when[i];
+        if ((kind == Trace.Pellet || kind == Trace.Ember) && struck[i].boss >= 0) dealt *= BOSS_PELLET;
+        var downed = down > 0 && Math.Length((struck[i].at - from).xz) < CONCUSS_NEAR && Random.NextFloat() < down;
+        Land(arms, struck[i], dealt, heads[i], weaks[i], from, knock, chance, herd, true, ignite: ignite, down: downed);
+        count += 1;
+        left -= 1;
+        if (heads[i]) left += headPierce;
+        if (left == 0) end = when[i];
     }
     // Ricochet Rounds: on from the last it struck (a pellet's as often as it sets items off)
     var bounces = Holds(arms, Item.Ricochet);
@@ -557,15 +613,16 @@ void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float 
         var roll = Random.NextFloat();
         if (roll < chance) Detonate(arms, struck[0], Math.Lerp(from, to, when[0]), damage, herd);
     }
-    Send(Traced { seat = arms.seat, from = from, to = Math.Lerp(from, to, end), kind = kind });
-    if (wall <= 1 && count < pierce) Send(Thud { at = Math.Lerp(from, to, wall), normal = normal });
+    Send(Traced { seat = arms.seat, from = from, to = Math.Lerp(from, to, end), kind = kind, weight = weight });
+    if (wall <= 1 && left > 0) Send(Thud { at = Math.Lerp(from, to, wall), normal = normal });
 }
 
 // A flamethrower's puff: every one of the dead in its cone, `reach` ahead of the nozzle across the ground (short of what
 // stands in the way) and `cone` metres either side of the aim for each metre out, and any close by in front; the
-// FLAME_MOST nearest. Each takes it through the items (Land, as a Blow.Flame), no shove or reel, and catches fire one
-// puff in FLAME_IGNITE. The flames go through them: there's no round to stop.
-void Scorch(Arms arms, float3 from, float3 way, float reach, float cone, float damage, float chance, Ashwick ashwick, Herd herd)
+// `most` nearest (FLAME_MOST, more with a Wide Nozzle). Each takes it through the items (Land, as a Blow.Flame), no
+// shove or reel, and catches fire one puff in `ignite` (FLAME_IGNITE, more with Sticky Fuel). The flames go through them:
+// there's no round to stop.
+void Scorch(Arms arms, float3 from, float3 way, float reach, float cone, float damage, float chance, Ashwick ashwick, Herd herd, int most, float ignite)
 {
     var flat = Math.Length(way.xz);
     var level = flat > 0.001 ? float3(way.x / flat, 0, way.z / flat) : float3(0, 0, 1);
@@ -589,14 +646,13 @@ void Scorch(Arms arms, float3 from, float3 way, float reach, float cone, float d
         caught.Insert(at, z);
         nears.Insert(at, d);
     }
-    for (var i = 0; i < Math.Min(caught.count, FLAME_MOST); i++)
+    for (var i = 0; i < Math.Min(caught.count, most); i++)
     {
         var roll = Random.NextFloat();
-        Land(arms, caught[i], damage, false, false, from, -1, chance, herd, true, Blow.Flame, roll < FLAME_IGNITE);
+        Land(arms, caught[i], damage, false, false, from, -1, chance, herd, true, Blow.Flame, roll < ignite);
     }
 }
 
-const float FLAME_NOZZLE = 1;       // How much further a flamethrower reaches for each AP Round (a longer nozzle)
 const float FLAME_NEAR = 1.3;       // Within this, any of the dead in front is in the flames, whatever the cone
 const int FLAME_MOST = 14;          // A puff reaches so many of the dead at most, the nearest
 const float FLAME_IGNITE = 0.06;    // How likely a puff is to set one it reaches alight (about a second in the flames)
@@ -672,6 +728,7 @@ event(Hurt hurt) TakeHurt(mut Survivor survivor, Match match)
         survivor.items[int(Item.SecondWind)] -= 1;
         survivor.health = MaxHealth(survivor);
         Send(Cue { sound = Sfx.Revive, at = survivor.feet });
+        Send(Winded { seat = survivor.seat, at = survivor.feet, left = survivor.selfRevives });
         return;
     }
     survivor.health = 0;
@@ -698,6 +755,15 @@ event Revived
     int by;
 }
 
+// A Second Wind used: a survivor who'd have gone down straight back up, whole, for what's seen and heard (the owner,
+// 2026-10-20: "second wind needs to be clear when it was used"). `left`: how many more they have.
+event Winded
+{
+    int seat;
+    float3 at;
+    int left;
+}
+
 // What fired: the gun, a phase round, a turret, a drone.
 enum Source { Gun, Phase, Turret, Drone }
 
@@ -709,11 +775,15 @@ event Loosed
     float3 at;
     float3 way;                 // The way it was aimed
     Source source;
-    float reach;                // How far it reaches (a flamethrower's fire is drawn as far)
+    float reach;                // How far it reaches (a flamethrower's fire is drawn as far)...
+    float cone;                 // ...and how wide (Wide Nozzle)
+    int heat;                   // Hot Fuel's ranks: its fire burns brighter, then blue
+    int rank = 1;               // The gun's level (its cards' ranks and one)
 }
 
-// What a round's line looks like.
-enum Trace { Bullet, Pellet, Phase, Turret, Drone, Bounce, Shard }
+// What a round's line looks like: an incendiary round's (Fire), a dragon shell's pellet (Ember) and a slug's are the gun
+// cards'.
+enum Trace { Bullet, Pellet, Phase, Turret, Drone, Bounce, Shard, Fire, Ember, Slug }
 
 // A round's line, from the eye (or a turret's or a drone's gun) to where it stopped.
 event Traced
@@ -722,6 +792,7 @@ event Traced
     float3 from;
     float3 to;
     Trace kind;
+    float weight = 1;           // How thick, against its kind's (Heavy Caliber's rounds)
 }
 
 // Live Wire's arc, from one of the dead to the next.

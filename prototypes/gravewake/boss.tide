@@ -82,15 +82,15 @@ Mutant MutantOf(BossKind kind)
     switch (kind)
     {
         case BossKind.Brood:
-            return Mutant { name = "THE BROODMOTHER", size = 2.2, radius = 1.1, speed = 1.7, health = 1.1, head = float3(0, 1.45, 0.38), chest = float3(0, 1.375, 0.17),
+            return Mutant { name = "THE BROODMOTHER", size = 2.2, radius = 1.1, speed = 1.5, health = 1.1, head = float3(0, 1.45, 0.38), chest = float3(0, 1.375, 0.17),
                             hips = float3(0, 0.99, 0.07), weak = float3(0, 1.03, 0.39), weakRadius = 0.36, weakTimes = 2, headRadius = 0.2, chestRadius = 0.36, weakFace = float3(0, 0, 1), tint = float3(0.9, 1.0, 0.75),
                             hint = "Her glowing sac: wide open as she births" };
         case BossKind.Stalker:
-            return Mutant { name = "THE STALKER", size = 2.0, radius = 0.7, speed = 4.2, health = 0.75, head = float3(0, 1.71, 0.61), chest = float3(0, 1.66, 0.33),
+            return Mutant { name = "THE STALKER", size = 2.0, radius = 0.7, speed = 3.5, health = 0.75, head = float3(0, 1.71, 0.61), chest = float3(0, 1.66, 0.33),
                             hips = float3(0, 1.23, 0.05), weak = float3(0, 1.51, 0.44), weakRadius = 0.13, weakTimes = 1.5, headRadius = 0.13, chestRadius = 0.25, weakFace = float3(0, 0, 1), tint = float3(0.8, 0.85, 1.0),
                             hint = "The sac at its throat, as it shrieks" };
     }
-    return Mutant { name = "THE MAULER", size = 2.3, radius = 1.0, speed = 2.4, health = 1.0, head = float3(0, 1.17, 0.46), chest = float3(0, 1.14, 0.32),
+    return Mutant { name = "THE MAULER", size = 2.3, radius = 1.0, speed = 2.1, health = 1.0, head = float3(0, 1.17, 0.46), chest = float3(0, 1.14, 0.32),
                     hips = float3(0, 0.78, 0.05), weak = float3(0, 1.29, 0.19), weakRadius = 0.3, weakTimes = 3, headRadius = 0.13, chestRadius = 0.36, weakFace = float3(0, 0, -1), tint = float3(1.0, 0.75, 0.68),
                     hint = "The sores on its back" };
 }
@@ -114,7 +114,7 @@ const float SWIPE_WINDUP = 0.55;        // The Stalker's slam: quicker, closer
 const float SWIPE_RADIUS = 3.2;
 const float SWIPE_DAMAGE = 30;
 const float CHARGE_WINDUP = 0.9;
-const float CHARGE_SPEED = 15;
+const float CHARGE_SPEED = 12;          // (15 till the game slowed, 2026-10-20)
 const float CHARGE_SECONDS = 1.3;
 const float CHARGE_DAMAGE = 35;
 const float RECOVER_SECONDS = 1.6;      // The Mauler, after a charge: turned slowly, its back open
@@ -464,10 +464,11 @@ void BossTo(mut Boss boss, BossMove move)
 void Lob(float3 from, float3 target, float3 goes, float damage)
 {
     var aim = target + float3(0, 1.0, 0);
-    var flight = Math.Clamp(Math.Length((aim - from).xz) / SPIT_SPEED, 0.4, 1.8);
+    var flight = Math.Clamp(Math.Length((aim - from).xz) / SPIT_SPEED, SPIT_SOONEST, SPIT_LONGEST);
     var to = aim + float3(goes.x, 0, goes.z) * flight * SPIT_LEAD;
     var velocity = (to - from) / flight + float3(0, 0.5 * SPIT_GRAVITY * flight, 0);
-    Spawn(Missile { kind = Shot.Spit, at = from, velocity = velocity, gravity = SPIT_GRAVITY, damage = damage, splash = SPIT_REACH, seat = -1, life = 4 });
+    Spawn(Missile { kind = Shot.Spit, at = from, velocity = velocity, gravity = SPIT_GRAVITY, damage = damage, splash = SPIT_REACH, seat = -1, life = 5, mark = On(to.x, to.z),
+                    flight = flight });
 }
 
 float3 Flatten(float3 v)

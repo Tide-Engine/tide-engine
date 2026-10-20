@@ -713,18 +713,18 @@ typedef struct rgba {
     uint8_t r, g, b, a;
 } rgba;
 
-// Kept from 0 to 1 first, NaN as 0 (fmaxf gives the number that isn't NaN),
-// with no branch, so a color's four are converted at once: tide_platform_draw
-// --bench spent a seventh of its own time here when each channel branched.
-// The bytes are the same for every float.
-static uint8_t color_channel(const float v)
-{
-    return (uint8_t)(fminf(fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f);
-}
+// A color as bytes: each channel kept from 0 to 1 first, NaN as 0, times 255, plus a half, and what's after the
+// point dropped, the four at once (maxnum and minnum are fmaxf's and fminf's rule; lane by lane, IEEE's arithmetic):
+// the same byte for every one of the 2^32 floats as (uint8_t)(fminf(fmaxf(v, 0), 1) * 255 + 0.5f), checked
+// exhaustively. With no branch: tide_platform_draw --bench spent a seventh of its time here when each channel branched.
+typedef float rgba_lanes __attribute__((ext_vector_type(4)));
+typedef int32_t rgba_ints __attribute__((ext_vector_type(4)));
 
 static rgba to_rgba(const tide_color c)
 {
-    return (rgba){color_channel(c.r), color_channel(c.g), color_channel(c.b), color_channel(c.a)};
+    const rgba_lanes kept = __builtin_elementwise_minnum(__builtin_elementwise_maxnum((rgba_lanes){c.r, c.g, c.b, c.a}, (rgba_lanes)0.0f), (rgba_lanes)1.0f);
+    const rgba_ints bytes = __builtin_convertvector(kept * 255.0f + 0.5f, rgba_ints);
+    return (rgba){(uint8_t)bytes.x, (uint8_t)bytes.y, (uint8_t)bytes.z, (uint8_t)bytes.w};
 }
 
 // Shapes go to the GPU as instances of one quad, each its shape in window
@@ -1155,14 +1155,30 @@ static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const ca
             if (form > TIDE_SHAPE_ARC) continue;
             // Its lengths in window pixels, and its angles as the screen has them, where y goes down
             const tide_float2 center = to_screen(cam, c->a);
-            const rgba color = to_rgba(c->color), color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
+            const rgba color = to_rgba(c->color);
             *out = (shape){{center.x, center.y}, {c->b.x * scale * 0.5f, c->b.y * scale * 0.5f},
                            {color.r, color.g, color.b, color.a}, (float)kinds[form]};
+            const float outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale, soft = s->soft * scale;
+            // A solid one (solid_shape's test, on the numbers its extra would have), while the run's are: its radius
+            // alone, its extra never made. The same color's bits are the same bytes
+            if (radius && form != TIDE_SHAPE_ARC && s->turn.x == 1.0f && s->turn.y == 0.0f && outline == 0.0f && soft == 0.0f) {
+                bool one_color = memcmp(&s->color2, &c->color, sizeof s->color2) == 0;
+                if (!one_color) {
+                    const rgba bottom = to_rgba(s->color2);
+                    one_color = memcmp(&bottom, &color, sizeof bottom) == 0;
+                }
+                if (one_color) {
+                    *radius++ = s->radius * scale;
+                    out++;
+                    continue;
+                }
+            }
+            const rgba color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
             const shape_extra e = {.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
                                    .radius = s->radius * scale,
                                    // A hairline is a logical pixel wide, whatever the camera
-                                   .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
-                                   .soft = s->soft * scale,
+                                   .outline = outline,
+                                   .soft = soft,
                                    .sweep = s->sweep,
                                    .color2 = {color2.r, color2.g, color2.b, color2.a},
                                    .rim = {rim.r, rim.g, rim.b, rim.a}};
@@ -1512,6 +1528,59 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
     for (uint32_t j = i; j < count; j++) out[j - i] = corner_of(&k, &vertices[indices[j]]);
     s->count += count - i;
     mesh_vertex_count += count - i;
+}
+
+// A run of the quads the list kept as quads (TIDE_DRAW_QUADS), after the ones before it when nothing came between
+// them: the quads add_mesh makes of the same two triangles, or where the run's triangles already, those triangles.
+// The same numbers to the bit: make_quad_across's box of p and r through the camera, a lane each as there, and
+// corner_of's corners.
+static void add_quads(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
+{
+    draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
+    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter || s->wrap != c->mesh.wrap) {
+        s = start_quads(STEP_MESH);
+        s->texture = c->mesh.texture;
+        s->filter = c->mesh.filter;
+        s->wrap = c->mesh.wrap;
+    }
+    const uint32_t first = c->mesh.first < list->quad_count ? c->mesh.first : list->quad_count;
+    const uint32_t count = c->mesh.count < list->quad_count - first ? c->mesh.count : list->quad_count - first;
+    const tide_draw_quad *in = list->quads + first;
+    const corner_camera k = corner_camera_of(cam);
+    if (s->quads) {
+        quad *out = quad_room(count);
+        const float_lanes centers = {k.cx, k.cy, k.cx, k.cy};
+        const float_lanes half = {k.half_width, k.half_height, k.half_width, k.half_height};
+        for (uint32_t i = 0; i < count; i++, out++) {
+            const tide_draw_quad *q = &in[i];
+            const float_lanes at = {q->from.x, q->from.y, q->to.x, q->to.y};
+            float_lanes box;
+            if (k.gui) {
+                box = at * k.scale;
+            } else {
+                const float_lanes moved = (at - centers) * k.scale;
+                box = __builtin_shufflevector(half + moved, half - moved, 0, 5, 2, 7);
+            }
+            const float span[4] = {q->uv_from.x, q->uv_from.y, q->uv_to.x, q->uv_to.y};
+            const rgba bytes = to_rgba(q->color);
+            memcpy(out->box, &box, sizeof out->box);
+            memcpy(out->span, span, sizeof out->span);
+            memcpy(out->color, &bytes, sizeof out->color);
+            out->pattern = (int32_t)q->pattern;
+        }
+        quad_count += count;
+        s->count += count;
+        return;
+    }
+    mesh_vertex *out = mesh_room(6u * count);
+    for (uint32_t i = 0; i < count; i++) {
+        for (uint32_t corner = 0; corner < 6u; corner++) {
+            const tide_vertex v = tide_draw_quad_corner(&in[i], corner);
+            *out++ = corner_of(&k, &v);
+        }
+    }
+    s->count += 6u * count;
+    mesh_vertex_count += 6u * count;
 }
 
 // A glyph's two triangles over its four corners, after the text before it: a quad where it's one.
@@ -3961,6 +4030,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case TIDE_DRAW_MESH:
             add_mesh(list, c, cam);
+            break;
+        case TIDE_DRAW_QUADS:
+            add_quads(list, c, cam);
             break;
         case TIDE_DRAW_CAMERA_3D:
             if (c->camera.matrix >= list->matrix_count) { // TIDE_DRAW_FIRST_CAMERA

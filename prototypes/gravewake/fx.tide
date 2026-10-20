@@ -438,12 +438,15 @@ view DrawFx(Fx fx, Lens lens)
 local event(Struck struck) Bleed(mut Fx fx)
 {
     if (struck.blow == Blow.Shove) return;
-    // Turned by a Warden's mail: sparks off iron, no blood
+    // Turned by a Warden's mail: sparks off iron, no blood; bright and many, a flash of steel blue, so it's seen that it
+    // turned the round (the owner, 2026-10-20: the kinds "need to be clear what they do")
     if (struck.mail && !struck.killed)
     {
-        for (var i = 0; i < 6; i++)
-            Glow(fx, Mote { at = struck.at, velocity = (Math.Normalize(struck.at - struck.from) * -2 + Scatter(fx, 3)), life = 0.25, size = 0.025, color = float3(1.0, 0.85, 0.5),
+        var back = Math.Normalize(struck.at - struck.from) * -3;
+        for (var i = 0; i < 14; i++)
+            Glow(fx, Mote { at = struck.at, velocity = back + Scatter(fx, 4.5), life = 0.3, size = 0.04, color = i % 3 == 0 ? float3(0.7, 0.85, 1.0) : float3(1.0, 0.85, 0.5),
                             alpha = 5, gravity = 8 });
+        Glow(fx, Mote { at = struck.at, life = 0.08, size = 0.3, grow = 2, color = float3(0.6, 0.75, 1.0), alpha = 2 });
         return;
     }
     // The way the blow went, across the ground: what comes out the far side goes on that way
@@ -667,11 +670,14 @@ local event(Spell spell) Conjure(mut Fx fx)
 }
 
 // A round's line: from the muzzle (where the gun was drawn), a thin bright streak to where it stopped; a phase round's
-// wide and pale, a drone's red. And the muzzle's flash.
+// wide and pale, a drone's red; the gun cards' a heavy round's thicker, an incendiary round's and a dragon shell's
+// burning red with embers shed along it, a slug's a white-hot bar. And the muzzle's flash.
 local event(Traced traced) Tracer(mut Fx fx, Grip grip)
 {
     var way = Math.Normalize(traced.to - traced.from);
-    var gun = traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase;
+    var gun = traced.kind == Trace.Bullet || traced.kind == Trace.Pellet || traced.kind == Trace.Phase || traced.kind == Trace.Fire || traced.kind == Trace.Ember
+              || traced.kind == Trace.Slug;
+    var weight = Math.Max(0.5, traced.weight);
     var drawn = gun && traced.seat >= 0 && traced.seat < 4 ? grip.muzzles[traced.seat] : float3(0);
     var from = gun && Math.Distance(drawn, traced.from) < 1.5 ? drawn : gun ? traced.from + way * 0.6 : traced.from;
     if (Math.Distance(from, traced.to) < 0.3) return;
@@ -697,8 +703,26 @@ local event(Traced traced) Tracer(mut Fx fx, Grip grip)
         case Trace.Pellet:
             fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.06, width = 0.035, color = float3(1.0, 0.75, 0.45) });
             break;
+        case Trace.Fire:
+        case Trace.Ember:
+        {
+            // Burning: a red-orange streak, longer lived, and embers shed along it, falling
+            var pellet = traced.kind == Trace.Ember;
+            fx.streaks.Add(Streak { from = from, to = traced.to, life = pellet ? 0.09 : 0.13, width = (pellet ? 0.045 : 0.065) * weight, color = float3(1.0, 0.38, 0.08) });
+            var length = Math.Distance(from, traced.to);
+            var embers = Math.Clamp(int(length * (pellet ? 0.25 : 0.4)), 1, 6);
+            for (var i = 0; i < embers; i++)
+                Glow(fx, Mote { at = Math.Lerp(from, traced.to, fx.random.NextFloat()), velocity = Scatter(fx, 0.8) + float3(0, 0.6, 0), life = fx.random.NextFloat(0.25, 0.5),
+                                size = 0.03, color = float3(1.0, 0.45, 0.1), alpha = 3, gravity = 2, cool = 1 });
+            break;
+        }
+        case Trace.Slug:
+            // A slug: a thick white-hot bar, then its afterglow
+            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.12, width = 0.2, color = float3(1.0, 0.95, 0.8) });
+            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.35, width = 0.09, color = float3(1.0, 0.55, 0.25) });
+            break;
         default:
-            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.08, width = 0.05, color = float3(1.0, 0.82, 0.5) });
+            fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.08 * (0.5 + 0.5 * weight), width = 0.05 * weight, color = float3(1.0, 0.82, 0.5) });
             break;
     }
 }
@@ -872,6 +896,28 @@ local event(Picked picked) Anoint(mut Fx fx)
     {
         var turn = i * Math.TAU / 40;
         Glow(fx, Mote { at = picked.at + float3(0, 0.12, 0), velocity = float3(Math.Sin(turn), 0, Math.Cos(turn)) * 7, drag = 3, life = 0.5, size = 0.1, color = hue, alpha = 2.5 });
+    }
+}
+
+// A Second Wind used: a burst of gold-white light off the survivor, motes rushing up and a ring of them flung out over
+// the ground.
+local event(Winded winded) Rewind(mut Fx fx)
+{
+    if (!fx.made) return;
+    var hue = float3(1.0, 0.85, 0.45);
+    fx.flashes.Add(Flash { at = winded.at + float3(0, 1.2, 0), color = hue * 12, reach = 10, life = 0.6 });
+    for (var i = 0; i < 90; i++)
+    {
+        var turn = fx.random.NextFloat(Math.TAU);
+        var r = fx.random.NextFloat(0.1, 0.7);
+        Glow(fx, Mote { at = winded.at + float3(Math.Sin(turn) * r, fx.random.NextFloat(0, 1.6), Math.Cos(turn) * r), velocity = float3(0, fx.random.NextFloat(4, 10), 0),
+                        life = fx.random.NextFloat(0.6, 1.1), size = fx.random.NextFloat(0.08, 0.16), grow = -0.1, color = i % 3 == 0 ? float3(1, 1, 0.9) : hue, alpha = 3.5,
+                        drag = 1 });
+    }
+    for (var i = 0; i < 60; i++)
+    {
+        var turn = i * Math.TAU / 60;
+        Glow(fx, Mote { at = winded.at + float3(0, 0.15, 0), velocity = float3(Math.Sin(turn), 0, Math.Cos(turn)) * 11, drag = 2.5, life = 0.7, size = 0.14, color = hue, alpha = 3 });
     }
 }
 

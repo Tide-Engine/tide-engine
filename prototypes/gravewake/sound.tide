@@ -110,7 +110,6 @@ local singleton Ears
     float stepped;            // Metres walked at this machine's last footfall
     float[4] othersStepped;
     Act lastAct;
-    float lastActTime;
     float orbChime;           // When the last orb's chime was, and how far up the scale the run of them has got
     int orbStep;
     float voices;             // The dead's voices that may start now, coming back at eight a second
@@ -274,7 +273,9 @@ view Footfalls(Survivor survivor, mut Ears ears, Me me, Village village)
     else Audio.Play(clip, s.feet, 0.7, pitch);
 }
 
-// What this machine's own hands do that the match sends no event for: a magazine changed, a shotgun pumped.
+// What this machine's own hands do that the match sends no event for: a magazine changed. (A shotgun's pump racked a
+// moment after each blast till the owner, 2026-10-21: "the shotgun should just be a thump sound not a draw back and
+// forth one": it never loads, and the blast is all that's heard of it.)
 [Stage(Layers.Hud, 33)]
 view Handling(mut Ears ears, Me me, query (Survivor survivor) survivors)
 {
@@ -285,14 +286,11 @@ view Handling(mut Ears ears, Me me, query (Survivor survivor) survivors)
         var info = Info(s.gun);
         if (s.act == Act.Reload && ears.lastAct != Act.Reload && !info.shells)
             Audio.Play(s.gun == Weapon.Pistol ? pistolReload : magReload, 0.8, (s.gun == Weapon.Pistol ? 1.5 : 1.4) / Math.Max(0.4, s.actLength));
-        // The pump, a moment after the shot
-        if (s.gun == Weapon.Shotgun && s.act == Act.Fire && s.actTime >= 0.28 && (ears.lastActTime < 0.28 || ears.lastAct != Act.Fire)) Audio.Play(pumpClip, 0.75);
         // The right mouse's skill back: a soft chime (with its flare round the crosshair, hud.tide)
         var ready = s.cooldowns[0] <= 0;
         if (ready && !ears.skillReady && s.life == Life.Standing && s.role != Role.None) Audio.Play(readyClip, 0.55);
         ears.skillReady = ready;
         ears.lastAct = s.act;
-        ears.lastActTime = s.actTime;
     }
 }
 
@@ -472,6 +470,13 @@ local event(HordeRose horde) HearHorde(mut Ears ears)
         var at = horde.at + float3(Math.Sin(turn) * off, 1.4, Math.Cos(turn) * off);
         Audio.Play(groans[ears.random.NextInt(groans.count)], at, 0.75, ears.random.NextFloat(0.7, 0.95));
     }
+}
+
+// A Second Wind used: the rare item's chord over the revive's (Cue), so it's heard as more than being raised.
+local event(Winded winded) HearWinded(Me me)
+{
+    if (winded.seat == me.seat) Audio.Play(itemRare, 1.0);
+    else Audio.Play(itemRare, winded.at, 0.7, 1.0);
 }
 
 local event(Cue cue) HearCue(mut Ears ears, Me me)

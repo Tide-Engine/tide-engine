@@ -37,6 +37,8 @@ local singleton Feed
     List<float3> blows;          // Where the blows taken came from...
     List<float> blowAges;        // ...and how long ago
     List<Tally> tallies;         // The numbers of hits rising off the dead
+    float winded = 10;           // Seconds since this machine's survivor's Second Wind went (the flash and the ring out)
+    float3 windAt;
     float readyFlash;            // Seconds since the right mouse's skill came back (a flare round the crosshair)...
     bool wasReady = true;        // ...as it was last frame
 }
@@ -78,8 +80,8 @@ void Panel(float2 center, float2 size, float u)
                        outlineColor = Color(1, 0.9, 0.75, 0.13) });
 }
 
-// A circle on the ground round a place, drawn over the picture.
-void GroundRing(Look look, float3 at, float radius, float thick, Color c, float w, float h)
+// A circle on the ground round a place, drawn over the picture; or of it only `sweep` radians from the yaw `start`.
+void GroundRing(Look look, float3 at, float radius, float thick, Color c, float w, float h, float start = 0, float sweep = 6.2831855)
 {
     // In the picture's own big pixels, one square for each it passes through, so it looks drawn in the world with the
     // rest, not a smooth line over it (the owner, 2026-10-19: "some of the VFX are very smooth looking"); a pixel
@@ -91,11 +93,11 @@ void GroundRing(Look look, float3 at, float radius, float thick, Color c, float 
     float4 side = Math.Mul(look.toClip, float4(at + float3(radius, 0, 0), 1));
     if (middle.w <= 0.01 || side.w <= 0.01) return;
     var across = Math.Length(float2((side.x / side.w - middle.x / middle.w) * 0.5 * w, (side.y / side.w - middle.y / middle.w) * 0.5 * h));
-    var sides = int(Math.Clamp(across * Math.TAU / block * 1.5, 16, 900));
+    var sides = int(Math.Clamp(across * sweep / block * 1.5, 4, 900));
     mut var last = float2(-10000);
     for (var k = 0; k < sides; k++)
     {
-        var turn = k * Math.TAU / sides;
+        var turn = start + k * sweep / sides;
         var x = at.x + Math.Sin(turn) * radius;
         var z = at.z + Math.Cos(turn) * radius;
         float4 clip = Math.Mul(look.toClip, float4(x, Math.Max(at.y, Ground(x, z)) + 0.05, z, 1));
@@ -132,7 +134,105 @@ view BloaterRings(Me me, Look look, Lobby lobby, Match match, query (Zombie zomb
     }
 }
 
-const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn
+const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn (and the other kinds' tells)
+
+// What the other kinds of the dead are about to do, on the ground, as a Bloater's ring is (the owner, 2026-10-20, of
+// cards telling each kind as it first came: "those tooltips about new enemies should not show, we should just discover
+// naturally; but they need to be clear what they do"): a Runner crouched, a strip of red as long and wide as its leap
+// (turning with it till its way's set, then brighter), lit from it toward its end as the leap nears; a Brute's blow coming, an orange arc in front of it as far as it
+// reaches, filling as it lands; a Howler howling, a magenta ring as far as its frenzy reaches, a second growing out to
+// meet it as the howl ends.
+[Stage(Layers.Hud, -1)]
+view KindTells(Me me, Look look, Lobby lobby, Match match, query (Zombie zombie) zombies)
+{
+    if (lobby.page != Page.Playing || !me.playing || match.phase == Phase.Over) return;
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    foreach (var row in zombies)
+    {
+        var z = row.zombie;
+        if (z.state != ZombieState.Hunting || Math.Length((z.at - me.ears).xz) > BLOAT_SHOWN) continue;
+        var mark = KindMark(z.kind);
+        var at = On(z.at.x, z.at.z);
+        if (z.kind == ZombieKind.Runner && (z.windup > 0 || z.leap > 0))
+        {
+            var near = z.leap > 0 ? 1.0 : Math.Saturate(z.windup / POUNCE_CROUCH);
+            var set = z.leap > 0 || z.windup > POUNCE_CROUCH - POUNCE_LOCK;
+            var way = Flat(z.yaw);
+            var aside = Flat(z.yaw + Math.PI * 0.5) * 0.35;
+            var length = POUNCE_SPEED * POUNCE_SECONDS;
+            var c = set ? Color(1.0, 0.35, 0.3, 0.95) : Color(mark.x, mark.y, mark.z, 0.4 + 0.3 * near);
+            GroundStrip(look, at + aside, at + aside + way * length, c, w, h);
+            GroundStrip(look, at - aside, at - aside + way * length, c, w, h);
+            GroundStrip(look, at, at + way * (length * near), Color(1.0, 0.55, 0.45, 0.5 + 0.4 * near), w, h);
+            GroundRing(look, at + way * length, ATTACK_REACH, 2 * u, c, w, h);
+        }
+        if (z.kind == ZombieKind.Brute && z.swing > 0 && z.swing < ATTACK_LANDS + 0.1)
+        {
+            var near = Math.Saturate(z.swing / ATTACK_LANDS);
+            var reach = ATTACK_REACH * KindScale(z.kind) + 0.45;
+            var c = Color(mark.x, mark.y, mark.z, 0.5 + 0.45 * near);
+            GroundRing(look, at, reach, 3 * u, c, w, h, z.yaw - BRUTE_ARC, BRUTE_ARC * 2);
+            GroundRing(look, at, reach * Math.Max(0.15, near), 2 * u, Color(1.0, 0.75, 0.4, 0.4 + 0.5 * near), w, h, z.yaw - BRUTE_ARC, BRUTE_ARC * 2);
+        }
+        if (z.kind == ZombieKind.Howler && z.windup > 0)
+        {
+            var near = Math.Saturate(z.windup / HOWL_WINDUP);
+            var pulse = 0.75 + 0.25 * Math.Sin(look.time * (8 + 20 * near));
+            GroundRing(look, at, HOWL_REACH, 2.5 * u, Color(mark.x, mark.y, mark.z, (0.35 + 0.5 * near) * pulse), w, h);
+            GroundRing(look, at, HOWL_REACH * near, 2 * u, Color(1.0, 0.6, 1.0, 0.3 + 0.5 * near), w, h);
+        }
+    }
+}
+
+const float BRUTE_ARC = 1.37;       // Either side of its way a Brute's blow lands (zombies.tide's: the dot over 0.2)
+
+// A line on the ground from one place to another, drawn over the picture in its big pixels (as GroundRing).
+void GroundStrip(Look look, float3 from, float3 to, Color c, float w, float h)
+{
+    var block = look.block;
+    float4 a = Math.Mul(look.toClip, float4(from, 1));
+    float4 b = Math.Mul(look.toClip, float4(to, 1));
+    if (a.w <= 0.01 || b.w <= 0.01) return;
+    var across = Math.Length(float2((b.x / b.w - a.x / a.w) * 0.5 * w, (b.y / b.w - a.y / a.w) * 0.5 * h));
+    var steps = int(Math.Clamp(across / block * 1.5, 2, 600));
+    mut var last = float2(-10000);
+    for (var k = 0; k <= steps; k++)
+    {
+        var p = Math.Lerp(from, to, float(k) / steps);
+        float4 clip = Math.Mul(look.toClip, float4(p.x, Math.Max(p.y, Ground(p.x, p.z)) + 0.05, p.z, 1));
+        if (clip.w <= 0.01) continue;
+        var dot = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
+        var cell = (Math.Floor(dot / block) + float2(0.5)) * block;
+        if (cell.x == last.x && cell.y == last.y) continue;
+        last = cell;
+        if (cell.x < -block || cell.y < -block || cell.x > w + block || cell.y > h + block) continue;
+        Draw.Shape(Shape { center = cell, size = float2(block), color = c });
+    }
+}
+
+// Where bile in the air will land (a Spitter's, the Broodmother's): a sick yellow ring as wide as its splash on the
+// ground there, and a second growing out from its middle to meet it as it comes down (the owner, 2026-10-20, of the
+// Spitters': "those projectiles move so fast its hard to see them coming").
+[Stage(Layers.Hud, -1)]
+view SpitMarks(Me me, Look look, Lobby lobby, Match match, query (Missile missile) missiles)
+{
+    if (lobby.page != Page.Playing || !me.playing || match.phase == Phase.Over) return;
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    foreach (var row in missiles)
+    {
+        var m = row.missile;
+        if (m.kind != Shot.Spit || m.flight <= 0 || Math.Length((m.mark - me.ears).xz) > BLOAT_SHOWN) continue;
+        var near = Math.Saturate(m.age / m.flight);
+        GroundRing(look, m.mark, SPIT_REACH, 2.5 * u, Color(0.95, 0.85, 0.15, 0.5 + 0.4 * near), w, h);
+        if (near > 0.05) GroundRing(look, m.mark, SPIT_REACH * near, 2 * u, Color(1.0, 0.95, 0.4, 0.35 + 0.5 * near), w, h);
+    }
+}
 
 // A mark for a place a survivor's to go: over it, with its name and how far, while it's on the screen; else an arrow at
 // the screen's edge, the way it is (north up the screen), with its name.
@@ -191,6 +291,7 @@ void Bar(float2 left, float2 size, float share, float trail, Color fill, Color f
 }
 
 const Color EMBER = Color(0.98, 0.5, 0.18);
+const Color GUN_CARD = Color(0.74, 0.58, 1.0);       // A gun card's, and the gun's level
 const Color XP = Color(0.35, 0.95, 0.75);            // The party's experience, as the orbs are
 const Color XP_FOOT = Color(0.1, 0.45, 0.35);
 const Color HEALTH = Color(0.86, 0.16, 0.1);
@@ -380,6 +481,9 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         var box = float2(right - 120 * u, h - 52 * u);
         Panel(box, float2(240 * u, 64 * u), u);
         Write(info.name.ToUpper(), float2(box.x - 106 * u, box.y - 14 * u), 12 * u, ASH, Anchor.MiddleLeft);
+        // Its level (its cards' ranks and one), in the gun cards' colour
+        if (mine.gun == RoleWeapon(mine.role) && GunLevel(mine) > 1)
+            WriteBold($"LV {GunLevel(mine)}", float2(box.x - 100 * u + Draw.MeasureText(info.name.ToUpper(), 12 * u).x, box.y - 14 * u), 12 * u, GUN_CARD, Anchor.MiddleLeft);
         var holds = MagOf(mine, mine.gun);
         var low = mine.mag == 0 ? Color(0.95, 0.3, 0.2) : mine.mag <= holds / 4 ? Color(0.98, 0.7, 0.35) : BONE;
         var loading = mine.act == Act.Reload;
@@ -568,6 +672,17 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     for (var i = 0; i < feed.news.count; i++)
         Write(feed.news[i], float2(w - 34 * u, 140 * u + i * 20 * u), 14 * u, Color(BONE.r, BONE.g, BONE.b, Math.Saturate(6 - feed.newsAge[i])), Anchor.MiddleRight);
 
+    // ---- A Second Wind gone: the screen flashes gold-white and a ring of light rushes out over the ground ----
+    feed.winded += dt;
+    if (feed.winded < WIND_SHOWN && me.playing)
+    {
+        var t = feed.winded / WIND_SHOWN;
+        Draw.Rect(float2(w * 0.5, h * 0.5), float2(w, h), Color(1.0, 0.9, 0.6, 0.45 * Math.Saturate(1 - feed.winded / 0.35)));
+        var gold = Color(1.0, 0.85, 0.4, 0.9 * (1 - t));
+        GroundRing(look, feed.windAt, 0.8 + 6 * Math.Sqrt(t), 3 * u, gold, w, h);
+        GroundRing(look, feed.windAt, 0.5 + 4 * Math.Sqrt(t), 2 * u, Color(1, 1, 0.85, 0.7 * (1 - t)), w, h);
+    }
+
     // ---- The banner: a power-up's name, the card taken ----
     feed.bannerLeft = Math.Max(0, feed.bannerLeft - dt);
     if (feed.banner != feed.bannerShown)
@@ -723,7 +838,7 @@ view DevKeys(Devices devices, Lobby lobby, Match match, mut DevWalk walk)
         Send(Cheat { what = 40 + walk.mission });
         walk.mission = (walk.mission + 1) % 3;
     }
-    if (keys.f5.down) Send(Cheat { what = 4 });
+    if (keys.f5.down) Send(Cheat { what = keys.leftShift.pressed || keys.rightShift.pressed ? 9 : 4 });
     if (keys.f10.down) Send(Cheat { what = keys.leftShift.pressed || keys.rightShift.pressed ? 7 : 5 });
     if (keys.f6.down)
     {
@@ -884,7 +999,8 @@ view Tallies(Me me, Look look, Lobby lobby, mut Feed feed)
               : t.tone == -1 ? Color(0.62, 0.66, 0.72, fade * 0.85) : t.flame ? Color(1.0, 0.62, 0.25, fade) : Color(1.0, 0.97, 0.92, fade);
         var size = (t.tone == 3 ? 23 : t.tone == 2 ? 21 : t.tone == 1 ? 21 : t.tone == -1 ? 12 : 15) * (t.killed ? 1.15 : 1.0) * pop * u;
         // A hard dark edge all round, so it reads over blood, fire and the moonlit ground alike
-        var text = $"{int(t.damage + 0.5)}";
+        // (turned by a Warden's mail, it says so: the number's not what matters)
+        var text = t.tone == -1 ? "ARMOR" : $"{int(t.damage + 0.5)}";
         var edge = Math.Max(1.5, size * 0.09);
         var dark = Color(0.05, 0.02, 0.02, fade * 0.9);
         Draw.Text(text, at + float2(edge, 0), size, dark, Anchor.MiddleCenter, Font.Bold);
@@ -923,6 +1039,26 @@ local event(Picked picked) ShowPicked(mut Feed feed, Me me)
     feed.newsAge.Add(0);
 }
 
+const float WIND_SHOWN = 1.2;       // Seconds a Second Wind's flash and ring last
+
+// A Second Wind used: this machine's a banner with how many are left, a flash and a ring (Overlay); a friend's a line in
+// the corner.
+local event(Winded winded) ShowWinded(mut Feed feed, Me me)
+{
+    var left = winded.left == 0 ? "NONE LEFT" : $"{winded.left} LEFT";
+    if (winded.seat == me.seat)
+    {
+        feed.banner = $"SECOND WIND  -  {left}";
+        feed.bannerLeft = 3;
+        feed.bannerColor = Color(1.0, 0.85, 0.4);
+        feed.winded = 0;
+        feed.windAt = winded.at;
+        return;
+    }
+    feed.news.Add($"{HeroName(winded.seat)}'s Second Wind ({left.ToLower()})");
+    feed.newsAge.Add(0);
+}
+
 local event(Levelled levelled) ShowLevel(mut Feed feed)
 {
     if (feed.bannerLeft > 1) return;
@@ -938,6 +1074,7 @@ Color RarityColor(Rarity rarity)
         case Rarity.Uncommon: return Color(0.45, 0.9, 0.45);
         case Rarity.Rare: return Color(0.95, 0.35, 0.3);
         case Rarity.Skill: return EMBER;
+        case Rarity.Gun: return GUN_CARD;
     }
     return Color(0.9, 0.88, 0.84);
 }
@@ -968,6 +1105,7 @@ string RarityName(Rarity rarity)
         case Rarity.Uncommon: return "Uncommon";
         case Rarity.Rare: return "Rare";
         case Rarity.Skill: return "Skill";
+        case Rarity.Gun: return "Gun";
     }
     return "Common";
 }
@@ -1089,6 +1227,22 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
             name = same ? $"{SkillName(skill)} {Roman(mine.secondaryRank + 1)}" : SkillName(skill);
             line = same ? RankLine(skill, mine.secondaryRank + 1) : SkillLine(skill);
         }
+        else if (rarity == Rarity.Gun)
+        {
+            // A gun card: its rank after this one, of how many, and the gun's level it makes
+            var have = mine.items[int(item)];
+            top = $"{Info(RoleWeapon(mine.role)).name.ToUpper()}  -  LEVEL {GunLevel(mine) + 1}";
+            name = $"{ItemName(item)} {Roman(have + 1)}";
+            line = GunCardLine(item, have + 1);
+            // Its ranks, a pip each: those had lit, the one it gives bright
+            var most = CardMost(item);
+            for (var c = 0; c < most; c++)
+            {
+                var pip = middle + float2((c - (most - 1) * 0.5) * 14 * u, 122 * u);
+                var lit = c < have ? 0.75 : c == have ? 1.0 : 0.0;
+                Draw.Shape(Shape { center = pip, size = float2(8, 8) * u, rotation = Math.PI * 0.25, color = lit > 0 ? Color(tint.r, tint.g, tint.b, lit * a) : Color(0.25, 0.22, 0.2, 0.8 * a) });
+            }
+        }
         else
         {
             var have = mine.items[int(item)];
@@ -1097,11 +1251,6 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
                 top = $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}";
                 name = $"{ItemName(item)} {Roman(have + 1)}";
                 line = ItemLineAt(item, have + 1);
-            }
-            if (Nozzle(mine, item))
-            {
-                name = have > 0 ? $"Long Nozzle {Roman(have + 1)}" : "Long Nozzle";
-                line = have > 0 ? $"Flames reach {int(FLAME_NOZZLE * (have + 1))} m further" : $"Flames reach {int(FLAME_NOZZLE)} m further (+{int(FLAME_NOZZLE)} m each)";
             }
         }
         Write(top, middle + float2(0, 8 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);

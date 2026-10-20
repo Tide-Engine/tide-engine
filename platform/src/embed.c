@@ -265,11 +265,71 @@ static size_t draw_part(const size_t at, const uint64_t count, const size_t each
     return from;
 }
 
+// The list as the packet has it: its quads (TIDE_DRAW_QUADS) as the meshes they were, a TIDE_DRAW_MESH command over
+// their corners and triangles after the list's own, to the bit (tide_draw_quad_corner). A list with none is as it is.
+static tide_draw_command *unquad_commands;
+static tide_vertex *unquad_vertices;
+static uint32_t *unquad_indices;
+static size_t unquad_command_room, unquad_vertex_room, unquad_index_room;
+
+static bool unquad_room(void **items, size_t *room, const size_t count, const size_t size)
+{
+    if (count <= *room) return true;
+    void *grown = realloc(*items, count * size);
+    if (!grown) return false;
+    *items = grown;
+    *room = count;
+    return true;
+}
+
+static bool unquad(const tide_draw_list *d, tide_draw_list *out)
+{
+    *out = *d;
+    if (!d->quad_count) return true;
+    const size_t vertices = (size_t)d->vertex_count + 4u * (size_t)d->quad_count;
+    const size_t indices = (size_t)d->index_count + 6u * (size_t)d->quad_count;
+    if (!unquad_room((void **)&unquad_commands, &unquad_command_room, d->count, sizeof(tide_draw_command))
+        || !unquad_room((void **)&unquad_vertices, &unquad_vertex_room, vertices, sizeof(tide_vertex))
+        || !unquad_room((void **)&unquad_indices, &unquad_index_room, indices, sizeof(uint32_t))) return false;
+    if (d->count) memcpy(unquad_commands, d->commands, d->count * sizeof(tide_draw_command));
+    if (d->vertex_count) memcpy(unquad_vertices, d->vertices, d->vertex_count * sizeof(tide_vertex));
+    if (d->index_count) memcpy(unquad_indices, d->indices, d->index_count * sizeof(uint32_t));
+    uint32_t vertex_count = d->vertex_count, index_count = d->index_count;
+    for (uint32_t i = 0; i < d->count; i++) {
+        tide_draw_command *c = &unquad_commands[i];
+        if (c->kind != TIDE_DRAW_QUADS) continue;
+        const uint32_t from = c->mesh.first < d->quad_count ? c->mesh.first : d->quad_count;
+        const uint32_t count = c->mesh.count < d->quad_count - from ? c->mesh.count : d->quad_count - from;
+        c->kind = TIDE_DRAW_MESH;
+        c->mesh.first = index_count;
+        c->mesh.count = 6u * count;
+        for (uint32_t k = 0; k < count; k++) {
+            const tide_draw_quad *q = &d->quads[from + k];
+            static const uint32_t corners[4] = {0, 1, 2, 5}; // p, q, r and s of p q r p r s
+            static const uint32_t triangles[6] = {0, 1, 2, 0, 2, 3};
+            for (uint32_t v = 0; v < 4u; v++) unquad_vertices[vertex_count + v] = tide_draw_quad_corner(q, corners[v]);
+            for (uint32_t t = 0; t < 6u; t++) unquad_indices[index_count + t] = vertex_count + triangles[t];
+            vertex_count += 4u;
+            index_count += 6u;
+        }
+    }
+    out->commands = unquad_commands;
+    out->vertices = unquad_vertices;
+    out->vertex_count = vertex_count;
+    out->indices = unquad_indices;
+    out->index_count = index_count;
+    out->quads = NULL;
+    out->quad_count = 0;
+    return true;
+}
+
 const uint8_t *tide_embed_draw(const tide_embed *e, uint32_t *size)
 {
     if (size) *size = 0;
     if (e != &the_embed || !running || !tide_run_game) return NULL;
-    const tide_draw_list *d = &tide_run_draw;
+    tide_draw_list shown;
+    if (!unquad(&tide_run_draw, &shown)) return NULL;
+    const tide_draw_list *d = &shown;
     const tide_float2 screen = tide_platform_screen_size();
     const tide_embed_draw_header header = {
         .magic = TIDE_EMBED_DRAW_MAGIC, .version = TIDE_EMBED_DRAW_VERSION,
