@@ -6,6 +6,143 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Performance pass against handwritten C, 2026-10-20
+
+The owner asked for a performance pass over everything (threading, GPU,
+simulation), each pushed to its limits against hand-coded optimal C for the
+same case, as a baseline. This section is the pass's summary and its CPU
+simulation part. The two below are its rollback, schedule and thread-scaling
+part and its drawing part, done on branches of their own and merged with it.
+
+Method: Windows 11, Ryzen 9 7900X (two CCDs of six cores, 32 MiB L3 each),
+RTX 4080 SUPER, Clang 23.1.2, release preset. Every run holds the shared
+`Local\TideClaudeContinuationBenchmark` mutex after a quiet spell with no
+builds, tests or benchmarks, and is marked `competingWork` when one starts
+meanwhile (`bench/results/perf-pass/run.ps1`; `bench/README.md` lists the
+tools). Before is `b27a4d90`, dev when the pass began, its binaries frozen as
+`perf-pass-baseline`; after is this branch with dev merged in, built at
+`aaa64e87` (rows say `45733126+local`, the runner's own commit).
+The numbers come from one run of both in turn, before then after, the next
+round after then before, five rounds (`perf-pass-end-before-r*` and
+`-after-r*`; one of 150 runs, a Vulkan draw before, had competing work):
+medians of each run's median tick, and Tide/C the median of each run's ratio
+against the fastest C way in that run (`node
+bench/results/perf-pass/summarize.mjs perf-pass-end-before
+perf-pass-end-after`). A first attempt, `perf-pass-final-*`, stopped after two
+rounds when another session's test suite ran for half an hour; its rows stay
+in the ledger, unused (its churn on 12 threads read 0.80 ms under that suite).
+Each run's binaries (SHA-256), arguments, times and competing work are in
+`bench/results/perf-pass/<label>-metadata.json`.
+
+| ms a tick (C way) | 1 thread before → after | Tide/C | 12 threads before → after | Tide/C |
+| --- | ---: | ---: | ---: | ---: |
+| particles, 1M (C) | 0.452 → 0.459 | 1.12× | 0.185 → 0.091 | 1.10× |
+| particles, 16 snapshots kept | 0.982 → 1.022 | 1.07× | 0.655 → 0.583 | 0.93× |
+| wide, 1M (C) | 1.381 → 1.502 | 1.27× | 0.789 → 0.817 | 1.17× |
+| sand fixture, 1024² (C, lookup) | 1.011 → 0.969 | 2.35× | 0.217 → 0.215 | 2.90× |
+| life, 1024² (C) | 0.580 → 0.421 | 5.45× | 0.199 → 0.118 | 1.53× |
+| churn, 2,000 a tick (C) | 0.414 → 0.421 | 2.11× | 0.398 → 0.397 | 1.98× |
+| events, 200k turrets (C) | 0.888 → 0.878 | 7.43× | 0.880 → 0.879 | 7.42× |
+| n-body, 2,000 (C, SIMD) | 3.413 → 3.418 | 1.73× | 0.385 → 0.412 | 1.75× |
+| buckets, 4,096 (C) | 0.0867 → 0.0619 | 8.60× | 0.0869 → 0.0619 | 11.9× |
+| lookup, 16k keys, 1,024 changes (C) | 1.776 → 1.338 | 4.23× | 1.777 → 1.347 | 4.20× |
+| lookup, 16k keys, steady (C) | 1.875 → 1.368 | 10.1× | 1.879 → 1.371 | 8.40× |
+
+Wide's single thread moves between 1.33 and 1.50 ms from run to run with no
+change of its code: the pass's other pairing below has it 1.475 → 1.328.
+Buckets' C on 12 threads moves between 0.005 and 0.018 ms, so that ratio says
+little. N-body on 12 threads is the desktop pool's choice of cache groups
+trying the one group now and then (notes/schedule-and-threads.md).
+
+Sessions (`bench_sand`, `bench_gallery`, medians of five): Sand's client
+simulates 30.6 → 14.9 ms per simulated second, its update median 0.546 →
+0.260 ms and p99 0.873 → 0.456, its snapshots 0.303 → 0.142 ms per second,
+the server's simulation 3.04 → 1.51; Gallery's are as they were (client 1.81
+→ 1.86 ms per second, update 0.072 → 0.078 ms). Replays, bytes sent, catch-up
+times and end hashes (Sand 0x953b9562d90bd9bb at tick 736, Gallery
+0x365586644fdce54f at tick 1733) are the same before and after. Sand's
+session ticks are small and memory-bound on twelve threads, which is where
+keeping a tick on one CCD pays.
+
+The other measurements, the same day and gated the same way:
+`perf-pass-pool-*` pairs the binaries from just after the desktop pool change
+(`59789b32`, before the other two parts and dev's 24 commits merged) with the
+final ones: particles, wide, sand, life, churn and n-body all within noise of
+each other, so nothing merged afterwards slowed them. `perf-pass-end-only`
+runs the programs with no before: versus_rollback 1.15× its dirty-block C
+(1.19× with movers spread), versus_systems 1.10× at 4,096 entities a kind,
+2.53× at 64 and 1.67× empty, churn 1.95-2.20× C on 1 to 12 threads, and the
+hand-written drawing (Drawing against handwritten OpenGL and Vulkan, below:
+Tide's totals are 1.5× C's for an empty Vulkan frame, about 4× for rects and
+circles, 9× round rects, 11× cubes, 14× textured quads).
+
+What changed, and where it's described:
+- Cached list writes skip preparing a list the cache already holds writable,
+  and a grid's windowed parallel loop whose step writes its own cell first
+  doesn't copy its window (notes/language.md, Performance pass).
+- Maps find their two lists once a lookup, hash keys of up to 16 bytes
+  inline, and `tide_list_prepare` returns inline for a world's own lists
+  (notes/ecs.md, Performance pass).
+- Grid windows plan their row runs once and copy small runs inline, and a
+  task's whole-chunk put compares and copies in one pass
+  (notes/schedule-and-threads.md, Grid parallel loops, performance pass).
+- The desktop pool keeps a tick on one cache group where that's quicker
+  (notes/schedule-and-threads.md, Cache groups in the desktop pool): the
+  12-thread gains above and Sand's session.
+- Lane bookkeeping inline and the tick's threads taking tiny tasks a few at a
+  time (Rollback, the schedule and thread scaling, below).
+- The renderer: partial readback, shape runs, Vulkan upload memory, recording
+  reads (Drawing, below).
+- A correctness fix the release suite found: attached local fields were
+  `restrict` while query rows wrote them (notes/language.md, Query rows reach
+  attached local fields, Correction).
+
+Where Tide stays behind, and why (profiled with `tide_sample`):
+- Events, 7.4×: every hit resolves its target entity to a row (generation,
+  table, chunk, lane) and then follows a chain of dependent loads; C indexes
+  its targets directly. A C way that defers its hits as Tide's events are
+  (`C, deferred` in versus_events) is 1.6× immediate C, so deferral isn't
+  most of it: Tide is about 4.7× deferred C. Record size is about 15%.
+  Applying them on threads doesn't help even in C (taking the hits on 4 to 12
+  threads, each its own targets, 0.5 ms against 0.2 on one: every thread
+  reads every hit).
+- Life, 5.5× on one thread: LLVM narrows only part of the kernel (it compares
+  at 32 bits where C counts sixteen byte cells at a time), and gathering a
+  window and putting cells back is memory traffic C's two flat byte grids
+  with a dead border, taking turns, don't have. On 12 threads it's 1.5×.
+- Lookup, 4-10×, and buckets: a probe is a chain of dependent loads through a
+  chunked list (directory, page, element, for the index and again for the
+  entry) on a random pattern.
+- Churn, 2×: entity-table cache misses, and structural changes are applied
+  serially.
+- Wide, 1.2-1.3×: 8 KiB lane pages streamed against C's contiguous arrays;
+  stores that change nothing are already gone.
+- N-body, 1.7×: C is explicitly 4-wide SIMD across bodies; tidec's 4-lane
+  batch of the outer loop does vectorize (packed `sqrtps`/`divps`) but only
+  partly, the rest in how the lanes are fed.
+- Rollback and systems: the page hash and fixed per-task costs (below).
+
+Proposals that need the owner, none started:
+- A per-function view of a list or map (resolve heap, directory and pages
+  once for a loop) would take lookups and buckets most of the way to C, but
+  it is a new runtime function generated code calls.
+- Events: dispatch fused with sending where one handler consumes an event,
+  or applied in parallel by target; either changes how events are scheduled.
+- Cache groups on Linux and Android (sysfs `shared_cpu_list`,
+  `pthread_setaffinity_np`): untestable here, as WSL2 shows one L3.
+- N-body: tidec emitting explicit vector code for its lane batches.
+- A faster page hash (Rollback, below): changes every pinned hash and the
+  protocol version.
+- Drawing: a `gpu.h` call handing out ring room so shapes are built once, and
+  a quad/sprite path (Drawing, below).
+
+Validation of the merged branch: warning-free native and web debug builds;
+all 2,477 native debug CTests (the Vulkan SDK's SPIR-V checks and 36 GPU tests
+under the validation layer included) and all 2,383 web debug CTests pass, run
+again after the `restrict` fix; all 2,439 native release CTests pass (no
+Vulkan SDK in that build). Linux, macOS, Android, MinGW and sanitizers were
+not run; no CI was dispatched.
+
 ## Rollback, the schedule and thread scaling against C, 2026-10-20
 
 The performance pass asked for what wasn't compared with handwritten C: a
