@@ -34,6 +34,7 @@ singleton Ashwick
     List<float> ledges;           // By cliff cell: the top of the cliff there (the highest ground within two cells)
     List<byte> heights;           // By cell: the ground at its middle, in eighths of a metre from 4 m down (HeightStep)
     List<byte> field;             // Cells to the nearest survivor, UNREACHED where none can be reached
+    List<float3> brambles;        // The bramble thickets (plan.tide): x, z, reach
     bool made;
 }
 
@@ -65,6 +66,7 @@ void BuildAshwick(mut Ashwick ashwick)
     ashwick.solids = plan.solids;
     ashwick.risers = plan.risers;
     ashwick.starts = plan.starts;
+    ashwick.brambles = plan.brambles;
     ashwick.buckets.Clear();
     for (var b = 0; b < BUCKETS_W * BUCKETS_H; b++)
     {

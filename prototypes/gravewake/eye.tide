@@ -182,7 +182,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     }
     foreach (var row in missiles)
     {
-        if (row.missile.kind != Shot.Pot) continue;
+        if (row.missile.kind != Shot.Pot && row.missile.kind != Shot.Napalm) continue;
         AddLight(lights, eye, Light { at = row.missile.at, color = float3(1.0, 0.5, 0.15) * 3, reach = 7 });
     }
 }

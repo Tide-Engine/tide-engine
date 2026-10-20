@@ -149,7 +149,7 @@ No attribution is required for any of it; it is given here anyway.
 | hit_kill.ogg | 0.23 | synthesized |
 | hit_stone_1.ogg | 0.56 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) |
 | hit_stone_2.ogg | 0.60 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) |
-| hit_tick.ogg | 0.07 | synthesized |
+| hit_tick.ogg | 0.16 | synthesized |
 | hit_wood_1.ogg | 0.31 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) |
 | hit_wood_2.ogg | 0.31 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) |
 | hitmarker.ogg | 0.01 | Interface Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/interface-sounds) |
@@ -237,4 +237,5 @@ No attribution is required for any of it; it is given here anyway.
 | swing_light_2.ogg | 0.46 | Medieval Sound Effects: Weapon Textures (part 1 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | swing_light_3.ogg | 0.45 | Medieval Sound Effects: Weapon Textures (part 2 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | throw.ogg | 0.43 | Swishes Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/swishes-sound-pack) + synthesized layers |
+| thump.ogg | 0.43 | synthesized |
 | turret_fire.ogg | 0.31 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |

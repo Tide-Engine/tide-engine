@@ -37,7 +37,7 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Aim (the crosshair is the cursor) | Mouse | Right stick |
 | The camera nearer or further | Mouse wheel | |
 | Fire | Left mouse | Right trigger |
-| The secondary skill, at the cursor | Right mouse | Left trigger or shoulder |
+| The gun's own skill, at the cursor | Right mouse | Left trigger or shoulder |
 | Roll: a dodge, nothing the dead do touches you for most of it (two charges) | Space (or Shift) | East or South button |
 | Pick a survivor, take an item | 1, 2, 3 | D-pad left, up, right |
 | Reload (it loads by itself when empty) | R | West button |
@@ -48,16 +48,14 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | Survivor | Gun | Right mouse | By itself |
 | --- | --- | --- | --- |
 | Gunner | Carbine: automatic, any range | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
-| Breacher | Pump Shotgun: fourteen pellets in a wide spread, never needs loading; takes a third less from the dead | Boot: a side kick that sweeps a flash of light through where it reaches, flinging the dead in front back off their feet into the ones behind them (each it strikes flashes white); the nearest one down is stamped on | Firebomb: into the thickest of them |
-| Engineer | Flamethrower: a jet of fire 7.5 m long, widening as it goes, burning everything in it and setting it alight; ten seconds a tank (AP, Ricochet and HE Rounds aren't offered: it has no rounds) | C4 Charge: set down, a red ring round it showing how far it'll reach; right mouse again (BLOW) to set it off, whenever you like | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
+| Breacher | Pump Shotgun: fourteen pellets in a wide spread, never needs loading; takes a third less from the dead | Thumper: a grenade lobbed with a thump to burst where the cursor is, throwing the dead down | Boot: at the dead pressing in front, a side kick that sweeps a flash of light through where it reaches, flinging them back off their feet into the ones behind them; the nearest one down is stamped on |
+| Engineer | Flamethrower: a jet of fire 4.8 m long, widening as it goes, burning everything in it and now and then setting it alight (bosses take it three and a half times over); ten seconds a tank. AP Rounds are a Long Nozzle to it, a metre more each (Ricochet and HE Rounds aren't offered: it has no rounds) | Napalm: a glob of burning fuel lobbed to the cursor, splashing into fire on the ground that burns the dead in it for four seconds | Attack Drone: sent up when the dead are about; flies after you, at your shoulder, and fires on its own for twelve seconds, setting off your items |
 
-The right mouse skill is the survivor's to begin with, and can change: a
-skill card (orange) turns up in some level's offers, another of five
-(Phase Round, Boot, C4 Charge, Leap, Blink) to take in its place, or the one
-you have a rank stronger, to rank III: a phase round becomes three in a fan,
-then five; the boot kicks wider, then all round; a C4 charge becomes two set
-down at once, then three; a leap lands wider and harder; a blink bursts where you leave, then
-where you land too. Pips under the skill show its rank.
+The right mouse skill is the gun's own, and grows: a skill card (orange)
+turns up in some level's offers, the skill a rank stronger, to rank III: a
+phase round becomes three in a fan, then five; the Thumper two grenades, then
+three; napalm's fire wider and longer, then two globs. Pips under the skill
+show its rank.
 
 Everything but the gun, the right mouse skill and the roll happens by
 itself: each survivor's special as soon as it's ready and the dead are in
@@ -106,7 +104,7 @@ more bolts of lightning, more rockets.
 | Common | Hollow Points (damage), Hair Trigger (fire and reload faster), Kevlar Vest (health, armour), Running Shoes (speed), Leech Rounds (kills heal), Field Battery (skills back sooner), Extended Mag, Lucky Shot (hits for double), Smelling Salts (raise friends faster; not offered alone), Ricochet Rounds (hits bounce on to more of the dead), Bone Splinters (kills throw shards of bone into the dead round them) |
 | Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (a drone each over your head shoots the nearest dead), Ember Ring (a ring of fire round you sets the dead alight), Frostbite (hits freeze), Energy Drink (another roll), Kerosene (the dead you roll past catch fire), Steel Toes (more to the dead on the ground), Bile Bomb (the Bloaters you kill burst wider and harder on the dead), AP Rounds (through one more), Saw Blades (a blade each circles you, cutting what it passes), Tesla Coil (lightning into the nearest dead), Molotov Satchel (firebombs at the thickest of the dead) |
 | Rare | Mortar Flare (hits call a shell down), Second Wind (going down, straight back up, used up), HE Rounds (every round bursts where it lands), Dragon's Breath (hits set the dead alight), Thunder Drum (a shockwave throws down the dead round you), Rocket Pod (rockets at the dead round you) |
-| Skill | A right mouse skill in place of yours, or yours a rank stronger (above) |
+| Skill | Your right mouse skill a rank stronger (above) |
 
 Uncommon and rare items turn up more as the run goes on. What you take is
 yours till the game's over, through going down and bleeding out.
@@ -205,19 +203,7 @@ out of the ground all round you, 16 to 32 m off, from every side.
 | West | The old graveyard: ten graves the dead rise from, their stones small enough to run past; a great brazier at its edge |
 | North-west | A ring of standing stones, a great brazier in it |
 | South | A great dead oak, a great brazier beside it |
-| About the clearing | A few sparse groves and big stones to stand behind; and eleven plague pits, open graves 4 to 7.5 m long brimming with black blood, a sick light drifting on them, earth heaped at one end. Nobody walks into one, you or the dead (they go round); rounds go over. |
-
-### The ground erupting
-
-Every few seconds (eight on the first night, a second less each night after,
-down to three; oftener for a party) the ground cracks near one of you, 3 to
-12 m off, half the time under the thickest of the dead there: its seams glow
-and a red ring shows how far it'll reach (2.6 m), another growing out to meet
-it. A second and a half later it bursts into fire: up to 24 to anyone in it
-(more as the danger climbs), thrown back, unless they're rolling; the dead
-in it torn apart. It burns on eight seconds, setting the dead that walk into
-it alight (lure them through it) and burning anyone standing in it (12 a
-second).
+| About the clearing | A few sparse groves and big stones to stand behind; eleven plague pits, open graves 4 to 7.5 m long brimming with black blood, a sick light drifting on them, earth heaped at one end (nobody walks into one, you or the dead: they go round; rounds go over); and a dozen bramble thickets, dark bushes 2 to 4 m round that you wade through at half pace (the dead don't care) |
 
 ## Build and run
 
@@ -249,19 +235,20 @@ this folder.
 | `ashwick.tide` | The plan made solid: collision, the ground under feet, the lines rounds and grenades follow, the way to the survivors |
 | `rounds.tide` | The run: the danger with time and the nights, how many of the dead come, of which kinds and how tough, where they rise |
 | `nights.tide` | The nights: each one's clock, its bosses at its end, dawn, calling the fallen back, each night's look, the night's panel |
-| `hazards.tide` | The plague pits and the ground erupting: where, what they do, what's seen and heard of them |
+| `hazards.tide` | The plague pits, the bramble thickets, and fire on the ground (napalm's): what they do, what's seen and heard of them |
 | `boss.tide` | The bosses: the Mauler, the Broodmother and the Stalker, the night's own and the development key's, their moves and weak spots |
-| `kits.tide` | The survivors' kits: the roll, the skills that use themselves and where, the Engineer's walking turret |
+| `kits.tide` | The survivors' kits: the roll, the guns' own skills, the skills that use themselves and where, the Engineer's attack drone |
 | `items.tide` | The items: what each does, the offer at a level, what a hit or a kill sets off, the drone and the ember ring, levels |
 | `zombies.tide` | The dead and their kinds: rising, hunting, a Spitter's bile, a Warden's mail, a Bloater's burst, wounds, burning, freezing, going over |
 | `weapons.tide` | The guns' numbers |
 | `hands.tide` | Running, rolling, turning to the cursor, firing (each round a ray through the dead), loading, raising friends, going down |
 | `missions.tide` | The optional missions: a hold, a cull, the wisps; their reward, panel and markers; and where the objectives are |
-| `missiles.tide` | Frag grenades, firebombs, mines, the Mortar Flare's shells, a Spitter's bile |
+| `missiles.tide` | Frag grenades and the Thumper's, firebombs, napalm, the Mortar Flare's shells, a Spitter's bile |
 | `drops.tide` | The cues for what's heard, and a survivor's refill |
 | `crowd.tide` | The horde, its kinds and the bosses drawn: low-poly bodies whose clips a vert plays from a texture, thousands in a few draws |
 | `kit.tide`, `look.tide`, `eye.tide` | The clearing's meshes; light, shadows, fog, bloom; the camera |
-| `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide`, `gore.tide` | The survivors; the gun in hand, grenades, mines, turrets, drones; the graves and braziers; tracers, flames, blood, sparks; the stains on the ground and the pieces of the dead |
+| `flames.tide` | The flamethrower's fire as it's seen: a little fluid of burning fuel, swirling, rising, pooling and cooling to smoke |
+| `people.tide`, `held.tide`, `setpieces.tide`, `fx.tide`, `gore.tide` | The survivors; the gun in hand, grenades, napalm, the attack drones, the gun drones; the graves and braziers; tracers, flames, blood, sparks; the stains on the ground and the pieces of the dead |
 | `hud.tide`, `sound.tide` | What's written over the picture (the offer and the survivors too), the title; what's heard |
 | `art/` | The forest, ruin, people, the kinds of the dead, mutants, guns and items, with how each was made: see `art/CREDITS.md` |
 | `sfx/` | The sounds, made by `sfx/tools/make_sfx.py`: see `sfx/CREDITS.md` |

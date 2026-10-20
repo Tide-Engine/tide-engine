@@ -1,0 +1,231 @@
+// The flamethrower's fire, as it's seen: a little fluid of burning fuel on each machine (the owner, 2026-10-20: "can we
+// make it visually impressive? almost like a light fluid simulation"). Each puff throws a gout of blobs down the cone,
+// fast and white-hot at the nozzle; the air slows them and they spread, a field of noise swirls them as they slow, the
+// hot rise, and they swell and cool through yellow and orange to red and go up as smoke. What reaches the ground splashes
+// and runs along it, and some of it pools and burns there a moment, scorching it; fire licks up round the dead it
+// reaches. Each is drawn as a ragged tongue of light in hard steps, its middle hottest, and the jet lights the ground
+// round it. Nothing of it is the match's: the flames' harm is hands.tide's Scorch.
+
+struct Blob
+{
+    float3 at;
+    float3 velocity;
+    float age;
+    float life = 1;
+    float heat = 1;           // 1 white-hot, cooling to nothing as it goes
+    float size = 0.08;
+    float seed;               // Its own place in the noise, so no two swirl alike
+    int seat = -1;            // Whose jet it's from, for its light
+    bool pooled;              // Landed and burning on the ground
+    bool smoked;              // Has given off its smoke
+}
+
+local singleton Flames
+{
+    List<Blob> blobs;
+    List<Sprite> sprites;
+    float clock;
+    Random random;
+}
+
+const int BLOBS_MOST = 1600;
+const int GOUT = 18;                // Blobs a puff
+const float FLAME_DRAG = 2.3;       // How fast the air slows a blob, a second (thrown at 14 m/s it goes about 5.5 m)
+const float FLAME_LIFT = 7;         // How fast the hottest rise, metres a second a second
+const float FLAME_SWIRL = 34;       // How hard the noise turns them, most once they've slowed
+const float POOL_CHANCE = 0.3;      // How likely a hot blob landing is to pool and burn there
+const float SMOKE_CHANCE = 0.12;    // How likely a blob cooled is to give off a wisp of smoke
+
+// A puff of the flamethrower: a gout of burning fuel from the nozzle, most of it down the middle of the cone, and the
+// thin bright rope of fuel just out of it.
+local event(Loosed loosed) Gout(mut Flames flames, mut Fx fx, Grip grip)
+{
+    if (loosed.weapon != Weapon.Flamer || loosed.source != Source.Gun) return;
+    var drawn = loosed.seat >= 0 && loosed.seat < 4 ? grip.muzzles[loosed.seat] : float3(0);
+    var at = Math.Distance(drawn, loosed.at) < 1.5 ? drawn : loosed.at;
+    var level = Math.Normalize(float3(loosed.way.x, 0, loosed.way.z));
+    var right = Math.Normalize(Math.Cross(float3(0, 1, 0), level));
+    var cone = Info(Weapon.Flamer).cone;
+    // As fast as carries it about as far as it reaches (the air's drag and its life)
+    var reach = loosed.reach > 0 ? loosed.reach : Info(Weapon.Flamer).range;
+    var thrown = (reach + 0.4) * FLAME_DRAG / 0.86;
+    for (var k = 0; k < GOUT && flames.blobs.count < BLOBS_MOST; k++)
+    {
+        // (two rolls summed: more down the middle than at the edges)
+        var aside = (flames.random.NextFloat() + flames.random.NextFloat() - 1) * cone * 1.1;
+        var rise = flames.random.NextFloat(-0.05, 0.08);
+        var dir = Math.Normalize(level + right * aside + float3(0, rise, 0));
+        var speed = thrown * flames.random.NextFloat(0.88, 1.12);
+        var seed = flames.random.NextFloat(100);
+        var size = flames.random.NextFloat(0.15, 0.22);
+        // Spread over the time till the next puff, as though it had come out all along: a stream, not clumps
+        var early = flames.random.NextFloat(Info(Weapon.Flamer).rate);
+        flames.blobs.Add(Blob { at = at + dir * speed * early, velocity = dir * speed * (1 - FLAME_DRAG * early), age = early, life = flames.random.NextFloat(0.7, 1.0),
+                                size = size, seed = seed, seat = loosed.seat });
+    }
+    fx.streaks.Add(Streak { from = at, to = at + level * 1.5, life = 0.05, width = 0.045, color = float3(1.0, 0.82, 0.45) });
+}
+
+// Fire licking up round one of the dead the flames reach, now and then (they reach many, fourteen times a second).
+local event(Struck struck) Lick(mut Flames flames)
+{
+    if (struck.blow != Blow.Flame || flames.blobs.count >= BLOBS_MOST || flames.random.NextFloat() > 0.45) return;
+    mut var away = struck.at - struck.from;
+    away.y = 0;
+    away = Math.Length(away) > 0.01 ? Math.Normalize(away) : float3(1, 0, 0);
+    var round = Math.Cross(float3(0, 1, 0), away) * (flames.random.NextFloat() < 0.5 ? -1.0 : 1.0);
+    var from = struck.at - away * 0.25 + float3(0, flames.random.NextFloat(-0.5, 0.2), 0);
+    var seed = flames.random.NextFloat(100);
+    flames.blobs.Add(Blob { at = from, velocity = round * flames.random.NextFloat(1.5, 3) + away * 1.5 + float3(0, flames.random.NextFloat(1.5, 3), 0),
+                            life = flames.random.NextFloat(0.4, 0.65), heat = 0.85, size = 0.18, seed = seed, seat = struck.seat });
+}
+
+// Each frame: the fluid moves on, and what's drawn of it is gathered; a napalm glob in flight sheds it as it goes.
+[Stage(Layers.Gather, 2)]
+view FlowFire(mut Flames flames, mut Fx fx, mut Gore gore, Me me, query (Missile missile) missiles)
+{
+    var dt = me.dt;
+    flames.clock += dt;
+    flames.sprites.Clear();
+    foreach (var row in missiles)
+    {
+        var m = row.missile;
+        if (m.kind != Shot.Napalm || dt <= 0) continue;
+        for (var k = 0; k < 3 && flames.blobs.count < BLOBS_MOST; k++)
+        {
+            var seed = flames.random.NextFloat(100);
+            var size = flames.random.NextFloat(0.18, 0.28);
+            flames.blobs.Add(Blob { at = m.at + Scatter(fx, 0.15), velocity = m.velocity * 0.15 + Scatter(fx, 1.2), life = flames.random.NextFloat(0.35, 0.6), heat = 0.95,
+                                    size = size, seed = seed, seat = m.seat });
+        }
+    }
+    for (var i = flames.blobs.count - 1; i >= 0; i--)
+    {
+        mut var b = flames.blobs[i];
+        b.age += dt;
+        b.heat = Math.Max(0, b.heat - dt / b.life * (b.pooled ? 0.6 : 1.0));
+        if (b.age >= b.life || b.heat <= 0.02)
+        {
+            flames.blobs.RemoveAt(i);
+            continue;
+        }
+        // Cooled enough: a wisp of smoke off it now and then, thin and soon gone (it had been dark, thick and lasting, and
+        // piled up over the survivor into a black cloud: the owner, 2026-10-20, "the leftover smoke makes it hard to view
+        // stuff")
+        if (!b.smoked && b.heat < 0.3)
+        {
+            b.smoked = true;
+            if (flames.random.NextFloat() < SMOKE_CHANCE)
+                Murk(fx, Mote { at = b.at + float3(0, 0.1, 0), velocity = b.velocity * 0.3 + float3(0, 0.7, 0), life = flames.random.NextFloat(0.5, 0.8),
+                                size = Math.Min(b.size, 0.35) * 0.8, grow = 0.35, color = float3(0.16, 0.14, 0.13), alpha = 0.16, drag = 1.5 });
+        }
+        if (b.pooled)
+        {
+            // A pool burning on the ground: it doesn't move, it flickers, and tongues of flame go up off it
+            if (flames.random.NextFloat() < 0.18)
+                Glow(fx, Mote { at = b.at + float3(flames.random.NextFloat(-0.15, 0.15), 0.05, flames.random.NextFloat(-0.15, 0.15)), velocity = float3(0, flames.random.NextFloat(1.2, 2.2), 0),
+                                life = flames.random.NextFloat(0.25, 0.45), size = 0.1, grow = -0.15, color = float3(1.0, 0.45, 0.1), alpha = 1.2, cool = 1 });
+        }
+        else
+        {
+            // The air slows it; the hot rise; slowed, the noise turns it more
+            b.velocity *= Math.Max(0, 1 - FLAME_DRAG * dt);
+            b.velocity.y += FLAME_LIFT * b.heat * b.heat * dt;
+            var p = b.at * 0.75 + float3(0, -flames.clock * 1.6, b.seed);
+            var swirl = float3(Math.Perlin(p, 1), Math.Perlin(p, 2) * 0.6, Math.Perlin(p, 3));
+            var slowed = 1 - Math.Saturate(Math.Length(b.velocity) / 16);
+            b.velocity += swirl * FLAME_SWIRL * (0.15 + slowed) * dt;
+            b.at += b.velocity * dt;
+            // On the ground: it splashes and runs along it, and a hot one may pool there
+            var floor = Ground(b.at.x, b.at.z) + 0.06;
+            if (b.at.y < floor)
+            {
+                b.at.y = floor;
+                if (b.velocity.y < 0) b.velocity.y = -b.velocity.y * 0.2;
+                if (b.heat > 0.45 && flames.random.NextFloat() < POOL_CHANCE)
+                {
+                    b.pooled = true;
+                    b.velocity = float3(0);
+                    b.life = b.age + flames.random.NextFloat(0.9, 1.5);
+                    b.size = Math.Max(b.size, 0.3);
+                    Stain(gore, b.at, flames.random.NextFloat(0.25, 0.4), 0.25, flames.random.NextFloat(Math.TAU), 1.0, CHAR);
+                }
+            }
+        }
+        // It swells as it slows and cools: a narrow jet billowing out
+        b.size += dt * (b.pooled ? 0.05 : 0.25 + 0.75 * (1 - b.heat));
+        flames.blobs[i] = b;
+        // White-gold, yellow, orange, red, as it cools; brightest hot, and a pool's flickering
+        var flicker = b.pooled ? 0.65 + 0.35 * Math.Perlin(float2(flames.clock * 9, b.seed)) : 1.0;
+        var bright = Math.Saturate(b.heat * 1.5) * flicker;
+        flames.sprites.Add(Sprite { at = b.at, to = b.at, size = b.size, color = float4(FireHue(b.heat), 0.22 * bright) });
+    }
+}
+
+// The colour of fire as hot as `heat`: white-gold at 1, through yellow and orange, to a dull red near nothing.
+float3 FireHue(float heat)
+{
+    if (heat > 0.75) return Math.Lerp(float3(1.0, 0.45, 0.08), float3(1.0, 0.7, 0.25), (heat - 0.75) / 0.25);
+    if (heat > 0.45) return Math.Lerp(float3(0.9, 0.16, 0.02), float3(1.0, 0.45, 0.08), (heat - 0.45) / 0.3);
+    return Math.Lerp(float3(0.3, 0.03, 0.01), float3(0.9, 0.16, 0.02), heat / 0.45);
+}
+
+// The jets' light: for each survivor's, a lamp at the middle of its hot fire, as bright as there's fire, and one down
+// among what's pooled.
+[Stage(Layers.Gather, 3)]
+view FireLight(Flames flames, mut Lights lights, Me me)
+{
+    for (var seat = 0; seat < 4; seat++)
+    {
+        mut var sum = float3(0);
+        mut var weight = 0.0;
+        mut var pools = float3(0);
+        mut var pooled = 0.0;
+        foreach (var b in flames.blobs)
+        {
+            if (b.seat != seat) continue;
+            if (b.pooled)
+            {
+                pools += b.at * b.heat;
+                pooled += b.heat;
+            }
+            else
+            {
+                sum += b.at * b.heat;
+                weight += b.heat;
+            }
+        }
+        if (weight > 0.5) AddLight(lights, me.eye, Light { at = sum / weight + float3(0, 0.4, 0), color = float3(1.0, 0.45, 0.12) * Math.Min(5, 0.35 * weight), reach = 9 });
+        if (pooled > 0.5) AddLight(lights, me.eye, Light { at = pools / pooled + float3(0, 0.5, 0), color = float3(1.0, 0.4, 0.1) * Math.Min(3, 0.5 * pooled), reach = 6 });
+    }
+}
+
+// A blob of burning fuel: a ragged tongue of light (its edge eaten by noise, which moves as it rises), in hard steps, its
+// middle hottest, so it's crisp in the picture's big pixels and the jet looks a body of fire, not a heap of squares.
+frag FireBlob(Corner corner, out Color color, Sprite sprite, Look look)
+{
+    var off = corner.uv * 2 - float2(1);
+    var ragged = Math.Perlin(off * 1.8 + float2(sprite.at.x * 2.3 + sprite.at.z * 1.7, sprite.at.y * 2.9 - look.time * 3)) * 0.4;
+    // Taller than wide, its top tapering: a flame's tongue
+    var d = Math.Length(float2(off.x * (1.1 + 0.35 * Math.Max(0, -off.y)), off.y * 0.95)) + ragged;
+    if (d > 0.92) this.Discard();
+    var hue = float3(sprite.color.x, sprite.color.y, sprite.color.z);
+    var core = d < 0.4 ? 1.0 : d < 0.68 ? 0.55 : 0.22;
+    var hot = d < 0.4 ? Math.Lerp(hue, float3(1.0, 0.85, 0.55), 0.15) : hue;
+    var far = Math.Distance(sprite.at, look.eye);
+    color = Color(hot * sprite.color.w * core * Math.Exp(-far * look.fog * 0.6) * Math.Saturate((far - 0.4) / 1.5), 1);
+}
+
+[Stage(Layers.Glass, 2)]
+view DrawFire(Flames flames, Fx fx, Lens lens)
+{
+    if (!lens.made || !fx.made || flames.sprites.count == 0) return;
+    lens.scene.Depth(Depth.Read),
+    lens.scene.Cull(Cull.None)
+    {
+        lens.scene.Blend(Blend.Add)
+        {
+            lens.scene.Instanced(fx.quad, fx.quadFaces, flames.sprites, Face, FireBlob);
+        }
+    }
+}

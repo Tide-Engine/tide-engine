@@ -55,9 +55,7 @@ singleton Match
     int orbs;                    // Experience orbs lying (orbs.tide)
     int bosses;                  // How many have come
     int devBoss = -1;            // Development: a boss of this kind now, not one of the night's own (the key's), or -1 for none
-    // The eruptions (hazards.tide)
-    float eruptWait;             // Seconds till the next
-    List<float3> blazes;         // The fires on the ground, x, z, reach (KeepBlazes)
+    List<float3> blazes;         // The fires on the ground (hazards.tide), x, z, reach (KeepBlazes)
     // The missions (missions.tide): the one going (None, none), where, the seconds it has left, what's done of it
     // against its goal; the seconds till the next; and the development key's kind for the next, or -1 for any
     MissionKind mission;
@@ -131,7 +129,6 @@ void ResetMatch(mut Match match)
     match.bosses = 0;
     match.devBoss = -1;
     ResetMissions(match);
-    ResetEruptions(match);
     match.devMission = -1;
     match.orbs = 0;
     match.lasted = 0;

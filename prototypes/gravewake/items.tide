@@ -32,8 +32,8 @@ enum Item
     LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, BileBomb, ApRounds, SawBlades, TeslaCoil, Molotovs,
     // Rare
     Mortar, SecondWind, HeRounds, DragonsBreath, Shockwave, RocketPod,
-    // Skill cards: not items, a right mouse's skill to take (SkillCard)
-    CardPhaseRound, CardBoot, CardMine, CardLeap, CardBlink,
+    // Skill cards: not items, the right mouse's skill a rank stronger (SkillCard): each gun's own
+    CardPhaseRound, CardThumper, CardNapalm,
 }
 
 const int ITEM_COUNT = 30;          // The items: the skill cards come after (Spring Boots, a jump in the air, went with jumping)
@@ -56,10 +56,8 @@ Skill CardSkill(Item item)
     switch (item)
     {
         case Item.CardPhaseRound: return Skill.PhaseRound;
-        case Item.CardBoot: return Skill.Boot;
-        case Item.CardMine: return Skill.Mine;
-        case Item.CardLeap: return Skill.Leap;
-        case Item.CardBlink: return Skill.Blink;
+        case Item.CardThumper: return Skill.Thumper;
+        case Item.CardNapalm: return Skill.Napalm;
     }
     return Skill.None;
 }
@@ -68,12 +66,10 @@ Item SkillCard(Skill skill)
 {
     switch (skill)
     {
-        case Skill.PhaseRound: return Item.CardPhaseRound;
-        case Skill.Boot: return Item.CardBoot;
-        case Skill.Mine: return Item.CardMine;
-        case Skill.Leap: return Item.CardLeap;
+        case Skill.Thumper: return Item.CardThumper;
+        case Skill.Napalm: return Item.CardNapalm;
     }
-    return Item.CardBlink;
+    return Item.CardPhaseRound;
 }
 
 string ItemName(Item item)
@@ -267,12 +263,12 @@ int Holds(Arms arms, Item item)
 // the right mouse, or the one they have a rank stronger.
 void Offer(mut Survivor survivor, int minute, int players, Rarity least)
 {
-    var card = least == Rarity.Common && Random.NextFloat() < SKILL_CARD_CHANCE;
+    var card = least == Rarity.Common && Random.NextFloat() < SKILL_CARD_CHANCE && survivor.secondaryRank < SKILL_RANKS;
     for (var k = 0; k < 3; k++)
     {
         if (card && k == 2)
         {
-            survivor.offers[k] = RollCard(survivor);
+            survivor.offers[k] = SkillCard(SecondaryOf(survivor));
             continue;
         }
         mut var item = Item.HollowPoints;
@@ -290,21 +286,16 @@ void Offer(mut Survivor survivor, int minute, int players, Rarity least)
 }
 
 // An item that would do nothing for a survivor's gun, so isn't offered them: what a round does, to the Engineer's
-// flamethrower (it has no rounds).
+// flamethrower (it has no rounds). (AP Rounds are its longer nozzle: Nozzle.)
 bool Useless(Survivor survivor, Item item)
 {
-    return Info(RoleWeapon(survivor.role)).cone > 0 && (item == Item.ApRounds || item == Item.Ricochet || item == Item.HeRounds);
+    return Info(RoleWeapon(survivor.role)).cone > 0 && (item == Item.Ricochet || item == Item.HeRounds);
 }
 
-// A skill card for a survivor: any of the five but their own at its last rank.
-Item RollCard(Survivor survivor)
+// AP Rounds, to a flamethrower: a longer nozzle, its flames reaching a metre further each (hands.tide's FLAME_NOZZLE).
+bool Nozzle(Survivor survivor, Item item)
 {
-    for (var tries = 0; tries < 10; tries++)
-    {
-        var card = Item(ITEM_COUNT + Random.NextInt(5));
-        if (CardSkill(card) != SecondaryOf(survivor) || survivor.secondaryRank < SKILL_RANKS) return card;
-    }
-    return SkillCard(SecondaryOf(survivor) == Skill.Blink ? Skill.Leap : Skill.Blink);
+    return item == Item.ApRounds && Info(RoleWeapon(survivor.role)).cone > 0;
 }
 
 // One item, `minute` minutes into the run: mostly common, uncommon more often as the run goes on, now and then a rare.
@@ -351,7 +342,6 @@ system Choose(Hands hands, mut Survivor survivor)
 void TakeRole(mut Survivor survivor, Role role)
 {
     survivor.role = role;
-    survivor.secondary = SkillOf(role, 0);
     survivor.secondaryRank = 1;
     survivor.gun = RoleWeapon(role);
     survivor.mag = MagOf(survivor, survivor.gun);
@@ -366,16 +356,10 @@ void TakeRole(mut Survivor survivor, Role role)
 
 void Take(mut Survivor survivor, Item item)
 {
-    // A skill card: the right mouse's skill another (its first rank, ready), or the same a rank stronger
-    var skill = CardSkill(item);
-    if (skill != Skill.None)
+    // A skill card: the right mouse's skill a rank stronger, ready at once
+    if (CardSkill(item) != Skill.None)
     {
-        if (skill == SecondaryOf(survivor)) survivor.secondaryRank = Math.Min(SKILL_RANKS, survivor.secondaryRank + 1);
-        else
-        {
-            survivor.secondary = skill;
-            survivor.secondaryRank = 1;
-        }
+        survivor.secondaryRank = Math.Min(SKILL_RANKS, survivor.secondaryRank + 1);
         survivor.cooldowns[0] = 0;
         return;
     }
