@@ -127,7 +127,7 @@ void tide_heap_release(tide_heap *h, const uint32_t block)
     __atomic_add_fetch(&h->moves, 1u, __ATOMIC_RELAXED);
 }
 
-void tide_heap_flush(tide_heap *h)
+void tide_heap_flush_pending(tide_heap *h)
 {
     while (h->pending) {
         const uint32_t block = h->pending;

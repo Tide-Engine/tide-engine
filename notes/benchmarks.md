@@ -46,6 +46,17 @@ Linux cache groups have no number here: WSL2 shows one L3 for all 24 CPUs,
 so the pool there is as it was. Its parsing and pinning were checked on
 made-up trees (notes/schedule-and-threads.md).
 
+Per-row scratch resets and heap flushes inline (notes/ecs.md), paired six
+rounds against the first round's binaries (`perf-pass-rows2-*`, which also
+counts `tide_list_cache_fill_mut` finding a block once): versus_rollback
+1.934 → 1.728 ms a period on one thread, 1.13× → 1.04× its dirty-block C;
+with movers spread 2.889 → 2.718 (1.29× → 1.22× C); versus_systems as it was
+(1.09-1.11× at 4,096 a kind, 2.6× at 64, 1.67× empty: they make no text or
+lists). Against the map views' binaries (`perf-pass-rows-*`) the other
+programs and sessions are where they were on one thread; on 12 threads
+particles' runs split between about 0.12 and 0.25 ms on both sides, the
+pool's choice of cache groups flipping under other agents' load that day.
+
 ## Performance pass against handwritten C, 2026-10-20
 
 The owner asked for a performance pass over everything (threading, GPU,

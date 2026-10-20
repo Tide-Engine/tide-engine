@@ -37,6 +37,20 @@ The views are C locals of the function (and of each parallel loop's task),
 not state: nothing is kept between calls, snapshots, threads or reloads.
 Results: notes/benchmarks.md, Map views and Linux cache groups.
 
+Per-row scratch reset and heap flush inline (2026-10-20): generated code
+resets the scratch area to its mark and flushes the world's heap after every
+row of a system that makes text or lists (`tide_scratch_reset(tide_mark);
+tide_heap_flush(&tide_w->heap);`), and most rows make and release nothing.
+`tide_scratch_mark`, `tide_scratch_reset` (`tide/text.h`) and
+`tide_heap_flush` (`tide/heap.h`) are now inline, same names, signatures and
+effects: the mark is `tide_scratch_top` (text.c's `scratch_used`, now an
+extern thread-local, as `tide_scratch_slots` is), a reset to a mark at or
+past it does nothing, and a flush with nothing pending does nothing; only
+otherwise do they call `tide_scratch_reset_to` and `tide_heap_flush_pending`,
+the functions as they were. The rollback agent measured the two calls at
+about 5% of versus_rollback's ticks (Rollback, the schedule and thread
+scaling, in notes/benchmarks.md).
+
 ## Performance pass: lists, maps and grid windows (2026-10-20)
 
 Internal, with no layout, hash, order or interface change (pinned hashes are

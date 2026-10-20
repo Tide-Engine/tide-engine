@@ -15,6 +15,13 @@ declares `tide_mv`, a view for each map it reads or sets by key (codegen's
 language.md, Map views. `tide_list_cache_fill_mut` finds a side-by-side
 list's block once (internal; same results).
 
+`tide_scratch_mark`, `tide_scratch_reset` and `tide_heap_flush` are inline
+over `tide_scratch_top` and the out-of-line `tide_scratch_reset_to` and
+`tide_heap_flush_pending` (the functions as they were), as
+`tide_list_prepare` is over `tide_list_prepare_borrowed`: generated code
+calls the same names as before (ecs.md, Per-row scratch reset and heap
+flush inline).
+
 ## Performance pass (2026-10-20)
 
 No runtime function is new to generated code. `tide/list.h` gains

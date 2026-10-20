@@ -29,7 +29,7 @@
 // what was made since the mark, never on what came and went before.
 
 TIDE_THREAD_LOCAL char *tide_scratch_slots[TIDE_SCRATCH_SLOTS];
-static TIDE_THREAD_LOCAL uint32_t scratch_used; // The top of the stack: an offset
+TIDE_THREAD_LOCAL uint32_t tide_scratch_top; // The top of the stack: an offset (tide/text.h)
 static TIDE_THREAD_LOCAL uint32_t scratch_end;  // Where the piece the top is in ends: no room past it
 
 typedef struct scratch_piece {
@@ -46,11 +46,6 @@ static TIDE_THREAD_LOCAL uint32_t piece_count;
 static TIDE_THREAD_LOCAL uint32_t piece_room;
 static TIDE_THREAD_LOCAL scratch_piece spare; // Let go, kept for the next piece; `memory` NULL for none
 
-uint32_t tide_scratch_mark(void)
-{
-    return scratch_used;
-}
-
 static void map_piece(const scratch_piece *p, const bool mapped)
 {
     for (uint32_t k = 0; k < p->slots; k++) {
@@ -58,10 +53,10 @@ static void map_piece(const scratch_piece *p, const bool mapped)
     }
 }
 
-void tide_scratch_reset(const uint32_t mark)
+void tide_scratch_reset_to(const uint32_t mark)
 {
-    if (mark >= scratch_used) return;
-    scratch_used = mark;
+    if (mark >= tide_scratch_top) return;
+    tide_scratch_top = mark;
     if (piece_count > 1 && pieces[piece_count - 1u].start >= mark) { // Pieces go: the biggest is the next spare
         free(spare.memory);
         spare.memory = NULL;
@@ -92,7 +87,7 @@ void tide_scratch_free(void)
     piece_room = 0;
     free(spare.memory);
     spare.memory = NULL;
-    scratch_used = 0;
+    tide_scratch_top = 0;
     scratch_end = 0;
 }
 
@@ -103,7 +98,7 @@ static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const
     fprintf(stderr,
             "tide: out of memory: %s of %llu bytes can't go in the scratch area (%s), which holds %u bytes on this thread: the text, "
             "lists and grids code makes along the way, kept until their system, view or handler is done\n",
-            what, (unsigned long long)bytes, why, (unsigned)scratch_used);
+            what, (unsigned long long)bytes, why, (unsigned)tide_scratch_top);
     abort();
 }
 
@@ -136,7 +131,7 @@ static void add_piece(const uint64_t bytes, const char *what)
     }
     pieces[piece_count++] = p;
     map_piece(&p, true);
-    scratch_used = p.start;
+    tide_scratch_top = p.start;
     scratch_end = p.start + (p.slots << TIDE_SCRATCH_SHIFT);
 }
 
@@ -144,12 +139,12 @@ static void add_piece(const uint64_t bytes, const char *what)
 // `align` (a power of two): the offset. `what` is for when there's none.
 static uint32_t scratch_take(const uint32_t bytes, const uint32_t align, const char *what)
 {
-    uint32_t at = (scratch_used + align - 1u) & ~(align - 1u);
+    uint32_t at = (tide_scratch_top + align - 1u) & ~(align - 1u);
     if ((uint64_t)at + bytes > scratch_end) {
         add_piece(bytes, what); // Its start is a slot's: aligned
-        at = scratch_used;
+        at = tide_scratch_top;
     }
-    scratch_used = at + bytes;
+    tide_scratch_top = at + bytes;
     return at;
 }
 
@@ -164,8 +159,8 @@ static char *scratch_alloc(const uint32_t bytes)
 // Whether `a` is the newest text in the scratch area, so it can grow in place.
 static bool at_top(const tide_str a)
 {
-    if (!scratch_used) return false;
-    const uintptr_t top = (uintptr_t)tide_scratch_at(scratch_used - 1u) + 1u; // The byte after the last in use
+    if (!tide_scratch_top) return false;
+    const uintptr_t top = (uintptr_t)tide_scratch_at(tide_scratch_top - 1u) + 1u; // The byte after the last in use
     return (uintptr_t)a.ptr + (uintptr_t)a.bytes + 1u == top;
 }
 
@@ -173,8 +168,8 @@ static bool at_top(const tide_str a)
 // text and its piece has the room, or in a copy, and returns where they go.
 static char *grow(tide_str *a, const uint32_t more)
 {
-    if (at_top(*a) && more <= scratch_end - scratch_used) {
-        scratch_used += more;
+    if (at_top(*a) && more <= scratch_end - tide_scratch_top) {
+        tide_scratch_top += more;
         char *p = (char *)(uintptr_t)a->ptr;
         p[(uint32_t)a->bytes + more] = '\0';
         return p + a->bytes;
