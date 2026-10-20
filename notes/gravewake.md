@@ -63,6 +63,78 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### More cards, upgrades that show, a right mouse skill to change (2026-10-20)
+
+The owner: "let's work on upgrades. I wonder if the right click ability should
+start empty or at least be swappable for others? not sure. at the very least
+we need more cards and we also need to make them feel powerful, not just
+functionally but visually too. like the drone, if we upgrade it maybe we just
+get 2 drones." What was made of it, and the numbers, are mine, Provisional.
+
+- **The right mouse skill, swappable** (items.tide's `Item.Card...`, `CardSkill`,
+  `RollCard`, `Take`; kits.tide's `SecondaryOf`, `RankLine`, `UseSecondary`;
+  `Survivor.secondary`, `secondaryRank`): it starts as the kit's (starting with
+  none would leave the first minutes with only the gun), and in three level
+  offers of ten a skill card (orange) takes the last place: another of five
+  (Phase Round, Boot, Mine, and the Leap and the Blink, given to nobody since the
+  kits were made) in place of yours, ready at once, or yours a rank stronger, to
+  rank III, each rank 15% sooner back and showing: a phase round three rounds in
+  a fan, then five, a quarter, then half again as hard; the boot further, wider,
+  then all round, 30% then 60% harder, at more; a mine two, then three, side by
+  side; a leap a quarter, then half again as wide where it lands, harder, a wider
+  ring of earth thrown up; a blink a burst of violet light throwing down the dead
+  where it leaves, then where it lands too. Pips under the skill show the rank.
+  A leap now carries its way (the air had slowed it to 2 m: 5.4 now); a blink
+  goes to the cursor, as far as 8 m (+2 a rank).
+- **Seven more cards** (items.tide; ITEM_COUNT 30): common, Ricochet Rounds (a
+  hit bounces on to one more of the dead within 7 m for 60%, +1 each: a hot
+  streak and sparks) and Bone Splinters (a kill throws 3 shards of bone, +2 each,
+  into the nearest dead within 5 m, each 45% of one of the dead's health: pale
+  streaks); uncommon, Saw Blades (a blade each circling 2.3 m out, waist high,
+  cutting what's within 0.75 m of it every 0.12 s for 22: two crossed squares of
+  steel spinning, a gleam, a trail behind and sparks off its edge), Tesla Coil
+  (every 1.2 s lightning from over your head into the 2 nearest dead within 9 m,
+  +1 each, 45 each) and Molotov Satchel (a firebomb at the thickest of the dead
+  every 6 s, 20% sooner each); rare, Thunder Drum (every 5 s, 10% sooner each, a
+  shockwave throws down the dead within 4 m, +1 m each, for 60: a flash, a ring
+  of pale light rushing out, dust) and Rocket Pod (every 3 s, 2 rockets, +1 each,
+  over your shoulders at the nearest dead within 22 m, 110 each in 2.6 m: a motor's
+  flame and smoke behind them). Each bites by itself, as the drone and the ember
+  ring do, and sets off nothing more.
+- **Upgrades that show**: Gun Drones are a drone each (to six; past that they fire
+  faster), in a ring over your head going slowly round, firing in turn, each a red
+  light under it; the Ember Ring a ring of flame at its edge, wider and thicker each
+  (it had been a few embers inside it); Saw Blades, Tesla bolts and rockets one
+  more each. A card says what you'll have with it ("Tesla Coil III: the 4 nearest
+  dead", items.tide's `ItemLineAt`), its level in Roman numerals. Taking one throws
+  up a column of light in its colour round you, a ring of it rushing out over the
+  ground and a flash, more for rarer ones (fx.tide's `Anoint`).
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16; the bots
+  pass over skill cards, using any but their kit's badly): the middle runs the
+  Gunner 740 s (732 before), the Engineer 966 (732), the Breacher 868 (612); most
+  still go down. Taking skill cards at random, as they first did, the Gunner and
+  the Engineer had done worse (a blink never used, a leap into the thick of them).
+  Ticks of 2000 of the dead 1.93 ms, of 4000 4.2 ms.
+- **Development**: Shift+F10 gives the items that fight by themselves, several
+  each (four drones, three saw blades, two Tesla Coils and Ember Rings, a Rocket
+  Pod, a Thunder Drum).
+- **Tests**: three Gun Drones each fire in turn; a Saw Blade cuts one of the dead
+  on its circle (1.2 s); a Tesla Coil strikes the two nearest; a Thunder Drum
+  throws one 3 m off down; a Rocket Pod has 2 rockets in the air and hurts one
+  10 m off; Ricochet Rounds hurt the one beside the one shot; Bone Splinters the
+  one beside one shot dead; a Molotov Satchel throws; a skill card makes the right
+  mouse a leap, another a leap rank II, which carries 5.4 m and knocks down the one
+  it lands by; a phase round rank III strikes three of the dead across its fan; a
+  blink rank II goes 7 m, the one by where it left thrown down. A skill card comes
+  only in an offer's last place. (Two older checks made sure of themselves: a
+  survivor made another kit has its kit's skill, and the ground's burst keeps a
+  spare of the dead well away for the burning after.)
+- **Validation**: native debug `gravewake_test` and the web debug WASI one pass.
+  Looked at in standard-host captures: a Breacher with the Shift+F10 items in a
+  horde (the drones, the blades, the ring of fire, bolts, a rocket's burst), and
+  eight offers in a row (a skill card in place of the Boot, Tesla Coil III, Saw
+  Blades IV).
+
 ### Each kind its own body (2026-10-19)
 
 The owner: "also lets give each different enemy type a unique look too; its

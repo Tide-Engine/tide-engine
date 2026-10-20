@@ -181,6 +181,13 @@ view DrawMissile(Missile missile, Lens lens, Look look)
         case Shot.Shell:
             lens.scene.Mesh(ballMesh, float4x4.TRS(missile.at, quaternion.identity, float3(0.3, 0.6, 0.3)), Wobble, Steel, Finish { tint = float3(0.3, 0.3, 0.32) });
             return;
+        case Shot.Rocket:
+        {
+            var way = Math.Length(missile.velocity) > 0.01 ? Math.Normalize(missile.velocity) : float3(0, 0, 1);
+            var turn = quaternion.LookRotation(way, Math.Abs(way.y) > 0.95 ? float3(1, 0, 0) : float3(0, 1, 0));
+            lens.scene.Mesh(ballMesh, float4x4.TRS(missile.at, turn, float3(0.13, 0.13, 0.42)), Wobble, Steel, Finish { tint = float3(0.6, 0.62, 0.55) });
+            return;
+        }
     }
 }
 
@@ -225,10 +232,35 @@ view ShadowTurret(Turret turret, Lens lens)
 [Stage(Layers.Scene, 3)]
 view DrawDrone(Survivor survivor, Lens lens, Look look, Armory armory)
 {
-    if (!lens.made || !armory.made || !survivor.ready || survivor.life != Life.Standing || Has(survivor, Item.GunDrone) == 0) return;
-    var at = DroneAt(survivor) + float3(0, Math.Sin(look.time * 2.3 + survivor.seat) * 0.06, 0);
-    var turn = quaternion.AxisAngle(float3(0, 1, 0), survivor.yaw + Math.Sin(look.time * 0.7) * 0.3);
-    lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at, turn, float3(0.3, 0.09, 0.3)), Wobble, Steel, Finish { });
-    lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at + Math.Rotate(turn, float3(0, -0.02, 0.15)), turn, float3(0.07, 0.04, 0.04)), Steel,
-                    Finish { tint = float3(8, 1.2, 0.6), open = 0 });
+    var drones = Has(survivor, Item.GunDrone);
+    if (!lens.made || !armory.made || !survivor.ready || survivor.life != Life.Standing || drones == 0) return;
+    // A drone each (items.tide's DroneAt), facing the way they aim
+    var shown = Math.Min(drones, DRONES_SHOWN);
+    for (var k = 0; k < shown; k++)
+    {
+        var at = DroneAt(survivor, k, drones) + float3(0, Math.Sin(look.time * 2.3 + survivor.seat + k * 1.7) * 0.06, 0);
+        var turn = quaternion.AxisAngle(float3(0, 1, 0), survivor.yaw + Math.Sin(look.time * 0.7 + k) * 0.3);
+        lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at, turn, float3(0.3, 0.09, 0.3)), Wobble, Steel, Finish { });
+        lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at + Math.Rotate(turn, float3(0, -0.02, 0.15)), turn, float3(0.07, 0.04, 0.04)), Steel,
+                        Finish { tint = float3(8, 1.2, 0.6), open = 0 });
+    }
+}
+
+// ---- Saw blades, circling their survivors: two squares of steel crossed, spinning, a hot hub ----
+
+[Stage(Layers.Scene, 3)]
+view DrawSaws(Survivor survivor, Lens lens, Look look, Armory armory)
+{
+    var saws = Has(survivor, Item.SawBlades);
+    if (!lens.made || !armory.made || !survivor.ready || survivor.life != Life.Standing || saws == 0) return;
+    var shown = Math.Min(saws, SAWS_SHOWN);
+    for (var k = 0; k < shown; k++)
+    {
+        var at = SawAt(survivor, k, shown);
+        var spin = quaternion.AxisAngle(float3(0, 1, 0), look.time * 24 + k);
+        var across = Math.Mul(spin, quaternion.AxisAngle(float3(0, 1, 0), Math.PI * 0.25));
+        lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at, spin, float3(0.6, 0.04, 0.6)), Wobble, Steel, Finish { tint = float3(1.6, 1.6, 1.7) });
+        lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at, across, float3(0.6, 0.04, 0.6)), Wobble, Steel, Finish { tint = float3(1.6, 1.6, 1.7) });
+        lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at + float3(0, 0.03, 0), spin, float3(0.15, 0.05, 0.15)), Steel, Finish { tint = float3(5, 1.6, 0.4), open = 0 });
+    }
 }

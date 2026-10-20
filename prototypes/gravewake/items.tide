@@ -12,26 +12,68 @@
 //
 // And levels: every kill by anyone is experience for the whole party, and each
 // level makes every survivor's damage and health a little greater.
+//
+// The owner, 2026-10-20: "we need more cards and we also need to make them feel
+// powerful, not just functionally but visually too. like the drone, if we
+// upgrade it maybe we just get 2 drones". So the ones that fight for you show
+// how many you have: a drone each, a saw blade each circling you, more rockets,
+// more bolts of lightning, a wider ring of fire; and taking one throws up a
+// column of light in its colour. And the right mouse's skill is swappable
+// (2026-10-20: "should start empty or at least be swappable for others? not
+// sure"): a skill card turns up in some offers, another skill to take in its
+// place, or the one you have, a rank stronger (three ranks), each rank showing
+// (more rounds, more mines, a wider slam). Mine, Provisional.
 
 enum Item
 {
     // Common
-    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts,
+    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts, Ricochet, Splinters,
     // Uncommon
-    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds,
+    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds, SawBlades, TeslaCoil, Molotovs,
     // Rare
-    Mortar, SecondWind, HeRounds, DragonsBreath,
+    Mortar, SecondWind, HeRounds, DragonsBreath, Shockwave, RocketPod,
+    // Skill cards: not items, a right mouse's skill to take (SkillCard)
+    CardPhaseRound, CardBoot, CardMine, CardLeap, CardBlink,
 }
 
-const int ITEM_COUNT = 23;          // (Spring Boots, a jump in the air, went with jumping)
+const int ITEM_COUNT = 30;          // The items: the skill cards come after (Spring Boots, a jump in the air, went with jumping)
+const int SKILL_RANKS = 3;
+const float SKILL_CARD_CHANCE = 0.3; // Of a level's offers that have a skill card among them
 
-enum Rarity { Common, Uncommon, Rare }
+enum Rarity { Common, Uncommon, Rare, Skill }
 
 Rarity RarityOf(Item item)
 {
+    if (int(item) >= ITEM_COUNT) return Rarity.Skill;
     if (int(item) >= int(Item.Mortar)) return Rarity.Rare;
     if (int(item) >= int(Item.LiveWire)) return Rarity.Uncommon;
     return Rarity.Common;
+}
+
+// A skill card's skill (None for an item).
+Skill CardSkill(Item item)
+{
+    switch (item)
+    {
+        case Item.CardPhaseRound: return Skill.PhaseRound;
+        case Item.CardBoot: return Skill.Boot;
+        case Item.CardMine: return Skill.Mine;
+        case Item.CardLeap: return Skill.Leap;
+        case Item.CardBlink: return Skill.Blink;
+    }
+    return Skill.None;
+}
+
+Item SkillCard(Skill skill)
+{
+    switch (skill)
+    {
+        case Skill.PhaseRound: return Item.CardPhaseRound;
+        case Skill.Boot: return Item.CardBoot;
+        case Skill.Mine: return Item.CardMine;
+        case Skill.Leap: return Item.CardLeap;
+    }
+    return Item.CardBlink;
 }
 
 string ItemName(Item item)
@@ -47,6 +89,8 @@ string ItemName(Item item)
         case Item.ExtendedMag: return "Extended Mag";
         case Item.LuckyShot: return "Lucky Shot";
         case Item.Salts: return "Smelling Salts";
+        case Item.Ricochet: return "Ricochet Rounds";
+        case Item.Splinters: return "Bone Splinters";
         case Item.LiveWire: return "Live Wire";
         case Item.PowderKeg: return "Powder Keg";
         case Item.GunDrone: return "Gun Drone";
@@ -57,12 +101,18 @@ string ItemName(Item item)
         case Item.SteelToes: return "Steel Toes";
         case Item.GasMask: return "Gas Mask";
         case Item.ApRounds: return "AP Rounds";
+        case Item.SawBlades: return "Saw Blades";
+        case Item.TeslaCoil: return "Tesla Coil";
+        case Item.Molotovs: return "Molotov Satchel";
         case Item.Mortar: return "Mortar Flare";
         case Item.SecondWind: return "Second Wind";
         case Item.HeRounds: return "HE Rounds";
         case Item.DragonsBreath: return "Dragon's Breath";
+        case Item.Shockwave: return "Thunder Drum";
+        case Item.RocketPod: return "Rocket Pod";
     }
-    return "";
+    var skill = CardSkill(item);
+    return skill != Skill.None ? SkillName(skill) : "";
 }
 
 // What one does, and what another of it adds.
@@ -79,9 +129,11 @@ string ItemLine(Item item)
         case Item.ExtendedMag: return "Half again the rounds in a magazine (+50% each)";
         case Item.LuckyShot: return "15% chance a hit does double (+15% each)";
         case Item.Salts: return "Raise a friend who's down 50% faster (+50% each)";
+        case Item.Ricochet: return "A round that hits bounces on to one more of the dead near it, for 60% (+1 bounce each)";
+        case Item.Splinters: return "Your kills burst into 3 shards of bone that strike the dead round them (+2 each)";
         case Item.LiveWire: return "15% chance a hit arcs to 3 more of the dead (+2 each)";
         case Item.PowderKeg: return "Your kills burst, hurting the 2 nearest for a quarter of what one of the dead can take (+10% each, +1 every second)";
-        case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (faster each)";
+        case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (one more drone each)";
         case Item.EmberRing: return "Sets the dead within 3 m of you alight (+0.5 m each)";
         case Item.Frostbite: return "12% chance a hit freezes the dead solid for 2 s (+12% each)";
         case Item.EnergyDrink: return "One more roll (+1 each)";
@@ -89,12 +141,53 @@ string ItemLine(Item item)
         case Item.SteelToes: return "50% more to the dead on the ground (+50% each)";
         case Item.GasMask: return "Bloaters' bursts can't hurt you, and the ones you kill burst 30% wider on the dead (+30% each)";
         case Item.ApRounds: return "Rounds go through one more of the dead (+1 each)";
+        case Item.SawBlades: return "A saw blade circles you, cutting every one of the dead it passes (+1 blade each)";
+        case Item.TeslaCoil: return "Every 1.2 s lightning strikes the 2 nearest dead (+1 each)";
+        case Item.Molotovs: return "Every 6 s a firebomb flies at the thickest of the dead (20% sooner each)";
         case Item.Mortar: return "3% chance a hit calls a shell down on it (+3% each)";
         case Item.SecondWind: return "Going down, get straight back up. Used up (one more each)";
         case Item.HeRounds: return "Every round bursts where it lands, 2.5 m across, for 40% of its damage (+1 m, +10% each)";
         case Item.DragonsBreath: return "25% chance a hit sets the dead alight (+25% each)";
+        case Item.Shockwave: return "Every 5 s a shockwave throws down the dead within 4 m of you (+1 m each, and sooner)";
+        case Item.RocketPod: return "Every 3 s, 2 rockets fly at the dead round you (+1 each)";
     }
     return "";
+}
+
+// What `count` of one do together, for an offer of one more than a survivor has (the card says what they'll have: "4
+// drones", not "+1 each"); as ItemLine for one, and for those whose numbers don't add up whole.
+string ItemLineAt(Item item, int count)
+{
+    var n = count;
+    if (n <= 1) return ItemLine(item);
+    switch (item)
+    {
+        case Item.HollowPoints: return $"{15 * n}% more damage";
+        case Item.HairTrigger: return $"Shoot and reload {15 * n}% faster";
+        case Item.Kevlar: return $"{45 * n} more health and {6 * n}% less from blows";
+        case Item.Sneakers: return $"Run {12 * n}% faster";
+        case Item.Battery: return $"Skills come back {int(Math.Round(100 * (1 - Math.Pow(0.85, n))))}% sooner";
+        case Item.ExtendedMag: return $"{50 * n}% more rounds in a magazine";
+        case Item.LuckyShot: return $"{Math.Min(100, 15 * n)}% chance a hit does double";
+        case Item.Salts: return $"Raise a friend who's down {50 * n}% faster";
+        case Item.Ricochet: return $"A round that hits bounces on to {n} more of the dead near it, for 60%";
+        case Item.Splinters: return $"Your kills burst into {1 + 2 * n} shards of bone that strike the dead round them";
+        case Item.LiveWire: return $"15% chance a hit arcs to {1 + 2 * n} more of the dead";
+        case Item.GunDrone: return n > DRONES_SHOWN ? $"{DRONES_SHOWN} drones round you shoot the nearest dead, {n} drones' worth" : $"{n} drones round you shoot the nearest dead";
+        case Item.Frostbite: return $"{Math.Min(100, 12 * n)}% chance a hit freezes the dead solid for 2 s";
+        case Item.EnergyDrink: return $"{n} more rolls";
+        case Item.SteelToes: return $"{50 * n}% more to the dead on the ground";
+        case Item.GasMask: return $"Bloaters' bursts can't hurt you, and the ones you kill burst {30 * n}% wider on the dead";
+        case Item.ApRounds: return $"Rounds go through {n} more of the dead";
+        case Item.SawBlades: return n > SAWS_SHOWN ? $"{SAWS_SHOWN} saw blades circle you, cutting {n} blades' worth" : $"{n} saw blades circle you, cutting every one of the dead they pass";
+        case Item.TeslaCoil: return $"Every 1.2 s lightning strikes the {1 + n} nearest dead";
+        case Item.Mortar: return $"{3 * n}% chance a hit calls a shell down on it";
+        case Item.SecondWind: return $"Going down, get straight back up, {n} times";
+        case Item.DragonsBreath: return $"{Math.Min(100, 25 * n)}% chance a hit sets the dead alight";
+        case Item.Shockwave: return $"A shockwave throws down the dead within {int(DRUM_REACH) + n - 1} m of you, more often";
+        case Item.RocketPod: return $"Every 3 s, {1 + n} rockets fly at the dead round you";
+    }
+    return ItemLine(item);
 }
 
 // ---- What the items make of a survivor ----
@@ -152,7 +245,7 @@ int RollCharges(Survivor s)
 struct Arms
 {
     int seat;
-    int[23] items;
+    int[30] items;
     float might;
     float crit;
 }
@@ -170,11 +263,18 @@ int Holds(Arms arms, Item item)
 // ---- The offer at a level ----
 
 // Three items for a survivor, `minute` minutes into the run, no two the same: mostly common, uncommon more often as the
-// run goes on, now and then a rare.
+// run goes on, now and then a rare; and now and then (a level's offer) a skill card in the last place: another skill for
+// the right mouse, or the one they have a rank stronger.
 void Offer(mut Survivor survivor, int minute, int players, Rarity least)
 {
+    var card = least == Rarity.Common && Random.NextFloat() < SKILL_CARD_CHANCE;
     for (var k = 0; k < 3; k++)
     {
+        if (card && k == 2)
+        {
+            survivor.offers[k] = RollCard(survivor);
+            continue;
+        }
         mut var item = Item.HollowPoints;
         for (var tries = 0; tries < 20; tries++)
         {
@@ -187,6 +287,17 @@ void Offer(mut Survivor survivor, int minute, int players, Rarity least)
         survivor.offers[k] = item;
     }
     survivor.choosing = true;
+}
+
+// A skill card for a survivor: any of the five but their own at its last rank.
+Item RollCard(Survivor survivor)
+{
+    for (var tries = 0; tries < 10; tries++)
+    {
+        var card = Item(ITEM_COUNT + Random.NextInt(5));
+        if (CardSkill(card) != SecondaryOf(survivor) || survivor.secondaryRank < SKILL_RANKS) return card;
+    }
+    return SkillCard(SecondaryOf(survivor) == Skill.Blink ? Skill.Leap : Skill.Blink);
 }
 
 // One item, `minute` minutes into the run: mostly common, uncommon more often as the run goes on, now and then a rare.
@@ -226,13 +337,15 @@ system Choose(Hands hands, mut Survivor survivor)
     survivor.choosing = false;
     survivor.picks += 1;
     Take(survivor, item);
-    Send(Picked { seat = survivor.seat, item = item });
+    Send(Picked { seat = survivor.seat, item = item, at = survivor.feet, rank = CardSkill(item) != Skill.None ? survivor.secondaryRank : Has(survivor, item) });
 }
 
 // A survivor's kit taken: its gun in hand, its skills ready.
 void TakeRole(mut Survivor survivor, Role role)
 {
     survivor.role = role;
+    survivor.secondary = SkillOf(role, 0);
+    survivor.secondaryRank = 1;
     survivor.gun = RoleWeapon(role);
     survivor.mag = MagOf(survivor, survivor.gun);
     for (var i = 0; i < 3; i++) survivor.cooldowns[i] = 0;
@@ -246,6 +359,19 @@ void TakeRole(mut Survivor survivor, Role role)
 
 void Take(mut Survivor survivor, Item item)
 {
+    // A skill card: the right mouse's skill another (its first rank, ready), or the same a rank stronger
+    var skill = CardSkill(item);
+    if (skill != Skill.None)
+    {
+        if (skill == SecondaryOf(survivor)) survivor.secondaryRank = Math.Min(SKILL_RANKS, survivor.secondaryRank + 1);
+        else
+        {
+            survivor.secondary = skill;
+            survivor.secondaryRank = 1;
+        }
+        survivor.cooldowns[0] = 0;
+        return;
+    }
     survivor.items[int(item)] += 1;
     if (item == Item.Kevlar) survivor.health = MaxHealth(survivor);
     if (item == Item.ExtendedMag) survivor.mag = MagOf(survivor, survivor.gun);
@@ -322,7 +448,7 @@ void Detonate(Arms arms, Body first, float3 at, float damage, Herd herd)
     Send(Blast { at = at, reach = reach, element = Element.Blast, kind = Shot.Pop });
 }
 
-// A kill: a Powder Keg bursts it, Leech Rounds heal.
+// A kill: a Powder Keg bursts it, Bone Splinters fly from it, Leech Rounds heal.
 event(Earned earned) Earn(mut Survivor survivor, Herd herd, Match match)
 {
     if (!earned.kill) return;
@@ -367,23 +493,114 @@ event(Earned earned) Earn(mut Survivor survivor, Herd herd, Match match)
                                   echo = true });
         Send(Blast { at = earned.at + float3(0, 0.8, 0), reach = reach, element = Element.Fire, kind = Shot.Keg });
     }
+    // Bone Splinters: shards from the kill into the nearest dead round it, one each
+    var shards = Has(survivor, Item.Splinters);
+    if (shards > 0 && !earned.echo)
+    {
+        var from = earned.at + float3(0, 1.1, 0);
+        foreach (var z in NearestOf(Near(herd, earned.at, SPLINTER_REACH), earned.at, SPLINTER_REACH, 1 + 2 * shards))
+        {
+            z.entity.Send(Wound { damage = ZombieHealth(match.danger) * SPLINTER_SHARE * (1 + 0.15 * Has(survivor, Item.HollowPoints)), seat = survivor.seat, from = from,
+                                  knock = 2, blow = Blow.Blade, echo = true });
+            Send(Traced { seat = survivor.seat, from = from, to = z.chest, kind = Trace.Shard });
+        }
+    }
 }
 
-// ---- The drone and the ember ring: damage that needs no aim ----
+const float SPLINTER_REACH = 5;
+const float SPLINTER_SHARE = 0.45;   // Of one of the dead's health, a shard (Hollow Points' more)
+
+// The `most` nearest of the dead in `bodies` within `reach` of a place, nearest first.
+List<Body> NearestOf(List<Body> bodies, float3 at, float reach, int most)
+{
+    mut List<Body> caught = [];
+    mut List<float> far = [];
+    foreach (var z in bodies)
+    {
+        var off = Math.Length((z.at - at).xz);
+        if (!z.hittable || z.risen < 0.6 || off > reach) continue;
+        mut var place = caught.count;
+        while (place > 0 && far[place - 1] > off) place -= 1;
+        if (place >= most) continue;
+        caught.Insert(place, z);
+        far.Insert(place, off);
+        if (caught.count > most)
+        {
+            caught.RemoveAt(most);
+            far.RemoveAt(most);
+        }
+    }
+    return caught;
+}
+
+// Ricochet Rounds: from the last of the dead a round struck on to the nearest others it hasn't, so many times.
+void Ricochet(Arms arms, Body first, float damage, int count, Herd herd)
+{
+    mut var from = first.chest;
+    mut List<Entity> struck = [first.entity];
+    var bodies = Near(herd, first.at, RICOCHET_REACH + count);
+    for (var bounce = 0; bounce < count; bounce++)
+    {
+        mut Body best = default;
+        mut var bestFar = RICOCHET_REACH;
+        foreach (var z in bodies)
+        {
+            if (!z.hittable || struck.Contains(z.entity)) continue;
+            var far = Math.Distance(z.chest, from);
+            if (far >= bestFar) continue;
+            bestFar = far;
+            best = z;
+        }
+        if (best.entity == default) break;
+        best.entity.Send(Wound { damage = damage, seat = arms.seat, from = from, knock = 1, blow = Blow.Missile, echo = true });
+        Send(Traced { seat = arms.seat, from = from, to = best.chest, kind = Trace.Bounce });
+        struck.Add(best.entity);
+        from = best.chest;
+    }
+}
+
+const float RICOCHET_REACH = 7;
+
+// ---- What fights by itself: damage that needs no aim ----
+
+const int DRONES_SHOWN = 6;          // Drones drawn at most (more fire faster)
+const float ORBIT_SPIN = 3.4;        // The saw blades' turn, radians a second (the drones go round at a fifth of it)
+const float SAW_REACH = 2.3;         // How far out the saw blades circle...
+const int SAWS_SHOWN = 6;            // ...so many at most (more cut harder)...
+const float SAW_EVERY = 0.12;        // ...cutting so often...
+const float SAW_BITE = 0.75;         // ...what's within so far of each...
+const float SAW_HURT = 22;           // ...for so much
+const float TESLA_EVERY = 1.2;
+const float TESLA_REACH = 9;
+const float TESLA_HURT = 45;
+const float MOLOTOV_EVERY = 6;
+const float DRUM_EVERY = 5;          // A Thunder Drum's wave...
+const float DRUM_REACH = 4;          // ...this far (+1 m each)...
+const float DRUM_HURT = 60;          // ...for so much, the dead thrown down
+const float ROCKET_EVERY = 3;
+const float ROCKET_REACH = 22;
+const float ROCKET_SPEED = 18;
+const float ROCKET_HURT = 110;
+const float ROCKET_SPLASH = 2.6;
 
 [Stage(Tick.Hands, 2)]
 system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, Time time)
 {
     if (match.paused) return;
     if (!survivor.ready || survivor.life != Life.Standing || match.phase == Phase.Over) return;
+    var dt = time.dt;
+    survivor.sawTurn += dt * ORBIT_SPIN;
+    if (survivor.sawTurn > Math.TAU * 50) survivor.sawTurn -= Math.TAU * 50;
+    // Gun Drones: a drone each round them, firing in turn, each at the nearest to it it can see
     var drones = Has(survivor, Item.GunDrone);
     if (drones > 0)
     {
-        survivor.droneWait -= time.dt;
+        survivor.droneWait -= dt;
         if (survivor.droneWait <= 0)
         {
             survivor.droneWait = 0.5 / drones;
-            var drone = DroneAt(survivor);
+            survivor.droneNext = (survivor.droneNext + 1) % Math.Min(drones, DRONES_SHOWN);
+            var drone = DroneAt(survivor, survivor.droneNext, drones);
             mut Body best = default;
             mut var bestFar = 20.0;
             foreach (var z in Near(herd, survivor.feet, 20))
@@ -402,6 +619,104 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
                 Send(Traced { seat = survivor.seat, from = drone, to = best.chest, kind = Trace.Drone });
                 Send(Loosed { seat = survivor.seat, weapon = Weapon.Smg, at = drone, way = Math.Normalize(best.chest - drone), source = Source.Drone });
             }
+        }
+    }
+    // Saw Blades: a blade each circling them, cutting the dead its edge is on (more than SAWS_SHOWN cut harder)
+    var saws = Has(survivor, Item.SawBlades);
+    if (saws > 0)
+    {
+        survivor.sawWait -= dt;
+        if (survivor.sawWait <= 0)
+        {
+            survivor.sawWait = SAW_EVERY;
+            var shown = Math.Min(saws, SAWS_SHOWN);
+            var harder = float(saws) / shown;
+            var bodies = Near(herd, survivor.feet, SAW_REACH + SAW_BITE + 0.5);
+            for (var k = 0; k < shown; k++)
+            {
+                var at = SawAt(survivor, k, shown);
+                foreach (var z in bodies)
+                {
+                    if (!z.hittable || Math.Length((z.at - at).xz) > SAW_BITE) continue;
+                    z.entity.Send(Wound { damage = SAW_HURT * harder * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = 2.5, blow = Blow.Blade, echo = true });
+                }
+            }
+        }
+    }
+    // A Tesla Coil: lightning from over their head into the nearest dead, one more each
+    var tesla = Has(survivor, Item.TeslaCoil);
+    if (tesla > 0)
+    {
+        survivor.teslaWait -= dt;
+        if (survivor.teslaWait <= 0)
+        {
+            var from = survivor.feet + float3(0, 2.1, 0);
+            var caught = NearestOf(Near(herd, survivor.feet, TESLA_REACH), survivor.feet, TESLA_REACH, 1 + tesla);
+            survivor.teslaWait = caught.count > 0 ? TESLA_EVERY : AUTO_LOOK;
+            foreach (var z in caught)
+            {
+                z.entity.Send(Wound { damage = TESLA_HURT * Might(survivor), seat = survivor.seat, element = Element.Shock, from = from, knock = 1, blow = Blow.Burst, echo = true });
+                Send(Spell { seat = survivor.seat, from = from, to = z.chest });
+            }
+        }
+    }
+    // A Molotov Satchel: a firebomb at the thickest of the dead near
+    var molotovs = Has(survivor, Item.Molotovs);
+    if (molotovs > 0)
+    {
+        survivor.molotovWait -= dt;
+        if (survivor.molotovWait <= 0)
+        {
+            var target = Thickest(survivor.feet, Near(herd, survivor.feet, 16), 3, 15, out var found);
+            survivor.molotovWait = found ? MOLOTOV_EVERY * Math.Pow(0.8, molotovs - 1) : AUTO_LOOK;
+            if (found) Throw(survivor, Skill.Firebomb, target);
+        }
+    }
+    // A Thunder Drum: a wave out from them, the dead in it hurt and thrown down
+    var drum = Has(survivor, Item.Shockwave);
+    if (drum > 0)
+    {
+        survivor.shockWait -= dt;
+        if (survivor.shockWait <= 0)
+        {
+            var reach = DRUM_REACH + (drum - 1);
+            var bodies = Near(herd, survivor.feet, reach);
+            if (!Within(survivor.feet, bodies, reach)) survivor.shockWait = AUTO_LOOK;
+            else
+            {
+                survivor.shockWait = DRUM_EVERY * Math.Pow(0.9, drum - 1);
+                foreach (var z in bodies)
+                {
+                    var far = Math.Length((z.at - survivor.feet).xz);
+                    if (!z.hittable || far > reach) continue;
+                    z.entity.Send(Wound { damage = DRUM_HURT * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = 9 * (1 - 0.5 * far / reach), down = true,
+                                          blow = Blow.Blunt, echo = true });
+                }
+                Send(Blast { at = survivor.feet, reach = reach, element = Element.Shock, kind = Shot.Drum });
+            }
+        }
+    }
+    // A Rocket Pod: rockets over their shoulders at the nearest dead, one more each
+    var pods = Has(survivor, Item.RocketPod);
+    if (pods > 0)
+    {
+        survivor.rocketWait -= dt;
+        if (survivor.rocketWait <= 0)
+        {
+            var caught = NearestOf(Near(herd, survivor.feet, ROCKET_REACH), survivor.feet, ROCKET_REACH, 1 + pods);
+            survivor.rocketWait = caught.count > 0 ? ROCKET_EVERY : AUTO_LOOK;
+            for (var k = 0; k < 1 + pods && caught.count > 0; k++)
+            {
+                var z = caught[k % caught.count];
+                var side = (k % 2 == 0 ? 1.0 : -1.0) * (0.3 + 0.1 * (k / 2));
+                var from = survivor.feet + float3(0, 1.9, 0) + Flat(survivor.yaw + Math.PI * 0.5) * side - Flat(survivor.yaw) * 0.2;
+                var to = z.chest;
+                var flight = Math.Max(0.25, Math.Distance(from, to) / ROCKET_SPEED);
+                var velocity = (to - from) / flight + float3(0, 0.5 * ROCKET_DROP * flight, 0);
+                Spawn(Missile { kind = Shot.Rocket, at = from, velocity = velocity, gravity = ROCKET_DROP, damage = ROCKET_HURT * Might(survivor), splash = ROCKET_SPLASH,
+                                element = Element.Blast, seat = survivor.seat, life = flight + 0.2, echo = true });
+            }
+            if (caught.count > 0) Send(Cue { sound = Sfx.Rocket, at = survivor.feet + float3(0, 2, 0) });
         }
     }
     // The ember ring: every second, the dead near enough catch fire (the fire's own damage, zombies.tide, grows with the
@@ -429,11 +744,23 @@ float EmberReach(int embers)
     return 2.5 + 0.5 * embers;
 }
 
-// Where a survivor's drone hovers: over their left shoulder, up and a little back (the over-the-shoulder camera is on
-// the right: over that shoulder it sat by the crosshair).
-float3 DroneAt(Survivor survivor)
+const float ROCKET_DROP = 8;        // A rocket's fall: it arcs a little
+
+// Where a survivor's drone `k` of their `count` hovers: one over their left shoulder, up and a little back; more, in a
+// ring over their head going slowly round, wider for more.
+float3 DroneAt(Survivor survivor, int k, int count)
 {
-    return survivor.feet + float3(0, 2.35, 0) - Flat(survivor.yaw + Math.PI * 0.5) * 0.75 - Flat(survivor.yaw) * 0.45;
+    var shown = Math.Min(count, DRONES_SHOWN);
+    if (shown <= 1) return survivor.feet + float3(0, 2.35, 0) - Flat(survivor.yaw + Math.PI * 0.5) * 0.75 - Flat(survivor.yaw) * 0.45;
+    var turn = survivor.sawTurn * 0.2 + k * Math.TAU / shown;
+    return survivor.feet + float3(0, 2.3 + 0.12 * (k % 2), 0) + float3(Math.Sin(turn), 0, Math.Cos(turn)) * (0.75 + 0.08 * shown);
+}
+
+// Where a survivor's saw blade `k` of `shown` is: circling them waist high, SAW_REACH out.
+float3 SawAt(Survivor survivor, int k, int shown)
+{
+    var turn = survivor.sawTurn + k * Math.TAU / Math.Max(1, shown);
+    return survivor.feet + float3(Math.Sin(turn) * SAW_REACH, 0.85, Math.Cos(turn) * SAW_REACH);
 }
 
 // ---- Levels ----
@@ -490,11 +817,14 @@ system Experience(mut Survivor survivor, Match match)
     }
 }
 
-// A survivor's item taken, for what's seen and heard.
+// A survivor's item taken, for what's seen and heard: where they stood, and how many of it they have now (a skill card,
+// its rank).
 event Picked
 {
     int seat;
     Item item;
+    float3 at;
+    int rank;
 }
 
 // A survivor's kit taken.

@@ -60,10 +60,10 @@ typedef struct Bot {
 static Bot bots[SEATS_MOST];
 
 // Items every survivor starts the run with (the harness's last argument: "GD2,PK1"), to weigh what one is worth.
-#define ITEMS 23
+#define ITEMS 30
 static int startItems[ITEMS];
-static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "LW", "PK", "GD", "ER", "FR", "ED", "KE", "ST", "GM", "AP",
-                                       "MF", "SW", "HE", "DB"};
+static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "RR", "BS", "LW", "PK", "GD", "ER", "FR", "ED", "KE", "ST", "GM",
+                                       "AP", "SB", "TC", "MS", "MF", "SW", "HE", "DB", "TD", "RP"};
 
 static void parse_items(const char *list)
 {
@@ -117,7 +117,10 @@ static Hands think(int seat, float dt)
     if (s.choosing) {
         bot->pickWait -= dt;
         if (bot->pickWait <= 0) {
-            const int k = (int)(frand() * 3);
+            // Any of the three but a skill card (a bot uses its kit's right mouse skill well and the others badly: a
+            // blink not at all, a leap into the thick of them)
+            int k = (int)(frand() * 3);
+            for (int tries = 0; tries < 6 && (int)s.offers.at[k] >= Item_CardPhaseRound; tries++) k = (int)(frand() * 3);
             h.pick1 = k == 0;
             h.pick2 = k == 1;
             h.pick3 = k == 2;
@@ -338,11 +341,13 @@ static Hands think(int seat, float dt)
     bot->blinkTurn = false;
     h.roll = s.life == Life_Standing && s.rolls > 0 && s.roll <= 0 && ((nearest < 2.2f && press > 0.01f) || bursting);
     const bool ready0 = s.cooldowns.at[0] <= 0;
-    switch (s.role) {
-    case Role_Gunner: h.secondary = ready0 && onTarget && within20 >= 3; break;          // Phase Round down a line of them
-    case Role_Breacher: h.secondary = ready0 && nearest < 2.2f && onTarget; break;       // The boot
-    case Role_Engineer: h.secondary = ready0 && within8 >= 3; break;                     // A mine at our feet as they come
-    default: break;
+    // (the right mouse's skill: the kit's, or what a skill card made it)
+    switch (s.secondary) {
+    case Skill_PhaseRound: h.secondary = ready0 && onTarget && within20 >= 3; break;     // Down a line of them
+    case Skill_Boot: h.secondary = ready0 && nearest < 2.2f && onTarget; break;          // At the one on us
+    case Skill_Mine: h.secondary = ready0 && within8 >= 3; break;                        // At our feet as they come
+    case Skill_Leap: h.secondary = ready0 && onTarget && within8 >= 4; break;            // Into a knot of them
+    default: break;                                                                      // (a blink goes the way it aims: not used)
     }
     if (s.life == Life_Downed) h.secondary = false;
     (void)within4;

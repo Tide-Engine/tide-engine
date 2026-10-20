@@ -182,6 +182,8 @@ static void become(int seat, Role role, Weapon gun)
     for (int k = 0; k < 3; k++) s.cooldowns.at[k] = 0;
     s.rolls = 2;
     s.rollWait = 0;
+    s.secondary = Skill_None;      // The kit's right mouse skill (no skill card's)
+    s.secondaryRank = 1;
     set(seat, s);
 }
 
@@ -340,6 +342,48 @@ static void press(bool *key)
     *key = false;
 }
 
+// A skill card taken (it's no item: the right mouse's skill another, or a rank stronger).
+static Survivor take_card(int seat, Item card)
+{
+    Survivor s = get(seat);
+    s.offers.at[0] = card;
+    s.offers.at[1] = s.offers.at[2] = Item_HollowPoints;
+    s.choosing = true;
+    s.pending = 0;
+    set(seat, s);
+    pick(seat, 1);
+    return get(seat);
+}
+
+// One of the dead held at a place, on its feet, as tough as a hundred thousand, an ordinary one.
+static void hold_at(tide_entity e, tide_float3 at)
+{
+    Zombie z = zombie(e);
+    z.at = at;
+    z.pace = 0;
+    z.state = ZombieState_Hunting;
+    z.health = 100000;
+    z.kind = ZombieKind_Walker;
+    z.frenzy = 0;
+    z.shove = (tide_float3){0, 0, 0};
+    z.swing = 0;
+    z.windup = 0;
+    z.leap = 0;
+    z.burn = 0;
+    z.flinch = 0;
+    CHECK(tide_set_Zombie(&world, e, z));
+}
+
+// A survivor with only so many of one item, its timers run out.
+static void only_item(int seat, Item item, int count)
+{
+    Survivor s = get(seat);
+    memset(&s.items, 0, sizeof s.items);
+    s.items.at[item] = count;
+    s.droneWait = s.sawWait = s.teslaWait = s.molotovWait = s.shockWait = s.rocketWait = 0;
+    set(seat, s);
+}
+
 static int missiles_of(Shot kind)
 {
     int count = 0;
@@ -452,7 +496,8 @@ int main(void)
     for (int seat = 0; seat < 2; seat++) {
         const Survivor s = get(seat);
         CHECK(s.choosing);
-        for (int k = 0; k < 3; k++) CHECK((int)s.offers.at[k] >= 0 && (int)s.offers.at[k] < 24);
+        for (int k = 0; k < 3; k++) CHECK((int)s.offers.at[k] >= 0 && (int)s.offers.at[k] < Item_CardBlink + 1);
+        CHECK((int)s.offers.at[0] < Item_CardPhaseRound && (int)s.offers.at[1] < Item_CardPhaseRound);     // A skill card in the last place only
         CHECK(s.offers.at[0] != s.offers.at[1] && s.offers.at[1] != s.offers.at[2] && s.offers.at[0] != s.offers.at[2]);
     }
     {
@@ -1471,6 +1516,206 @@ int main(void)
         spawning();
     }
 
+    // ---- Upgrades that show (the owner, 2026-10-20): three Gun Drones fire in turn; a Saw Blade cuts what it passes; a
+    // Tesla Coil strikes the two nearest; a Thunder Drum throws one down; a Rocket Pod's rockets fly and burst; Ricochet
+    // Rounds bounce on; Bone Splinters fly from a kill; a Molotov Satchel throws. Skill cards: the right mouse a leap,
+    // then a leap a rank stronger that lands and knocks one down; a phase round at its third rank, five in a fan, three
+    // of the dead struck; a blink at its second rank, the one by where it left thrown down ----
+    {
+        few(4);
+        become(0, Role_Gunner, Weapon_Rifle);
+        only_skill(0, -1);
+        put(1, (tide_float3){24, 0, -14}, (tide_float3){24, 1, -20});
+        put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -16});
+        tick_safe(10);
+        const tide_float3 feet = get(0).feet;
+        tide_entity d[4];
+        int found = 0;
+        for (uint32_t row = 0; row < world.arch5_Zombie.count && found < 4; row++)
+            if (TIDE_AT(&world, arch5_Zombie, Zombie, row).state == ZombieState_Hunting) d[found++] = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+        CHECK(found == 4);
+        const tide_float3 away[4] = {{feet.x - 30, feet.y, feet.z + 14}, {feet.x - 32, feet.y, feet.z + 14}, {feet.x - 34, feet.y, feet.z + 14}, {feet.x - 36, feet.y, feet.z + 14}};
+        for (int k = 0; k < 4; k++) hold_at(d[k], away[k]);
+        // Three Gun Drones, firing in turn
+        only_item(0, Item_GunDrone, 3);
+        hold_at(d[0], (tide_float3){feet.x, feet.y, feet.z - 7});
+        bool fired[3] = {false, false, false};
+        float whole = zombie(d[0]).health;
+        for (int t = 0; t < 90; t++) {
+            tick_safe(1);
+            const int n = get(0).droneNext;
+            if (n >= 0 && n < 3) fired[n] = true;
+        }
+        printf("three Gun Drones: each fired %d, %.0f to one 7 m off in 1.5 s\n", fired[0] && fired[1] && fired[2], whole - zombie(d[0]).health);
+        CHECK(fired[0] && fired[1] && fired[2] && zombie(d[0]).health < whole);
+        // A Saw Blade: one of the dead on its circle
+        only_item(0, Item_SawBlades, 1);
+        hold_at(d[0], (tide_float3){feet.x + 2.3f, feet.y, feet.z});
+        whole = zombie(d[0]).health;
+        int t = 0;
+        for (; t < 150 && zombie(d[0]).health >= whole; t++) tick_safe(1);
+        printf("a Saw Blade: one of the dead on its circle cut after %.2f s\n", t / 60.0f);
+        CHECK(zombie(d[0]).health < whole);
+        // A Tesla Coil: the two nearest (the dead where they're put before it's armed)
+        only_item(0, Item_HollowPoints, 0);
+        hold_at(d[0], (tide_float3){feet.x - 3, feet.y, feet.z - 4});
+        hold_at(d[1], (tide_float3){feet.x + 3, feet.y, feet.z - 4});
+        tick_safe(2);
+        only_item(0, Item_TeslaCoil, 1);
+        const float a0 = zombie(d[0]).health, a1 = zombie(d[1]).health;
+        tick_safe(20);
+        CHECK(zombie(d[0]).health < a0 && zombie(d[1]).health < a1);
+        // A Thunder Drum: one 3 m off thrown down
+        only_item(0, Item_HollowPoints, 0);
+        hold_at(d[1], away[1]);
+        hold_at(d[0], (tide_float3){feet.x, feet.y, feet.z - 3});
+        tick_safe(2);
+        only_item(0, Item_Shockwave, 1);
+        bool over = false;
+        for (t = 0; t < 30 && !over; t++) {
+            tick_safe(1);
+            over = zombie(d[0]).state == ZombieState_Fallen;
+        }
+        CHECK(over);
+        // A Rocket Pod: rockets at one 10 m off
+        only_item(0, Item_HollowPoints, 0);
+        hold_at(d[0], (tide_float3){feet.x, feet.y, feet.z - 10});
+        tick_safe(2);
+        only_item(0, Item_RocketPod, 1);
+        whole = zombie(d[0]).health;
+        int rockets = 0;
+        for (t = 0; t < 90; t++) {
+            tick_safe(1);
+            rockets = rockets > missiles_of(Shot_Rocket) ? rockets : missiles_of(Shot_Rocket);
+        }
+        printf("a Rocket Pod: %d rockets in the air at once, %.0f to one 10 m off\n", rockets, whole - zombie(d[0]).health);
+        CHECK(rockets == 2 && zombie(d[0]).health < whole);
+        // Ricochet Rounds: shot at one, the one beside it hurt too
+        only_item(0, Item_Ricochet, 1);
+        hold_at(d[0], (tide_float3){feet.x, feet.y, feet.z - 7});
+        hold_at(d[1], (tide_float3){feet.x + 2.5f, feet.y, feet.z - 7});
+        tick_safe(2);
+        look_at(0, zombie(d[0]).chestAt);
+        Survivor s = get(0);
+        s.shotWait = 0;
+        s.mag = 30;
+        set(0, s);
+        whole = zombie(d[1]).health;
+        press(&held[0].attack);
+        tick_safe(3);
+        printf("Ricochet Rounds: %.0f to the one beside the one shot\n", whole - zombie(d[1]).health);
+        CHECK(zombie(d[1]).health < whole);
+        // Bone Splinters: one shot dead, the one beside it struck by a shard
+        only_item(0, Item_Splinters, 1);
+        hold_at(d[1], (tide_float3){feet.x + 2.0f, feet.y, feet.z - 7});
+        Zombie z = zombie(d[0]);
+        z.health = 1;
+        CHECK(tide_set_Zombie(&world, d[0], z));
+        tick_safe(2);
+        look_at(0, zombie(d[0]).chestAt);
+        s = get(0);
+        s.shotWait = 0;
+        s.mag = 30;
+        set(0, s);
+        whole = zombie(d[1]).health;
+        press(&held[0].attack);
+        tick_safe(3);
+        CHECK(killed(d[0]) && zombie(d[1]).health < whole);
+        // (the one shot dead: four of the dead again)
+        few(4);
+        found = 0;
+        for (uint32_t row = 0; row < world.arch5_Zombie.count && found < 4; row++)
+            if (TIDE_AT(&world, arch5_Zombie, Zombie, row).state == ZombieState_Hunting) d[found++] = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+        CHECK(found == 4);
+        for (int k = 0; k < 4; k++) hold_at(d[k], away[k]);
+        put(0, feet, (tide_float3){feet.x, 1.6f, feet.z - 10});
+        // A Molotov Satchel: a firebomb at three of the dead together
+        only_item(0, Item_HollowPoints, 0);
+        hold_at(d[0], (tide_float3){feet.x, feet.y, feet.z - 8});
+        hold_at(d[1], (tide_float3){feet.x + 1, feet.y, feet.z - 8});
+        hold_at(d[2], (tide_float3){feet.x - 1, feet.y, feet.z - 8});
+        tick_safe(2);
+        only_item(0, Item_Molotovs, 1);
+        int pots = 0;
+        for (t = 0; t < 30 && pots == 0; t++) {
+            tick_safe(1);
+            pots = missiles_of(Shot_Pot);
+        }
+        CHECK(pots > 0);
+        only_item(0, Item_HollowPoints, 0);
+        for (int k = 0; k < 4; k++) hold_at(d[k], away[k]);
+        tick_safe(120);              // (the fire out)
+        // Skill cards: a leap in place of the phase round, then a rank stronger
+        s = take_card(0, Item_CardLeap);
+        CHECK(s.secondary == Skill_Leap && s.secondaryRank == 1);
+        s = take_card(0, Item_CardLeap);
+        CHECK(s.secondary == Skill_Leap && s.secondaryRank == 2);
+        put(0, feet, (tide_float3){feet.x, 1.6f, feet.z - 10});
+        tick_safe(10);
+        hold_at(d[0], (tide_float3){feet.x, feet.y, feet.z - 6.5f});
+        tick_safe(2);
+        look_at(0, zombie(d[0]).chestAt);
+        only_skill(0, 0);
+        press(&held[0].secondary);
+        only_skill(0, -1);
+        bool aloft = false, landed = false;
+        for (t = 0; t < 120 && !landed; t++) {
+            tick_safe(1);
+            if (!get(0).grounded) aloft = true;
+            landed = aloft && get(0).grounded;
+        }
+        const float leapt = hypotf(get(0).feet.x - feet.x, get(0).feet.z - feet.z);
+        tick_safe(2);
+        printf("a leap, rank II: %.1f m, the one where it landed %s\n", leapt, zombie(d[0]).state == ZombieState_Fallen ? "knocked down" : "on its feet");
+        CHECK(aloft && landed && leapt > 4 && zombie(d[0]).state == ZombieState_Fallen);
+        // A phase round again, to its third rank: five in a fan
+        s = take_card(0, Item_CardPhaseRound);
+        CHECK(s.secondary == Skill_PhaseRound && s.secondaryRank == 1);
+        take_card(0, Item_CardPhaseRound);
+        s = take_card(0, Item_CardPhaseRound);
+        CHECK(s.secondaryRank == 3);
+        put(0, feet, (tide_float3){feet.x, 1.6f, feet.z - 12});
+        tick_safe(10);
+        for (int k = 0; k < 3; k++) {
+            const float turn = (float)(k - 1) * 0.16f;
+            hold_at(d[k], (tide_float3){feet.x + 12.0f * sinf(turn), feet.y, feet.z - 12.0f * cosf(turn)});
+        }
+        tick_safe(2);
+        look_at(0, zombie(d[1]).chestAt);
+        const float h0 = zombie(d[0]).health, h1 = zombie(d[1]).health, h2 = zombie(d[2]).health;
+        only_skill(0, 0);
+        press(&held[0].secondary);
+        only_skill(0, -1);
+        tick_safe(3);
+        printf("a phase round, rank III: %.0f, %.0f and %.0f to three of the dead across its fan\n", h0 - zombie(d[0]).health, h1 - zombie(d[1]).health, h2 - zombie(d[2]).health);
+        CHECK(zombie(d[0]).health < h0 && zombie(d[1]).health < h1 && zombie(d[2]).health < h2);
+        // A blink, rank II: the one beside where it left thrown down
+        take_card(0, Item_CardBlink);
+        s = take_card(0, Item_CardBlink);
+        CHECK(s.secondary == Skill_Blink && s.secondaryRank == 2);
+        for (int k = 0; k < 4; k++) hold_at(d[k], away[k]);
+        put(0, feet, (tide_float3){feet.x, 1.6f, feet.z - 7});
+        tick_safe(10);
+        hold_at(d[0], (tide_float3){feet.x + 1.6f, feet.y, feet.z + 0.5f});
+        tick_safe(1);
+        s = get(0);
+        s.aim = (tide_float3){feet.x, feet.y + 1, feet.z - 7};
+        set(0, s);
+        only_skill(0, 0);
+        press(&held[0].secondary);
+        only_skill(0, -1);
+        tick_safe(2);
+        const float went = hypotf(get(0).feet.x - feet.x, get(0).feet.z - feet.z);
+        printf("a blink, rank II: %.1f m, the one by where it left %s\n", went, zombie(d[0]).state == ZombieState_Fallen ? "thrown down" : "on its feet");
+        CHECK(went > 4 && zombie(d[0]).state == ZombieState_Fallen);
+        s = get(0);
+        s.secondary = Skill_None;
+        s.secondaryRank = 1;
+        memset(&s.items, 0, sizeof s.items);
+        set(0, s);
+        spawning();
+    }
+
     // ---- The night's chests: four, on open ground, apart; standing by one opens it, and everyone's owed a pick; a chest
     // left alone shuts again ----
     {
@@ -2020,9 +2265,15 @@ int main(void)
         printf("a round over the pit: %.1f to one of the dead beyond it\n", whole - zombie(beyond).health);
         CHECK(zombie(beyond).health < whole);
 
-        // The ground cracking near a survivor, not on them (one of the dead stood by for the burst first)
-        few(2);
+        // The ground cracking near a survivor, not on them (one of the dead stood by for the burst first, the rest held off
+        // well away, one of them for the burning after)
+        few(3);
         const tide_entity torn = sturdy();
+        for (uint32_t row = 0; row < world.arch5_Zombie.count; row++) {
+            const tide_entity e = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+            if (e.index == torn.index || TIDE_AT(&world, arch5_Zombie, Zombie, row).state != ZombieState_Hunting) continue;
+            hold_at(e, (tide_float3){-14.0f - (float)row, 0, -30});
+        }
         Zombie held_still = zombie(torn);
         held_still.at = (tide_float3){0.8f, 0, -22.5f};
         held_still.pace = 0;

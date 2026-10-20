@@ -315,7 +315,9 @@ local event(Blast blast) FeelBlast(mut Me me)
 {
     if (blast.kind == Shot.Pop || blast.kind == Shot.Spit) return;
     var far = Math.Distance(blast.at, me.ears);
-    me.shake = Math.Max(me.shake, Math.Saturate(1.2 - far / 14));
+    // (a Thunder Drum's every few seconds and a Rocket Pod's many: a little)
+    var most = blast.kind == Shot.Drum ? 0.3 : blast.kind == Shot.Rocket ? 0.4 : 1.0;
+    me.shake = Math.Max(me.shake, Math.Saturate(1.2 - far / 14) * most);
 }
 
 local event(Loosed loosed) FeelLoosed(mut Me me)

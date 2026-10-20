@@ -5,9 +5,9 @@
 // dead's, which flies at the living. Each tick one moves, drops, and meets
 // the dead (or the living) before the walls.
 
-// What a missile is. A Keg, a Quake, Bile and a Pop are none: a Powder Keg's burst, a boss's slam, a Bloater's burst
-// and an HE round's, for what's seen and heard.
-enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake, Bile, Spit, Pop }
+// What a missile is. A Keg, a Quake, Bile, a Pop and a Drum are none: a Powder Keg's burst, a boss's slam, a Bloater's
+// burst, an HE round's and a Thunder Drum's wave, for what's seen and heard. A Rocket is a Rocket Pod's.
+enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake, Bile, Spit, Pop, Rocket, Drum }
 
 component Missile
 {
@@ -134,8 +134,8 @@ system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time ti
     }
     if (missile.life <= 0)
     {
-        // A grenade's fuse run out where it lies; anything else gone
-        if (missile.kind == Shot.Grenade) Burst(missile, missile.at, Near(herd, missile.at, missile.splash + 1));
+        // A grenade's fuse run out where it lies, a rocket at its mark; anything else gone
+        if (missile.kind == Shot.Grenade || missile.kind == Shot.Rocket) Burst(missile, missile.at, Near(herd, missile.at, missile.splash + 1));
         this.Destroy();
         return;
     }

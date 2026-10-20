@@ -58,7 +58,8 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
         if (up > 0) wish -= uphill * up;
     }
     var target = wish * speed;
-    var grip = survivor.grounded ? GRIP : 3.5;
+    // (in a leap, hardly any: it carries them its way)
+    var grip = survivor.grounded ? GRIP : survivor.leaping ? 0.4 : 3.5;
     var blend = Math.Min(1, dt * grip);
     survivor.velocity.x += (target.x - survivor.velocity.x) * blend;
     survivor.velocity.z += (target.z - survivor.velocity.z) * blend;
@@ -283,7 +284,7 @@ system Fight(Hands hands, mut Survivor survivor, Match match, Ashwick ashwick, H
     if (survivor.leaping && survivor.grounded)
     {
         survivor.leaping = false;
-        Slam(survivor, Near(herd, survivor.feet, SLAM_REACH + 0.5));
+        Slam(survivor, Near(herd, survivor.feet, SlamReach(survivor.secondaryRank) + 0.5));
     }
 
     // Finishing what the hands were doing
@@ -542,6 +543,9 @@ void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float 
         Land(arms, struck[i], dealt, heads[i], weaks[i], from, knock, chance, herd);
         if (i == pierce - 1) end = when[i];
     }
+    // Ricochet Rounds: on from the last it struck (a pellet's as often as it sets items off)
+    var bounces = Holds(arms, Item.Ricochet);
+    if (count > 0 && bounces > 0 && Random.NextFloat() < chance) Ricochet(arms, struck[count - 1], damage * 0.6, bounces, herd);
     if (count > 0 && Holds(arms, Item.HeRounds) > 0)
     {
         var roll = Random.NextFloat();
@@ -662,7 +666,7 @@ event Loosed
 }
 
 // What a round's line looks like.
-enum Trace { Bullet, Pellet, Phase, Turret, Drone }
+enum Trace { Bullet, Pellet, Phase, Turret, Drone, Bounce, Shard }
 
 // A round's line, from the eye (or a turret's or a drone's gun) to where it stopped.
 event Traced
