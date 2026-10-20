@@ -1,5 +1,18 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Window pixel scale metadata (2026-10-20)
+
+`Screen.scale` is a read-only float2 in views and their drawing helpers: physical
+pixels per logical window pixel on x/y. It exposes the renderer's existing
+ratios, including rounding that can make the axes differ. It does not describe
+an arbitrary selected render target or imply target-content validity. The
+standard host sets `tide_draw_list.screen_scale` before the generated frame from
+`tide_platform_screen_scale`; a custom host may supply its own. A zeroed axis
+reads as 1. The metadata is local, needs no GPU allocation/readback and survives
+ordinary draw reset like other host metadata. All hosts/game libraries rebuild
+for the C layout change. Tests and validation are in `notes/language.md`.
+
+
 ## Explicit skinned instances (2026-10-20)
 
 Owner-approved: `Draw.Instanced(model, instances[, texture/filter/wrap][, vert][, frag][, values])`

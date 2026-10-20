@@ -1,5 +1,15 @@
 # The platform layer and the renderer
 
+## Window scale getter (2026-10-20)
+
+`tide_platform_screen_scale()` exposes the existing `window_scale()` float2,
+physical/logical pixel ratios independently on each axis. The standard host
+passes it to generated frames as draw-list metadata for `Screen.scale`. It adds
+no backend call, allocation, device query or target invalidation rule. The float
+bits platform fixture also checks frame access against this getter. See
+`notes/drawing.md` and `notes/language.md` for contracts and validation.
+
+
 ## Target dimensions for local metadata (2026-10-18)
 
 tide_platform_target_pixels exposes the existing target_extent calculation to

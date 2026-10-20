@@ -1,0 +1,9 @@
+local singleton Seen { float2 scale; float width; float height; }
+float2 Forward() { return Screen.scale; }
+view Show(mut Seen seen)
+{
+    seen.scale = Forward();
+    seen.width = Screen.width;
+    seen.height = Screen.height;
+}
+scene Main { }

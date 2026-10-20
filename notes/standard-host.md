@@ -1,5 +1,16 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Window scale frame metadata (2026-10-20)
+
+The host supplies `tide_platform_screen_scale()` in the draw list's
+`screen_scale` before every frame, beside the existing target-pixel callback.
+Generated `Screen.scale` is the same read-only frame-local float2 as the
+renderer's physical/logical ratios. Zeroed custom-host metadata defaults to one
+per axis. This adds no frame pacing, simulation pause or lost-contents event.
+Hosts/libraries rebuild for the draw-list layout change. Validation is in
+`notes/language.md`; other new Inside Out ideas are saved in the prototype audit.
+
+
 Texture metadata (2026-10-18): before calling the generated frame the standard
 host supplies tide_platform_target_pixels in tide_draw_list.target_pixels.
 This borrowed callback crosses the host/game-library boundary explicitly;

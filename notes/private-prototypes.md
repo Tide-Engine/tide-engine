@@ -1,5 +1,50 @@
 # Prototype catalog and staging
 
+## Inside Out follow-up review (2026-10-20)
+
+Reviewed the kept list at the start of `notes/inside-out.md`. The owner requested
+that conventional completions and fixes proceed without routine design questions.
+This review preserves the remaining ideas; proposals below are not requirements.
+
+Built in this review:
+
+- Float hashing and bit casts: `Math.AsInt(float/float2/float3/float4)`, inverse
+  `Math.AsFloat(int/int2/int3/int4)`, and `Math.Hash` for floats/vectors. These
+  reuse the existing IEEE bit representation and positive xxHash32 contract,
+  on CPU and GPU. Signed zero retains its distinct bits. Integer overloads keep
+  their existing results. See `notes/language.md` and `notes/shaders.md`.
+- Large read-only values: private generated CPU function/method signatures borrow
+  aggregates/receivers where source mutation is provably absent. Value snapshots
+  remain for overlapping mutable inputs, later argument effects, extern calls,
+  callbacks and world writes. This removes repeated 40 KB recursive copies
+  without new syntax or reference semantics. See `notes/language.md`.
+- `Screen.scale`: read-only float2 frame metadata, using the renderer's existing
+  physical/logical pixel ratios on x/y. The standard host supplies it, custom
+  hosts default to (1, 1). This covers scale observation, not target-content loss.
+  See `notes/drawing.md` and `notes/standard-host.md`.
+- The ANGLE/D3D11 varying-loop comparison warning was already fixed on
+  2026-10-19, with an explicit D3D11/WARP test. Inside Out's unrolled workaround
+  can remain until its next game revision. This is not an outstanding engine bug.
+
+Saved for owner discussion:
+
+| Gap | Concrete idea and remaining choice |
+|---|---|
+| Rendering unchanged frames / frame cap | Separate presentation pacing from the existing uninterrupted match/input/network loop. Consider a target frame-rate setting plus explicit render requests. The dirty/request lifecycle and behavior with continuously animated local UI need a contract. |
+| Target contents lost | Prefer read-only allocation/content-generation metadata to a consumed event, changing on resize, scale, device recreation and relevant reloads. Define when the view observes invalidation and whether the counter describes allocation or usable contents. `Screen.scale` alone cannot detect device loss. |
+| Numeric render attachments | Consider an explicit raw/data attachment mode that bypasses color alpha encoding. Define attachment vs whole-target scope, clear/filter/blend semantics and MRT interaction before changing the existing premultiplied color contract. |
+| 2D polygons | `Draw.Polygon` could follow existing list/shape conventions, but convex-only vs arbitrary concave input, fill rules, holes and outlines remain choices. Existing `Draw.Mesh` still supplies explicit triangles. |
+| Per-pass GPU cost | Named regions or pass identifiers could extend the existing asynchronous whole-frame timer and feed numeric profiler/capture output. Choose public region scope, result latency and unsupported-device behavior before adding query resources to every backend. |
+| Vector/matrix equality | Current decided operators are scalar-only. Choose whole-value bool equality or bool-vector results plus reductions (`All`/`Any`); the latter adds types and language semantics. A bool-returning explicit equality helper is another option. Float hashing does not decide equality. |
+| Game arguments / page address | A local startup/environment API could expose immutable arguments and the page URL. Decide standard-host flag visibility, custom-host input and startup/frame lifetime; match-affecting answers must still enter through synchronized input. |
+| Typed C command serialization | Reuse the generated command codecs to produce bounded envelopes for the existing authenticated command entry point. Container/text payloads need an explicit source heap/world context, and the codec must not invent sender/sequence authority. Exporting the current static helper blindly would hide that lifetime contract. |
+| Calling ordinary Tide functions from C | A public export/call interface needs a stable signature and explicit world/local/caller capabilities. Generated static helpers remain implementation details; this is separate from pure command serialization. |
+| Phones as controllers | Preserve the game's proposal: ordinary gamepads in Devices, with explicit pairing, seat ownership, disconnect and transport rules. A phone relay is not automatically part of Devices. |
+
+No game workarounds or prototype browser fixtures were rewritten. Final compiler,
+renderer and documentation validation is recorded in `notes/language.md`.
+
+
 The owner requested an admin section for games in progress on 2026-10-09, and
 later that day public game URLs, so invited players need no admin access. This
 note is the catalog and staging contract. A game's own rules, tests and

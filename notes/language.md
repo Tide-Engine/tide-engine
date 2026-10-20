@@ -1,5 +1,45 @@
 # Language features, as tidec builds them
 
+## Inside Out API and aggregate-copy completions (2026-10-20)
+
+Authorized conventional additions: `Math.AsInt` reinterprets float/float2/float3/
+float4 as int equivalents; `Math.AsFloat` is the inverse. Both use memcpy-based
+inline math helpers, not pointer aliasing or numeric conversions. Float/vector
+`Math.Hash` hashes exactly those int bits through the existing xxHash32 mixers
+and keeps its nonnegative 31-bit result. Positive/negative zero differ. Existing
+integer/long signatures precede float signatures so their overload resolution
+and deterministic pins stay unchanged. CPU tests cover normal/subnormal values,
+infinities and explicit NaN payloads; GPU tests compare finite input bits and
+all four hash arities against CPU results.
+
+Codegen also uses private const-pointer signatures for read-only aggregates of
+at least 128 bytes and read-only method receivers when it can prove no source
+mutation during the call. No Tide alias/reference behavior is added. Overlapping
+mutable input types (including nested fields/containers), world writes, sends,
+spawns, tasks, extern calls and Action helpers keep the ordinary value path.
+Extern, async, operator, Interpolate, audio and input entry ABIs are unchanged.
+Recursive type inspection is bounded and fails conservatively. Later argument
+side effects retain existing ordered snapshots; non-addressable values use
+caller-owned compound literals. Shared GPU helpers retain their shader ABI.
+
+`readonly_aggregates` runs 40 KB values through 96 recursive function and method
+calls and tests disjoint mutable results, overlapping values/fields, implicit
+method forwarding with container outputs, later operand mutation and C mutation.
+`float_bits` checks all scalar/vector bit-cast and hash overloads. `screen_scale`
+checks current-frame metadata, default scale and changes between frames; three
+diagnostics pin match/GPU/write rejection. Editor tests cover new math help and
+Screen metadata. `notes/private-prototypes.md` saves all remaining design ideas.
+
+Validation: full warning-free native/web debug builds pass. All 2,452 native
+CTests (2,418 ordinary plus 34 GPU) and all 2,361 web CTests pass, including WASI
+execution, shader pins/SPIR-V validation and Vulkan/OpenGL/WebGL/WebGPU/D3D11-WARP
+checks. The 241 editor cases and production docs build pass. Actual
+unchanged Inside Out source generates successfully, with SeatOf/Together/HallOf
+receiving `const Workshop *`; that generated C passes strict native and WASI
+syntax checks. No private prototype browser playtest, CI dispatch or deployment
+was performed. Other OSes, Android and sanitizers remain CI coverage.
+
+
 ## Explicit skinned instance overload (2026-10-20)
 
 Owner-approved `Draw.Instanced(SkinnedMesh<V>, instances, ...)` follows the existing

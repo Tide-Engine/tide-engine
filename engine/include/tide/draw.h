@@ -1333,6 +1333,7 @@ typedef struct tide_draw_list {
     // The window's size in logical pixels, supplied before recording (tide_draw_screen_size).
     // With none, window frustum culling and automatic LOD selection are skipped.
     tide_float2 screen;
+    tide_float2 screen_scale; // Frame-host physical pixels per logical pixel, independently on x/y; zero means 1
     tide_target_pixels_fn target_pixels; // Borrowed frame metadata; no GPU readback
     float lod_pixels;  // How many pixels a level may be off by to be picked; 0 is 1
     uint32_t leveled;  // Whether the frame drew a level: its runs may want gathering (tide_draw_gather_levels)

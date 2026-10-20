@@ -304,6 +304,7 @@ typedef struct param {
     loc name_at;
     bool read;    // The body names it
     bool written; // The body assigns through it
+    bool c_indirect; // Internal CPU ABI: a proven read-only aggregate can borrow its caller's storage
     bool ownership; // `with ownership`, `without ownership`: by whether this machine's player owns the entity; no type, `type_at` is the word
     // `verified Health health`, `with verified Dead`, `event(verified Died died)`: from the world the server has
     // confirmed, in a view; in a local handler's trigger, once the server confirmed the tick that sent the event
@@ -706,6 +707,7 @@ typedef struct decl {
     bool borrows_queries; // A synchronous helper whose query parameters borrow its callers' selections
     bool borrows_asset_collections; // CPU-only synchronous borrowing, propagated through helpers
     bool calls_c;        // Code that calls an extern function, itself or through others: its calls run in order
+    bool c_self_indirect; // Private CPU ABI for a proven read-only aggregate method receiver
     bool writes_text;    // A system that writes text, lists or grids into its world: its heap, which one system changes at a time
     bool spawns;         // A system that spawns or loads scenes: entity IDs are handed out in order
     bool starts_tasks;   // Code that starts tasks, calling an async function without await: they're the world's, in order

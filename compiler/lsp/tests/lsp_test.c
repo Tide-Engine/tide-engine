@@ -3145,10 +3145,13 @@ TIDE_TEST(lsp_gui)
 
     open_document("scene Main { }\nview V() { var w = Screen.wid$th; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Screen.width: float"));
+    open_document("scene Main { }\nview V() { var scale = Screen.sc$ale; }\n");
+    const char *scale = request("textDocument/hover");
+    TIDE_CHECK(has(scale, "Screen.scale: float2") && has(scale, "Physical pixels per logical window pixel"));
 
     // Screen.Flip: a device's position, from the bottom left, as the screen's, from the top left
     const char *screen = complete("scene Main { }\nview V()\n{\n    Screen.$\n}\n");
-    TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "Flip"));
+    TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "scale") && offers(screen, "Flip"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    Screen.$\n}\n"), "Flip"));
     open_document("scene Main { }\nview V(Devices devices)\n{\n    Draw.Circle(Screen.Fl$ip(devices.pointer.position), 4, Color.white);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -11947,6 +11950,20 @@ TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
     clear_sent();
     lsp_free(&server);
     model_metadata_forget();
+}
+
+TIDE_TEST(lsp_float_bitcasts_and_float_hash_help)
+{
+    start();
+    const char *math = complete("scene Main { }\nview V() { Math.$ }\n");
+    TIDE_CHECK(offers(math, "AsInt") && offers(math, "AsFloat") && offers(math, "Hash"));
+    open_document("scene Main { }\nview V() { var bits = Math.AsI$nt(float3(1, 2, 3)); Debug.Log(\"\" + bits); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *bits = request("textDocument/hover");
+    TIDE_CHECK(has(bits, "Math.AsInt(float3 value) -> int3") && has(bits, "without a numeric conversion"));
+    open_document("scene Main { }\nview V() { var hash = Math.Ha$sh(float4(1, 2, 3, 4)); Debug.Log(\"\" + hash); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float's exact bits"));
 }
 
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
