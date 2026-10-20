@@ -44,8 +44,22 @@ typedef struct tide_list {
 // Immutable asset descriptor: count in a, SHA-256 after the block header.
 #define TIDE_LIST_ASSET 0x40000000u
 const void *tide_list_asset_at(tide_list l, int32_t i, uint32_t size);
-// Before writable access, make borrowed asset storage this value's own.
-void tide_list_prepare(tide_list *l, uint32_t size, uint32_t where);
+// Before writable access, make borrowed asset storage this value's own. Most
+// lists are a world's own or the scratch area's already, which is told here,
+// inline, from the list's block: only an asset's or the pack's goes further
+// (tide_list_prepare_borrowed).
+void tide_list_prepare_borrowed(tide_list *l, uint32_t size, uint32_t where);
+static inline void tide_list_prepare(tide_list *l, const uint32_t size, const uint32_t where)
+{
+    if (!l || !l->at) return;
+    if (l->at >> 30 == TIDE_IN_SCRATCH) {
+        if (!tide_pack_holds(l->at)) return;
+    } else {
+        const tide_block *b = tide_block_at(l->at);
+        if (!b || b->b != TIDE_LIST_ASSET) return;
+    }
+    tide_list_prepare_borrowed(l, size, where);
+}
 
 // Reading and writing elements is inline, as code does it for every element
 // it touches.

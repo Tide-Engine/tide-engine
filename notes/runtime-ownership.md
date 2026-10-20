@@ -4,8 +4,10 @@
 
 No runtime function is new to generated code. `tide/list.h` gains
 `tide_list_view`, `tide_list_view_of` and `tide_list_view_at`, and `tide/map.h`
-`tide_map_hash_word`: helpers of the inline `tide_map_find` and
-`tide_map_hash_bytes` (and of map.c), which generated code reaches only
+`tide_map_hash_word`; `tide_list_prepare` is inline over the new
+`tide_list_prepare_borrowed` (the function as it was). These are helpers of
+the inline `tide_map_find`, `tide_map_hash_bytes` and `tide_list_prepare`
+(and of map.c), which generated code reaches only
 through those, as before. `engine/src/grid.c`'s window functions keep their
 signatures; `buffer_for` is private. Generated list helpers read
 `tide_list_cache`'s fields as `tide_list_cached_at_mut` does. Contracts are in

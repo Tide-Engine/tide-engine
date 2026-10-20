@@ -20,6 +20,13 @@ unchanged; measurements in notes/benchmarks.md, Performance pass):
   to 16 bytes, so a lookup with a key of known size makes no call; longer keys
   call `tide_hash`. They must stay the same function: `map_key_hash_is_tide_hash_at_every_size`
   (`tests/test_map.c`) compares them at every size up to 40 bytes.
+- `tide_list_prepare` is inline, its signature and what it does the same: a
+  list that's a world's own or the scratch area's (not the pack's) returns
+  after one look at its block, and only an asset's or the pack's calls
+  `tide_list_prepare_borrowed` (the function as it was). A cached write that
+  misses (each bucket of a list of lists) and every map insert, which
+  prepares both lists, called it: the list of lists in bench/versus/buckets
+  went from 0.069 to 0.061 ms a tick.
 - Together, 16,384 keys' steady lookups went from 1.92 to 1.41 ms a tick.
   What's left is the chain of dependent loads a probe makes through a chunked
   list (directory, page, element, twice) on a random pattern: about 8x C.

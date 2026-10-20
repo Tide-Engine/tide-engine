@@ -443,7 +443,7 @@ void tide_list_set(tide_list *to, const tide_list value, const uint32_t size, co
     if (data) tide_asset_origin_list(tide_heap_of(where), *to, data);
 }
 
-void tide_list_prepare(tide_list *l, const uint32_t size, const uint32_t where)
+void tide_list_prepare_borrowed(tide_list *l, const uint32_t size, const uint32_t where)
 {
     if (!l || !l->at) return;
     tide_asset_data *data = tide_asset_list(*l);
