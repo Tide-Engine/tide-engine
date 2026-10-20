@@ -2,7 +2,9 @@
 // the caller's among them. A file of its own, since it includes the operating
 // system's headers.
 
-#if !defined(_WIN32) && !defined(__wasm__)
+#if defined(__linux__)
+#define _GNU_SOURCE // sysconf, and sched_setaffinity, sched_getcpu and CPU_SET (Android's too), under strict C
+#elif !defined(_WIN32) && !defined(__wasm__)
 #define _DEFAULT_SOURCE // sysconf under strict C
 #endif
 
@@ -186,6 +188,14 @@ typedef CONDITION_VARIABLE pool_signal;
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #endif
+#ifdef __linux__
+#include <sched.h>
+
+#include "cpu_groups.h"
+#ifndef TIDE_CPU_SYSFS
+#define TIDE_CPU_SYSFS "/sys/devices/system/cpu" // Another, made up, for a probe of the pool's groups on a machine that has one
+#endif
+#endif
 typedef pthread_mutex_t pool_lock;
 typedef pthread_cond_t pool_signal;
 #define LOCK(l) pthread_mutex_lock(l)
@@ -220,8 +230,9 @@ typedef pthread_cond_t pool_signal;
 // cores from its first round on, or the system moves it from one group to the
 // other between ticks, and the world with it: unpinned, those six took 0.13 ms
 // where they took 0.086 pinned. Which threads run never changes what they
-// make (tide/jobs.h), only how soon. Groups are found on Windows; elsewhere,
-// and on a machine with one cache, there's one.
+// make (tide/jobs.h), only how soon. Groups are found on Windows and on Linux
+// and Android (cpu_groups.h); elsewhere, and on a machine with one cache,
+// there's one.
 #define MOST_GROUPS 8u
 #define CHOICES 4u  // The works whose rounds `run` times apart: a tick's, and a few others'
 #define TRIALS 6u   // A work's first rounds take each way in turn...
@@ -264,6 +275,8 @@ typedef struct pool {
     choice choices[CHOICES];
 #ifdef _WIN32
     GROUP_AFFINITY affinity[MOST_GROUPS]; // Each group's logical processors
+#elif defined(__linux__)
+    cpu_set_t affinity[MOST_GROUPS];
 #endif
 } pool;
 
@@ -308,6 +321,10 @@ static DWORD WINAPI worker(LPVOID thread)
 #else
 static void *worker(void *thread)
 {
+#ifdef __linux__
+    const pool *p = &the_pool; // Each worker keeps to its group's CPUs, as a Windows one is made to
+    if (p->groups > 1u) sched_setaffinity(0, sizeof(cpu_set_t), &p->affinity[p->worker_group[(uint32_t)(uintptr_t)thread]]);
+#endif
     worker_loop((uint32_t)(uintptr_t)thread);
     return NULL;
 }
@@ -323,6 +340,11 @@ static uint32_t caller_group(const pool *p)
         for (uint32_t g = 0; g < p->groups; g++) {
             if (p->affinity[g].Group == at.Group && ((p->affinity[g].Mask >> at.Number) & 1u)) return g;
         }
+    }
+#elif defined(__linux__)
+    const int cpu = p->groups > 1u ? sched_getcpu() : -1;
+    for (uint32_t g = 0; cpu >= 0 && cpu < CPU_SETSIZE && g < p->groups; g++) {
+        if (CPU_ISSET(cpu, &p->affinity[g])) return g;
     }
 #else
     (void)p;
@@ -372,6 +394,11 @@ static void round_of(pool *p, const bool every, const uint32_t others, void (*wo
 #ifdef _WIN32
     if (p->groups > 1u && !kept_home) {
         SetThreadGroupAffinity(GetCurrentThread(), &p->affinity[home], NULL);
+        kept_home = true;
+    }
+#elif defined(__linux__)
+    if (p->groups > 1u && !kept_home) {
+        sched_setaffinity(0, sizeof(cpu_set_t), &p->affinity[home]);
         kept_home = true;
     }
 #else
@@ -444,8 +471,9 @@ static void more(void *self, const uint32_t count)
 // The CPU's cores, not counting the second thread a core runs (SMT): two
 // threads of a tick on one core share its execution units and cache, and go
 // slower than one, while a spinning one holds the other back. Logical
-// processors when the system won't say. On Windows, also the groups of cores
-// that share a last-level cache, into `p`; elsewhere `p` gets one.
+// processors when the system won't say. On Windows, Linux and Android, also
+// the groups of cores that share a last-level cache, into `p`; elsewhere `p`
+// gets one.
 static uint32_t cores(pool *p)
 {
     p->groups = 1;
@@ -525,6 +553,21 @@ static uint32_t cores(pool *p)
     p->cores[0] = n > 0 ? (uint32_t)n : 1u;
     return p->cores[0];
 #else
+#ifdef __linux__
+    tide_cpu_groups found;
+    tide_cpu_groups_find(TIDE_CPU_SYSFS, &found);
+    if (found.count > 1u && found.count <= MOST_GROUPS) {
+        p->groups = found.count;
+        for (uint32_t g = 0; g < found.count; g++) {
+            p->cores[g] = found.cores[g];
+            CPU_ZERO(&p->affinity[g]);
+            for (uint32_t cpu = 0; cpu < TIDE_CPU_MOST && cpu < CPU_SETSIZE; cpu++) {
+                if (tide_cpu_has(&found.cpus[g], cpu)) CPU_SET(cpu, &p->affinity[g]);
+            }
+        }
+        return found.physical;
+    }
+#endif
     const long n = sysconf(_SC_NPROCESSORS_ONLN);
     uint32_t logical = n > 0 ? (uint32_t)n : 1u;
     // Linux says whether the cores run two threads each; Android too, where it lets a program read it

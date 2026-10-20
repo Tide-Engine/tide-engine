@@ -271,6 +271,13 @@ target_include_directories(tide_platform_audio_forget PRIVATE "${PROJECT_SOURCE_
 target_link_libraries(tide_platform_audio_forget PRIVATE tide)
 add_test(NAME tide_platform_audio_forget COMMAND tide_platform_audio_forget)
 
+# The desktop pool's cache groups on Linux and Android, from made-up sysfs trees.
+add_executable(tide_platform_cpu_groups tests/cpu_groups.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_cpu_groups PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_compile_definitions(tide_platform_cpu_groups PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(tide_platform_cpu_groups PRIVATE tide)
+add_test(NAME tide_platform_cpu_groups COMMAND tide_platform_cpu_groups)
+
 # The page's microphone lifecycle and worklet bridge, with a fake device:
 # no browser permissions or physical microphone are needed.
 if(TIDE_NODE)

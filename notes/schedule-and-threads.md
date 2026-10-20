@@ -19,10 +19,33 @@ out. `run_some` and `more` stay in the home group first. Results never
 depend on which threads run. Paired against the pool before, gated, two
 rounds each on 12 threads: versus_particles 0.236 to about 0.09 ms, versus_life
 0.21 to 0.13, versus_wide 10-15% less, versus_sand as it was, versus_nbody
-within 5-10% (a few of its 32 rounds try the home group). Linux, macOS,
-Android and the web keep one group: finding them there (sysfs's
-cache/index3/shared_cpu_list and pthread_setaffinity_np on Linux) is left to
-do, as nothing here could test it.
+within 5-10% (a few of its 32 rounds try the home group). macOS and the
+web keep one group.
+
+Linux and Android (2026-10-20, the owner's go-ahead with CI as the check):
+`platform/src/cpu_groups.h` reads sysfs (`/sys/devices/system/cpu`:
+`online`, each CPU's `cache/index*/{level,type,shared_cpu_list}`, the
+highest unified level's being the groups, and
+`topology/thread_siblings_list`, a core counted at its first CPU), with the
+same rules as Windows: several groups, each of two cores or more, disjoint,
+between them every online CPU, at most 8; otherwise one group and the old
+count (`smt/active`). Workers pin themselves with `sched_setaffinity`, the
+thread that runs rounds pins itself to the home group at its first round,
+and the home group is the one `sched_getcpu` finds the pool made on
+(`_GNU_SOURCE` in jobs.c on Linux and Android, for these and `CPU_SET`).
+Android often shows no cache directories, or one L3 for every core
+(DynamIQ), and keeps one group. `tide_platform_cpu_groups`
+(`platform/tests/cpu_groups.c`) reads made-up trees on every system: a
+7900X's two chiplets (two groups of six cores, SMT counted once), one
+shared L3, groups of one core, sixteen CPUs without SMT in four groups, an
+L2 last level, and none at all; and the list parser. It passes on Windows
+and, built by hand, on WSL2's Ubuntu; there `jobs.c` builds warning-free
+(strict C17) and a probe pointing the pool at the 7900X tree
+(`TIDE_CPU_SYSFS`, a compile-time default for that) ran 20 rounds with the
+caller and five workers on the home group's CPUs and six on the other's.
+WSL2 itself shows one L3 for all 24 CPUs, so no multi-cache Linux machine
+has run it: a Linux CI run, or a machine with chiplets, is its first real
+test.
 
 Grid parallel loops, performance pass (2026-10-20): `tide_par_window` works out a
 row's runs (where each chunk's cells go in the window, and where they start in
