@@ -1514,6 +1514,59 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
     mesh_vertex_count += count - i;
 }
 
+// A run of the quads the list kept as quads (TIDE_DRAW_QUADS), after the ones before it when nothing came between
+// them: the quads add_mesh makes of the same two triangles, or where the run's triangles already, those triangles.
+// The same numbers to the bit: make_quad_across's box of p and r through the camera, a lane each as there, and
+// corner_of's corners.
+static void add_quads(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
+{
+    draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
+    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter || s->wrap != c->mesh.wrap) {
+        s = start_quads(STEP_MESH);
+        s->texture = c->mesh.texture;
+        s->filter = c->mesh.filter;
+        s->wrap = c->mesh.wrap;
+    }
+    const uint32_t first = c->mesh.first < list->quad_count ? c->mesh.first : list->quad_count;
+    const uint32_t count = c->mesh.count < list->quad_count - first ? c->mesh.count : list->quad_count - first;
+    const tide_draw_quad *in = list->quads + first;
+    const corner_camera k = corner_camera_of(cam);
+    if (s->quads) {
+        quad *out = quad_room(count);
+        const float_lanes centers = {k.cx, k.cy, k.cx, k.cy};
+        const float_lanes half = {k.half_width, k.half_height, k.half_width, k.half_height};
+        for (uint32_t i = 0; i < count; i++, out++) {
+            const tide_draw_quad *q = &in[i];
+            const float_lanes at = {q->from.x, q->from.y, q->to.x, q->to.y};
+            float_lanes box;
+            if (k.gui) {
+                box = at * k.scale;
+            } else {
+                const float_lanes moved = (at - centers) * k.scale;
+                box = __builtin_shufflevector(half + moved, half - moved, 0, 5, 2, 7);
+            }
+            const float span[4] = {q->uv_from.x, q->uv_from.y, q->uv_to.x, q->uv_to.y};
+            const rgba bytes = to_rgba(q->color);
+            memcpy(out->box, &box, sizeof out->box);
+            memcpy(out->span, span, sizeof out->span);
+            memcpy(out->color, &bytes, sizeof out->color);
+            out->pattern = (int32_t)q->pattern;
+        }
+        quad_count += count;
+        s->count += count;
+        return;
+    }
+    mesh_vertex *out = mesh_room(6u * count);
+    for (uint32_t i = 0; i < count; i++) {
+        for (uint32_t corner = 0; corner < 6u; corner++) {
+            const tide_vertex v = tide_draw_quad_corner(&in[i], corner);
+            *out++ = corner_of(&k, &v);
+        }
+    }
+    s->count += 6u * count;
+    mesh_vertex_count += 6u * count;
+}
+
 // A glyph's two triangles over its four corners, after the text before it: a quad where it's one.
 static void add_glyph(const mesh_vertex corners[4])
 {
@@ -3961,6 +4014,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case TIDE_DRAW_MESH:
             add_mesh(list, c, cam);
+            break;
+        case TIDE_DRAW_QUADS:
+            add_quads(list, c, cam);
             break;
         case TIDE_DRAW_CAMERA_3D:
             if (c->camera.matrix >= list->matrix_count) { // TIDE_DRAW_FIRST_CAMERA

@@ -54,6 +54,7 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_BLIT,      // shaded: a fullscreen shaded run, replacing its destination
     TIDE_DRAW_SHAPE,     // a = center, b = size, color, shape: a shape with smooth edges
     TIDE_DRAW_STENCIL,   // stencil: what the commands after it do with their destination's stencil
+    TIDE_DRAW_QUADS,     // mesh: a run of quads of 2D meshes (tide_draw_list.quads), and the texture they sample
 } tide_draw_kind;
 
 // How what a command draws goes over what's there. Tide's `Blend` has the same
@@ -180,8 +181,8 @@ typedef struct tide_draw_command {
             tide_float2 a;
             tide_float2 b;
         };
-        struct {              // TIDE_DRAW_MESH
-            uint32_t first;   // Its indices in tide_draw_list.indices, three a triangle...
+        struct {              // TIDE_DRAW_MESH, TIDE_DRAW_QUADS
+            uint32_t first;   // Its indices in tide_draw_list.indices, three a triangle (its quads in .quads)...
             uint32_t count;   // ...and how many
             uint32_t texture; // 1 + its texture's place in tide_draw_list.textures, or 0 for none
             uint16_t filter;  // tide_filter
@@ -282,6 +283,73 @@ typedef struct tide_vertex {
     tide_float2 uv;
     tide_color color;
 } tide_vertex;
+
+// A 2D mesh of four corners and two triangles, p q r and p r s, whose corners'
+// places and uvs take two numbers at most on each axis, p's and r's, and are of
+// one color: a sprite, a tile, an upright image. The list keeps it as this, 52
+// bytes where its corners and triangles took 152 (TIDE_DRAW_QUADS), as the
+// renderer draws it: `pattern` has 4 bits for each of the six corners in order,
+// x, y, u and v, 1 where it takes r's number and 0 where p's. Its corners are
+// those numbers, to the bit (tide_draw_quad_corner).
+typedef struct tide_draw_quad {
+    tide_float2 from, to;       // p's place and r's
+    tide_float2 uv_from, uv_to; // ...and their uvs
+    tide_color color;
+    uint32_t pattern;
+} tide_draw_quad;
+
+// Its corner `k` (0 to 5, of p q r p r s) as a vertex.
+static inline tide_vertex tide_draw_quad_corner(const tide_draw_quad *q, const uint32_t k)
+{
+    const uint32_t pick = q->pattern >> (4u * k);
+    return (tide_vertex){{pick & 1u ? q->to.x : q->from.x, pick & 2u ? q->to.y : q->from.y},
+                         {pick & 4u ? q->uv_to.x : q->uv_from.x, pick & 8u ? q->uv_to.y : q->uv_from.y}, q->color};
+}
+
+// Whether four corners and six indices are such a quad (tide_draw_quad), and
+// it into `q` if so. Corners compared by their bits, as the renderer would
+// compare them, so what's one here is one there and the same numbers.
+// A float's bits, from where it is (a register, as often as not: no wider load over narrower stores).
+static inline uint32_t tide_draw_bits(const float f)
+{
+    uint32_t u;
+    __builtin_memcpy(&u, &f, sizeof u);
+    return u;
+}
+
+static inline __attribute__((always_inline)) bool tide_draw_quad_of(const tide_vertex *v, const uint32_t *t, tide_draw_quad *q)
+{
+    if (t[3] != t[0] || t[4] != t[2] || t[0] > 3u || t[1] > 3u || t[2] > 3u || t[5] > 3u) return false;
+    const tide_vertex *const corner[4] = {&v[t[0]], &v[t[1]], &v[t[2]], &v[t[5]]}; // p, q, r and s
+    uint32_t at[4][4], color[4][4]; // Each corner's x, y, u and v, and its color, as bits: field by field
+    for (uint32_t k = 0; k < 4u; k++) {
+        at[k][0] = tide_draw_bits(corner[k]->position.x);
+        at[k][1] = tide_draw_bits(corner[k]->position.y);
+        at[k][2] = tide_draw_bits(corner[k]->uv.x);
+        at[k][3] = tide_draw_bits(corner[k]->uv.y);
+        color[k][0] = tide_draw_bits(corner[k]->color.r);
+        color[k][1] = tide_draw_bits(corner[k]->color.g);
+        color[k][2] = tide_draw_bits(corner[k]->color.b);
+        color[k][3] = tide_draw_bits(corner[k]->color.a);
+    }
+    bool fits = true;
+    uint32_t q_picks = 0, r_picks = 0, s_picks = 0;
+    for (uint32_t axis = 0; axis < 4u; axis++) {
+        const bool qp = at[1][axis] == at[0][axis], sp = at[3][axis] == at[0][axis];
+        fits &= (qp | (at[1][axis] == at[2][axis])) & (sp | (at[3][axis] == at[2][axis]));
+        fits &= (color[1][axis] == color[0][axis]) & (color[2][axis] == color[0][axis]) & (color[3][axis] == color[0][axis]);
+        q_picks |= (uint32_t)!qp << axis;
+        r_picks |= (uint32_t)(at[2][axis] != at[0][axis]) << axis;
+        s_picks |= (uint32_t)!sp << axis;
+    }
+    if (!fits) return false;
+    // Field by field, as they were read
+    *q = (tide_draw_quad){{corner[0]->position.x, corner[0]->position.y}, {corner[2]->position.x, corner[2]->position.y},
+                          {corner[0]->uv.x, corner[0]->uv.y}, {corner[2]->uv.x, corner[2]->uv.y},
+                          {corner[0]->color.r, corner[0]->color.g, corner[0]->color.b, corner[0]->color.a}, 0u};
+    q->pattern = q_picks << 4 | r_picks << 8 | r_picks << 16 | s_picks << 20; // p q r p r s
+    return true;
+}
 
 // How a mesh samples its texture between pixels. Tide's `Filter` has the same
 // values, which are Unity's FilterMode's. Trilinear also reads the texture's
@@ -1278,6 +1346,9 @@ typedef struct tide_draw_list {
     tide_vertex *vertices; // The meshes' corners
     uint32_t vertex_count;
     uint32_t vertex_capacity;
+    tide_draw_quad *quads; // The meshes that are one quad each (TIDE_DRAW_QUADS)
+    uint32_t quad_count;
+    uint32_t quad_capacity;
     uint32_t *indices; // ...and their triangles, each index a place in `vertices`
     uint32_t index_count;
     uint32_t index_capacity;
@@ -1767,40 +1838,66 @@ void tide_draw_text_at(tide_draw_list *d, const char *text, tide_float2 position
 // side of a triangle draws. A triangle with an index past the vertices is
 // left out.
 //
+// A mesh of four corners and two triangles that make a quad (tide_draw_quad)
+// is kept as the quad, where nothing set changes a mesh (a tint, a
+// transform): a TIDE_DRAW_QUADS command, a run of them, which the renderer
+// draws as the same triangles. Any other mesh is its corners and triangles.
+//
 // More of the run the last command draws, as sprites and tiles of one image
 // one after another are (its image, as it was and noted this frame, and its
 // blend, filter and wrap, with nothing set since that changes a mesh, and
-// every index in the mesh), is inline: the corners and the triangles stored
-// after the list's, and the command's count, which the code that just built
-// the corners may store straight there. tide_draw_mesh_placed does the rest
-// as it always did, the same as this where both do it.
+// every index in the mesh), is inline: the quad, or the corners and the
+// triangles, stored after the list's, and the command's count, which the code
+// that just built the corners may store straight there. tide_draw_mesh_placed
+// does the rest as it always did, the same as this where both do it.
 void tide_draw_mesh_placed(tide_draw_list *d, const tide_vertex *vertices, uint32_t vertex_count, const uint32_t *indices,
                            uint32_t index_count, const tide_texture *texture, tide_filter filter, tide_wrap wrap);
 
+// The same with the texture's slot already found (tide_draw_texture_slot's, or 0 for none), as Tide's lists are drawn.
+void tide_draw_mesh_with(tide_draw_list *d, const tide_vertex *vertices, uint32_t vertex_count, const uint32_t *indices,
+                         uint32_t index_count, uint32_t slot, tide_filter filter, tide_wrap wrap);
+
+// Whether a mesh with `texture` is drawn with the image the last command's run draws with, as texture_slot finds it.
+static inline __attribute__((always_inline)) bool tide_draw_same_image(const tide_draw_list *d, const tide_draw_command *last,
+                                                                       const tide_texture *texture)
+{
+    if (!texture || !texture->pixels) return last->mesh.texture == 0;
+    if (!last->mesh.texture || last->mesh.texture > d->texture_count) return false;
+    const tide_draw_texture *t = &d->textures[last->mesh.texture - 1u];
+    return t->id == (uint64_t)(uintptr_t)texture->pixels && t->space == TIDE_PIXELS_MEMORY && t->frame == d->frame
+        && t->version == texture->version && t->width == texture->width && t->height == texture->height
+        && t->format == TIDE_TEXELS_BYTES;
+}
+
 // The same, with what uvs past 0 and 1 read: `wrap`.
-static inline void tide_draw_mesh_wrapped(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
+static inline __attribute__((always_inline)) void tide_draw_mesh_wrapped(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
                                           const uint32_t *indices, const uint32_t index_count, const tide_texture *texture,
                                           const tide_filter filter, const tide_wrap wrap)
 {
     const uint32_t whole = index_count / 3u * 3u; // What's past the last whole triangle is left out
-    if (d->count && !(d->altered | d->unsettled) && vertex_count && whole
-        && vertex_count <= d->vertex_capacity - d->vertex_count && whole <= d->index_capacity - d->index_count) {
+    if (d->count && !(d->altered | d->unsettled) && vertex_count && whole) {
         tide_draw_command *last = &d->commands[d->count - 1u];
-        if (last->kind == TIDE_DRAW_MESH && last->blend == d->place.blend && last->mesh.filter == (uint16_t)filter
-            && last->mesh.wrap == (uint16_t)wrap && last->mesh.first + last->mesh.count == d->index_count
-            && last->mesh.texture <= d->texture_count) {
-            bool same = false; // The image the last command drew with, as texture_slot would find it
-            if (!texture || !texture->pixels) {
-                same = last->mesh.texture == 0;
-            } else if (last->mesh.texture) {
-                const tide_draw_texture *t = &d->textures[last->mesh.texture - 1u];
-                same = t->id == (uint64_t)(uintptr_t)texture->pixels && t->space == TIDE_PIXELS_MEMORY && t->frame == d->frame
-                    && t->version == texture->version && t->width == texture->width && t->height == texture->height
-                    && t->format == TIDE_TEXELS_BYTES;
+        const bool goes_on = last->blend == d->place.blend && last->mesh.filter == (uint16_t)filter
+                          && last->mesh.wrap == (uint16_t)wrap;
+        if (vertex_count == 4u && index_count == 6u) {
+            tide_draw_quad q;
+            if (tide_draw_quad_of(vertices, indices, &q)) { // A quad, after the last command's or of a run of its own
+                if (goes_on && last->kind == TIDE_DRAW_QUADS && last->mesh.first + last->mesh.count == d->quad_count
+                    && d->quad_count < d->quad_capacity && tide_draw_same_image(d, last, texture)) {
+                    d->quads[d->quad_count++] = q;
+                    last->mesh.count++;
+                    return;
+                }
+                tide_draw_mesh_placed(d, vertices, vertex_count, indices, index_count, texture, filter, wrap);
+                return;
             }
+        }
+        if (goes_on && last->kind == TIDE_DRAW_MESH && last->mesh.first + last->mesh.count == d->index_count
+            && vertex_count <= d->vertex_capacity - d->vertex_count && whole <= d->index_capacity - d->index_count
+            && tide_draw_same_image(d, last, texture)) {
             bool within = true;
             for (uint32_t i = 0; i < whole; i++) within &= indices[i] < vertex_count;
-            if (same && within) {
+            if (within) {
                 const uint32_t base = d->vertex_count;
                 __builtin_memcpy(d->vertices + base, vertices, (size_t)vertex_count * sizeof(tide_vertex));
                 uint32_t *to = d->indices + d->index_count;
@@ -1815,7 +1912,7 @@ static inline void tide_draw_mesh_wrapped(tide_draw_list *d, const tide_vertex *
     tide_draw_mesh_placed(d, vertices, vertex_count, indices, index_count, texture, filter, wrap);
 }
 
-static inline void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
+static inline __attribute__((always_inline)) void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
                                   const uint32_t *indices, const uint32_t index_count, const tide_texture *texture,
                                   const tide_filter filter)
 {
