@@ -22,6 +22,30 @@ writes the folder's `restart` file. `--once` builds once. It refuses
 User docs: `docs/tools/cli.md`, Unity. Checked by hand with a scratch install
 (MinGW release plus debug trees) on `unity/Sample`, and by its play mode test.
 
+`--assets <Assets>` (`build_options.unity_assets`) adds the Unity project's
+prefabs and scenes (`compiler/cli/unity_assets.c`, reading YAML with
+`unity_yaml.c`; the format and rules are in `notes/unity.md`, Authoring as
+built). `generate` appends their Tide text as `compile_input`s with `.text`
+(new: a file's text given rather than read), paths `Assets/...`, after the
+game's own files, and `Library/Tide/Unity.tide` declaring `Unity.Source`; it
+writes each text to `<path>/prefabs/<asset>.tprefab`. The parser treats paths
+ending `.prefab`/`.unity` as `.tprefab` files (prefab declarations only).
+`game_stamp` folds in `unity_assets_stamp` (paths and stamps of every
+`.prefab`, `.unity` and `.meta`), so a saved prefab rebuilds the game. After
+each schema, `unity.json` (the Unity.Source map, kept on `build.unity_map` from
+the last good generate) and `Packages/com.tide.game` beside `Assets`
+(`package.json`, `Tide.Game.asmdef`, `schema.json` and a stub naming the hash,
+each written only when it changes: Unity's shared build cache keys a compile by
+its sources, so the stub is what recompiles the generated types).
+
+`tide unity --web` (once: `--web` turns watching off) is `tide_unity_web`: a
+standalone wasm build of `generate`'s game with `unity_web_main` (and
+`unity_web_exports`, split under C's string length limit) for its `main.c`, in
+the web cache, written as `tide-game.js` by `write_unity_script` (config,
+program and pack as `page_payload` base64, then the release or debug runtime
+with `strip_reloading`), and `unity.json`. `--assets` is taken by `build` and `run` too (for servers of Unity-made games); the prefab texts under `-o` are `tide unity`'s alone. The embed host's exports gained
+`tide_embed_draw`. `tide help unity` lists `--web` through the shared option.
+
 ## Terminal editor configuration helper (2026-10-18)
 
 `tide ide emacs|vim|neovim` prints ready-to-copy init configuration from the

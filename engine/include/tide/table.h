@@ -89,11 +89,88 @@ void tide_table_scatter(tide_table *t, const tide_columns *c, uint32_t row, uint
 // and with its hash good: tide_table_lanes_end makes each page whose rows
 // changed the table's, and lets the rest go. tide_table_lanes_shared says
 // whether any of the lanes' pages is shared, which is when apart pays.
-bool tide_table_lanes_shared(const tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes);
-void tide_table_lanes_begin(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes, bool apart,
-                            const uint8_t **in, uint8_t **out);
-void tide_table_lanes_end(tide_table *t, const tide_columns *c, uint32_t chunk, uint32_t first, uint32_t lanes,
-                          uint8_t *const *out);
+//
+// A loop that changes a chunk's lanes writes a page a snapshot shares into a
+// page of the table's own from the start: a copy of the shared one, which the
+// loop then reads and writes as it would its own in place. If no row changed,
+// the shared page stays, with its hash, and the copy is kept by this thread
+// for the next one of its size, so a system whose rows don't change allocates
+// nothing from tick to tick. If one did, the copy is the table's page: what
+// the loop wrote is never copied again.
+//
+// Every chunk of every system that changes a component goes through these, so
+// what a lane the table alone has costs (written in place) is inline, where a
+// world of few rows spent a quarter of its tick calling them, and what a shared
+// lane costs is a function of its own in each file (tide_table_lane_apart,
+// tide_table_lane_end_apart), not more code at every call.
+static inline bool tide_table_lanes_shared(const tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
+                                           const uint32_t lanes)
+{
+    for (uint32_t k = 0; k < lanes; k++) {
+        if (t->pages[chunk * c->count + first + k]->refs != 1u) return true;
+    }
+    return false;
+}
+
+// A lane that isn't written in place: a page of its own to write, with the
+// rows copied unless the loop writes them all (`apart`).
+static inline __attribute__((noinline)) void tide_table_lane_apart(tide_table *t, const tide_columns *c, const uint32_t chunk,
+                                                                   const uint32_t column, const bool apart, const uint8_t **in,
+                                                                   uint8_t **out)
+{
+    tide_page *p = t->pages[chunk * c->count + column];
+    tide_page *own = tide_page_take(p->size);
+    *own = (tide_page){1, p->size, p->first, UINT32_MAX, 0, 0};
+    *out = tide_page_data(own);
+    if (apart) { // The loop writes every row: read where they are
+        *in = tide_page_data(p);
+        return;
+    }
+    memcpy(tide_page_data(own), tide_page_data(p), (size_t)tide_table_rows(t, c->shift, chunk) * c->sizes[column]);
+    *in = *out;
+}
+
+static inline void tide_table_lanes_begin(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
+                                          const uint32_t lanes, const bool apart, const uint8_t **in, uint8_t **out)
+{
+    for (uint32_t k = 0; k < lanes; k++) {
+        tide_page *p = t->pages[chunk * c->count + first + k];
+        if (!apart && p->refs == 1u) { // This table's alone: in place, and what it hashed to is out of date
+            p->hashed = UINT32_MAX;
+            in[k] = out[k] = tide_page_data(p);
+            continue;
+        }
+        tide_table_lane_apart(t, c, chunk, first + k, apart, &in[k], &out[k]);
+    }
+}
+
+// A lane written into a page of its own: the table's now if a row changed,
+// else let go, the one it took the place of staying.
+static inline __attribute__((noinline)) void tide_table_lane_end_apart(tide_table *t, const tide_columns *c, const uint32_t chunk,
+                                                                       const uint32_t column, uint8_t *out)
+{
+    tide_page **p = &t->pages[chunk * c->count + column];
+    tide_page *own = (tide_page *)(void *)out - 1;
+    const size_t bytes = (size_t)tide_table_rows(t, c->shift, chunk) * c->sizes[column];
+    if (tide_same_bytes(out, tide_page_data(*p), bytes)) { // No row changed: still shared, still hashed
+        tide_page_give(own);
+        return;
+    }
+    memset(out + bytes, 0, own->size - bytes); // Past its rows a page is zeros, and this one was whatever it was
+    tide_page *was = *p;
+    *p = own;
+    if (was->refs == 1u) tide_page_give(was); // The table's alone, as when it wrote apart from a page of its own
+    else was->refs--;
+}
+
+static inline void tide_table_lanes_end(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
+                                        const uint32_t lanes, uint8_t *const *out)
+{
+    for (uint32_t k = lanes; k-- > 0;) {
+        if (out[k] == tide_page_data(t->pages[chunk * c->count + first + k])) continue; // Written in place
+        tide_table_lane_end_apart(t, c, chunk, first + k, out[k]);
+    }
+}
 
 // The same for a chunk whose rows are written in pieces, by several threads at
 // once (tide/jobs.h), which can't each take pages for it.
@@ -123,7 +200,12 @@ void tide_table_lanes_end_pieces(tide_table *t, const tide_columns *c, uint32_t 
 static inline void *tide_table_column_mut(tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t column)
 {
     tide_page **p = &t->pages[chunk * c->count + column];
-    *p = tide_page_own(*p, 1, tide_table_rows(t, c->shift, chunk) * c->sizes[column]);
+    tide_page *page = *p;
+    if (__builtin_expect(page->refs == 1u, 1)) { // This table's alone, as tide_page_own leaves it, with nothing written back
+        page->hashed = UINT32_MAX;
+        return tide_page_data(page);
+    }
+    *p = tide_page_own(page, 1, tide_table_rows(t, c->shift, chunk) * c->sizes[column]);
     return tide_page_data(*p);
 }
 void *tide_table_cell(tide_table *t, const tide_columns *c, uint32_t row, uint32_t column);

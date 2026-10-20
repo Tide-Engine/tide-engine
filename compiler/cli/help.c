@@ -154,7 +154,8 @@ static const argument_help arguments[] = {
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
      "build --release produces one self-contained HTML file. run serves the\n"
      "page and opens a browser unless --no-open or TIDE_HIDDEN is set.\n"
-     "Choose one target: native (default), --web or --android.", RUN | BUILD},
+     "unity --web builds tide-game.js, for a Unity WebGL player's page, once.\n"
+     "Choose one target: native (default), --web or --android.", RUN | BUILD | UNITY},
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
      "Saving rebuilds and restarts the app. Release builds also make an app\n"
@@ -175,6 +176,11 @@ static const argument_help arguments[] = {
      "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
     {"--once", "--once", "Build once and end",
      "unity builds the game once rather than as its files change, as a player build does.", UNITY},
+    {"--assets", "--assets <folder>", "Include a Unity project's prefabs and scenes",
+     "Reads a Unity project's Assets folder: each prefab and scene holding\n"
+     "TideEntity objects is a Tide prefab named after its file, and Build\n"
+     "Settings' first scene loads as Main starts. build and run take it for a\n"
+     "server, or any build, of a game made in Unity.", UNITY | BUILD | RUN},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
     {"--host", "--host [port]", "Open Main's match for others to join",

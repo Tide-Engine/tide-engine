@@ -1,5 +1,20 @@
 # Netcode: sessions, prediction, commands
 
+## Session protocol 17: pages hashed by stripes (2026-10-20)
+
+`tide_hash_wide`, every page's hash and so every world hash, is a new function
+(notes/ecs.md, A page's hash by stripes). Peers already refuse another
+`PROTOCOL` in HELLO (`engine/src/session.c`), so it goes from 16 to 17: two
+builds that hash pages differently would otherwise connect and disagree about
+every tick, and a joiner's page-hash negotiation would want every page. Nothing
+else on the wire changed; `tests/test_commands.c` writes 17 by hand. Page
+hashes reach the wire in each tick's world hash, in a world delta's (the hash
+its receiver must come to) and in a joiner's list of page hashes
+(`*_hash_pages`), all covered by the protocol number. Raw packed worlds hold
+none (their bytes are unchanged, as the local fields/events fixtures pin), so
+a world unpacked by either build is hashed by that build's function. Pinned
+deltas moved in their bytes, not in size.
+
 ## Double Position presentation errors (2026-10-20)
 
 Position-tagged double scalars/vectors now use the existing private correction

@@ -3517,6 +3517,41 @@ TIDE_TEST(lsp_format_lists)
 }
 
 
+TIDE_TEST(lsp_empty_scene_declarations)
+{
+    start();
+    open_document("namespace Levels { scene Are$na; }\nscene Main;\n"
+                  "event(Spawned) Setup(with Main) { Scene.Load(Levels.Arena); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "scene Arena"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    TIDE_CHECK(count(request_with("textDocument/rename", "\"newName\":\"Room\""), "\"newText\":\"Room\"") == 2);
+
+    open_document("local scene Main;\nlocal scene Menu;\n"
+                  "local event(Spawned) Open(with Main) { Scene.Load(Menu); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"Main\",\"detail\":\"local scene\""));
+    TIDE_CHECK(has(symbols, "\"name\":\"Menu\",\"detail\":\"local scene\""));
+    const char *scenes = complete("scene Arena;\nscene Main;\nevent(Spawned) Setup(with Main) { Scene.Load($); }\n");
+    TIDE_CHECK(offers(scenes, "Arena"));
+
+    static const char messy[] = "local  scene Main ; // Menu\nnamespace Levels\n{\nscene Arena ;\n}\n";
+    static const char expected[] = "local scene Main; // Menu\nnamespace Levels\n{\n    scene Arena;\n}\n";
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), expected) == 0);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+
+    // A semicolon ends the scene; a following declaration keeps its own body.
+    open_document("scene Main;\ncomponent Body { int value; }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Body); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document("scene Main;\ncomponent Body;\n");
+    TIDE_CHECK(has(last_sent(), "expected '{'"));
+    open_document("scene Main\n");
+    TIDE_CHECK(has(last_sent(), "expected '{'"));
+}
+
 TIDE_TEST(lsp_scenes)
 {
     start();
@@ -6631,6 +6666,65 @@ static void start_in(const char *folder)
              "{\"rootUri\":\"%s\",\"workspaceFolders\":[{\"uri\":\"%s\",\"name\":\"game\"}]}}",
              folder, folder);
     handle(message);
+}
+
+// A game in a Unity project's Assets (tide unity --assets): renaming a component renames it where the project's
+// prefabs and scenes list it in a TideEntity, and where a prefab instance changes one's type; renaming its field
+// renames it in that component's values, and not in another component's of the same field name.
+TIDE_TEST(lsp_rename_reaches_unity_assets)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_unity");
+    make_folder("lsp_unity/ProjectSettings");
+    make_folder("lsp_unity/Assets");
+    make_folder("lsp_unity/Assets/Tide");
+    write_file("lsp_unity/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.0.0f1\n");
+    static const char game[] = "component Health { int hp; int armor; }\n"
+                               "component Part { int hp; }\n"
+                               "scene Main { }\n";
+    write_file("lsp_unity/Assets/Tide/game.tide", game);
+    write_file("lsp_unity/Assets/Thing.prefab",
+               "%YAML 1.1\n"
+               "--- !u!114 &1\n"
+               "MonoBehaviour:\n"
+               "  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}\n"
+               "  components:\n"
+               "  - type: Health\n"            // line 5
+               "    values: hp = 10, armor = 1\n" // line 6
+               "  - type: Part\n"
+               "    values: hp = 3\n"
+               "--- !u!1001 &2\n"
+               "PrefabInstance:\n"
+               "  m_Modification:\n"
+               "    m_Modifications:\n"
+               "    - target: {fileID: 1, guid: 0123456789abcdef0123456789abcdef, type: 3}\n"
+               "      propertyPath: components.Array.data[0].type\n"
+               "      value: Health\n"); // line 15
+    write_file("lsp_unity/Assets/Other.prefab", "--- !u!1 &1\nGameObject:\n  m_Name: Health\n  type: Health\n");
+    char root[700], uri[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_unity/Assets/Tide", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_unity/Assets/Tide/game.tide", dir);
+    start_in(root);
+    open_uri(uri, game);
+    const char *renamed = request_at(uri, "textDocument/rename", 0, 12, "\"newName\":\"Vitality\"");
+    TIDE_CHECK(has(renamed, "Thing.prefab"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":5,\"character\":10},\"end\":{\"line\":5,\"character\":16}},\"newText\":\"Vitality\"}"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":15,\"character\":13},\"end\":{\"line\":15,\"character\":19}},\"newText\":\"Vitality\"}"));
+    TIDE_CHECK(!has(renamed, "Other.prefab")); // No TideEntity in it
+    const char *field = request_at(uri, "textDocument/rename", 0, 23, "\"newName\":\"health\"");
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":6,\"character\":12},\"end\":{\"line\":6,\"character\":14}},\"newText\":\"health\"}"));
+    TIDE_CHECK(!has(field, "\"line\":8,")); // Part's hp stays
+    remove_game_file("lsp_unity/Assets/Tide/game.tide");
+    remove_game_file("lsp_unity/Assets/Thing.prefab");
+    remove_game_file("lsp_unity/Assets/Other.prefab");
+    remove_game_file("lsp_unity/ProjectSettings/ProjectVersion.txt");
+    remove_folder("lsp_unity/Assets/Tide");
+    remove_folder("lsp_unity/Assets");
+    remove_folder("lsp_unity/ProjectSettings");
+    remove_folder("lsp_unity");
+    clear_sent();
+    lsp_free(&server);
 }
 
 // A folder open in the editor is a game, as `tide run` builds it: every .tide

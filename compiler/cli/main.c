@@ -304,6 +304,7 @@ int main(const int argc, char **argv)
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
         else if (unity && strcmp(a, "--once") == 0) once = true;
+        else if ((unity || build || run) && strcmp(a, "--assets") == 0 && i + 1 < argc) opts.unity_assets = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {
             fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
@@ -316,10 +317,10 @@ int main(const int argc, char **argv)
     // starts as one line.
     opts.stats_open = run && opts.stats;
     // Interactive runs reload as files change. Runs with no window end once.
-    opts.watch = (run && !headless && !opts.server) || (unity && !once);
+    opts.watch = (run && !headless && !opts.server) || (unity && !once && !opts.web); // A web build is for a player: once
     opts.unity = unity;
-    if (unity && (!opts.output || opts.web || opts.android || opts.server)) {
-        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine: not with --web, --android or --server\n"
+    if (unity && (!opts.output || opts.android || opts.server)) {
+        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine, or a WebGL player with --web: not with --android or --server\n"
                                     : "tide: unity takes where to build, like `tide unity -o Library/Tide`\n");
         free(defines);
         return 2;

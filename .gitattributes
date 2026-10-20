@@ -8,6 +8,9 @@ compiler/tests/e2e/crlf.tide -text
 # give the tests other text than they expect.
 compiler/tests/e2e/assets/** -text
 
+# A Unity project's assets as Unity wrote them, for tide unity's converter.
+compiler/cli/tests/unity_project/** -text
+
 # The platform's font, and code vendored as it came.
 *.ttf binary
 

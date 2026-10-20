@@ -1,0 +1,710 @@
+{
+  "label": "perf-pass-views-wide",
+  "revision": "c02addd8",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T17:30:24.3787244Z",
+  "runs": [
+    {
+      "competingWork": false,
+      "round": 1,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r1"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0819971,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r1",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 1,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r1"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0674717,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r1",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 1,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r1"
+      ],
+      "backend": null,
+      "wallSeconds": 0.891472,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r1",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 1,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r1"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9272523,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r1",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 1,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r1"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6893657,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r1",
+      "name": "versus_events",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 1,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r1"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6390736,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r1",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 2,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r2"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0291432,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r2",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 2,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r2"
+      ],
+      "backend": null,
+      "wallSeconds": 1.12208,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r2",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 2,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r2"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9427914,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r2",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 2,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r2"
+      ],
+      "backend": null,
+      "wallSeconds": 0.8729414,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r2",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 2,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r2"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6288093,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r2",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 2,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r2"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6877982,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r2",
+      "name": "versus_events",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 3,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r3"
+      ],
+      "backend": null,
+      "wallSeconds": 1.1198762,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r3",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 3,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r3"
+      ],
+      "backend": null,
+      "wallSeconds": 1.1397973,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r3",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 3,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r3"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0259294,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r3",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 3,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r3"
+      ],
+      "backend": null,
+      "wallSeconds": 0.879349,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r3",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 3,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r3"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6217218,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r3",
+      "name": "versus_events",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 3,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r3"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6236245,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r3",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 4,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r4"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0949565,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r4",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 4,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r4"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0762843,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r4",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 4,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r4"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9202477,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r4",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 4,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r4"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9045592,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r4",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 4,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r4"
+      ],
+      "backend": null,
+      "wallSeconds": 0.646973,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r4",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 4,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r4"
+      ],
+      "backend": null,
+      "wallSeconds": 0.7161332,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r4",
+      "name": "versus_events",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 5,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r5"
+      ],
+      "backend": null,
+      "wallSeconds": 1.1693868,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r5",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 5,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r5"
+      ],
+      "backend": null,
+      "wallSeconds": 1.1395665,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r5",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 5,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r5"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0238186,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r5",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 5,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r5"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9207938,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r5",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 5,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r5"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6635656,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r5",
+      "name": "versus_events",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 5,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r5"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6218759,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r5",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 6,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r6"
+      ],
+      "backend": null,
+      "wallSeconds": 1.1221539,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r6",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 6,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r6"
+      ],
+      "backend": null,
+      "wallSeconds": 1.105418,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r6",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 6,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r6"
+      ],
+      "backend": null,
+      "wallSeconds": 0.8961194,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r6",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 6,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r6"
+      ],
+      "backend": null,
+      "wallSeconds": 0.8800323,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r6",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 6,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r6"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6497113,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r6",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 6,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r6"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6378435,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r6",
+      "name": "versus_events",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 7,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r7"
+      ],
+      "backend": null,
+      "wallSeconds": 1.2045807,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r7",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 7,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r7"
+      ],
+      "backend": null,
+      "wallSeconds": 1.1169441,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r7",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 7,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r7"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9382043,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r7",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 7,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r7"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9155927,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r7",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 7,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r7"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6189062,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r7",
+      "name": "versus_events",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 7,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r7"
+      ],
+      "backend": null,
+      "wallSeconds": 0.7108737,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r7",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 8,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r8"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0856565,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r8",
+      "name": "versus_wide",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 8,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r8"
+      ],
+      "backend": null,
+      "wallSeconds": 1.0771982,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r8",
+      "name": "versus_wide",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 8,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r8"
+      ],
+      "backend": null,
+      "wallSeconds": 0.8547491,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r8",
+      "name": "versus_churn",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 8,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r8"
+      ],
+      "backend": null,
+      "wallSeconds": 0.9215291,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r8",
+      "name": "versus_churn",
+      "side": "before"
+    },
+    {
+      "competingWork": false,
+      "round": 8,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-after-r8"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6517144,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-after-r8",
+      "name": "versus_events",
+      "side": "after"
+    },
+    {
+      "competingWork": false,
+      "round": 8,
+      "arguments": [
+        "--save",
+        "perf-pass-views-wide-before-r8"
+      ],
+      "backend": null,
+      "wallSeconds": 0.6543608,
+      "exitCode": 0,
+      "label": "perf-pass-views-wide-before-r8",
+      "name": "versus_events",
+      "side": "before"
+    }
+  ],
+  "binaries": [
+    {
+      "sha256": "fc5344e1285a256a82a7abdfed8cdc852992374b629480e5a7be0097756ac514",
+      "name": "versus_churn.exe"
+    },
+    {
+      "sha256": "ae1f2766654018506238a93ce9b4a32b8ffb2f276d5d14993f0e0b957f6e2f29",
+      "name": "versus_events.exe"
+    },
+    {
+      "sha256": "b45955e3832dc8f4ce545e7f5053d6596e5cd6404c59148ebc4b8d739e669766",
+      "name": "versus_wide.exe"
+    }
+  ],
+  "beforeRevision": "45733126",
+  "beforeBinaries": [
+    {
+      "sha256": "33b53bcbb0900fca0e43d1f0ffabee60ac540bad75c50b379f6d07ffef652628",
+      "name": "versus_churn.exe"
+    },
+    {
+      "sha256": "738281be070a52dc310d09f6bde2e886b26a7e8c025d9e911df6c8967ba6fb54",
+      "name": "versus_events.exe"
+    },
+    {
+      "sha256": "98f0dc620ae14176c9bac36e6b85794ba00763d2541b09325cb413c25a53d011",
+      "name": "versus_wide.exe"
+    }
+  ],
+  "finishedUtc": "2026-10-20T17:33:26.4510194Z"
+}

@@ -18,8 +18,9 @@ told local code), a kick's message and what the game asked of the window
 requests (Start of Main only for now: named scenes come with the schema);
 `tide_embed_background` leaves the match on Android and iOS, desktop nothing.
 One at a time: the host's statics are the process's. `tide_embed_abi()`
-returns `TIDE_EMBED_ABI` (1), which changes with anything another language lays
-out or calls, so a binding refuses an embed built by another tide.
+returns `TIDE_EMBED_ABI` (2, since `tide_embed_draw`), which changes with
+anything another language lays out or calls, so a binding refuses an embed
+built by another tide.
 
 - Input is raw, as a window reports it (`tide_embed_input`: held keys as bits,
   cursor, this frame's scroll and locked movement, buttons, one gamepad, typed
@@ -34,7 +35,11 @@ out or calls, so a binding refuses an embed built by another tide.
   kept for the status, the clipboard is left alone and no paste is taken.
 - `tide_run_embedded` (`tide/host.h`) keeps the frame off the GPU timers, the
   draw and audio submission and the stats drawer; the draw list is still
-  recorded, for Tide drawing in Unity later.
+  recorded, and `tide_embed_draw` gives it to the other program as bytes (made
+  when asked, into a buffer the embed keeps): a 64-byte
+  `tide_embed_draw_header` (magic "TIDD", version 1, counts, this build's
+  struct sizes, the screen), then commands, shapes, vertices, indices, text,
+  matrices and text turns, each from a multiple of 8, zeroed between.
 - The host's own option parsing ends a program at a bad flag, so the embed gives
   it none: `tide_run_arguments` still reads `--host`/`--join`/`--connect`, and
   `--seed`/`--data-dir` are parsed apart, a bad one left out with a line.
@@ -64,8 +69,17 @@ start again, refused kinds), bad flags left out, NaN or negative frames and
 screens, the packet's bytes as another language reads them (two entities,
 owner flags, a root, blended values, text and a list through STRINGS, a
 singleton), the schema's types and kinds, a command reaching its handler and
-refusals of a wrong size or type, and a scene started by name. The library
-path is covered end to end by `unity/Sample`'s play mode test.
+refusals of a wrong size or type, a scene started by name, and the draw
+packet (its header, parts, and the view's rect and text among its commands,
+nothing once ended). The library path is covered end to end by
+`unity/Sample`'s play mode test.
+
+On the web, `embed.c` runs in the program `tide unity --web` generates
+(`compiler/cli/build.c`, `unity_web_main`): `main` creates the embed with the
+page's pack (`tide_platform_pack`) and runs `tide_platform_run`, whose frame
+calls `tide_embed_frame` with the input Unity's jslib last copied in (zeroed
+for a frame without, as the worker's while the page is hidden), and exports
+`tide_unity_*` for the jslib (`notes/unity.md`, Web as built).
 
 ## Window scale frame metadata (2026-10-20)
 

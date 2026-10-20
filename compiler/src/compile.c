@@ -61,11 +61,12 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
 #else
             strcmp(inputs[i].path, opts->editor_source) == 0;
 #endif
-        if (overlay) {
-            overlay_found = true;
-            src->len = strlen(opts->editor_text);
+        const char *given = overlay ? opts->editor_text : inputs[i].text;
+        overlay_found |= overlay;
+        if (given) {
+            src->len = strlen(given);
             text = arena_alloc(src->len + 1);
-            memcpy(text, opts->editor_text, src->len + 1);
+            memcpy(text, given, src->len + 1);
         } else text = read_file(inputs[i].path, &src->len);
         if (!text) {
             fprintf(stderr, "tidec: can't read %s\n", inputs[i].path);

@@ -11,14 +11,21 @@ target_compile_definitions(tide_bench PRIVATE TIDE_BENCH_RESULTS="${CMAKE_CURREN
 
 tide_add_game(bench_sand SOURCES sand/sand.tide NAME sand HOST sand/main.c)
 target_link_libraries(bench_sand PRIVATE tide_bench)
-add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x742cb392be44252d)
+add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x6ac505971b099ca5)
 # Sand to play, with its views and the mouse: `sand` in a window, sand.html on
 # the web, which the docs site shows (docs/guide/sand.md).
 tide_add_game(sand SOURCES sand/sand.tide sand/play.tide TITLE "Tide sand" STATS)
 
 tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST gallery/main.c)
 target_link_libraries(bench_gallery PRIVATE tide_bench)
-add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xccd64c3fd8bcbb8b)
+add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xe8641c8f2826ff50)
+
+# Page hashes: the engine's beside candidates for its place, timed on the
+# shapes a world's hash reads (`bench_hash`, natively and under Node); the test
+# checks each SIMD way gives its plain definition's bits.
+add_executable(bench_hash hash/hash.c)
+target_link_libraries(bench_hash PRIVATE tide)
+add_test(NAME bench_hash COMMAND bench_hash --quick)
 
 # C against Tide: concepts written both ways, as fast as each language allows,
 # timed on the same work (see versus/versus.h).
@@ -50,6 +57,11 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
+# Tide's drawing benchmark's workloads by hand in OpenGL and Vulkan, timed the same way
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    add_subdirectory(draw)
+endif()
+
 # Sumo's real-time native delay measurement; invoked explicitly, never a
 # timing assertion in CTest. Its machines share a pool capped at four threads.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
@@ -71,4 +83,14 @@ if(TIDE_NODE)
         add_test(NAME bench_harness COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/harness.mjs"
             $<TARGET_FILE:bench_sand> $<TARGET_FILE:versus_events>)
     endif()
+endif()
+
+# A sampling profiler for Windows that needs no administrator rights:
+# `tide_sample -- build/release/bin/versus_life.exe --threads 1` prints where a
+# program's own code spent its samples, by function and line (through
+# llvm-symbolizer and the program's PDB: profile release builds).
+if(WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    add_executable(tide_sample EXCLUDE_FROM_ALL profile/sample.c)
+    target_link_libraries(tide_sample PRIVATE psapi)
+    target_compile_definitions(tide_sample PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()

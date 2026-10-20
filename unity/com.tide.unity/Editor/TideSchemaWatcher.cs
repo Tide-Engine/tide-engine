@@ -1,18 +1,15 @@
 using System;
 using System.IO;
-using System.Text.RegularExpressions;
 using UnityEditor;
-using UnityEditor.Compilation;
 
 namespace Tide.Editor
 {
-    // Keeps the generated C# types (Tide.Game) the newest build's: when Library/Tide/schema.json says another hash
-    // than the one they were made from, Unity compiles scripts again, from scratch, so the generator reads it.
-    // Unity's build cache knows nothing of the schema, so nothing less would make it run.
+    // Keeps the generated C# types (Tide.Game) the newest build's. tide unity writes each new schema into the
+    // project's Packages/com.tide.game with a stub naming its hash, which Unity's build cache sees: a refresh is all
+    // it takes, which this asks for as soon as the schema changes rather than when the editor next has focus.
     [InitializeOnLoad]
     public static class TideSchemaWatcher
     {
-        const string AskedKey = "Tide.SchemaCompileAsked";
         static DateTime seen;
 
         static TideSchemaWatcher()
@@ -21,13 +18,14 @@ namespace Tide.Editor
         }
 
         public static string SchemaPath => Path.Combine(Tide.TideLibrary.BuildFolder, "schema.json");
+        public static string PackageSchemaPath => Path.Combine(TideSettings.ProjectFolder, "Packages", "com.tide.game", "schema.json");
 
         static void Check()
         {
-            var path = SchemaPath;
             DateTime written;
             try
             {
+                var path = PackageSchemaPath;
                 if (!File.Exists(path)) return;
                 written = File.GetLastWriteTimeUtc(path);
             }
@@ -35,27 +33,10 @@ namespace Tide.Editor
             {
                 return;
             }
-            if (written == seen) return;
+            if (written == seen || EditorApplication.isCompiling || EditorApplication.isUpdating) return;
+            var first = seen == default; // What the editor opened with, which it has compiled
             seen = written;
-            string text;
-            try
-            {
-                text = File.ReadAllText(path);
-            }
-            catch (IOException)
-            {
-                seen = default; // tide is writing it: look again
-                return;
-            }
-            var match = Regex.Match(text, "\"hash\":\"([0-9A-Fa-f]+)\"");
-            if (!match.Success) return;
-            var hash = match.Groups[1].Value;
-            if (hash == CompiledHash()) return;
-            // Once a hash: a generator that can't read it mustn't make the editor compile forever
-            if (SessionState.GetString(AskedKey, "") == hash) return;
-            SessionState.SetString(AskedKey, hash);
-            UnityEngine.Debug.Log($"Tide: the game's types changed (schema {hash}): compiling scripts again");
-            CompilationPipeline.RequestScriptCompilation(RequestScriptCompilationOptions.CleanBuildCache);
+            if (!first) AssetDatabase.Refresh();
         }
 
         // The hash the generated types were made from, or "" before there were any.

@@ -19,6 +19,7 @@
 #include "serve.h"
 #include "sys.h"
 #include "toolchain.h"
+#include "unity_assets.h"
 #include "tide/sha256.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
@@ -226,7 +227,7 @@ static compile_input *game_inputs(const char *folder, const game_packages *packa
     }
     compile_input *inputs = malloc(sizeof(compile_input) * (size_t)paths->count);
     if (!inputs) abort();
-    for (int i = 0; i < paths->count; i++) inputs[i] = (compile_input){paths->items[i], names[i]};
+    for (int i = 0; i < paths->count; i++) inputs[i] = (compile_input){paths->items[i], names[i], NULL};
     free(names);
     *count = paths->count;
     return inputs;
@@ -496,6 +497,7 @@ typedef struct build {
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
     game_packages packages; // Found again by each build of the game
+    char *unity_map;        // With opts->unity_assets: the map of its Unity.Source numbers, from its last generate (unity_assets.h)
 } build;
 
 static uint64_t header_stamp(const char *folder);
@@ -1807,6 +1809,34 @@ static bool generate(build *b, const char *gen, const bool layout)
     int count = 0;
     compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count);
     if (!inputs) return false;
+    // A Unity project's prefabs and scenes, as the prefabs tide makes of them, after the game's own files
+    unity_sources unity = {0};
+    if (b->opts->unity_assets) {
+        if (!unity_assets_read(b->opts->unity_assets, &unity)) {
+            unity_sources_free(&unity);
+            free(inputs);
+            free_files(&paths);
+            return false;
+        }
+        inputs = realloc(inputs, sizeof(compile_input) * (size_t)(count + unity.count + 1));
+        if (!inputs) abort();
+        for (int i = 0; i < unity.count; i++) inputs[count++] = (compile_input){unity.items[i].path, NULL, unity.items[i].text};
+        // ...each as tide read it, beside the build, which its messages' lines are of
+        char *prefabs = b->opts->unity && b->opts->output ? path_join(b->opts->output, "prefabs") : NULL;
+        if (prefabs) sys_remove_tree(prefabs);
+        for (int i = 0; prefabs && i < unity.count; i++) {
+            if (strcmp(unity.items[i].path, UNITY_SOURCE_PATH) == 0) continue;
+            char *name = format("%s.tprefab", unity.items[i].path, NULL);
+            char *path = path_join(prefabs, name);
+            char *dir = path_dir(path);
+            sys_mkdirs(dir);
+            sys_write_text(path, unity.items[i].text);
+            free(dir);
+            free(path);
+            free(name);
+        }
+        free(prefabs);
+    }
     tide_sha256 external;
     tide_sha256_init(&external);
     static const char *const identity_extensions[] = {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl",
@@ -1821,7 +1851,7 @@ static bool generate(build *b, const char *gen, const bool layout)
         for (int i = 0; i < files.count; i++) {
             size_t size;
             char *bytes = sys_read_file(files.items[i], &size);
-            if (!bytes) { fprintf(stderr, "tide: cannot fingerprint %s\n", files.items[i]); free_files(&files); free(prefix); free(inputs); free_files(&paths); return false; }
+            if (!bytes) { fprintf(stderr, "tide: cannot fingerprint %s\n", files.items[i]); free_files(&files); free(prefix); free(inputs); free_files(&paths); unity_sources_free(&unity); return false; }
             has_external = true;
             // Source checkout line endings do not change C semantics. Binary
             // libraries remain exact bytes, including every target variant.
@@ -1857,7 +1887,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     char *pack = pack_of(gen);
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
-    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); return false; }
+    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .embed = b->opts->unity, .externs = &b->externs,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
@@ -1873,6 +1903,9 @@ static bool generate(build *b, const char *gen, const bool layout)
     if (ok) {
         free_asset_paths(&b->info);
         b->info = next_info;
+        free(b->unity_map);
+        b->unity_map = unity.map;
+        unity.map = NULL;
     } else {
         // A bad asset can be fixed without editing code: keep watching the
         // paths and rebuild policy of the last successful generation.
@@ -1881,6 +1914,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     free(pack);
     free(inputs);
     free_files(&paths);
+    unity_sources_free(&unity);
     return ok;
 }
 
@@ -2206,6 +2240,7 @@ static uint64_t game_stamp(const build *b)
         const package_line *line = b->packages.items[p].line;
         if (line->local || line->builtin) stamp_folder(&h, b->packages.items[p].folder);
     }
+    if (b->opts->unity_assets) h = (h ^ unity_assets_stamp(b->opts->unity_assets)) * 0x100000001B3ull;
     return h;
 }
 
@@ -2347,7 +2382,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 // What tide/embed.h's host gives the program that loads it
 static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create", "tide_embed_destroy", "tide_embed_frame",
                                             "tide_embed_view", "tide_embed_status_of", "tide_embed_request", "tide_embed_command",
-                                            "tide_embed_background", "tide_embed_schema", NULL};
+                                            "tide_embed_background", "tide_embed_schema", "tide_embed_draw", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -2480,6 +2515,56 @@ static bool build_embed_host(run *r)
     return ok;
 }
 
+// Writes `text` to `path` unless it holds it already: Unity compiles again for what changes.
+static bool write_if_changed(const char *path, const char *text, const size_t size)
+{
+    size_t had = 0;
+    char *old = sys_read_file(path, &had);
+    const bool same = old && had == size && memcmp(old, text, size) == 0;
+    free(old);
+    return same || sys_write_file(path, text, size);
+}
+
+// The project's Packages/com.tide.game, an embedded package of the assembly Tide.Game: the schema, which the
+// package's source generator makes the game's C# types of, and a stub naming the schema's hash. Unity's build
+// cache knows an assembly by its sources, so the stub is what makes a new schema compile again. Made from the
+// project of opts->unity_assets, as each build's schema changes; meant for source control, so a clone compiles
+// before tide has built anything. False after saying what's wrong.
+static bool write_unity_package(const run *r, const char *schema, const uint32_t size)
+{
+    if (!r->b.opts->unity_assets) return true;
+    char *assets = path_absolute(r->b.opts->unity_assets);
+    char *project = path_dir(assets);
+    char *dir = path_join(project, "Packages/com.tide.game");
+    bool ok = sys_mkdirs(dir);
+    // The hash, from the schema's "hash":"..."
+    char hash[17] = "";
+    const char *at = strstr(schema, "\"hash\":\"");
+    for (int i = 0; at && i < 16 && at[8 + i] && at[8 + i] != '"'; i++) hash[i] = at[8 + i];
+    static const char package[] = "{\n  \"name\": \"com.tide.game\",\n  \"displayName\": \"Tide game types\",\n  \"version\": \"0.0.0\",\n"
+                                  "  \"description\": \"Written by tide unity: the game's schema, which Tide's package makes "
+                                  "the game's C# types of. Keep it in source control.\"\n}\n";
+    static const char asmdef[] = "{\n    \"name\": \"Tide.Game\",\n    \"rootNamespace\": \"Tide.Game\",\n"
+                                 "    \"references\": [\n        \"Tide.Runtime\"\n    ],\n    \"allowUnsafeCode\": true,\n"
+                                 "    \"autoReferenced\": true\n}\n";
+    char stub[512];
+    snprintf(stub, sizeof stub, "// Written by tide unity. The game's C# types are generated from schema.json beside this,\n"
+                                "// by Tide's package (Tide.Generator), whenever this hash changes: %s\n", hash);
+    const char *const names[] = {"package.json", "Tide.Game.asmdef", "TideGameSchema.cs", "schema.json"};
+    const char *const texts[] = {package, asmdef, stub, schema};
+    const size_t sizes[] = {sizeof package - 1, sizeof asmdef - 1, strlen(stub), size};
+    for (int i = 0; ok && i < 4; i++) {
+        char *path = path_join(dir, names[i]);
+        ok = write_if_changed(path, texts[i], sizes[i]);
+        if (!ok) fprintf(stderr, "tide: can't write %s\n", path);
+        free(path);
+    }
+    free(dir);
+    free(project);
+    free(assets);
+    return ok;
+}
+
 // The newest build's schema, from the build itself, as schema.json beside it: what the package's C# bindings are
 // generated from before anything runs. False after saying what's wrong.
 static bool write_unity_schema(const run *r)
@@ -2499,18 +2584,237 @@ static bool write_unity_schema(const run *r)
         char *written = path_join(r->dir, "schema.json.tmp");
         char *path = path_join(r->dir, "schema.json");
         ok = sys_write_file(written, text, size) && sys_rename(written, path);
+        if (!ok) fprintf(stderr, "tide: can't write the schema of %s\n", library_path);
+        ok = ok && write_unity_package(r, text, size);
         free(written);
         free(path);
         free(text);
+    } else {
+        fprintf(stderr, "tide: can't read the schema of %s\n", library_path);
     }
-    if (!ok) fprintf(stderr, "tide: can't write the schema of %s\n", library_path);
     sys_library_close(library);
     free(library_path);
+    // ...and which GameObject shows each entity of the Unity project's prefabs and scenes
+    if (ok) {
+        char *written = path_join(r->dir, "unity.json.tmp");
+        char *path = path_join(r->dir, "unity.json");
+        const char *map = r->b.unity_map ? r->b.unity_map : "{\"assets\": []}\n";
+        ok = sys_write_file(written, map, strlen(map)) && sys_rename(written, path);
+        if (!ok) fprintf(stderr, "tide: can't write %s\n", path);
+        free(written);
+        free(path);
+    }
     return ok;
+}
+
+// Tide's program in a Unity WebGL player's page: tide/embed.h's host with the game linked in, its frames run by
+// Unity's through tide.js's `pageFrames`, and what Unity's Tide.jslib calls (com.tide.unity).
+static const char unity_web_main[] =
+    "// Generated by tide. Do not edit. Tide's program beside Unity's on the web (tide unity --web): tide/embed.h's\n"
+    "// host with the game linked in, its frames run by Unity's (Tide.jslib, through tide.js's pageFrames) while the\n"
+    "// page is shown, and by tide.js's worker while it's hidden. The jslib copies Unity's input in and the view\n"
+    "// packet, schema and status out through these exports.\n"
+    "#define TIDE_HAS_EMBED 1\n"
+    "#include \"game.h\"\n"
+    "#include \"tide/run.h\"\n"
+    "#include \"tide/embed.h\"\n"
+    "#include \"tide/platform.h\"\n"
+    "\n"
+    "#include <stdlib.h>\n"
+    "#include <string.h>\n"
+    "\n"
+    "#define TIDE_UNITY_EXPORT(name) __attribute__((export_name(#name)))\n"
+    "\n"
+    "static tide_embed *unity_embed;\n"
+    "static tide_embed_input unity_input;\n"
+    "static bool unity_fresh; // Unity gave this frame's input: a frame without it (the page hidden) has none\n"
+    "static float unity_width = 960.0f, unity_height = 540.0f, unity_scale = 1.0f;\n"
+    "static tide_embed_status unity_status;\n"
+    "static uint32_t unity_view_size, unity_schema_size, unity_draw_size;\n"
+    "static uint8_t *unity_scratch;\n"
+    "static uint32_t unity_scratch_size;\n"
+    "\n"
+    "static int unity_frame(void *user, const float seconds)\n"
+    "{\n"
+    "    (void)user;\n"
+    "    if (!unity_fresh) memset(&unity_input, 0, sizeof unity_input);\n"
+    "    unity_fresh = false;\n"
+    "    tide_embed_frame(unity_embed, seconds, &unity_input, unity_width, unity_height, unity_scale);\n"
+    "    return TIDE_KEEP_RUNNING;\n"
+    "}\n"
+    "\n"
+    "int main(int argc, char **argv)\n"
+    "{\n"
+    "    size_t pack_size = 0;\n"
+    "    uint8_t *pack = tide_platform_pack(&pack_size); // The page's (TIDE_PACK)\n"
+    "    unity_embed = tide_embed_create(&(tide_embed_desc){.game = &tide_host_game_api, .pack = pack, .pack_size = pack_size,\n"
+    "                                                       .argc = argc, .argv = argv, .game_name = \"%s\"});\n"
+    "    free(pack);\n"
+    "    if (!unity_embed) return 1;\n"
+    "    tide_platform_run(unity_frame, NULL);\n"
+    "}\n";
+
+// ...and what Tide.jslib calls
+static const char unity_web_exports[] =
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_ready) int tide_unity_ready(void) { return unity_embed != NULL; }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_input) tide_embed_input *tide_unity_input(void) { return &unity_input; }\n"
+    "\n"
+    "// The page's clock times frames, the worker's too: Unity's seconds aren't needed\n"
+    "TIDE_UNITY_EXPORT(tide_unity_frame_info) void tide_unity_frame_info(float seconds, float width, float height, float scale)\n"
+    "{\n"
+    "    (void)seconds;\n"
+    "    unity_fresh = true;\n"
+    "    unity_width = width;\n"
+    "    unity_height = height;\n"
+    "    unity_scale = scale;\n"
+    "}\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_status) const tide_embed_status *tide_unity_status(void)\n"
+    "{\n"
+    "    tide_embed_status_of(unity_embed, &unity_status);\n"
+    "    return &unity_status;\n"
+    "}\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_view) const uint8_t *tide_unity_view(void) { return tide_embed_view(unity_embed, &unity_view_size); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_view_size) uint32_t tide_unity_view_size(void) { return unity_view_size; }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_schema) const char *tide_unity_schema(void) { return tide_embed_schema(unity_embed, &unity_schema_size); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_schema_size) uint32_t tide_unity_schema_size(void) { return unity_schema_size; }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_draw) const uint8_t *tide_unity_draw(void) { return tide_embed_draw(unity_embed, &unity_draw_size); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_draw_size) uint32_t tide_unity_draw_size(void) { return unity_draw_size; }\n"
+    "\n"
+    "// Where the page puts what it passes in (a request's text, a command's value): `size` bytes, till the next call\n"
+    "TIDE_UNITY_EXPORT(tide_unity_buffer) uint8_t *tide_unity_buffer(const uint32_t size)\n"
+    "{\n"
+    "    if (size > (64u << 20)) return NULL;\n"
+    "    if (size > unity_scratch_size) {\n"
+    "        uint8_t *grown = realloc(unity_scratch, size);\n"
+    "        if (!grown) return NULL;\n"
+    "        unity_scratch = grown;\n"
+    "        unity_scratch_size = size;\n"
+    "    }\n"
+    "    return unity_scratch;\n"
+    "}\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_request) int tide_unity_request(uint32_t kind, const char *text, uint32_t port)\n"
+    "{\n"
+    "    return tide_embed_request(unity_embed, (tide_session_request_kind)kind, text, port);\n"
+    "}\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_command) int tide_unity_command(uint32_t type, uint32_t index, uint32_t generation,\n"
+    "                                                             const void *value, uint32_t size)\n"
+    "{\n"
+    "    return tide_embed_command(unity_embed, type, index, generation, value, size);\n"
+    "}\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_background) void tide_unity_background(int hidden) { tide_embed_background(unity_embed, hidden != 0); }\n";
+
+// tide-game.js, for the page: the Tide config tide.js reads (the program waits for Unity's TideRunner to start
+// it, its frames are Unity's, and it draws in a canvas of its own that no one sees), the program and its pack as
+// base64, and tide.js. False after saying what's wrong.
+static bool write_unity_script(const char *root, const char *program, const char *script_path, const char *pack, const bool release)
+{
+    char *runtime_path = path_join(root, release ? "web/tide.release.js" : "web/tide.js");
+    char *runtime = sys_read_file(runtime_path, NULL);
+    free(runtime_path);
+    size_t wasm_len = 0, pack_len = 0;
+    char *wasm = sys_read_file(program, &wasm_len);
+    char *packed = pack ? sys_read_file(pack, &pack_len) : NULL;
+    bool ok = false;
+    FILE *f = NULL;
+    if (!runtime || !wasm) {
+        fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
+        goto done;
+    }
+    strip_reloading(runtime);
+    f = fopen(script_path, "wb");
+    if (!f) {
+        fprintf(stderr, "tide: can't write %s\n", script_path);
+        goto done;
+    }
+    fputs("// Generated by tide unity --web. Tide's program for a Unity WebGL player's page, which Tide's package for Unity\n"
+          "// puts in it before Unity's own: it runs as the player's TideRunner says (Tide.jslib).\n"
+          "var Tide = window.Tide = Object.assign(window.Tide || {}, {\n"
+          "    wait: true, pageFrames: true, embedded: true, canvas: document.createElement('canvas'),\n"
+          "});\n", f);
+    char *encoded = page_payload(wasm, wasm_len, release);
+    fprintf(f, "const TIDE_PROGRAM = \"%s\";\n", encoded);
+    free(encoded);
+    if (packed) {
+        char *pack_encoded = page_payload(packed, pack_len, release);
+        fprintf(f, "const TIDE_PACK = \"%s\";\n", pack_encoded);
+        free(pack_encoded);
+    }
+    fputs(runtime, f);
+    ok = fclose(f) == 0;
+    f = NULL;
+    if (!ok) fprintf(stderr, "tide: can't write %s\n", script_path);
+done:
+    if (f) fclose(f);
+    free(runtime);
+    free(wasm);
+    free(packed);
+    return ok;
+}
+
+// tide unity --web: the game as Tide's program for a Unity WebGL player (tide-game.js), with unity.json. Once.
+static int tide_unity_web(const char *root, const build_options *opts)
+{
+    build b = {0};
+    if (!build_setup(&b, root, opts, false)) return 1;
+    char *dir = path_absolute(opts->output);
+    char *gen = path_join(b.cache, "gen-unity");
+    sys_mkdirs(dir);
+    sys_mkdirs(gen);
+    int code = 1;
+    char *main_c = path_join(gen, "main.c");
+    char *game_c = path_join(gen, "game.c");
+    char *program = path_join(b.cache, "unity.wasm");
+    char *script = path_join(dir, "tide-game.js");
+    char *map = path_join(dir, "unity.json");
+    char *pack = NULL;
+    file_list objects = {0};
+    c_side c = {0};
+    if (!generate(&b, gen, false)) goto done;
+    char escaped[512];
+    c_string(escaped, sizeof escaped, b.name);
+    char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports);
+    if (!text) abort();
+    sprintf(text, unity_web_main, escaped);
+    strcat(text, unity_web_exports);
+    const bool wrote = sys_write_text(main_c, text);
+    free(text);
+    if (!wrote) goto done;
+    add_file(&objects, path_join(b.cache, "unity-game.o"));
+    add_file(&objects, path_join(b.cache, "unity-main.o"));
+    if (!compile_game(&b, gen, game_c, main_c, &objects, &c) || !find_libraries(&b, &c)) goto done;
+    if (!link_objects(&b, &objects, &c, program, false, NULL)) goto done;
+    pack = pack_of(gen);
+    if (!write_unity_script(root, program, script, pack, opts->release)) goto done;
+    const char *mapped = b.unity_map ? b.unity_map : "{\"assets\": []}\n";
+    if (!sys_write_file(map, mapped, strlen(mapped))) {
+        fprintf(stderr, "tide: can't write %s\n", map);
+        goto done;
+    }
+    printf("tide: built the game for Unity's WebGL player in %s\n", dir);
+    code = 0;
+done:
+    free_game_c(&c);
+    free_files(&objects);
+    free(pack);
+    free(map);
+    free(script);
+    free(program);
+    free(game_c);
+    free(main_c);
+    free(gen);
+    free(dir);
+    return code;
 }
 
 int tide_unity(const char *root, const build_options *opts)
 {
+    if (opts->web) return tide_unity_web(root, opts);
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;
     r.dir = path_absolute(opts->output);

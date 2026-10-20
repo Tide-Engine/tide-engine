@@ -1,5 +1,23 @@
 # The language server and the editors
 
+## Empty scene shorthand (2026-10-20)
+
+The shared parser accepts semicolon-terminated scenes, including local and
+namespaced declarations. Existing LSP symbol/occurrence and formatter paths
+handle them without adapter changes. lsp_empty_scene_declarations exercises
+diagnostics, hover, references, rename, outline, completion and formatting.
+TextMate's existing declaration matcher already scopes both forms; new probes
+pin that behavior and the all-E2E grammar check skips their nonexistent bodies.
+Validation is recorded in notes/language.md.
+
+## Renames reaching Unity assets (2026-10-20)
+
+Renaming a component, or a component's field, of a game whose folder is inside a
+Unity project's `Assets` also edits the project's prefabs and scenes holding
+com.tide.unity's TideEntity: `analysis_rename` appends `unity_renames`' edits
+(`compiler/lsp/analysis.c`) to its changes, as UTF-16 columns. Details, limits
+and the test: notes/unity.md, Tooling as built.
+
 ## Double Position hover (2026-10-20)
 
 Position attribute hover now identifies float/double scalars and vectors and

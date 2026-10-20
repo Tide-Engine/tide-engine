@@ -1726,6 +1726,120 @@ static void tiles_leave_no_gaps(void)
 }
 
 // ---------------------------------------------------------------------------
+// The renderer draws two of a mesh's or of text's triangles as one quad where
+// they are one, and a run of smooth shapes that are all solid ones with a
+// radius each where the others have an extra (see quad and solid_shape in
+// platform.c). Each scene below is drawn as that; again after something in
+// the same run, away from what's compared, that keeps the run from being one
+// (what was drawn before these); and again with that last, which turns the
+// run back as it goes. The three are the same pixels, and as many draw calls.
+
+enum { SAME_SIDE = 120 }; // The block compared, in the target's pixels from its top left
+static tide_float2 same_points[SAME_SIDE * SAME_SIDE];
+static uint32_t same_pixels[3][SAME_SIDE * SAME_SIDE];
+
+enum { SAME_ALONE, SAME_AFTER, SAME_BEFORE }; // Where the scene's run has what keeps it from being quads or solid
+
+static void same_scene(void (*scene)(int), const float scale, const char *what)
+{
+    static const char *const ways[3] = {"", "after what keeps them from being so", "before what turns them back"};
+    uint32_t calls[3];
+    for (int y = 0; y < SAME_SIDE; y++) {
+        for (int x = 0; x < SAME_SIDE; x++) same_points[y * SAME_SIDE + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    for (int k = 0; k < 3; k++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_draw_set_screen(&list);
+        scene(k);
+        tide_platform_read_pixels_as(&list, (int)screen.x, (int)screen.y, scale, same_points, SAME_SIDE * SAME_SIDE,
+                                     same_pixels[k]);
+        calls[k] = tide_platform_draw_calls();
+    }
+    for (int k = 1; k < 3; k++) {
+        int differ = 0;
+        for (int i = 0; i < SAME_SIDE * SAME_SIDE; i++) differ += same_pixels[0][i] != same_pixels[k][i];
+        char message[200];
+        snprintf(message, sizeof message, "%s at a scale of %g are the same pixels as %s (%d differ)", what,
+                 (double)scale, ways[k], differ);
+        expect(differ == 0, message);
+        snprintf(message, sizeof message, "%s at a scale of %g are as many draw calls as %s (%u and %u)", what,
+                 (double)scale, ways[k], (unsigned)calls[0], (unsigned)calls[k]);
+        expect(calls[0] == calls[k], message);
+    }
+}
+
+// A triangle alone, with the same texture as the quads below, away from them.
+static void same_triangle(void)
+{
+    static const uint32_t three[3] = {0, 1, 2};
+    const tide_vertex v[3] = {{{200, 300}, {0, 0}, white}, {{220, 300}, {1, 0}, white}, {{200, 320}, {0, 1}, white}};
+    tide_draw_mesh(&list, v, 3, three, 3, &four_texture, TIDE_FILTER_BILINEAR);
+}
+
+// Quads of a texture, each of one color, at places and uvs that aren't whole,
+// some of them flipped, in the orders of corners and triangles a game might give.
+static void same_quads(const int way)
+{
+    static const uint32_t orders[][6] = {{0, 1, 2, 0, 2, 3}, {0, 1, 3, 1, 2, 3}, {2, 1, 0, 3, 2, 0}, {3, 0, 1, 3, 1, 2}};
+    if (way == SAME_AFTER) same_triangle();
+    for (uint32_t i = 0; i < 12; i++) {
+        const float x = 3.0f + (float)(i % 4) * 28.5f + 0.25f * (float)i, y = 2.5f + (float)(i / 4) * 37.75f;
+        const float w = 20.0f + (float)i * 0.6f, h = 30.0f - (float)i * 0.4f;
+        const float u0 = i & 1u ? 0.9f : 0.1f, u1 = i & 1u ? 0.1f : 0.9f;
+        const tide_color c = {(float)(i * 20u % 255u) / 255.0f, 0.8f, (float)(i * 50u % 255u) / 255.0f, i % 3u ? 1.0f : 0.6f};
+        const tide_vertex v[4] = {{{x, y}, {u0, 0.2f}, c}, {{x + w, y}, {u1, 0.2f}, c},
+                                  {{x + w, y + h}, {u1, 0.8f}, c}, {{x, y + h}, {u0, 0.8f}, c}};
+        tide_draw_mesh(&list, v, 4, orders[i % 4u], 6, &four_texture, TIDE_FILTER_BILINEAR);
+    }
+    if (way == SAME_BEFORE) same_triangle();
+}
+
+// Turned text, away from the text below, whose glyphs aren't quads of that kind.
+static void same_turned(void)
+{
+    tide_draw_set_transform(&list, tide_draw_transform_turned(tide_f2(200, 300), 0.5f));
+    tide_draw_text(&list, "turned", tide_f2(0, 0), 16, white);
+    tide_draw_unset_transform(&list);
+}
+
+// Text in both weights.
+static void same_text(const int way)
+{
+    if (way == SAME_AFTER) same_turned();
+    tide_draw_text(&list, "Quads 0123 gjy", tide_f2(4, 6), 18, white);
+    tide_draw_text_at(&list, "Bold, too", tide_f2(6, 40), 22, orange, TIDE_ANCHOR_UPPER_LEFT, TIDE_FONT_BOLD);
+    tide_draw_text(&list, "small", tide_f2(8, 80), 11, cyan);
+    if (way == SAME_BEFORE) same_turned();
+}
+
+// Round rects, ellipses, circles and rects among them, unturned and of one
+// color each; and part of a ring, away from them, which isn't a solid shape.
+static void same_shapes(const int way)
+{
+    if (way == SAME_AFTER) tide_draw_arc(&list, tide_f2(200, 300), 12, 0, 1.5f, 4, white);
+    for (uint32_t i = 0; i < 9; i++) {
+        const tide_float2 at = tide_f2(10.0f + (float)(i % 3u) * 18.25f, 10.0f + (float)(i / 3u) * 17.5f);
+        const tide_color c = {0.2f + (float)i * 0.08f, 0.9f - (float)i * 0.07f, 0.5f, i % 4u ? 1.0f : 0.5f};
+        tide_draw_round_rect(&list, at, tide_f2(14.5f, 11.0f), (float)i * 0.75f, c);
+        tide_draw_rect(&list, tide_f2(at.x, at.y + 60.0f), tide_f2(9, 7), c);
+        tide_draw_ellipse(&list, tide_f2(at.x + 60.0f, at.y), tide_f2(7.5f, 4.25f), c);
+        tide_draw_circle(&list, tide_f2(at.x + 60.0f, at.y + 60.0f), 6.3f, c);
+    }
+    if (way == SAME_BEFORE) tide_draw_arc(&list, tide_f2(200, 300), 12, 0, 1.5f, 4, white);
+}
+
+static void runs_drawn_alike(void)
+{
+    same_scene(same_quads, 1.0f, "quads");
+    same_scene(same_quads, 2.0f, "quads");
+    same_scene(same_text, 1.0f, "glyphs as quads");
+    same_scene(same_text, 2.0f, "glyphs as quads");
+    same_scene(same_shapes, 1.0f, "solid shapes");
+    same_scene(same_shapes, 2.0f, "solid shapes, plain circles among them,");
+}
+
+// ---------------------------------------------------------------------------
 // Shapes with smooth edges: round rects, turned ones, ellipses, thick lines
 // and outlines, parts of rings, and the general shape's fills, outlines and
 // fading edges
@@ -3494,6 +3608,7 @@ enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 // through the smooth shapes' pipeline then, 8 to 12: what a game keeps and the GPU reads, of which a frame
 // changes a little or all (bench_kept)
 static int bench_kind;
+static bool bench_one; // --only: that workload alone
 static int bench_frame;
 static const char *bench_label;
 static FILE *bench_output;
@@ -3927,6 +4042,34 @@ static void bench_scene(void)
     }
 }
 
+// --dump-frames <prefix>: each workload's last frame, drawn again and read
+// whole into <prefix>-<workload>.ppm, after its timing, to compare with
+// another renderer's (bench/draw/versus_draw --compare <prefix>).
+static const char *bench_frames_prefix;
+
+static bool bench_dump_frame(void)
+{
+    enum { PIXELS = WIDTH * HEIGHT };
+    static tide_float2 points[PIXELS];
+    static uint32_t pixels[PIXELS];
+    for (int i = 0; i < PIXELS; i++) points[i] = tide_f2((float)(i % WIDTH), (float)(i / WIDTH));
+    tide_platform_read_pixels(&list, points, PIXELS, pixels);
+    char path[1024];
+    snprintf(path, sizeof path, "%s-%d.ppm", bench_frames_prefix, bench_kind);
+    FILE *f = fopen(path, "wb");
+    bool ok = f != NULL;
+    if (f) {
+        fprintf(f, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
+        for (int i = 0; i < PIXELS; i++) {
+            const uint8_t rgb[3] = {(uint8_t)(pixels[i] >> 24), (uint8_t)(pixels[i] >> 16), (uint8_t)(pixels[i] >> 8)};
+            ok &= fwrite(rgb, 1, 3, f) == 3;
+        }
+        ok &= fclose(f) == 0;
+    }
+    if (!ok) fprintf(stderr, "draw: couldn't write %s\n", path);
+    return ok;
+}
+
 static int bench(void)
 {
     const uint64_t start = tide_time_now_ns();
@@ -3950,8 +4093,9 @@ static int bench(void)
            bench_names[bench_kind], recording.median_ms, recording.p95_ms, rendering.median_ms, rendering.p95_ms,
            total.median_ms, total.p95_ms);
     if (bench_label) bench_write_record(recording, rendering, total);
+    if (bench_frames_prefix && !bench_dump_frame()) return 1;
     bench_frame = 0;
-    if (++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
+    if (!bench_one && ++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
     if (bench_output) {
         const bool failed = ferror(bench_output) != 0;
         const int closed = fclose(bench_output);
@@ -4107,6 +4251,7 @@ static int frame(void *user, const float seconds)
         smooth_shapes();
         themed_gui();
         tiles_leave_no_gaps();
+        runs_drawn_alike();
         text_checks();
         settings();
         depth_settings();
@@ -4139,6 +4284,7 @@ static int frame(void *user, const float seconds)
         smooth_shapes();
         themed_gui();
         tiles_leave_no_gaps();
+        runs_drawn_alike();
         text_checks();
         settings();
         depth_settings();
@@ -4177,12 +4323,25 @@ int main(const int argc, char **argv)
         else if (strcmp(argv[i], "--frames-bench") == 0) frames_benching = true;
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
         else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];
+        else if (strcmp(argv[i], "--dump-frames") == 0 && i + 1 < argc) bench_frames_prefix = argv[++i];
+        else if (strcmp(argv[i], "--only") == 0 && i + 1 < argc) {
+            char *end;
+            const long only = strtol(argv[++i], &end, 10);
+            if (*end || end == argv[i] || only < 0 || only >= BENCH_KINDS) {
+                fprintf(stderr, "draw: --only takes a workload's number, 0 to %d\n", BENCH_KINDS - 1);
+                return 2;
+            }
+            bench_kind = (int)only;
+            bench_one = true;
+        }
         else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("usage: tide_platform_draw [--bench [--save <label>]] [--frames-bench] [--dump <file.ppm>]\n"
+            printf("usage: tide_platform_draw [--bench [--save <label>] [--dump-frames <prefix>] [--only <n>]] [--frames-bench] [--dump <file.ppm>]\n"
                    "  --bench          20 warmup frames, then 100 measured frames per workload\n"
                    "  --frames-bench   the same, drawn into the window and shown, as a game's frames are\n"
                    "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
+                   "  --dump-frames <prefix>  after each workload's timing, its last frame as <prefix>-<n>.ppm\n"
+                   "  --only <n>       the workload numbered n alone, from 0 in the order they're printed (for a profiler)\n"
                    "  --dump <file>    write the smooth shapes' scene as an image (a PPM), and check nothing\n"
                    "On the web: ?bench&save=<label> prints the records.\n"
                    "Set TIDE_BENCH_REVISION and TIDE_BENCH_MACHINE to identify the build and CPU/GPU.\n");
@@ -4192,8 +4351,8 @@ int main(const int argc, char **argv)
             return 2;
         }
     }
-    if (bench_label && !benching) {
-        fprintf(stderr, "draw: --save needs --bench\n");
+    if ((bench_label || bench_frames_prefix || bench_one) && !benching) {
+        fprintf(stderr, "draw: --save, --dump-frames and --only need --bench\n");
         return 2;
     }
     if (benching) {

@@ -404,6 +404,12 @@ typedef struct tide_gpu {
     // synchronous canvas readback reports opaque alpha; the sampleable color
     // texture itself retains its original alpha.
     void (*target_read)(tide_gpu_id target, uint8_t *rgba);
+    // Optional: a part of it read back as target_read reads the whole, `width`
+    // by `height` pixels from (x, y), counted from its top left, inside it,
+    // into `width` * `height` * 4 bytes. What reading a few pixels costs is
+    // then theirs, not the whole target's. NULL where a backend reads only
+    // whole targets (WebGPU's).
+    void (*target_read_part)(tide_gpu_id target, int x, int y, int width, int height, uint8_t *rgba);
 
     // A pass on `target`, or the window for 0: cleared to black (every color
     // image it has, a float one too), depth too and stencil to 0, or over

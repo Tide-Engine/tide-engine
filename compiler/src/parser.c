@@ -2003,7 +2003,7 @@ static decl *parse_prefab(parser *p)
     return d;
 }
 
-static decl *parse_data_decl(parser *p, const decl_kind kind)
+static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scene)
 {
     const char *what = kind == DECL_COMPONENT   ? "component or scene name"
                        : kind == DECL_SINGLETON ? "singleton name"
@@ -2012,6 +2012,11 @@ static decl *parse_data_decl(parser *p, const decl_kind kind)
                                                 : "input name";
     const token *name = expect_ident(p, what);
     decl *d = new_decl(kind, name);
+    d->is_scene = is_scene;
+    if (is_scene && at(p, T_SEMI)) {
+        d->end = advance(p)->at;
+        return d;
+    }
     expect(p, T_LBRACE, "'{'");
     while (!at(p, T_RBRACE)) {
         if (p->recover && (at(p, T_EOF) || at_decl_start_or_function(p, false))) {
@@ -2640,7 +2645,10 @@ program *program_new(void)
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
     const size_t path_len = strlen(src->path);
-    const bool prefab_file = path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0;
+    // A Unity prefab or scene is read as the prefab `tide unity` makes of it
+    const bool prefab_file = (path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0) ||
+                             (path_len >= 7 && strcmp(src->path + path_len - 7, ".prefab") == 0) ||
+                             (path_len >= 6 && strcmp(src->path + path_len - 6, ".unity") == 0);
     parser p = {.toks = toks, .recover = recover, .prog = prog};
     p.unit = NEW(unit);
     p.unit->src = src;
@@ -2741,26 +2749,23 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         const bool function = at_method_from(&p, 0, p.overriding);
         if (!function) advance(&p);
         if (function) d = parse_method(&p, NULL);
-        else if (t->kind == T_COMPONENT) d = parse_data_decl(&p, DECL_COMPONENT);
-        else if (t->kind == T_SINGLETON) d = parse_data_decl(&p, DECL_SINGLETON);
+        else if (t->kind == T_COMPONENT) d = parse_data_decl(&p, DECL_COMPONENT, false);
+        else if (t->kind == T_SINGLETON) d = parse_data_decl(&p, DECL_SINGLETON, false);
         else if (t->kind == T_SYSTEM) d = parse_system(&p, false);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "input")) d = parse_data_decl(&p, DECL_INPUT);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "input")) d = parse_data_decl(&p, DECL_INPUT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "view")) d = parse_system(&p, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "audio")) d = parse_audio(&p);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "command")) {
-            d = parse_data_decl(&p, DECL_EVENT);
+            d = parse_data_decl(&p, DECL_EVENT, false);
             d->is_command = true;
         }
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "enum")) d = parse_enum(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "prefab")) d = parse_prefab(&p);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) {
-            d = parse_data_decl(&p, DECL_COMPONENT);
-            d->is_scene = true;
-        }
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) d = parse_data_decl(&p, DECL_COMPONENT, true);
         else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "event")) d = parse_handler(&p, false);
         else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "command")) d = parse_handler(&p, true);
         else if (t->kind == T_IDENT && at(&p, T_SYSTEM) && str_eq_c(t->text, "extern")) d = parse_extern_system(&p);

@@ -10927,6 +10927,60 @@ static void window_assign(stmt *s, stmt *loop)
 
 // A parallel loop's steps go through a window when they can: its block, and
 // the cells around it that they read at their place plus constants.
+// Whether a statement could end a step before the statements after it run:
+// a return, or a continue or break that isn't some loop's inside it.
+static bool may_leave_step(const stmt *s, const int depth)
+{
+    if (!s) return false;
+    switch (s->kind) {
+    case S_RETURN:
+    case S_FAIL:
+        return true;
+    case S_CONTINUE:
+    case S_BREAK:
+        return depth == 0;
+    case S_WHILE:
+    case S_FOR:
+    case S_FOREACH:
+    case S_PARALLEL:
+        return may_leave_step(s->init, depth + 1) || may_leave_step(s->step, depth + 1) || may_leave_step(s->then_stmt, depth + 1);
+    case S_SWITCH:
+        for (int i = 0; i < s->cases.count; i++) {
+            for (int k = 0; k < s->cases.items[i].body.count; k++) {
+                if (may_leave_step(s->cases.items[i].body.items[k], depth)) return true;
+            }
+        }
+        return false;
+    default:
+        for (int i = 0; i < s->stmts.count; i++) {
+            if (may_leave_step(s->stmts.items[i], depth)) return true;
+        }
+        return may_leave_step(s->then_stmt, depth) || may_leave_step(s->else_stmt, depth);
+    }
+}
+
+// Whether every step of a loop over a grid writes its own cell (`cells[at] =`
+// at the top of its body) before anything can end it, so a task's window
+// needn't start as a copy of the cells it read: each one it puts back is
+// written. Blocks of one cell only: a bigger block's step may leave some of
+// its cells as they were.
+static bool writes_own_cell(const stmt *loop)
+{
+    if (loop->block[0] != 1 || loop->block[1] != 1 || loop->block[2] != 1) return false;
+    const stmt *body = loop->then_stmt;
+    const int count = body->kind == S_BLOCK ? body->stmts.count : 1;
+    for (int i = 0; i < count; i++) {
+        const stmt *s = body->kind == S_BLOCK ? body->stmts.items[i] : body;
+        if (s->kind == S_ASSIGN && s->target->kind == E_INDEX && s->target->window && s->target->window_offset[0] == 0
+            && s->target->window_offset[1] == 0 && s->target->window_offset[2] == 0
+            && same_place(s->target->object, loop->value)) {
+            return true;
+        }
+        if (may_leave_step(s, 0)) return false;
+    }
+    return false;
+}
+
 static void plan_window(stmt *loop)
 {
     if (loop->value->type.kind == TY_LIST) { // Its steps write their own elements into their task's copy
@@ -10941,6 +10995,7 @@ static void plan_window(stmt *loop)
         loop->window_hi[i] = loop->block[i] - 1;
     }
     window_stmt(loop->then_stmt, loop);
+    loop->writes_own = loop->windowed && writes_own_cell(loop);
 }
 
 // What a parallel loop's step can't do, which runs at once with the others:
@@ -15358,6 +15413,16 @@ static void check_params(const checker *c, decl *sys)
                        system_what(sys));
             diag_note("to run for entities with or without a component, write two %ss, one 'with' it and one 'without'",
                       system_what(sys));
+            p->type = T_ERR;
+            continue;
+        }
+        // A prefab's name (a Unity prefab's or scene's too): its entities have no component of its name to filter by
+        decl *other_prefab;
+        if (!d && lookup(c->prog, c->unit, p->type_name, NAME_PREFAB, &other_prefab)) {
+            diag_error(p->type_at.line ? p->type_at : p->at, "'" STR_FMT "' is a prefab, and a %s takes components and singletons",
+                       STR_ARG(p->type_name), system_what(sys));
+            diag_note("to run for its entities, give them a component of their own (in Unity, on their TideEntity) and "
+                      "take that, or filter by it: 'with In" STR_FMT "'", STR_ARG(p->type_name));
             p->type = T_ERR;
             continue;
         }

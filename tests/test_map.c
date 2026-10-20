@@ -84,6 +84,24 @@ TIDE_TEST(map_keys_find_their_values_in_a_world)
     tide_heap_free(&world.heap);
 }
 
+// Keys up to 16 bytes are hashed by tide_map_hash_bytes' own steps, which
+// have to be tide_hash's exactly: where a key lands decides the index's bytes,
+// which worlds hash, pack and send.
+TIDE_TEST(map_key_hash_is_tide_hash_at_every_size)
+{
+    uint8_t bytes[40];
+    for (uint32_t round = 0; round < 64u; round++) {
+        for (uint32_t i = 0; i < sizeof bytes; i++) bytes[i] = (uint8_t)(round * 37u + i * 101u + (i >> 2) * round);
+        for (uint32_t size = 0; size <= sizeof bytes; size++) {
+            const uint64_t h = tide_hash(bytes, size);
+            TIDE_CHECK(tide_map_hash_bytes(bytes, size) == (uint32_t)(h ^ h >> 32));
+        }
+    }
+    const int32_t key = -123456789;
+    const uint64_t h = tide_hash(&key, sizeof key);
+    TIDE_CHECK(tide_map_hash_bytes(&key, sizeof key) == (uint32_t)(h ^ h >> 32));
+}
+
 TIDE_TEST(map_collision_probes_cross_chunks_and_wrap_without_changing_snapshots)
 {
     start();

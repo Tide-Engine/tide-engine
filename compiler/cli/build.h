@@ -22,6 +22,7 @@ typedef struct build_options {
     const char *editor_prefab, *editor_source, *editor_draft;
     bool editor_local;
     bool unity; // For Unity's Tide package (tide unity): the game built for another program to run (tidec --embed)
+    const char *unity_assets; // ...and the Unity project's Assets folder, whose prefabs and scenes it has (unity_assets.h)
 } build_options;
 
 // Builds a game with the engine files installed in `root` (see AGENTS.md,

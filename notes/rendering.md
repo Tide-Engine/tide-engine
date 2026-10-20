@@ -1,5 +1,127 @@
 # The platform layer and the renderer
 
+## Quads, solid shapes and a fenced flush (2026-10-20, second round)
+
+Round 2 of the performance pass against the handwritten drawing baseline
+(`notes/benchmarks.md`, Drawing, second round). Internal, Claude's; no API
+changed. Every benchmark frame is the same bytes before and after on Vulkan
+and OpenGL, all 13 workloads (`tide_platform_draw --bench --dump-frames`).
+
+- **Quads** (`quad`, `make_quad`, `make_quad_across`, `triangles_instead`,
+  `add_glyph` in `platform/src/platform.c`). Two of a 2D mesh's or of text's
+  triangles go to the GPU as one 40-byte instance where their six corners'
+  places take two numbers at most on each axis, as their uvs do, and they're of
+  one color: a sprite, a tile, an upright glyph, in any order of corners and
+  triangles. The instance has the two numbers of each axis (`box`, `span`), the
+  color, and 4 bits a corner (`pattern`) saying which number each of the six
+  takes. `PIPELINE_QUADS` and `PIPELINE_TEXT_QUADS` read it per instance
+  (`quad_glsl_vertex`, `QUAD_WGSL_VERTEX`, by `gl_VertexID` / `vertex_index`)
+  into the meshes' and text's own fragment shaders, with the arithmetic of
+  their vertex shader, so the GPU draws the same triangles from the same
+  numbers: 40 bytes where six vertices were 120. A run (`draw_step.quads`)
+  starts as quads; the first two triangles that aren't one (a turned glyph,
+  corners of two colors, a lone triangle) turn its quads back into the
+  vertices they stood for, to the bit, and it goes on as triangles. One step
+  is still one draw call, and six vertices a quad are counted
+  (`tide_platform_draw_vertices`). `make_quad_across` is the common case,
+  triangles p q r and p r s with p and r opposite: it compares the list's
+  vertices as they are, by their bits, four lanes at once (clang's
+  `ext_vector_type`, SSE2 here, NEON on arm64, scalars on wasm), since a
+  corner's place on the screen is worked out from its own on that axis alone,
+  and works out p's and r's only. `make_quad` takes any other order. The
+  first version, every corner converted into a `mesh_vertex` and compared a
+  field at a time, built quads slower than the triangles it replaced (474 ->
+  650-760 µs a frame of 65,536): the compiler spilled and branched, and wide
+  loads over the structs' narrower stores waited.
+- **Solid shapes** (`solid_shape`, `settle_radii`, `smooth_instead`). A run of
+  smooth shapes whose smooth ones are all solid (a box or an ellipse,
+  unturned, one color top to bottom, no outline, no fade) has a radius for
+  each of its shapes, 4 bytes, where it would have a 32-byte extra:
+  `PIPELINE_SOLID_SHAPES`, whose vertex shader (`solid_shape_glsl_vertex`,
+  `solid_shape_wgsl_vertex`) sets the extra's other numbers as constants
+  before the same lines as the smooth shapes' (`SMOOTH_SHAPE_GLSL_MAIN`,
+  `SMOOTH_SHAPE_WGSL_MAIN`), into the same fragment shader. That's round
+  rects, plain circles on a scaled display and the plain shapes among them.
+  The first smooth shape that isn't solid gives the run's shapes the extras
+  they stood for and it goes on as before. Those extras differ from what
+  `add_smooth_run` would have written only where no shader reads them (an
+  arc's sweep, an outline's color with no outline) and in the sign of a zero
+  (turn.y), which places nothing differently.
+- **Vulkan's flush** submits with a fence of its own (`vk.flushed`) and waits
+  for it, which waits for everything submitted before it, where it waited for
+  the queue to go idle, and a command pool none of whose buffers was begun
+  since its last reset isn't reset again (`flush`, `tide_gpu_vk_present`).
+- Tests: `runs_drawn_alike` in `platform/tests/draw.c` draws quads (four
+  orders of corners, flipped uvs, places that aren't whole), text in both
+  weights, and solid shapes with rects and circles among them, at scales 1 and
+  2, three ways: alone; after something in the same run that keeps it from
+  being quads or solid (a lone triangle, turned text, part of a ring); and
+  with that last, which turns it back. All three are the same pixels and as
+  many draw calls, on Vulkan (before and after its device is lost), OpenGL,
+  WebGL and WebGPU. A quad with its uvs swapped, or solid shapes given no
+  radius, fail it (checked by breaking each on purpose). The renderer's SPIR-V
+  is ten shaders now (`tide_spirv_shaders_valid`).
+- Tried and dropped: one `vkCmdPipelineBarrier` for each pass's barriers and
+  layout turns, with their stage masks joined (no change beyond noise to an
+  empty frame or rects, and it would have the next pass's vertices wait for
+  the last one's fragments).
+- Not built:
+  - Converting shapes straight into GPU-visible memory. Uploads are bound by
+    the bus: Vulkan's ring is device-local host-visible memory, which the
+    CPU writes at about 20 GB/s here (1.5 MB of rects takes 0.08 ms, 7.8 MB
+    of triangles took 0.38). Writing instances there as they're converted
+    would save the CPU's copy of what it just converted (about 0.07 ms for
+    65,536 rects, 0.19 for round rects before solid shapes). It needs a
+    `gpu.h` call that hands out room which lasts until the list's last pass
+    is recorded: `flush_if_full` can flush mid-list, which frees the ring and
+    may destroy a ring that grew. WebGL and WebGPU would keep `buffer_write`.
+  - OpenGL's empty frame (0.17-0.29 ms against C's 0.01-0.02): the hidden
+    window's swap, which the next readback waits for. Skipping the swap made
+    uploads slower (round 1), as NVIDIA recycles `glBufferSubData`'s memory at
+    swaps; uploads through an unsynchronized ring with fences would have to
+    come first.
+
+## Readback, upload memory and runs of shapes (2026-10-20)
+
+From the performance pass against the handwritten drawing baseline
+(`bench/draw/versus_draw`, `notes/benchmarks.md`, Drawing against
+handwritten OpenGL and Vulkan). Internal changes, Claude's; pixels are the
+same bytes before and after on both backends for all 13 benchmark workloads.
+
+- `tide_platform_read_pixels` reads back only the box around the points it's
+  asked for, through `gpu.h`'s optional `target_read_part` (OpenGL, so WebGL
+  too, and Vulkan; WebGPU has none and reads whole targets as before). Vulkan's
+  blue-first-to-red-first swizzle of what's read back is a `restrict` loop that
+  vectorizes; done a byte at a time it was an eighth of the benchmark's own CPU
+  time while it read whole frames. Vulkan's empty benchmark frame: 0.137 -> 0.065 ms.
+- `draw_list` turns a run of plain shapes (`add_plain_run`: rects, their
+  outlines, lines, and circles where the destination isn't scaled) and a run
+  of smooth shapes (`add_smooth_run`) into steps in one loop each, with the
+  camera's numbers read once and the arithmetic of the cases they replace,
+  bit for bit. `rect_corner` and `add_smooth_shape` went into them.
+- `color_channel` keeps a channel from 0 to 1 with `fminf`/`fmaxf` (NaN as 0)
+  instead of branching, so a color converts four channels at once; it gives
+  the same byte for all 2^32 floats (checked exhaustively, same flags).
+- `add_mesh` reads its camera's numbers once. A small cache of converted
+  corners (a quad's two triangles share two) was slower, and was dropped.
+- Vulkan's per-frame upload ring (the source of buffer and texture copies,
+  and the uniforms) is allocated in device-local host-visible memory where the
+  device has such a type (all of a desktop GPU's memory with resizable BAR,
+  else a 256 MB window; any integrated GPU's), for rings up to 32 MB
+  (`UPLOAD_LOCAL_BYTES`), else, or when that allocation fails, in host memory
+  as before. Copies out of it then don't cross the bus as the GPU runs: with
+  per-phase timers (not committed), submission to pixel read back went 0.21 ->
+  0.14-0.18 ms for 65,536 rects and 0.44 -> 0.27 ms for 65,536 cubes'
+  transforms, while the CPU's copy into the ring rose slightly (0.075 -> 0.086 ms).
+- Tried and not kept: OpenGL swapping the window only after a frame drew in
+  it (as Vulkan presents only an image it drew in), flushing otherwise. A
+  hidden window's swap costs the next readback about 0.09 ms (measured in the
+  baseline too: 0.025 -> 0.111 ms with a swap between frames), and the empty
+  frame went 0.131 -> 0.034 ms, but frames that upload a lot got 1.5 to 5 times
+  slower (round rects 0.84 -> 3.95 ms): NVIDIA's driver evidently recycles
+  `glBufferSubData`'s memory at swaps. Every test frame through
+  `tide_platform_read_pixels` still swaps the hidden window.
+
 ## Pipelines made in the background (2026-10-20)
 
 Cause of the first-use hitch the owner saw in GRAVEWAKE on the web: each GPU

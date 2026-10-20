@@ -1,5 +1,137 @@
 # Language features, as tidec builds them
 
+## Map views (2026-10-20)
+
+Owner-approved runtime use (runtime-ownership.md): every function body that
+can index lists or maps declares, beside `tide_lc`, `tide_map_view tide_mv[n]`
+and `tide_map_views_none(tide_mv, n)` (`declare_list_caches`, both counts
+patched in by `close_list_caches`), a view for each map it reads or sets by
+key, slotted by what names the map (`view_slot`, as `cache_slot`), so
+`scores` and `seen` don't share one. `map_views` is on wherever `list_caches`
+is, parallel loops' tasks included. Through it, `m[k]` calls
+`tide_map%d_cget`, `m.Has` `_chas`, `m.Get` `_ctryget`, `m.TryGet(k, out v)`
+`_ctryget_out`, a path into a value (`m[k].x`) `_cat`, and `m[k] = v` (not on
+an element's slot) `_cset`. The plain helpers stay for the compiler's own
+generated code (visibility, hierarchy, client state) and anywhere without
+views, each now its `c` form with a view of its own. Only the views' handles
+are set at entry; a view's other fields are read only once it's found
+something. ecs.md, Map views across a function, has the runtime contract.
+
+## Events in runs (2026-10-20)
+
+Compiler-private, with no language, runtime-interface, layout or hash change
+(measured in notes/benchmarks.md, Events, second round). A system whose whole
+body is one batchable Send (`batch_event`, unchanged) used to reserve a
+24-byte `tide_command` per row; it now records runs:
+
+- `gen_sent_runs` (only in a game with such a system, `program_batches`):
+  `TIDE_CMD_EVENTS`, last in the kinds' enum, `tide_sent_<Event>` (the target,
+  then the value: 12 bytes for an `int` event), and `tide_sent_push_<Event>`,
+  which pushes one queue item through `tide_queue_push`: the ordinary head
+  (`id` the event, `depth` the system's `tide_chain`, `entity` null), the
+  count at `TIDE_COMMAND_HEAD`, then the entries at `TIDE_SENT_AT`, as many
+  as fit a queue page (`TIDE_SENT_MOST`, at least one). The chunk loop
+  (`gen_chunk`, `rows_batched`) pushes a run per page's worth of rows and
+  hands each row its entry (`tide_reserved` is a `tide_sent_<Event> *`; NULL
+  in rows functions that filter, which send the ordinary way).
+- `tide_apply_from` takes a run with `tide_apply_events`, which calls the
+  event's `tide_dispatch_run_<Event>`: each entry in order, its handlers, then
+  `tide_hear_<Event>` when the tick records, as `tide_apply_event` takes one
+  event. The run's depth is the one each event had; what handlers record goes
+  behind the whole queue as before.
+- Events sent the ordinary way get a loop of the same kind (`event_runs`: the
+  match's events that handlers or listeners take, not commands or events with
+  text). `tide_apply_event` (match) takes the queue's place too and hands the
+  item to `tide_dispatch_items_<Event>`, which counts the items right after it
+  in its page with its head (size, kind, event, depth: a page's items are back
+  to back, so that's `used` and the item's size, read before any is taken),
+  takes them all in order and moves the place past them. A system's loop
+  whose Send is in an `if` or a function, or a handler sending to many,
+  records such items. What a handler records meanwhile goes after them, as
+  before.
+- Both loops are `gen_dispatch_each`'s, `noinline` so each has the registers
+  to itself, and step from one event to the next by a count, not by reading
+  where the next one is, so the lookups of many targets are in flight at once.
+- Those events' dispatcher is split (`gen_dispatcher`, `split`): finding the
+  target (`gen_dispatch_locate`) and `tide_dispatch_at_<Event>(w, target,
+  loc, event)`, everything after it (`gen_dispatch_handlers`). Where one
+  archetype takes the event (`dispatch_candidate`), the loop reads that
+  table's count, page array and first handle once and finds each target by
+  `index - first` checked against the row's handle, with two calls of
+  `tide_dispatch_at`, so the found one knows its archetype; a miss (another
+  archetype, a moved row, a gone or reused handle, the null target) takes
+  `tide_entity_location`. That's sound because no handler moves an
+  archetype's rows: spawns, adds, removes and destroys wait in the queue,
+  and what a handler writes (its `mut` components, `World.Set`) changes lane
+  pages, never the entity column or the page array. Other events' loops call
+  `tide_dispatch_<Event>` for each.
+- `tide_settle_item` settles a run's targets and entity fields, though a
+  batched system never spawns, so its queue isn't settled.
+  `tide_command_fits` doesn't list the kind: a run is only in the queue during
+  the tick that sends it, never in a world's bytes, and one from bytes fails.
+- Old and new tidec over every game's source list (`--no-line`, the
+  simulation identity lines aside): 196 of 325 generate what they did, the
+  129 whose match events handlers or listeners take have the loops.
+  `tide_table_column_mut` (tide/table.h) no longer writes back a page pointer
+  that didn't change, for every game.
+- Tests: `compiler/tests/e2e/events_runs` (3,000 targets in two archetypes,
+  5,000 shooters, six ticks: runs of three events, items of a fourth sent in
+  an `if`, a sparse filter, an event whose handlers take two archetypes, the
+  world as target, a Destroy queued before the shots, rows a removal moved,
+  slots a handler's spawn took again, handlers that send and spawn, a local
+  handler that hears the runs) against the same worked out in C, on one
+  thread, through a pool that says it has four (each chunk's own queue) and
+  from the world as bytes. Breaking the found check, the fallback or the
+  items' count fails it. `events_batch` and `events_lookup` still pass.
+
+## Empty scene shorthand (2026-10-20)
+
+Owner-approved: `scene Name;` is a complete empty scene declaration equivalent
+to `scene Name { }`, including `local scene` and declarations in namespaces.
+Braces remain valid. Only scenes gain this shorthand; other data declarations
+still require braces. `parse_data_decl` receives the scene flag before reading
+the body and records the semicolon as the declaration's end. Checking, generated
+types, startup and scene lifetime use the existing paths, with no runtime change.
+
+The existing scenes_fallback and scenes_local E2E fixtures now exercise shorthand
+match/local Main startup and reloading. lsp_empty_scene_declarations covers
+namespaced loads, local scenes, hover/references/rename, outline/completion,
+formatting/idempotence, declaration boundaries and missing-body diagnostics.
+Shared grammar probes cover both spellings; the all-E2E grammar check recognizes
+that a shorthand scene has no body. The spec and Scenes page document the rule.
+
+Validation: warning-free native/web debug builds; all 2,477 native CTests
+(including 36 Vulkan/OpenGL GPU checks) and all 2,383 web CTests (including
+WebGL, D3D11 and 11 WebGPU checks) pass. The full LSP suite, all 268 grammar
+cases, production docs build and diff check pass. One-off comparisons of match
+fallback, local and namespaced scenes produce byte-identical generated C and
+headers for braced/semicolon forms with --no-line; no determinism pin changed.
+Clang 23.1.2, Node 24.21.0 and Chrome 155.0.8059.85 were used. Other OSes,
+Android, MinGW and sanitizers were not run on this Windows machine; CI was
+not dispatched.
+
+## Performance pass: list writes and grid windows (2026-10-20)
+
+Two compiler-private changes, no language or runtime-interface change (measured
+in notes/benchmarks.md, Performance pass):
+
+- A list type's cached write helpers (`tide_list<n>_cset`, `_cslot`) skip
+  `tide_list_prepare` when the function's cache is writable for that same list
+  and still holds (`CACHE_OWNS` in codegen.c, `tide_list_cached_at_mut`'s own
+  test). Only `tide_list_cache_fill_mut` makes a cache writable, after the
+  helper prepared the list; it never caches a scratch or pack list and refuses
+  an asset descriptor, and preparing only ever acts by changing the list's
+  handle, so it would change nothing. Every element a loop wrote used to pay
+  two block lookups and an asset-registry check for it.
+- A windowed parallel loop over a grid of one-cell blocks whose step writes
+  `cells[at]` at the top of its body before anything can end it
+  (`writes_own_cell`, `may_leave_step` in check.c: no return, fail, or
+  continue/break of the step before it; `stmt.writes_own`) no longer copies
+  its whole window into the copy the steps write: every cell put back is
+  written. A tile where the grid has no chunk, whose blocks are checked first
+  and may skip, still copies. `compiler/tests/e2e` grid fixtures and the
+  safety suite cover the loops; versus_life and versus_sand pin the results.
+
 ## Building a game for another program: --embed (2026-10-20)
 
 `codegen_options.embed` (`tidec --embed`, `tide_add_game(EMBED)`, `tide unity`)
@@ -26,6 +158,11 @@ Check: every one of the 324 source lists in a debug build generated with
 found an unused `out` (fix helpers of types with only maps/grids) and an unused
 `place` (games with no component), both fixed. Runtime contract and tests:
 `notes/standard-host.md`, `notes/runtime-ownership.md`.
+
+For `tide unity --assets`: `compile_input.text` gives a file's text in place
+of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
+`parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,
+so they hold prefab declarations only (`notes/unity.md`, Authoring as built). A system's or view's parameter or filter naming a prefab (a Unity scene's too) says it's a prefab and how to filter its entities, rather than "unknown component" (`errors/system_filter_by_prefab`).
 
 ## Double Position correction smoothing (2026-10-20)
 
@@ -379,6 +516,16 @@ all eleven query_local_fields runtime cases, the safety fixture and all 240
 editor cases. The production docs build passes. Exact cross-platform pins are
 unchanged. Linux/macOS/MinGW, Android and sanitizers were not run on this Windows
 machine; no CI or private prototype playtests were dispatched.
+
+Correction (2026-10-20): a view's or handler's pointer to a parameter's
+attached local fields was `restrict`, while its query rows reach the same cell
+and write it (the outer aliases above). That is undefined, and optimized builds
+acted on it: in release, query_local_fields failed two checks (the birth-reset
+outer alias read 4 rather than 5; ReadWhileWriting saw no change), passing in
+debug only because nothing took `restrict` at its word. The fields pointer is
+no longer `restrict` (`gen_system_body`'s signature; match-data pointers keep
+it, as local code never writes match data). All eleven cases pass in release.
+Release CTest wasn't in the validation above, which is how it went unnoticed.
 
 Recorded-owner local event filters (2026-10-19): the shared checker accepts
 with/without ownership in local handlers of match events, including verified
@@ -1994,7 +2141,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **It's the calling system's in the schedule:** `check_acts` sets `decl.spawns` on a system, view or handler that calls a function that spawns, and `decl.writes_text` on one whose function records text, as `note_spawn` and `note_text_write` do for its own. So `analyze_parallelism`, `system_splits` and `system_settles` need no rule: a system that splits and calls a function that spawns gets temporary handles and settles them, in its queue and in the entity fields of its `mut` components, which is everything a function could have written one to. A function that sends keeps a system splitting.
   - **In generated C the function is handed what it records in**, where its other hidden parameters go (`gen_routine_signature`, `gen_routine_call` in `compiler/src/codegen.c`): `tide_world *tide_w`, not const (`takes_world`, `changes_world`), `tide_local *tide_l` (`takes_local`), and `tide_entity tide_scene` when it spawns in a world that has scenes (`takes_scene`, `scene_is_local`), which a call gives its own `tide_scene` when that's of the same world and the null entity otherwise. The `Send` and the `Spawn` in it are the lines a system has (`gen_send`, `gen_spawn`, `gen_method`), so they record through `tide_recording` into the queue of whatever task runs the caller, and `tide_new_entity` gives a temporary handle there. A function nothing could call (both worlds) still generates C that compiles.
   - **A call of one keeps its order** (`call_keeps_order`): one that gives a value runs before its statement when anything does, like a call to C. `call_acts` counts it as a call that does something, so the unused-local warning says to keep the call as a statement.
-  - **A system whose whole body is one `Send`** still writes its events as a run (`batch_event`); through a function it takes the ordinary push, one event at a time.
+  - **A system whose whole body is one `Send`** still writes its events as a run (`batch_event`; since 2026-10-20 one queue item a run, Events in runs at the top); through a function it takes the ordinary push, one event at a time.
   - A program with no such function generates the C it did, byte for byte: old and new tidec over every game's source list, with `--layout` and without (234 games).
   - Tests: `compiler/tests/e2e/function_acts` (the order among a system's own sends, a sum's calls, a block's; a struct's and a component's methods, a task and a command's handler; `Add`, `Remove` and `Destroy`; a spawn joining its caller's scene and going with it; one thread against a pool that says it has four, tick by tick, with events sent to entities spawned there; a view's functions sending a local event and a command and spawning and destroying local entities), natively and on the web; `compiler/tests/errors/function_acts_*.tide`, a file a diagnostic. `event_send_in_function` and `function_spawn`, which pinned the refusals, are gone.
   - **Editors:** completion offers `Spawn` and `Send` in a function or a method, with the events of both worlds, and an entity's `Add`, `Remove`, `Destroy` and `Send` after its dot there (`passed` in `list_members`, and the routine's branch of `complete_expression`, `compiler/lsp/analysis.c`), not in an operator, an `Interpolate` or an `audio` declaration, and never `Snap`. They were hidden in every function, async ones too, which could always send. `lsp_functions_send_and_spawn` checks them, and the diagnostic at a view's call.

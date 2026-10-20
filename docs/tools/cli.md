@@ -283,6 +283,32 @@ types from. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
 
+`--assets Assets` makes the project's prefabs and scenes part of the game:
+each one holding GameObjects with the package's TideEntity component is a Tide
+prefab named after its file, read from its saved file (Unity's Force Text
+serialization) with its prefab instances and variants expanded. A TideEntity is
+an entity of that prefab, Unity's Transform and parent are its own, and its
+Tide components are those the TideEntity lists. A prefab instance's component
+values go over its prefab's field by field. Code spawns them as any prefab:
+`Spawn(Roller)`, or `Scene.Load(Level)` for a scene's; Build Settings' first
+scene loads as Main starts, as a player build starts with it, and Unity loads
+and unloads each scene as the match does. Each such entity gets a
+`Unity.Source` component, by which Unity shows it through its own GameObject.
+A message about a prefab gives lines of the Tide text tide made of it, which it
+writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
+`Packages/com.tide.game` up to date: the game's schema, which the package makes
+its C# types of. Keep that folder in source control, so a fresh clone compiles
+before tide has built anything.
+
+`tide build` and `tide run` take `--assets` too, for a dedicated server, or any
+build, of a game made in Unity: `tide build --server --assets Assets` has the
+same prefabs and scenes as the Unity players it serves.
+
+`--web` builds the game once for a Unity WebGL player instead: `tide-game.js`,
+which Unity's Tide package puts in the player's page beside Unity's own, and
+the map of its prefabs and scenes. The package runs this as a WebGL player
+builds. Serve the player cross-origin isolated, as any Tide page.
+
 ## Dedicated servers
 
 ```sh

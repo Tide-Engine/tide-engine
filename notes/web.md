@@ -1,5 +1,13 @@
 # Web builds
 
+A page's own program running the frames (2026-10-20): `Tide.pageFrames` makes
+frames while the page is shown come only from `Tide.frame()`, which the page's
+other program calls from its own frame (a Unity WebGL player, through
+com.tide.unity's Tide.jslib); hidden, the worker runs them as before, so a match
+never waits on it. `Tide.exports()` and `Tide.memory()` give that program the
+Tide program's exports and memory. `tide.release.js` was regenerated. Used by
+`tide unity --web` (notes/unity.md, Web as built); every other page is as it was.
+
 Managed deployment (2026-10-15): normal players retain wasm32-wasip1-threads;
 the new server artifact is a separate single-threaded wasm32-wasip1 reactor,
 without platform/render/audio libraries or Node WASI. Its bounded host ABI,
@@ -43,6 +51,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 ## Building
 
 ### Web builds
+
+A page's own program running the frames (2026-10-20): `Tide.pageFrames` makes
+frames while the page is shown come only from `Tide.frame()`, which the page's
+other program calls from its own frame (a Unity WebGL player, through
+com.tide.unity's Tide.jslib); hidden, the worker runs them as before, so a match
+never waits on it. `Tide.exports()` and `Tide.memory()` give that program the
+Tide program's exports and memory. `tide.release.js` was regenerated. Used by
+`tide unity --web` (notes/unity.md, Web as built); every other page is as it was.
 
 - Standalone release pages use checked-in `platform/web/tide.release.js` and gzip program/pack payloads only when smaller (2026-10-10). The runtime detects gzip magic after base64 decoding and inflates synchronously before WASM instantiation or asset loading, checking the output length and CRC32; raw payloads still work. Debug and watched pages keep `tide.js` and raw bytes. CMake Release/MinSizeRel selects the generated runtime; CLI release builds select the installed copy, with embedded clang's existing zlib supplying compression. The gzip header fixes mtime to zero and OS to 255 for reproducible output. No engine ABI, WASM import, worker-message or public page property is renamed.
   - `cmake/web_runtime.mjs --write` is a maintainer step after `npm ci --prefix docs`, pinned to the existing Rolldown 1.2.12. It tree-shakes only synchronous gunzip from fflate 0.8.3 (upstream commit `a661bab4c135c368b6e68af3be1904f89ed070cf`), then removes comments/whitespace and mangles local identifiers with compression and property mangling disabled. Keeping scope boundaries matters because `threadMain` is serialized for workers. fflate's MIT notice is included in every generated page and installed under `licenses/fflate/`.

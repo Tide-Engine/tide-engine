@@ -77,7 +77,7 @@ static bool add_input(input_list *inputs, const char *path)
         inputs->items = realloc(inputs->items, (size_t)inputs->room * sizeof(compile_input));
         if (!inputs->items) return false;
     }
-    inputs->items[inputs->count++] = (compile_input){path, inputs->package};
+    inputs->items[inputs->count++] = (compile_input){path, inputs->package, NULL};
     return true;
 }
 

@@ -1,0 +1,122 @@
+// Rollback: a world as a predicting client keeps it. Most of it is movers in
+// a box, of which a fraction move; the rest lie still, so a tick changes the
+// movers that move and leaves the others' data as it was. A few thousand
+// turrets cool down every tick and fire when they're ready, counting each
+// shot in a singleton and in a list.
+//
+// This file is only the simulation. The host (main.c) runs it the way a
+// client that predicts does: the world before each tick kept in a ring,
+// the world after it hashed, and every few ticks a kept world restored and
+// the ticks since run again.
+
+scene Main { }
+
+const float BOX = 100; // Movers bounce inside a box from 0 to here on each axis
+
+// The benchmark sets these before the first tick, which spawns everything.
+singleton Setup
+{
+    int movers = 1000;
+    int turrets = 100;
+    int moving = 25; // Of every hundred movers, how many move
+    int first;       // How many of the movers that come first move, when they aren't spread
+    int spread;      // 0: the movers that move come first; 1: they're spread through the rest
+    int notes = 512; // The list's length
+    bool ready;
+}
+
+singleton Score
+{
+    int shots;
+    List<int> heat; // Shots, by the slot of the turret that fired them
+}
+
+component Position
+{
+    float3 value;
+}
+
+component Velocity
+{
+    float3 value;
+}
+
+component Turret
+{
+    float cooldown;
+    float reload;
+    int slot;
+    int shots;
+}
+
+system Start(mut Setup setup, mut Score score)
+{
+    if (setup.ready) return;
+    setup.ready = true;
+    score.heat.Resize(setup.notes);
+    for (var i = 0; i < setup.movers; i++)
+    {
+        var h = Math.Hash(int2(i, 0));
+        var g = Math.Hash(int2(i, 1));
+        var at = float3(float(h & 0xFFFF), float(g & 0xFFFF), float((h ^ g) & 0xFFFF)) * (BOX / 65536);
+        var moves = setup.spread != 0 ? i % 100 < setup.moving : i < setup.first;
+        var velocity = moves ? float3(float((h >> 16 & 0xFF) - 128), float((g >> 16 & 0xFF) - 128), float((h >> 24 & 0xFF) - 128)) * 0.25
+                             : float3(0, 0, 0);
+        Spawn(Position { value = at }, Velocity { value = velocity });
+    }
+    for (var i = 0; i < setup.turrets; i++)
+    {
+        var h = Math.Hash(int2(i, 3));
+        Spawn(Position { value = float3(float(h & 0xFF), 0, float(h >> 8 & 0xFF)) * (BOX / 256) },
+              Turret { cooldown = float(h >> 16 & 0x3FF) * (1.0 / 1024), reload = 0.25 + float(h >> 6 & 0x3FF) * (1.0 / 1024), slot = i % setup.notes });
+    }
+}
+
+// Movers that move go in a straight line and bounce off the box's walls; the
+// others' velocity is zero, so nothing of theirs changes.
+system Move(mut Position p, mut Velocity v, Time time)
+{
+    p.value += v.value * time.dt;
+    if (p.value.x < 0)
+    {
+        p.value.x = -p.value.x;
+        v.value.x = -v.value.x;
+    }
+    else if (p.value.x > BOX)
+    {
+        p.value.x = BOX * 2 - p.value.x;
+        v.value.x = -v.value.x;
+    }
+    if (p.value.y < 0)
+    {
+        p.value.y = -p.value.y;
+        v.value.y = -v.value.y;
+    }
+    else if (p.value.y > BOX)
+    {
+        p.value.y = BOX * 2 - p.value.y;
+        v.value.y = -v.value.y;
+    }
+    if (p.value.z < 0)
+    {
+        p.value.z = -p.value.z;
+        v.value.z = -v.value.z;
+    }
+    else if (p.value.z > BOX)
+    {
+        p.value.z = BOX * 2 - p.value.z;
+        v.value.z = -v.value.z;
+    }
+}
+
+system Aim(mut Turret t, mut Score score, Time time)
+{
+    t.cooldown -= time.dt;
+    if (t.cooldown <= 0)
+    {
+        t.cooldown += t.reload;
+        t.shots++;
+        score.shots++;
+        score.heat[t.slot] += 1;
+    }
+}

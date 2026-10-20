@@ -10,9 +10,10 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace Tide.Generator
 {
-    // C# types for a Tide game: one struct for each type of its schema (Library/Tide/schema.json, which tide unity
-    // writes beside each build), laid out as the game's C lays it out, so a view packet's bytes read as them in
-    // place. Emitted into the package's Tide.Game assembly alone, which every script sees.
+    // C# types for a Tide game: one struct for each type of its schema (Packages/com.tide.game/schema.json, which
+    // tide unity writes with each build that changes it), laid out as the game's C lays it out, so a view packet's
+    // bytes read as them in place. Unity runs it for every assembly (its DLL is in no assembly's folder); it emits
+    // into Tide.Game, that package's assembly, alone, which every script sees.
     [Generator]
     public sealed class SchemaGenerator : ISourceGenerator
     {
@@ -23,7 +24,7 @@ namespace Tide.Generator
         public void Execute(GeneratorExecutionContext context)
         {
             if (context.Compilation.AssemblyName != "Tide.Game") return;
-            var path = FindSchema(context.Compilation);
+            var path = FindSchema(context.Compilation, context.AdditionalFiles);
             string text = null;
             try
             {
@@ -42,10 +43,29 @@ namespace Tide.Generator
             context.AddSource("TideGame.g.cs", SourceText.From(Emit(text), Encoding.UTF8));
         }
 
-        // The project's Library/Tide/schema.json: from the folder Unity compiles in, or above a source of the assembly.
-        static string FindSchema(Compilation compilation)
+        // The project's Library/Tide/schema.json: in the project Unity's UnityAdditionalFile.txt names (which it gives
+        // each assembly it compiles), else from the folder Unity compiles in, or above a source of the assembly.
+        static string FindSchema(Compilation compilation, IEnumerable<AdditionalText> additional)
         {
-            var candidates = new List<string> { Directory.GetCurrentDirectory() };
+            var candidates = new List<string>();
+            foreach (var file in additional)
+            {
+                // The package's csc.rsp hands it over, so it's an input of the compile Unity's build cache knows
+                if (Path.GetFileName(file.Path) == "schema.json" && File.Exists(file.Path)) return file.Path;
+            }
+            foreach (var file in additional)
+            {
+                if (!file.Path.EndsWith("UnityAdditionalFile.txt", StringComparison.OrdinalIgnoreCase)) continue;
+                var project = file.GetText()?.ToString().Trim();
+                if (string.IsNullOrEmpty(project)) continue;
+                // The embedded package tide unity writes, whose stub makes Unity compile again for a new schema;
+                // else the build's own
+                var schema = Path.Combine(project, "Packages", "com.tide.game", "schema.json");
+                if (File.Exists(schema)) return schema;
+                schema = Path.Combine(project, "Library", "Tide", "schema.json");
+                if (File.Exists(schema)) return schema;
+            }
+            candidates.Add(Directory.GetCurrentDirectory());
             foreach (var tree in compilation.SyntaxTrees)
             {
                 if (!string.IsNullOrEmpty(tree.FilePath) && Path.IsPathRooted(tree.FilePath)) candidates.Add(Path.GetDirectoryName(tree.FilePath));
@@ -193,7 +213,7 @@ namespace Tide.Generator
             {
                 case "text": return "global::Tide.TideText";
                 case "list": return "global::Tide.TideList";
-                case "entity": return "global::Tide.TideEntity";
+                case "entity": return "global::Tide.TideEntityId";
                 case "map":
                 case "grid": return null;
                 case "struct":

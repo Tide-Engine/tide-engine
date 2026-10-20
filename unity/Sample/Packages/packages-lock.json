@@ -1,5 +1,11 @@
 {
   "dependencies": {
+    "com.tide.game": {
+      "version": "file:com.tide.game",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {}
+    },
     "com.tide.unity": {
       "version": "file:../../com.tide.unity",
       "depth": 0,

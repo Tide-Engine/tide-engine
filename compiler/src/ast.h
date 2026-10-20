@@ -1226,6 +1226,10 @@ struct stmt {
     bool windowed;
     int window_lo[3];
     int window_hi[3];
+    // A windowed loop over a grid of one-cell blocks whose every step writes
+    // its own cell before anything can end it: the window its steps write
+    // needs none of the cells it was found with (writes_own_cell in check.c).
+    bool writes_own;
 
     // S_ASSIGN
     expr *target;

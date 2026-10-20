@@ -256,7 +256,7 @@ TIDE_TEST(rolls_crossplatform_match)
 {
     tide_world_start_seeded(&world, DT, NULL, 20261008u);
     const uint64_t h = hash_after(&world, 120);
-    const uint64_t expected = 0x15ADC5FDDDF7D61Aull;
+    const uint64_t expected = 0xE4A682149C15233Aull;
     if (h != expected) printf("    rolls match: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);
     TIDE_CHECK(h == expected);
 }

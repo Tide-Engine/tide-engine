@@ -149,6 +149,8 @@ const cases = {
         ['Stats operator +(', [['operator', 'keyword.other.operator'], ['+', 'keyword.operator']]],
     ],
     'declaration words are keywords only where a declaration starts': [
+        ['scene Main;', [['scene', 'storage.type'], ['Main', 'entity.name.type']]],
+        ['local scene Menu;', [['local', 'storage.modifier'], ['scene', 'storage.type'], ['Menu', 'entity.name.type']]],
         ['input PlayerInput', [['input', 'storage.type'], ['PlayerInput', 'entity.name.type']]],
         ['system Steer(', [['system', 'storage.type'], ['Steer', 'entity.name.function'], ['input', '!storage'], ['events', '!storage']]],
         ['if (input is PlayerInput other)', [['input', '!storage'], ['input', '!keyword'], ['is', 'keyword.operator.expression.is'], ['is', '!entity.name.type']]],
@@ -650,7 +652,7 @@ for (const program of programs) {
             for (const piece of line.pieces) {
                 assert.ok(!has(piece.scopes, 'invalid'), `${program}:${line.number}: "${piece.text}" is ${piece.scopes.join(' ')}`);
             }
-            if (/^(?:local\s+)?(?:component|singleton|struct|input|scene)\b/.test(text) && !text.includes('}')) inType = true;
+            if (/^(?:local\s+)?(?:component|singleton|struct|input|scene)\b/.test(text) && !text.includes('}') && !/^(?:local\s+)?scene\s+\w+\s*;/.test(text)) inType = true;
             else if (text === '}') inType = false;
             let name = null;
             let nameAt = 0;

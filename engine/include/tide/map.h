@@ -86,29 +86,98 @@ int32_t tide_map_next(tide_map m, const tide_map_kind *k, int64_t *order, int32_
 
 // A well-mixed hash of a key's bytes, the same on every machine. Here, so the
 // pack's builder (tide/pack.h) hashes a map's keys as the game's lookups do.
+// It's tide_hash's: for keys of up to 16 bytes, the most maps have, its steps
+// are written out here, so a lookup with a key of a size the compiler knows
+// makes no call (tests/test_map.c checks the two agree).
+static inline uint64_t tide_map_hash_word(uint64_t h, const uint64_t word)
+{
+    h ^= word * 0xBF58476D1CE4E5B9ull;
+    return (h << 27 | h >> 37) * 0x94D049BB133111EBull;
+}
+
 static inline uint32_t tide_map_hash_bytes(const void *data, const uint32_t size)
 {
-    const uint64_t h = tide_hash(data, size);
+    uint64_t h;
+    if (size <= 16u) {
+        const uint8_t *p = data;
+        h = tide_map_hash_word(TIDE_HASH_START, (uint64_t)size);
+        uint32_t i = 0;
+        for (; i + 8u <= size; i += 8u) {
+            uint64_t word = 0;
+            for (uint32_t k = 0; k < 8u; k++) word |= (uint64_t)p[i + k] << (8u * k);
+            h = tide_map_hash_word(h, word);
+        }
+        if (i < size) {
+            uint64_t tail = 0;
+            for (uint32_t k = 0; i + k < size; k++) tail |= (uint64_t)p[i + k] << (8u * k);
+            h = tide_map_hash_word(h, tail);
+        }
+        h ^= h >> 33; // tide_hash_end
+        h *= 0xFF51AFD7ED558CCDull;
+        h ^= h >> 33;
+        h *= 0xC4CEB9FE1A85EC53ull;
+        h ^= h >> 33;
+    } else {
+        h = tide_hash(data, size);
+    }
     return (uint32_t)(h ^ h >> 32);
 }
 
-// The entry whose key is `probe`, or -1.
+// A map's two lists found once (tide_list_view), not again at every slot and
+// entry a probe reads: for one lookup (tide_map_find), or kept by generated
+// code for each map a function looks keys up in, across the function, so
+// lookup after lookup finds them again only when they may have changed
+// (tide_list_view_hold). One with neither list found is tide_map_view_none's.
+typedef struct tide_map_view {
+    tide_list_view index;
+    tide_list_view entries;
+} tide_map_view;
+
+static inline void tide_map_view_none(tide_map_view *v)
+{
+    v->index.at = 0u;
+    v->entries.at = 0u;
+}
+
+// ...each of `count` of them.
+static inline void tide_map_views_none(tide_map_view *v, const uint32_t count)
+{
+    for (uint32_t i = 0; i < count; i++) tide_map_view_none(&v[i]);
+}
+
+// The entry whose key is `probe`, or -1, through `v`, which then has the
+// map's lists (tide_map_view_entry reads the entry found).
 // Inline even at large call sites so fixed generated kinds specialize entry
 // addressing and hash/equality calls. The probe order and stored hash stay
 // identical to the generic path used inside insert.
-static inline __attribute__((always_inline)) int32_t tide_map_find(const tide_map m, const tide_map_kind *k, const void *probe)
+static inline __attribute__((always_inline)) int32_t tide_map_find_in(tide_map_view *v, const tide_map m, const tide_map_kind *k,
+                                                                      const void *probe)
 {
     if (!m.live) return -1;
-    const uint32_t count = (uint32_t)tide_list_count(m.index);
-    if (!count) return -1;
-    const uint32_t mask = count - 1u;
+    tide_list_view_hold(&v->index, m.index, sizeof(uint32_t));
+    if (!v->index.count) return -1;
+    tide_list_view_hold(&v->entries, m.entries, k->entry_size);
+    const uint32_t mask = v->index.count - 1u;
     for (uint32_t s = k->hash_probe(probe) & mask;; s = (s + 1u) & mask) {
-        const uint32_t *slot = tide_list_at(m.index, (int32_t)s, sizeof *slot);
+        const uint32_t *slot = tide_list_view_at(&v->index, s, sizeof *slot);
         const uint32_t number = slot ? *slot : 0u;
         if (!number) return -1;
-        const void *e = tide_list_at(m.entries, (int32_t)(number - 1u), k->entry_size);
+        const void *e = tide_list_view_at(&v->entries, number - 1u, k->entry_size);
         if (tide_map_live(e) && k->equal((const uint8_t *)e + k->key_offset, probe)) return (int32_t)(number - 1u);
     }
+}
+
+static inline __attribute__((always_inline)) int32_t tide_map_find(const tide_map m, const tide_map_kind *k, const void *probe)
+{
+    tide_map_view v;
+    tide_map_view_none(&v);
+    return tide_map_find_in(&v, m, k, probe);
+}
+
+// Entry `i` of the map `v` last found a key in, to read: as tide_map_entry.
+static inline const void *tide_map_view_entry(tide_map_view *v, const int32_t i, const tide_map_kind *k)
+{
+    return tide_list_view_at(&v->entries, (uint32_t)i, k->entry_size);
 }
 
 // The entry for `probe`: the one that has it, or a new live one at the end,

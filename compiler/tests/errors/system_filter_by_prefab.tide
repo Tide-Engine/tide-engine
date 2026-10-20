@@ -1,0 +1,6 @@
+// expect: 'Level' is a prefab, and a system takes components and singletons
+// expect: give them a component of their own (in Unity, on their TideEntity) and take that, or filter by it: 'with InLevel'
+component Spin { float speed; }
+prefab Level { Spin; }
+system Spinning(mut Spin spin, with Level) { spin.speed += 1; }
+scene Main { }

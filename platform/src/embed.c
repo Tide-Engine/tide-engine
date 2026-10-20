@@ -38,6 +38,9 @@ static bool running;
 static bool from_library; // The game is the libraries tide builds in a folder, swapped in as they come
 #endif
 static tide_packet packet;
+// The draw packet (tide_embed_draw), made when it's asked for, from the frame's draw list
+static uint8_t *drawn;
+static size_t drawn_capacity;
 static char *schema;
 static uint32_t schema_size;
 static const tide_host_game *schema_of; // The build `schema` describes
@@ -192,6 +195,9 @@ void tide_embed_destroy(tide_embed *e)
     tide_run_pack_size = 0;
     tide_run_game = NULL;
     tide_packet_free(&packet);
+    free(drawn);
+    drawn = NULL;
+    drawn_capacity = 0;
     free(schema);
     schema = NULL;
     schema_of = NULL;
@@ -250,6 +256,55 @@ const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size)
     if (e != &the_embed || !running || !packet.size) return NULL;
     if (size) *size = packet.size;
     return packet.bytes;
+}
+
+static size_t draw_part(const size_t at, const uint64_t count, const size_t each, uint64_t *total)
+{
+    const size_t from = (at + 7u) & ~(size_t)7u;
+    *total = (uint64_t)from + count * each;
+    return from;
+}
+
+const uint8_t *tide_embed_draw(const tide_embed *e, uint32_t *size)
+{
+    if (size) *size = 0;
+    if (e != &the_embed || !running || !tide_run_game) return NULL;
+    const tide_draw_list *d = &tide_run_draw;
+    const tide_float2 screen = tide_platform_screen_size();
+    const tide_embed_draw_header header = {
+        .magic = TIDE_EMBED_DRAW_MAGIC, .version = TIDE_EMBED_DRAW_VERSION,
+        .commands = d->count, .shapes = d->shape_count, .vertices = d->vertex_count, .indices = d->index_count,
+        .text = d->text_used, .matrices = d->matrix_count, .turns = d->turn_count,
+        .command_size = (uint32_t)sizeof(tide_draw_command), .shape_size = (uint32_t)sizeof(tide_draw_shape_data),
+        .vertex_size = (uint32_t)sizeof(tide_vertex),
+        .screen_width = screen.x, .screen_height = screen.y, .screen_scale = tide_platform_screen_scale().x,
+    };
+    uint64_t end = sizeof header;
+    const size_t commands = draw_part((size_t)end, header.commands, sizeof(tide_draw_command), &end);
+    const size_t shapes = draw_part((size_t)end, header.shapes, sizeof(tide_draw_shape_data), &end);
+    const size_t vertices = draw_part((size_t)end, header.vertices, sizeof(tide_vertex), &end);
+    const size_t indices = draw_part((size_t)end, header.indices, sizeof(uint32_t), &end);
+    const size_t text = draw_part((size_t)end, header.text, 1, &end);
+    const size_t matrices = draw_part((size_t)end, header.matrices, sizeof(tide_float4x4), &end);
+    const size_t turns = draw_part((size_t)end, header.turns, sizeof(tide_float2x2), &end);
+    if (end > UINT32_MAX / 2u) return NULL; // No frame draws so much
+    if (end > drawn_capacity) {
+        uint8_t *grown = realloc(drawn, (size_t)end);
+        if (!grown) return NULL;
+        drawn = grown;
+        drawn_capacity = (size_t)end;
+    }
+    memset(drawn, 0, (size_t)end); // Padding between the parts too
+    memcpy(drawn, &header, sizeof header);
+    if (header.commands) memcpy(drawn + commands, d->commands, header.commands * sizeof(tide_draw_command));
+    if (header.shapes) memcpy(drawn + shapes, d->shapes, header.shapes * sizeof(tide_draw_shape_data));
+    if (header.vertices) memcpy(drawn + vertices, d->vertices, header.vertices * sizeof(tide_vertex));
+    if (header.indices) memcpy(drawn + indices, d->indices, header.indices * sizeof(uint32_t));
+    if (header.text) memcpy(drawn + text, d->text, header.text);
+    if (header.matrices) memcpy(drawn + matrices, d->matrices, header.matrices * sizeof(tide_float4x4));
+    if (header.turns) memcpy(drawn + turns, d->turns, header.turns * sizeof(tide_float2x2));
+    if (size) *size = (uint32_t)end;
+    return drawn;
 }
 
 void tide_embed_status_of(const tide_embed *e, tide_embed_status *out)

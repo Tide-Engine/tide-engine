@@ -72,12 +72,21 @@ void *tide_list_cache_fill_mut(tide_list_cache *c, const tide_list l, const int3
     *c = (tide_list_cache){0};
     tide_heap *heap = l.at ? tide_heap_of(l.at >> 30) : NULL;
     if (!heap) return tide_list_at_mut(l, i, size); // A list in the scratch area moves as it grows: never cached
-    void *found = tide_list_at_mut(l, i, size);    // The page the run is in is the heap's own from here on
-    if (!found) return NULL;
-    const uint32_t moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED); // After: a page just copied counts
     const tide_page *p = heap->page[OFFSET(l.at) >> TIDE_HEAP_PAGE_SHIFT];
     const tide_block *b =
         (const tide_block *)(const void *)((const uint8_t *)tide_page_data(p) + (OFFSET(l.at) - (p->first << TIDE_HEAP_PAGE_SHIFT)));
+    if (!(b->b & TIDE_LIST_CHUNKED)) { // Side by side, as tide_list_at_mut has them, its block found the once
+        if (i < 0 || (uint32_t)i >= b->a || b->b == TIDE_LIST_ASSET) return NULL;
+        const tide_block *own = tide_heap_write(heap, OFFSET(l.at)); // Its page the heap's own from here on
+        const uint32_t moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED); // After: a page just copied counts
+        *c = (tide_list_cache){l.at, moves, heap, own, 0, own->a, (const uint8_t *)(own + 1), true};
+        return (uint8_t *)(uintptr_t)(own + 1) + (size_t)(uint32_t)i * size;
+    }
+    void *found = tide_list_at_mut(l, i, size); // The page the run is in is the heap's own from here on
+    if (!found) return NULL;
+    const uint32_t moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED); // After: a page just copied counts
+    p = heap->page[OFFSET(l.at) >> TIDE_HEAP_PAGE_SHIFT];
+    b = (const tide_block *)(const void *)((const uint8_t *)tide_page_data(p) + (OFFSET(l.at) - (p->first << TIDE_HEAP_PAGE_SHIFT)));
     *c = (tide_list_cache){l.at, moves, heap, b, 0, b->a, (const uint8_t *)(b + 1), true};
     if (b->b & TIDE_LIST_CHUNKED) { // Its chunk's elements
         const uint32_t per = TIDE_LIST_CHUNK / size;
@@ -443,7 +452,7 @@ void tide_list_set(tide_list *to, const tide_list value, const uint32_t size, co
     if (data) tide_asset_origin_list(tide_heap_of(where), *to, data);
 }
 
-void tide_list_prepare(tide_list *l, const uint32_t size, const uint32_t where)
+void tide_list_prepare_borrowed(tide_list *l, const uint32_t size, const uint32_t where)
 {
     if (!l || !l->at) return;
     tide_asset_data *data = tide_asset_list(*l);

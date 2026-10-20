@@ -46,9 +46,20 @@ typedef struct tide_str {
 #define TIDE_SCRATCH_SLOTS (1u << (30u - TIDE_SCRATCH_SHIFT))
 
 // The scratch area: where it is now, and going back there, which frees
-// everything made since.
-uint32_t tide_scratch_mark(void);
-void tide_scratch_reset(uint32_t mark);
+// everything made since. Generated code does both around every row of a
+// system that makes text or lists, where nothing was made most of the time,
+// so they're inline: only a reset that frees something calls
+// tide_scratch_reset_to. tide_scratch_top is this thread's top of the area.
+extern TIDE_THREAD_LOCAL uint32_t tide_scratch_top;
+void tide_scratch_reset_to(uint32_t mark);
+static inline uint32_t tide_scratch_mark(void)
+{
+    return tide_scratch_top;
+}
+static inline void tide_scratch_reset(const uint32_t mark)
+{
+    if (mark < tide_scratch_top) tide_scratch_reset_to(mark);
+}
 // Frees this thread's scratch area; the next text made allocates it again.
 // For hot reloading, before a game's library is unloaded (tide/host.h).
 void tide_scratch_free(void);

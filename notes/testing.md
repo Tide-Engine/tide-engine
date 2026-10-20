@@ -43,7 +43,7 @@ Where CMake finds `spirv-val`, `tidec_spirv_<name>` and `tide_spirv_shaders_vali
 
 This machine has no SDK installed. The Windows SDK 1.4.350.0 installer (`vulkansdk-windows-X64-1.4.350.0.exe`, SHA-256 `855b27ba05d2d8119c5114c5d4ff870ca38f2c632b11e1bb9923b9b7e6ecfe7b`, as Scoop's manifest pins it) was unpacked with 7-Zip into `%LOCALAPPDATA%/TideDev/VulkanSDK/1.4.350.0` (its `Bin` alone comes out, which holds both tools). The debug preset was configured with `-DTIDE_VULKAN_SDK=C:/Users/blenm/AppData/Local/TideDev/VulkanSDK/1.4.350.0`. Nothing was registered with the system, so a run outside CTest has no layer unless it sets those variables itself.
 
-`tide_platform_swapchain` and `tide_platform_pipeline_cache` are Vulkan's alone, and set `TIDE_BACKEND=vulkan`: on a machine without it they fail, where the others would draw with OpenGL.
+`tide_platform_swapchain` and `tide_platform_pipeline_cache` are Vulkan's alone, and set `TIDE_BACKEND=vulkan`: on a machine without it they fail, where the others would draw with OpenGL. So does `versus_draw` (2026-10-20, the drawing benchmark's handwritten baseline, `bench/draw/`), whose `--quick` run draws a few frames of each workload and checks the pixel read back; `versus_draw_opengl` is its OpenGL twin. The baseline enables the validation layer itself under `TIDE_VULKAN_VALIDATION`, with synchronization checks, and stops at its first message.
 
 CI runs no `gpu` test (its runners have no GPU), so Vulkan's coverage is this machine's.
 

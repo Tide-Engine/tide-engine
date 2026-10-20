@@ -64,7 +64,7 @@ namespace Tide
 
     // An entity field: Tide's handle of one, which the packet's entities have too (TideEntityRow).
     [StructLayout(LayoutKind.Sequential)]
-    public struct TideEntity
+    public struct TideEntityId
     {
         public uint index;
         public uint generation;
@@ -72,9 +72,9 @@ namespace Tide
         public bool IsNull => generation == 0;
         public ulong Id => ((ulong)generation << 32) | index;
 
-        public static implicit operator TideEntity(TideEntityRow row)
+        public static implicit operator TideEntityId(TideEntityRow row)
         {
-            return new TideEntity { index = row.Index, generation = row.Generation };
+            return new TideEntityId { index = row.Index, generation = row.Generation };
         }
     }
 }
