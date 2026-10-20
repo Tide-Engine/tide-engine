@@ -14,6 +14,7 @@
 // map to tide/draw.h, and GUI and GUILayout to tide/gui.h.
 
 static const type T_F = {TY_FLOAT, NULL};
+static const type T_D = {TY_DOUBLE, NULL};
 static const type T_WHOLE = {TY_INT, NULL};
 static const type T_F2 = {TY_FLOAT2, NULL};
 static const type T_F3 = {TY_FLOAT3, NULL};
@@ -246,7 +247,7 @@ typedef struct signature {
     unsigned out;            // A bit per `out` parameter, which the call makes: its bit in `mut` is set too
 } signature;
 
-#define MAX_SIGNATURES 384
+#define MAX_SIGNATURES 448
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -509,6 +510,29 @@ static void build_signatures(void)
     describe(add("Random", "NextQuaternionRotation", T_Q, "tide_random_next_quaternion_rotation", 0, T_NONE, T_NONE, T_NONE), NULL,
              "A rotation, every one as likely.");
 
+    // Double hashes and vector geometry
+    for (int n = 1; n <= 4; n++) {
+        const type v = double_vector_type(n);
+        describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", v), 1, v, T_NONE, T_NONE), "value",
+                 "xxHash32 of the double's exact binary64 bits, component by component, without the top bit; signed zeros hash differently.");
+    }
+    for (int n = 2; n <= 4; n++) {
+        const type v = double_vector_type(n);
+        const type scalar = {TY_DOUBLE, NULL};
+        add("Math", "Dot", scalar, c_function("dot", v), 2, v, v, T_NONE);
+        add("Math", "Length", scalar, c_function("length", v), 1, v, T_NONE, T_NONE);
+        add("Math", "LengthSq", scalar, c_function("lengthsq", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Distance", scalar, c_function("distance", v), 2, v, v, T_NONE);
+        add("Math", "DistanceSq", scalar, c_function("distancesq", v), 2, v, v, T_NONE);
+        describe(add("Math", "Normalize", v, c_function("normalize", v), 1, v, T_NONE, T_NONE), "vector",
+                 "A double vector at length 1; a squared length at or below the smallest normal double, or NaN, gives zero.");
+        add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE);
+        add("Math", "Csum", scalar, c_function("csum", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Cmin", scalar, c_function("cmin", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Cmax", scalar, c_function("cmax", v), 1, v, T_NONE, T_NONE);
+    }
+    add("Math", "Cross", double_vector_type(3), "tide_cross_d3", 2, double_vector_type(3), double_vector_type(3), T_NONE);
+
     // Quaternions
     add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE);
     describe(add("Math", "Normalize", T_Q, "tide_normalize_q", 1, T_Q, T_NONE, T_NONE), "rotation",
@@ -541,6 +565,21 @@ static void build_signatures(void)
     add("Math", "Transform", T_F3, "tide_transform_f4x4", 2, T_F4X4, T_F3, T_NONE);
     add("Math", "Rotate", T_F3, "tide_rotate_f4x4", 2, T_F4X4, T_F3, T_NONE);
 
+    // Double matrices
+    for (int n = 2; n <= 4; n++) {
+        const type m = double_matrix_type(n);
+        const type v = double_vector_type(n);
+        char mul_vec[64];
+        snprintf(mul_vec, sizeof mul_vec, "tide_mul_%s_%s", type_suffix(m), type_suffix(v));
+        add("Math", "Mul", m, c_function("mul", m), 2, m, m, T_NONE);
+        add("Math", "Mul", v, mul_vec, 2, m, v, T_NONE);
+        add("Math", "Transpose", m, c_function("transpose", m), 1, m, T_NONE, T_NONE);
+        add("Math", "Inverse", m, c_function("inverse", m), 1, m, T_NONE, T_NONE);
+        add("Math", "Determinant", T_D, c_function("determinant", m), 1, m, T_NONE, T_NONE);
+    }
+    add("Math", "Transform", double_vector_type(3), "tide_transform_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
+    add("Math", "Rotate", double_vector_type(3), "tide_rotate_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
+
     // Ways to build quaternions and matrices
     describe(add("quaternion", "AxisAngle", T_Q, "tide_axisangle_q", 2, T_F3, T_F, T_NONE),
              "axis, angle", "A rotation of `angle` radians around `axis`.");
@@ -572,6 +611,28 @@ static void build_signatures(void)
     ortho->params[3] = T_F;
     describe(ortho, "width, height, near, far",
              "An orthographic projection, for `Draw.Camera(transform, projection)`: a box `width` by `height` "
+             "around the camera's axis, from `near` to `far`, with no perspective.");
+
+    describe(add("double4x4", "TRS", double_matrix_type(4), "tide_trsq_d4x4", 3, double_vector_type(3), T_Q, double_vector_type(3)),
+             "translation, rotation, scale", "Scale, then rotate with a quaternion widened before matrix arithmetic, then translate.");
+    describe(add("double4x4", "TRS", double_matrix_type(4), "tide_trs_d4x4", 3, double_vector_type(3), double_matrix_type(3), double_vector_type(3)),
+             "translation, rotation, scale", "Scale, then rotate with a double3x3, then translate.");
+    describe(add("double4x4", "Translate", double_matrix_type(4), "tide_translate_d4x4", 1, double_vector_type(3), T_NONE, T_NONE),
+             "translation", "A translation matrix.");
+    describe(add("double4x4", "Scale", double_matrix_type(4), "tide_scaling_d4x4", 1, double_vector_type(3), T_NONE, T_NONE),
+             "scale", "A scale matrix, without rotation or translation.");
+    signature *double_perspective = add("double4x4", "PerspectiveFov", double_matrix_type(4), "tide_perspectivefov_d4x4", 3, T_D, T_D, T_D);
+    double_perspective->argc = 4;
+    double_perspective->params[3] = T_D;
+    describe(double_perspective, "verticalFov, aspect, near, far",
+             "A binary64 perspective projection: `verticalFov` in radians, and "
+             "`aspect` the screen's width over its height. It takes what a camera sees, looking down -z as "
+             "OpenGL's and Unity's views do, to the screen, from `near` to `far`.");
+    signature *double_ortho = add("double4x4", "Ortho", double_matrix_type(4), "tide_ortho_d4x4", 3, T_D, T_D, T_D);
+    double_ortho->argc = 4;
+    double_ortho->params[3] = T_D;
+    describe(double_ortho, "width, height, near, far",
+             "A binary64 orthographic projection: a box `width` by `height` "
              "around the camera's axis, from `near` to `far`, with no perspective.");
 
     // Sound, in local code: tide/audio.h. Codegen passes the frame's audio list first, and a Clip through
@@ -1015,6 +1076,9 @@ static void build_signatures(void)
     // The GUI, in views: tide/gui.h. Codegen passes the view's GUI first, then
     // the widget's ID, then a mut argument's address.
     add_widget("Label", T_NONE, "label", "string text", 0, "Text.");
+    add_gui("double", "TryParse", T_BOOL, "tide_str_parse_double", "string text, out double value", 0,
+            "Reads the whole decimal text as the nearest double, ties to even, with identical bits on every platform. Invalid text or overflow gives false and zero.");
+
     add_widget("Button", T_BOOL, "button", "string text", GUI_ID, "A button. Returns whether it was pressed.");
     add_widget("Toggle", T_BOOL, "toggle", "string text, mut bool value", GUI_ID,
                "A checkbox for `value`. Returns whether it changed it.");
@@ -1160,7 +1224,13 @@ static const struct {
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},
     {"Math", "TAU", TY_FLOAT, "TIDE_TAU_F"},
     {"Math", "E", TY_FLOAT, "TIDE_E_F"},
+    {"double", "PI", TY_DOUBLE, "0x1.921fb54442d18p+1"},
+    {"double", "TAU", TY_DOUBLE, "0x1.921fb54442d18p+2"},
+    {"double", "E", TY_DOUBLE, "0x1.5bf0a8b145769p+1"},
     {"quaternion", "identity", TY_QUATERNION, "tide_identity_q()"},
+    {"double2x2", "identity", TY_DOUBLE2X2, "tide_identity_d2x2()"},
+    {"double3x3", "identity", TY_DOUBLE3X3, "tide_identity_d3x3()"},
+    {"double4x4", "identity", TY_DOUBLE4X4, "tide_identity_d4x4()"},
     {"float2x2", "identity", TY_FLOAT2X2, "tide_identity_f2x2()"},
     {"float3x3", "identity", TY_FLOAT3X3, "tide_identity_f3x3()"},
     {"float4x4", "identity", TY_FLOAT4X4, "tide_identity_f4x4()"},
@@ -1273,6 +1343,7 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
 {
     int dim = 1;
     bool is_float = !ints_ok;
+    bool is_double = false;
     bool color = false;
     for (int i = 0; i < e->args.count; i++) {
         if (e->args.items[i]->kind == E_DEFAULT) continue;
@@ -1282,6 +1353,7 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
             continue;
         }
         if (t.kind == TY_CHAR) continue; // Its code point, an int, as a char is wherever an int goes
+        if (t.kind == TY_LONG) { is_double = true; continue; }
         if (!type_is_numeric(t)) return false;
         const int d = type_dim(t);
         if (d > 1) {
@@ -1289,9 +1361,15 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
             dim = d;
         }
         if (type_is_float_based(t)) is_float = true;
+        if (type_is_double_based(t)) is_double = true;
+    }
+    if (is_double) {
+        bool actual_double = false;
+        for (int i = 0; i < e->args.count; i++) actual_double |= type_is_double_based(e->args.items[i]->type);
+        if (!actual_double || color) return false;
     }
     if (color && dim > 1) return false;
-    *out = color ? T_COLOR : vector_type(is_float, dim);
+    *out = color ? T_COLOR : is_double ? double_vector_type(dim) : vector_type(is_float, dim);
     return true;
 }
 
@@ -1451,6 +1529,20 @@ static bool default_ambiguous(const int first, const expr *e)
         int theirs[MAX_PARAMS];
         bind(s, e, mine);
         bind(other, e, theirs);
+        // Concrete operands still determine precision beside a default. In
+        // Dot(default, float3(...)), widening both operands to double3 is a
+        // worse fit than retaining float3, rather than a new ambiguity.
+        bool better = false, no_worse = true;
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *arg = e->args.items[i];
+            if (arg->kind == E_DEFAULT || arg->enum_shorthand || out_untyped(arg)) continue;
+            const type t = real_type(s->params[mine[i]]);
+            const type u = real_type(other->params[theirs[i]]);
+            if (t.kind == u.kind && t.decl == u.decl) continue;
+            if (!type_assignable(u, t)) no_worse = false;
+            else if (!type_assignable(t, u)) better = true;
+        }
+        if (better && no_worse) continue;
         for (int i = 0; i < e->args.count; i++) {
             const type t = real_type(s->params[mine[i]]);
             const type u = real_type(other->params[theirs[i]]);

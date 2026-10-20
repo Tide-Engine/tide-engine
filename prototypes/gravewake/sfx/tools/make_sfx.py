@@ -1570,6 +1570,15 @@ def hit_tick(rng):
     return trim(soft_clip(unit(y) * 1.3, 1.2), -48, fade_out=0.02)
 
 
+@sound('skill_ready')
+def skill_ready(rng):
+    # The right mouse's skill back: two soft rising notes of a small bell, quiet, so it's heard but not heeded over a fight
+    a = modal([1318.5, 1318.5 * 2.76], [1.0, 0.25], [10, 18], 0.5, rng)
+    b = modal([1975.5, 1975.5 * 2.76], [1.0, 0.25], [8, 16], 0.6, rng)
+    y = mix((unit(a), 0, -2), (unit(b), 0.07, 0))
+    return trim(y, -50, fade_out=0.15)
+
+
 @sound('thump')
 def thump(rng):
     # The grenade launcher: a hollow "thoomp", a low pressure drop down a tube with a ring of its metal, and a puff of gas

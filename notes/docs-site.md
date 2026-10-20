@@ -1,5 +1,23 @@
 # The docs site
 
+## Double math and matrix completion (2026-10-20)
+
+Basics, Math and the spec now describe complete existing component-wise double
+math, binary64 constants, double matrix types/builders/conversions, CPU/GPU
+boundaries and accuracy limits. Prior deferrals of trig/matrices are superseded;
+double noise, double quaternions and automatic camera-relative rendering remain
+separate. Production/docs grammar validation: notes/language.md.
+
+## Double numeric documentation (2026-10-20)
+
+Basics, Math, Text and lists, JSON, Input, Determinism and the spec document the new
+binary64 scalar/vector values. They keep defaults and float rendering APIs clear,
+show subtract-before-narrowing for large coordinates, describe full precision
+text/JSON/input and distinguish the owner-approved types from first-build
+conversion/wire choices and the deferred double math/rendering work. Production
+build and all 268 shared grammar cases pass; no site deployment or CI dispatch.
+Compiler/runtime validation: notes/language.md.
+
 ## Shared player ceiling documentation (2026-10-20)
 
 The language settings table, Matches player-count section and spec report the

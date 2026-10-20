@@ -7,13 +7,12 @@
 
 // ---------------------------------------------------------------------------
 // Numbers out of text: a number's digits and its power of ten, read once,
-// then made an int or a float by exact integer arithmetic. No strtod: the
+// then made an int, float or double by exact integer arithmetic. No strtod: the
 // same text is the same bits on every platform.
 
-// Digits kept. A float is decided by 112 of them at the most (the longest
-// decimal that's halfway between two floats), so past these all that matters
-// is whether any was nonzero.
-#define DIGITS 128
+// Digits kept. Binary64 midpoint decimals need at most 768 significant digits
+// (binary32 at most 112); beyond this bound only a nonzero tail matters.
+#define DIGITS 800
 
 typedef struct number {
     bool negative;
@@ -110,9 +109,9 @@ static bool number_int(const number *n, const int64_t least, const int64_t most,
     return true;
 }
 
-// Integers of some six hundred bits at the most: 129 digits over ten to the
-// 175th are the widest a float's rounding is worked out from.
-#define WIDE_WORDS 40
+// Bounded integers for the largest retained binary64 decimal and its power
+// of ten. 4096 bits cover 801 retained digits with the accepted exponent range.
+#define WIDE_WORDS 128
 
 typedef struct wide {
     int n;                    // Words in use; the top one is nonzero
@@ -243,6 +242,63 @@ static bool number_float(const number *n, float *out)
     return true;
 }
 
+static bool number_double(const number *n, double *out)
+{
+    uint64_t bits = 0;
+    const int64_t magnitude = n->count + n->exponent; // The number is under ten to this, and at least a tenth of that
+    if (n->count > 0 && magnitude > 309) return false;  // Past the largest finite binary64 value
+    if (n->count > 0 && magnitude >= -324) {            // The smallest double is about 4.94e-324
+        wide num, den;
+        int64_t exponent = n->exponent;
+        wide_set(&num, 0);
+        for (int32_t i = 0; i < n->count; i++) wide_mul_add(&num, 10u, n->digits[i]);
+        if (n->more) { // What wasn't kept, as one more digit: it's never exactly halfway then
+            wide_mul_add(&num, 10u, 1u);
+            exponent--;
+        }
+        wide_set(&den, 1u);
+        for (int64_t e = 0; e < exponent; e++) wide_mul_add(&num, 10u, 0u);
+        for (int64_t e = exponent; e < 0; e++) wide_mul_add(&den, 10u, 0u);
+        // num / den as x * 2^k, x from 1 up to 2
+        int k = wide_bits(&num) - wide_bits(&den);
+        if (k >= 0) wide_shl(&den, k);
+        else wide_shl(&num, -k);
+        if (wide_cmp(&num, &den) < 0) {
+            wide_shl(&num, 1);
+            k--;
+        }
+        // The double is m * 2^q: 53 bits of m, or fewer for one under the smallest normal double
+        int q = k - 52 > -1074 ? k - 52 : -1074;
+        const int take = k - q + 1;
+        if (take >= 0) {
+            uint64_t m = 0;
+            bool round = false;
+            for (int i = 0; i <= take; i++) {
+                const bool bit = wide_cmp(&num, &den) >= 0;
+                if (bit) wide_sub(&num, &den);
+                if (i < take) m = m << 1 | (bit ? 1u : 0u);
+                else round = bit;
+                wide_shl(&num, 1);
+            }
+            if (round && (num.n != 0 || (m & 1u))) m++;
+            if (m == UINT64_C(1) << 53) {
+                m >>= 1;
+                q++;
+            }
+            if (m >= UINT64_C(1) << 52) {
+                const int biased = q + 1075;
+                if (biased >= 2047) return false;
+                bits = (uint64_t)biased << 52 | (m & UINT64_C(0x000FFFFFFFFFFFFF));
+            } else {
+                bits = m; // Under the smallest normal double
+            }
+        }
+    }
+    if (n->negative) bits |= UINT64_C(0x8000000000000000);
+    memcpy(out, &bits, sizeof bits);
+    return true;
+}
+
 bool tide_str_parse_float(const tide_str text, float *value)
 {
     *value = 0.0f;
@@ -251,6 +307,18 @@ bool tide_str_parse_float(const tide_str text, float *value)
     number n;
     float v;
     if (scan_number(p, p + text.bytes, false, &n) != p + text.bytes || !number_float(&n, &v)) return false;
+    *value = v;
+    return true;
+}
+
+bool tide_str_parse_double(const tide_str text, double *value)
+{
+    *value = 0.0;
+    if (text.bytes <= 0) return false;
+    const uint8_t *p = (const uint8_t *)text.ptr;
+    number n;
+    double v;
+    if (scan_number(p, p + text.bytes, false, &n) != p + text.bytes || !number_double(&n, &v)) return false;
     *value = v;
     return true;
 }
@@ -446,6 +514,19 @@ bool tide_json_float(tide_json *j, float *v)
     float f;
     const uint8_t *after = scan_number(j->at, j->end, true, &n);
     if (!after || !number_float(&n, &f)) return failed(j);
+    *v = f;
+    j->at = after;
+    return true;
+}
+
+bool tide_json_double(tide_json *j, double *v)
+{
+    if (j->failed) return false;
+    skip_space(j);
+    number n;
+    double f;
+    const uint8_t *after = scan_number(j->at, j->end, true, &n);
+    if (!after || !number_double(&n, &f)) return failed(j);
     *v = f;
     j->at = after;
     return true;
@@ -795,4 +876,13 @@ tide_str tide_json_add_float(const tide_str a, const float v)
     if ((bits & 0x7F800000u) == 0x7F800000u) return tide_str_add_cstr(a, "null"); // NaN and the infinities
     if (bits == 0x80000000u) return tide_str_add_cstr(a, "-0");
     return tide_str_add_float(a, v, 0);
+}
+
+tide_str tide_json_add_double(const tide_str a, const double v)
+{
+    uint64_t bits;
+    memcpy(&bits, &v, sizeof bits);
+    if ((bits & UINT64_C(0x7FF0000000000000)) == UINT64_C(0x7FF0000000000000)) return tide_str_add_cstr(a, "null");
+    if (bits == UINT64_C(0x8000000000000000)) return tide_str_add_cstr(a, "-0");
+    return tide_str_add_double(a, v, 0);
 }

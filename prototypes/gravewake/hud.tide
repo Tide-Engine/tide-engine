@@ -37,6 +37,8 @@ local singleton Feed
     List<float3> blows;          // Where the blows taken came from...
     List<float> blowAges;        // ...and how long ago
     List<Tally> tallies;         // The numbers of hits rising off the dead
+    float readyFlash;            // Seconds since the right mouse's skill came back (a flare round the crosshair)...
+    bool wasReady = true;        // ...as it was last frame
 }
 
 // A hit's number, rising off where it landed (the owner, 2026-10-20: "some VFX/SFX for when you hit something, like a
@@ -479,6 +481,37 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         Draw.Line(reticle + float2(0, gap), reticle + float2(0, gap + tick), 2 * u, c);
         Draw.Line(reticle - float2(0, gap), reticle - float2(0, gap + tick), 2 * u, c);
         Draw.Circle(reticle, 1.5 * u, c);
+        // Round it, what's coming back, seen without looking away from the dead (the owner, 2026-10-20: "we need some
+        // indicator on the crosshair or some sound or something when the ability is ready, even when reloading some way
+        // to know the progress without glancing down"): on its left the right mouse's skill, filling out from its middle
+        // as it comes back, lit when it's ready, flaring as it comes (a chime too: sound.tide's Handling); on its right
+        // the gun's rounds, or its loading as it fills (none for a gun never loaded)
+        var ring = gap + tick + 7 * u;
+        var half = 0.75;
+        var rmb = SecondaryOf(mine);
+        var rmbReady = mine.cooldowns[0] <= 0;
+        if (rmbReady && !feed.wasReady) feed.readyFlash = 0;
+        feed.wasReady = rmbReady;
+        feed.readyFlash += dt;
+        if (mine.life == Life.Standing && rmb != Skill.None)
+        {
+            var back = rmbReady ? 1.0 : 1 - Math.Saturate(mine.cooldowns[0] / Math.Max(0.01, Cooldown(mine, rmb)));
+            var flare = Math.Saturate(1 - feed.readyFlash / 0.35);
+            Draw.Arc(reticle, ring + 1.5 * u, Math.PI - half, 2 * half, 4 * u, Color(0, 0, 0, 0.4));
+            Draw.Arc(reticle, ring + (rmbReady ? 1.5 * u * flare : 0), Math.PI - half * back, 2 * half * back, (rmbReady ? 3 + 2 * flare : 2) * u,
+                     rmbReady ? Color(EMBER.r, EMBER.g, EMBER.b, 0.95) : Color(ASH.r, ASH.g, ASH.b, 0.7));
+            if (flare > 0)
+                Draw.Arc(reticle, ring + (4 + 16 * (1 - flare)) * u, Math.PI - half, 2 * half, 2 * u, Color(EMBER.r, EMBER.g, EMBER.b, 0.9 * flare));
+        }
+        if (!info.bottomless || mine.gun != RoleWeapon(mine.role))
+        {
+            var rounds = MagOf(mine, mine.gun);
+            var refilling = mine.act == Act.Reload && !info.shells;
+            var filled = refilling ? Math.Saturate(mine.actTime / Math.Max(0.01, mine.actLength)) : Math.Saturate(float(mine.mag) / Math.Max(1, rounds));
+            var ink = refilling ? SKY_BLUE : mine.mag == 0 ? Color(0.95, 0.3, 0.2) : mine.mag <= rounds / 4 ? Color(0.98, 0.7, 0.35) : BONE;
+            Draw.Arc(reticle, ring + 1.5 * u, -half, 2 * half, 4 * u, Color(0, 0, 0, 0.4));
+            if (filled > 0) Draw.Arc(reticle, ring, -half * filled, 2 * half * filled, 2 * u, Color(ink.r, ink.g, ink.b, refilling ? 0.95 : 0.75));
+        }
     }
     feed.marker = Math.Max(0, feed.marker - dt);
     feed.markerAge += dt;

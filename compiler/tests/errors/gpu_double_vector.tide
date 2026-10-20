@@ -1,0 +1,4 @@
+// expect: double3 can't go to the GPU: the GPU's floats are 32 bits
+scene Main { }
+frag Shade(Vertex3 vertex, out Color color) { double3 value = double3(1); color = Color(float3(value)); }
+view Show() { Draw.Mesh([], [], float4x4.identity, Shade); }

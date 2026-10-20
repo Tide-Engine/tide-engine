@@ -1,0 +1,3 @@
+// expect: double3x3 takes 3 double3 columns or 9 numbers row by row
+singleton Data { double3x3 value = double3x3(double2(1d), double2(2d)); }
+scene Main { }

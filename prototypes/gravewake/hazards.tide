@@ -10,8 +10,9 @@ using Rooms;
 // - The bramble thickets (plan.tide's brambles): a survivor wades through one
 //   at half pace (hands.tide's Steer); the dead don't care.
 // - Fire on the ground (Blaze): where the Engineer's napalm splashed, burning a
-//   few seconds, setting the dead that walk into it alight. It doesn't burn the
-//   living. (The eruptions, the ground cracking and bursting into fire near the
+//   few seconds, setting the dead that walk into it alight and burning the
+//   living who stand in it, its maker too (the owner, 2026-10-20: "my own
+//   napalm fire should hurt me"), unless they're rolling. (The eruptions, the ground cracking and bursting into fire near the
 //   survivors every few seconds, went: the owner, 2026-10-20, "the random
 //   exploding circles are out of place, we can maybe just add bushes in the map
 //   that make you walk slower". Their fire is the napalm's.)
@@ -19,6 +20,7 @@ using Rooms;
 // Every number is mine, Provisional.
 
 const float BLAZE_BITE = 0.5;        // How often a fire bites
+const float BLAZE_HURT = 12;         // A second, to a survivor standing in it (times the dead's Harm), as the eruptions' did
 const int BLAZES_MOST = 12;
 
 component Blaze
@@ -40,10 +42,10 @@ bool Afire(Match match, float3 at, float room)
     return false;
 }
 
-// Each fire, each tick: biting every BLAZE_BITE, the dead in it (bosses too) burned and set alight, its maker's; and out.
-// All of them out at dawn, and at a new run.
+// Each fire, each tick: biting every BLAZE_BITE, the dead in it (bosses too) burned and set alight, its maker's, and the
+// survivors standing in it burned (not one rolling); and out. All of them out at dawn, and at a new run.
 [Stage(Tick.Rounds, 7)]
-system Burn(mut Blaze blaze, Match match, Herd herd, Time time)
+system Burn(mut Blaze blaze, Match match, Herd herd, Time time, query (Survivor survivor) survivors)
 {
     if (match.restarting || match.phase == Phase.Dawn || match.phase == Phase.Waiting)
     {
@@ -64,6 +66,13 @@ system Burn(mut Blaze blaze, Match match, Herd herd, Time time)
     {
         if (!body.hittable || Math.Length((body.at - blaze.at).xz) > blaze.reach + (body.boss >= 0 ? 1.0 : 0.0)) continue;
         body.entity.Send(Wound { damage = blaze.hurt, seat = blaze.seat, from = blaze.at, knock = -1, element = Element.Fire, blow = Blow.Burning, echo = true });
+    }
+    var harm = Harm(match.danger);
+    foreach (var row in survivors)
+    {
+        var s = row.survivor;
+        if (!s.ready || s.life != Life.Standing || Guarded(s) || Math.Length((s.feet - blaze.at).xz) > blaze.reach) continue;
+        row.entity.Send(Hurt { damage = BLAZE_HURT * BLAZE_BITE * harm, from = blaze.at });
     }
 }
 

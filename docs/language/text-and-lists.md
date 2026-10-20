@@ -27,7 +27,7 @@ system Greet(mut Nameplate plate, Stats stats)
 - `+` joins text with anything it can show: `"score " + score`, `1 + "st"`.
 - `$"score {score}"` puts values in text. After a value, a colon and a format say how it's written: `{x:F2}` for two decimals, `{n:D3}` for at least three digits (`007`), `{n:X}` for hex. `{{` and `}}` are braces, and `?:` in a value goes in parentheses: `{(won ? 1 : 0)}`.
 
-Text can show numbers, bools, enums (their member's name, or their number when [no member has it](./basics.md#from-a-number)), vectors and quaternions (`(1, 0.5)`), `Color`, `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for one a system splitting its entities across threads just spawned, whose ID comes once it's done) and players (`PlayerID(0)`). Floats are written with the fewest digits that read back as the same float, exactly the same on every platform.
+Text can show numbers, bools, enums (their member's name, or their number when [no member has it](./basics.md#from-a-number)), vectors and quaternions (`(1, 0.5)`), `Color`, `Rect`, entities (`Entity(3:1)`, or `Entity(new)` for one a system splitting its entities across threads just spawned, whose ID comes once it's done) and players (`PlayerID(0)`). Floats and doubles are written with the fewest digits that read back as the same value, exactly the same on every platform. Doubles also accept fixed decimal formats through `F17`, such as `$"{value:F12}"`.
 
 It shows whole values too, which is handy for debugging. Structs, components, singletons, events and inputs show their name and every field, and lists show their elements. Text inside them is in quotes, so empty text still shows:
 
@@ -76,10 +76,11 @@ bool ReadScore(List<byte> file, out string name, out int score)
 | `int.TryParse(text, out value)` | Whether the whole text is an int, which goes to `value` |
 | `long.TryParse(text, out value)` | The same, for a long |
 | `float.TryParse(text, out value)` | Whether the whole text is a number, which goes to `value` as the nearest float |
+| `double.TryParse(text, out value)` | The same, rounded directly to the nearest double |
 
 - **`Split` keeps empty pieces**, so joining the pieces with the separator gives the text back: `"a,,b".Split(",")` is `["a", "", "b"]`, and `"".Split(",")` is one empty piece. A separator that isn't in the text, or an empty one, gives the whole text as one piece.
 - **`TryParse` takes a number and nothing else.** An int is digits, with `-` before them for a negative one. A float can have a point and an exponent too: `-12.5`, `.5`, `1e-3`. Spaces, a `+`, hex and words like `NaN` make it false, and so does a number its type doesn't hold. `Trim` the text first when it's what a player typed. When it's false, `value` is 0.
-- **A float read from text is the nearest one**, worked out exactly, the same bits on every platform. What `$"{x}"` shows of a float reads back as that float.
+- **A float read from text is the nearest one**, worked out exactly, the same bits on every platform. The same holds for doubles at their full precision. What `$"{x}"` shows reads back as the original value.
 - **`FromBytes` gives a [`string?`](./errors.md)**, since bytes from a file or a server can be anything: `?? ""` for a fallback, or `is string text` to run only when they're text.
 
 For JSON, there's [`Json.Read` and `Json.Write`](./json.md), which read and write a struct whole.
@@ -395,7 +396,7 @@ system Score(mut Scoreboard board, Hit hit)
 }
 ```
 
-Keys are `byte`, `int`, `long`, `char`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
+Keys are `byte`, `int`, `long`, `char`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats and doubles aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
 
 ### Members
 

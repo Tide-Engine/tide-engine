@@ -878,6 +878,13 @@ int main(void)
             printf("napalm: %.0f in its splash, a fire %.1f m round for %.1f s, %.0f more and burning (%d) in it\n", splashed, fire.reach, fire.seconds,
                    before - zombie(e).health, zombie(e).burn > 0);
             CHECK(splashed > 0 && zombie(e).burn > 0 && zombie(e).health < before && fire.seat == 0);
+            // Its maker standing in it is burned too (the owner, 2026-10-20: "my own napalm fire should hurt me")
+            put(0, (tide_float3){fire.at.x - 0.5f, fire.at.y, fire.at.z}, (tide_float3){fire.at.x - 0.5f, 1, fire.at.z + 5});
+            const float whole = get(0).health;
+            tick(40);
+            printf("napalm's maker standing in its fire: %.1f off them\n", whole - get(0).health);
+            CHECK(get(0).health < whole);
+            heal();
             for (int t = 0; t < 60 * 8 && world.arch4_Blaze.count > 0; t++) tick_safe(1);
             CHECK(world.arch4_Blaze.count == 0);
         }
