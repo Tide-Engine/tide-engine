@@ -374,7 +374,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
     {
         for (var k = 0; k < 3; k++)
         {
-            var skill = SkillOf(mine.role, k);
+            var skill = k == 0 ? SecondaryOf(mine) : SkillOf(mine.role, k);
             var at = float2(right - 27 * u - (2 - k) * 64 * u, h - 140 * u);
             var full = Cooldown(mine, skill);
             var ready = mine.cooldowns[k] <= 0;
@@ -392,6 +392,10 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
                 WriteBold($"{int(Math.Ceil(mine.cooldowns[k]))}", at + float2(0, 14 * u), 12 * u, BONE, Anchor.MiddleCenter);
             }
             Write(SkillName(skill).ToUpper(), at + float2(0, 36 * u), 9 * u, ready ? BONE : ASH, Anchor.MiddleCenter);
+            // The right mouse's rank: a pip each
+            if (k == 0 && mine.secondaryRank > 1)
+                for (var c = 0; c < mine.secondaryRank; c++)
+                    Draw.Circle(at + float2((c - (mine.secondaryRank - 1) * 0.5) * 9 * u, -33 * u), 2.5 * u, EMBER);
             // The roll's charges: a pip each, lit when ready
             if (skill == Skill.Roll)
             {
@@ -616,7 +620,7 @@ view Ending(Match match, Lobby lobby, mut Feed feed, Devices devices, query (Sur
 // Runners, Brutes, Howlers in turn; with Shift, one of each and one of the ordinary dead lined up in front of you,
 // dazed),
 // F3 a boss (the Mauler, the Broodmother, the Stalker in turn), F4 a horde of two thousand more, F5 a level (and so an
-// offer), F6 a walk to the next place, F7 the night on (its end, its bosses, now; with them up, dawn), F10 an item, F1
+// offer), F6 a walk to the next place, F7 the night on (its end, its bosses, now; with them up, dawn), F10 an item (with Shift, the items that fight by themselves, several each), F1
 // a mission (a hold, a cull, the wisps in turn). (F8 is the engine's: its numbers.)
 local singleton DevWalk
 {
@@ -650,7 +654,7 @@ view DevKeys(Devices devices, Lobby lobby, Match match, mut DevWalk walk)
         walk.mission = (walk.mission + 1) % 3;
     }
     if (keys.f5.down) Send(Cheat { what = 4 });
-    if (keys.f10.down) Send(Cheat { what = 5 });
+    if (keys.f10.down) Send(Cheat { what = keys.leftShift.pressed || keys.rightShift.pressed ? 7 : 5 });
     if (keys.f6.down)
     {
         walk.next = (walk.next + 1) % 8;
@@ -794,8 +798,28 @@ Color RarityColor(Rarity rarity)
     {
         case Rarity.Uncommon: return Color(0.45, 0.9, 0.45);
         case Rarity.Rare: return Color(0.95, 0.35, 0.3);
+        case Rarity.Skill: return EMBER;
     }
     return Color(0.9, 0.88, 0.84);
+}
+
+// A count in Roman numerals, as a card's level is shown (past ten, as a number).
+string Roman(int n)
+{
+    switch (n)
+    {
+        case 1: return "I";
+        case 2: return "II";
+        case 3: return "III";
+        case 4: return "IV";
+        case 5: return "V";
+        case 6: return "VI";
+        case 7: return "VII";
+        case 8: return "VIII";
+        case 9: return "IX";
+        case 10: return "X";
+    }
+    return $"{n}";
 }
 
 string RarityName(Rarity rarity)
@@ -804,6 +828,7 @@ string RarityName(Rarity rarity)
     {
         case Rarity.Uncommon: return "Uncommon";
         case Rarity.Rare: return "Rare";
+        case Rarity.Skill: return "Skill";
     }
     return "Common";
 }
@@ -912,11 +937,32 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
         WriteBold($"{k + 1}", key, 16 * u, Color(BONE.r, BONE.g, BONE.b, a), Anchor.MiddleCenter);
         Draw.Shape(Shape { center = middle + float2(0, -40 * u), size = float2(60, 60) * u, radius = 30 * u, color = Color(tint.r, tint.g, tint.b, 0.16 * a), soft = 22 * u });
         DrawItemMark(item, middle + float2(0, -40 * u), 60 * u, a);
-        var have = mine.items[int(item)];
-        Write(have > 0 ? $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}" : RarityName(rarity).ToUpper(), middle + float2(0, 8 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a),
-              Anchor.MiddleCenter);
-        WriteBold(ItemName(item), middle + float2(0, 32 * u), 21 * u, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
-        WriteWrapped(ItemLine(item), middle + float2(0, 62 * u), size.x - 34 * u, 13 * u, Color(BONE.r, BONE.g, BONE.b, 0.85 * a));
+        // An item: its level after this one (II, III...) by its name; a skill card: another skill for the right mouse, or
+        // the one you have a rank stronger
+        var skill = CardSkill(item);
+        mut var top = RarityName(rarity).ToUpper();
+        mut var name = ItemName(item);
+        mut var line = ItemLine(item);
+        if (skill != Skill.None)
+        {
+            var same = skill == SecondaryOf(mine);
+            top = same ? $"RIGHT MOUSE  -  RANK {Roman(mine.secondaryRank + 1)}" : $"RIGHT MOUSE  -  IN PLACE OF {SkillName(SecondaryOf(mine)).ToUpper()}";
+            name = same ? $"{SkillName(skill)} {Roman(mine.secondaryRank + 1)}" : SkillName(skill);
+            line = same ? RankLine(skill, mine.secondaryRank + 1) : SkillLine(skill);
+        }
+        else
+        {
+            var have = mine.items[int(item)];
+            if (have > 0)
+            {
+                top = $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}";
+                name = $"{ItemName(item)} {Roman(have + 1)}";
+                line = ItemLineAt(item, have + 1);
+            }
+        }
+        Write(top, middle + float2(0, 8 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);
+        WriteBold(name, middle + float2(0, 32 * u), 21 * u, Color(tint.r, tint.g, tint.b, a), Anchor.MiddleCenter);
+        WriteWrapped(line, middle + float2(0, 62 * u), size.x - 34 * u, 13 * u, Color(BONE.r, BONE.g, BONE.b, 0.85 * a));
     }
     Write("1, 2 or 3   (pad: d-pad left, up, right)", float2(w * 0.5, h * 0.5 + size.y * 0.5 + 26 * u), 13 * u, Color(ASH.r, ASH.g, ASH.b, 0.8), Anchor.MiddleCenter);
 }

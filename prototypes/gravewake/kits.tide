@@ -58,6 +58,27 @@ Weapon RoleWeapon(Role role)
     return Weapon.Pistol;
 }
 
+// A survivor's right mouse skill: their kit's, or what a skill card made it (items.tide).
+Skill SecondaryOf(Survivor survivor)
+{
+    return survivor.secondary != Skill.None ? survivor.secondary : SkillOf(survivor.role, 0);
+}
+
+// What a skill's next rank gives (a skill card for the one a survivor has).
+string RankLine(Skill skill, int rank)
+{
+    var three = rank >= 3;
+    switch (skill)
+    {
+        case Skill.PhaseRound: return three ? "Five heavy rounds in a fan, half again as hard" : "Three heavy rounds in a fan, a quarter harder";
+        case Skill.Boot: return three ? "Kick the dead all round you, 60% harder" : "Kick wider and further, 30% harder";
+        case Skill.Mine: return three ? "Lay three mines at once" : "Lay two mines at once";
+        case Skill.Leap: return three ? "Land half again as wide, 60% harder" : "Land a quarter wider, 30% harder";
+        case Skill.Blink: return three ? "Blast the dead where you leave and where you land" : "Blast the dead where you leave";
+    }
+    return "";
+}
+
 // A kit's skills: 0 the secondary (right mouse), 1 the roll (Space), 2 the special, which uses itself.
 Skill SkillOf(Role role, int slot)
 {
@@ -122,10 +143,16 @@ float BaseCooldown(Skill skill)
     return 5;
 }
 
+// Seconds between uses: the Field Batteries' less, and the right mouse's a rank's less too.
 float Cooldown(Survivor survivor, Skill skill)
 {
-    return BaseCooldown(skill) * Math.Pow(0.85, survivor.items[int(Item.Battery)]);
+    var ranked = skill == SecondaryOf(survivor) ? Math.Pow(0.85, survivor.secondaryRank - 1) : 1.0;
+    return BaseCooldown(skill) * Math.Pow(0.85, survivor.items[int(Item.Battery)]) * ranked;
 }
+
+const float PHASE_FAN = 0.08;       // Radians between a ranked phase round's rounds
+const float BLINK_FAR = 8;          // How far a blink goes at most (+2 m a rank)
+const float BLINK_BLAST = 2.8;      // A ranked blink's burst, this wide
 
 const float ROLL_SECONDS = 0.5;     // A roll, start to finish...
 const float ROLL_SPEED = 9.5;       // ...how fast in its middle (quick at first, slowing)...
@@ -160,19 +187,31 @@ void StartRoll(mut Survivor survivor, float2 move)
 }
 
 // The secondary, on the right mouse button (the owner, 2026-10-18: "i like this new "automatic" abilities direction but
-// i miss the right click power"): as soon as it's ready while it's held, at the cursor. A phase round through every one
-// of the dead down its line (a headshot through the head the cursor's on); the boot at the dead in front, toward the
-// cursor, stamping on the nearest one down; a mine set down the cursor's way. Not mid-roll.
+// i miss the right click power"): as soon as it's ready while it's held, at the cursor. The kit's, or another a skill
+// card gave (items.tide), each a rank stronger from another card of it. A phase round through every one of the dead down
+// its line (a headshot through the head the cursor's on; three in a fan, then five); the boot at the dead in front,
+// toward the cursor, stamping on the nearest one down (wider, then all round); a mine set down the cursor's way (two,
+// then three); a leap the cursor's way, the dead where it lands knocked down (wider); a blink to the cursor (bursting
+// where it leaves, then where it lands too). Not mid-roll.
 void UseSecondary(Entity self, mut Survivor survivor, Ashwick ashwick, Herd herd)
 {
-    var skill = SkillOf(survivor.role, 0);
+    var skill = SecondaryOf(survivor);
     if (skill == Skill.None || survivor.cooldowns[0] > 0 || survivor.roll > 0) return;
+    var rank = survivor.secondaryRank;
+    mut var to = survivor.feet;
     switch (skill)
     {
         case Skill.PhaseRound:
         {
             var from = AimFrom(survivor, 90, out var look);
-            Shoot(ArmsOf(survivor), from, look, 90, 100 * Might(survivor), 1.5, 1000, ashwick, herd, Trace.Phase, 1, AimedAt(survivor, 90));
+            var rounds = 2 * rank - 1;
+            for (var k = 0; k < rounds; k++)
+            {
+                var turn = (k - (rounds - 1) * 0.5) * PHASE_FAN;
+                var way = turn == 0 ? look : Math.Rotate(quaternion.AxisAngle(float3(0, 1, 0), turn), look);
+                var aimed = turn == 0 ? AimedAt(survivor, 90) : from + way * 90;
+                Shoot(ArmsOf(survivor), from, way, 90, 100 * Might(survivor) * (1 + 0.25 * (rank - 1)), 1.5, 1000, ashwick, herd, Trace.Phase, 1, aimed);
+            }
             Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Phase });
             survivor.act = Act.Fire;
             survivor.actTime = 0;
@@ -180,21 +219,72 @@ void UseSecondary(Entity self, mut Survivor survivor, Ashwick ashwick, Herd herd
             break;
         }
         case Skill.Boot:
-            Kick(self, survivor, Near(herd, survivor.feet, KICK_REACH + 1.5), survivor.yaw);
+            Kick(self, survivor, Near(herd, survivor.feet, KICK_REACH * 1.5 + 1.5), survivor.yaw, rank);
             survivor.kicked = 0;
+            to = survivor.feet + Flat(survivor.yaw);
             break;
         case Skill.Mine:
         {
-            var ahead = survivor.feet + Flat(survivor.yaw) * 1.2;
-            mut var at = On(ahead.x, ahead.z);
-            if (Math.Distance(PushOut(ashwick, at, 0.2, 0.3), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
-            Spawn(Missile { kind = Shot.Mine, at = at + float3(0, 0.03, 0), damage = 220 * Might(survivor), splash = 4.5, seat = survivor.seat, life = 40 });
-            Send(Cue { sound = Sfx.Mine, at = at });
+            for (var k = 0; k < rank; k++)
+            {
+                var side = (k - (rank - 1) * 0.5) * 1.4;
+                var ahead = survivor.feet + Flat(survivor.yaw) * (1.2 + 0.3 * Math.Abs(side)) + Flat(survivor.yaw + Math.PI * 0.5) * side;
+                mut var at = On(ahead.x, ahead.z);
+                if (Math.Distance(PushOut(ashwick, at, 0.2, 0.3), at) > 0.001 || at.y > survivor.feet.y + 1) at = On(survivor.feet.x, survivor.feet.z);
+                Spawn(Missile { kind = Shot.Mine, at = at + float3(0, 0.03, 0), damage = 220 * Might(survivor), splash = 4.5, seat = survivor.seat, life = 40 });
+                Send(Cue { sound = Sfx.Mine, at = at });
+            }
             break;
+        }
+        case Skill.Leap:
+        {
+            if (!survivor.grounded) return;
+            survivor.velocity = Flat(survivor.yaw) * 8 + float3(0, 9.5, 0);
+            survivor.grounded = false;
+            survivor.leaping = true;
+            break;
+        }
+        case Skill.Blink:
+        {
+            // To the cursor, as far as BLINK_FAR (more a rank), but not through anything nor off the clearing
+            var way = Flat(survivor.yaw);
+            var most = Math.Min(BLINK_FAR + 2 * (rank - 1), Math.Max(2, Math.Length((survivor.aim - survivor.feet).xz)));
+            for (var k = 1; k <= int(most / 0.25); k++)
+            {
+                var step = survivor.feet + way * (k * 0.25);
+                var at = On(step.x, step.z);
+                if (!InClearing(at) || Math.Distance(PushOut(ashwick, at, BODY_RADIUS, BODY_HIGH), at) > 0.001 || at.y > survivor.feet.y + 1.5) break;
+                to = at;
+            }
+            if (Math.Distance(to, survivor.feet) < 1) return;
+            var left = survivor.feet;
+            if (rank >= 2) BlinkBlast(survivor, left, Near(herd, left, BLINK_BLAST + 0.5));
+            if (rank >= 3) BlinkBlast(survivor, to, Near(herd, to, BLINK_BLAST + 0.5));
+            Send(Unleashed { seat = survivor.seat, skill = skill, at = left, to = to, rank = rank });
+            survivor.feet = to;
+            survivor.velocity = float3(0);
+            survivor.cooldowns[0] = Cooldown(survivor, skill);
+            return;
         }
     }
     survivor.cooldowns[0] = Cooldown(survivor, skill);
-    Send(Unleashed { seat = survivor.seat, skill = skill, at = survivor.feet, to = survivor.feet });
+    Send(Unleashed { seat = survivor.seat, skill = skill, at = survivor.feet, to = to, rank = rank });
+}
+
+// A ranked blink's burst: the dead near where it leaves (or lands) hurt and thrown down.
+void BlinkBlast(Survivor survivor, float3 at, List<Body> bodies)
+{
+    foreach (var z in bodies)
+    {
+        if (!z.hittable || Math.Length((z.at - at).xz) > BLINK_BLAST) continue;
+        z.entity.Send(Wound { damage = 90 * Might(survivor), seat = survivor.seat, from = at, knock = 6, down = true, blow = Blow.Blunt, element = Element.Shock });
+    }
+}
+
+// How far a leap's landing knocks the dead down, at a rank.
+float SlamReach(int rank)
+{
+    return SLAM_REACH * (1 + 0.25 * (rank - 1));
 }
 
 // The special, by itself (the owner, 2026-10-18: "everything other than dodge and main weapon firing should be
@@ -290,44 +380,49 @@ const int AUTO_TRIES = 24;          // How many of the nearest are tried as a sk
 const int AUTO_CROWD = 200;         // ...against how many of the dead about
 const float AUTO_KNOT = 4;          // How near a grenade's mark one of the dead counts as in the knot
 
-// A leap come down: what's near goes over.
+// A leap come down: what's near goes over (wider and harder a rank).
 void Slam(Survivor survivor, List<Body> bodies)
 {
+    var rank = survivor.secondaryRank;
+    var reach = SlamReach(rank);
     foreach (var z in bodies)
     {
-        if (!z.hittable || Math.Distance(z.at, survivor.feet) > SLAM_REACH) continue;
-        z.entity.Send(Wound { damage = 150 * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = 6, down = true, blow = Blow.Blunt });
+        if (!z.hittable || Math.Distance(z.at, survivor.feet) > reach) continue;
+        z.entity.Send(Wound { damage = 150 * Might(survivor) * (1 + 0.3 * (rank - 1)), seat = survivor.seat, from = survivor.feet, knock = 6 + rank, down = true, blow = Blow.Blunt });
     }
-    Send(Unleashed { seat = survivor.seat, skill = Skill.Leap, at = survivor.feet, to = survivor.feet, landed = true });
+    Send(Unleashed { seat = survivor.seat, skill = Skill.Leap, at = survivor.feet, to = survivor.feet, landed = true, rank = rank });
 }
 
 // The boot, toward `yaw`: the dead that way, within a stride, go over backwards (six at most); the nearest one already
-// down is stamped on, on the head.
-void Kick(Entity self, Survivor survivor, List<Body> bodies, float yaw)
+// down is stamped on, on the head. A rank kicks further, wider (all round at the third) and harder, at more.
+void Kick(Entity self, Survivor survivor, List<Body> bodies, float yaw, int rank)
 {
     mut var hits = 0;
     mut var stampAt = -1;
     mut var stampFar = 1000.0;
-    var might = Might(survivor);
+    var might = Might(survivor) * (1 + 0.3 * (rank - 1));
+    var reach = KICK_REACH * (1 + 0.25 * (rank - 1));
+    var arc = rank >= 3 ? 4.0 : rank == 2 ? 1.4 : 0.9;
+    var most = 6 + 4 * (rank - 1);
     for (var i = 0; i < bodies.count; i++)
     {
         var z = bodies[i];
         if (!z.hittable) continue;
         var to = (z.down ? z.head : z.chest) - survivor.feet;
         var far = Math.Length(to.xz);
-        if (far > KICK_REACH + ZOMBIE_RADIUS * z.size) continue;
+        if (far > reach + ZOMBIE_RADIUS * z.size) continue;
         var angle = Math.Abs(TurnBetween(yaw, Math.Atan2(to.x, to.z)));
-        if (angle > 0.9 && far > 0.6) continue;
+        if (angle > arc && far > 0.6) continue;
         if (z.down)
         {
             if (far >= stampFar) continue;
             stampFar = far;
             stampAt = i;
         }
-        else if (hits < 6)
+        else if (hits < most)
         {
             hits += 1;
-            z.entity.Send(Wound { damage = 80 * might, seat = survivor.seat, from = survivor.feet, knock = 7, down = true, blow = Blow.Blunt });
+            z.entity.Send(Wound { damage = 80 * might, seat = survivor.seat, from = survivor.feet, knock = 7 + 2 * (rank - 1), down = true, blow = Blow.Blunt });
         }
     }
     if (stampAt >= 0)
@@ -479,6 +574,7 @@ event Unleashed
     float3 at;
     float3 to;
     bool landed;
+    int rank = 1;               // The right mouse's skill's rank
 }
 
 event Kicked

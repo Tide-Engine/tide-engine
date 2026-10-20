@@ -59,7 +59,7 @@ component Survivor
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
     float3 aim;                      // What the cursor's on (Hands.aim)
     // The items (items.tide): stacks of each, the three on offer at a level while `choosing`
-    int[23] items;
+    int[30] items;
     Item[3] offers;
     bool choosing;
     int pending;                     // Picks owed: a level's, a chest's, a boss's, after the one on offer...
@@ -68,7 +68,17 @@ component Survivor
     float gone;                      // Seconds since bleeding out: back beside a friend as the night's bosses rise, at dawn, or BACK_AFTER
     int level = 1;                   // The party's, as it reached this survivor
     float droneWait;
+    int droneNext;                   // Which of the drones fires next
     float emberWait;
+    float sawTurn;                   // The saw blades' turn round them...
+    float sawWait;                   // ...and seconds till they cut again
+    float teslaWait;
+    float molotovWait;
+    float shockWait;
+    float rocketWait;
+    // The right mouse's skill (kits.tide), its kit's at first, another or a rank stronger from a skill card
+    Skill secondary;
+    int secondaryRank = 1;
     int kills;
     int headshots;
     int downs;
@@ -335,6 +345,19 @@ command(Cheat cheat, PlayerID sender) Cheating(mut Match match, Party party)
         case 5:
             party.survivors[seat].Send(Given { item = Item(Random.NextInt(ITEM_COUNT)) });
             return;
+        case 7:
+            // The items that fight by themselves, several of each, to look at (four drones, three saw blades, two Tesla
+            // Coils and Ember Rings, a Rocket Pod and a Thunder Drum)
+            for (var k = 0; k < 4; k++) party.survivors[seat].Send(Given { item = Item.GunDrone });
+            for (var k = 0; k < 3; k++) party.survivors[seat].Send(Given { item = Item.SawBlades });
+            for (var k = 0; k < 2; k++)
+            {
+                party.survivors[seat].Send(Given { item = Item.TeslaCoil });
+                party.survivors[seat].Send(Given { item = Item.EmberRing });
+            }
+            party.survivors[seat].Send(Given { item = Item.RocketPod });
+            party.survivors[seat].Send(Given { item = Item.Shockwave });
+            return;
     }
     // Six of a kind of the dead, the next six to rise: 20 Bloaters, 21 Spitters, 22 Wardens, 23 Runners, 24 Brutes, 25
     // Howlers
@@ -386,7 +409,7 @@ event(Given given) TakeGiven(mut Survivor survivor)
 {
     if (survivor.role == Role.None) return;
     Take(survivor, given.item);
-    Send(Picked { seat = survivor.seat, item = given.item });
+    Send(Picked { seat = survivor.seat, item = given.item, at = survivor.feet, rank = Has(survivor, given.item) });
 }
 
 event(Moved moved) TakeMoved(mut Survivor survivor)

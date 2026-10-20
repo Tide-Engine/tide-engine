@@ -375,6 +375,8 @@ local event(Blast blast) HearBlast(mut Ears ears)
     }
     if (blast.kind == Shot.Pot || blast.kind == Shot.Keg) Audio.Play(fireBurst, blast.at, blast.kind == Shot.Keg ? 0.6 : 1.0, ears.random.NextFloat(0.9, 1.1));
     else if (blast.kind == Shot.Quake) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, 0.55);
+    else if (blast.kind == Shot.Drum) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 0.7, ears.random.NextFloat(0.4, 0.45));
+    else if (blast.kind == Shot.Rocket) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 0.55, ears.random.NextFloat(1.2, 1.4));
     else if (blast.kind == Shot.Bile) Audio.Play(bloatPops[ears.random.NextInt(bloatPops.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.05));
     else Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, ears.random.NextFloat(0.9, 1.1));
 }
@@ -422,6 +424,7 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
         case Sfx.Howl: Audio.Play(screams[ears.random.NextInt(screams.count)], cue.at, 1.0, ears.random.NextFloat(0.62, 0.7)); return;
         case Sfx.Bellow: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, ears.random.NextFloat(0.5, 0.58)); return;
         case Sfx.Pound: Audio.Play(hitsBlunt[ears.random.NextInt(hitsBlunt.count)], cue.at, 1.0, 0.6); return;
+        case Sfx.Rocket: Audio.Play(throwClip, cue.at, 0.8, ears.random.NextFloat(1.5, 1.7)); return;
     }
 }
 

@@ -47,9 +47,17 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 
 | Survivor | Gun | Right mouse | By itself |
 | --- | --- | --- | --- |
-| Gunner | Carbine: automatic, through three | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
+| Gunner | Carbine: automatic, any range | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
 | Breacher | Pump Shotgun: eleven pellets, never needs loading; takes a third less from the dead | Boot: kicks the dead in front over; the nearest one down is stamped on | Firebomb: into the thickest of them |
 | Engineer | SMG: sets items off half again as often | Mine: bursts when the dead come near | Turret: set down when the dead are about; walks after you, keeping a couple of metres off, and fires on its own for twelve seconds, setting off your items |
+
+The right mouse skill is the survivor's to begin with, and can change: a
+skill card (orange) turns up in some level's offers, another of five
+(Phase Round, Boot, Mine, Leap, Blink) to take in its place, or the one you
+have a rank stronger, to rank III: a phase round becomes three in a fan,
+then five; the boot kicks wider, then all round; a mine becomes two, then
+three; a leap lands wider and harder; a blink bursts where you leave, then
+where you land too. Pips under the skill show its rank.
 
 Everything but the gun, the right mouse skill and the roll happens by
 itself: each survivor's special as soon as it's ready and the dead are in
@@ -79,15 +87,20 @@ no jumping.
 ### The items
 
 At every level, and for every one of a night's bosses felled, three to choose
-from (1, 2 or 3, shown across the middle of the screen); each stacks. The run
-waits while anyone chooses, the picture and its sounds held still. A chest
-gives everyone a pick too.
+from (1, 2 or 3, shown across the middle of the screen); each stacks, the
+card saying what you'll have with it (Tesla Coil III: the 4 nearest dead).
+The run waits while anyone chooses, the picture and its sounds held still. A
+chest gives everyone a pick too. Taking one throws up a column of light in
+its colour. The ones that fight by themselves show how many you have: a drone
+each over your head, a saw blade each circling you, a wider ring of fire,
+more bolts of lightning, more rockets.
 
 | Rarity | Items |
 | --- | --- |
-| Common | Hollow Points (damage), Hair Trigger (fire and reload faster), Kevlar Vest (health, armour), Running Shoes (speed), Leech Rounds (kills heal), Field Battery (skills back sooner), Extended Mag, Lucky Shot (hits for double), Smelling Salts (raise friends faster; not offered alone) |
-| Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (shoots the nearest dead), Ember Ring (sets the dead near you alight), Frostbite (hits freeze), Energy Drink (another roll), Kerosene (the dead you roll past catch fire), Steel Toes (more to the dead on the ground), Gas Mask (Bloaters' bursts can't hurt you; the ones you kill burst wider), AP Rounds (through one more) |
-| Rare | Mortar Flare (hits call a shell down), Second Wind (going down, straight back up, used up), HE Rounds (every round bursts where it lands), Dragon's Breath (hits set the dead alight) |
+| Common | Hollow Points (damage), Hair Trigger (fire and reload faster), Kevlar Vest (health, armour), Running Shoes (speed), Leech Rounds (kills heal), Field Battery (skills back sooner), Extended Mag, Lucky Shot (hits for double), Smelling Salts (raise friends faster; not offered alone), Ricochet Rounds (hits bounce on to more of the dead), Bone Splinters (kills throw shards of bone into the dead round them) |
+| Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (a drone each over your head shoots the nearest dead), Ember Ring (a ring of fire round you sets the dead alight), Frostbite (hits freeze), Energy Drink (another roll), Kerosene (the dead you roll past catch fire), Steel Toes (more to the dead on the ground), Gas Mask (Bloaters' bursts can't hurt you; the ones you kill burst wider), AP Rounds (through one more), Saw Blades (a blade each circles you, cutting what it passes), Tesla Coil (lightning into the nearest dead), Molotov Satchel (firebombs at the thickest of the dead) |
+| Rare | Mortar Flare (hits call a shell down), Second Wind (going down, straight back up, used up), HE Rounds (every round bursts where it lands), Dragon's Breath (hits set the dead alight), Thunder Drum (a shockwave throws down the dead round you), Rocket Pod (rockets at the dead round you) |
+| Skill | A right mouse skill in place of yours, or yours a rank stronger (above) |
 
 Uncommon and rare items turn up more as the run goes on. What you take is
 yours till the game's over, through going down and bleeding out.
@@ -163,7 +176,8 @@ of each lined up in front of you, dazed), F3 a boss (the Mauler, the Broodmother
 the Stalker in turn), F4 two thousand more of the
 dead, F5 a level (and so an offer), F6 walk to the next part of the clearing,
 F7 the night on (its end now, its boss rising; again while it stands, dawn),
-F9 a camera over the clearing, F10 a random item, F1 a mission (a hold, a
+F9 a camera over the clearing, F10 a random item (with Shift, the items that
+fight by themselves, several each), F1 a mission (a hold, a
 cull, the wisps in turn).
 
 ## Ashwick Wood

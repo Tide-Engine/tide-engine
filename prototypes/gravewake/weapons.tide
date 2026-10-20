@@ -20,7 +20,10 @@ struct WeaponInfo
     float spread;           // Radians off the aim
     int pellets = 1;
     float range = 70;
-    int pierce = 1;         // How many of the dead a round goes through
+    int pierce = 1;         // How many of the dead a round strikes, the last where it stops: one, every gun (the carbine went
+                            // through three and the shotgun's pellets four, till the owner, 2026-10-20: "it makes that
+                            // "penetrates 1 more zombie" useless and the starting weapon too powerful for hordes"); AP Rounds
+                            // one more each
     float proc = 1;         // How likely a round's items are to go off (a pellet's less)
     bool bottomless;        // Never loaded: it fires on as long as the trigger's held (the owner, of the shotgun: "the extra
                             // reloading just feels bad")
@@ -31,10 +34,10 @@ WeaponInfo Info(Weapon weapon)
     switch (weapon)
     {
         case Weapon.Rifle:
-            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.1, mag = 30, reload = 1.5, spread = 0.008, pierce = 3 };
+            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.1, mag = 30, reload = 1.5, spread = 0.008 };
         case Weapon.Shotgun:
             return WeaponInfo { name = "Pump Shotgun", model = "shotgun", damage = 24, head = 1.5, rate = 0.55, mag = 8, reload = 0.34, shells = true, bottomless = true, spread = 0.065,
-                                pellets = 11, range = 28, pierce = 4, proc = 0.3 };
+                                pellets = 11, range = 28, proc = 0.3 };
         case Weapon.Smg:
             // (its rounds set items off half again as often: the Engineer fights with what they carry)
             return WeaponInfo { name = "SMG", model = "smg", damage = 15, rate = 0.066, mag = 50, reload = 1.3, spread = 0.028, range = 45, proc = 1.5 };

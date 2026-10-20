@@ -216,11 +216,20 @@ view Flicker(mut Fx fx, mut Gore gore, Me me, Village village, query (Zombie zom
             var s = row.survivor;
             var embers = Has(s, Item.EmberRing);
             if (embers == 0 || s.life != Life.Standing || Math.Distance(s.feet, me.eye) > 40) continue;
-            var reach = 3 + 0.5 * embers;
-            for (var k = 0; k < 3; k++)
+            // A ring of flame at its edge, more of it for more (the owner, 2026-10-20: upgrades that look it), and embers
+            // drifting inside
+            var reach = EmberReach(embers);
+            for (var k = 0; k < 5 + 2 * embers; k++)
             {
                 var turn = fx.random.NextFloat(Math.TAU);
-                var at = s.feet + float3(Math.Cos(turn) * reach * fx.random.NextFloat(0.5, 1), 0.1, Math.Sin(turn) * reach * fx.random.NextFloat(0.5, 1));
+                var at = s.feet + float3(Math.Cos(turn) * reach, 0.1, Math.Sin(turn) * reach);
+                Glow(fx, Mote { at = at, velocity = float3(0, fx.random.NextFloat(0.8, 1.6), 0), life = fx.random.NextFloat(0.3, 0.5), size = fx.random.NextFloat(0.12, 0.2),
+                                grow = -0.25, color = float3(1.0, 0.45, 0.1), alpha = 1.6, cool = 1 });
+            }
+            for (var k = 0; k < 2; k++)
+            {
+                var turn = fx.random.NextFloat(Math.TAU);
+                var at = s.feet + float3(Math.Cos(turn) * reach * fx.random.NextFloat(0.3, 0.95), 0.1, Math.Sin(turn) * reach * fx.random.NextFloat(0.3, 0.95));
                 Glow(fx, Mote { at = at, velocity = float3(-Math.Sin(turn), 0.8, Math.Cos(turn)) * 0.8, life = 0.6, size = 0.06, color = float3(1.0, 0.4, 0.08), alpha = 2.5 });
             }
         }
@@ -231,6 +240,13 @@ view Flicker(mut Fx fx, mut Gore gore, Me me, Village village, query (Zombie zom
         if (m.kind == Shot.Pot) Glow(fx, Mote { at = m.at + float3(0, 0.12, 0), life = 0.15, size = 0.1, color = float3(1.0, 0.5, 0.15), alpha = 3 });
         if (m.kind == Shot.Grenade) Glow(fx, Mote { at = m.at, life = 0.08, size = 0.04, color = float3(1.0, 0.3, 0.1), alpha = 2 });
         if (m.kind == Shot.Shell) Glow(fx, Mote { at = m.at + float3(0, 0.6, 0), life = 0.2, size = 0.12, color = float3(1.0, 0.6, 0.3), alpha = 2 });
+        // A rocket: its motor's flame, and smoke behind
+        if (m.kind == Shot.Rocket)
+        {
+            var back = Math.Length(m.velocity) > 0.01 ? -Math.Normalize(m.velocity) : float3(0);
+            Glow(fx, Mote { at = m.at + back * 0.25, life = 0.06, size = 0.16, color = float3(1.0, 0.6, 0.2), alpha = 3 });
+            Murk(fx, Mote { at = m.at + back * 0.3, velocity = Scatter(fx, 0.3), life = 0.5, size = 0.12, grow = 0.5, color = float3(0.3, 0.28, 0.26), alpha = 0.5, drag = 2 });
+        }
         if (m.kind == Shot.Mine && m.age >= MINE_ARMS && Math.Frac(me.clock * 2) < 0.2)
             Glow(fx, Mote { at = m.at + float3(0, 0.1, 0), life = 0.05, size = 0.12, color = float3(1.0, 0.15, 0.1), alpha = 3 });
         // A Spitter's bile: a glowing gob, dripping
@@ -533,6 +549,22 @@ local event(Blast blast) Explode(mut Fx fx)
                             grow = 0.6, color = float3(0.16, 0.18, 0.05), alpha = 0.16, drag = 1.5 });
         return;
     }
+    if (blast.kind == Shot.Drum)
+    {
+        // A Thunder Drum's wave: a flash, a ring of pale light rushing out as far as it reaches, the dust thrown up behind it
+        fx.flashes.Add(Flash { at = blast.at + float3(0, 1, 0), color = float3(0.7, 0.8, 1.0) * 5, reach = blast.reach * 1.6, life = 0.25 });
+        var ground = On(blast.at.x, blast.at.z) + float3(0, 0.2, 0);
+        for (var i = 0; i < 72; i++)
+        {
+            var turn = i * Math.TAU / 72;
+            var way = float3(Math.Cos(turn), 0, Math.Sin(turn));
+            Glow(fx, Mote { at = ground + way * 0.6, velocity = way * blast.reach * 3.2, drag = 3.2, life = 0.4, size = 0.16, color = float3(0.75, 0.85, 1.0), alpha = 2.5 });
+            if (i % 3 == 0)
+                Murk(fx, Mote { at = ground + way * blast.reach * 0.8, velocity = way * 2 + float3(0, 1.2, 0), life = 0.8, size = 0.3, grow = 0.6, color = float3(0.17, 0.14, 0.11),
+                                alpha = 0.5, drag = 2 });
+        }
+        return;
+    }
     if (blast.kind == Shot.Quake)
     {
         // A slam: earth thrown up in a ring as wide as it reaches
@@ -634,6 +666,17 @@ local event(Traced traced) Tracer(mut Fx fx, Grip grip)
         case Trace.Drone:
             fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.06, width = 0.02, color = float3(1.0, 0.3, 0.2) });
             break;
+        case Trace.Bounce:
+            // A ricochet: a hot streak and a spark where it glanced off
+            fx.streaks.Add(Streak { from = traced.from, to = traced.to, life = 0.12, width = 0.045, color = float3(1.0, 0.95, 0.6) });
+            for (var i = 0; i < 4; i++)
+                Glow(fx, Mote { at = traced.from, velocity = Scatter(fx, 4), life = 0.18, size = 0.03, color = float3(1.0, 0.9, 0.5), alpha = 4, gravity = 6 });
+            break;
+        case Trace.Shard:
+            // A shard of bone: a pale streak, and bits of it
+            fx.streaks.Add(Streak { from = traced.from, to = traced.to, life = 0.14, width = 0.05, color = float3(0.9, 0.85, 0.7) });
+            Murk(fx, Mote { at = traced.to, velocity = Scatter(fx, 2) + float3(0, 1.5, 0), life = 0.5, size = 0.06, gravity = 9, color = float3(0.75, 0.7, 0.6), alpha = 1 });
+            break;
         case Trace.Pellet:
             fx.streaks.Add(Streak { from = from, to = traced.to, life = 0.06, width = 0.035, color = float3(1.0, 0.75, 0.45) });
             break;
@@ -706,15 +749,34 @@ local event(Unleashed used) Flourish(mut Fx fx)
     switch (used.skill)
     {
         case Skill.Leap:
+        {
             if (!used.landed) return;
-            for (var i = 0; i < 40; i++)
+            // Earth thrown up in a ring as wide as it knocks the dead down (wider a rank), and a flash
+            var wide = SlamReach(used.rank) / SLAM_REACH;
+            fx.flashes.Add(Flash { at = used.at + float3(0, 0.8, 0), color = float3(1.0, 0.7, 0.4) * 3 * wide, reach = SlamReach(used.rank) * 1.5, life = 0.2 });
+            for (var i = 0; i < 40 + 20 * (used.rank - 1); i++)
             {
-                var turn = i * Math.TAU / 40;
+                var turn = i * Math.TAU / (40 + 20 * (used.rank - 1));
                 var way = float3(Math.Cos(turn), 0, Math.Sin(turn));
-                Murk(fx, Mote { at = used.at + way * 0.4 + float3(0, 0.1, 0), velocity = way * fx.random.NextFloat(3, 6) + float3(0, fx.random.NextFloat(0.5, 2), 0), life = 1.1,
+                Murk(fx, Mote { at = used.at + way * 0.4 + float3(0, 0.1, 0), velocity = way * fx.random.NextFloat(3, 6) * wide + float3(0, fx.random.NextFloat(0.5, 2), 0), life = 1.1,
                                 size = fx.random.NextFloat(0.2, 0.4), grow = 0.6, color = float3(0.17, 0.14, 0.11), alpha = 0.7, drag = 2.5 });
             }
             return;
+        }
+        case Skill.Boot:
+        {
+            // Dust kicked out the way the boot went, wider a rank, all round at the third
+            var yaw = Math.Atan2(used.to.x - used.at.x, used.to.z - used.at.z);
+            var arc = used.rank >= 3 ? Math.PI : used.rank == 2 ? 1.4 : 0.9;
+            for (var i = 0; i < 14 * used.rank; i++)
+            {
+                var turn = yaw + fx.random.NextFloat(-arc, arc);
+                var way = float3(Math.Sin(turn), 0, Math.Cos(turn));
+                Murk(fx, Mote { at = used.at + way * 0.5 + float3(0, 0.3, 0), velocity = way * fx.random.NextFloat(3, 5) * (1 + 0.25 * (used.rank - 1)) + float3(0, 0.6, 0), life = 0.6,
+                                size = 0.22, grow = 0.6, color = float3(0.18, 0.15, 0.12), alpha = 0.6, drag = 3 });
+            }
+            return;
+        }
         case Skill.None:
         case Skill.Roll:
             for (var i = 0; i < 12; i++)
@@ -726,6 +788,19 @@ local event(Unleashed used) Flourish(mut Fx fx)
             {
                 Glow(fx, Mote { at = used.at + float3(0, 1, 0), velocity = Scatter(fx, 3), life = 0.4, size = 0.12, color = float3(0.7, 0.55, 1.0), alpha = 3, drag = 3 });
                 Glow(fx, Mote { at = used.to + float3(0, 1, 0), velocity = Scatter(fx, 3), life = 0.5, size = 0.12, color = float3(0.7, 0.55, 1.0), alpha = 3, drag = 3 });
+            }
+            // Ranked, a burst of it where it left, and (the third) where it landed: a ring rushing out
+            for (var end = 0; end < 2; end++)
+            {
+                if (used.rank < 2 + end) continue;
+                var at = end == 0 ? used.at : used.to;
+                fx.flashes.Add(Flash { at = at + float3(0, 1, 0), color = float3(0.7, 0.55, 1.0) * 5, reach = 6, life = 0.25 });
+                for (var i = 0; i < 36; i++)
+                {
+                    var turn = i * Math.TAU / 36;
+                    Glow(fx, Mote { at = at + float3(0, 0.3, 0), velocity = float3(Math.Sin(turn), 0, Math.Cos(turn)) * BLINK_BLAST * 3, drag = 3, life = 0.4, size = 0.13,
+                                    color = float3(0.75, 0.6, 1.0), alpha = 2.5 });
+                }
             }
             return;
     }
@@ -767,4 +842,58 @@ local event(Howled howled) ShowHowl(mut Fx fx)
         var turn = i * Math.TAU / 64;
         Glow(fx, Mote { at = ground, velocity = float3(Math.Sin(turn), 0, Math.Cos(turn)) * howled.reach * 2.4, drag = 2.4, life = 0.6, size = 0.14, color = hue, alpha = 2.5 });
     }
+}
+
+// An item taken, or a skill: a column of light in its colour rising round whoever took it, a ring of it rushing out over
+// the ground, a flash; the rarer, the more (the owner, 2026-10-20: "make them feel powerful ... visually too").
+local event(Picked picked) Anoint(mut Fx fx)
+{
+    if (!fx.made) return;
+    var rarity = RarityOf(picked.item);
+    var tint = RarityColor(rarity);
+    var hue = float3(tint.r, tint.g, tint.b);
+    var strong = rarity == Rarity.Rare ? 2.0 : rarity == Rarity.Common ? 0.8 : 1.3;
+    fx.flashes.Add(Flash { at = picked.at + float3(0, 1.2, 0), color = hue * 5 * strong, reach = 7, life = 0.5 });
+    for (var i = 0; i < int(50 * strong); i++)
+    {
+        var turn = fx.random.NextFloat(Math.TAU);
+        var r = fx.random.NextFloat(0.2, 0.9);
+        Glow(fx, Mote { at = picked.at + float3(Math.Sin(turn) * r, fx.random.NextFloat(0, 0.6), Math.Cos(turn) * r), velocity = float3(0, fx.random.NextFloat(3, 8), 0),
+                        life = fx.random.NextFloat(0.5, 1.0), size = fx.random.NextFloat(0.06, 0.14), grow = -0.1, color = hue, alpha = 3, drag = 1 });
+    }
+    for (var i = 0; i < 40; i++)
+    {
+        var turn = i * Math.TAU / 40;
+        Glow(fx, Mote { at = picked.at + float3(0, 0.12, 0), velocity = float3(Math.Sin(turn), 0, Math.Cos(turn)) * 7, drag = 3, life = 0.5, size = 0.1, color = hue, alpha = 2.5 });
+    }
+}
+
+// The saw blades and the drones, seen in the dark: a gleam on each blade and sparks flung off its edge behind it, a red
+// light under each drone.
+[Stage(Layers.Gather, 3)]
+view Gleams(Survivor survivor, mut Fx fx, Me me)
+{
+    if (!fx.made || !survivor.ready || survivor.life != Life.Standing || Math.Distance(survivor.feet, me.eye) > 45) return;
+    var saws = Has(survivor, Item.SawBlades);
+    if (saws > 0)
+    {
+        var shown = Math.Min(saws, SAWS_SHOWN);
+        for (var k = 0; k < shown; k++)
+        {
+            var at = SawAt(survivor, k, shown);
+            Glow(fx, Mote { at = at + float3(0, 0.08, 0), life = 0.05, size = 0.34, color = float3(0.85, 0.9, 1.0), alpha = 0.6 });
+            // The blade's path just behind it, a fading arc
+            for (var j = 1; j <= 3; j++)
+            {
+                var back = survivor.sawTurn - j * 0.12 + k * Math.TAU / shown;
+                var trail = survivor.feet + float3(Math.Sin(back) * SAW_REACH, 0.9, Math.Cos(back) * SAW_REACH);
+                Glow(fx, Mote { at = trail, life = 0.05, size = 0.2, color = float3(0.7, 0.75, 0.9), alpha = 0.5 - 0.12 * j });
+            }
+            if (fx.random.NextFloat() < Math.Min(Frame.dt, 0.05) * 20)
+                Glow(fx, Mote { at = at, velocity = Scatter(fx, 4) + float3(0, 1.5, 0), life = 0.25, size = 0.04, color = float3(1.0, 0.8, 0.45), alpha = 4, gravity = 8 });
+        }
+    }
+    var drones = Has(survivor, Item.GunDrone);
+    for (var k = 0; k < Math.Min(drones, DRONES_SHOWN); k++)
+        Glow(fx, Mote { at = DroneAt(survivor, k, drones) - float3(0, 0.08, 0), life = 0.05, size = 0.22, color = float3(1.0, 0.3, 0.2), alpha = 1.4 });
 }
