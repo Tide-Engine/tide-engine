@@ -1306,34 +1306,11 @@ static __attribute__((noinline)) void plain_altered(tide_draw_list *d, const tid
     push(d, kind, a, b, color);
 }
 
-void tide_draw_circle(tide_draw_list *d, const tide_float2 center, const float radius, const tide_color color)
+// A plain shape where tide_draw_plain_kind's inline stores aren't all there is to it
+void tide_draw_plain(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b, const tide_color color)
 {
-    if (d->altered) plain_altered(d, TIDE_DRAW_CIRCLE, center, tide_f2(radius, 0.0f), color);
-    else push(d, TIDE_DRAW_CIRCLE, center, tide_f2(radius, 0.0f), color);
-}
-
-void tide_draw_wire_circle(tide_draw_list *d, const tide_float2 center, const float radius, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_WIRE_CIRCLE, center, tide_f2(radius, 0.0f), color);
-    else push(d, TIDE_DRAW_WIRE_CIRCLE, center, tide_f2(radius, 0.0f), color);
-}
-
-void tide_draw_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_RECT, center, size, color);
-    else push(d, TIDE_DRAW_RECT, center, size, color);
-}
-
-void tide_draw_wire_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_WIRE_RECT, center, size, color);
-    else push(d, TIDE_DRAW_WIRE_RECT, center, size, color);
-}
-
-void tide_draw_line(tide_draw_list *d, const tide_float2 from, const tide_float2 to, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_LINE, from, to, color);
-    else push(d, TIDE_DRAW_LINE, from, to, color);
+    if (d->altered) plain_altered(d, kind, a, b, color);
+    else push(d, kind, a, b, color);
 }
 
 // ---------------------------------------------------------------------------
@@ -1515,8 +1492,9 @@ void tide_draw_rect_rotated(tide_draw_list *d, const tide_float2 center, const t
     solid(d, center, size, 0.0f, rotation, TIDE_SHAPE_BOX, color);
 }
 
-void tide_draw_round_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
-                          const tide_color color)
+// A round rect where tide_draw_round_rect's inline stores aren't all there is to it
+void tide_draw_round_rect_placed(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
+                                 const tide_color color)
 {
     solid(d, center, size, radius, 0.0f, TIDE_SHAPE_BOX, color);
 }
@@ -1980,20 +1958,16 @@ void tide_draw_triangles(tide_draw_list *d, const uint32_t base, const uint32_t 
     tide_draw_triangles_wrapped(d, base, indices, count, texture, filter, TIDE_WRAP_CLAMP);
 }
 
-void tide_draw_mesh_wrapped(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
-                            const uint32_t *indices, const uint32_t index_count, const tide_texture *texture,
-                            const tide_filter filter, const tide_wrap wrap)
+// A mesh where tide_draw_mesh_wrapped's inline stores aren't all there is to it
+void tide_draw_mesh_placed(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
+                           const uint32_t *indices, const uint32_t index_count, const tide_texture *texture,
+                           const tide_filter filter, const tide_wrap wrap)
 {
     if (vertex_count == 0 || index_count < 3u) return;
     tide_draw_triangles_wrapped(d, tide_draw_vertices(d, vertices, vertex_count), indices, index_count, texture, filter,
                                 wrap);
 }
 
-void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count, const uint32_t *indices,
-                    const uint32_t index_count, const tide_texture *texture, const tide_filter filter)
-{
-    tide_draw_mesh_wrapped(d, vertices, vertex_count, indices, index_count, texture, filter, TIDE_WRAP_CLAMP);
-}
 
 // ---------------------------------------------------------------------------
 // 3D
