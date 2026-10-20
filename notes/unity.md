@@ -199,12 +199,38 @@ Spike step 2 (2026-10-20), on the same branch:
   of a few hundred bodies) is tens of KB, a few µs; even a whole 4 MB world would
   be about 1% of a 60 Hz frame.
 
-Still open for phase 0: a native Tide player in the same room (headless native
-runs fake their clock, so it needs a windowed or real-clock run), mobile
-browsers, the sumo-sized copy, and frames driven by Unity rather than two
-animation-frame loops (Tide's frame can trail Unity's by one). Unity drives
-Tide's frame only while the page is visible; hidden, `tide.js`'s heartbeat
-keeps driving it, so a throttled Unity never slows the match.
+Unity drives Tide's frame only while the page is visible; hidden, `tide.js`'s
+heartbeat keeps driving it, so a throttled Unity never slows the match.
+
+Spike step 3 (2026-10-20): a native player joined the room a Unity WebGL page
+hosted. `game/spike_native.c` is a windowless HOST program on the real clock: a
+session over the generated `tide_game_api`, joined with
+`tide_platform_room_join` (desktop WebRTC through the relay). Two Unity pages,
+a plain Tide page and the native player played 20 s in one match, all four
+bodies in every world, resyncs 0 everywhere, native included (verified 582,
+predicted 584 at its end).
+
+Still open for phase 0: mobile browsers (needs devices).
+
+### IL2CPP and Tide's C
+
+Proposed by the owner (2026-10-20): IL2CPP player builds could compile Tide's
+generated C and runtime with the player, rather than linking a library built
+by tide. Checked on WebGL (Unity 6000.6.0f1, its Emscripten clang):
+`PlayerSettings.SetAdditionalIl2CppArgs("--compiler-flags=...")` reaches C
+sources in `Assets/` (a probe with `#error` unless a define was given failed
+without the argument and built with it). Flags are global: they apply to all
+IL2CPP C++ too. Unity's own flags for a plugin's C include `-O3`,
+`-fno-strict-overflow`, `-msimd128` and no `-ffp-contract`, so Tide's
+`-ffp-contract=off -fno-fast-math` must be added; generated C can also carry
+`#pragma clang fp contract(off)` so a file doesn't depend on build flags.
+
+Open: Windows and Xbox IL2CPP compile with MSVC, which Tide's clang-only C may
+not build; results under each platform's compiler must match the pinned
+cross-platform hashes (the per-tick hash would show a mismatch as a desync);
+FP environment (denormals) on Unity's threads. Alternative: a static library
+tide builds with its own clang per platform, linked with `__Internal`, with
+sources only where tide can't build (console SDKs).
 
 ## Tide drawing in Unity
 
