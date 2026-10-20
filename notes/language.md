@@ -1,5 +1,52 @@
 # Language features, as tidec builds them
 
+## Double math and matrix completion (2026-10-20)
+
+The owner corrected the foundation's narrow scope: double trig and matrices
+belong with double support. All existing component-wise Math functions now
+accept doubles and double vectors, including Sin/Cos/Tan/Asin/Acos/Atan/Atan2,
+Exp/Exp2/Log/Log2/Log10/Pow. double.PI/TAU/E provide binary64 constants without
+changing existing Math constants. No old float arithmetic or pins change.
+
+Double2x2/3x3/4x4 kinds are appended, eight-byte aligned, with columns,
+row/column construction, identity, negation, addition/subtraction, scalar scaling,
+Mul/Transpose/Inverse/Determinant, Transform/Rotate and double4x4 builders.
+Matching float matrices widen implicitly and explicit constructors narrow per
+component. Mixed matrix addition/subtraction retains double precision. TRS
+accepts a double3x3 or the existing quaternion; quaternion construction widens
+components before matrix arithmetic but cannot restore absent input precision.
+The compiler walks double matrix columns for input/command repair and raw/delta
+bits, interpolation and inspection. Other storage uses the existing flat value
+paths. Layout metadata keeps matrices PLAIN as before: identical matrix types
+survive reload; a precision/type change retains the new default.
+
+engine/src/math64 vendors the portable non-FMA binary64 subset from musl 1.1.18
+(Sun fdlibm/FreeBSD), separate from unchanged in-house float functions. Its source
+and license notices, namespace/word-access adaptation and checksum are recorded
+in that directory's README. Correct rounding for every input is not promised.
+Tests compare 398 golden values generated independently with mpmath 1.3.0 at
+400 decimal digits, within one binary64 ulp, and cover special values, huge-angle
+reduction, subnormals and large-position matrix inverses. A new exact-result pin
+is A8DEFF186244546C; the existing 8D8432D419DF4D83 pin is unchanged. E2E exercises
+scalar/vector math, matrix builders/operators/conversions, command columns,
+raw/delta input, repair, snapshots, recipient state and interpolation. Compiler
+diagnostics, LSP column/constructor/math signatures and shared grammars cover
+the language/tooling boundaries. Double noise, double quaternions and automatic
+camera-relative rendering remain outside this work.
+
+Validation: full native debug passes 2,467/2,467, including 34 GPU tests with
+Vulkan validation/OpenGL; full web debug passes 2,376/2,376 (2,365 ordinary/WebGL
+and 11 WebGPU). Both debug builds use clang 23.1.2; Node 24.21.0 and Chrome
+155.0.8059.85 run web coverage. The eight focused double runtime tests and four
+E2E cases pass native/WASI debug and optimized builds, with both bit pins
+agreeing (native optimized also uses clang 18.1.8). The final optimized E2E
+rerun includes mixed-precision rotation construction and default-overload cases.
+All 398 reference cases pass within one binary64 ulp; regenerating the checked
+reference header is byte-identical. Full LSP tests, the production docs build,
+all 268 shared grammar cases and the staged diff check pass. No old pin changed.
+Linux, macOS, Android, MinGW and sanitizer coverage were not run on this Windows
+machine; CI was not dispatched.
+
 ## Double scalar and vector foundation (2026-10-20)
 
 The owner approved double, double2, double3 and double4 as the first large-world

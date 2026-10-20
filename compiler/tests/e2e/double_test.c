@@ -65,6 +65,8 @@ TIDE_TEST(double_snapshots_packing_projection_and_interpolation)
     const Position64 current = tide_get_Position64(&world, ITEM);
     const Position64 old = tide_get_Position64(&previous, ITEM);
     TIDE_CHECK(local.Display.position.x == old.position.x + .5 * (current.position.x - old.position.x));
+    TIDE_CHECK(local.Display.matrix.c0.x == old.matrix.c0.x + .5 * (current.matrix.c0.x - old.matrix.c0.x));
+    TIDE_CHECK(tide_get_Position64(&restored, ITEM).transform.c3.x == 1000000000.125);
     TIDE_CHECK(tide_world_hash(&world) == after && tide_world_hash(&previous) == before);
     tide_local_free(&local);
     tide_world_free(&previous);
@@ -75,6 +77,7 @@ TIDE_TEST(double_snapshots_packing_projection_and_interpolation)
 TIDE_TEST(double_commands_keep_scalar_and_vector_payload_bits)
 {
     tide_world_init(&world, 1.0f);
+    tide_world_tick(&world);
     tide_local_init(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(0), 0, false, false, "");
     local.Display.submit = true;
@@ -87,7 +90,7 @@ TIDE_TEST(double_commands_keep_scalar_and_vector_payload_bits)
     TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
     tide_world_tick(&world);
     TIDE_CHECK(world.Results.commandValue == 1000000000.125);
-    TIDE_CHECK(world.Results.destination.x == 1000000000.125 && world.Results.destination.y == .25);
+    TIDE_CHECK(world.Results.destination.x == 1000000000.25 && world.Results.destination.y == .5);
     tide_local_free(&local);
     tide_world_free(&world);
 }
@@ -104,22 +107,28 @@ TIDE_TEST(double_inputs_pack_exactly_and_repair_nonfinite_values)
         in.amount = tide_d_from_bits(patterns[i]);
         in.direction = tide_d3(in.amount, -in.amount, 3.25);
         in.samples.at[0] = in.amount;
+        in.matrix.c0.x = in.amount;
+        in.matrix.c1.y = -in.amount;
         uint32_t size = tide_game_api.write_input(&in, bytes, sizeof bytes);
         TIDE_REQUIRE(size && tide_game_api.read_input(bytes, size, &out));
         TIDE_CHECK(tide_d_bits(out.amount) == patterns[i]);
         TIDE_CHECK(memcmp(&in.direction, &out.direction, sizeof in.direction) == 0);
+        TIDE_CHECK(memcmp(&in.matrix, &out.matrix, sizeof in.matrix) == 0);
         size = tide_game_api.write_input_delta(&in, &base, bytes, sizeof bytes);
         TIDE_REQUIRE(size && tide_game_api.read_input_delta(bytes, size, &base, &out));
         TIDE_CHECK(tide_d_bits(out.amount) == patterns[i]);
         TIDE_CHECK(tide_d_bits(out.samples.at[0]) == patterns[i]);
+        TIDE_CHECK(memcmp(&in.matrix, &out.matrix, sizeof in.matrix) == 0);
         base = in;
     }
     tide_world_init(&world, 1.0f);
     Controls in = {0};
     in.amount = tide_d_from_bits(UINT64_C(0x7FF8123456789ABC));
+    in.matrix.c0.x = in.amount;
     in.direction = tide_d3(1e300, -1e300, tide_d_from_bits(UINT64_C(0x7FF0000000000000)));
     tide_world_set_input(&world, tide_player_from_index(0), in);
     tide_world_tick(&world);
     TIDE_CHECK(world.Results.input == 10.125);
+    TIDE_CHECK(world.Results.matrixInput == 1.0);
     tide_world_free(&world);
 }

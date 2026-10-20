@@ -1604,7 +1604,8 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
     switch (t.kind) {
     case TY_ERROR: return false;
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_DOUBLE: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
-    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
+    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
@@ -1681,7 +1682,8 @@ static bool grid_cell_ok(const type t, const loc at)
     switch (t.kind) {
     case TY_ERROR: return false;
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_DOUBLE: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
-    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
+    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
     case TY_STRUCT:
@@ -2081,7 +2083,8 @@ static bool array_element_ok(const type t, const loc at)
     switch (t.kind) {
     case TY_ERROR: return false;
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_DOUBLE: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
-    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
+    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
     case TY_STRUCT:
@@ -3026,13 +3029,17 @@ static type check_construct(checker *c, expr *e, const type target)
 
     const int n = matrix_dim(target);
     if (n > 0) {
-        const type column = vector_type(true, n);
+        const type column = matrix_column(target);
+        if (argc == 1 && matrix_dim(first) == n) {
+            e->ctor = CTOR_CONVERT;
+            return target;
+        }
         bool columns = argc == n;
         bool scalars = argc == n * n;
         for (int i = 0; i < argc; i++) {
             const type t = e->args.items[i]->type;
             if (!type_assignable(column, t)) columns = false;
-            if (!is_scalar_number(t)) scalars = false;
+            if (!type_assignable(type_scalar(column), t)) scalars = false;
         }
         if (columns) {
             e->ctor = CTOR_MAT_COLUMNS;
@@ -3046,13 +3053,16 @@ static type check_construct(checker *c, expr *e, const type target)
             e->ctor = CTOR_MAT_FROM_QUAT;
             return target;
         }
-        if (n == 4 && argc == 2 && first.kind == TY_FLOAT3X3 && type_assignable((type){TY_FLOAT3, NULL}, e->args.items[1]->type)) {
+        if (n == 4 && argc == 2 && type_assignable(type_is_double_based(target) ? double_matrix_type(3) : matrix_type(3), first)
+            && type_assignable(type_is_double_based(target) ? double_vector_type(3) : (type){TY_FLOAT3, NULL}, e->args.items[1]->type)) {
             e->ctor = CTOR_MAT_FROM_ROT_T;
             return target;
         }
-        diag_error(e->at, "%s takes %d float%d columns or %d numbers row by row", name, n, n, n * n);
-        if (n == 3) diag_note("float3x3(quaternion) builds a rotation matrix");
-        if (n == 4) diag_note("float4x4(float3x3 rotation, float3 translation) builds a transform");
+        diag_error(e->at, "%s takes %d %s columns or %d numbers row by row", name, n, type_name(column), n * n);
+        if (n == 3) diag_note("%s(quaternion) builds a rotation matrix", name);
+        if (n == 4) diag_note("%s(%s rotation, %s translation) builds a transform", name,
+                              type_name(type_is_double_based(target) ? double_matrix_type(3) : matrix_type(3)),
+                              type_name(type_is_double_based(target) ? double_vector_type(3) : vector_type(true, 3)));
         return T_ERR;
     }
 
@@ -7793,7 +7803,7 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
 
     // Double arithmetic widens ordinary numeric operands before any operation.
     // Comparisons remain scalar, as they are for float/int vectors.
-    if (type_is_double_based(l) || type_is_double_based(r)) {
+    if ((type_is_double_based(l) || type_is_double_based(r)) && !matrix_dim(l) && !matrix_dim(r)) {
         const int dl = l.kind == TY_LONG ? 1 : type_dim(l);
         const int dr = r.kind == TY_LONG ? 1 : type_dim(r);
         const bool numbers = (type_is_numeric(l) || l.kind == TY_LONG) && (type_is_numeric(r) || r.kind == TY_LONG);
@@ -7807,7 +7817,7 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
 
     // Longs: with ints and longs, which widen to long. Never with floats by
     // themselves: float(x) and long(x) say which way the value goes.
-    if (l.kind == TY_LONG || r.kind == TY_LONG) {
+    if ((l.kind == TY_LONG || r.kind == TY_LONG) && !matrix_dim(l) && !matrix_dim(r)) {
         const type other = l.kind == TY_LONG ? r : l;
         const bool integers = type_is_integer(l) && type_is_integer(r);
         switch (op) {
@@ -7864,9 +7874,12 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
         const int ml = matrix_dim(l);
         const int mr = matrix_dim(r);
         if (ml || mr) {
-            if ((op == T_PLUS || op == T_MINUS) && l.kind == r.kind) return l;
-            if ((op == T_STAR || op == T_SLASH) && ml && is_scalar_number(r)) return l;
-            if (op == T_STAR && mr && is_scalar_number(l)) return r;
+            if (op == T_PLUS || op == T_MINUS) {
+                if (l.kind == r.kind || type_assignable(l, r)) return l;
+                if (type_assignable(r, l)) return r;
+            }
+            if ((op == T_STAR || op == T_SLASH) && ml && type_assignable(type_scalar(matrix_column(l)), r)) return l;
+            if (op == T_STAR && mr && type_assignable(type_scalar(matrix_column(r)), l)) return r;
             if (op == T_STAR) {
                 diag_error(at, "operator '*' doesn't multiply matrices");
                 diag_note("use Math.Mul(a, b) for a matrix product, or with a vector");
@@ -8461,7 +8474,7 @@ static type check_member(checker *c, expr *e)
     const int n = matrix_dim(obj);
     if (n > 0) {
         if (e->member.len == 2 && e->member.ptr[0] == 'c' && e->member.ptr[1] >= '0' && e->member.ptr[1] < '0' + n) {
-            return vector_type(true, n);
+            return matrix_column(obj);
         }
         diag_error(e->at, "%s has columns c0 to c%d, not '" STR_FMT "'", type_name(obj), n - 1, STR_ARG(e->member));
         return T_ERR;

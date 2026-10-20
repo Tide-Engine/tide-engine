@@ -1,5 +1,19 @@
 # No Tide code can corrupt memory
 
+## Double transcendental and matrix values (2026-10-20)
+
+The private binary64 adapter uses memcpy-based word access, requires binary64
+without excess precision and namespaces all public/internal kernels. Large trig
+argument reduction uses the bounded upstream tables and arrays for finite
+binary64 inputs; public entry points handle nonfinite values before reduction.
+The pow scale adjustment forms negative exponent-shift bits unsigned, avoiding
+the upstream negative signed left shift. A sign comparison is made explicitly
+unsigned. Source notices and provenance are retained. Matrix narrowing reuses
+the checked scalar double-to-float conversion; packing/repair/interpolation walk
+typed columns. No new allocation or data-dependent matrix index is introduced.
+Conformance, special-value, raw-bit and generated-code coverage is recorded in
+notes/language.md.
+
 ## Double values and exact decimal conversion (2026-10-20)
 
 Double-to-int/long checks NaN and exclusive upper/inclusive lower limits before

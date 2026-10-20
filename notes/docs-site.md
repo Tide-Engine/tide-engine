@@ -1,5 +1,13 @@
 # The docs site
 
+## Double math and matrix completion (2026-10-20)
+
+Basics, Math and the spec now describe complete existing component-wise double
+math, binary64 constants, double matrix types/builders/conversions, CPU/GPU
+boundaries and accuracy limits. Prior deferrals of trig/matrices are superseded;
+double noise, double quaternions and automatic camera-relative rendering remain
+separate. Production/docs grammar validation: notes/language.md.
+
 ## Double numeric documentation (2026-10-20)
 
 Basics, Math, Text and lists, JSON, Input, Determinism and the spec document the new

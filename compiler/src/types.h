@@ -44,7 +44,7 @@ void suggest_builtin_types(suggestion *s);
 // Number of components: 1 for byte, int, float and double, 2-4 for vectors, 0 for anything else.
 int type_dim(type t);
 
-// Binary32 and binary64 floating-point families, and their scalar type.
+// Binary32 scalars/vectors and binary64 scalars/vectors/matrices.
 bool type_is_float_based(type t);
 bool type_is_double_based(type t);
 // The scalar of a numeric type: int, float or double (byte retains byte).
@@ -61,7 +61,7 @@ bool type_is_integer(type t);
 // An immutable asset glob's resource references, borrowed by synchronous helpers.
 bool type_is_asset_collection(type t);
 
-// 2, 3 or 4 for float2x2, float3x3, float4x4; 0 otherwise.
+// 2, 3 or 4 for float/double square matrices; 0 otherwise.
 int matrix_dim(type t);
 
 // A type's bytes and alignment in generated C. Generated types have no padding
@@ -104,6 +104,8 @@ bool type_blends(type t);
 type vector_type(bool is_float, int dim);
 type double_vector_type(int dim);
 type matrix_type(int dim);
+type double_matrix_type(int dim);
+type matrix_column(type t);
 
 // Can a value of type `from` be stored where `to` is expected? Exact matches,
 // plus byte/char -> int/long/float/double, int -> long/float/double, long -> double,

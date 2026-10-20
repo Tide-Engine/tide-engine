@@ -14,6 +14,7 @@
 // map to tide/draw.h, and GUI and GUILayout to tide/gui.h.
 
 static const type T_F = {TY_FLOAT, NULL};
+static const type T_D = {TY_DOUBLE, NULL};
 static const type T_WHOLE = {TY_INT, NULL};
 static const type T_F2 = {TY_FLOAT2, NULL};
 static const type T_F3 = {TY_FLOAT3, NULL};
@@ -206,15 +207,14 @@ static const struct {
     const char *name;
     int argc;
     bool ints; // Works on ints too; otherwise ints convert to float.
-    bool transcendental; // Binary64 versions are a separate deterministic-math increment.
 } componentwise[] = {
-    {"Abs", 1, true, false}, {"Sign", 1, true, false}, {"Min", 2, true, false}, {"Max", 2, true, false}, {"Clamp", 3, true, false},
-    {"Floor", 1, false, false}, {"Ceil", 1, false, false}, {"Round", 1, false, false}, {"Trunc", 1, false, false}, {"Frac", 1, false, false},
-    {"Sqrt", 1, false, false}, {"Rsqrt", 1, false, false}, {"Saturate", 1, false, false}, {"Radians", 1, false, false}, {"Degrees", 1, false, false},
-    {"Sin", 1, false, true}, {"Cos", 1, false, true}, {"Tan", 1, false, true}, {"Asin", 1, false, true}, {"Acos", 1, false, true},
-    {"Atan", 1, false, true}, {"Atan2", 2, false, true}, {"Exp", 1, false, true}, {"Exp2", 1, false, true}, {"Log", 1, false, true},
-    {"Log2", 1, false, true}, {"Log10", 1, false, true}, {"Pow", 2, false, true}, {"Step", 2, false, false},
-    {"Lerp", 3, false, false}, {"Unlerp", 3, false, false}, {"SmoothStep", 3, false, false},
+    {"Abs", 1, true}, {"Sign", 1, true}, {"Min", 2, true}, {"Max", 2, true}, {"Clamp", 3, true},
+    {"Floor", 1, false}, {"Ceil", 1, false}, {"Round", 1, false}, {"Trunc", 1, false}, {"Frac", 1, false},
+    {"Sqrt", 1, false}, {"Rsqrt", 1, false}, {"Saturate", 1, false}, {"Radians", 1, false}, {"Degrees", 1, false},
+    {"Sin", 1, false}, {"Cos", 1, false}, {"Tan", 1, false}, {"Asin", 1, false}, {"Acos", 1, false},
+    {"Atan", 1, false}, {"Atan2", 2, false}, {"Exp", 1, false}, {"Exp2", 1, false}, {"Log", 1, false},
+    {"Log2", 1, false}, {"Log10", 1, false}, {"Pow", 2, false}, {"Step", 2, false},
+    {"Lerp", 3, false}, {"Unlerp", 3, false}, {"SmoothStep", 3, false},
 };
 
 #define COMPONENTWISE_COUNT (sizeof componentwise / sizeof componentwise[0])
@@ -565,6 +565,21 @@ static void build_signatures(void)
     add("Math", "Transform", T_F3, "tide_transform_f4x4", 2, T_F4X4, T_F3, T_NONE);
     add("Math", "Rotate", T_F3, "tide_rotate_f4x4", 2, T_F4X4, T_F3, T_NONE);
 
+    // Double matrices
+    for (int n = 2; n <= 4; n++) {
+        const type m = double_matrix_type(n);
+        const type v = double_vector_type(n);
+        char mul_vec[64];
+        snprintf(mul_vec, sizeof mul_vec, "tide_mul_%s_%s", type_suffix(m), type_suffix(v));
+        add("Math", "Mul", m, c_function("mul", m), 2, m, m, T_NONE);
+        add("Math", "Mul", v, mul_vec, 2, m, v, T_NONE);
+        add("Math", "Transpose", m, c_function("transpose", m), 1, m, T_NONE, T_NONE);
+        add("Math", "Inverse", m, c_function("inverse", m), 1, m, T_NONE, T_NONE);
+        add("Math", "Determinant", T_D, c_function("determinant", m), 1, m, T_NONE, T_NONE);
+    }
+    add("Math", "Transform", double_vector_type(3), "tide_transform_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
+    add("Math", "Rotate", double_vector_type(3), "tide_rotate_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
+
     // Ways to build quaternions and matrices
     describe(add("quaternion", "AxisAngle", T_Q, "tide_axisangle_q", 2, T_F3, T_F, T_NONE),
              "axis, angle", "A rotation of `angle` radians around `axis`.");
@@ -596,6 +611,28 @@ static void build_signatures(void)
     ortho->params[3] = T_F;
     describe(ortho, "width, height, near, far",
              "An orthographic projection, for `Draw.Camera(transform, projection)`: a box `width` by `height` "
+             "around the camera's axis, from `near` to `far`, with no perspective.");
+
+    describe(add("double4x4", "TRS", double_matrix_type(4), "tide_trsq_d4x4", 3, double_vector_type(3), T_Q, double_vector_type(3)),
+             "translation, rotation, scale", "Scale, then rotate with a quaternion widened before matrix arithmetic, then translate.");
+    describe(add("double4x4", "TRS", double_matrix_type(4), "tide_trs_d4x4", 3, double_vector_type(3), double_matrix_type(3), double_vector_type(3)),
+             "translation, rotation, scale", "Scale, then rotate with a double3x3, then translate.");
+    describe(add("double4x4", "Translate", double_matrix_type(4), "tide_translate_d4x4", 1, double_vector_type(3), T_NONE, T_NONE),
+             "translation", "A translation matrix.");
+    describe(add("double4x4", "Scale", double_matrix_type(4), "tide_scaling_d4x4", 1, double_vector_type(3), T_NONE, T_NONE),
+             "scale", "A scale matrix, without rotation or translation.");
+    signature *double_perspective = add("double4x4", "PerspectiveFov", double_matrix_type(4), "tide_perspectivefov_d4x4", 3, T_D, T_D, T_D);
+    double_perspective->argc = 4;
+    double_perspective->params[3] = T_D;
+    describe(double_perspective, "verticalFov, aspect, near, far",
+             "A binary64 perspective projection: `verticalFov` in radians, and "
+             "`aspect` the screen's width over its height. It takes what a camera sees, looking down -z as "
+             "OpenGL's and Unity's views do, to the screen, from `near` to `far`.");
+    signature *double_ortho = add("double4x4", "Ortho", double_matrix_type(4), "tide_ortho_d4x4", 3, T_D, T_D, T_D);
+    double_ortho->argc = 4;
+    double_ortho->params[3] = T_D;
+    describe(double_ortho, "width, height, near, far",
+             "A binary64 orthographic projection: a box `width` by `height` "
              "around the camera's axis, from `near` to `far`, with no perspective.");
 
     // Sound, in local code: tide/audio.h. Codegen passes the frame's audio list first, and a Clip through
@@ -1187,7 +1224,13 @@ static const struct {
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},
     {"Math", "TAU", TY_FLOAT, "TIDE_TAU_F"},
     {"Math", "E", TY_FLOAT, "TIDE_E_F"},
+    {"double", "PI", TY_DOUBLE, "0x1.921fb54442d18p+1"},
+    {"double", "TAU", TY_DOUBLE, "0x1.921fb54442d18p+2"},
+    {"double", "E", TY_DOUBLE, "0x1.5bf0a8b145769p+1"},
     {"quaternion", "identity", TY_QUATERNION, "tide_identity_q()"},
+    {"double2x2", "identity", TY_DOUBLE2X2, "tide_identity_d2x2()"},
+    {"double3x3", "identity", TY_DOUBLE3X3, "tide_identity_d3x3()"},
+    {"double4x4", "identity", TY_DOUBLE4X4, "tide_identity_d4x4()"},
     {"float2x2", "identity", TY_FLOAT2X2, "tide_identity_f2x2()"},
     {"float3x3", "identity", TY_FLOAT3X3, "tide_identity_f3x3()"},
     {"float4x4", "identity", TY_FLOAT4X4, "tide_identity_f4x4()"},
@@ -1579,11 +1622,6 @@ type resolve_builtin_call(const str owner, expr *e)
                 diag_error(e->at, "Math.%s can't take (%s)", componentwise[i].name, args);
                 diag_note("it takes numbers, vectors and colors; vectors in one call must be the same size, and a color "
                           "goes with colors and numbers");
-                return (type){TY_ERROR, NULL};
-            }
-            if (type_is_double_based(target) && componentwise[i].transcendental) {
-                diag_error(e->at, "Math.%s has no double version", componentwise[i].name);
-                diag_note("convert explicitly to float for this function; double arithmetic, square roots and vector geometry retain 64-bit precision");
                 return (type){TY_ERROR, NULL};
             }
             for (int a = 0; a < e->args.count; a++) vec_push(e->arg_want, target);
