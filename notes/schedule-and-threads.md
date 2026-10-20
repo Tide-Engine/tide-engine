@@ -1,5 +1,30 @@
 # The schedule and the tick on threads
 
+Picking tasks on threads (2026-10-20), in `engine/src/jobs.c` alone, the
+schedule and every result as they were:
+- A thread takes a system's tasks a few at a time where each is little work
+  (`BATCH_WORK`, 250,000 of tidec's units, as `PIECE_WORK`), as many as come to
+  that, never so many that the system has fewer takings than the tick has
+  threads (`system_state.batch`, `.batches`). Each task still runs with its own
+  queue, temporary handles and settling, one after another on that thread, so
+  what one thread would have recorded is unchanged; `finish_tasks` counts the
+  takings' tasks done at once. Threads asked for a system's work count
+  takings, not tasks.
+- Looking for work starts at `tick_run.front`, the first system that may have
+  something left to give out, which a thread moves past systems whose tasks
+  and settling are all given out, rather than at system 0 every time.
+- Each system's state is on a cache line of its own (`_Alignas(64)`, from an
+  aligned start in its memory), so threads counting one system's tasks don't
+  take the line from those looking at the next.
+`versus_systems` (64 systems, 16,384 entities of each kind, tasks of 2,048 rows
+of a cheap loop) went from 0.20 to 0.175 ms a tick on 2 threads and 0.14 to
+0.12 on 4 (alternating runs); past 6 threads this machine's runs vary too much
+to tell (threads on its second CCD). `jobs_cheap_tasks_are_taken_a_few_at_a_time`
+(`tests/test_jobs.c`) checks that 64 cheap tasks on eight threads each run
+once by their own number and ask for 7 threads, not 63; `platform/tests/jobs`
+and the e2e row, world-set and schedule fixtures check results against one
+thread. Measurements: notes/benchmarks.md.
+
 Query local fields (2026-10-19): attached local access and mutable-query effects
 propagate through synchronous helpers. Views/local handlers retain their
 existing serial order and named phases; match component data remains read-only

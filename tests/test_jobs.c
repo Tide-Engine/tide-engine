@@ -113,6 +113,54 @@ TIDE_TEST(jobs_pieces_are_begun_and_ended_around_their_system)
     tide_entities_free(&entities);
 }
 
+// Sixty-four chunks of next to nothing each: more than the threads, none worth pieces.
+static uint32_t many_count(const void *world, uint64_t *work)
+{
+    (void)world;
+    *work = 64u * 1000u;
+    return 64;
+}
+
+static uint32_t many_seen[64]; // How many times each task ran
+
+static void run_many(void *world, const uint32_t task, const uint32_t pieces)
+{
+    (void)world;
+    pieces_seen[2] = pieces;
+    tasks_run[2]++;
+    if (task < 64u) many_seen[task]++;
+}
+
+// A system of many tasks that are each next to nothing is taken a few tasks at
+// a time: each still runs once, by its own number, and the threads asked for
+// it once the system it waits for is done are as many as its takings, eight
+// of eight tasks on eight threads, not one for each task.
+TIDE_TEST(jobs_cheap_tasks_are_taken_a_few_at_a_time)
+{
+    static const uint32_t after_first[1] = {0};
+    const tide_system_tasks systems[2] = {
+        {.count = heavy_count, .run = run_0, .splits = true, .name = "first"},
+        {.count = many_count, .run = run_many, .splits = true, .wait_count = 1, .waits = after_first, .name = "many"},
+    };
+    tide_queue queue = {0};
+    tide_entities entities = {0};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
+    const tide_jobs eight = {.threads = 8, .run = alone_run, .more = count_more};
+    memset(pieces_seen, 0, sizeof pieces_seen);
+    memset(tasks_run, 0, sizeof tasks_run);
+    memset(many_seen, 0, sizeof many_seen);
+    asked = 0;
+    tide_run_systems(NULL, &tick, &eight);
+    TIDE_CHECK(tasks_run[0] == 16 && tasks_run[2] == 64 && pieces_seen[2] == 1);
+    bool once = true;
+    for (uint32_t i = 0; i < 64u; i++) once &= many_seen[i] == 1u;
+    TIDE_CHECK(once);
+    TIDE_CHECK(asked == 7);
+    if (asked != 7) printf("    asked for %u threads\n", asked);
+    tide_queue_free(&queue);
+    tide_entities_free(&entities);
+}
+
 // On one thread nothing goes in pieces, and nothing is made for them.
 TIDE_TEST(jobs_on_one_thread_make_no_pieces)
 {
