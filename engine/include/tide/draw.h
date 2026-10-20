@@ -1314,6 +1314,10 @@ typedef struct tide_draw_list {
     uint32_t mesh_free;           // 1 + the first free place, or 0
     uint32_t *mesh_index;         // The meshes by whose they are: 1 + a place, or 0 for none
     uint32_t mesh_index_capacity; // A power of two, or 0
+    // 1 + the place tide_draw_mesh_slot found last, or 0: a view drawing a mesh for each of its entities asks for
+    // it again and again. Still that mesh's while the place has the same one, as only tide_draw_mesh_slot makes
+    // places, one a mesh (a free place's is TIDE_MESH_NONE, which nobody asks for)
+    uint32_t mesh_last;
     tide_draw_run *runs;          // The TIDE_DRAW_SHADED commands' runs
     uint32_t run_count;
     uint32_t run_capacity;
@@ -1938,11 +1942,42 @@ tide_float4x4 tide_draw_camera_fit(tide_float4x4 matrix, float width, float heig
 // its edge. Either side of a triangle draws. Instances of one mesh drawn one
 // after another, with one texture, filter and wrap, are one command, which
 // renderers draw at once.
-void tide_draw_mesh_3d(tide_draw_list *d, const tide_mesh *mesh, tide_float4x4 transform, const tide_texture *texture,
-                       tide_filter filter);
+//
+// The mesh asked for last again, with no texture and room for its transform,
+// as a view drawing a mesh for each of its entities asks: inline, the
+// transform stored straight where the list keeps the next instance's, from
+// where the caller has it, and tide_draw_instance_stored records the rest.
+// tide_draw_mesh_3d_placed does all of it otherwise, as it always did.
+void tide_draw_mesh_3d_placed(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 *transform,
+                              const tide_texture *texture, tide_filter filter, tide_wrap wrap);
+
+// An instance of mesh place `mesh` (1 + it, a valid one) with no texture, whose transform is the next of the list's
+// matrices, stored there and not yet counted: culled, or counted and recorded.
+void tide_draw_instance_stored(tide_draw_list *d, uint32_t mesh, tide_filter filter, tide_wrap wrap);
+
 // The same, with what uvs past 0 and 1 read: `wrap`.
-void tide_draw_mesh_3d_wrapped(tide_draw_list *d, const tide_mesh *mesh, tide_float4x4 transform,
-                               const tide_texture *texture, tide_filter filter, tide_wrap wrap);
+static inline void tide_draw_mesh_3d_wrapped(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
+                                             const tide_texture *texture, const tide_filter filter, const tide_wrap wrap)
+{
+    if (mesh && mesh->vertices && mesh->indices && (!texture || !texture->pixels) && d->mesh_last
+        && d->mesh_last <= d->mesh_count && d->matrix_count < d->matrix_capacity) {
+        tide_draw_mesh_data *m = &d->meshes[d->mesh_last - 1u];
+        if (m->space == TIDE_MESH_MEMORY && m->id == (uint64_t)(uintptr_t)mesh->vertices
+            && m->other == (uint64_t)(uintptr_t)mesh->indices && m->version == mesh->version) {
+            m->frame = d->frame;
+            d->matrices[d->matrix_count] = transform;
+            tide_draw_instance_stored(d, d->mesh_last, filter, wrap);
+            return;
+        }
+    }
+    tide_draw_mesh_3d_placed(d, mesh, &transform, texture, filter, wrap);
+}
+
+static inline void tide_draw_mesh_3d(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
+                                     const tide_texture *texture, const tide_filter filter)
+{
+    tide_draw_mesh_3d_wrapped(d, mesh, transform, texture, filter, TIDE_WRAP_CLAMP);
+}
 
 // A version for vertices and indices that change rarely: a hash of them.
 uint64_t tide_mesh_version(const tide_mesh *mesh);

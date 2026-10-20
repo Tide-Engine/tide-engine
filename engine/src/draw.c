@@ -2177,14 +2177,6 @@ static void reindex_meshes(tide_draw_list *d)
     }
 }
 
-// The place tide_draw_mesh_slot found last on this thread, which a view drawing one mesh for each of its entities
-// asks for again and again: still that mesh's while its place holds the same one, as only it makes places, one a
-// mesh (a free place's is TIDE_MESH_NONE, which nobody asks for).
-static TIDE_THREAD_LOCAL struct {
-    const tide_draw_list *list;
-    uint32_t place; // 1 + it
-} last_mesh;
-
 // ...and where it isn't that one: hashing and probing, or a new place. Apart, so the place found last is found
 // without what this needs of registers and stack.
 static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, const uint32_t space, const uint64_t id,
@@ -2196,7 +2188,7 @@ static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, con
             tide_draw_mesh_data *m = &d->meshes[d->mesh_index[i] - 1u];
             if (m->space == space && m->id == id && m->other == other && m->version == version) {
                 m->frame = d->frame;
-                last_mesh.list = d, last_mesh.place = d->mesh_index[i];
+                d->mesh_last = d->mesh_index[i];
                 return d->mesh_index[i];
             }
         }
@@ -2214,7 +2206,7 @@ static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, con
     if (d->mesh_count >= d->mesh_index_capacity / 2u) reindex_meshes(d);
     else index_mesh(d, place);
     *fill = true;
-    last_mesh.list = d, last_mesh.place = place + 1u;
+    d->mesh_last = place + 1u;
     return place + 1u;
 }
 
@@ -2223,8 +2215,8 @@ uint32_t tide_draw_mesh_slot(tide_draw_list *d, const uint32_t space, const uint
 {
     *fill = false;
     if (space == TIDE_MESH_NONE) return 0;
-    const uint32_t place = last_mesh.place;
-    if (last_mesh.list == d && place && place <= d->mesh_count) {
+    const uint32_t place = d->mesh_last; // The place found last (tide_draw_list.mesh_last)
+    if (place && place <= d->mesh_count) {
         tide_draw_mesh_data *m = &d->meshes[place - 1u];
         if (m->space == space && m->id == id && m->other == other && m->version == version) {
             m->frame = d->frame;
@@ -2936,6 +2928,29 @@ static void instance_at(tide_draw_list *d, const uint32_t mesh, const tide_float
     instance_placed(d, mesh, transform, texture, filter, wrap);
 }
 
+// One whose transform the caller stored already, as the next of the list's matrices (tide_draw_mesh_3d_wrapped):
+// instance_at's own case, without reading it from the caller, and with no texture; anything else is instance_placed,
+// from a copy, as growing the matrices could move them.
+void tide_draw_instance_stored(tide_draw_list *d, const uint32_t mesh, const tide_filter filter, const tide_wrap wrap)
+{
+    const tide_draw_place *p = &d->place;
+    if (!d->unsettled && !(p->moved & TIDE_DRAW_MOVED_3D) && mesh && mesh <= d->mesh_count) {
+        const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+        if (!m->levels && m->index_count && m->space != TIDE_MESH_BYTES) {
+            tide_float4x4 *own = &d->matrices[d->matrix_count];
+            const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+            if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), own, NULL)) return;
+            const uint32_t at = d->matrix_count++;
+            const uint32_t cull = p->cull;
+            const uint8_t side = cull == TIDE_CULL_NONE ? sides(cull) : sides(cull | (mirrors(own) ? TIDE_DRAW_MIRRORED : 0u));
+            mesh_run(d, mesh, at, 1, 0, filter, wrap, (tide_blend)p->blend, (tide_depth)p->depth, side, tide_draw_tint(d));
+            return;
+        }
+    }
+    const tide_float4x4 transform = d->matrices[d->matrix_count];
+    instance_placed(d, mesh, &transform, 0, filter, wrap);
+}
+
 // ...and any other: apart, so the one above keeps few registers.
 static void instance_placed(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
                             const tide_filter filter, const tide_wrap wrap)
@@ -3028,9 +3043,10 @@ uint64_t tide_mesh_version(const tide_mesh *mesh)
     return tide_hash_end(tide_hash_more(h, mesh->indices, (size_t)mesh->index_count * sizeof(uint32_t)));
 }
 
-// A mesh in the caller's memory, its transform where the caller has it.
-static void mesh_3d_at(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 *transform, const tide_texture *texture,
-                       const tide_filter filter, const tide_wrap wrap)
+// A mesh in the caller's memory, its transform where the caller has it: where tide_draw_mesh_3d_wrapped's inline
+// stores aren't all there is to it.
+void tide_draw_mesh_3d_placed(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 *transform,
+                              const tide_texture *texture, const tide_filter filter, const tide_wrap wrap)
 {
     if (!mesh || !mesh->vertices || !mesh->indices) return;
     bool fill;
@@ -3040,17 +3056,6 @@ static void mesh_3d_at(tide_draw_list *d, const tide_mesh *mesh, const tide_floa
     instance_at(d, slot, transform, texture_slot(d, texture), filter, wrap);
 }
 
-void tide_draw_mesh_3d(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
-                       const tide_texture *texture, const tide_filter filter)
-{
-    mesh_3d_at(d, mesh, &transform, texture, filter, TIDE_WRAP_CLAMP);
-}
-
-void tide_draw_mesh_3d_wrapped(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
-                               const tide_texture *texture, const tide_filter filter, const tide_wrap wrap)
-{
-    mesh_3d_at(d, mesh, &transform, texture, filter, wrap);
-}
 
 // ---------------------------------------------------------------------------
 // One list after another
