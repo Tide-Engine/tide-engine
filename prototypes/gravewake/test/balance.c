@@ -2,7 +2,7 @@
 // input (aiming with the look as a player's mouse does, at a human's turn rate
 // and with some error; backing off from the dead; going for orbs and chests
 // when it's safe; using each survivor's skills as a player would; reviving a
-// friend; going for the night's boss when it rises), and each run's numbers are printed: how long
+// friend; stepping out of a napalm fire; going for the night's boss when it rises), and each run's numbers are printed: how long
 // it lasted, how many nights were kept, kills, downs, when each level came,
 // the items taken (at levels and from chests), how many of a carbine's rounds
 // to the body one of the ordinary dead took at 2, 5, 10 and 15 minutes (with
@@ -247,7 +247,20 @@ static Hands think(int seat, float dt)
     bool atChest = false;
     for (uint32_t r = 0; r < world.arch7_Chest.count; r++)
         if (flat_distance(TIDE_AT(&world, arch7_Chest, Chest, r).at, s.feet) < 2.2f) atChest = true;
-    if (atChest && nearest > 2.5f) {
+    // Out of a napalm fire on the ground (it burns its maker too)
+    float fireX = 0, fireZ = 0;
+    for (uint32_t r = 0; r < world.arch4_Blaze.count; r++) {
+        const Blaze b = TIDE_AT(&world, arch4_Blaze, Blaze, r);
+        const float d = flat_distance(b.at, s.feet);
+        if (d > b.reach + 0.8f) continue;
+        fireX += (s.feet.x - b.at.x) / fmaxf(d, 0.1f);
+        fireZ += (s.feet.z - b.at.z) / fmaxf(d, 0.1f);
+    }
+    if (fireX != 0 || fireZ != 0) {
+        const float away = sqrtf(fireX * fireX + fireZ * fireZ);
+        goX = fireX / away;
+        goZ = fireZ / away;
+    } else if (atChest && nearest > 2.5f) {
     } else if (nearest < 4.5f && press > 0.01f) {
         goX = -pressX / press;
         goZ = -pressZ / press;

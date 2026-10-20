@@ -49,13 +49,15 @@ Play at <https://tide-engine.dev/prototypes/gravewake/>. **Play** is alone;
 | --- | --- | --- | --- |
 | Gunner | Carbine: automatic, any range | Phase Round: through every one of the dead down its line | Frag Grenade: into the thickest of them |
 | Breacher | Pump Shotgun: fourteen pellets in a wide spread, never needs loading; takes a third less from the dead | Thumper: a grenade lobbed with a thump to burst where the cursor is, throwing the dead down | Boot: at the dead pressing in front, a side kick that sweeps a flash of light through where it reaches, flinging them back off their feet into the ones behind them; the nearest one down is stamped on |
-| Engineer | Flamethrower: a jet of fire 4.8 m long, widening as it goes, burning everything in it and now and then setting it alight (bosses take it three and a half times over); ten seconds a tank. AP Rounds are a Long Nozzle to it, a metre more each (Ricochet and HE Rounds aren't offered: it has no rounds) | Napalm: a glob of burning fuel lobbed to the cursor, splashing into fire on the ground that burns the dead in it for four seconds | Attack Drone: sent up when the dead are about; flies after you, at your shoulder, and fires on its own for twelve seconds, setting off your items |
+| Engineer | Flamethrower: a jet of fire 4.8 m long, widening as it goes, burning everything in it and now and then setting it alight (bosses take it three and a half times over); ten seconds a tank. AP Rounds are a Long Nozzle to it, a metre more each (Ricochet and HE Rounds aren't offered: it has no rounds) | Napalm: a glob of burning fuel lobbed to the cursor, splashing into fire on the ground that burns the dead in it for four seconds, and you if you stand in it | Attack Drone: sent up when the dead are about; flies after you, at your shoulder, and fires on its own for twelve seconds, setting off your items |
 
 The right mouse skill is the gun's own, and grows: a skill card (orange)
 turns up in some level's offers, the skill a rank stronger, to rank III: a
 phase round becomes three in a fan, then five; the Thumper two grenades, then
 three; napalm's fire wider and longer, then two globs. Pips under the skill
-show its rank.
+show its rank. Round the crosshair, its arc on the left fills as it comes
+back and lights up (with a chime) when it's ready; the arc on the right is
+your magazine, or your loading as it fills.
 
 Everything but the gun, the right mouse skill and the roll happens by
 itself: each survivor's special as soon as it's ready and the dead are in

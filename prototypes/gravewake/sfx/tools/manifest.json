@@ -1499,6 +1499,14 @@
   ],
   "seconds": 1.576
  },
+ "skill_ready": {
+  "bytes": 59138,
+  "file": "skill_ready.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.67
+ },
  "smg_fire_1": {
   "bytes": 50562,
   "file": "smg_fire_1.wav",
