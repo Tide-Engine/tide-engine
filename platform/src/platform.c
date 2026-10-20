@@ -759,6 +759,21 @@ typedef struct shape_extra {
     uint8_t rim[4];    // Its outline's color
 } shape_extra;
 
+// Whether a smooth shape is a solid one, which needs no more of its extra than
+// its corners' radius to be drawn: a box or an ellipse, unturned, one color
+// from top to bottom, with no outline and no fade. Of the rest, an arc's sweep
+// and an outline's color are read by none of those, and the rest is zeros and
+// ones. A run whose smooth shapes are all solid ones has a radius for each of
+// its shapes (4 bytes) where it would have an extra (32), and goes through a
+// pipeline that has the rest as constants in place of the extra's, into the
+// same lines of the same shaders (shaders.h): the same pixels. That's round
+// rects, plain circles on a scaled display, and plain shapes among either.
+static inline bool solid_shape(const shape *s, const shape_extra *e)
+{
+    return s->kind != (float)SHAPE_ARC && e->turn[0] == 1.0f && e->turn[1] == 0.0f && e->outline == 0.0f
+        && e->soft == 0.0f && memcmp(e->color2, s->color, sizeof e->color2) == 0;
+}
+
 // A mesh's corner, in window pixels. Meshes go to the GPU as triangles, three
 // of these each: a run of them with one texture is one draw call. Text goes
 // the same way, two triangles a glyph, its uv in the font atlas's pixels.
@@ -767,6 +782,21 @@ typedef struct mesh_vertex {
     float uv[2];
     uint8_t color[4]; // RGBA
 } mesh_vertex;
+
+// Two of those triangles, as one instance of the quads' pipelines, where they
+// can be: their six corners' places take two numbers at most on each axis, as
+// their uvs do, and they're of one color. That's a sprite, a tile or a glyph
+// that isn't turned, in whatever order its corners and triangles come. Each
+// corner takes one number or the other on each axis, as its bits were, so
+// the GPU draws the same triangles from the same numbers as from six of the
+// vertices above: the same pixels, from 40 bytes where those were 120. A run
+// of them is one draw call, as the run of triangles it stands for was.
+typedef struct quad {
+    float box[4];     // The two numbers its places take on each axis, in window pixels: x and y, then the others
+    float span[4];    // ...and its uvs'
+    uint8_t color[4]; // RGBA
+    int32_t pattern;  // Which each corner takes, 4 bits a corner from the first: x, y, u and v, 1 for the second
+} quad;
 
 // What a list comes to, in order: runs of shapes, clears, runs of text, runs
 // of triangles, clips, runs of instances of 3D meshes, and runs of instances
@@ -794,6 +824,10 @@ typedef struct draw_step {
                       // a STEP_SHADED's too, for a 3D shader
     uint32_t fit;     // ...which is for a square screen (see TIDE_DRAW_CAMERA_3D)
     uint32_t smooth;  // STEP_SHAPES: for a run with smooth shapes, 1 + where its shapes' extras start; else 0
+    uint32_t solid;   // ...or for one whose smooth shapes are all solid ones, 1 + where their radii start (see
+                      // solid_shape), where `smooth` is 0
+    uint32_t quads;   // STEP_TEXT and STEP_MESH: 1 while every two of its triangles are a quad, which `first` and
+                      // `count` are then of, else 0 (see quad)
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
     tide_gpu_id pipeline; // What draws it, once it's found: its shader's, for a STEP_SHADED
     tide_color tint;  // STEP_MESH_3D: what its pixels' colors are multiplied by
@@ -807,8 +841,12 @@ static shape *shapes;
 static uint32_t shape_count, shape_capacity;
 static shape_extra *shape_extras;
 static uint32_t shape_extra_count, shape_extra_capacity;
+static float *shape_radii;
+static uint32_t shape_radius_count, shape_radius_capacity;
 static mesh_vertex *mesh_vertices;
 static uint32_t mesh_vertex_count, mesh_vertex_capacity;
+static quad *quads;
+static uint32_t quad_count, quad_capacity;
 static draw_step *steps;
 static uint32_t step_count, step_capacity;
 static uint32_t draw_target;
@@ -965,9 +1003,59 @@ static void settle_extras(void)
     shape_extra_count += missing;
 }
 
+// Room for `count` more radii after the ones there.
+static float *radius_room(const uint32_t count)
+{
+    if (count > shape_radius_capacity - shape_radius_count) {
+        uint64_t capacity = shape_radius_capacity ? shape_radius_capacity : 1024u;
+        while (capacity < (uint64_t)shape_radius_count + count) capacity *= 2u;
+        if (capacity > UINT32_MAX / sizeof(float)) tide_out_of_memory();
+        shape_radii = tide_realloc(shape_radii, shape_radius_capacity * sizeof(float), (size_t)capacity * sizeof(float));
+        shape_radius_capacity = (uint32_t)capacity;
+    }
+    return shape_radii + shape_radius_count;
+}
+
+// ...and the same for a run of solid shapes' radii (see solid_shape): the
+// plain shapes since its last smooth one get theirs, 0.
+static void settle_radii(void)
+{
+    if (step_count == 0) return;
+    const draw_step *run = &steps[step_count - 1];
+    if (run->kind != STEP_SHAPES || !run->solid) return;
+    const uint32_t missing = run->count - (shape_radius_count - (run->solid - 1u));
+    if (missing == 0) return;
+    memset(radius_room(missing), 0, (size_t)missing * sizeof(float));
+    shape_radius_count += missing;
+}
+
+// The run of shapes `run`, the last there is, has a smooth shape that isn't a
+// solid one: its shapes get the extras they stood for (the plain ones', zeros),
+// in place of their radii, the last there are, and it goes on as a run of
+// smooth shapes.
+static void smooth_instead(draw_step *run)
+{
+    settle_radii();
+    const uint32_t radii = run->solid - 1u;
+    shape_extra *out = extra_room(run->count);
+    for (uint32_t i = 0; i < run->count; i++) {
+        const shape *s = &shapes[run->first + i];
+        out[i] = (shape_extra){0};
+        if (!(s->kind >= (float)SHAPE_BOX)) continue;
+        out[i].turn[0] = 1.0f;
+        out[i].radius = shape_radii[radii + i];
+        memcpy(out[i].color2, s->color, sizeof out[i].color2);
+    }
+    run->smooth = shape_extra_count + 1u;
+    run->solid = 0;
+    shape_extra_count += run->count;
+    shape_radius_count = radii;
+}
+
 static draw_step *add_step(const uint32_t kind)
 {
     settle_extras(); // The run before it, if it was one of shapes, is over
+    settle_radii();
     if (step_count == step_capacity) {
         const uint32_t capacity = step_capacity ? step_capacity * 2u : 64u;
         steps = tide_realloc(steps, step_capacity * sizeof(draw_step), capacity * sizeof(draw_step));
@@ -1017,7 +1105,19 @@ static void add_smooth(const int kind, const float x, const float y, const float
                        const rgba color, const shape_extra extra)
 {
     if (!run_goes_on(STEP_SHAPES)) start_shapes();
-    if (!steps[step_count - 1].smooth) steps[step_count - 1].smooth = shape_extra_count + 1u;
+    draw_step *run = &steps[step_count - 1];
+    if (!run->smooth) { // A run of solid shapes while they are
+        if (!run->solid) run->solid = shape_radius_count + 1u;
+        settle_radii(); // The plain shapes before it in the run
+        const shape s = {{x, y}, {half_width, half_height}, {color.r, color.g, color.b, color.a}, (float)kind};
+        if (solid_shape(&s, &extra)) {
+            add_shape(kind, x, y, half_width, half_height, color);
+            *radius_room(1) = extra.radius;
+            shape_radius_count++;
+            return;
+        }
+        smooth_instead(run);
+    }
     settle_extras(); // The plain shapes before it in the run
     add_shape(kind, x, y, half_width, half_height, color);
     *extra_room(1) = extra;
@@ -1034,14 +1134,17 @@ static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const ca
                                 [TIDE_SHAPE_ARC] = SHAPE_ARC};
     const uint8_t blend = list->commands[at].blend;
     if (!run_goes_on(STEP_SHAPES)) start_shapes();
-    const uint32_t step = step_count - 1u;
-    if (!steps[step].smooth) steps[step].smooth = shape_extra_count + 1u; // It's a run of smooth shapes from here
+    draw_step *const run = &steps[step_count - 1u];
+    if (!run->smooth && !run->solid) run->solid = shape_radius_count + 1u; // A run of solid shapes while they are
     settle_extras(); // The plain shapes before them in the run
+    settle_radii();
     const float scale = cam->scale;
     for (;;) {
         const uint32_t left = list->count - at, piece = left < 4096u ? left : 4096u;
-        shape *const first = shape_room(piece), *out = first;
-        shape_extra *extra = extra_room(piece);
+        shape *out = shape_room(piece);
+        // Room for each shape's extra, or while the run's are solid shapes, for its radius
+        shape_extra *extra = run->smooth ? extra_room(piece) : NULL;
+        float *radius = run->smooth ? NULL : radius_room(piece);
         uint32_t taken = 0;
         for (; taken < piece; taken++) {
             const tide_draw_command *c = &list->commands[at + taken];
@@ -1053,21 +1156,39 @@ static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const ca
             // Its lengths in window pixels, and its angles as the screen has them, where y goes down
             const tide_float2 center = to_screen(cam, c->a);
             const rgba color = to_rgba(c->color), color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
-            *out++ = (shape){{center.x, center.y}, {c->b.x * scale * 0.5f, c->b.y * scale * 0.5f},
-                             {color.r, color.g, color.b, color.a}, (float)kinds[form]};
-            *extra++ = (shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
-                                     .radius = s->radius * scale,
-                                     // A hairline is a logical pixel wide, whatever the camera
-                                     .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
-                                     .soft = s->soft * scale,
-                                     .sweep = s->sweep,
-                                     .color2 = {color2.r, color2.g, color2.b, color2.a},
-                                     .rim = {rim.r, rim.g, rim.b, rim.a}};
+            *out = (shape){{center.x, center.y}, {c->b.x * scale * 0.5f, c->b.y * scale * 0.5f},
+                           {color.r, color.g, color.b, color.a}, (float)kinds[form]};
+            const shape_extra e = {.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
+                                   .radius = s->radius * scale,
+                                   // A hairline is a logical pixel wide, whatever the camera
+                                   .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
+                                   .soft = s->soft * scale,
+                                   .sweep = s->sweep,
+                                   .color2 = {color2.r, color2.g, color2.b, color2.a},
+                                   .rim = {rim.r, rim.g, rim.b, rim.a}};
+            if (radius) {
+                if (solid_shape(out, &e)) {
+                    *radius++ = e.radius;
+                    out++;
+                    continue;
+                }
+                // The first that isn't: what's added so far is counted, and the run's shapes get extras
+                const uint32_t added = (uint32_t)(out - (shapes + shape_count));
+                shape_count += added;
+                shape_radius_count += added;
+                run->count += added;
+                smooth_instead(run);
+                radius = NULL;
+                extra = extra_room(piece - taken);
+            }
+            *extra++ = e;
+            out++;
         }
-        const uint32_t added = (uint32_t)(out - first);
+        const uint32_t added = (uint32_t)(out - (shapes + shape_count));
         shape_count += added;
-        shape_extra_count += added;
-        steps[step].count += added;
+        if (radius) shape_radius_count += added;
+        else shape_extra_count += added;
+        run->count += added;
         at += taken;
         if (taken < piece || at == list->count) return at;
     }
@@ -1175,36 +1296,242 @@ static mesh_vertex *mesh_room(const uint32_t count)
     return mesh_vertices + mesh_vertex_count;
 }
 
+// Room for `count` more quads after the ones there.
+static quad *quad_room(const uint32_t count)
+{
+    if (count > quad_capacity - quad_count) {
+        uint64_t capacity = quad_capacity ? quad_capacity : 1024u;
+        while (capacity < (uint64_t)quad_count + count) capacity *= 2u;
+        if (capacity > UINT32_MAX / sizeof(quad)) tide_out_of_memory();
+        quads = tide_realloc(quads, quad_capacity * sizeof(quad), (size_t)capacity * sizeof(quad));
+        quad_capacity = (uint32_t)capacity;
+    }
+    return quads + quad_count;
+}
+
+_Static_assert(offsetof(mesh_vertex, uv) == 2 * sizeof(float) && offsetof(mesh_vertex, color) == 4 * sizeof(float),
+               "a mesh vertex's place and uv are its first four floats");
+
+// The quad whose six corners, in order, are corner[which[0]] to corner[which[5]], of `corners`, if it's one (see
+// quad): their places and uvs take two numbers at most on each axis, told apart by their bits, and they're of one
+// color. Nothing is written where it isn't.
+static bool make_quad(const mesh_vertex *corner, const uint32_t corners, const uint8_t *which, quad *q)
+{
+    uint32_t first[4], second[4], color, picks[6] = {0};
+    memcpy(first, &corner[0], sizeof first); // Its place, then its uv
+    memcpy(second, first, sizeof second);    // The same while no corner had another
+    memcpy(&color, corner[0].color, sizeof color);
+    for (uint32_t k = 1; k < corners; k++) {
+        uint32_t at[4], other;
+        memcpy(at, &corner[k], sizeof at);
+        memcpy(&other, corner[k].color, sizeof other);
+        if (other != color) return false;
+        for (uint32_t axis = 0; axis < 4; axis++) {
+            if (at[axis] == first[axis]) continue;
+            if (second[axis] == first[axis]) second[axis] = at[axis];
+            else if (at[axis] != second[axis]) return false;
+            picks[k] |= 1u << axis;
+        }
+    }
+    uint32_t pattern = 0;
+    for (uint32_t i = 0; i < 6; i++) pattern |= picks[which[i]] << (4u * i);
+    const uint32_t box[4] = {first[0], first[1], second[0], second[1]};
+    const uint32_t span[4] = {first[2], first[3], second[2], second[3]};
+    memcpy(q->box, box, sizeof box);
+    memcpy(q->span, span, sizeof span);
+    memcpy(q->color, &color, sizeof color);
+    q->pattern = (int32_t)pattern;
+    return true;
+}
+
+// A run of quads has two triangles that can't be one: its quads, the last there are, go back to being the six
+// vertices each they stood for, to the bit, and the run goes on as triangles.
+static void triangles_instead(draw_step *s)
+{
+    const uint32_t count = s->count;
+    mesh_vertex *out = mesh_room(6u * count);
+    for (uint32_t i = 0; i < count; i++) {
+        const quad *q = &quads[s->first + i];
+        uint32_t box[4], span[4];
+        memcpy(box, q->box, sizeof box);
+        memcpy(span, q->span, sizeof span);
+        for (uint32_t k = 0; k < 6; k++, out++) {
+            const uint32_t pick = (uint32_t)q->pattern >> (4u * k);
+            const uint32_t at[4] = {box[pick & 1u ? 2 : 0], box[pick & 2u ? 3 : 1], span[pick & 4u ? 2 : 0],
+                                    span[pick & 8u ? 3 : 1]};
+            memcpy(out, at, sizeof at);
+            memcpy(out->color, q->color, sizeof out->color);
+        }
+    }
+    quad_count = s->first;
+    s->first = mesh_vertex_count;
+    s->count = 6u * count;
+    s->quads = 0;
+    mesh_vertex_count += 6u * count;
+}
+
+// A run of triangles that starts as one of quads, until two of its triangles aren't one.
+static draw_step *start_quads(const uint32_t kind)
+{
+    draw_step *s = add_step(kind);
+    s->first = quad_count;
+    s->quads = 1;
+    return s;
+}
+
+// to_screen's arithmetic for a run of corners, with its camera's numbers read once.
+typedef struct corner_camera {
+    bool gui;
+    float scale, cx, cy, half_width, half_height;
+} corner_camera;
+
+static corner_camera corner_camera_of(const camera *cam)
+{
+    return (corner_camera){cam->gui, cam->scale, cam->center.x, cam->center.y,
+                           (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f,
+                           (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f};
+}
+
+static inline float corner_x(const corner_camera *k, const tide_vertex *v)
+{
+    return k->gui ? v->position.x * k->scale : k->half_width + (v->position.x - k->cx) * k->scale;
+}
+
+static inline float corner_y(const corner_camera *k, const tide_vertex *v)
+{
+    return k->gui ? v->position.y * k->scale : k->half_height - (v->position.y - k->cy) * k->scale;
+}
+
+static inline mesh_vertex corner_of(const corner_camera *k, const tide_vertex *v)
+{
+    const rgba color = to_rgba(v->color);
+    return (mesh_vertex){{corner_x(k, v), corner_y(k, v)}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
+}
+
+_Static_assert(offsetof(tide_vertex, uv) == 2 * sizeof(float) && offsetof(tide_vertex, color) == 4 * sizeof(float),
+               "a vertex's place and uv are its first four floats, and its color the next four");
+
+// Four 32-bit lanes, which clang makes one SIMD register where the target has them (SSE2 on x86-64, NEON on
+// arm64) and four scalars where it hasn't: a quad's corners compared all at once. Lane by lane, the arithmetic is
+// what the same floats get alone, IEEE's.
+typedef uint32_t lanes __attribute__((ext_vector_type(4)));
+typedef int32_t lane_mask __attribute__((ext_vector_type(4))); // What comparing lanes gives: -1 where they're equal
+typedef float float_lanes __attribute__((ext_vector_type(4)));
+
+static inline lanes lanes_of(const void *at)
+{
+    lanes v;
+    memcpy(&v, at, sizeof v);
+    return v;
+}
+
+// The quad of triangles p q r and p r s, as a quad's two mostly are, where p and r are its opposite corners on
+// both axes, and all four are of one color: what make_quad finds of them, sooner. It compares the vertices as the
+// list has them, by their bits: a corner's place on the screen is worked out from its own on that axis alone, so
+// two the same are the same there, and only p's and r's are worked out. Nothing is written where it isn't one
+// (make_quad may still find one).
+static bool make_quad_across(const corner_camera *k, const tide_vertex *const corner[4], quad *out)
+{
+    // A corner's x, y, u and v as bits, side by side, and its color's
+    const lanes p = lanes_of(&corner[0]->position), q = lanes_of(&corner[1]->position);
+    const lanes r = lanes_of(&corner[2]->position), s = lanes_of(&corner[3]->position);
+    const lanes color = lanes_of(&corner[0]->color);
+    const lane_mask qp = q == p, rp = r == p, sp = s == p;
+    const lane_mask fits = (qp | (q == r)) & (sp | (s == r)) & (lanes_of(&corner[1]->color) == color)
+                         & (lanes_of(&corner[2]->color) == color) & (lanes_of(&corner[3]->color) == color);
+    if (__builtin_reduce_and(fits) == 0) return false;
+    // Which number of each axis each corner takes: p the first, r the second where it's another
+    const lane_mask axis = {1, 2, 4, 8};
+    const uint32_t q_picks = (uint32_t)__builtin_reduce_or(~qp & axis), r_picks = (uint32_t)__builtin_reduce_or(~rp & axis);
+    const uint32_t s_picks = (uint32_t)__builtin_reduce_or(~sp & axis);
+    // p's and r's places on the screen, each lane as corner_x and corner_y work them out
+    const float_lanes at = (float_lanes)__builtin_shufflevector(p, r, 0, 1, 4, 5);
+    float_lanes box;
+    if (k->gui) {
+        box = at * k->scale;
+    } else {
+        const float_lanes moved = (at - (float_lanes){k->cx, k->cy, k->cx, k->cy}) * k->scale;
+        const float_lanes half = {k->half_width, k->half_height, k->half_width, k->half_height};
+        box = __builtin_shufflevector(half + moved, half - moved, 0, 5, 2, 7);
+    }
+    const lanes span = __builtin_shufflevector(p, r, 2, 3, 6, 7);
+    const rgba bytes = to_rgba(corner[0]->color);
+    memcpy(out->box, &box, sizeof out->box);
+    memcpy(out->span, &span, sizeof out->span);
+    memcpy(out->color, &bytes, sizeof out->color);
+    out->pattern = (int32_t)(q_picks << 4 | r_picks << 8 | r_picks << 16 | s_picks << 20); // p q r p r s
+    return true;
+}
+
 // A mesh command's triangles, their corners through the camera, after the
-// ones before it when nothing came between them.
+// ones before it when nothing came between them: two at a time as quads, as
+// long as they are.
 static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
 {
     const uint32_t count = c->mesh.count;
-    mesh_vertex *out = mesh_room(count);
     draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
     if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter || s->wrap != c->mesh.wrap) {
-        s = add_step(STEP_MESH);
-        s->first = mesh_vertex_count;
+        s = start_quads(STEP_MESH);
         s->texture = c->mesh.texture;
         s->filter = c->mesh.filter;
         s->wrap = c->mesh.wrap;
     }
-    s->count += count;
     const uint32_t *indices = list->indices + c->mesh.first;
     const tide_vertex *const vertices = list->vertices;
-    // to_screen's arithmetic, its camera's numbers read once
-    const bool gui = cam->gui;
-    const float scale = cam->scale, cx = cam->center.x, cy = cam->center.y;
-    const float half_width = (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f;
-    const float half_height = (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f;
-    for (uint32_t i = 0; i < count; i++) {
-        const tide_vertex *v = &vertices[indices[i]];
-        const float x = gui ? v->position.x * scale : half_width + (v->position.x - cx) * scale;
-        const float y = gui ? v->position.y * scale : half_height - (v->position.y - cy) * scale;
-        const rgba color = to_rgba(v->color);
-        out[i] = (mesh_vertex){{x, y}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
+    const corner_camera k = corner_camera_of(cam);
+    uint32_t i = 0;
+    if (s->quads) {
+        static const uint8_t four[6] = {0, 1, 2, 0, 2, 3}, six[6] = {0, 1, 2, 3, 4, 5};
+        quad *const first = quad_room(count / 6u), *out = first;
+        for (; i + 6u <= count; i += 6u, out++) {
+            const uint32_t *t = indices + i;
+            // Two triangles that share their first and last corners, as a quad's mostly do: four corners, once each
+            const bool shared = t[3] == t[0] && t[4] == t[2];
+            if (shared) {
+                const tide_vertex *const across[4] = {&vertices[t[0]], &vertices[t[1]], &vertices[t[2]], &vertices[t[5]]};
+                if (make_quad_across(&k, across, out)) continue;
+            }
+            mesh_vertex corner[6];
+            corner[0] = corner_of(&k, &vertices[t[0]]);
+            corner[1] = corner_of(&k, &vertices[t[1]]);
+            corner[2] = corner_of(&k, &vertices[t[2]]);
+            if (shared) {
+                corner[3] = corner_of(&k, &vertices[t[5]]);
+            } else {
+                for (uint32_t j = 3; j < 6; j++) corner[j] = corner_of(&k, &vertices[t[j]]);
+            }
+            if (!make_quad(corner, shared ? 4u : 6u, shared ? four : six, out)) break;
+        }
+        const uint32_t made = (uint32_t)(out - first);
+        quad_count += made;
+        s->count += made;
+        if (i == count) return;
+        triangles_instead(s);
     }
-    mesh_vertex_count += count;
+    mesh_vertex *out = mesh_room(count - i);
+    for (uint32_t j = i; j < count; j++) out[j - i] = corner_of(&k, &vertices[indices[j]]);
+    s->count += count - i;
+    mesh_vertex_count += count - i;
+}
+
+// A glyph's two triangles over its four corners, after the text before it: a quad where it's one.
+static void add_glyph(const mesh_vertex corners[4])
+{
+    static const uint8_t four[6] = {0, 1, 2, 0, 2, 3};
+    draw_step *s = &steps[step_count - 1];
+    if (s->quads) {
+        if (make_quad(corners, 4u, four, quad_room(1))) {
+            quad_count++;
+            s->count++;
+            return;
+        }
+        triangles_instead(s);
+    }
+    mesh_vertex *out = mesh_room(6);
+    out[0] = corners[0], out[1] = corners[1], out[2] = corners[2];
+    out[3] = corners[0], out[4] = corners[2], out[5] = corners[3];
+    mesh_vertex_count += 6;
+    s->count += 6;
 }
 
 // Where the line of text at `line` starts, in the target's pixels, a whole
@@ -1245,7 +1572,7 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
     float pen_x = line_start(font, text, pixels, stretch, x, side);
     float pen_y = floorf((at.y + tide_font_baseline(font) * size) * scale.y - above + 0.5f); // On the baseline
 
-    if (!run_goes_on(STEP_TEXT)) add_step(STEP_TEXT)->first = mesh_vertex_count;
+    if (!run_goes_on(STEP_TEXT)) start_quads(STEP_TEXT);
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
             pen_x = line_start(font, text, pixels, stretch, x, side);
@@ -1265,11 +1592,7 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
                 {{x1, y1}, {u1, v1}, {color.r, color.g, color.b, color.a}},
                 {{x0, y1}, {u0, v1}, {color.r, color.g, color.b, color.a}},
             };
-            mesh_vertex *out = mesh_room(6); // After add_step: the steps before it keep their vertices' places
-            out[0] = corners[0], out[1] = corners[1], out[2] = corners[2];
-            out[3] = corners[0], out[4] = corners[2], out[5] = corners[3];
-            mesh_vertex_count += 6;
-            steps[step_count - 1].count += 6;
+            add_glyph(corners);
         }
         pen_x += (float)g.advance * stretch;
     }
@@ -1309,7 +1632,7 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
     float pen_x = line_start(font, text, pixels, stretch, 0.0f, side);
     float pen_y = floorf(tide_font_baseline(font) * drawn * scale.y - above + 0.5f);
 
-    if (!run_goes_on(STEP_TEXT)) add_step(STEP_TEXT)->first = mesh_vertex_count;
+    if (!run_goes_on(STEP_TEXT)) start_quads(STEP_TEXT);
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
             pen_x = line_start(font, text, pixels, stretch, 0.0f, side);
@@ -1334,11 +1657,7 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
                                            {us[i], vs[i]},
                                            {color.r, color.g, color.b, color.a}};
             }
-            mesh_vertex *out = mesh_room(6);
-            out[0] = corners[0], out[1] = corners[1], out[2] = corners[2];
-            out[3] = corners[0], out[4] = corners[2], out[5] = corners[3];
-            mesh_vertex_count += 6;
-            steps[step_count - 1].count += 6;
+            add_glyph(corners); // A quad still, where nothing turned it
         }
         pen_x += (float)g.advance * stretch;
     }
@@ -1348,7 +1667,8 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
 // (tide_blend) and, for the 3D meshes', each thing a mesh does with depth
 // (tide_depth) and each side of a triangle it leaves out (tide_gpu_cull),
 // made the first time a list draws with it.
-enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_MESHES_3D, PIPELINE_KINDS };
+enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_SOLID_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_QUADS, PIPELINE_TEXT_QUADS,
+       PIPELINE_MESHES_3D, PIPELINE_KINDS };
 enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_NONE + 1, CULLS = TIDE_GPU_CULL_FRONT + 1 };
 
 // Stencil's numbers are the draw list's all the way down.
@@ -1439,9 +1759,13 @@ static struct {
     tide_gpu_id shape_instances;
     uint32_t shape_capacity; // Shapes the instance buffer holds
     tide_gpu_id shape_extras;
+    tide_gpu_id shape_radii;
+    uint32_t shape_radius_capacity; // Radii theirs holds
     uint32_t shape_extra_capacity; // Extras theirs holds
     tide_gpu_id mesh_vertices;
     uint32_t mesh_capacity; // Vertices the buffer holds
+    tide_gpu_id quads;
+    uint32_t quad_capacity; // Quads theirs holds
     tide_gpu_id matrices;
     uint32_t matrix_capacity; // Transforms the 3D meshes' instance buffer holds
     tide_gpu_id instances;
@@ -2121,17 +2445,16 @@ static bool gpu_ready(void)
     return true;
 }
 
-// A shader that shaders.h has in two pieces, as one: made once, and kept. NULL
-// where it has none (WGSL is only the web's).
-static const char *joined(const char *first, const char *second)
+// A shader that shaders.h has in two pieces, as one: made once, into *whole,
+// and kept. NULL where it has none (WGSL is only the web's).
+static const char *joined(char **whole, const char *first, const char *second)
 {
-    static char *whole;
-    if (!first || !second || whole) return whole;
+    if (!first || !second || *whole) return *whole;
     const size_t length = strlen(first);
-    whole = tide_alloc(length + strlen(second) + 1u);
-    memcpy(whole, first, length);
-    strcpy(whole + length, second);
-    return whole;
+    *whole = tide_alloc(length + strlen(second) + 1u);
+    memcpy(*whole, first, length);
+    strcpy(*whole + length, second);
+    return *whole;
 }
 
 // Which of a 3D mesh's triangles a pipeline leaves out, for its command's cull
@@ -2187,6 +2510,7 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
         made = &pipelines_into(into)->made[kind][blend][depth][cull];
     }
     if (*made) return *made;
+    static char *smooth_wgsl, *solid_wgsl; // Their WGSL, joined once (see joined)
     tide_gpu_pipeline_desc desc;
     switch (kind) {
     case PIPELINE_SHAPES:
@@ -2212,7 +2536,7 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
             .name = "smooth shapes",
             .glsl_vertex = smooth_shape_glsl_vertex,
             .glsl_fragment = smooth_shape_glsl_fragment,
-            .wgsl = joined(smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
+            .wgsl = joined(&smooth_wgsl, smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
             .spirv = SPIRV_OF(smooth_shape),
             .spirv_words = SPIRV_WORDS(smooth_shape),
             // The quad's corners, an instance a shape, and an extra for each
@@ -2227,6 +2551,25 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
                            {2, TIDE_GPU_BYTES4, offsetof(shape_extra, color2)},
                            {2, TIDE_GPU_BYTES4, offsetof(shape_extra, rim)}},
             .attribute_count = 8,
+            .uniform_size = sizeof(screen_uniforms),
+        };
+        break;
+    case PIPELINE_SOLID_SHAPES: // The smooth shapes' again, with a radius for each shape in place of its extra
+        desc = (tide_gpu_pipeline_desc){
+            .name = "solid shapes",
+            .glsl_vertex = solid_shape_glsl_vertex,
+            .glsl_fragment = smooth_shape_glsl_fragment,
+            .wgsl = joined(&solid_wgsl, solid_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
+            .spirv = SPIRV_OF(solid_shape),
+            .spirv_words = SPIRV_WORDS(solid_shape),
+            .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}, {sizeof(float), true}},
+            .slot_count = 3,
+            .attributes = {{0, TIDE_GPU_FLOAT2, 0},
+                           {1, TIDE_GPU_FLOAT4, offsetof(shape, a)},
+                           {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
+                           {1, TIDE_GPU_FLOAT, offsetof(shape, kind)},
+                           {2, TIDE_GPU_FLOAT, 0}},
+            .attribute_count = 5,
             .uniform_size = sizeof(screen_uniforms),
         };
         break;
@@ -2245,6 +2588,26 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
                            {0, TIDE_GPU_FLOAT2, offsetof(mesh_vertex, uv)},
                            {0, TIDE_GPU_BYTES4, offsetof(mesh_vertex, color)}},
             .attribute_count = 3,
+            .uniform_size = sizeof(screen_uniforms),
+            .texture_count = 1,
+        };
+        break;
+    case PIPELINE_QUADS:
+    case PIPELINE_TEXT_QUADS: // The meshes' and the text's again, each corner of a quad picked from its instance
+        desc = (tide_gpu_pipeline_desc){
+            .name = kind == PIPELINE_TEXT_QUADS ? "text quads" : "quads",
+            .glsl_vertex = quad_glsl_vertex,
+            .glsl_fragment = kind == PIPELINE_TEXT_QUADS ? text_glsl_fragment : mesh_glsl_fragment,
+            .wgsl = kind == PIPELINE_TEXT_QUADS ? text_quad_wgsl : quad_wgsl,
+            .spirv = kind == PIPELINE_TEXT_QUADS ? SPIRV_OF(text_quad) : SPIRV_OF(quad),
+            .spirv_words = kind == PIPELINE_TEXT_QUADS ? SPIRV_WORDS(text_quad) : SPIRV_WORDS(quad),
+            .slots = {{sizeof(quad), true}},
+            .slot_count = 1,
+            .attributes = {{0, TIDE_GPU_FLOAT4, offsetof(quad, box)},
+                           {0, TIDE_GPU_FLOAT4, offsetof(quad, span)},
+                           {0, TIDE_GPU_BYTES4, offsetof(quad, color)},
+                           {0, TIDE_GPU_INT, offsetof(quad, pattern)}},
+            .attribute_count = 4,
             .uniform_size = sizeof(screen_uniforms),
             .texture_count = 1,
         };
@@ -2374,10 +2737,15 @@ static void find_pipelines(const tide_draw_list *list)
         const uint32_t state = stencil_state(s->stencil);
         switch (s->kind) {
         case STEP_SHAPES:
-            s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend, 0, 0, into, state);
+            s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : s->solid ? PIPELINE_SOLID_SHAPES : PIPELINE_SHAPES,
+                                          s->blend, 0, 0, into, state);
             break;
-        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend, 0, 0, into, state); break;
-        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend, 0, 0, into, state); break;
+        case STEP_MESH:
+            s->pipeline = engine_pipeline(s->quads ? PIPELINE_QUADS : PIPELINE_MESHES, s->blend, 0, 0, into, state);
+            break;
+        case STEP_TEXT:
+            s->pipeline = engine_pipeline(s->quads ? PIPELINE_TEXT_QUADS : PIPELINE_TEXT, s->blend, 0, 0, into, state);
+            break;
         case STEP_MESH_3D:
             s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, into, state);
             break;
@@ -2736,8 +3104,9 @@ static bool upload_shaded(const tide_draw_list *list)
     return any;
 }
 
-// This list's shapes into the instance buffer, and its triangles, text's too,
-// into theirs: both grow as they need.
+// This list's shapes into the instance buffer, with their extras and radii,
+// and its triangles, text's too, and its quads into theirs: all grow as they
+// need.
 static void upload_shapes_and_meshes(void)
 {
     if (shape_count) {
@@ -2749,9 +3118,17 @@ static void upload_shapes_and_meshes(void)
                     256u);
         gpu->buffer_write(gpu_state.shape_extras, 0, shape_extras, (size_t)shape_extra_count * sizeof(shape_extra));
     }
+    if (shape_radius_count) { // A multiple of 4 bytes, as buffers take them
+        buffer_room(&gpu_state.shape_radii, &gpu_state.shape_radius_capacity, shape_radius_count, sizeof(float), 1024u);
+        gpu->buffer_write(gpu_state.shape_radii, 0, shape_radii, (size_t)shape_radius_count * sizeof(float));
+    }
     if (mesh_vertex_count) {
         buffer_room(&gpu_state.mesh_vertices, &gpu_state.mesh_capacity, mesh_vertex_count, sizeof(mesh_vertex), 4096u);
         gpu->buffer_write(gpu_state.mesh_vertices, 0, mesh_vertices, (size_t)mesh_vertex_count * sizeof(mesh_vertex));
+    }
+    if (quad_count) {
+        buffer_room(&gpu_state.quads, &gpu_state.quad_capacity, quad_count, sizeof(quad), 1024u);
+        gpu->buffer_write(gpu_state.quads, 0, quads, (size_t)quad_count * sizeof(quad));
     }
 }
 
@@ -3341,6 +3718,20 @@ static uint64_t draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
     return (uint64_t)g->index_count * s->count;
 }
 
+// A run of a mesh's or of text's triangles, its pipeline used: as its quads, one instance each (see quad), or as
+// its vertices. Returns the vertices drawn, six a quad.
+static uint64_t draw_triangles(const draw_step *s)
+{
+    if (s->quads) {
+        gpu->vertices(0, gpu_state.quads, (size_t)s->first * sizeof(quad));
+        gpu->draw(0, 6, s->count);
+        return UINT64_C(6) * s->count;
+    }
+    gpu->vertices(0, gpu_state.mesh_vertices, 0);
+    gpu->draw(s->first, s->count, 1);
+    return s->count;
+}
+
 // The pixel nearest `v`, from 0 to `most`: a rect's corner is any float a
 // game says, so it's kept to the target before it's made an int (NaN is 0).
 static int clamp_pixel(const float v, const int most)
@@ -3529,7 +3920,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     tide_font_frame();
     shape_count = 0;
     shape_extra_count = 0;
+    shape_radius_count = 0;
     mesh_vertex_count = 0;
+    quad_count = 0;
     step_count = 0;
     for (uint32_t i = 0; i < list->count; i++) {
         const tide_draw_command *c = &list->commands[i];
@@ -3649,6 +4042,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
     }
     settle_extras();
+    settle_radii();
     if (!over) last_camera = frame_targets[0].world;
 
     // What the steps draw from goes to the GPU first
@@ -3734,6 +4128,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (s->smooth) {
                 gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
                 gpu->vertices(2, gpu_state.shape_extras, (size_t)(s->smooth - 1u) * sizeof(shape_extra));
+            } else if (s->solid) {
+                gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
+                gpu->vertices(2, gpu_state.shape_radii, (size_t)(s->solid - 1u) * sizeof(float));
             } else {
                 gpu->uniforms(uniforms.screen, sizeof uniforms.screen);
             }
@@ -3760,9 +4157,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             sample_step_texture(list, s);
-            gpu->vertices(0, gpu_state.mesh_vertices, 0);
-            gpu->draw(s->first, s->count, 1);
-            vertices += s->count;
+            vertices += draw_triangles(s);
             calls++;
             break;
         case STEP_MESH_3D:
@@ -3793,9 +4188,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             // Stretched glyphs blend; the others land on the target's pixels
             gpu->sample(0, gpu_state.atlas, TIDE_GPU_FILTER_LINEAR, TIDE_GPU_WRAP_CLAMP);
-            gpu->vertices(0, gpu_state.mesh_vertices, 0);
-            gpu->draw(s->first, s->count, 1);
-            vertices += s->count;
+            vertices += draw_triangles(s);
             calls++;
             break;
         }
