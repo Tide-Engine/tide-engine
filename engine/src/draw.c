@@ -1399,27 +1399,55 @@ static __attribute__((noinline)) void alter_shape(const tide_draw_list *d, tide_
 }
 
 // A shape `size` across around `center`, whose fill at its top is `color`.
-static void push_shape(tide_draw_list *d, tide_float2 center, tide_float2 size, tide_color color,
-                       tide_draw_shape_data shape)
+// Room for a shape's own numbers after the list's, where shape_placed records
+// them, or leaves them for the next shape's.
+static tide_draw_shape_data *shape_slot(tide_draw_list *d)
+{
+    d->shapes = grow(d->shapes, d->shape_count, &d->shape_capacity, 1, sizeof(tide_draw_shape_data), 256u);
+    return &d->shapes[d->shape_count];
+}
+
+// The shape whose own numbers are in `shape` (shape_slot's), `size` across
+// around `center`, whose fill at its top is `color`, as the settings leave it:
+// recorded, unless it has no size.
+static void shape_placed(tide_draw_list *d, tide_float2 center, tide_float2 size, tide_color color,
+                         tide_draw_shape_data *shape)
 {
     if (!(size.x > 0.0f) || !(size.y > 0.0f)) return; // Also NaN
-    fit_shape(size, &shape);
+    fit_shape(size, shape);
     if (d->altered) {
-        alter_shape(d, &center, &size, &color, &shape);
+        alter_shape(d, &center, &size, &color, shape);
         if (!(size.x > 0.0f) || !(size.y > 0.0f)) return;
-        fit_shape(size, &shape);
+        fit_shape(size, shape);
     }
-    d->shapes = grow(d->shapes, d->shape_count, &d->shape_capacity, 1, sizeof(tide_draw_shape_data), 256u);
-    d->shapes[d->shape_count] = shape;
     push(d, TIDE_DRAW_SHAPE, center, size, color)->shape = d->shape_count++;
 }
 
-// A shape in one color, with a sharp edge.
+static void push_shape(tide_draw_list *d, tide_float2 center, tide_float2 size, tide_color color,
+                       tide_draw_shape_data shape)
+{
+    tide_draw_shape_data *slot = shape_slot(d);
+    *slot = shape;
+    shape_placed(d, center, size, color, slot);
+}
+
+// A shape in one color, with a sharp edge: written where the list keeps it, a
+// field at a time. Made whole and copied there, a frame of round rects waited
+// for the stores that made each one (see color_read).
 static void solid(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
                   const float rotation, const tide_shape_form form, const tide_color color)
 {
-    push_shape(d, center, size, color,
-               (tide_draw_shape_data){.turn = turn_by(rotation), .radius = radius, .form = (uint32_t)form, .color2 = color});
+    const tide_color fill = color_read(&color);
+    tide_draw_shape_data *s = shape_slot(d);
+    s->turn = turn_by(rotation);
+    s->radius = radius;
+    s->outline = 0.0f;
+    s->soft = 0.0f;
+    s->sweep = 0.0f;
+    s->form = (uint32_t)form;
+    s->color2 = fill;
+    s->outline_color = TIDE_COLOR_CLEAR;
+    shape_placed(d, center, size, fill, s);
 }
 
 // Its outline alone, `width` thick.
