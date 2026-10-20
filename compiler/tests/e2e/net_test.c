@@ -725,7 +725,9 @@ TIDE_TEST(net_recovery_restores_reconnect_cookie_metadata_outside_world_bytes)
     run(0.5);
     const tide_client_status before = tide_client_status_of(clients[0]);
     TIDE_REQUIRE(before.state == TIDE_SESSION_CONNECTED);
-    tide_server_recovery recovery;
+    uint64_t digests[TIDE_GAME_PLAYERS];
+    uint8_t identities[TIDE_GAME_PLAYERS][32];
+    tide_server_recovery recovery = {.digests = digests, .identities = identities};
     tide_server_recovery_state(server, &recovery);
     TIDE_CHECK(tide_players_has(&recovery.players, before.player.id - 1u));
     TIDE_CHECK(recovery.digests[before.player.id - 1u] != 0);
@@ -1398,7 +1400,7 @@ TIDE_TEST(net_a_session_goes_on_from_a_world)
 
     tide_session *next = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = session_sample});
     t = 0.0;
-    tide_player_set in_it = {{0}};
+    tide_player_set in_it = {0};
     tide_players_add(&in_it, (uint32_t)player);
     tide_session_start_from(next, left, in_it, t);
     for (int frame = 0; frame < 60; frame++) {

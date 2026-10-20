@@ -1,5 +1,26 @@
 # Language features, as tidec builds them
 
+## Shared player ceiling (2026-10-20)
+
+The owner approved maxPlayers from 1 through 65,536, sharing the ceiling used
+by dedicated-server connections and native room peers. The default remains 16;
+the setting still determines the world's input layout, generated Audience size
+and build compatibility. Compiler diagnostics use TIDE_PLAYERS_MOST; builtin
+help and user documentation now report the same range. Values above it remain
+compile errors, with the existing full-input-traffic scaling explanation.
+
+Generated Session ABI headers identify player protocol 16. Generated raw-save,
+network-delta and page-hash/need headers use temporary heap buffers, including
+a separate baseline only when needed; all are freed after their synchronous
+codec operation. This avoids stack overflow from a large match's fixed input
+arrays without changing serialized values, padding, hash ordering or runtime
+function calls. No new generated-C runtime function is required.
+
+players_ceiling compiles the exact ceiling and tests input index 65,535, the
+separate server slot, Audience word 2047, snapshot/delta transfer and reconnect
+recovery. players now covers 270 real sessions and a 300-player projected
+Audience. Runtime/protocol contracts and final validation: notes/netcode.md.
+
 ## Inside Out API and aggregate-copy completions (2026-10-20)
 
 Authorized conventional additions: `Math.AsInt` reinterprets float/float2/float3/
@@ -38,7 +59,6 @@ unchanged Inside Out source generates successfully, with SeatOf/Together/HallOf
 receiving `const Workshop *`; that generated C passes strict native and WASI
 syntax checks. No private prototype browser playtest, CI dispatch or deployment
 was performed. Other OSes, Android and sanitizers remain CI coverage.
-
 
 ## Explicit skinned instance overload (2026-10-20)
 
@@ -920,9 +940,9 @@ are recorded with the networking/editor changes after validation completes.
 Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
 fixture plus 10,000 visible PublicState rows with empty owned fields produced
 1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
-2.12–2.92 ms per recipient canonical hash after changing every added row's integer
-column; unchanged worlds measured 2.22–3.54 ms. Full-world hashes measured
-4.19–9.76 us with that column dirty and 2.57–11.11 us unchanged. These operations
+2.12â€“2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22â€“3.54 ms. Full-world hashes measured
+4.19â€“9.76 us with that column dirty and 2.57â€“11.11 us unchanged. These operations
 do different work: full-world hashing reuses cached page hashes and only rehashes
 the changed integer-column pages, whereas recipient hashing currently traverses
 and serializes every permitted logical value and allocates the temporary byte

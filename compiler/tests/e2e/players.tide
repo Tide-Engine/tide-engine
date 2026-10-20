@@ -3,7 +3,7 @@
 
 settings
 {
-    maxPlayers = 200;
+    maxPlayers = 300;
     hostMigration = true;
 }
 

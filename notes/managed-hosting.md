@@ -1,5 +1,18 @@
 # Managed hosting and deployment
 
+## Shared player ceiling and checkpoint storage (2026-10-20)
+
+The owner approved the same supported ceiling for match players and native
+server connections: 65,536. Managed operational memory/CPU/admission limits
+remain separately configured resource policies. Recovery output uses caller
+buffers sized to the game's maxPlayers. Managed checkpoint envelope 2 stores
+those game-sized digest/identity arrays and scalar metadata directly, without
+serializing pointers; save/restore stage the envelope on the heap. The decoder
+checks stored player-set prefix bounds before publishing restored metadata.
+Exact-release recovery remains the contract; old release envelopes are not
+silently adopted by rebuilt games. Session protocol 16, the rebuild marker,
+ceiling coverage and final validation are recorded in netcode.md.
+
 ## Play-link discovery correction (2026-10-15)
 
 The owner still could not find the console's play link. Verified the live test

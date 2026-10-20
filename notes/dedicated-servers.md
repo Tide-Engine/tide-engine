@@ -1,5 +1,15 @@
 # Dedicated servers
 
+## Shared player/connection ceiling (2026-10-20)
+
+TIDE_PLAYERS_MOST is the common 65,536 ceiling for a match's maxPlayers and a
+host's max_connections. Hosting and --max-connections validation reference the
+shared constant; defaults remain 16 per match and 256 across the host. The
+settings still limit independent resources. Native room peers now grow on
+demand to that ceiling instead of stopping at 256. Inner session protocol 16
+and caller-provided recovery buffers require host/game rebuilds; the outer
+hosting envelope remains version 2. Details and validation: netcode.md.
+
 ## CI corrections (2026-10-15)
 
 Run `38761765659` passed the full-pack/reduced-pack client checks over both

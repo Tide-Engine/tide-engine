@@ -1,5 +1,15 @@
 # Desktop WebRTC, rooms and their tests
 
+## Shared connection ceiling (2026-10-20)
+
+Native rooms now use the shared TIDE_PLAYERS_MOST ceiling (65,536), matching
+match players and dedicated-host connections. Their peer array starts empty,
+grows geometrically as peers arrive and is freed with the room; a small room
+does not reserve a ceiling-sized peer array. Browser rooms already use Maps
+and had no 256-peer array restriction. Signaling, RTC handshakes, timeouts,
+relay operational limits and transport semantics are unchanged. Session
+protocol 16 and validation are recorded in netcode.md.
+
 ## Custom web runner shutdown (2026-10-18)
 
 `web_rooms.mjs` and `web_threads.mjs` now use Chrome's DevTools pipe to ask

@@ -127,7 +127,12 @@ TIDE_MANAGED_EXPORT(tide_managed_status) uint32_t tide_managed_status(void)
 // player-cookie metadata remain outside the game's serialized world/payload.
 typedef struct tide_managed_checkpoint {
     uint32_t magic, size;
-    tide_server_recovery recovery;
+    tide_player_set players, leaving;
+    uint64_t digests[TIDE_GAME_PLAYERS];
+    uint8_t identities[TIDE_GAME_PLAYERS][32];
+    uint32_t tick_rate, seed;
+    float dt;
+    bool closed, started;
 } tide_managed_checkpoint;
 
 TIDE_MANAGED_EXPORT(tide_managed_save)
@@ -141,42 +146,58 @@ uint32_t tide_managed_save(uint8_t *out, const uint32_t capacity)
     if (!size || size > UINT32_MAX - sizeof(tide_managed_checkpoint)) return 0;
     const uint32_t total = size + (uint32_t)sizeof(tide_managed_checkpoint);
     if (!out || capacity < total) return total;
-    tide_managed_checkpoint checkpoint = {.magic = UINT32_C(0x314d4454), .size = size};
-    tide_server_recovery_state(tide_managed_server, &checkpoint.recovery);
-    memcpy(out, &checkpoint, sizeof checkpoint);
-    return write(world, out + sizeof checkpoint, size) == size ? total : 0;
+    tide_managed_checkpoint *checkpoint = calloc(1, sizeof *checkpoint);
+    if (!checkpoint) return 0;
+    checkpoint->magic = UINT32_C(0x324d4454);
+    checkpoint->size = size;
+    tide_server_recovery recovery = {.digests = checkpoint->digests, .identities = checkpoint->identities};
+    tide_server_recovery_state(tide_managed_server, &recovery);
+    checkpoint->players = recovery.players;
+    checkpoint->leaving = recovery.leaving;
+    checkpoint->tick_rate = recovery.tick_rate;
+    checkpoint->seed = recovery.seed;
+    checkpoint->dt = recovery.dt;
+    checkpoint->closed = recovery.closed;
+    checkpoint->started = recovery.started;
+    memcpy(out, checkpoint, sizeof *checkpoint);
+    free(checkpoint);
+    return write(world, out + sizeof(tide_managed_checkpoint), size) == size ? total : 0;
 }
 
 TIDE_MANAGED_EXPORT(tide_managed_restore)
 uint32_t tide_managed_restore(const uint8_t *data, const uint32_t size, const double now)
 {
     if (!tide_managed_server || size < sizeof(tide_managed_checkpoint)) return 0;
-    tide_managed_checkpoint checkpoint;
-    memcpy(&checkpoint, data, sizeof checkpoint);
-    if (checkpoint.magic != UINT32_C(0x314d4454) || checkpoint.size != size - sizeof checkpoint
-        || !checkpoint.recovery.tick_rate || checkpoint.recovery.tick_rate > 1000
-        || !(checkpoint.recovery.dt > 0.0f && checkpoint.recovery.dt <= 1.0f)) return 0;
+    tide_managed_checkpoint *checkpoint = malloc(sizeof *checkpoint);
+    if (!checkpoint) return 0;
+    memcpy(checkpoint, data, sizeof *checkpoint);
+    if (checkpoint->magic != UINT32_C(0x324d4454) || checkpoint->size != size - sizeof *checkpoint
+        || !checkpoint->tick_rate || checkpoint->tick_rate > 1000
+        || !(checkpoint->dt > 0.0f && checkpoint->dt <= 1.0f)
+        || checkpoint->players.words > TIDE_PLAYER_SET_BITS / 64u
+        || checkpoint->leaving.words > TIDE_PLAYER_SET_BITS / 64u) { free(checkpoint); return 0; }
     void *world = calloc(1, tide_game_api.world_size);
-    if (!world) return 0;
+    if (!world) { free(checkpoint); return 0; }
     bool (*read)(void *, const uint8_t *, uint32_t) = tide_managed_read_save
         ? tide_managed_read_save : tide_game_api.unpack_world;
-    const bool loaded = read(world, data + sizeof checkpoint, checkpoint.size);
+    const bool loaded = read(world, data + sizeof *checkpoint, checkpoint->size);
     tide_server *restored = NULL;
     if (loaded) {
         tide_server_desc d = tide_managed_description;
         d.world = world;
-        d.players = checkpoint.recovery.players;
-        d.leaving = checkpoint.recovery.leaving;
-        d.digests = checkpoint.recovery.digests;
-        d.identities = (const uint8_t (*)[32])checkpoint.recovery.identities;
-        d.closed = checkpoint.recovery.closed;
-        d.tick_rate = checkpoint.recovery.tick_rate;
-        d.seed = checkpoint.recovery.seed;
-        d.wait_for_first = !checkpoint.recovery.started;
-        d.dt = checkpoint.recovery.dt;
+        d.players = checkpoint->players;
+        d.leaving = checkpoint->leaving;
+        d.digests = checkpoint->digests;
+        d.identities = (const uint8_t (*)[32])checkpoint->identities;
+        d.closed = checkpoint->closed;
+        d.tick_rate = checkpoint->tick_rate;
+        d.seed = checkpoint->seed;
+        d.wait_for_first = !checkpoint->started;
+        d.dt = checkpoint->dt;
         tide_managed_now = now;
         restored = tide_server_create(&d, now);
     }
+    free(checkpoint);
     if (tide_game_api.free_world) tide_game_api.free_world(world);
     free(world);
     if (!restored) return 0;

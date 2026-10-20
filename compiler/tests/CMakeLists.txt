@@ -328,7 +328,8 @@ tide_e2e_test(constants SOURCES e2e/constants/a_tuning.tide e2e/constants/b_main
 tide_e2e_test(settings SOURCES e2e/settings.tide e2e/settings_more.tide) # Several blocks, in two files, are one list
 tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What ticks and frames say to a host's profiler
 tide_e2e_test(handover)
-tide_e2e_test(players) # A match of 150 players, in a game whose maxPlayers is 200
+tide_e2e_test(players) # 270 loopback players, including indices beyond a byte
+tide_e2e_test(players_ceiling) # Exact shared ceiling, sparse highest-slot connection and recovery
 tide_e2e_test(delta)
 if(TIDE_PLATFORM)
     # grid.Decode: the engine's PNG reader against the platform's writer, and a PNG decoded in the match

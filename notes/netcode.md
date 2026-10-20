@@ -1,5 +1,76 @@
 # Netcode: sessions, prediction, commands
 
+## Shared player/connection ceiling (2026-10-20)
+
+The owner approved 65,536 as the shared supported ceiling. TIDE_PLAYERS_MOST
+in tide/player.h now governs maxPlayers, native room peers, dedicated-host
+max_connections and the service CLI's validation. Defaults remain 16 players
+per match and 256 connections per dedicated host; those settings still bound
+different resources. This is a supported representation ceiling, not a measured
+65,536-player throughput claim.
+
+Session protocol 16 encodes welcome player indices, join/leave player indices,
+handover part indices and tick-piece indices as varints. Pending server events
+keep uint32 player indices. The generated Session ABI marker changes, so hosts
+and games rebuild together. Small indices retain their previous wire sizes.
+Tick sending retains its eight-packet update allowance and now resumes a large
+frame at its next unsent piece, rather than repeatedly starting at piece zero.
+Projected frames above 256 KB still use the existing chunked correction path as
+an internal reassembly bound; that threshold no longer reflects index width.
+
+Player sets remain bounded value bitsets (65,600 bits, including the server's
+input slot), with a maintained nonzero-word prefix so small sets do not scan
+the full ceiling. Initialize them with {0} and mutate through tide_players_*
+to preserve that prefix. Wire masks and frame/handover capacity bounds use the
+game's configured count. Per-player connections, inputs, Audience words and
+client handover digests use the configured count, not the global ceiling.
+The fixed bitsets are about 8 KiB of metadata each; they are not dynamically
+sized. Frame-capacity arithmetic widens before allocation; unsupported oversized
+handwritten game tables are refused. Kick validates against the game's own
+player count before indexing its connections.
+
+tide_server_recovery now takes caller-provided digest/identity output arrays,
+each tide_game_players(game) entries; its getter preserves those pointers and
+fills them. Managed checkpoint envelope 2 stores game-sized arrays without
+pointers, and save/restore allocate the checkpoint off the stack. Client
+handover metadata owns game-sized digest storage, released on replacement and
+destruction. Generated raw and network serialization headers also use temporary
+heap storage, so large configured input arrays do not exhaust the 1 MiB stack.
+Serialization contents and deterministic world hashes are unchanged for an
+unchanged game schema.
+
+The players fixture now runs 270 real loopback sessions with maxPlayers 300,
+including inputs, identity-preserving host migration, and all ten Audience
+words through actual recipient projection. players_ceiling compiles maxPlayers
+65536, exercises the last input/server slots and last Audience word, joins the
+last slot using a restored match with preceding slots reserved, verifies ticks
+and input delivery, round-trips its delta, reconnects with the same cookie, and
+checks leave delivery and rejection above the ceiling. It does not instantiate
+65,536 clients or benchmark that workload.
+
+Validation: warning-free Windows native/web debug builds; all 2,406 native
+and 2,353 web CTests are covered, including native Vulkan/OpenGL, WebGL,
+WebGPU, browser RTC/migration/threading, compiler/LSP and deterministic pins.
+The initial sole failure in each suite was the handwritten command fixture's
+protocol-15 packet; it now sends 16. After that fix and the final oversized-frame
+migration guards, the complete engine and eight affected session fixtures pass
+again on both native and WASI. The docs production build passes. A separately
+linked checkout-built WASM reactor with the ceiling fixture saves and restores
+an identical 3,170,841-byte managed checkpoint, and rejects an invalid player-set
+prefix. Its header also compiles under strict C17 with warnings as errors.
+Vulkan tests ran without a configured validation layer. Android, Linux/macOS,
+MinGW and sanitizer coverage remain CI work; no CI was dispatched.
+
+Integration: origin/dev advanced with disjoint math/Screen metadata and private
+aggregate-borrowing codegen. The two notes-only conflicts retain both records;
+code merged without conflicts. Both complete debug builds and the docs build
+pass after integration. The 21 affected native and 22 web checks pass, covering
+the engine/session/player fixtures, incoming float-bit/aggregate/Screen cases,
+Screen diagnostics, shader golden, native Vulkan/OpenGL and WebGL/WebGPU float
+checks, editor harness and native/browser rooms. The exact-ceiling managed
+checkpoint probe passes again against the merged runtime. No full-suite repeat
+was needed for the disjoint compiler hunks.
+
 Scene audience unification (2026-10-15): the compiler removed separate scene
 membership storage/APIs and uses the root Visibility group for the enclosing
 scene limit. Recipient projection, lifecycle journals, authoritative correction
@@ -209,7 +280,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **The local outbox** is `tide_outgoing_item`s (a malloc'd buffer, its size and channel) in the local state, `TIDE_COMMAND_OUTBOX` of them (32 a channel, the unordered ones counted as one), packed after the struct in `tide_local_pack` (each checked again as it's unpacked) and freed by `tide_local_free` and `tide_local_disconnected`.
   - Generated C: a game with no commands generates the C it did, byte for byte (old and new tidec over every game's source list); one with commands differs only in the contract's signatures, the outbox and `TIDE_COMMAND_CHANNELS` in its header, and so in its hash, which is one hash, not a layout change.
   - Tests: `compiler/tests/e2e/commands_channels` (channels numbered and their sequences apart, the window, a 3 MB command whole on one world and through the outbox's bytes, a chat line handled within half a second of a 3 MB upload on a lossy network while no player's verified tick falls behind, the same upload on a lossless one with no input late, 20 unordered commands once each under 30% loss, a late joiner's world with the sequences, a handover keeping every channel's and the window), natively and on the web; `compiler/tests/errors/command_channel_*.tide` and `command_unordered_*.tide`, one per diagnostic; `tests/test_commands.c` as it was, on the default channel.
-- A match takes as many players as the game says: its `maxPlayers` setting (`tide_game.max_players`, `TIDE_GAME_PLAYERS` in the generated header), 16 without one (`TIDE_PLAYERS_DEFAULT`) and 256 at most (`TIDE_PLAYERS_MOST`, `tide/player.h`). The world keeps an input for each and the server's in the slot after them, so the count is part of the layout: builds that differ in it are different games, and a reload that changes it starts the match over (`prepare_server` refuses). The netcode has no smaller limit of its own: a server's arrays by player are allocated for its game's count, sets of players are `tide_player_set` (320 bits: the players and the server's slot) and go on the wire as a varint of as many bits as they have (`write_players` in `engine/src/session.c`), so a match of a few players pays what a 32-bit set did; a tick's count of joins and leaves is a varint; and a handover record goes in parts of a datagram (`HANDOVER_PART`), as 256 digests don't fit one. Scene roots now use ordinary Visibility groups; Audience has as many 32-bit words as the game's players take (`add_audience_words` in `compiler/src/check.c`). `compiler/tests/e2e/players` retains its 150-machine loopback handover using an explicit test-only full-world `tide_game` adapter: all projection/filter/journal callbacks are cleared only for that legacy multiword/digest-transfer case, never for ordinary generated sessions. A separate case uses the unmodified generated projection API, joins all 200 players, checks all seven Audience words through the scene root's shared group, verifies recipient 199 receives its Table, then removes that member and proves Table is absent for 199 but still available to 198. All original migration identity/input/seating assertions remain. The three-case players fixture passes native and WASI (CTest 1.29/1.61 seconds).
+- A match takes its configured maxPlayers (16 by default), up to the shared TIDE_PLAYERS_MOST ceiling of 65,536. Its count is part of the input/Audience layout and build compatibility. Current protocol, storage and fixture contracts are in Shared player/connection ceiling above.
+
 - How late other players see you is the priority (the owner, 2026-10-05: "the entire point"; a player's own input was never the issue, and a change that made views draw the tick in progress was built by mistake and reverted the same day, as it also made each machine guess the others a tick further). What's between a key read on one machine and another's view showing it, beside the network: the wait for a tick to sample it, how early the client sends its inputs (the server holds each until its tick), the server's frame, and the watcher's.
   - A client sends its inputs as early as they have to be, and no earlier (`keep_early` in `engine/src/session.c`). The server says with everything it sends how long the player's inputs waited before their ticks ran (`note_wait`: from when each arrived, by its transport's clock, to the update that ran its tick, the least of the ticks an update ran; under 0 by a tick for each input missing when a tick ran, counted from the newest input the player sent, one that came too late among them: `connection.newest_sent`). It's said in 960ths of a second (`WAITS`), a signed varint after the newest input, which is a byte while the wait is under 65 ms; the tick before them went from 32 bits to a varint, so a SERVER is no bigger than it was for a match's first 9 hours at 60 ticks a second (a byte more after), and `PROTOCOL` went to 10. The least of those waits over a while is what counts, as being early is for the input that's nearly late.
   - What the client keeps that least at (`early_wanted`): its lead in ticks (`tide_client_desc.lead`: 0 on the server's machine, whose inputs go straight in), or, with `lead_frame`, which a session's player over a network has, one of its own frames where that's less (the owner, 2026-10-06, of what it saves: "1 tick would be huge"). A frame because inputs are read and sent a frame at a time, and every unacknowledged input goes again in each: so a frame that came late, or a datagram that was lost, still leaves the input in time. A machine's frame is the time between its updates, on the whole, the last while it watched (`frame`), and counts as a 60th of a second where it's shorter (`EARLY_FRAME`): that's what a match of 60 ticks a second has with a tick, so a fast display gets no less. Hosts that say `lead` alone keep whole ticks, as tests and benchmarks do.

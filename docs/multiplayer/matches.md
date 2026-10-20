@@ -261,7 +261,7 @@ settings
 }
 ```
 
-`maxPlayers` goes from 1 to 256. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
+`maxPlayers` goes from 1 to 65,536, the same supported ceiling as a dedicated server’s total connections. The settings are separate: one limits a match, the other limits connections across all of the server’s matches. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
 
 Pick what the game is built for. In a full-world match every player receives every other's input and simulates the whole world, so traffic can grow with the square of its players. [Visibility](../game/visibility.md) restricts state, simulation and owner-input delivery, while the server still simulates the complete match.
 

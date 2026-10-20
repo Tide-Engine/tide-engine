@@ -110,7 +110,7 @@ int tide_serve(const tide_serve_desc *desc)
             uint32_t value;
             const uint32_t most = strcmp(a, "--port") == 0 ? 65535u
                                 : strcmp(a, "--max-matches") == 0 ? 4096u
-                                : strcmp(a, "--max-connections") == 0 ? 65536u
+                                : strcmp(a, "--max-connections") == 0 ? TIDE_PLAYERS_MOST
                                 : strcmp(a, "--frames") == 0 ? 1000000000u : 0u;
             if (!most || i + 1 >= desc->argc || !serve_number(desc->argv[++i], most, &value) || !value) {
                 fprintf(stderr, "tide: invalid server option %s; use --port, --max-matches, --max-connections, "

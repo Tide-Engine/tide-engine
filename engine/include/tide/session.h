@@ -368,8 +368,9 @@ uint32_t tide_server_player_count(const tide_server *s);
 // with the world at an update boundary; transport connections are never persisted.
 typedef struct tide_server_recovery {
     tide_player_set players, leaving;
-    uint64_t digests[TIDE_PLAYERS_MOST];
-    uint8_t identities[TIDE_PLAYERS_MOST][32];
+    // Caller-provided output arrays, each tide_game_players(game) entries.
+    uint64_t *digests;
+    uint8_t (*identities)[32];
     uint32_t tick_rate;
     uint32_t seed;
     float dt;

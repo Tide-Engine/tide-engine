@@ -1,0 +1,20 @@
+settings
+{
+    maxPlayers = 65536;
+    tickRate = 1;
+}
+
+input Controls { int push; }
+component Mover { int sum; }
+singleton Match { int joined; int left; int ticks; PlayerID last; Audience audience; }
+scene Main { }
+event(PlayerJoined joined) Join(mut Match match)
+{
+    match.joined += 1;
+    match.last = joined.player;
+    match.audience.Add(joined.player);
+    Spawn(Mover { }, Owner { player = joined.player });
+}
+event(PlayerLeft left) Leave(mut Match match) { match.left += 1; match.last = left.player; match.audience.Remove(left.player); }
+system Count(mut Match match) { match.ticks += 1; }
+system Push(Controls input, mut Mover mover, with Owner) { mover.sum += input.push; }

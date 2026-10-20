@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Shared player ceiling (2026-10-20)
+
+The owner approved the shared 65,536-player/connection ceiling. This maintains
+the existing temporary player/session/hosting/platform exception. No new runtime
+function is generated or exported. tide_player_set gains an active-word prefix;
+tide_server_recovery carries caller-provided game-sized digest/identity output
+buffers instead of global-ceiling arrays. Its getter fills those buffers.
+Generated hosts/games rebuild together through the Session ABI marker. Session
+protocol 16 and managed checkpoint envelope 2 are described in netcode.md.
+
 ## Inside Out conventional completions (2026-10-20)
 
 Under the owner's conventional API-completion instruction and existing math
@@ -12,7 +22,6 @@ generated frames call no platform function. Hosts/libraries rebuild for that C
 layout addition. Private CPU aggregate borrowing adds no runtime entry point or
 public Tide reference semantics. Contracts/validation: notes/language.md and
 notes/drawing.md.
-
 
 ## Explicit skinned instance adapters (2026-10-20)
 
