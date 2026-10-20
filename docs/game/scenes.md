@@ -15,6 +15,10 @@ scene Arena
 
 A loaded scene is an entity like any other. The declaration is its component, and its fields are the scene's state, so a system that takes `Arena` runs once per loaded arena.
 
+For an empty scene, use `scene Arena;` as shorthand for `scene Arena { }`.
+The same works for local scenes: `local scene Main;`. Both forms are complete
+declarations, and braces remain valid.
+
 ## Authored prefabs
 
 An authored `.tprefab` file describes a reusable rooted entity tree. The same
@@ -71,7 +75,7 @@ the [native scene editor](../tools/editors.md#native-scene-editor).
 The game starts in the scene called `Main`, and there's exactly one. It sets up the first scene, not the game loop: the engine runs the tick.
 
 ```csharp
-scene Main { }
+scene Main;
 
 event(Spawned) Setup(with Main)
 {

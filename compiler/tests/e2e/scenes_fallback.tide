@@ -1,6 +1,6 @@
 // When a world's last scene unloads, Main loads again.
 
-scene Main { }
+scene Main;
 
 scene Arena
 {
