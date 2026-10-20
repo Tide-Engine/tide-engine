@@ -60,6 +60,15 @@ namespace Tide.Editor
             var said = (output.Result + errors).Trim();
             if (process.ExitCode != 0) throw new BuildFailedException("Tide: the game didn't build for the player:\n" + said);
             if (said.Length > 0) Debug.Log("tide: " + said);
+            // A player loads only the scenes it was built with, and the match may load any of these
+            var built = new HashSet<string>(EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path));
+            foreach (var asset in TideUnityMap.Load(Built).assets)
+            {
+                if (asset.scene && !built.Contains(asset.path))
+                {
+                    Debug.LogWarning($"Tide: {asset.path} holds Tide entities, but isn't in Build Settings: a player whose match loads it can't. Add it there.");
+                }
+            }
         }
 
         public void OnProcessScene(UnityEngine.SceneManagement.Scene scene, BuildReport report)

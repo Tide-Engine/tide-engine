@@ -99,15 +99,33 @@ namespace Tide
         readonly Dictionary<string, GameObject> prefabByGuid = new Dictionary<string, GameObject>();
         int makingRow = -1;
 
+        // Play in the editor from a scene of Tide entities with no runner of its own (a level, opened alone): one is
+        // made, which runs the match with the scenes open.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        static void RunnerForOpenScenes()
+        {
+            if (!Application.isEditor || FindAnyObjectByType<TideRunner>() != null || FindAnyObjectByType<TideEntity>() == null) return;
+            new GameObject("Tide").AddComponent<TideRunner>();
+        }
+
         void OnEnable()
         {
             if (Current != null && Current != this)
             {
-                Debug.LogError("Tide: one TideRunner at a time: the game's state is the process's.", this);
-                enabled = false;
+                // One at a time, as the game's state is the process's: a scene's own, for playing from it, gives way
+                // when the running match loads that scene
+                if (Application.isPlaying) Destroy(this);
+                else enabled = false;
                 return;
             }
             Current = this;
+            // The match decides which of the project's scenes are loaded: this goes on whichever it unloads
+            if (Application.isPlaying && transform.parent == null) DontDestroyOnLoad(gameObject);
+            scenesOpen.Clear();
+            for (var i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                scenesOpen.Add(UnityEngine.SceneManagement.SceneManager.GetSceneAt(i).path);
+            }
             library = TideLibrary.Open(TideLibrary.BuildFolder);
             if (library == null)
             {
@@ -299,6 +317,7 @@ namespace Tide
             var count = read ? Packet.EntityCount : 0;
             if (byRow.Length < count) byRow = new TideEntityView[Math.Max(count, byRow.Length * 2)];
             for (var i = 0; i < count; i++) byRow[i] = null;
+            FollowScenes(count);
             for (var i = 0; i < count; i++) ViewOf(i);
             gone.Clear();
             foreach (var pair in shown)
@@ -457,6 +476,97 @@ namespace Tide
             moved.SetPositionAndRotation(at, turn);
             var between = moved.parent != null ? moved.parent.lossyScale : Vector3.one;
             moved.localScale = new Vector3(Divide(size.x, between.x), Divide(size.y, between.y), Divide(size.z, between.z));
+        }
+
+        // The project's scenes the match has (their entities' roots, Unity.Source's node 0 of a scene's asset): each
+        // loaded beside the others as its root comes, if it isn't open already, and unloaded as it goes. Build
+        // Settings' first is one, which the match loads as Main starts (tide unity's Unity.Begin).
+        readonly HashSet<int> scenesWanted = new HashSet<int>();
+        readonly HashSet<string> scenesLoading = new HashSet<string>();
+        readonly HashSet<string> scenesShown = new HashSet<string>(); // ...that the match has had while this ran
+        bool openSent;
+        readonly List<string> scenesOpen = new List<string>(); // What the editor had open as this started
+
+        void FollowScenes(int count)
+        {
+            if (sourceType < 0) return;
+            scenesWanted.Clear();
+            for (var i = 0; i < count; i++)
+            {
+                if (!SourceOf(i, out var asset, out var node) || node != 0) continue;
+                var a = Map.Of(asset);
+                if (a != null && a.scene) scenesWanted.Add(asset);
+            }
+            foreach (var asset in scenesWanted)
+            {
+                var path = Map.Of(asset).path;
+                scenesShown.Add(path);
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneByPath(path);
+                if ((scene.IsValid() && scene.isLoaded) || scenesLoading.Contains(path)) continue;
+                var loading = LoadScene(path);
+                if (loading == null) continue;
+                scenesLoading.Add(path);
+                loading.completed += _ => scenesLoading.Remove(path);
+            }
+            // What the match had and has no more
+            foreach (var a in Map.assets)
+            {
+                if (!a.scene || !scenesShown.Contains(a.path)) continue;
+                var still = false;
+                foreach (var asset in scenesWanted) still |= Map.Of(asset).path == a.path;
+                if (still) continue;
+                if (scenesLoading.Contains(a.path)) continue; // Let go of while it loads: unloaded once it has
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneByPath(a.path);
+                if (scene.IsValid() && scene.isLoaded && UnityEngine.SceneManagement.SceneManager.sceneCount > 1)
+                {
+                    UnityEngine.SceneManagement.SceneManager.UnloadSceneAsync(scene);
+                }
+                scenesShown.Remove(a.path);
+            }
+            OpenEditorScenes();
+        }
+
+        static AsyncOperation LoadScene(string path)
+        {
+            var additive = new UnityEngine.SceneManagement.LoadSceneParameters(UnityEngine.SceneManagement.LoadSceneMode.Additive);
+#if UNITY_EDITOR
+            // In Play mode, any scene of the project, in Build Settings or not
+            return UnityEditor.SceneManagement.EditorSceneManager.LoadSceneAsyncInPlayMode(path, additive);
+#else
+            var loading = UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(path, additive);
+            if (loading == null) Debug.LogError($"Tide: the match loaded {path}, which isn't in this build: add it to Build Settings.");
+            return loading;
+#endif
+        }
+
+        // In the editor, the match has the scenes the editor has open, of those holding Tide entities, rather than
+        // Build Settings' first: Unity.Open, which the match takes from its first player alone, the server's as it
+        // started. Sent once, as this machine runs the match.
+        void OpenEditorScenes()
+        {
+            if (!Application.isEditor || openSent || status.server == 0 || State != TideSessionState.Connected) return;
+            openSent = true;
+            var type = Schema.TypeIndex("Unity.Open");
+            var t = Schema.Type(type);
+            var assetField = t?.Field("asset");
+            var onlyField = t?.Field("only");
+            if (assetField == null || onlyField == null) return;
+            var open = new List<int>();
+            foreach (var path in scenesOpen)
+            {
+                for (var k = 0; k < Map.assets.Length; k++)
+                {
+                    if (Map.assets[k].scene && Map.assets[k].path == path) open.Add(k);
+                }
+            }
+            var value = new byte[Math.Max(1, (int)t.size)];
+            for (var i = 0; i < open.Count; i++)
+            {
+                Array.Clear(value, 0, value.Length);
+                BitConverter.GetBytes(open[i]).CopyTo(value, (int)assetField.offset);
+                value[onlyField.offset] = (byte)(i == 0 ? 1 : 0); // The first: these, and no others
+                fixed (byte* bytes = value) library.Command(embed, (uint)type, 0, 0, bytes, (uint)value.Length);
+            }
         }
 
         static T Ensure<T>(GameObject on) where T : Component

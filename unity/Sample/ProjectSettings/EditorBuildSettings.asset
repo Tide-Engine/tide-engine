@@ -8,4 +8,7 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Sample/Bounce.unity
     guid: dbcc42363b8edd040a8142598b6a6149
+  - enabled: 1
+    path: Assets/Sample/Bonus.unity
+    guid: 1fc9ad18d4875a543abaa6cced41a231
   m_configObjects: {}

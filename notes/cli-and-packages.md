@@ -43,7 +43,7 @@ standalone wasm build of `generate`'s game with `unity_web_main` (and
 `unity_web_exports`, split under C's string length limit) for its `main.c`, in
 the web cache, written as `tide-game.js` by `write_unity_script` (config,
 program and pack as `page_payload` base64, then the release or debug runtime
-with `strip_reloading`), and `unity.json`. The embed host's exports gained
+with `strip_reloading`), and `unity.json`. `--assets` is taken by `build` and `run` too (for servers of Unity-made games); the prefab texts under `-o` are `tide unity`'s alone. The embed host's exports gained
 `tide_embed_draw`. `tide help unity` lists `--web` through the shared option.
 
 ## Terminal editor configuration helper (2026-10-18)

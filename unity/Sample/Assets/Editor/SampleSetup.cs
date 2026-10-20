@@ -17,7 +17,7 @@ public static class SampleSetup
     public static void Make()
     {
         Directory.CreateDirectory(Folder);
-        foreach (var old in new[] { "Ball.prefab", "Roller.prefab", "Bounce.unity", "Ball.mat", "Floor.mat", "Pillar.mat" })
+        foreach (var old in new[] { "Ball.prefab", "Roller.prefab", "Bounce.unity", "Bonus.unity", "Ball.mat", "Floor.mat", "Pillar.mat" })
         {
             AssetDatabase.DeleteAsset(Folder + "/" + old);
         }
@@ -59,7 +59,15 @@ public static class SampleSetup
         Pillar(pillars, "Pillar", new Vector3(3.5f, 0.75f, 0), pillarMaterial, -0.75f);
         new GameObject("Tide").AddComponent<TideRunner>();
         EditorSceneManager.SaveScene(scene, Folder + "/Bounce.unity");
-        EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(Folder + "/Bounce.unity", true) };
+        // A scene the match loads when its code says (the ShowBonus command), which Unity then loads beside Bounce
+        var bonus = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        Pillar(new GameObject("Bonus").transform, "Totem", new Vector3(0, 0.75f, -3.5f), pillarMaterial, 3f);
+        EditorSceneManager.SaveScene(bonus, Folder + "/Bonus.unity");
+        EditorBuildSettings.scenes = new[]
+        {
+            new EditorBuildSettingsScene(Folder + "/Bounce.unity", true), // The first: the match loads it as Main starts
+            new EditorBuildSettingsScene(Folder + "/Bonus.unity", true),
+        };
         AssetDatabase.SaveAssets();
         Debug.Log("SampleSetup: made " + Folder + "/Bounce.unity");
     }

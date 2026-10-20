@@ -177,8 +177,10 @@ static const argument_help arguments[] = {
     {"--once", "--once", "Build once and end",
      "unity builds the game once rather than as its files change, as a player build does.", UNITY},
     {"--assets", "--assets <folder>", "Include a Unity project's prefabs and scenes",
-     "unity reads the project's Assets folder: each prefab and scene holding\n"
-     "TideEntity objects is a Tide prefab named after its file.", UNITY},
+     "Reads a Unity project's Assets folder: each prefab and scene holding\n"
+     "TideEntity objects is a Tide prefab named after its file, and Build\n"
+     "Settings' first scene loads as Main starts. build and run take it for a\n"
+     "server, or any build, of a game made in Unity.", UNITY | BUILD | RUN},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
     {"--host", "--host [port]", "Open Main's match for others to join",

@@ -393,6 +393,52 @@ says it isn't supported; tide resolves asset paths from the declaring file),
 unsaved scene and prefab edits (tide reads saved files), `Name#k` paths when
 names include `#`, gizmos, and tidels renames reaching Unity assets.
 
+### Scenes as built (2026-10-20)
+
+**Owner:** the match decides which Unity scenes are loaded, as a dedicated
+server outside Unity must have them too; Build Settings' first scene mirrors
+Unity's start; after it, the match's code loads scenes; in the editor, the
+editor tells the match which scenes it has open, editor only.
+
+- **The converter** (`unity_declarations`) adds to `Unity.tide`, when the
+  project has scenes of Tide entities: `singleton Unity.Scenes { Map<int,
+  Entity> loaded; PlayerID opener; bool heard; bool opened; }`;
+  `event(Spawned) Begin(with Main, ...)` loading Build Settings' first enabled
+  scene (`ProjectSettings/EditorBuildSettings.asset`, whose stamp is the
+  game's too), unless the editor's command came first; `command Open { int
+  asset; bool only; }`, taken only from the match's first player (set by its
+  `PlayerJoined`, or by the command when it comes first in the first tick):
+  `only` unloads the scenes it loaded but that one, then it loads the asset's
+  scene by a `switch` over the scenes. Order-independent: Begin then Open, or
+  Open then Begin, end with the editor's scenes alone. Test:
+  `unity_prefabs_and_scenes_as_tide_prefabs` (the fixture's Build Settings
+  names Level first, after a scene that's off).
+- **`tide build`/`tide run --assets`**: a server, or any build, of a game made
+  in Unity has the same prefabs and this code (the prefab texts are written
+  for `tide unity` alone, under its `-o`). Checked: `tide run --frames 60` and
+  `tide build --server` of the sample.
+- **The runner** follows the match: a scene asset's root entity in the packet
+  loads that scene additively unless it's open
+  (`EditorSceneManager.LoadSceneAsyncInPlayMode` in the editor, any scene;
+  `SceneManager.LoadSceneAsync` in a player, Build Settings' scenes), and its
+  going unloads it, waiting for a load the match let go of mid-way. Entities
+  of a scene still loading show once it has. The runner keeps itself across
+  loads (`DontDestroyOnLoad`, a root one), and a scene's own runner loaded
+  while one runs removes itself quietly. In the editor, as this machine runs
+  the match (`status.server`), it sends Open for each scene of Tide entities
+  open as it started, the first with `only`; and Play from a scene of Tide
+  entities with no runner makes one. The build processor warns of a scene of
+  Tide entities missing from Build Settings.
+- **The sample**: `Bonus.unity` (a Totem Spinner), loaded and unloaded by the
+  `ShowBonus` command; Bounce.tide no longer loads Bounce itself. Play mode
+  tests: the match loads and unloads Bonus with Unity; the editor's open
+  Bounce and Bonus are the match's; Bonus open alone is the match's and Bounce,
+  loaded as Main started, goes. Players checked as before.
+
+Gaps: what the editor opens while playing isn't sent; a client in the editor
+sends nothing (the server decides); `Scene.Load` of the same Unity scene twice
+binds both roots' entities to one set of GameObjects.
+
 ### Web as built (2026-10-20): option B, packaged
 
 `tide unity --web -o <dir>` (once; `compiler/cli/build.c`, `tide_unity_web`)

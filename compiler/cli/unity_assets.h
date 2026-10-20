@@ -16,6 +16,12 @@
 // scene, and each node's GameObject as a path of names from the asset's root
 // ("Body/Arm", "Arm#1" for a second Arm among siblings; "" for the root, and
 // for a scene's own entity, which no GameObject is).
+//
+// With scenes among them, that source also has the match's Unity scenes:
+// Unity.Scenes (which it loaded, by asset number), Build Settings' first scene
+// (ProjectSettings/EditorBuildSettings.asset) loaded as Main starts, as a
+// player build starts with it, and Unity.Open, the editor's command to have
+// the scenes it has open instead, taken from the match's first player alone.
 
 #include <stdbool.h>
 
