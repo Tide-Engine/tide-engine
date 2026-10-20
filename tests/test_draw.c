@@ -577,6 +577,59 @@ TIDE_TEST(draw_meshes_keep_their_triangles)
     TIDE_CHECK(d.vertices == NULL && d.indices == NULL && d.vertex_count == 0);
 }
 
+// A mesh of one quad, one color, is kept as the quad (tide_draw_quad): its
+// corners are those it was given, to the bit, and quads one after another
+// with the same image are one command; anything else is corners and triangles.
+TIDE_TEST(draw_meshes_of_one_quad_are_kept_as_quads)
+{
+    tide_draw_list d = {0};
+    tide_vertex sprite[4];
+    for (uint32_t i = 0; i < 4u; i++) sprite[i] = (tide_vertex){quad[i].position, quad[i].uv, {0.25f, 0.5f, 0.75f, 1.0f}};
+    sprite[2].position.x = -0.0f; // Told apart by its bits from 0, as the renderer tells them
+    sprite[1].position.x = -0.0f;
+    tide_draw_mesh(&d, sprite, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
+    tide_draw_mesh(&d, sprite, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
+    TIDE_REQUIRE(d.count == 1 && d.quad_count == 2 && d.vertex_count == 0 && d.index_count == 0);
+    TIDE_CHECK(d.commands[0].kind == TIDE_DRAW_QUADS && d.commands[0].mesh.first == 0 && d.commands[0].mesh.count == 2);
+    for (uint32_t k = 0; k < 6u; k++) { // p q r p r s
+        const tide_vertex v = tide_draw_quad_corner(&d.quads[1], k), want = sprite[quad_indices[k]];
+        TIDE_CHECK(memcmp(&v, &want, sizeof v) == 0);
+    }
+
+    // Through the same calls Tide's lists take, and after other meshes: a run of quads of its own
+    static const uint32_t other_way[6] = {2, 1, 0, 3, 2, 0};
+    tide_draw_mesh(&d, quad, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR); // Four colors: corners and triangles
+    tide_draw_mesh_with(&d, sprite, 4, quad_indices, 6, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_mesh(&d, sprite, 4, other_way, 6, NULL, TIDE_FILTER_BILINEAR); // Its triangles share other corners
+    TIDE_REQUIRE(d.count == 4 && d.quad_count == 3 && d.vertex_count == 8 && d.index_count == 12);
+    TIDE_CHECK(d.commands[1].kind == TIDE_DRAW_MESH && d.commands[2].kind == TIDE_DRAW_QUADS
+               && d.commands[2].mesh.first == 2 && d.commands[3].kind == TIDE_DRAW_MESH);
+
+    // Tinted, it's corners and triangles, as a tint is worked into each corner
+    tide_draw_reset(&d);
+    tide_draw_set_tint(&d, (tide_color){0.5f, 0.5f, 0.5f, 1.0f});
+    tide_draw_mesh(&d, sprite, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.quad_count == 0 && d.vertex_count == 4);
+
+    // Another list's quads are this one's, with this one's textures
+    static const uint8_t pixels[4] = {9, 8, 7, 255};
+    tide_draw_list from = {0};
+    tide_draw_reset(&d);
+    tide_draw_rect(&d, tide_f2(0.0f, 0.0f), tide_f2(1.0f, 1.0f), TIDE_COLOR_WHITE);
+    tide_draw_mesh(&from, sprite, 4, quad_indices, 6, &(tide_texture){pixels, 1, 1, 5}, TIDE_FILTER_POINT);
+    tide_draw_mesh(&from, sprite, 4, quad_indices, 6, &(tide_texture){pixels, 1, 1, 5}, TIDE_FILTER_POINT);
+    TIDE_REQUIRE(from.count == 1 && from.quad_count == 2);
+    tide_draw_append(&d, &from);
+    TIDE_REQUIRE(d.quad_count == 2 && d.texture_count == 1);
+    const tide_draw_command *appended = &d.commands[d.count - 1u];
+    TIDE_CHECK(appended->kind == TIDE_DRAW_QUADS && appended->mesh.count == 2 && appended->mesh.texture == 1
+               && appended->mesh.filter == TIDE_FILTER_POINT);
+    TIDE_CHECK(memcmp(&d.quads[1], &from.quads[1], sizeof d.quads[1]) == 0);
+    tide_draw_free(&from);
+    tide_draw_free(&d);
+    TIDE_CHECK(d.quads == NULL && d.quad_count == 0);
+}
+
 TIDE_TEST(draw_textures_are_copied_when_they_change)
 {
     tide_draw_list d = {0};

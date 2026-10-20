@@ -58,6 +58,15 @@ view Show(Counter counter)
     Seen(counter.ticks, counter.presses, Screen.width, Screen.height);
     Draw.Rect(float2(10, 20), float2(30, 40), Color(1, 0, 0)); // What the other program can draw (tide_embed_draw)
     Draw.Text("drawn", float2(5, 6), 12, Color(0, 1, 0));
+    // A quad of one color, which the list keeps as a quad and the packet shows as the mesh it is
+    var blue = Color(0, 0, 1);
+    List<Vertex> corners = [
+        Vertex { position = float2(50, 60), color = blue },
+        Vertex { position = float2(70, 60), uv = float2(1, 0), color = blue },
+        Vertex { position = float2(70, 80), uv = float2(1, 1), color = blue },
+        Vertex { position = float2(50, 80), uv = float2(0, 1), color = blue },
+    ];
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3]);
 }
 
 // What makes Arena a scene a match can start in, which the other program can then start by name
