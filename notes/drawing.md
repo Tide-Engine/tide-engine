@@ -1,5 +1,42 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Recording sprites and 3D instances (2026-10-20, second round)
+
+Round 2 of the performance pass (`notes/benchmarks.md`, Drawing, second
+round). Internal to `engine/src/draw.c`; recorded lists, culling decisions and
+pixels are unchanged, and no layout changed.
+
+- `texture_slot`: a mesh drawn with the image the last command drew a mesh
+  with, unchanged and already noted as drawn this frame, takes that command's
+  slot without hashing: what `texture_place` would find and do.
+- `tide_draw_triangles_with` keeps the list's index count in a register as it
+  copies a mesh's triangles; `grow`'s reallocating part is apart
+  (`grown`, never inlined), so what records a command keeps its registers.
+- One 3D instance (`instance_at`, what a view drawing a mesh for each entity
+  records), where the settings are settled, nothing is between the mesh and
+  the world, and the mesh is a valid one of `tide_vertex3`s without levels:
+  its transform is read once, into its place in the list's matrices, where
+  culling and the side it's drawn from read it, and the place is taken only
+  if it isn't culled. The same checks in the same order as before; anything
+  else goes through `instance_placed`, the code as it was, apart.
+- `bounds_visible` works out its rounding allowance only for a box past a
+  plane: the allowance is never under 0, so a box on a plane's inner side
+  passes it whatever the allowance is, and the answers are the same. Bounds
+  are passed by pointer, read where the list keeps them.
+- `tide_draw_mesh_slot` checks the place found last on its thread in a small
+  function, the hashing apart (`mesh_slot_found`), and `matrix_read` stores
+  what it reads a column at a time, which reads of any width after it find.
+- Measured (release, five gated rounds, medians, Vulkan / OpenGL): 65,536
+  textured quads recorded in 0.915 / 0.912 ms, from 1.117 / 1.114; 65,536
+  cube instances in 1.218 / 1.224, from 1.529 / 1.488; 65,536 round rects in
+  0.708 / 0.707, from 0.794 / 0.793 (`grown` apart: a shape's two arrays and
+  its command each grow). A sprite's four vertices copied 8 bytes at a time
+  instead of by `memcpy` (as `color_read` reads a color) recorded quads in
+  0.98 ms against 0.91, and was dropped; a struct-copy loop changed nothing.
+- Tests: the native suite's draw, frustum and settings tests (`tests/test_draw*.c`,
+  `tests/test_frustum.c`), the generated draw E2Es and the platform pixel tests,
+  all passing; nothing new was needed for recording, whose lists are as they were.
+
 ## Recording reads what its caller just wrote (2026-10-20)
 
 From the performance pass against the handwritten drawing baseline

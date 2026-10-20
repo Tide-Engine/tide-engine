@@ -58,7 +58,9 @@ static bool write(FILE *out, const char *name, const char *first, const char *se
 static bool write_all(FILE *out)
 {
     return write(out, "shape", shape_wgsl, NULL) && write(out, "smooth_shape", smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment)
+        && write(out, "solid_shape", solid_shape_wgsl_vertex, smooth_shape_wgsl_fragment)
         && write(out, "mesh", mesh_wgsl, NULL) && write(out, "text", text_wgsl, NULL)
+        && write(out, "quad", quad_wgsl, NULL) && write(out, "text_quad", text_quad_wgsl, NULL)
         && write(out, "mesh_3d", mesh_3d_wgsl, NULL) && write(out, "clear", clear_wgsl, NULL)
         && write(out, "clear_all", clear_all_wgsl, NULL);
 }
