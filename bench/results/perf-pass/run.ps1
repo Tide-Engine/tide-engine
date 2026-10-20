@@ -39,6 +39,7 @@ $all = @(
     @{name='versus_systems'; exe='versus_systems'; args=@()},
     @{name='versus_systems_empty'; exe='versus_systems'; args=@('--count','0')},
     @{name='versus_systems_small'; exe='versus_systems'; args=@('--count','64')},
+    @{name='versus_systems_mid'; exe='versus_systems'; args=@('--count','16384','--threads-list','1,2,4,8,12')},
     @{name='versus_systems_scaling'; exe='versus_systems'; args=@('--count','65536','--threads-list','1,2,4,8,12')},
     # Every versus program's ways on 1 to 12 threads
     @{name='versus_particles_scaling'; exe='versus_particles'; args=@('--threads-list','1,2,4,8,12')},
