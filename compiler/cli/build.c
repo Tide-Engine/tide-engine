@@ -1822,7 +1822,7 @@ static bool generate(build *b, const char *gen, const bool layout)
         if (!inputs) abort();
         for (int i = 0; i < unity.count; i++) inputs[count++] = (compile_input){unity.items[i].path, NULL, unity.items[i].text};
         // ...each as tide read it, beside the build, which its messages' lines are of
-        char *prefabs = b->opts->output ? path_join(b->opts->output, "prefabs") : NULL;
+        char *prefabs = b->opts->unity && b->opts->output ? path_join(b->opts->output, "prefabs") : NULL;
         if (prefabs) sys_remove_tree(prefabs);
         for (int i = 0; prefabs && i < unity.count; i++) {
             if (strcmp(unity.items[i].path, UNITY_SOURCE_PATH) == 0) continue;

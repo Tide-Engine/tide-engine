@@ -36,7 +36,17 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     unity_sources s;
     TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_FIXTURE, &s));
     TIDE_CHECK(s.count == 5); // Unity.Source's declaration and the four assets
-    TIDE_CHECK(text_of(&s, UNITY_SOURCE_PATH) != NULL);
+    // Unity.Source, and the scenes the match has: Build Settings' first one on (Level) loaded as Main starts, and
+    // the editor's command to have the scenes it has open
+    const char *declared = text_of(&s, UNITY_SOURCE_PATH);
+    TIDE_REQUIRE(declared != NULL);
+    TIDE_CHECK(strstr(declared, "    component Source\n") != NULL);
+    TIDE_CHECK(strstr(declared, "    event(Spawned) Begin(with Main, mut Scenes scenes)\n    {\n"
+                                "        if (scenes.opened) return; // The editor's command came first\n"
+                                "        scenes.loaded[1] = Scene.Load(Level);\n") != NULL);
+    TIDE_CHECK(strstr(declared, "    command Open\n") != NULL);
+    TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(Level); break;\n") != NULL);
+    TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
     // The Tip goes under Thing through Visual, which is no entity: Visual's placement (up 1, twice the size) is the
     // Tip's. The inactive Off isn't there.
     TIDE_CHECK(reads(&s, "Assets/Fixture/Thing.prefab",

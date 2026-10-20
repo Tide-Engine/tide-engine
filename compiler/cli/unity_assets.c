@@ -1188,6 +1188,89 @@ static char *write_prefab(project *p, const asset *a, node **roots, const int co
 }
 
 // ---------------------------------------------------------------------------
+// The match's Unity scenes (UNITY_SOURCE_PATH's declarations)
+
+typedef struct unity_scene {
+    int number;  // The asset's in the map, as Unity.Source has it
+    char *name;  // Its prefab's
+    char guid[33];
+} unity_scene;
+
+// The first scene Build Settings has on, as ProjectSettings/EditorBuildSettings.asset says: its GUID into `guid`
+// ("" for none).
+static void first_build_scene(const project *p, char guid[33])
+{
+    guid[0] = '\0';
+    char *dir = grab(p->project_length + 64);
+    memcpy(dir, p->assets, p->project_length);
+    strcpy(dir + p->project_length, "ProjectSettings/EditorBuildSettings.asset");
+    size_t size = 0;
+    char *body = sys_read_file(dir, &size);
+    free(dir);
+    yaml_file f;
+    if (!body || !yaml_read(body, &f)) {
+        free(body);
+        return;
+    }
+    free(body);
+    for (int d = 0; d < f.count && !guid[0]; d++) {
+        const yaml_node *scenes = yaml_get(f.documents[d].body, "m_Scenes");
+        for (int i = 0; scenes && scenes->kind == YAML_SEQ && i < scenes->count; i++) {
+            if (yaml_number(scenes->items[i], "enabled", 0) == 0) continue;
+            snprintf(guid, 33, "%s", yaml_text(scenes->items[i], "guid", ""));
+            break;
+        }
+    }
+    yaml_free(&f);
+}
+
+// Unity.Source, and with the project's scenes of Tide entities: which the match has loaded (Unity loads and unloads
+// them as it does), Build Settings' first as Main starts, as a player build starts with it, and the editor's command
+// to have the scenes it has open, which only the match's first player can send: the server's as the match started.
+static char *unity_declarations(const unity_scene *scenes, const int count, const char *first)
+{
+    text t = {0};
+    puts_(&t, "// Which of Unity's GameObjects shows an entity, and which of Unity's scenes the match has, as Tide's package\n"
+              "// for Unity finds them\n"
+              "namespace Unity\n{\n    component Source\n    {\n        int asset;\n        int node;\n    }\n");
+    if (count) {
+        puts_(&t, "\n    // The project's scenes the match has loaded, by their asset numbers in Source, and the player whose editor\n"
+                  "    // can choose them\n"
+                  "    singleton Scenes\n    {\n        Map<int, Entity> loaded;\n        PlayerID opener;\n        bool heard;\n        bool opened; // The editor chose them\n    }\n"
+                  "\n    // The server's player joins first, before the match's first tick\n"
+                  "    event(PlayerJoined joined) Arrived(mut Scenes scenes)\n    {\n"
+                  "        if (scenes.heard) return;\n        scenes.heard = true;\n        scenes.opener = joined.player;\n    }\n");
+        for (int i = 0; first && i < count; i++) {
+            if (strcmp(scenes[i].name, first) != 0) continue;
+            putf(&t, "\n    // Build Settings' first scene, which a player build starts with\n"
+                     "    event(Spawned) Begin(with Main, mut Scenes scenes)\n    {\n"
+                     "        if (scenes.opened) return; // The editor's command came first\n"
+                     "        scenes.loaded[%d] = Scene.Load(%s);\n    }\n", scenes[i].number, scenes[i].name);
+        }
+        puts_(&t, "\n    // The editor's, as Play starts there: a scene it has open; `only` unloads the others the match loaded for it\n"
+                  "    command Open\n    {\n        int asset;\n        bool only;\n    }\n"
+                  "\n    command(Open open, PlayerID sender) Opening(mut Scenes scenes)\n    {\n"
+                  "        // The first player's, which may come in the first tick, before its PlayerJoined does\n"
+                  "        if (!scenes.heard)\n        {\n            scenes.heard = true;\n            scenes.opener = sender;\n        }\n"
+                  "        if (sender != scenes.opener) return;\n        scenes.opened = true;\n"
+                  "        if (open.only)\n        {\n            mut List<int> others = [];\n"
+                  "            foreach (var entry in scenes.loaded)\n            {\n"
+                  "                if (entry.key != open.asset) others.Add(entry.key);\n            }\n"
+                  "            foreach (var asset in others)\n            {\n"
+                  "                Scene.Unload(scenes.loaded[asset]);\n                scenes.loaded.Remove(asset);\n            }\n        }\n"
+                  "        if (scenes.loaded.Has(open.asset)) return;\n"
+                  "        switch (open.asset)\n        {\n");
+        for (int i = 0; i < count; i++) {
+            putf(&t, "            case %d: scenes.loaded[%d] = Scene.Load(%s); break;\n", scenes[i].number, scenes[i].number,
+                 scenes[i].name);
+        }
+        puts_(&t, "        }\n    }\n");
+    }
+    puts_(&t, "}\n");
+    return t.s;
+}
+
+// ---------------------------------------------------------------------------
 
 static void stamp_file(void *user, const char *path)
 {
@@ -1203,6 +1286,14 @@ unsigned long long unity_assets_stamp(const char *assets)
     folder_find(dir, ".prefab", stamp_file, &h);
     folder_find(dir, ".unity", stamp_file, &h);
     folder_find(dir, ".meta", stamp_file, &h);
+    // ...and Build Settings, whose first scene the match starts with
+    char *absolute = path_absolute(assets);
+    char *project = path_dir(absolute);
+    char *settings = path_join(project, "ProjectSettings/EditorBuildSettings.asset");
+    stamp_file(&h, settings);
+    free(settings);
+    free(project);
+    free(absolute);
     free(dir);
     return h;
 }
@@ -1222,9 +1313,12 @@ bool unity_assets_read(const char *assets, unity_sources *out)
     text map = {0};
     puts_(&map, "{\"assets\": [");
     grow((void **)&out->items, &capacity, out->count, sizeof *out->items);
-    out->items[out->count++] = (unity_source){dup(UNITY_SOURCE_PATH),
-        dup("// Which of Unity's GameObjects shows an entity, as Tide's package for Unity finds it\n"
-            "namespace Unity\n{\n    component Source\n    {\n        int asset;\n        int node;\n    }\n}\n")};
+    out->items[out->count++] = (unity_source){dup(UNITY_SOURCE_PATH), NULL}; // Its text once the assets are known
+    unity_scene *scenes = NULL;
+    int scene_count = 0, scene_capacity = 0;
+    char first_guid[33];
+    first_build_scene(&p, first_guid);
+    const char *first = NULL;
     int number = 0;
     for (int i = 0; i < p.count; i++) {
         asset *a = &p.items[i];
@@ -1238,6 +1332,14 @@ bool unity_assets_read(const char *assets, unity_sources *out)
             grow((void **)&out->items, &capacity, out->count, sizeof *out->items);
             unity_source *s = &out->items[out->count++];
             s->path = dup(a->local);
+            if (scene) {
+                grow((void **)&scenes, &scene_capacity, scene_count, sizeof *scenes);
+                unity_scene *u = &scenes[scene_count++];
+                u->number = number;
+                u->name = asset_name(a->local);
+                snprintf(u->guid, sizeof u->guid, "%s", a->guid);
+                if (strcmp(a->guid, first_guid) == 0) first = u->name;
+            }
             s->text = write_prefab(&p, a, roots, count, scene, number++, &map);
         }
         for (int k = 0; k < count; k++) free_node(roots[k]);
@@ -1245,6 +1347,9 @@ bool unity_assets_read(const char *assets, unity_sources *out)
     }
     puts_(&map, "\n]}\n");
     out->map = map.s;
+    out->items[0].text = unity_declarations(scenes, scene_count, first);
+    for (int i = 0; i < scene_count; i++) free(scenes[i].name);
+    free(scenes);
     if (out->count == 1) { // No asset holds TideEntity objects: no Unity.Source either
         free(out->items[0].path);
         free(out->items[0].text);

@@ -9,6 +9,86 @@ using UnityEngine.TestTools;
 // placed and colored by the match.
 public sealed unsafe class BounceTests
 {
+    const string Bounce = "Assets/Sample/Bounce.unity";
+    const string Bonus = "Assets/Sample/Bonus.unity";
+
+    // The runner goes on across scene loads (the match decides which are loaded): each test ends its own
+    [UnityTearDown]
+    public IEnumerator EndTheMatch()
+    {
+        if (TideRunner.Current != null) Object.Destroy(TideRunner.Current.gameObject);
+        yield return null;
+    }
+
+    // Waits by real time (a batch run's frames are short) for `done`, up to `seconds`.
+    static IEnumerator Until(System.Func<bool> done, float seconds)
+    {
+        var until = Time.realtimeSinceStartup + seconds;
+        while (!done() && Time.realtimeSinceStartup < until) yield return null;
+    }
+
+    static TideEntityView Totem()
+    {
+        var scene = SceneManager.GetSceneByPath(Bonus);
+        if (!scene.IsValid() || !scene.isLoaded) return null;
+        foreach (var root in scene.GetRootGameObjects())
+        {
+            var totem = root.transform.Find("Totem");
+            var view = totem != null ? totem.GetComponent<TideEntityView>() : null;
+            if (view != null && view.Showing) return view;
+        }
+        return null;
+    }
+
+    // The match loads Bonus's entities when its code says, and Unity loads the scene with them beside Bounce; and
+    // unloads it as the match does.
+    [UnityTest]
+    public IEnumerator TheMatchLoadsAndUnloadsScenes()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Until(() => runner.State == TideSessionState.Connected && runner.Packet.InMatch, 10f);
+        Assert.AreEqual(TideSessionState.Connected, runner.State);
+        Assert.IsFalse(SceneManager.GetSceneByPath(Bonus).isLoaded, "Bonus isn't the match's yet");
+        Assert.IsTrue(runner.Send(new Tide.Game.ShowBonus { on = true }), "the command is the game's");
+        yield return Until(() => Totem() != null, 10f);
+        var totem = Totem();
+        Assert.IsNotNull(totem, "Unity loaded Bonus as the match did, and the Totem shows its entity");
+        Assert.IsTrue(totem.TryGet(out Tide.Game.Spinner spinner) && spinner.speed == 3f, "with the scene's Spinner");
+        Assert.IsTrue(SceneManager.GetSceneByPath(Bounce).isLoaded, "beside Bounce");
+        runner.Send(new Tide.Game.ShowBonus { on = false });
+        yield return Until(() => !SceneManager.GetSceneByPath(Bonus).isLoaded, 10f);
+        Assert.IsFalse(SceneManager.GetSceneByPath(Bonus).isLoaded, "and unloaded it as the match did");
+    }
+
+    // With Bonus alone open, the match has it rather than Build Settings' first, Bounce, which it loaded as Main
+    // started and then let go, and Unity with it.
+    [UnityTest]
+    public IEnumerator TheEditorsOpenScenesAloneAreTheMatchs()
+    {
+        SceneManager.LoadScene(Bonus);
+        yield return null;
+        new GameObject("Tide").AddComponent<TideRunner>(); // As one is made for a level opened alone
+        yield return Until(() => Totem() != null && !SceneManager.GetSceneByPath(Bounce).isLoaded, 10f);
+        Assert.IsNotNull(Totem(), "the match has Bonus's entities");
+        // Bounce came as Main started, and went with the editor's command
+        yield return Until(() => !SceneManager.GetSceneByPath(Bounce).isLoaded, 5f);
+        Assert.IsFalse(SceneManager.GetSceneByPath(Bounce).isLoaded, "and not Bounce's");
+    }
+
+    // In the editor, the match has the scenes the editor has open: Bonus too, without the game's code asking.
+    [UnityTest]
+    public IEnumerator TheEditorsOpenScenesAreTheMatchs()
+    {
+        SceneManager.LoadScene(Bounce);
+        SceneManager.LoadScene(Bonus, LoadSceneMode.Additive);
+        yield return null;
+        yield return Until(() => Totem() != null, 10f);
+        Assert.IsNotNull(Totem(), "the match loaded Bonus's entities, which the open scene shows");
+        Assert.IsNotNull(GameObject.Find("Pillars")?.transform.GetChild(0).GetComponent<TideEntityView>(), "and Bounce's");
+    }
+
     // Whether the frame's draw packet (tide/embed.h's tide_embed_draw) has a text command saying `words`.
     static bool DrewText(TideRunner runner, string words)
     {

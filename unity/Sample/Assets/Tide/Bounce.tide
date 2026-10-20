@@ -1,19 +1,35 @@
 // The Tide package's sample: each player is a ball in a box, rolled with WASD or a stick, Space to jump.
 // Tide simulates, predicts and rolls back; Unity draws. The balls are Roller (Assets/Sample/Roller.prefab) and the
-// pillars are Bounce's (Assets/Sample/Bounce.unity): Unity's prefab and scene, whose TideEntity objects are Tide's.
+// pillars are Bounce's (Assets/Sample/Bounce.unity, Build Settings' first scene, which the match loads as Main starts):
+// Unity's prefab and scene, whose TideEntity objects are Tide's.
 settings { title = "Bounce"; tickRate = 30; maxPlayers = 8; }
 
 scene Main { }
 
-// The Unity scene's entities, as the match's
-event(Spawned) Arena(with Main)
-{
-    Scene.Load(Bounce);
-}
-
 component Spinner
 {
     float speed = 1;
+}
+
+// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them
+command ShowBonus
+{
+    bool on;
+}
+
+singleton Extras
+{
+    Entity bonus;
+}
+
+command(ShowBonus show, PlayerID sender) Toggle(mut Extras extras)
+{
+    if (show.on && extras.bonus == default) extras.bonus = Scene.Load(Bonus);
+    if (!show.on && extras.bonus != default)
+    {
+        Scene.Unload(extras.bonus);
+        extras.bonus = default;
+    }
 }
 
 system Spinning(Spinner spinner, mut Transform transform, Time time)

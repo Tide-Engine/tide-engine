@@ -46,6 +46,13 @@ variants work as in Unity: what an instance changes goes over its prefab's,
 field by field. tide reads saved files, so save a prefab or scene to put it in
 the game.
 
+The match decides which scenes are loaded, and Unity follows: Build Settings'
+first scene loads as Main starts, as a player build starts with it, and the
+game's code loads and unloads the others (`Scene.Load(Level)`), which Unity
+loads beside the rest and unloads as the match does. In the editor, Play has
+the scenes you have open instead, and makes a `TideRunner` if they have none.
+Put every scene the match loads in Build Settings, for players.
+
 ## Run
 
 Add a GameObject with a `TideRunner`. In Play mode it runs the game: Main's
