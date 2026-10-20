@@ -181,6 +181,24 @@ pages and a plain Tide page in one relay room, 30 s:
   can't see (the Standard shader, a primitive's collider class). The design
   avoids this by reference (Runtime binding), not by workarounds.
 
+Spike step 2 (2026-10-20), on the same branch:
+
+- Unity drives Tide's frame. `tide.js` gained `pageFrames` (spike branch only,
+  with the release runtime regenerated): while the page is shown, its loop
+  schedules nothing and the page calls `Tide.frame()`; hidden, the worker
+  heartbeat runs frames as for any page. Unity's `Update` calls it before
+  copying, so Unity and Tide frames matched exactly (2,930 each in 30 s) with no
+  trailing frame. Tide's whole frame there (session update and views) averaged
+  0.22 ms.
+- A hidden Unity page hosting the match: Unity fell to one frame a second while
+  Tide kept serving at exactly its 30 Hz tick rate on the heartbeat; the other
+  players stayed verified with 0 resyncs.
+- Copying from Tide's shared memory into Unity's heap (`HEAPU8.set`, the
+  `.jslib`'s operation) ran at about 19 GB/s: 16 KB 1.2-1.5 µs, 256 KB 13 µs,
+  1 MB 54-61 µs, 4 MB 205-231 µs a frame. A sumo-sized view state (transforms
+  of a few hundred bodies) is tens of KB, a few µs; even a whole 4 MB world would
+  be about 1% of a 60 Hz frame.
+
 Still open for phase 0: a native Tide player in the same room (headless native
 runs fake their clock, so it needs a windowed or real-clock run), mobile
 browsers, the sumo-sized copy, and frames driven by Unity rather than two
