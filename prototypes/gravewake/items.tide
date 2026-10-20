@@ -279,7 +279,7 @@ void Offer(mut Survivor survivor, int minute, int players, Rarity least)
         for (var tries = 0; tries < 20; tries++)
         {
             item = RollItem(minute, players, least);
-            mut var taken = false;
+            mut var taken = Useless(survivor, item);
             for (var j = 0; j < k; j++)
                 if (survivor.offers[j] == item) taken = true;
             if (!taken) break;
@@ -287,6 +287,13 @@ void Offer(mut Survivor survivor, int minute, int players, Rarity least)
         survivor.offers[k] = item;
     }
     survivor.choosing = true;
+}
+
+// An item that would do nothing for a survivor's gun, so isn't offered them: what a round does, to the Engineer's
+// flamethrower (it has no rounds).
+bool Useless(Survivor survivor, Item item)
+{
+    return Info(RoleWeapon(survivor.role)).cone > 0 && (item == Item.ApRounds || item == Item.Ricochet || item == Item.HeRounds);
 }
 
 // A skill card for a survivor: any of the five but their own at its last rank.
@@ -383,15 +390,17 @@ void Take(mut Survivor survivor, Item item)
 
 // A round's hit on one of the dead: a crit, perhaps; more if it's down; then what the items set off, `chance` times as
 // likely as a whole round's (a shotgun's pellet sets off less, an SMG's round more). What the items set off themselves
-// sets off nothing more. `aimed`: a round of the survivor's own (Wound.aimed), not a drone's or a turret's.
-void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd, bool aimed)
+// sets off nothing more. `aimed`: a round of the survivor's own (Wound.aimed), not a drone's or a turret's. A flamethrower's
+// puff lands as a Blow.Flame, and `ignite` sets it alight.
+void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd, bool aimed, Blow blow = Blow.Missile,
+          bool ignite = false)
 {
     var crit = Random.NextFloat() < arms.crit;
     var frozen = Holds(arms, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Holds(arms, Item.Frostbite) * chance;
     var lit = Holds(arms, Item.DragonsBreath) > 0 && Random.NextFloat() < 0.25 * Holds(arms, Item.DragonsBreath) * chance;
     var toes = z.down ? 1 + 0.5 * Holds(arms, Item.SteelToes) : 1.0;
-    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, weak = weak, from = from, knock = knock, blow = Blow.Missile,
-                          aimed = aimed, crit = crit, element = frozen ? Element.Frost : lit ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
+    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, weak = weak, from = from, knock = knock, blow = blow,
+                          aimed = aimed, crit = crit, element = frozen ? Element.Frost : lit || ignite ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
     var wire = Holds(arms, Item.LiveWire);
     if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(arms, z, 1 + 2 * wire, damage * 0.6, herd);
     var mortar = Holds(arms, Item.Mortar);

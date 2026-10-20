@@ -1,8 +1,9 @@
-// The guns: each survivor's own, and the pistol a downed one fights on with.
+// The guns: each survivor's own, and the pistol a downed one fights on with. (The SMG was the Engineer's till the
+// flamethrower, 2026-10-20; the turret and the drones still carry one.)
 // A gun's numbers are one switch, Info(), read by the match and by what's
 // drawn and heard. Every shot is a ray (hands.tide's Shoot): no bullet flies.
 
-enum Weapon { None, Rifle, Shotgun, Smg, Pistol }
+enum Weapon { None, Rifle, Shotgun, Smg, Pistol, Flamer }
 
 // What a hit does besides the damage: fire burns, frost slows (and again freezes), shock stuns, a blast throws.
 enum Element { None, Fire, Frost, Shock, Bleed, Blast }
@@ -28,6 +29,8 @@ struct WeaponInfo
     float proc = 1;         // How likely a round's items are to go off (a pellet's less)
     bool bottomless;        // Never loaded: it fires on as long as the trigger's held (the owner, of the shotgun: "the extra
                             // reloading just feels bad")
+    float cone;             // A flamethrower's: no rounds, but a cone of flame `range` long and this many metres either
+                            // side of the aim for each metre out (hands.tide's Scorch)
 }
 
 WeaponInfo Info(Weapon weapon)
@@ -46,6 +49,12 @@ WeaponInfo Info(Weapon weapon)
             return WeaponInfo { name = "SMG", model = "smg", damage = 15, rate = 0.066, mag = 50, reload = 1.3, spread = 0.028, range = 45, proc = 1.5 };
         case Weapon.Pistol:
             return WeaponInfo { name = "Sidearm", model = "pistol", damage = 26, rate = 0.22, mag = 12, reload = 1.1, spread = 0.01 };
+        case Weapon.Flamer:
+            // The Engineer's, in the SMG's place (the owner, 2026-10-20: "its too similar to the rifle. maybe a flamethrower
+            // ... so rifle is long range, shotgun is close/long mix and the flames is mostly close range"): a puff every
+            // 0.07 s into everything in a cone 7.5 m long, setting it alight; its tank ten seconds of it
+            return WeaponInfo { name = "Flamethrower", model = "flamer", damage = 13, head = 1, rate = 0.07, mag = 140, reload = 1.8, range = 7.5,
+                                cone = 0.4, proc = 0.12 };
     }
     return WeaponInfo { name = "", model = "pistol", rate = 1, mag = 1, reload = 1 };
 }

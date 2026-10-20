@@ -53,7 +53,7 @@ Weapon RoleWeapon(Role role)
     {
         case Role.Gunner: return Weapon.Rifle;
         case Role.Breacher: return Weapon.Shotgun;
-        case Role.Engineer: return Weapon.Smg;
+        case Role.Engineer: return Weapon.Flamer;
     }
     return Weapon.Pistol;
 }

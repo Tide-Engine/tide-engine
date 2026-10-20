@@ -115,6 +115,8 @@ No attribution is required for any of it; it is given here anyway.
 | explode_2.ogg | 2.10 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 25 CC0 bang/firework SFX by rubberduck (CC0 1.0, https://opengameart.org/content/25-cc0-bang-firework-sfx), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) + synthesized layers |
 | fire_burst.ogg | 1.57 | Fireball 1 (JM FX Fireball 01) by Julien Matthey (posted by diligentcircle) (CC0 1.0, https://opengameart.org/content/fireball-1) + synthesized layers |
 | fire_loop.ogg | 4.00 | Fire crackling by AntumDeluge (CC0 1.0, https://opengameart.org/content/fire-crackling) + synthesized layers |
+| flamer_loop.ogg | 2.10 | synthesized |
+| flamer_start.ogg | 0.59 | synthesized |
 | forge.ogg | 4.80 | Hammer on anvil by TheMightyGlider (CC0 1.0, https://opengameart.org/content/hammer-on-anvil), Blacksmith's hammer by vishwajai (CC0 1.0, https://opengameart.org/content/blacksmiths-hammer) + synthesized layers |
 | forge_ready.ogg | 2.53 | synthesized |
 | freeze.ogg | 1.91 | Freeze spell by artisticdude (CC0 1.0, https://opengameart.org/content/freeze-spell-0) + synthesized layers |
