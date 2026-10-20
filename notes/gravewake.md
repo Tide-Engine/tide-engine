@@ -63,6 +63,120 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### The gun's own right mouse, brambles for the eruptions, a drone, fire like a fluid (2026-10-20)
+
+The owner, after playing the flamethrower round: "can we make it visually
+impressive? almost like a light fluid simulation"; "the leftover smoke makes it
+hard to view stuff"; then "i still think the flamethrower kills too fast and
+maybe still a tad too far / the random exploding circles are out of place, we
+can maybe just add bushes in the map that make you walk slower ... / the normal
+hit markers are still hard to hear, i like the critical/headshot effect ... /
+the turret is funny, its a tripod sliding around... lol maybe we dont do that,
+maybe its just a flying drone as a started idk. in general the C4 also feels
+meh. im starting to think the right click should be one ability that is related
+to the gun you hold. the rifle has the sniper like shot, the shotgun maybe
+shoots a grenade with a thump sound and the flamethrower maybe shoots fire and
+leaves the ground burning for a bit or something. these should be able to take
+upgrades to become better." What was made of each, and the numbers, are mine,
+Provisional.
+
+- **Fire like a fluid** (flames.tide, new; this machine's only, nothing of the
+  match): each puff throws a gout of 18 blobs of burning fuel, most down the
+  cone's middle, spread over the time to the next puff as though they'd come out
+  all along (a stream, not clumps), thrown at the speed that the air's drag
+  (`FLAME_DRAG` 2.3 a second) slows to a stop about at its reach (`Loosed.reach`).
+  Each frame they slow, the hot rise (`FLAME_LIFT`, as heat squared), a field of
+  Perlin noise turns them, more as they slow (`FLAME_SWIRL`), they swell and cool
+  through white-gold, yellow, orange to a dull red (`FireHue`); a hot one landing
+  splashes and runs along the ground, and three in ten pool there a second or so,
+  flickering, tongues of flame off them and a scorch under; fire licks up round
+  the dead it reaches (`Lick`, from `Struck`); one cooled gives off a thin wisp of
+  smoke one time in eight (`SMOKE_CHANCE`). Each is drawn (`FireBlob`) as a ragged
+  tongue of light in three hard steps, its middle hottest, added; a lamp at the
+  middle of each survivor's hot fire and one among what's pooled (`FireLight`).
+  Iterated in captures: specks like confetti at first (blobs a pixel or two in the
+  low picture), then a milky white cloud (overlaps adding up): now each is two or
+  three times the size, a quarter as bright, redder as it cools. The smoke, first
+  thick, near black and lasting, piled up over the survivor into a black cloud
+  (the owner's picture): a wisp now, a sixth as opaque, gone in under a second.
+- **The flamethrower slower and shorter**: 4.8 m (5.5), 7 a puff (13), a puff in
+  seventeen sets one alight (`FLAME_IGNITE` 0.06; a third): a walker burns down in
+  about two thirds of a second, not a quarter. A boss takes a puff 3.5 times over
+  (`FLAME_BOSS`, boss.tide's `BossWound`): a great body in the flames, no weak spot
+  to find and no catching fire. (5 a puff and 0.04 measured too weak, below.)
+- **The right mouse is the gun's own** (kits.tide's `SecondaryOf`, `SkillOf`,
+  `UseSecondary`; items.tide's cards): the carbine's phase round as it was; the
+  shotgun's **Thumper**, a grenade lobbed (`ThrowTo`'s new pace, 24 m/s across the
+  ground) to burst where the cursor is, 300 times might in 4 m, the dead thrown
+  down, a "thoomp" (`thump.ogg`), every 5 s; the flamethrower's **Napalm**, a glob
+  of burning fuel (`Shot.Napalm`, drawn alight, the fire shedding off it in
+  flight) lobbed to the cursor, 120 in its splash and setting the dead alight,
+  and where it splashes a fire on the ground (hazards.tide's `Blaze`, its
+  `seat`, `seconds` and `hurt`), 2.6 m round for 4 s, biting the dead in it,
+  bosses too, a quarter of the splash every half second and setting them alight,
+  never the living; every 7 s. Skill cards are now only the gun's skill a rank
+  stronger (`CardPhaseRound`, `CardThumper`, `CardNapalm`; the card's offered only
+  below rank III): the Thumper two grenades, then three, a quarter and half again
+  as hard; napalm's fire a quarter wider and half again as long, then two globs.
+  `Survivor.secondary` is gone. The C4 (`Shot.Mine`, `charges`, `detonations`, the
+  charge rings), the Leap and the Blink (`leaping`, `Slam`, `BlinkBlast`) are gone.
+- **The Breacher's boot by itself**: the shotgun's grenade took the right mouse,
+  so the boot is the Breacher's special (`AutoSkill` takes the survivor's entity
+  for it), kicking when one of the dead is within its reach in front, at rank I;
+  the Firebomb left the kits (the Molotov Satchel still throws them).
+- **The attack drone** (kits.tide's `Sentry`, `DRONE_HIGH`; held.tide's
+  `DrawTurret`, `DronePlace`; art/guns/drone.glb by `art/guns/tools/make_drone.py`):
+  the Engineer's special flies: sent up over their shoulder, it keeps 2.2 m off at
+  2.4 m over the ground, over whatever stands in the way (no more pushing out of
+  boxes), firing as before. Drawn: an olive armoured quadcopter, a hazard stripe,
+  four arms out to motor pods, a gun slung under its nose, a red eye that glows,
+  skids (588 triangles), bobbing, tipped the way it flies, its four rotors turning.
+  `TurretFeet`, the tripod's model and `TURRET_HIGH` went.
+- **Brambles for the eruptions** (hazards.tide; plan.tide's `brambles`,
+  `BRAMBLES`, `BRAMBLE_SLOW`; ashwick.tide's `Ashwick.brambles`; hands.tide's
+  `InBrambles` in `Steer`): the ground cracking and bursting near the survivors
+  every few seconds is gone (`Erupt`, `Cracked`, `Erupted`, `Match.eruptWait`, the
+  bots' stepping out of fires); in its place, a dozen bramble thickets 2.2 to 4 m
+  round out between the landmarks, clear of them, the paths, the camp, the
+  graveyard and the pits, each thick with the kit's bushes (and a fern in five)
+  darkened to 0.55. A survivor walking in one goes at half pace; a roll's as it was;
+  the dead don't care. The Blaze and its drawing (flames, light, the ground's glow,
+  a faint ring) stay, for napalm.
+- **A hit heard** (sfx/tools/make_sfx.py's `hit_tick`; sound.tide): a small struck
+  plate's tink, the head's ding's little brother, ringing a tenth of a second, at
+  0.85 (the first tick, at 0.5, was lost under the guns).
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16; the bots
+  now use the gun's skill: a phase round down a line of three, a grenade or napalm
+  into three or more): the Gunner's middle run 1123 s (990 the last round), the
+  Breacher's 597 (849), the Engineer's 214 at 5 a puff, 205 at 7, about 515 with
+  bosses taking flames 3.5 times over (about 630 at 13 a puff and 5.5 m); nine of
+  the sixteen Engineers die in the first night's end, standing within the
+  flamethrower's reach of the Mauler, inside its slam, and the bots don't roll. A
+  player rolls; if the Engineer's too weak at a boss, the levers are `FLAME_BOSS`
+  and the puff's 7. The Breacher lost the firebomb that used itself and gained a
+  grenade by hand. The night's end fights 15 to 30 s.
+- **Tests**: the Thumper does 432 to one 7 m off at the cursor; the boot by itself
+  kicks one close over and stamps on one down; napalm 6 m off splashes (177), its
+  fire 2.6 m round for 4 s burns one walked into it (367 more, alight) and goes
+  out; the drone flies 7.8 m after its maker to 2.2 m from them, 2.4 m up; the
+  flamethrower held two seconds burns the two in its cone (3 m, and 4 m 1.2 m
+  aside) and sets at least one alight; 12 thickets, half a second's walk 1.85 m in
+  one and 3.69 on open ground; a skill card a rank, to III (the phase round's fan).
+  The eruption's checks, the C4's, the leap's and the blink's went. The cull
+  mission's check now stands its survivor on whichever side of the circle has
+  nothing standing in the way and moves the other dead off its line (a round stops
+  in the first it strikes; the run's changed draws had put a trunk, then the dead,
+  between). The generated archetype numbers moved again (`arch4_Blaze`, `arch5_Orb`,
+  `arch6_Zombie`, `arch7_Chest`). Native debug `gravewake_test` and the web debug
+  WASI one pass.
+- **Built with Visual Studio's clang** (18.1.8): `C:/Program Files/LLVM` was gone
+  from this machine partway through (not this work's doing), so the debug, release
+  and web builds were configured afresh and found the toolchain's fallback.
+- **Validation**: looked at in standard-host captures: the jet into the line-up
+  and into a horde, after a long burst (the smoke clearing), napalm splashing into
+  fire among the dead with the drone at the survivor's shoulder, the Thumper's
+  burst at the cursor, walking into a thicket. Not heard: the sounds' loudness.
+
 ### The Engineer's flamethrower (2026-10-20)
 
 The owner: "i wonder if we should change the engineer's weapon; its too similar
@@ -73,8 +187,8 @@ thingy." The numbers, the look and the sound are mine, Provisional.
 - **The gun** (weapons.tide's `Weapon.Flamer`, `WeaponInfo.cone`; kits.tide's
   `RoleWeapon`): the Engineer's in the SMG's place (the turret and the drones still
   carry an SMG). A puff every 0.07 s while it's held, 13 a puff times might, to
-  every one of the dead in a cone 7.5 m long across the ground and 0.4 m either
-  side of the aim a metre out (3 m wide at its end), and any in front within 1.3 m
+  every one of the dead in a cone 5.5 m long across the ground and 0.3 m either
+  side of the aim a metre out (3.3 m wide at its end), and any in front within 1.3 m
   (`FLAME_NEAR`), the 14 nearest (`FLAME_MOST`), short of what stands in the way;
   each puff sets one alight one time in three (`FLAME_IGNITE`), so a body in the
   flames burns within about a fifth of a second. A tank is 140 puffs (ten seconds),
@@ -90,8 +204,16 @@ thingy." The numbers, the look and the sound are mine, Provisional.
   stream without popping each puff, and a body's numbers add up in orange while the
   puffs keep coming (`Tally.flame`, `FLAME_MERGE` 0.3 s); the dead flash a little
   (0.3), bosses 0.25.
-- **Offers** (items.tide's `Useless`): AP Rounds, Ricochet Rounds and HE Rounds,
-  what a round does, aren't offered a survivor whose gun is the flamethrower.
+- **Shorter, and a nozzle to lengthen it** (the owner, after playing: "we should
+  decrease a bit the range of the fire; we can allow upgrades of course but it
+  feels a bit too powerful right from the start"): it was 7.5 m and 0.4 a side (6
+  m wide at its end, not the 3 written first). AP Rounds are its upgrade: shown to
+  the Engineer as a Long Nozzle (hud.tide's offer, items.tide's `Nozzle`), each a
+  metre more (hands.tide's `FLAME_NOZZLE`). `Loosed.reach` carries how far it
+  reaches, and the fire's drawn as far (flames.tide's `Gout`: thrown at the speed
+  that, with the air's drag, carries it there).
+- **Offers** (items.tide's `Useless`): Ricochet Rounds and HE Rounds, what a round
+  does, aren't offered a survivor whose gun is the flamethrower.
 - **Seen** (fx.tide's `MuzzleFlash`): no flash; each puff throws eight blocks of
   flame down the cone, 14 to 19 m/s, as far as it reaches, swelling and cooling
   from orange to red and rising a little, two hotter yellow ones near the nozzle,
@@ -109,6 +231,11 @@ thingy." The numbers, the look and the sound are mine, Provisional.
   0.15 s after the last puff and while the run's held for a pick). A kill of yours in
   it gives the kill's knock, quieter. CREDITS.md and manifest.json got their rows
   by hand (the tool rewrites CREDITS.md's names as `.wav`).
+- **Measured, shorter** (the bot fires within 6.5 m and goes to the night's boss
+  till 5.5 m off): the Engineer's middle run about 630 s, five of sixteen dying in
+  the first night's end, in the Mauler's slam (6.5 m: the flames now need you
+  inside it, and the bots don't roll); fights 27 to 32 s. A player rolls; if the
+  Engineer's too weak at a boss, the lever is the puff's 13.
 - **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16; the bot
   fires within 8.5 m and goes to the night's boss till 6 m off): at 11 a puff the
   Engineer's middle run 860 s and the night's end fights 28 to 29 s (the SMG's 972

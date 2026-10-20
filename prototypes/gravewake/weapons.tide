@@ -52,9 +52,13 @@ WeaponInfo Info(Weapon weapon)
         case Weapon.Flamer:
             // The Engineer's, in the SMG's place (the owner, 2026-10-20: "its too similar to the rifle. maybe a flamethrower
             // ... so rifle is long range, shotgun is close/long mix and the flames is mostly close range"): a puff every
-            // 0.07 s into everything in a cone 7.5 m long, setting it alight; its tank ten seconds of it
-            return WeaponInfo { name = "Flamethrower", model = "flamer", damage = 13, head = 1, rate = 0.07, mag = 140, reload = 1.8, range = 7.5,
-                                cone = 0.4, proc = 0.12 };
+            // 0.07 s into everything in a cone 4.8 m long, now and then setting it alight; its tank ten seconds of it. (7.5
+            // m and 0.4 a side till the owner: "we should decrease a bit the range of the fire; we can allow upgrades of
+            // course but it feels a bit too powerful right from the start": AP Rounds lengthen it, items.tide's Nozzle;
+            // then 5.5 m and 13 a puff, a puff in three setting one alight, till "i still think the flamethrower kills
+            // too fast and maybe still a tad too far")
+            return WeaponInfo { name = "Flamethrower", model = "flamer", damage = 7, head = 1, rate = 0.07, mag = 140, reload = 1.8, range = 4.8,
+                                cone = 0.3, proc = 0.12 };
     }
     return WeaponInfo { name = "", model = "pistol", rate = 1, mag = 1, reload = 1 };
 }

@@ -940,12 +940,12 @@
   "seconds": 0.597
  },
  "hit_tick": {
-  "bytes": 6218,
+  "bytes": 14156,
   "file": "hit_tick.wav",
   "kind": "sfx",
   "layers": false,
   "packs": [],
-  "seconds": 0.07
+  "seconds": 0.16
  },
  "hit_wood_1": {
   "bytes": 27398,
@@ -1809,6 +1809,14 @@
   "packs": [
    "oga_swishes"
   ],
+  "seconds": 0.426
+ },
+ "thump": {
+  "bytes": 37634,
+  "file": "thump.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
   "seconds": 0.426
  },
  "turret_fire": {

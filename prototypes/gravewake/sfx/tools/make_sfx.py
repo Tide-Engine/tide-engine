@@ -1562,12 +1562,25 @@ def flamer_start(rng):
 # A hit of your own landing, made from nothing: crisp enough to hear over the gun, short enough for an SMG's rate
 @sound('hit_tick')
 def hit_tick(rng):
-    # A hard, bright tick (two inharmonic partials gone in 40 ms over a snap of noise) on a little knock of body
-    tt = t(0.07)
-    ping = (np.sin(2 * np.pi * 3150 * tt) + 0.6 * np.sin(2 * np.pi * 4870 * tt + 1.0)) * np.exp(-tt * 95)
-    snap = highpass(white(0.07, rng), 3500) * np.exp(-tt * 260)
-    y = mix((unit(ping), 0, -2), (unit(snap), 0, -5), (body_thump(0.07, rng, 190, 60), 0, -9))
-    return trim(soft_clip(unit(y) * 1.4, 1.2), -48, fade_out=0.01)
+    # A small struck plate, the head's ding's little brother (the owner liked that one, and couldn't hear the first tick
+    # over the guns): a bright metallic tink, its partials ringing a tenth of a second, over a snap of noise and a knock
+    y = modal([2650, 2650 * 2.76, 2650 * 5.40], [1.0, 0.45, 0.2], [32, 48, 70], 0.16, rng)
+    snap = highpass(white(0.025, rng), 4000) * np.exp(-t(0.025) * 220)
+    y = mix((unit(y), 0, -1), (unit(snap), 0, -6), (body_thump(0.06, rng, 220, 70), 0, -10))
+    return trim(soft_clip(unit(y) * 1.3, 1.2), -48, fade_out=0.02)
+
+
+@sound('thump')
+def thump(rng):
+    # The grenade launcher: a hollow "thoomp", a low pressure drop down a tube with a ring of its metal, and a puff of gas
+    tt = t(0.45)
+    f = 150 * np.exp(-tt / 0.06) + 55
+    drop = np.sin(2 * np.pi * np.cumsum(f) / R) * np.exp(-tt * 14) * np.minimum(1, tt / 0.002)
+    tube = bandpass(white(0.45, rng), 250, 900) * np.exp(-tt * 30)
+    ring = modal([420, 420 * 2.3], [1.0, 0.4], [22, 35], 0.45, rng)
+    puff = lowpass(white(0.45, rng), 1800) * np.exp(-tt * 18) * np.minimum(1, tt / 0.01)
+    y = mix((unit(drop), 0, 0), (unit(tube), 0, -6), (unit(ring), 0, -16), (unit(puff), 0.01, -10))
+    return trim(soft_clip(unit(y) * 1.4, 1.3), -45, fade_out=0.1)
 
 
 @sound('hit_kill')
