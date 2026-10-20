@@ -63,6 +63,38 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Napalm burns its maker; what's coming back, round the crosshair (2026-10-20)
+
+The owner: "my own napalm fire should hurt me"; "we need some indicator on the
+crosshair or some sound or something when the ability is ready, even when
+reloading some way to know the progress without glancing down would be
+appreciated." The shapes and numbers are mine, Provisional.
+
+- **Napalm burns the living** (hazards.tide's `Burn`, `BLAZE_HURT` back): every
+  survivor standing in a fire on the ground, its maker too, takes 12 a second times
+  `Harm` (a bite every half second), not while rolling, as the eruptions' fire did.
+  The bots step out of one again (test/balance.c).
+- **Round the crosshair** (hud.tide's `Overlay`; `Feed.readyFlash`, `wasReady`):
+  two short arcs just outside its ticks. On its left, the right mouse's skill:
+  grey, filling out from its middle as it comes back; ember orange and thicker once
+  it's ready, flaring as it comes (a ring thrown out and the arc swelling a moment).
+  On its right, the gun: its magazine running down from full (bone, amber at a
+  quarter, red empty), and while loading, its loading filling in blue; none for a
+  gun never loaded (the shotgun). Each on a dark track. They fill from their middles,
+  so the arcs' angles needn't run either way.
+- **A chime when it's back** (sound.tide's `Handling`, `Ears.skillReady`;
+  `skill_ready.ogg`, made by `make_sfx.py`): two soft rising notes of a small bell,
+  quiet, as the right mouse's skill comes back.
+- **Measured** (`gravewake_balance`, the Engineer, seeds 1 to 16): the middle run
+  about 270 s (about 515 before its fire burned it), most dying in the first night's
+  end: the bots don't roll, and walk out of their napalm late.
+- **Tests**: napalm's maker standing in its fire loses 46 in two-thirds of a second.
+  Native debug `gravewake_test` and the web debug WASI one pass, built again with
+  LLVM 23 (back on this machine).
+- **Validation**: looked at in standard-host captures round the cursor: the skill's
+  arc ready, used and filling back, the magazine running down, the loading in blue.
+  Not heard: the chime's loudness.
+
 ### The gun's own right mouse, brambles for the eruptions, a drone, fire like a fluid (2026-10-20)
 
 The owner, after playing the flamethrower round: "can we make it visually

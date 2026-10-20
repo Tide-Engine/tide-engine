@@ -68,6 +68,7 @@ asset Clip hitHead = "sfx/hit_head.ogg";
 asset Clip flamerLoop = "sfx/flamer_loop.ogg";
 asset Clip flamerStart = "sfx/flamer_start.ogg";
 asset Clip thumpClip = "sfx/thump.ogg";
+asset Clip readyClip = "sfx/skill_ready.ogg";
 
 // The master's limiter: whatever piles up (a bell over two dozen groans) is held under full scale, at once, and let back
 // up over a tenth of a second.
@@ -117,6 +118,7 @@ local singleton Ears
     int ticked;               // This frame's hits of your own heard: a tick, a kill's knock and a head's ding, one of each
     int knocked;              // a frame, so a shotgun's pellets are one
     int dinged;
+    bool skillReady = true;   // This machine's right mouse skill, ready as it was last frame
 }
 
 // The bed: the night, the dread under it, the heart when it's bad.
@@ -285,6 +287,10 @@ view Handling(mut Ears ears, Me me, query (Survivor survivor) survivors)
             Audio.Play(s.gun == Weapon.Pistol ? pistolReload : magReload, 0.8, (s.gun == Weapon.Pistol ? 1.5 : 1.4) / Math.Max(0.4, s.actLength));
         // The pump, a moment after the shot
         if (s.gun == Weapon.Shotgun && s.act == Act.Fire && s.actTime >= 0.28 && (ears.lastActTime < 0.28 || ears.lastAct != Act.Fire)) Audio.Play(pumpClip, 0.75);
+        // The right mouse's skill back: a soft chime (with its flare round the crosshair, hud.tide)
+        var ready = s.cooldowns[0] <= 0;
+        if (ready && !ears.skillReady && s.life == Life.Standing && s.role != Role.None) Audio.Play(readyClip, 0.55);
+        ears.skillReady = ready;
         ears.lastAct = s.act;
         ears.lastActTime = s.actTime;
     }
