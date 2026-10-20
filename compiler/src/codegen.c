@@ -9237,6 +9237,8 @@ static void gen_correction_leaves(gen *g, const decl *d, const char *path, const
             continue;
         }
         static const char *const axes[] = {"x", "y", "z", "w"};
+        // Position arithmetic retains the field's scalar precision. For doubles,
+        // the shared float frame-decay factor widens before multiplication.
         for (int axis = 0; axis < dim; axis++) {
             sb leaf = {0};
             sb_printf(&leaf, "%s%s%s", at, dim > 1 ? "." : "", dim > 1 ? axes[axis] : "");
@@ -19624,6 +19626,8 @@ static void gen_layout(gen *g)
               types.count, enums.count, enums.count ? "tide_layout_enums" : "NULL");
 }
 
+#include "embed_codegen.inc"
+
 // A setting's text for tide, cut to fit.
 static void setting_text(char *out, const size_t size, const expr *setting)
 {
@@ -20426,7 +20430,8 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_sounds(&g);
     gen_rebind_resources(&g);
     gen_editor_preview(&g);
-    if (opts->layout) gen_layout(&g);
+    if (opts->layout || opts->embed) gen_layout(&g);
+    if (opts->embed) gen_embed(&g);
 
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);

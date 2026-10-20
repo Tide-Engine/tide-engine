@@ -16,6 +16,7 @@
 #include <windows.h>
 #else
 #include <dirent.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -942,6 +943,7 @@ bool sys_process_alive(const uint32_t pid)
 // through `typed`, waiting until it's taken.
 static char typed[256];
 static int typed_ready; // Read and written atomically
+static int typed_ended; // ...and that the input ended
 
 #ifdef _WIN32
 static DWORD WINAPI read_lines(void *unused)
@@ -964,6 +966,7 @@ static void *read_lines(void *unused)
         memcpy(typed, line, sizeof typed);
         __atomic_store_n(&typed_ready, 1, __ATOMIC_RELEASE);
     }
+    __atomic_store_n(&typed_ended, 1, __ATOMIC_RELEASE);
     return 0;
 }
 
@@ -975,6 +978,53 @@ void sys_read_lines(void)
 #else
     pthread_t thread;
     if (pthread_create(&thread, NULL, read_lines, NULL) == 0) pthread_detach(thread);
+#endif
+}
+
+void *sys_library_open(const char *path)
+{
+#ifdef _WIN32
+    return (void *)LoadLibraryA(path);
+#else
+    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+#endif
+}
+
+void (*sys_library_find(void *library, const char *name))(void)
+{
+    void (*fn)(void) = NULL;
+    if (!library) return NULL;
+#ifdef _WIN32
+    const FARPROC found = GetProcAddress((HMODULE)library, name);
+#else
+    void *found = dlsym(library, name);
+#endif
+    if (found) memcpy(&fn, &found, sizeof fn);
+    return fn;
+}
+
+void sys_library_close(void *library)
+{
+    if (!library) return;
+#ifdef _WIN32
+    FreeLibrary((HMODULE)library);
+#else
+    dlclose(library);
+#endif
+}
+
+bool sys_input_ended(void)
+{
+    return __atomic_load_n(&typed_ended, __ATOMIC_ACQUIRE) != 0;
+}
+
+void sys_sleep_ms(const int ms)
+{
+#ifdef _WIN32
+    Sleep((DWORD)(ms > 0 ? ms : 0));
+#else
+    const struct timespec nap = {ms / 1000, (long)(ms % 1000) * 1000000L};
+    nanosleep(&nap, NULL);
 #endif
 }
 

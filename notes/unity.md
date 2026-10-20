@@ -231,15 +231,73 @@ Decisions, all approved by the owner as picked:
 Left for later phases: Tide's draw list for Unity's renderer (phase 5), audio,
 Tide GUI input claims.
 
-Built so far (phase 1, step 1, 2026-10-20): `tide/embed.h` on desktop with a
-linked game: create, destroy, frame, status, requests and background, with its
-contracts and tests in `notes/standard-host.md`. One change from the draft:
-the frame takes raw `tide_embed_input` (what a window reports) instead of
-`tide_devices`, so presses latch and movement adds up in the platform's own
-poll. Next: the schema and view packet (tidec), commands, named scene starts,
-loading game libraries (the editor), the web build of the embed, and the Unity
-package. Known gaps: `Clipboard.Copy` and pastes are dropped when embedded, and
-stdout/stderr aren't routed to the other program yet.
+### Phase 1 as built (2026-10-20)
+
+The owner asked for it "most of the way there", to test and then list tweaks,
+as a git URL package with no hard-coded paths. Built:
+
+- **`tide/embed.h`** (`platform/src/embed.c`): the standard host in another
+  program's frame, with a linked game or, on desktop, `library_dir`: the newest
+  `game-<n>` there, each newer one swapped in as `tide run`'s host does
+  (`platform/src/reload_library.inc`, shared with `reload.c`). Frames take raw
+  `tide_embed_input` (a change from the draft's `tide_devices`, so presses latch
+  in the platform's own poll); status is a flat, size-asserted struct;
+  `tide_embed_view`, `tide_embed_schema`, `tide_embed_command` (with a target
+  entity: a completion of the approved call), START by scene name, and
+  `tide_embed_abi`. Contracts and tests: `notes/standard-host.md`.
+- **The view packet** is laid out in `engine/include/tide/embed_game.h`:
+  header, entities (index, generation, owner flags, prefab, parent), then
+  8-aligned sections of components (rows, blended values), singletons, local
+  fields and STRINGS (text and plain-element lists, named by handle). Prefab is
+  always none: entity prefab identity (owner decision 3) waits for authoring.
+- **`tidec --embed`** (`compiler/src/embed_codegen.inc`, `tide_add_game(EMBED)`)
+  writes `tide_game_embed`, in the `.c` only: the header, and so the game's hash,
+  is byte-identical with and without it, so Unity builds play with every other
+  build of the same game. The packet writer reuses views' `tide_prev_<C>`/
+  `tide_blend_<C>`. Schema JSON comes from the game's own layout (C offsets)
+  through the engine's `tide_schema_json`. Details: `notes/language.md`.
+- **`tide unity [folder] -o <path> [--once]`** (`compiler/cli/build.c`): the
+  embed host library (`tide_embed`, the installed platform library and engine,
+  exporting the ten `tide_embed_*` functions), then `game-<n>`/`pack-<n>`
+  numbered on from the folder, and `schema.json`, read from each new build
+  through its exported `tide_unity_schema`. Ends when its input closes; a
+  `restart` line starts the running game over. `notes/cli-and-packages.md`.
+- **The package** `unity/com.tide.unity` (Unity 6000.0+): `Tide.Runtime`
+  (`TideRunner`: loads a copy of `Library/Tide/tide_embed` through function
+  pointers, frames with Unity's input from the Input System or the Input
+  Manager, reads the packet, shows entities by view rules (Tide prefab name or
+  component), places them by Tide's `Transform` under their parents, sends
+  commands and requests; `TideEntityView.Get<T>`), `Tide.Editor` (Project
+  Settings > Tide; `TideToolchain` finds tide by setting, PATH or the
+  installer's folder; `TideBuildService` runs `tide unity` while the editor is
+  open; `TideSchemaWatcher` forces a clean script compile when the schema hash
+  changes, as Unity's build cache doesn't see the file), and `Tide.Game`,
+  which the source generator (`unity/generator`, built to
+  `Game/Tide.Generator.dll`, labelled RoslynAnalyzer in its meta) fills with a
+  struct for every schema type. The generator reads
+  `Library/Tide/schema.json` from the folder Unity compiles in: Unity forwards
+  `.additionalfile`s only from `Assets`. The game folder defaults to
+  `Assets/Tide`, as tide compiles every `.c` in a game's folder. Every package
+  file has its `.meta`, which a git package can't make.
+- **`unity/Sample`**: Bounce (balls in a box, WASD/stick, Space), its scene and
+  ball prefab (`Assets/Editor/SampleSetup.cs` makes them), `BallTint` reading
+  the generated `Tide.Game.Ball`, and a play mode test.
+
+Tests: `tide_platform_embed` (eight cases: frames, input, requests, flags, bad
+frames, packet bytes incl. text/list/owner flags and a blended singleton,
+schema, commands and named scenes); every one of the repo's 324 games built
+with `--embed` compiles under `-Wall -Wextra -Wpedantic -Werror`, and their
+headers match plain builds; the sample's play mode test, headless with a scratch
+install: `tide unity` builds it, Tide runs Main in Unity's frames, the ball is
+this machine's, shown, coloured through the generated type and dropped onto the
+floor by the match.
+
+Gaps known now: Tide drawing in Unity (phase 5), authoring and prefab identity
+(phase 3), the web path's package side (option B is proven, not packaged),
+player builds (a linked library per platform), commands holding text or lists,
+scenes C# can start being those the game's code starts, `Clipboard.Copy`/paste,
+and tide's own log lines from the embed host reaching Unity's Console (the
+build service's do).
 
 ## Web
 

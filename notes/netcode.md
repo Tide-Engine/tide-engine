@@ -1,5 +1,14 @@
 # Netcode: sessions, prediction, commands
 
+## Double Position presentation errors (2026-10-20)
+
+Position-tagged double scalars/vectors now use the existing private correction
+path in their declared precision. Frame fractions/decay timing remain shared
+floats, widened for binary64 arithmetic. No session protocol, prediction,
+simulation state, packing or runtime API changes. The extended view_corrections
+E2E covers interpolation, correction/decay, cache privacy, snaps, identity and
+confirmed removal; final validation is in notes/language.md.
+
 ## Double matrix columns (2026-10-20)
 
 Generated input/command codecs walk double matrix columns as double vectors,

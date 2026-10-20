@@ -15,8 +15,22 @@ singleton Camera { [Position] float3 center; [Rotation] float angle; [Rotation] 
 singleton Rules { bool drop; bool remove; bool snapBody; bool snapCamera; }
 local singleton Observed { Nested first; Nested second; float3 center; float angle; quaternion rotation; }
 
+struct DoublePose
+{
+    [Position] double scalar;
+    [Position] double2 planar;
+    [Position] double3 spatial;
+    [Position] double4 wide;
+    double ordinary;
+}
+
+struct DoubleNested { DoublePose pose; [Snap] DoublePose immediate; }
+component Body64 { DoubleNested state; }
+singleton Camera64 { [Position] double3 center; }
+local singleton Observed64 { DoubleNested first; DoubleNested second; double3 center; }
+
 scene Main { }
-event(Spawned) Setup(with Main) { Spawn(Body); }
+event(Spawned) Setup(with Main) { Spawn(Body); Spawn(Body64); }
 
 system BodyLifetime(Rules rules, with Body)
 {
@@ -29,6 +43,26 @@ system CameraCut(Rules rules, mut Camera camera)
 {
     if (rules.snapCamera) camera.Snap();
 }
+
+system DoubleBodyLifetime(Rules rules, with Body64)
+{
+    if (rules.snapBody) this.Snap();
+    if (rules.remove) this.Remove(Body64);
+    if (rules.drop) this.Destroy();
+}
+
+system DoubleCameraCut(Rules rules, mut Camera64 camera)
+{
+    if (rules.snapCamera) camera.Snap();
+}
+
+view DoubleFirst(Body64 body, Camera64 camera, mut Observed64 observed)
+{
+    observed.first = body.state;
+    observed.center = camera.center;
+}
+
+view DoubleSecond(Body64 body, mut Observed64 observed) { observed.second = body.state; }
 
 view First(Body body, Camera camera, mut Observed observed)
 {

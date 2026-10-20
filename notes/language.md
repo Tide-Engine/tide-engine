@@ -1,5 +1,67 @@
 # Language features, as tidec builds them
 
+## Building a game for another program: --embed (2026-10-20)
+
+`codegen_options.embed` (`tidec --embed`, `tide_add_game(EMBED)`, `tide unity`)
+writes the layout and `tide_game_embed` (`compiler/src/embed_codegen.inc`,
+after `gen_layout`) into the `.c` alone, so the header and the game's hash are
+the same as a plain build's (checked on three games). It holds: the view packet
+writer, modeled on `tide_world_print`'s walk over every match archetype and
+component (sparse presence included), blending each value with views'
+`tide_prev_<C>`/`tide_blend_<C>` (the owned variant where a custom
+interpolator reads the heap), owner flags from `Owner` against `Session.player`,
+parents from `tide_parent_of` where the game has a hierarchy, component and
+singleton local fields, and `TIDE_HELPER tide_embed_fix_<T>` turning text and
+plain-element list fields into STRINGS handles (maps, sets, grids and lists of
+heap-holding elements zeroed); command types' layouts appended after the
+layout's types and a dispatcher onto `tide_local_send_<C>` with the target,
+refusing a wrong size and commands holding text or lists; START by scene name
+over `start_scenes` with defaults (text zeroed); tables of components,
+singletons, local parts, commands, scenes, prefabs and non-plain fields (text,
+list with element size and type, map, grid, entity); and `schema`, through the
+engine's `tide_schema_json`. A build without `--embed` generates what it did.
+
+Check: every one of the 324 source lists in a debug build generated with
+`--embed` and compiled under `-Wall -Wextra -Wpedantic -Werror`; the first run
+found an unused `out` (fix helpers of types with only maps/grids) and an unused
+`place` (games with no component), both fixed. Runtime contract and tests:
+`notes/standard-host.md`, `notes/runtime-ownership.md`.
+
+## Double Position correction smoothing (2026-10-20)
+
+The owner requested [Position] on double coordinates. The checker now accepts
+double and double2/3/4, alongside existing float types, while retaining the
+match-only, no-arguments, Snap/conflict and custom-Interpolate restrictions.
+Double matrices remain invalid; Rotation still accepts float radians/quaternion.
+
+The existing generated correction path already stores the error in the field's
+declared C type and performs subtraction, accumulation, application and decay
+multiplication in that type. No numeric codegen or runtime helper was changed.
+The float frame interpolation fraction and existing float exponential decay
+coefficient widen for double arithmetic. The same 75 ms half-life and all float
+behavior remain unchanged. Errors remain private local presentation state,
+excluded from match hashes and local/match packing; snaps, identity changes,
+confirmed removal and timeline replacement retain their existing reset rules.
+
+Four double regressions extend view_corrections: all four scalar/vector sizes,
+nested structs and Snap boundaries, component and singleton presentation,
+billion-unit fractional offsets, fractional errors requiring binary64 precision,
+ordinary movement and accumulated corrections, decay, zero-error interpolation,
+two views, unchanged world hash/values/packed bytes and cache resets/lifetime.
+The seven existing float/rotation regressions remain intact. New diagnostics pin
+double matrix rejection and unchanged double Rotation rejection. LSP hover and
+user docs/spec identify the newly accepted types.
+
+Validation: full native debug passes 2,469/2,469, including 34 Vulkan/OpenGL
+GPU tests; full web debug passes 2,378/2,378 (2,367 ordinary/WebGL and 11 WebGPU).
+All 11 view_corrections cases pass native/WASI debug and optimized builds;
+all 16 correction diagnostics and the full LSP suite, including double Position
+hover, pass. Production docs build, all 268 shared grammar cases and the staged
+diff check pass. No determinism pin changed. Debug uses clang 23.1.2 with Node
+24.21.0 and Chrome 155.0.8059.85 for web; native optimized uses clang 18.1.8.
+Linux, macOS, Android, MinGW and sanitizer coverage were not run on this Windows
+machine; CI was not dispatched.
+
 ## Double math and matrix completion (2026-10-20)
 
 The owner corrected the foundation's narrow scope: double trig and matrices

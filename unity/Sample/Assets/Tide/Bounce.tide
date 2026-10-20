@@ -1,0 +1,76 @@
+// The Tide package's sample: each player is a ball in a box, rolled with WASD or a stick, Space to jump.
+// Tide simulates, predicts and rolls back; Unity draws the balls (TideRunner's view rule for Ball).
+settings { title = "Bounce"; tickRate = 30; maxPlayers = 8; }
+
+scene Main { }
+
+input Roll
+{
+    [Clamp(-1, 1)] float2 move;
+    bool jump;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
+        move += devices.gamepad.leftStick;
+        jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed;
+    }
+}
+
+component Ball
+{
+    float3 velocity;
+    Color color;
+    int seat;
+    int bounces;
+}
+
+singleton Room
+{
+    int arrivals;
+    Map<PlayerID, Entity> balls;
+}
+
+event(PlayerJoined joined) Arrive(mut Room room)
+{
+    var seat = room.arrivals;
+    room.arrivals += 1;
+    var hue = seat * 0.37 - int(seat * 0.37);
+    var color = Color(0.5 + 0.5 * Math.Cos(hue * 6.283), 0.5 + 0.5 * Math.Cos((hue - 0.333) * 6.283), 0.5 + 0.5 * Math.Cos((hue + 0.333) * 6.283));
+    room.balls[joined.player] = Spawn(Ball { color = color, seat = seat },
+        Transform { localPosition = float3(seat % 4 * 1.5 - 2.25, 2, seat / 4 * 1.5) }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Room room)
+{
+    room.balls[left.player].Destroy();
+    room.balls.Remove(left.player);
+}
+
+system Rolling(Roll roll, mut Ball ball, mut Transform transform, Time time)
+{
+    mut var p = transform.localPosition;
+    ball.velocity.x += roll.move.x * 12 * time.dt;
+    ball.velocity.z += roll.move.y * 12 * time.dt;
+    ball.velocity.x *= 0.98;
+    ball.velocity.z *= 0.98;
+    ball.velocity.y -= 20 * time.dt;
+    if (roll.jump && p.y <= 0.501) ball.velocity.y = 8;
+    p += ball.velocity * time.dt;
+    if (p.y < 0.5)
+    {
+        p.y = 0.5;
+        if (ball.velocity.y < -2) ball.bounces += 1;
+        ball.velocity.y = -ball.velocity.y * 0.4;
+    }
+    if (Math.Abs(p.x) > 5) { p.x = Math.Clamp(p.x, -5, 5); ball.velocity.x = -ball.velocity.x * 0.8; }
+    if (Math.Abs(p.z) > 5) { p.z = Math.Clamp(p.z, -5, 5); ball.velocity.z = -ball.velocity.z * 0.8; }
+    transform.localPosition = p;
+    // Rolling along the floor
+    var travel = float2(ball.velocity.x, ball.velocity.z) * time.dt * 2;
+    transform.localRotation = Math.Normalize(Math.Mul(quaternion.Euler(travel.y, 0, -travel.x), transform.localRotation));
+}

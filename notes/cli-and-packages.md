@@ -1,5 +1,27 @@
 # `tide`, packages and the package
 
+## tide unity (2026-10-20)
+
+`tide unity [folder] -o <path> [--once] [--release] [--define S]` builds a game
+for Unity's Tide package (`notes/unity.md`): `build_options.unity` makes
+`generate` pass `codegen_options.embed`. Into `<path>`: `tide_embed`
+(`tide_embed.dll`, `libtide_embed.so`/`.dylib`), linked from a one-line
+`embed_host.c`, the engine's objects and the installed platform library, its
+ten `tide_embed_*` functions exported (a `.def` file under MinGW, `-u` on ELF
+and Mach-O) and renamed into place whole; then `game-<n>`/`pack-<n>` from
+`build_library` with a library stub defining `TIDE_HAS_EMBED` and exporting
+`tide_unity_schema`, numbered on from the highest already there
+(`highest_numbered`, through `sys_list`), so a game running from the folder
+takes each; and `schema.json`, written whole by loading the new build
+(`sys_library_open`/`_find`/`_close`, new in `sys.c`) and calling its
+`tide_unity_schema`. Watching, it rebuilds as `tide run` does and ends when its
+input ends (`sys_input_ended`, set by the line reader at EOF); a `restart` line
+writes the folder's `restart` file. `--once` builds once. It refuses
+`--web`/`--android`/`--server` and a missing `-o`; `tide help unity` and
+`--once` have help entries; `tide_cli_run_exit_tests` stubs `tide_unity`.
+User docs: `docs/tools/cli.md`, Unity. Checked by hand with a scratch install
+(MinGW release plus debug trees) on `unity/Sample`, and by its play mode test.
+
 ## Terminal editor configuration helper (2026-10-18)
 
 `tide ide emacs|vim|neovim` prints ready-to-copy init configuration from the
