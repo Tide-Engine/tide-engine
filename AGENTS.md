@@ -199,3 +199,4 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |
 | `builds/`, `tide publish`, inactive build service | `notes/build-service.md` |
 | Relocated standalone mockup.games repository | `notes/mockup-games.md` |
+| Unity as a rendering/authoring front end (proposal, unbuilt) | `notes/unity.md` |
