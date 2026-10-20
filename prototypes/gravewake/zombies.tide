@@ -520,22 +520,23 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
         if (zombie.fuse > 0) zombie.fuse += dt;
         if (zombie.fuse >= BLOAT_FUSE)
         {
-            // The living round it hurt and thrown back, the nearer the more (not one in a Gas Mask); one killed by a
-            // survivor in Gas Masks bursts wider
-            mut var masks = 0;
+            // The living round it hurt and thrown back, the nearer the more, every one of them (a Gas Mask kept it off its
+            // wearer till the owner, 2026-10-20: "that shouldnt be a thing, it removes way too much danger"); one killed by
+            // a survivor with Bile Bombs bursts wider and harder on the dead
+            mut var bombs = 0;
             foreach (var row in survivors)
-                if (row.survivor.seat == zombie.killer) masks = Has(row.survivor, Item.GasMask);
+                if (row.survivor.seat == zombie.killer) bombs = Has(row.survivor, Item.BileBomb);
             foreach (var row in survivors)
             {
                 var s = row.survivor;
-                if (!s.ready || s.life != Life.Standing || Has(s, Item.GasMask) > 0) continue;
+                if (!s.ready || s.life != Life.Standing) continue;
                 var far = Math.Length((s.feet - zombie.chestAt).xz);
                 if (far > BLOAT_REACH) continue;
                 var share = Math.Sqrt(1 - far / BLOAT_REACH);
                 row.entity.Send(Hurt { damage = BLOAT_HURT * Harm(match.danger) * (0.4 + 0.6 * share), from = zombie.chestAt });
                 row.entity.Send(Shoved { velocity = Flatten(s.feet - zombie.chestAt) * 9 * share + float3(0, 4 * share, 0) });
             }
-            Rupture(this, zombie, match, herd, BLOAT_REACH * (1 + 0.3 * masks));
+            Rupture(this, zombie, match, herd, BLOAT_REACH * (1 + 0.3 * bombs), 1 + 0.5 * bombs);
             return;
         }
     }
@@ -875,9 +876,9 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
 
 const float BLOAT_PACE = 0.8;      // A Bloater's speed against the ordinary dead's of its gait
 
-// A Bloater bursting, as far as `reach`: the dead round it wounded and thrown down (credited to whoever killed it, if
-// anyone did), and it gone, in pieces. (Hunt hurts the living round it.)
-void Rupture(Entity self, mut Zombie zombie, Match match, Herd herd, float reach)
+// A Bloater bursting, as far as `reach`, `harder` times as hard: the dead round it wounded and thrown down (credited to
+// whoever killed it, if anyone did), and it gone, in pieces. (Hunt hurts the living round it.)
+void Rupture(Entity self, mut Zombie zombie, Match match, Herd herd, float reach, float harder)
 {
     zombie.popped = true;
     var at = zombie.chestAt;
@@ -887,7 +888,7 @@ void Rupture(Entity self, mut Zombie zombie, Match match, Herd herd, float reach
         var far = Math.Distance(z.at + float3(0, 1, 0), at);
         if (far > reach) continue;
         var share = Math.Sqrt(1 - far / reach);
-        z.entity.Send(Wound { damage = ZombieHealth(match.danger) * 2 * (0.4 + 0.6 * share), seat = zombie.killer, element = Element.Blast, from = at,
+        z.entity.Send(Wound { damage = ZombieHealth(match.danger) * 2 * harder * (0.4 + 0.6 * share), seat = zombie.killer, element = Element.Blast, from = at,
                               knock = 8 * share, down = share > 0.3, blow = Blow.Burst, echo = true });
     }
     Send(Blast { at = at, reach = reach, element = Element.Blast, kind = Shot.Bile });

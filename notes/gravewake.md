@@ -63,6 +63,21 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### No Gas Mask: the Bile Bomb (2026-10-20)
+
+The owner: "there is also an ability that makes bloaters not hurt me anymore.
+that shouldnt be a thing, it removes way too much danger."
+
+- **The Gas Mask is gone** (zombies.tide's `Hunt`, `Rupture`; items.tide's
+  `Item.BileBomb`): a Bloater's burst hurts every survivor in it again. Its place
+  among the uncommon items is the Bile Bomb, all of it what it had beside the
+  mask: the Bloaters you kill burst 30% wider on the dead (as it was) and half
+  again as hard (new), more each. Mine, Provisional.
+- **Tests**: the Gas Mask's check (a burst beside its wearer not hurting them) is
+  now the Bile Bomb's: a Bloater its holder shoots dead bursts on one of the dead
+  4.2 m from it, past a burst's 3.6 m, for 114. Native debug `gravewake_test` and
+  the web debug WASI one pass.
+
 ### The floor gone black and speckled: the stains read by their colour (2026-10-20)
 
 The owner, with a picture of the clearing's floor black, flecked all over with

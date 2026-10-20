@@ -531,7 +531,7 @@ int main(void)
         s = take(0, Item_EnergyDrink);
         CHECK(s.rolls == 3);                           // A third roll, ready now
         const Item rest[] = {Item_HollowPoints, Item_HairTrigger, Item_Sneakers, Item_Leech, Item_Battery, Item_LuckyShot, Item_Salts, Item_LiveWire,
-                             Item_PowderKeg, Item_GunDrone, Item_EmberRing, Item_Frostbite, Item_Kerosene, Item_SteelToes, Item_GasMask,
+                             Item_PowderKeg, Item_GunDrone, Item_EmberRing, Item_Frostbite, Item_Kerosene, Item_SteelToes, Item_BileBomb,
                              Item_ApRounds, Item_Mortar, Item_HeRounds, Item_DragonsBreath};
         for (size_t k = 0; k < sizeof rest / sizeof rest[0]; k++) {
             const int before = get(0).items.at[rest[k]];
@@ -1377,8 +1377,8 @@ int main(void)
     }
 
     // ---- What the newer items do: AP Rounds through one more (four in a row, the carbine stopping in the first); HE Rounds burst on the first they hit, wounding the one
-    // beside it; Dragon's Breath sets the dead alight; Kerosene sets the ones a dash goes through alight; a Gas Mask keeps
-    // a Bloater's burst off; the Engineer's turret sets off its maker's items (Frostbite, here) ----
+    // beside it; Dragon's Breath sets the dead alight; Kerosene sets the ones a dash goes through alight; a Bloater shot dead
+    // by one with a Bile Bomb bursts wider; the Engineer's turret sets off its maker's items (Frostbite, here) ----
     {
         few(5);
         become(0, Role_Gunner, Weapon_Rifle);
@@ -1464,36 +1464,43 @@ int main(void)
             held[0].move = (tide_float2){0, 0};
             CHECK(lit);
         }
-        // A Gas Mask: a Bloater bursting beside its wearer doesn't hurt them (no other of the dead about to claw them)
+        // A Bile Bomb: a Bloater shot dead by its holder bursts wider, the one 4.2 m from it (past a burst's 3.6) wounded
         {
-            few(1);
+            few(2);
+            become(0, Role_Gunner, Weapon_Rifle);
             Survivor s = get(0);
             memset(&s.items, 0, sizeof s.items);
-            s.items.at[Item_GasMask] = 1;
-            s.health = 100;
+            s.items.at[Item_BileBomb] = 1;
             set(0, s);
-            put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -12});
+            put(0, (tide_float3){0, 0, -6}, (tide_float3){0, 1.6f, -16});
             tick_safe(10);
-            const tide_entity e = sturdy();
-            Zombie z = zombie(e);
+            const tide_float3 feet = get(0).feet;
+            tide_entity pair[2];
+            int found = 0;
+            for (uint32_t row = 0; row < world.arch5_Zombie.count && found < 2; row++)
+                if (TIDE_AT(&world, arch5_Zombie, Zombie, row).state == ZombieState_Hunting) pair[found++] = TIDE_ENTITY_AT(&world, arch5_Zombie, row);
+            CHECK(found == 2);
+            hold_at(pair[0], (tide_float3){feet.x, feet.y, feet.z - 8});
+            hold_at(pair[1], (tide_float3){feet.x + 4.2f, feet.y, feet.z - 8});
+            Zombie z = zombie(pair[0]);
             z.kind = ZombieKind_Bloater;
-            z.pace = 0;
-            z.at = (tide_float3){get(0).feet.x, get(0).feet.y, get(0).feet.z - 1.8f};
-            CHECK(tide_set_Zombie(&world, e, z));
+            z.health = 1;
+            CHECK(tide_set_Zombie(&world, pair[0], z));
+            tick_safe(2);
+            look_at(0, zombie(pair[0]).chestAt);
             s = get(0);
-            s.health = 100;
+            s.shotWait = 0;
+            s.mag = 30;
             set(0, s);
-            bool burst = false;
-            float least = 100;
-            for (int t = 0; t < 160 && !burst; t++) {
-                tick(1);
-                decline();
-                least = fminf(least, get(0).health);
-                burst = !tide_entity_alive(&world.entities, e);
-            }
-            tick(3);
-            least = fminf(least, get(0).health);
-            CHECK(burst && least >= 100);
+            const float whole = zombie(pair[1]).health;
+            press(&held[0].attack);
+            for (int t = 0; t < 120 && tide_entity_alive(&world.entities, pair[0]); t++) tick_safe(1);
+            tick_safe(3);
+            printf("a Bile Bomb: a Bloater shot dead bursts on one 4.2 m off for %.0f\n", whole - zombie(pair[1]).health);
+            CHECK(!tide_entity_alive(&world.entities, pair[0]) && zombie(pair[1]).health < whole);
+            s = get(0);
+            memset(&s.items, 0, sizeof s.items);
+            set(0, s);
         }
         // The turret, with its maker's Frostbite: what it shoots freezes
         {

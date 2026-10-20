@@ -63,7 +63,7 @@ static Bot bots[SEATS_MOST];
 // Items every survivor starts the run with (the harness's last argument: "GD2,PK1"), to weigh what one is worth.
 #define ITEMS 30
 static int startItems[ITEMS];
-static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "RR", "BS", "LW", "PK", "GD", "ER", "FR", "ED", "KE", "ST", "GM",
+static const char *itemCodes[ITEMS] = {"HP", "HT", "KV", "SN", "LR", "FB", "EM", "LS", "SS", "RR", "BS", "LW", "PK", "GD", "ER", "FR", "ED", "KE", "ST", "BB",
                                        "AP", "SB", "TC", "MS", "MF", "SW", "HE", "DB", "TD", "RP"};
 
 static void parse_items(const char *list)

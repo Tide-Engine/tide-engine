@@ -29,7 +29,7 @@ enum Item
     // Common
     HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts, Ricochet, Splinters,
     // Uncommon
-    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, GasMask, ApRounds, SawBlades, TeslaCoil, Molotovs,
+    LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, BileBomb, ApRounds, SawBlades, TeslaCoil, Molotovs,
     // Rare
     Mortar, SecondWind, HeRounds, DragonsBreath, Shockwave, RocketPod,
     // Skill cards: not items, a right mouse's skill to take (SkillCard)
@@ -99,7 +99,7 @@ string ItemName(Item item)
         case Item.EnergyDrink: return "Energy Drink";
         case Item.Kerosene: return "Kerosene";
         case Item.SteelToes: return "Steel Toes";
-        case Item.GasMask: return "Gas Mask";
+        case Item.BileBomb: return "Bile Bomb";
         case Item.ApRounds: return "AP Rounds";
         case Item.SawBlades: return "Saw Blades";
         case Item.TeslaCoil: return "Tesla Coil";
@@ -139,7 +139,7 @@ string ItemLine(Item item)
         case Item.EnergyDrink: return "One more roll (+1 each)";
         case Item.Kerosene: return "The dead you roll past catch fire (wider each)";
         case Item.SteelToes: return "50% more to the dead on the ground (+50% each)";
-        case Item.GasMask: return "Bloaters' bursts can't hurt you, and the ones you kill burst 30% wider on the dead (+30% each)";
+        case Item.BileBomb: return "The Bloaters you kill burst 30% wider and half again as hard on the dead (+30%, +50% each)";
         case Item.ApRounds: return "Rounds go through one more of the dead (+1 each)";
         case Item.SawBlades: return "A saw blade circles you, cutting every one of the dead it passes (+1 blade each)";
         case Item.TeslaCoil: return "Every 1.2 s lightning strikes the 2 nearest dead (+1 each)";
@@ -177,7 +177,7 @@ string ItemLineAt(Item item, int count)
         case Item.Frostbite: return $"{Math.Min(100, 12 * n)}% chance a hit freezes the dead solid for 2 s";
         case Item.EnergyDrink: return $"{n} more rolls";
         case Item.SteelToes: return $"{50 * n}% more to the dead on the ground";
-        case Item.GasMask: return $"Bloaters' bursts can't hurt you, and the ones you kill burst {30 * n}% wider on the dead";
+        case Item.BileBomb: return $"The Bloaters you kill burst {30 * n}% wider and {50 * n}% harder on the dead";
         case Item.ApRounds: return $"Rounds go through {n} more of the dead";
         case Item.SawBlades: return n > SAWS_SHOWN ? $"{SAWS_SHOWN} saw blades circle you, cutting {n} blades' worth" : $"{n} saw blades circle you, cutting every one of the dead they pass";
         case Item.TeslaCoil: return $"Every 1.2 s lightning strikes the {1 + n} nearest dead";
