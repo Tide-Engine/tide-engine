@@ -78,6 +78,20 @@ that GameObject reads the entity's components as Tide's views see them this
 frame: `view.Get<Tide.Game.Health>()`. `TideRunner.Current.Send(command)`
 sends a command, as local code's `Send`.
 
+C# doesn't spawn: the match does, in Tide code, which a command from C# can
+ask for (`Spawn(Bullet, ...)` in its handler, `Bullet` being the Unity prefab,
+under `UnityEngine.Prefabs`). Unity sees the newest predicted state once a
+frame, so a GameObject lasts as long as its entity there: a rollback that
+spawns the entity again keeps it, and one that gives its handle to another
+entity (a spawn the server didn't make) gets the other entity a GameObject of
+its own.
+
+With the runner's "Pool" on, the GameObject of an entity that goes is kept,
+inactive, for the next entity of its prefab: reset what Unity alone keeps on it,
+an Animator's state or particles, in `OnDisable` or `OnEnable`. For a pool of
+your own, set `TideRunner.Spawner` to an `ITideSpawner`, whose `Make(prefab)`
+and `Release(prefab, made)` replace Instantiate and Destroy.
+
 What the game's Tide views draw with `Draw` (2D: shapes, lines, meshes and
 text) is drawn over Unity's frame, in any render pipeline, while the runner's
 "Draw Tide" is on. 3D meshes, textures and the game's own shaders aren't yet.

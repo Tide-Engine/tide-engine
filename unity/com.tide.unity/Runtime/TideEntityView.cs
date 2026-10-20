@@ -31,6 +31,11 @@ namespace Tide
         // A GameObject of a scene, or inside a prefab's instance, that an entity of its UnityEngine.Source shows through:
         // hidden while its entity's gone, rather than destroyed, and placed where it is in Unity's hierarchy
         internal bool Authored;
+        // What it was made for, which a rollback giving the handle to another entity changes: the entity's spawn
+        // (0: not known), its UnityEngine.Source (-1: none), and the prefab it's an instance of (null: a scene's)
+        internal uint Born;
+        internal int SourceAsset = -1, SourceNode = -1;
+        internal GameObject MadeFrom;
 
         public bool Mine => Entity.Mine;
 

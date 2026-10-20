@@ -369,6 +369,32 @@ under the parent entity's GameObject, through what's between; gone, they're
 deactivated rather than destroyed. Others use the view rules as before. The
 map is reloaded with each schema and when the file changes.
 
+**Identity and pooling (2026-10-21, owner: "lets deal with that gap and lets
+allow pooling").** Views were keyed by handle alone, and a rollback can give a
+handle to another entity (a predicted spawn where the server had another:
+notes/ecs.md, born), which kept the first entity's GameObject, maybe of
+another prefab, for the second. Now a `--embed` build always keeps what each
+entity was born as (`entities_born` is true for it: a hash per spawn, beside
+the world, not in the hash or the header, so the game's hash is unchanged), the
+view packet's entity row carries it (`born`, 24-byte rows, packet version 2),
+and `TideEntityView` keeps the born and `UnityEngine.Source` it was made for:
+`TideRunner.Same` remakes the view when either changes (born only where both
+are known; 0 is a world another machine sent). A game with visibility state
+borns from tick and handle, which doesn't tell two spawns of one tick and
+handle apart; the Source check still tells their prefabs apart. Releasing goes
+through `Release`: a scene's or an instance's GameObject is deactivated; one
+made from a prefab (`MadeFrom`, a view rule's or a Unity prefab's root) goes to
+`TideRunner.Spawner` (`ITideSpawner.Make/Release`, a game's own pool) if set,
+else to the pool when `pool` is on (inactive under "Tide pool", the runner's
+child, by prefab; taken back out to the active scene, reset by the game in
+`OnDisable`/`OnEnable`), else Destroy. `OnDisable` hands shown views to the
+spawner and destroys the pool, and no longer destroys scenes' GameObjects.
+Tests: `tide_platform_embed` (the row's born is known and stays), the sample's
+`Toss` command (an unowned Roller in and out) with
+`ThePoolKeepsAGameObjectForTheNextEntity` and
+`ASpawnerMakesAndLetsGoOfGameObjects`. Not exercised end to end: a real
+rollback handing a handle over, which needs two machines in the sample's test.
+
 **Generated types and Unity's build cache.** Unity 6 caches compiles in a
 shared cache keyed by an assembly's inputs (`Csc ... [CacheHit ...]` in the
 log), and a file in `Library` isn't one: deleting `Library/Bee` still restored

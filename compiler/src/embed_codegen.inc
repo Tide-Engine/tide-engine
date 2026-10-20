@@ -134,14 +134,17 @@ static void gen_embed(gen *g)
                       field_cname(&prog->owner->fields.items[0]), field_cname(&prog->owner->fields.items[0]),
                       field_cname(&prog->owner->fields.items[0]));
         }
-        sb_put(o, "        const uint32_t row[5] = {e.index, e.generation, flags, TIDE_PACKET_NONE, TIDE_PACKET_NONE};\n"
+        // ...and what it was spawned as, which tells another program's object for it from one for another entity a
+        // rollback gave its handle
+        sb_put(o, "        const uint32_t row[6] = {e.index, e.generation, flags, TIDE_PACKET_NONE, TIDE_PACKET_NONE,\n"
+                  "                                 tide_entity_born(&w->entities, e)};\n"
                   "        memcpy(tide_packet_grow(out, TIDE_PACKET_ENTITY, false), row, sizeof row);\n"
                   "        if (e.index < w->entities.next_unused) place[e.index] = n;\n        n++;\n    }\n");
     }
     // Parents, now every entity has its place
     if (prog->hierarchy[0]) {
         sb_put(o, "    for (uint32_t k = 0; k < n; k++) {\n"
-                  "        uint32_t row[5];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
+                  "        uint32_t row[6];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
                   "        memcpy(row, at, sizeof row);\n"
                   "        const tide_entity parent = tide_parent_of(w, (tide_entity){row[0], row[1]});\n"
                   "        if (tide_entity_is_null(parent) || parent.index >= w->entities.next_unused) continue;\n"
