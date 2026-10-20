@@ -296,6 +296,15 @@ TIDE_TEST(embed_schema)
     char counter[96];
     snprintf(counter, sizeof counter, "{\"name\":\"Counter\",\"kind\":\"component\",\"size\":%u", (unsigned)sizeof(Counter));
     TIDE_CHECK(strstr(schema, counter) != NULL);
+    // A component's declared defaults, as its bytes: its text and lists empty
+    Counter defaults;
+    memset(&defaults, 0, sizeof defaults);
+    defaults.rate = 2.5f;
+    char hex[sizeof defaults * 2 + 16] = "\"defaults\":\"";
+    for (size_t i = 0; i < sizeof defaults; i++) {
+        snprintf(hex + strlen(hex), 3, "%02x", (unsigned)((const uint8_t *)&defaults)[i]);
+    }
+    TIDE_CHECK(strstr(schema, hex) != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"label\",\"type\":\"string\",\"kind\":\"text\"") != NULL);
     TIDE_CHECK(strstr(schema, "\"name\":\"marks\",\"type\":\"List<int>\",\"kind\":\"list\"") != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"Tally\",\"kind\":\"singleton\"") != NULL);

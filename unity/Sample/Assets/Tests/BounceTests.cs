@@ -133,7 +133,7 @@ public sealed unsafe class BounceTests
         for (var frame = 0; frame < 300 && ball == null; frame++)
         {
             yield return null;
-            foreach (var view in Object.FindObjectsByType<TideEntityView>(FindObjectsSortMode.None))
+            foreach (var view in Object.FindObjectsByType<TideEntityView>())
             {
                 if (view.Has<Tide.Game.Ball>()) ball = view;
             }

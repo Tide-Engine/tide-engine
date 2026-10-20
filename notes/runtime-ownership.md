@@ -76,6 +76,9 @@ and `_free`, and `tide_schema_json`. They grow buffers through `tide_realloc`
 and bound every size; a game built without `--embed` calls none of them, and
 no existing function, struct or the generated header changed. The platform's
 `tide/embed.h` host is agent-maintained with the rest of `platform/`.
+`tide_embed_game` later gained a last member, `defaults`, a generated function
+`tide_schema_json` calls for each component's default bytes (Unity's inspector
+shows them); still no generated call into the engine beyond those above.
 
 ## Double Position attribute (2026-10-20)
 
