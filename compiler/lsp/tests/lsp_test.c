@@ -11982,6 +11982,12 @@ TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
     help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "Draw.SkinnedMesh(mesh, transform[, pose]") && has(help, "\"activeParameter\":2"));
     TIDE_CHECK(has(help, "skinning applies its transforms before the user vertex stage"));
+    open_document("scene Main { }\nstruct Item { Pose pose; }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    Draw.Instanced(model, $[Item { pose = model.defaultPose }]);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Draw.Instanced(mesh, instances[") && has(help, "\"activeParameter\":1"));
+    TIDE_CHECK(has(help, "optional Pose pose field") && has(help, "Invalid poses skip their item"));
     open_document("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color) { color = vertex.color; }\n"
                   "view V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
                   "    Draw.SkinnedMesh(model, float4x4.identity, $Shade);\n}\n");

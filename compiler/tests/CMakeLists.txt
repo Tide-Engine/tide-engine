@@ -148,6 +148,7 @@ tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decodi
 tide_e2e_test(animation_imports) # Cleaned exporter names, selected clips and combined source catalogs
 tide_e2e_test(animation_lookup) # Bool/out catalogs, failure defaults, evaluation order and owned outputs
 tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms
+tide_e2e_test(skinned_instanced) # Per-item poses, rest instances, shader fields, capture and batching
 tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists after each entity and frame
 tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
 tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes

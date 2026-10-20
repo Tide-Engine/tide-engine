@@ -41,6 +41,12 @@ frag SkinColor(SkinCorner corner, out Color color)
 }
 
 struct SkinPlacement { float posed; }
+struct SkinInstance { float4x4 transform; Pose pose; Color tint = Color.white; }
+
+frag SkinTint(Vertex3 corner, SkinInstance item, out Color color)
+{
+    color = corner.color * item.tint;
+}
 
 vert SkinPlaced(mut Vertex3 corner, out SkinPlacement info, out float4 clip)
 {
@@ -73,20 +79,20 @@ view Skins(mut SkinView state)
     Draw.SetCamera(float4x4.identity, float4x4.Ortho(128, 128, 0.1, 100));
     Draw.Cull(Cull.None)
     {
-        Draw.SkinnedMesh(model, Place(20, 20), rest);
-        Draw.SkinnedMesh(model, Place(20, 52), moving);
+        Draw.Instanced(model, [SkinInstance { transform = Place(20, 20), pose = rest },
+                              SkinInstance { transform = Place(20, 52), pose = moving }]);
         Draw.SkinnedMesh(lit, Place(100, 20), scaled, SkinObserved, SkinColor);
         state.shadow.Clear(Color.white);
         state.shadow.SetCamera(float4x4.identity, float4x4.Ortho(128, 128, 0.1, 100));
         state.shadow.Cull(Cull.None)
         {
-            state.shadow.SkinnedMesh(model, Place(20, 84), moving);
+            state.shadow.Instanced(model, [SkinInstance { transform = Place(20, 84), pose = moving }]);
         }
         state.depth = state.shadow.depth;
         Draw.SkinnedMesh(model, Place(20, 84), moving, SkinShadow);
         // Later independent poses of the same asset cannot overwrite earlier palette captures.
-        Draw.SkinnedMesh(model, Place(84, 52), rest);
-        Draw.SkinnedMesh(model, Place(84, 84), moving);
+        Draw.Instanced(model, [SkinInstance { transform = Place(84, 52), pose = rest, tint = Color.red },
+                              SkinInstance { transform = Place(84, 84), pose = moving, tint = Color.blue }], SkinTint);
         Draw.SkinnedMesh(model, Place(20, 116), moving, SkinPlaced, SkinPlacedColor);
     }
 }

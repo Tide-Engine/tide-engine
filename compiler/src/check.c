@@ -5874,7 +5874,7 @@ static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
     const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
-    const bool skinned = e->skinned = str_eq_c(e->name, "SkinnedMesh");
+    bool skinned = e->skinned = str_eq_c(e->name, "SkinnedMesh");
     const char *draw_name = e->targeted ? (skinned ? "target.SkinnedMesh" : instanced ? "target.Instanced" : "target.Mesh")
                                         : (skinned ? "Draw.SkinnedMesh" : instanced ? "Draw.Instanced" : "Draw.Mesh");
     // The vert and the frag it names come last, the vert first, and after
@@ -5917,6 +5917,8 @@ static type check_mesh_draw(checker *c, expr *e)
         expr *mesh = e->args.items[0];
         const type whole = check_expr(c, mesh);
         checked = 1;
+        if (instanced && whole.kind == TY_STRUCT && whole.decl->skin_kind == SKIN_MESH)
+            skinned = e->skinned = true;
         if (skinned && (whole.kind != TY_STRUCT || whole.decl->skin_kind != SKIN_MESH)) {
             for (int i = 1; i < count; i++) check_expr(c, e->args.items[i]);
             if (whole.kind != TY_ERROR) diag_error(mesh->at, "%s takes a SkinnedMesh<V> first, and this is %s", draw_name,
@@ -5925,7 +5927,8 @@ static type check_mesh_draw(checker *c, expr *e)
         }
         if (skinned && count < 2) {
             for (int i = 1; i < count; i++) check_expr(c, e->args.items[i]);
-            diag_error(e->at, "%s takes a skinned mesh and its float4x4 transform first; a Pose is optional", draw_name);
+            diag_error(e->at, instanced ? "%s takes a skinned mesh and a list of instances first"
+                                       : "%s takes a skinned mesh and its float4x4 transform first; a Pose is optional", draw_name);
             return T_ERR;
         }
         if (whole.kind == TY_MESH || skinned) {
@@ -5949,7 +5952,7 @@ static type check_mesh_draw(checker *c, expr *e)
             }
             if (skinned) e->skin_mesh = mesh;
             for (int i = 1; i < had; i++) {
-                if (skinned && i == 2 && i < count) {
+                if (skinned && !instanced && i == 2 && i < count) {
                     const type pose = check_expr(c, given[i]);
                     if (pose.kind == TY_ERROR) return T_ERR;
                     if (pose.kind == TY_STRUCT && pose.decl->skin_kind == SKIN_POSE) {
@@ -6155,6 +6158,12 @@ static type check_mesh_draw(checker *c, expr *e)
                            STR_ARG(e->instance_type->name), type_name(transform->type));
                 return T_ERR;
             }
+            const field *pose = skinned ? field_called(e->instance_type, "pose") : NULL;
+            if (pose && (pose->type.kind != TY_STRUCT || pose->type.decl->skin_kind != SKIN_POSE)) {
+                diag_error(instances->at, "a skinned instance struct's 'pose' is a Pose, and '" STR_FMT "'s is %s",
+                           STR_ARG(e->instance_type->name), type_name(pose->type));
+                return T_ERR;
+            }
         }
     } else if (dims == 3) {
         at++; // Its transform, checked above
@@ -6236,7 +6245,7 @@ static type check_mesh_draw(checker *c, expr *e)
     }
     if (!ok) return T_ERR;
 
-    if (instanced && transforms && vertex == prog->vertex3 && !shaded) {
+    if (instanced && transforms && vertex == prog->vertex3 && !shaded && !skinned) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;

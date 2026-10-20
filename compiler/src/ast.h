@@ -1278,6 +1278,7 @@ typedef struct shader {
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
     const field *instance_transform; // The instance struct's optional float4x4 transform
+    const field *instance_pose; // A skinned instance's optional CPU Pose
     const field *instance_list;      // A list its code reads of the instance struct, which no draw can send
     VEC(shader_value) values;
     VEC(shader_texture) textures;

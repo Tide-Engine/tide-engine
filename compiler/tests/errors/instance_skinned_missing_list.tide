@@ -1,0 +1,7 @@
+// expect: Draw.Instanced takes a skinned mesh and a list of instances first
+scene Main { }
+view Show()
+{
+    SkinnedMesh<Vertex3> model = default;
+    Draw.Instanced(model);
+}

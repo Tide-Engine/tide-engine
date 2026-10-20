@@ -1,6 +1,7 @@
 // A spare int4 lane carries the atlas base at the 16-attribute limit.
 // A completely full layout keeps its individual palette without an extra attribute.
 scene Main { }
+struct SkinInstance { Pose pose; }
 
 struct Corner { float3 position; }
 asset SkinnedMesh<Corner> model = "../../../platform/tests/skinned.gltf";
@@ -34,13 +35,15 @@ vert Saturated(mut Corner corner, Full item)
 view PackedModels(with Packed)
 {
     Draw.SkinnedMesh(model, float4x4.identity, Spare);
-    Draw.SkinnedMesh(model, float4x4.identity, model.animations.move.Sample(0.5), Spare);
+    Draw.Instanced(model, [SkinInstance { pose = model.animations.move.Sample(0.5) },
+                          SkinInstance { pose = model.defaultPose }], Spare);
 }
 
 view FullModels(with Full)
 {
     Draw.SkinnedMesh(model, float4x4.identity, Saturated);
-    Draw.SkinnedMesh(model, float4x4.identity, model.animations.move.Sample(0.5), Saturated);
+    Draw.Instanced(model, [SkinInstance { pose = model.animations.move.Sample(0.5) },
+                          SkinInstance { pose = model.defaultPose }], Saturated);
 }
 
 event(Spawned) Setup(with Main)

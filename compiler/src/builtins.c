@@ -832,7 +832,9 @@ static void build_signatures(void)
     static const char instanced_doc[] =
         "Draws one mesh for each element of `instances`, in order: a List<float4x4> of 3D transforms, or a List<T> "
         "of structs whose fields a vert or frag reads through a read-only T parameter. A 3D struct's float4x4 "
-        "transform places it; without one it uses the identity. A vert places 2D instances.";
+        "transform places it; without one it uses the identity. A vert places 2D instances. "
+        "A SkinnedMesh<V> can replace the vertices and indices: an optional Pose pose field animates each item; "
+        "without it the model uses authored rest. Invalid poses skip their item.";
     describe(add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_lists", 3, T_VERTICES3, T_INDICES, T_TRANSFORMS),
              "vertices, indices, instances", instanced_doc);
     signature *instances_texture_sampled = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
