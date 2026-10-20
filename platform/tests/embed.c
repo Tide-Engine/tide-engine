@@ -223,6 +223,48 @@ TIDE_TEST(embed_view_packet)
     tide_embed_destroy(e);
 }
 
+// What the views drew, for the other program to draw: the header says the parts, each from a multiple of 8, and
+// Show's rect and text are among the commands, the text's words in the text part.
+TIDE_TEST(embed_draw_packet)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 30, NULL); // The counter is there, and Show draws for it
+    uint32_t size = 0;
+    const uint8_t *p = tide_embed_draw(e, &size);
+    TIDE_REQUIRE(p != NULL && size >= sizeof(tide_embed_draw_header));
+    tide_embed_draw_header h;
+    memcpy(&h, p, sizeof h);
+    TIDE_CHECK(h.magic == TIDE_EMBED_DRAW_MAGIC && h.version == TIDE_EMBED_DRAW_VERSION);
+    TIDE_CHECK(h.command_size == sizeof(tide_draw_command) && h.shape_size == sizeof(tide_draw_shape_data));
+    TIDE_CHECK(h.vertex_size == sizeof(tide_vertex));
+    TIDE_CHECK(h.screen_width == 800.0f && h.screen_height == 600.0f && h.screen_scale == 2.0f);
+    const size_t commands = (sizeof h + 7u) & ~(size_t)7u;
+    size_t at = commands + (size_t)h.commands * sizeof(tide_draw_command);
+    at = (at + 7u) & ~(size_t)7u; // shapes
+    at += (size_t)h.shapes * sizeof(tide_draw_shape_data);
+    at = (at + 7u) & ~(size_t)7u; // vertices
+    at += (size_t)h.vertices * sizeof(tide_vertex);
+    at = (at + 7u) & ~(size_t)7u; // indices
+    at += (size_t)h.indices * sizeof(uint32_t);
+    const size_t text = (at + 7u) & ~(size_t)7u;
+    TIDE_REQUIRE(text + h.text <= size);
+    bool rect = false, words = false;
+    for (uint32_t i = 0; i < h.commands; i++) {
+        tide_draw_command c;
+        memcpy(&c, p + commands + i * sizeof c, sizeof c);
+        if (c.kind == TIDE_DRAW_RECT && c.a.x == 10.0f && c.a.y == 20.0f && c.b.x == 30.0f && c.b.y == 40.0f && c.color.r == 1.0f) {
+            rect = true;
+        }
+        if (c.kind == TIDE_DRAW_TEXT && c.text < h.text && strcmp((const char *)p + text + c.text, "drawn") == 0) words = true;
+    }
+    TIDE_CHECK(rect);
+    TIDE_CHECK(words);
+    tide_embed_destroy(e);
+    TIDE_CHECK(tide_embed_draw(e, &size) == NULL && size == 0); // Nothing once it's ended
+}
+
 // The schema names the packet's types, what they are, and the game's commands and scenes.
 TIDE_TEST(embed_schema)
 {

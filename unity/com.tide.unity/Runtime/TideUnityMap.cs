@@ -45,6 +45,13 @@ namespace Tide
             }
         }
 
+        public static TideUnityMap Parse(string json)
+        {
+            var map = JsonUtility.FromJson<TideUnityMap>(json) ?? new TideUnityMap();
+            map.assets ??= Array.Empty<Asset>();
+            return map;
+        }
+
         // Whether `tide unity` has written another since this one.
         public bool Stale(string folder)
         {

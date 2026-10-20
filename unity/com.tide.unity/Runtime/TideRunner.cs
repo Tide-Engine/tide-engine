@@ -41,9 +41,16 @@ namespace Tide
         [Tooltip("Another relay's address; empty for Tide's")]
         public string relay = "";
 
+        [Tooltip("Draw what the game's Tide views draw (Draw's 2D calls) over Unity's frame")]
+        public bool drawTide = true;
+
         public List<TideViewRule> views = new List<TideViewRule>();
 
         [HideInInspector] public List<TidePrefabLink> prefabs = new List<TidePrefabLink>();
+
+        // A player's map of the Unity prefabs and scenes (unity.json), which the build put here: a web player can't
+        // read files of its own
+        [HideInInspector] public string map = "";
 
         public static TideRunner Current { get; private set; }
         public TidePacket Packet { get; } = new TidePacket();
@@ -115,6 +122,22 @@ namespace Tide
                 return;
             }
             LoadSchema();
+            if (drawTide)
+            {
+                var draw = Ensure<TideDraw>(gameObject);
+                draw.Runner = this;
+            }
+        }
+
+        // What the game's views drew this frame (tide_embed_draw's packet), valid until the next frame, or null.
+        public byte* DrawPacket(out uint length)
+        {
+            length = 0;
+            if (embed == IntPtr.Zero) return null;
+            uint size = 0;
+            var bytes = library.Draw(embed, &size);
+            length = size;
+            return bytes;
         }
 
         IntPtr Create()
@@ -146,7 +169,7 @@ namespace Tide
                     packSize = (UIntPtr)library.PackSize,
                     libraryDir = library.Game != IntPtr.Zero ? IntPtr.Zero : Str(TideLibrary.BuildFolder),
                 };
-                return library.create(&desc);
+                return library.Create(&desc);
             }
             finally
             {
@@ -158,7 +181,7 @@ namespace Tide
         void LoadSchema()
         {
             uint size = 0;
-            var bytes = library.schema(embed, &size);
+            var bytes = library.Schema(embed, &size);
             Schema = bytes == null || size == 0 ? null : TideSchema.Parse(Encoding.UTF8.GetString(bytes, (int)size));
             schemaWarned = false;
             LoadMap();
@@ -166,7 +189,7 @@ namespace Tide
 
         void LoadMap()
         {
-            Map = TideUnityMap.Load(TideLibrary.BuildFolder);
+            Map = !Application.isEditor && !string.IsNullOrEmpty(map) ? TideUnityMap.Parse(map) : TideUnityMap.Load(TideLibrary.BuildFolder);
             sourceType = Schema?.TypeIndex("Unity.Source") ?? -1;
             var t = sourceType >= 0 ? Schema.Type(sourceType) : null;
             sourceAsset = (int?)t?.Field("asset")?.offset ?? -1;
@@ -215,7 +238,7 @@ namespace Tide
                 if (view != null) Destroy(view.gameObject);
             }
             shown.Clear();
-            if (embed != IntPtr.Zero) library.destroy(embed);
+            if (embed != IntPtr.Zero) library.Destroy(embed);
             embed = IntPtr.Zero;
             library = null;
             if (Current == this) Current = null;
@@ -223,7 +246,7 @@ namespace Tide
 
         void OnApplicationPause(bool paused)
         {
-            if (embed != IntPtr.Zero) library.background(embed, (byte)(paused ? 1 : 0));
+            if (embed != IntPtr.Zero) library.Background(embed, (byte)(paused ? 1 : 0));
         }
 
         void Update()
@@ -232,12 +255,12 @@ namespace Tide
             TideInputReader.Read(ref input, 1f);
             fixed (TideEmbedInput* p = &input)
             {
-                library.frame(embed, Time.unscaledDeltaTime, p, Screen.width, Screen.height, 1f);
+                library.Frame(embed, Time.unscaledDeltaTime, p, Screen.width, Screen.height, 1f);
             }
-            fixed (TideEmbedStatus* p = &status) library.status(embed, p);
+            fixed (TideEmbedStatus* p = &status) library.Status(embed, p);
             FollowCursor();
             uint size = 0;
-            var bytes = library.view(embed, &size);
+            var bytes = library.View(embed, &size);
             frames++;
             if (!Packet.Read(bytes, size))
             {
@@ -252,7 +275,7 @@ namespace Tide
                 Show(false);
                 return;
             }
-            if ((frames & 63) == 0 && Map.Stale(TideLibrary.BuildFolder)) LoadMap(); // The prefabs and scenes were built again
+            if (Application.isEditor && (frames & 63) == 0 && Map.Stale(TideLibrary.BuildFolder)) LoadMap(); // The prefabs and scenes were built again
             Show(true);
         }
 
@@ -328,7 +351,7 @@ namespace Tide
                 if (prefab == null) return null;
                 var made = Instantiate(prefab);
                 made.name = $"{prefab.name} ({entity.Index})";
-                return made.GetComponent<TideEntityView>() ?? made.AddComponent<TideEntityView>();
+                return Ensure<TideEntityView>(made);
             }
             var a = Map.Of(asset);
             var path = a != null && (uint)node < (uint)a.nodes.Length ? a.nodes[node] : null;
@@ -350,7 +373,7 @@ namespace Tide
                 }
                 var made = Instantiate(prefab);
                 made.name = $"{prefab.name} ({entity.Index})";
-                var root = made.GetComponent<TideEntityView>() ?? made.AddComponent<TideEntityView>();
+                var root = Ensure<TideEntityView>(made);
                 root.Authored = false;
                 return root;
             }
@@ -369,7 +392,7 @@ namespace Tide
                 }
             }
             if (found == null) return null;
-            var view = found.GetComponent<TideEntityView>() ?? found.gameObject.AddComponent<TideEntityView>();
+            var view = Ensure<TideEntityView>(found.gameObject);
             view.Authored = true;
             if (!found.gameObject.activeSelf) found.gameObject.SetActive(true);
             return view;
@@ -436,6 +459,11 @@ namespace Tide
             moved.localScale = new Vector3(Divide(size.x, between.x), Divide(size.y, between.y), Divide(size.z, between.z));
         }
 
+        static T Ensure<T>(GameObject on) where T : Component
+        {
+            return on.TryGetComponent<T>(out var had) ? had : on.AddComponent<T>();
+        }
+
         static float Divide(float a, float b)
         {
             return b != 0f ? a / b : a;
@@ -500,9 +528,9 @@ namespace Tide
         public bool Request(TideRequest kind, string text = null, uint port = 0)
         {
             if (embed == IntPtr.Zero) return false;
-            if (text == null) return library.request(embed, (uint)kind, null, port) != 0;
+            if (text == null) return library.Request(embed, (uint)kind, null, port) != 0;
             var bytes = Encoding.UTF8.GetBytes(text + "\0");
-            fixed (byte* p = bytes) return library.request(embed, (uint)kind, p, port) != 0;
+            fixed (byte* p = bytes) return library.Request(embed, (uint)kind, p, port) != 0;
         }
 
         // A command, as local code's Send: `T` is the command's type (TideTypeAttribute names it). False for a type
@@ -523,7 +551,7 @@ namespace Tide
             if (embed == IntPtr.Zero || Schema == null) return false;
             var type = TypeOf<T>.Index(Schema);
             if (type < 0) return false;
-            return library.command(embed, (uint)type, index, generation, &value, (uint)sizeof(T)) != 0;
+            return library.Command(embed, (uint)type, index, generation, &value, (uint)sizeof(T)) != 0;
         }
 
         static string Utf8(byte* bytes, int capacity)

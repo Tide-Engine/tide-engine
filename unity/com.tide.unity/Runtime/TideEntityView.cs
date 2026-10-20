@@ -34,6 +34,9 @@ namespace Tide
 
         public bool Mine => Entity.Mine;
 
+        // Whether it shows an entity of this frame's packet (false once the entity's gone)
+        public bool Showing => Runner != null && Row >= 0;
+
         // Whether the entity has `T`'s component this frame.
         public bool Has<T>() where T : unmanaged
         {

@@ -19,7 +19,7 @@ TIDE_TEST(random_local_declarations_preserve_match_rolls)
     }
     const uint64_t hash = tide_world_hash(&world);
     printf("    hash: %" PRIu64 "\n", hash);
-    TIDE_CHECK(hash == UINT64_C(5079178118440730783));
+    TIDE_CHECK(hash == UINT64_C(4269262140126984523));
     tide_world_free(&snapshot);
     tide_world_free(&world);
 }

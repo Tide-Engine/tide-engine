@@ -2271,7 +2271,7 @@ TIDE_TEST(cracked_a_player_and_a_bot_play_a_game_to_its_end)
 // number, a map, the order of a tick): then the test prints the new one, to be
 // pinned here once the other platforms print the same.
 #define MATCH_TICKS 3000
-#define MATCH_HASH UINT64_C(0x0267de53757af494)
+#define MATCH_HASH UINT64_C(0x0a216d532fa6445c)
 
 static tide_world other;
 

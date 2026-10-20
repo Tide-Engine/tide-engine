@@ -1,5 +1,13 @@
 # The language server and the editors
 
+## Renames reaching Unity assets (2026-10-20)
+
+Renaming a component, or a component's field, of a game whose folder is inside a
+Unity project's `Assets` also edits the project's prefabs and scenes holding
+com.tide.unity's TideEntity: `analysis_rename` appends `unity_renames`' edits
+(`compiler/lsp/analysis.c`) to its changes, as UTF-16 columns. Details, limits
+and the test: notes/unity.md, Tooling as built.
+
 ## Double Position hover (2026-10-20)
 
 Position attribute hover now identifies float/double scalars and vectors and

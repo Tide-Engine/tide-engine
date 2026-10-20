@@ -38,6 +38,14 @@ the last good generate) and `Packages/com.tide.game` beside `Assets`
 each written only when it changes: Unity's shared build cache keys a compile by
 its sources, so the stub is what recompiles the generated types).
 
+`tide unity --web` (once: `--web` turns watching off) is `tide_unity_web`: a
+standalone wasm build of `generate`'s game with `unity_web_main` (and
+`unity_web_exports`, split under C's string length limit) for its `main.c`, in
+the web cache, written as `tide-game.js` by `write_unity_script` (config,
+program and pack as `page_payload` base64, then the release or debug runtime
+with `strip_reloading`), and `unity.json`. The embed host's exports gained
+`tide_embed_draw`. `tide help unity` lists `--web` through the shared option.
+
 ## Terminal editor configuration helper (2026-10-18)
 
 `tide ide emacs|vim|neovim` prints ready-to-copy init configuration from the

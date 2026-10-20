@@ -298,6 +298,11 @@ writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
 its C# types of. Keep that folder in source control, so a fresh clone compiles
 before tide has built anything.
 
+`--web` builds the game once for a Unity WebGL player instead: `tide-game.js`,
+which Unity's Tide package puts in the player's page beside Unity's own, and
+the map of its prefabs and scenes. The package runs this as a WebGL player
+builds. Serve the player cross-origin isolated, as any Tide page.
+
 ## Dedicated servers
 
 ```sh

@@ -14,7 +14,8 @@ namespace Tide.Editor
     // A player build of the project brings the game: before it, tide builds an optimized one (tide unity --once
     // --release) into Temp/TideBuild; each scene's TideRunner gets a link to every Unity prefab the game spawns, so
     // Unity builds them in; after it, the embed, the game's library ("game"), its pack and the map go into the
-    // player's StreamingAssets/Tide, where TideLibrary looks. Desktop players for the editor's own platform, for now.
+    // player's StreamingAssets/Tide, where TideLibrary looks; or for WebGL, Tide's program goes in the page. Desktop players
+    // for the editor's own platform and WebGL, for now.
     public sealed class TideBuildProcessor : IPreprocessBuildWithReport, IProcessSceneWithReport, IPostprocessBuildWithReport
     {
         public int callbackOrder => 0;
@@ -33,9 +34,10 @@ namespace Tide.Editor
             var native = Application.platform == RuntimePlatform.WindowsEditor ? BuildTarget.StandaloneWindows64
                 : Application.platform == RuntimePlatform.OSXEditor ? BuildTarget.StandaloneOSX
                 : BuildTarget.StandaloneLinux64;
-            if (target != native)
+            var web = target == BuildTarget.WebGL;
+            if (target != native && !web)
             {
-                throw new BuildFailedException($"Tide: players build for {native} on this machine, for now: the game's library is built by this machine's tide, not for {target}.");
+                throw new BuildFailedException($"Tide: players build for {native} and WebGL on this machine, for now: the game's library is built by this machine's tide, not for {target}.");
             }
             var tide = TideToolchain.Find(out var where);
             if (tide == null) throw new BuildFailedException("Tide: " + where);
@@ -44,7 +46,7 @@ namespace Tide.Editor
             var start = new ProcessStartInfo
             {
                 FileName = tide,
-                Arguments = $"unity --once --release -o \"{Built}\" --assets \"{Application.dataPath}\"",
+                Arguments = $"unity --once --release{(web ? " --web" : "")} -o \"{Built}\" --assets \"{Application.dataPath}\"",
                 WorkingDirectory = TideSettings.instance.GameFolderPath,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -71,9 +73,15 @@ namespace Tide.Editor
                 var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(asset.guid));
                 if (prefab != null) links.Add(new TidePrefabLink { guid = asset.guid, prefab = prefab });
             }
+            var mapPath = Path.Combine(Built, "unity.json");
+            var mapText = File.Exists(mapPath) ? File.ReadAllText(mapPath) : "";
             foreach (var root in scene.GetRootGameObjects())
             {
-                foreach (var runner in root.GetComponentsInChildren<TideRunner>(true)) runner.prefabs = links;
+                foreach (var runner in root.GetComponentsInChildren<TideRunner>(true))
+                {
+                    runner.prefabs = links;
+                    runner.map = mapText;
+                }
             }
         }
 
@@ -81,6 +89,11 @@ namespace Tide.Editor
         {
             if (!Wanted()) return;
             var output = report.summary.outputPath;
+            if (report.summary.platform == BuildTarget.WebGL)
+            {
+                PlaceWeb(output);
+                return;
+            }
             var data = report.summary.platform == BuildTarget.StandaloneOSX
                 ? Path.Combine(output, "Contents", "Resources", "Data")
                 : Path.Combine(Path.GetDirectoryName(output) ?? ".", Path.GetFileNameWithoutExtension(output) + "_Data");
@@ -105,6 +118,24 @@ namespace Tide.Editor
                 if (name.StartsWith("game-") || name == TideLibrary.LibraryName) continue;
                 File.Copy(file, Path.Combine(into, name), true);
             }
+        }
+
+        // A WebGL player's page gets Tide's program (tide-game.js: tide.js, the game's WebAssembly and its pack),
+        // loaded before Unity's. Its threads need the page cross-origin isolated, as any Tide page's do: served with
+        // Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp.
+        static void PlaceWeb(string output)
+        {
+            var script = Path.Combine(Built, "tide-game.js");
+            if (!File.Exists(script)) throw new BuildFailedException("Tide: tide built no tide-game.js in " + Built);
+            File.Copy(script, Path.Combine(output, "tide-game.js"), true);
+            var page = Path.Combine(output, "index.html");
+            if (!File.Exists(page)) throw new BuildFailedException($"Tide: the WebGL build has no index.html in {output} to put Tide's program in.");
+            var html = File.ReadAllText(page);
+            const string tag = "<script src=\"tide-game.js\"></script>";
+            if (html.Contains(tag)) return;
+            var head = html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+            if (head < 0) throw new BuildFailedException("Tide: the WebGL build's index.html has no </head> to put Tide's program before.");
+            File.WriteAllText(page, html.Insert(head, tag + "\n"));
         }
 
         // The highest n of `<prefix><n><suffix>` in `folder`, or -1.

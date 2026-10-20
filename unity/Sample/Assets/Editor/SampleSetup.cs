@@ -64,6 +64,23 @@ public static class SampleSetup
         Debug.Log("SampleSetup: made " + Folder + "/Bounce.unity");
     }
 
+    // A WebGL player of the scene, into the folder after -tideOut, for web-smoke.mjs:
+    // Unity.exe -batchmode -buildTarget WebGL -projectPath . -executeMethod SampleSetup.BuildWeb -tideOut <folder> -quit
+    public static void BuildWeb()
+    {
+        var args = System.Environment.GetCommandLineArgs();
+        var at = System.Array.IndexOf(args, "-tideOut");
+        var output = at >= 0 && at + 1 < args.Length ? args[at + 1] : "Builds/Web";
+        var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+        {
+            scenes = new[] { Folder + "/Bounce.unity" },
+            locationPathName = output,
+            target = BuildTarget.WebGL,
+        });
+        Debug.Log($"SampleSetup: WebGL build {report.summary.result} in {output}");
+        if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded) EditorApplication.Exit(1);
+    }
+
     static void Pillar(Transform parent, string name, Vector3 at, Material material, float speed)
     {
         var pillar = GameObject.CreatePrimitive(PrimitiveType.Cube);

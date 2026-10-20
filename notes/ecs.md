@@ -51,6 +51,51 @@ the functions as they were. The rollback agent measured the two calls at
 about 5% of versus_rollback's ticks (Rollback, the schedule and thread
 scaling, in notes/benchmarks.md).
 
+## A page's hash by stripes (2026-10-20)
+
+The owner's call on a faster page hash: "Measure first", and switch only if a
+candidate beats the hash there was natively and as WebAssembly. One did; the
+measurements, the candidates that didn't and the quality checks are in
+notes/benchmarks.md, Page hash, measured. This supersedes the four chains of
+2026-10-07 below ("A page's hash is `tide_hash_wide`"), whose other contracts
+(only pages use it, `tide_hash` and the rest unchanged) stand.
+
+- **What it is** (`tide_hash_wide`, `engine/src/net.c`): XXH3's accumulation
+  with keys and an end of our own. The run, zeros after it to a whole number
+  of 64-byte stripes, goes a stripe at a time into eight 64-bit accumulators,
+  one a word: for word j, d, and its key word k, accumulator j adds
+  `lo32(d ^ k) * hi32(d ^ k)` and accumulator `j ^ 1` adds d (so a product of
+  zero loses nothing, and a word's sum is never where its product is). Stripe
+  n of each block of 16 takes key words n to n + 7; after each block every
+  accumulator becomes `((a ^ a >> 47) ^ key[16 + j]) * 0x9E3779B1`. Then the
+  size and the eight accumulators are `tide_hash`'s chain's words and its end
+  is `tide_hash`'s. Keys and starting values are splitmix64's numbers from
+  "tidehash" (`0x7469646568617368`).
+- **The same bits everywhere, by construction and by test**: integer arithmetic
+  only. Three ways compute it: clang's two-word vectors (`pmuludq` on SSE2,
+  `umlal` on NEON, plain words where a build has no SIMD), WebAssembly's SIMD
+  (two vectors' halves gathered by two shuffles, then `extmul_low`/`_high`,
+  where `i64x2.mul` is three multiplies under V8), and on x86-64 AVX2's
+  four-word vectors where `cpuid` finds AVX2 and the system saves its
+  registers (looked at once, a relaxed atomic; inline `cpuid`/`xgetbv` as Box3D's
+  dispatch does). Native ways ask for the next block while hashing one
+  (`__builtin_prefetch`, a hint). `tide_hash_wide_baseline` (new, `tide/net.h`)
+  is the way without AVX2, so a machine with AVX2 tests both; generated code
+  calls nothing new. NEON's way is compiled from the same C as SSE2's (clang
+  makes `xtn`/`shrn`/`umlal` of it, checked in its assembly) and is tested only
+  where CI runs ARM64.
+- `PROTOCOL` is 17 (notes/netcode.md): two builds that hash pages differently
+  would connect and then disagree about every tick.
+- Every pinned world hash moved and nothing else did: the list is in
+  notes/benchmarks.md, Page hash, measured.
+- Tests (`tests/test_hash.c`, natively and under Node): both ways against the
+  definition written plainly (bytes read one at a time) at every length to 300
+  from three starts and around blocks and pages, of bytes and of zeros; one bit
+  anywhere in 16 KiB; the same bit (0, 31, 32, 33, 62, 63 of each word) in
+  every pair of 32 stripes of zeros, in a block and across a scramble; zeros of
+  every length to 2,100; four pinned numbers. `bench_hash --quick` also checks
+  each of its SIMD ways against its plain definition on both builds.
+
 ## Performance pass: lists, maps and grid windows (2026-10-20)
 
 Internal, with no layout, hash, order or interface change (pinned hashes are
@@ -257,7 +302,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Five alternating end-to-end build rounds of 100 helper functions and 100 entity systems, using one or four archetypes and the least saved median, show the fixture tradeoff: with four archetypes, a Tide-body edit in native release is 33.07 -> 3.16 s, and in web release 16.22 -> 2.69 s; native debug is 0.62 -> 0.73 s and web debug 0.90 -> 0.95 s. Cold builds and unchanged/C/header edits are in the report. These Windows measurements include build completion and were taken with recorded CPU contention; their ranges and the separate direct Clang phases qualify the comparison.
   - A task's components are copies too, loaded each time it goes on and put back when it waits or ends, and around what it awaits or starts, which may change them (`gen_entity_copies` in `compiler/src/codegen.c`).
 - Each page keeps the hash of what's in use in it until it changes, so a world's hash (`tide_world_hash`) only reads what changed since the last one. It covers contents, never addresses or capacity, so it's the same on every machine for the same state. The command queue, empty between ticks, isn't shared.
-- **A page's hash is `tide_hash_wide`** (2026-10-07; the owner, of a faster hash that would move every pinned world hash: "if its faster at no cost other than out tests then its not even a question, update it"). What's built, and what code relies on:
+- **A page's hash is `tide_hash_wide`** (2026-10-07; the owner, of a faster hash that would move every pinned world hash: "if its faster at no cost other than out tests then its not even a question, update it"). Its four chains are superseded by stripes (2026-10-20, A page's hash by stripes, above); the rest of this entry stands. What's built, and what code relies on:
   - It's four of `tide_hash`'s chains side by side (`engine/src/net.c`): chain k takes the words at 8k, 32 + 8k and on, with `tide_hash`'s own step (`add_word`); what's left after the last round of 32 bytes goes a word a chain, the last short and zeros past its bytes; then the size and the four chains are one chain's words, and the end is `tide_hash`'s. One chain has the CPU wait for each word's multiplies before the next word; four don't. Three more were measured and not taken: eight chains were no quicker here, and one multiply a word, with four chains or eight, was a tenth quicker, but a word that differs in one bit near its middle then leaves its chain differing in the top bit alone, which the chain's next word undoes if it differs in its own top bit.
   - **Only pages use it** (`tide_page_hash`). `tide_hash`, `tide_hash_more` and `tide_hash_end` are what they were, for everything that isn't a page: how a world's hash puts its pages' hashes together, the physics packages' stamps, what entities are born as, shaders' ids. `Math.Hash` and the seeding of `Random` are functions of their own. So no simulation changed, which the pins say: the physics packages' pins of their bodies and of their own images' bytes, and what was answered, stayed, and every pinned hash of a world moved (40 values in 17 files, two of them decimal in `compiler/tests/CMakeLists.txt`, four the web's own in `local_fields_same.h` and `local_events_same.h`, whose deltas carry the hash).
   - `PROTOCOL` went to 13: two builds of one game that hash pages differently would connect, and then disagree about every tick. `tests/test_commands.c` writes that number by hand.

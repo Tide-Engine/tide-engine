@@ -1,8 +1,12 @@
-# Unity as a front end (proposal)
+# Unity as a front end
 
-Proposal of 2026-10-20. Nothing here is built and none of it is an approved
-requirement until the owner confirms a phase. Decisions the owner made in the
-discussion are marked **Owner**; everything else is a pick to confirm.
+Proposed and built 2026-10-20, early: the owner asked for every phase "most of
+the way there" to test and then list tweaks. What's built is in the "as built"
+sections below; the proposal's text above them is the design they follow.
+Decisions the owner made in the discussion are marked **Owner**; everything
+else is a pick to confirm. One pick the owner hasn't seen and should:
+`Packages/com.tide.game`, a generated folder in the project (Authoring as
+built, "Generated types and Unity's build cache").
 
 Tide stays the simulation, networking and determinism: the match code, its
 session, prediction, rollback, hashing and transports run as they do today.
@@ -388,6 +392,79 @@ Gaps: asset fields (a Unity asset in a Tide `Asset<T>` field: the converter
 says it isn't supported; tide resolves asset paths from the declaring file),
 unsaved scene and prefab edits (tide reads saved files), `Name#k` paths when
 names include `#`, gizmos, and tidels renames reaching Unity assets.
+
+### Web as built (2026-10-20): option B, packaged
+
+`tide unity --web -o <dir>` (once; `compiler/cli/build.c`, `tide_unity_web`)
+builds the game, `--embed`, as a WASI program whose `main` is
+`unity_web_main`: `tide_embed_create` with the linked game and the page's pack,
+then `tide_platform_run`, its frame `tide_embed_frame` with the input the page
+last copied in (a frame with none, from tide.js's worker while the page is
+hidden, gets zeroed input), and `tide_unity_*` exports: `ready`, `input`,
+`frame_info` (the screen; frames are timed by the page's clock), `status`,
+`view`/`view_size`, `schema`/`schema_size`, `draw`/`draw_size`, `buffer` (where
+the page puts a request's text or a command's value), `request`, `command`,
+`background`. It writes `tide-game.js`: `Tide = {wait, pageFrames, embedded,
+canvas: a detached one}`, `TIDE_PROGRAM`/`TIDE_PACK` as base64 (gzip in
+release) and tide.js, and `unity.json`.
+
+`tide.js` (`platform/web/tide.js`, release runtime regenerated): with
+`pageFrames`, frames while the page is shown come only from `Tide.frame()`;
+hidden, from the worker as before. `Tide.exports()` and `Tide.memory()` give
+the page the program's exports and memory.
+
+The package: `Runtime/Plugins/WebGL/Tide.jslib` starts the program with the
+runner's arguments (`Tide.arguments`, `Tide.relay`, `Tide.start()`), and each
+Unity frame copies Unity's input into the program's memory, runs
+`Tide.frame()` and copies the packet, schema, status and draw packet into
+buffers of Unity's heap it keeps (`_malloc`), which `TideLibrary`'s methods
+return as the desktop calls do (TideRunner calls methods now, function pointers
+on desktop, `DllImport("__Internal")` on WebGL). A web player can't read
+`StreamingAssets` files, so players carry the map in the scene
+(`TideRunner.map`, set as the scene builds). The build processor runs `tide
+unity --web --once --release` for a WebGL target and puts `tide-game.js` in the
+build with a `<script>` before `</head>` of Unity's `index.html`: no template in
+`Assets`. Tide's threads need the page served cross-origin isolated (COOP
+same-origin, COEP require-corp), as any Tide page.
+
+Checked: `unity/Sample/web-smoke.mjs` serves a WebGL build of the sample
+(`SampleSetup.BuildWeb`, Brotli as Unity builds it, served with its encoding)
+isolated and opens `index.html?tide-smoke` in headless Chrome (muted, a window
+of its own): PlayerSmoke saw the match running, this machine's ball through
+the Unity prefab on the floor, and Tide turning the scene's pillars: PASS.
+
+### Tide drawing in Unity as built (2026-10-20): the 2D first slice
+
+`tide_embed_draw` (`notes/standard-host.md`) gives the frame's draw list;
+`Runtime/TideDraw.cs`, which TideRunner adds while `drawTide` (on by default),
+draws it over Unity's frame from `OnGUI` with GL (`Hidden/Internal-Colored`),
+so in any render pipeline: rects, circles, their wires, lines, smooth shapes
+(boxes and ellipses with their top-to-bottom fill and outline; arcs as part of
+a ring; round corners, soft edges and turns not yet), 2D meshes' triangles
+with their corners' colors times the tint, and text in Unity's font at the
+anchor; under Tide's 2D cameras (a size is half the height seen; 0 a pixel a
+unit, y up from the bottom) and in screen pixels after `Draw.Screen`; alpha and
+additive blending. Skipped: clears (Unity's frame is below), render targets,
+clips, stencil, textures, 3D meshes, shaded runs and blits. The sample's Hud
+view draws its text, which the play mode test finds in the packet. The HLSL
+target and ScriptedImporter for custom frags/verts, Tide's own font, and 3D
+meshes through Unity's renderer remain.
+
+### Tooling as built (2026-10-20)
+
+- Console context for tide's messages (Authoring, above).
+- `tidels` renames reach a Unity project (`compiler/lsp/analysis.c`,
+  `unity_renames`): with the game's folder inside a project's `Assets` (found
+  up from it by `ProjectSettings/ProjectVersion.txt`), renaming a component
+  edits its `- type:` lines in every prefab and scene holding TideEntity
+  objects and a prefab instance's change of a `.type`, and renaming a field
+  edits its key in that component's `values` (plain or single-quoted).
+  Instances' changes of values aren't renamed: their YAML doesn't say whose
+  they are. Test: `lsp_rename_reaches_unity_assets`.
+- Gizmos (`Editor/TideGizmos.cs`): a selected TideEntity's components as a
+  Scene view label; in Play mode, each shown entity's index, generation and
+  whether it's this machine's (unselected ones within 40 units of the Scene
+  view's camera).
 
 ### Player builds as built (2026-10-20)
 

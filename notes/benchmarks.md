@@ -183,7 +183,8 @@ Proposals that need the owner, none started:
   `pthread_setaffinity_np`): untestable here, as WSL2 shows one L3.
 - N-body: tidec emitting explicit vector code for its lane batches.
 - A faster page hash (Rollback, below): changes every pinned hash and the
-  protocol version.
+  protocol version. Measured and done, as the owner asked: Page hash,
+  measured, below.
 - Drawing: a `gpu.h` call handing out ring room so shapes are built once, and
   a quad/sprite path (Drawing, below).
 
@@ -193,6 +194,195 @@ under the validation layer included) and all 2,383 web debug CTests pass, run
 again after the `restrict` fix; all 2,439 native release CTests pass (no
 Vulkan SDK in that build). Linux, macOS, Android, MinGW and sanitizers were
 not run; no CI was dispatched.
+
+## Page hash, measured, 2026-10-20
+
+The pass left the page hash as rollback's largest gap (`tide_hash_wide`, four
+of `tide_hash`'s chains: 21 GB/s where wyhash ran 37, so 1.76× C, dirty's hash).
+The owner's call: "Measure first", natively and as WebAssembly, where wasm32
+has no 64 by 64 to 128-bit multiply (ordinary `-msimd128` SIMD allowed,
+relaxed SIMD not), and switch only if a candidate beats the hash there was on
+both. One did, and is the engine's now (notes/ecs.md, A page's hash by
+stripes; notes/netcode.md, Session protocol 17).
+
+**The tool.** `bench_hash` (`bench/hash/hash.c`, `bench/README.md`, Page
+hashes) times every candidate on the shapes a world's hash reads: an 8 KiB lane
+page and a 16 KiB page in cache, 512 KiB (L2) and 8 MiB (L3) of pages in a
+shuffled order, 256 MiB of 16 KiB pages from memory, and 64- and 1,000-byte
+runs. 31 rounds take the candidates in turn on each shape, a few milliseconds a
+sample; it prints the median and the best, the best being nearest a hash's own
+speed on a shared machine. Before timing, every SIMD way is checked against its
+plain definition's bits on both builds. Windows 11, Ryzen 9 7900X, Clang
+23.1.2; native release (RelWithDebInfo, x86-64's SSE2 baseline) and web release
+under Node 24.21.0; each run under the shared gate (`gate.ps1`) with the
+process pinned to one logical CPU (`ProcessorAffinity` 0x100, which the
+program inherits), as unpinned runs moved by a third between runs.
+
+**Candidates.** `chains4`, the hash there was. `chains8`, eight of its chains.
+`wyhash` (final version 4, bench/versus/rollback's copy) with a 64 by 64 to
+128-bit multiply, and `wyhash32` with four 32-bit multiplies in its place, as
+wasm32 must. `stripes`: XXH3's accumulation (eight 64-bit sums of 32 by 32-bit
+products of key-xored words, plus each word into the neighbouring sum, a
+scramble every kilobyte) with keys and an end of our own; its ways: plain C
+(`stripes_plain`, the definition, vectorizer off), clang's two-word vectors
+(`stripes`, `pmuludq`; `_prefetch` asks for the next kilobyte; `_x2` takes two
+stripes a turn as well), AVX2's four-word ones (`stripes_avx2`, `_prefetch`),
+and on the web WebAssembly SIMD with two shuffles and `extmul_low`/`_high`
+(`stripes_wasm`, `_x2`) or with `i64x2.mul` (`stripes_wasm_mul`, and what
+clang makes of the generic vectors). `pairs`: the same with each product taken
+across two words (`lo(w0) * lo(w2)` and so on), which `extmul` and NEON's
+`umull` take as vectors come. `chains4_prefetch`: the hash there was with the
+prefetch.
+
+Natively, GB/s, median (best) of 31 rounds, and nanoseconds a hash for short
+runs; `stripes` as the engine ships it is `engine` (AVX2, on this CPU) and
+`engine_baseline` (SSE2), `chains4` the hash there was:
+
+| | engine | engine_baseline | chains4 | chains8 | wyhash | wyhash32 | pairs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 KiB page, hot | 76.7 (80.3) | 39.4 (41.7) | 19.2 (20.5) | 20.1 (20.4) | 35.3 (36.2) | 8.6 (8.8) | 39.5 (41.4) |
+| 16 KiB page, hot | 81.9 (83.9) | 41.8 (42.5) | 20.2 (20.5) | 20.1 (20.5) | 35.2 (35.9) | 8.7 (8.8) | 41.7 (42.6) |
+| 512 KiB of 8 KiB pages (L2) | 76.8 (78.0) | 40.8 (41.5) | 20.0 (20.2) | 19.9 (20.2) | 34.9 (35.5) | 8.6 (8.8) | 40.2 (41.2) |
+| 8 MiB of 8 KiB pages (L3) | 45.7 (57.7) | 37.5 (38.9) | 18.9 (19.6) | 18.8 (19.6) | 32.6 (33.6) | 8.0 (8.6) | 37.0 (39.0) |
+| 8 MiB of 16 KiB pages (L3) | 74.0 (76.6) | 39.5 (40.7) | 19.6 (20.0) | 19.3 (20.0) | 33.8 (34.5) | 8.4 (8.7) | 37.8 (40.6) |
+| 256 MiB of 16 KiB pages (memory) | 16.3 (18.1) | 12.8 (17.3) | 9.5 (12.0) | 10.0 (12.6) | 11.4 (14.7) | 5.8 (6.8) | 12.8 (14.3) |
+| 64 B, ns a hash | 8.4 (8.0) | 8.6 (8.3) | 7.5 (7.2) | 10.1 (9.1) | 2.8 (2.7) | 11.0 (10.7) | 8.5 (8.2) |
+| 1,000 B, ns a hash | 26.8 (25.4) | 39.7 (38.0) | 57.3 (55.8) | 58.9 (57.8) | 28.5 (28.0) | 120.9 (117.7) | 42.2 (40.0) |
+
+The other native ways, 8 KiB hot: `stripes` 36.6, `_prefetch` 38.4, `_x2`
+40.8 (the shipped baseline's loop), `stripes_avx2` 75.1, `_prefetch` 77.8,
+plain C 9.8; from memory the prefetch is worth 12.0 → 13.6 (two-word vectors)
+and 15.3 → 15.5 (AVX2), `chains4_prefetch` 10.1 against 9.5 but 17.7 in cache.
+
+Under Node (web release, `-msimd128`), GB/s, median (best); `engine` is the
+shuffle/extmul way, `stripes` clang's generic vectors (`i64x2.mul`):
+
+| | engine | chains4 | chains8 | wyhash | wyhash32 | stripes | stripes_wasm_mul | pairs_wasm |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 KiB page, hot | 26.4 (27.0) | 17.4 (17.6) | 19.2 (19.6) | 9.2 (9.4) | 6.7 (6.8) | 15.9 (16.5) | 16.3 (16.7) | 28.3 (29.0) |
+| 16 KiB page, hot | 26.9 (27.7) | 17.5 (18.1) | 19.6 (20.1) | 8.7 (9.4) | 6.4 (6.8) | 13.3 (17.0) | 16.7 (17.0) | 29.0 (29.9) |
+| 512 KiB of 8 KiB pages (L2) | 26.2 (27.2) | 17.7 (18.2) | 19.1 (19.9) | 8.0 (9.5) | 6.5 (6.8) | 16.3 (16.9) | 16.6 (17.0) | 28.5 (29.2) |
+| 8 MiB of 8 KiB pages (L3) | 20.4 (23.3) | 15.5 (16.7) | 16.4 (18.4) | 8.7 (9.0) | 6.5 (6.7) | 14.5 (15.8) | 13.6 (16.0) | 23.4 (26.0) |
+| 8 MiB of 16 KiB pages (L3) | 23.3 (25.5) | 16.1 (17.2) | 17.3 (19.1) | 8.7 (9.2) | 6.5 (6.7) | 15.2 (16.3) | 15.3 (16.6) | 25.9 (27.7) |
+| 256 MiB of 16 KiB pages (memory) | 11.1 (14.4) | 9.0 (11.5) | 9.5 (11.5) | 6.0 (7.1) | 5.4 (6.0) | 9.4 (10.9) | 9.2 (11.2) | 11.8 (14.9) |
+| 64 B, ns a hash | 17.5 (16.9) | 23.0 (22.7) | 24.3 (23.4) | 27.0 (26.0) | 23.5 (22.9) | 17.5 (17.0) | 17.6 (17.3) | 16.6 (15.1) |
+| 1,000 B, ns a hash | 60.6 (58.9) | 76.0 (74.4) | 72.1 (70.0) | 124.9 (122.7) | 170.0 (166.8) | 85.5 (83.9) | 85.4 (84.1) | 58.3 (56.7) |
+
+Two stripes a turn on the web (`stripes_wasm_x2`) measured the same as one.
+These are the last of three pinned runs each way, the same day; the best
+figures of the earlier two were within a few percent of these, while unpinned
+runs moved by up to a third.
+
+**Quality** (`bench_hash --quality`, native; the bits are the same everywhere).
+Avalanche (each input bit flipped for 40,000 random 8- and 16-byte keys down to
+2,000 random 16 KiB pages, 512 input bits sampled on the long ones): the
+largest distance of any input-bit/output-bit pair's flip rate from a half is
+0.009 to 0.046 for stripes, against 0.009 to 0.049 for the hash there was and
+for wyhash, which is the noise of that many pairs (about 4σ). Every one-bit and
+two-bit change of a 16 KiB page (two bits 1 to 8,192 bytes apart, 2.1 million
+runs), of zeros and of random bytes; the same bit (0, 1, 31, 32, 33, 62, 63 of
+each word) in every pair of 64 stripes of 4 KiB of zeros (112,897 runs); zeros
+of every length to 16 KiB; and a counter at two places in an 8 KiB page (2^20
+values; chi-squared of the low byte 273, 255 expected): no two equal, for
+stripes, chains4, chains8 and wyhash. Pairs failed: 848 equal pairs among the
+one- and two-bit changes of zeros and 324 in the stripes test. Two words share
+a product there, and with zeros a top bit flipped twice leaves only
+`±2^31 × (the other word's key half)`, which the key's slide makes equal for
+word 0 in stripes s, t and word 2 in s + 2, t + 2. XXH3's own construction,
+where a word's product is its own halves', has nothing like it.
+
+**Decision: stripes.** It beats the hash there was on every shape under Node
+(1.5× in cache, 1.3–1.45× in L3, 1.25× from memory, 64-byte runs in 17.5 ns where
+they took 23) and natively on all but the shortest (2× with SSE2 and 4× with
+AVX2 in cache, 1.7× from memory, 1,000 bytes in 27 ns where they took 57; a
+64-byte run takes 8.4 ns where it took 7.5, as eight accumulators end in nine
+steps where four chains end in five). It's the only candidate that wins on
+both: wyhash wins natively and runs at half the speed under Node; chains8
+gains a tenth on the web and nothing natively; pairs is 5% quicker than
+stripes on the web and failed the quality checks. Ways
+kept: two-word vectors with the prefetch and two stripes a turn
+(`tide_hash_wide_baseline`, natively), AVX2's with the prefetch where `cpuid`
+finds it (x86-64; Box3D's dispatch does the same), and the shuffle/extmul way
+on the web. Tried and not kept: `i64x2.mul` (a third slower than extmul under
+V8, as V8 makes it three `pmuludq`), two stripes a turn on the web (no
+quicker), prefetching the old chains (slower in cache, a tenth quicker from
+memory), wyhash's 128-bit multiply on wasm32 (a call to compiler-rt's
+`__multi3` each; four 32-bit multiplies written out are slower still).
+
+**End to end** (`run.ps1 -Label page-hash -Before`, three alternating rounds,
+frozen binaries of `4a59a73a` before and this change after; 30 runs, none with
+competing work; ledger rows `page-hash-before-r*`/`-after-r*`, metadata in
+`bench/results/perf-pass/page-hash-metadata.json`). Medians of round medians,
+ms:
+
+| | Before | After | |
+| --- | ---: | ---: | ---: |
+| Rollback, 100k movers: hashes (5), 1 thread | 0.229 | 0.120 | 0.52× |
+| ...whole period, 1 thread (Tide / C, dirty) | 2.068 (1.17×) | 1.951 (1.08×) | 0.94× |
+| ...hashes, 12 threads | 0.212 | 0.129 | 0.61× |
+| Rollback, spread movers: hashes, 1 thread | 0.671 | 0.273 | 0.41× |
+| ...whole period, 1 thread (Tide / C) | 2.804 (1.27×) | 2.391 (1.12×) | 0.85× |
+| Rollback, 1M movers: hashes, 1 thread | 4.66 | 3.22 | 0.69× |
+| ...whole period on 1/2/4/8/12 threads | 32.6/22.2/15.3/14.6/11.9 | 31.4/20.8/14.6/13.2/12.0 | |
+| Sand: client update median / p99 | 0.291 / 0.637 | 0.259 / 0.461 | |
+| ...client simulate, ms per second | 16.8 | 14.8 | |
+| Gallery: client update median / p99 | 0.112 / 0.358 | 0.090 / 0.300 | |
+
+C, dirty's own hash at 100k movers was 0.105 and 0.104 ms in the two builds, so
+Tide's hashes went from 2.2× it to 1.15×. Ticks, snapshots and restores moved
+within noise. Every way's digest of the worlds (computed from their contents,
+not by the page hash) is the same before and after, as are the sessions'
+replays, bytes sent and catch-up times; only the end hashes differ (Sand
+0x953b9562d90bd9bb → 0xfc2b7b098a2836e9 at tick 736, Gallery 0x365586644fdce54f
+→ 0xd756ff9c9dc087de at tick 1733).
+
+The same programs as WebAssembly under Node (web release, the frozen `4a59a73a`
+builds against this change's, three alternating rounds, each run under
+`gate.ps1`; medians of the rounds, ms; `--save` doesn't reach the ledgers from
+WASI, so each run's numbers and the binaries' SHA-256 are in
+`bench/results/perf-pass/page-hash-web-metadata.json`): rollback at 100k
+movers, hashes 0.220 → 0.159 and the period 2.753 → 2.709 (C, dirty's wyhash
+0.59, slow on wasm32);
+with spread movers, hashes 0.749 → 0.598 and the period 3.423 → 3.405. Sand's
+and Gallery's sessions under Node are as they were (clients' update median
+0.72 → 0.71 and 0.09 → 0.09 ms; a client simulates about 42 ms a second of
+Sand in both), the hash being a smaller part of a slower tick there. Digests
+are the same before and after, and the sessions end on the native builds'
+new hashes, bit for bit.
+
+**What moved** (the new numbers are the tests' own output, the same natively
+and under Node; `PROTOCOL` 16 → 17): `tests/test_hash.c`'s four; the Sand and
+Gallery quick sessions (`bench/CMakeLists.txt`: 0x6ac505971b099ca5 at tick 169
+and 0xe8641c8f2826ff50 at tick 272); seven decimal pins in
+`compiler/tests/CMakeLists.txt` (nested, arrays, FBX, skinned, chars, JSON,
+optional fields); in `compiler/tests/e2e`, rows, random, random local order
+(two fixtures), rolls, `assets_same.h`, decode, crossplatform text, and the
+world hash and whole and delta bytes' digests in `local_fields_same.h` and
+`local_events_same.h`; Box2D's stack, course, kit and sleep (nine) and Box3D's
+stack, course, sleep and mesh (eleven), every one a world hash or a sum of
+each tick's; Towers' and Sumo's servers' worlds (two each); and CRACKED's
+scripted match (`prototypes/cracked`, opt-in, built apart with
+`TIDE_PRIVATE_PROTOTYPES=ON`: 0x0a216d532fa6445c natively and under Node). 47
+world pins in 22 files. CRACKED's pin was already stale before this change: a
+build of `4a59a73a`'s page hash ends its match as 0x514280888af9724c, not the
+pinned 0x0267de53757af494, with the same bullets, rounds, points and map the
+new build prints (notes/cracked.md).
+What didn't move, and was checked: every pin of a simulated value (the
+physics packages' bodies, Box2D's own image bytes, Box3D's resident digests,
+what was answered; `test_crossplatform.c`, `crossplatform.tide`, skinned
+pose bits), the raw packed worlds' bytes and sizes and the delta sizes in
+the local fields/events fixtures, and their sessions' bytes sent.
+
+**Validation** (this Windows machine): warning-free native debug, web debug
+and native release builds. The full native debug suite, 2,478 tests: the 32
+that pin a world hash failed on exactly those checks and pass with the new
+numbers, and the whole suite passes again (Vulkan SDK's validation layer and
+SPIR-V checks included). The full web debug suite, 2,384 tests, passes,
+pinned numbers included, so native and WASI agree on all of them. CRACKED's
+64 tests pass natively and under Node in builds of their own. Native release:
+the 252 tests matching `tide_tests|tidec_e2e|versus|bench` pass. Linux, macOS,
+ARM64 (where NEON's way runs: CI's macOS and Android jobs), MinGW and
+sanitizers need CI to confirm the pins; none was dispatched.
 
 ## Rollback, the schedule and thread scaling against C, 2026-10-20
 
@@ -349,7 +539,8 @@ Remaining gaps, largest first, with the best explanation:
    wasm32; or XXH3's 32×32→64 SIMD multiplies, about 1.2–1.5× here at SSE2 and
    native on wasm SIMD) would change every pinned world hash and `PROTOCOL`, as
    `tide_hash_wide` did on 2026-10-07: the owner's call, with web throughput
-   measured first. Not done.
+   measured first. Done the same day, after measuring (Page hash, measured,
+   above): 1.15× C, dirty's hash at 100k movers.
 2. Ticks under a kept ring (1.8–2.0× C in place): writing every changed
    chunk's lanes apart and comparing them afterwards is the price of sharing.
    Tracking changes in the loop didn't pay (above). Writing in place when only

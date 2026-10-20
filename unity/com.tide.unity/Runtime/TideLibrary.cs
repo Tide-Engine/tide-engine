@@ -14,19 +14,20 @@ namespace Tide
     {
         IntPtr handle;
 
-        internal delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr> create;
-        internal delegate* unmanaged[Cdecl]<IntPtr, void> destroy;
-        internal delegate* unmanaged[Cdecl]<IntPtr, float, TideEmbedInput*, float, float, float, double> frame;
-        internal delegate* unmanaged[Cdecl]<IntPtr, TideEmbedStatus*, void> status;
-        internal delegate* unmanaged[Cdecl]<IntPtr, uint, byte*, uint, byte> request;
-        internal delegate* unmanaged[Cdecl]<IntPtr, byte, void> background;
-        internal delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> view;
-        internal delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> schema;
-        internal delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte> command;
-        internal delegate* unmanaged[Cdecl]<uint> abi;
+        delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr> createFn;
+        delegate* unmanaged[Cdecl]<IntPtr, void> destroyFn;
+        delegate* unmanaged[Cdecl]<IntPtr, float, TideEmbedInput*, float, float, float, double> frameFn;
+        delegate* unmanaged[Cdecl]<IntPtr, TideEmbedStatus*, void> statusFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, byte*, uint, byte> requestFn;
+        delegate* unmanaged[Cdecl]<IntPtr, byte, void> backgroundFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> viewFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> schemaFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte> commandFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> drawFn;
+        delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 1;
+        public const uint Abi = 2;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
@@ -54,6 +55,9 @@ namespace Tide
         // Opens the embed tide built in `folder`, or null after saying why in the Console.
         public static TideLibrary Open(string folder)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return OpenWeb();
+#else
             var built = Path.Combine(folder, LibraryName);
             if (!File.Exists(built))
             {
@@ -93,6 +97,7 @@ namespace Tide
                 return null;
             }
             return library;
+#endif
         }
 
         // A player's: the game's library and its pack, from `folder`.
@@ -125,23 +130,24 @@ namespace Tide
 
         bool Bind()
         {
-            abi = (delegate* unmanaged[Cdecl]<uint>)Find("tide_embed_abi");
-            if (abi == null || abi() != Abi)
+            abiFn = (delegate* unmanaged[Cdecl]<uint>)Find("tide_embed_abi");
+            if (abiFn == null || abiFn() != Abi)
             {
-                Debug.LogError($"Tide: {LibraryName} was built by a tide this package doesn't match (its ABI is {(abi == null ? 0 : abi())}, the package's {Abi}): update the package or tide so they agree.");
+                Debug.LogError($"Tide: {LibraryName} was built by a tide this package doesn't match (its ABI is {(abiFn == null ? 0 : abiFn())}, the package's {Abi}): update the package or tide so they agree.");
                 return false;
             }
-            create = (delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr>)Find("tide_embed_create");
-            destroy = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_destroy");
-            frame = (delegate* unmanaged[Cdecl]<IntPtr, float, TideEmbedInput*, float, float, float, double>)Find("tide_embed_frame");
-            status = (delegate* unmanaged[Cdecl]<IntPtr, TideEmbedStatus*, void>)Find("tide_embed_status_of");
-            request = (delegate* unmanaged[Cdecl]<IntPtr, uint, byte*, uint, byte>)Find("tide_embed_request");
-            background = (delegate* unmanaged[Cdecl]<IntPtr, byte, void>)Find("tide_embed_background");
-            view = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_view");
-            schema = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_schema");
-            command = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte>)Find("tide_embed_command");
-            if (create == null || destroy == null || frame == null || status == null || request == null || background == null
-                || view == null || schema == null || command == null)
+            createFn = (delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr>)Find("tide_embed_create");
+            destroyFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_destroy");
+            frameFn = (delegate* unmanaged[Cdecl]<IntPtr, float, TideEmbedInput*, float, float, float, double>)Find("tide_embed_frame");
+            statusFn = (delegate* unmanaged[Cdecl]<IntPtr, TideEmbedStatus*, void>)Find("tide_embed_status_of");
+            requestFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, byte*, uint, byte>)Find("tide_embed_request");
+            backgroundFn = (delegate* unmanaged[Cdecl]<IntPtr, byte, void>)Find("tide_embed_background");
+            viewFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_view");
+            schemaFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_schema");
+            commandFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte>)Find("tide_embed_command");
+            drawFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_draw");
+            if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
+                || viewFn == null || schemaFn == null || commandFn == null || drawFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
                 return false;
@@ -153,6 +159,51 @@ namespace Tide
         {
             return NativeLoader.Find(handle, name);
         }
+
+        // tide/embed.h's calls. On the web they go to Tide's own program beside Unity's (Tide.jslib), which copies
+        // input in and the packet, schema and status out.
+#if UNITY_WEBGL && !UNITY_EDITOR
+        internal IntPtr Create(TideEmbedDesc* desc) => TideWebCreate(desc);
+        public void Destroy(IntPtr embed) => TideWebDestroy();
+        public double Frame(IntPtr embed, float seconds, TideEmbedInput* input, float width, float height, float scale) =>
+            TideWebFrame(seconds, input, sizeof(TideEmbedInput), width, height, scale);
+        public void Status(IntPtr embed, TideEmbedStatus* status) => TideWebStatus(status, sizeof(TideEmbedStatus));
+        public byte Request(IntPtr embed, uint kind, byte* text, uint port) => (byte)TideWebRequest(kind, text, port);
+        public void Background(IntPtr embed, byte hidden) => TideWebBackground(hidden);
+        public byte* View(IntPtr embed, uint* size) => TideWebView(size);
+        public byte* Schema(IntPtr embed, uint* size) => TideWebSchema(size);
+        public byte* Draw(IntPtr embed, uint* size) => TideWebDraw(size);
+        public byte Command(IntPtr embed, uint type, uint index, uint generation, void* value, uint size) =>
+            (byte)TideWebCommand(type, index, generation, value, size);
+
+        [DllImport("__Internal")] static extern IntPtr TideWebCreate(TideEmbedDesc* desc);
+        [DllImport("__Internal")] static extern void TideWebDestroy();
+        [DllImport("__Internal")] static extern double TideWebFrame(float seconds, TideEmbedInput* input, int size, float width, float height, float scale);
+        [DllImport("__Internal")] static extern void TideWebStatus(TideEmbedStatus* status, int size);
+        [DllImport("__Internal")] static extern int TideWebRequest(uint kind, byte* text, uint port);
+        [DllImport("__Internal")] static extern void TideWebBackground(byte hidden);
+        [DllImport("__Internal")] static extern byte* TideWebView(uint* size);
+        [DllImport("__Internal")] static extern byte* TideWebSchema(uint* size);
+        [DllImport("__Internal")] static extern byte* TideWebDraw(uint* size);
+        [DllImport("__Internal")] static extern int TideWebCommand(uint type, uint index, uint generation, void* value, uint size);
+
+        // Tide's program on the page: it loads beside Unity's (TideWebBuild put it in the page), and starts when
+        // TideRunner does.
+        static TideLibrary OpenWeb() => new TideLibrary();
+#else
+        internal IntPtr Create(TideEmbedDesc* desc) => createFn(desc);
+        public void Destroy(IntPtr embed) => destroyFn(embed);
+        public double Frame(IntPtr embed, float seconds, TideEmbedInput* input, float width, float height, float scale) =>
+            frameFn(embed, seconds, input, width, height, scale);
+        public void Status(IntPtr embed, TideEmbedStatus* status) => statusFn(embed, status);
+        public byte Request(IntPtr embed, uint kind, byte* text, uint port) => requestFn(embed, kind, text, port);
+        public void Background(IntPtr embed, byte hidden) => backgroundFn(embed, hidden);
+        public byte* View(IntPtr embed, uint* size) => viewFn(embed, size);
+        public byte* Schema(IntPtr embed, uint* size) => schemaFn(embed, size);
+        public byte* Draw(IntPtr embed, uint* size) => drawFn(embed, size);
+        public byte Command(IntPtr embed, uint type, uint index, uint generation, void* value, uint size) =>
+            commandFn(embed, type, index, generation, value, size);
+#endif
 
         // The library stays loaded for the editor's life: a game running in it may hold memory and threads of it.
         public void Dispose()
