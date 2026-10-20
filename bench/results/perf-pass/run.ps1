@@ -11,7 +11,7 @@ param(
     [string]$Bin = 'build/release/bin',
     [int]$QuietSeconds = 60,
     [int]$QuietDeadlineMinutes = 30,
-    [string]$Revision = '' # The source the binaries were built from, when they are not this checkout's (a frozen earlier build)
+    [string]$BuiltFrom = '' # The revision the binaries were built from, when they are not this checkout's (a frozen earlier build)
 )
 $env:TIDE_HIDDEN = '1'
 $ErrorActionPreference = 'Stop'
@@ -64,7 +64,7 @@ foreach ($exe in ($set | ForEach-Object { $_.exe } | Sort-Object -Unique)) { Cop
 
 $revision = (git rev-parse HEAD).Trim()
 $dirty = @(git status --porcelain --untracked-files=no).Count -gt 0
-$env:TIDE_BENCH_REVISION = if ($Revision) { $Revision } elseif ($dirty) { "$revision+local" } else { $revision }
+$env:TIDE_BENCH_REVISION = if ($BuiltFrom) { $BuiltFrom } elseif ($dirty) { "$revision+local" } else { $revision }
 $env:TIDE_BENCH_MACHINE = 'AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2'
 $meta = [ordered]@{label=$Label; revision=$env:TIDE_BENCH_REVISION; machine=$env:TIDE_BENCH_MACHINE; startedUtc=(Get-Date).ToUniversalTime().ToString('o'); runs=@()
     binaries=@(Get-ChildItem $frozen -File | ForEach-Object { @{name=$_.Name; sha256=(Get-FileHash $_.FullName).Hash.ToLower()} })}
