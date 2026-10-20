@@ -2878,7 +2878,9 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
   turret that fires and then goes); Frostbite freezing and the Mortar Flare
   calling a shell, Live Wire arcing to another of the dead, a Powder Keg
   kill hurting the one beside it, the drone and the ember ring wounding
-  without a shot; wading slowed by three
+  without a shot, the drone holding its fire through two seconds of a pick's
+  pause (the owner thought it kept killing while paused, 2026-10-20: the
+  dead's health and its life don't change); wading slowed by three
   of the dead; a Bloater's swelling and burst, and one shot dead from afar;
   the Spitter, the Warden and the newer items (Phase 3, above); a chest
   opened, and one let go shutting again; orbs lying, taken from 4 m, gone

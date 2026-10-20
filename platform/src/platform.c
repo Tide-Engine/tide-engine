@@ -1302,6 +1302,13 @@ static void begin_pass(const tide_gpu_id target, const bool clear)
     pass_stencil = 0;
 }
 
+// Whether a step's pipeline is made yet: one the backend makes in the background isn't drawn with till it is, and
+// the step is left out of the frames before (tide_platform_background_pipelines).
+static bool pipeline_made(const draw_step *s)
+{
+    return !gpu->pipeline_ready || !s->pipeline || gpu->pipeline_ready(s->pipeline);
+}
+
 // A step's pipeline, for the draws after it, with the step's stencil number where the pass has another.
 static void use_pipeline(const draw_step *s)
 {
@@ -1720,6 +1727,7 @@ static uint32_t *gpu_texture_index; // Texture places by space/id: 1 + a place, 
 static uint32_t gpu_texture_index_capacity; // A power of two, or 0: at most half taken
 static uint32_t gpu_frame;
 static tide_texture_idle *idle_textures;
+uint32_t tide_texture_idle_frames = TIDE_TEXTURE_IDLE_FRAMES;
 static uint32_t idle_texture_capacity;
 
 // Temporary integer-data storage detached from identities absent from this
@@ -1972,9 +1980,18 @@ static void follow_cache_folder(void)
     free(file);
 }
 
+// Whether pipelines are made in the background where the backend can (tide_platform_background_pipelines).
+static bool background_pipelines;
+
+void tide_platform_background_pipelines(const bool on)
+{
+    background_pipelines = on;
+}
+
 static bool gpu_ready(void)
 {
     follow_cache_folder();
+    if (gpu->background) gpu->background(background_pipelines);
     const uint32_t epoch = gpu->epoch();
     if (epoch == 0 || epoch == gpu_epoch) return epoch != 0;
     if (gpu->time_reset) gpu->time_reset();
@@ -2870,7 +2887,7 @@ static void forget_textures(const uint32_t epoch)
             .age = gpu_frame - g->frame, .place = i,
         };
     }
-    tide_texture_idle_trim(idle_textures, idle_count, TIDE_TEXTURE_IDLE_BYTES, TIDE_TEXTURE_IDLE_COUNT);
+    tide_texture_idle_trim(idle_textures, idle_count, TIDE_TEXTURE_IDLE_BYTES, TIDE_TEXTURE_IDLE_COUNT, tide_texture_idle_frames);
     for (uint32_t i = 0; i < idle_count; i++) {
         if (idle_textures[i].keep) continue;
         gpu_texture *g = &gpu_textures[idle_textures[i].place];
@@ -3609,6 +3626,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case STEP_STENCIL:
             break;
         case STEP_SHAPES:
+            if (!pipeline_made(s)) break;
             // A run with smooth shapes goes through the pipeline that draws every kind, with their extras
             use_pipeline(s);
             if (s->smooth) {
@@ -3625,6 +3643,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case STEP_CLEAR: {
             // A triangle over the target, which the clip cuts, and which sets depth and stencil back too
+            if (!pipeline_made(s)) break;
             const float color[4] = {(float)s->color.r / 255.0f, (float)s->color.g / 255.0f, (float)s->color.b / 255.0f,
                                     (float)s->color.a / 255.0f};
             use_pipeline(s);
@@ -3635,7 +3654,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         }
         case STEP_MESH:
-            if (s->count == 0) break;
+            if (s->count == 0 || !pipeline_made(s)) break;
             use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             sample_step_texture(list, s);
@@ -3645,14 +3664,17 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             calls++;
             break;
         case STEP_MESH_3D:
+            if (!pipeline_made(s)) break;
             vertices += draw_mesh_3d(list, s);
             calls++;
             break;
         case STEP_SHADED:
+            if (!pipeline_made(s)) break;
             vertices += draw_shaded(list, s);
             calls++;
             break;
         case STEP_BLIT:
+            if (!pipeline_made(s)) break;
             clip(&(draw_step){.kind = STEP_NO_CLIP});
             vertices += draw_shaded(list, s);
             calls++;
@@ -3664,7 +3686,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (pass_active) clip(s);
             break;
         default: // Text
-            if (s->count == 0 || !gpu_state.atlas) break;
+            if (s->count == 0 || !gpu_state.atlas || !pipeline_made(s)) break;
             use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             // Stretched glyphs blend; the others land on the target's pixels
