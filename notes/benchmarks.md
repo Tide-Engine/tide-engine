@@ -134,7 +134,9 @@ Proposals that need the owner, none started:
 - A faster page hash (Rollback, below): changes every pinned hash and the
   protocol version.
 - Drawing: a `gpu.h` call handing out ring room so shapes are built once, and
-  a quad/sprite path (Drawing, below).
+  a quad/sprite path (Drawing, below). The renderer's quads were built
+  internally in a second round (Drawing, second round, below); a sprite call
+  or quad command in the list remains an API question.
 
 Validation of the merged branch: warning-free native and web debug builds;
 all 2,477 native debug CTests (the Vulkan SDK's SPIR-V checks and 36 GPU tests
@@ -142,6 +144,124 @@ under the validation layer included) and all 2,383 web debug CTests pass, run
 again after the `restrict` fix; all 2,439 native release CTests pass (no
 Vulkan SDK in that build). Linux, macOS, Android, MinGW and sanitizers were
 not run; no CI was dispatched.
+
+## Drawing, second round, 2026-10-20
+
+Round 2 of the renderer against the handwritten baseline (`versus_draw`,
+Drawing against handwritten OpenGL and Vulkan, below), internal only, as the
+owner decided for quads: no Draw API, generated code or runtime function
+changed. What was built is in `notes/rendering.md` (Quads, solid shapes and a
+fenced flush) and `notes/drawing.md` (Recording sprites and 3D instances):
+
+- 2D meshes' and text's triangles go to the GPU as 40-byte quad instances
+  where two of them are an unturned quad of one color (120 bytes of vertices
+  before), and a run of solid smooth shapes carries a 4-byte radius a shape in
+  place of a 32-byte extra; both fall back exactly when the run gets anything
+  else.
+- Recording: a run of sprites keeps its texture's slot without hashing, a
+  single 3D instance reads its transform once into the list's matrices and
+  culls it there, culling's rounding allowance is worked out only for a box
+  past a plane, and growing arrays is apart from what records.
+- Vulkan's flush waits for a fence where it waited for the queue to go idle,
+  and leaves unused command pools alone.
+
+Every benchmark frame of the 13 workloads is the same bytes before and after
+on both backends (`tide_platform_draw --bench --dump-frames`, compared byte for
+byte; `versus_draw --compare` against the after frames: 0 pixels differ in any
+workload, on either API).
+
+Five gated rounds (`bench/results/perf-pass/run.ps1 -Label draw2 -Rounds 5
+-Before`, before `4a59a73a`, after `24c44443`, each program run from both in
+turn; `draw2-before-r3`'s OpenGL run had competing work), and five of the C
+baseline straight after (`draw2-c`, the same `versus_draw` binary as round 1);
+binaries' SHA-256 and times in `bench/results/perf-pass/draw2-metadata.json`
+and `draw2-c-metadata.json`. Medians of the rounds' medians, ms a frame,
+record / render + readback / total; Tide/C is total over total:
+
+| Vulkan | before | after | C by hand | Tide/C before | after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nothing | 0.000 / 0.074 / 0.075 | 0.000 / 0.053 / 0.054 | 0.000 / 0.049 / 0.049 | 1.52× | 1.09× |
+| 65,536 rects | 0.268 / 0.340 / 0.605 | 0.268 / 0.329 / 0.597 | 0.057 / 0.098 / 0.155 | 3.92× | 3.86× |
+| 65,536 circles | 0.253 / 0.307 / 0.561 | 0.253 / 0.289 / 0.543 | 0.057 / 0.096 / 0.154 | 3.64× | 3.52× |
+| 65,536 textured quads | 1.117 / 1.025 / 2.206 | 0.915 / 0.587 / 1.518 | 0.057 / 0.095 / 0.152 | 14.49× | 9.97× |
+| 65,536 cube instances | 1.529 / 0.448 / 1.982 | 1.218 / 0.425 / 1.645 | 0.034 / 0.158 / 0.192 | 10.31× | 8.56× |
+| 65,536 round rects | 0.794 / 0.601 / 1.420 | 0.708 / 0.526 / 1.233 | 0.068 / 0.097 / 0.166 | 8.57× | 7.44× |
+| rects, text every 1,024 | 0.255 / 0.396 / 0.651 | 0.255 / 0.386 / 0.639 | - | - | - |
+| rects, a round rect every 1,024 | 0.255 / 0.476 / 0.729 | 0.254 / 0.350 / 0.604 | - | - | - |
+| cubes, a matrix each (C only) | - | - | 0.183 / 0.159 / 0.343 | - | - |
+
+| OpenGL 3.3 | before | after | C by hand | Tide/C before | after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nothing | 0.000 / 0.262 / 0.262 | 0.000 / 0.254 / 0.254 | 0.000 / 0.018 / 0.018 | 14.84× | 14.41× |
+| 65,536 rects | 0.267 / 0.425 / 0.693 | 0.267 / 0.424 / 0.691 | 0.063 / 0.118 / 0.183 | 3.78× | 3.77× |
+| 65,536 circles | 0.253 / 0.366 / 0.621 | 0.253 / 0.365 / 0.621 | 0.063 / 0.122 / 0.188 | 3.30× | 3.30× |
+| 65,536 textured quads | 1.114 / 1.576 / 2.687 | 0.912 / 0.817 / 1.741 | 0.060 / 0.115 / 0.178 | 15.11× | 9.79× |
+| 65,536 cube instances | 1.488 / 0.727 / 2.217 | 1.224 / 0.731 / 1.954 | 0.043 / 0.129 / 0.167 | 13.25× | 11.68× |
+| 65,536 round rects | 0.793 / 0.826 / 1.619 | 0.707 / 0.622 / 1.334 | 0.064 / 0.137 / 0.200 | 8.08× | 6.66× |
+| rects, text every 1,024 | 0.255 / 0.656 / 0.911 | 0.255 / 0.656 / 0.912 | - | - | - |
+| rects, a round rect every 1,024 | 0.254 / 0.608 / 0.864 | 0.254 / 0.427 / 0.682 | - | - | - |
+| cubes, a matrix each (C only) | - | - | 0.149 / 0.316 / 0.465 | - | - |
+
+The kept-data workloads, Vulkan totals: grid 0.121 -> 0.098, 65,536 lights
+read whole 0.159 -> 0.152, read in part 0.139 -> 0.134, a list made each frame
+0.110 -> 0.091, a moving mesh 0.346 -> 0.321 (the fenced flush); OpenGL's are
+as they were (0.103-0.360). This round's before is slower than round 1's after
+in a few rows (Vulkan's empty frame 0.065 there, 0.075 here) on the same
+binaries' code: the machine, with other sessions' GPU work, varied between
+the days' runs; compare each table's columns with each other.
+
+Where the time went, from temporary per-phase timers (not committed; means
+over 120 frames, Vulkan, before against the build of the gated A/B that
+preceded the final one): textured quads' conversion 474 -> 350 µs and upload
+376 -> 131 µs (7.8 MB a frame to 2.6); round rects' upload 192 -> 105 µs (3.7
+MB to 1.8) while their conversion rose 257 -> 300-325 µs (each shape's extra
+is still worked out, to be checked); GPU, submission and readback were about
+as they were in both. OpenGL's quads gained most in their upload:
+`glBufferSubData` costs more a byte there.
+
+Tried and dropped (numbers in the notes): converting quads through
+`mesh_vertex` structs compared a field at a time (slower than the triangles:
+conversion 650-760 µs); one barrier call a pass with joined stage masks (no
+change beyond noise); a sprite's vertices copied 8 bytes at a time (recording
+0.91 -> 0.98 ms).
+
+What remains, and why:
+- Rects and circles, about 3.5-3.9 times C: recording a 44-byte command a
+  shape (about 4 ns, written to memory past the L2 and read back by the
+  renderer) is the floor of the draw list's format, which is public; the
+  renderer's conversion (about 2 ns a shape) is close to bound by reading
+  those commands; the upload is bound by the bus (1.5 MB at about 20 GB/s).
+  Converting straight into the upload memory would save about 0.07 ms
+  (`notes/rendering.md`, Not built: it needs a `gpu.h` call whose room lasts
+  across a flush).
+- Textured quads, about 10 times: recording is 0.91 ms of 1.52, 14 ns a quad,
+  most of it 128 bytes of vertices and 24 of indices a quad in the list's own
+  format (memory traffic and a `memcpy` call), plus the benchmark's own
+  building of them; the renderer then reads them all back (about 0.36 ms).
+  C writes 20 bytes once. A sprite call or a quad command in the list would
+  close most of it, and is an API question.
+- Cube instances, 8.6 times (4.8 times C with a matrix each): about 18.5 ns a
+  recorded instance remains, the frustum test in double precision against six
+  planes, the side's determinant, the mesh lookup and run merging, and 4 MB of
+  transforms uploaded a frame. A float fast path for culling, exact by an
+  error bound, would need float planes kept in the list (a layout change) or
+  converted per call.
+- Round rects, 7.4 times: 104 bytes recorded a shape (command and shape data,
+  0.71 ms, memory-bound), 28 uploaded where C uploads 24.
+- OpenGL's empty frame, 14 times C: the hidden window's swap, which the next
+  readback waits for (round 1). Skipping it needs uploads that don't go
+  through `glBufferSubData` first; not built.
+- Vulkan's empty frame is 1.09 times C.
+
+Validation: warning-free native, release and web debug builds; all 2,477
+native debug CTests pass (36 `gpu` tests with Vulkan under the validation
+layer and synchronization checks, OpenGL twins, `tide_spirv_shaders_valid`
+with the renderer's ten shaders); release `tide_platform_draw`, `_targets`,
+`_shaders`, `_skinned` and their OpenGL twins and `versus_draw` pass under the
+validation layer; all 2,383 web debug CTests pass (WebGL, the D3D11 WebGL run
+and the 11 WebGPU pages, which run `runs_drawn_alike` too). The draw test
+counts 2,975 `ok`s on Vulkan (both devices) and 1,537 on OpenGL. Android,
+Linux, macOS, MinGW and sanitizers were not run; no CI was dispatched.
 
 ## Rollback, the schedule and thread scaling against C, 2026-10-20
 
