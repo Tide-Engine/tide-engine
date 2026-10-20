@@ -27,6 +27,10 @@ namespace Tide
         public TideEntityRow Entity { get; internal set; }
         internal int Row = -1; // Among the packet's entities, this frame; -1 once it's gone
         internal bool Seen;
+        internal int PlacedAt = -1; // The frame it was last placed in
+        // A GameObject of a scene, or inside a prefab's instance, that an entity of its Unity.Source shows through:
+        // hidden while its entity's gone, rather than destroyed, and placed where it is in Unity's hierarchy
+        internal bool Authored;
 
         public bool Mine => Entity.Mine;
 

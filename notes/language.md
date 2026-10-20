@@ -27,6 +27,11 @@ found an unused `out` (fix helpers of types with only maps/grids) and an unused
 `place` (games with no component), both fixed. Runtime contract and tests:
 `notes/standard-host.md`, `notes/runtime-ownership.md`.
 
+For `tide unity --assets`: `compile_input.text` gives a file's text in place
+of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
+`parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,
+so they hold prefab declarations only (`notes/unity.md`, Authoring as built).
+
 ## Double Position correction smoothing (2026-10-20)
 
 The owner requested [Position] on double coordinates. The checker now accepts

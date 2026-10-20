@@ -175,6 +175,9 @@ static const argument_help arguments[] = {
      "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
     {"--once", "--once", "Build once and end",
      "unity builds the game once rather than as its files change, as a player build does.", UNITY},
+    {"--assets", "--assets <folder>", "Include a Unity project's prefabs and scenes",
+     "unity reads the project's Assets folder: each prefab and scene holding\n"
+     "TideEntity objects is a Tide prefab named after its file.", UNITY},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
     {"--host", "--host [port]", "Open Main's match for others to join",

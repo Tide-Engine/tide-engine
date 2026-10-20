@@ -19,6 +19,7 @@
 #include "serve.h"
 #include "sys.h"
 #include "toolchain.h"
+#include "unity_assets.h"
 #include "tide/sha256.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
@@ -226,7 +227,7 @@ static compile_input *game_inputs(const char *folder, const game_packages *packa
     }
     compile_input *inputs = malloc(sizeof(compile_input) * (size_t)paths->count);
     if (!inputs) abort();
-    for (int i = 0; i < paths->count; i++) inputs[i] = (compile_input){paths->items[i], names[i]};
+    for (int i = 0; i < paths->count; i++) inputs[i] = (compile_input){paths->items[i], names[i], NULL};
     free(names);
     *count = paths->count;
     return inputs;
@@ -496,6 +497,7 @@ typedef struct build {
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
     game_packages packages; // Found again by each build of the game
+    char *unity_map;        // With opts->unity_assets: the map of its Unity.Source numbers, from its last generate (unity_assets.h)
 } build;
 
 static uint64_t header_stamp(const char *folder);
@@ -1807,6 +1809,34 @@ static bool generate(build *b, const char *gen, const bool layout)
     int count = 0;
     compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count);
     if (!inputs) return false;
+    // A Unity project's prefabs and scenes, as the prefabs tide makes of them, after the game's own files
+    unity_sources unity = {0};
+    if (b->opts->unity_assets) {
+        if (!unity_assets_read(b->opts->unity_assets, &unity)) {
+            unity_sources_free(&unity);
+            free(inputs);
+            free_files(&paths);
+            return false;
+        }
+        inputs = realloc(inputs, sizeof(compile_input) * (size_t)(count + unity.count + 1));
+        if (!inputs) abort();
+        for (int i = 0; i < unity.count; i++) inputs[count++] = (compile_input){unity.items[i].path, NULL, unity.items[i].text};
+        // ...each as tide read it, beside the build, which its messages' lines are of
+        char *prefabs = b->opts->output ? path_join(b->opts->output, "prefabs") : NULL;
+        if (prefabs) sys_remove_tree(prefabs);
+        for (int i = 0; prefabs && i < unity.count; i++) {
+            if (strcmp(unity.items[i].path, UNITY_SOURCE_PATH) == 0) continue;
+            char *name = format("%s.tprefab", unity.items[i].path, NULL);
+            char *path = path_join(prefabs, name);
+            char *dir = path_dir(path);
+            sys_mkdirs(dir);
+            sys_write_text(path, unity.items[i].text);
+            free(dir);
+            free(path);
+            free(name);
+        }
+        free(prefabs);
+    }
     tide_sha256 external;
     tide_sha256_init(&external);
     static const char *const identity_extensions[] = {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl",
@@ -1821,7 +1851,7 @@ static bool generate(build *b, const char *gen, const bool layout)
         for (int i = 0; i < files.count; i++) {
             size_t size;
             char *bytes = sys_read_file(files.items[i], &size);
-            if (!bytes) { fprintf(stderr, "tide: cannot fingerprint %s\n", files.items[i]); free_files(&files); free(prefix); free(inputs); free_files(&paths); return false; }
+            if (!bytes) { fprintf(stderr, "tide: cannot fingerprint %s\n", files.items[i]); free_files(&files); free(prefix); free(inputs); free_files(&paths); unity_sources_free(&unity); return false; }
             has_external = true;
             // Source checkout line endings do not change C semantics. Binary
             // libraries remain exact bytes, including every target variant.
@@ -1857,7 +1887,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     char *pack = pack_of(gen);
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
-    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); return false; }
+    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .embed = b->opts->unity, .externs = &b->externs,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
@@ -1873,6 +1903,9 @@ static bool generate(build *b, const char *gen, const bool layout)
     if (ok) {
         free_asset_paths(&b->info);
         b->info = next_info;
+        free(b->unity_map);
+        b->unity_map = unity.map;
+        unity.map = NULL;
     } else {
         // A bad asset can be fixed without editing code: keep watching the
         // paths and rebuild policy of the last successful generation.
@@ -1881,6 +1914,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     free(pack);
     free(inputs);
     free_files(&paths);
+    unity_sources_free(&unity);
     return ok;
 }
 
@@ -2206,6 +2240,7 @@ static uint64_t game_stamp(const build *b)
         const package_line *line = b->packages.items[p].line;
         if (line->local || line->builtin) stamp_folder(&h, b->packages.items[p].folder);
     }
+    if (b->opts->unity_assets) h = (h ^ unity_assets_stamp(b->opts->unity_assets)) * 0x100000001B3ull;
     return h;
 }
 
@@ -2480,6 +2515,56 @@ static bool build_embed_host(run *r)
     return ok;
 }
 
+// Writes `text` to `path` unless it holds it already: Unity compiles again for what changes.
+static bool write_if_changed(const char *path, const char *text, const size_t size)
+{
+    size_t had = 0;
+    char *old = sys_read_file(path, &had);
+    const bool same = old && had == size && memcmp(old, text, size) == 0;
+    free(old);
+    return same || sys_write_file(path, text, size);
+}
+
+// The project's Packages/com.tide.game, an embedded package of the assembly Tide.Game: the schema, which the
+// package's source generator makes the game's C# types of, and a stub naming the schema's hash. Unity's build
+// cache knows an assembly by its sources, so the stub is what makes a new schema compile again. Made from the
+// project of opts->unity_assets, as each build's schema changes; meant for source control, so a clone compiles
+// before tide has built anything. False after saying what's wrong.
+static bool write_unity_package(const run *r, const char *schema, const uint32_t size)
+{
+    if (!r->b.opts->unity_assets) return true;
+    char *assets = path_absolute(r->b.opts->unity_assets);
+    char *project = path_dir(assets);
+    char *dir = path_join(project, "Packages/com.tide.game");
+    bool ok = sys_mkdirs(dir);
+    // The hash, from the schema's "hash":"..."
+    char hash[17] = "";
+    const char *at = strstr(schema, "\"hash\":\"");
+    for (int i = 0; at && i < 16 && at[8 + i] && at[8 + i] != '"'; i++) hash[i] = at[8 + i];
+    static const char package[] = "{\n  \"name\": \"com.tide.game\",\n  \"displayName\": \"Tide game types\",\n  \"version\": \"0.0.0\",\n"
+                                  "  \"description\": \"Written by tide unity: the game's schema, which Tide's package makes "
+                                  "the game's C# types of. Keep it in source control.\"\n}\n";
+    static const char asmdef[] = "{\n    \"name\": \"Tide.Game\",\n    \"rootNamespace\": \"Tide.Game\",\n"
+                                 "    \"references\": [\n        \"Tide.Runtime\"\n    ],\n    \"allowUnsafeCode\": true,\n"
+                                 "    \"autoReferenced\": true\n}\n";
+    char stub[512];
+    snprintf(stub, sizeof stub, "// Written by tide unity. The game's C# types are generated from schema.json beside this,\n"
+                                "// by Tide's package (Tide.Generator), whenever this hash changes: %s\n", hash);
+    const char *const names[] = {"package.json", "Tide.Game.asmdef", "TideGameSchema.cs", "schema.json"};
+    const char *const texts[] = {package, asmdef, stub, schema};
+    const size_t sizes[] = {sizeof package - 1, sizeof asmdef - 1, strlen(stub), size};
+    for (int i = 0; ok && i < 4; i++) {
+        char *path = path_join(dir, names[i]);
+        ok = write_if_changed(path, texts[i], sizes[i]);
+        if (!ok) fprintf(stderr, "tide: can't write %s\n", path);
+        free(path);
+    }
+    free(dir);
+    free(project);
+    free(assets);
+    return ok;
+}
+
 // The newest build's schema, from the build itself, as schema.json beside it: what the package's C# bindings are
 // generated from before anything runs. False after saying what's wrong.
 static bool write_unity_schema(const run *r)
@@ -2499,13 +2584,26 @@ static bool write_unity_schema(const run *r)
         char *written = path_join(r->dir, "schema.json.tmp");
         char *path = path_join(r->dir, "schema.json");
         ok = sys_write_file(written, text, size) && sys_rename(written, path);
+        if (!ok) fprintf(stderr, "tide: can't write the schema of %s\n", library_path);
+        ok = ok && write_unity_package(r, text, size);
         free(written);
         free(path);
         free(text);
+    } else {
+        fprintf(stderr, "tide: can't read the schema of %s\n", library_path);
     }
-    if (!ok) fprintf(stderr, "tide: can't write the schema of %s\n", library_path);
     sys_library_close(library);
     free(library_path);
+    // ...and which GameObject shows each entity of the Unity project's prefabs and scenes
+    if (ok) {
+        char *written = path_join(r->dir, "unity.json.tmp");
+        char *path = path_join(r->dir, "unity.json");
+        const char *map = r->b.unity_map ? r->b.unity_map : "{\"assets\": []}\n";
+        ok = sys_write_file(written, map, strlen(map)) && sys_rename(written, path);
+        if (!ok) fprintf(stderr, "tide: can't write %s\n", path);
+        free(written);
+        free(path);
+    }
     return ok;
 }
 

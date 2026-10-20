@@ -1,8 +1,25 @@
 // The Tide package's sample: each player is a ball in a box, rolled with WASD or a stick, Space to jump.
-// Tide simulates, predicts and rolls back; Unity draws the balls (TideRunner's view rule for Ball).
+// Tide simulates, predicts and rolls back; Unity draws. The balls are Roller (Assets/Sample/Roller.prefab) and the
+// pillars are Bounce's (Assets/Sample/Bounce.unity): Unity's prefab and scene, whose TideEntity objects are Tide's.
 settings { title = "Bounce"; tickRate = 30; maxPlayers = 8; }
 
 scene Main { }
+
+// The Unity scene's entities, as the match's
+event(Spawned) Arena(with Main)
+{
+    Scene.Load(Bounce);
+}
+
+component Spinner
+{
+    float speed = 1;
+}
+
+system Spinning(Spinner spinner, mut Transform transform, Time time)
+{
+    transform.localRotation = Math.Normalize(Math.Mul(quaternion.Euler(0, spinner.speed * time.dt, 0), transform.localRotation));
+}
 
 input Roll
 {
@@ -41,7 +58,7 @@ event(PlayerJoined joined) Arrive(mut Room room)
     room.arrivals += 1;
     var hue = seat * 0.37 - int(seat * 0.37);
     var color = Color(0.5 + 0.5 * Math.Cos(hue * 6.283), 0.5 + 0.5 * Math.Cos((hue - 0.333) * 6.283), 0.5 + 0.5 * Math.Cos((hue + 0.333) * 6.283));
-    room.balls[joined.player] = Spawn(Ball { color = color, seat = seat },
+    room.balls[joined.player] = Spawn(Roller, Ball { color = color, seat = seat },
         Transform { localPosition = float3(seat % 4 * 1.5 - 2.25, 2, seat / 4 * 1.5) }, Owner { player = joined.player });
 }
 

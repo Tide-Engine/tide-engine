@@ -62,7 +62,8 @@ namespace Tide.Editor
             var start = new ProcessStartInfo
             {
                 FileName = tide,
-                Arguments = $"unity -o \"{TideLibrary.BuildFolder}\"",
+                // The project's prefabs and scenes are the game's too: their TideEntity objects are its prefabs
+                Arguments = $"unity -o \"{TideLibrary.BuildFolder}\" --assets \"{Application.dataPath}\"",
                 WorkingDirectory = folder,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -130,9 +131,10 @@ namespace Tide.Editor
             {
                 // A compiler's error or warning says so; the rest of what tide says is progress
                 var line = entry.line;
-                if (line.Contains(": error") || line.StartsWith("tide: can't") || line.Contains("FAILED")) Debug.LogError("tide: " + line);
-                else if (line.Contains(": warning")) Debug.LogWarning("tide: " + line);
-                else if (line.Length > 0) Debug.Log("tide: " + line);
+                var context = ContextOf(ref line);
+                if (line.Contains(": error") || line.StartsWith("tide: can't") || line.Contains("FAILED")) Debug.LogError("tide: " + line, context);
+                else if (line.Contains(": warning")) Debug.LogWarning("tide: " + line, context);
+                else if (line.Length > 0) Debug.Log("tide: " + line, context);
             }
             if (process != null && process.HasExited)
             {
@@ -140,6 +142,35 @@ namespace Tide.Editor
                 process.Dispose();
                 process = null;
             }
+        }
+
+        static readonly System.Text.RegularExpressions.Regex located =
+            new System.Text.RegularExpressions.Regex(@"^(?<path>.+?):(?<line>\d+):(?<column>\d+): (error|warning|note)");
+
+        // The asset a message is about, for the Console to select: a .tide file of the game, or a prefab or scene,
+        // whose line numbers are of the Tide text tide made of it, which the message then names.
+        static UnityEngine.Object ContextOf(ref string line)
+        {
+            var match = located.Match(line);
+            if (!match.Success) return null;
+            var path = match.Groups["path"].Value.Replace('\\', '/');
+            var project = TideSettings.ProjectFolder.Replace('\\', '/').TrimEnd('/') + "/";
+            string asset = null;
+            if (Path.IsPathRooted(path))
+            {
+                if (path.StartsWith(project, StringComparison.OrdinalIgnoreCase)) asset = path.Substring(project.Length);
+            }
+            else if (path.StartsWith("Assets/") && File.Exists(Path.Combine(project, path)))
+            {
+                asset = path; // A prefab's or a scene's
+                line += $" (line {match.Groups["line"].Value} of Library/Tide/prefabs/{path}.tprefab, the Tide text tide read)";
+            }
+            else
+            {
+                var full = Path.GetFullPath(Path.Combine(TideSettings.instance.GameFolderPath, path)).Replace('\\', '/');
+                if (full.StartsWith(project, StringComparison.OrdinalIgnoreCase)) asset = full.Substring(project.Length);
+            }
+            return asset != null ? AssetDatabase.LoadMainAssetAtPath(asset) : null;
         }
     }
 }

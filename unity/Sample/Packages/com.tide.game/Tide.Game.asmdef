@@ -1,0 +1,9 @@
+{
+    "name": "Tide.Game",
+    "rootNamespace": "Tide.Game",
+    "references": [
+        "Tide.Runtime"
+    ],
+    "allowUnsafeCode": true,
+    "autoReferenced": true
+}

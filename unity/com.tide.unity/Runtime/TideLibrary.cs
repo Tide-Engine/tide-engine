@@ -35,8 +35,21 @@ namespace Tide
                     ? "libtide_embed.dylib"
                     : "libtide_embed.so";
 
-        // The project's folder of what tide builds for it: Library/Tide, beside Assets.
-        public static string BuildFolder => Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? ".", "Library", "Tide");
+        // The suffix of a library on this machine, as tide names the game's.
+        public static string LibrarySuffix => Path.GetExtension(LibraryName);
+
+        // The folder of what tide builds for the project: in the editor Library/Tide, beside Assets, where a new
+        // build of the game is swapped in as it comes; in a player, the build's StreamingAssets/Tide, where Tide's
+        // build processor put the embed, the game's library ("game") and its pack.
+        public static string BuildFolder => Application.isEditor
+            ? Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? ".", "Library", "Tide")
+            : Path.Combine(Application.streamingAssetsPath, "Tide");
+
+        // A player's game, linked in by hand: tide_host_library of its library, and its pack's bytes (unmanaged,
+        // for the process's life, as the library is). Zero in the editor, whose embed loads the game's builds itself.
+        public IntPtr Game { get; private set; }
+        public IntPtr Pack { get; private set; }
+        public int PackSize { get; private set; }
 
         // Opens the embed tide built in `folder`, or null after saying why in the Console.
         public static TideLibrary Open(string folder)
@@ -44,36 +57,70 @@ namespace Tide
             var built = Path.Combine(folder, LibraryName);
             if (!File.Exists(built))
             {
-                Debug.LogError($"Tide: {built} isn't there yet. Open Window > Tide to build the game, or check the Console for tide's errors.");
+                Debug.LogError(Application.isEditor
+                    ? $"Tide: {built} isn't there yet: tide builds it while the editor is open (Project Settings > Tide), and says what's wrong in the Console."
+                    : $"Tide: {built} isn't in this build: Tide's build processor puts it there as the player builds.");
                 return null;
             }
-            // A copy of its own, named for when it was built, so tide can write the next one meanwhile
-            var loaded = Path.Combine(folder, "loaded");
-            Directory.CreateDirectory(loaded);
-            var stamp = File.GetLastWriteTimeUtc(built).Ticks;
-            var copy = Path.Combine(loaded, Path.GetFileNameWithoutExtension(LibraryName) + "-" + stamp + Path.GetExtension(LibraryName));
-            try
+            var load = built;
+            if (Application.isEditor)
             {
-                if (!File.Exists(copy)) File.Copy(built, copy);
+                // A copy of its own, named for when it was built, so tide can write the next one meanwhile
+                var loaded = Path.Combine(folder, "loaded");
+                Directory.CreateDirectory(loaded);
+                var stamp = File.GetLastWriteTimeUtc(built).Ticks;
+                load = Path.Combine(loaded, Path.GetFileNameWithoutExtension(LibraryName) + "-" + stamp + LibrarySuffix);
+                try
+                {
+                    if (!File.Exists(load)) File.Copy(built, load);
+                }
+                catch (IOException e)
+                {
+                    Debug.LogError($"Tide: can't copy {built} to load it: {e.Message}");
+                    return null;
+                }
             }
-            catch (IOException e)
-            {
-                Debug.LogError($"Tide: can't copy {built} to load it: {e.Message}");
-                return null;
-            }
-            var handle = NativeLoader.Load(copy, out var error);
+            var handle = NativeLoader.Load(load, out var error);
             if (handle == IntPtr.Zero)
             {
-                Debug.LogError($"Tide: can't load {copy}: {error}");
+                Debug.LogError($"Tide: can't load {load}: {error}");
                 return null;
             }
             var library = new TideLibrary { handle = handle };
-            if (!library.Bind())
+            if (!library.Bind() || (!Application.isEditor && !library.LinkGame(folder)))
             {
                 library.Dispose();
                 return null;
             }
             return library;
+        }
+
+        // A player's: the game's library and its pack, from `folder`.
+        bool LinkGame(string folder)
+        {
+            var path = Path.Combine(folder, "game" + LibrarySuffix);
+            var game = NativeLoader.Load(path, out var error);
+            if (game == IntPtr.Zero)
+            {
+                Debug.LogError($"Tide: can't load {path}: {error}");
+                return false;
+            }
+            var entry = (delegate* unmanaged[Cdecl]<IntPtr>)NativeLoader.Find(game, "tide_host_library");
+            Game = entry != null ? entry() : IntPtr.Zero;
+            if (Game == IntPtr.Zero)
+            {
+                Debug.LogError($"Tide: {path} isn't a game's library: it has no tide_host_library.");
+                return false;
+            }
+            var pack = Path.Combine(folder, "pack");
+            if (File.Exists(pack))
+            {
+                var bytes = File.ReadAllBytes(pack);
+                Pack = Marshal.AllocHGlobal(Math.Max(1, bytes.Length));
+                Marshal.Copy(bytes, 0, Pack, bytes.Length);
+                PackSize = bytes.Length;
+            }
+            return true;
         }
 
         bool Bind()

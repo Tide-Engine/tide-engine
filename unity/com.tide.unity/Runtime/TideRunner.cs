@@ -16,9 +16,21 @@ namespace Tide
         public GameObject prefab;
     }
 
+    // A Unity prefab the game spawns, by its GUID: what a player build instantiates for an entity of it, filled in
+    // by the editor as the scene builds.
+    [Serializable]
+    public sealed class TidePrefabLink
+    {
+        public string guid;
+        public GameObject prefab;
+    }
+
     // Runs the game: one Tide frame in each of Unity's, with Unity's input,
-    // then shows the entities the frame's view packet has, each by a
-    // GameObject of the first view rule that matches it.
+    // then shows the entities the frame's view packet has. An entity of a
+    // Unity prefab or scene (made with TideEntity) shows through its own
+    // GameObject: a scene's, or one of an instance of its prefab, made for its
+    // prefab's root entity. Any other shows through a GameObject of the first
+    // view rule that matches it.
     [DefaultExecutionOrder(-10000)]
     [DisallowMultipleComponent]
     public sealed unsafe class TideRunner : MonoBehaviour
@@ -30,6 +42,8 @@ namespace Tide
         public string relay = "";
 
         public List<TideViewRule> views = new List<TideViewRule>();
+
+        [HideInInspector] public List<TidePrefabLink> prefabs = new List<TidePrefabLink>();
 
         public static TideRunner Current { get; private set; }
         public TidePacket Packet { get; } = new TidePacket();
@@ -71,6 +85,12 @@ namespace Tide
         int[][] rows = Array.Empty<int[]>();
         int[] rowsAt = Array.Empty<int>();
         int frames;
+
+        // Which GameObject shows an entity of the project's prefabs and scenes
+        public TideUnityMap Map { get; private set; } = new TideUnityMap();
+        int sourceType = -1, sourceAsset = -1, sourceNode = -1; // Unity.Source in the schema, and its fields' offsets
+        readonly Dictionary<string, GameObject> prefabByGuid = new Dictionary<string, GameObject>();
+        int makingRow = -1;
 
         void OnEnable()
         {
@@ -120,7 +140,11 @@ namespace Tide
                     argv = argv,
                     gameName = Str(Application.productName),
                     relay = string.IsNullOrEmpty(relay) ? IntPtr.Zero : Str(relay),
-                    libraryDir = Str(TideLibrary.BuildFolder),
+                    // A player's game is linked in by hand; the editor's embed loads each build tide makes
+                    game = library.Game,
+                    pack = library.Pack,
+                    packSize = (UIntPtr)library.PackSize,
+                    libraryDir = library.Game != IntPtr.Zero ? IntPtr.Zero : Str(TideLibrary.BuildFolder),
                 };
                 return library.create(&desc);
             }
@@ -137,6 +161,51 @@ namespace Tide
             var bytes = library.schema(embed, &size);
             Schema = bytes == null || size == 0 ? null : TideSchema.Parse(Encoding.UTF8.GetString(bytes, (int)size));
             schemaWarned = false;
+            LoadMap();
+        }
+
+        void LoadMap()
+        {
+            Map = TideUnityMap.Load(TideLibrary.BuildFolder);
+            sourceType = Schema?.TypeIndex("Unity.Source") ?? -1;
+            var t = sourceType >= 0 ? Schema.Type(sourceType) : null;
+            sourceAsset = (int?)t?.Field("asset")?.offset ?? -1;
+            sourceNode = (int?)t?.Field("node")?.offset ?? -1;
+            if (sourceAsset < 0 || sourceNode < 0) sourceType = -1;
+        }
+
+        // The Unity prefab of `guid`: the scene's link to it, or in the editor, the asset itself.
+        GameObject PrefabOf(string guid)
+        {
+            if (prefabByGuid.TryGetValue(guid, out var found) && found != null) return found;
+            found = null;
+            foreach (var link in prefabs)
+            {
+                if (link != null && link.guid == guid) found = link.prefab;
+            }
+#if UNITY_EDITOR
+            if (found == null)
+            {
+                var path = UnityEditor.AssetDatabase.GUIDToAssetPath(guid);
+                if (!string.IsNullOrEmpty(path)) found = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            }
+#endif
+            prefabByGuid[guid] = found;
+            return found;
+        }
+
+        // The packet entity's Unity.Source, if it has one.
+        bool SourceOf(int row, out int asset, out int node)
+        {
+            asset = node = -1;
+            if (sourceType < 0) return false;
+            var r = RowOf(sourceType, row);
+            if (r < 0) return false;
+            var value = Packet.Row((uint)sourceType, r, out _);
+            if (value == null) return false;
+            asset = *(int*)(value + sourceAsset);
+            node = *(int*)(value + sourceNode);
+            return true;
         }
 
         void OnDisable()
@@ -183,6 +252,7 @@ namespace Tide
                 Show(false);
                 return;
             }
+            if ((frames & 63) == 0 && Map.Stale(TideLibrary.BuildFolder)) LoadMap(); // The prefabs and scenes were built again
             Show(true);
         }
 
@@ -205,25 +275,8 @@ namespace Tide
             }
             var count = read ? Packet.EntityCount : 0;
             if (byRow.Length < count) byRow = new TideEntityView[Math.Max(count, byRow.Length * 2)];
-            for (var i = 0; i < count; i++)
-            {
-                var entity = Packet.Entity(i);
-                byRow[i] = null;
-                if (!shown.TryGetValue(entity.Id, out var view))
-                {
-                    var prefab = RuleFor(entity, i);
-                    if (prefab == null) continue;
-                    var made = Instantiate(prefab);
-                    made.name = $"{prefab.name} ({entity.Index})";
-                    view = made.GetComponent<TideEntityView>() ?? made.AddComponent<TideEntityView>();
-                    view.Runner = this;
-                    shown[entity.Id] = view;
-                }
-                view.Entity = entity;
-                view.Row = i;
-                view.Seen = true;
-                byRow[i] = view;
-            }
+            for (var i = 0; i < count; i++) byRow[i] = null;
+            for (var i = 0; i < count; i++) ViewOf(i);
             gone.Clear();
             foreach (var pair in shown)
             {
@@ -231,13 +284,95 @@ namespace Tide
             }
             foreach (var id in gone)
             {
-                if (shown[id] != null) Destroy(shown[id].gameObject);
+                var view = shown[id];
                 shown.Remove(id);
+                if (view == null) continue; // Its instance went with its root's entity
+                if (view.Authored) view.gameObject.SetActive(false); // A scene's, or in an instance: hidden till it's back
+                else Destroy(view.gameObject);
             }
             for (var i = 0; i < count; i++)
             {
                 if (byRow[i] != null) Place(byRow[i], i);
             }
+        }
+
+        // The view of the packet's entity `row`, made or found the first time it's seen: by its Unity.Source if it
+        // has one, else by the view rules.
+        TideEntityView ViewOf(int row)
+        {
+            if (byRow[row] != null) return byRow[row];
+            var entity = Packet.Entity(row);
+            if (!shown.TryGetValue(entity.Id, out var view) || view == null)
+            {
+                if (makingRow == row) return null; // Its parents loop back to it
+                var outer = makingRow;
+                makingRow = row;
+                view = Make(entity, row);
+                makingRow = outer;
+                if (view == null) return null;
+                view.Runner = this;
+                shown[entity.Id] = view;
+            }
+            view.Entity = entity;
+            view.Row = row;
+            view.Seen = true;
+            byRow[row] = view;
+            return view;
+        }
+
+        TideEntityView Make(TideEntityRow entity, int row)
+        {
+            if (!SourceOf(row, out var asset, out var node))
+            {
+                var prefab = RuleFor(entity, row);
+                if (prefab == null) return null;
+                var made = Instantiate(prefab);
+                made.name = $"{prefab.name} ({entity.Index})";
+                return made.GetComponent<TideEntityView>() ?? made.AddComponent<TideEntityView>();
+            }
+            var a = Map.Of(asset);
+            var path = a != null && (uint)node < (uint)a.nodes.Length ? a.nodes[node] : null;
+            if (path == null) return null; // A build the map isn't of yet
+            Transform found;
+            if (a.scene)
+            {
+                // A scene's own GameObject, where the scene is open
+                found = TideUnityMap.FindInScene(UnityEngine.SceneManagement.SceneManager.GetSceneByPath(a.path), path);
+            }
+            else if (node == 0)
+            {
+                // A prefab's root entity: an instance of it, with the GameObjects its other entities show through
+                var prefab = PrefabOf(a.guid);
+                if (prefab == null)
+                {
+                    Debug.LogWarning($"Tide: an entity of {a.path} came, which this build can't find: the scene links the prefabs the game spawns as it builds.", this);
+                    return null;
+                }
+                var made = Instantiate(prefab);
+                made.name = $"{prefab.name} ({entity.Index})";
+                var root = made.GetComponent<TideEntityView>() ?? made.AddComponent<TideEntityView>();
+                root.Authored = false;
+                return root;
+            }
+            else
+            {
+                // Inside an instance of its prefab: the one made for the entity of its prefab's root above it
+                found = null;
+                for (var at = entity; at.HasParent && at.Parent < (uint)Packet.EntityCount;)
+                {
+                    var up = (int)at.Parent;
+                    at = Packet.Entity(up);
+                    if (!SourceOf(up, out var upAsset, out var upNode) || upAsset != asset || upNode != 0) continue;
+                    var instance = ViewOf(up);
+                    found = instance != null ? TideUnityMap.Find(instance.transform, path) : null;
+                    break;
+                }
+            }
+            if (found == null) return null;
+            var view = found.GetComponent<TideEntityView>() ?? found.gameObject.AddComponent<TideEntityView>();
+            view.Authored = true;
+            if (!found.gameObject.activeSelf) found.gameObject.SetActive(true);
+            return view;
         }
 
         GameObject RuleFor(TideEntityRow entity, int row)
@@ -254,12 +389,17 @@ namespace Tide
         }
 
         // Tide's Transform, where the entity has one: its local placement under its parent's GameObject.
+        // A GameObject of Unity's scene or prefab instance stays where it is in Unity's hierarchy: its placement is
+        // Tide's under its parent entity's, through the GameObjects between them. Its parent is placed first.
         void Place(TideEntityView view, int row)
         {
+            if (view.PlacedAt == frames) return;
+            view.PlacedAt = frames;
             var entity = view.Entity;
             var parent = entity.HasParent && entity.Parent < (uint)Packet.EntityCount ? byRow[entity.Parent] : null;
+            if (parent != null) Place(parent, (int)entity.Parent);
             var under = parent != null ? parent.transform : null;
-            if (view.transform.parent != under) view.transform.SetParent(under, false);
+            if (!view.Authored && view.transform.parent != under) view.transform.SetParent(under, false);
             var type = Schema.TypeIndex("Transform");
             if (type < 0) return;
             var r = RowOf(type, row);
@@ -274,9 +414,31 @@ namespace Tide
             var q = (float*)(value + rotation.offset);
             var s = (float*)(value + scale.offset);
             // Tide is left-handed, y up, z forward, as Unity: the same numbers
-            view.transform.localPosition = new Vector3(p[0], p[1], p[2]);
-            view.transform.localRotation = new Quaternion(q[0], q[1], q[2], q[3]);
-            view.transform.localScale = new Vector3(s[0], s[1], s[2]);
+            var at = new Vector3(p[0], p[1], p[2]);
+            var turn = new Quaternion(q[0], q[1], q[2], q[3]);
+            var size = new Vector3(s[0], s[1], s[2]);
+            var moved = view.transform;
+            if (moved.parent == under)
+            {
+                moved.localPosition = at;
+                moved.localRotation = turn;
+                moved.localScale = size;
+                return;
+            }
+            if (under != null)
+            {
+                at = under.TransformPoint(at);
+                turn = under.rotation * turn;
+                size = Vector3.Scale(size, under.lossyScale);
+            }
+            moved.SetPositionAndRotation(at, turn);
+            var between = moved.parent != null ? moved.parent.lossyScale : Vector3.one;
+            moved.localScale = new Vector3(Divide(size.x, between.x), Divide(size.y, between.y), Divide(size.z, between.z));
+        }
+
+        static float Divide(float a, float b)
+        {
+            return b != 0f ? a / b : a;
         }
 
         // The row of the packet's entity `entity` in type `type`'s section this frame, or -1.
