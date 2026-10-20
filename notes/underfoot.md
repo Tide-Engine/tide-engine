@@ -237,6 +237,14 @@ stars leave the top of the screen still. The harness (process, DevTools pipe,
 frame control) is Inside Out's three helper files, imported from
 `prototypes/inside-out/test/`; removing that prototype means moving them.
 
+The pages run with `Tide.backgroundPipelines = false` so every frame they step
+draws its new shaders (2026-10-20, `notes/rendering.md`). Open flake:
+`underfoot_play_webgpu` failed twice under full web-suite load at "Enter opens
+the next puzzle ... for both players". The guest's crop differed from the
+host's, once with synchronous pipelines too. It passed alone and 3/3 with both
+backends in parallel. `advanceMatch` likely lets one screen show the new puzzle
+a frame before the other; the cause is unconfirmed.
+
 ## What was learned about the engine
 
 Three things got in the way, each worked round in the game:

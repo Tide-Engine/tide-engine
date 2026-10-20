@@ -771,6 +771,9 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
         id = fallback;
     }
     tide_platform_name_game(id); // Its folders: the renderer's cache too, whether the game uses files or not
+    // A game's frames don't wait for a GPU pipeline to be made: what's drawn with one shows once it's made. Not in
+    // a run with no window, whose frames are read back and go the same every time
+    tide_platform_background_pipelines(!tide_run_headless);
     if (!game->set_io) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;

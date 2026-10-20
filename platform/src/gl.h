@@ -117,6 +117,9 @@ enum {
     GL_VERTEX_SHADER = 0x8B31,
     GL_COMPILE_STATUS = 0x8B81,
     GL_LINK_STATUS = 0x8B82,
+    // KHR_parallel_shader_compile's, which the page enables where the browser has it (tide.js): whether a program's
+    // compiling and linking is done, asked without waiting for it, where asking for its status waits
+    GL_COMPLETION_STATUS_KHR = 0x91B1,
     GL_READ_FRAMEBUFFER = 0x8CA8,
     GL_DRAW_FRAMEBUFFER = 0x8CA9,
     GL_FRAMEBUFFER_COMPLETE = 0x8CD5,

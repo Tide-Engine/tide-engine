@@ -141,6 +141,8 @@ tide_platform_draw(&draw);
 tide_session_mark_presented(session); // Records the tick and blend fraction the views drew
 ```
 
+A shader's GPU pipeline is made the first time something draws with it. `tide_platform_background_pipelines(true)` lets a backend that can make it in the background do so (WebGPU's, and WebGL's where the browser compiles shaders in parallel): the frame doesn't wait, and what draws with it shows once it's made, a frame or a few later. The standard host turns it on, except in a run with no window, whose frames are read back; a host of its own leaves it off unless it asks.
+
 Asking for the cursor's lock isn't having it: the system decides, and `tide_platform_poll` says whether the window holds the cursor, as `devices.mouse.locked`, which `Cursor.locked` reads. A host that fills the devices itself sets it.
 
 The measure function a host gives the GUI takes the weight text is in, as the file of it: `tide_platform_measure_text(text, size, target, font)`, with `TIDE_FONT_REGULAR` or `TIDE_FONT_BOLD` (see [Text](../game/views.md#text)). The bold weight's file, `tide_font_bold_ttf`, is in the platform layer's library, in an object nothing there names, so a program only carries it when its code names it: the C of a game that says `Font.Bold` does. A host that runs such a game with no platform layer, like a server or a test, still has to link: with the platform layer's library, which gives it that one object, or by defining the array itself, as nothing draws with it there:

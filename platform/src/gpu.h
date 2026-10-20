@@ -345,6 +345,15 @@ typedef struct tide_gpu {
 
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
+    // Optional, for a backend that can make pipelines in the background
+    // (WebGPU's, and WebGL's where the browser compiles in parallel): while
+    // `background` is on, `pipeline` begins one and returns at once, and
+    // `pipeline_ready` says once it's made. Till then nothing is drawn with
+    // it: the renderer leaves its steps out (tide_platform_background_pipelines).
+    // Off, as a backend starts, `pipeline` makes one before it returns. NULL
+    // for a backend that only makes them so.
+    void (*background)(bool on);
+    bool (*pipeline_ready)(tide_gpu_id pipeline);
 
     // Pixels of its own to draw into, with depth and stencil: the color
     // images `format` says, in order, rows from the top. Each color image is

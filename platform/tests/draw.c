@@ -365,11 +365,11 @@ static void resident_pack_textures(void)
         {.bytes = 6, .age = 2, .place = 2}, {.bytes = 2, .age = 3, .place = 3},
         {.bytes = UINT64_MAX, .age = 1, .place = 4}, {.bytes = 1, .age = 61, .place = 5},
     };
-    tide_texture_idle_trim(policy, 6, 10, 3);
+    tide_texture_idle_trim(policy, 6, 10, 3, 60);
     uint32_t selected = 0;
     for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
     expect(selected == ((1u << 1) | (1u << 2)), "idle texture pressure prefers recent images, bounds bytes and expires old ones");
-    tide_texture_idle_trim(policy, 6, UINT64_MAX, 1);
+    tide_texture_idle_trim(policy, 6, UINT64_MAX, 1, 60);
     selected = 0;
     for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
     expect(selected == (1u << 1), "idle texture slot pressure has a stable tie order and safe byte arithmetic");
@@ -404,6 +404,9 @@ static void resident_pack_textures(void)
     tide_platform_read_pixels(&list, &point, 1, &got);
     const uint64_t base_memory = tide_platform_gpu_memory();
     uint64_t resident_memory = 0;
+    // (an unused image kept 60 lists here, where a game's is kept far longer: TIDE_TEXTURE_IDLE_FRAMES)
+    const uint32_t idle_frames = tide_texture_idle_frames;
+    tide_texture_idle_frames = 60;
     for (uint32_t frame = 0; frame < 66; frame++) {
         tide_draw_reset(&list);
         tide_draw_set_screen(&list);
@@ -420,6 +423,7 @@ static void resident_pack_textures(void)
             expect(tide_platform_gpu_memory() == resident_memory, "a hidden pack image keeps its base and mip allocation");
         if (frame == 63) expect(tide_platform_gpu_memory() == base_memory, "an expired pack image releases its entire allocation");
     }
+    tide_texture_idle_frames = idle_frames;
     tide_pack_unload(); // Cached GPU ids contain no pointer into the unloaded pack.
     tide_draw_forget(&list);
     tide_draw_reset(&list);
@@ -4015,6 +4019,49 @@ static uint32_t lost_epoch; // The device's before Vulkan's was lost on purpose
 #endif
 static const char *dump_path;
 
+// Pipelines made in the background (tide_platform_background_pipelines), across frames, as a game's are: the shaders'
+// pipelines let go of (the list forgot them, and a frame drew without them), then drawn again with background on.
+// On WebGPU the first frame can't have made them (that takes the page's turn), so it leaves the shaded draws out, and
+// the rest draw; on every backend they show, drawn right, within BACKGROUND_FRAMES. A backend that makes them as
+// they're asked for draws them in the first.
+enum { BACKGROUND_FRAMES = 600 };
+
+static int background_frame(void)
+{
+    static int frames;
+    const check orange_quad = {32, 32, orange, ""};
+    if (frames == 0) {
+        tide_draw_forget(&list);
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_platform_draw(&list); // Without the shaders: their pipelines go
+        tide_platform_background_pipelines(true);
+    } else {
+        tide_float2 point = tide_f2(orange_quad.x, orange_quad.y);
+        uint32_t got = 0;
+        shaded_scene();
+        tide_platform_read_pixels(&list, &point, 1, &got);
+        const bool drawn = near(got, rgba(orange), 8);
+#ifdef __wasm__
+        if (frames == 1 && strcmp(tide_platform_renderer(), "WebGPU") == 0)
+            expect(!drawn && near(got, rgba(background), 8), "a shader's first frame with background pipelines leaves its draws out on WebGPU");
+#endif
+        if (drawn) {
+            printf("background pipelines: the shaded draws showed in frame %d\n", frames);
+            shaded_checks(); // Drawn right, every one
+            tide_platform_background_pipelines(false);
+            return 0;
+        }
+        if (frames >= BACKGROUND_FRAMES) {
+            expect(false, "background pipelines are made within the frames given them");
+            tide_platform_background_pipelines(false);
+            return 0;
+        }
+    }
+    frames++;
+    return TIDE_KEEP_RUNNING;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -4025,6 +4072,13 @@ static int frame(void *user, const float seconds)
     if (benching) return bench();
     if (frames_benching) return frames_bench();
     if (dump_path) return dump(dump_path);
+    // Once everything has checked out, the pipelines in the background, over frames of their own (background_frame)
+    static int background_state; // 1: under way; 2: done
+    if (background_state == 1) {
+        if (background_frame() == TIDE_KEEP_RUNNING) return TIDE_KEEP_RUNNING;
+        background_state = 2;
+        if (failures) return 1;
+    }
 #if defined(__wasm__) || defined(DRAW_VULKAN)
     // WebGPU's and Vulkan's devices can go away (a driver that starts over),
     // taking what the renderer made on them. Once everything checked out, the
@@ -4068,28 +4122,36 @@ static int frame(void *user, const float seconds)
         return run_checks();
     }
 #endif
-    meshes();
-    many_cached_textures();
-    resident_pack_textures();
-    compressed_pack_textures();
-    changed_textures();
-    meshes_3d();
-    primitives();
-    shaded();
-    transient_data_textures();
-    wraps();
-    mipmaps();
-    smooth_shapes();
-    themed_gui();
-    tiles_leave_no_gaps();
-    text_checks();
-    settings();
-    depth_settings();
-    cull_settings();
-    frustum_culling();
-    levels_of_detail();
-    vertex_counts();
-    const int code = run_checks();
+    // Everything, once: then the pipelines in the background (above), then a lost device's
+    int code = 0;
+    if (background_state == 0) {
+        meshes();
+        many_cached_textures();
+        resident_pack_textures();
+        compressed_pack_textures();
+        changed_textures();
+        meshes_3d();
+        primitives();
+        shaded();
+        transient_data_textures();
+        wraps();
+        mipmaps();
+        smooth_shapes();
+        themed_gui();
+        tiles_leave_no_gaps();
+        text_checks();
+        settings();
+        depth_settings();
+        cull_settings();
+        frustum_culling();
+        levels_of_detail();
+        vertex_counts();
+        code = run_checks();
+        if (code == 0) {
+            background_state = 1;
+            return TIDE_KEEP_RUNNING;
+        }
+    }
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

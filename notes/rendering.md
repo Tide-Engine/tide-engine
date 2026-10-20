@@ -1,5 +1,48 @@
 # The platform layer and the renderer
 
+## Pipelines made in the background (2026-10-20)
+
+Cause of the first-use hitch the owner saw in GRAVEWAKE on the web: each GPU
+pipeline (shader + blend/depth/cull/target key) is made on its first draw, and
+both web backends made it synchronously. WebGPU's `createRenderPipeline`
+compiled before the frame could submit. WebGL queried `COMPILE_STATUS` and
+`LINK_STATUS` straight after compiling and linking, which waits for the driver.
+A new effect's first frame therefore stalled. Separately, idle pack images expired after 60 lists,
+so a texture shown now and then (a boss's animation) was uploaded again each
+time it returned (see `notes/textures.md`).
+
+- `tide_gpu` gained optional `background(bool)` and `pipeline_ready(id)`. With
+  background on, `pipeline` starts one and returns at once; `pipeline_ready`
+  polls. NULL on backends that only make them synchronously (Vulkan, desktop GL).
+  The renderer's `pipeline_made` leaves out steps (shapes, clear, mesh, mesh 3D,
+  shaded, blit, text) whose pipeline isn't made yet. The step is simply not
+  drawn that frame; nothing waits.
+- `tide_platform_background_pipelines(bool)` (`tide/platform.h`) turns it on;
+  `gpu_ready` passes it to the backend each frame. Off by default. The standard
+  host (`tide_run_bind_io` in `host.h`) turns it on except in headless runs,
+  whose frames are read back and must draw the same every time. Custom hosts and
+  tests keep synchronous pipelines unless they ask.
+- WebGPU (`tide.js`): `createRenderPipelineAsync`, the entry's `pipeline` set
+  when it resolves on the same device. A rejection fails the page under
+  `checkGL`, otherwise prints. WebGL: `KHR_parallel_shader_compile` is enabled
+  where present; `gpu_gl.c` splits compile/link from their status checks
+  (`gl_pipeline_finish`), and on wasm `gl_pipeline_ready` polls
+  `GL_COMPLETION_STATUS_KHR` before finishing. Without the extension the
+  completion query answers true, so it finishes on the first poll as before.
+  Desktop GL keeps immediate finishing; Vulkan has its disk pipeline cache.
+- Test: `platform/tests/draw.c` adds a background phase after all other checks.
+  It forgets the list, draws a frame without the shaders (their pipelines go),
+  turns background on and draws `shaded_scene()` each frame until (32,32) is
+  orange, then runs `shaded_checks()` on it (600-frame limit). On WebGPU frame 1
+  must leave the draws out. Measured on this machine: native Vulkan/GL and
+  WebGL draw it in frame 1 (WebGL's compile finished before the poll); WebGPU
+  leaves frame 1 out and draws it in frame 3. The rgba-fallback page variants
+  pass too.
+- Pages that step frames and compare screenshots turn it off with
+  `Tide.backgroundPipelines = false` (see `notes/web.md`).
+- Gap: on the web, a shader's first appearance is one or a few frames late
+  rather than hitching; nothing prewarms pipelines before they are drawn.
+
 ## Window scale getter (2026-10-20)
 
 `tide_platform_screen_scale()` exposes the existing `window_scale()` float2,
