@@ -22,6 +22,7 @@ typedef struct codegen_options {
     const char *out_dir;
     bool line_directives;    // Map generated code back to .tide lines for debuggers.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
+    bool embed;              // ...and tide_game_embed (tide/embed_game.h), for another program to run it (tide/embed.h): implies layout.
     bool strip_unused_assets; // Closed release games only: exclude assets never referenced by checked Tide code/defaults/shaders.
     bool server; // Preserve the client compatibility identity; emit server build metadata.
     bool strip_server_assets; // Explicit closed-world promise for the simulation asset closure.

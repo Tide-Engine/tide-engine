@@ -2,6 +2,10 @@
 // host's loop (tide/host.h), called once a frame, with what that program's
 // window read standing in for a window of Tide's own (embedded.h).
 
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__wasm__)
+#define _DEFAULT_SOURCE // dlopen and readdir under strict C
+#endif
+
 #include "tide/embed.h"
 
 #include <stdlib.h>
@@ -11,8 +15,18 @@
 #include <TargetConditionals.h>
 #endif
 
+#include "tide/embed_game.h"
 #include "tide/host.h"
+#include "tide/migrate.h"
 #include "embedded.h"
+
+#if !defined(__wasm__)
+// Loading the game's libraries as tide run's host does, on this host's state
+#include "reload_library.inc"
+#if !defined(_WIN32)
+#include <dirent.h>
+#endif
+#endif
 
 struct tide_embed {
     int unused;
@@ -20,6 +34,13 @@ struct tide_embed {
 
 static tide_embed the_embed;
 static bool running;
+#if !defined(__wasm__)
+static bool from_library; // The game is the libraries tide builds in a folder, swapped in as they come
+#endif
+static tide_packet packet;
+static char *schema;
+static uint32_t schema_size;
+static const tide_host_game *schema_of; // The build `schema` describes
 
 uint32_t tide_embed_abi(void)
 {
@@ -51,11 +72,82 @@ static void embed_options(const tide_embed_desc *desc)
     }
 }
 
+#if !defined(__wasm__)
+// The highest n of a file `<prefix><n><suffix>` in `dir`, or 0 for none.
+static uint32_t newest(const char *dir, const char *prefix, const char *suffix)
+{
+    uint32_t most = 0;
+    const size_t prefix_size = strlen(prefix), suffix_size = strlen(suffix);
+#ifdef _WIN32
+    char pattern[4096];
+    snprintf(pattern, sizeof pattern, "%s/%s*", dir, prefix);
+    WIN32_FIND_DATAA found;
+    const HANDLE find = FindFirstFileA(pattern, &found);
+    if (find == INVALID_HANDLE_VALUE) return 0;
+    do {
+        const char *name = found.cFileName;
+#else
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    for (const struct dirent *entry; (entry = readdir(d)) != NULL;) {
+        const char *name = entry->d_name;
+#endif
+        const size_t size = strlen(name);
+        if (size <= prefix_size + suffix_size || strncmp(name, prefix, prefix_size) != 0
+            || strcmp(name + size - suffix_size, suffix) != 0) continue;
+        uint64_t n = 0;
+        size_t i = prefix_size;
+        for (; i < size - suffix_size && name[i] >= '0' && name[i] <= '9' && n <= UINT32_MAX; i++) n = n * 10u + (uint64_t)(name[i] - '0');
+        if (i == size - suffix_size && n > most && n <= UINT32_MAX) most = (uint32_t)n;
+#ifdef _WIN32
+    } while (FindNextFileA(find, &found));
+    FindClose(find);
+#else
+    }
+    closedir(d);
+#endif
+    return most;
+}
+
+// The newest build tide made in `dir`, as reload.c loads one, with its pack: NULL after saying why.
+static const tide_host_game *open_library(const char *dir)
+{
+    const uint32_t build = newest(dir, "game-", LIBRARY_SUFFIX);
+    if (!build) {
+        fprintf(stderr, "tide: no build of the game in %s yet: tide unity makes them\n", dir);
+        return NULL;
+    }
+    const size_t size = strlen(dir) + 1;
+    char *kept = tide_alloc(size);
+    memcpy(kept, dir, size);
+    reload.dir = kept;
+    reload.running = reload.loaded = build;
+    const tide_host_game *game = load(build, &reload.library, true);
+    if (!game) return NULL;
+    const uint32_t pack = newest(dir, "pack-", "");
+    reload.pack = pack ? pack - 1u : 0u; // check_pack loads the newest from here on
+    return game;
+}
+#endif
+
 tide_embed *tide_embed_create(const tide_embed_desc *desc)
 {
-    if (running || !desc || !desc->game) return NULL;
+    if (running || !desc || (!desc->game && !desc->library_dir)) return NULL;
+    const tide_host_game *game = desc->game;
+#if !defined(__wasm__)
+    from_library = false;
+    tide_run_embedded = true; // Before loading: a library that won't load leaves the program going
+    if (!game) {
+        game = open_library(desc->library_dir);
+        from_library = game != NULL;
+    }
+#endif
+    if (!game) {
+        tide_run_embedded = false;
+        return NULL;
+    }
     running = true;
-    tide_run_game = desc->game;
+    tide_run_game = game;
     tide_run_embedded = true;
     tide_platform_set_relay(desc->relay);
     tide_platform_embed_frame(NULL, tide_f2(960.0f, 540.0f), 1.0f); // A screen until the first frame says one
@@ -69,6 +161,9 @@ tide_embed *tide_embed_create(const tide_embed_desc *desc)
         memcpy(pack, desc->pack, desc->pack_size);
         tide_run_assets_from(pack, desc->pack_size);
     }
+#if !defined(__wasm__)
+    if (from_library) check_pack(); // The pack tide wrote with the build, where the game has assets
+#endif
     tide_run_begin();
     return &the_embed;
 }
@@ -76,30 +171,91 @@ tide_embed *tide_embed_create(const tide_embed_desc *desc)
 void tide_embed_destroy(tide_embed *e)
 {
     if (e != &the_embed || !running) return;
-    tide_run_end();
-    if (tide_run_game->unload) tide_run_game->unload();
+    if (tide_run_game) {
+        tide_run_end();
+        if (tide_run_game->unload) tide_run_game->unload();
+    }
+#if !defined(__wasm__)
+    if (from_library && reload.library) {
+        library_close(reload.library);
+        char path[4096];
+        loaded_path(reload.loaded, path, sizeof path);
+        remove(path);
+    }
+    if (from_library) {
+        free((char *)(uintptr_t)reload.dir);
+        memset(&reload, 0, sizeof reload);
+    }
+#endif
     free(tide_run_pack);
     tide_run_pack = NULL;
     tide_run_pack_size = 0;
+    tide_run_game = NULL;
+    tide_packet_free(&packet);
+    free(schema);
+    schema = NULL;
+    schema_of = NULL;
     tide_platform_set_relay(NULL);
     tide_run_embedded = false;
     running = false;
+}
+
+// The frame's view packet, from the worlds the frame's views drew.
+static void write_view(void)
+{
+    const tide_embed_game *embed = tide_run_game ? tide_run_game->embed : NULL;
+    if (!embed || !embed->view) {
+        tide_packet_begin(&packet);
+        tide_packet_end(&packet, tide_run_game ? tide_run_game->game->hash : 0, false, 0, 0, 1.0f, 0);
+        return;
+    }
+    const tide_view_worlds view = tide_session_view(tide_run_session);
+    const tide_session_status status = tide_session_status_of(tide_run_session);
+    embed->view(view.current, view.previous, view.alpha, tide_run_local, status.client.verified_tick, &packet);
 }
 
 double tide_embed_frame(tide_embed *e, const float seconds, const tide_embed_input *input, const float width, const float height,
                         const float scale)
 {
     if (e != &the_embed || !running) return 0.0;
-    tide_platform_embed_frame(input, tide_f2(width, height), scale);
     // The session's clock is the frames' sum: a length that's none (NaN too) adds nothing
-    tide_run_frame(NULL, seconds >= 0.0f && seconds <= 3600.0f ? seconds : 0.0f);
+    const float dt = seconds >= 0.0f && seconds <= 3600.0f ? seconds : 0.0f;
+#if !defined(__wasm__)
+    if (from_library) { // A new build, as tide run's host takes one: between two frames
+        reload.since_check += dt;
+        if (reload.since_check >= 0.1f) {
+            reload.since_check = 0.0f;
+            check();
+        }
+        if (reload.restart_requested && tide_run_game) {
+            check();
+            restart();
+            reload.restart_requested = false;
+        }
+    }
+#endif
+    if (!tide_run_game) return 0.0; // A build that didn't load after a restart: it said why
+    tide_platform_embed_frame(input, tide_f2(width, height), scale);
+    tide_run_frame(NULL, dt);
+#if !defined(__wasm__)
+    if (from_library) rejoin(dt);
+#endif
+    write_view();
     return tide_session_until_tick(tide_run_session);
+}
+
+const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size)
+{
+    if (size) *size = 0;
+    if (e != &the_embed || !running || !packet.size) return NULL;
+    if (size) *size = packet.size;
+    return packet.bytes;
 }
 
 void tide_embed_status_of(const tide_embed *e, tide_embed_status *out)
 {
     *out = (tide_embed_status){0};
-    if (e != &the_embed || !running) return;
+    if (e != &the_embed || !running || !tide_run_session) return;
     const tide_session_status s = tide_session_status_of(tide_run_session);
     const tide_client_status *c = &s.client;
     *out = (tide_embed_status){
@@ -126,11 +282,16 @@ void tide_embed_status_of(const tide_embed *e, tide_embed_status *out)
 
 bool tide_embed_request(tide_embed *e, const tide_session_request_kind kind, const char *text, const uint32_t port)
 {
-    if (e != &the_embed || !running) return false;
+    if (e != &the_embed || !running || !tide_run_game) return false;
     tide_session_request request = {.kind = kind, .port = port};
     switch (kind) {
-    case TIDE_REQUEST_START:
-        if (text) return false; // Main's match: a scene by its name comes with the game's schema
+    case TIDE_REQUEST_START: // Main's match, or a scene by its name
+        if (text) {
+            const tide_embed_game *embed = tide_run_game->embed;
+            if (!embed || !embed->start || !embed->start(tide_run_start, text)) return false;
+            tide_run_request(&request, tide_run_start);
+            return true;
+        }
         break;
     case TIDE_REQUEST_JOIN:
     case TIDE_REQUEST_CONNECT:
@@ -150,10 +311,42 @@ bool tide_embed_request(tide_embed *e, const tide_session_request_kind kind, con
     return true;
 }
 
+bool tide_embed_command(tide_embed *e, const uint32_t type, const uint32_t target_index, const uint32_t target_generation,
+                        const void *value, const uint32_t size)
+{
+    if (e != &the_embed || !running || !tide_run_game || !value || type > INT32_MAX) return false;
+    const tide_embed_game *embed = tide_run_game->embed;
+    return embed && embed->command
+        && embed->command(tide_run_local, (int32_t)type, target_index, target_generation, value, size);
+}
+
 void tide_embed_background(tide_embed *e, const bool background)
 {
-    if (e != &the_embed || !running || !background) return;
+    if (e != &the_embed || !running || !background || !tide_run_game) return;
 #if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
     tide_run_request(&(tide_session_request){.kind = TIDE_REQUEST_LEAVE}, NULL);
 #endif
+}
+
+static void make_schema(void)
+{
+    const tide_host_game *game = tide_run_game;
+    free(schema);
+    schema = NULL;
+    schema_size = 0;
+    schema_of = game;
+    if (!game || !game->embed || !game->embed->schema) return;
+    const uint32_t size = game->embed->schema(NULL, 0);
+    if (!size) return;
+    schema = tide_alloc((size_t)size + 1u);
+    schema_size = game->embed->schema(schema, size + 1u);
+}
+
+const char *tide_embed_schema(const tide_embed *e, uint32_t *size)
+{
+    if (size) *size = 0;
+    if (e != &the_embed || !running || !tide_run_game) return NULL;
+    if (schema_of != tide_run_game) make_schema(); // A new build came in
+    if (size) *size = schema_size;
+    return schema;
 }

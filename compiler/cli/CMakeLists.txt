@@ -15,7 +15,7 @@ if(WIN32)
     target_link_libraries(tide_cli PRIVATE ws2_32 crypt32) # Web serving and user-bound encrypted hosting credentials.
 else()
     find_package(Threads REQUIRED)
-    target_link_libraries(tide_cli PRIVATE Threads::Threads) # Reads the terminal while a game runs
+    target_link_libraries(tide_cli PRIVATE Threads::Threads ${CMAKE_DL_LIBS}) # Reads the terminal while a game runs; loads Unity builds' schemas
 endif()
 install(TARGETS tide_cli RUNTIME DESTINATION bin COMPONENT tide)
 
@@ -29,7 +29,7 @@ add_executable(tide_cli_tests tests/release_test.c tests/install_test.c tests/li
 target_include_directories(tide_cli_tests PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/platform/src/rtc")
 target_link_libraries(tide_cli_tests PRIVATE tide tidec_core)
 if(NOT WIN32)
-    target_link_libraries(tide_cli_tests PRIVATE Threads::Threads)
+    target_link_libraries(tide_cli_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 add_test(NAME tide_cli_tests COMMAND tide_cli_tests)
 
@@ -40,7 +40,7 @@ add_executable(tide_cli_run_exit_tests tests/run_exit_test.c help.c sys.c)
 target_include_directories(tide_cli_run_exit_tests PRIVATE . ../lsp)
 target_link_libraries(tide_cli_run_exit_tests PRIVATE tidec_core)
 if(NOT WIN32)
-    target_link_libraries(tide_cli_run_exit_tests PRIVATE Threads::Threads)
+    target_link_libraries(tide_cli_run_exit_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 add_test(NAME tide_cli_run_exit COMMAND tide_cli_run_exit_tests)
 

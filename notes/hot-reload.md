@@ -1,5 +1,13 @@
 # Hot reloading
 
+Library loading for another program (2026-10-20): `reload.c`'s helpers for
+carrying state over and loading, checking and swapping `game-<n>` libraries
+moved, unchanged but for one line, into `platform/src/reload_library.inc`,
+which `reload.c` and `embed.c` both include: each file including `tide/host.h`
+has its own copy of the host's state, and these helpers work on it. Under
+`tide/embed.h`, a full restart whose library won't load leaves the game stopped
+instead of exiting. `tide run`'s behavior is unchanged. `notes/standard-host.md`.
+
 ## Double matrices (2026-10-20)
 
 Double matrix fields use the existing PLAIN matrix layout category, preserving

@@ -1,6 +1,7 @@
 // Tide inside another program's frame (tide/embed.h), as that program runs
 // it: platform/tests/embed.tide, its frames' lengths and input made up here.
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -8,6 +9,7 @@
 #include "tide/embed.h"
 #include "tide/run.h"
 #include "tide_test.h"
+
 
 // What the game's view saw at the last frame (embed.tide's Show).
 static int seen_ticks = -1, seen_presses = -1;
@@ -128,5 +130,144 @@ TIDE_TEST(embed_bad_frames)
     tide_embed_frame(e, -1.0f, NULL, nan_value, -5.0f, 0.0f);
     TIDE_CHECK(seen_ticks == ticks);
     TIDE_CHECK(seen_width == 1.0f && seen_height == 1.0f);
+    tide_embed_destroy(e);
+}
+
+// The layout's type named `name`, or -1.
+static int32_t type_named(const char *name)
+{
+    for (uint32_t i = 0; i < tide_game_layout.type_count; i++) {
+        if (strcmp(tide_game_layout.types[i].name, name) == 0) return (int32_t)i;
+    }
+    return -1;
+}
+
+static uint32_t u32_at(const uint8_t *p, const uint32_t at)
+{
+    uint32_t v;
+    memcpy(&v, p + at, sizeof v);
+    return v;
+}
+
+// The packet's section of `kind` for `type`: its count, its rows (or NULL) and values, as another language finds them.
+static const uint8_t *section(const uint8_t *p, const uint32_t size, const uint32_t kind, const int32_t type, uint32_t *count,
+                              const uint8_t **rows)
+{
+    const uint32_t entities = u32_at(p, 36), sections = u32_at(p, 40);
+    uint32_t at = TIDE_PACKET_HEADER + entities * TIDE_PACKET_ENTITY;
+    for (uint32_t s = 0; s < sections; s++) {
+        at = (at + 7u) & ~7u;
+        if (at + TIDE_PACKET_SECTION > size) return NULL;
+        const uint32_t k = u32_at(p, at), t = u32_at(p, at + 4), n = u32_at(p, at + 8), bytes = u32_at(p, at + 16);
+        const uint8_t *data = p + at + TIDE_PACKET_SECTION;
+        if (k == kind && (int32_t)t == type) {
+            *count = n;
+            const bool has_rows = kind == TIDE_PACKET_COMPONENT || kind == TIDE_PACKET_COMPONENT_LOCAL;
+            if (rows) *rows = has_rows ? data : NULL;
+            return has_rows ? data + ((n * 4u + 7u) & ~7u) : data;
+        }
+        at += TIDE_PACKET_SECTION + bytes;
+    }
+    return NULL;
+}
+
+// The text or list a packet's handle names, in its STRINGS.
+static const uint8_t *strings_entry(const uint8_t *p, const uint32_t size, const uint32_t handle, uint32_t *length)
+{
+    uint32_t count = 0;
+    const uint8_t *entries = section(p, size, TIDE_PACKET_STRINGS, 0, &count, NULL);
+    if (!entries || handle == 0 || handle > count) return NULL;
+    *length = u32_at(entries, (handle - 1u) * 8u + 4u);
+    return entries + count * 8u + u32_at(entries, (handle - 1u) * 8u);
+}
+
+// The frame's view packet holds the entity, its components blended as views see them, text and lists, and singletons.
+TIDE_TEST(embed_view_packet)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 30, NULL);
+    uint32_t size = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    TIDE_CHECK(p != NULL && size >= TIDE_PACKET_HEADER);
+    TIDE_CHECK(u32_at(p, 0) == TIDE_PACKET_MAGIC && u32_at(p, 4) == TIDE_PACKET_VERSION && u32_at(p, 16) == size);
+    uint64_t hash;
+    memcpy(&hash, p + 8, sizeof hash);
+    TIDE_CHECK(hash == tide_game_api.hash);
+    TIDE_CHECK(u32_at(p, 20) == 1u); // In a match
+    TIDE_CHECK(u32_at(p, 36) == 2u); // Two entities: Main's scene, and this machine's player's counter
+    uint32_t count = 0;
+    const uint8_t *rows = NULL;
+    const uint8_t *values = section(p, size, TIDE_PACKET_COMPONENT, type_named("Counter"), &count, &rows);
+    TIDE_CHECK(values != NULL && count == 1u && u32_at(rows, 0) < 2u);
+    const uint32_t entity = TIDE_PACKET_HEADER + u32_at(rows, 0) * TIDE_PACKET_ENTITY;
+    TIDE_CHECK(u32_at(p, entity + 8) == 3u); // Owned, and by this machine's player
+    TIDE_CHECK(u32_at(p, entity + 16) == TIDE_PACKET_NONE); // A root
+    Counter counter;
+    memcpy(&counter, values, sizeof counter);
+    TIDE_CHECK(counter.ticks == seen_ticks);
+    uint32_t length = 0;
+    const uint8_t *label = strings_entry(p, size, counter.label.at, &length);
+    TIDE_CHECK(label && length == 7u && memcmp(label, "counted", 7) == 0);
+    const uint8_t *marks = strings_entry(p, size, counter.marks.at, &length);
+    int32_t mark[3];
+    TIDE_CHECK(marks && length == sizeof mark);
+    memcpy(mark, marks, sizeof mark);
+    TIDE_CHECK(mark[0] == 4 && mark[1] == 5 && mark[2] == 6);
+    const uint8_t *tally = section(p, size, TIDE_PACKET_SINGLETON, type_named("Tally"), &count, NULL);
+    TIDE_CHECK(tally != NULL && count == 1u);
+    float level;
+    memcpy(&level, tally + offsetof(Tally, level), sizeof level);
+    TIDE_CHECK(level > 0.3f && level < 0.6f); // About half a second of ticks, blended between the last two
+    tide_embed_destroy(e);
+}
+
+// The schema names the packet's types, what they are, and the game's commands and scenes.
+TIDE_TEST(embed_schema)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    uint32_t size = 0;
+    const char *schema = tide_embed_schema(e, &size);
+    TIDE_CHECK(schema != NULL && size == strlen(schema));
+    char counter[96];
+    snprintf(counter, sizeof counter, "{\"name\":\"Counter\",\"kind\":\"component\",\"size\":%u", (unsigned)sizeof(Counter));
+    TIDE_CHECK(strstr(schema, counter) != NULL);
+    TIDE_CHECK(strstr(schema, "{\"name\":\"label\",\"type\":\"string\",\"kind\":\"text\"") != NULL);
+    TIDE_CHECK(strstr(schema, "\"name\":\"marks\",\"type\":\"List<int>\",\"kind\":\"list\"") != NULL);
+    TIDE_CHECK(strstr(schema, "{\"name\":\"Tally\",\"kind\":\"singleton\"") != NULL);
+    TIDE_CHECK(strstr(schema, "{\"name\":\"Bump\",\"kind\":\"command\"") != NULL);
+    TIDE_CHECK(strstr(schema, "\"scenes\":[\"Main\",\"Arena\"]") != NULL || strstr(schema, "\"Arena\"") != NULL);
+    tide_embed_destroy(e);
+}
+
+// A command from the other program reaches its handler as local code's would; a scene starts by its name.
+TIDE_TEST(embed_commands_and_scenes)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 5, NULL);
+    const uint32_t bump = tide_game_layout.type_count; // The first type after the layout's: the game's one command
+    const Bump value = {.by = 7};
+    TIDE_CHECK(tide_embed_command(e, bump, 0, 0, &value, sizeof value));
+    TIDE_CHECK(!tide_embed_command(e, bump, 0, 0, &value, sizeof value - 1u)); // Not its size
+    TIDE_CHECK(!tide_embed_command(e, bump + 1u, 0, 0, &value, sizeof value)); // No command
+    frames(e, 10, NULL);
+    uint32_t size = 0, count = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *tally = section(p, size, TIDE_PACKET_SINGLETON, type_named("Tally"), &count, NULL);
+    TIDE_CHECK(tally != NULL);
+    int32_t bumps;
+    memcpy(&bumps, tally + offsetof(Tally, bumps), sizeof bumps);
+    TIDE_CHECK(bumps == 7);
+    TIDE_CHECK(!tide_embed_request(e, TIDE_REQUEST_START, "Nowhere", 0));
+    TIDE_CHECK(tide_embed_request(e, TIDE_REQUEST_START, "Arena", 0));
+    frames(e, 10, NULL);
+    tide_embed_status status;
+    tide_embed_status_of(e, &status);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
     tide_embed_destroy(e);
 }

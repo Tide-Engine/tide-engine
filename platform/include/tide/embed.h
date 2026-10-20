@@ -26,7 +26,7 @@ typedef struct tide_embed tide_embed;
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
-    const tide_host_game *game; // A game linked in: tide/run.h's tide_host_game_api
+    const tide_host_game *game; // A game linked in: tide/run.h's tide_host_game_api, or NULL with library_dir
     const uint8_t *pack;        // ...its pack of assets (tide_game_pack), copied, or NULL for a game with none
     size_t pack_size;
     int tick_rate;              // Ticks per second, over the game's tickRate setting; 0 for that
@@ -35,6 +35,9 @@ typedef struct tide_embed_desc {
     char **argv;
     const char *game_name;      // Its folders' name when the game sets no appId; NULL for "game"
     const char *relay;          // Another relay's address; NULL for TIDE_RELAY or the default
+    // ...or the folder tide writes the game's libraries to (game-<n>, pack-<n>: tide unity), desktop only: the newest
+    // is the game, and each newer one is swapped into the running match, as tide run's host does
+    const char *library_dir;
 } tide_embed_desc;
 
 // One finger's event this frame, as tide/devices.h's tide_touch_event takes it.
@@ -97,7 +100,8 @@ _Static_assert(sizeof(tide_embed_status) == 52 + TIDE_NETWORK_ADDRESS_BYTES + TI
                "tide_embed_status has no padding the compiler adds");
 
 // Starts the game, and the match its command line asks for or Main's, as
-// tide/run.h does. NULL when one runs already or `desc` names no game.
+// tide/run.h does. NULL when one runs already, `desc` names no game, or its
+// library_dir has no build of one that loads (it says why).
 tide_embed *tide_embed_create(const tide_embed_desc *desc);
 void tide_embed_destroy(tide_embed *e);
 
@@ -110,10 +114,30 @@ double tide_embed_frame(tide_embed *e, float seconds, const tide_embed_input *in
 
 void tide_embed_status_of(const tide_embed *e, tide_embed_status *out);
 
-// What local code's Session calls do: TIDE_REQUEST_START (Main's match: `text`
-// NULL), _JOIN (`text` a room's code), _CONNECT (`text` an address, with
+// The frame's view packet (tide/embed_game.h says its bytes): what the game's
+// views saw, blended between ticks. Valid until the next frame; NULL for a game
+// built without it (tidec --embed).
+const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
+
+// The game's schema, as JSON: its types as its C lays them out (tide/layout.h),
+// which are the packet's and the commands', with what they are, its enums,
+// commands, prefabs and scenes. Valid until a new build comes in; NULL for a game
+// built without tidec's --embed.
+const char *tide_embed_schema(const tide_embed *e, uint32_t *size);
+
+// A command from the other program, as local code's Send: `type` its type's
+// place in the schema, sent to the entity `target_index`/`target_generation`
+// (zeros for none: entity.Send against Send), `value` its bytes as the schema
+// lays them out. False for a type that's no command, a size that isn't its, or
+// one that holds text or lists, which bytes from another program can't.
+bool tide_embed_command(tide_embed *e, uint32_t type, uint32_t target_index, uint32_t target_generation, const void *value,
+                        uint32_t size);
+
+// What local code's Session calls do: TIDE_REQUEST_START (`text` a scene's
+// name in the schema, or NULL for Main's), _JOIN (`text` a room's code), _CONNECT (`text` an address, with
 // `port`), _OPEN (on `port`, and in a room), _CLOSE, _LEAVE, _END and
-// _KICK_ALL (`text` its message). False for a kind it doesn't take.
+// _KICK_ALL (`text` its message). False for a kind it doesn't take, or a scene
+// the game hasn't.
 bool tide_embed_request(tide_embed *e, tide_session_request_kind kind, const char *text, uint32_t port);
 
 // The app went to the background (true) or came back. A phone leaves its match

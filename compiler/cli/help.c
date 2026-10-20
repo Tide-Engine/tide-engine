@@ -9,8 +9,8 @@ enum {
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
     EDITORS = 1u << 12, OPEN = 1u << 13, UPGRADE = 1u << 14, VERSION = 1u << 15,
-    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18,
-    COMPILE = RUN | BUILD | SCHEDULE | SHADERS,
+    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19,
+    COMPILE = RUN | BUILD | SCHEDULE | SHADERS | UNITY,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
 };
 
@@ -33,6 +33,13 @@ static const command_help commands[] = {
      "A game includes .tide and .tprefab files, its C/C++ and libraries, and\n"
      "the packages listed in tide.packages. Work files are cached in .tide.\n\n"
      "Example: tide build --release --web", BUILD},
+    {"unity", "unity [folder] -o <path> [options]", "Build a game for Unity's Tide package",
+     "Builds the game for the Tide package in a Unity project, into the path\n"
+     "(the project's Library/Tide): the host Unity loads, then a library of the\n"
+     "game each time its files change, which the running game swaps in. It ends\n"
+     "when its input closes, as the Unity editor's package does. --once builds\n"
+     "once and ends.\n\n"
+     "Example: tide unity Assets/Tide -o Library/Tide", UNITY},
     {"deploy", "deploy [folder] [options]", "Build locally and upload to managed hosting",
      "Builds a release client and WASM server locally, then uploads them.\n"
      "Creates or reuses a folder-named project and saves its immutable ID and\n"
@@ -165,7 +172,9 @@ static const argument_help arguments[] = {
     {"--debug-views", "--debug-views", "Enable the profiler (F7)",
      "F7 shows where frame and tick time go, as with the debugViews setting.", RUN | BUILD},
     {"-o", "-o <path>", "Select the built program's output path",
-     "Overrides the default output in <folder>/build.", BUILD},
+     "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
+    {"--once", "--once", "Build once and end",
+     "unity builds the game once rather than as its files change, as a player build does.", UNITY},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
     {"--host", "--host [port]", "Open Main's match for others to join",

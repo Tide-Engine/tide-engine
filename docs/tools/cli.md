@@ -14,6 +14,7 @@ tide <command> [folder] [options]
 |---|---|
 | `tide run [folder]` | Builds the game, plays it and reloads when you save |
 | `tide build [folder]` | Builds the game into `<folder>/build`, named after the folder |
+| `tide unity [folder] -o <path>` | Builds the game for the [Tide package in a Unity project](#unity), as its files change |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
 | `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
@@ -264,6 +265,23 @@ When the game gets into a state you don't want, press **Ctrl+R** in the game, or
 `tide run --web` hot reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/`, opens it in your browser, and keeps running until you press Ctrl+C. What each hot reload did shows in the browser's console. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
+
+## Unity
+
+```sh
+tide unity Assets/Tide -o Library/Tide
+```
+
+Unity's Tide package (`unity/com.tide.unity` in Tide's repository, added to a
+project from its git URL) runs a game's simulation and networking inside the
+Unity editor: Tide simulates, predicts and rolls back, and Unity draws. The
+package starts this command itself while the editor is open, so you rarely type
+it. It builds into the path it's given: the host Unity loads, then a library of
+the game each time its files change, which the running game takes over as
+`tide run` does, and the game's schema, which the package generates its C#
+types from. It ends when its input closes, as the editor's package closes it.
+`--once` builds once and ends. Unity and other Tide builds of the same game
+play in the same matches. This is early, and its details may change.
 
 ## Dedicated servers
 

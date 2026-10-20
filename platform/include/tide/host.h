@@ -110,6 +110,9 @@ typedef struct tide_host_game {
     // (tide/network.h), which a library keeps in its own copy of the engine.
     // NULL for a table that never has one: its matches are in Tide's rooms.
     const tide_network *(*network)(void);
+    // What another program needs to run the game (tide/embed.h): its view
+    // packet, commands and scenes by name; NULL for a game built without it.
+    const struct tide_embed_game *embed;
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.

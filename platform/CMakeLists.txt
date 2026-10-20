@@ -243,7 +243,7 @@ add_test(NAME tide_platform_jobs COMMAND tide_platform_jobs)
 set_tests_properties(tide_platform_jobs PROPERTIES TIMEOUT 120)
 
 # Tide inside another program's frame (tide/embed.h): no window, GPU or audio device.
-tide_add_game(tide_platform_embed SOURCES tests/embed.tide NAME game
+tide_add_game(tide_platform_embed SOURCES tests/embed.tide NAME game EMBED
     HOST tests/embed.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_embed PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_platform_embed PRIVATE tide_platform)

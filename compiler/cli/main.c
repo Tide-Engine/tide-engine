@@ -166,9 +166,11 @@ int main(const int argc, char **argv)
         return tide_hosting_command(root, argc, argv);
     const bool run = strcmp(command, "run") == 0;
     const bool build = strcmp(command, "build") == 0;
+    const bool unity = strcmp(command, "unity") == 0;
     const bool shaders = strcmp(command, "shaders") == 0;
     const bool schedule = strcmp(command, "schedule") == 0 || shaders;
-    if (!run && !build && !schedule) {
+    bool once = false; // unity --once
+    if (!run && !build && !unity && !schedule) {
         fprintf(stderr, "tide: unknown command '%s'\n", command);
         fprintf(stderr, "  = note: see `tide help` for commands\n");
         return 2;
@@ -300,7 +302,8 @@ int main(const int argc, char **argv)
             }
             defines[opts.define_count++] = name;
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
-        else if (strcmp(a, "-o") == 0 && i + 1 < argc && build) opts.output = argv[++i];
+        else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
+        else if (unity && strcmp(a, "--once") == 0) once = true;
         else if (a[0] != '-') opts.folder = a;
         else {
             fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
@@ -313,7 +316,14 @@ int main(const int argc, char **argv)
     // starts as one line.
     opts.stats_open = run && opts.stats;
     // Interactive runs reload as files change. Runs with no window end once.
-    opts.watch = run && !headless && !opts.server;
+    opts.watch = (run && !headless && !opts.server) || (unity && !once);
+    opts.unity = unity;
+    if (unity && (!opts.output || opts.web || opts.android || opts.server)) {
+        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine: not with --web, --android or --server\n"
+                                    : "tide: unity takes where to build, like `tide unity -o Library/Tide`\n");
+        free(defines);
+        return 2;
+    }
     // DEBUG is every build's but --release's
     if (!opts.release) defines[opts.define_count++] = "DEBUG";
     // The game's tide.packages reads them too: its #if lines say which packages this build has
@@ -384,12 +394,14 @@ int main(const int argc, char **argv)
         code = opts.watch ? tide_run_reloading(root, &opts, game_args) : tide_run_native(root, &opts, game_args);
     } else if (run) {
         code = tide_run_web(root, &opts, open_page, game_args);
+    } else if (unity) {
+        code = tide_unity(root, &opts);
     } else {
         char *program = tide_build(root, &opts);
         if (!program) code = 1;
         else printf("Built %s\n", program);
     }
-    if (!run) tide_check_for_update(root);
+    if (!run && !unity) tide_check_for_update(root);
     free(defines);
     return code;
 }

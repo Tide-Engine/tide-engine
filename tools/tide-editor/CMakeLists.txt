@@ -6,7 +6,7 @@ target_include_directories(tide_editor_document PUBLIC .
 target_link_libraries(tide_editor_document PUBLIC tidec_core)
 if(NOT WIN32)
     find_package(Threads REQUIRED)
-    target_link_libraries(tide_editor_document PUBLIC Threads::Threads)
+    target_link_libraries(tide_editor_document PUBLIC Threads::Threads ${CMAKE_DL_LIBS}) # sys.c loads libraries
 endif()
 
 add_executable(tide_editor main.c model.c preview.c interaction.c embed.c)
