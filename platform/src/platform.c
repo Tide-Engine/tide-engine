@@ -713,18 +713,18 @@ typedef struct rgba {
     uint8_t r, g, b, a;
 } rgba;
 
-// Kept from 0 to 1 first, NaN as 0 (fmaxf gives the number that isn't NaN),
-// with no branch, so a color's four are converted at once: tide_platform_draw
-// --bench spent a seventh of its own time here when each channel branched.
-// The bytes are the same for every float.
-static uint8_t color_channel(const float v)
-{
-    return (uint8_t)(fminf(fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f);
-}
+// A color as bytes: each channel kept from 0 to 1 first, NaN as 0, times 255, plus a half, and what's after the
+// point dropped, the four at once (maxnum and minnum are fmaxf's and fminf's rule; lane by lane, IEEE's arithmetic):
+// the same byte for every one of the 2^32 floats as (uint8_t)(fminf(fmaxf(v, 0), 1) * 255 + 0.5f), checked
+// exhaustively. With no branch: tide_platform_draw --bench spent a seventh of its time here when each channel branched.
+typedef float rgba_lanes __attribute__((ext_vector_type(4)));
+typedef int32_t rgba_ints __attribute__((ext_vector_type(4)));
 
 static rgba to_rgba(const tide_color c)
 {
-    return (rgba){color_channel(c.r), color_channel(c.g), color_channel(c.b), color_channel(c.a)};
+    const rgba_lanes kept = __builtin_elementwise_minnum(__builtin_elementwise_maxnum((rgba_lanes){c.r, c.g, c.b, c.a}, (rgba_lanes)0.0f), (rgba_lanes)1.0f);
+    const rgba_ints bytes = __builtin_convertvector(kept * 255.0f + 0.5f, rgba_ints);
+    return (rgba){(uint8_t)bytes.x, (uint8_t)bytes.y, (uint8_t)bytes.z, (uint8_t)bytes.w};
 }
 
 // Shapes go to the GPU as instances of one quad, each its shape in window
@@ -1155,14 +1155,30 @@ static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const ca
             if (form > TIDE_SHAPE_ARC) continue;
             // Its lengths in window pixels, and its angles as the screen has them, where y goes down
             const tide_float2 center = to_screen(cam, c->a);
-            const rgba color = to_rgba(c->color), color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
+            const rgba color = to_rgba(c->color);
             *out = (shape){{center.x, center.y}, {c->b.x * scale * 0.5f, c->b.y * scale * 0.5f},
                            {color.r, color.g, color.b, color.a}, (float)kinds[form]};
+            const float outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale, soft = s->soft * scale;
+            // A solid one (solid_shape's test, on the numbers its extra would have), while the run's are: its radius
+            // alone, its extra never made. The same color's bits are the same bytes
+            if (radius && form != TIDE_SHAPE_ARC && s->turn.x == 1.0f && s->turn.y == 0.0f && outline == 0.0f && soft == 0.0f) {
+                bool one_color = memcmp(&s->color2, &c->color, sizeof s->color2) == 0;
+                if (!one_color) {
+                    const rgba bottom = to_rgba(s->color2);
+                    one_color = memcmp(&bottom, &color, sizeof bottom) == 0;
+                }
+                if (one_color) {
+                    *radius++ = s->radius * scale;
+                    out++;
+                    continue;
+                }
+            }
+            const rgba color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
             const shape_extra e = {.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
                                    .radius = s->radius * scale,
                                    // A hairline is a logical pixel wide, whatever the camera
-                                   .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
-                                   .soft = s->soft * scale,
+                                   .outline = outline,
+                                   .soft = soft,
                                    .sweep = s->sweep,
                                    .color2 = {color2.r, color2.g, color2.b, color2.a},
                                    .rim = {rim.r, rim.g, rim.b, rim.a}};
