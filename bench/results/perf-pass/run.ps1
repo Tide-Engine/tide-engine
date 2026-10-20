@@ -40,7 +40,8 @@ $all = @(
     @{name='bench_gallery'; exe='bench_gallery'; args=@()},
     @{name='draw_opengl'; exe='tide_platform_draw'; args=@('--bench'); backend='opengl'},
     @{name='draw_vulkan'; exe='tide_platform_draw'; args=@('--bench'); backend='vulkan'},
-    @{name='versus_draw_opengl'; exe='versus_draw'; args=@(); backend='opengl'}
+    @{name='versus_draw_opengl'; exe='versus_draw'; args=@(); backend='opengl'},
+    @{name='versus_draw_vulkan'; exe='versus_draw'; args=@(); backend='vulkan'}
 )
 $set = @($all | Where-Object { ($Only.Count -eq 0 -or $Only -contains $_.name) -and (Test-Path (Join-Path $Bin "$($_.exe).exe")) })
 if ($set.Count -eq 0) { throw 'Nothing to run' }

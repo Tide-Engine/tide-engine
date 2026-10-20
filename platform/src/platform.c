@@ -611,23 +611,18 @@ static tide_float2 to_screen(const camera *cam, const tide_float2 p)
     return tide_f2(width * 0.5f + (p.x - cam->center.x) * cam->scale, height * 0.5f - (p.y - cam->center.y) * cam->scale);
 }
 
-// A rect's top left corner on screen: y goes up in the world, down in the GUI.
-static tide_float2 rect_corner(const camera *cam, const tide_draw_command *c)
-{
-    const float half_height = cam->gui ? -c->b.y * 0.5f : c->b.y * 0.5f;
-    return to_screen(cam, tide_f2(c->a.x - c->b.x * 0.5f, c->a.y + half_height));
-}
-
 // A color as the GPU takes it: a byte each.
 typedef struct rgba {
     uint8_t r, g, b, a;
 } rgba;
 
+// Kept from 0 to 1 first, NaN as 0 (fmaxf gives the number that isn't NaN),
+// with no branch, so a color's four are converted at once: tide_platform_draw
+// --bench spent a seventh of its own time here when each channel branched.
+// The bytes are the same for every float.
 static uint8_t color_channel(const float v)
 {
-    if (!(v > 0.0f)) return 0; // Also NaN
-    if (v >= 1.0f) return 255;
-    return (uint8_t)(v * 255.0f + 0.5f);
+    return (uint8_t)(fminf(fmaxf(v, 0.0f), 1.0f) * 255.0f + 0.5f);
 }
 
 static rgba to_rgba(const tide_color c)
@@ -844,6 +839,19 @@ static shape_extra *extra_room(const uint32_t count)
     return shape_extras + shape_extra_count;
 }
 
+// Room for `count` more shapes after the ones there.
+static shape *shape_room(const uint32_t count)
+{
+    if (count > shape_capacity - shape_count) {
+        uint64_t capacity = shape_capacity ? shape_capacity : 1024u;
+        while (capacity < (uint64_t)shape_count + count) capacity *= 2u;
+        if (capacity > UINT32_MAX / sizeof(shape)) tide_out_of_memory();
+        shapes = tide_realloc(shapes, shape_capacity * sizeof(shape), (size_t)capacity * sizeof(shape));
+        shape_capacity = (uint32_t)capacity;
+    }
+    return shapes + shape_count;
+}
+
 // Every shape of a run that has smooth ones has an extra, in the run's order.
 // Plain shapes don't say so as they're added, which keeps adding one as cheap
 // as it was: the ones added since the run's last smooth shape get theirs
@@ -919,28 +927,53 @@ static void add_smooth(const int kind, const float x, const float y, const float
     shape_extra_count++;
 }
 
-// A TIDE_DRAW_SHAPE command's shape, through the camera: its lengths in window
-// pixels, and its angles as the screen has them, where y goes down.
-static void add_smooth_shape(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
+// The TIDE_DRAW_SHAPE commands from `at` on, one after another with one
+// blend, each as add_smooth adds a shape and its extra, through the camera, in
+// one loop (a frame of many smooth shapes spends its time here). Returns where
+// the run ends.
+static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const camera *cam)
 {
-    if (c->shape >= list->shape_count) return;
     static const int kinds[] = {[TIDE_SHAPE_BOX] = SHAPE_BOX, [TIDE_SHAPE_ELLIPSE] = SHAPE_ELLIPSE,
                                 [TIDE_SHAPE_ARC] = SHAPE_ARC};
-    const tide_draw_shape_data *s = &list->shapes[c->shape];
-    const uint32_t form = s->form & (uint32_t)TIDE_SHAPE_FORMS;
-    if (form > TIDE_SHAPE_ARC) return;
-    const tide_float2 center = to_screen(cam, c->a);
+    const uint8_t blend = list->commands[at].blend;
+    if (!run_goes_on(STEP_SHAPES)) start_shapes();
+    const uint32_t step = step_count - 1u;
+    if (!steps[step].smooth) steps[step].smooth = shape_extra_count + 1u; // It's a run of smooth shapes from here
+    settle_extras(); // The plain shapes before them in the run
     const float scale = cam->scale;
-    const rgba color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
-    add_smooth(kinds[form], center.x, center.y, c->b.x * scale * 0.5f, c->b.y * scale * 0.5f, to_rgba(c->color),
-               (shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
-                             .radius = s->radius * scale,
-                             // A hairline is a logical pixel wide, whatever the camera
-                             .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
-                             .soft = s->soft * scale,
-                             .sweep = s->sweep,
-                             .color2 = {color2.r, color2.g, color2.b, color2.a},
-                             .rim = {rim.r, rim.g, rim.b, rim.a}});
+    for (;;) {
+        const uint32_t left = list->count - at, piece = left < 4096u ? left : 4096u;
+        shape *const first = shape_room(piece), *out = first;
+        shape_extra *extra = extra_room(piece);
+        uint32_t taken = 0;
+        for (; taken < piece; taken++) {
+            const tide_draw_command *c = &list->commands[at + taken];
+            if (c->kind != TIDE_DRAW_SHAPE || c->blend != blend) break;
+            if (c->shape >= list->shape_count) continue;
+            const tide_draw_shape_data *s = &list->shapes[c->shape];
+            const uint32_t form = s->form & (uint32_t)TIDE_SHAPE_FORMS;
+            if (form > TIDE_SHAPE_ARC) continue;
+            // Its lengths in window pixels, and its angles as the screen has them, where y goes down
+            const tide_float2 center = to_screen(cam, c->a);
+            const rgba color = to_rgba(c->color), color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
+            *out++ = (shape){{center.x, center.y}, {c->b.x * scale * 0.5f, c->b.y * scale * 0.5f},
+                             {color.r, color.g, color.b, color.a}, (float)kinds[form]};
+            *extra++ = (shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
+                                     .radius = s->radius * scale,
+                                     // A hairline is a logical pixel wide, whatever the camera
+                                     .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
+                                     .soft = s->soft * scale,
+                                     .sweep = s->sweep,
+                                     .color2 = {color2.r, color2.g, color2.b, color2.a},
+                                     .rim = {rim.r, rim.g, rim.b, rim.a}};
+        }
+        const uint32_t added = (uint32_t)(out - first);
+        shape_count += added;
+        shape_extra_count += added;
+        steps[step].count += added;
+        at += taken;
+        if (taken < piece || at == list->count) return at;
+    }
 }
 
 // A circle or its outline, `radius` window pixels around (x, y). The plain
@@ -963,6 +996,72 @@ static void add_circle(const bool wire, const float x, const float y, const floa
                              .outline = wire ? fminf(r, 1.0f) : 0.0f,
                              .color2 = {fill.r, fill.g, fill.b, fill.a},
                              .rim = {color.r, color.g, color.b, color.a}});
+}
+
+// The plain shapes from command `at` on, one after another with one blend
+// (rects, their outlines, lines, and circles where the destination isn't
+// scaled), as the cases of draw_list add each, in one loop: a frame of many
+// shapes spends its time here. Each one's arithmetic is theirs, to the bit.
+// Returns where the run ends: the first command it isn't.
+static uint32_t add_plain_run(const tide_draw_list *list, uint32_t at, const camera *cam)
+{
+    const uint8_t blend = list->commands[at].blend;
+    if (!run_goes_on(STEP_SHAPES)) start_shapes();
+    const uint32_t step = step_count - 1u;
+    const bool gui = cam->gui;
+    const float scale = cam->scale, cx = cam->center.x, cy = cam->center.y;
+    const float half_width = (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f;
+    const float half_height = (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f;
+    for (;;) {
+        // In pieces, so a long list with few shapes doesn't keep room for one a command
+        const uint32_t left = list->count - at, piece = left < 4096u ? left : 4096u;
+        shape *const first = shape_room(piece), *out = first;
+        const tide_draw_command *c = &list->commands[at], *const end = c + piece;
+        for (; c < end; c++, out++) {
+            if (c->blend != blend) break;
+            const rgba color = to_rgba(c->color);
+            float ax, ay, bx, by;
+            int kind;
+            switch ((tide_draw_kind)c->kind) {
+            case TIDE_DRAW_RECT:
+            case TIDE_DRAW_WIRE_RECT: { // Its top left corner through to_screen: y goes up in the world, down in the GUI
+                const float x = c->a.x - c->b.x * 0.5f, y = c->a.y + (gui ? -c->b.y * 0.5f : c->b.y * 0.5f);
+                const float left_x = gui ? x * scale : half_width + (x - cx) * scale;
+                const float top_y = gui ? y * scale : half_height - (y - cy) * scale;
+                bx = c->b.x * scale * 0.5f;
+                by = c->b.y * scale * 0.5f;
+                ax = left_x + bx;
+                ay = top_y + by;
+                kind = c->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT;
+                break;
+            }
+            case TIDE_DRAW_CIRCLE:
+            case TIDE_DRAW_WIRE_CIRCLE:
+                if (scaled) goto done; // A smooth shape there (add_circle)
+                ax = gui ? c->a.x * scale : half_width + (c->a.x - cx) * scale;
+                ay = gui ? c->a.y * scale : half_height - (c->a.y - cy) * scale;
+                bx = by = c->b.x * scale;
+                kind = c->kind == TIDE_DRAW_CIRCLE ? SHAPE_CIRCLE : SHAPE_WIRE_CIRCLE;
+                break;
+            case TIDE_DRAW_LINE:
+                ax = gui ? c->a.x * scale : half_width + (c->a.x - cx) * scale;
+                ay = gui ? c->a.y * scale : half_height - (c->a.y - cy) * scale;
+                bx = gui ? c->b.x * scale : half_width + (c->b.x - cx) * scale;
+                by = gui ? c->b.y * scale : half_height - (c->b.y - cy) * scale;
+                kind = SHAPE_LINE;
+                break;
+            default:
+                goto done;
+            }
+            *out = (shape){{ax, ay}, {bx, by}, {color.r, color.g, color.b, color.a}, (float)kind};
+        }
+    done:;
+        const uint32_t added = (uint32_t)(out - first);
+        shape_count += added;
+        steps[step].count += added;
+        at += added;
+        if (c != end || at == list->count) return at;
+    }
 }
 
 // Room for `count` more vertices after the ones there.
@@ -995,11 +1094,18 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
     }
     s->count += count;
     const uint32_t *indices = list->indices + c->mesh.first;
+    const tide_vertex *const vertices = list->vertices;
+    // to_screen's arithmetic, its camera's numbers read once
+    const bool gui = cam->gui;
+    const float scale = cam->scale, cx = cam->center.x, cy = cam->center.y;
+    const float half_width = (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f;
+    const float half_height = (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f;
     for (uint32_t i = 0; i < count; i++) {
-        const tide_vertex *v = &list->vertices[indices[i]];
-        const tide_float2 p = to_screen(cam, v->position);
+        const tide_vertex *v = &vertices[indices[i]];
+        const float x = gui ? v->position.x * scale : half_width + (v->position.x - cx) * scale;
+        const float y = gui ? v->position.y * scale : half_height - (v->position.y - cy) * scale;
         const rgba color = to_rgba(v->color);
-        out[i] = (mesh_vertex){{p.x, p.y}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
+        out[i] = (mesh_vertex){{x, y}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
     }
     mesh_vertex_count += count;
 }
@@ -3316,8 +3422,17 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         frame_target *f = &frame_targets[draw_target];
         camera *cam = &f->through;
         if (c->kind != TIDE_DRAW_TARGET && !f->valid) continue;
-        const rgba color = to_rgba(c->color);
         draw_blend = c->blend;
+        const bool circle = c->kind == TIDE_DRAW_CIRCLE || c->kind == TIDE_DRAW_WIRE_CIRCLE;
+        if (c->kind == TIDE_DRAW_RECT || c->kind == TIDE_DRAW_WIRE_RECT || c->kind == TIDE_DRAW_LINE || (circle && !scaled)) {
+            i = add_plain_run(list, i, cam) - 1u; // It and the plain shapes after it
+            continue;
+        }
+        if (c->kind == TIDE_DRAW_SHAPE) {
+            i = add_smooth_run(list, i, cam) - 1u; // ...or the smooth ones
+            continue;
+        }
+        const rgba color = to_rgba(c->color);
         switch ((tide_draw_kind)c->kind) {
         case TIDE_DRAW_TARGET:
             select_target(c->target < targets ? c->target : targets);
@@ -3394,7 +3509,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             f->stencil = draw_stencil = tide_stencil_packed(tide_stencil_unpacked(c->stencil));
             add_step(STEP_STENCIL);
             break;
-        case TIDE_DRAW_CIRCLE:
+        case TIDE_DRAW_CIRCLE: // On a scaled destination: the others are add_plain_run's, as rects and lines are
         case TIDE_DRAW_WIRE_CIRCLE: {
             const tide_float2 p = to_screen(cam, c->a);
             const float r = c->b.x * cam->scale;
@@ -3402,23 +3517,10 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         }
         case TIDE_DRAW_SHAPE:
-            add_smooth_shape(list, c, cam);
-            break;
         case TIDE_DRAW_RECT:
-        case TIDE_DRAW_WIRE_RECT: {
-            const tide_float2 top_left = rect_corner(cam, c);
-            const float hw = c->b.x * cam->scale * 0.5f;
-            const float hh = c->b.y * cam->scale * 0.5f;
-            add_shape(c->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT, top_left.x + hw, top_left.y + hh, hw,
-                      hh, color);
-            break;
-        }
-        case TIDE_DRAW_LINE: {
-            const tide_float2 from = to_screen(cam, c->a);
-            const tide_float2 to = to_screen(cam, c->b);
-            add_shape(SHAPE_LINE, from.x, from.y, to.x, to.y, color);
-            break;
-        }
+        case TIDE_DRAW_WIRE_RECT:
+        case TIDE_DRAW_LINE:
+            break; // add_plain_run's and add_smooth_run's, above
         case TIDE_DRAW_TEXT: {
             // A command in bold without the bold's file (a list filled by hand) is in the regular weight
             const unsigned char *font = c->words.bold ? list->bold : TIDE_FONT_REGULAR;
@@ -3819,12 +3921,27 @@ void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_
     }
     draw_list(list, (draw_root){.gpu = gpu_state.target, .width = (float)logical_width, .height = (float)logical_height,
                               .pixel_width = width, .pixel_height = height}, false, false);
-    gpu->target_read(gpu_state.target, gpu_state.target_pixels);
+    // Only the pixels from the points' top left to their bottom right come back, where the backend reads parts:
+    // reading all of a 256 by 352 target for one point took Vulkan 0.137 ms a frame where nothing drew, 0.064 now
+    int left = width, top = height, right = 0, bottom = 0;
+    for (int i = 0; i < count; i++) {
+        const int x = (int)points[i].x, y = (int)points[i].y;
+        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+        if (x < left) left = x;
+        if (x >= right) right = x + 1;
+        if (y < top) top = y;
+        if (y >= bottom) bottom = y + 1;
+    }
+    if (right <= left) left = top = 0, right = bottom = 1; // None inside: one is read all the same, which waits for the GPU
+    if (!gpu->target_read_part) left = top = 0, right = width, bottom = height;
+    const int across = right - left;
+    if (across == width && bottom - top == height) gpu->target_read(gpu_state.target, gpu_state.target_pixels);
+    else gpu->target_read_part(gpu_state.target, left, top, across, bottom - top, gpu_state.target_pixels);
     for (int i = 0; i < count; i++) {
         const int x = (int)points[i].x, y = (int)points[i].y;
         uint32_t pixel = 0;
         if (x >= 0 && x < width && y >= 0 && y < height) {
-            const uint8_t *p = gpu_state.target_pixels + ((size_t)y * (size_t)width + (size_t)x) * 4u;
+            const uint8_t *p = gpu_state.target_pixels + ((size_t)(y - top) * (size_t)across + (size_t)(x - left)) * 4u;
             pixel = (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | (uint32_t)p[3];
         }
         out[i] = pixel;

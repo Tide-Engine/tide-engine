@@ -92,6 +92,7 @@ enum { TIME_PAIRS = 4 };             // Pairs of timestamps waiting to be read
 enum { BLOCK_BYTES = 64u << 20 };    // Device memory is taken in blocks this big...
 enum { DEDICATED_BYTES = 16u << 20 }; // ...and an allocation this big or bigger on its own
 enum { RING_BYTES = 4u << 20 };      // A frame's uploads and uniforms start with this much room
+enum { UPLOAD_LOCAL_BYTES = 32u << 20 }; // ...in the GPU's memory up to this much (allocate)
 
 // A piece of device memory: an allocation's own, or a part of a block's.
 typedef struct vk_alloc {
@@ -406,6 +407,22 @@ static bool allocate(const VkMemoryRequirements needs, const vk_memory_use use, 
     const VkMemoryPropertyFlags want = host_visible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
                                                     : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     uint32_t type = use == USE_READBACK ? memory_type(needs.memoryTypeBits, want | VK_MEMORY_PROPERTY_HOST_CACHED_BIT) : UINT32_MAX;
+    // A frame's uploads and uniforms (its ring) in the GPU's own memory where the host can write that, as a
+    // desktop GPU lets it through its BAR (all of its memory with resizable BAR, else a window of 256 MB) and an
+    // integrated one does anyway: copies out of it and uniforms then don't cross the bus as the GPU runs. A frame
+    // of 65,536 rects took 0.21 -> 0.14-0.18 ms from submission to its pixel read back, 65,536 cubes'
+    // transforms 0.44 -> 0.27. Rings up to UPLOAD_LOCAL_BYTES, so two frames take a fraction of such a window;
+    // bigger ones (a big texture's upload), or where it's full, are in the host's memory as before.
+    if (use == USE_UPLOAD && needs.size <= UPLOAD_LOCAL_BYTES) {
+        const uint32_t local = memory_type(needs.memoryTypeBits, want | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        const VkMemoryAllocateInfo info = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, needs.size, local};
+        if (local != UINT32_MAX && vkAllocateMemory(vk.device, &info, NULL, &out->memory) == VK_SUCCESS) {
+            out->size = needs.size;
+            if (vkMapMemory(vk.device, out->memory, 0, VK_WHOLE_SIZE, 0, &out->mapped) == VK_SUCCESS) return true;
+            vkFreeMemory(vk.device, out->memory, NULL);
+            *out = (vk_alloc){0};
+        }
+    }
     if (type == UINT32_MAX) type = memory_type(needs.memoryTypeBits, want);
     if (type == UINT32_MAX && !host_visible) type = memory_type(needs.memoryTypeBits, 0);
     if (type == UINT32_MAX) return false;
@@ -1690,10 +1707,11 @@ static struct {
     VkDeviceSize size;
 } readback;
 
-static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
+static void vk_target_read_part(const tide_gpu_id id, const int x, const int y, const int width, const int height,
+                                uint8_t *rgba)
 {
     const vk_target *t = &vk.targets[id - 1u];
-    const size_t bytes = (size_t)t->width * (size_t)t->height * 4u;
+    const size_t bytes = (size_t)width * (size_t)height * 4u;
     if (vk.lost || !t->bytes) { // Depth alone, or floats first: no bytes to read
         memset(rgba, 0, bytes);
         return;
@@ -1715,8 +1733,8 @@ static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
     const uint32_t layer = t->face ? t->layer : 0u;
     const VkCommandBuffer cb = outside();
     turn(cb, c->image, c->format, 0, 1, layer, 1, c->rest, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    const VkBufferImageCopy copy = {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1}, {0, 0, 0},
-                                    {(uint32_t)t->width, (uint32_t)t->height, 1}};
+    const VkBufferImageCopy copy = {0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1}, {x, y, 0},
+                                    {(uint32_t)width, (uint32_t)height, 1}};
     vkCmdCopyImageToBuffer(cb, c->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1, &copy);
     const VkMemoryBarrier seen = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, NULL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT};
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &seen, 0, NULL, 0, NULL);
@@ -1726,14 +1744,23 @@ static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
         memset(rgba, 0, bytes);
         return;
     }
-    const uint8_t *from = readback.memory.mapped;
+    // Apart (restrict), so the loop below takes many pixels at once: done a byte at a time, it took an eighth
+    // of tide_platform_draw --bench's own time when that read whole frames back
+    const uint8_t *restrict from = readback.memory.mapped;
+    uint8_t *restrict to = rgba;
     if (c->format == VK_FORMAT_B8G8R8A8_UNORM) { // Blue first: red first, as it's read back
         for (size_t i = 0; i < bytes; i += 4) {
-            rgba[i] = from[i + 2], rgba[i + 1] = from[i + 1], rgba[i + 2] = from[i], rgba[i + 3] = from[i + 3];
+            to[i] = from[i + 2], to[i + 1] = from[i + 1], to[i + 2] = from[i], to[i + 3] = from[i + 3];
         }
     } else {
         memcpy(rgba, from, bytes);
     }
+}
+
+static void vk_target_read(const tide_gpu_id id, uint8_t *rgba)
+{
+    const vk_target *t = &vk.targets[id - 1u];
+    vk_target_read_part(id, 0, 0, t->width, t->height, rgba);
 }
 
 // ---------------------------------------------------------------------------
@@ -2784,6 +2811,7 @@ const tide_gpu tide_gpu_vulkan = {
     .resolve_depth = vk_resolve_depth,
     .target_free = vk_target_free,
     .target_read = vk_target_read,
+    .target_read_part = vk_target_read_part,
     .begin = vk_begin,
     .end = vk_end,
     .scissor = vk_scissor,

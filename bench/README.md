@@ -42,7 +42,7 @@ All end-state digests agree. Offering workers does not make shared mutable map/s
 
 The session runs retain matching worlds and join times: Sand's clients run about 30 ms of simulation per simulated second, while Gallery's largest initial world is 4.41 MB as sent and its slowest catch-up is 2.67 s under the configured 50 ms each-way delay and 1% loss. One OpenGL drawing run is saved with the RTX 4080 SUPER; its empty-scene median readback is 0.296 ms and 65,536 rectangles take 1.111 ms including recording/readback. These measurements describe this machine; the audit changes the benchmarks and their validation, and makes no engine speedup claim. [Audit metadata](results/benchmark-audit-metadata.json) identifies the runs and binaries.
 
-Remaining coverage opportunities include a retained window of multiple snapshots with restore/replay, asset-heavy compilation, and a handwritten graphics baseline. Networked Sand/Gallery already measure replay, snapshot, hash, packing, transfer and joining costs together; the new retained-state variants isolate snapshot/write costs against C.
+Remaining coverage opportunities include a retained window of multiple snapshots with restore/replay and asset-heavy compilation. A handwritten graphics baseline, missing at the audit, is `versus_draw` (Drawing, below). Networked Sand/Gallery already measure replay, snapshot, hash, packing, transfer and joining costs together; the new retained-state variants isolate snapshot/write costs against C.
 
 ## Native runtime measurements
 
@@ -151,15 +151,19 @@ The harness never edits a game in the repository or a supplied installation. `--
 ## Drawing
 
 ```powershell
-cmake --build --preset release --target tide_platform_draw
+cmake --build --preset release --target tide_platform_draw versus_draw
 $env:TIDE_BENCH_REVISION = "<revision and local changes>"
 $env:TIDE_BENCH_MACHINE = "<CPU and GPU>"
-build/release/bin/tide_platform_draw --bench --save change-name
+build/release/bin/tide_platform_draw --bench --save change-name     # TIDE_BACKEND=vulkan or opengl picks the backend
+build/release/bin/versus_draw --save change-name                    # the same workloads by hand, in TIDE_BACKEND's API
+node bench/compare.mjs draw --tide change-name --c change-name      # side by side, with Tide's ratio to C
 ```
 
-The drawing benchmark measures 65,536 rectangles, circles, rectangles interrupted by text, textured quads, cube instances, round rects (the smooth shapes' path) and rectangles with a round rect among every 1,024 (one run of both kinds, which all goes through the smooth shapes' pipeline), plus an empty scene showing the readback cost. Each workload has 20 warmup frames and 100 measured frames. It reports median and p95 for draw-list recording, rendering with readback, and the combined time. Saved rows in `bench/results/draw.jsonl` identify the renderer, dimensions, compiler, machine and revision. On a web build, `?bench&save=change-name` prints JSONL records; `backend=webgpu` or `backend=webgl` chooses the backend.
+The drawing benchmark measures 65,536 rectangles, circles, rectangles interrupted by text, textured quads, cube instances, round rects (the smooth shapes' path) and rectangles with a round rect among every 1,024 (one run of both kinds, which all goes through the smooth shapes' pipeline), plus an empty scene showing the readback cost. Each workload has 20 warmup frames and 100 measured frames. It reports median and p95 for draw-list recording, rendering with readback, and the combined time. Saved rows in `bench/results/draw.jsonl` identify the renderer, dimensions, compiler, machine and revision. On a web build, `?bench&save=change-name` prints JSONL records; `backend=webgpu` or `backend=webgl` chooses the backend. `--only <n>` runs one workload (for a profiler), and `--dump-frames <prefix>` writes each workload's last frame as `<prefix>-<n>.ppm` after its timing.
 
-These are C calls to Tide's drawing APIs. They exclude generated Tide view execution, and rendering time includes CPU submission, GPU completion and copying the target's pixels back. They are useful for tracking overhead and batching, but there is no handwritten GPU API baseline yet, so they do not establish competitive graphics performance. Pixel tests of generated shaders and manual instancing verify correctness separately.
+These are C calls to Tide's drawing APIs. They exclude generated Tide view execution, and rendering time includes CPU submission, GPU completion and copying the requested pixels back. Pixel tests of generated shaders and manual instancing verify correctness separately.
+
+`versus_draw` (`bench/draw/`, desktop only) is the handwritten baseline: the nothing, rects, circles, textured quads, cube instances and round rects workloads written directly against OpenGL 3.3 core (`draw_gl.c`) or Vulkan 1.3 (`draw_vk.c`, dynamic rendering, no window), as an expert writes them for these cases: a static quad or cube, one instance buffer the CPU writes straight into (an unsynchronized map on OpenGL, device-local host-visible memory kept mapped on Vulkan), one pipeline and one instanced draw per workload, minimal state, and one pixel read back. It uses the same target, frames, shapes, colors, camera and timing boundaries, and its frames are byte-identical to Tide's on both APIs (`versus_draw --compare <prefix>` against `tide_platform_draw --bench --dump-frames <prefix>`). It also draws the cubes with a whole matrix each, as Tide sends them, as an extra workload. Its rows have `"competitive_baseline":true`, `"way":"C"`, the API and the device; `TIDE_BACKEND` picks the API, Vulkan first without it. Its record part writes instances into GPU-visible memory, while Tide's record is its draw list and its upload is in its render part, so compare totals. `--quick` (a CTest on each API, label `gpu`, Vulkan under the validation layer) checks the pixel read back. Results and remaining gaps: `notes/benchmarks.md`, Drawing against handwritten OpenGL and Vulkan.
 
 ## Skinned meshes
 
