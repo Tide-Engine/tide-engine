@@ -63,6 +63,31 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### The floor gone black and speckled: the stains read by their colour (2026-10-20)
+
+The owner, with a picture of the clearing's floor black, flecked all over with
+red and a pink glint: "sometimes the floor looks like this, idk why but it
+seems like its not rendering or something?"
+
+- **Why**: the stains' drying (gore.tide's `Dry`, every 2 s over the whole
+  clearing) draws black with a little alpha, meant to fade them. But an alpha
+  blend (the engine's, premultiplied, as the spec has it) darkens what's there
+  and raises its alpha, `a + d * (1 - a)`: it can't lower one. So every texel of
+  the clearing went toward black at full alpha, blood or none, and the floor
+  (look.tide's `Earth`), reading how much blood there was by the stains' alpha,
+  laid black over all of it, and since the last round the wet flecks and the
+  glint on it too. A few minutes after the last wipe (a run's start, the next
+  night) it was all of it: long in the menu, or a long night. (Before the
+  flecks it had been a floor going slowly darker.)
+- **The fix** (look.tide's `Earth`): how much blood is there is how much colour's
+  left (the sum of the stains' red, green and blue, over their alpha, which `Sample`
+  gives), times their alpha's share as before: fresh blood full, dried blood (its
+  colour darkened by the drying) fading away, a texel never bled on nothing
+  whatever its alpha. The drying is as it was, and so dries as it was meant to.
+- **Validation**: a standard-host capture after 150 s in the menu: before, the
+  owner's picture (black, flecked); after, the floor as it should be. Fresh blood
+  looks as it did. Native debug `gravewake_test` passes.
+
 ### A wider shotgun, crisp effects, shining blood cleared at dawn, a side kick, C4 (2026-10-20)
 
 The owner: "i think the shotgun shots should spread more"; "the saw VFX look

@@ -337,7 +337,8 @@ view Soak(mut Gore gore, Lens lens, Match match)
     gore.splats.Clear();
 }
 
-// Fading what's there: nothing laid over it, a little at a time.
+// Fading what's there: black laid over it, a little at a time. (Blended, that darkens the stains' colour and raises their
+// alpha toward 1 all over the clearing: look.tide's Earth reads how much blood there is by how much colour's left.)
 frag Dry(Corner corner, out Color color, Splat splat)
 {
     color = Color(0, 0, 0, splat.alpha);

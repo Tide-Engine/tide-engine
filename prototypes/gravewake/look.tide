@@ -262,12 +262,17 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens, 
     mut var ground = Linear(paint * 1.45);
     // Blood soaked in where it fell (gore.tide's stains), and a wet shine on it. Its colour's what the stains' share of
     // red, green and blue says, at blood's darkness (the stains' own colour over their alpha had blown up where faint
-    // ones lay: blending keeps far less alpha than colour)
+    // ones lay: blending keeps far less alpha than colour). How much of it there is is how much colour's left there, not
+    // its alpha: the drying (gore.tide's Dry) blends black over the stains, which darkens what's there and raises their
+    // alpha (an alpha blend can't lower one), so by alpha the whole clearing had read as soaked, black and flecked with
+    // wet, a few minutes after the last wipe (the owner, 2026-10-20: "sometimes the floor looks like this ... it seems
+    // like its not rendering")
     float4 seen = Math.Mul(look.toStain, float4(this.world, 1));
     var blood = lens.stainsColor.Sample(float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5));
     var hue = float3(blood.r, blood.g, blood.b) / Math.Max(blood.r + blood.g + blood.b, 0.001);
-    ground = Math.Lerp(ground, Linear(hue * (0.3 + 0.12 * fine) * (1.25 - 0.55 * Math.Saturate(blood.a))), Math.Saturate(blood.a * 1.6));
-    mut var wet = blood.a;
+    var soaked = Math.Saturate((blood.r + blood.g + blood.b) * 3) * Math.Saturate(blood.a * 1.6);
+    ground = Math.Lerp(ground, Linear(hue * (0.3 + 0.12 * fine) * (1.25 - 0.55 * soaked)), soaked);
+    mut var wet = soaked;
     // The plague pits: black blood to the brim (a box's edge, its corners rounded, frayed a little), darkest deep in,
     // a bone awash here and there; a lip of heaped earth at its edge, and trodden black mud round that
     mut var pool = 0.0;
@@ -371,7 +376,7 @@ frag Earth(Corner corner, out Color color, Look look, Lights lights, Lens lens, 
     // pool's gloss; on the pits, a glint on the ripples here and there
     lit += look.moonColor * float3(1.0, 0.45, 0.4) * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, normal), look.moonWay)), 70) * wet * 0.35;
     var gloss = Math.Perlin(at * 6.5 + float2(look.time * 0.12, look.time * 0.05)) + Math.Perlin(at * 13 + float2(5, 11)) * 0.4;
-    var fresh = Math.Saturate(blood.a * 2.2 - 0.6);
+    var fresh = Math.Saturate(soaked * 2.2 - 0.6);
     lit += (gloss > 0.86 ? float3(0.5, 0.2, 0.17) : gloss > 0.72 ? float3(0.2, 0.02, 0.015) : float3(0)) * fresh;
     var ripple = float3(Math.Perlin(at * 2.3 + float2(look.time * 0.25, 0)), 0, Math.Perlin(at * 2.3 + float2(0, look.time * 0.2))) * 0.15;
     lit += look.moonColor * float3(0.9, 0.45, 0.4) * Math.Pow(Math.Saturate(Math.Dot(Math.Reflect(-toEye, Math.Normalize(normal + ripple)), look.moonWay)), 60) * pool * 0.12;
