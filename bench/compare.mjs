@@ -127,8 +127,13 @@ export function compareDraw(rows, { tide, c } = {}) {
         return;
     }
     const ms = (v) => (v == null ? "-" : v.toFixed(3));
-    const columns = [32, 9, 9, 10, 10, 9, 9, 8];
+    const columns = [46, 8, 8, 9, 8, 8, 8, 8];
     const line = (cells) => console.log(cells.map((cell, i) => (i ? String(cell).padStart(columns[i]) : String(cell).padEnd(columns[i]))).join(""));
+    // A heading over two columns, in the middle of them
+    const over = (text, i) => {
+        const width = columns[i] + columns[i + 1], left = Math.max(0, Math.floor((width - text.length) / 2));
+        return (" ".repeat(left) + text).padEnd(width);
+    };
     for (const renderer of renderers) {
         const of = (kind, label) => rows.filter((r) => kind(r) && ofLabel(r, label) && r.renderer === renderer);
         const tideRows = of((r) => !isC(r), tideLabel), cRows = of(isC, cLabel);
@@ -139,8 +144,8 @@ export function compareDraw(rows, { tide, c } = {}) {
             + `${tideRows[0].frames} frames; medians of the runs' medians, ms`);
         const machines = [...new Set([...tideRows, ...cRows].map((r) => r.machine ?? "machine unknown"))];
         console.log(`  ${machines.join(" / ")}${cRows[0].device ? `; ${cRows[0].device}` : ""}`);
-        line(["", "record", "", "render+", "readback", "total", "", "Tide/C"]);
-        line(["workload", "Tide", "C", "Tide", "C", "Tide", "C", ""]);
+        console.log("".padEnd(columns[0]) + over("record", 1) + over("render", 3) + over("total", 5) + "Tide/C".padStart(columns[7]));
+        line(["workload", "Tide", "C", "Tide", "C", "Tide", "C", "total"]);
         const workloads = [...new Set([...tideRows, ...cRows].map((r) => r.workload))];
         for (const workload of workloads) {
             const part = (list, key) => {
@@ -150,10 +155,10 @@ export function compareDraw(rows, { tide, c } = {}) {
             const t = ["record_ms", "render_readback_ms", "total_ms"].map((key) => part(tideRows, key));
             const k = ["record_ms", "render_readback_ms", "total_ms"].map((key) => part(cRows, key));
             const ratio = t[2] != null && k[2] > 0 ? `${(t[2] / k[2]).toFixed(2)}x` : "-";
-            line([workload.length > 31 ? `${workload.slice(0, 30)}…` : workload, ms(t[0]), ms(k[0]), ms(t[1]), ms(k[1]), ms(t[2]), ms(k[2]), ratio]);
+            line([workload.length > 45 ? `${workload.slice(0, 44)}…` : workload, ms(t[0]), ms(k[0]), ms(t[1]), ms(k[1]), ms(t[2]), ms(k[2]), ratio]);
         }
-        console.log("  C's record writes its instances where the GPU reads them; Tide's uploads them in its render part,"
-            + " so compare totals. C reads back one pixel, Tide the pixels it's asked for.");
+        console.log("  render is render + readback. C's record writes its instances where the GPU reads them; Tide's"
+            + " record is its draw list, which its render part uploads, so compare totals.");
     }
 }
 
