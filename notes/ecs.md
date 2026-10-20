@@ -1,5 +1,48 @@
 # ECS and simulation state
 
+## Performance pass: lists, maps and grid windows (2026-10-20)
+
+Internal, with no layout, hash, order or interface change (pinned hashes are
+unchanged; measurements in notes/benchmarks.md, Performance pass):
+
+- Cached list writes no longer prepare a list the cache already holds
+  writable (see language.md for why that's sound). In bench/versus/buckets a
+  flat list's write went from 0.050 to 0.028 ms a tick (7x C to 4x).
+- `tide_map_find` finds both of a map's lists once (`tide_list_view_of`,
+  `tide_list_view_at` in `tide/list.h`: the heap, page table and block that
+  `tide_list_at` finds again at every element), not at every slot and entry a
+  probe reads; `empty_slot` in map.c does the same. The view holds while the
+  code that made it runs on: the page table it read stays until the heap
+  settles, and a page copied meanwhile has the same elements. Same probe
+  order, same results; asset lists of another element size read as empty, as
+  `tide_list_asset_at` has them.
+- `tide_map_hash_bytes` writes `tide_hash`'s steps out inline for keys of up
+  to 16 bytes, so a lookup with a key of known size makes no call; longer keys
+  call `tide_hash`. They must stay the same function: `map_key_hash_is_tide_hash_at_every_size`
+  (`tests/test_map.c`) compares them at every size up to 40 bytes.
+- `tide_list_prepare` is inline, its signature and what it does the same: a
+  list that's a world's own or the scratch area's (not the pack's) returns
+  after one look at its block, and only an asset's or the pack's calls
+  `tide_list_prepare_borrowed` (the function as it was). A cached write that
+  misses (each bucket of a list of lists) and every map insert, which
+  prepares both lists, called it: the list of lists in bench/versus/buckets
+  went from 0.069 to 0.061 ms a tick.
+- Together, 16,384 keys' steady lookups went from 1.92 to 1.41 ms a tick.
+  What's left is the chain of dependent loads a probe makes through a chunked
+  list (directory, page, element, twice) on a random pattern: about 8x C.
+
+Lane bookkeeping inline (2026-10-20): `tide_table_lanes_shared`,
+`tide_table_lanes_begin` and `tide_table_lanes_end` are `static inline` in
+`tide/table.h`, with the same names, arguments and behavior, so a chunk whose
+lanes the table alone has (no snapshot shares them) costs no call. What a
+shared lane costs (taking a page, copying rows, comparing and swapping pages)
+stays out of line, in `tide_table_lane_apart` and `tide_table_lane_end_apart`,
+`static inline` `noinline` helpers each file that uses them has a copy of, not
+more code at every call. No exported function was added and generated code
+calls what it called. `versus_systems` with 64 entities of each kind went from
+4.8 to 3.9 µs a tick (median of alternating runs) and with 4,096 from 65.2 to
+63.8 µs; its executable grew 34 KB (6%). Measurements: notes/benchmarks.md.
+
 Recorded containers (2026-10-19): local event queries capture their statically
 read container fields at tick end, including reads through borrowed helpers.
 Equal query shapes retain one shared record/tail. Direct parameters still use

@@ -6,7 +6,67 @@ The opt-in [GPU clip experiment](results/gpu-clip/README.md) uses `bench_skinned
 
 Simulation benchmarks compare the same deterministic work in Tide and hand-written C. Build and run them with `cmake --build --preset release --target versus`; individual `build/release/bin/versus_<concept>` programs list their options with `--help`. Save repeated measurements with `--save <label>` in `bench/results/versus.jsonl`.
 
+The [October 20 performance pass](../notes/benchmarks.md) added tools for measuring on a machine other agents build and benchmark on, all in `results/perf-pass/` but the profiler. Every timing they make holds the shared `Local\TideClaudeContinuationBenchmark` mutex and waits for a quiet spell with no builds, tests or benchmarks:
+
+- `run.ps1 -Label <label> [-Rounds 3] [-Only a,b]` copies the benchmarks' binaries aside and runs every versus program, the sand and gallery sessions and drawing on OpenGL and Vulkan, saving each run as `<label>-r<round>`. Pass `-Only`'s list through `pwsh -Command "& ./bench/results/perf-pass/run.ps1 ..."`: `-File` would take it as one string. With `-Before <folder> -BeforeBuiltFrom <revision>`, a folder of earlier binaries, each program runs from both in turn (before, after, then after, before), saved as `<label>-before-r<round>` and `<label>-after-r<round>`: the way to compare a change on a busy machine.
+- `summarize.mjs <label>...` prints, for each label, the median of its rounds per benchmark and thread count, Tide against the fastest C way.
+- `gate.ps1 <program> [arguments]` runs one command under the gate, for a quick timing that isn't saved.
+- `tide_sample` (`profile/sample.c`, Windows, built on request: `cmake --build --preset release --target tide_sample`) is a sampling profiler that needs no administrator rights: `tide_sample [--top n] [--lines n] -- <program> [arguments]` suspends each of the program's threads a few thousand times a second and prints where its own code was, by innermost function, outermost function and line, through `llvm-symbolizer` and the program's PDB. Profile release builds; samples in `ntdll.dll` are mostly threads waiting.
+
 Set `TIDE_BENCH_MACHINE` to the CPU/machine and `TIDE_BENCH_REVISION` to the source revision and local changes before saving simulation or session runs, as for drawing below. New rows also record architecture, compiler version and whether C splitting was forced (`--split`, or `--quick`). Comparisons group matching options, machine, compiler and thread counts; older rows without that metadata form separate groups. Unidentified machines are reported as `unknown`; provide the machine label when comparing machines.
+
+## Rollback, the schedule and thread scaling (2026-10-20)
+
+`versus_rollback` runs a world the way a predicting client does, and compares what each part costs. Each timed tick is a period, one of the client's frames: `--every` ticks (4), each with the world before it kept in a ring of `--kept` worlds (16) and the world after it hashed, then a correction, which restores the world kept `--back` ticks ago (8, as many as are kept at the most), runs those ticks again with what they had the first time, keeping each again, and hashes the end, which has to match the hash it had. So a period runs 12 ticks, keeps 12 worlds, hashes 5 and restores one, about what a client 150 ms from its server does at 60 ticks a second. The world has `--movers` (100,000) movers with a Position and a Velocity, of which `--moving` of each hundred (25) move and the rest lie still, the movers that move coming first in spawn order, or spread through the rest with `--spread 1`; and `--turrets` (4,000) turrets, which cool down every tick and count each shot in a singleton and in a list of `--notes` (4,096) ints.
+
+- `Tide` keeps worlds with `tide_world_copy`, ticks with `tide_world_tick_on` and hashes as sessions do (`hash_world_on` with a pool, which hashes the pages that changed on a few threads first, `tide_world_hash` without).
+- `C` keeps its world in one block, its arrays one after the other: keeping a world is a `memcpy` of the block into the ring, restoring one a `memcpy` back, and the hash is wyhash (final version 4, written into the fixture) over every byte, in 64 KiB units hashed apart and then together, on threads past 4 MiB.
+- `C, dirty` is what someone writes next, once they know a tick changes little: each array in 16 KiB blocks, each with a version a tick changes when its loops find (comparing bits as they write) that they changed a byte of the block, and each block's hash kept with the version it's of. Keeping a world copies the blocks whose version isn't the kept world's, restoring the same the other way, and the hash rehashes only blocks that changed since and then hashes their hashes.
+
+Every way hashes all of its state each time, and ends with the same world and ring, bit for bit. Each reports its tick (the first time and again), snapshot, hash and restore times beside the whole period's (`ms a tick, by part`), and saves them in its row.
+
+`versus_systems` measures the schedule: 64 systems over 16 components of two floats, in four kinds of entity that each have eight of them. Twelve components' systems read only what they change, four in a row each, and the first four components' are a band that each read the one before, ten deep. `--count` sets the entities of each kind: 0 is what a tick of 64 systems costs with nothing to do. The C way runs the same 64 loops in order, or from 16,384 entities a kind, in the ten stages an expert works out from what each reads and writes, a stage's loops at once in pieces on threads.
+
+Any versus program takes `--threads-list 1,2,4,8,12`, which runs every way on each count of threads in turn; the default (one thread, then every core) and its output are unchanged. A pool of fewer threads than the platform's lets its workers sleep and wakes as many as a round asks for, as the platform's does. It doesn't choose which cores take part: on this machine's two CCDs (six cores and 32 MiB of L3 each), past six threads a run's threads straddle both, and curves there mostly show memory moving between the two halves, for C and Tide alike.
+
+Three gated rounds at `1c6befb1` (`coverage-baseline-r1..r3`, Windows 11, Ryzen 9 7900X, Clang 23.1.2), medians of the rounds' medians, milliseconds a period:
+
+| Rollback, 100,000 movers, 25 of each 100 moving first | Tide | C | C, dirty | Tide / C | Tide / C, dirty |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Whole period, 1 thread | 1.813 | 2.166 | 1.544 | 0.84× | 1.17× |
+| Ticks (12) | 1.607 | 0.882 | 1.244 | 1.82× | 1.29× |
+| Snapshots (12) | 0.026 | 0.816 | 0.180 | 0.03× | 0.14× |
+| Hashes (5) | 0.180 | 0.345 | 0.102 | 0.52× | 1.76× |
+| Restore (1) | 0.0018 | 0.104 | 0.014 | 0.02× | 0.13× |
+| Hashes, 12 threads offered | 0.132 | 0.344 | 0.102 | 0.38× | 1.30× |
+| With `--spread 1`: whole period, 1 thread | 2.506 | 2.107 | 2.764 | 1.18× | 0.91× |
+| ...ticks / snapshots / hashes | 1.788 / 0.082 / 0.631 | 0.881 / 0.774 / 0.344 | 1.242 / 1.091 / 0.330 | | |
+
+Taking a snapshot and restoring one cost Tide next to nothing (its pages are shared until written), and its hash only reads the pages that changed; what the snapshots save shows up in the ticks instead, which write each shared lane into a page of their own and compare it with the shared one (`tide_table_lanes_begin`/`_end`). With a million movers (`--movers 1000000 --turrets 40000`), the period is 27.8 ms for Tide, 32.1 for C and 25.9 for C, dirty on one thread (0.85×, 1.08×), and 12.9, 22.2 and 10.9 on twelve; Tide's hash there is 3.3× C, dirty's (about 8 GB/s against 26), which fits the pages it hashes being new every tick, taken from the ones a snapshot let go of, where C, dirty writes its blocks in place and finds them still in the caches; this wasn't measured apart.
+
+| Systems, entities of each kind | Tide, 1 thread (ms) | C (ms) | Tide / C |
+| --- | ---: | ---: | ---: |
+| 0 (64 systems, nothing to do) | 0.0009 | 0.0006 | 1.50× |
+| 64 | 0.0047 | 0.0015 | 3.13× |
+| 4,096 | 0.0652 | 0.0580 | 1.12× |
+| 16,384 | 0.2575 | 0.2253 | 1.14× |
+| 65,536 | 1.292 | 0.918 | 1.36× |
+
+| Tide / best C on 1, 2, 4, 8, 12 threads | 1 | 2 | 4 | 8 | 12 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Systems, 16,384 a kind (Tide ms: 0.258, 0.199, 0.136, 0.202, 0.308) | 1.14× | 1.13× | 0.87× | 0.71× | 0.82× |
+| Systems, 65,536 a kind (Tide ms: 1.292, 0.817, 0.488, 0.526, 0.465) | 1.36× | 1.42× | 1.33× | 1.11× | 0.86× |
+| Particles, 1 million (Tide ms: 0.455, 0.240, 0.129, 0.145, 0.183) | 1.03× | 1.05× | 1.00× | 0.90× | 0.79× |
+| Wide, 1 million (Tide ms: 1.366, 0.972, 0.830, 0.875, 0.802) | 1.28× | 1.27× | 1.16× | 1.17× | 1.10× |
+| Sand, 1024² (Tide ms: 0.985, 0.549, 0.316, 0.234, 0.215) | 2.40× | 2.63× | 2.84× | 3.23× | 3.45× |
+| Life, 1024² (Tide ms: 0.575, 0.331, 0.197, 0.193, 0.198) | 7.48× | 4.30× | 2.56× | 2.52× | 2.56× |
+| Churn, 2,000 a tick (Tide ms: 0.431 to 0.419) | 2.16× | 2.10× | 2.12× | 2.11× | 2.11× |
+| Events, 200,000 sends (Tide ms: 0.906 to 0.876) | 7.64× | 7.46× | 7.45× | 7.42× | 7.37× |
+| N-body, 2,000 (Tide ms: 3.396, 1.727, 0.897, 0.489, 0.386) | 1.73× | 1.70× | 1.71× | 1.69× | 1.66× |
+| Nested buckets, 4,096 (Tide ms: 0.086 throughout) | 11.84× | 12.93× | 12.36× | 6.34× | 4.93× |
+| Map/set, 16,384 keys (Tide ms: 1.751 to 1.766) | 5.62× | 5.54× | 5.60× | 5.54× | 5.58× |
+
+C's ways that don't split their work (Life, Churn, Events, Lookup's) take the same time on every count; Sand's and N-body's best C is their table-lookup and SIMD ways. Tide's churn, events, buckets and map/set ticks stay on one thread whatever is offered. Memory-bound loops (Particles, Systems) are fastest on four to six threads for both languages and slower past that, on this machine's second CCD. Two changes came of these: a chunk's lane bookkeeping is inline where no snapshot shares its pages (systems at 64 entities a kind 4.8 → 3.9 µs a tick), and on threads cheap tasks are taken a few at a time, starting from the first system with work left (systems at 16,384 a kind 17–20% faster on 2 and 4 threads). `notes/benchmarks.md` has the paired before/after rounds, what was tried and dropped, and the gaps left; closing the hash's (`tide_hash_wide` about 1.75× slower than wyhash here) needs the owner, as a faster page hash would move every pinned world hash.
 
 ## Coverage and the October 6 audit
 
@@ -34,7 +94,7 @@ All end-state digests agree. Offering workers does not make shared mutable map/s
 
 The session runs retain matching worlds and join times: Sand's clients run about 30 ms of simulation per simulated second, while Gallery's largest initial world is 4.41 MB as sent and its slowest catch-up is 2.67 s under the configured 50 ms each-way delay and 1% loss. One OpenGL drawing run is saved with the RTX 4080 SUPER; its empty-scene median readback is 0.296 ms and 65,536 rectangles take 1.111 ms including recording/readback. These measurements describe this machine; the audit changes the benchmarks and their validation, and makes no engine speedup claim. [Audit metadata](results/benchmark-audit-metadata.json) identifies the runs and binaries.
 
-Remaining coverage opportunities include a retained window of multiple snapshots with restore/replay, asset-heavy compilation, and a handwritten graphics baseline. Networked Sand/Gallery already measure replay, snapshot, hash, packing, transfer and joining costs together; the new retained-state variants isolate snapshot/write costs against C.
+Remaining coverage opportunities include asset-heavy compilation. Two items missing at the audit exist since 2026-10-20: a retained window of multiple snapshots with restore/replay is `versus_rollback` (above), and a handwritten graphics baseline is `versus_draw` (Drawing, below). Networked Sand/Gallery already measure replay, snapshot, hash, packing, transfer and joining costs together; the new retained-state variants isolate snapshot/write costs against C.
 
 ## Native runtime measurements
 
@@ -143,15 +203,19 @@ The harness never edits a game in the repository or a supplied installation. `--
 ## Drawing
 
 ```powershell
-cmake --build --preset release --target tide_platform_draw
+cmake --build --preset release --target tide_platform_draw versus_draw
 $env:TIDE_BENCH_REVISION = "<revision and local changes>"
 $env:TIDE_BENCH_MACHINE = "<CPU and GPU>"
-build/release/bin/tide_platform_draw --bench --save change-name
+build/release/bin/tide_platform_draw --bench --save change-name     # TIDE_BACKEND=vulkan or opengl picks the backend
+build/release/bin/versus_draw --save change-name                    # the same workloads by hand, in TIDE_BACKEND's API
+node bench/compare.mjs draw --tide change-name --c change-name      # side by side, with Tide's ratio to C
 ```
 
-The drawing benchmark measures 65,536 rectangles, circles, rectangles interrupted by text, textured quads, cube instances, round rects (the smooth shapes' path) and rectangles with a round rect among every 1,024 (one run of both kinds, which all goes through the smooth shapes' pipeline), plus an empty scene showing the readback cost. Each workload has 20 warmup frames and 100 measured frames. It reports median and p95 for draw-list recording, rendering with readback, and the combined time. Saved rows in `bench/results/draw.jsonl` identify the renderer, dimensions, compiler, machine and revision. On a web build, `?bench&save=change-name` prints JSONL records; `backend=webgpu` or `backend=webgl` chooses the backend.
+The drawing benchmark measures 65,536 rectangles, circles, rectangles interrupted by text, textured quads, cube instances, round rects (the smooth shapes' path) and rectangles with a round rect among every 1,024 (one run of both kinds, which all goes through the smooth shapes' pipeline), plus an empty scene showing the readback cost. Each workload has 20 warmup frames and 100 measured frames. It reports median and p95 for draw-list recording, rendering with readback, and the combined time. Saved rows in `bench/results/draw.jsonl` identify the renderer, dimensions, compiler, machine and revision. On a web build, `?bench&save=change-name` prints JSONL records; `backend=webgpu` or `backend=webgl` chooses the backend. `--only <n>` runs one workload (for a profiler), and `--dump-frames <prefix>` writes each workload's last frame as `<prefix>-<n>.ppm` after its timing.
 
-These are C calls to Tide's drawing APIs. They exclude generated Tide view execution, and rendering time includes CPU submission, GPU completion and copying the target's pixels back. They are useful for tracking overhead and batching, but there is no handwritten GPU API baseline yet, so they do not establish competitive graphics performance. Pixel tests of generated shaders and manual instancing verify correctness separately.
+These are C calls to Tide's drawing APIs. They exclude generated Tide view execution, and rendering time includes CPU submission, GPU completion and copying the requested pixels back. Pixel tests of generated shaders and manual instancing verify correctness separately.
+
+`versus_draw` (`bench/draw/`, desktop only) is the handwritten baseline: the nothing, rects, circles, textured quads, cube instances and round rects workloads written directly against OpenGL 3.3 core (`draw_gl.c`) or Vulkan 1.3 (`draw_vk.c`, dynamic rendering, no window), as an expert writes them for these cases: a static quad or cube, one instance buffer the CPU writes straight into (an unsynchronized map on OpenGL, device-local host-visible memory kept mapped on Vulkan), one pipeline and one instanced draw per workload, minimal state, and one pixel read back. It uses the same target, frames, shapes, colors, camera and timing boundaries, and its frames are byte-identical to Tide's on both APIs (`versus_draw --compare <prefix>` against `tide_platform_draw --bench --dump-frames <prefix>`). It also draws the cubes with a whole matrix each, as Tide sends them, as an extra workload. Its rows have `"competitive_baseline":true`, `"way":"C"`, the API and the device; `TIDE_BACKEND` picks the API, Vulkan first without it. Its record part writes instances into GPU-visible memory, while Tide's record is its draw list and its upload is in its render part, so compare totals. `--quick` (a CTest on each API, label `gpu`, Vulkan under the validation layer) checks the pixel read back. Results and remaining gaps: `notes/benchmarks.md`, Drawing against handwritten OpenGL and Vulkan.
 
 ## Skinned meshes
 

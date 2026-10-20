@@ -7832,6 +7832,11 @@ static bool program_has_slots(const program *prog)
     return false;
 }
 
+// Whether a list helper's `cache` is writable for list `*l` and still holds
+// (tide_list_cached_at_mut's own test): the list was prepared before it was.
+#define CACHE_OWNS \
+    "(cache->writable && cache->at == l->at && __atomic_load_n(&cache->heap->moves, __ATOMIC_RELAXED) == cache->moves)"
+
 static void gen_list_helpers(gen *g, const bool bodies)
 {
     const program *prog = g->prog;
@@ -7920,9 +7925,12 @@ static void gen_list_helpers(gen *g, const bool bodies)
                      "    if (l && (uint32_t)i < (uint32_t)tide_list_count(*l)) tide_list_prepare(l, sizeof(%s), where);\n"
                      "    %s *p = %stide_list_at_mut(*l, i, sizeof(%s))%s;\n    if (p) tide_list%d_put(p, v, where);\n}\n\n",
                   k, vc, sz, ec, has, sz, or_none, k);
-        // The same through the function's cache (tide_lc): a run's page made the world's own once
+        // The same through the function's cache (tide_lc): a run's page made the world's own once. A cache that's
+        // writable for this very list, and still holds, was filled after the list was prepared, and only a world's
+        // own elements are ever cached writable (never an asset's or the pack's): preparing it again would change
+        // nothing, and is what every element a loop writes would otherwise pay for (CACHE_OWNS)
         sb_printf(o, "TIDE_HELPER void tide_list%d_cset(tide_list_cache *cache, tide_list *l, const int32_t i, const %s v, const uint32_t where)\n{\n"
-                     "    if (l && (uint32_t)i < (uint32_t)tide_list_count(*l)) tide_list_prepare(l, sizeof(%s), where);\n"
+                     "    if (l && !" CACHE_OWNS " && (uint32_t)i < (uint32_t)tide_list_count(*l)) tide_list_prepare(l, sizeof(%s), where);\n"
                      "    %s *p = %stide_list_cached_at_mut(cache, *l, i, sizeof(%s))%s;\n    if (p) tide_list%d_put(p, v, where);\n}\n\n",
                   k, vc, sz, ec, has, sz, or_none, k);
         sb_printf(o, "TIDE_HELPER void tide_list%d_add(tide_list *l, const %s v, const uint32_t where)\n{\n"
@@ -7947,7 +7955,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
                          "    if (l && (uint32_t)i < (uint32_t)tide_list_count(*l)) tide_list_prepare(l, sizeof(%s), where);\n"
                          "    return l ? tide_list_at_mut(*l, i, sizeof(%s)) : NULL;\n}\n\n", ec, k, sz, sz);
             sb_printf(o, "TIDE_HELPER %s *tide_list%d_cslot(tide_list_cache *cache, tide_list *l, const int32_t i, const uint32_t where)\n{\n"
-                         "    if (l && (uint32_t)i < (uint32_t)tide_list_count(*l)) tide_list_prepare(l, sizeof(%s), where);\n"
+                         "    if (l && !" CACHE_OWNS " && (uint32_t)i < (uint32_t)tide_list_count(*l)) tide_list_prepare(l, sizeof(%s), where);\n"
                          "    return l ? tide_list_cached_at_mut(cache, *l, i, sizeof(%s)) : NULL;\n}\n\n", ec, k, sz, sz);
         }
         // Each element's text goes, or comes, for clearing, assigning, owning or releasing a list
@@ -12027,7 +12035,12 @@ static void gen_par_steps(gen *g, const decl *sys)
             sb_put(o, "    const size_t tide_wn = (size_t)tide_extent[0] * (size_t)tide_extent[1] * (size_t)tide_extent[2];\n");
             sb_printf(o, "    %s *const tide_wm = tide_scratch_memory(2u * tide_wn * sizeof(%s));\n", cell, cell);
             sb_put(o, "    tide_par_window(tide_pl, tide_lo, tide_extent, tide_wm);\n");
-            sb_printf(o, "    memcpy(tide_wm + tide_wn, tide_wm, tide_wn * sizeof(%s));\n", cell);
+            // The copy the steps write starts as what they read, but where
+            // every step writes its own cell, all that's put back is written:
+            // only a tile where the grid has no chunk, whose blocks are
+            // checked first, skips some
+            if (s->writes_own) sb_printf(o, "    if (tide_sparse) memcpy(tide_wm + tide_wn, tide_wm, tide_wn * sizeof(%s));\n", cell);
+            else sb_printf(o, "    memcpy(tide_wm + tide_wn, tide_wm, tide_wn * sizeof(%s));\n", cell);
             sb_printf(o, "    const %s *restrict const tide_win = tide_wm;\n    %s *restrict const tide_wout = tide_wm + tide_wn;\n", cell,
                       cell);
         }
@@ -12418,9 +12431,11 @@ static void gen_system_body(gen *g, const decl *sys)
         if (p->type.kind == TY_INPUT) {
             sb_printf(o, ", const %s *restrict %s", c_type(p->type), prev_input_name(g, p->name));
         }
-        // Its local fields, where the local world keeps them: read and written in place
+        // Its local fields, where the local world keeps them: read and written in place.
+        // Not `restrict`: a query's rows reach the same entity's fields, and write them while
+        // this pointer is live, so an optimizer taking `restrict` at its word reads stale ones.
         if (has_fields_ptr(p)) {
-            sb_printf(o, ", %s%s *restrict %s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
+            sb_printf(o, ", %s%s *%s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
                       fields_name(g, p->name));
         }
     }

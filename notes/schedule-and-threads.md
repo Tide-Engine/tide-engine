@@ -1,5 +1,70 @@
 # The schedule and the tick on threads
 
+Cache groups in the desktop pool (2026-10-20, platform/src/jobs.c): cores that
+share a last-level cache are a group, found on Windows from
+GetLogicalProcessorInformationEx (the largest unified cache level; only where
+there are several groups, each of two cores or more, between them every core,
+at most 8). A Ryzen 9 7900X has two of six. Data moves between groups slowly:
+a million particles tick in 0.086 ms on six threads pinned to one group, 0.38
+on three of each and 0.27 on all twelve, the C as much as Tide, while N-body,
+which is arithmetic, wants all twelve (0.43 against 0.62). So each worker is
+pinned to its group (SetThreadGroupAffinity), the pool's home group is the one
+it was made on, a thread that runs rounds is pinned to it from its first
+round (unpinned, the system moved it between groups and the world with it:
+0.13 ms where pinned was 0.086), and `run` takes either the home group's
+threads or every group's, per work function (`choice`): its first six rounds
+take each in turn, then the one whose last three rounds' middle time is
+lower, and every 64th round the other one, so a work that changes is found
+out. `run_some` and `more` stay in the home group first. Results never
+depend on which threads run. Paired against the pool before, gated, two
+rounds each on 12 threads: versus_particles 0.236 to about 0.09 ms, versus_life
+0.21 to 0.13, versus_wide 10-15% less, versus_sand as it was, versus_nbody
+within 5-10% (a few of its 32 rounds try the home group). Linux, macOS,
+Android and the web keep one group: finding them there (sysfs's
+cache/index3/shared_cpu_list and pthread_setaffinity_np on Linux) is left to
+do, as nothing here could test it.
+
+Grid parallel loops, performance pass (2026-10-20): `tide_par_window` works out a
+row's runs (where each chunk's cells go in the window, and where they start in
+their chunk's row) once for the window, as they're the same for every row that
+doesn't pass the last int, and copies runs up to 256 bytes inline rather than
+through memcpy, which a window called some 17,000 times a tick in versus_life.
+`tide_par_window_put` compares and copies those runs inline too, and a task
+whose own cells are exactly one whole chunk (one-cell blocks, the common case)
+compares its rows and, if any changed, fills a buffer it takes uninitialized
+(`buffer_for` with `whole`, grid.c) with every row of the window, rather than
+copying the chunk into the buffer first and then the rows that changed: rows
+that didn't change are the chunk's as it is, and no other task's own cells are
+in that chunk. With the compiler's `writes_own` (language.md), versus_life
+went from 0.583 to about 0.42 ms a tick on one thread; versus_sand, whose 2x2
+blocks are mostly not chunk-aligned, about 5%. The geometry stays 64-bit where
+it was (memory-safety.md).
+
+Picking tasks on threads (2026-10-20), in `engine/src/jobs.c` alone, the
+schedule and every result as they were:
+- A thread takes a system's tasks a few at a time where each is little work
+  (`BATCH_WORK`, 250,000 of tidec's units, as `PIECE_WORK`), as many as come to
+  that, never so many that the system has fewer takings than the tick has
+  threads (`system_state.batch`, `.batches`). Each task still runs with its own
+  queue, temporary handles and settling, one after another on that thread, so
+  what one thread would have recorded is unchanged; `finish_tasks` counts the
+  takings' tasks done at once. Threads asked for a system's work count
+  takings, not tasks.
+- Looking for work starts at `tick_run.front`, the first system that may have
+  something left to give out, which a thread moves past systems whose tasks
+  and settling are all given out, rather than at system 0 every time.
+- Each system's state is on a cache line of its own (`_Alignas(64)`, from an
+  aligned start in its memory), so threads counting one system's tasks don't
+  take the line from those looking at the next.
+`versus_systems` (64 systems, 16,384 entities of each kind, tasks of 2,048 rows
+of a cheap loop) went from 0.20 to 0.175 ms a tick on 2 threads and 0.14 to
+0.12 on 4 (alternating runs); past 6 threads this machine's runs vary too much
+to tell (threads on its second CCD). `jobs_cheap_tasks_are_taken_a_few_at_a_time`
+(`tests/test_jobs.c`) checks that 64 cheap tasks on eight threads each run
+once by their own number and ask for 7 threads, not 63; `platform/tests/jobs`
+and the e2e row, world-set and schedule fixtures check results against one
+thread. Measurements: notes/benchmarks.md.
+
 Query local fields (2026-10-19): attached local access and mutable-query effects
 propagate through synchronous helpers. Views/local handlers retain their
 existing serial order and named phases; match component data remains read-only
