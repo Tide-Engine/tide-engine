@@ -6,6 +6,150 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Drawing against handwritten OpenGL and Vulkan, 2026-10-20
+
+The owner asked for a performance pass comparing each part of the engine
+with hand-coded optimal C for the same case. For drawing, the missing
+coverage item was a handwritten graphics baseline. `versus_draw`
+(`bench/draw/`, desktop only; `bench/README.md`, Drawing) now draws
+`tide_platform_draw --bench`'s nothing, 65,536 rects, circles, textured
+quads, cube instances and round rects by hand, in OpenGL 3.3 core
+(`draw_gl.c`) or Vulkan 1.3 (`draw_vk.c`), as an expert writes these cases: a
+static quad or cube, one instance buffer written straight into GPU-visible
+memory, one pipeline and one instanced draw a workload, minimal state, one
+pixel read back. Same 256 by 352 target, 20 warmup and 100 measured frames,
+same shapes, colors, camera and timing split (record; render + readback;
+total). Its frames are byte-identical to Tide's on both APIs for all six
+workloads (`versus_draw --compare` against `tide_platform_draw --bench
+--dump-frames`). Choices measured while writing it: OpenGL's instances are
+written through an unsynchronized map (orphaning with
+`GL_MAP_INVALIDATE_BUFFER_BIT` had NVIDIA's driver write 65,536 rects in 0.33
+ms instead of 0.05; OpenGL 4.4's persistent mapping matched the
+unsynchronized map; `glBufferSubData` cost about 0.18 ms more); Vulkan's are
+in device-local host-visible memory (65,536 rects 0.146 ms a frame against
+0.18-0.20 in host memory). The baseline re-records its command buffer every
+frame and doesn't overlap frames, as Tide's benchmark doesn't. It also draws
+the cubes with a whole matrix each, Tide's data, as a seventh workload. Rows
+have `"competitive_baseline":true` and `"way":"C"` with the API and device;
+`node bench/compare.mjs draw --tide <label> --c <label>` prints them side by
+side. `tide_platform_draw --bench` gained `--only <n>` and `--dump-frames`.
+
+| Vulkan, ms | Tide before: record / render / total | Tide after | C by hand | Tide / C before | after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nothing | 0.000 / 0.137 / 0.137 | 0.000 / 0.065 / 0.065 | 0.000 / 0.047 / 0.047 | 2.50× | 1.39× |
+| 65,536 rects | 0.338 / 0.740 / 1.075 | 0.265 / 0.325 / 0.590 | 0.057 / 0.090 / 0.147 | 7.60× | 4.01× |
+| 65,536 circles | 0.339 / 0.716 / 1.054 | 0.252 / 0.284 / 0.536 | 0.057 / 0.088 / 0.145 | 7.36× | 3.71× |
+| 65,536 textured quads | 1.104 / 2.037 / 3.160 | 1.100 / 0.905 / 2.005 | 0.057 / 0.089 / 0.146 | 22.54× | 13.70× |
+| 65,536 cube instances | 1.580 / 0.605 / 2.193 | 1.491 / 0.414 / 1.904 | 0.034 / 0.147 / 0.181 | 12.57× | 10.52× |
+| 65,536 round rects | 0.796 / 1.499 / 2.294 | 0.786 / 0.544 / 1.331 | 0.068 / 0.089 / 0.158 | 14.96× | 8.44× |
+| rects, text every 1,024 | 0.340 / 0.800 / 1.139 | 0.252 / 0.372 / 0.624 | - | - | - |
+| rects, a round rect every 1,024 | 0.344 / 0.897 / 1.242 | 0.252 / 0.439 / 0.693 | - | - | - |
+| cubes, a matrix each (C only) | - | - | 0.183 / 0.149 / 0.333 | - | - |
+
+| OpenGL 3.3, ms | Tide before: record / render / total | Tide after | C by hand | Tide / C before | after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nothing | 0.000 / 0.172 / 0.172 | 0.000 / 0.144 / 0.145 | 0.000 / 0.012 / 0.012 | 9.14× | 11.75× |
+| 65,536 rects | 0.337 / 0.747 / 1.084 | 0.266 / 0.403 / 0.669 | 0.055 / 0.110 / 0.167 | 6.07× | 4.00× |
+| 65,536 circles | 0.338 / 0.695 / 1.037 | 0.252 / 0.358 / 0.610 | 0.057 / 0.112 / 0.174 | 5.99× | 3.51× |
+| 65,536 textured quads | 1.105 / 2.237 / 3.343 | 1.105 / 1.421 / 2.522 | 0.055 / 0.109 / 0.164 | 20.31× | 15.35× |
+| 65,536 cube instances | 1.586 / 0.723 / 2.321 | 1.488 / 0.694 / 2.178 | 0.031 / 0.129 / 0.159 | 14.32× | 13.67× |
+| 65,536 round rects | 0.801 / 1.591 / 2.395 | 0.787 / 0.780 / 1.567 | 0.058 / 0.127 / 0.189 | 12.59× | 8.28× |
+| rects, text every 1,024 | 0.338 / 0.962 / 1.304 | 0.252 / 0.637 / 0.893 | - | - | - |
+| rects, a round rect every 1,024 | 0.344 / 0.924 / 1.271 | 0.253 / 0.588 / 0.844 | - | - | - |
+| cubes, a matrix each (C only) | - | - | 0.144 / 0.299 / 0.447 | - | - |
+
+Medians of three gated runs' medians, ms, Ryzen 9 7900X / RTX 4080 SUPER
+(NVIDIA 617.42) / Windows 11 / Clang 23.1.2, release. Before is `6278df68`
+(`perf-draw-before-r1..3`), after is `dd171ccd` (`perf-draw-final-r1..3`, its
+binaries; the tree had uncommitted documentation, hence `+local`), each with
+Tide on both backends and C in both APIs alternating; C is the same binary in
+both, and each ratio is against its own run's C (C's after column shown). The
+kept-data workloads (grid, lights, moved mesh) have no C counterpart and are
+in the ledger; all five are faster on both backends (Vulkan totals 0.17-0.44
+-> 0.10-0.32 ms, OpenGL 0.12-0.41 -> 0.09-0.34), mostly from the readback.
+Tide's record is its draw list; its render part converts, uploads, draws and
+reads back the pixels asked for. C's record writes instances into GPU memory.
+Compare totals. C's OpenGL empty frame moved between runs (0.019 before,
+0.012 after), so that ratio says little; Tide's 0.172 -> 0.145 is mostly its
+hidden window's swap (below).
+
+What changed (`notes/rendering.md`, Readback, upload memory and runs of
+shapes; `notes/drawing.md`, Recording reads what its caller just wrote):
+`tide_platform_read_pixels` reads only the box around its points (Vulkan's
+whole-target read and swizzle was an eighth of the benchmark's own CPU
+time); runs of plain and smooth shapes convert in one loop each and colors
+convert without branches; Vulkan's per-frame upload ring lives in
+device-local host-visible memory; recording reads a call's color and
+transform a float at a time, as Windows passes them by address and a wide
+load over the caller's narrower stores waits for them. Every one of the 13
+workloads' frames is the same bytes before and after on both backends.
+
+Tried and dropped, with numbers in those notes: OpenGL swapping the hidden
+window only when a frame drew in it (the empty frame 0.131 -> 0.034 ms, but
+uploads 1.5-5 times slower: NVIDIA recycles `glBufferSubData` memory at
+swaps), a cache of converted mesh corners (quads' conversion 0.82 -> 1.4
+ms), and word-at-a-time copies of just-built vertices and shapes (no gain or
+slower). Profiling used the coordinator's sampler (`bench/profile/sample.c`
+on the performance-pass branch) and temporary per-phase timers.
+
+What remains, and why (Vulkan, after; the parts of a frame are from the
+temporary per-phase timers, means over 120 frames):
+- Rects and circles, about 4 times C: two passes. Tide records a 44-byte
+  command through an exported call (about 4 ns a shape), then converts each
+  to a 24-byte instance (about 0.14 ms for 65,536) and copies those into the
+  upload ring (about 0.085 ms), which the GPU copies again before drawing. C
+  writes 20-byte instances once (0.057 ms). Building instances straight into
+  GPU-visible memory would need an upper bound on a list's shapes and a
+  `gpu.h` call that hands out room in the ring.
+- Textured quads, about 14 times: the generic mesh path. A quad is recorded
+  as 4 vertices of 32 bytes and 6 indices (about 17 ns), and expanded into 6
+  vertices of 20 bytes (7.8 MB a frame: about 0.6 ms converting, 0.4 ms
+  uploading). C sends one 20-byte instance a quad. Recognising quads, or a
+  sprite call, would be an API or renderer design question for the owner.
+- Cube instances, about 10.5 times: about 23 ns a recorded instance (mesh
+  lookup, frustum culling in double precision, a 64-byte transform, its
+  determinant for the side drawn, run merging) and 4 MB of transforms a
+  frame where C's positions are 0.75 MB. With Tide's data (a matrix each)
+  C takes 0.33 ms in total, so most of the gap is the recording path.
+- Round rects, about 8.4 times: 104 bytes recorded per shape (the command
+  and the shape's own 60), converted to 56 (instance and extra) and
+  uploaded, against C's 24.
+- OpenGL's empty frame stays near 0.15 ms against C's 0.01-0.02: Tide's frame
+  loop swaps the hidden window between frames, outside the timed part, and
+  the next readback waits for that swap (C swapping the same way measured
+  0.025 -> 0.111 ms); skipping it was the setback above.
+- Vulkan's empty frame (0.065 ms against C's 0.047) is most likely its
+  submission path: a command buffer a pass with its barriers, and
+  `vkQueueWaitIdle` where C waits for one fence. Not measured apart.
+
+Measurement hygiene: every timed run, exploratory ones too, held the
+shared `Local\TideClaudeContinuationBenchmark` mutex after a quiet period
+with no builds, tests or benchmarks; the scratch gate also waited for any
+other process using more than half a core (other agents' game runs), except
+one Claude Code `pwsh` of another session that had spun a core since
+2026-10-16, which was running for before and after alike. The runner
+(`bench/results/perf-pass/run.ps1`, which gained the Vulkan baseline entry)
+has to be invoked in-process (`& ./run.ps1 -Only a,b`): through `pwsh -File`
+the list arrives as one string and nothing runs. An after run labelled
+`perf-draw-after` (Tide) / `perf-draw-after-c` (C, rerun separately when
+LLVM was briefly uninstalled from the machine and the baseline couldn't be
+relinked; the identical frozen binary was used) ran under visibly more noise
+(p95s two to three times the before run's) and is kept in the ledger but not
+used for the table. Other desktop activity and clocks were not controlled.
+
+Validation: warning-free native and web debug builds with Clang 23.1.2 and
+Node 24.21.0; all 2,455 native debug CTests pass (36 `gpu`, Vulkan under the
+validation layer with synchronization checks, and OpenGL twins, including
+the new `versus_draw` and `versus_draw_opengl`, and `bench_harness`, which
+checks the draw comparison on fixture rows), and all 2,362 web debug CTests
+pass (WebGL, the D3D11 WebGL run, and 11 WebGPU pages). Release
+`tide_platform_draw`, `_targets`, `_shaders` and `_skinned` pass on Vulkan
+under validation and on OpenGL after each change, and every benchmark frame
+was compared byte for byte before and after. Android, Linux, macOS, MinGW
+and sanitizers were not run; no CI was dispatched. The Vulkan upload ring's
+device-local placement is checked on this NVIDIA GPU alone; integrated and
+mobile GPUs, and MoltenVK, take the same path through their own memory types.
+
 ## O2 versus O3 on the external stress test, 2026-10-12
 
 The owner requested an optimization-level benchmark after approving optimized

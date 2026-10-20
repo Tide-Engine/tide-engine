@@ -1,5 +1,46 @@
 # The platform layer and the renderer
 
+## Readback, upload memory and runs of shapes (2026-10-20)
+
+From the performance pass against the handwritten drawing baseline
+(`bench/draw/versus_draw`, `notes/benchmarks.md`, Drawing against
+handwritten OpenGL and Vulkan). Internal changes, Claude's; pixels are the
+same bytes before and after on both backends for all 13 benchmark workloads.
+
+- `tide_platform_read_pixels` reads back only the box around the points it's
+  asked for, through `gpu.h`'s optional `target_read_part` (OpenGL, so WebGL
+  too, and Vulkan; WebGPU has none and reads whole targets as before). Vulkan's
+  blue-first-to-red-first swizzle of what's read back is a `restrict` loop that
+  vectorizes; done a byte at a time it was an eighth of the benchmark's own CPU
+  time while it read whole frames. Vulkan's empty benchmark frame: 0.137 -> 0.065 ms.
+- `draw_list` turns a run of plain shapes (`add_plain_run`: rects, their
+  outlines, lines, and circles where the destination isn't scaled) and a run
+  of smooth shapes (`add_smooth_run`) into steps in one loop each, with the
+  camera's numbers read once and the arithmetic of the cases they replace,
+  bit for bit. `rect_corner` and `add_smooth_shape` went into them.
+- `color_channel` keeps a channel from 0 to 1 with `fminf`/`fmaxf` (NaN as 0)
+  instead of branching, so a color converts four channels at once; it gives
+  the same byte for all 2^32 floats (checked exhaustively, same flags).
+- `add_mesh` reads its camera's numbers once. A small cache of converted
+  corners (a quad's two triangles share two) was slower, and was dropped.
+- Vulkan's per-frame upload ring (the source of buffer and texture copies,
+  and the uniforms) is allocated in device-local host-visible memory where the
+  device has such a type (all of a desktop GPU's memory with resizable BAR,
+  else a 256 MB window; any integrated GPU's), for rings up to 32 MB
+  (`UPLOAD_LOCAL_BYTES`), else, or when that allocation fails, in host memory
+  as before. Copies out of it then don't cross the bus as the GPU runs: with
+  per-phase timers (not committed), submission to pixel read back went 0.21 ->
+  0.14-0.18 ms for 65,536 rects and 0.44 -> 0.27 ms for 65,536 cubes'
+  transforms, while the CPU's copy into the ring rose slightly (0.075 -> 0.086 ms).
+- Tried and not kept: OpenGL swapping the window only after a frame drew in
+  it (as Vulkan presents only an image it drew in), flushing otherwise. A
+  hidden window's swap costs the next readback about 0.09 ms (measured in the
+  baseline too: 0.025 -> 0.111 ms with a swap between frames), and the empty
+  frame went 0.131 -> 0.034 ms, but frames that upload a lot got 1.5 to 5 times
+  slower (round rects 0.84 -> 3.95 ms): NVIDIA's driver evidently recycles
+  `glBufferSubData`'s memory at swaps. Every test frame through
+  `tide_platform_read_pixels` still swaps the hidden window.
+
 ## Window scale getter (2026-10-20)
 
 `tide_platform_screen_scale()` exposes the existing `window_scale()` float2,

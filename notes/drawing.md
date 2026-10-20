@@ -1,5 +1,38 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Recording reads what its caller just wrote (2026-10-20)
+
+From the performance pass against the handwritten drawing baseline
+(`notes/benchmarks.md`, Drawing against handwritten OpenGL and Vulkan).
+Internal to `engine/src/draw.c`; recorded lists, culling decisions and pixels
+are unchanged.
+
+- On Windows x64 a struct of more than 8 bytes (a `tide_color`, a
+  `tide_float4x4`) is passed by address, to a copy the caller has usually just
+  written a float or two at a time. A 16-byte load over several narrower
+  stores can't be forwarded from them and waits until they reach the cache;
+  the sampling profiler put about half of recording a rect there. `push` reads
+  its color a float at a time (`color_read`, `volatile` so the compiler can't
+  join the loads again), and a single instance's transform is read the same way
+  (`matrix_read`) into the list's matrices and the frustum test. Elsewhere
+  (System V passes these in registers) this costs a store and four loads.
+  Recording 65,536 rects: 0.337 -> 0.26 ms (Ryzen 9 7900X, Clang 23.1.2).
+- `tide_draw_instance` and `tide_draw_mesh_3d` pass the transform on by
+  address (`instance_at`, `mesh_3d_at`) instead of copying it into each call
+  below; `frustum_camera` compares its three cached numbers directly where it
+  built an array and compared it whole; `tide_draw_mesh_slot` keeps the place
+  it found last on its thread (`TIDE_THREAD_LOCAL`) and checks that place's
+  key first, as a view drawing one mesh per entity asks again and again (keys
+  are unique, as only it makes places, and a free place's space is
+  `TIDE_MESH_NONE`, which nobody asks for). Together: 65,536 cube instances
+  recorded in about 1.51 ms, from 1.58.
+- `solid` (round rects, turned rects, ellipses) writes a shape's numbers
+  into the list's slot a field at a time (`shape_slot`, `shape_placed`, which
+  `push_shape` also goes through) instead of building them and copying the
+  whole: 65,536 round rects 0.82 -> 0.795 ms. Copying a just-built shape or
+  vertex array a word at a time instead didn't help (shapes: no change; a
+  quad's four vertices: 1.13 -> 1.35 ms, slower), and was dropped.
+
 ## Window pixel scale metadata (2026-10-20)
 
 `Screen.scale` is a read-only float2 in views and their drawing helpers: physical
