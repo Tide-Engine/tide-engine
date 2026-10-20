@@ -1,0 +1,832 @@
+{
+  "label": "coverage-baseline",
+  "revision": "1c6befb1e85e9599006933b43f8f8c87cd2a1037",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T11:23:32.8484081Z",
+  "runs": [
+    {
+      "arguments": [
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_rollback",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 1.3978597
+    },
+    {
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_rollback_spread",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 1.7828143
+    },
+    {
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_rollback_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 36.3564976
+    },
+    {
+      "arguments": [
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_systems",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 0.192494
+    },
+    {
+      "arguments": [
+        "--count",
+        "0",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_systems_empty",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 0.0344868
+    },
+    {
+      "arguments": [
+        "--count",
+        "64",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_systems_small",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 0.0406322
+    },
+    {
+      "arguments": [
+        "--count",
+        "16384",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_systems_mid",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 1.5588143
+    },
+    {
+      "arguments": [
+        "--count",
+        "65536",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_systems_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 4.6220861
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_particles_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 1.0654137
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_wide_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 2.2018961
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_sand_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 1.2435608
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_life_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 0.3286198
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_churn_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 1.4899485
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_events_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 1.2558352
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_nbody_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 0.8704947
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_buckets_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 0.4079742
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r1"
+      ],
+      "name": "versus_lookup_scaling",
+      "round": 1,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r1",
+      "competingWork": false,
+      "wallSeconds": 2.5371615
+    },
+    {
+      "arguments": [
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_rollback",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 1.403486
+    },
+    {
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_rollback_spread",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 1.8045768
+    },
+    {
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_rollback_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": true,
+      "wallSeconds": 37.36692
+    },
+    {
+      "arguments": [
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_systems",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 0.1820166
+    },
+    {
+      "arguments": [
+        "--count",
+        "0",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_systems_empty",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 0.0367427
+    },
+    {
+      "arguments": [
+        "--count",
+        "64",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_systems_small",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 0.0396134
+    },
+    {
+      "arguments": [
+        "--count",
+        "16384",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_systems_mid",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 1.445673
+    },
+    {
+      "arguments": [
+        "--count",
+        "65536",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_systems_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 4.5965964
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_particles_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 1.0655929
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_wide_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 2.1956378
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_sand_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 1.2417545
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_life_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 0.387396
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_churn_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 1.6564011
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_events_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 1.2209257
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_nbody_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 0.8704067
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_buckets_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 0.4134787
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r2"
+      ],
+      "name": "versus_lookup_scaling",
+      "round": 2,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r2",
+      "competingWork": false,
+      "wallSeconds": 2.5193702
+    },
+    {
+      "arguments": [
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_rollback",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 1.399166
+    },
+    {
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_rollback_spread",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 1.7995192
+    },
+    {
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_rollback_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 36.5439188
+    },
+    {
+      "arguments": [
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_systems",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 0.1837494
+    },
+    {
+      "arguments": [
+        "--count",
+        "0",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_systems_empty",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 0.0347393
+    },
+    {
+      "arguments": [
+        "--count",
+        "64",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_systems_small",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 0.039637
+    },
+    {
+      "arguments": [
+        "--count",
+        "16384",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_systems_mid",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 1.4140982
+    },
+    {
+      "arguments": [
+        "--count",
+        "65536",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_systems_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 4.3883212
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_particles_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 1.0916245
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_wide_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 2.1623159
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_sand_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 1.2390422
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_life_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 0.3255776
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_churn_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 1.4843828
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_events_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 1.1934885
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_nbody_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 0.8571511
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_buckets_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 0.4104463
+    },
+    {
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-baseline-r3"
+      ],
+      "name": "versus_lookup_scaling",
+      "round": 3,
+      "exitCode": 0,
+      "backend": null,
+      "label": "coverage-baseline-r3",
+      "competingWork": false,
+      "wallSeconds": 2.4953208
+    }
+  ],
+  "binaries": [
+    {
+      "name": "versus_buckets.exe",
+      "sha256": "e3e1be8965d82392c21040de0ec6f60318376c820c30f8b2eb3beb1d1fd7894e"
+    },
+    {
+      "name": "versus_churn.exe",
+      "sha256": "91d2cf6699ea7eb4c028f89c8fc772f6c5320ea0a645a7ff88bc5c7abbfeb4bc"
+    },
+    {
+      "name": "versus_events.exe",
+      "sha256": "e293cbfda1cca55bc731f799b7f6ca6c36a54bfc2746352f6af1a871686582e6"
+    },
+    {
+      "name": "versus_life.exe",
+      "sha256": "f73662fe36f14f9672c139663b246052543dd456674f958421c60a93ae3e1e0f"
+    },
+    {
+      "name": "versus_lookup.exe",
+      "sha256": "a0183a6ea72280c9f3d03e96562bba3d56c8dd71c9f72c04696f3f0047a8ecd6"
+    },
+    {
+      "name": "versus_nbody.exe",
+      "sha256": "9806bd16f472937bfd18f7f3141deb281382eea03de312585fa6788ec582a2dd"
+    },
+    {
+      "name": "versus_particles.exe",
+      "sha256": "b69930990914b03578362cab139b7172f9da00c936da48c222e03ec2da3d2953"
+    },
+    {
+      "name": "versus_rollback.exe",
+      "sha256": "ca9baf3b13a29db28a8335ab8c53880adbe924eb71878c66616c0f01fd45390d"
+    },
+    {
+      "name": "versus_sand.exe",
+      "sha256": "79cb30c5ca32e5878fe9a68999984d78e244c3da1485d838ebf85822b3d32a61"
+    },
+    {
+      "name": "versus_systems.exe",
+      "sha256": "b97ef46f51c62932df369ed81a568225b036838825baedd90cab3804a4c2eaca"
+    },
+    {
+      "name": "versus_wide.exe",
+      "sha256": "46123d84a0fe7fb153f3a9ad0b2390490febb96f1c0f1cae5f3826b37d28e0f3"
+    }
+  ],
+  "finishedUtc": "2026-10-20T11:30:11.1184076Z"
+}
