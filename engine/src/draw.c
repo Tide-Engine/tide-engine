@@ -368,6 +368,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->text_used = 0;
     d->vertex_count = 0;
     d->index_count = 0;
+    d->quad_count = 0;
     d->matrix_count = 0;
     d->run_count = 0;
     d->instance_used = 0;
@@ -436,6 +437,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->text);
     free(d->vertices);
     free(d->indices);
+    free(d->quads);
     free(d->textures);
     free(d->texture_index);
     free(d->targets);
@@ -1184,7 +1186,7 @@ void tide_draw_forget(tide_draw_list *d)
     // gone, and with shaders of a build that is
     for (uint32_t i = 0; i < d->count; i++) {
         tide_draw_command *c = &d->commands[i];
-        if (c->kind == TIDE_DRAW_MESH) c->mesh.texture = 0;
+        if (c->kind == TIDE_DRAW_MESH || c->kind == TIDE_DRAW_QUADS) c->mesh.texture = 0;
         if (c->kind == TIDE_DRAW_MESH_3D) c->mesh3.mesh = c->mesh3.texture = 0;
         if (c->kind == TIDE_DRAW_TARGET) c->target = UINT32_MAX;
     }
@@ -1306,34 +1308,11 @@ static __attribute__((noinline)) void plain_altered(tide_draw_list *d, const tid
     push(d, kind, a, b, color);
 }
 
-void tide_draw_circle(tide_draw_list *d, const tide_float2 center, const float radius, const tide_color color)
+// A plain shape where tide_draw_plain_kind's inline stores aren't all there is to it
+void tide_draw_plain(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b, const tide_color color)
 {
-    if (d->altered) plain_altered(d, TIDE_DRAW_CIRCLE, center, tide_f2(radius, 0.0f), color);
-    else push(d, TIDE_DRAW_CIRCLE, center, tide_f2(radius, 0.0f), color);
-}
-
-void tide_draw_wire_circle(tide_draw_list *d, const tide_float2 center, const float radius, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_WIRE_CIRCLE, center, tide_f2(radius, 0.0f), color);
-    else push(d, TIDE_DRAW_WIRE_CIRCLE, center, tide_f2(radius, 0.0f), color);
-}
-
-void tide_draw_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_RECT, center, size, color);
-    else push(d, TIDE_DRAW_RECT, center, size, color);
-}
-
-void tide_draw_wire_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_WIRE_RECT, center, size, color);
-    else push(d, TIDE_DRAW_WIRE_RECT, center, size, color);
-}
-
-void tide_draw_line(tide_draw_list *d, const tide_float2 from, const tide_float2 to, const tide_color color)
-{
-    if (d->altered) plain_altered(d, TIDE_DRAW_LINE, from, to, color);
-    else push(d, TIDE_DRAW_LINE, from, to, color);
+    if (d->altered) plain_altered(d, kind, a, b, color);
+    else push(d, kind, a, b, color);
 }
 
 // ---------------------------------------------------------------------------
@@ -1515,8 +1494,9 @@ void tide_draw_rect_rotated(tide_draw_list *d, const tide_float2 center, const t
     solid(d, center, size, 0.0f, rotation, TIDE_SHAPE_BOX, color);
 }
 
-void tide_draw_round_rect(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
-                          const tide_color color)
+// A round rect where tide_draw_round_rect's inline stores aren't all there is to it
+void tide_draw_round_rect_placed(tide_draw_list *d, const tide_float2 center, const tide_float2 size, const float radius,
+                                 const tide_color color)
 {
     solid(d, center, size, radius, 0.0f, TIDE_SHAPE_BOX, color);
 }
@@ -1797,7 +1777,8 @@ static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
     // it would do with them
     if (d->count) {
         const tide_draw_command *last = &d->commands[d->count - 1u];
-        if (last->kind == TIDE_DRAW_MESH && last->mesh.texture && last->mesh.texture <= d->texture_count) {
+        if ((last->kind == TIDE_DRAW_MESH || last->kind == TIDE_DRAW_QUADS) && last->mesh.texture
+            && last->mesh.texture <= d->texture_count) {
             const tide_draw_texture *t = &d->textures[last->mesh.texture - 1u];
             if (t->id == (uint64_t)(uintptr_t)texture->pixels && t->space == TIDE_PIXELS_MEMORY && t->frame == d->frame
                 && t->version == texture->version && t->width == texture->width && t->height == texture->height
@@ -1980,20 +1961,51 @@ void tide_draw_triangles(tide_draw_list *d, const uint32_t base, const uint32_t 
     tide_draw_triangles_wrapped(d, base, indices, count, texture, filter, TIDE_WRAP_CLAMP);
 }
 
-void tide_draw_mesh_wrapped(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
-                            const uint32_t *indices, const uint32_t index_count, const tide_texture *texture,
-                            const tide_filter filter, const tide_wrap wrap)
+// A quad (tide_draw_quad) with the texture in `slot`, after the last command's quads where it can go on with them.
+static void quad_placed(tide_draw_list *d, const tide_draw_quad *q, const uint32_t slot, const tide_filter filter,
+                        const tide_wrap wrap)
 {
-    if (vertex_count == 0 || index_count < 3u) return;
-    tide_draw_triangles_wrapped(d, tide_draw_vertices(d, vertices, vertex_count), indices, index_count, texture, filter,
-                                wrap);
+    if (slot > d->texture_count) return;
+    d->quads = grow(d->quads, d->quad_count, &d->quad_capacity, 1, sizeof(tide_draw_quad), 1024u);
+    const uint32_t at = d->quad_count++;
+    d->quads[at] = *q;
+    tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
+    if (last && last->kind == TIDE_DRAW_QUADS && last->blend == d->place.blend && last->mesh.texture == slot
+        && last->mesh.filter == (uint16_t)filter && last->mesh.wrap == (uint16_t)wrap && last->mesh.first + last->mesh.count == at) {
+        last->mesh.count++;
+        return;
+    }
+    tide_draw_command *c = push(d, TIDE_DRAW_QUADS, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
+    c->mesh.first = at;
+    c->mesh.count = 1;
+    c->mesh.texture = slot;
+    c->mesh.filter = (uint16_t)filter;
+    c->mesh.wrap = (uint16_t)wrap;
 }
 
-void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count, const uint32_t *indices,
-                    const uint32_t index_count, const tide_texture *texture, const tide_filter filter)
+// A mesh with the texture in `slot`: a quad as one (tide_draw_quad), where nothing set changes it, and anything
+// else as its corners and triangles.
+void tide_draw_mesh_with(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count, const uint32_t *indices,
+                         const uint32_t index_count, const uint32_t slot, const tide_filter filter, const tide_wrap wrap)
 {
-    tide_draw_mesh_wrapped(d, vertices, vertex_count, indices, index_count, texture, filter, TIDE_WRAP_CLAMP);
+    if (vertex_count == 0 || index_count < 3u) return;
+    tide_draw_quad q;
+    if (vertex_count == 4u && index_count == 6u && !d->altered && tide_draw_quad_of(vertices, indices, &q)) {
+        quad_placed(d, &q, slot, filter, wrap);
+        return;
+    }
+    tide_draw_triangles_with(d, tide_draw_vertices(d, vertices, vertex_count), indices, index_count, slot, filter, wrap);
 }
+
+// A mesh where tide_draw_mesh_wrapped's inline stores aren't all there is to it
+void tide_draw_mesh_placed(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
+                           const uint32_t *indices, const uint32_t index_count, const tide_texture *texture,
+                           const tide_filter filter, const tide_wrap wrap)
+{
+    if (vertex_count == 0 || index_count < 3u) return;
+    tide_draw_mesh_with(d, vertices, vertex_count, indices, index_count, texture_slot(d, texture), filter, wrap);
+}
+
 
 // ---------------------------------------------------------------------------
 // 3D
@@ -2203,14 +2215,6 @@ static void reindex_meshes(tide_draw_list *d)
     }
 }
 
-// The place tide_draw_mesh_slot found last on this thread, which a view drawing one mesh for each of its entities
-// asks for again and again: still that mesh's while its place holds the same one, as only it makes places, one a
-// mesh (a free place's is TIDE_MESH_NONE, which nobody asks for).
-static TIDE_THREAD_LOCAL struct {
-    const tide_draw_list *list;
-    uint32_t place; // 1 + it
-} last_mesh;
-
 // ...and where it isn't that one: hashing and probing, or a new place. Apart, so the place found last is found
 // without what this needs of registers and stack.
 static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, const uint32_t space, const uint64_t id,
@@ -2222,7 +2226,7 @@ static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, con
             tide_draw_mesh_data *m = &d->meshes[d->mesh_index[i] - 1u];
             if (m->space == space && m->id == id && m->other == other && m->version == version) {
                 m->frame = d->frame;
-                last_mesh.list = d, last_mesh.place = d->mesh_index[i];
+                d->mesh_last = d->mesh_index[i];
                 return d->mesh_index[i];
             }
         }
@@ -2240,7 +2244,7 @@ static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, con
     if (d->mesh_count >= d->mesh_index_capacity / 2u) reindex_meshes(d);
     else index_mesh(d, place);
     *fill = true;
-    last_mesh.list = d, last_mesh.place = place + 1u;
+    d->mesh_last = place + 1u;
     return place + 1u;
 }
 
@@ -2249,8 +2253,8 @@ uint32_t tide_draw_mesh_slot(tide_draw_list *d, const uint32_t space, const uint
 {
     *fill = false;
     if (space == TIDE_MESH_NONE) return 0;
-    const uint32_t place = last_mesh.place;
-    if (last_mesh.list == d && place && place <= d->mesh_count) {
+    const uint32_t place = d->mesh_last; // The place found last (tide_draw_list.mesh_last)
+    if (place && place <= d->mesh_count) {
         tide_draw_mesh_data *m = &d->meshes[place - 1u];
         if (m->space == space && m->id == id && m->other == other && m->version == version) {
             m->frame = d->frame;
@@ -2962,6 +2966,29 @@ static void instance_at(tide_draw_list *d, const uint32_t mesh, const tide_float
     instance_placed(d, mesh, transform, texture, filter, wrap);
 }
 
+// One whose transform the caller stored already, as the next of the list's matrices (tide_draw_mesh_3d_wrapped):
+// instance_at's own case, without reading it from the caller, and with no texture; anything else is instance_placed,
+// from a copy, as growing the matrices could move them.
+void tide_draw_instance_stored(tide_draw_list *d, const uint32_t mesh, const tide_filter filter, const tide_wrap wrap)
+{
+    const tide_draw_place *p = &d->place;
+    if (!d->unsettled && !(p->moved & TIDE_DRAW_MOVED_3D) && mesh && mesh <= d->mesh_count) {
+        const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+        if (!m->levels && m->index_count && m->space != TIDE_MESH_BYTES) {
+            tide_float4x4 *own = &d->matrices[d->matrix_count];
+            const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+            if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), own, NULL)) return;
+            const uint32_t at = d->matrix_count++;
+            const uint32_t cull = p->cull;
+            const uint8_t side = cull == TIDE_CULL_NONE ? sides(cull) : sides(cull | (mirrors(own) ? TIDE_DRAW_MIRRORED : 0u));
+            mesh_run(d, mesh, at, 1, 0, filter, wrap, (tide_blend)p->blend, (tide_depth)p->depth, side, tide_draw_tint(d));
+            return;
+        }
+    }
+    const tide_float4x4 transform = d->matrices[d->matrix_count];
+    instance_placed(d, mesh, &transform, 0, filter, wrap);
+}
+
 // ...and any other: apart, so the one above keeps few registers.
 static void instance_placed(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
                             const tide_filter filter, const tide_wrap wrap)
@@ -3054,9 +3081,10 @@ uint64_t tide_mesh_version(const tide_mesh *mesh)
     return tide_hash_end(tide_hash_more(h, mesh->indices, (size_t)mesh->index_count * sizeof(uint32_t)));
 }
 
-// A mesh in the caller's memory, its transform where the caller has it.
-static void mesh_3d_at(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 *transform, const tide_texture *texture,
-                       const tide_filter filter, const tide_wrap wrap)
+// A mesh in the caller's memory, its transform where the caller has it: where tide_draw_mesh_3d_wrapped's inline
+// stores aren't all there is to it.
+void tide_draw_mesh_3d_placed(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 *transform,
+                              const tide_texture *texture, const tide_filter filter, const tide_wrap wrap)
 {
     if (!mesh || !mesh->vertices || !mesh->indices) return;
     bool fill;
@@ -3066,17 +3094,6 @@ static void mesh_3d_at(tide_draw_list *d, const tide_mesh *mesh, const tide_floa
     instance_at(d, slot, transform, texture_slot(d, texture), filter, wrap);
 }
 
-void tide_draw_mesh_3d(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
-                       const tide_texture *texture, const tide_filter filter)
-{
-    mesh_3d_at(d, mesh, &transform, texture, filter, TIDE_WRAP_CLAMP);
-}
-
-void tide_draw_mesh_3d_wrapped(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
-                               const tide_texture *texture, const tide_filter filter, const tide_wrap wrap)
-{
-    mesh_3d_at(d, mesh, &transform, texture, filter, wrap);
-}
 
 // ---------------------------------------------------------------------------
 // One list after another
@@ -3364,6 +3381,11 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             tide_draw_triangles_with(d, base, from->indices + c->mesh.first, c->mesh.count,
                                      append_texture(d, from, c->mesh.texture), (tide_filter)c->mesh.filter,
                                      (tide_wrap)c->mesh.wrap);
+        } else if (c->kind == TIDE_DRAW_QUADS) {
+            const uint32_t slot = append_texture(d, from, c->mesh.texture);
+            for (uint32_t k = 0; k < c->mesh.count && c->mesh.first + k < from->quad_count; k++) {
+                quad_placed(d, &from->quads[c->mesh.first + k], slot, (tide_filter)c->mesh.filter, (tide_wrap)c->mesh.wrap);
+            }
         } else if (c->kind == TIDE_DRAW_MESH_3D) {
             if (!c->mesh3.mesh || c->mesh3.count == 0) continue;
             const uint32_t slot = append_mesh(d, from, c->mesh3.mesh);

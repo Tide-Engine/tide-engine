@@ -259,7 +259,10 @@ TIDE_TEST(embed_draw_packet)
     at += (size_t)h.indices * sizeof(uint32_t);
     const size_t text = (at + 7u) & ~(size_t)7u;
     TIDE_REQUIRE(text + h.text <= size);
-    bool rect = false, words = false;
+    const size_t shapes = (commands + (size_t)h.commands * sizeof(tide_draw_command) + 7u) & ~(size_t)7u;
+    const size_t vertices = (shapes + (size_t)h.shapes * sizeof(tide_draw_shape_data) + 7u) & ~(size_t)7u;
+    const size_t indices = (vertices + (size_t)h.vertices * sizeof(tide_vertex) + 7u) & ~(size_t)7u;
+    bool rect = false, words = false, quad = false, quads = false;
     for (uint32_t i = 0; i < h.commands; i++) {
         tide_draw_command c;
         memcpy(&c, p + commands + i * sizeof c, sizeof c);
@@ -267,9 +270,25 @@ TIDE_TEST(embed_draw_packet)
             rect = true;
         }
         if (c.kind == TIDE_DRAW_TEXT && c.text < h.text && strcmp((const char *)p + text + c.text, "drawn") == 0) words = true;
+        quads |= c.kind == TIDE_DRAW_QUADS; // The list's quads are meshes in the packet, as they always were
+        if (c.kind == TIDE_DRAW_MESH && c.mesh.count == 6u && c.mesh.first + 6u <= h.indices) {
+            uint32_t at_index[6];
+            memcpy(at_index, p + indices + (size_t)c.mesh.first * sizeof(uint32_t), sizeof at_index);
+            bool blue = true;
+            float right = 0.0f;
+            for (uint32_t k = 0; k < 6u; k++) {
+                tide_vertex v;
+                if (at_index[k] >= h.vertices) { blue = false; break; }
+                memcpy(&v, p + vertices + (size_t)at_index[k] * sizeof v, sizeof v);
+                blue &= v.color.b == 1.0f && v.color.r == 0.0f && (v.position.x == 50.0f || v.position.x == 70.0f);
+                if (v.position.x > right) right = v.position.x;
+            }
+            quad |= blue && right == 70.0f;
+        }
     }
     TIDE_CHECK(rect);
     TIDE_CHECK(words);
+    TIDE_CHECK(quad && !quads);
     tide_embed_destroy(e);
     TIDE_CHECK(tide_embed_draw(e, &size) == NULL && size == 0); // Nothing once it's ended
 }

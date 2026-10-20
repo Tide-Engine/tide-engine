@@ -6,6 +6,66 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Drawing, third round, 2026-10-20
+
+The owner asked to close drawing's gap to hand-written C further, noting that
+C's render part is its slower one while Tide's recording was: recording was 5
+to 37 times C's, rendering 3 to 7. The changes are in notes/drawing.md,
+Recording inline and quads as quads, and notes/rendering.md, Recorded quads
+and faster conversion; every benchmark frame is the same bytes as round two's
+on both backends.
+
+Gated, five alternating rounds of round two's binaries (`cf6ff8b0`) and
+these (`95da256d`), then five of `versus_draw` in the same sitting
+(`draw3-final-before`/`-after`, `draw3-final-c`); totals in ms, the ratio
+against that sitting's C (which ran slower than in round two's, rects 0.171
+against 0.147):
+
+| Vulkan | before | after | C | Tide/C before → after |
+| --- | ---: | ---: | ---: | ---: |
+| nothing | 0.054 | 0.058 | 0.068 | 0.79× → 0.85× |
+| 65,536 rects | 0.589 | 0.491 | 0.171 | 3.44× → 2.87× |
+| 65,536 circles | 0.547 | 0.460 | 0.171 | 3.20× → 2.69× |
+| 65,536 textured quads | 1.499 | 1.231 | 0.172 | 8.72× → 7.16× |
+| 65,536 cube instances | 1.699 | 1.437 | 0.209 | 8.13× → 6.88× |
+| 65,536 round rects | 1.263 | 0.742 | 0.183 | 6.90× → 4.05× |
+
+| OpenGL 3.3 | before | after | C | Tide/C before → after |
+| --- | ---: | ---: | ---: | ---: |
+| 65,536 rects | 0.718 | 0.609 | 0.210 | 3.42× → 2.90× |
+| 65,536 circles | 0.634 | 0.565 | 0.207 | 3.06× → 2.73× |
+| 65,536 textured quads | 1.688 | 1.414 | 0.207 | 8.15× → 6.83× |
+| 65,536 cube instances | 1.950 | 1.709 | 0.195 | 10.0× → 8.76× |
+| 65,536 round rects | 1.331 | 0.806 | 0.213 | 6.25× → 3.78× |
+
+Recording, before → after (Vulkan): rects 0.268 → 0.145, round rects 0.711
+→ 0.219, cubes 1.248 → 0.948, quads 0.909 → 0.832; rendering quads 0.575 →
+0.382, round rects 0.547 → 0.519 (the rest as they were, within noise).
+Against the pass's start (round one's "before"): rects 7.6× → 2.9×, round
+rects 15.0× → 4.1×, quads 22.5× → 7.2×, cubes 12.6× → 6.9×.
+
+Where the time goes now (temporary per-phase timers and the sampler, rects,
+µs a frame): recording 146 (C 57); converting 145; the upload 78, a CPU copy
+of 1.5 MB into write-combined GPU memory at about 19 GB/s; the GPU and the
+read back about 130 (C's whole render 90-115). What's left and why:
+- Plain shapes: two passes where C has one. Recording a shape's 44-byte
+  command, then converting it to a 24-byte instance. Recording plain shapes
+  as instances in the units they're drawn in, converted at the render by a
+  few multiply-adds into GPU-visible memory, would take rects to about 2×;
+  it changes what a list keeps for them, which about 30 test files read.
+  Moving the camera's arithmetic to the GPU instead would change pixels'
+  last bits between backends (GPU compilers contract to FMAs), so not that.
+- Textured quads: the call takes four 32-byte corners and six indices,
+  which the caller builds and recording reads back and compares; about 36%
+  of their recording is the benchmark's own corners. A call for sprites
+  (an API question for the owner) would make a sprite one small record.
+- Cubes: 4 MB of matrices a frame (64 bytes each, an affine one could be 48),
+  the double-precision frustum test and the side's determinant, per
+  instance.
+- Converting straight into GPU-visible memory: about 70 µs of a rects frame
+  (the conversion overlapping the write), more for quads; it needs Vulkan
+  memory kept across a mid-list flush. Not built.
+
 ## Where the performance pass ended, 2026-10-20
 
 Both rounds of the pass, measured once against the binaries from before it

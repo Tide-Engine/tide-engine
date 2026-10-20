@@ -434,8 +434,7 @@ static void mesh_lists(tide_draw_list *d, const tide_list vertices, const tide_l
     bool vertices_copied, indices_copied;
     tide_vertex *v = tide_list_flatten(vertices, sizeof(tide_vertex), false, &vertices_copied);
     uint32_t *i = tide_list_flatten(indices, sizeof(uint32_t), false, &indices_copied);
-    tide_draw_triangles_with(d, tide_draw_vertices(d, v, (uint32_t)vertex_count), i, (uint32_t)index_count, slot, filter,
-                             wrap);
+    tide_draw_mesh_with(d, v, (uint32_t)vertex_count, i, (uint32_t)index_count, slot, filter, wrap); // A quad as one
     tide_list_unflatten(indices, i, sizeof(uint32_t), false, indices_copied);
     tide_list_unflatten(vertices, v, sizeof(tide_vertex), false, vertices_copied);
 }

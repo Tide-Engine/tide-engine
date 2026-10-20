@@ -480,11 +480,14 @@ float3 RisingToward(Ashwick ashwick, float3 focus, float near, float far, float 
     return RisingPlace(ashwick, focus, near, far);
 }
 
+// How a horde (or one alone) goes: shambling at first; running more often as the danger climbs, half of them at most,
+// and of those sprinting a third at most. (Nine in ten running by danger 4.5, and six of those in ten sprinting, till the
+// owner, 2026-10-20: "the nights increase their speed TOO MUCH, it becomes hard to understand what is happening".)
 Gait GaitFor(float danger)
 {
-    var runners = Math.Clamp((danger - 1.4) * 0.3, 0, 0.92);
+    var runners = Math.Clamp((danger - 1.4) * 0.12, 0, 0.5);
     if (Random.NextFloat() >= runners) return Gait.Shamble;
-    var sprinters = Math.Clamp((danger - 3.5) * 0.15, 0, 0.6);
+    var sprinters = Math.Clamp((danger - 4) * 0.05, 0, 0.33);
     return Random.NextFloat() < sprinters ? Gait.Sprint : Gait.Run;
 }
 

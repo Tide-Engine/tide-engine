@@ -1,5 +1,62 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Recording inline and quads as quads (2026-10-20, third round)
+
+The owner asked to close drawing's gap to hand-written C further: recording
+was 5 to 37 times C's, where C writes each instance once. Internal; the API is
+as it was, and every benchmark frame is the same bytes (notes/rendering.md,
+Recorded quads; numbers in notes/benchmarks.md, Drawing, third round).
+
+- **Inline common cases** (`tide/draw.h`): `tide_draw_rect`, `_circle`,
+  `_wire_rect`, `_wire_circle` and `_line` (`tide_draw_plain_kind`),
+  `tide_draw_round_rect`, `tide_draw_mesh(_wrapped)` and
+  `tide_draw_mesh_3d(_wrapped)` are header-inline: where nothing set changes
+  what's recorded (`altered`, `unsettled`) and there's room, their stores go
+  straight into the list from where the caller has the values (registers, as
+  often as not: on Windows a color or a matrix passed to a function goes by
+  its address, through memory). Everything else is the functions as they were,
+  renamed `tide_draw_plain`, `tide_draw_round_rect_placed`,
+  `tide_draw_mesh_placed` and `tide_draw_mesh_3d_placed`. The mesh paths are
+  `always_inline`: clang otherwise kept them as calls. Same names, arguments and
+  results for every caller, generated code included.
+- **A 3D mesh's next instance**: the list keeps the place
+  `tide_draw_mesh_slot` found last (`tide_draw_list.mesh_last`, where a
+  thread-local was), which the inline path checks; the transform is stored as
+  the list's next matrix, and `tide_draw_instance_stored` culls and records it
+  as `instance_at` did, reading it where it is.
+- **Quads as quads** (`tide_draw_quad`, `TIDE_DRAW_QUADS`, `tide_draw_list.quads`):
+  a mesh of four corners and six indices, triangles p q r and p r s, whose
+  corners' places and uvs take p's and r's numbers on each axis (compared by
+  their bits, as the renderer does) and whose colors are one, is kept as a
+  52-byte quad (p's and r's places and uvs, the color, 4 bits a corner
+  saying which number each takes) where its corners and triangles took 152:
+  `tide_draw_quad_of`, `tide_draw_quad_corner` gives its corners back to the
+  bit. Not where a tint or a transform changes corners (`altered`): those stay
+  corners and triangles. Quads one after another with one image, blend,
+  filter and wrap are one command; a quad starts a run of its own after a
+  mesh of corners, and a mesh after quads, which the renderer still draws as
+  one step. `tide_draw_mesh_with` (a texture's slot already found) is what
+  Tide's lists go through (`mesh_lists`), so `Draw.Mesh` of a sprite's list is
+  a quad too. `tide_draw_append` carries quads (`quad_placed`, with the
+  destination's textures); forgetting textures clears a quads command's as a
+  mesh's. The embed host's packet (`platform/src/embed.c`, `unquad`) shows
+  them as the meshes they were, a `TIDE_DRAW_MESH` over their four corners, so
+  what reads it is unchanged.
+- Measured (65,536 a frame, Vulkan, totals): rects 0.58 -> 0.47 ms, round
+  rects 1.23 -> about 0.7, textured quads 1.46 -> about 1.2, cubes 1.63 ->
+  1.35 (see benchmarks.md for the gated numbers). Recording rects 0.27 ->
+  0.15 ms, round rects 0.71 -> 0.21, cubes 1.21 -> 0.94; quads' recording is
+  now mostly the caller building four 32-byte corners for a call that takes
+  them, which only a call for sprites would avoid (an API question).
+- Tests: `draw_meshes_of_one_quad_are_kept_as_quads` (`tests/test_draw.c`:
+  a quad with -0 and 0 told apart, its corners to the bit, quads merging,
+  gradients, other corner orders and tints staying corners and triangles,
+  Tide lists' path, `tide_draw_append` with textures); `embed_draw_packet`
+  (`platform/tests/embed.c`) draws a sprite in Tide and finds it in the packet
+  as a mesh over its corners, with no quads command; the platform pixel tests
+  (`runs_drawn_alike` mixes recorded quads with meshes both ways) and every
+  draw test as before.
+
 ## Recording sprites and 3D instances (2026-10-20, second round)
 
 Round 2 of the performance pass (`notes/benchmarks.md`, Drawing, second

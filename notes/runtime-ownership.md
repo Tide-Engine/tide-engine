@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## Drawing's third round (2026-10-20)
+
+Generated code calls the same `tide/draw.h` names as before; several are now
+header-inline over out-of-line functions that are the old bodies
+(`tide_draw_plain`, `tide_draw_round_rect_placed`, `tide_draw_mesh_placed`,
+`tide_draw_mesh_3d_placed`, `tide_draw_instance_stored`), and
+`tide_draw_mesh_with` is what `mesh.c` calls for Tide's lists. The draw list
+gained `quads`, `quad_count`, `quad_capacity` and `mesh_last`, and
+`tide_draw_kind` gained `TIDE_DRAW_QUADS` at its end: hosts and libraries
+rebuild with the engine, as for any draw-list layout change. The embed packet
+is unchanged (quads go out as meshes). Contracts in drawing.md, Recording
+inline and quads as quads.
+
 ## Map views generated code keeps (2026-10-20)
 
 Owner-approved (the performance pass's second round: "a list view resolved
