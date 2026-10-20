@@ -540,7 +540,7 @@ void Shoot(Arms arms, float3 from, float3 way, float range, float damage, float 
         // A boss takes a pellet at half: every one of a shotgun's eleven finds something that big, and it had done twice
         // what the carbine and the SMG do to one (boss.tide's BOSS_PELLET)
         if (kind == Trace.Pellet && struck[i].boss >= 0) dealt *= BOSS_PELLET;
-        Land(arms, struck[i], dealt, heads[i], weaks[i], from, knock, chance, herd);
+        Land(arms, struck[i], dealt, heads[i], weaks[i], from, knock, chance, herd, true);
         if (i == pierce - 1) end = when[i];
     }
     // Ricochet Rounds: on from the last it struck (a pellet's as often as it sets items off)

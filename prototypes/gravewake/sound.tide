@@ -62,6 +62,9 @@ asset Clip itemUncommon = "sfx/item_uncommon.ogg";
 asset Clip itemRare = "sfx/item_rare.ogg";
 asset Clip powerupGrab = "sfx/powerup_grab.ogg";
 asset Clip hitmarkerClip = "sfx/hitmarker.ogg";
+asset Clip hitTick = "sfx/hit_tick.ogg";
+asset Clip hitKill = "sfx/hit_kill.ogg";
+asset Clip hitHead = "sfx/hit_head.ogg";
 
 // The master's limiter: whatever piles up (a bell over two dozen groans) is held under full scale, at once, and let back
 // up over a tenth of a second.
@@ -103,6 +106,9 @@ local singleton Ears
     int orbStep;
     float voices;             // The dead's voices that may start now, coming back at eight a second
     float lastPoints;
+    int ticked;               // This frame's hits of your own heard: a tick, a kill's knock and a head's ding, one of each
+    int knocked;              // a frame, so a shotgun's pellets are one
+    int dinged;
 }
 
 // The bed: the night, the dread under it, the heart when it's bad.
@@ -111,6 +117,9 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, Haz
 {
     Audio.SetEffect(Bus.Master, Limit());
     var dt = me.dt;
+    ears.ticked = 0;
+    ears.knocked = 0;
+    ears.dinged = 0;
     var playing = lobby.playing;
     // The dread: low through the early rounds, the high one later or when the dead are many
     var fighting = match.phase == Phase.Fighting;
@@ -289,7 +298,7 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
     if (struck.mail && !struck.killed)
     {
         if (mine) Audio.Play(stoneHits[ears.random.NextInt(stoneHits.count)], struck.at, 0.7, ears.random.NextFloat(1.6, 1.9));
-        if (mine) Audio.Play(hitmarkerClip, 0.25, 0.6);
+        if (mine && struck.aimed) Audio.Play(hitmarkerClip, 0.25, 0.6);
         return;
     }
     // A horde's worth of hits at once would be noise: the kills, the heads and this machine's own
@@ -308,7 +317,24 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
         Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.75, ears.random.NextFloat(0.88, 1.12));
     }
     if (struck.element == Element.Frost) Audio.Play(freezeClip, struck.at, 0.6, 1.0);
-    if (mine) Audio.Play(hitmarkerClip, struck.head ? 0.6 : struck.killed ? 0.5 : 0.3, struck.crit ? 1.7 : struck.head ? 1.45 : struck.killed ? 0.8 : 1.0);
+    // A hit of your own hand's (not what fights by itself, which would never stop): a crisp tick, a kill a heavier knock,
+    // the head or a weak spot a ding over its crack (the owner, 2026-10-20: "some VFX/SFX for when you hit something")
+    if (!mine || !struck.aimed) return;
+    if (struck.killed && ears.knocked < 1)
+    {
+        ears.knocked += 1;
+        Audio.Play(hitKill, struck.head ? 0.85 : 0.7, ears.random.NextFloat(0.97, 1.04));
+    }
+    else if (!struck.killed && ears.ticked < 1)
+    {
+        ears.ticked += 1;
+        Audio.Play(hitTick, struck.crit ? 0.65 : 0.5, struck.crit ? 1.3 : ears.random.NextFloat(0.96, 1.06));
+    }
+    if ((struck.head || struck.weak) && ears.dinged < 1)
+    {
+        ears.dinged += 1;
+        Audio.Play(hitHead, struck.killed ? 0.5 : 0.4, struck.weak ? 0.75 : struck.killed ? 1.0 : 1.1);
+    }
 }
 
 local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)

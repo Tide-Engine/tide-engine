@@ -383,15 +383,15 @@ void Take(mut Survivor survivor, Item item)
 
 // A round's hit on one of the dead: a crit, perhaps; more if it's down; then what the items set off, `chance` times as
 // likely as a whole round's (a shotgun's pellet sets off less, an SMG's round more). What the items set off themselves
-// sets off nothing more.
-void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd)
+// sets off nothing more. `aimed`: a round of the survivor's own (Wound.aimed), not a drone's or a turret's.
+void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd, bool aimed)
 {
     var crit = Random.NextFloat() < arms.crit;
     var frozen = Holds(arms, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Holds(arms, Item.Frostbite) * chance;
     var lit = Holds(arms, Item.DragonsBreath) > 0 && Random.NextFloat() < 0.25 * Holds(arms, Item.DragonsBreath) * chance;
     var toes = z.down ? 1 + 0.5 * Holds(arms, Item.SteelToes) : 1.0;
     z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, weak = weak, from = from, knock = knock, blow = Blow.Missile,
-                          crit = crit, element = frozen ? Element.Frost : lit ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
+                          aimed = aimed, crit = crit, element = frozen ? Element.Frost : lit ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
     var wire = Holds(arms, Item.LiveWire);
     if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(arms, z, 1 + 2 * wire, damage * 0.6, herd);
     var mortar = Holds(arms, Item.Mortar);
@@ -399,7 +399,7 @@ void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, fl
     {
         var dx = Random.NextFloat(-0.4, 0.4);
         var dz = Random.NextFloat(-0.4, 0.4);
-        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(dx, 30, dz), velocity = float3(0, -45, 0), damage = 100 * arms.might, splash = 3.5, element = Element.Blast,
+        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(dx, 30, dz), velocity = float3(0, -45, 0), damage = 200 * arms.might, splash = 3.5, element = Element.Blast,
                         seat = arms.seat, life = 2, echo = true });
     }
 }
@@ -569,18 +569,18 @@ const float SAW_REACH = 2.3;         // How far out the saw blades circle...
 const int SAWS_SHOWN = 6;            // ...so many at most (more cut harder)...
 const float SAW_EVERY = 0.12;        // ...cutting so often...
 const float SAW_BITE = 0.75;         // ...what's within so far of each...
-const float SAW_HURT = 22;           // ...for so much
+const float SAW_HURT = 44;           // ...for so much
 const float TESLA_EVERY = 1.2;
 const float TESLA_REACH = 9;
-const float TESLA_HURT = 45;
+const float TESLA_HURT = 90;
 const float MOLOTOV_EVERY = 6;
 const float DRUM_EVERY = 5;          // A Thunder Drum's wave...
 const float DRUM_REACH = 4;          // ...this far (+1 m each)...
-const float DRUM_HURT = 60;          // ...for so much, the dead thrown down
+const float DRUM_HURT = 120;          // ...for so much, the dead thrown down
 const float ROCKET_EVERY = 3;
 const float ROCKET_REACH = 22;
 const float ROCKET_SPEED = 18;
-const float ROCKET_HURT = 110;
+const float ROCKET_HURT = 220;
 const float ROCKET_SPLASH = 2.6;
 
 [Stage(Tick.Hands, 2)]
@@ -615,7 +615,7 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
             }
             if (best.entity != default && LongRay(ashwick, drone, best.chest, out _) > 1)
             {
-                Land(ArmsOf(survivor), best, 14 * Might(survivor), false, false, drone, 0.5, 0.5, herd);
+                Land(ArmsOf(survivor), best, 28 * Might(survivor), false, false, drone, 0.5, 0.5, herd, false);
                 Send(Traced { seat = survivor.seat, from = drone, to = best.chest, kind = Trace.Drone });
                 Send(Loosed { seat = survivor.seat, weapon = Weapon.Smg, at = drone, way = Math.Normalize(best.chest - drone), source = Source.Drone });
             }
@@ -732,7 +732,7 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
             foreach (var z in Near(herd, survivor.feet, reach))
             {
                 if (!z.hittable || Math.Distance(z.at, survivor.feet) > reach) continue;
-                z.entity.Send(Wound { damage = 5 * embers * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = -1, blow = Blow.Burning, element = Element.Fire,
+                z.entity.Send(Wound { damage = 10 * embers * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = -1, blow = Blow.Burning, element = Element.Fire,
                                       echo = true });
             }
         }

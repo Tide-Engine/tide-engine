@@ -143,8 +143,11 @@ No attribution is required for any of it; it is given here anyway.
 | hit_blunt_2.ogg | 0.33 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Deep Bone Crack/Break SFX by Zane Little Music (CC0 1.0, https://opengameart.org/content/deep-bone-crackbreak-sfx), 8 Wet Squish, Slurp Impacts by Independent.nu (posted by qubodup) (CC0 1.0, https://opengameart.org/content/8-wet-squish-slurp-impacts) + synthesized layers |
 | hit_blunt_3.ogg | 0.39 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Deep Bone Crack/Break SFX by Zane Little Music (CC0 1.0, https://opengameart.org/content/deep-bone-crackbreak-sfx), 8 Wet Squish, Slurp Impacts by Independent.nu (posted by qubodup) (CC0 1.0, https://opengameart.org/content/8-wet-squish-slurp-impacts) + synthesized layers |
 | hit_blunt_4.ogg | 0.38 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Deep Bone Crack/Break SFX by Zane Little Music (CC0 1.0, https://opengameart.org/content/deep-bone-crackbreak-sfx), 8 Wet Squish, Slurp Impacts by Independent.nu (posted by qubodup) (CC0 1.0, https://opengameart.org/content/8-wet-squish-slurp-impacts) + synthesized layers |
+| hit_head.ogg | 0.45 | synthesized |
+| hit_kill.ogg | 0.23 | synthesized |
 | hit_stone_1.ogg | 0.56 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) |
 | hit_stone_2.ogg | 0.60 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) |
+| hit_tick.ogg | 0.07 | synthesized |
 | hit_wood_1.ogg | 0.31 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) |
 | hit_wood_2.ogg | 0.31 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) |
 | hitmarker.ogg | 0.01 | Interface Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/interface-sounds) |

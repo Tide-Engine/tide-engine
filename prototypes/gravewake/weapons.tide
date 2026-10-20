@@ -12,7 +12,8 @@ struct WeaponInfo
     string name;
     string model;           // Its file in art/guns
     float damage;           // A hit's, before a head's, a crit's and the survivor's might
-    float head = 2;         // How much more a hit on the head does
+    float head = 3;         // How much more a hit on the head does: one of the dead felled by one at the start (2 till they
+                            // took three rounds to the body, rounds.tide's ZombieHealth)
     float rate;             // Seconds between shots
     int mag;                // Rounds loaded at once (there are always more)
     float reload;           // Seconds to load a magazine, or one shell
@@ -34,7 +35,7 @@ WeaponInfo Info(Weapon weapon)
     switch (weapon)
     {
         case Weapon.Rifle:
-            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.1, mag = 30, reload = 1.5, spread = 0.008 };
+            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.09, mag = 30, reload = 1.5, spread = 0.008 };
         case Weapon.Shotgun:
             // (spread 0.065 and eleven pellets of 24 till the owner, 2026-10-20: "i think the shotgun shots should spread more":
             // wider, it was more a spray and less a slug, so more pellets)

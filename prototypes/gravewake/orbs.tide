@@ -10,6 +10,7 @@
 const float ORB_REACH = 5;           // How near a survivor draws an orb in
 const float ORB_SECONDS = 40;        // How long one lies before it's gone
 const float ORB_SPEED = 14;          // How fast one flies to whoever draws it
+const float ORB_WORTH = 0.75;        // At danger 1 (0.5 till fewer, tougher dead came: rounds.tide's ZombieHealth)
 const int ORBS_MOST = 800;           // Lying at once; past this a kill's experience is the party's at once
 
 component Orb
@@ -31,7 +32,7 @@ event OrbTaken
 // What one of the ordinary dead's orb is worth, at a danger: as its health grows (half a point at the start).
 float OrbWorth(float danger)
 {
-    return 0.5 * Math.Pow(danger, 1.1);
+    return ORB_WORTH * Math.Pow(danger, 1.1);
 }
 
 // Experience to the party, a level each time it's enough.

@@ -63,6 +63,90 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Hits you feel, the dead harder to kill (2026-10-20)
+
+The owner: "i want you to polish the experience; VFX, SFX, balancing etc. ...
+some VFX/SFX for when you hit something, like a hitmarker thing / make enemies
+harder to kill, right now its 1 or 2 bullets, maybe 3-4 is a better spot? with
+the occasional harder hitting headshot". What was made of it and every number
+are mine, Provisional.
+
+- **Why the old marker didn't read**: it was there, small, but every hit of a
+  survivor's showed it and ticked, the drones', saw blades', Tesla bolts' and
+  the rest's too, so with a few items it was lit all the time and a round of
+  your own didn't stand out. `Wound.aimed` (and `Struck.aimed`) now says a hit
+  came from the survivor's own hand: a round through `Shoot` (the gun, the phase
+  round; `Land`'s new last argument, false for drones and turrets) and the boot,
+  stamp, leap and blink. Only those mark, number, tick and flash hard. `Struck`
+  also carries `damage`, what it took.
+- **The marker** (hud.tide's `ShowMarker`, `Overlay`): four strokes round the
+  cursor on a dark edge, popped out 1.6 times as big as the hit lands and
+  settling in 70 ms; white a hit, gold the head, red a kill (and a ring thrown
+  out from it), orange a weak spot, yellow a crit, small grey off mail. A
+  shotgun's pellets in one tick are one mark, the best of them.
+- **Numbers** (hud.tide's `Tally`, `Tallies`, `TALLIES_MOST` 48, `TALLY_LIFE`
+  0.8 s): each hit of your own hand puts what it did over the body, in bold
+  with a dark edge all round, popping in 1.9 times as big, rising and drifting
+  aside, fading over its last quarter second; in the marker's colours (white,
+  gold, orange, red for a crit, grey off mail), bigger for a head, a weak spot, a
+  crit or a kill. Pellets landing on one body in the same frame add up into one
+  number (a first try merged within 0.1 s, which ran the carbine's rounds 0.09 s
+  apart together). Drawn under the panels, held still during a pick (`Me.dt`).
+- **The dead's flash**: a hit of your own hand whitens the body 0.9 (0.35 for
+  the rest, as all were), gone in a fifth of a second.
+- **Sounds** (sfx/tools/make_sfx.py, synthesized, no recordings): `hit_tick`
+  (70 ms, two inharmonic partials over a snap of noise and a small knock),
+  `hit_kill` (the tick twice and lower, a thick knock and a short ring) and
+  `hit_head` (a struck plate's ding laid over the skull's crack, low for a weak
+  spot). Played flat (not placed) for your own hand's hits only, one of each a
+  frame (sound.tide's `Ears.ticked`, `knocked`, `dinged`, cleared by `Listen`),
+  so a shotgun blast is one. The Kenney click (`hitmarker`) is now only the mail's.
+  The tool rewrote CREDITS.md's file names as `.wav` (the ones it writes before
+  `to_ogg.sh`); that was put back and the three rows added by hand.
+- **A headshot kill jolts the camera** a little (eye.tide's `FeelStruck`, 0.18).
+- **Harder to kill** (rounds.tide's `ZOMBIE_HEALTH` 67, was 25; weapons.tide's
+  `WeaponInfo.head` 3, was 2): a carbine round is 25, so one of the ordinary
+  dead takes three to the body at the start and one to the head. Measured over a
+  run (`gravewake_balance`'s new line, the toughest ordinary one up against the
+  first survivor's might): 2.4 to 2.9 rounds at 2 and 5 minutes, 3.0 to 3.7 at 10,
+  4.5 to 6.8 at 15 (it had been 0.9 to 1.1, 1.4 and 2.1 to 2.3). The shotgun's
+  pellets keep 1.5 on the head.
+- **What came with it** (all measured against the same build's numbers):
+  - Fewer of the dead, each worth more: `SPAWN_RATE` 2.6 a danger (4) and
+    `ORB_WORTH` 0.75 (0.5). At four a second the carbine (some 2.5 kills a
+    second now) was overrun in the first minute; the levels come about when
+    they did (L17 near 395 s either way).
+  - What fights by itself and the skills twice as hard, so they don't go limp
+    (to the dead they're three quarters of what they were): a drone's 28, a
+    turret's 20, a saw blade's 44, Tesla 90, the Thunder Drum 120, a rocket 220,
+    the ember ring 10 a stack, a Mortar Flare's shell 200, the boot 260 and its
+    stamp 480, a leap 300, a blink's burst 180, C4 640, a frag 360, a firebomb
+    180, a phase round 200; burning 80 and bleeding 60 a bite besides their share
+    of the dead's health.
+  - The carbine fires every 0.09 s (0.1): with three rounds a kill the Gunner
+    had lost most.
+  - `BOSS_HEALTH` 9500 (8000): the doubled items had cut the night's end fights
+    by a fifth.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16 each, the
+  middle run; `test/balance.c` now also prints the rounds above and the night's
+  end fights, from its clock running out to dawn): before, the Gunner 1084 s,
+  the Breacher 603, the Engineer 920, fights 16 to 31 s; after, the Gunner 990,
+  the Breacher 849, the Engineer 972, fights 19 to 26 s; 13 or 14 of each 16
+  going down. The first pass (no quicker carbine, bosses at 8000): the Gunner
+  608, the Breacher 701, the Engineer 790 over seeds 1 to 8. So about as hard
+  as before, and the Breacher, which had been far behind, with the others: its
+  boot and pellets lost least. Kills a second fell by about half (14 to 17 from
+  14 to 32). The levers: `ZOMBIE_HEALTH`, `SPAWN_RATE`, `ORB_WORTH`, the head's 3.
+- **Tests**: unchanged and passing (their checks are of ratios and kills); the
+  numbers they print moved with the doubled skills (a C4 charge 1184 to the one
+  at it, a Rocket Pod 998 to one 10 m off, a phase round rank III 588 to each).
+  Native debug `gravewake_test` and the web debug WASI one pass; the web debug
+  page builds. The browser tests weren't run (the owner asked not to).
+- **Validation**: looked at in standard-host captures: the dead lined up (Shift+F2)
+  and shot, the white flash, the marker and a 25 over a body hit, a gold 75 over
+  a Bloater's head; a horde (F4) shot into, the red kill marker and its ring over
+  the crowd. Not heard: the sounds' loudness against the guns is my guess.
+
 ### No Gas Mask: the Bile Bomb (2026-10-20)
 
 The owner: "there is also an ability that makes bloaters not hurt me anymore.
@@ -2207,15 +2291,16 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 - **The score** is the nights kept and the time; the HUD counts each one's
   kills (there are no points).
 - **The dead** walk a flow field to the nearest standing survivor and claw.
-  Heads take double (a shotgun's pellet half again); a boss's weak spot
+  Heads take three times (a shotgun's pellet half again); a boss's weak spot
   takes its own (two to four times). Fire burns for 3 s,
   frost slows for 3 s and a second frost while slowed freezes solid (and
   Frostbite freezes outright), shock stuns for 0.6 s, a blast throws. A boot,
   a dash, a slam and a grenade's middle knock them over; one lying takes half
   as much again and is stamped on by the boot.
-- **Headshots**: a gold hit marker (red and bigger for a kill), a crack,
-  HEADSHOT over the crosshair for a kill; a crit's marker is yellow; one a
-  Warden's mail turns is grey.
+- **Headshots**: a gold hit marker (red and bigger for a kill), a crack and a
+  ding, a gold number, HEADSHOT over the crosshair and a jolt for a kill; a
+  crit's marker is yellow; one a Warden's mail turns is grey. Only hits of the
+  survivor's own hand mark (above, 2026-10-20).
 - **Down and out.** At 0 health a survivor goes down for 30 s and fights on
   with the pistol, unless a Second Wind puts them straight back up (one used
   up). Raised by a friend standing by them for 3 s. Who bleeds out is back beside

@@ -885,6 +885,22 @@
   ],
   "seconds": 0.384
  },
+ "hit_head": {
+  "bytes": 39734,
+  "file": "hit_head.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.45
+ },
+ "hit_kill": {
+  "bytes": 20482,
+  "file": "hit_kill.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.232
+ },
  "hit_stone_1": {
   "bytes": 49794,
   "file": "hit_stone_1.wav",
@@ -906,6 +922,14 @@
    "rd_breaking"
   ],
   "seconds": 0.597
+ },
+ "hit_tick": {
+  "bytes": 6218,
+  "file": "hit_tick.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.07
  },
  "hit_wood_1": {
   "bytes": 27398,

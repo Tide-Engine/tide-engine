@@ -69,7 +69,13 @@ moves you up, down and across it whichever way you face; you turn to the
 cursor, and your shots go level through it across the ground, whatever its
 rise and fall, striking the dead by where they stand: the cursor on a head is
 a headshot (the crosshair goes gold), on a boss's weak spot a weak hit
-(orange), from the side it faces. A ring on the ground marks each
+(orange), from the side it faces. A hit of your own (the gun, the right mouse
+skill; not what fights by itself) flashes the body white, pops a mark out
+round the crosshair (white, gold on a head, red with a ring thrown out for a
+kill, orange on a weak spot, yellow for a crit, grey off a Warden's mail) and
+sends its number up off the body in the same colours, with a crisp tick, a
+heavier knock for a kill and a ding for a head; a head taken off jolts the
+camera. A ring on the ground marks each
 survivor, and what stands between the camera and you is cut away. There's
 no jumping.
 
@@ -107,8 +113,8 @@ yours till the game's over, through going down and bleeding out.
 
 ### The dead
 
-They claw up out of the ground, four a second at first (more with more of
-you) and many more as the danger climbs (Easy, Medium, Hard, Very Hard,
+They claw up out of the ground, two or three a second at first (more with
+more of you) and many more as the danger climbs (Easy, Medium, Hard, Very Hard,
 Insane, Impossible), tougher and quicker too (from Hard on, up to 40% quicker
 past Impossible: the fastest then outpace you walking as you fire, though not
 running), up to 4000 at once. Most come
@@ -116,8 +122,10 @@ in hordes: every five to nine seconds the ones due claw up together out of
 one patch of ground 22 to 32 m from one of you, each from about the far side
 of you from the last, a groan going up from them, all at one pace; a quarter
 come
-alone, from anywhere. A head hit is gold on the crosshair, a Lucky Shot's
-double yellow. Every one pressed against you slows you; a roll goes through
+alone, from anywhere. One of the ordinary dead takes three of a carbine's
+rounds to the body at first, about four later on, and one to the head (a head
+hit does three times a body's; a shotgun pellet's half again). A head hit is
+gold on the crosshair, a Lucky Shot's double yellow. Every one pressed against you slows you; a roll goes through
 them. Their claws hit harder as the danger climbs, and your health comes back only
 slowly, once you've gone four seconds unhurt.
 

@@ -155,18 +155,26 @@ float Harm(float danger)
     return Math.Pow(danger, 0.4);
 }
 
-// What one of the dead can take, at a danger.
+// What one of the dead can take, at a danger: three of the carbine's rounds to the body at the start, one to the head.
+// (25, a round or two, till the owner, 2026-10-20: "make enemies harder to kill, right now its 1 or 2 bullets, maybe 3-4
+// is a better spot? with the occasional harder hitting headshot". What fights by itself and the skills hit twice as hard
+// as they did, and fewer of the dead come, each worth more: OrbWorth, SpawnRate.)
 float ZombieHealth(float danger)
 {
-    return 25 * Math.Pow(danger, 1.1);
+    return ZOMBIE_HEALTH * Math.Pow(danger, 1.1);
 }
 
-// How many of the dead come a second for one survivor, at a danger: four at the start, twenty at danger 5. (Three
-// till the nights went on a clock: with no beacon to hold, the survivors roamed clear of the dead.)
+const float ZOMBIE_HEALTH = 67;
+
+// How many of the dead come a second for one survivor, at a danger: 2.6 at the start, 13 at danger 5. (Three till the
+// nights went on a clock: with no beacon to hold, the survivors roamed clear of the dead; then four, till they took 2.7
+// times the rounds, ZombieHealth.)
 float SpawnRate(float danger)
 {
-    return 4 * danger;
+    return SPAWN_RATE * danger;
 }
+
+const float SPAWN_RATE = 2.6;
 
 // The words for a danger, after Risk of Rain 2's.
 string DangerName(float danger)

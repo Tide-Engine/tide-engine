@@ -5,8 +5,10 @@
 // friend; stepping out of the fires on the ground, and rolling out of one
 // about to burst; going for the night's boss when it rises), and each run's numbers are printed: how long
 // it lasted, how many nights were kept, kills, downs, when each level came,
-// the items taken (at levels and from chests). Not a test: run it from a
-// release build.
+// the items taken (at levels and from chests), how many of a carbine's rounds
+// to the body one of the ordinary dead took at 2, 5, 10 and 15 minutes (with
+// the first survivor's might), and how long each night's end's fight went,
+// from the clock running out to dawn. Not a test: run it from a release build.
 //   gravewake_balance <roles> [runs] [minutes] [first seed] [quiet|loud] [items] [still]
 // `roles` is one letter a survivor: G Gunner, B Breacher, E Engineer ("G" alone,
 // "GB" a pair). Each run's line, then the runs' means.
@@ -96,7 +98,24 @@ typedef struct Run {
     int reloading;            // Ticks the first survivor spent loading
     char itemNames[192];      // What the first survivor held at the end
     float itemsAt[SEATS_MOST][8]; // Items held at 2, 4, 6, 8, 10, 12, 14, 16 minutes
+    float hitsAt[4];          // A carbine's rounds to the body one of the ordinary dead took at 2, 5, 10, 15 minutes (or -1)
+    float fights[16];         // Seconds from each night's clock running out to its dawn
+    int fightCount;
 } Run;
+
+// How many of a carbine's rounds to the body the toughest of the ordinary dead up would take from the first survivor:
+// its health over the carbine's 25 times their might (items.tide's Might, kept in step by hand).
+static float carbine_hits(void)
+{
+    float most = 0;
+    for (uint32_t r = 0; r < world.arch5_Zombie.count; r++) {
+        const Zombie z = TIDE_AT(&world, arch5_Zombie, Zombie, r);
+        if (z.kind == ZombieKind_Walker && z.state == ZombieState_Hunting && z.health > most) most = z.health;
+    }
+    const Survivor s = get(0);
+    const float might = (1 + 0.24f * (float)(s.level - 1)) * (1 + 0.15f * (float)s.items.at[Item_HollowPoints]);
+    return most > 0 ? most / (25 * might) : -1;
+}
 
 
 // The input a bot gives for a tick.
@@ -414,6 +433,10 @@ static Run play(const char *roles, unsigned seed, float minutes)
     int lastLevel = world.Match.level;
     int lastKept = 0;
     int mark = 0;
+    int hitMark = 0;
+    float fightFrom = -1;
+    static const float hitMinutes[4] = {2, 5, 10, 15};
+    for (int k = 0; k < 4; k++) run.hitsAt[k] = -1;
     const int most = (int)(minutes * 60 * 60);
     for (int t = 0; t < most && world.Match.phase != Phase_Over; t++) {
         tick(dt);
@@ -425,10 +448,14 @@ static Run play(const char *roles, unsigned seed, float minutes)
             lastLevel++;
             run.levelAt[run.levels++] = world.Match.clock;
         }
+        if (world.Match.reckoning && fightFrom < 0) fightFrom = world.Match.clock;
         while (world.Match.kept > lastKept && run.nights < 16) {
             lastKept++;
             run.nightAt[run.nights++] = world.Match.clock;
+            if (fightFrom >= 0 && run.fightCount < 16) run.fights[run.fightCount++] = world.Match.clock - fightFrom;
+            fightFrom = -1;
         }
+        while (hitMark < 4 && world.Match.clock >= hitMinutes[hitMark] * 60.0f) run.hitsAt[hitMark++] = carbine_hits();
         while (mark < 8 && world.Match.clock >= (mark + 1) * 120.0f) {
             for (int seat = 0; seat < seats; seat++) {
                 int n = 0;
@@ -503,6 +530,10 @@ int main(int argc, char **argv)
     static float lasted[RUNS_MOST], rate[RUNS_MOST], items[RUNS_MOST], perMinute[RUNS_MOST], levels[RUNS_MOST], nights[RUNS_MOST], downs[RUNS_MOST];
     static float levelAt[8][RUNS_MOST];
     int levelRuns[8] = {0};
+    static float hitsAt[4][RUNS_MOST];
+    int hitRuns[4] = {0};
+    static float fights[RUNS_MOST * 16];
+    int fightCount = 0;
     for (int k = 0; k < runs; k++) {
         const Run r = play(roles, first + (unsigned)k, minutes);
         tide_world_free(&world);
@@ -533,6 +564,9 @@ int main(int argc, char **argv)
             const int at = (l + 1) * 2 - 1;
             if (at < r.levels) levelAt[l][levelRuns[l]++] = r.levelAt[at];
         }
+        for (int m = 0; m < 4; m++)
+            if (r.hitsAt[m] > 0) hitsAt[m][hitRuns[m]++] = r.hitsAt[m];
+        for (int f = 0; f < r.fightCount; f++) fights[fightCount++] = r.fights[f];
     }
     float q[3];
     printf("%s%s%s x%d:", roles, argc > 6 ? " +" : "", argc > 6 ? argv[6] : "", runs);
@@ -556,6 +590,17 @@ int main(int argc, char **argv)
             quartiles(levelAt[l], levelRuns[l], q);
             printf(" L%d %.0f s (%d)", (l + 1) * 2 + 1, q[1], levelRuns[l]);
         }
+    printf("\n    carbine rounds to the body for one of the dead (middle, runs):");
+    static const char *hitNames[4] = {"2 min", "5 min", "10 min", "15 min"};
+    for (int m = 0; m < 4; m++)
+        if (hitRuns[m] >= 1) {
+            quartiles(hitsAt[m], hitRuns[m], q);
+            printf(" %s %.1f (%d)", hitNames[m], q[1], hitRuns[m]);
+        }
+    if (fightCount >= 1) {
+        quartiles(fights, fightCount, q);
+        printf("\n    night's end fights: %.0f s [%.0f-%.0f] (%d)", q[1], q[0], q[2], fightCount);
+    }
     printf("\n");
     return 0;
 }

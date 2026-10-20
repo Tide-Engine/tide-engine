@@ -1535,6 +1535,38 @@ def hitmarker(rng):
     return trim(highpass(at_onset(S('kenney_interface', 'click_002.ogg')), 800), -50, fade_out=0.01)
 
 
+# A hit of your own landing, made from nothing: crisp enough to hear over the gun, short enough for an SMG's rate
+@sound('hit_tick')
+def hit_tick(rng):
+    # A hard, bright tick (two inharmonic partials gone in 40 ms over a snap of noise) on a little knock of body
+    tt = t(0.07)
+    ping = (np.sin(2 * np.pi * 3150 * tt) + 0.6 * np.sin(2 * np.pi * 4870 * tt + 1.0)) * np.exp(-tt * 95)
+    snap = highpass(white(0.07, rng), 3500) * np.exp(-tt * 260)
+    y = mix((unit(ping), 0, -2), (unit(snap), 0, -5), (body_thump(0.07, rng, 190, 60), 0, -9))
+    return trim(soft_clip(unit(y) * 1.4, 1.2), -48, fade_out=0.01)
+
+
+@sound('hit_kill')
+def hit_kill(rng):
+    # The kill: the tick doubled and lower, a thick knock under it and a short ring after, so it's told from a hit
+    tt = t(0.22)
+    ping = (np.sin(2 * np.pi * 2350 * tt) + 0.5 * np.sin(2 * np.pi * 3720 * tt + 0.7)) * np.exp(-tt * 30)
+    tick = (np.sin(2 * np.pi * 3150 * tt) + 0.6 * np.sin(2 * np.pi * 4870 * tt)) * np.exp(-tt * 110)
+    snap = highpass(white(0.22, rng), 2500) * np.exp(-tt * 140)
+    y = mix((unit(tick), 0, -3), (unit(tick), 0.028, -5), (unit(ping), 0.028, -7), (unit(snap), 0, -6),
+            (body_thump(0.16, rng, 95, 26), 0, -1))
+    return trim(soft_clip(unit(y) * 1.6, 1.4), -48, fade_out=0.04)
+
+
+@sound('hit_head')
+def hit_head(rng):
+    # The head: a bright metallic ding (a struck plate's partials), laid over the skull's crack
+    y = modal([1840, 1840 * 2.76, 1840 * 5.40, 1840 * 8.93], [1.0, 0.55, 0.3, 0.15], [9, 14, 22, 30], 0.45, rng)
+    snap = highpass(white(0.03, rng), 4000) * np.exp(-t(0.03) * 200)
+    y = mix((unit(y), 0, -1), (unit(snap), 0, -7))
+    return trim(y, -50, fade_out=0.08)
+
+
 # ================================================================ MUSIC: perk jingles
 
 _SEMI = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}

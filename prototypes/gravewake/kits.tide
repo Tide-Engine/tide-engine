@@ -210,7 +210,7 @@ void UseSecondary(Entity self, mut Survivor survivor, Ashwick ashwick, Herd herd
                 var turn = (k - (rounds - 1) * 0.5) * PHASE_FAN;
                 var way = turn == 0 ? look : Math.Rotate(quaternion.AxisAngle(float3(0, 1, 0), turn), look);
                 var aimed = turn == 0 ? AimedAt(survivor, 90) : from + way * 90;
-                Shoot(ArmsOf(survivor), from, way, 90, 100 * Might(survivor) * (1 + 0.25 * (rank - 1)), 1.5, 1000, ashwick, herd, Trace.Phase, 1, aimed);
+                Shoot(ArmsOf(survivor), from, way, 90, 200 * Might(survivor) * (1 + 0.25 * (rank - 1)), 1.5, 1000, ashwick, herd, Trace.Phase, 1, aimed);
             }
             Send(Loosed { seat = survivor.seat, weapon = survivor.gun, at = from, way = look, source = Source.Phase });
             survivor.act = Act.Fire;
@@ -290,7 +290,7 @@ void BlinkBlast(Survivor survivor, float3 at, List<Body> bodies)
     foreach (var z in bodies)
     {
         if (!z.hittable || Math.Length((z.at - at).xz) > BLINK_BLAST) continue;
-        z.entity.Send(Wound { damage = 90 * Might(survivor), seat = survivor.seat, from = at, knock = 6, down = true, blow = Blow.Blunt, element = Element.Shock });
+        z.entity.Send(Wound { damage = 180 * Might(survivor), seat = survivor.seat, from = at, knock = 6, down = true, blow = Blow.Blunt, element = Element.Shock, aimed = true });
     }
 }
 
@@ -401,7 +401,7 @@ void Slam(Survivor survivor, List<Body> bodies)
     foreach (var z in bodies)
     {
         if (!z.hittable || Math.Distance(z.at, survivor.feet) > reach) continue;
-        z.entity.Send(Wound { damage = 150 * Might(survivor) * (1 + 0.3 * (rank - 1)), seat = survivor.seat, from = survivor.feet, knock = 6 + rank, down = true, blow = Blow.Blunt });
+        z.entity.Send(Wound { damage = 300 * Might(survivor) * (1 + 0.3 * (rank - 1)), seat = survivor.seat, from = survivor.feet, knock = 6 + rank, down = true, blow = Blow.Blunt, aimed = true });
     }
     Send(Unleashed { seat = survivor.seat, skill = Skill.Leap, at = survivor.feet, to = survivor.feet, landed = true, rank = rank });
 }
@@ -437,11 +437,11 @@ void Kick(Entity self, Survivor survivor, List<Body> bodies, float yaw, int rank
         else if (hits < most)
         {
             hits += 1;
-            z.entity.Send(Wound { damage = 130 * might, seat = survivor.seat, from = survivor.feet, knock = 12 + 2 * (rank - 1), down = true, blow = Blow.Blunt });
+            z.entity.Send(Wound { damage = 260 * might, seat = survivor.seat, from = survivor.feet, knock = 12 + 2 * (rank - 1), down = true, blow = Blow.Blunt, aimed = true });
         }
     }
     if (stampAt >= 0)
-        bodies[stampAt].entity.Send(Wound { damage = 240 * might, seat = survivor.seat, head = true, from = survivor.feet, blow = Blow.Blunt });
+        bodies[stampAt].entity.Send(Wound { damage = 480 * might, seat = survivor.seat, head = true, from = survivor.feet, blow = Blow.Blunt, aimed = true });
     self.Send(Kicked { seat = survivor.seat, hits = hits + (stampAt >= 0 ? 1 : 0), stamp = stampAt >= 0 });
 }
 
@@ -456,10 +456,10 @@ void Throw(Survivor survivor, Skill skill, float3 target)
     var velocity = ThrowTo(from, target, THROW_GRAVITY, out var flight);
     var fuse = flight + 0.1;
     if (frag)
-        Spawn(Missile { kind = Shot.Grenade, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = 180 * Might(survivor), splash = 5.5, element = Element.Blast,
+        Spawn(Missile { kind = Shot.Grenade, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = 360 * Might(survivor), splash = 5.5, element = Element.Blast,
                         seat = survivor.seat, life = fuse });
     else
-        Spawn(Missile { kind = Shot.Pot, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = 90 * Might(survivor), splash = 4.8, element = Element.Fire,
+        Spawn(Missile { kind = Shot.Pot, at = from, velocity = velocity, gravity = THROW_GRAVITY, damage = 180 * Might(survivor), splash = 4.8, element = Element.Fire,
                         seat = survivor.seat, life = 5 });
     Send(Cue { sound = Sfx.Throw, at = eye });
 }
@@ -500,7 +500,7 @@ component Turret
 }
 
 const float TURRET_PROC = 0.6;
-const float TURRET_HURT = 10;       // A round's, times its maker's might...
+const float TURRET_HURT = 20;       // A round's, times its maker's might...
 const float TURRET_RATE = 0.14;     // ...one every so often
 const float TURRET_HEEL = 2.2;      // How near its maker it keeps...
 const float TURRET_SPEED = 8.5;     // ...going at most so fast (quicker than a run, not than a roll)
@@ -575,7 +575,7 @@ system Sentry(mut Turret turret, Ashwick ashwick, Herd herd, Match match, Time t
     turret.yaw = Math.Atan2(way.x, way.z);
     turret.pitch = Math.Asin(Math.Clamp(way.y, -1, 1));
     turret.wait = TURRET_RATE;
-    Land(turret.arms, best, TURRET_HURT * turret.arms.might, false, false, gun, 0.6, TURRET_PROC, herd);
+    Land(turret.arms, best, TURRET_HURT * turret.arms.might, false, false, gun, 0.6, TURRET_PROC, herd, false);
     var muzzle = gun + way * 0.45;
     Send(Traced { seat = turret.seat, from = muzzle, to = best.chest, kind = Trace.Turret });
     Send(Loosed { seat = turret.seat, weapon = Weapon.Smg, at = muzzle, way = way, source = Source.Turret });

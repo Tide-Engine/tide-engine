@@ -317,6 +317,12 @@ local event(Kicked kicked) FeelKick(mut Me me)
     if (kicked.seat == me.seat && kicked.hits > 0) me.shake = Math.Max(me.shake, 0.3);
 }
 
+// A head taken off by your own round: a small jolt, felt as much as seen.
+local event(Struck struck) FeelStruck(mut Me me)
+{
+    if (struck.seat == me.seat && struck.aimed && struck.head && struck.killed) me.shake = Math.Max(me.shake, 0.18);
+}
+
 local event(Blast blast) FeelBlast(mut Me me)
 {
     if (blast.kind == Shot.Pop || blast.kind == Shot.Spit) return;
