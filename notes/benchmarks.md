@@ -6,6 +6,109 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Where the performance pass ended, 2026-10-20
+
+Both rounds of the pass, measured once against the binaries from before it
+(`b27a4d90`), gated and alternating, five rounds (`perf-pass-round2-before`
+/ `-after`, built at `cf6ff8b0`; `perf-pass-round2-only` for the programs
+that didn't exist before). The machine was busier than for the first
+round's table (other sessions' builds between runs), so absolute times are
+higher on both sides; compare ratios within a column. Each round's sections
+below have the causes, the changes and what was tried.
+
+| Tide/C (C way) | 1 thread before → after | 12 threads before → after |
+| --- | ---: | ---: |
+| events | 7.54× → 3.71× | 7.77× → 3.79× |
+| life | 7.69× → 5.49× | 2.75× → 1.75× |
+| lookup, steady | 10.75× → 6.69× | 10.13× → 6.69× |
+| lookup, 1,024 changes | 5.73× → 3.69× | 5.71× → 3.70× |
+| buckets, a list of lists | 11.96× → 7.86× | (C's own time varies 4×) |
+| sand fixture (C, lookup) | 2.42× → 2.35× | 3.31× → 3.04× |
+| churn | 2.86× → 3.02× (noise) | 3.20× → 2.71× |
+| wide | 1.42× → 1.31× | 1.13× → 1.08× |
+| particles | 1.64× → 1.29× | ms 0.239 → 0.151 |
+| n-body (C, SIMD) | 1.71× → 1.72× | 1.79× → 1.71× |
+| rollback, 100k movers (C, dirty blocks) | 1.17× (coverage baseline) → 0.96× | 0.95× |
+| rollback, movers spread (C) | 1.18× → 0.97× | 0.92× |
+| systems, 4,096 / 64 / 0 a kind | 1.12× / 3.13× / 1.50× → 1.10× / 2.60× / 1.67× | |
+
+Sessions: Sand's clients 31.5 → 16.6 ms of simulation per simulated second,
+update median 0.564 → 0.288 ms, p99 1.054 → 0.635, snapshots 0.444 → 0.175
+ms/s, the server 2.93 → 1.64 ms/s; Gallery's clients 3.00 → 2.77 ms/s,
+update 0.119 → 0.109 ms. Replays, bytes and catch-up the same; end hashes
+differ only by the page hash (Page hash, measured).
+
+Drawing, totals in ms, Tide before → after against the hand-written C:
+Vulkan nothing 0.145 → 0.062 (C 0.048), rects 1.129 → 0.603 (0.147),
+circles 1.118 → 0.550 (0.147), textured quads 3.537 → 1.597 (0.148), cubes
+2.371 → 1.740 (0.186), round rects 2.486 → 1.289 (0.159); OpenGL nothing
+0.351 → 0.257 (0.024), rects 1.160 → 0.736 (0.185), circles 1.091 → 0.634
+(0.193), textured quads 3.747 → 1.829 (0.174), cubes 2.538 → 2.508 (0.174;
+the second round's own pairing has 2.217 → 1.954), round rects 2.574 → 1.572
+(0.196).
+
+Left, each with its cause in the sections below: events at 3.7× (a handle
+check, a page-ownership check and a component copy per event, and ordinary
+sends' 24-byte items; a queue-reservation runtime function is proposed),
+lookups (the probe's hash, slot, entry chain the layout and hash pin), Life
+(32-bit compares of a byte-sized count, and its windows), n-body (per-lane
+float3s shuffled to lanes), small worlds' per-task cost, and drawing's
+recorded commands (a sprite call, a ring-room `gpu.h` call and float frustum
+planes would be the next steps). Validation of the merged result: native
+debug 2,480/2,480 (Vulkan SDK checks and GPU tests under validation), web
+debug 2,386/2,386, native release 2,448/2,448, `cracked_tests` 64/64; no CI.
+
+## Map views and Linux cache groups, 2026-10-20
+
+The pass's second round, after the owner approved list views for generated
+code and asked for cache groups on Linux and Android with CI as their check
+(notes/ecs.md, Map views across a function; notes/schedule-and-threads.md,
+Linux and Android). Gated and alternating as above, five rounds, the first
+round's final binaries (`45733126`) against `c02addd8`
+(`perf-pass-views-before`/`-after`):
+
+| ms a tick, 1 thread (C way) | before | after | Tide/C after |
+| --- | ---: | ---: | ---: |
+| lookup, 16k keys, 1,024 changes (C) | 1.365 | 1.161 | 3.70× |
+| lookup, 16k keys, steady (C) | 1.379 | 1.137 | 8.6× |
+| buckets, a list of lists (C) | 0.0627 | 0.0575 | 7.9× |
+
+12 threads alike (lookups run on one). Sand's session clients 18.1 → 16.6 ms
+of simulation per second (no map in its hot path; within noise), Gallery as it
+was; end hashes the same. Every other versus program moved within noise; a
+focused eight-round pairing of wide, churn and events
+(`perf-pass-views-wide-*`), as wide's first pairing read 1.61 → 1.86 ms
+under heavy machine load, has wide at 1.30× and 1.29× its C, events 7.58×
+and 7.59×: no change, as their generated code has no map and they call no
+changed function.
+
+Taken a step at a time on the lookup benchmark (single gated runs):
+holding views per function but calling `tide_list_view_hold` out of line
+saved 2% (clang didn't inline it); forcing the hold and element reads inline
+saved 7%; setting an existing key's value through the view instead of
+`tide_map_insert` (two prepares, a lookup of its own, a fresh block lookup to
+write) another 10%. What's left, profiled: the probe's own chain, hash (four
+64-bit multiplies) → slot → entry → key compare, about 14 ns a lookup
+against C's 2 ns, whose keys sit in a 64 KB array of their own and whose
+hash is two 32-bit multiplies. Shortening it would change the hash or the
+entry layout, which every snapshot and world hash pins, or the chunk size
+(the element-to-chunk division is on the chain).
+
+Linux cache groups have no number here: WSL2 shows one L3 for all 24 CPUs,
+so the pool there is as it was. Its parsing and pinning were checked on
+made-up trees (notes/schedule-and-threads.md).
+
+Per-row scratch resets and heap flushes inline (notes/ecs.md), paired six
+rounds against the first round's binaries (`perf-pass-rows2-*`, which also
+counts `tide_list_cache_fill_mut` finding a block once): versus_rollback
+1.934 → 1.728 ms a period on one thread, 1.13× → 1.04× its dirty-block C;
+with movers spread 2.889 → 2.718 (1.29× → 1.22× C); versus_systems as it was
+(1.09-1.11× at 4,096 a kind, 2.6× at 64, 1.67× empty: they make no text or
+lists). Against the map views' binaries (`perf-pass-rows-*`) the other
+programs and sessions are where they were on one thread; on 12 threads
+particles' runs split between about 0.12 and 0.25 ms on both sides, the
+pool's choice of cache groups flipping under other agents' load that day.
+
 ## Performance pass against handwritten C, 2026-10-20
 
 The owner asked for a performance pass over everything (threading, GPU,
@@ -98,9 +201,9 @@ What changed, and where it's described:
   attached local fields, Correction).
 
 Where Tide stays behind, and why (profiled with `tide_sample`):
-- Events, 7.4×: every hit resolves its target entity to a row (generation,
-  table, chunk, lane) and then follows a chain of dependent loads; C indexes
-  its targets directly. A C way that defers its hits as Tide's events are
+- Events, 7.4× (3.7× since: Events, second round, below): every hit resolves
+  its target entity to a row (generation, table, chunk, lane) and then follows
+  a chain of dependent loads; C indexes its targets directly. A C way that defers its hits as Tide's events are
   (`C, deferred` in versus_events) is 1.6× immediate C, so deferral isn't
   most of it: Tide is about 4.7× deferred C. Record size is about 15%.
   Applying them on threads doesn't help even in C (taking the hits on 4 to 12
@@ -132,9 +235,12 @@ Proposals that need the owner, none started:
   `pthread_setaffinity_np`): untestable here, as WSL2 shows one L3.
 - N-body: tidec emitting explicit vector code for its lane batches.
 - A faster page hash (Rollback, below): changes every pinned hash and the
-  protocol version.
+  protocol version. Measured and done, as the owner asked: Page hash,
+  measured, below.
 - Drawing: a `gpu.h` call handing out ring room so shapes are built once, and
-  a quad/sprite path (Drawing, below).
+  a quad/sprite path (Drawing, below). The renderer's quads were built
+  internally in a second round (Drawing, second round, below); a sprite call
+  or quad command in the list remains an API question.
 
 Validation of the merged branch: warning-free native and web debug builds;
 all 2,477 native debug CTests (the Vulkan SDK's SPIR-V checks and 36 GPU tests
@@ -142,6 +248,421 @@ under the validation layer included) and all 2,383 web debug CTests pass, run
 again after the `restrict` fix; all 2,439 native release CTests pass (no
 Vulkan SDK in that build). Linux, macOS, Android, MinGW and sanitizers were
 not run; no CI was dispatched.
+
+## Page hash, measured, 2026-10-20
+
+The pass left the page hash as rollback's largest gap (`tide_hash_wide`, four
+of `tide_hash`'s chains: 21 GB/s where wyhash ran 37, so 1.76× C, dirty's hash).
+The owner's call: "Measure first", natively and as WebAssembly, where wasm32
+has no 64 by 64 to 128-bit multiply (ordinary `-msimd128` SIMD allowed,
+relaxed SIMD not), and switch only if a candidate beats the hash there was on
+both. One did, and is the engine's now (notes/ecs.md, A page's hash by
+stripes; notes/netcode.md, Session protocol 17).
+
+**The tool.** `bench_hash` (`bench/hash/hash.c`, `bench/README.md`, Page
+hashes) times every candidate on the shapes a world's hash reads: an 8 KiB lane
+page and a 16 KiB page in cache, 512 KiB (L2) and 8 MiB (L3) of pages in a
+shuffled order, 256 MiB of 16 KiB pages from memory, and 64- and 1,000-byte
+runs. 31 rounds take the candidates in turn on each shape, a few milliseconds a
+sample; it prints the median and the best, the best being nearest a hash's own
+speed on a shared machine. Before timing, every SIMD way is checked against its
+plain definition's bits on both builds. Windows 11, Ryzen 9 7900X, Clang
+23.1.2; native release (RelWithDebInfo, x86-64's SSE2 baseline) and web release
+under Node 24.21.0; each run under the shared gate (`gate.ps1`) with the
+process pinned to one logical CPU (`ProcessorAffinity` 0x100, which the
+program inherits), as unpinned runs moved by a third between runs.
+
+**Candidates.** `chains4`, the hash there was. `chains8`, eight of its chains.
+`wyhash` (final version 4, bench/versus/rollback's copy) with a 64 by 64 to
+128-bit multiply, and `wyhash32` with four 32-bit multiplies in its place, as
+wasm32 must. `stripes`: XXH3's accumulation (eight 64-bit sums of 32 by 32-bit
+products of key-xored words, plus each word into the neighbouring sum, a
+scramble every kilobyte) with keys and an end of our own; its ways: plain C
+(`stripes_plain`, the definition, vectorizer off), clang's two-word vectors
+(`stripes`, `pmuludq`; `_prefetch` asks for the next kilobyte; `_x2` takes two
+stripes a turn as well), AVX2's four-word ones (`stripes_avx2`, `_prefetch`),
+and on the web WebAssembly SIMD with two shuffles and `extmul_low`/`_high`
+(`stripes_wasm`, `_x2`) or with `i64x2.mul` (`stripes_wasm_mul`, and what
+clang makes of the generic vectors). `pairs`: the same with each product taken
+across two words (`lo(w0) * lo(w2)` and so on), which `extmul` and NEON's
+`umull` take as vectors come. `chains4_prefetch`: the hash there was with the
+prefetch.
+
+Natively, GB/s, median (best) of 31 rounds, and nanoseconds a hash for short
+runs; `stripes` as the engine ships it is `engine` (AVX2, on this CPU) and
+`engine_baseline` (SSE2), `chains4` the hash there was:
+
+| | engine | engine_baseline | chains4 | chains8 | wyhash | wyhash32 | pairs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 KiB page, hot | 76.7 (80.3) | 39.4 (41.7) | 19.2 (20.5) | 20.1 (20.4) | 35.3 (36.2) | 8.6 (8.8) | 39.5 (41.4) |
+| 16 KiB page, hot | 81.9 (83.9) | 41.8 (42.5) | 20.2 (20.5) | 20.1 (20.5) | 35.2 (35.9) | 8.7 (8.8) | 41.7 (42.6) |
+| 512 KiB of 8 KiB pages (L2) | 76.8 (78.0) | 40.8 (41.5) | 20.0 (20.2) | 19.9 (20.2) | 34.9 (35.5) | 8.6 (8.8) | 40.2 (41.2) |
+| 8 MiB of 8 KiB pages (L3) | 45.7 (57.7) | 37.5 (38.9) | 18.9 (19.6) | 18.8 (19.6) | 32.6 (33.6) | 8.0 (8.6) | 37.0 (39.0) |
+| 8 MiB of 16 KiB pages (L3) | 74.0 (76.6) | 39.5 (40.7) | 19.6 (20.0) | 19.3 (20.0) | 33.8 (34.5) | 8.4 (8.7) | 37.8 (40.6) |
+| 256 MiB of 16 KiB pages (memory) | 16.3 (18.1) | 12.8 (17.3) | 9.5 (12.0) | 10.0 (12.6) | 11.4 (14.7) | 5.8 (6.8) | 12.8 (14.3) |
+| 64 B, ns a hash | 8.4 (8.0) | 8.6 (8.3) | 7.5 (7.2) | 10.1 (9.1) | 2.8 (2.7) | 11.0 (10.7) | 8.5 (8.2) |
+| 1,000 B, ns a hash | 26.8 (25.4) | 39.7 (38.0) | 57.3 (55.8) | 58.9 (57.8) | 28.5 (28.0) | 120.9 (117.7) | 42.2 (40.0) |
+
+The other native ways, 8 KiB hot: `stripes` 36.6, `_prefetch` 38.4, `_x2`
+40.8 (the shipped baseline's loop), `stripes_avx2` 75.1, `_prefetch` 77.8,
+plain C 9.8; from memory the prefetch is worth 12.0 → 13.6 (two-word vectors)
+and 15.3 → 15.5 (AVX2), `chains4_prefetch` 10.1 against 9.5 but 17.7 in cache.
+
+Under Node (web release, `-msimd128`), GB/s, median (best); `engine` is the
+shuffle/extmul way, `stripes` clang's generic vectors (`i64x2.mul`):
+
+| | engine | chains4 | chains8 | wyhash | wyhash32 | stripes | stripes_wasm_mul | pairs_wasm |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 KiB page, hot | 26.4 (27.0) | 17.4 (17.6) | 19.2 (19.6) | 9.2 (9.4) | 6.7 (6.8) | 15.9 (16.5) | 16.3 (16.7) | 28.3 (29.0) |
+| 16 KiB page, hot | 26.9 (27.7) | 17.5 (18.1) | 19.6 (20.1) | 8.7 (9.4) | 6.4 (6.8) | 13.3 (17.0) | 16.7 (17.0) | 29.0 (29.9) |
+| 512 KiB of 8 KiB pages (L2) | 26.2 (27.2) | 17.7 (18.2) | 19.1 (19.9) | 8.0 (9.5) | 6.5 (6.8) | 16.3 (16.9) | 16.6 (17.0) | 28.5 (29.2) |
+| 8 MiB of 8 KiB pages (L3) | 20.4 (23.3) | 15.5 (16.7) | 16.4 (18.4) | 8.7 (9.0) | 6.5 (6.7) | 14.5 (15.8) | 13.6 (16.0) | 23.4 (26.0) |
+| 8 MiB of 16 KiB pages (L3) | 23.3 (25.5) | 16.1 (17.2) | 17.3 (19.1) | 8.7 (9.2) | 6.5 (6.7) | 15.2 (16.3) | 15.3 (16.6) | 25.9 (27.7) |
+| 256 MiB of 16 KiB pages (memory) | 11.1 (14.4) | 9.0 (11.5) | 9.5 (11.5) | 6.0 (7.1) | 5.4 (6.0) | 9.4 (10.9) | 9.2 (11.2) | 11.8 (14.9) |
+| 64 B, ns a hash | 17.5 (16.9) | 23.0 (22.7) | 24.3 (23.4) | 27.0 (26.0) | 23.5 (22.9) | 17.5 (17.0) | 17.6 (17.3) | 16.6 (15.1) |
+| 1,000 B, ns a hash | 60.6 (58.9) | 76.0 (74.4) | 72.1 (70.0) | 124.9 (122.7) | 170.0 (166.8) | 85.5 (83.9) | 85.4 (84.1) | 58.3 (56.7) |
+
+Two stripes a turn on the web (`stripes_wasm_x2`) measured the same as one.
+These are the last of three pinned runs each way, the same day; the best
+figures of the earlier two were within a few percent of these, while unpinned
+runs moved by up to a third.
+
+**Quality** (`bench_hash --quality`, native; the bits are the same everywhere).
+Avalanche (each input bit flipped for 40,000 random 8- and 16-byte keys down to
+2,000 random 16 KiB pages, 512 input bits sampled on the long ones): the
+largest distance of any input-bit/output-bit pair's flip rate from a half is
+0.009 to 0.046 for stripes, against 0.009 to 0.049 for the hash there was and
+for wyhash, which is the noise of that many pairs (about 4σ). Every one-bit and
+two-bit change of a 16 KiB page (two bits 1 to 8,192 bytes apart, 2.1 million
+runs), of zeros and of random bytes; the same bit (0, 1, 31, 32, 33, 62, 63 of
+each word) in every pair of 64 stripes of 4 KiB of zeros (112,897 runs); zeros
+of every length to 16 KiB; and a counter at two places in an 8 KiB page (2^20
+values; chi-squared of the low byte 273, 255 expected): no two equal, for
+stripes, chains4, chains8 and wyhash. Pairs failed: 848 equal pairs among the
+one- and two-bit changes of zeros and 324 in the stripes test. Two words share
+a product there, and with zeros a top bit flipped twice leaves only
+`±2^31 × (the other word's key half)`, which the key's slide makes equal for
+word 0 in stripes s, t and word 2 in s + 2, t + 2. XXH3's own construction,
+where a word's product is its own halves', has nothing like it.
+
+**Decision: stripes.** It beats the hash there was on every shape under Node
+(1.5× in cache, 1.3–1.45× in L3, 1.25× from memory, 64-byte runs in 17.5 ns where
+they took 23) and natively on all but the shortest (2× with SSE2 and 4× with
+AVX2 in cache, 1.7× from memory, 1,000 bytes in 27 ns where they took 57; a
+64-byte run takes 8.4 ns where it took 7.5, as eight accumulators end in nine
+steps where four chains end in five). It's the only candidate that wins on
+both: wyhash wins natively and runs at half the speed under Node; chains8
+gains a tenth on the web and nothing natively; pairs is 5% quicker than
+stripes on the web and failed the quality checks. Ways
+kept: two-word vectors with the prefetch and two stripes a turn
+(`tide_hash_wide_baseline`, natively), AVX2's with the prefetch where `cpuid`
+finds it (x86-64; Box3D's dispatch does the same), and the shuffle/extmul way
+on the web. Tried and not kept: `i64x2.mul` (a third slower than extmul under
+V8, as V8 makes it three `pmuludq`), two stripes a turn on the web (no
+quicker), prefetching the old chains (slower in cache, a tenth quicker from
+memory), wyhash's 128-bit multiply on wasm32 (a call to compiler-rt's
+`__multi3` each; four 32-bit multiplies written out are slower still).
+
+**End to end** (`run.ps1 -Label page-hash -Before`, three alternating rounds,
+frozen binaries of `4a59a73a` before and this change after; 30 runs, none with
+competing work; ledger rows `page-hash-before-r*`/`-after-r*`, metadata in
+`bench/results/perf-pass/page-hash-metadata.json`). Medians of round medians,
+ms:
+
+| | Before | After | |
+| --- | ---: | ---: | ---: |
+| Rollback, 100k movers: hashes (5), 1 thread | 0.229 | 0.120 | 0.52× |
+| ...whole period, 1 thread (Tide / C, dirty) | 2.068 (1.17×) | 1.951 (1.08×) | 0.94× |
+| ...hashes, 12 threads | 0.212 | 0.129 | 0.61× |
+| Rollback, spread movers: hashes, 1 thread | 0.671 | 0.273 | 0.41× |
+| ...whole period, 1 thread (Tide / C) | 2.804 (1.27×) | 2.391 (1.12×) | 0.85× |
+| Rollback, 1M movers: hashes, 1 thread | 4.66 | 3.22 | 0.69× |
+| ...whole period on 1/2/4/8/12 threads | 32.6/22.2/15.3/14.6/11.9 | 31.4/20.8/14.6/13.2/12.0 | |
+| Sand: client update median / p99 | 0.291 / 0.637 | 0.259 / 0.461 | |
+| ...client simulate, ms per second | 16.8 | 14.8 | |
+| Gallery: client update median / p99 | 0.112 / 0.358 | 0.090 / 0.300 | |
+
+C, dirty's own hash at 100k movers was 0.105 and 0.104 ms in the two builds, so
+Tide's hashes went from 2.2× it to 1.15×. Ticks, snapshots and restores moved
+within noise. Every way's digest of the worlds (computed from their contents,
+not by the page hash) is the same before and after, as are the sessions'
+replays, bytes sent and catch-up times; only the end hashes differ (Sand
+0x953b9562d90bd9bb → 0xfc2b7b098a2836e9 at tick 736, Gallery 0x365586644fdce54f
+→ 0xd756ff9c9dc087de at tick 1733).
+
+The same programs as WebAssembly under Node (web release, the frozen `4a59a73a`
+builds against this change's, three alternating rounds, each run under
+`gate.ps1`; medians of the rounds, ms; `--save` doesn't reach the ledgers from
+WASI, so each run's numbers and the binaries' SHA-256 are in
+`bench/results/perf-pass/page-hash-web-metadata.json`): rollback at 100k
+movers, hashes 0.220 → 0.159 and the period 2.753 → 2.709 (C, dirty's wyhash
+0.59, slow on wasm32);
+with spread movers, hashes 0.749 → 0.598 and the period 3.423 → 3.405. Sand's
+and Gallery's sessions under Node are as they were (clients' update median
+0.72 → 0.71 and 0.09 → 0.09 ms; a client simulates about 42 ms a second of
+Sand in both), the hash being a smaller part of a slower tick there. Digests
+are the same before and after, and the sessions end on the native builds'
+new hashes, bit for bit.
+
+**What moved** (the new numbers are the tests' own output, the same natively
+and under Node; `PROTOCOL` 16 → 17): `tests/test_hash.c`'s four; the Sand and
+Gallery quick sessions (`bench/CMakeLists.txt`: 0x6ac505971b099ca5 at tick 169
+and 0xe8641c8f2826ff50 at tick 272); seven decimal pins in
+`compiler/tests/CMakeLists.txt` (nested, arrays, FBX, skinned, chars, JSON,
+optional fields); in `compiler/tests/e2e`, rows, random, random local order
+(two fixtures), rolls, `assets_same.h`, decode, crossplatform text, and the
+world hash and whole and delta bytes' digests in `local_fields_same.h` and
+`local_events_same.h`; Box2D's stack, course, kit and sleep (nine) and Box3D's
+stack, course, sleep and mesh (eleven), every one a world hash or a sum of
+each tick's; Towers' and Sumo's servers' worlds (two each); and CRACKED's
+scripted match (`prototypes/cracked`, opt-in, built apart with
+`TIDE_PRIVATE_PROTOTYPES=ON`: 0x0a216d532fa6445c natively and under Node). 47
+world pins in 22 files. CRACKED's pin was already stale before this change: a
+build of `4a59a73a`'s page hash ends its match as 0x514280888af9724c, not the
+pinned 0x0267de53757af494, with the same bullets, rounds, points and map the
+new build prints (notes/cracked.md).
+What didn't move, and was checked: every pin of a simulated value (the
+physics packages' bodies, Box2D's own image bytes, Box3D's resident digests,
+what was answered; `test_crossplatform.c`, `crossplatform.tide`, skinned
+pose bits), the raw packed worlds' bytes and sizes and the delta sizes in
+the local fields/events fixtures, and their sessions' bytes sent.
+
+**Validation** (this Windows machine): warning-free native debug, web debug
+and native release builds. The full native debug suite, 2,478 tests: the 32
+that pin a world hash failed on exactly those checks and pass with the new
+numbers, and the whole suite passes again (Vulkan SDK's validation layer and
+SPIR-V checks included). The full web debug suite, 2,384 tests, passes,
+pinned numbers included, so native and WASI agree on all of them. CRACKED's
+64 tests pass natively and under Node in builds of their own. Native release:
+the 252 tests matching `tide_tests|tidec_e2e|versus|bench` pass. Linux, macOS,
+ARM64 (where NEON's way runs: CI's macOS and Android jobs), MinGW and
+sanitizers need CI to confirm the pins; none was dispatched.
+
+## Drawing, second round, 2026-10-20
+
+Round 2 of the renderer against the handwritten baseline (`versus_draw`,
+Drawing against handwritten OpenGL and Vulkan, below), internal only, as the
+owner decided for quads: no Draw API, generated code or runtime function
+changed. What was built is in `notes/rendering.md` (Quads, solid shapes and a
+fenced flush) and `notes/drawing.md` (Recording sprites and 3D instances):
+
+- 2D meshes' and text's triangles go to the GPU as 40-byte quad instances
+  where two of them are an unturned quad of one color (120 bytes of vertices
+  before), and a run of solid smooth shapes carries a 4-byte radius a shape in
+  place of a 32-byte extra; both fall back exactly when the run gets anything
+  else.
+- Recording: a run of sprites keeps its texture's slot without hashing, a
+  single 3D instance reads its transform once into the list's matrices and
+  culls it there, culling's rounding allowance is worked out only for a box
+  past a plane, and growing arrays is apart from what records.
+- Vulkan's flush waits for a fence where it waited for the queue to go idle,
+  and leaves unused command pools alone.
+
+Every benchmark frame of the 13 workloads is the same bytes before and after
+on both backends (`tide_platform_draw --bench --dump-frames`, compared byte for
+byte; `versus_draw --compare` against the after frames: 0 pixels differ in any
+workload, on either API).
+
+Five gated rounds (`bench/results/perf-pass/run.ps1 -Label draw2 -Rounds 5
+-Before`, before `4a59a73a`, after `24c44443`, each program run from both in
+turn; `draw2-before-r3`'s OpenGL run had competing work), and five of the C
+baseline straight after (`draw2-c`, the same `versus_draw` binary as round 1);
+binaries' SHA-256 and times in `bench/results/perf-pass/draw2-metadata.json`
+and `draw2-c-metadata.json`. Medians of the rounds' medians, ms a frame,
+record / render + readback / total; Tide/C is total over total:
+
+| Vulkan | before | after | C by hand | Tide/C before | after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nothing | 0.000 / 0.074 / 0.075 | 0.000 / 0.053 / 0.054 | 0.000 / 0.049 / 0.049 | 1.52× | 1.09× |
+| 65,536 rects | 0.268 / 0.340 / 0.605 | 0.268 / 0.329 / 0.597 | 0.057 / 0.098 / 0.155 | 3.92× | 3.86× |
+| 65,536 circles | 0.253 / 0.307 / 0.561 | 0.253 / 0.289 / 0.543 | 0.057 / 0.096 / 0.154 | 3.64× | 3.52× |
+| 65,536 textured quads | 1.117 / 1.025 / 2.206 | 0.915 / 0.587 / 1.518 | 0.057 / 0.095 / 0.152 | 14.49× | 9.97× |
+| 65,536 cube instances | 1.529 / 0.448 / 1.982 | 1.218 / 0.425 / 1.645 | 0.034 / 0.158 / 0.192 | 10.31× | 8.56× |
+| 65,536 round rects | 0.794 / 0.601 / 1.420 | 0.708 / 0.526 / 1.233 | 0.068 / 0.097 / 0.166 | 8.57× | 7.44× |
+| rects, text every 1,024 | 0.255 / 0.396 / 0.651 | 0.255 / 0.386 / 0.639 | - | - | - |
+| rects, a round rect every 1,024 | 0.255 / 0.476 / 0.729 | 0.254 / 0.350 / 0.604 | - | - | - |
+| cubes, a matrix each (C only) | - | - | 0.183 / 0.159 / 0.343 | - | - |
+
+| OpenGL 3.3 | before | after | C by hand | Tide/C before | after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nothing | 0.000 / 0.262 / 0.262 | 0.000 / 0.254 / 0.254 | 0.000 / 0.018 / 0.018 | 14.84× | 14.41× |
+| 65,536 rects | 0.267 / 0.425 / 0.693 | 0.267 / 0.424 / 0.691 | 0.063 / 0.118 / 0.183 | 3.78× | 3.77× |
+| 65,536 circles | 0.253 / 0.366 / 0.621 | 0.253 / 0.365 / 0.621 | 0.063 / 0.122 / 0.188 | 3.30× | 3.30× |
+| 65,536 textured quads | 1.114 / 1.576 / 2.687 | 0.912 / 0.817 / 1.741 | 0.060 / 0.115 / 0.178 | 15.11× | 9.79× |
+| 65,536 cube instances | 1.488 / 0.727 / 2.217 | 1.224 / 0.731 / 1.954 | 0.043 / 0.129 / 0.167 | 13.25× | 11.68× |
+| 65,536 round rects | 0.793 / 0.826 / 1.619 | 0.707 / 0.622 / 1.334 | 0.064 / 0.137 / 0.200 | 8.08× | 6.66× |
+| rects, text every 1,024 | 0.255 / 0.656 / 0.911 | 0.255 / 0.656 / 0.912 | - | - | - |
+| rects, a round rect every 1,024 | 0.254 / 0.608 / 0.864 | 0.254 / 0.427 / 0.682 | - | - | - |
+| cubes, a matrix each (C only) | - | - | 0.149 / 0.316 / 0.465 | - | - |
+
+The kept-data workloads, Vulkan totals: grid 0.121 -> 0.098, 65,536 lights
+read whole 0.159 -> 0.152, read in part 0.139 -> 0.134, a list made each frame
+0.110 -> 0.091, a moving mesh 0.346 -> 0.321 (the fenced flush); OpenGL's are
+as they were (0.103-0.360). This round's before is slower than round 1's after
+in a few rows (Vulkan's empty frame 0.065 there, 0.075 here) on the same
+binaries' code: the machine, with other sessions' GPU work, varied between
+the days' runs; compare each table's columns with each other.
+
+Where the time went, from temporary per-phase timers (not committed; means
+over 120 frames, Vulkan, before against the build of the gated A/B that
+preceded the final one): textured quads' conversion 474 -> 350 µs and upload
+376 -> 131 µs (7.8 MB a frame to 2.6); round rects' upload 192 -> 105 µs (3.7
+MB to 1.8) while their conversion rose 257 -> 300-325 µs (each shape's extra
+is still worked out, to be checked); GPU, submission and readback were about
+as they were in both. OpenGL's quads gained most in their upload:
+`glBufferSubData` costs more a byte there.
+
+Tried and dropped (numbers in the notes): converting quads through
+`mesh_vertex` structs compared a field at a time (slower than the triangles:
+conversion 650-760 µs); one barrier call a pass with joined stage masks (no
+change beyond noise); a sprite's vertices copied 8 bytes at a time (recording
+0.91 -> 0.98 ms).
+
+What remains, and why:
+- Rects and circles, about 3.5-3.9 times C: recording a 44-byte command a
+  shape (about 4 ns, written to memory past the L2 and read back by the
+  renderer) is the floor of the draw list's format, which is public; the
+  renderer's conversion (about 2 ns a shape) is close to bound by reading
+  those commands; the upload is bound by the bus (1.5 MB at about 20 GB/s).
+  Converting straight into the upload memory would save about 0.07 ms
+  (`notes/rendering.md`, Not built: it needs a `gpu.h` call whose room lasts
+  across a flush).
+- Textured quads, about 10 times: recording is 0.91 ms of 1.52, 14 ns a quad,
+  most of it 128 bytes of vertices and 24 of indices a quad in the list's own
+  format (memory traffic and a `memcpy` call), plus the benchmark's own
+  building of them; the renderer then reads them all back (about 0.36 ms).
+  C writes 20 bytes once. A sprite call or a quad command in the list would
+  close most of it, and is an API question.
+- Cube instances, 8.6 times (4.8 times C with a matrix each): about 18.5 ns a
+  recorded instance remains, the frustum test in double precision against six
+  planes, the side's determinant, the mesh lookup and run merging, and 4 MB of
+  transforms uploaded a frame. A float fast path for culling, exact by an
+  error bound, would need float planes kept in the list (a layout change) or
+  converted per call.
+- Round rects, 7.4 times: 104 bytes recorded a shape (command and shape data,
+  0.71 ms, memory-bound), 28 uploaded where C uploads 24.
+- OpenGL's empty frame, 14 times C: the hidden window's swap, which the next
+  readback waits for (round 1). Skipping it needs uploads that don't go
+  through `glBufferSubData` first; not built.
+- Vulkan's empty frame is 1.09 times C.
+
+Validation: warning-free native, release and web debug builds; all 2,477
+native debug CTests pass (36 `gpu` tests with Vulkan under the validation
+layer and synchronization checks, OpenGL twins, `tide_spirv_shaders_valid`
+with the renderer's ten shaders); release `tide_platform_draw`, `_targets`,
+`_shaders`, `_skinned` and their OpenGL twins and `versus_draw` pass under the
+validation layer; all 2,383 web debug CTests pass (WebGL, the D3D11 WebGL run
+and the 11 WebGPU pages, which run `runs_drawn_alike` too). The draw test
+counts 2,975 `ok`s on Vulkan (both devices) and 1,537 on OpenGL. Android,
+Linux, macOS, MinGW and sanitizers were not run; no CI was dispatched.
+
+## Events, second round, 2026-10-20
+
+The pass's largest simulation gap: `versus_events` (200,000 turrets each
+sending a `Hit` a tick to one of 50,000 targets, one handler taking it) at
+7.4× its C. Where the time was, from `tide_sample` and the disassembly of the
+release build at `4a59a73a`:
+
+- Taking the events was 79% of Tide's tick and recording them 19%. Each event
+  went round `tide_apply_from`: `tide_queue_next`, the chain's depth, a switch
+  on the kind and one on the event, then the dispatcher's lookup, which read
+  the target table's count, page array and first handle again for every
+  event (a handler writes through byte pointers, so the C compiler can't keep
+  them), all inlined into one function short of registers: about 60
+  instructions an event (C's loop has 6). 32% of all samples were on the line
+  after the handle check, the instructions behind it waiting.
+- Records of 24 bytes an event (a `tide_command`'s head and the value), each
+  head written by the row that sent it; C, deferred keeps 8.
+- Memory, less than it looked: the handle check is a random read of a 400 KB
+  column, but with 500 targets, all in L1, the tick took 0.40 ms where 50,000
+  took 0.52 (at the third step below), and prefetching never helped.
+
+What changed (notes/language.md and notes/ecs.md, Events in runs), each step
+timed in alternating gated runs of scratch builds, Tide on one thread:
+
+1. A system whose whole body is one Send records runs (an item of the queue,
+   12 bytes an `int` event), taken in a loop of their own: 0.87 → 0.69 ms.
+2. That loop reads the table's count, pages and first handle once, and the
+   dispatcher is split so it calls only what follows finding the target:
+   → 0.52.
+3. Two calls, so the one where the target was found knows its archetype (no
+   switch, no gone check), and `tide_table_column_mut` doesn't write back an
+   unchanged page pointer: → 0.475.
+4. The loop `noinline`, with the registers to itself, and the shared page's
+   copy marked unlikely: → 0.45, about 31 instructions an event.
+5. Ordinary event items back to back in a page through the same kind of loop:
+   versus_events with its Send in an `if` (so not one Send alone, a scratch
+   build): 1.12 → 0.92 ms.
+
+The pair (gated, five rounds alternating before, `4a59a73a`, and after,
+`0ceefae5`; `events-r2-before-r*` and `-after-r*` in the ledgers; runner
+metadata, binaries' SHA-256 and no competing work in
+`bench/results/perf-pass/events-r2-metadata.json`):
+
+| ms a tick | Tide before → after | C | C, deferred | Tide/C | Tide/C, deferred |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 thread | 0.882 → 0.439 | 0.119 | 0.187 | 7.42× → 3.68× | 4.72× → 2.36× |
+| 12 threads | 0.878 → 0.435 | 0.119 | 0.188 | 7.40× → 3.64× | 4.67× → 2.32× |
+
+On 1, 2, 4, 8 and 12 threads (`versus_events_scaling`, medians of five) Tide
+went 0.878, 0.879, 0.886, 0.881, 0.883 → 0.439, 0.445, 0.444, 0.437, 0.431
+ms (two of the after runs on 4 threads read 0.62-0.64), C 0.118-0.120 and C,
+deferred 0.186-0.188 throughout. Churn 1 thread 0.451 → 0.415 and 12 threads
+0.396 → 0.415, its generated C unchanged (12-thread runs 0.38-0.49 on both
+sides). Sand's and Gallery's sessions as they were: client simulation 14.6 →
+14.6 and 1.64 → 1.64 ms a simulated second, updates 0.257 → 0.256 and 0.068 →
+0.069 ms, the same bytes, replays and end hashes (0x953b9562d90bd9bb at tick
+736, 0x365586644fdce54f at 1733).
+
+The other versus programs, three rounds of each in turn (`events-r2-others-*`,
+metadata beside the first; its revision says `+local` for the ledgers the
+first pair had written, the binaries the same): particles 0.448 → 0.447 and
+0.088 → 0.089 ms on 1 and 12 threads, wide 1.468 → 1.396 and 0.809 → 0.753,
+sand 0.956 → 0.981 (one after run 1.104) and 0.221 → 0.219, life 0.420 → 0.419
+and 0.119 → 0.119, n-body 3.42 → 3.40 and 0.410 → 0.382, buckets 0.0619 →
+0.0617 and 0.0619 → 0.0624, lookup 1.312 → 1.331 and 1.313 → 1.339, steady
+lookup 1.350 → 1.339 and 1.345 → 1.343: within their noise. Of these only
+sand's generated C changed, in `PlayerJoined`'s dispatch, which its runs
+never reach.
+
+Tried and dropped:
+
+- Prefetching the targets' rows 8, 16 or 32 events ahead: slower every time,
+  0.80-1.02 ms against 0.69 in the first loop and 0.52-0.54 against 0.46 in
+  the last. The loop is bound by its instructions more than by memory, and
+  working out where to prefetch costs half a lookup.
+- Taking ordinary items one after another as found, the next one's place from
+  `tide_queue_next` each time: 1.25 ms against 1.13 the way it was, on the
+  scratch game with its Send in an `if` (each event waited for its place to be
+  read); counting them first through `tide_queue_next`: 1.15. Counting them
+  from the page's `used` (built): 0.92.
+- A per-run cache of each chunk's lane pages a handler writes, written by hand
+  into the generated C: 0.45 → 0.425 (6%). Not built: the handlers' columns
+  would need a second way of being generated for a few instructions an event.
+
+What's left, 3.7× C and 2.4× C, deferred:
+
+- The loop still takes about 31 instructions an event to C's 6: checking the
+  target's handle against its row (a random read C doesn't make, since C
+  trusts its index, and a handle can be gone or reused by the event's turn),
+  the lane page's ownership for each event (`tide_table_column_mut`: a load, a
+  compare and `hashed` written), gathering and putting back the component, and
+  the handler. Recording is about 0.08 ms of the 0.44.
+- Sends that aren't a system's whole body (in an `if`, a function or a
+  handler) still record 24 bytes each through `tide_cmd_push`, whose page's
+  `used` and queue's `count` go through memory event by event: about 0.46 ms
+  of the 0.92 in the scratch game. Generated code reserving a loop's room in
+  the queue ahead would take most of it, which is a new runtime function
+  generated code calls: a proposal for the owner, not built.
+- The pass's proposals stand: dispatch fused with sending where one handler
+  consumes an event, or applied in parallel by target, both changes to how
+  events are scheduled.
+
+Validation: warning-free native and web debug and native release builds; all
+2,478 native debug CTests (Vulkan SDK checks and 36 GPU tests included), all
+2,384 web debug CTests and the 246 native release `tidec_e2e`, `versus` and
+`tide_tests` tests pass; cross-platform, random and session pins unchanged.
+Linux, macOS, Android, MinGW and sanitizers were not run; no CI was dispatched.
 
 ## Rollback, the schedule and thread scaling against C, 2026-10-20
 
@@ -298,7 +819,8 @@ Remaining gaps, largest first, with the best explanation:
    wasm32; or XXH3's 32×32→64 SIMD multiplies, about 1.2–1.5× here at SSE2 and
    native on wasm SIMD) would change every pinned world hash and `PROTOCOL`, as
    `tide_hash_wide` did on 2026-10-07: the owner's call, with web throughput
-   measured first. Not done.
+   measured first. Done the same day, after measuring (Page hash, measured,
+   above): 1.15× C, dirty's hash at 100k movers.
 2. Ticks under a kept ring (1.8–2.0× C in place): writing every changed
    chunk's lanes apart and comparing them afterwards is the price of sharing.
    Tracking changes in the loop didn't pay (above). Writing in place when only

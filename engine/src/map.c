@@ -34,7 +34,8 @@ static void set_slot(const tide_map m, const uint32_t s, const uint32_t value)
 // The slot a key with hash `h` lands in: the first empty one from its own.
 static uint32_t empty_slot(const tide_map m, const uint32_t h)
 {
-    const tide_list_view index = tide_list_view_of(m.index, sizeof(uint32_t));
+    tide_list_view index;
+    tide_list_view_find(&index, m.index, sizeof(uint32_t));
     const uint32_t mask = index.count - 1u;
     uint32_t s = h & mask;
     for (;;) {

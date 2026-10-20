@@ -241,6 +241,7 @@ static struct {
 
     vk_frame frames[FRAMES];
     uint32_t frame;
+    VkFence flushed; // What a flush's submission signals (see flush)
     VkDescriptorSetLayout set_layout;
     VkPipelineLayout layout;
     VkSampler samplers[SAMPLER_COUNT];
@@ -826,29 +827,35 @@ static void flush(void)
         const VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, NULL, wait ? 1u : 0u, &vk.frames[vk.frame].acquired, &stage,
                                      vk.pending_count, vk.pending, 0, NULL};
         if (wait) vk.acquire_waited = true;
-        result = vkQueueSubmit(vk.queue, 1, &submit, VK_NULL_HANDLE);
+        result = vkQueueSubmit(vk.queue, 1, &submit, vk.flushed);
         vk.pending_count = 0;
         vk.submitted++;
         for (uint32_t i = vk.query_sent; i < vk.query_count; i++) vk.query_serial[(vk.query_first + i) % TIME_PAIRS] = vk.submitted;
         vk.query_sent = vk.query_count;
+        // ...and waited for, with what the frames before it sent: a fence a submission signals waits for everything
+        // submitted before it too
+        if (result == VK_SUCCESS) result = vkWaitForFences(vk.device, 1, &vk.flushed, VK_TRUE, UINT64_MAX);
+        if (result == VK_SUCCESS) result = vkResetFences(vk.device, 1, &vk.flushed);
     }
-    // ...and what the frames before it sent, which may still be on their way
-    if (result == VK_SUCCESS) result = vkQueueWaitIdle(vk.queue);
+    // Everything the GPU had is done, once the frames sent before are (every submission but a flush's has a frame's
+    // fence): every frame's room, garbage and command buffers are free again
+    for (uint32_t i = 0; i < FRAMES; i++) {
+        vk_frame *f = &vk.frames[i];
+        if (f->fenced) {
+            if (result == VK_SUCCESS) result = vkWaitForFences(vk.device, 1, &f->fence, VK_TRUE, UINT64_MAX);
+            vkResetFences(vk.device, 1, &f->fence);
+            f->fenced = false;
+        }
+    }
     if (result != VK_SUCCESS) {
         lose(result);
         return;
     }
-    // Everything the GPU had is done: every frame's room, garbage and command buffers are free again
     vk.completed = vk.submitted;
     for (uint32_t i = 0; i < FRAMES; i++) {
         vk_frame *f = &vk.frames[i];
-        if (f->fenced) {
-            vkWaitForFences(vk.device, 1, &f->fence, VK_TRUE, UINT64_MAX);
-            vkResetFences(vk.device, 1, &f->fence);
-            f->fenced = false;
-        }
         collect(f);
-        vkResetCommandPool(vk.device, f->pool, 0);
+        if (f->used) vkResetCommandPool(vk.device, f->pool, 0); // Unless none of its command buffers was begun since
         f->used = 0;
         f->ring.used = 0;
         reset_pools(f);
@@ -1114,7 +1121,7 @@ void tide_gpu_vk_present(void)
         if (f->serial > vk.completed) vk.completed = f->serial;
     }
     collect(f);
-    vkResetCommandPool(vk.device, f->pool, 0);
+    if (f->used) vkResetCommandPool(vk.device, f->pool, 0); // Unless none of its command buffers was begun since
     f->used = 0;
     f->ring.used = 0;
     reset_pools(f);
@@ -2415,6 +2422,8 @@ static void destroy_device(void)
         free(f->garbage);
         *f = (vk_frame){0};
     }
+    if (vk.flushed) vkDestroyFence(vk.device, vk.flushed, NULL);
+    vk.flushed = VK_NULL_HANDLE;
     for (uint32_t i = 0; i < 8; i++) {
         if (rendered[i]) vkDestroySemaphore(vk.device, rendered[i], NULL);
         rendered[i] = VK_NULL_HANDLE;
@@ -2626,6 +2635,8 @@ static bool create_device(const bool say)
         const VkSemaphoreCreateInfo semaphore = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, NULL, 0};
         check(vkCreateSemaphore(vk.device, &semaphore, NULL, &f->acquired), "vkCreateSemaphore");
     }
+    const VkFenceCreateInfo flushed = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, NULL, 0};
+    check(vkCreateFence(vk.device, &flushed, NULL, &vk.flushed), "vkCreateFence");
     const VkPipelineCacheCreateInfo cache = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, NULL, 0, 0, NULL};
     check(vkCreatePipelineCache(vk.device, &cache, NULL, &vk.pipeline_cache), "vkCreatePipelineCache");
     read_pipeline_cache();

@@ -1,5 +1,19 @@
 # No Tide code can corrupt memory
 
+## Events in runs (2026-10-20)
+
+A run of events (notes/language.md, Events in runs) is read only by the
+generated code of the build that pushed it, during the tick that pushed it:
+its count is the one its pusher wrote, and `tide_command_fits` refuses the
+kind in a queue unpacked from bytes, so no game value or received byte sizes
+a read. Finding a target reads the table's entity column only below the
+table's count (`index - first` is unsigned), and its rows can't move during
+the run (structural changes wait in the queue); anything else goes through
+`tide_entity_location`, as before. Counting ordinary items in a row reads
+heads only below the page's `used`, in steps of the first item's own size,
+which `tide_command_fits` has checked for items from bytes. `events_runs`
+covers gone, reused and moved handles and the null target.
+
 ## Double transcendental and matrix values (2026-10-20)
 
 The private binary64 adapter uses memcpy-based word access, requires binary64

@@ -456,10 +456,20 @@ void tide_draw_free(tide_draw_list *d)
 
 // Room for `more` items of `size` bytes after the `count` there are, the
 // array doubling as it needs.
-static void *grow(void *items, const uint32_t count, uint32_t *capacity, const uint64_t more, const size_t size,
-                  const uint32_t first)
+static __attribute__((noinline)) void *grown(void *items, const uint32_t count, uint32_t *capacity, const uint64_t more,
+                                             const size_t size, const uint32_t first);
+
+// Apart from where it has to grow, which is rare: what records a command keeps its registers.
+static inline void *grow(void *items, const uint32_t count, uint32_t *capacity, const uint64_t more, const size_t size,
+                         const uint32_t first)
 {
-    if (more <= *capacity - count) return items;
+    if (__builtin_expect(more <= *capacity - count, 1)) return items;
+    return grown(items, count, capacity, more, size, first);
+}
+
+static void *grown(void *items, const uint32_t count, uint32_t *capacity, const uint64_t more, const size_t size,
+                   const uint32_t first)
+{
     uint64_t room = *capacity ? *capacity : first;
     while (room < count + more) room *= 2u;
     if (room > UINT32_MAX / size) tide_out_of_memory();
@@ -635,7 +645,11 @@ static inline tide_color color_read(const tide_color *color)
 static inline void matrix_read(float *to, const tide_float4x4 *matrix)
 {
     const volatile float *from = (const volatile float *)matrix;
-    for (int i = 0; i < 16; i++) to[i] = from[i];
+    for (int c = 0; c < 4; c++) {
+        // ...and written a column at a time, which reads of any width after it find
+        const float column[4] = {from[c * 4], from[c * 4 + 1], from[c * 4 + 2], from[c * 4 + 3]};
+        memcpy(to + c * 4, column, sizeof column);
+    }
 }
 
 // A command that draws, with the blend there is, after what its destination's
@@ -1778,6 +1792,20 @@ uint64_t tide_texture_version(const void *pixels, const int32_t width, const int
 static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
 {
     if (!texture || !texture->pixels) return 0;
+    // The texture the last command drew a mesh with, again, as a run of sprites or tiles of one image is drawn:
+    // what texture_place would find, its pixels as they were and already noted as drawn this frame, which is all
+    // it would do with them
+    if (d->count) {
+        const tide_draw_command *last = &d->commands[d->count - 1u];
+        if (last->kind == TIDE_DRAW_MESH && last->mesh.texture && last->mesh.texture <= d->texture_count) {
+            const tide_draw_texture *t = &d->textures[last->mesh.texture - 1u];
+            if (t->id == (uint64_t)(uintptr_t)texture->pixels && t->space == TIDE_PIXELS_MEMORY && t->frame == d->frame
+                && t->version == texture->version && t->width == texture->width && t->height == texture->height
+                && t->format == TIDE_TEXELS_BYTES) {
+                return last->mesh.texture;
+            }
+        }
+    }
     uint8_t *pixels;
     const uint32_t slot = tide_draw_texture_slot(d, TIDE_PIXELS_MEMORY, (uint64_t)(uintptr_t)texture->pixels,
                                                  texture->version, texture->width, texture->height, &pixels);
@@ -1910,16 +1938,20 @@ void tide_draw_triangles_with(tide_draw_list *d, const uint32_t base, const uint
     const uint32_t within = d->vertex_count - base;
     d->indices = grow(d->indices, d->index_count, &d->index_capacity, count, sizeof(uint32_t), 2048u);
     const uint32_t first = d->index_count;
+    // The list's count kept here as it grows, where its stores could otherwise be the list's own for all the
+    // compiler knows, and read again after each triangle
+    uint32_t *const to = d->indices;
+    uint32_t at = first;
     for (uint32_t i = 0; i + 3u <= count; i += 3u) {
         const uint32_t a = indices[i], b = indices[i + 1u], c = indices[i + 2u];
         if (a >= within || b >= within || c >= within) continue;
-        uint32_t *out = &d->indices[d->index_count];
-        out[0] = base + a;
-        out[1] = base + b;
-        out[2] = base + c;
-        d->index_count += 3u;
+        to[at] = base + a;
+        to[at + 1u] = base + b;
+        to[at + 2u] = base + c;
+        at += 3u;
     }
-    if (d->index_count == first) return;
+    d->index_count = at;
+    if (at == first) return;
     // More of the mesh before it, when nothing came between them
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
     if (last && last->kind == TIDE_DRAW_MESH && last->blend == d->place.blend && last->mesh.texture == slot
@@ -2171,32 +2203,26 @@ static void reindex_meshes(tide_draw_list *d)
     }
 }
 
-uint32_t tide_draw_mesh_slot(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t other,
-                             const uint64_t version, bool *fill)
+// The place tide_draw_mesh_slot found last on this thread, which a view drawing one mesh for each of its entities
+// asks for again and again: still that mesh's while its place holds the same one, as only it makes places, one a
+// mesh (a free place's is TIDE_MESH_NONE, which nobody asks for).
+static TIDE_THREAD_LOCAL struct {
+    const tide_draw_list *list;
+    uint32_t place; // 1 + it
+} last_mesh;
+
+// ...and where it isn't that one: hashing and probing, or a new place. Apart, so the place found last is found
+// without what this needs of registers and stack.
+static __attribute__((noinline)) uint32_t mesh_slot_found(tide_draw_list *d, const uint32_t space, const uint64_t id,
+                                                          const uint64_t other, const uint64_t version, bool *fill)
 {
-    *fill = false;
-    if (space == TIDE_MESH_NONE) return 0;
-    // The place found last on this thread, which a view drawing one mesh for each of its entities asks for again
-    // and again: still that mesh's while its place holds the same one, as only this makes places, one a mesh
-    // (a free place's is TIDE_MESH_NONE, which nobody asks for). Hashing and probing come after.
-    static TIDE_THREAD_LOCAL struct {
-        const tide_draw_list *list;
-        uint32_t place; // 1 + it
-    } last;
-    if (last.list == d && last.place && last.place <= d->mesh_count) {
-        tide_draw_mesh_data *m = &d->meshes[last.place - 1u];
-        if (m->space == space && m->id == id && m->other == other && m->version == version) {
-            m->frame = d->frame;
-            return last.place;
-        }
-    }
     if (d->mesh_index_capacity) {
         const uint32_t mask = d->mesh_index_capacity - 1u;
         for (uint32_t i = mesh_hash(space, id, other, version) & mask; d->mesh_index[i]; i = (i + 1u) & mask) {
             tide_draw_mesh_data *m = &d->meshes[d->mesh_index[i] - 1u];
             if (m->space == space && m->id == id && m->other == other && m->version == version) {
                 m->frame = d->frame;
-                last.list = d, last.place = d->mesh_index[i];
+                last_mesh.list = d, last_mesh.place = d->mesh_index[i];
                 return d->mesh_index[i];
             }
         }
@@ -2214,8 +2240,24 @@ uint32_t tide_draw_mesh_slot(tide_draw_list *d, const uint32_t space, const uint
     if (d->mesh_count >= d->mesh_index_capacity / 2u) reindex_meshes(d);
     else index_mesh(d, place);
     *fill = true;
-    last.list = d, last.place = place + 1u;
+    last_mesh.list = d, last_mesh.place = place + 1u;
     return place + 1u;
+}
+
+uint32_t tide_draw_mesh_slot(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t other,
+                             const uint64_t version, bool *fill)
+{
+    *fill = false;
+    if (space == TIDE_MESH_NONE) return 0;
+    const uint32_t place = last_mesh.place;
+    if (last_mesh.list == d && place && place <= d->mesh_count) {
+        tide_draw_mesh_data *m = &d->meshes[place - 1u];
+        if (m->space == space && m->id == id && m->other == other && m->version == version) {
+            m->frame = d->frame;
+            return place;
+        }
+    }
+    return mesh_slot_found(d, space, id, other, version, fill);
 }
 
 void tide_draw_mesh_fill_bytes(tide_draw_list *d, const uint32_t mesh, const void *vertices, const uint32_t vertex_size,
@@ -2569,25 +2611,30 @@ static void shaded_visible(tide_draw_list *d, const tide_shader *shader, const u
     }
 }
 
+// No bounds to cull by (set 0).
+static const tide_draw_bounds no_bounds;
+
 // Bounds are cached alongside the retained geometry, never read from a game's
 // lists after capture. A shader supplies a position only when it cannot deform it.
-static tide_draw_bounds mesh_bounds(tide_draw_list *d, uint32_t mesh, const uint32_t position)
+// Where the list keeps them: read where they are, never copied whole (see color_read), and before the list's
+// meshes can move.
+static const tide_draw_bounds *mesh_bounds(tide_draw_list *d, uint32_t mesh, const uint32_t position)
 {
-    if (!mesh || mesh > d->mesh_count) return (tide_draw_bounds){0};
+    if (!mesh || mesh > d->mesh_count) return &no_bounds;
     if (d->meshes[mesh - 1u].base) mesh = d->meshes[mesh - 1u].base;
-    if (!mesh || mesh > d->mesh_count) return (tide_draw_bounds){0};
+    if (!mesh || mesh > d->mesh_count) return &no_bounds;
     tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
-    if (m->bounds_position == position && m->bounds.set) return m->bounds;
+    if (m->bounds_position == position && m->bounds.set) return &m->bounds;
     m->bounds_position = position;
     m->bounds = (tide_draw_bounds){.set = 2};
     if (!position || m->vertex_size < sizeof(tide_float3) || position - 1u > m->vertex_size - sizeof(tide_float3)
-        || !m->bytes || !m->vertex_count) return m->bounds;
+        || !m->bytes || !m->vertex_count) return &m->bounds;
     float lo[3] = {0}, hi[3] = {0};
     for (uint32_t i = 0; i < m->vertex_count; i++) {
         float p[3];
         memcpy(p, (const uint8_t *)m->bytes + (size_t)i * m->vertex_size + position - 1u, sizeof p);
         for (uint32_t axis = 0; axis < 3; axis++) {
-            if (!tide_is_finite_f(p[axis])) return m->bounds;
+            if (!tide_is_finite_f(p[axis])) return &m->bounds;
             if (!i || p[axis] < lo[axis]) lo[axis] = p[axis];
             if (!i || p[axis] > hi[axis]) hi[axis] = p[axis];
         }
@@ -2597,7 +2644,7 @@ static tide_draw_bounds mesh_bounds(tide_draw_list *d, uint32_t mesh, const uint
                    (float)(((double)lo[2] + hi[2]) * 0.5)},
         .extents = {(float)(((double)hi[0] - lo[0]) * 0.5), (float)(((double)hi[1] - lo[1]) * 0.5),
                     (float)(((double)hi[2] - lo[2]) * 0.5)}, .set = 1};
-    return m->bounds;
+    return &m->bounds;
 }
 
 static const tide_draw_frustum *frustum_camera(tide_draw_list *d)
@@ -2635,10 +2682,10 @@ static const tide_draw_frustum *frustum_camera(tide_draw_list *d)
 // Conservative support test of the transformed box against all six clip
 // planes. Double intermediates avoid overflow for arbitrary finite game values.
 // The error allowance also keeps boxes touching a plane despite GPU rounding.
-static bool bounds_visible(const tide_draw_bounds bounds, const tide_draw_frustum *camera,
+static bool bounds_visible(const tide_draw_bounds *bounds, const tide_draw_frustum *camera,
                            const tide_float4x4 *own, const tide_float4x4 *through)
 {
-    if (bounds.set != 1 || !camera->count) return true;
+    if (bounds->set != 1 || !camera->count) return true;
     float w[16];
     if (through) {
         const tide_float4x4 world = tide_mul_f4x4(*through, *own);
@@ -2650,48 +2697,61 @@ static bool bounds_visible(const tide_draw_bounds bounds, const tide_draw_frustu
         if (!tide_is_finite_f(w[i])) return true;
     }
     if (w[3] != 0.0f || w[7] != 0.0f || w[11] != 0.0f || w[15] != 1.0f) return true;
-    const double center[3] = {bounds.center.x, bounds.center.y, bounds.center.z};
-    const double extent[3] = {bounds.extents.x, bounds.extents.y, bounds.extents.z};
-    double at[3], radius[3], magnitude[3];
+    const double center[3] = {bounds->center.x, bounds->center.y, bounds->center.z};
+    const double extent[3] = {bounds->extents.x, bounds->extents.y, bounds->extents.z};
+    double at[3], radius[3];
     for (uint32_t row = 0; row < 3; row++) {
         at[row] = w[12 + row];
         radius[row] = 0.0;
-        magnitude[row] = tide_abs_f(w[12 + row]);
         for (uint32_t axis = 0; axis < 3; axis++) {
             const double scale = w[axis * 4 + row];
             at[row] += scale * center[axis];
             radius[row] += (scale < 0.0 ? -scale : scale) * extent[axis];
-            const double part = scale * center[axis];
-            magnitude[row] += (part < 0.0 ? -part : part)
-                + (scale < 0.0 ? -scale : scale) * extent[axis];
         }
     }
+    // The rounding allowance is never less than 0, so a box on a plane's inner side, or on it, is in front of
+    // it whatever the allowance is: it's worked out only for one past a plane, once (a frame of visible
+    // instances needs none, and the answer is the same)
+    double magnitude[3];
+    bool measured = false;
     for (uint32_t plane = 0; plane < camera->count; plane++) {
         const double *p = camera->plane[plane], *rounding = camera->magnitude[plane];
         double distance = p[3];
-        double error = rounding[3];
         for (uint32_t axis = 0; axis < 3; axis++) {
             const double n = p[axis];
             distance += n * at[axis] + (n < 0.0 ? -n : n) * radius[axis];
-            error += rounding[axis] * magnitude[axis];
         }
+        if (!(distance < 0.0)) continue;
+        if (!measured) {
+            for (uint32_t row = 0; row < 3; row++) {
+                magnitude[row] = tide_abs_f(w[12 + row]);
+                for (uint32_t axis = 0; axis < 3; axis++) {
+                    const double scale = w[axis * 4 + row];
+                    const double part = scale * center[axis];
+                    magnitude[row] += (part < 0.0 ? -part : part) + (scale < 0.0 ? -scale : scale) * extent[axis];
+                }
+            }
+            measured = true;
+        }
+        double error = rounding[3];
+        for (uint32_t axis = 0; axis < 3; axis++) error += rounding[axis] * magnitude[axis];
         if (distance < -1e-5 * (error + 1.0)) return false;
     }
     return true;
 }
 
-static tide_draw_bounds draw_bounds(tide_draw_list *d, const uint32_t mesh, const uint32_t position)
+static const tide_draw_bounds *draw_bounds(tide_draw_list *d, const uint32_t mesh, const uint32_t position)
 {
-    if (d->place.no_frustum_culling) return (tide_draw_bounds){0};
-    return d->place.bounds.set ? d->place.bounds : position ? mesh_bounds(d, mesh, position) : (tide_draw_bounds){0};
+    if (d->place.no_frustum_culling) return &no_bounds;
+    return d->place.bounds.set ? &d->place.bounds : position ? mesh_bounds(d, mesh, position) : &no_bounds;
 }
 
 static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                           const uint32_t count, const void *uniforms, const uint32_t *textures, const uint32_t sampling)
 {
     const uint32_t size = shader ? tide_shader_instance_size(shader) : 0;
-    const tide_draw_bounds bounds = shader && shader->dims == 3 ? draw_bounds(d, mesh, shader->bounds_position)
-                                                               : (tide_draw_bounds){0};
+    const tide_draw_bounds bounds = shader && shader->dims == 3 ? *draw_bounds(d, mesh, shader->bounds_position)
+                                                               : no_bounds;
     if (bounds.set != 1 || !count || !instances || size < sizeof(tide_float4x4) || shader->instance_floats < 4u) {
         shaded_visible(d, shader, mesh, instances, count, uniforms, textures, sampling);
         return;
@@ -2702,7 +2762,7 @@ static void shaded_placed(tide_draw_list *d, const tide_shader *shader, const ui
     for (uint32_t i = 0; i < count; i++) {
         tide_float4x4 own;
         memcpy(&own, (const uint8_t *)instances + (size_t)i * size, sizeof own);
-        if (bounds_visible(bounds, camera, &own, through)) continue;
+        if (bounds_visible(&bounds, camera, &own, through)) continue;
         if (i > first) shaded_visible(d, shader, mesh, (const uint8_t *)instances + (size_t)first * size,
                                       i - first, uniforms, textures, sampling);
         first = i + 1u;
@@ -2873,13 +2933,43 @@ static uint32_t one_level(tide_draw_list *d, const uint32_t mesh, const tide_flo
 // One instance: what a view that runs for each entity records, so it's the
 // code above for a count of one, not a call to the one for any number.
 // ...its transform where the caller has it: passed on by its address, never copied whole (see color_read).
+static __attribute__((noinline)) void instance_placed(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform,
+                                                      const uint32_t texture, const tide_filter filter, const tide_wrap wrap);
+
 static void instance_at(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
                         const tide_filter filter, const tide_wrap wrap)
 {
     const tide_draw_place *p = &d->place;
+    // What a view drawing a mesh for each of its entities records: a mesh of tide_vertex3s without levels, nothing
+    // between it and the world, the settings already settled. Its transform is read once, into its place in the
+    // list's matrices, where culling and the side it's drawn from read it; the place is taken unless it's culled.
+    // The same as below, in that order, without reading the caller's transform three times
+    if (!d->unsettled && !(p->moved & TIDE_DRAW_MOVED_3D) && mesh && mesh <= d->mesh_count && texture <= d->texture_count) {
+        const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+        if (!m->levels && m->index_count && m->space != TIDE_MESH_BYTES) {
+            d->matrices = grow(d->matrices, d->matrix_count, &d->matrix_capacity, 1, sizeof(tide_float4x4), 256u);
+            tide_float4x4 *own = &d->matrices[d->matrix_count];
+            matrix_read((float *)own, transform); // The caller's, just made (see color_read)
+            const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+            if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), own, NULL)) return;
+            const uint32_t at = d->matrix_count++;
+            const uint32_t cull = p->cull;
+            const uint8_t side = cull == TIDE_CULL_NONE ? sides(cull) : sides(cull | (mirrors(own) ? TIDE_DRAW_MIRRORED : 0u));
+            mesh_run(d, mesh, at, 1, texture, filter, wrap, (tide_blend)p->blend, (tide_depth)p->depth, side, tide_draw_tint(d));
+            return;
+        }
+    }
+    instance_placed(d, mesh, transform, texture, filter, wrap);
+}
+
+// ...and any other: apart, so the one above keeps few registers.
+static void instance_placed(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transform, const uint32_t texture,
+                            const tide_filter filter, const tide_wrap wrap)
+{
+    const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    const tide_draw_bounds bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
-    if (bounds.set == 1 && !bounds_visible(bounds, frustum_camera(d), transform, through)) return;
+    const tide_draw_bounds *bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+    if (bounds->set == 1 && !bounds_visible(bounds, frustum_camera(d), transform, through)) return;
     uint32_t drawn = mesh;
     if (mesh && mesh <= d->mesh_count && d->meshes[mesh - 1u].levels) drawn = one_level(d, mesh, transform, through);
     mesh_instances(d, drawn, transform, 1, texture, filter, wrap, (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull,
@@ -2898,10 +2988,10 @@ static void instances_placed(tide_draw_list *d, const uint32_t mesh, const tide_
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    const tide_draw_bounds bounds = draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
+    const tide_draw_bounds bounds = *draw_bounds(d, mesh, 1u + offsetof(tide_vertex3, position));
     uint32_t first = 0;
     for (uint32_t i = 0; bounds.set == 1 && transforms && i < count; i++) {
-        if (bounds_visible(bounds, frustum_camera(d), &transforms[i], through)) continue;
+        if (bounds_visible(&bounds, frustum_camera(d), &transforms[i], through)) continue;
         if (i > first) mesh_instances(d, mesh, transforms + first, i - first, texture, filter, wrap,
                                       (tide_blend)p->blend, (tide_depth)p->depth, p->cull, tide_draw_tint(d), through,
                                       through && (p->moved & TIDE_DRAW_MOVED_MIRROR));

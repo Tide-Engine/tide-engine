@@ -1,0 +1,274 @@
+{
+  "label": "page-hash-web",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; Windows; Clang 23.1.2; Node 24.21.0",
+  "how": "web release under cmake/run_wasi.mjs, each run under bench/results/perf-pass/gate.ps1; before and after in turn, the order swapped each round",
+  "beforeRevision": "4a59a73a",
+  "binaries": {
+    "versus_rollback": {
+      "before": "830e2010031a14b9559c7be5dbd22a9940cc92a42891a510956dbdf0cd726b31",
+      "after": "d7c5597577e38d7533f30c46bcaeed808aa5802980a1103a55b5c177889d5819"
+    },
+    "bench_sand": {
+      "before": "2c1911d3b877fb010ad8a1d735a6179396f17241f99b80ceb87d1a285ef4a2d9",
+      "after": "51e97815fb3d2cf0b256bda98c3d4ef3204ac479c2ae7d0d7f27416ddd1095ea"
+    },
+    "bench_gallery": {
+      "before": "51b6b58b879604b9cbf05284af477dc8a23ccc06e7ea065ba0e603d20f01a2b8",
+      "after": "cf4c28e3a38fffab34b3b144a5e049f6e4bfb688f1a56a983b59518420553ad6"
+    }
+  },
+  "runs": [
+    {
+      "name": "versus_rollback",
+      "round": 1,
+      "side": "before",
+      "tide_ms": 2.723,
+      "tide_hash_ms": 0.218,
+      "tide_tick_ms": 2.452,
+      "c_ms": 4.149,
+      "c_dirty_ms": 2.412,
+      "c_dirty_hash_ms": 0.587,
+      "digest": "0xda8ae50dacda5a66"
+    },
+    {
+      "name": "versus_rollback",
+      "round": 1,
+      "side": "after",
+      "tide_ms": 2.827,
+      "tide_hash_ms": 0.183,
+      "tide_tick_ms": 2.567,
+      "c_ms": 4.33,
+      "c_dirty_ms": 2.487,
+      "c_dirty_hash_ms": 0.597,
+      "digest": "0xda8ae50dacda5a66"
+    },
+    {
+      "name": "versus_rollback",
+      "round": 2,
+      "side": "before",
+      "tide_ms": 2.753,
+      "tide_hash_ms": 0.22,
+      "tide_tick_ms": 2.469,
+      "c_ms": 4.19,
+      "c_dirty_ms": 2.375,
+      "c_dirty_hash_ms": 0.586,
+      "digest": "0xda8ae50dacda5a66"
+    },
+    {
+      "name": "versus_rollback",
+      "round": 2,
+      "side": "after",
+      "tide_ms": 2.655,
+      "tide_hash_ms": 0.153,
+      "tide_tick_ms": 2.449,
+      "c_ms": 4.18,
+      "c_dirty_ms": 2.478,
+      "c_dirty_hash_ms": 0.592,
+      "digest": "0xda8ae50dacda5a66"
+    },
+    {
+      "name": "versus_rollback",
+      "round": 3,
+      "side": "before",
+      "tide_ms": 2.767,
+      "tide_hash_ms": 0.224,
+      "tide_tick_ms": 2.494,
+      "c_ms": 4.261,
+      "c_dirty_ms": 2.431,
+      "c_dirty_hash_ms": 0.589,
+      "digest": "0xda8ae50dacda5a66"
+    },
+    {
+      "name": "versus_rollback",
+      "round": 3,
+      "side": "after",
+      "tide_ms": 2.709,
+      "tide_hash_ms": 0.159,
+      "tide_tick_ms": 2.494,
+      "c_ms": 4.251,
+      "c_dirty_ms": 2.366,
+      "c_dirty_hash_ms": 0.584,
+      "digest": "0xda8ae50dacda5a66"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "round": 1,
+      "side": "before",
+      "tide_ms": 3.361,
+      "tide_hash_ms": 0.735,
+      "tide_tick_ms": 2.473,
+      "c_ms": 4.061,
+      "c_dirty_ms": 4.577,
+      "c_dirty_hash_ms": 1.903,
+      "digest": "0x7d28c963f84f0903"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "round": 1,
+      "side": "after",
+      "tide_ms": 3.405,
+      "tide_hash_ms": 0.598,
+      "tide_tick_ms": 2.642,
+      "c_ms": 4.152,
+      "c_dirty_ms": 4.751,
+      "c_dirty_hash_ms": 1.918,
+      "digest": "0x7d28c963f84f0903"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "round": 2,
+      "side": "before",
+      "tide_ms": 3.423,
+      "tide_hash_ms": 0.758,
+      "tide_tick_ms": 2.539,
+      "c_ms": 4.148,
+      "c_dirty_ms": 4.596,
+      "c_dirty_hash_ms": 1.915,
+      "digest": "0x7d28c963f84f0903"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "round": 2,
+      "side": "after",
+      "tide_ms": 3.453,
+      "tide_hash_ms": 0.614,
+      "tide_tick_ms": 2.678,
+      "c_ms": 4.187,
+      "c_dirty_ms": 4.701,
+      "c_dirty_hash_ms": 1.925,
+      "digest": "0x7d28c963f84f0903"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "round": 3,
+      "side": "before",
+      "tide_ms": 3.475,
+      "tide_hash_ms": 0.749,
+      "tide_tick_ms": 2.61,
+      "c_ms": 4.205,
+      "c_dirty_ms": 4.713,
+      "c_dirty_hash_ms": 1.939,
+      "digest": "0x7d28c963f84f0903"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "round": 3,
+      "side": "after",
+      "tide_ms": 3.319,
+      "tide_hash_ms": 0.576,
+      "tide_tick_ms": 2.559,
+      "c_ms": 4.175,
+      "c_dirty_ms": 4.694,
+      "c_dirty_hash_ms": 1.918,
+      "digest": "0x7d28c963f84f0903"
+    },
+    {
+      "name": "bench_sand",
+      "round": 1,
+      "side": "before",
+      "clients_update_median_ms": 0.68,
+      "clients_update_p99_ms": 1.22,
+      "client_simulate_ms_per_s": 39.4,
+      "end": "tick 736, hash 0x953b9562d90bd9bb"
+    },
+    {
+      "name": "bench_sand",
+      "round": 1,
+      "side": "after",
+      "clients_update_median_ms": 0.68,
+      "clients_update_p99_ms": 1.25,
+      "client_simulate_ms_per_s": 40.5,
+      "end": "tick 736, hash 0xfc2b7b098a2836e9"
+    },
+    {
+      "name": "bench_sand",
+      "round": 2,
+      "side": "before",
+      "clients_update_median_ms": 0.72,
+      "clients_update_p99_ms": 1.27,
+      "client_simulate_ms_per_s": 43.17,
+      "end": "tick 736, hash 0x953b9562d90bd9bb"
+    },
+    {
+      "name": "bench_sand",
+      "round": 2,
+      "side": "after",
+      "clients_update_median_ms": 0.71,
+      "clients_update_p99_ms": 1.25,
+      "client_simulate_ms_per_s": 42.66,
+      "end": "tick 736, hash 0xfc2b7b098a2836e9"
+    },
+    {
+      "name": "bench_sand",
+      "round": 3,
+      "side": "before",
+      "clients_update_median_ms": 0.72,
+      "clients_update_p99_ms": 1.24,
+      "client_simulate_ms_per_s": 41.95,
+      "end": "tick 736, hash 0x953b9562d90bd9bb"
+    },
+    {
+      "name": "bench_sand",
+      "round": 3,
+      "side": "after",
+      "clients_update_median_ms": 0.71,
+      "clients_update_p99_ms": 1.24,
+      "client_simulate_ms_per_s": 42.3,
+      "end": "tick 736, hash 0xfc2b7b098a2836e9"
+    },
+    {
+      "name": "bench_gallery",
+      "round": 1,
+      "side": "before",
+      "clients_update_median_ms": 0.09,
+      "clients_update_p99_ms": 0.96,
+      "client_simulate_ms_per_s": 3.03,
+      "end": "tick 1733, hash 0x365586644fdce54f"
+    },
+    {
+      "name": "bench_gallery",
+      "round": 1,
+      "side": "after",
+      "clients_update_median_ms": 0.09,
+      "clients_update_p99_ms": 0.62,
+      "client_simulate_ms_per_s": 2.73,
+      "end": "tick 1733, hash 0xd756ff9c9dc087de"
+    },
+    {
+      "name": "bench_gallery",
+      "round": 2,
+      "side": "before",
+      "clients_update_median_ms": 0.09,
+      "clients_update_p99_ms": 0.46,
+      "client_simulate_ms_per_s": 2.75,
+      "end": "tick 1733, hash 0x365586644fdce54f"
+    },
+    {
+      "name": "bench_gallery",
+      "round": 2,
+      "side": "after",
+      "clients_update_median_ms": 0.09,
+      "clients_update_p99_ms": 1.04,
+      "client_simulate_ms_per_s": 3.11,
+      "end": "tick 1733, hash 0xd756ff9c9dc087de"
+    },
+    {
+      "name": "bench_gallery",
+      "round": 3,
+      "side": "before",
+      "clients_update_median_ms": 0.08,
+      "clients_update_p99_ms": 0.48,
+      "client_simulate_ms_per_s": 2.27,
+      "end": "tick 1733, hash 0x365586644fdce54f"
+    },
+    {
+      "name": "bench_gallery",
+      "round": 3,
+      "side": "after",
+      "clients_update_median_ms": 0.07,
+      "clients_update_p99_ms": 0.4,
+      "client_simulate_ms_per_s": 2.29,
+      "end": "tick 1733, hash 0xd756ff9c9dc087de"
+    }
+  ]
+}

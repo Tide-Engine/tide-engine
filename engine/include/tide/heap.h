@@ -104,7 +104,13 @@ void tide_heap_release(tide_heap *h, uint32_t block);
 
 // Frees the released blocks, zeroed, for reuse. Generated code calls it once
 // the code that released them is done.
-void tide_heap_flush(tide_heap *h);
+// Inline for its common case, as generated code flushes after every row of a
+// system that makes text or lists: nothing released, nothing to do.
+void tide_heap_flush_pending(tide_heap *h);
+static inline void tide_heap_flush(tide_heap *h)
+{
+    if (h->pending) tide_heap_flush_pending(h);
+}
 
 // Frees the page tables the heap grew out of, which code on other threads may
 // still have been reading. Generated code calls it once systems are done.

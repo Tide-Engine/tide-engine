@@ -112,57 +112,121 @@ static inline void *tide_list_at(const tide_list l, const int32_t i, const uint3
 
 // A list found once, to read many of its elements at random, as a map's
 // lookup does with its index and entries: what tide_list_at finds again for
-// every element (the heap, its page table, the list's block) found the once.
-// It holds while the code that found it runs on, as the page table it read
-// stays until the heap settles, after that code (see tide/heap.h), and a page
-// copied meanwhile has the same elements as the one it was copied from.
+// every element (the heap, its page table, the list's block) found the once,
+// and the first TIDE_LIST_VIEW_CHUNKS chunks' elements each found the first
+// time one of theirs is read. tide_list_view_find makes one for code that
+// reads a while and lets it go, as a lookup does; tide_list_view_hold keeps
+// one across code that may change the list meanwhile, as generated code keeps
+// a map's for a whole function (tide_map_view): it finds the list again only
+// when what it found may have changed.
+//
+// What it found holds while the list is the same (its tide_list.at), its
+// heap hasn't moved or released a block or copied a page since
+// (tide_heap.moves), and its count is what it was: elements added or removed
+// in place change the count; growing a block or a list's chunks, or a page
+// made a world's own to be changed, moves the heap. A view found in a page
+// table that's since been replaced is still read rightly till the heap
+// settles, after the code (see tide/heap.h). A view of a list in the scratch
+// area is of the place, which is the list's as long as the list has it.
+#define TIDE_LIST_VIEW_CHUNKS 32u
+
 typedef struct tide_list_view {
     const uint8_t *elements;   // Side by side from here; NULL in chunks or when there are none to read
     const uint32_t *directory; // In chunks: each chunk's heap offset
     tide_page *const *pages;   // ...in this page table
     uint32_t count;            // Elements to read: 0 for none
+    uint32_t at;               // The list (its tide_list.at), 0 for none
+    const tide_heap *heap;     // ...in this heap, NULL in the scratch area
+    uint32_t moves;            // ...whose moves were these
+    uint32_t known;            // Which of the first chunks `chunk` has found, a bit each
+    const tide_block *header;  // The list's block, whose count says it still holds; NULL with none
+    bool borrowed;             // An asset's elements or the pack's: made this value's own before it's written (tide_list_prepare)
+    const uint8_t *chunk[TIDE_LIST_VIEW_CHUNKS]; // Each chunk's first element, where `known` says
 } tide_list_view;
 
-static inline tide_list_view tide_list_view_of(const tide_list l, const uint32_t size)
+static inline void tide_list_view_find(tide_list_view *v, const tide_list l, const uint32_t size)
 {
-    tide_list_view v = {NULL, NULL, NULL, 0u};
-    if (!l.at) return v;
+    v->elements = NULL;
+    v->directory = NULL;
+    v->pages = NULL;
+    v->count = 0u;
+    v->at = l.at;
+    v->heap = NULL;
+    v->moves = 0u;
+    v->known = 0u;
+    v->header = NULL;
+    v->borrowed = false;
+    if (!l.at) return;
     const uint32_t offset = l.at & 0x3FFFFFFFu;
     if (l.at >> 30 == TIDE_IN_SCRATCH) {
         const tide_block *b = (const tide_block *)(uintptr_t)tide_scratch_at(offset);
-        v.elements = (const uint8_t *)(b + 1);
-        v.count = b->a;
-        return v;
+        v->elements = (const uint8_t *)(b + 1);
+        v->count = b->a;
+        v->header = b;
+        v->borrowed = tide_pack_holds(l.at);
+        return;
     }
     const tide_heap *heap = tide_heap_read(l.at >> 30);
-    if (!heap) return v;
+    if (!heap) {
+        v->at = 0u; // Nothing to hold
+        return;
+    }
+    v->heap = heap;
+    v->moves = __atomic_load_n(&heap->moves, __ATOMIC_RELAXED);
     tide_page *const *pages = __atomic_load_n(&heap->page, __ATOMIC_ACQUIRE);
     const tide_page *p = __atomic_load_n(&pages[offset >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
     const tide_block *b = (const tide_block *)(uintptr_t)((const uint8_t *)tide_page_data(p) + (offset - (p->first << TIDE_HEAP_PAGE_SHIFT)));
+    v->header = b;
     if (b->b == TIDE_LIST_ASSET) { // The asset's bytes, where they're the right shape (as tide_list_asset_at)
-        v.elements = (const uint8_t *)tide_list_asset_at(l, 0, size);
-        v.count = v.elements ? b->a : 0u;
-        return v;
+        v->elements = (const uint8_t *)tide_list_asset_at(l, 0, size);
+        v->count = v->elements ? b->a : 0u;
+        v->borrowed = true;
+        return;
     }
-    v.count = b->a;
+    v->count = b->a;
     if (b->b & TIDE_LIST_CHUNKED) {
-        v.directory = (const uint32_t *)(const void *)(b + 1);
-        v.pages = pages;
+        v->directory = (const uint32_t *)(const void *)(b + 1);
+        v->pages = pages;
     } else {
-        v.elements = (const uint8_t *)(b + 1);
+        v->elements = (const uint8_t *)(b + 1);
     }
-    return v;
+}
+
+// Whether a view found of `l` still holds.
+static inline __attribute__((always_inline)) bool tide_list_view_holds(const tide_list_view *v, const tide_list l)
+{
+    if (v->at != l.at || !v->at) return false;
+    if (v->heap && __atomic_load_n(&v->heap->moves, __ATOMIC_RELAXED) != v->moves) return false;
+    // An asset's count is its descriptor's, which never changes; any other's is in its block
+    return (v->borrowed && v->heap) || v->header->a == v->count;
+}
+
+// A view of `l`, found again only if the one `v` has doesn't still hold.
+static inline __attribute__((always_inline)) void tide_list_view_hold(tide_list_view *v, const tide_list l, const uint32_t size)
+{
+    if (!tide_list_view_holds(v, l)) tide_list_view_find(v, l, size);
 }
 
 // Element `i` of a view, as tide_list_at would have it: NULL past the end.
-static inline const void *tide_list_view_at(const tide_list_view *v, const uint32_t i, const uint32_t size)
+static inline __attribute__((always_inline)) const void *tide_list_view_at(tide_list_view *v, const uint32_t i, const uint32_t size)
 {
     if (i >= v->count) return NULL;
     if (v->elements) return v->elements + (size_t)i * size;
     const uint32_t per = TIDE_LIST_CHUNK / size;
-    const uint32_t chunk = v->directory[i / per];
+    const uint32_t n = i / per;
+    const size_t place = sizeof(tide_block) + (size_t)(i - n * per) * size;
+    if (n < TIDE_LIST_VIEW_CHUNKS) {
+        if (!(v->known >> n & 1u)) {
+            const uint32_t chunk = v->directory[n];
+            const tide_page *c = __atomic_load_n(&v->pages[chunk >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
+            v->chunk[n] = (const uint8_t *)tide_page_data(c);
+            v->known |= 1u << n;
+        }
+        return v->chunk[n] + place;
+    }
+    const uint32_t chunk = v->directory[n];
     const tide_page *c = __atomic_load_n(&v->pages[chunk >> TIDE_HEAP_PAGE_SHIFT], __ATOMIC_ACQUIRE);
-    return (const char *)tide_page_data(c) + sizeof(tide_block) + (size_t)(i % per) * size;
+    return (const char *)tide_page_data(c) + place;
 }
 
 // Only the code changing a heap writes it, so it reads the page table as it

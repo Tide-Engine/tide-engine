@@ -70,9 +70,9 @@ tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
-target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=12420115232080880287ull)
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=9428574205239071589ull)
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
-target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9673056146649414802ull)
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=8958662768801678541ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
 tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
@@ -157,7 +157,7 @@ tide_e2e_test(skinned_scratch) # Owned model structs reclaim temporary lists aft
 tide_e2e_test(skinned_draw_borrow) # Draw-only borrows avoid owned copies, preserving operand snapshots and captured palettes
 tide_e2e_test(skinned_attribute_limit SOURCES shaders/skinned_attribute_limit.tide) # Atlas bases reuse a spare int lane; full layouts keep individual palettes
 tide_e2e_test(fbx_assets) # ASCII/binary FBX assets, checked catalogs, CPU poses and match snapshots
-target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=17651989322280626694ull)
+target_compile_definitions(tidec_e2e_fbx_assets PRIVATE FBX_HASH=936010611238560858ull)
 tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
 tide_e2e_test(animations) # Animation-only assets, inferred members, dynamic catalogs and persistent ownership
 if(TIDE_NODE)
@@ -170,7 +170,7 @@ if(TIDE_NODE)
             "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")
     set_tests_properties(tidec_skinned_default_identity PROPERTIES TIMEOUT 120)
 endif()
-target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=10246351871245853744ull)
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=13181359130345510980ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
@@ -205,6 +205,7 @@ tide_e2e_test(operators)
 tide_e2e_test(events)
 tide_e2e_test(events_lookup) # Verified event target rows and fallback after structural changes
 tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
+tide_e2e_test(events_runs) # Runs of events taken in their own loop: found, moved, other and gone targets, against C
 tide_e2e_test(commands)
 # Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
 tide_e2e_test(commands_channels)
@@ -246,7 +247,7 @@ tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch e
 tide_e2e_test(strings)
 # char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
 tide_e2e_test(chars)
-target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=15458773560132745070ull)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=5269360396618934956ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)
@@ -257,9 +258,9 @@ tide_e2e_test(lists_out SOURCES e2e/lists_out.tide e2e/lists_out_c.c) # `out Lis
 tide_e2e_test(resident SOURCES e2e/resident.tide e2e/resident_c.c) # A match singleton's Resident field: a C library's state as the world's pages
 tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out` parameters and arguments, as C#'s
 tide_e2e_test(json) # Json.Read<T> and Json.Write, and text as bytes, pieces and numbers
-target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=8786489112930409120ull)
+target_compile_definitions(tidec_e2e_json PRIVATE JSON_HASH=13621850945442854179ull)
 tide_e2e_test(optional_fields) # T? fields: in structs, components, singletons, scenes, events, commands and the input
-target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=14748397450274180197ull)
+target_compile_definitions(tidec_e2e_optional_fields PRIVATE OPTIONAL_FIELDS_HASH=10352090099506241445ull)
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists
 tide_e2e_test(parallel_list_batch) # Independent output lanes preserve exact reductions, calls and snapshots

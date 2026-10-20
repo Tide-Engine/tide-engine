@@ -145,9 +145,13 @@ end of a game; the same inputs twice, a snapshot, a packed world, and two
 clients over a network with 40 ms of latency, 15 of jitter and 5% loss with
 no world sent again.
 
-- **The scripted match's hash is `0x0267de53757af494`**, the same natively
+- **The scripted match's hash is `0x0a216d532fa6445c`**, the same natively
   and under WASI. Any change to the match changes it: update it from one
-  platform and confirm the other.
+  platform and confirm the other. (2026-10-20: the page hash changed,
+  notes/ecs.md. The pin it replaced, `0x0267de53757af494`, was already stale
+  before that: at `4a59a73a` with the old page hash the match ended as
+  `0x514280888af9724c`, with the same 816 bullets, 1 round, 0 points and map 0
+  it ends with now; what moved it earlier wasn't looked for.)
 - A test forces a map by writing `Arena.futureMap` in the two ticks after
   the joins, and a card by adding to `Arena.picks` then (`raise_map`, `give`).
 
