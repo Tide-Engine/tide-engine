@@ -3480,7 +3480,7 @@ static void describe(const occurrence *o, sb *out)
                                        "absolute field is kept."},
             {"Snap", "[Snap]", "Views see this field as it is at the latest tick, not blended between the last two: "
                                "for angles that wrap and values that jump."},
-            {"Position", "[Position]", "Provisional: a float or floating-point vector presented with linear tick interpolation and accumulated visual correction error."},
+            {"Position", "[Position]", "Provisional: a float or double scalar/vector presented with linear tick interpolation and accumulated visual correction error in its own precision."},
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},

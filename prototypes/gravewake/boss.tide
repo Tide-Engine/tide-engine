@@ -582,6 +582,7 @@ local event(Struck struck) FlashBoss(mut Boss boss)
 event(BossFelled felled) TakeFelled(mut Survivor survivor)
 {
     survivor.pending += 1;
+    survivor.rewardWait = Math.Max(survivor.rewardWait, BOSS_REWARD_WAIT);
 }
 
 // Thrown by a boss.

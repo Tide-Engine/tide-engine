@@ -13143,9 +13143,9 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
                 diag_error(a->at, "[Snap] keeps a field immediate, so it can't also have [" STR_FMT "]", STR_ARG(a->name));
             } else if (f->view_correction) {
                 diag_error(a->at, "field '" STR_FMT "' already has a view correction attribute", STR_ARG(f->name));
-            } else if (f->type.kind != TY_ERROR && (position ? !type_is_float_based(f->type) || type_dim(f->type) < 1
+            } else if (f->type.kind != TY_ERROR && (position ? !(type_is_float_based(f->type) || type_is_double_based(f->type)) || type_dim(f->type) < 1
                                                              : f->type.kind != TY_FLOAT && f->type.kind != TY_QUATERNION)) {
-                diag_error(a->at, position ? "[Position] works on float and floating-point vectors, not %s"
+                diag_error(a->at, position ? "[Position] works on float, double and their vectors, not %s"
                                           : "[Rotation] works on float radians and quaternion, not %s", type_name(f->type));
             } else {
                 f->view_correction = position ? 1 : 2;

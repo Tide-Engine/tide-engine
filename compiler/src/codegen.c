@@ -9237,6 +9237,8 @@ static void gen_correction_leaves(gen *g, const decl *d, const char *path, const
             continue;
         }
         static const char *const axes[] = {"x", "y", "z", "w"};
+        // Position arithmetic retains the field's scalar precision. For doubles,
+        // the shared float frame-decay factor widens before multiplication.
         for (int axis = 0; axis < dim; axis++) {
             sb leaf = {0};
             sb_printf(&leaf, "%s%s%s", at, dim > 1 ? "." : "", dim > 1 ? axes[axis] : "");
