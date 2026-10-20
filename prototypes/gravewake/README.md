@@ -154,18 +154,18 @@ outline, so it's known at a glance in a horde: red a Runner, lime a Bloater,
 yellow a Spitter, blue a Warden, orange a Brute, magenta a Howler. Each has its
 own body too (art/kinds): a Runner hunched with long claws, a Bloater's vast
 belly, a Spitter's throat sac, a Warden's iron shoulders and shield, a Brute's
-bull shoulders, a Howler tall with its neck thrown back. The first time each
-kind comes in a run, a card on the left says what it does and what to do
-about it.
+bull shoulders, a Howler tall with its neck thrown back. What each is about
+to do is drawn on the ground, as a Bloater's ring is: a Runner's leap, a
+Brute's blow, a Howler's reach, where bile will land.
 
 | Kind | From | |
 | --- | --- | --- |
-| Runner (red) | 25 s | Lean, and quicker than any, though slower than you. From 2 to 5.5 m off, with nothing between, it crouches half a second (its eyes flaring), then leaps 4.5 m at you and strikes as it lands (a roll's guard turns it). Three-fifths as tough as the rest. |
+| Runner (red) | 25 s | Lean, and quicker than any, though slower than you. From 2 to 5.5 m off, with nothing between, it crouches half a second (its eyes flaring, a strip of red on the ground where it'll leap, turning with you till the last fifth of a second, then set: step aside), then leaps 4.5 m and strikes as it lands (a roll's guard turns it). Three-fifths as tough as the rest. |
 | Bloater (lime) | 40 s | Wider, slower, sick green with glowing boils, two and a half times as tough. Within 2.4 m of you it stops and swells, shuddering, glowing and hissing gas, and the ground it'll reach burns red, a ring at its edge and another growing out to meet it; it bursts 1.4 s later, hurting everyone within 3.6 m (up to 45) and tearing up the dead round it. Shoot it dead and it falls and swells the same way, bursting a second later: from far off, that's a weapon; up close, get out of the red. |
 | Spitter (yellow) | 75 s | Thin and sallow, its throat glowing. It hangs back, 4 to 13 m off, and with a clear line to you its throat swells and it lobs bile, slow and high (a second or more in the air), that hurts (up to 18) and slows you for 2 s; a yellow ring on the ground is where it'll land. Step out of it, then find it and shoot it. |
-| Warden (blue) | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, and they ring); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
-| Brute (orange) | 2:30 | A third bigger all round, slow, eight times as tough. Nothing staggers it or throws it down, and blows barely push it. Its blow does two and a half times a claw's and throws you back. |
-| Howler (magenta) | 3:40 | Tall and thin. It hangs back, 3 to 11 m off, and every 7 s or so stands and howls (its colour streaming off its head); at the howl's end every one of the dead within 10 m of it is frenzied for 5 s, quicker, their outlines throbbing magenta. Shoot it first. |
+| Warden (blue) | 2 min | Broad, in dark iron mail, its head bare. Rounds, blasts and blows to its body do a quarter as much (a grey mark, ARMOR over it, and a spray of sparks); its head takes them all. On its back, knocked down, its mail doesn't help, and fire burns through it. Its claws hit half again as hard. |
+| Brute (orange) | 2:30 | A third bigger all round, slow, eight times as tough. Nothing staggers it or throws it down, and blows barely push it. Its blow does two and a half times a claw's and throws you back: an orange arc on the ground in front of it is where it'll land as it winds up. |
+| Howler (magenta) | 3:40 | Tall and thin. It hangs back, 3 to 11 m off, and every 7 s or so stands and howls (its colour streaming off its head, a magenta ring on the ground as far as it'll reach); at the howl's end every one of the dead within 10 m of it is frenzied for 5 s, quicker, their outlines throbbing magenta. Shoot it first. |
 
 ### The bosses
 

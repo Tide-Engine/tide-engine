@@ -14,7 +14,6 @@ singleton Match
     float timer;                 // Seconds into the phase (the countdown while waiting, the dawn)
     float clock;                 // Seconds the run has gone
     float danger;                // How dangerous it's got (Danger), each tick
-    int seenKinds;               // The kinds of the dead come this run, a bit each (each told once as it first comes: KindSeen)
     bool paused;                 // Someone has items to choose: everything waits for them (Pause)
     int players = 1;             // Survivors in the match, each tick
     float crowd = 1;             // How many more of the dead they bring than one alone (nights.tide's Crowd)
@@ -108,7 +107,6 @@ void ResetMatch(mut Match match)
     match.timer = 0;
     match.clock = 0;
     match.danger = 1;
-    match.seenKinds = 0;
     match.paused = false;
     match.alive = 0;
     match.killed = 0;
@@ -384,12 +382,6 @@ void RaiseOne(mut Match match, float3 at, float3 focus, Gait gait, float danger)
     }
     Spawn(Zombie { at = at, yaw = YawTo(at, focus), health = ZombieHealth(danger) * KindHealth(kind), gait = KindGait(kind, gait), look = look,
                    state = ZombieState.Rising, pace = pace, phase = phase, kind = kind, spit = SPIT_EVERY });
-    var bit = 1 << int(kind);
-    if (kind != ZombieKind.Walker && (match.seenKinds & bit) == 0)
-    {
-        match.seenKinds |= bit;
-        Send(KindSeen { kind = kind });
-    }
 }
 
 // Where one of a horde claws up: anywhere in its patch where the ground is open and the way to the survivors clear

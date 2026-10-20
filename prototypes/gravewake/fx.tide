@@ -438,12 +438,15 @@ view DrawFx(Fx fx, Lens lens)
 local event(Struck struck) Bleed(mut Fx fx)
 {
     if (struck.blow == Blow.Shove) return;
-    // Turned by a Warden's mail: sparks off iron, no blood
+    // Turned by a Warden's mail: sparks off iron, no blood; bright and many, a flash of steel blue, so it's seen that it
+    // turned the round (the owner, 2026-10-20: the kinds "need to be clear what they do")
     if (struck.mail && !struck.killed)
     {
-        for (var i = 0; i < 6; i++)
-            Glow(fx, Mote { at = struck.at, velocity = (Math.Normalize(struck.at - struck.from) * -2 + Scatter(fx, 3)), life = 0.25, size = 0.025, color = float3(1.0, 0.85, 0.5),
+        var back = Math.Normalize(struck.at - struck.from) * -3;
+        for (var i = 0; i < 14; i++)
+            Glow(fx, Mote { at = struck.at, velocity = back + Scatter(fx, 4.5), life = 0.3, size = 0.04, color = i % 3 == 0 ? float3(0.7, 0.85, 1.0) : float3(1.0, 0.85, 0.5),
                             alpha = 5, gravity = 8 });
+        Glow(fx, Mote { at = struck.at, life = 0.08, size = 0.3, grow = 2, color = float3(0.6, 0.75, 1.0), alpha = 2 });
         return;
     }
     // The way the blow went, across the ground: what comes out the far side goes on that way

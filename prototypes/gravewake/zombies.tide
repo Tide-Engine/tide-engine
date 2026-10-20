@@ -26,41 +26,6 @@ enum Gait { Shamble, Run, Sprint }
 // KindMark).
 enum ZombieKind { Walker, Bloater, Spitter, Warden, Runner, Brute, Howler }
 
-string KindName(ZombieKind kind)
-{
-    switch (kind)
-    {
-        case ZombieKind.Bloater: return "Bloater";
-        case ZombieKind.Spitter: return "Spitter";
-        case ZombieKind.Warden: return "Warden";
-        case ZombieKind.Runner: return "Runner";
-        case ZombieKind.Brute: return "Brute";
-        case ZombieKind.Howler: return "Howler";
-    }
-    return "Walker";
-}
-
-// What a kind does, and what to do about it, as it's told when it first comes (hud.tide's NewKind).
-string KindTell(ZombieKind kind)
-{
-    switch (kind)
-    {
-        case ZombieKind.Bloater: return "Swells and bursts when you're near, or a moment after it dies. Keep out of its red ring: the burst tears the dead apart too.";
-        case ZombieKind.Spitter: return "Hangs back and lobs bile where you're going. Step out of the yellow ring before it lands: bile slows you.";
-        case ZombieKind.Warden: return "Iron mail turns three quarters of every round to its body. Aim for its bare head, or burn it.";
-        case ZombieKind.Runner: return "Quick and lean. A few metres off it crouches, then leaps at you: roll through the leap.";
-        case ZombieKind.Brute: return "Eight times as tough, never staggers, and its blow throws you. Keep it off you.";
-        case ZombieKind.Howler: return "Stands back and howls: the dead near it run faster a while. Kill it first.";
-    }
-    return "";
-}
-
-// A kind of the dead come for the first time this run (not the ordinary dead), for its card (hud.tide's NewKind).
-event KindSeen
-{
-    ZombieKind kind;
-}
-
 const float BLOAT_NEAR = 2.4;      // How near a survivor sets a Bloater swelling
 const float BLOAT_FUSE = 1.4;      // Seconds from that to its burst
 const float BLOAT_DEAD_FUSE = 1.0; // Killed, seconds from its fall to its burst (if it wasn't nearer already)
@@ -95,6 +60,7 @@ const float RUNNER_PACE = 1.15;    // Against a sprinter's
 const float POUNCE_FAR = 5.5;      // How far off a Runner pounces from...
 const float POUNCE_NEAR = 2.2;     // ...and how near (nearer, it claws)
 const float POUNCE_CROUCH = 0.55;  // Seconds it crouches first (0.45, a leap 0.35 s at 13 m/s, till the game slowed, 2026-10-20)
+const float POUNCE_LOCK = 0.2;     // ...the last so long of it not turning, its leap's way set...
 const float POUNCE_SECONDS = 0.4;  // The leap...
 const float POUNCE_SPEED = 11.25;  // ...this fast (4.5 m)
 const float POUNCE_HIT = 0.8;      // Landing on a survivor, against a claw
@@ -779,7 +745,8 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
                 zombie.windup = 0;
                 zombie.leap = 0.0001;
                 zombie.struck = false;
-                if (target != default) zombie.yaw = YawTo(zombie.at, targetAt + targetGoes * 0.15);
+                // (the way it faced as its aim locked: it had turned to where they'd be at the last moment, which
+                // nothing on the ground could show)
                 Send(Cue { sound = Sfx.Pounce, at = zombie.headAt });
             }
         }
@@ -877,8 +844,10 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
         var rate = zombie.gait == Gait.Shamble ? 3.0 : 7.0;
         zombie.yaw += Math.Clamp(turn, -rate * dt, rate * dt);
     }
-    // Close, or winding up, it turns to face them
-    if (target != default && (nearest < 2.2 || zombie.windup > 0) && zombie.leap <= 0)
+    // Close, or winding up, it turns to face them (a Runner not in its crouch's last POUNCE_LOCK: its leap's way is set,
+    // and shown on the ground, hud.tide's KindTells, so a step aside then takes one out of it)
+    var locked = runner && zombie.windup > POUNCE_CROUCH - POUNCE_LOCK;
+    if (target != default && (nearest < 2.2 || zombie.windup > 0) && zombie.leap <= 0 && !locked)
     {
         var face = TurnBetween(zombie.yaw, YawTo(zombie.at, targetAt));
         zombie.yaw += Math.Clamp(face, -8 * dt, 8 * dt);

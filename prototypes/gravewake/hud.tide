@@ -39,8 +39,6 @@ local singleton Feed
     List<Tally> tallies;         // The numbers of hits rising off the dead
     float winded = 10;           // Seconds since this machine's survivor's Second Wind went (the flash and the ring out)
     float3 windAt;
-    ZombieKind newKind;          // A kind of the dead first come this run, told on the left (NewKind)...
-    float newKindLeft;           // ...so many seconds more
     float readyFlash;            // Seconds since the right mouse's skill came back (a flare round the crosshair)...
     bool wasReady = true;        // ...as it was last frame
 }
@@ -82,8 +80,8 @@ void Panel(float2 center, float2 size, float u)
                        outlineColor = Color(1, 0.9, 0.75, 0.13) });
 }
 
-// A circle on the ground round a place, drawn over the picture.
-void GroundRing(Look look, float3 at, float radius, float thick, Color c, float w, float h)
+// A circle on the ground round a place, drawn over the picture; or of it only `sweep` radians from the yaw `start`.
+void GroundRing(Look look, float3 at, float radius, float thick, Color c, float w, float h, float start = 0, float sweep = 6.2831855)
 {
     // In the picture's own big pixels, one square for each it passes through, so it looks drawn in the world with the
     // rest, not a smooth line over it (the owner, 2026-10-19: "some of the VFX are very smooth looking"); a pixel
@@ -95,11 +93,11 @@ void GroundRing(Look look, float3 at, float radius, float thick, Color c, float 
     float4 side = Math.Mul(look.toClip, float4(at + float3(radius, 0, 0), 1));
     if (middle.w <= 0.01 || side.w <= 0.01) return;
     var across = Math.Length(float2((side.x / side.w - middle.x / middle.w) * 0.5 * w, (side.y / side.w - middle.y / middle.w) * 0.5 * h));
-    var sides = int(Math.Clamp(across * Math.TAU / block * 1.5, 16, 900));
+    var sides = int(Math.Clamp(across * sweep / block * 1.5, 4, 900));
     mut var last = float2(-10000);
     for (var k = 0; k < sides; k++)
     {
-        var turn = k * Math.TAU / sides;
+        var turn = start + k * sweep / sides;
         var x = at.x + Math.Sin(turn) * radius;
         var z = at.z + Math.Cos(turn) * radius;
         float4 clip = Math.Mul(look.toClip, float4(x, Math.Max(at.y, Ground(x, z)) + 0.05, z, 1));
@@ -136,47 +134,83 @@ view BloaterRings(Me me, Look look, Lobby lobby, Match match, query (Zombie zomb
     }
 }
 
-const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn
+const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn (and the other kinds' tells)
 
-// A kind of the dead first come this run: what it does and what to do about it, on a card on the left a few seconds
-// (the owner, 2026-10-20: "some of the enemy types (color based), im not sure what they all do haha. are they special in
-// some way?" Each is; this says how, as each first comes).
-local event(KindSeen seen) ShowNewKind(mut Feed feed)
-{
-    feed.newKind = seen.kind;
-    feed.newKindLeft = NEW_KIND_SECONDS;
-}
-
-const float NEW_KIND_SECONDS = 8;
-
-[Stage(Layers.Hud, 1)]
-view NewKind(Lobby lobby, Me me, mut Feed feed, Match match)
+// What the other kinds of the dead are about to do, on the ground, as a Bloater's ring is (the owner, 2026-10-20, of
+// cards telling each kind as it first came: "those tooltips about new enemies should not show, we should just discover
+// naturally; but they need to be clear what they do"): a Runner crouched, a strip of red as long and wide as its leap
+// (turning with it till its way's set, then brighter), lit from it toward its end as the leap nears; a Brute's blow coming, an orange arc in front of it as far as it
+// reaches, filling as it lands; a Howler howling, a magenta ring as far as its frenzy reaches, a second growing out to
+// meet it as the howl ends.
+[Stage(Layers.Hud, -1)]
+view KindTells(Me me, Look look, Lobby lobby, Match match, query (Zombie zombie) zombies)
 {
     if (lobby.page != Page.Playing || !me.playing || match.phase == Phase.Over) return;
-    if (!match.paused) feed.newKindLeft = Math.Max(0, feed.newKindLeft - Math.Min(Frame.dt, 0.05));
-    if (feed.newKindLeft <= 0) return;
     Draw.SetScreen();
+    var w = Screen.width;
     var h = Screen.height;
     var u = Unit();
-    var shown = NEW_KIND_SECONDS - feed.newKindLeft;
-    var a = Math.Saturate(shown * 4) * Math.Saturate(feed.newKindLeft * 1.5);
-    var slide = (1 - Math.SmoothStep(0, 1, Math.Saturate(shown * 4))) * 40 * u;
-    var mark = KindMark(feed.newKind);
-    var tint = Color(mark.x, mark.y, mark.z, a);
-    var box = float2(34 * u + 170 * u - slide, h * 0.52);
-    var size = float2(340, 118) * u;
-    Draw.Shape(Shape { center = box + float2(0, 6 * u), size = size, radius = 8 * u, color = Color(0, 0, 0, 0.5 * a), soft = 18 * u });
-    Draw.Shape(Shape { center = box, size = size, radius = 8 * u, color = Color(0.09, 0.07, 0.06, 0.92 * a), color2 = Color(0.03, 0.022, 0.02, 0.95 * a), outline = 1.5 * u,
-                       outlineColor = Color(mark.x, mark.y, mark.z, 0.8 * a) });
-    Draw.Shape(Shape { center = box - float2(size.x * 0.5 - 2 * u, 0), size = float2(4 * u, size.y - 10 * u), color = tint });
-    // Its colour, as a gem, and its name
-    var gem = box + float2(-size.x * 0.5 + 34 * u, -28 * u);
-    var pulse = 1 + 0.12 * Math.Sin(shown * 8);
-    Draw.Shape(Shape { center = gem, size = float2(30, 30) * u * pulse, rotation = Math.PI * 0.25, color = Color(mark.x, mark.y, mark.z, 0.25 * a), soft = 10 * u });
-    Draw.Shape(Shape { center = gem, size = float2(16, 16) * u, rotation = Math.PI * 0.25, color = tint });
-    Write("NEW KIND OF THE DEAD", gem + float2(24 * u, -9 * u), 10 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleLeft);
-    WriteBold(KindName(feed.newKind).ToUpper(), gem + float2(24 * u, 8 * u), 19 * u, tint, Anchor.MiddleLeft);
-    WriteWrapped(KindTell(feed.newKind), box + float2(0, 9 * u), size.x - 30 * u, 12 * u, Color(BONE.r, BONE.g, BONE.b, 0.9 * a));
+    foreach (var row in zombies)
+    {
+        var z = row.zombie;
+        if (z.state != ZombieState.Hunting || Math.Length((z.at - me.ears).xz) > BLOAT_SHOWN) continue;
+        var mark = KindMark(z.kind);
+        var at = On(z.at.x, z.at.z);
+        if (z.kind == ZombieKind.Runner && (z.windup > 0 || z.leap > 0))
+        {
+            var near = z.leap > 0 ? 1.0 : Math.Saturate(z.windup / POUNCE_CROUCH);
+            var set = z.leap > 0 || z.windup > POUNCE_CROUCH - POUNCE_LOCK;
+            var way = Flat(z.yaw);
+            var aside = Flat(z.yaw + Math.PI * 0.5) * 0.35;
+            var length = POUNCE_SPEED * POUNCE_SECONDS;
+            var c = set ? Color(1.0, 0.35, 0.3, 0.95) : Color(mark.x, mark.y, mark.z, 0.4 + 0.3 * near);
+            GroundStrip(look, at + aside, at + aside + way * length, c, w, h);
+            GroundStrip(look, at - aside, at - aside + way * length, c, w, h);
+            GroundStrip(look, at, at + way * (length * near), Color(1.0, 0.55, 0.45, 0.5 + 0.4 * near), w, h);
+            GroundRing(look, at + way * length, ATTACK_REACH, 2 * u, c, w, h);
+        }
+        if (z.kind == ZombieKind.Brute && z.swing > 0 && z.swing < ATTACK_LANDS + 0.1)
+        {
+            var near = Math.Saturate(z.swing / ATTACK_LANDS);
+            var reach = ATTACK_REACH * KindScale(z.kind) + 0.45;
+            var c = Color(mark.x, mark.y, mark.z, 0.5 + 0.45 * near);
+            GroundRing(look, at, reach, 3 * u, c, w, h, z.yaw - BRUTE_ARC, BRUTE_ARC * 2);
+            GroundRing(look, at, reach * Math.Max(0.15, near), 2 * u, Color(1.0, 0.75, 0.4, 0.4 + 0.5 * near), w, h, z.yaw - BRUTE_ARC, BRUTE_ARC * 2);
+        }
+        if (z.kind == ZombieKind.Howler && z.windup > 0)
+        {
+            var near = Math.Saturate(z.windup / HOWL_WINDUP);
+            var pulse = 0.75 + 0.25 * Math.Sin(look.time * (8 + 20 * near));
+            GroundRing(look, at, HOWL_REACH, 2.5 * u, Color(mark.x, mark.y, mark.z, (0.35 + 0.5 * near) * pulse), w, h);
+            GroundRing(look, at, HOWL_REACH * near, 2 * u, Color(1.0, 0.6, 1.0, 0.3 + 0.5 * near), w, h);
+        }
+    }
+}
+
+const float BRUTE_ARC = 1.37;       // Either side of its way a Brute's blow lands (zombies.tide's: the dot over 0.2)
+
+// A line on the ground from one place to another, drawn over the picture in its big pixels (as GroundRing).
+void GroundStrip(Look look, float3 from, float3 to, Color c, float w, float h)
+{
+    var block = look.block;
+    float4 a = Math.Mul(look.toClip, float4(from, 1));
+    float4 b = Math.Mul(look.toClip, float4(to, 1));
+    if (a.w <= 0.01 || b.w <= 0.01) return;
+    var across = Math.Length(float2((b.x / b.w - a.x / a.w) * 0.5 * w, (b.y / b.w - a.y / a.w) * 0.5 * h));
+    var steps = int(Math.Clamp(across / block * 1.5, 2, 600));
+    mut var last = float2(-10000);
+    for (var k = 0; k <= steps; k++)
+    {
+        var p = Math.Lerp(from, to, float(k) / steps);
+        float4 clip = Math.Mul(look.toClip, float4(p.x, Math.Max(p.y, Ground(p.x, p.z)) + 0.05, p.z, 1));
+        if (clip.w <= 0.01) continue;
+        var dot = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h);
+        var cell = (Math.Floor(dot / block) + float2(0.5)) * block;
+        if (cell.x == last.x && cell.y == last.y) continue;
+        last = cell;
+        if (cell.x < -block || cell.y < -block || cell.x > w + block || cell.y > h + block) continue;
+        Draw.Shape(Shape { center = cell, size = float2(block), color = c });
+    }
 }
 
 // Where bile in the air will land (a Spitter's, the Broodmother's): a sick yellow ring as wide as its splash on the
@@ -965,7 +999,8 @@ view Tallies(Me me, Look look, Lobby lobby, mut Feed feed)
               : t.tone == -1 ? Color(0.62, 0.66, 0.72, fade * 0.85) : t.flame ? Color(1.0, 0.62, 0.25, fade) : Color(1.0, 0.97, 0.92, fade);
         var size = (t.tone == 3 ? 23 : t.tone == 2 ? 21 : t.tone == 1 ? 21 : t.tone == -1 ? 12 : 15) * (t.killed ? 1.15 : 1.0) * pop * u;
         // A hard dark edge all round, so it reads over blood, fire and the moonlit ground alike
-        var text = $"{int(t.damage + 0.5)}";
+        // (turned by a Warden's mail, it says so: the number's not what matters)
+        var text = t.tone == -1 ? "ARMOR" : $"{int(t.damage + 0.5)}";
         var edge = Math.Max(1.5, size * 0.09);
         var dark = Color(0.05, 0.02, 0.02, fade * 0.9);
         Draw.Text(text, at + float2(edge, 0), size, dark, Anchor.MiddleCenter, Font.Bold);

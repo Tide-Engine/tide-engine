@@ -1350,16 +1350,6 @@ int main(void)
         }
     }
 
-    // ---- A kind of the dead first come is told, once: a Howler raised, its kind marked seen ----
-    {
-        world.Match.seenKinds &= ~(1 << ZombieKind_Howler);
-        world.Match.special = ZombieKind_Howler;
-        world.Match.specials = 1;
-        world.Match.rush = 1;
-        tick_safe(2);
-        CHECK((world.Match.seenKinds & (1 << ZombieKind_Howler)) != 0);
-    }
-
     // ---- A Runner: 4.5 m off, it crouches, then leaps and lands its blow, within a second. A Brute:
     // kicked, it stays on its feet; its blow throws the survivor back. A Howler 8 m off: it stands and howls, and the dead
     // round it are frenzied ----

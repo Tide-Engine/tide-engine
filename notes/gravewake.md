@@ -63,6 +63,37 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### The kinds told by what they do, not by cards (2026-10-21)
+
+The owner: "those tooltips about new enemies should not show, we should just
+discover naturally; but they need to be clear what they do". The tells are
+mine, Provisional.
+
+- **The cards are gone**: hud.tide's `NewKind` and `ShowNewKind`, zombies.tide's
+  `KindName`, `KindTell` and `KindSeen`, `Match.seenKinds`, and their check.
+- **What each is about to do, on the ground** (hud.tide's `KindTells`, drawn as a
+  Bloater's ring is, within `BLOAT_SHOWN`; `GroundRing` takes an arc now, `start`
+  and `sweep`; `GroundStrip`, a line in the picture's big pixels): a Runner
+  crouched, two red lines as long as its leap (4.5 m) and a ring where it lands, a
+  pale line filling toward it as the leap nears; a Brute's blow coming, an orange
+  arc as far as it reaches and as wide as it lands (`BRUTE_ARC`, 1.37 rad either
+  side), a second filling out to it; a Howler howling, a magenta ring as far as
+  its frenzy reaches (`HOWL_REACH`), pulsing faster, a second growing out to it.
+  The Bloater's ring and the bile's are as they were.
+- **A Runner's leap is set before it goes** (zombies.tide's `POUNCE_LOCK`, 0.2
+  s): it turns to face whom it's after as it crouches, but not in the crouch's
+  last fifth of a second, and leaps the way it faces (it had turned at the last
+  moment to where they'd be in 0.15 s, which nothing on the ground could show);
+  its strip goes bright red as it's set, so a step aside then takes one out of
+  it, as a roll does.
+- **A Warden's mail seen**: a round it turns throws fourteen sparks (six), some
+  steel blue, and a flash of blue; its number over the body reads ARMOR.
+- **Validation**: native debug and web debug WASI `gravewake_test` pass. Looked
+  at in standard-host captures: a Runner's strip, a Howler's ring and a bile's
+  ring round a survivor at once; a Brute's arc (in a local build that drew it all
+  the time: a Brute's blow never came in sight in the captures, the others
+  reaching the survivor first).
+
 ### Levels further apart, a Second Wind you see (2026-10-20)
 
 The owner: "upgrades are too quick, we need to space them out more"; then
