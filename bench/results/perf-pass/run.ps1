@@ -5,6 +5,10 @@
 #   pwsh bench/results/perf-pass/run.ps1 -Label perf-pass-baseline -Rounds 3
 #   pwsh -Command "& ./bench/results/perf-pass/run.ps1 -Label x -Only versus_life,versus_events"
 #   (-Only takes a list, which -File would pass as one string)
+# With -Before, a folder of earlier binaries, each program runs from both in
+# turn (before then after, the next round after then before, so drift falls
+# on both), saved as "<Label>-before-r<round>" and "<Label>-after-r<round>":
+#   pwsh bench/results/perf-pass/run.ps1 -Label final -Rounds 5 -Before build/perf-pass/perf-pass-baseline/bin -BeforeBuiltFrom <revision>
 param(
     [Parameter(Mandatory)][string]$Label,
     [int]$Rounds = 3,
@@ -12,15 +16,20 @@ param(
     [string]$Bin = 'build/release/bin',
     [int]$QuietSeconds = 60,
     [int]$QuietDeadlineMinutes = 30,
-    [string]$BuiltFrom = '' # The revision the binaries were built from, when they are not this checkout's (a frozen earlier build)
+    [string]$BuiltFrom = '', # The revision the binaries were built from, when they are not this checkout's (a frozen earlier build)
+    [string]$Before = '',
+    [string]$BeforeBuiltFrom = ''
 )
 $env:TIDE_HIDDEN = '1'
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 Set-Location $root
+if ($Before -and !$BeforeBuiltFrom) { throw '-Before needs -BeforeBuiltFrom, the revision those binaries were built from' }
 $evidence = Join-Path $root "build/perf-pass/$Label"
 $frozen = Join-Path $evidence 'bin'
+$frozenBefore = Join-Path $evidence 'before-bin'
 New-Item -ItemType Directory -Path $frozen -Force | Out-Null
+if ($Before) { New-Item -ItemType Directory -Path $frozenBefore -Force | Out-Null }
 
 # name, program, arguments (each gets --save), environment
 $all = @(
@@ -60,18 +69,27 @@ $all = @(
     @{name='versus_draw_opengl'; exe='versus_draw'; args=@(); backend='opengl'},
     @{name='versus_draw_vulkan'; exe='versus_draw'; args=@(); backend='vulkan'}
 )
-$set = @($all | Where-Object { ($Only.Count -eq 0 -or $Only -contains $_.name) -and (Test-Path (Join-Path $Bin "$($_.exe).exe")) })
+$set = @($all | Where-Object { ($Only.Count -eq 0 -or $Only -contains $_.name) -and (Test-Path (Join-Path $Bin "$($_.exe).exe")) -and
+    (!$Before -or (Test-Path (Join-Path $Before "$($_.exe).exe"))) })
 if ($set.Count -eq 0) { throw 'Nothing to run' }
-foreach ($exe in ($set | ForEach-Object { $_.exe } | Sort-Object -Unique)) { Copy-Item -LiteralPath (Join-Path $Bin "$exe.exe") -Destination $frozen -Force }
+foreach ($exe in ($set | ForEach-Object { $_.exe } | Sort-Object -Unique)) {
+    Copy-Item -LiteralPath (Join-Path $Bin "$exe.exe") -Destination $frozen -Force
+    if ($Before) { Copy-Item -LiteralPath (Join-Path $Before "$exe.exe") -Destination $frozenBefore -Force }
+}
 
 $revision = (git rev-parse HEAD).Trim()
 $dirty = @(git status --porcelain --untracked-files=no).Count -gt 0
-$env:TIDE_BENCH_REVISION = if ($BuiltFrom) { $BuiltFrom } elseif ($dirty) { "$revision+local" } else { $revision }
+$afterRevision = if ($BuiltFrom) { $BuiltFrom } elseif ($dirty) { "$revision+local" } else { $revision }
+$env:TIDE_BENCH_REVISION = $afterRevision
 $env:TIDE_BENCH_MACHINE = 'AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2'
-$meta = [ordered]@{label=$Label; revision=$env:TIDE_BENCH_REVISION; machine=$env:TIDE_BENCH_MACHINE; startedUtc=(Get-Date).ToUniversalTime().ToString('o'); runs=@()
+$meta = [ordered]@{label=$Label; revision=$afterRevision; machine=$env:TIDE_BENCH_MACHINE; startedUtc=(Get-Date).ToUniversalTime().ToString('o'); runs=@()
     binaries=@(Get-ChildItem $frozen -File | ForEach-Object { @{name=$_.Name; sha256=(Get-FileHash $_.FullName).Hash.ToLower()} })}
+if ($Before) {
+    $meta.beforeRevision = $BeforeBuiltFrom
+    $meta.beforeBinaries = @(Get-ChildItem $frozenBefore -File | ForEach-Object { @{name=$_.Name; sha256=(Get-FileHash $_.FullName).Hash.ToLower()} })
+}
 function Save-Metadata { $meta | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $evidence 'metadata.json') -Encoding utf8 }
-function Busy([int]$allowed = 0) { @(Get-Process | Where-Object { $_.Id -ne $allowed -and ($_.ProcessName -in @('ninja','clang','clang++','clang-cl','lld-link','cmake','ctest','tide_tests','tidec') -or $_.ProcessName -match '^(bench_|versus_|tidec_)') }) }
+function Busy([int]$allowed = 0) { @(Get-Process | Where-Object { $_.Id -ne $allowed -and ($_.ProcessName -in @('ninja','clang','clang++','clang-cl','lld-link','cmake','ctest','tide_tests','tidec') -or $_.ProcessName -match '^(bench_|versus_|tidec_|tide_platform_draw)') }) }
 
 $gate = [Threading.Mutex]::new($false, 'Local\TideClaudeContinuationBenchmark')
 $held = $false; $process = $null
@@ -85,28 +103,34 @@ try {
         Start-Sleep -Seconds 5
     }
     foreach ($round in 1..$Rounds) {
+        $sides = if (!$Before) { @('') } elseif ($round % 2) { @('before', 'after') } else { @('after', 'before') }
         foreach ($b in $set) {
-            # Wait out builds/tests that started meanwhile, rather than measure under them
-            $wait = [Diagnostics.Stopwatch]::StartNew()
-            while (@(Busy).Count) { if ($wait.Elapsed.TotalMinutes -gt $QuietDeadlineMinutes) { throw 'Competing work never stopped' }; Start-Sleep -Seconds 5 }
-            $saveLabel = "$Label-r$round"
-            $arguments = @($b.args) + @('--save', $saveLabel)
-            if ($b.backend) { $env:TIDE_BACKEND = $b.backend } else { Remove-Item Env:TIDE_BACKEND -ErrorAction SilentlyContinue }
-            $prefix = Join-Path $evidence "$($b.name)-r$round"
-            Write-Output "$($b.name) round $round"
-            $watch = [Diagnostics.Stopwatch]::StartNew()
-            $process = Start-Process -FilePath (Join-Path $frozen "$($b.exe).exe") -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput "$prefix.log" -RedirectStandardError "$prefix.err"
-            $interrupted = $false
-            while (!$process.WaitForExit(1000)) {
-                if (@(Busy $process.Id).Count) { $interrupted = $true }
-                if ($watch.Elapsed.TotalMinutes -gt 15) { throw "$($b.name) took over 15 minutes" }
+            foreach ($side in $sides) {
+                # Wait out builds/tests that started meanwhile, rather than measure under them
+                $wait = [Diagnostics.Stopwatch]::StartNew()
+                while (@(Busy).Count) { if ($wait.Elapsed.TotalMinutes -gt $QuietDeadlineMinutes) { throw 'Competing work never stopped' }; Start-Sleep -Seconds 5 }
+                $tag = if ($side) { "-$side" } else { '' }
+                $saveLabel = "$Label$tag-r$round"
+                $arguments = @($b.args) + @('--save', $saveLabel)
+                if ($b.backend) { $env:TIDE_BACKEND = $b.backend } else { Remove-Item Env:TIDE_BACKEND -ErrorAction SilentlyContinue }
+                $env:TIDE_BENCH_REVISION = if ($side -eq 'before') { $BeforeBuiltFrom } else { $afterRevision }
+                $folder = if ($side -eq 'before') { $frozenBefore } else { $frozen }
+                $prefix = Join-Path $evidence "$($b.name)$tag-r$round"
+                Write-Output "$($b.name)$tag round $round"
+                $watch = [Diagnostics.Stopwatch]::StartNew()
+                $process = Start-Process -FilePath (Join-Path $folder "$($b.exe).exe") -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput "$prefix.log" -RedirectStandardError "$prefix.err"
+                $interrupted = $false
+                while (!$process.WaitForExit(1000)) {
+                    if (@(Busy $process.Id).Count) { $interrupted = $true }
+                    if ($watch.Elapsed.TotalMinutes -gt 15) { throw "$($b.name) took over 15 minutes" }
+                }
+                $process.Refresh()
+                $meta.runs += @{name=$b.name; side=$side; round=$round; label=$saveLabel; arguments=$arguments; backend=$b.backend; exitCode=$process.ExitCode; wallSeconds=$watch.Elapsed.TotalSeconds; competingWork=$interrupted}
+                Save-Metadata
+                if ($process.ExitCode -ne 0) { Get-Content "$prefix.log" -Tail 20; Get-Content "$prefix.err"; throw "$($b.name) failed" }
+                if ($interrupted) { Write-Output "  (other builds/tests ran during it: marked competingWork)" }
+                $process = $null
             }
-            $process.Refresh()
-            $meta.runs += @{name=$b.name; round=$round; label=$saveLabel; arguments=$arguments; backend=$b.backend; exitCode=$process.ExitCode; wallSeconds=$watch.Elapsed.TotalSeconds; competingWork=$interrupted}
-            Save-Metadata
-            if ($process.ExitCode -ne 0) { Get-Content "$prefix.log" -Tail 20; Get-Content "$prefix.err"; throw "$($b.name) failed" }
-            if ($interrupted) { Write-Output "  (other builds/tests ran during it: marked competingWork)" }
-            $process = $null
         }
     }
     $meta.finishedUtc = (Get-Date).ToUniversalTime().ToString('o')
