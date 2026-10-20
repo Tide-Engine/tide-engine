@@ -1,5 +1,178 @@
 # Benchmarks
 
+## Rollback, the schedule and thread scaling against C, 2026-10-20
+
+The performance pass asked for what wasn't compared with handwritten C: a
+predicting client's snapshots, hashes and rollbacks, the scheduler's fixed and
+per-task cost, and how every concept scales from one thread to twelve. Built
+and measured on Windows 11, Ryzen 9 7900X (two CCDs of six cores, 32 MiB L3
+each), Clang 23.1.2, release preset; `bench/README.md` (Rollback, the schedule
+and thread scaling) describes the programs, options and baseline tables.
+
+- **Harness** (`bench/versus/versus.c`): `--threads-list 1,2,4,8,12` runs every
+  way on each count; default runs and their output are unchanged, and tables
+  print sub-0.1 ms cells to a hundredth of a microsecond. A pool of fewer
+  threads now wraps the platform pool's `run_some` and `more` (it used to keep
+  every worker awake in every round and had neither), counting the workers in
+  a round so no more than the count take part. A concept may name its tick's
+  parts (`versus_desc.part_names`, `.parts`, a function per way read after each
+  timed tick); their medians print beside the whole tick's with Tide/C ratios,
+  and medians and means go into the saved row (`"parts"` under a way). The
+  gated runner (`bench/results/perf-pass/run.ps1`) lists the new programs'
+  variants and every versus program's scaling, and takes `-Revision` for a
+  frozen earlier build.
+- **`versus_rollback`**: a period is `--every` ticks, each kept into a ring of
+  `--kept` worlds and hashed, then a restore of the world `--back` ticks ago and
+  those ticks run again (kept again, not hashed), and a hash of the end checked
+  against the first. Tide uses `tide_world_copy`, `tide_world_tick_on` and the
+  session's hash (`hash_world_on` with a pool). C copies one block whole with
+  `memcpy` and hashes it with wyhash; C, dirty keeps 16 KiB blocks with versions
+  its loops bump when they change a bit, copies only blocks whose versions
+  differ and rehashes only stale ones. Digests cover the live world, the ring's
+  world before the latest tick and the count of mismatched hashes (zero), so
+  every way keeps the same ring. Not covered: packing, deltas, inputs and the
+  network; replayed ticks are not hashed, as a client hashes a tick when it's
+  confirmed.
+- **`versus_systems`**: 64 systems over 16 two-float components in four kinds
+  (each component in two kinds), twelve independent lanes of four systems and a
+  band ten deep; `--count` from 0. The kernels are memory-bound, deliberately
+  cheap: what's measured is the tick around them. C runs the same loops in
+  order, or in precomputed stages on `versus_for` from 16,384 entities a kind,
+  where it measured faster.
+- Tests: `versus_rollback`, `_spread`, `_deep` (`--kept 3 --back 5 --every 1`),
+  `versus_systems` and `_empty`, native and web, `--quick` (forced C splitting).
+
+Baseline: three gated rounds at `1c6befb1`, `coverage-baseline-r1..r3` in
+`bench/results/versus.jsonl`, runner metadata (arguments, binary SHA-256s,
+competing work) in `bench/results/perf-pass/coverage/baseline-metadata.json`;
+round 2 of the million-mover scaling run overlapped other builds and is marked.
+Medians of round medians, ms a period, one thread:
+
+| Rollback, 100k movers (25% moving, first) | Tide | C | C, dirty | Tide/C | Tide/C, dirty |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Period | 1.813 | 2.166 | 1.544 | 0.84 | 1.17 |
+| 12 ticks | 1.607 | 0.882 | 1.244 | 1.82 | 1.29 |
+| 12 snapshots | 0.026 | 0.816 | 0.180 | 0.03 | 0.14 |
+| 5 hashes | 0.180 | 0.345 | 0.102 | 0.52 | 1.76 |
+| 1 restore | 0.0018 | 0.104 | 0.014 | 0.02 | 0.13 |
+| Spread movers: period / ticks / hashes | 2.506 / 1.788 / 0.631 | 2.107 / 0.881 / 0.344 | 2.764 / 1.242 / 0.330 | 1.18 | 0.91 |
+| 1M movers, 40k turrets: period / ticks / hashes | 27.76 / 22.85 / 3.90 | 32.11 / 14.93 / 4.64 | 25.88 / 19.90 / 1.21 | 0.85 | 1.08 |
+
+On 1, 2, 4, 8 and 12 threads the million-mover period is Tide 27.8, 22.3, 16.5,
+13.6, 12.9 ms; C 32.1, 30.7, 24.8, 21.9, 22.2; C, dirty 25.9, 17.6, 12.7, 9.9,
+10.9. Systems at 0/64/4,096/16,384/65,536 entities a kind are 1.50/3.13/1.12/
+1.14/1.36× C on one thread; at 16,384 Tide is 0.258, 0.199, 0.136, 0.202 and
+0.308 ms on 1/2/4/8/12 threads (0.87× C at 4) and at 65,536 1.292, 0.817,
+0.488, 0.526, 0.465. Every versus program's curve is in `bench/README.md`.
+Past six threads this machine's curves mostly measure traffic between its two
+CCDs, as the harness can't choose cores: memory-bound loops (particles,
+systems) are fastest on four to six threads in both languages.
+
+What the parts show, and where the time went (the coordinator's sampling
+profiler, `tide_sample`, on Tide-only builds of the fixtures):
+
+- Snapshots and restores cost Tide 30–50× less than whole copies and 5–7× less
+  than versioned blocks: they share pages. The cost moves into the ticks: with
+  a ring kept, every chunk a system changes is written apart into new pages
+  and compared with the shared ones (`tide_table_lanes_end`), and Tide's 12
+  ticks take 1.82× C's in place. Move's rows function alone is close to C's
+  loop (about 1.1–1.2×); the rest is the page comparisons and copies (about 15% of
+  Tide's period in the C runtime's `memcmp`/`memcpy`), Aim's rows (a system
+  that writes a list: its rows don't vectorize and each calls
+  `tide_scratch_reset` and `tide_heap_flush`), and page taking and giving.
+- The hash: per changed page Tide is as incremental as C, dirty, and slower
+  only by its function: `tide_hash_wide` runs at 21 GB/s here where wyhash
+  runs at 37 (a scratch microbenchmark, 8 KiB to 4 MiB in cache; an
+  XXH3-style SSE2 loop ran 1.4–1.9× `tide_hash_wide` in a noisier run), which
+  matches the 1.76× at 100k movers. At a
+  million movers it's 3.3×, about 8 GB/s, which fits new pages coming from
+  memory each tick; not measured apart.
+- Systems: with 64 entities a kind about a quarter of the samples were in
+  `tide_table_lanes_shared`/`_begin`/`_end`; with 65,536 the loops are
+  memory-bound in 8 KiB lane pages (one per 2,048 rows) where C streams whole
+  arrays, and the first touch of each page's header shows (`lanes_shared`).
+  On threads, 12 workers spent 14% of their samples looking for work
+  (`work_once` scanning every system from the first) and 4% counting finished
+  tasks, with 1,024 tasks a tick of about 0.25 µs each at 16,384 a kind.
+
+Optimizations kept (engine/src/jobs.c and tide/table.h; notes/ecs.md and
+notes/schedule-and-threads.md have the contracts):
+
+- Lane bookkeeping inline for lanes the table alone has, with shared-lane work
+  in per-file `noinline` helpers: systems at 64 a kind 4.8 → 3.9 µs a tick
+  (alternating runs; 4.1 with everything inline, which grew the executable
+  more), at 4,096 65.2 → 63.8 µs. Executable +34 KB (6%).
+- On threads: cheap tasks taken a few at a time (`BATCH_WORK`), the search
+  for work starting at the first system with anything left, and each system's
+  state on its own cache line: systems at 16,384 a kind 0.20 → 0.175 ms on
+  2 threads and 0.14 → 0.12 on 4 (alternating runs; 6 and 12 threads vary
+  more than that between runs). `jobs_cheap_tasks_are_taken_a_few_at_a_time`
+  pins the takings.
+
+Two gated rounds alternate the frozen baseline binaries with the optimized
+ones (`coverage-pair-before-p1`, `-after-p1`, `-before-p2`, `-after-p2`; their
+runner metadata is in `bench/results/perf-pass/coverage/`). The machine was
+busy with other sessions' builds and suites and the owner's own work: round
+1's before pass is visibly slower than the baseline in its C ways too, and
+three of its runs are marked as overlapping builds. Round 2, the cleaner,
+before → after, Tide ms a tick (best C before → after in brackets):
+
+| Program | 1 thread | 2 | 4 | 8 | 12 |
+| --- | --- | --- | --- | --- | --- |
+| Systems, 64 a kind | 0.0048 → 0.0039 (0.0015) | | | | |
+| Systems, 4,096 a kind | 0.0674 → 0.0630 (0.0591 → 0.0573) | | | | |
+| Systems, 16,384 a kind | 0.268 → 0.249 (0.231 → 0.225) | 0.206 → 0.171 (0.179 → 0.170) | 0.143 → 0.114 (0.177 → 0.152) | 0.304 → 0.169 (0.360 → 0.288) | 0.244 → 0.301 (0.279 → 0.352) |
+| Systems, 65,536 a kind | 1.379 → 1.227 (0.907 → 0.938) | 0.863 → 0.866 (0.561 → 0.656) | 0.492 → 0.407 (0.395 → 0.422) | 0.904 → 0.415 (0.834 → 0.588) | 0.768 → 0.349 (0.879 → 0.640) |
+| Rollback, period | 1.990 → 1.812 (C, dirty 1.727 → 1.495) | | | | 1.859 → 1.769 (1.714 → 1.852) |
+
+Systems at 64 a kind go from 3.20× C to 2.60×, and from 1.14× to 1.10× at
+4,096, as in the alternating runs above; on 2 and 4 threads at 16,384 a kind
+Tide is 17–20% faster and moves from 1.15× to 1.00× and 0.81× to 0.75× C. At 8
+and 12 threads both languages' times move by up to half between passes, so
+those cells say nothing about the change. The rollback period and the other
+programs' curves (particles, wide, sand, life, n-body) change within what C's
+own times moved between the passes; nothing there is claimed. The paired
+rows' revisions were first recorded wrongly: `run.ps1`'s `-Revision` and its
+`$revision` were one variable (PowerShell names ignore case), so the before
+rows said `188cc9b4`; the parameter is now `-BuiltFrom`, and the before rows
+and their metadata say `1c6befb1`, the build they ran. A final gated paired
+measurement of the merged branch is the coordinator's.
+
+Tried and dropped: generated apart rows functions that tracked, lane by lane,
+whether any row changed a bit (as C, dirty does), so unchanged lanes gave
+their page back without `tide_table_lanes_end`'s comparison. The rollback
+period went 1.584 → 1.649 ms on 100k movers (three alternating runs each; the
+tracking cost more than the comparisons of pages still in cache) and was
+within noise at a million, so the codegen change was reverted. Removing Aim's
+per-row `tide_scratch_reset`/`tide_heap_flush` calls by hand in generated C
+(safe for that body only) took the ticks from 1.66 to 1.58 ms, an upper bound
+for making those calls cheaper.
+
+Remaining gaps, largest first, with the best explanation:
+
+1. The page hash's speed (1.76× C, dirty; 3.3× at a million movers). A faster
+   page hash (wyhash's 64×64→128 multiply, about 1.75× here, but emulated on
+   wasm32; or XXH3's 32×32→64 SIMD multiplies, about 1.2–1.5× here at SSE2 and
+   native on wasm SIMD) would change every pinned world hash and `PROTOCOL`, as
+   `tide_hash_wide` did on 2026-10-07: the owner's call, with web throughput
+   measured first. Not done.
+2. Ticks under a kept ring (1.8–2.0× C in place): writing every changed
+   chunk's lanes apart and comparing them afterwards is the price of sharing.
+   Tracking changes in the loop didn't pay (above). Writing in place when only
+   a few rows change would need a different page scheme.
+3. Per-row costs of systems that touch text or lists: two calls a row
+   (`tide_scratch_reset`, `tide_heap_flush`) where nothing was made or let go,
+   about 5% of the rollback ticks here; inline fast paths in `tide/text.h` and
+   `tide/heap.h` (a thread-local compare, a `pending` test) would recover most
+   of it without new generated calls.
+4. Small worlds: 2.6× C at 64 entities a kind after the change, about 20 ns a
+   chunk-task of fixed cost (task dispatch, scratch mark, lanes, the rows
+   call) against C's direct loops.
+5. Big memory-bound worlds: 1.3–1.4× C at 65,536 a kind, from 8 KiB lane
+   pages against contiguous arrays.
+6. Thread scaling past one CCD: shared by C; the platform pool's topology is
+   the coordinator's (platform/src/jobs.c).
+
 Scene visibility unification (2026-10-15): removing generated scene audience
 fields changes the quick-session world pins to 742cb392be44252d for Sand and
 ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
@@ -292,11 +465,11 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - Tests run each one `--quick`, which fails when a client's world went wrong, a bot couldn't join, or the server's world ends with another hash than the one in `bench/CMakeLists.txt`, which every platform and thread count has to agree on. Timings aren't checked: machines differ too much.
 - Sand is a game people play too: `sand` (`sand.html` on the web) is `sand/sand.tide` with `sand/play.tide`, its views, GUI and rooms, and the mouse through the input's `Sample`, which the benchmark's bots don't call. The docs site shows it (see Docs site).
 - A benchmark holds its game as the engine can today, and says where that's not how it should be. It changes as the engine does (sand's cells were a list, then a grid that a chunk system stepped on threads, then 2 by 2 blocks that a parallel loop steps), and its expected hash with it.
-- `bench/versus/` measures Tide against C: a concept written both ways, each as fast as its language allows, on the same work (`bench/versus/versus.h`). Each is a program, `versus_<concept>`: particles (an ECS system streaming through a component), wide (the same through a component of a dozen floats, half of which a tick changes, and with `--tagged 1`, by a system that leaves out the entities with a sparse tag, `--frozen` in a hundred of them), sand (`sand/sand.tide` itself), life (a grid stencil), churn (spawning and destroying), events, and nbody (every pair, through a list). Each takes `--kept 1`, which keeps the world before every tick, as a client keeps every tick it predicts: the snapshot shares the world's pages, so the tick writes none of them in place. `cmake --build --preset release --target versus` runs them all.
+- `bench/versus/` measures Tide against C: a concept written both ways, each as fast as its language allows, on the same work (`bench/versus/versus.h`). Each is a program, `versus_<concept>`: particles (an ECS system streaming through a component), wide (the same through a component of a dozen floats, half of which a tick changes, and with `--tagged 1`, by a system that leaves out the entities with a sparse tag, `--frozen` in a hundred of them), sand (`sand/sand.tide` itself), life (a grid stencil), churn (spawning and destroying), events, nbody (every pair, through a list), rollback (a predicting client's ring of kept worlds, hashes and corrections, by part) and systems (64 systems' schedule, from no entities up). Each takes `--kept 1`, which keeps the world before every tick, as a client keeps every tick it predicts: the snapshot shares the world's pages, so the tick writes none of them in place. `cmake --build --preset release --target versus` runs them all.
   - Every way starts from nothing and runs the same ticks, the first of which sets it up, and has to end with the same result, bit for bit: the same work, so the times compare. A digest adds up a hash of each thing a way holds (`versus_item`), so ways keep things in any order. Tests run each one `--quick` and fail when the ways disagree.
   - `versus_lookup` compares map/set hits, misses, score updates and ordered key replacement. Its Tide host reads entries directly from the world heap for the semantic digest: a signed 64-bit insertion-order header, then the primitive key and value, both map and set entries 16 bytes with the key at 8. It uses `tide_map_live` so negative removed-entry orders are skipped; storage IDs and padding are never included in the digest. This mirror must follow tidec's entry layout. Layout assertions pin its offsets and strides, and `versus_lookup`, `_empty`, `_single` and `_steady` compare live keys, values and insertion order against the independent C tables on one and several threads.
   - The C is what someone who knows the machine writes: arrays rather than structs where that's faster, branches turned into selects for SIMD, arrays staggered so they don't share their addresses' low bits (4K aliasing), and threads on the same pool Tide ticks on (`versus_for`), only once there's enough work for them to pay (`versus_pieces`; `--split` and `--quick` always split). A way with a trick Tide can't do yet is a way of its own (`C, lookup`, `C, SIMD`). The C builds with the flags generated code does, so the results stay bit-identical.
-  - It times each tick after the warm-up ones, on one thread and then on every core, and reports medians, and how many times as long Tide takes. `--save <label>` adds a run to `bench/results/versus.jsonl`.
+  - It times each tick after the warm-up ones, on one thread and then on every core (or each count `--threads-list` gives), and reports medians, and how many times as long Tide takes, with the parts a concept times its ticks in (rollback's) beside them. `--save <label>` adds a run to `bench/results/versus.jsonl`.
 
 ## Shared component syntax migration (2026-10-12)
 
