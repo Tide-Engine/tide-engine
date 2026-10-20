@@ -182,7 +182,7 @@ view Prepare(mut Me me, mut Lens lens, mut Look look, mut Lights lights, mut Kit
     }
     foreach (var row in missiles)
     {
-        if (row.missile.kind != Shot.Pot) continue;
+        if (row.missile.kind != Shot.Pot && row.missile.kind != Shot.Napalm) continue;
         AddLight(lights, eye, Light { at = row.missile.at, color = float3(1.0, 0.5, 0.15) * 3, reach = 7 });
     }
 }
@@ -315,6 +315,12 @@ local event(Hurt hurt) FeelHurt(mut Me me, Survivor survivor)
 local event(Kicked kicked) FeelKick(mut Me me)
 {
     if (kicked.seat == me.seat && kicked.hits > 0) me.shake = Math.Max(me.shake, 0.3);
+}
+
+// A head taken off by your own round: a small jolt, felt as much as seen.
+local event(Struck struck) FeelStruck(mut Me me)
+{
+    if (struck.seat == me.seat && struck.aimed && struck.head && struck.killed) me.shake = Math.Max(me.shake, 0.18);
 }
 
 local event(Blast blast) FeelBlast(mut Me me)

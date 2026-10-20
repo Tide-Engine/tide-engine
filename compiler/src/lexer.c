@@ -168,7 +168,7 @@ static tok_kind lex_number(lexer *lx)
     if (lx->end - lx->p >= 3 && memcmp(lx->p, "deg", 3) == 0) {
         is_float = true;
         lx->p += 3;
-    } else if (lx->p < lx->end && (*lx->p == 'f' || *lx->p == 'F')) {
+    } else if (lx->p < lx->end && (*lx->p == 'f' || *lx->p == 'F' || *lx->p == 'd' || *lx->p == 'D')) {
         is_float = true;
         lx->p++;
     } else if (!is_float && lx->p < lx->end && (*lx->p == 'L' || *lx->p == 'l')) {

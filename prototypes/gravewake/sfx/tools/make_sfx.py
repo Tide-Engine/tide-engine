@@ -1535,6 +1535,84 @@ def hitmarker(rng):
     return trim(highpass(at_onset(S('kenney_interface', 'click_002.ogg')), 800), -50, fade_out=0.01)
 
 
+# The Engineer's flamethrower, made from nothing: a jet's roar to loop while the trigger's held, and its lighting
+@sound('flamer_loop', kind='loop', peak_db=-3.0)
+def flamer_loop(rng):
+    # A gas jet tearing through air (a broad hiss, rough and quick-flickering), a low roar under it, a few crackles
+    sec = 2.4
+    n = n_of(sec)
+    flick = 1 + 0.35 * lowpass(rng.standard_normal(n), 14) / 0.05
+    jet = bandpass(colored(sec, rng, -2.0), 500, 6500) * np.clip(flick, 0.4, 1.8)
+    roar = lowpass(highpass(colored(sec, rng, -5.0), 45), 420) * np.clip(1 + 0.3 * lowpass(rng.standard_normal(n), 5) / 0.03, 0.5, 1.6)
+    bed = fire_bed(sec, rng, crackle_rate=18, roar=0.6)
+    y = mix((unit(jet), 0, -3), (unit(roar), 0, 0), (unit(bed), 0, -8))
+    return loopify(y, 0.3)
+
+
+@sound('flamer_start', layers=False)
+def flamer_start(rng):
+    # The jet lit: a quick rush of fire through air and a soft thump of the gas catching
+    tt = t(0.6)
+    w = roar_whoosh(0.6, rng, peak_at=0.08)
+    thump = lowpass(colored(0.6, rng, -5), 300) * np.exp(-tt * 12) * np.minimum(1, tt / 0.004)
+    y = mix((unit(w), 0, 0), (unit(thump), 0, -3))
+    return trim(y, -45, fade_out=0.15)
+
+
+# A hit of your own landing, made from nothing: crisp enough to hear over the gun, short enough for an SMG's rate
+@sound('hit_tick')
+def hit_tick(rng):
+    # A small struck plate, the head's ding's little brother (the owner liked that one, and couldn't hear the first tick
+    # over the guns): a bright metallic tink, its partials ringing a tenth of a second, over a snap of noise and a knock
+    y = modal([2650, 2650 * 2.76, 2650 * 5.40], [1.0, 0.45, 0.2], [32, 48, 70], 0.16, rng)
+    snap = highpass(white(0.025, rng), 4000) * np.exp(-t(0.025) * 220)
+    y = mix((unit(y), 0, -1), (unit(snap), 0, -6), (body_thump(0.06, rng, 220, 70), 0, -10))
+    return trim(soft_clip(unit(y) * 1.3, 1.2), -48, fade_out=0.02)
+
+
+@sound('skill_ready')
+def skill_ready(rng):
+    # The right mouse's skill back: two soft rising notes of a small bell, quiet, so it's heard but not heeded over a fight
+    a = modal([1318.5, 1318.5 * 2.76], [1.0, 0.25], [10, 18], 0.5, rng)
+    b = modal([1975.5, 1975.5 * 2.76], [1.0, 0.25], [8, 16], 0.6, rng)
+    y = mix((unit(a), 0, -2), (unit(b), 0.07, 0))
+    return trim(y, -50, fade_out=0.15)
+
+
+@sound('thump')
+def thump(rng):
+    # The grenade launcher: a hollow "thoomp", a low pressure drop down a tube with a ring of its metal, and a puff of gas
+    tt = t(0.45)
+    f = 150 * np.exp(-tt / 0.06) + 55
+    drop = np.sin(2 * np.pi * np.cumsum(f) / R) * np.exp(-tt * 14) * np.minimum(1, tt / 0.002)
+    tube = bandpass(white(0.45, rng), 250, 900) * np.exp(-tt * 30)
+    ring = modal([420, 420 * 2.3], [1.0, 0.4], [22, 35], 0.45, rng)
+    puff = lowpass(white(0.45, rng), 1800) * np.exp(-tt * 18) * np.minimum(1, tt / 0.01)
+    y = mix((unit(drop), 0, 0), (unit(tube), 0, -6), (unit(ring), 0, -16), (unit(puff), 0.01, -10))
+    return trim(soft_clip(unit(y) * 1.4, 1.3), -45, fade_out=0.1)
+
+
+@sound('hit_kill')
+def hit_kill(rng):
+    # The kill: the tick doubled and lower, a thick knock under it and a short ring after, so it's told from a hit
+    tt = t(0.22)
+    ping = (np.sin(2 * np.pi * 2350 * tt) + 0.5 * np.sin(2 * np.pi * 3720 * tt + 0.7)) * np.exp(-tt * 30)
+    tick = (np.sin(2 * np.pi * 3150 * tt) + 0.6 * np.sin(2 * np.pi * 4870 * tt)) * np.exp(-tt * 110)
+    snap = highpass(white(0.22, rng), 2500) * np.exp(-tt * 140)
+    y = mix((unit(tick), 0, -3), (unit(tick), 0.028, -5), (unit(ping), 0.028, -7), (unit(snap), 0, -6),
+            (body_thump(0.16, rng, 95, 26), 0, -1))
+    return trim(soft_clip(unit(y) * 1.6, 1.4), -48, fade_out=0.04)
+
+
+@sound('hit_head')
+def hit_head(rng):
+    # The head: a bright metallic ding (a struck plate's partials), laid over the skull's crack
+    y = modal([1840, 1840 * 2.76, 1840 * 5.40, 1840 * 8.93], [1.0, 0.55, 0.3, 0.15], [9, 14, 22, 30], 0.45, rng)
+    snap = highpass(white(0.03, rng), 4000) * np.exp(-t(0.03) * 200)
+    y = mix((unit(y), 0, -1), (unit(snap), 0, -7))
+    return trim(y, -50, fade_out=0.08)
+
+
 # ================================================================ MUSIC: perk jingles
 
 _SEMI = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}

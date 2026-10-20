@@ -63,6 +63,346 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### A reward after its cause is seen, chests shut, napalm smaller (2026-10-20)
+
+The owner: "when an objective is completed or a boss killed the reward shows
+instantly before i even see the boss die; we need some delay there. also chests
+should be closed lol. / the napalm ability felt a bit OP and hard to not get
+myself hit by it; i dont hate it i dont love it". The numbers are mine,
+Provisional.
+
+- **A reward's pick waits** (items.tide's `Owed.delay`, `Experience`;
+  `Survivor.rewardWait`; boss.tide's `TakeFelled`): a boss's pick is offered 2.5 s
+  after it falls (`BOSS_REWARD_WAIT`), a mission's 1.5 s after it's done, a chest's
+  1 s after it bursts open; nothing's offered meanwhile (a level's waits too), and
+  the wait doesn't run while the match is held for a pick.
+- **Chests shut** (art/kit/tools/close_chest.py, run once over the kit's two chest
+  parts, `Chest_Wood~furniture.glb` and `~metal.glb`): the kit's chest is modelled
+  with its lid flung open; the script finds the lid's loose parts (starting behind
+  the box, or rising above its top) and swings them 122.3 degrees shut about the
+  hinge along the box's back top edge (found from where the lid's front and back
+  edges are open against where they lie shut), and writes the parts back as
+  split_kit.py exports them. Looked at in Blender renders of both parts.
+- **Napalm smaller** (kits.tide, missiles.tide): its fire 2.0 m round (2.6) for
+  3 s (4), biting 0.18 of its splash (0.25); its splash 100 (120) in 2.0 m (2.4);
+  every 8 s (7); and it lands at least 4.5 m from its thrower whatever the cursor
+  is on (`NAPALM_NEAREST`), so a glob aimed at the dead on top of you doesn't burn
+  you. The ranks' wider and longer as before.
+- **Measured** (`gravewake_balance`, seeds 1 to 16): the Gunner's middle run 1458
+  s, the Breacher's 581, the Engineer's 206 (most Engineers still die in the first
+  night's end, in the Mauler's slam: the bots don't roll).
+- **Tests**: the Mauler felled, its pick not on offer (2.5 s to wait), then on offer
+  three seconds on; napalm's splash 141, its fire 2.0 m for 3 s. Native debug
+  `gravewake_test` and the web debug WASI one pass.
+
+### Napalm burns its maker; what's coming back, round the crosshair (2026-10-20)
+
+The owner: "my own napalm fire should hurt me"; "we need some indicator on the
+crosshair or some sound or something when the ability is ready, even when
+reloading some way to know the progress without glancing down would be
+appreciated." The shapes and numbers are mine, Provisional.
+
+- **Napalm burns the living** (hazards.tide's `Burn`, `BLAZE_HURT` back): every
+  survivor standing in a fire on the ground, its maker too, takes 12 a second times
+  `Harm` (a bite every half second), not while rolling, as the eruptions' fire did.
+  The bots step out of one again (test/balance.c).
+- **Round the crosshair** (hud.tide's `Overlay`; `Feed.readyFlash`, `wasReady`):
+  two short arcs just outside its ticks. On its left, the right mouse's skill:
+  grey, filling out from its middle as it comes back; ember orange and thicker once
+  it's ready, flaring as it comes (a ring thrown out and the arc swelling a moment).
+  On its right, the gun: its magazine running down from full (bone, amber at a
+  quarter, red empty), and while loading, its loading filling in blue; none for a
+  gun never loaded (the shotgun). Each on a dark track. They fill from their middles,
+  so the arcs' angles needn't run either way.
+- **A chime when it's back** (sound.tide's `Handling`, `Ears.skillReady`;
+  `skill_ready.ogg`, made by `make_sfx.py`): two soft rising notes of a small bell,
+  quiet, as the right mouse's skill comes back.
+- **Measured** (`gravewake_balance`, the Engineer, seeds 1 to 16): the middle run
+  about 270 s (about 515 before its fire burned it), most dying in the first night's
+  end: the bots don't roll, and walk out of their napalm late.
+- **Tests**: napalm's maker standing in its fire loses 46 in two-thirds of a second.
+  Native debug `gravewake_test` and the web debug WASI one pass, built again with
+  LLVM 23 (back on this machine).
+- **Validation**: looked at in standard-host captures round the cursor: the skill's
+  arc ready, used and filling back, the magazine running down, the loading in blue.
+  Not heard: the chime's loudness.
+
+### The gun's own right mouse, brambles for the eruptions, a drone, fire like a fluid (2026-10-20)
+
+The owner, after playing the flamethrower round: "can we make it visually
+impressive? almost like a light fluid simulation"; "the leftover smoke makes it
+hard to view stuff"; then "i still think the flamethrower kills too fast and
+maybe still a tad too far / the random exploding circles are out of place, we
+can maybe just add bushes in the map that make you walk slower ... / the normal
+hit markers are still hard to hear, i like the critical/headshot effect ... /
+the turret is funny, its a tripod sliding around... lol maybe we dont do that,
+maybe its just a flying drone as a started idk. in general the C4 also feels
+meh. im starting to think the right click should be one ability that is related
+to the gun you hold. the rifle has the sniper like shot, the shotgun maybe
+shoots a grenade with a thump sound and the flamethrower maybe shoots fire and
+leaves the ground burning for a bit or something. these should be able to take
+upgrades to become better." What was made of each, and the numbers, are mine,
+Provisional.
+
+- **Fire like a fluid** (flames.tide, new; this machine's only, nothing of the
+  match): each puff throws a gout of 18 blobs of burning fuel, most down the
+  cone's middle, spread over the time to the next puff as though they'd come out
+  all along (a stream, not clumps), thrown at the speed that the air's drag
+  (`FLAME_DRAG` 2.3 a second) slows to a stop about at its reach (`Loosed.reach`).
+  Each frame they slow, the hot rise (`FLAME_LIFT`, as heat squared), a field of
+  Perlin noise turns them, more as they slow (`FLAME_SWIRL`), they swell and cool
+  through white-gold, yellow, orange to a dull red (`FireHue`); a hot one landing
+  splashes and runs along the ground, and three in ten pool there a second or so,
+  flickering, tongues of flame off them and a scorch under; fire licks up round
+  the dead it reaches (`Lick`, from `Struck`); one cooled gives off a thin wisp of
+  smoke one time in eight (`SMOKE_CHANCE`). Each is drawn (`FireBlob`) as a ragged
+  tongue of light in three hard steps, its middle hottest, added; a lamp at the
+  middle of each survivor's hot fire and one among what's pooled (`FireLight`).
+  Iterated in captures: specks like confetti at first (blobs a pixel or two in the
+  low picture), then a milky white cloud (overlaps adding up): now each is two or
+  three times the size, a quarter as bright, redder as it cools. The smoke, first
+  thick, near black and lasting, piled up over the survivor into a black cloud
+  (the owner's picture): a wisp now, a sixth as opaque, gone in under a second.
+- **The flamethrower slower and shorter**: 4.8 m (5.5), 7 a puff (13), a puff in
+  seventeen sets one alight (`FLAME_IGNITE` 0.06; a third): a walker burns down in
+  about two thirds of a second, not a quarter. A boss takes a puff 3.5 times over
+  (`FLAME_BOSS`, boss.tide's `BossWound`): a great body in the flames, no weak spot
+  to find and no catching fire. (5 a puff and 0.04 measured too weak, below.)
+- **The right mouse is the gun's own** (kits.tide's `SecondaryOf`, `SkillOf`,
+  `UseSecondary`; items.tide's cards): the carbine's phase round as it was; the
+  shotgun's **Thumper**, a grenade lobbed (`ThrowTo`'s new pace, 24 m/s across the
+  ground) to burst where the cursor is, 300 times might in 4 m, the dead thrown
+  down, a "thoomp" (`thump.ogg`), every 5 s; the flamethrower's **Napalm**, a glob
+  of burning fuel (`Shot.Napalm`, drawn alight, the fire shedding off it in
+  flight) lobbed to the cursor, 120 in its splash and setting the dead alight,
+  and where it splashes a fire on the ground (hazards.tide's `Blaze`, its
+  `seat`, `seconds` and `hurt`), 2.6 m round for 4 s, biting the dead in it,
+  bosses too, a quarter of the splash every half second and setting them alight,
+  never the living; every 7 s. Skill cards are now only the gun's skill a rank
+  stronger (`CardPhaseRound`, `CardThumper`, `CardNapalm`; the card's offered only
+  below rank III): the Thumper two grenades, then three, a quarter and half again
+  as hard; napalm's fire a quarter wider and half again as long, then two globs.
+  `Survivor.secondary` is gone. The C4 (`Shot.Mine`, `charges`, `detonations`, the
+  charge rings), the Leap and the Blink (`leaping`, `Slam`, `BlinkBlast`) are gone.
+- **The Breacher's boot by itself**: the shotgun's grenade took the right mouse,
+  so the boot is the Breacher's special (`AutoSkill` takes the survivor's entity
+  for it), kicking when one of the dead is within its reach in front, at rank I;
+  the Firebomb left the kits (the Molotov Satchel still throws them).
+- **The attack drone** (kits.tide's `Sentry`, `DRONE_HIGH`; held.tide's
+  `DrawTurret`, `DronePlace`; art/guns/drone.glb by `art/guns/tools/make_drone.py`):
+  the Engineer's special flies: sent up over their shoulder, it keeps 2.2 m off at
+  2.4 m over the ground, over whatever stands in the way (no more pushing out of
+  boxes), firing as before. Drawn: an olive armoured quadcopter, a hazard stripe,
+  four arms out to motor pods, a gun slung under its nose, a red eye that glows,
+  skids (588 triangles), bobbing, tipped the way it flies, its four rotors turning.
+  `TurretFeet`, the tripod's model and `TURRET_HIGH` went.
+- **Brambles for the eruptions** (hazards.tide; plan.tide's `brambles`,
+  `BRAMBLES`, `BRAMBLE_SLOW`; ashwick.tide's `Ashwick.brambles`; hands.tide's
+  `InBrambles` in `Steer`): the ground cracking and bursting near the survivors
+  every few seconds is gone (`Erupt`, `Cracked`, `Erupted`, `Match.eruptWait`, the
+  bots' stepping out of fires); in its place, a dozen bramble thickets 2.2 to 4 m
+  round out between the landmarks, clear of them, the paths, the camp, the
+  graveyard and the pits, each thick with the kit's bushes (and a fern in five)
+  darkened to 0.55. A survivor walking in one goes at half pace; a roll's as it was;
+  the dead don't care. The Blaze and its drawing (flames, light, the ground's glow,
+  a faint ring) stay, for napalm.
+- **A hit heard** (sfx/tools/make_sfx.py's `hit_tick`; sound.tide): a small struck
+  plate's tink, the head's ding's little brother, ringing a tenth of a second, at
+  0.85 (the first tick, at 0.5, was lost under the guns).
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16; the bots
+  now use the gun's skill: a phase round down a line of three, a grenade or napalm
+  into three or more): the Gunner's middle run 1123 s (990 the last round), the
+  Breacher's 597 (849), the Engineer's 214 at 5 a puff, 205 at 7, about 515 with
+  bosses taking flames 3.5 times over (about 630 at 13 a puff and 5.5 m); nine of
+  the sixteen Engineers die in the first night's end, standing within the
+  flamethrower's reach of the Mauler, inside its slam, and the bots don't roll. A
+  player rolls; if the Engineer's too weak at a boss, the levers are `FLAME_BOSS`
+  and the puff's 7. The Breacher lost the firebomb that used itself and gained a
+  grenade by hand. The night's end fights 15 to 30 s.
+- **Tests**: the Thumper does 432 to one 7 m off at the cursor; the boot by itself
+  kicks one close over and stamps on one down; napalm 6 m off splashes (177), its
+  fire 2.6 m round for 4 s burns one walked into it (367 more, alight) and goes
+  out; the drone flies 7.8 m after its maker to 2.2 m from them, 2.4 m up; the
+  flamethrower held two seconds burns the two in its cone (3 m, and 4 m 1.2 m
+  aside) and sets at least one alight; 12 thickets, half a second's walk 1.85 m in
+  one and 3.69 on open ground; a skill card a rank, to III (the phase round's fan).
+  The eruption's checks, the C4's, the leap's and the blink's went. The cull
+  mission's check now stands its survivor on whichever side of the circle has
+  nothing standing in the way and moves the other dead off its line (a round stops
+  in the first it strikes; the run's changed draws had put a trunk, then the dead,
+  between). The generated archetype numbers moved again (`arch4_Blaze`, `arch5_Orb`,
+  `arch6_Zombie`, `arch7_Chest`). Native debug `gravewake_test` and the web debug
+  WASI one pass.
+- **Built with Visual Studio's clang** (18.1.8): `C:/Program Files/LLVM` was gone
+  from this machine partway through (not this work's doing), so the debug, release
+  and web builds were configured afresh and found the toolchain's fallback.
+- **Validation**: looked at in standard-host captures: the jet into the line-up
+  and into a horde, after a long burst (the smoke clearing), napalm splashing into
+  fire among the dead with the drone at the survivor's shoulder, the Thumper's
+  burst at the cursor, walking into a thicket. Not heard: the sounds' loudness.
+
+### The Engineer's flamethrower (2026-10-20)
+
+The owner: "i wonder if we should change the engineer's weapon; its too similar
+to the rifle. maybe a flamethrower could be a fun change. so rifle is long
+range, shotgun is close/long mix and the flames is mostly close range
+thingy." The numbers, the look and the sound are mine, Provisional.
+
+- **The gun** (weapons.tide's `Weapon.Flamer`, `WeaponInfo.cone`; kits.tide's
+  `RoleWeapon`): the Engineer's in the SMG's place (the turret and the drones still
+  carry an SMG). A puff every 0.07 s while it's held, 13 a puff times might, to
+  every one of the dead in a cone 5.5 m long across the ground and 0.3 m either
+  side of the aim a metre out (3.3 m wide at its end), and any in front within 1.3 m
+  (`FLAME_NEAR`), the 14 nearest (`FLAME_MOST`), short of what stands in the way;
+  each puff sets one alight one time in three (`FLAME_IGNITE`), so a body in the
+  flames burns within about a fifth of a second. A tank is 140 puffs (ten seconds),
+  1.8 s to fill; an Extended Mag half again. No headshots, no shove or reel (the
+  dead walk on through it: the risk of close range). Flames lick in under a
+  Warden's mail. Items go off a puff in eight as often as a round's (`proc` 0.12),
+  each one the puff reaches.
+- **How** (hands.tide's `Scorch`, from `Fight` when `cone > 0`; items.tide's `Land`
+  takes a `Blow` and `ignite`, defaulting to a round's): its puffs are
+  `Blow.Flame`, aimed (the hit marker, the numbers), drawn and heard apart:
+  no blood or flesh sound a puff, an ember now and then; burned to death in it,
+  the dead fall apart charred, as burning ones do; the marker stays up through a
+  stream without popping each puff, and a body's numbers add up in orange while the
+  puffs keep coming (`Tally.flame`, `FLAME_MERGE` 0.3 s); the dead flash a little
+  (0.3), bosses 0.25.
+- **Shorter, and a nozzle to lengthen it** (the owner, after playing: "we should
+  decrease a bit the range of the fire; we can allow upgrades of course but it
+  feels a bit too powerful right from the start"): it was 7.5 m and 0.4 a side (6
+  m wide at its end, not the 3 written first). AP Rounds are its upgrade: shown to
+  the Engineer as a Long Nozzle (hud.tide's offer, items.tide's `Nozzle`), each a
+  metre more (hands.tide's `FLAME_NOZZLE`). `Loosed.reach` carries how far it
+  reaches, and the fire's drawn as far (flames.tide's `Gout`: thrown at the speed
+  that, with the air's drag, carries it there).
+- **Offers** (items.tide's `Useless`): Ricochet Rounds and HE Rounds, what a round
+  does, aren't offered a survivor whose gun is the flamethrower.
+- **Seen** (fx.tide's `MuzzleFlash`): no flash; each puff throws eight blocks of
+  flame down the cone, 14 to 19 m/s, as far as it reaches, swelling and cooling
+  from orange to red and rising a little, two hotter yellow ones near the nozzle,
+  now and then smoke off its end, its orange light along the way. (A first try,
+  pale blocks half again as big at alpha 1.5, bloomed to white.)
+- **The model** (art/guns/flamer.glb, `art/guns/tools/make_flamer.py`, Blender, from
+  primitives in the guns' palette; guns.json's line put in by it): a steel body
+  over a red fuel tank with a brass band, a hose from its valve up into the barrel,
+  a slotted heat shield, a flared nozzle with a glowing pilot light under it, a fore
+  grip (people.tide's `ForeGrip` 0.44) and a short stock; 808 triangles.
+- **Heard** (sfx/tools/make_sfx.py, synthesized): `flamer_start`, a rush of fire
+  through air and a soft thump as it lights; `flamer_loop`, 2.1 s, a gas jet's
+  rough hiss over a low roar and crackles, looped while it's held (sound.tide's
+  `Ears.flame`, and `othersFlame` for the last other heard, where they are; they stop
+  0.15 s after the last puff and while the run's held for a pick). A kill of yours in
+  it gives the kill's knock, quieter. CREDITS.md and manifest.json got their rows
+  by hand (the tool rewrites CREDITS.md's names as `.wav`).
+- **Measured, shorter** (the bot fires within 6.5 m and goes to the night's boss
+  till 5.5 m off): the Engineer's middle run about 630 s, five of sixteen dying in
+  the first night's end, in the Mauler's slam (6.5 m: the flames now need you
+  inside it, and the bots don't roll); fights 27 to 32 s. A player rolls; if the
+  Engineer's too weak at a boss, the lever is the puff's 13.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16; the bot
+  fires within 8.5 m and goes to the night's boss till 6 m off): at 11 a puff the
+  Engineer's middle run 860 s and the night's end fights 28 to 29 s (the SMG's 972
+  and 22 to 26); at 13 (kept), 1147 and 1182 s over the two halves, fights 28 and
+  29 s, against the Gunner's 990 and the Breacher's 849: within the runs' spread
+  (150 to 1460 s a seed). The fights are longer: flames don't find a weak spot,
+  and a boss has to be stood near.
+- **Tests**: the Engineer's checks hold the flamethrower; new, held half a second
+  it burns the two in its cone (3 m ahead, 5 m ahead 1.5 m aside: 493 and 314) and
+  sets both alight, not one 10 m off nor one behind, six puffs of its tank. The
+  check that one bled out is back beside a friend a minute later allows 6 m (they're
+  set 2.4 m from where the friend stood, and the run's changed path had the friend
+  walk on to 4.2 m). Native debug `gravewake_test` and the web debug WASI one pass.
+- **Validation**: looked at in standard-host captures: the jet into the line-up
+  (Shift+F2), the three in it burning, their numbers growing; the model in Blender
+  from the side and three quarters. Not heard: the roar's loudness is my guess.
+- **Gaps**: the flamethrower's own items: nothing uses its being a flame (a wider
+  cone, a longer one); the bots don't roll, so they stand in the dead it doesn't stop.
+
+### Hits you feel, the dead harder to kill (2026-10-20)
+
+The owner: "i want you to polish the experience; VFX, SFX, balancing etc. ...
+some VFX/SFX for when you hit something, like a hitmarker thing / make enemies
+harder to kill, right now its 1 or 2 bullets, maybe 3-4 is a better spot? with
+the occasional harder hitting headshot". What was made of it and every number
+are mine, Provisional.
+
+- **Why the old marker didn't read**: it was there, small, but every hit of a
+  survivor's showed it and ticked, the drones', saw blades', Tesla bolts' and
+  the rest's too, so with a few items it was lit all the time and a round of
+  your own didn't stand out. `Wound.aimed` (and `Struck.aimed`) now says a hit
+  came from the survivor's own hand: a round through `Shoot` (the gun, the phase
+  round; `Land`'s new last argument, false for drones and turrets) and the boot,
+  stamp, leap and blink. Only those mark, number, tick and flash hard. `Struck`
+  also carries `damage`, what it took.
+- **The marker** (hud.tide's `ShowMarker`, `Overlay`): four strokes round the
+  cursor on a dark edge, popped out 1.6 times as big as the hit lands and
+  settling in 70 ms; white a hit, gold the head, red a kill (and a ring thrown
+  out from it), orange a weak spot, yellow a crit, small grey off mail. A
+  shotgun's pellets in one tick are one mark, the best of them.
+- **Numbers** (hud.tide's `Tally`, `Tallies`, `TALLIES_MOST` 48, `TALLY_LIFE`
+  0.8 s): each hit of your own hand puts what it did over the body, in bold
+  with a dark edge all round, popping in 1.9 times as big, rising and drifting
+  aside, fading over its last quarter second; in the marker's colours (white,
+  gold, orange, red for a crit, grey off mail), bigger for a head, a weak spot, a
+  crit or a kill. Pellets landing on one body in the same frame add up into one
+  number (a first try merged within 0.1 s, which ran the carbine's rounds 0.09 s
+  apart together). Drawn under the panels, held still during a pick (`Me.dt`).
+- **The dead's flash**: a hit of your own hand whitens the body 0.9 (0.35 for
+  the rest, as all were), gone in a fifth of a second.
+- **Sounds** (sfx/tools/make_sfx.py, synthesized, no recordings): `hit_tick`
+  (70 ms, two inharmonic partials over a snap of noise and a small knock),
+  `hit_kill` (the tick twice and lower, a thick knock and a short ring) and
+  `hit_head` (a struck plate's ding laid over the skull's crack, low for a weak
+  spot). Played flat (not placed) for your own hand's hits only, one of each a
+  frame (sound.tide's `Ears.ticked`, `knocked`, `dinged`, cleared by `Listen`),
+  so a shotgun blast is one. The Kenney click (`hitmarker`) is now only the mail's.
+  The tool rewrote CREDITS.md's file names as `.wav` (the ones it writes before
+  `to_ogg.sh`); that was put back and the three rows added by hand.
+- **A headshot kill jolts the camera** a little (eye.tide's `FeelStruck`, 0.18).
+- **Harder to kill** (rounds.tide's `ZOMBIE_HEALTH` 67, was 25; weapons.tide's
+  `WeaponInfo.head` 3, was 2): a carbine round is 25, so one of the ordinary
+  dead takes three to the body at the start and one to the head. Measured over a
+  run (`gravewake_balance`'s new line, the toughest ordinary one up against the
+  first survivor's might): 2.4 to 2.9 rounds at 2 and 5 minutes, 3.0 to 3.7 at 10,
+  4.5 to 6.8 at 15 (it had been 0.9 to 1.1, 1.4 and 2.1 to 2.3). The shotgun's
+  pellets keep 1.5 on the head.
+- **What came with it** (all measured against the same build's numbers):
+  - Fewer of the dead, each worth more: `SPAWN_RATE` 2.6 a danger (4) and
+    `ORB_WORTH` 0.75 (0.5). At four a second the carbine (some 2.5 kills a
+    second now) was overrun in the first minute; the levels come about when
+    they did (L17 near 395 s either way).
+  - What fights by itself and the skills twice as hard, so they don't go limp
+    (to the dead they're three quarters of what they were): a drone's 28, a
+    turret's 20, a saw blade's 44, Tesla 90, the Thunder Drum 120, a rocket 220,
+    the ember ring 10 a stack, a Mortar Flare's shell 200, the boot 260 and its
+    stamp 480, a leap 300, a blink's burst 180, C4 640, a frag 360, a firebomb
+    180, a phase round 200; burning 80 and bleeding 60 a bite besides their share
+    of the dead's health.
+  - The carbine fires every 0.09 s (0.1): with three rounds a kill the Gunner
+    had lost most.
+  - `BOSS_HEALTH` 9500 (8000): the doubled items had cut the night's end fights
+    by a fifth.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16 each, the
+  middle run; `test/balance.c` now also prints the rounds above and the night's
+  end fights, from its clock running out to dawn): before, the Gunner 1084 s,
+  the Breacher 603, the Engineer 920, fights 16 to 31 s; after, the Gunner 990,
+  the Breacher 849, the Engineer 972, fights 19 to 26 s; 13 or 14 of each 16
+  going down. The first pass (no quicker carbine, bosses at 8000): the Gunner
+  608, the Breacher 701, the Engineer 790 over seeds 1 to 8. So about as hard
+  as before, and the Breacher, which had been far behind, with the others: its
+  boot and pellets lost least. Kills a second fell by about half (14 to 17 from
+  14 to 32). The levers: `ZOMBIE_HEALTH`, `SPAWN_RATE`, `ORB_WORTH`, the head's 3.
+- **Tests**: unchanged and passing (their checks are of ratios and kills); the
+  numbers they print moved with the doubled skills (a C4 charge 1184 to the one
+  at it, a Rocket Pod 998 to one 10 m off, a phase round rank III 588 to each).
+  Native debug `gravewake_test` and the web debug WASI one pass; the web debug
+  page builds. The browser tests weren't run (the owner asked not to).
+- **Validation**: looked at in standard-host captures: the dead lined up (Shift+F2)
+  and shot, the white flash, the marker and a 25 over a body hit, a gold 75 over
+  a Bloater's head; a horde (F4) shot into, the red kill marker and its ring over
+  the crowd. Not heard: the sounds' loudness against the guns is my guess.
+
 ### No Gas Mask: the Bile Bomb (2026-10-20)
 
 The owner: "there is also an ability that makes bloaters not hurt me anymore.
@@ -2207,15 +2547,16 @@ A run of nights in a forest clearing (Phase 3, above), an item at each level:
 - **The score** is the nights kept and the time; the HUD counts each one's
   kills (there are no points).
 - **The dead** walk a flow field to the nearest standing survivor and claw.
-  Heads take double (a shotgun's pellet half again); a boss's weak spot
+  Heads take three times (a shotgun's pellet half again); a boss's weak spot
   takes its own (two to four times). Fire burns for 3 s,
   frost slows for 3 s and a second frost while slowed freezes solid (and
   Frostbite freezes outright), shock stuns for 0.6 s, a blast throws. A boot,
   a dash, a slam and a grenade's middle knock them over; one lying takes half
   as much again and is stamped on by the boot.
-- **Headshots**: a gold hit marker (red and bigger for a kill), a crack,
-  HEADSHOT over the crosshair for a kill; a crit's marker is yellow; one a
-  Warden's mail turns is grey.
+- **Headshots**: a gold hit marker (red and bigger for a kill), a crack and a
+  ding, a gold number, HEADSHOT over the crosshair and a jolt for a kill; a
+  crit's marker is yellow; one a Warden's mail turns is grey. Only hits of the
+  survivor's own hand mark (above, 2026-10-20).
 - **Down and out.** At 0 health a survivor goes down for 30 s and fights on
   with the pistol, unless a Second Wind puts them straight back up (one used
   up). Raised by a friend standing by them for 3 s. Who bleeds out is back beside

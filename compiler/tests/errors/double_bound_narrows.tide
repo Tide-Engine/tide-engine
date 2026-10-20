@@ -1,0 +1,3 @@
+// expect: the bound is double, but field 'value' is float3
+input Controls { [Min(1d)] float3 value; }
+scene Main { }

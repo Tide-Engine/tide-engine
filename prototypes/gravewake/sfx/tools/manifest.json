@@ -581,6 +581,22 @@
   ],
   "seconds": 4.0
  },
+ "flamer_loop": {
+  "bytes": 23363,
+  "file": "flamer_loop.ogg",
+  "kind": "loop",
+  "layers": false,
+  "packs": [],
+  "seconds": 2.1
+ },
+ "flamer_start": {
+  "bytes": 52226,
+  "file": "flamer_start.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.592
+ },
  "forge": {
   "bytes": 45767,
   "file": "forge.ogg",
@@ -885,6 +901,22 @@
   ],
   "seconds": 0.384
  },
+ "hit_head": {
+  "bytes": 39734,
+  "file": "hit_head.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.45
+ },
+ "hit_kill": {
+  "bytes": 20482,
+  "file": "hit_kill.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.232
+ },
  "hit_stone_1": {
   "bytes": 49794,
   "file": "hit_stone_1.wav",
@@ -906,6 +938,14 @@
    "rd_breaking"
   ],
   "seconds": 0.597
+ },
+ "hit_tick": {
+  "bytes": 14156,
+  "file": "hit_tick.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.16
  },
  "hit_wood_1": {
   "bytes": 27398,
@@ -1459,6 +1499,14 @@
   ],
   "seconds": 1.576
  },
+ "skill_ready": {
+  "bytes": 59138,
+  "file": "skill_ready.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
+  "seconds": 0.67
+ },
  "smg_fire_1": {
   "bytes": 50562,
   "file": "smg_fire_1.wav",
@@ -1769,6 +1817,14 @@
   "packs": [
    "oga_swishes"
   ],
+  "seconds": 0.426
+ },
+ "thump": {
+  "bytes": 37634,
+  "file": "thump.wav",
+  "kind": "sfx",
+  "layers": false,
+  "packs": [],
   "seconds": 0.426
  },
  "turret_fire": {

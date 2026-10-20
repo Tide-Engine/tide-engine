@@ -13,6 +13,39 @@ signatures; `buffer_for` is private. Generated list helpers read
 `tide_list_cache`'s fields as `tide_list_cached_at_mut` does. Contracts are in
 ecs.md and schedule-and-threads.md, Performance pass.
 
+## Double Position attribute (2026-10-20)
+
+The owner-approved attribute extension changes compiler acceptance and uses
+existing generated correction helpers. Double errors retain the field's type;
+no new generated-C/runtime function, storage contract or runtime implementation
+is introduced. Scope and validation: notes/language.md.
+
+## Double math and matrices (2026-10-20)
+
+The owner's completion request extends the existing temporary math maintenance
+area with tide_*_d transcendental functions and inline tide_*_d2x2/d3x3/d4x4
+matrix helpers, following float naming and operation order. No engine state,
+container or networking runtime API changes. The vendored binary64 kernels
+live in engine/src/math64 and ship as source through the existing recursive
+engine-source installation/CLI build. Float kernels remain in math.c unchanged.
+Contracts, numeric accuracy limits and validation: notes/language.md.
+
+## Double numeric values (2026-10-20)
+
+The owner-approved scalar/vector addition extends the existing temporary math,
+text/JSON and migration maintenance areas. Generated basic math/conversion/hash
+calls use inline tide_*_d/d2/d3/d4 in tide/math.h. Text calls
+`tide_str_add_double`, `tide_str_add_d2/d3/d4`, `tide_str_parse_double`,
+`tide_json_double` and `tide_json_add_double`, following their float counterparts.
+The feature is authorized; these helper shapes and narrowing/literal choices
+are first-build implementation picks, recorded provisionally in the spec.
+
+No world/container/session runtime structure or exported networking function
+changes. Input doubles reuse two ordered tide_bits_put/get calls. Layout metadata
+appends TIDE_LAYOUT_DOUBLE; generated games and migration hosts rebuild together.
+Full contracts, gaps, safety and validation: notes/language.md and
+notes/memory-safety.md.
+
 ## Shared player ceiling (2026-10-20)
 
 The owner approved the shared 65,536-player/connection ceiling. This maintains

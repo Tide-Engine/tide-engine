@@ -6,7 +6,7 @@ description: "Learn how Tide keeps ordinary float simulations bit-identical acro
 
 Given the same build and the same inputs and commands, Tide's simulation gives bit-identical results on every supported platform: Windows, Linux, macOS, Android and the web, on Intel, AMD and ARM. That's what lets desktop, phone and web players share one match.
 
-It uses ordinary 32-bit floats, not fixed point. Tide code gets this for free: there's nothing to avoid, and no special types to use. This page is about how the engine keeps it, for the curious, and for anyone writing C that touches the simulation.
+It uses ordinary IEEE 754 floats: 32-bit `float` and 64-bit `double`, rather than fixed point. Tide code gets this for free: there's nothing to avoid, and no special types to use. This page is about how the engine keeps it, for the curious, and for anyone writing C that touches the simulation.
 
 ## Floats
 
@@ -25,7 +25,7 @@ The engine compiles everything, your game included, with the flags that guarante
 
 NaN in the simulation is a bug: NaN's bit patterns aren't the same everywhere. The engine keeps it out where it can:
 
-- Inputs come from other machines, so NaN and infinite floats in them become the field's default before the game sees them (see [Input](../game/input.md)).
+- Inputs come from other machines, so NaN and infinite floats or doubles in them become the field's default before the game sees them (see [Input](../game/input.md)).
 - `Math.Clamp` always returns a value in range, `Math.Min` and `Math.Max` with one NaN return the other argument, and `Math.Normalize` gives zero for a zero vector, where dividing by its length would give NaN.
 
 ## Random numbers

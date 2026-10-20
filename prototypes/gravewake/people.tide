@@ -432,6 +432,7 @@ float ForeGrip(Weapon weapon)
     {
         case Weapon.Shotgun: return 0.24;
         case Weapon.Smg: return 0.14;
+        case Weapon.Flamer: return 0.44;
     }
     return 0.2;
 }
@@ -526,11 +527,12 @@ view DrawSurvivor(Survivor survivor, Lens lens)
     }
 }
 
-// A blow's flash on one of the dead.
+// A blow's flash on one of the dead: white through, for a moment, from a hit of a survivor's own hand.
 local event(Struck struck) FlashStruck(mut Zombie zombie)
 {
     if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Shove) return;
-    zombie.flash = struck.killed ? 0.0 : 0.35;
+    // (a flamethrower's puffs, fourteen a second, a little: the fire on it is the rest)
+    zombie.flash = struck.killed ? 0.0 : struck.blow == Blow.Flame ? Math.Max(zombie.flash, 0.3) : struck.aimed ? 0.9 : 0.35;
 }
 
 // How a gun is held: a long gun in both hands, the pistol in the right alone.

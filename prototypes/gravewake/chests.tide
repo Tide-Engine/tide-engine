@@ -113,7 +113,7 @@ event(Prying prying) Pry(mut Chest chest, Party party)
     chest.pried += prying.amount;
     if (chest.pried < 1) return;
     for (var seat = 0; seat < 4; seat++)
-        if (party.taken[seat]) party.survivors[seat].Send(Owed { picks = 1 });
+        if (party.taken[seat]) party.survivors[seat].Send(Owed { picks = 1, delay = CHEST_REWARD_WAIT });
     Send(ChestOpened { at = chest.at, seat = prying.by });
     this.Destroy();
 }

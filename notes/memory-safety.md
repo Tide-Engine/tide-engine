@@ -1,5 +1,36 @@
 # No Tide code can corrupt memory
 
+## Double transcendental and matrix values (2026-10-20)
+
+The private binary64 adapter uses memcpy-based word access, requires binary64
+without excess precision and namespaces all public/internal kernels. Large trig
+argument reduction uses the bounded upstream tables and arrays for finite
+binary64 inputs; public entry points handle nonfinite values before reduction.
+The pow scale adjustment forms negative exponent-shift bits unsigned, avoiding
+the upstream negative signed left shift. A sign comparison is made explicitly
+unsigned. Source notices and provenance are retained. Matrix narrowing reuses
+the checked scalar double-to-float conversion; packing/repair/interpolation walk
+typed columns. No new allocation or data-dependent matrix index is introduced.
+Conformance, special-value, raw-bit and generated-code coverage is recorded in
+notes/language.md.
+
+## Double values and exact decimal conversion (2026-10-20)
+
+Double-to-int/long checks NaN and exclusive upper/inclusive lower limits before
+any C integer cast. Double-to-float handles NaN and values outside binary32's
+finite conversion range explicitly, including the nearest/even overflow midpoint;
+vector narrowing calls the same scalar helpers. Input/command repair follows
+every double component and existing explicit padding/optional clearing.
+
+Exact number reading retains at most 800 digits plus a nonzero-tail flag. Its
+128-word integers cover the complete accepted binary64 rounding range; extreme
+exponents return overflow/zero before constructing powers. Printing uses 40-word
+integers and a 384-byte double output buffer for the compiler's F0..F17 formats.
+No decimal conversion calls libc at runtime. The old float paths retain their
+bits. Runtime cases cover every finite exponent of both signs, integer and float
+cast boundaries, negative zero, NaNs, largest/smallest finite values, exact
+midpoints and long nonzero tails. Full contracts and validation: language.md.
+
 ## Shared player ceiling (2026-10-20)
 
 The approved 65,536 ceiling uses uint32/varint player and fragment indices,

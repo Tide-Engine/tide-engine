@@ -139,8 +139,8 @@ float BossHealth(float danger, float crowd, BossKind kind)
     return BOSS_HEALTH * danger * crowd * MutantOf(kind).health;
 }
 
-const float BOSS_HEALTH = 8000;
-const float BOSS_PELLET = 0.5;          // Of a shotgun pellet's damage a boss takes (all eleven find a thing that big)
+const float BOSS_HEALTH = 9500;         // (8000 till what fights by itself and the skills hit twice as hard, 2026-10-20)
+const float BOSS_PELLET = 0.5;          // Of a shotgun pellet's damage a boss takes (all fourteen find a thing that big)
 
 // Which kind rises: the nights take them in turn, and two or three at a night's end are each another.
 BossKind KindForNight(int night, int k)
@@ -545,7 +545,7 @@ float BossSink(Boss boss)
 event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
 {
     if (boss.move == BossMove.Dying || wound.seat < 0) return;
-    var damage = wound.damage;
+    var damage = wound.damage * (wound.blow == Blow.Flame ? FLAME_BOSS : 1.0);
     boss.health -= damage;
     boss.hurt += wound.weak ? damage : 0;
     var killed = boss.health <= 0;
@@ -568,19 +568,21 @@ event(Wound wound) BossWound(mut Boss boss, mut Match match, Party party)
     var m = MutantOf(boss.kind);
     var turn = quaternion.AxisAngle(float3(0, 1, 0), boss.yaw);
     this.Send(Struck { at = boss.at + Math.Rotate(turn, (wound.weak ? m.weak : m.chest) * m.size), from = wound.from, head = wound.head, killed = killed,
-                       element = wound.element, seat = wound.seat, blow = wound.blow, crit = wound.crit, weak = wound.weak });
+                       element = wound.element, seat = wound.seat, blow = wound.blow, crit = wound.crit, weak = wound.weak, damage = damage,
+                       aimed = wound.aimed });
 }
 
 // A blow's flash, on this machine.
 local event(Struck struck) FlashBoss(mut Boss boss)
 {
-    boss.flash = 0.6;
+    boss.flash = struck.blow == Blow.Flame ? Math.Max(boss.flash, 0.25) : 0.6;
 }
 
 // One of the night's own felled: an item for each survivor, picked as a level's is.
 event(BossFelled felled) TakeFelled(mut Survivor survivor)
 {
     survivor.pending += 1;
+    survivor.rewardWait = Math.Max(survivor.rewardWait, BOSS_REWARD_WAIT);
 }
 
 // Thrown by a boss.

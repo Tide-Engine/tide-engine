@@ -1,16 +1,16 @@
 using Rooms;
 
 // What's held, and what's thrown and set down: every survivor's gun in their
-// hand; grenades, firebombs, mines and shells on their way; the Engineer's
-// turrets; the gun drones. The guns are art/guns, each with its grip at the
-// origin (guns.json says where its muzzle is).
+// hand; grenades, firebombs, napalm and shells on their way; the Engineer's
+// attack drones; the gun drones. The guns are art/guns, each with its grip at
+// the origin (guns.json says where its muzzle is).
 
 asset Map<string, Mesh<Corner>> gunMeshes = "art/guns/*.glb";
 asset Map<string, Mesh<Corner>> items = "art/items/*.glb";
 asset string gunsJson = "art/guns/guns.json";
 asset Mesh<Corner> potMesh = "art/weapons/fire_pot.glb";
 asset Mesh<Corner> ballMesh = "art/weapons/cannonball.glb";
-asset Mesh<Corner> tripodMesh = "art/guns/tripod.glb";
+asset Mesh<Corner> droneMesh = "art/guns/drone.glb";
 
 // What guns.json says of a gun: its muzzle, in its own space.
 struct GunData
@@ -158,7 +158,7 @@ view ReadyArmory(mut Armory armory)
 // ---- What's thrown, laid and called down ----
 
 [Stage(Layers.Scene, 3)]
-view DrawMissile(Missile missile, Lens lens, Look look, Armory armory)
+view DrawMissile(Missile missile, Lens lens, Look look)
 {
     if (!lens.made || Math.Distance(missile.at, look.eye) > 70) return;
     switch (missile.kind)
@@ -170,25 +170,11 @@ view DrawMissile(Missile missile, Lens lens, Look look, Armory armory)
         case Shot.Pot:
             lens.scene.Mesh(potMesh, float4x4.TRS(missile.at, quaternion.Euler(missile.age * 9, missile.age * 5, 0), float3(1)), Wobble, Steel, Finish { });
             return;
-        case Shot.Mine:
-        {
-            // A C4 charge: a block of it, olive, bound round with dark tape, a box of wires on it and its light blinking
-            // red, quicker once it's set (big enough to see where it went down)
-            if (!armory.made) return;
-            var turn = quaternion.AxisAngle(float3(0, 1, 0), missile.at.x * 1.3 + missile.at.z * 0.7);
-            var at = missile.at + float3(0, 0.1, 0);
-            lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at, turn, float3(0.56, 0.2, 0.38)), Wobble, Steel,
-                            Finish { tint = float3(2.6, 3.0, 1.6), light = float3(0.07, 0.085, 0.035) });
-            for (var k = -1; k <= 1; k += 2)
-                lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at + Math.Rotate(turn, float3(0.17 * k, 0.01, 0)), turn, float3(0.06, 0.22, 0.4)), Wobble, Steel,
-                                Finish { tint = float3(0.4) });
-            lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at + Math.Rotate(turn, float3(0, 0.13, 0)), turn, float3(0.18, 0.07, 0.14)), Wobble, Steel,
-                            Finish { tint = float3(0.6) });
-            var blink = Math.Frac(look.time * (missile.age >= MINE_ARMS ? 3 : 1)) < 0.35;
-            lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(at + Math.Rotate(turn, float3(0, 0.18, 0)), turn, float3(0.12)), Wobble, Steel,
-                            Finish { tint = float3(0.3), light = blink ? float3(4, 0.3, 0.15) : float3(0.35, 0.03, 0.02) });
+        case Shot.Napalm:
+            // A glob of burning fuel: a ball of it, alight (flames.tide's fire trails it)
+            lens.scene.Mesh(ballMesh, float4x4.TRS(missile.at, quaternion.Euler(missile.age * 7, missile.age * 4, 0), float3(0.24)), Wobble, Steel,
+                            Finish { tint = float3(0.9, 0.35, 0.08), light = float3(2.2, 0.8, 0.15) });
             return;
-        }
         case Shot.Shell:
             lens.scene.Mesh(ballMesh, float4x4.TRS(missile.at, quaternion.identity, float3(0.3, 0.6, 0.3)), Wobble, Steel, Finish { tint = float3(0.3, 0.3, 0.32) });
             return;
@@ -213,29 +199,42 @@ view DrawCarried(Survivor survivor, Lens lens, mut Grip grip, Armory armory)
     if (survivor.seat >= 0 && survivor.seat < 4) grip.muzzles[survivor.seat] = Point(survivor.held, V3(DataOf(armory, survivor.gun).muzzle));
 }
 
-// ---- The Engineer's turrets ----
+// ---- The Engineer's attack drones ----
 
+// Its body bobbing and tipped the way it flies (more the faster), turned to what it shoots; its four rotors turning.
 [Stage(Layers.Scene, 3)]
-view DrawTurret(Turret turret, Lens lens, Look look)
+view DrawTurret(Turret turret, Lens lens, Look look, Armory armory)
 {
-    if (!lens.made || Math.Distance(turret.at, look.eye) > 90) return;
-    var at = TurretFeet(turret);
-    lens.scene.Mesh(tripodMesh, float4x4.TRS(at, quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), float3(1)), Wobble, Steel, Finish { });
-    var aim = Math.Mul(quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), quaternion.AxisAngle(float3(1, 0, 0), -turret.pitch));
-    lens.scene.Mesh(GunMesh(Weapon.Smg), float4x4.TRS(at + float3(0, TURRET_HIGH - 0.1, 0), aim, float3(1.15)), Wobble, Steel, Finish { });
+    if (!lens.made || !armory.made || Math.Distance(turret.at, look.eye) > 90) return;
+    var place = DronePlace(turret, look.time);
+    lens.scene.Mesh(droneMesh, place, Wobble, Steel, Finish { });
+    for (var sx = -1; sx <= 1; sx += 2)
+        for (var sz = -1; sz <= 1; sz += 2)
+        {
+            var hub = Point(place, float3(sx * ROTOR_OUT, 0.08, sz * ROTOR_OUT));
+            var spin = quaternion.AxisAngle(float3(0, 1, 0), look.time * 47 * sx + sz);
+            for (var blade = 0; blade < 2; blade++)
+                lens.scene.Mesh(armory.box, armory.boxFaces, float4x4.TRS(hub, Math.Mul(spin, quaternion.AxisAngle(float3(0, 1, 0), blade * Math.PI * 0.5)),
+                                float3(0.34, 0.006, 0.03)), Wobble, Steel, Finish { tint = float3(0.25) });
+        }
 }
 
-// Where a turret's feet are seen: hopping as it scuttles after its maker.
-float3 TurretFeet(Turret turret)
+const float ROTOR_OUT = 0.34;       // How far out along each diagonal the drone's rotors turn (art/guns/tools/make_drone.py's ARM)
+
+// Where a drone is seen: bobbing, tipped toward the way it flies, turned to its aim.
+float4x4 DronePlace(Turret turret, float time)
 {
-    return turret.at + float3(0, Math.Abs(Math.Sin(turret.stride * 4.5)) * 0.14 * Math.Saturate(turret.pace / 2), 0);
+    var bob = float3(0, Math.Sin(time * 3.1 + turret.seat) * 0.07, 0);
+    var tip = Math.Min(0.35, turret.pace * 0.05);
+    var turn = Math.Mul(quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), quaternion.AxisAngle(float3(1, 0, 0), tip));
+    return float4x4.TRS(turret.at + bob, turn, float3(1.3));
 }
 
 [Stage(Layers.Shadows, 1)]
-view ShadowTurret(Turret turret, Lens lens)
+view ShadowTurret(Turret turret, Lens lens, Look look)
 {
     if (!lens.made) return;
-    lens.moon.Mesh(tripodMesh, float4x4.TRS(TurretFeet(turret), quaternion.AxisAngle(float3(0, 1, 0), turret.yaw), float3(1)));
+    lens.moon.Mesh(droneMesh, DronePlace(turret, look.time));
 }
 
 // ---- The gun drones, over their survivors' shoulders ----

@@ -1,5 +1,53 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Inside another program's frame (2026-10-20)
+
+`tide/embed.h` (`platform/src/embed.c`) runs the standard host's loop inside
+another program's frame loop with no window, GPU or audio device: phase 1 of the
+Unity front end the owner approved (`notes/unity.md`, Phase 1 interface).
+`tide_embed_create` takes a linked game's `tide_host_game` (`tide/run.h`'s
+`tide_host_game_api`), its pack, tick rate, command line and relay, and starts
+Main's match or what the command line asks, through `tide_run_begin`. Each
+`tide_embed_frame(e, seconds, input, width, height, scale)` is one
+`tide_run_frame`; the session's clock is the frames' summed lengths (NaN or
+negative add none). `tide_embed_status_of` gives a flat copy of
+`tide_session_status` (no compiler padding, size asserted, so C# lays it out
+the same on every platform), the room code (`tide_run_room`, what the frame
+told local code), a kick's message and what the game asked of the window
+(typing, cursor lock); `tide_embed_request` takes Session
+requests (Start of Main only for now: named scenes come with the schema);
+`tide_embed_background` leaves the match on Android and iOS, desktop nothing.
+One at a time: the host's statics are the process's. `tide_embed_abi()`
+returns `TIDE_EMBED_ABI` (1), which changes with anything another language lays
+out or calls, so a binding refuses an embed built by another tide.
+
+- Input is raw, as a window reports it (`tide_embed_input`: held keys as bits,
+  cursor, this frame's scroll and locked movement, buttons, one gamepad, typed
+  code points, this frame's touch events, all top-left y-down). The approved
+  draft named `tide_devices`; raw input replaced it so presses latch and
+  movement adds up in the platform's own poll, unchanged.
+  `tide_platform_embed_frame` (`platform/src/embedded.h`) makes it the poll's
+  source in the window's place, as a headless script is (`key_held`,
+  `mouse_state`, `gamepad_state`, `touchscreen`, `take_touch`, `take_char` in
+  `platform.c`), and sets the screen; sizes outside 1 to 16,384 and scales
+  outside 0.25 to 16 (NaN too) become 1. Embedded, typing and cursor lock are
+  kept for the status, the clipboard is left alone and no paste is taken.
+- `tide_run_embedded` (`tide/host.h`) keeps the frame off the GPU timers, the
+  draw and audio submission and the stats drawer; the draw list is still
+  recorded, for Tide drawing in Unity later.
+- The host's own option parsing ends a program at a bad flag, so the embed gives
+  it none: `tide_run_arguments` still reads `--host`/`--join`/`--connect`, and
+  `--seed`/`--data-dir` are parsed apart, a bad one left out with a line.
+- `tide_platform_set_relay` (`rooms.c`) picks a relay over `TIDE_RELAY` and the
+  default on desktop; a page's is its own (`Tide.relay`), so it does nothing on
+  the web.
+
+Tests: `tide_platform_embed` (`platform/tests/embed.c`, `embed.tide`, native
+only: on the web it builds, but needs a page's imports) runs Main at 30 Hz from
+made-up 60 Hz frames, one at a time, a one-frame key tap reaching one tick,
+the screen reaching `Screen.width`, requests (leave, start again, refused
+kinds), bad flags left out, and NaN or negative frames and screens.
+
 ## Window scale frame metadata (2026-10-20)
 
 The host supplies `tide_platform_screen_scale()` in the draw list's

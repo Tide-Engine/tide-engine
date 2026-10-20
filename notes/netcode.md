@@ -1,5 +1,35 @@
 # Netcode: sessions, prediction, commands
 
+## Double Position presentation errors (2026-10-20)
+
+Position-tagged double scalars/vectors now use the existing private correction
+path in their declared precision. Frame fractions/decay timing remain shared
+floats, widened for binary64 arithmetic. No session protocol, prediction,
+simulation state, packing or runtime API changes. The extended view_corrections
+E2E covers interpolation, correction/decay, cache privacy, snaps, identity and
+confirmed removal; final validation is in notes/language.md.
+
+## Double matrix columns (2026-10-20)
+
+Generated input/command codecs walk double matrix columns as double vectors,
+reusing the binary64 low-word-first representation and changed-bit deltas.
+Nonfinite components repair to declared defaults before game input. Command,
+raw/delta input, recipient state and replay E2E coverage now includes matrices;
+no transport/session protocol or runtime networking function changes.
+Validation: notes/language.md.
+
+## Double input and command fields (2026-10-20)
+
+Generated double scalar/vector payloads retain all 64 bits per component as two
+ordered 32-bit words, low first. An input delta sends a changed flag followed by
+those bits only when changed; +0/-0 and payload bits remain distinguishable.
+Readers never put two stateful bit reads in one C operand expression. Repair and
+bounds handle double leaves before input Sanitize/command dispatch. Existing
+schema identity distinguishes the new types; the session protocol is unchanged.
+The double E2E covers extreme bit patterns, whole/delta round trips, nonfinite
+repair and actual command submission/dispatch with truncation rejection.
+Full contracts and validation: notes/language.md.
+
 ## Shared player/connection ceiling (2026-10-20)
 
 The owner approved 65,536 as the shared supported ceiling. TIDE_PLAYERS_MOST

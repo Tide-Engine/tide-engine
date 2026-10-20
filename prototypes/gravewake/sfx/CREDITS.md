@@ -115,6 +115,8 @@ No attribution is required for any of it; it is given here anyway.
 | explode_2.ogg | 2.10 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 25 CC0 bang/firework SFX by rubberduck (CC0 1.0, https://opengameart.org/content/25-cc0-bang-firework-sfx), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) + synthesized layers |
 | fire_burst.ogg | 1.57 | Fireball 1 (JM FX Fireball 01) by Julien Matthey (posted by diligentcircle) (CC0 1.0, https://opengameart.org/content/fireball-1) + synthesized layers |
 | fire_loop.ogg | 4.00 | Fire crackling by AntumDeluge (CC0 1.0, https://opengameart.org/content/fire-crackling) + synthesized layers |
+| flamer_loop.ogg | 2.10 | synthesized |
+| flamer_start.ogg | 0.59 | synthesized |
 | forge.ogg | 4.80 | Hammer on anvil by TheMightyGlider (CC0 1.0, https://opengameart.org/content/hammer-on-anvil), Blacksmith's hammer by vishwajai (CC0 1.0, https://opengameart.org/content/blacksmiths-hammer) + synthesized layers |
 | forge_ready.ogg | 2.53 | synthesized |
 | freeze.ogg | 1.91 | Freeze spell by artisticdude (CC0 1.0, https://opengameart.org/content/freeze-spell-0) + synthesized layers |
@@ -143,8 +145,11 @@ No attribution is required for any of it; it is given here anyway.
 | hit_blunt_2.ogg | 0.33 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Deep Bone Crack/Break SFX by Zane Little Music (CC0 1.0, https://opengameart.org/content/deep-bone-crackbreak-sfx), 8 Wet Squish, Slurp Impacts by Independent.nu (posted by qubodup) (CC0 1.0, https://opengameart.org/content/8-wet-squish-slurp-impacts) + synthesized layers |
 | hit_blunt_3.ogg | 0.39 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Deep Bone Crack/Break SFX by Zane Little Music (CC0 1.0, https://opengameart.org/content/deep-bone-crackbreak-sfx), 8 Wet Squish, Slurp Impacts by Independent.nu (posted by qubodup) (CC0 1.0, https://opengameart.org/content/8-wet-squish-slurp-impacts) + synthesized layers |
 | hit_blunt_4.ogg | 0.38 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), Deep Bone Crack/Break SFX by Zane Little Music (CC0 1.0, https://opengameart.org/content/deep-bone-crackbreak-sfx), 8 Wet Squish, Slurp Impacts by Independent.nu (posted by qubodup) (CC0 1.0, https://opengameart.org/content/8-wet-squish-slurp-impacts) + synthesized layers |
+| hit_head.ogg | 0.45 | synthesized |
+| hit_kill.ogg | 0.23 | synthesized |
 | hit_stone_1.ogg | 0.56 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) |
 | hit_stone_2.ogg | 0.60 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds), 75 CC0 breaking/falling/hit sfx by rubberduck (CC0 1.0, https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx) |
+| hit_tick.ogg | 0.16 | synthesized |
 | hit_wood_1.ogg | 0.31 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) |
 | hit_wood_2.ogg | 0.31 | Impact Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/impact-sounds) |
 | hitmarker.ogg | 0.01 | Interface Sounds by Kenney (kenney.nl) (CC0 1.0, https://kenney.nl/assets/interface-sounds) |
@@ -202,6 +207,7 @@ No attribution is required for any of it; it is given here anyway.
 | shotgun_fire_1.ogg | 1.58 | Cannon Fire by Thimras (CC0 1.0, https://opengameart.org/content/cannon-fire), The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |
 | shotgun_fire_2.ogg | 1.22 | Cannon Fire by Thimras (CC0 1.0, https://opengameart.org/content/cannon-fire), The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |
 | shotgun_fire_3.ogg | 1.58 | Cannon Fire by Thimras (CC0 1.0, https://opengameart.org/content/cannon-fire), The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) + synthesized layers |
+| skill_ready.ogg | 0.67 | synthesized |
 | smg_fire_1.ogg | 0.57 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
 | smg_fire_2.ogg | 0.57 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
 | smg_fire_3.ogg | 0.59 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |
@@ -232,4 +238,5 @@ No attribution is required for any of it; it is given here anyway.
 | swing_light_2.ogg | 0.46 | Medieval Sound Effects: Weapon Textures (part 1 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | swing_light_3.ogg | 0.45 | Medieval Sound Effects: Weapon Textures (part 2 of 2) by Still North Media (posted by medicinestorm) (CC0 1.0, https://opengameart.org/content/medieval-sound-effects-weapon-textures) + synthesized layers |
 | throw.ogg | 0.43 | Swishes Sound Pack by artisticdude (CC0 1.0, https://opengameart.org/content/swishes-sound-pack) + synthesized layers |
+| thump.ogg | 0.43 | synthesized |
 | turret_fire.ogg | 0.31 | The Free Firearm Sound Library by The Free Firearm Sound Library project (posted by EFlynn) (CC0 1.0, https://opengameart.org/content/the-free-firearm-sound-library) |

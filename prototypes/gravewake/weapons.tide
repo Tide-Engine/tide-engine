@@ -1,8 +1,9 @@
-// The guns: each survivor's own, and the pistol a downed one fights on with.
+// The guns: each survivor's own, and the pistol a downed one fights on with. (The SMG was the Engineer's till the
+// flamethrower, 2026-10-20; the turret and the drones still carry one.)
 // A gun's numbers are one switch, Info(), read by the match and by what's
 // drawn and heard. Every shot is a ray (hands.tide's Shoot): no bullet flies.
 
-enum Weapon { None, Rifle, Shotgun, Smg, Pistol }
+enum Weapon { None, Rifle, Shotgun, Smg, Pistol, Flamer }
 
 // What a hit does besides the damage: fire burns, frost slows (and again freezes), shock stuns, a blast throws.
 enum Element { None, Fire, Frost, Shock, Bleed, Blast }
@@ -12,7 +13,8 @@ struct WeaponInfo
     string name;
     string model;           // Its file in art/guns
     float damage;           // A hit's, before a head's, a crit's and the survivor's might
-    float head = 2;         // How much more a hit on the head does
+    float head = 3;         // How much more a hit on the head does: one of the dead felled by one at the start (2 till they
+                            // took three rounds to the body, rounds.tide's ZombieHealth)
     float rate;             // Seconds between shots
     int mag;                // Rounds loaded at once (there are always more)
     float reload;           // Seconds to load a magazine, or one shell
@@ -27,6 +29,8 @@ struct WeaponInfo
     float proc = 1;         // How likely a round's items are to go off (a pellet's less)
     bool bottomless;        // Never loaded: it fires on as long as the trigger's held (the owner, of the shotgun: "the extra
                             // reloading just feels bad")
+    float cone;             // A flamethrower's: no rounds, but a cone of flame `range` long and this many metres either
+                            // side of the aim for each metre out (hands.tide's Scorch)
 }
 
 WeaponInfo Info(Weapon weapon)
@@ -34,7 +38,7 @@ WeaponInfo Info(Weapon weapon)
     switch (weapon)
     {
         case Weapon.Rifle:
-            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.1, mag = 30, reload = 1.5, spread = 0.008 };
+            return WeaponInfo { name = "Carbine", model = "rifle", damage = 25, rate = 0.09, mag = 30, reload = 1.5, spread = 0.008 };
         case Weapon.Shotgun:
             // (spread 0.065 and eleven pellets of 24 till the owner, 2026-10-20: "i think the shotgun shots should spread more":
             // wider, it was more a spray and less a slug, so more pellets)
@@ -45,6 +49,16 @@ WeaponInfo Info(Weapon weapon)
             return WeaponInfo { name = "SMG", model = "smg", damage = 15, rate = 0.066, mag = 50, reload = 1.3, spread = 0.028, range = 45, proc = 1.5 };
         case Weapon.Pistol:
             return WeaponInfo { name = "Sidearm", model = "pistol", damage = 26, rate = 0.22, mag = 12, reload = 1.1, spread = 0.01 };
+        case Weapon.Flamer:
+            // The Engineer's, in the SMG's place (the owner, 2026-10-20: "its too similar to the rifle. maybe a flamethrower
+            // ... so rifle is long range, shotgun is close/long mix and the flames is mostly close range"): a puff every
+            // 0.07 s into everything in a cone 4.8 m long, now and then setting it alight; its tank ten seconds of it. (7.5
+            // m and 0.4 a side till the owner: "we should decrease a bit the range of the fire; we can allow upgrades of
+            // course but it feels a bit too powerful right from the start": AP Rounds lengthen it, items.tide's Nozzle;
+            // then 5.5 m and 13 a puff, a puff in three setting one alight, till "i still think the flamethrower kills
+            // too fast and maybe still a tad too far")
+            return WeaponInfo { name = "Flamethrower", model = "flamer", damage = 7, head = 1, rate = 0.07, mag = 140, reload = 1.8, range = 4.8,
+                                cone = 0.3, proc = 0.12 };
     }
     return WeaponInfo { name = "", model = "pistol", rate = 1, mag = 1, reload = 1 };
 }

@@ -1,13 +1,14 @@
 // What's thrown, laid and called down (rounds are rays, hands.tide's Shoot):
-// frag grenades, which burst on the dead or after a moment; firebombs, which
-// burst into flame where they land; mines, which wait for the dead to come
-// near; the Mortar Flare's shells; and a Spitter's bile, the one that's the
+// frag grenades, which burst on the dead or after a moment (and the Thumper's,
+// where they land); firebombs, which burst into flame where they land; napalm,
+// which leaves the ground burning (hazards.tide's Blaze); the Mortar Flare's
+// shells; and a Spitter's bile, the one that's the
 // dead's, which flies at the living. Each tick one moves, drops, and meets
 // the dead (or the living) before the walls.
 
 // What a missile is. A Keg, a Quake, Bile, a Pop and a Drum are none: a Powder Keg's burst, a boss's slam, a Bloater's
 // burst, an HE round's and a Thunder Drum's wave, for what's seen and heard. A Rocket is a Rocket Pod's.
-enum Shot { Grenade, Pot, Mine, Shell, Keg, Quake, Bile, Spit, Pop, Rocket, Drum }
+enum Shot { Grenade, Pot, Napalm, Shell, Keg, Quake, Bile, Spit, Pop, Rocket, Drum }
 
 component Missile
 {
@@ -22,7 +23,7 @@ component Missile
     float life;                  // Seconds left
     float age;
     bool echo;                  // Set off by an item: what it kills sets off nothing more
-    int fuse;                   // A C4 charge: how many times its survivor had blown theirs when it was set down
+    int rank = 1;               // A Thumper's grenade's or a napalm glob's skill's rank (how wide and long its fire burns)
 }
 
 // A burst: fire, a grenade's, a mine's, a shell's.
@@ -42,11 +43,6 @@ event Thud
 }
 
 const float HEAD_RADIUS = 0.26;
-const float MINE_ARMS = 0.6;         // Seconds after a C4 charge is set down that its light blinks
-const float C4_REACH = 5;            // A C4 charge's burst, so wide...
-const float C4_HURT = 320;           // ...so hard at its heart...
-const float C4_LIFE = 90;            // ...and, left so long, it goes off by itself
-const float C4_SET = 0.4;            // Seconds after charges are set down before they can be blown
 
 // Where a segment first comes within `radius` of a point, as a fraction of it (2 for never).
 float SphereHit(float3 from, float3 to, float3 middle, float radius)
@@ -119,21 +115,6 @@ system Fly(mut Missile missile, Ashwick ashwick, Herd herd, Match match, Time ti
         missile.at = to;
         return;
     }
-    if (missile.kind == Shot.Mine)
-    {
-        // A C4 charge: blown when the survivor who set it down blows theirs (the owner, 2026-10-20: "i wonder if it
-        // should be remote C4 or something, you place it then you choose to explode it": it had burst on the first of the
-        // dead to come near), or, left too long, by itself
-        mut var blown = missile.life <= 0;
-        foreach (var row in survivors)
-            if (row.survivor.seat == missile.seat && row.survivor.detonations > missile.fuse) blown = true;
-        if (blown)
-        {
-            Burst(missile, missile.at + float3(0, 0.3, 0), Near(herd, missile.at, missile.splash + 1));
-            this.Destroy();
-        }
-        return;
-    }
     if (missile.life <= 0)
     {
         // A grenade's fuse run out where it lies, a rocket at its mark; anything else gone
@@ -197,5 +178,22 @@ void Burst(Missile missile, float3 at, List<Body> bodies)
         z.entity.Send(Wound { damage = missile.damage * (0.4 + 0.6 * share), seat = missile.seat, element = missile.element, from = at, knock = 7 * share,
                               down = share > 0.5 && missile.element == Element.Blast, blow = Blow.Burst, echo = missile.echo });
     }
+    // Napalm: the ground where it splashed burning a while (wider and longer a rank), the dead in it set alight
+    if (missile.kind == Shot.Napalm)
+        Spawn(Blaze { at = On(at.x, at.z), reach = NapalmReach(missile.rank), seconds = NapalmSeconds(missile.rank), seat = missile.seat,
+                      hurt = missile.damage * NAPALM_BITE });
     Send(Blast { at = at, reach = missile.splash, element = missile.element, kind = missile.kind });
 }
+
+// How wide a napalm glob's fire burns on the ground, and how long, at its skill's rank.
+float NapalmReach(int rank)
+{
+    return 2.0 * (rank >= 2 ? 1.25 : 1.0) * (rank >= 3 ? 1.1 : 1.0);
+}
+
+float NapalmSeconds(int rank)
+{
+    return 3 * (rank >= 2 ? 1.5 : 1.0) * (rank >= 3 ? 1.2 : 1.0);
+}
+
+const float NAPALM_BITE = 0.18;     // A napalm fire's bite, every BLAZE_BITE, against its glob's splash

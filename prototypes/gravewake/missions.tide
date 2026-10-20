@@ -150,7 +150,7 @@ void EndMission(mut Match match, Party party, bool done)
 {
     if (done)
         for (var seat = 0; seat < 4; seat++)
-            if (party.taken[seat]) party.survivors[seat].Send(Owed { boons = 1 });
+            if (party.taken[seat]) party.survivors[seat].Send(Owed { boons = 1, delay = MISSION_REWARD_WAIT });
     Send(MissionEnded { kind = match.mission, at = match.missionAt, done = done });
     match.mission = MissionKind.None;
     match.wisps.Clear();

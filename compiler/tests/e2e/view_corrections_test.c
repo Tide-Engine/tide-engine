@@ -9,6 +9,7 @@ static tide_local local, other_local;
 static tide_draw_list draw;
 static tide_gui gui;
 static const tide_entity BODY = {1, 1};
+static const tide_entity BODY64 = {2, 1};
 
 static bool near(float a, float b) { return tide_abs_f(a - b) < 0.00002f; }
 static bool same_rotation(tide_quaternion a, tide_quaternion b)
@@ -40,6 +41,19 @@ static void scalar(tide_world *w, float value)
     b.state.immediate = b.state.pose;
     tide_set_Body(w, BODY, b);
     w->Camera.center = tide_f3(value, value + 1, value + 2);
+}
+
+static void scalar64(tide_world *w, double value)
+{
+    Body64 b = tide_get_Body64(w, BODY64);
+    b.state.pose.scalar = value;
+    b.state.pose.planar = tide_d2(value, value + .125);
+    b.state.pose.spatial = tide_d3(value, value + .125, value + .25);
+    b.state.pose.wide = tide_d4(value, value + .125, value + .25, value + .375);
+    b.state.pose.ordinary = value;
+    b.state.immediate = b.state.pose;
+    tide_set_Body64(w, BODY64, b);
+    w->Camera64.center = b.state.pose.spatial;
 }
 
 static void correct_on(tide_local *l, float alpha)
@@ -229,5 +243,104 @@ TIDE_TEST(corrections_private_cache_never_changes_world_or_local_packed_bytes)
     const tide_view_correction reset = {.reset = true};
     tide_local_correct(&local, &reset);
     TIDE_CHECK(local.tide_corrections_Body.rows.count == 0 && !local.tide_correction_Camera.valid);
+    free(a); free(b);
+}
+
+TIDE_TEST(corrections_double_positions_preserve_large_world_offsets_and_responsive_motion)
+{
+    const double origin = 1000000000.0;
+    start();
+    scalar64(&previous, origin + 1); scalar64(&before, origin + 1.25);
+    scalar64(&after_previous, origin + .5); scalar64(&after, origin + .75);
+    const uint64_t hash = tide_world_hash(&after);
+    correct_on(&local, .5f);
+    frame_on(&local, &after, &after_previous, &verified, .5f);
+    TIDE_CHECK(local.Observed64.first.pose.scalar == origin + 1.125);
+    TIDE_CHECK(local.Observed64.first.pose.planar.y == origin + 1.25);
+    TIDE_CHECK(local.Observed64.first.pose.spatial.z == origin + 1.375);
+    TIDE_CHECK(local.Observed64.first.pose.wide.w == origin + 1.5);
+    TIDE_CHECK(local.Observed64.center.x == origin + 1.125 && local.Observed64.center.z == origin + 1.375);
+    TIDE_CHECK(local.Observed64.first.pose.ordinary == origin + .625);
+    TIDE_CHECK(local.Observed64.first.immediate.scalar == origin + .75);
+    TIDE_CHECK(local.Observed64.second.pose.scalar == local.Observed64.first.pose.scalar);
+    TIDE_CHECK(tide_world_hash(&after) == hash && tide_get_Body64(&after, BODY64).state.pose.scalar == origin + .75);
+
+    scalar64(&after, origin + 1);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(local.Observed64.first.pose.scalar == origin + 1.5);
+    tide_world_copy(&before, &after);
+    scalar64(&after, origin + .875);
+    correct_on(&local, 1);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(local.Observed64.first.pose.scalar == origin + 1.5);
+    tide_local_frame_time(&local, .075f);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(local.Observed64.first.pose.scalar == origin + 1.1875);
+    TIDE_CHECK(local.Observed64.first.pose.wide.w == origin + 1.5625);
+    TIDE_CHECK(local.Observed64.center.x == origin + 1.1875);
+    TIDE_CHECK(local.Observed64.second.pose.scalar == local.Observed64.first.pose.scalar);
+}
+
+TIDE_TEST(corrections_double_error_and_zero_error_interpolation_keep_binary64_precision)
+{
+    start(); scalar64(&before, 1); scalar64(&after, .9);
+    correct_on(&local, 1);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(local.Observed64.first.pose.scalar == 1 && local.Observed64.center.x == 1);
+    // Storing the ~0.1 correction in float would fail the exact checks above.
+    tide_local_frame_time(&local, .075f);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(tide_abs_d(local.Observed64.first.pose.scalar - .95) < 1e-8);
+
+    start(); scalar64(&previous, 1000000000.25); scalar64(&before, 1000000000.75);
+    tide_world_copy(&after_previous, &previous); tide_world_copy(&after, &before);
+    correct_on(&local, .333f);
+    frame_on(&local, &after, &after_previous, &after, .333f);
+    const double expected = 1000000000.25 + (double).333f * .5;
+    TIDE_CHECK(local.Observed64.first.pose.scalar == expected && local.Observed64.center.x == expected);
+    TIDE_CHECK(local.Observed64.first.pose.ordinary == expected);
+    TIDE_CHECK(local.Observed64.first.immediate.scalar == 1000000000.75);
+    TIDE_CHECK(local.tide_corrections_Body64.rows.count == 0 && !local.tide_correction_Camera64.valid);
+}
+
+TIDE_TEST(corrections_double_positions_clear_on_snaps_identity_changes_and_confirmed_removal)
+{
+    start(); scalar64(&before, 1000000000.5); scalar64(&after, 1000000000.25); correct_on(&local, 1);
+    tide_entity_snap(&after.entities, BODY64);
+    after.Rules.snapCamera = true; tide_world_tick(&after);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(local.Observed64.first.pose.scalar == 1000000000.25 && local.Observed64.center.x == 1000000000.25);
+    TIDE_CHECK(local.tide_corrections_Body64.rows.count == 0 && !local.tide_correction_Camera64.valid);
+
+    start(); scalar64(&before, 1); scalar64(&after, .9); correct_on(&local, 1);
+    tide_entity_set_born(&after.entities, BODY64, tide_entity_born(&after.entities, BODY64) + 1u);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(local.Observed64.first.pose.scalar == .9 && local.tide_corrections_Body64.rows.count == 0);
+
+    start(); scalar64(&before, 1); scalar64(&after, .9); correct_on(&local, 1);
+    tide_world_copy(&verified, &after);
+    after.Rules.remove = true; tide_world_tick(&after);
+    frame_on(&local, &after, NULL, &verified, 1);
+    TIDE_CHECK(local.tide_corrections_Body64.rows.count == 1);
+    frame_on(&local, &after, NULL, &after, 1);
+    TIDE_CHECK(local.tide_corrections_Body64.rows.count == 0);
+}
+
+TIDE_TEST(corrections_double_errors_remain_private_and_reset_on_replacement)
+{
+    start(); scalar64(&before, 1000000000.5); scalar64(&after, 1000000000.25);
+    const uint64_t hash = tide_world_hash(&after);
+    const uint32_t size = tide_local_pack(&local, NULL, 0);
+    uint8_t *a = malloc(size), *b = malloc(size);
+    TIDE_REQUIRE(a && b && tide_local_pack(&local, a, size) == size);
+    correct_on(&local, 1);
+    TIDE_REQUIRE(local.tide_corrections_Body64.rows.count == 1 && local.tide_correction_Camera64.valid);
+    TIDE_REQUIRE(tide_local_pack(&local, b, size) == size);
+    TIDE_CHECK(memcmp(a, b, size) == 0 && tide_world_hash(&after) == hash);
+    TIDE_REQUIRE(tide_local_unpack(&other_local, b, size));
+    TIDE_CHECK(other_local.tide_corrections_Body64.rows.count == 0 && !other_local.tide_correction_Camera64.valid);
+    const tide_view_correction reset = {.reset = true};
+    tide_local_correct(&local, &reset);
+    TIDE_CHECK(local.tide_corrections_Body64.rows.count == 0 && !local.tide_correction_Camera64.valid);
     free(a); free(b);
 }

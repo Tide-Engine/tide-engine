@@ -13,7 +13,8 @@
 // the same rule. Formulas follow Unity.Mathematics.
 //
 // Names are tide_<function>_<type>, where <type> is one of
-// f, f2, f3, f4 (float vectors), i, i2, i3, i4 (int vectors), q (quaternion)
+// f, f2, f3, f4 (float vectors), d, d2, d3, d4 (double vectors),
+// i, i2, i3, i4 (int vectors), q (quaternion)
 // and f2x2, f3x3, f4x4 (column-major float matrices).
 
 // Never fuse a*b + c, even in files built with other flags.
@@ -26,6 +27,10 @@ typedef struct tide_float2 { float x, y; } tide_float2;
 typedef struct tide_float3 { float x, y, z; } tide_float3;
 typedef struct tide_float4 { float x, y, z, w; } tide_float4;
 
+typedef struct tide_double2 { double x, y; } tide_double2;
+typedef struct tide_double3 { double x, y, z; } tide_double3;
+typedef struct tide_double4 { double x, y, z, w; } tide_double4;
+
 typedef struct tide_int2 { int32_t x, y; } tide_int2;
 typedef struct tide_int3 { int32_t x, y, z; } tide_int3;
 typedef struct tide_int4 { int32_t x, y, z, w; } tide_int4;
@@ -34,8 +39,14 @@ typedef struct tide_int4 { int32_t x, y, z, w; } tide_int4;
 typedef struct tide_quaternion { tide_float4 value; } tide_quaternion;
 
 // Column-major: c0 is the first column.
+typedef struct tide_double2x2 { tide_double2 c0, c1; } tide_double2x2;
+
 typedef struct tide_float2x2 { tide_float2 c0, c1; } tide_float2x2;
+typedef struct tide_double3x3 { tide_double3 c0, c1, c2; } tide_double3x3;
+
 typedef struct tide_float3x3 { tide_float3 c0, c1, c2; } tide_float3x3;
+typedef struct tide_double4x4 { tide_double4 c0, c1, c2, c3; } tide_double4x4;
+
 typedef struct tide_float4x4 { tide_float4 c0, c1, c2, c3; } tide_float4x4;
 
 // Constants. Decimal literals are rounded to float by the compiler.
@@ -158,6 +169,120 @@ float tide_log10_f(float x);
 float tide_pow_f(float x, float y);
 
 // ---------------------------------------------------------------------------
+// Scalars: double. The same operation order, with IEEE binary64 precision.
+
+#define TIDE_DEG2RAD_D 0.01745329251994329576923690768489
+#define TIDE_RAD2DEG_D 57.2957795130823208767981548141052
+#define TIDE_DBL_MIN_NORMAL_D 2.22507385850720138309e-308
+
+static inline uint64_t tide_d_bits(const double x)
+{
+    uint64_t u;
+    memcpy(&u, &x, sizeof u);
+    return u;
+}
+
+static inline double tide_d_from_bits(const uint64_t u)
+{
+    double x;
+    memcpy(&x, &u, sizeof x);
+    return x;
+}
+
+static inline double tide_add_d(const double a, const double b) { return a + b; }
+static inline double tide_sub_d(const double a, const double b) { return a - b; }
+static inline double tide_mul_d(const double a, const double b) { return a * b; }
+static inline double tide_div_d(const double a, const double b) { return a / b; }
+static inline double tide_neg_d(const double x) { return -x; }
+
+static inline double tide_abs_d(const double x) { return tide_d_from_bits(tide_d_bits(x) & UINT64_C(0x7FFFFFFFFFFFFFFF)); }
+
+static inline double tide_copysign_d(const double magnitude, const double sign)
+{
+    return tide_d_from_bits((tide_d_bits(magnitude) & UINT64_C(0x7FFFFFFFFFFFFFFF)) | (tide_d_bits(sign) & UINT64_C(0x8000000000000000)));
+}
+
+// 1, -1 or 0 (also 0 for NaN).
+static inline double tide_sign_d(const double x) { return (x > 0.0 ? 1.0 : 0.0) - (x < 0.0 ? 1.0 : 0.0); }
+
+// Every double but NaN and the infinities. Reads the bits, so no compiler
+// setting can change the answer.
+static inline bool tide_is_finite_d(const double x) { return (tide_d_bits(x) & UINT64_C(0x7FF0000000000000)) != UINT64_C(0x7FF0000000000000); }
+
+// With one NaN argument, they return the other one: a bad value, maybe from
+// another player's input, shouldn't spread (b != b is true only for NaN).
+static inline double tide_min_d(const double a, const double b) { return a < b || b != b ? a : b; }
+static inline double tide_max_d(const double a, const double b) { return a > b || b != b ? a : b; }
+// NaN gives lo, so a clamped value is always in range (x == x is false only for NaN).
+static inline double tide_clamp_d(const double x, const double lo, const double hi)
+{
+    return x == x ? tide_max_d(lo, tide_min_d(hi, x)) : lo;
+}
+static inline double tide_saturate_d(const double x) { return tide_clamp_d(x, 0.0, 1.0); } // NaN gives 0
+
+// Doubles at or above 2^52 in magnitude are already integers (or inf/NaN).
+static inline double tide_trunc_d(const double x)
+{
+    if (!(tide_abs_d(x) < 4503599627370496.0)) return x;
+    return tide_copysign_d((double)(int64_t)x, x);
+}
+
+static inline double tide_floor_d(const double x)
+{
+    const double t = tide_trunc_d(x);
+    return t > x ? t - 1.0 : t;
+}
+
+static inline double tide_ceil_d(const double x)
+{
+    const double t = tide_trunc_d(x);
+    return t < x ? t + 1.0 : t;
+}
+
+// Nearest integer, ties to even: adding and removing 2^52 rounds in the FPU.
+static inline double tide_round_d(const double x)
+{
+    const double a = tide_abs_d(x);
+    if (!(a < 4503599627370496.0)) return x;
+    return tide_copysign_d((a + 4503599627370496.0) - 4503599627370496.0, x);
+}
+
+static inline double tide_frac_d(const double x) { return x - tide_floor_d(x); }
+
+// sqrt is an IEEE basic operation: correctly rounded everywhere.
+static inline double tide_sqrt_d(const double x) { return __builtin_sqrt(x); }
+
+// Exact 1/sqrt, not the approximate rsqrt instruction.
+static inline double tide_rsqrt_d(const double x) { return 1.0 / tide_sqrt_d(x); }
+
+static inline double tide_lerp_d(const double a, const double b, const double t) { return a + t * (b - a); }
+static inline double tide_unlerp_d(const double a, const double b, const double x) { return (x - a) / (b - a); }
+static inline double tide_step_d(const double edge, const double x) { return x >= edge ? 1.0 : 0.0; }
+
+static inline double tide_smoothstep_d(const double a, const double b, const double x)
+{
+    const double t = tide_saturate_d((x - a) / (b - a));
+    return t * t * (3.0 - (2.0 * t));
+}
+
+static inline double tide_radians_d(const double degrees) { return degrees * TIDE_DEG2RAD_D; }
+static inline double tide_degrees_d(const double radians) { return radians * TIDE_RAD2DEG_D; }
+
+// ---------------------------------------------------------------------------
+double tide_sin_d(double x);
+double tide_cos_d(double x);
+double tide_tan_d(double x);
+double tide_asin_d(double x);
+double tide_acos_d(double x);
+double tide_atan_d(double x);
+double tide_atan2_d(double x, double y);
+double tide_exp_d(double x);
+double tide_exp2_d(double x);
+double tide_log_d(double x);
+double tide_log2_d(double x);
+double tide_log10_d(double x);
+double tide_pow_d(double x, double y);
+
 // Scalars: int. Arithmetic wraps on overflow; division and modulo by zero give
 // 0; shift counts use their low 5 bits and >> keeps the sign (as in C#).
 
@@ -226,6 +351,36 @@ static inline int32_t tide_i_from_l(const int64_t x) { return (int32_t)(uint32_t
 // ---------------------------------------------------------------------------
 // Vectors: construction and component-wise operations
 
+static inline double tide_d_from_i(const int32_t x) { return (double)x; }
+static inline double tide_d_from_l(const int64_t x) { return (double)x; }
+static inline double tide_d_from_f(const float x) { return (double)x; }
+// Narrowing rounds to binary32, overflowing to a signed infinity.
+static inline float tide_f_from_d(const double x)
+{
+    if (x != x) return tide_f_from_bits(0x7FC00000u);
+    if (x >= 0x1.ffffffp+127) return tide_f_from_bits(0x7F800000u);
+    if (x <= -0x1.ffffffp+127) return tide_f_from_bits(0xFF800000u);
+    if (x > 0x1.fffffep+127) return 0x1.fffffep+127f;
+    if (x < -0x1.fffffep+127) return -0x1.fffffep+127f;
+    return (float)x;
+}
+static inline int32_t tide_i_from_d(const double x)
+{
+    if (x != x) return 0;
+    if (x >= 2147483648.0) return INT32_MAX;
+    if (x <= -2147483648.0) return INT32_MIN;
+    return (int32_t)x;
+}
+static inline int64_t tide_l_from_d(const double x)
+{
+    if (x != x) return 0;
+    if (x >= 9223372036854775808.0) return INT64_MAX;
+    if (x <= -9223372036854775808.0) return INT64_MIN;
+    return (int64_t)x;
+}
+
+
+
 static inline tide_float2 tide_f2(const float x, const float y) { return (tide_float2){x, y}; }
 static inline tide_float3 tide_f3(const float x, const float y, const float z) { return (tide_float3){x, y, z}; }
 static inline tide_float4 tide_f4(const float x, const float y, const float z, const float w) { return (tide_float4){x, y, z, w}; }
@@ -239,6 +394,13 @@ static inline tide_float4 tide_f4_splat(const float s) { return (tide_float4){s,
 static inline tide_int2 tide_i2_splat(const int32_t s) { return (tide_int2){s, s}; }
 static inline tide_int3 tide_i3_splat(const int32_t s) { return (tide_int3){s, s, s}; }
 static inline tide_int4 tide_i4_splat(const int32_t s) { return (tide_int4){s, s, s, s}; }
+
+static inline tide_double2 tide_d2(const double x, const double y) { return (tide_double2){x, y}; }
+static inline tide_double2 tide_d2_splat(const double x) { return (tide_double2){x, x}; }
+static inline tide_double3 tide_d3(const double x, const double y, const double z) { return (tide_double3){x, y, z}; }
+static inline tide_double3 tide_d3_splat(const double x) { return (tide_double3){x, x, x}; }
+static inline tide_double4 tide_d4(const double x, const double y, const double z, const double w) { return (tide_double4){x, y, z, w}; }
+static inline tide_double4 tide_d4_splat(const double x) { return (tide_double4){x, x, x, x}; }
 
 // Component-wise versions of a scalar function tide_<name>_f / tide_<name>_i.
 #define TIDE_MAP1(V, S, name, f)                                                                  \
@@ -322,6 +484,46 @@ TIDE_MAP1(float, f, log2, f)
 TIDE_MAP1(float, f, log10, f)
 TIDE_MAP2(float, f, pow, f)
 
+// double vectors
+TIDE_MAP2(double, d, add, d)
+TIDE_MAP2(double, d, sub, d)
+TIDE_MAP2(double, d, mul, d)
+TIDE_MAP2(double, d, div, d)
+TIDE_MAP1(double, d, neg, d)
+TIDE_MAP1(double, d, abs, d)
+TIDE_MAP1(double, d, sign, d)
+TIDE_MAP2(double, d, min, d)
+TIDE_MAP2(double, d, max, d)
+TIDE_MAP3(double, d, clamp, d)
+TIDE_MAP1(double, d, saturate, d)
+TIDE_MAP1(double, d, trunc, d)
+TIDE_MAP1(double, d, floor, d)
+TIDE_MAP1(double, d, ceil, d)
+TIDE_MAP1(double, d, round, d)
+TIDE_MAP1(double, d, frac, d)
+TIDE_MAP1(double, d, sqrt, d)
+TIDE_MAP1(double, d, rsqrt, d)
+TIDE_MAP3(double, d, lerp, d)
+TIDE_MAP3(double, d, unlerp, d)
+TIDE_MAP2(double, d, step, d)
+TIDE_MAP3(double, d, smoothstep, d)
+TIDE_MAP1(double, d, radians, d)
+TIDE_MAP1(double, d, degrees, d)
+
+TIDE_MAP1(double, d, sin, d)
+TIDE_MAP1(double, d, cos, d)
+TIDE_MAP1(double, d, tan, d)
+TIDE_MAP1(double, d, asin, d)
+TIDE_MAP1(double, d, acos, d)
+TIDE_MAP1(double, d, atan, d)
+TIDE_MAP2(double, d, atan2, d)
+TIDE_MAP1(double, d, exp, d)
+TIDE_MAP1(double, d, exp2, d)
+TIDE_MAP1(double, d, log, d)
+TIDE_MAP1(double, d, log2, d)
+TIDE_MAP1(double, d, log10, d)
+TIDE_MAP2(double, d, pow, d)
+
 // int vectors
 TIDE_MAP2(int, i, add, i)
 TIDE_MAP2(int, i, sub, i)
@@ -348,6 +550,20 @@ static inline tide_int4 tide_i4_from_f4(const tide_float4 v)
 {
     return (tide_int4){tide_i_from_f(v.x), tide_i_from_f(v.y), tide_i_from_f(v.z), tide_i_from_f(v.w)};
 }
+
+// ---------------------------------------------------------------------------
+static inline tide_double2 tide_d2_from_f2(const tide_float2 v) { return (tide_double2){(double)v.x, (double)v.y}; }
+static inline tide_double2 tide_d2_from_i2(const tide_int2 v) { return (tide_double2){(double)v.x, (double)v.y}; }
+static inline tide_float2 tide_f2_from_d2(const tide_double2 v) { return (tide_float2){tide_f_from_d(v.x), tide_f_from_d(v.y)}; }
+static inline tide_int2 tide_i2_from_d2(const tide_double2 v) { return (tide_int2){tide_i_from_d(v.x), tide_i_from_d(v.y)}; }
+static inline tide_double3 tide_d3_from_f3(const tide_float3 v) { return (tide_double3){(double)v.x, (double)v.y, (double)v.z}; }
+static inline tide_double3 tide_d3_from_i3(const tide_int3 v) { return (tide_double3){(double)v.x, (double)v.y, (double)v.z}; }
+static inline tide_float3 tide_f3_from_d3(const tide_double3 v) { return (tide_float3){tide_f_from_d(v.x), tide_f_from_d(v.y), tide_f_from_d(v.z)}; }
+static inline tide_int3 tide_i3_from_d3(const tide_double3 v) { return (tide_int3){tide_i_from_d(v.x), tide_i_from_d(v.y), tide_i_from_d(v.z)}; }
+static inline tide_double4 tide_d4_from_f4(const tide_float4 v) { return (tide_double4){(double)v.x, (double)v.y, (double)v.z, (double)v.w}; }
+static inline tide_double4 tide_d4_from_i4(const tide_int4 v) { return (tide_double4){(double)v.x, (double)v.y, (double)v.z, (double)v.w}; }
+static inline tide_float4 tide_f4_from_d4(const tide_double4 v) { return (tide_float4){tide_f_from_d(v.x), tide_f_from_d(v.y), tide_f_from_d(v.z), tide_f_from_d(v.w)}; }
+static inline tide_int4 tide_i4_from_d4(const tide_double4 v) { return (tide_int4){tide_i_from_d(v.x), tide_i_from_d(v.y), tide_i_from_d(v.z), tide_i_from_d(v.w)}; }
 
 // ---------------------------------------------------------------------------
 // Hashes: xxHash32 of the value's bytes (little-endian, seed 0), as Unity's
@@ -442,6 +658,45 @@ static inline int32_t tide_hash_f2(const tide_float2 v) { return tide_hash_i2(ti
 static inline int32_t tide_hash_f3(const tide_float3 v) { return tide_hash_i3(tide_asint_f3(v)); }
 static inline int32_t tide_hash_f4(const tide_float4 v) { return tide_hash_i4(tide_asint_f4(v)); }
 
+// Binary64 hashes use the same xxHash32 byte order: low word first.
+static inline int32_t tide_hash_d(const double value) { return tide_hash_l((int64_t)tide_d_bits(value)); }
+
+static inline int32_t tide_hash_double_words(const uint64_t *values, const int count)
+{
+    uint32_t lanes[4] = {TIDE_XXH_P1 + TIDE_XXH_P2, TIDE_XXH_P2, 0u, 0u - TIDE_XXH_P1};
+    for (int i = 0; i + 1 < count; i += 2) {
+        lanes[0] = tide_xxh_lane(lanes[0], (int32_t)(uint32_t)values[i]);
+        lanes[1] = tide_xxh_lane(lanes[1], (int32_t)(uint32_t)(values[i] >> 32));
+        lanes[2] = tide_xxh_lane(lanes[2], (int32_t)(uint32_t)values[i + 1]);
+        lanes[3] = tide_xxh_lane(lanes[3], (int32_t)(uint32_t)(values[i + 1] >> 32));
+    }
+    uint32_t hash = tide_xxh_rotl(lanes[0], 1) + tide_xxh_rotl(lanes[1], 7)
+                  + tide_xxh_rotl(lanes[2], 12) + tide_xxh_rotl(lanes[3], 18) + (uint32_t)count * 8u;
+    if (count & 1) {
+        hash = tide_xxh_word(hash, (int32_t)(uint32_t)values[count - 1]);
+        hash = tide_xxh_word(hash, (int32_t)(uint32_t)(values[count - 1] >> 32));
+    }
+    return tide_xxh_end(hash);
+}
+
+static inline int32_t tide_hash_d2(const tide_double2 value)
+{
+    const uint64_t words[2] = {tide_d_bits(value.x), tide_d_bits(value.y)};
+    return tide_hash_double_words(words, 2);
+}
+
+static inline int32_t tide_hash_d3(const tide_double3 value)
+{
+    const uint64_t words[3] = {tide_d_bits(value.x), tide_d_bits(value.y), tide_d_bits(value.z)};
+    return tide_hash_double_words(words, 3);
+}
+
+static inline int32_t tide_hash_d4(const tide_double4 value)
+{
+    const uint64_t words[4] = {tide_d_bits(value.x), tide_d_bits(value.y), tide_d_bits(value.z), tide_d_bits(value.w)};
+    return tide_hash_double_words(words, 4);
+}
+
 // ---------------------------------------------------------------------------
 // Noise (noise.c): gradient (Perlin), simplex and cellular noise of a point
 // and a seed, from the hashes above, so a cell is the same on every machine
@@ -506,6 +761,56 @@ TIDE_GEOMETRY(3)
 TIDE_GEOMETRY(4)
 
 #undef TIDE_GEOMETRY
+
+// ---------------------------------------------------------------------------
+// Double vector geometry
+
+static inline double tide_dot_d2(const tide_double2 a, const tide_double2 b) { return a.x * b.x + a.y * b.y; }
+static inline double tide_dot_d3(const tide_double3 a, const tide_double3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+static inline double tide_dot_d4(const tide_double4 a, const tide_double4 b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
+
+static inline tide_double3 tide_cross_d3(const tide_double3 a, const tide_double3 b)
+{
+    return (tide_double3){a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
+static inline double tide_csum_d2(const tide_double2 v) { return v.x + v.y; }
+static inline double tide_csum_d3(const tide_double3 v) { return v.x + v.y + v.z; }
+static inline double tide_csum_d4(const tide_double4 v) { return v.x + v.y + v.z + v.w; }
+static inline double tide_cmin_d2(const tide_double2 v) { return tide_min_d(v.x, v.y); }
+static inline double tide_cmin_d3(const tide_double3 v) { return tide_min_d(tide_min_d(v.x, v.y), v.z); }
+static inline double tide_cmin_d4(const tide_double4 v) { return tide_min_d(tide_min_d(v.x, v.y), tide_min_d(v.z, v.w)); }
+static inline double tide_cmax_d2(const tide_double2 v) { return tide_max_d(v.x, v.y); }
+static inline double tide_cmax_d3(const tide_double3 v) { return tide_max_d(tide_max_d(v.x, v.y), v.z); }
+static inline double tide_cmax_d4(const tide_double4 v) { return tide_max_d(tide_max_d(v.x, v.y), tide_max_d(v.z, v.w)); }
+
+// Length, distance, normalize and reflect for each double vector size.
+#define TIDE_DOUBLE_GEOMETRY(N)                                                                          \
+    static inline double tide_lengthsq_d##N(const tide_double##N v) { return tide_dot_d##N(v, v); } \
+    static inline double tide_length_d##N(const tide_double##N v) { return tide_sqrt_d(tide_dot_d##N(v, v)); } \
+    static inline double tide_distancesq_d##N(const tide_double##N a, const tide_double##N b)       \
+    { return tide_lengthsq_d##N(tide_sub_d##N(b, a)); }                                          \
+    static inline double tide_distance_d##N(const tide_double##N a, const tide_double##N b)         \
+    { return tide_length_d##N(tide_sub_d##N(b, a)); }                                            \
+    /* Zero for a vector too short to normalize (its length squared is no normal double), */      \
+    /* where dividing by its length would give NaN. One with NaN in it gives zero too. */        \
+    static inline tide_double##N tide_normalize_d##N(const tide_double##N v)                       \
+    {                                                                                            \
+        const double len = tide_dot_d##N(v, v);                                                   \
+        return len > TIDE_DBL_MIN_NORMAL_D ? tide_mul_d##N(tide_d##N##_splat(tide_rsqrt_d(len)), v) \
+                                           : tide_d##N##_splat(0.0);                            \
+    }                                                                                            \
+    static inline tide_double##N tide_reflect_d##N(const tide_double##N i, const tide_double##N n)  \
+    {                                                                                            \
+        return tide_sub_d##N(i, tide_mul_d##N(tide_mul_d##N(tide_d##N##_splat(2.0), n),          \
+                                              tide_d##N##_splat(tide_dot_d##N(i, n))));          \
+    }
+
+TIDE_DOUBLE_GEOMETRY(2)
+TIDE_DOUBLE_GEOMETRY(3)
+TIDE_DOUBLE_GEOMETRY(4)
+
+#undef TIDE_DOUBLE_GEOMETRY
 
 // ---------------------------------------------------------------------------
 // Quaternions
@@ -958,4 +1263,316 @@ static inline tide_float4x4 tide_ortho_f4x4(const float width, const float heigh
                            {0.0f, 2.0f / height, 0.0f, 0.0f},
                            {0.0f, 0.0f, -2.0f * rcpdz, 0.0f},
                            {0.0f, 0.0f, -(far_z + near_z) * rcpdz, 1.0f}};
+}
+
+// Binary64 matrices, with the same column storage and operation order.
+
+static inline tide_double2x2 tide_identity_d2x2(void) { return (tide_double2x2){{1.0, 0.0}, {0.0, 1.0}}; }
+
+static inline tide_double3x3 tide_identity_d3x3(void)
+{
+    return (tide_double3x3){{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
+}
+
+static inline tide_double4x4 tide_identity_d4x4(void)
+{
+    return (tide_double4x4){{1.0, 0.0, 0.0, 0.0}, {0.0, 1.0, 0.0, 0.0}, {0.0, 0.0, 1.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
+}
+
+// Component-wise matrix operations, column by column.
+static inline tide_double2x2 tide_add_d2x2(const tide_double2x2 a, const tide_double2x2 b)
+{
+    return (tide_double2x2){tide_add_d2(a.c0, b.c0), tide_add_d2(a.c1, b.c1)};
+}
+static inline tide_double3x3 tide_add_d3x3(const tide_double3x3 a, const tide_double3x3 b)
+{
+    return (tide_double3x3){tide_add_d3(a.c0, b.c0), tide_add_d3(a.c1, b.c1), tide_add_d3(a.c2, b.c2)};
+}
+static inline tide_double4x4 tide_add_d4x4(const tide_double4x4 a, const tide_double4x4 b)
+{
+    return (tide_double4x4){tide_add_d4(a.c0, b.c0), tide_add_d4(a.c1, b.c1), tide_add_d4(a.c2, b.c2), tide_add_d4(a.c3, b.c3)};
+}
+static inline tide_double2x2 tide_sub_d2x2(const tide_double2x2 a, const tide_double2x2 b)
+{
+    return (tide_double2x2){tide_sub_d2(a.c0, b.c0), tide_sub_d2(a.c1, b.c1)};
+}
+static inline tide_double3x3 tide_sub_d3x3(const tide_double3x3 a, const tide_double3x3 b)
+{
+    return (tide_double3x3){tide_sub_d3(a.c0, b.c0), tide_sub_d3(a.c1, b.c1), tide_sub_d3(a.c2, b.c2)};
+}
+static inline tide_double4x4 tide_sub_d4x4(const tide_double4x4 a, const tide_double4x4 b)
+{
+    return (tide_double4x4){tide_sub_d4(a.c0, b.c0), tide_sub_d4(a.c1, b.c1), tide_sub_d4(a.c2, b.c2), tide_sub_d4(a.c3, b.c3)};
+}
+static inline tide_double2x2 tide_neg_d2x2(const tide_double2x2 a) { return (tide_double2x2){tide_neg_d2(a.c0), tide_neg_d2(a.c1)}; }
+static inline tide_double3x3 tide_neg_d3x3(const tide_double3x3 a)
+{
+    return (tide_double3x3){tide_neg_d3(a.c0), tide_neg_d3(a.c1), tide_neg_d3(a.c2)};
+}
+static inline tide_double4x4 tide_neg_d4x4(const tide_double4x4 a)
+{
+    return (tide_double4x4){tide_neg_d4(a.c0), tide_neg_d4(a.c1), tide_neg_d4(a.c2), tide_neg_d4(a.c3)};
+}
+static inline tide_double2x2 tide_scale_d2x2(const tide_double2x2 a, const double s)
+{
+    const tide_double2 v = tide_d2_splat(s);
+    return (tide_double2x2){tide_mul_d2(a.c0, v), tide_mul_d2(a.c1, v)};
+}
+static inline tide_double3x3 tide_scale_d3x3(const tide_double3x3 a, const double s)
+{
+    const tide_double3 v = tide_d3_splat(s);
+    return (tide_double3x3){tide_mul_d3(a.c0, v), tide_mul_d3(a.c1, v), tide_mul_d3(a.c2, v)};
+}
+static inline tide_double4x4 tide_scale_d4x4(const tide_double4x4 a, const double s)
+{
+    const tide_double4 v = tide_d4_splat(s);
+    return (tide_double4x4){tide_mul_d4(a.c0, v), tide_mul_d4(a.c1, v), tide_mul_d4(a.c2, v), tide_mul_d4(a.c3, v)};
+}
+static inline tide_double2x2 tide_divs_d2x2(const tide_double2x2 a, const double s)
+{
+    const tide_double2 v = tide_d2_splat(s);
+    return (tide_double2x2){tide_div_d2(a.c0, v), tide_div_d2(a.c1, v)};
+}
+static inline tide_double3x3 tide_divs_d3x3(const tide_double3x3 a, const double s)
+{
+    const tide_double3 v = tide_d3_splat(s);
+    return (tide_double3x3){tide_div_d3(a.c0, v), tide_div_d3(a.c1, v), tide_div_d3(a.c2, v)};
+}
+static inline tide_double4x4 tide_divs_d4x4(const tide_double4x4 a, const double s)
+{
+    const tide_double4 v = tide_d4_splat(s);
+    return (tide_double4x4){tide_div_d4(a.c0, v), tide_div_d4(a.c1, v), tide_div_d4(a.c2, v), tide_div_d4(a.c3, v)};
+}
+
+// Matrix * column vector: the columns weighted by the vector's components.
+static inline tide_double2 tide_mul_d2x2_d2(const tide_double2x2 m, const tide_double2 v)
+{
+    return tide_add_d2(tide_mul_d2(m.c0, tide_d2_splat(v.x)), tide_mul_d2(m.c1, tide_d2_splat(v.y)));
+}
+
+static inline tide_double3 tide_mul_d3x3_d3(const tide_double3x3 m, const tide_double3 v)
+{
+    return tide_add_d3(tide_add_d3(tide_mul_d3(m.c0, tide_d3_splat(v.x)), tide_mul_d3(m.c1, tide_d3_splat(v.y))),
+                       tide_mul_d3(m.c2, tide_d3_splat(v.z)));
+}
+
+static inline tide_double4 tide_mul_d4x4_d4(const tide_double4x4 m, const tide_double4 v)
+{
+    return tide_add_d4(tide_add_d4(tide_mul_d4(m.c0, tide_d4_splat(v.x)), tide_mul_d4(m.c1, tide_d4_splat(v.y))),
+                       tide_add_d4(tide_mul_d4(m.c2, tide_d4_splat(v.z)), tide_mul_d4(m.c3, tide_d4_splat(v.w))));
+}
+
+static inline tide_double2x2 tide_mul_d2x2(const tide_double2x2 a, const tide_double2x2 b)
+{
+    return (tide_double2x2){tide_mul_d2x2_d2(a, b.c0), tide_mul_d2x2_d2(a, b.c1)};
+}
+
+static inline tide_double3x3 tide_mul_d3x3(const tide_double3x3 a, const tide_double3x3 b)
+{
+    return (tide_double3x3){tide_mul_d3x3_d3(a, b.c0), tide_mul_d3x3_d3(a, b.c1), tide_mul_d3x3_d3(a, b.c2)};
+}
+
+static inline tide_double4x4 tide_mul_d4x4(const tide_double4x4 a, const tide_double4x4 b)
+{
+    return (tide_double4x4){tide_mul_d4x4_d4(a, b.c0), tide_mul_d4x4_d4(a, b.c1), tide_mul_d4x4_d4(a, b.c2),
+                           tide_mul_d4x4_d4(a, b.c3)};
+}
+
+static inline tide_double2x2 tide_transpose_d2x2(const tide_double2x2 m)
+{
+    return (tide_double2x2){{m.c0.x, m.c1.x}, {m.c0.y, m.c1.y}};
+}
+
+static inline tide_double3x3 tide_transpose_d3x3(const tide_double3x3 m)
+{
+    return (tide_double3x3){{m.c0.x, m.c1.x, m.c2.x}, {m.c0.y, m.c1.y, m.c2.y}, {m.c0.z, m.c1.z, m.c2.z}};
+}
+
+static inline tide_double4x4 tide_transpose_d4x4(const tide_double4x4 m)
+{
+    return (tide_double4x4){{m.c0.x, m.c1.x, m.c2.x, m.c3.x},
+                           {m.c0.y, m.c1.y, m.c2.y, m.c3.y},
+                           {m.c0.z, m.c1.z, m.c2.z, m.c3.z},
+                           {m.c0.w, m.c1.w, m.c2.w, m.c3.w}};
+}
+
+static inline double tide_determinant_d2x2(const tide_double2x2 m) { return m.c0.x * m.c1.y - m.c1.x * m.c0.y; }
+static inline double tide_determinant_d3x3(const tide_double3x3 m) { return tide_dot_d3(m.c0, tide_cross_d3(m.c1, m.c2)); }
+
+static inline tide_double2x2 tide_inverse_d2x2(const tide_double2x2 m)
+{
+    const double s = 1.0 / tide_determinant_d2x2(m);
+    return (tide_double2x2){{m.c1.y * s, -m.c0.y * s}, {-m.c1.x * s, m.c0.x * s}};
+}
+
+// The inverse's rows are the cross products of pairs of columns, over the determinant.
+static inline tide_double3x3 tide_inverse_d3x3(const tide_double3x3 m)
+{
+    const tide_double3 r0 = tide_cross_d3(m.c1, m.c2);
+    const tide_double3 r1 = tide_cross_d3(m.c2, m.c0);
+    const tide_double3 r2 = tide_cross_d3(m.c0, m.c1);
+    const double s = 1.0 / tide_dot_d3(m.c0, r0);
+    return tide_scale_d3x3(tide_transpose_d3x3((tide_double3x3){r0, r1, r2}), s);
+}
+
+// 4x4 determinant and inverse by Laplace expansion over 2x2 sub-determinants.
+// a<row><col> names below refer to the mathematical matrix, not the storage.
+#define TIDE_DM4_ELEMENTS(m)                                                                       \
+    const double a00 = m.c0.x, a01 = m.c1.x, a02 = m.c2.x, a03 = m.c3.x;                          \
+    const double a10 = m.c0.y, a11 = m.c1.y, a12 = m.c2.y, a13 = m.c3.y;                          \
+    const double a20 = m.c0.z, a21 = m.c1.z, a22 = m.c2.z, a23 = m.c3.z;                          \
+    const double a30 = m.c0.w, a31 = m.c1.w, a32 = m.c2.w, a33 = m.c3.w;                          \
+    const double s0 = a00 * a11 - a10 * a01, s1 = a00 * a12 - a10 * a02, s2 = a00 * a13 - a10 * a03; \
+    const double s3 = a01 * a12 - a11 * a02, s4 = a01 * a13 - a11 * a03, s5 = a02 * a13 - a12 * a03; \
+    const double k5 = a22 * a33 - a32 * a23, k4 = a21 * a33 - a31 * a23, k3 = a21 * a32 - a31 * a22; \
+    const double k2 = a20 * a33 - a30 * a23, k1 = a20 * a32 - a30 * a22, k0 = a20 * a31 - a30 * a21;
+
+static inline double tide_determinant_d4x4(const tide_double4x4 m)
+{
+    TIDE_DM4_ELEMENTS(m)
+    (void)a02; (void)a03; (void)a12; (void)a13;
+    return s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0;
+}
+
+static inline tide_double4x4 tide_inverse_d4x4(const tide_double4x4 m)
+{
+    TIDE_DM4_ELEMENTS(m)
+    const double d = 1.0 / (s0 * k5 - s1 * k4 + s2 * k3 + s3 * k2 - s4 * k1 + s5 * k0);
+    // b<row><col> of the inverse, stored column by column.
+    const double b00 = (a11 * k5 - a12 * k4 + a13 * k3) * d;
+    const double b01 = (-a01 * k5 + a02 * k4 - a03 * k3) * d;
+    const double b02 = (a31 * s5 - a32 * s4 + a33 * s3) * d;
+    const double b03 = (-a21 * s5 + a22 * s4 - a23 * s3) * d;
+    const double b10 = (-a10 * k5 + a12 * k2 - a13 * k1) * d;
+    const double b11 = (a00 * k5 - a02 * k2 + a03 * k1) * d;
+    const double b12 = (-a30 * s5 + a32 * s2 - a33 * s1) * d;
+    const double b13 = (a20 * s5 - a22 * s2 + a23 * s1) * d;
+    const double b20 = (a10 * k4 - a11 * k2 + a13 * k0) * d;
+    const double b21 = (-a00 * k4 + a01 * k2 - a03 * k0) * d;
+    const double b22 = (a30 * s4 - a31 * s2 + a33 * s0) * d;
+    const double b23 = (-a20 * s4 + a21 * s2 - a23 * s0) * d;
+    const double b30 = (-a10 * k3 + a11 * k1 - a12 * k0) * d;
+    const double b31 = (a00 * k3 - a01 * k1 + a02 * k0) * d;
+    const double b32 = (-a30 * s3 + a31 * s1 - a32 * s0) * d;
+    const double b33 = (a20 * s3 - a21 * s1 + a22 * s0) * d;
+    return (tide_double4x4){{b00, b10, b20, b30}, {b01, b11, b21, b31}, {b02, b12, b22, b32}, {b03, b13, b23, b33}};
+}
+
+#undef TIDE_DM4_ELEMENTS
+
+static inline tide_double4x4 tide_d4x4_from_d3x3_d3(const tide_double3x3 rotation, const tide_double3 translation)
+{
+    return (tide_double4x4){{rotation.c0.x, rotation.c0.y, rotation.c0.z, 0.0},
+                           {rotation.c1.x, rotation.c1.y, rotation.c1.z, 0.0},
+                           {rotation.c2.x, rotation.c2.y, rotation.c2.z, 0.0},
+                           {translation.x, translation.y, translation.z, 1.0}};
+}
+
+static inline tide_double4x4 tide_translate_d4x4(const tide_double3 t)
+{
+    return tide_d4x4_from_d3x3_d3(tide_identity_d3x3(), t);
+}
+
+static inline tide_double4x4 tide_scaling_d4x4(const tide_double3 s)
+{
+    return (tide_double4x4){{s.x, 0.0, 0.0, 0.0}, {0.0, s.y, 0.0, 0.0},
+                           {0.0, 0.0, s.z, 0.0}, {0.0, 0.0, 0.0, 1.0}};
+}
+
+// Translation, rotation and scale combined: scales, then rotates, then translates.
+static inline tide_double4x4 tide_trs_d4x4(const tide_double3 t, const tide_double3x3 r, const tide_double3 s)
+{
+    const tide_double3x3 m = r;
+    return tide_d4x4_from_d3x3_d3((tide_double3x3){tide_mul_d3(m.c0, tide_d3_splat(s.x)),
+                                                  tide_mul_d3(m.c1, tide_d3_splat(s.y)),
+                                                  tide_mul_d3(m.c2, tide_d3_splat(s.z))},
+                                  t);
+}
+
+// A point (w = 1) through a 4x4 matrix: rotation, scale and translation.
+static inline tide_double3 tide_transform_d4x4(const tide_double4x4 m, const tide_double3 p)
+{
+    const tide_double4 r = tide_mul_d4x4_d4(m, tide_d4(p.x, p.y, p.z, 1.0));
+    return tide_d3(r.x, r.y, r.z);
+}
+
+// A direction (w = 0) through a 4x4 matrix: rotation and scale, no translation.
+static inline tide_double3 tide_rotate_d4x4(const tide_double4x4 m, const tide_double3 v)
+{
+    const tide_double4 r = tide_mul_d4x4_d4(m, tide_d4(v.x, v.y, v.z, 0.0));
+    return tide_d3(r.x, r.y, r.z);
+}
+
+// Projections, as Unity.Mathematics' float4x4.PerspectiveFov and Ortho: from
+// a camera's view, which looks down -z (OpenGL's and Unity's view space), to
+// clip space, where z goes from -1 at `near_z` to 1 at `far_z`. The field of
+// view is vertical, in radians, and `aspect` is width over height.
+static inline tide_double4x4 tide_perspectivefov_d4x4(const double vertical_fov, const double aspect, const double near_z,
+                                                     const double far_z)
+{
+    const double cotangent = 1.0 / tide_tan_d(vertical_fov * 0.5);
+    const double rcpdz = 1.0 / (near_z - far_z);
+    return (tide_double4x4){{cotangent / aspect, 0.0, 0.0, 0.0},
+                           {0.0, cotangent, 0.0, 0.0},
+                           {0.0, 0.0, (far_z + near_z) * rcpdz, -1.0},
+                           {0.0, 0.0, 2.0 * near_z * far_z * rcpdz, 0.0}};
+}
+
+// A box `width` by `height` around the camera's axis.
+static inline tide_double4x4 tide_ortho_d4x4(const double width, const double height, const double near_z, const double far_z)
+{
+    const double rcpdz = 1.0 / (far_z - near_z);
+    return (tide_double4x4){{2.0 / width, 0.0, 0.0, 0.0},
+                           {0.0, 2.0 / height, 0.0, 0.0},
+                           {0.0, 0.0, -2.0 * rcpdz, 0.0},
+                           {0.0, 0.0, -(far_z + near_z) * rcpdz, 1.0}};
+}
+
+static inline tide_double2x2 tide_d2x2_from_f2x2(const tide_float2x2 m)
+{
+    return (tide_double2x2){tide_d2_from_f2(m.c0), tide_d2_from_f2(m.c1)};
+}
+
+static inline tide_float2x2 tide_f2x2_from_d2x2(const tide_double2x2 m)
+{
+    return (tide_float2x2){tide_f2_from_d2(m.c0), tide_f2_from_d2(m.c1)};
+}
+
+static inline tide_double3x3 tide_d3x3_from_f3x3(const tide_float3x3 m)
+{
+    return (tide_double3x3){tide_d3_from_f3(m.c0), tide_d3_from_f3(m.c1), tide_d3_from_f3(m.c2)};
+}
+
+static inline tide_float3x3 tide_f3x3_from_d3x3(const tide_double3x3 m)
+{
+    return (tide_float3x3){tide_f3_from_d3(m.c0), tide_f3_from_d3(m.c1), tide_f3_from_d3(m.c2)};
+}
+
+static inline tide_double4x4 tide_d4x4_from_f4x4(const tide_float4x4 m)
+{
+    return (tide_double4x4){tide_d4_from_f4(m.c0), tide_d4_from_f4(m.c1), tide_d4_from_f4(m.c2), tide_d4_from_f4(m.c3)};
+}
+
+static inline tide_float4x4 tide_f4x4_from_d4x4(const tide_double4x4 m)
+{
+    return (tide_float4x4){tide_f4_from_d4(m.c0), tide_f4_from_d4(m.c1), tide_f4_from_d4(m.c2), tide_f4_from_d4(m.c3)};
+}
+
+// Rotation matrix of a normalized quaternion.
+static inline tide_double3x3 tide_d3x3_from_q(const tide_quaternion q)
+{
+    const double x = q.value.x, y = q.value.y, z = q.value.z, w = q.value.w;
+    const double x2 = x + x, y2 = y + y, z2 = z + z;
+    const double xx = x * x2, yy = y * y2, zz = z * z2;
+    const double xy = x * y2, xz = x * z2, yz = y * z2;
+    const double wx = w * x2, wy = w * y2, wz = w * z2;
+    return (tide_double3x3){{1.0 - (yy + zz), xy + wz, xz - wy},
+                           {xy - wz, 1.0 - (xx + zz), yz + wx},
+                           {xz + wy, yz - wx, 1.0 - (xx + yy)}};
+}
+
+
+static inline tide_double4x4 tide_trsq_d4x4(const tide_double3 t, const tide_quaternion r, const tide_double3 s)
+{
+    return tide_trs_d4x4(t, tide_d3x3_from_q(r), s);
 }

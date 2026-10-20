@@ -10,7 +10,8 @@ using Rooms;
 
 local singleton Feed
 {
-    float marker;                // Seconds left of the hit marker
+    float marker;                // Seconds left of the hit marker...
+    float markerAge = 1;         // ...and since it landed, for its pop
     bool markerKill;
     bool markerHead;             // On the head: gold, or red and bigger for a kill
     bool markerCrit;             // A Lucky Shot's double: yellow
@@ -35,7 +36,28 @@ local singleton Feed
     float bossTrail = 1;
     List<float3> blows;          // Where the blows taken came from...
     List<float> blowAges;        // ...and how long ago
+    List<Tally> tallies;         // The numbers of hits rising off the dead
+    float readyFlash;            // Seconds since the right mouse's skill came back (a flare round the crosshair)...
+    bool wasReady = true;        // ...as it was last frame
 }
+
+// A hit's number, rising off where it landed (the owner, 2026-10-20: "some VFX/SFX for when you hit something, like a
+// hitmarker thing"): what a round or a blow of your own hand did, as Risk of Rain 2 shows it.
+struct Tally
+{
+    float3 at;
+    float damage;
+    float age;
+    float drift;                // Across the screen as it rises, at 720 lines
+    int tone;                   // 0 the body, 1 the head, 2 a crit, 3 a weak spot; -1 turned by mail
+    bool killed;
+    bool flame;                 // A flamethrower's: its puffs on one body add up while they keep coming
+}
+
+const int TALLIES_MOST = 48;
+const float TALLY_LIFE = 0.8;
+const float FLAME_MERGE = 0.3;      // A flamethrower's puff this soon after the last on one body adds to its number
+const float TALLY_MERGE = 0.005;    // A hit in the same frame as another on the same spot adds to its number (a shotgun's pellets)
 
 const Color GOLD = Color(0.95, 0.82, 0.45);
 const Color CHALK = Color(0.62, 0.04, 0.03);
@@ -111,22 +133,6 @@ view BloaterRings(Me me, Look look, Lobby lobby, Match match, query (Zombie zomb
 }
 
 const float BLOAT_SHOWN = 22;       // How near a Bloater's ring is drawn
-
-// How far your C4 charges' bursts will reach, round each, in red, throbbing: the dead in it are the ones it'll take.
-[Stage(Layers.Hud, -1)]
-view ChargeRings(Me me, Look look, Lobby lobby, Match match, query (Missile missile) missiles)
-{
-    if (lobby.page != Page.Playing || !me.playing || match.phase == Phase.Over) return;
-    Draw.SetScreen();
-    var u = Unit();
-    var pulse = 0.65 + 0.35 * Math.Sin(look.time * 6);
-    foreach (var row in missiles)
-    {
-        var m = row.missile;
-        if (m.kind != Shot.Mine || m.seat != me.seat) continue;
-        GroundRing(look, m.at, m.splash, 2.5 * u, Color(1.0, 0.3, 0.12, 0.75 * pulse), Screen.width, Screen.height);
-    }
-}
 
 // A mark for a place a survivor's to go: over it, with its name and how far, while it's on the screen; else an arrow at
 // the screen's edge, the way it is (north up the screen), with its name.
@@ -398,7 +404,7 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
             if (ready) Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(EMBER.r, EMBER.g, EMBER.b, 0.18), soft = 10 * u });
             Draw.Shape(Shape { center = at, size = square, radius = 6 * u, color = Color(0.1, 0.08, 0.07, 0.86), color2 = Color(0.03, 0.025, 0.02, 0.92), outline = 1.5 * u,
                                outlineColor = ready ? Color(EMBER.r, EMBER.g, EMBER.b, 0.95) : Color(1, 0.9, 0.75, 0.15) });
-            var key = k == 0 ? (mine.charges > 0 ? "BLOW" : "RMB") : k == 1 ? "SPACE" : "AUTO";
+            var key = k == 0 ? "RMB" : k == 1 ? "SPACE" : "AUTO";
             WriteBold(key, at, 12 * u, ready ? BONE : Color(ASH.r, ASH.g, ASH.b, 0.6), Anchor.MiddleCenter);
             if (!ready)
             {
@@ -475,19 +481,67 @@ view Overlay(Me me, Look look, Match match, Party party, Lobby lobby, mut Feed f
         Draw.Line(reticle + float2(0, gap), reticle + float2(0, gap + tick), 2 * u, c);
         Draw.Line(reticle - float2(0, gap), reticle - float2(0, gap + tick), 2 * u, c);
         Draw.Circle(reticle, 1.5 * u, c);
+        // Round it, what's coming back, seen without looking away from the dead (the owner, 2026-10-20: "we need some
+        // indicator on the crosshair or some sound or something when the ability is ready, even when reloading some way
+        // to know the progress without glancing down"): on its left the right mouse's skill, filling out from its middle
+        // as it comes back, lit when it's ready, flaring as it comes (a chime too: sound.tide's Handling); on its right
+        // the gun's rounds, or its loading as it fills (none for a gun never loaded)
+        var ring = gap + tick + 7 * u;
+        var half = 0.75;
+        var rmb = SecondaryOf(mine);
+        var rmbReady = mine.cooldowns[0] <= 0;
+        if (rmbReady && !feed.wasReady) feed.readyFlash = 0;
+        feed.wasReady = rmbReady;
+        feed.readyFlash += dt;
+        if (mine.life == Life.Standing && rmb != Skill.None)
+        {
+            var back = rmbReady ? 1.0 : 1 - Math.Saturate(mine.cooldowns[0] / Math.Max(0.01, Cooldown(mine, rmb)));
+            var flare = Math.Saturate(1 - feed.readyFlash / 0.35);
+            Draw.Arc(reticle, ring + 1.5 * u, Math.PI - half, 2 * half, 4 * u, Color(0, 0, 0, 0.4));
+            Draw.Arc(reticle, ring + (rmbReady ? 1.5 * u * flare : 0), Math.PI - half * back, 2 * half * back, (rmbReady ? 3 + 2 * flare : 2) * u,
+                     rmbReady ? Color(EMBER.r, EMBER.g, EMBER.b, 0.95) : Color(ASH.r, ASH.g, ASH.b, 0.7));
+            if (flare > 0)
+                Draw.Arc(reticle, ring + (4 + 16 * (1 - flare)) * u, Math.PI - half, 2 * half, 2 * u, Color(EMBER.r, EMBER.g, EMBER.b, 0.9 * flare));
+        }
+        if (!info.bottomless || mine.gun != RoleWeapon(mine.role))
+        {
+            var rounds = MagOf(mine, mine.gun);
+            var refilling = mine.act == Act.Reload && !info.shells;
+            var filled = refilling ? Math.Saturate(mine.actTime / Math.Max(0.01, mine.actLength)) : Math.Saturate(float(mine.mag) / Math.Max(1, rounds));
+            var ink = refilling ? SKY_BLUE : mine.mag == 0 ? Color(0.95, 0.3, 0.2) : mine.mag <= rounds / 4 ? Color(0.98, 0.7, 0.35) : BONE;
+            Draw.Arc(reticle, ring + 1.5 * u, -half, 2 * half, 4 * u, Color(0, 0, 0, 0.4));
+            if (filled > 0) Draw.Arc(reticle, ring, -half * filled, 2 * half * filled, 2 * u, Color(ink.r, ink.g, ink.b, refilling ? 0.95 : 0.75));
+        }
     }
     feed.marker = Math.Max(0, feed.marker - dt);
+    feed.markerAge += dt;
     if (feed.marker > 0)
     {
-        var a = Math.Saturate(feed.marker * 5);
+        // Four strokes round the cursor, popped out big as the hit lands and settling in a few frames, on a dark edge so
+        // it reads over anything: white a hit, gold the head, red a kill, orange a weak spot, yellow a crit, grey off mail
+        var a = Math.Saturate(feed.marker * 6);
         var c = feed.markerWeak ? Color(1.0, 0.55, 0.1, a) : feed.markerMail ? Color(0.55, 0.6, 0.68, a) : feed.markerCrit ? Color(1.0, 0.95, 0.35, a)
-              : feed.markerHead ? (feed.markerKill ? Color(1.0, 0.18, 0.1, a) : Color(1.0, 0.78, 0.25, a)) : feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
-        var s = (feed.markerWeak ? 14 : feed.markerHead ? (feed.markerKill ? 15 : 11) : feed.markerKill ? 11 : 8) * u;
-        var thick = (feed.markerHead ? 3.5 : 2.5) * u;
-        Draw.Line(reticle + float2(-s, -s), reticle + float2(-s * 0.4, -s * 0.4), thick, c);
-        Draw.Line(reticle + float2(s, -s), reticle + float2(s * 0.4, -s * 0.4), thick, c);
-        Draw.Line(reticle + float2(-s, s), reticle + float2(-s * 0.4, s * 0.4), thick, c);
-        Draw.Line(reticle + float2(s, s), reticle + float2(s * 0.4, s * 0.4), thick, c);
+              : feed.markerHead ? (feed.markerKill ? Color(1.0, 0.18, 0.1, a) : Color(1.0, 0.8, 0.25, a)) : feed.markerKill ? Color(0.95, 0.2, 0.15, a) : Color(1, 1, 1, a);
+        var pop = 1 + 0.6 * Math.Saturate(1 - feed.markerAge / 0.07);
+        var s = (feed.markerWeak ? 17 : feed.markerHead ? (feed.markerKill ? 19 : 15) : feed.markerKill ? 15 : feed.markerMail ? 9 : 11) * pop * u;
+        var thick = (feed.markerHead || feed.markerWeak || feed.markerKill ? 4 : 3) * u;
+        var inner = 0.38;
+        var dark = Color(0.04, 0.02, 0.02, a * 0.85);
+        for (var k = 0; k < 2; k++)
+        {
+            var wide = k == 0 ? thick + 3 * u : thick;
+            var ink = k == 0 ? dark : c;
+            Draw.Line(reticle + float2(-s, -s), reticle + float2(-s * inner, -s * inner), wide, ink);
+            Draw.Line(reticle + float2(s, -s), reticle + float2(s * inner, -s * inner), wide, ink);
+            Draw.Line(reticle + float2(-s, s), reticle + float2(-s * inner, s * inner), wide, ink);
+            Draw.Line(reticle + float2(s, s), reticle + float2(s * inner, s * inner), wide, ink);
+        }
+        // A kill: a ring thrown out from it, gone in a moment
+        if (feed.markerKill && feed.markerAge < 0.2)
+        {
+            var spread = Math.Saturate(feed.markerAge / 0.2);
+            Draw.Arc(reticle, s * 1.25 + 26 * spread * u, 0, Math.TAU, (3 - 2 * spread) * u, Color(c.r, c.g, c.b, 0.8 * (1 - spread)));
+        }
     }
     feed.headshot = Math.Max(0, feed.headshot - dt);
     if (feed.headshot > 0)
@@ -758,18 +812,87 @@ override string Rooms.Tagline()
 
 // ---- What the feed hears ----
 
+// Only your own hand's hits mark (a round of your gun, the right mouse skill): the drones', the blades' and the rest's
+// had kept it lit all the time, so a hit of your own didn't show (the owner, 2026-10-20: "some VFX/SFX for when you hit
+// something, like a hitmarker thing").
 local event(Struck struck) ShowMarker(mut Feed feed, Me me)
 {
-    if (struck.seat != me.seat || struck.seat < 0 || struck.blow == Blow.Shove) return;
-    // Fire and bleeding wear them down quietly; only the kill shows
-    if (!struck.killed && (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding)) return;
-    feed.marker = struck.head ? 0.35 : 0.25;
-    feed.markerKill = struck.killed;
-    feed.markerHead = struck.head;
-    feed.markerCrit = struck.crit;
-    feed.markerWeak = struck.weak;
-    feed.markerMail = struck.mail && !struck.killed;
+    if (struck.seat != me.seat || struck.seat < 0 || !struck.aimed || struck.blow == Blow.Shove) return;
+    // A shotgun's pellets in one tick are one mark, the best of them; a flamethrower's puffs keep it up without popping it
+    // again each time
+    var flame = struck.blow == Blow.Flame;
+    var fresh = feed.markerAge < 0.02 && feed.marker > 0;
+    if (!flame || feed.marker <= 0 || struck.killed) feed.markerAge = 0;
+    feed.marker = struck.head || struck.weak || struck.killed ? 0.32 : 0.24;
+    feed.markerKill = struck.killed || (fresh && feed.markerKill);
+    feed.markerHead = struck.head || (fresh && feed.markerHead);
+    feed.markerCrit = struck.crit || (fresh && feed.markerCrit);
+    feed.markerWeak = struck.weak || (fresh && feed.markerWeak);
+    feed.markerMail = struck.mail && !struck.killed && !(fresh && !feed.markerMail);
     if (struck.head && struck.killed) feed.headshot = 0.9;
+    // Its number: added to one just up on the same spot (a shotgun's pellets in one body), else a new one
+    var tone = struck.weak ? 3 : struck.crit ? 2 : struck.head ? 1 : struck.mail ? -1 : 0;
+    for (var i = 0; i < feed.tallies.count; i++)
+    {
+        var t = feed.tallies[i];
+        if (t.flame != flame || t.age > (flame ? FLAME_MERGE : TALLY_MERGE) || Math.Distance(t.at, struck.at) > (flame ? 1.2 : 0.25)) continue;
+        // (a flame's number held low and unpopped while it grows)
+        feed.tallies[i] = Tally { at = t.at, damage = t.damage + struck.damage, age = flame ? Math.Min(t.age, 0.12) : 0, drift = t.drift, tone = Math.Max(t.tone, tone),
+                                  killed = t.killed || struck.killed, flame = flame };
+        return;
+    }
+    if (feed.tallies.count >= TALLIES_MOST) feed.tallies.RemoveAt(0);
+    // Each a little to one side or the other, so a stream of them on one of the dead doesn't stack in one place
+    var side = (feed.tallies.count % 2 == 0 ? 1.0 : -1.0) * (8 + 10 * Math.Frac(struck.at.x * 7.13 + struck.at.z * 3.71));
+    feed.tallies.Add(Tally { at = struck.at, damage = struck.damage, drift = side, tone = tone, killed = struck.killed, flame = flame });
+}
+
+// The numbers of your hits, over the dead and under the panels: each pops up big, settles, rises and fades. White on
+// the body, gold on the head, orange on a boss's weak spot, red for a crit, small and grey off a Warden's mail; a kill's a
+// little bigger.
+[Stage(Layers.Hud, -1)]
+view Tallies(Me me, Look look, Lobby lobby, mut Feed feed)
+{
+    if (lobby.page != Page.Playing || !me.playing)
+    {
+        feed.tallies.Clear();
+        return;
+    }
+    Draw.SetScreen();
+    var w = Screen.width;
+    var h = Screen.height;
+    var u = Unit();
+    for (var i = feed.tallies.count - 1; i >= 0; i--)
+    {
+        var t = feed.tallies[i];
+        var age = t.age + me.dt;
+        if (age > TALLY_LIFE)
+        {
+            feed.tallies.RemoveAt(i);
+            continue;
+        }
+        feed.tallies[i] = Tally { at = t.at, damage = t.damage, age = age, drift = t.drift, tone = t.tone, killed = t.killed, flame = t.flame };
+        float4 clip = Math.Mul(look.toClip, float4(t.at + float3(0, 0.35, 0), 1));
+        if (clip.w <= 0.01) continue;
+        var rise = Math.Saturate(age / TALLY_LIFE);
+        // Up quickly, then slowly; a little aside
+        var lift = (1 - (1 - rise) * (1 - rise)) * 34;
+        var at = float2((clip.x / clip.w * 0.5 + 0.5) * w, (0.5 - clip.y / clip.w * 0.5) * h) + float2(t.drift * rise, -lift) * u;
+        var pop = 1 + 0.9 * Math.Saturate(1 - age / 0.09);
+        var fade = Math.Saturate((TALLY_LIFE - age) / 0.25);
+        var c = t.tone == 3 ? Color(1.0, 0.55, 0.1, fade) : t.tone == 2 ? Color(1.0, 0.3, 0.18, fade) : t.tone == 1 ? Color(1.0, 0.84, 0.3, fade)
+              : t.tone == -1 ? Color(0.62, 0.66, 0.72, fade * 0.85) : t.flame ? Color(1.0, 0.62, 0.25, fade) : Color(1.0, 0.97, 0.92, fade);
+        var size = (t.tone == 3 ? 23 : t.tone == 2 ? 21 : t.tone == 1 ? 21 : t.tone == -1 ? 12 : 15) * (t.killed ? 1.15 : 1.0) * pop * u;
+        // A hard dark edge all round, so it reads over blood, fire and the moonlit ground alike
+        var text = $"{int(t.damage + 0.5)}";
+        var edge = Math.Max(1.5, size * 0.09);
+        var dark = Color(0.05, 0.02, 0.02, fade * 0.9);
+        Draw.Text(text, at + float2(edge, 0), size, dark, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(text, at - float2(edge, 0), size, dark, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(text, at + float2(0, edge), size, dark, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(text, at - float2(0, edge), size, dark, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(text, at, size, c, Anchor.MiddleCenter, Font.Bold);
+    }
 }
 
 // A blow taken, for the arc that says where it came from.
@@ -974,6 +1097,11 @@ view Offers(Me me, Lobby lobby, mut Feed feed, Match match, query (Survivor surv
                 top = $"{RarityName(rarity).ToUpper()}  -  YOU HAVE {have}";
                 name = $"{ItemName(item)} {Roman(have + 1)}";
                 line = ItemLineAt(item, have + 1);
+            }
+            if (Nozzle(mine, item))
+            {
+                name = have > 0 ? $"Long Nozzle {Roman(have + 1)}" : "Long Nozzle";
+                line = have > 0 ? $"Flames reach {int(FLAME_NOZZLE * (have + 1))} m further" : $"Flames reach {int(FLAME_NOZZLE)} m further (+{int(FLAME_NOZZLE)} m each)";
             }
         }
         Write(top, middle + float2(0, 8 * u), 11 * u, Color(ASH.r, ASH.g, ASH.b, a), Anchor.MiddleCenter);

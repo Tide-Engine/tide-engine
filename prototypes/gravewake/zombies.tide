@@ -400,10 +400,12 @@ event Wound
     bool crit;                  // Lucky Shot's double
     bool echo;                  // Set off by an item: a kill sets off nothing more
     bool weak;                  // To a boss's weak spot (the damage already the more for it)
+    bool aimed;                 // From the survivor's own hand (a round of their gun, the right mouse skill), not what fights
+                                // by itself: what the hit marker and the numbers are for
 }
 
 // What dealt a blow.
-enum Blow { Blade, Blunt, Missile, Burst, Burning, Bleeding, Shove }
+enum Blow { Blade, Blunt, Missile, Burst, Burning, Bleeding, Shove, Flame }    // (Flame: a flamethrower's puff)
 
 // A kill, to the survivor who made it (or a blow that wasn't one, for nothing).
 event Earned
@@ -434,6 +436,8 @@ event Struck
     bool crit;
     bool mail;                  // Turned by a Warden's mail
     bool weak;                  // On a boss's weak spot
+    float damage;               // What it took
+    bool aimed;                 // The wound's
 }
 
 // A Stalker's shriek or a Howler's howl, to each of the dead near it.
@@ -558,14 +562,14 @@ system Hunt(mut Zombie zombie, Match match, Ashwick ashwick, Herd herd, Time tim
     {
         zombie.burn -= dt;
         if (Math.Floor((zombie.burn + dt) * 4) != Math.Floor(zombie.burn * 4))
-            this.Send(Wound { damage = 40 + ZombieHealth(match.danger) * 0.06, seat = zombie.burner, element = Element.None, from = zombie.at, blow = Blow.Burning, knock = -1 });
+            this.Send(Wound { damage = 80 + ZombieHealth(match.danger) * 0.06, seat = zombie.burner, element = Element.None, from = zombie.at, blow = Blow.Burning, knock = -1 });
     }
     // Bleeding: the same
     if (zombie.bleed > 0)
     {
         zombie.bleed -= dt;
         if (Math.Floor((zombie.bleed + dt) * 2) != Math.Floor(zombie.bleed * 2))
-            this.Send(Wound { damage = 30 + ZombieHealth(match.danger) * 0.05, seat = zombie.bleeder, element = Element.None, from = zombie.at, blow = Blow.Bleeding, knock = -1 });
+            this.Send(Wound { damage = 60 + ZombieHealth(match.danger) * 0.05, seat = zombie.bleeder, element = Element.None, from = zombie.at, blow = Blow.Bleeding, knock = -1 });
     }
     switch (zombie.state)
     {
@@ -924,7 +928,9 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
     var steady = zombie.kind == ZombieKind.Brute;
     // On its back it's open: blows land harder, and a Warden's mail doesn't help
     var over = zombie.state == ZombieState.Fallen && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding;
-    var mail = zombie.kind == ZombieKind.Warden && !wound.head && !over && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding && wound.blow != Blow.Shove;
+    // (Flames lick in under the mail)
+    var mail = zombie.kind == ZombieKind.Warden && !wound.head && !over && wound.blow != Blow.Burning && wound.blow != Blow.Bleeding && wound.blow != Blow.Shove
+               && wound.blow != Blow.Flame;
     var damage = wound.damage * (over ? 1.5 : 1.0) * (mail ? WARDEN_MAIL : 1.0);
     zombie.health -= damage;
     var killed = zombie.health <= 0;
@@ -999,7 +1005,7 @@ event(Wound wound) TakeWound(mut Zombie zombie, mut Match match, Party party)
                                                   echo = wound.echo || wound.blow == Blow.Burning || wound.blow == Blow.Bleeding });
     var body = BodyOf(this, zombie);
     this.Send(Struck { at = wound.head ? body.head : body.chest, from = wound.from, head = wound.head, killed = killed, element = wound.element, seat = wound.seat,
-                       blow = wound.blow, crit = wound.crit, mail = mail && wound.damage >= 1 });
+                       blow = wound.blow, crit = wound.crit, mail = mail && wound.damage >= 1, damage = damage, aimed = wound.aimed });
 }
 
 // A Howler's howl, for what's seen: where, and how far the dead round it are frenzied.

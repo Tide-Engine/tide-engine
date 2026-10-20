@@ -32,8 +32,8 @@ enum Item
     LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, BileBomb, ApRounds, SawBlades, TeslaCoil, Molotovs,
     // Rare
     Mortar, SecondWind, HeRounds, DragonsBreath, Shockwave, RocketPod,
-    // Skill cards: not items, a right mouse's skill to take (SkillCard)
-    CardPhaseRound, CardBoot, CardMine, CardLeap, CardBlink,
+    // Skill cards: not items, the right mouse's skill a rank stronger (SkillCard): each gun's own
+    CardPhaseRound, CardThumper, CardNapalm,
 }
 
 const int ITEM_COUNT = 30;          // The items: the skill cards come after (Spring Boots, a jump in the air, went with jumping)
@@ -56,10 +56,8 @@ Skill CardSkill(Item item)
     switch (item)
     {
         case Item.CardPhaseRound: return Skill.PhaseRound;
-        case Item.CardBoot: return Skill.Boot;
-        case Item.CardMine: return Skill.Mine;
-        case Item.CardLeap: return Skill.Leap;
-        case Item.CardBlink: return Skill.Blink;
+        case Item.CardThumper: return Skill.Thumper;
+        case Item.CardNapalm: return Skill.Napalm;
     }
     return Skill.None;
 }
@@ -68,12 +66,10 @@ Item SkillCard(Skill skill)
 {
     switch (skill)
     {
-        case Skill.PhaseRound: return Item.CardPhaseRound;
-        case Skill.Boot: return Item.CardBoot;
-        case Skill.Mine: return Item.CardMine;
-        case Skill.Leap: return Item.CardLeap;
+        case Skill.Thumper: return Item.CardThumper;
+        case Skill.Napalm: return Item.CardNapalm;
     }
-    return Item.CardBlink;
+    return Item.CardPhaseRound;
 }
 
 string ItemName(Item item)
@@ -267,19 +263,19 @@ int Holds(Arms arms, Item item)
 // the right mouse, or the one they have a rank stronger.
 void Offer(mut Survivor survivor, int minute, int players, Rarity least)
 {
-    var card = least == Rarity.Common && Random.NextFloat() < SKILL_CARD_CHANCE;
+    var card = least == Rarity.Common && Random.NextFloat() < SKILL_CARD_CHANCE && survivor.secondaryRank < SKILL_RANKS;
     for (var k = 0; k < 3; k++)
     {
         if (card && k == 2)
         {
-            survivor.offers[k] = RollCard(survivor);
+            survivor.offers[k] = SkillCard(SecondaryOf(survivor));
             continue;
         }
         mut var item = Item.HollowPoints;
         for (var tries = 0; tries < 20; tries++)
         {
             item = RollItem(minute, players, least);
-            mut var taken = false;
+            mut var taken = Useless(survivor, item);
             for (var j = 0; j < k; j++)
                 if (survivor.offers[j] == item) taken = true;
             if (!taken) break;
@@ -289,15 +285,17 @@ void Offer(mut Survivor survivor, int minute, int players, Rarity least)
     survivor.choosing = true;
 }
 
-// A skill card for a survivor: any of the five but their own at its last rank.
-Item RollCard(Survivor survivor)
+// An item that would do nothing for a survivor's gun, so isn't offered them: what a round does, to the Engineer's
+// flamethrower (it has no rounds). (AP Rounds are its longer nozzle: Nozzle.)
+bool Useless(Survivor survivor, Item item)
 {
-    for (var tries = 0; tries < 10; tries++)
-    {
-        var card = Item(ITEM_COUNT + Random.NextInt(5));
-        if (CardSkill(card) != SecondaryOf(survivor) || survivor.secondaryRank < SKILL_RANKS) return card;
-    }
-    return SkillCard(SecondaryOf(survivor) == Skill.Blink ? Skill.Leap : Skill.Blink);
+    return Info(RoleWeapon(survivor.role)).cone > 0 && (item == Item.Ricochet || item == Item.HeRounds);
+}
+
+// AP Rounds, to a flamethrower: a longer nozzle, its flames reaching a metre further each (hands.tide's FLAME_NOZZLE).
+bool Nozzle(Survivor survivor, Item item)
+{
+    return item == Item.ApRounds && Info(RoleWeapon(survivor.role)).cone > 0;
 }
 
 // One item, `minute` minutes into the run: mostly common, uncommon more often as the run goes on, now and then a rare.
@@ -344,7 +342,6 @@ system Choose(Hands hands, mut Survivor survivor)
 void TakeRole(mut Survivor survivor, Role role)
 {
     survivor.role = role;
-    survivor.secondary = SkillOf(role, 0);
     survivor.secondaryRank = 1;
     survivor.gun = RoleWeapon(role);
     survivor.mag = MagOf(survivor, survivor.gun);
@@ -359,16 +356,10 @@ void TakeRole(mut Survivor survivor, Role role)
 
 void Take(mut Survivor survivor, Item item)
 {
-    // A skill card: the right mouse's skill another (its first rank, ready), or the same a rank stronger
-    var skill = CardSkill(item);
-    if (skill != Skill.None)
+    // A skill card: the right mouse's skill a rank stronger, ready at once
+    if (CardSkill(item) != Skill.None)
     {
-        if (skill == SecondaryOf(survivor)) survivor.secondaryRank = Math.Min(SKILL_RANKS, survivor.secondaryRank + 1);
-        else
-        {
-            survivor.secondary = skill;
-            survivor.secondaryRank = 1;
-        }
+        survivor.secondaryRank = Math.Min(SKILL_RANKS, survivor.secondaryRank + 1);
         survivor.cooldowns[0] = 0;
         return;
     }
@@ -383,15 +374,17 @@ void Take(mut Survivor survivor, Item item)
 
 // A round's hit on one of the dead: a crit, perhaps; more if it's down; then what the items set off, `chance` times as
 // likely as a whole round's (a shotgun's pellet sets off less, an SMG's round more). What the items set off themselves
-// sets off nothing more.
-void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd)
+// sets off nothing more. `aimed`: a round of the survivor's own (Wound.aimed), not a drone's or a turret's. A flamethrower's
+// puff lands as a Blow.Flame, and `ignite` sets it alight.
+void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, float knock, float chance, Herd herd, bool aimed, Blow blow = Blow.Missile,
+          bool ignite = false)
 {
     var crit = Random.NextFloat() < arms.crit;
     var frozen = Holds(arms, Item.Frostbite) > 0 && Random.NextFloat() < 0.12 * Holds(arms, Item.Frostbite) * chance;
     var lit = Holds(arms, Item.DragonsBreath) > 0 && Random.NextFloat() < 0.25 * Holds(arms, Item.DragonsBreath) * chance;
     var toes = z.down ? 1 + 0.5 * Holds(arms, Item.SteelToes) : 1.0;
-    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, weak = weak, from = from, knock = knock, blow = Blow.Missile,
-                          crit = crit, element = frozen ? Element.Frost : lit ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
+    z.entity.Send(Wound { damage = damage * (crit ? 2.0 : 1.0) * toes, seat = arms.seat, head = head, weak = weak, from = from, knock = knock, blow = blow,
+                          aimed = aimed, crit = crit, element = frozen ? Element.Frost : lit || ignite ? Element.Fire : Element.None, freeze = frozen ? 2.0 : 0 });
     var wire = Holds(arms, Item.LiveWire);
     if (wire > 0 && Random.NextFloat() < 0.15 * chance) Arc(arms, z, 1 + 2 * wire, damage * 0.6, herd);
     var mortar = Holds(arms, Item.Mortar);
@@ -399,7 +392,7 @@ void Land(Arms arms, Body z, float damage, bool head, bool weak, float3 from, fl
     {
         var dx = Random.NextFloat(-0.4, 0.4);
         var dz = Random.NextFloat(-0.4, 0.4);
-        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(dx, 30, dz), velocity = float3(0, -45, 0), damage = 100 * arms.might, splash = 3.5, element = Element.Blast,
+        Spawn(Missile { kind = Shot.Shell, at = z.at + float3(dx, 30, dz), velocity = float3(0, -45, 0), damage = 200 * arms.might, splash = 3.5, element = Element.Blast,
                         seat = arms.seat, life = 2, echo = true });
     }
 }
@@ -569,18 +562,18 @@ const float SAW_REACH = 2.3;         // How far out the saw blades circle...
 const int SAWS_SHOWN = 6;            // ...so many at most (more cut harder)...
 const float SAW_EVERY = 0.12;        // ...cutting so often...
 const float SAW_BITE = 0.75;         // ...what's within so far of each...
-const float SAW_HURT = 22;           // ...for so much
+const float SAW_HURT = 44;           // ...for so much
 const float TESLA_EVERY = 1.2;
 const float TESLA_REACH = 9;
-const float TESLA_HURT = 45;
+const float TESLA_HURT = 90;
 const float MOLOTOV_EVERY = 6;
 const float DRUM_EVERY = 5;          // A Thunder Drum's wave...
 const float DRUM_REACH = 4;          // ...this far (+1 m each)...
-const float DRUM_HURT = 60;          // ...for so much, the dead thrown down
+const float DRUM_HURT = 120;          // ...for so much, the dead thrown down
 const float ROCKET_EVERY = 3;
 const float ROCKET_REACH = 22;
 const float ROCKET_SPEED = 18;
-const float ROCKET_HURT = 110;
+const float ROCKET_HURT = 220;
 const float ROCKET_SPLASH = 2.6;
 
 [Stage(Tick.Hands, 2)]
@@ -615,7 +608,7 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
             }
             if (best.entity != default && LongRay(ashwick, drone, best.chest, out _) > 1)
             {
-                Land(ArmsOf(survivor), best, 14 * Might(survivor), false, false, drone, 0.5, 0.5, herd);
+                Land(ArmsOf(survivor), best, 28 * Might(survivor), false, false, drone, 0.5, 0.5, herd, false);
                 Send(Traced { seat = survivor.seat, from = drone, to = best.chest, kind = Trace.Drone });
                 Send(Loosed { seat = survivor.seat, weapon = Weapon.Smg, at = drone, way = Math.Normalize(best.chest - drone), source = Source.Drone });
             }
@@ -732,7 +725,7 @@ system Retinue(mut Survivor survivor, Herd herd, Ashwick ashwick, Match match, T
             foreach (var z in Near(herd, survivor.feet, reach))
             {
                 if (!z.hittable || Math.Distance(z.at, survivor.feet) > reach) continue;
-                z.entity.Send(Wound { damage = 5 * embers * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = -1, blow = Blow.Burning, element = Element.Fire,
+                z.entity.Send(Wound { damage = 10 * embers * Might(survivor), seat = survivor.seat, from = survivor.feet, knock = -1, blow = Blow.Burning, element = Element.Fire,
                                       echo = true });
             }
         }
@@ -777,11 +770,14 @@ float LevelSpan(int level, float crowd)
 const float LEVEL_FIRST = 40;
 const float LEVEL_GROWTH = 1.28;
 
-// Picks owed a survivor from a chest (each, a pick for everyone), a mission (a pick of the rarer items) or a boss.
+// Picks owed a survivor from a chest (each, a pick for everyone), a mission (a pick of the rarer items) or a boss, offered
+// `delay` seconds on, so what earned it is seen first (the owner, 2026-10-20: "when an objective is completed or a boss
+// killed the reward shows instantly before i even see the boss die; we need some delay there").
 event Owed
 {
     int picks;
     int boons;
+    float delay;
 }
 
 event(Owed owed) TakeOwed(mut Survivor survivor)
@@ -789,14 +785,21 @@ event(Owed owed) TakeOwed(mut Survivor survivor)
     if (!survivor.ready || survivor.role == Role.None) return;
     survivor.pending += owed.picks;
     survivor.boons += owed.boons;
+    survivor.rewardWait = Math.Max(survivor.rewardWait, owed.delay);
 }
 
+const float BOSS_REWARD_WAIT = 2.5;     // A boss's fall, seen before its pick...
+const float MISSION_REWARD_WAIT = 1.5;  // ...a mission's end...
+const float CHEST_REWARD_WAIT = 1;      // ...and a chest bursting open
+
 // Every kill is the party's: each survivor's level climbs together (Match.xp), each level a pick of three items; the
-// next is offered as soon as the last is taken (a mission's boon first: uncommon and rare only).
+// next is offered as soon as the last is taken (a mission's boon first: uncommon and rare only), and none while a reward's
+// wait runs.
 [Stage(Tick.Late, 1)]
-system Experience(mut Survivor survivor, Match match)
+system Experience(mut Survivor survivor, Match match, Time time)
 {
     if (!survivor.ready || survivor.role == Role.None) return;
+    if (!match.paused) survivor.rewardWait = Math.Max(0, survivor.rewardWait - time.dt);
     if (survivor.level < match.level)
     {
         var gained = match.level - survivor.level;
@@ -805,6 +808,7 @@ system Experience(mut Survivor survivor, Match match)
         // A level's health comes with it
         survivor.health = Math.Min(MaxHealth(survivor), survivor.health + LEVEL_HEALTH * gained);
     }
+    if (survivor.rewardWait > 0) return;
     if (!survivor.choosing && survivor.boons > 0)
     {
         survivor.boons -= 1;

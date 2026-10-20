@@ -254,6 +254,7 @@ static bool is_struct_like(const type t)
 // False for a type it can't have.
 static bool type_words(const type t, int *floats, int *ints)
 {
+    if (type_is_double_based(t)) return false;
     if (t.kind == TY_BYTE) { // An int there, from 0 to 255
         *ints += 1;
         return true;
@@ -404,6 +405,9 @@ static bool type_fits(emit *em, const type t, const loc at)
         return false;
     }
     switch (t.kind) {
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4:
+        why = "the GPU's floats are 32 bits: convert to a float scalar, vector or matrix in local code before drawing"; break;
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_STRING: why = "text is the CPU's"; break;
     case TY_MESH: why = "a Mesh is drawn, 'Draw.Mesh(mesh, transform, ...)', which sends the GPU its vertices and its triangles"; break;
@@ -4162,6 +4166,7 @@ static void ex(emit *em, const expr *e)
         else put_int(em, int_literal(e));
         return;
     case E_FLOAT: {
+        if (e->is_double) { type_fits(em, e->type, e->at); return; }
         if (e->is_degrees) {
             put_float(em, e->float_value);
             return;

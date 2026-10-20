@@ -1,5 +1,36 @@
 # The language server and the editors
 
+## Double Position hover (2026-10-20)
+
+Position attribute hover now identifies float/double scalars and vectors and
+their own correction precision. The existing double LSP regression opens a
+tagged double3 component, checks no diagnostics and verifies attribute hover.
+Completion syntax remains [Position]. Validation: notes/language.md.
+
+## Double matrices and math tooling (2026-10-20)
+
+The LSP and Vim/Emacs/TextMate grammars recognize double2x2/double3x3/double4x4.
+Matrix column completion/hover retains the double vector type. Constructors,
+identity, double.PI/TAU/E, all component-wise Math functions and double matrix
+builtins use the ordinary signature/member paths. GPU completion omits the
+binary64 matrix types. Tests extend the prior double tooling regression and
+grammar probes; final validation: notes/language.md.
+
+## Double numeric tooling (2026-10-20)
+
+The LSP offers double/double2/double3/double4 in CPU value/type positions, gives
+binary64 hover and constructor signatures, returns double scalar/vector types
+for swizzles and exposes double.TryParse. GPU type completion omits doubles.
+Shared TextMate and bundled Vim/Emacs grammars recognize the new primitive
+names; number tokens retain d/D suffixes. Existing formatting remains unchanged.
+Lexer/LSP/grammar cases exercise these paths and explicit narrowing guidance.
+
+The grammar's all-E2E declaration check now locates the declaration capture,
+rather than the first same-named identifier on its line. This repairs the existing
+`local event(Shown) Shown(...)` false failure without changing grammar behavior.
+The production docs build and all 268 grammar cases pass. Final native/web and
+editor harness validation: notes/language.md.
+
 ## Float bits and screen scale help (2026-10-20)
 
 Builtin completion/hover/signatures expose Math.AsInt/AsFloat, float Hash overloads

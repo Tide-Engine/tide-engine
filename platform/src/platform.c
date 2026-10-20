@@ -15,6 +15,7 @@
 #include "font.h"
 #include "audio_in.h"
 #include "audio_out.h"
+#include "embedded.h"
 #include "tide/vorbis.h"
 #include "gpu.h"
 #include "mixer.h"
@@ -96,6 +97,15 @@ static unsigned frames_counted;
 // only there for its graphics context.
 static bool headless;
 static tide_headless_desc headless_run;
+
+// Inside another program's frame (tide/embed.h): what its window read this
+// frame stands in for a window of Tide's own, as a headless run's script does,
+// and what the game asks of the window is kept for it to do.
+static bool embedded;
+static tide_embed_input embedded_input;
+static uint32_t embedded_text_at, embedded_touch_at; // The next of the frame's characters and touch events
+static bool embedded_typing, embedded_lock;
+_Static_assert(TIDE_KEY_COUNT <= 8 * sizeof embedded_input.keys, "a bit for every key");
 
 // Whether nobody hears this window: in a run nobody watches (TIDE_HIDDEN,
 // tide/page.h) nobody listens either, so it opens no output device and no
@@ -440,14 +450,97 @@ int tide_platform_fps(void)
 // Devices
 
 // What the devices say comes from the window, or for a headless one from
-// what was made up for it (script.h), which says it the same way.
+// what was made up for it (script.h), or inside another program's frame from
+// what its window read (tide/embed.h), which all say it the same way.
+
+void tide_platform_embed_frame(const tide_embed_input *input, const tide_float2 screen_size, const float screen_scale)
+{
+    embedded = true;
+    embedded_input = input ? *input : (tide_embed_input){0};
+    if (embedded_input.text_count > TIDE_TEXT_MAX) embedded_input.text_count = TIDE_TEXT_MAX;
+    if (embedded_input.touch_count > TIDE_EMBED_TOUCHES) embedded_input.touch_count = TIDE_EMBED_TOUCHES;
+    embedded_text_at = embedded_touch_at = 0;
+    // A size and scale that make no screen (NaN too) make the smallest one
+    const float scale = screen_scale >= 0.25f && screen_scale <= 16.0f ? screen_scale : 1.0f;
+    const float width = screen_size.x >= 1.0f && screen_size.x <= 16384.0f ? screen_size.x : 1.0f;
+    const float height = screen_size.y >= 1.0f && screen_size.y <= 16384.0f ? screen_size.y : 1.0f;
+    screen_width = (int)width;
+    screen_height = (int)height;
+    pixel_width = (int)((float)screen_width * scale + 0.5f);
+    pixel_height = (int)((float)screen_height * scale + 0.5f);
+}
+
+bool tide_platform_embed_typing(void)
+{
+    return embedded_typing;
+}
+
+bool tide_platform_embed_cursor_lock(void)
+{
+    return embedded_lock;
+}
+
+static bool key_held(const tide_key key)
+{
+    if (embedded) return (embedded_input.keys[key / 8] >> (key % 8) & 1u) != 0;
+    return headless ? tide_script_key_held(key) : tide_window_key_held(key);
+}
+
+static void mouse_state(tide_window_mouse *out)
+{
+    if (embedded) {
+        const tide_embed_input *in = &embedded_input;
+        *out = (tide_window_mouse){.x = in->mouse_x, .y = in->mouse_y, .wheel_x = in->wheel_x, .wheel_y = in->wheel_y,
+                                   .buttons = in->mouse_buttons, .locked = in->mouse_locked,
+                                   .moved_x = in->moved_x, .moved_y = in->moved_y};
+    } else if (headless) {
+        tide_script_mouse_state(out);
+    } else {
+        tide_window_mouse_state(out);
+    }
+}
+
+static void gamepad_state(tide_window_gamepad *out)
+{
+    if (embedded) {
+        const tide_embed_input *in = &embedded_input;
+        *out = (tide_window_gamepad){.connected = in->gamepad, .left_x = in->left_x, .left_y = in->left_y,
+                                     .right_x = in->right_x, .right_y = in->right_y, .left_trigger = in->left_trigger,
+                                     .right_trigger = in->right_trigger, .buttons = in->gamepad_buttons};
+    } else if (headless) {
+        tide_script_gamepad_state(out);
+    } else {
+        tide_window_gamepad_state(out);
+    }
+}
+
+static bool touchscreen(void)
+{
+    if (embedded) return embedded_input.touchscreen;
+    return headless ? tide_script_touchscreen() : tide_window_touchscreen();
+}
+
+static bool take_touch(tide_touch_report *out)
+{
+    if (!embedded) return headless ? tide_script_take_touch(out) : tide_window_take_touch(out);
+    while (embedded_touch_at < embedded_input.touch_count) {
+        const tide_embed_touch *t = &embedded_input.touches[embedded_touch_at++];
+        if (t->phase > TIDE_TOUCH_CANCELED) continue; // Not a phase: left out
+        *out = (tide_touch_report){.phase = (tide_touch_phase)t->phase, .source = t->source, .x = t->x, .y = t->y};
+        return true;
+    }
+    return false;
+}
+
+static uint32_t take_char(void)
+{
+    if (embedded) return embedded_text_at < embedded_input.text_count ? embedded_input.text[embedded_text_at++] : 0;
+    return headless ? tide_script_take_char() : tide_window_take_char();
+}
 
 static void poll_keyboard(tide_keyboard *k)
 {
-    for (size_t i = 0; i < COUNT_OF(key_offsets); i++) {
-        const bool held = headless ? tide_script_key_held((tide_key)i) : tide_window_key_held((tide_key)i);
-        tide_button_set(BUTTON_AT(k, key_offsets[i]), held);
-    }
+    for (size_t i = 0; i < COUNT_OF(key_offsets); i++) tide_button_set(BUTTON_AT(k, key_offsets[i]), key_held((tide_key)i));
 }
 
 // The mouse; true if it was used: it moved or scrolled, or a button went down
@@ -457,8 +550,7 @@ static bool poll_mouse(tide_mouse *m)
     static float last_x, last_y;
     static bool polled;
     tide_window_mouse mouse;
-    if (headless) tide_script_mouse_state(&mouse);
-    else tide_window_mouse_state(&mouse);
+    mouse_state(&mouse);
     // How it moved: where the cursor went or, while the window holds the
     // cursor (Cursor.Lock), what the mouse says it moved, as the cursor stays.
     const float dx = mouse.locked ? mouse.moved_x : polled ? mouse.x - last_x : 0.0f;
@@ -489,9 +581,9 @@ static bool poll_mouse(tide_mouse *m)
 static void poll_touches(tide_touchscreen *s)
 {
     tide_touches_poll(s);
-    s->connected = headless ? tide_script_touchscreen() : tide_window_touchscreen();
+    s->connected = touchscreen();
     tide_touch_report r;
-    while (headless ? tide_script_take_touch(&r) : tide_window_take_touch(&r)) {
+    while (take_touch(&r)) {
         tide_touch_event(s, r.phase, r.source, tide_f2(r.x, (float)screen_height - r.y));
     }
 }
@@ -499,8 +591,7 @@ static void poll_touches(tide_touchscreen *s)
 static void poll_gamepad(tide_gamepad *g)
 {
     tide_window_gamepad pad;
-    if (headless) tide_script_gamepad_state(&pad);
-    else tide_window_gamepad_state(&pad);
+    gamepad_state(&pad);
     g->connected = pad.connected;
     if (pad.connected) {
         g->leftStick = tide_f2(pad.left_x, -pad.left_y);
@@ -523,7 +614,8 @@ static uint32_t pasted_count, pasted_at;
 
 static void paste(void)
 {
-    const char *text = headless ? NULL : tide_window_take_paste(); // Never the system's clipboard into a headless run
+    // Never the system's clipboard into a headless run, and another program's window types what it pastes
+    const char *text = headless || embedded ? NULL : tide_window_take_paste();
     if (!text) return;
     for (uint32_t c; pasted_count < COUNT_OF(pasted) && (c = tide_utf8_next(&text)) != 0;) {
         if (c >= 32 && c != 127) pasted[pasted_count++] = c; // Not newlines or tabs
@@ -539,7 +631,7 @@ static void poll_text(tide_typed *text)
     while (pasted_at < pasted_count && text->count < TIDE_TEXT_MAX) text->chars[text->count++] = pasted[pasted_at++];
     if (pasted_at == pasted_count) pasted_at = pasted_count = 0;
     while (text->count < TIDE_TEXT_MAX) {
-        const uint32_t c = headless ? tide_script_take_char() : tide_window_take_char();
+        const uint32_t c = take_char();
         if (c == 0) break;
         text->chars[text->count++] = c;
     }
@@ -548,13 +640,16 @@ static void poll_text(tide_typed *text)
 void tide_platform_typing(const bool typing)
 {
     static bool was;
-    if (typing == was || headless) return;
+    embedded_typing = typing;
+    if (typing == was || headless || embedded) return;
     was = typing;
     tide_window_typing(typing);
 }
 
 void tide_platform_cursor_lock(const bool lock)
 {
+    embedded_lock = lock;
+    if (embedded) return; // The other program's window holds it, or not (tide_embed_input.mouse_locked)
     if (headless) {
         tide_script_cursor_lock(lock);
         return;
@@ -564,7 +659,9 @@ void tide_platform_cursor_lock(const bool lock)
 
 void tide_platform_copy(const char *text)
 {
-    if (headless) return; // A run nobody watches leaves the clipboard of whoever is at the machine alone
+    // A run nobody watches leaves the clipboard of whoever is at the machine alone, and another program's
+    // window has no clipboard of Tide's
+    if (headless || embedded) return;
     tide_window_copy(text);
 }
 

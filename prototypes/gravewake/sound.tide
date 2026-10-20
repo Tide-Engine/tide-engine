@@ -62,6 +62,13 @@ asset Clip itemUncommon = "sfx/item_uncommon.ogg";
 asset Clip itemRare = "sfx/item_rare.ogg";
 asset Clip powerupGrab = "sfx/powerup_grab.ogg";
 asset Clip hitmarkerClip = "sfx/hitmarker.ogg";
+asset Clip hitTick = "sfx/hit_tick.ogg";
+asset Clip hitKill = "sfx/hit_kill.ogg";
+asset Clip hitHead = "sfx/hit_head.ogg";
+asset Clip flamerLoop = "sfx/flamer_loop.ogg";
+asset Clip flamerStart = "sfx/flamer_start.ogg";
+asset Clip thumpClip = "sfx/thump.ogg";
+asset Clip readyClip = "sfx/skill_ready.ogg";
 
 // The master's limiter: whatever piles up (a bell over two dozen groans) is held under full scale, at once, and let back
 // up over a tenth of a second.
@@ -94,6 +101,11 @@ local singleton Ears
     Sound breath;
     Sound brazier;
     Sound torch;
+    Sound flame;              // This machine's flamethrower's roar, while it's held...
+    Sound othersFlame;        // ...and the others' (the last heard), where they are
+    float flaming;            // Seconds the roars go on unless another puff's heard
+    float othersFlaming;
+    float3 othersFlameAt;
     Random random;
     float stepped;            // Metres walked at this machine's last footfall
     float[4] othersStepped;
@@ -103,6 +115,10 @@ local singleton Ears
     int orbStep;
     float voices;             // The dead's voices that may start now, coming back at eight a second
     float lastPoints;
+    int ticked;               // This frame's hits of your own heard: a tick, a kill's knock and a head's ding, one of each
+    int knocked;              // a frame, so a shotgun's pellets are one
+    int dinged;
+    bool skillReady = true;   // This machine's right mouse skill, ready as it was last frame
 }
 
 // The bed: the night, the dread under it, the heart when it's bad.
@@ -111,6 +127,9 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, Haz
 {
     Audio.SetEffect(Bus.Master, Limit());
     var dt = me.dt;
+    ears.ticked = 0;
+    ears.knocked = 0;
+    ears.dinged = 0;
     var playing = lobby.playing;
     // The dread: low through the early rounds, the high one later or when the dead are many
     var fighting = match.phase == Phase.Fighting;
@@ -189,6 +208,21 @@ view Listen(mut Ears ears, Me me, Match match, Lobby lobby, Village village, Haz
     ears.brazier.pitch = 0.8;
     ears.brazier.bus = Bus.Ambience;
     ears.brazier.playing = brazierFar < 25;
+    // The flamethrowers' roars, while they're held (not while the run's held for a pick)
+    ears.flaming = Math.Max(0, ears.flaming - dt);
+    ears.othersFlaming = Math.Max(0, ears.othersFlaming - dt);
+    ears.flame.clip = flamerLoop;
+    ears.flame.loop = true;
+    ears.flame.volume = 0.75;
+    ears.flame.bus = Bus.Effects;
+    ears.flame.playing = ears.flaming > 0 && !match.paused && playing;
+    ears.othersFlame.clip = flamerLoop;
+    ears.othersFlame.loop = true;
+    ears.othersFlame.spatial = true;
+    ears.othersFlame.position = ears.othersFlameAt;
+    ears.othersFlame.volume = 0.65;
+    ears.othersFlame.bus = Bus.Effects;
+    ears.othersFlame.playing = ears.othersFlaming > 0 && !match.paused && playing;
     ears.voices = Math.Min(4, ears.voices + dt * 8);
 }
 
@@ -253,6 +287,10 @@ view Handling(mut Ears ears, Me me, query (Survivor survivor) survivors)
             Audio.Play(s.gun == Weapon.Pistol ? pistolReload : magReload, 0.8, (s.gun == Weapon.Pistol ? 1.5 : 1.4) / Math.Max(0.4, s.actLength));
         // The pump, a moment after the shot
         if (s.gun == Weapon.Shotgun && s.act == Act.Fire && s.actTime >= 0.28 && (ears.lastActTime < 0.28 || ears.lastAct != Act.Fire)) Audio.Play(pumpClip, 0.75);
+        // The right mouse's skill back: a soft chime (with its flare round the crosshair, hud.tide)
+        var ready = s.cooldowns[0] <= 0;
+        if (ready && !ears.skillReady && s.life == Life.Standing && s.role != Role.None) Audio.Play(readyClip, 0.55);
+        ears.skillReady = ready;
         ears.lastAct = s.act;
         ears.lastActTime = s.actTime;
     }
@@ -279,9 +317,15 @@ local event(Kicked kicked) HearKick(mut Ears ears, Me me, Survivor survivor)
 local event(Struck struck) HearStruck(mut Ears ears, Me me)
 {
     var mine = struck.seat == me.seat && struck.seat >= 0;
-    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding)
+    if (struck.blow == Blow.Burning || struck.blow == Blow.Bleeding || struck.blow == Blow.Flame)
     {
         if (struck.killed) Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.8, ears.random.NextFloat(0.9, 1.1));
+        // A flamethrower's kill of your own: the kill's knock, quieter (the roar's the rest)
+        if (struck.killed && mine && struck.aimed && ears.knocked < 1)
+        {
+            ears.knocked += 1;
+            Audio.Play(hitKill, 0.5, ears.random.NextFloat(0.88, 0.95));
+        }
         return;
     }
     if (struck.blow == Blow.Shove) return;
@@ -289,7 +333,7 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
     if (struck.mail && !struck.killed)
     {
         if (mine) Audio.Play(stoneHits[ears.random.NextInt(stoneHits.count)], struck.at, 0.7, ears.random.NextFloat(1.6, 1.9));
-        if (mine) Audio.Play(hitmarkerClip, 0.25, 0.6);
+        if (mine && struck.aimed) Audio.Play(hitmarkerClip, 0.25, 0.6);
         return;
     }
     // A horde's worth of hits at once would be noise: the kills, the heads and this machine's own
@@ -308,12 +352,45 @@ local event(Struck struck) HearStruck(mut Ears ears, Me me)
         Audio.Play(deaths[ears.random.NextInt(deaths.count)], struck.at, 0.75, ears.random.NextFloat(0.88, 1.12));
     }
     if (struck.element == Element.Frost) Audio.Play(freezeClip, struck.at, 0.6, 1.0);
-    if (mine) Audio.Play(hitmarkerClip, struck.head ? 0.6 : struck.killed ? 0.5 : 0.3, struck.crit ? 1.7 : struck.head ? 1.45 : struck.killed ? 0.8 : 1.0);
+    // A hit of your own hand's (not what fights by itself, which would never stop): a crisp tick, a kill a heavier knock,
+    // the head or a weak spot a ding over its crack (the owner, 2026-10-20: "some VFX/SFX for when you hit something")
+    if (!mine || !struck.aimed) return;
+    if (struck.killed && ears.knocked < 1)
+    {
+        ears.knocked += 1;
+        Audio.Play(hitKill, struck.head ? 0.85 : 0.7, ears.random.NextFloat(0.97, 1.04));
+    }
+    else if (!struck.killed && ears.ticked < 1)
+    {
+        ears.ticked += 1;
+        // (0.5 till the owner, 2026-10-20: "the normal hit markers are still hard to hear, i like the critical/headshot
+        // effect": a brighter ring now, louder)
+        Audio.Play(hitTick, struck.crit ? 0.95 : 0.85, struck.crit ? 1.25 : ears.random.NextFloat(0.97, 1.05));
+    }
+    if ((struck.head || struck.weak) && ears.dinged < 1)
+    {
+        ears.dinged += 1;
+        Audio.Play(hitHead, struck.killed ? 0.5 : 0.4, struck.weak ? 0.75 : struck.killed ? 1.0 : 1.1);
+    }
 }
 
 local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
 {
     var mine = loosed.seat == me.seat;
+    // A flamethrower: no shot, but a rush of fire as it's lit and its roar while it's held (Listen)
+    if (loosed.weapon == Weapon.Flamer && loosed.source == Source.Gun)
+    {
+        if (mine)
+        {
+            if (ears.flaming <= 0) Audio.Play(flamerStart, 0.8, ears.random.NextFloat(0.95, 1.05));
+            ears.flaming = FLAME_HELD;
+            return;
+        }
+        if (ears.othersFlaming <= 0) Audio.Play(flamerStart, loosed.at, 0.7, ears.random.NextFloat(0.95, 1.05));
+        ears.othersFlaming = FLAME_HELD;
+        ears.othersFlameAt = loosed.at;
+        return;
+    }
     mut Clip clip = rifleShots[ears.random.NextInt(rifleShots.count)];
     mut var volume = 1.0;
     mut var pitch = ears.random.NextFloat(0.96, 1.04);
@@ -344,6 +421,8 @@ local event(Loosed loosed) HearLoosed(mut Ears ears, Me me)
     PlayAt(clip, loosed.at, near, volume, pitch);
 }
 
+const float FLAME_HELD = 0.15;      // A flamethrower's roar goes on so long after a puff (it puffs every 0.07 s)
+
 local event(Spell spell) HearSpell(mut Ears ears)
 {
     Audio.Play(chainZap, spell.to, 0.55, ears.random.NextFloat(0.9, 1.2));
@@ -373,7 +452,7 @@ local event(Blast blast) HearBlast(mut Ears ears)
         Audio.Play(bloatPops[ears.random.NextInt(bloatPops.count)], blast.at, 0.6, ears.random.NextFloat(1.6, 1.9));
         return;
     }
-    if (blast.kind == Shot.Pot || blast.kind == Shot.Keg) Audio.Play(fireBurst, blast.at, blast.kind == Shot.Keg ? 0.6 : 1.0, ears.random.NextFloat(0.9, 1.1));
+    if (blast.kind == Shot.Pot || blast.kind == Shot.Napalm || blast.kind == Shot.Keg) Audio.Play(fireBurst, blast.at, blast.kind == Shot.Keg ? 0.6 : 1.0, ears.random.NextFloat(0.9, 1.1));
     else if (blast.kind == Shot.Quake) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 1.0, 0.55);
     else if (blast.kind == Shot.Drum) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 0.7, ears.random.NextFloat(0.4, 0.45));
     else if (blast.kind == Shot.Rocket) Audio.Play(explosions[ears.random.NextInt(explosions.count)], blast.at, 0.55, ears.random.NextFloat(1.2, 1.4));
@@ -411,7 +490,6 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
             return;
         case Sfx.Empty: PlayAt(emptyClip, cue.at, near, 0.6, 1.0); return;
         case Sfx.Throw: PlayAt(throwClip, cue.at, near, 0.7, 1.0); return;
-        case Sfx.Mine: Audio.Play(emptyClip, cue.at, 0.8, 0.7); return;
         case Sfx.Shell: PlayAt(shellLoad, cue.at, near, 0.7, ears.random.NextFloat(0.95, 1.05)); return;
         case Sfx.BossRoar: Audio.Play(screams[ears.random.NextInt(screams.count)], cue.at, 1.0, 0.42); return;
         case Sfx.BossCharge: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, 0.5); return;
@@ -425,7 +503,11 @@ local event(Cue cue) HearCue(mut Ears ears, Me me)
         case Sfx.Bellow: Audio.Play(snarls[ears.random.NextInt(snarls.count)], cue.at, 1.0, ears.random.NextFloat(0.5, 0.58)); return;
         case Sfx.Pound: Audio.Play(hitsBlunt[ears.random.NextInt(hitsBlunt.count)], cue.at, 1.0, 0.6); return;
         case Sfx.Rocket: Audio.Play(throwClip, cue.at, 0.8, ears.random.NextFloat(1.5, 1.7)); return;
-        case Sfx.Detonate: Audio.Play(emptyClip, cue.at, 1.0, 1.6); return;
+        case Sfx.Thump: PlayAt(thumpClip, cue.at, near, 1.0, ears.random.NextFloat(0.95, 1.05)); return;
+        case Sfx.Napalm:
+            PlayAt(thumpClip, cue.at, near, 0.7, ears.random.NextFloat(0.75, 0.82));
+            PlayAt(flamerStart, cue.at, near, 0.7, 1.1);
+            return;
     }
 }
 
@@ -438,20 +520,15 @@ local event(Picked picked) HearPicked(Me me)
     else Audio.Play(rarity == Rarity.Rare ? itemRare : itemUncommon, 0.85);
 }
 
-// A skill used: a roll's rush, a leap's and its landing, a blink's snap.
+// A skill used: a roll's rush, the drone going up.
 local event(Unleashed used) HearUnleashed(mut Ears ears, Me me)
 {
     var mine = used.seat == me.seat;
     switch (used.skill)
     {
         case Skill.None: PlayAt(swingsLight[ears.random.NextInt(swingsLight.count)], used.at, mine, 0.4, 1.4); return;
-        case Skill.Leap:
-            if (used.landed) Audio.Play(explosions[0], used.at, 1.0, 0.65);
-            else PlayAt(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, mine, 0.9, 0.8);
-            return;
         case Skill.Roll: PlayAt(swingsHeavy[ears.random.NextInt(swingsHeavy.count)], used.at, mine, 0.9, 1.3); return;
-        case Skill.Blink: Audio.Play(chainZap, used.to, 0.8, 1.5); return;
-        case Skill.Turret: Audio.Play(pumpClip, used.at, 0.9, 0.7); return;
+        case Skill.Turret: Audio.Play(pumpClip, used.at, 0.9, 1.2); return;
     }
 }
 
