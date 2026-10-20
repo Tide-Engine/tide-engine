@@ -118,7 +118,7 @@ more bolts of lightning, more rockets.
 
 | Rarity | Items |
 | --- | --- |
-| Common | Hollow Points (damage), Hair Trigger (fire and reload faster), Kevlar Vest (health, armour), Running Shoes (speed), Leech Rounds (kills heal), Field Battery (skills back sooner), Extended Mag, Lucky Shot (hits for double), Smelling Salts (raise friends faster; not offered alone), Ricochet Rounds (hits bounce on to more of the dead), Bone Splinters (kills throw shards of bone into the dead round them) |
+| Common | Hollow Points (damage), Hair Trigger (fire and reload faster), Kevlar Vest (health, armour), Running Shoes (speed), Leech Rounds (kills heal), Field Battery (skills back sooner), Extended Mag, Lucky Shot (hits for double), Smelling Salts (raise friends faster; not offered alone), Ricochet Rounds (hits bounce on to more of the dead), Bone Splinters (kills throw shards of bone into the dead round them), First Aid Kit (health comes back sooner and faster) |
 | Uncommon | Live Wire (hits arc to more of the dead), Powder Keg (kills burst into the two nearest dead), Gun Drone (a drone each over your head shoots the nearest dead), Ember Ring (a ring of fire round you sets the dead alight), Frostbite (hits freeze), Energy Drink (another roll), Kerosene (the dead you roll past catch fire), Steel Toes (more to the dead on the ground), Bile Bomb (the Bloaters you kill burst wider and harder on the dead), AP Rounds (through one more), Saw Blades (a blade each circles you, cutting what it passes), Tesla Coil (lightning into the nearest dead), Molotov Satchel (firebombs at the thickest of the dead) |
 | Rare | Mortar Flare (hits call a shell down), Second Wind (going down, straight back up, used up), HE Rounds (every round bursts where it lands), Dragon's Breath (hits set the dead alight), Thunder Drum (a shockwave throws down the dead round you), Rocket Pod (rockets at the dead round you) |
 | Skill | Your right mouse skill a rank stronger (above) |
@@ -143,7 +143,9 @@ rounds to the body at first, about four later on, and one to the head (a head
 hit does three times a body's; a shotgun pellet's half again). A head hit is
 gold on the crosshair, a Lucky Shot's double yellow. Every one pressed against you slows you; a roll goes through
 them. Their claws hit harder as the danger climbs, and your health comes back only
-slowly, once you've gone four seconds unhurt.
+slowly (about a minute and a half from nothing), once you've gone six seconds
+unhurt; First Aid Kits make it sooner and faster, Leech Rounds heal on kills, and
+dawn makes everyone whole.
 
 The ordinary dead are grey; every other kind is its own strong colour, its
 body washed with it, its eyes burning it and a hard edge of it round its

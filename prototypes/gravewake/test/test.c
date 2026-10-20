@@ -547,7 +547,7 @@ int main(void)
         CHECK(s.selfRevives == 1);
         s = take(0, Item_EnergyDrink);
         CHECK(s.rolls == 3);                           // A third roll, ready now
-        const Item rest[] = {Item_HollowPoints, Item_HairTrigger, Item_Sneakers, Item_Leech, Item_Battery, Item_LuckyShot, Item_Salts, Item_LiveWire,
+        const Item rest[] = {Item_HollowPoints, Item_HairTrigger, Item_Sneakers, Item_Leech, Item_Battery, Item_LuckyShot, Item_Salts, Item_FirstAid, Item_LiveWire,
                              Item_PowderKeg, Item_GunDrone, Item_EmberRing, Item_Frostbite, Item_Kerosene, Item_SteelToes, Item_BileBomb,
                              Item_ApRounds, Item_Mortar, Item_HeRounds, Item_DragonsBreath};
         for (size_t k = 0; k < sizeof rest / sizeof rest[0]; k++) {
@@ -565,6 +565,33 @@ int main(void)
         memset(&s.items, 0, sizeof s.items);
         s.selfRevives = 0;
         set(0, s);
+    }
+
+    // ---- Health coming back: nothing for 6 s after a blow, then 1.2% of it a second; with two First Aid Kits after 4 s,
+    // 3.6% a second (nobody about to hurt them meanwhile) ----
+    {
+        few(0);
+        float gained[2];
+        for (int k = 0; k < 2; k++) {
+            Survivor s = get(0);
+            s.items.at[Item_FirstAid] = 2 * k;
+            s.health = 40;
+            s.calm = 0;
+            set(0, s);
+            for (int t = 0; t < 60 * 10; t++) {
+                world.Match.xp = 0;           // (no level: it makes the survivors whole)
+                tick(1);
+                decline();
+            }
+            gained[k] = (get(0).health - 40) / max_health(get(0));
+        }
+        printf("health back in 10 s after a blow: %.1f%% of it, with two First Aid Kits %.1f%%\n", gained[0] * 100, gained[1] * 100);
+        CHECK(fabsf(gained[0] - 0.048f) < 0.004f && fabsf(gained[1] - 0.216f) < 0.01f);
+        Survivor s = get(0);
+        s.items.at[Item_FirstAid] = 0;
+        set(0, s);
+        heal();
+        spawning();
     }
 
     // ---- A Second Wind: down, and straight back up (a few of the dead about, not a crowd to claw them down again) ----
@@ -802,6 +829,7 @@ int main(void)
             CHECK(tide_set_Zombie(&world, other, o));
             n++;
         }
+        tick_safe(1);           // (the herd's grid made again with them where they now are: the throw looks there)
         before = zombie(e).health;
         only_skill(0, 2);
         int thrown = 0;

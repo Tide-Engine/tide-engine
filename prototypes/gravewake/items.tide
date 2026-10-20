@@ -34,7 +34,7 @@
 enum Item
 {
     // Common
-    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts, Ricochet, Splinters,
+    HollowPoints, HairTrigger, Kevlar, Sneakers, Leech, Battery, ExtendedMag, LuckyShot, Salts, Ricochet, Splinters, FirstAid,
     // Uncommon
     LiveWire, PowderKeg, GunDrone, EmberRing, Frostbite, EnergyDrink, Kerosene, SteelToes, BileBomb, ApRounds, SawBlades, TeslaCoil, Molotovs,
     // Rare
@@ -49,8 +49,8 @@ enum Item
     LongNozzle, WideNozzle, HotFuel, StickyFuel, BigTank,
 }
 
-const int ITEM_COUNT = 30;          // The items: the skill cards come after (Spring Boots, a jump in the air, went with jumping)
-const int ITEM_KINDS = 48;          // ...and the gun cards after them (a survivor's `items` counts each, and the gun cards' ranks)
+const int ITEM_COUNT = 31;          // The items: the skill cards come after (Spring Boots, a jump in the air, went with jumping)
+const int ITEM_KINDS = 49;          // ...and the gun cards after them (a survivor's `items` counts each, and the gun cards' ranks)
 const int GUN_CARDS = 5;            // Each gun's
 const int SKILL_RANKS = 3;
 const float SKILL_CARD_CHANCE = 0.3; // Of a level's offers that have a skill card among them
@@ -103,6 +103,7 @@ string ItemName(Item item)
         case Item.Salts: return "Smelling Salts";
         case Item.Ricochet: return "Ricochet Rounds";
         case Item.Splinters: return "Bone Splinters";
+        case Item.FirstAid: return "First Aid Kit";
         case Item.LiveWire: return "Live Wire";
         case Item.PowderKeg: return "Powder Keg";
         case Item.GunDrone: return "Gun Drone";
@@ -158,6 +159,7 @@ string ItemLine(Item item)
         case Item.Salts: return "Raise a friend who's down 50% faster (+50% each)";
         case Item.Ricochet: return "A round that hits bounces on to one more of the dead near it, for 60% (+1 bounce each)";
         case Item.Splinters: return "Your kills burst into 3 shards of bone that strike the dead round them (+2 each)";
+        case Item.FirstAid: return "Health comes back twice as fast (+1x each), and a second sooner after a blow (-1 s each)";
         case Item.LiveWire: return "15% chance a hit arcs to 3 more of the dead (+2 each)";
         case Item.PowderKeg: return "Your kills burst, hurting the 2 nearest for a quarter of what one of the dead can take (+10% each, +1 every second)";
         case Item.GunDrone: return "A drone at your shoulder shoots the nearest dead (one more drone each)";
@@ -199,6 +201,7 @@ string ItemLineAt(Item item, int count)
         case Item.Salts: return $"Raise a friend who's down {50 * n}% faster";
         case Item.Ricochet: return $"A round that hits bounces on to {n} more of the dead near it, for 60%";
         case Item.Splinters: return $"Your kills burst into {1 + 2 * n} shards of bone that strike the dead round them";
+        case Item.FirstAid: return $"Health comes back {n + 1} times as fast, {int(REGEN_DELAY - RegenDelay(n))} s sooner after a blow";
         case Item.LiveWire: return $"15% chance a hit arcs to {1 + 2 * n} more of the dead";
         case Item.GunDrone: return n > DRONES_SHOWN ? $"{DRONES_SHOWN} drones round you shoot the nearest dead, {n} drones' worth" : $"{n} drones round you shoot the nearest dead";
         case Item.Frostbite: return $"{Math.Min(100, 12 * n)}% chance a hit freezes the dead solid for 2 s";
@@ -388,6 +391,24 @@ float MaxHealth(Survivor s)
 
 const float LEVEL_HEALTH = 18;
 
+// How long after a blow health starts coming back, and how much of it a second: REGEN_DELAY and REGEN_RATE, and First
+// Aid Kits' quicker. (4 s and 4% a second, whole in under half a minute, till the owner, 2026-10-20: "health regen should
+// be scarcer and cards should allow to upgrade it; right now being damaged means nothing": 6 s and 1.2%, most of a
+// minute and a half from nothing, a kit a second sooner and as much again each.)
+float RegenDelay(int kits)
+{
+    return Math.Max(REGEN_SOONEST, REGEN_DELAY - kits);
+}
+
+float RegenRate(int kits)
+{
+    return REGEN_RATE * (1 + kits);
+}
+
+const float REGEN_DELAY = 6;        // Seconds unhurt before health comes back...
+const float REGEN_RATE = 0.012;     // ...and how much of it a second...
+const float REGEN_SOONEST = 2;      // ...and the soonest it comes back, with First Aid Kits
+
 float Fleetness(Survivor s)
 {
     return 1 + 0.12 * Has(s, Item.Sneakers);
@@ -410,7 +431,7 @@ int RollCharges(Survivor s)
 struct Arms
 {
     int seat;
-    int[48] items;
+    int[49] items;
     float might;
     float crit;
 }

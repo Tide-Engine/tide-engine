@@ -17,14 +17,16 @@ system Steer(Hands hands, mut Survivor survivor, Ashwick ashwick, Herd herd, Mat
     if (!survivor.ready || survivor.life == Life.Gone || match.phase == Phase.Over) return;
     FaceAim(survivor);
 
-    // Health comes back slowly after a few calm seconds (REGEN_DELAY, REGEN_RATE of it a second: it had come back whole in
-    // under two, so a survivor who dashed clear a moment never had to fear a blow); what Leech Rounds may heal comes back
-    // all the time
+    // Health comes back slowly after a few calm seconds (items.tide's RegenDelay, RegenRate: it had come back whole in
+    // under two, so a survivor who dashed clear a moment never had to fear a blow), sooner and faster with First Aid Kits;
+    // what Leech Rounds may heal comes back all the time
     survivor.calm += dt;
     survivor.slimed = Math.Max(0, survivor.slimed - dt);
     var leechMost = MaxHealth(survivor) * 0.08 * Has(survivor, Item.Leech);
     survivor.leech = Math.Min(leechMost, survivor.leech + leechMost * dt);
-    if (survivor.life == Life.Standing && survivor.calm > REGEN_DELAY) survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * REGEN_RATE);
+    var kits = Has(survivor, Item.FirstAid);
+    if (survivor.life == Life.Standing && survivor.calm > RegenDelay(kits))
+        survivor.health = Math.Min(MaxHealth(survivor), survivor.health + MaxHealth(survivor) * dt * RegenRate(kits));
 
     // Down: bleeding out, crawling, unless someone comes
     if (survivor.life == Life.Downed)
@@ -150,8 +152,6 @@ float Wading(Survivor survivor, Herd herd)
 }
 
 const float SLIME_SLOW = 0.6;       // Of their speed a survivor keeps while a Spitter's bile is on them (zombies.tide)
-const float REGEN_DELAY = 4;        // Seconds unhurt before health comes back...
-const float REGEN_RATE = 0.04;      // ...and how much of it a second
 const float GRIP = 22;              // How fast feet on the ground take up the way they're asked to go (a second's share)
 const float TOUCH_SLOW = 0.22;      // Speed lost to each of the dead pressed against a survivor
 const float TOUCH_SLOW_MOST = 0.6;  // ...and the most lost to them all

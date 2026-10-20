@@ -63,6 +63,31 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Health back slowly, First Aid Kits (2026-10-20)
+
+The owner: "health regen should be scarcer and cards should allow to upgrade it;
+right now being damaged means nothing". The numbers are mine, Provisional.
+
+- **Scarcer** (items.tide's `RegenDelay`, `RegenRate`, `REGEN_DELAY`,
+  `REGEN_RATE`, `REGEN_SOONEST`; hands.tide's `Steer`): health comes back 6 s
+  after a blow (4), at 1.2% of it a second (4%): most of a minute and a half from
+  nothing, where it had been under half a minute. A level's 18, Leech Rounds and
+  dawn heal as before.
+- **First Aid Kit** (`Item.FirstAid`, the twelfth common; `ITEM_COUNT` 31,
+  `ITEM_KINDS` 49, `int[49]`): each makes it come back a second sooner (2 s at
+  the soonest) and as fast again ("Health comes back 3 times as fast, 2 s sooner
+  after a blow" at two). The balance tool's code for it is FA.
+- **Measured** (`gravewake_balance`, 25 minutes at most, seeds 1 to 16, the bots
+  taking any of the three): the Gunner's middle run 1242 s (1106 with the old
+  regen, within the runs' spread), the Breacher's 694 (1216: up close, it was
+  living on regen), the Engineer's 180 (196).
+- **Tests**: 10 s after a blow, 4.8% of health back, 21.6% with two kits. The
+  frag's check (thrown by itself into a knot of the dead gathered round one)
+  now lets a tick pass after gathering them: the herd's grid is made each tick,
+  and the throw had aimed at where they'd stood before, which on the web, once
+  this check moved what ran before it, was metres off. Native debug and web
+  debug WASI `gravewake_test` pass.
+
 ### The gun grows, a slower game, each kind told (2026-10-20)
 
 The owner: "i feel like we need a way to upgrade our main weapon more; i really

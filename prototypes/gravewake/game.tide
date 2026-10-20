@@ -58,7 +58,7 @@ component Survivor
     int aimed = -1;                  // The friend down within reach, a seat, for the prompt
     float3 aim;                      // What the cursor's on (Hands.aim)
     // The items (items.tide): stacks of each (and the gun cards' ranks), the three on offer at a level while `choosing`
-    int[48] items;
+    int[49] items;
     Item[3] offers;
     bool choosing;
     int pending;                     // Picks owed: a level's, a chest's, a boss's, after the one on offer...
