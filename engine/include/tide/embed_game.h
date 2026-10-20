@@ -12,10 +12,13 @@
 //                      (tide_game.hash), u32 size, u32 flags (1: in a
 //                      match), u32 tick, u32 verified tick, f32 alpha,
 //                      u32 entities, u32 sections, u32 0
-//   entities, 20 bytes each: u32 index, u32 generation, u32 flags (1: this
+//   entities, 24 bytes each: u32 index, u32 generation, u32 flags (1: this
 //                      machine's player owns it, 2: a player owns it),
 //                      u32 prefab (UINT32_MAX: none), u32 parent (its place
-//                      among the entities, UINT32_MAX: a root)
+//                      among the entities, UINT32_MAX: a root), u32 born
+//                      (what it was spawned as, tide_entity_born: another
+//                      value on the same handle is another entity, which a
+//                      rollback gave the handle; 0: not known)
 //   sections, each from an 8-byte boundary, a 24-byte header first:
 //                      u32 kind, u32 type (the layout's type), u32 count,
 //                      u32 stride, u32 bytes (after the header), u32 0
@@ -34,9 +37,9 @@
 #include "tide/list.h"
 
 #define TIDE_PACKET_MAGIC 0x56444954u // "TIDV"
-#define TIDE_PACKET_VERSION 1u
+#define TIDE_PACKET_VERSION 2u
 #define TIDE_PACKET_HEADER 48u
-#define TIDE_PACKET_ENTITY 20u
+#define TIDE_PACKET_ENTITY 24u
 #define TIDE_PACKET_SECTION 24u
 #define TIDE_PACKET_NONE 0xFFFFFFFFu
 

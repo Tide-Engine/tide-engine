@@ -1160,10 +1160,13 @@ static bool enum_generated(const program *prog, const decl *d)
 
 // Local fields and correction errors stay with what was spawned, rather than
 // its handle alone: a rollback can give the same handle to another entity.
-// So does what a local handler heard of an event sent to an entity. Other
-// games' spawns keep no birth metadata.
-static bool entities_born(const program *prog)
+// So does what a local handler heard of an event sent to an entity, and a game
+// built for another program (--embed), which keeps an object of its own for each
+// entity (a GameObject). Other games' spawns keep no birth metadata.
+static bool entities_born(const gen *g)
 {
+    const program *prog = g->prog;
+    if (g->opts->embed) return true;
     for (int i = 0; i < prog->local_parts.count; i++) {
         if (prog->local_parts.items[i]->kind == DECL_COMPONENT) return true;
     }
@@ -9315,7 +9318,7 @@ static void gen_blend_helpers(gen *g)
             sb_printf(o, "TIDE_HELPER const %s *tide_prev_%s(const tide_world *w, const tide_world *now, tide_entity e, %s *out)\n{\n",
                       name, name, name);
             sb_put(o, "    if (tide_entity_snaps(&w->entities, e) != tide_entity_snaps(&now->entities, e)) return NULL;\n");
-            if (entities_born(prog)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
+            if (entities_born(g)) sb_put(o, "    if (!tide_born_same(tide_entity_born(&w->entities, e), tide_entity_born(&now->entities, e))) return NULL;\n");
             sb_printf(o, "    return tide_load_%s(w, e, out) ? out : NULL;\n}\n\n", name);
         }
     }
@@ -10451,7 +10454,7 @@ static void gen_apply(gen *g, const bool local)
     // spawned with (its archetype, its scene and each component's value, which
     // has no padding; the spawn's struct can). The same spawn in a replay gives
     // the same; another one, in the same slot, another.
-    const bool born = !local && entities_born(prog);
+    const bool born = !local && entities_born(g);
     if (born) {
         sb_put(o, prog->visibility_state
                   ? "// Recipient-safe birth identity: the spawn tick and final entity handle, never private values\n"
@@ -11373,7 +11376,7 @@ static void gen_hear(gen *g)
         if (lifecycle) sb_put(o, "    r->wants |= TIDE_HEARD_LIFECYCLE;\n");
         if (reads) sb_put(o, "    if (reads) r->wants |= TIDE_HEARD_READS_ROWS;\n");
         sb_put(o, "    r->target = target;\n");
-        if (entities_born(prog)) sb_put(o, "    r->born = tide_entity_born(&w->entities, target);\n");
+        if (entities_born(g)) sb_put(o, "    r->born = tide_entity_born(&w->entities, target);\n");
         sb_put(o, "    r->handlers = handlers;\n    r->same = tide_hash(&v.event, sizeof v.event);\n");
         if (heard_value_heap(g, event, event)) sb_put(o, "    r->same ^= tide_hash(tide_captured.data, tide_event_bytes);\n");
         sb_put(o, "    memcpy(r + 1, &v, sizeof v);\n");
@@ -13286,7 +13289,7 @@ static void gen_row_join(gen *g, const decl *sys, const char *pad)
     if (!sys->verified_join) return;
     sb_printf(o, "%sconst tide_location tide_vloc = tide_entity_location(&tide_verified->entities, tide_ent[tide_i]);\n", pad);
     sb_printf(o, "%sif (tide_vloc.archetype == TIDE_ARCHETYPE_NONE) continue; // Not confirmed, or gone there\n", pad);
-    if (entities_born(prog)) {
+    if (entities_born(g)) {
         sb_printf(o, "%sif (!tide_born_same(tide_entity_born(&tide_w->entities, tide_ent[tide_i]), "
                      "tide_entity_born(&tide_verified->entities, tide_ent[tide_i]))) continue; // Another entity has the handle there\n",
                   pad);

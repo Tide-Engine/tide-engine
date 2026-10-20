@@ -23,6 +23,27 @@ command ShowBonus
 singleton Extras
 {
     Entity bonus;
+    Entity tossed;
+}
+
+// A ball nobody rolls, in and out of the box: a GameObject made and let go of as its entity comes and goes, which
+// TideRunner's pool keeps for the next
+command Toss
+{
+    bool on;
+}
+
+command(Toss toss, PlayerID sender) Tossing(mut Extras extras)
+{
+    if (toss.on && extras.tossed == default)
+    {
+        extras.tossed = Spawn(Roller, Ball { color = Color(1, 1, 1), seat = -1 }, Transform { localPosition = float3(0, 3, 0) });
+    }
+    if (!toss.on && extras.tossed != default)
+    {
+        extras.tossed.Destroy();
+        extras.tossed = default;
+    }
 }
 
 command(ShowBonus show, PlayerID sender) Toggle(mut Extras extras)

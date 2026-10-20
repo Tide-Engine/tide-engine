@@ -122,6 +122,91 @@ public sealed unsafe class BounceTests
         return false;
     }
 
+    // The tossed ball's view (Toss's, seat -1), while it's shown.
+    static TideEntityView Tossed()
+    {
+        foreach (var view in Object.FindObjectsByType<TideEntityView>())
+        {
+            if (view.Showing && view.TryGet(out Tide.Game.Ball ball) && ball.seat == -1) return view;
+        }
+        return null;
+    }
+
+    static IEnumerator Connected(TideRunner runner)
+    {
+        yield return Until(() => runner.State == TideSessionState.Connected && runner.Packet.InMatch, 10f);
+        Assert.AreEqual(TideSessionState.Connected, runner.State);
+    }
+
+    // With the pool on, the GameObject of an entity that goes is kept, inactive, and the next entity of its prefab
+    // shows through it.
+    [UnityTest]
+    public IEnumerator ThePoolKeepsAGameObjectForTheNextEntity()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        runner.pool = true;
+        yield return Connected(runner);
+        Assert.IsTrue(runner.Send(new Tide.Game.Toss { on = true }));
+        yield return Until(() => Tossed() != null, 10f);
+        var first = Tossed();
+        Assert.IsNotNull(first, "the tossed ball shows");
+        var made = first.gameObject;
+        var entity = first.Entity.Id;
+        Assert.IsTrue(runner.Send(new Tide.Game.Toss { on = false }));
+        yield return Until(() => !made.activeSelf, 10f);
+        Assert.IsFalse(made.activeSelf, "its GameObject is kept, inactive, as its entity went");
+        Assert.AreEqual("Tide pool", made.transform.parent != null ? made.transform.parent.name : null, "in the pool");
+        Assert.IsTrue(runner.Send(new Tide.Game.Toss { on = true }));
+        yield return Until(() => Tossed() != null, 10f);
+        var second = Tossed();
+        Assert.IsNotNull(second, "the next tossed ball shows");
+        Assert.AreNotEqual(entity, second.Entity.Id, "another entity");
+        Assert.AreSame(made, second.gameObject, "through the GameObject the pool kept");
+        Assert.IsTrue(made.activeInHierarchy && made.transform.parent == null, "active again, out of the pool");
+    }
+
+    sealed class CountingSpawner : ITideSpawner
+    {
+        public readonly System.Collections.Generic.List<GameObject> made = new System.Collections.Generic.List<GameObject>();
+        public readonly System.Collections.Generic.List<GameObject> released = new System.Collections.Generic.List<GameObject>();
+
+        public GameObject Make(GameObject prefab)
+        {
+            var view = Object.Instantiate(prefab);
+            made.Add(view);
+            return view;
+        }
+
+        public void Release(GameObject prefab, GameObject view)
+        {
+            released.Add(view);
+            Object.Destroy(view);
+        }
+    }
+
+    // A game's own spawner makes and lets go of the GameObjects of prefabs' entities in place of the runner.
+    [UnityTest]
+    public IEnumerator ASpawnerMakesAndLetsGoOfGameObjects()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        var spawner = new CountingSpawner();
+        runner.Spawner = spawner;
+        yield return Connected(runner);
+        Assert.IsTrue(runner.Send(new Tide.Game.Toss { on = true }));
+        yield return Until(() => Tossed() != null, 10f);
+        var tossed = Tossed();
+        Assert.IsNotNull(tossed, "the tossed ball shows");
+        var made = tossed.gameObject;
+        Assert.Contains(made, spawner.made, "through a GameObject from the spawner");
+        Assert.IsTrue(runner.Send(new Tide.Game.Toss { on = false }));
+        yield return Until(() => spawner.released.Contains(made), 10f);
+        Assert.Contains(made, spawner.released, "which it let go of as its entity went");
+    }
+
     [UnityTest]
     public IEnumerator TheMatchShowsItsBall()
     {

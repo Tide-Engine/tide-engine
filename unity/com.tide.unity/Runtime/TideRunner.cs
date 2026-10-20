@@ -25,6 +25,15 @@ namespace Tide
         public GameObject prefab;
     }
 
+    // Makes and lets go of the GameObjects that show entities, in place of the runner's Instantiate and Destroy (or
+    // its pool): a game's own pool, say. `prefab` is the Unity prefab an entity shows through; Release gets back what
+    // Make gave for it.
+    public interface ITideSpawner
+    {
+        GameObject Make(GameObject prefab);
+        void Release(GameObject prefab, GameObject made);
+    }
+
     // Runs the game: one Tide frame in each of Unity's, with Unity's input,
     // then shows the entities the frame's view packet has. An entity of a
     // Unity prefab or scene (made with TideEntity) shows through its own
@@ -43,6 +52,13 @@ namespace Tide
 
         [Tooltip("Draw what the game's Tide views draw (Draw's 2D calls) over Unity's frame")]
         public bool drawTide = true;
+
+        [Tooltip("Keep the GameObject of an entity that goes, inactive, for the next entity of its prefab: reset what Unity alone keeps on it (an Animator's state, particles) in OnDisable or OnEnable")]
+        public bool pool;
+
+        // Makes and lets go of the GameObjects of the prefabs entities show through, in place of Instantiate and
+        // Destroy, or the pool: null for those
+        public ITideSpawner Spawner { get; set; }
 
         public List<TideViewRule> views = new List<TideViewRule>();
 
@@ -97,6 +113,9 @@ namespace Tide
         public TideUnityMap Map { get; private set; } = new TideUnityMap();
         int sourceType = -1, sourceAsset = -1, sourceNode = -1; // UnityEngine.Source in the schema, and its fields' offsets
         readonly Dictionary<string, GameObject> prefabByGuid = new Dictionary<string, GameObject>();
+        // The pool: GameObjects of entities that went, inactive under poolRoot, by the prefab they're of
+        readonly Dictionary<GameObject, Stack<GameObject>> pooled = new Dictionary<GameObject, Stack<GameObject>>();
+        Transform poolRoot;
         int makingRow = -1;
 
         // Play in the editor from a scene of Tide entities with no runner of its own (a level, opened alone): one is
@@ -253,9 +272,20 @@ namespace Tide
         {
             foreach (var view in shown.Values)
             {
-                if (view != null) Destroy(view.gameObject);
+                if (view == null) continue;
+                if (Spawner != null && view.MadeFrom != null) Spawner.Release(view.MadeFrom, view.gameObject);
+                else if (!view.Authored) Destroy(view.gameObject);
             }
             shown.Clear();
+            foreach (var free in pooled.Values)
+            {
+                foreach (var made in free)
+                {
+                    if (made != null) Destroy(made);
+                }
+            }
+            pooled.Clear();
+            if (poolRoot != null) Destroy(poolRoot.gameObject);
             if (embed != IntPtr.Zero) library.Destroy(embed);
             embed = IntPtr.Zero;
             library = null;
@@ -328,9 +358,7 @@ namespace Tide
             {
                 var view = shown[id];
                 shown.Remove(id);
-                if (view == null) continue; // Its instance went with its root's entity
-                if (view.Authored) view.gameObject.SetActive(false); // A scene's, or in an instance: hidden till it's back
-                else Destroy(view.gameObject);
+                Release(view);
             }
             for (var i = 0; i < count; i++)
             {
@@ -344,7 +372,14 @@ namespace Tide
         {
             if (byRow[row] != null) return byRow[row];
             var entity = Packet.Entity(row);
-            if (!shown.TryGetValue(entity.Id, out var view) || view == null)
+            if (shown.TryGetValue(entity.Id, out var view) && view != null && !Same(view, entity, row))
+            {
+                // A rollback gave the handle to another entity: the GameObject is the other one's
+                shown.Remove(entity.Id);
+                Release(view);
+                view = null;
+            }
+            if (view == null)
             {
                 if (makingRow == row) return null; // Its parents loop back to it
                 var outer = makingRow;
@@ -356,21 +391,96 @@ namespace Tide
                 shown[entity.Id] = view;
             }
             view.Entity = entity;
+            if (entity.Born != 0) view.Born = entity.Born;
             view.Row = row;
             view.Seen = true;
             byRow[row] = view;
             return view;
         }
 
+        // Whether `view` shows the packet's entity `row`, the one it was made for: what it was spawned as, where both
+        // are known, and its UnityEngine.Source are the same.
+        bool Same(TideEntityView view, TideEntityRow entity, int row)
+        {
+            if (view.Born != 0 && entity.Born != 0 && view.Born != entity.Born) return false;
+            SourceOf(row, out var asset, out var node);
+            return asset == view.SourceAsset && node == view.SourceNode;
+        }
+
+        // Lets go of an entity's GameObject: a scene's, or one in a prefab's instance, hidden till its entity's back;
+        // one made from a prefab, to the spawner, the pool or destroyed.
+        void Release(TideEntityView view)
+        {
+            if (view == null) return; // Its instance went with its root's entity
+            view.Row = -1;
+            view.Runner = null;
+            if (view.Authored)
+            {
+                view.gameObject.SetActive(false);
+                return;
+            }
+            var from = view.MadeFrom;
+            if (from != null && Spawner != null)
+            {
+                Spawner.Release(from, view.gameObject);
+                return;
+            }
+            if (from != null && pool)
+            {
+                view.gameObject.SetActive(false);
+                if (poolRoot == null)
+                {
+                    poolRoot = new GameObject("Tide pool").transform;
+                    poolRoot.SetParent(transform, false);
+                }
+                view.transform.SetParent(poolRoot, false);
+                if (!pooled.TryGetValue(from, out var free)) pooled[from] = free = new Stack<GameObject>();
+                free.Push(view.gameObject);
+                return;
+            }
+            Destroy(view.gameObject);
+        }
+
+        // A GameObject of `prefab` for an entity: the spawner's, one the pool kept, or a new one.
+        GameObject MakeFrom(GameObject prefab, TideEntityRow entity)
+        {
+            GameObject made = null;
+            if (Spawner != null) made = Spawner.Make(prefab);
+            else if (pooled.TryGetValue(prefab, out var free))
+            {
+                while (made == null && free.Count > 0) made = free.Pop(); // One a scene's unloading took is null
+                if (made != null)
+                {
+                    made.transform.SetParent(null, false);
+                    UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(made, UnityEngine.SceneManagement.SceneManager.GetActiveScene());
+                    made.SetActive(true);
+                }
+            }
+            if (made == null) made = Instantiate(prefab);
+            made.name = $"{prefab.name} ({entity.Index})";
+            return made;
+        }
+
         TideEntityView Make(TideEntityRow entity, int row)
+        {
+            var view = MakeView(entity, row);
+            if (view == null) return null;
+            SourceOf(row, out view.SourceAsset, out view.SourceNode);
+            view.Born = entity.Born;
+            view.PlacedAt = -1;
+            return view;
+        }
+
+        TideEntityView MakeView(TideEntityRow entity, int row)
         {
             if (!SourceOf(row, out var asset, out var node))
             {
                 var prefab = RuleFor(entity, row);
                 if (prefab == null) return null;
-                var made = Instantiate(prefab);
-                made.name = $"{prefab.name} ({entity.Index})";
-                return Ensure<TideEntityView>(made);
+                var made = Ensure<TideEntityView>(MakeFrom(prefab, entity));
+                made.Authored = false;
+                made.MadeFrom = prefab;
+                return made;
             }
             var a = Map.Of(asset);
             var path = a != null && (uint)node < (uint)a.nodes.Length ? a.nodes[node] : null;
@@ -390,10 +500,9 @@ namespace Tide
                     Debug.LogWarning($"Tide: an entity of {a.path} came, which this build can't find: the scene links the prefabs the game spawns as it builds.", this);
                     return null;
                 }
-                var made = Instantiate(prefab);
-                made.name = $"{prefab.name} ({entity.Index})";
-                var root = Ensure<TideEntityView>(made);
+                var root = Ensure<TideEntityView>(MakeFrom(prefab, entity));
                 root.Authored = false;
+                root.MadeFrom = prefab;
                 return root;
             }
             else

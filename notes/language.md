@@ -186,8 +186,10 @@ singletons, local parts, commands, scenes, prefabs and non-plain fields (text,
 list with element size and type, map, grid, entity); `schema`, through the
 engine's `tide_schema_json`; and `defaults` (`tide_embed_defaults`), each kept
 match component's `gen_value` with no inits, text and lists zeroed under a
-scratch mark as START's are, which the schema writes as hex. A build without
-`--embed` generates what it did.
+scratch mark as START's are, which the schema writes as hex. Entity rows end
+with `tide_entity_born`, and `entities_born` is true for any `--embed` build,
+so every spawn there keeps it (notes/unity.md, Identity and pooling). A build
+without `--embed` generates what it did.
 
 Check: every one of the 324 source lists in a debug build generated with
 `--embed` and compiled under `-Wall -Wextra -Wpedantic -Werror`; the first run
