@@ -66,7 +66,7 @@ static void tick(int count)
     }
 }
 
-static float max_health(Survivor s) { return 100.0f + 36.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
+static float max_health(Survivor s) { return 100.0f + 30.0f * (float)(s.level - 1) + 45.0f * (float)s.items.at[Item_Kevlar]; }
 
 // Both on their feet and whole, so the dead don't end a test that's about something else.
 static void heal(void)
@@ -456,7 +456,7 @@ int main(void)
     CHECK(world.Match.night == 1 && world.Match.nightEnds == 180 && !world.Match.reckoning);
     tick_safe(60 * 6);
     CHECK(world.arch6_Zombie.count > 0);
-    CHECK(world.Match.chestsDue == 0 && world.Match.chestsPlaced == 4 && world.arch7_Chest.count == 4);
+    CHECK(world.Match.chestsDue == 0 && world.Match.chestsPlaced == 2 && world.arch7_Chest.count == 2);
     int fired = 0;
     bool offered = false;
     for (int t = 0; t < 60 * 60 * 5 && world.Match.clock < 90; t++) {
@@ -540,7 +540,7 @@ int main(void)
         s.selfRevives = 0;
         set(0, s);
         s = take(0, Item_Kevlar);
-        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 36.0f * (float)(s.level - 1));
+        CHECK(s.items.at[Item_Kevlar] == 1 && s.health == max_health(s) && max_health(s) == 145.0f + 30.0f * (float)(s.level - 1));
         s = take(0, Item_ExtendedMag);
         CHECK(s.mag == 45);                             // Half again a carbine's 30, loaded now
         s = take(0, Item_SecondWind);
@@ -1016,7 +1016,7 @@ int main(void)
         Survivor s = get(0);
         memset(&s.items, 0, sizeof s.items);
         s.items.at[Item_Frostbite] = 13;              // Always
-        s.items.at[Item_Mortar] = 10;                 // Always
+        s.items.at[Item_Mortar] = 34;                 // Always (3% a stack: ten had been three in ten)
         s.items.at[Item_LiveWire] = 1;
         set(0, s);
         // A round into the crowd: whichever of the dead it meets first freezes, and a shell comes down on it
@@ -1586,7 +1586,7 @@ int main(void)
             CHECK(zombie(line[1]).health < besides);
             CHECK(zombie(line[0]).burn > 0);
         }
-        // The gun cards: Burst Fire I a second round in a fan, 60% of the first, into the one 5 m off; Incendiary Rounds III
+        // The gun cards: Burst Fire I a second round in a fan, 50% of the first, into the one 5 m off; Incendiary Rounds III
         // setting it alight; Marksman I taking a headshot on through into the one behind; a Slug Core's slug through three
         // in a line where the pellets stop in the first; a Long Nozzle II reaching one 6.5 m off; Gas Piston, a magazine a
         // fifth more, loaded
@@ -1645,7 +1645,7 @@ int main(void)
             for (int k = 0; k < 4; k++) struck += zombie(line[k]).health < before[k];
             printf("gun cards: a round %.0f, with Burst Fire I %.0f; Incendiary III alight %d; Marksman I's headshot %.0f, striking %d\n", body[0], body[1], lit, head,
                    struck);
-            CHECK(fabsf(body[1] - 1.6f * body[0]) < 0.05f * body[0]);
+            CHECK(fabsf(body[1] - 1.5f * body[0]) < 0.05f * body[0]);
             CHECK(lit);
             CHECK(fabsf(head - 4 * body[0]) < 0.05f * body[0] && struck == 2);
             // The Breacher's slug
@@ -1959,11 +1959,11 @@ int main(void)
         spawning();
     }
 
-    // ---- The night's chests: four, on open ground, apart; standing by one opens it, and everyone's owed a pick; a chest
+    // ---- The night's chests: two, on open ground, apart; standing by one opens it, and everyone's owed a pick; a chest
     // left alone shuts again ----
     {
         heal();
-        CHECK(world.Match.chestsPlaced == 4 && world.arch7_Chest.count <= 4 && world.arch7_Chest.count >= 1);
+        CHECK(world.Match.chestsPlaced == 2 && world.arch7_Chest.count <= 2 && world.arch7_Chest.count >= 1);
         for (uint32_t r = 0; r < world.arch7_Chest.count; r++) {
             const Chest a = TIDE_AT(&world, arch7_Chest, Chest, r);
             CHECK(a.night == world.Match.night && walkable(a.at));
@@ -2670,7 +2670,7 @@ int main(void)
         tick_safe(30);
         CHECK(world.Match.phase == Phase_Fighting && world.Match.night == night + 1 && !world.Match.reckoning);
         CHECK(world.Match.nightClock < 1 && world.Match.nightEnds == 180);
-        CHECK(world.Match.chestsPlaced == 4 && world.arch7_Chest.count == 4);
+        CHECK(world.Match.chestsPlaced == 2 && world.arch7_Chest.count == 2);
         for (uint32_t r = 0; r < world.arch7_Chest.count; r++) CHECK(TIDE_AT(&world, arch7_Chest, Chest, r).night == night + 1);
         printf("night %d kept; night %d falls, danger %.2f to %.2f\n", night, world.Match.night, before, world.Match.danger);
         CHECK(world.Match.danger > before * 1.15f);
