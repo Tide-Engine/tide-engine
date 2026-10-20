@@ -7,8 +7,37 @@ using UnityEngine.TestTools;
 
 // The sample in play mode: Tide runs Bounce's match in the editor, and Unity shows this machine's player's ball,
 // placed and colored by the match.
-public sealed class BounceTests
+public sealed unsafe class BounceTests
 {
+    // Whether the frame's draw packet (tide/embed.h's tide_embed_draw) has a text command saying `words`.
+    static bool DrewText(TideRunner runner, string words)
+    {
+        var bytes = runner.DrawPacket(out var length);
+        if (bytes == null || length < 64) return false;
+        var header = (uint*)bytes;
+        ulong at = 64;
+        ulong Part(uint count, uint each)
+        {
+            var from = (at + 7) & ~7ul;
+            at = from + (ulong)count * each;
+            return from;
+        }
+        var commands = (TideDrawCommand*)(bytes + Part(header[2], header[9]));
+        Part(header[3], header[10]);
+        Part(header[4], header[11]);
+        Part(header[5], 4);
+        var text = bytes + Part(header[6], 1);
+        for (var i = 0; i < header[2]; i++)
+        {
+            if (commands[i].kind != 7 || commands[i].text >= header[6]) continue;
+            var start = text + commands[i].text;
+            var n = 0;
+            while (start[n] != 0) n++;
+            if (System.Text.Encoding.UTF8.GetString(start, n) == words) return true;
+        }
+        return false;
+    }
+
     [UnityTest]
     public IEnumerator TheMatchShowsItsBall()
     {
@@ -41,6 +70,8 @@ public sealed class BounceTests
         var y = ball.transform.position.y;
         Assert.That(y, Is.InRange(0.45f, 0.6f), "it fell to the floor: " + y);
         Assert.Greater(Tide.Game.TideGameSchema.Hash.Length, 0, "the bindings were made from the game's schema");
+        // What the Hud view drew, for Unity to draw over its frame: its text among the draw packet's commands
+        Assert.IsTrue(DrewText(runner, "Balls: 1"), "the draw packet has the Hud's text");
         // The scene's pillars are the match's Spinner entities (both named Pillar), turned by Tide where Unity has them
         for (var i = 0; i < 2; i++)
         {

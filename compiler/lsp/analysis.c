@@ -9926,6 +9926,8 @@ static const char *check_new_name(const occurrence *target, const str name)
     return NULL;
 }
 
+static void unity_renames(const occurrence *target, const char *new_name, jbuf *out, int *files_written);
+
 const char *analysis_rename(const char *uri, const int line, const int character, const char *new_name, jbuf *out)
 {
     const occurrence *target;
@@ -9959,10 +9961,200 @@ const char *analysis_rename(const char *uri, const int line, const int character
         }
         if (written) jb_put(out, "]");
     }
+    unity_renames(target, new_name, out, &files_written);
     jb_put(out, "}}");
 done:
     arena_rewind(temporary);
     return error;
+}
+
+// ---------------------------------------------------------------------------
+// Renames reaching a Unity project (tide unity --assets): the game's folder in
+// its Assets, its prefabs and scenes holding TideEntity components
+// (com.tide.unity). A component's name is in them where a TideEntity lists it
+// (`- type: Combat.Health`) and where a prefab instance changes one's type; a
+// field's, where the TideEntity's values for that component set it
+// (`values: hp = 10, armor = 1`). Not yet: a prefab instance's change of a
+// component's values, whose YAML doesn't say which component's they are.
+
+#define UNITY_ENTITY_GUID "4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e" // TideEntity.cs.meta's
+
+typedef struct unity_rename {
+    jbuf *out;
+    int *files_written;
+    const char *type;     // The component's name in the files, as qualified
+    const char *new_type; // ...and what it's renamed to, or NULL for a field's rename
+    const char *field, *new_field;
+    jbuf edits; // One file's
+    int edit_count;
+} unity_rename;
+
+// A byte offset in a line as LSP counts columns: UTF-16 code units.
+static int utf16_column(const char *line, const int bytes)
+{
+    int column = 0;
+    for (int i = 0; i < bytes && line[i]; i++) {
+        const unsigned char c = (unsigned char)line[i];
+        if ((c & 0xC0) == 0x80) continue; // A continuation byte
+        column += c >= 0xF0 ? 2 : 1;      // Past the BMP, a surrogate pair
+    }
+    return column;
+}
+
+static void unity_edit(unity_rename *u, const int line, const char *text, const int from, const int to, const char *replacement)
+{
+    if (u->edit_count++) jb_put(&u->edits, ",");
+    jb_printf(&u->edits, "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"newText\":",
+              line, utf16_column(text, from), line, utf16_column(text, to));
+    jb_string(&u->edits, replacement);
+    jb_put(&u->edits, "}");
+}
+
+// `prefix` then exactly `name` and the line's end: where the name starts, or -1.
+static int unity_names(const char *line, const char *prefix, const char *name)
+{
+    const char *p = line;
+    while (*p == ' ') p++;
+    const size_t n = strlen(prefix);
+    if (strncmp(p, prefix, n) != 0) return -1;
+    p += n;
+    const size_t m = strlen(name);
+    if (strncmp(p, name, m) != 0) return -1;
+    const char *end = p + m;
+    while (*end == ' ' || *end == '\r') end++;
+    return *end ? -1 : (int)(p - line);
+}
+
+// The field keys in a values line (`values: a = 1, b = float3(1, 2, 3)`, plain or single-quoted) that are `field`.
+static void unity_rename_keys(unity_rename *u, const int number, const char *line, const char *start)
+{
+    const char *p = start;
+    const bool quoted = *p == '\'';
+    if (quoted) p++;
+    int depth = 0;
+    char quote = 0;
+    const char *segment = p;
+    for (;; p++) {
+        const char c = *p;
+        if (quote && c) {
+            if (c == '\\' && p[1]) p++;
+            else if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '"') quote = c;
+        else if (c == '(' || c == '[' || c == '{') depth++;
+        else if (c == ')' || c == ']' || c == '}') depth--;
+        const bool end = !c || c == '\r' || (quoted && c == '\'' && p[1] != '\'');
+        if (end || ((c == ',' || c == ';') && depth == 0)) {
+            const char *key = segment;
+            while (*key == ' ') key++;
+            const char *eq = strchr(key, '=');
+            if (eq && eq < p) {
+                const char *key_end = eq;
+                while (key_end > key && key_end[-1] == ' ') key_end--;
+                if ((size_t)(key_end - key) == strlen(u->field) && strncmp(key, u->field, (size_t)(key_end - key)) == 0) {
+                    unity_edit(u, number, line, (int)(key - line), (int)(key_end - line), u->new_field);
+                }
+            }
+            if (end) break;
+            segment = p + 1;
+        }
+    }
+}
+
+static void unity_rename_file(void *user, const char *path)
+{
+    unity_rename *u = user;
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    jbuf text = {0};
+    char chunk[16384];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, f)) > 0) jb_putn(&text, chunk, n);
+    fclose(f);
+    if (!text.data || !strstr(text.data, UNITY_ENTITY_GUID)) {
+        jb_free(&text);
+        return;
+    }
+    u->edits = (jbuf){0};
+    u->edit_count = 0;
+    char current[256] = ""; // The type of the TideEntity component whose entry the lines are in
+    bool type_change = false; // The line before changed a component's type in a prefab instance
+    int number = 0;
+    for (char *line = text.data; line && *line; number++) {
+        char *next = strchr(line, '\n');
+        if (next) *next = '\0';
+        int at;
+        const char *p = line;
+        while (*p == ' ') p++;
+        if (strncmp(p, "- type: ", 8) == 0) {
+            snprintf(current, sizeof current, "%s", p + 8);
+            const size_t len = strlen(current);
+            if (len && current[len - 1] == '\r') current[len - 1] = '\0';
+            if (u->new_type && (at = unity_names(line, "- type: ", u->type)) >= 0) {
+                unity_edit(u, number, line, at, at + (int)strlen(u->type), u->new_type);
+            }
+        } else if (!u->new_type && strncmp(p, "values: ", 8) == 0 && strcmp(current, u->type) == 0) {
+            unity_rename_keys(u, number, line, p + 8);
+        } else if (u->new_type && type_change && (at = unity_names(line, "value: ", u->type)) >= 0) {
+            unity_edit(u, number, line, at, at + (int)strlen(u->type), u->new_type);
+        }
+        // A component's entry is its type's line and its values' after it
+        if (strncmp(p, "- type: ", 8) != 0 && strncmp(p, "values: ", 8) != 0) current[0] = '\0';
+        type_change = strncmp(p, "propertyPath: components.Array.data[", 36) == 0 && strstr(p, "].type") != NULL;
+        line = next ? next + 1 : NULL;
+    }
+    if (u->edit_count) {
+        jbuf uri = {0};
+        jb_put(&uri, path[0] == '/' ? "file://" : "file:///");
+        for (const char *c = path; *c; c++) {
+            if (*c == ' ' || *c == '%' || *c == '#' || *c == '?') jb_printf(&uri, "%%%02X", (unsigned char)*c);
+            else jb_putn(&uri, c, 1);
+        }
+        if ((*u->files_written)++) jb_put(u->out, ",");
+        jb_string(u->out, uri.data);
+        jb_put(u->out, ":[");
+        jb_put(u->out, u->edits.data);
+        jb_put(u->out, "]");
+        jb_free(&uri);
+    }
+    jb_free(&u->edits);
+    jb_free(&text);
+}
+
+static void unity_renames(const occurrence *target, const char *new_name, jbuf *out, int *files_written)
+{
+    const decl *component = NULL;
+    const field *renamed = NULL;
+    if (target->kind == OCC_TYPE && target->decl && target->decl->kind == DECL_COMPONENT) component = target->decl;
+    if (target->kind == OCC_FIELD && target->field && target->decl && target->decl->kind == DECL_COMPONENT) {
+        component = target->decl;
+        renamed = target->field;
+    }
+    if (!component || !asset_roots.game_folder) return;
+    // The Unity project the game's folder is in: the folder above it with ProjectSettings and Assets
+    char project[1024];
+    snprintf(project, sizeof project, "%s", asset_roots.game_folder);
+    for (size_t len = strlen(project); len > 0;) {
+        while (len > 0 && (project[len - 1] == '/' || project[len - 1] == '\\')) project[--len] = '\0';
+        char probe[1100];
+        snprintf(probe, sizeof probe, "%s/ProjectSettings/ProjectVersion.txt", project);
+        if (folder_file_info(probe, NULL, NULL)) break;
+        while (len > 0 && project[len - 1] != '/' && project[len - 1] != '\\') project[--len] = '\0';
+        if (len == 0) return;
+    }
+    char type[256], new_type[256];
+    snprintf(type, sizeof type, STR_FMT, STR_ARG(component->qualified));
+    // A namespaced component keeps its namespace: only its own name changes
+    const char *dot = strrchr(type, '.');
+    snprintf(new_type, sizeof new_type, "%.*s%s", dot ? (int)(dot - type + 1) : 0, type, new_name);
+    char field_name[256] = "";
+    if (renamed) snprintf(field_name, sizeof field_name, STR_FMT, STR_ARG(renamed->name));
+    unity_rename u = {out, files_written, type, renamed ? NULL : new_type, field_name, new_name, {0}, 0};
+    char assets[1100];
+    snprintf(assets, sizeof assets, "%s/Assets/", project);
+    folder_find(assets, ".prefab", unity_rename_file, &u);
+    folder_find(assets, ".unity", unity_rename_file, &u);
 }
 
 // ---------------------------------------------------------------------------

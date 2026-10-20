@@ -22,7 +22,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 1u
+#define TIDE_EMBED_ABI 2u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -124,6 +124,31 @@ const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
 // commands, prefabs and scenes. Valid until a new build comes in; NULL for a game
 // built without tidec's --embed.
 const char *tide_embed_schema(const tide_embed *e, uint32_t *size);
+
+// What the frame's views drew (tide/draw.h's draw list), for the other program
+// to draw in its own window, as bytes: this header, then its arrays, each from
+// a multiple of 8 bytes, in this order: the commands (tide_draw_command), the
+// smooth shapes' rest (tide_draw_shape_data), the meshes' corners (tide_vertex)
+// and triangles (uint32_t indices), the commands' text (`text` bytes, each
+// command's from its offset to a NUL), the matrices of 3D cameras and instances
+// (tide_float4x4) and turned text's transforms (tide_float2x2). The sizes say
+// how big this build's structs are, for a reader to check. Valid until the next
+// frame.
+#define TIDE_EMBED_DRAW_MAGIC 0x44444954u // "TIDD"
+#define TIDE_EMBED_DRAW_VERSION 1u
+
+typedef struct tide_embed_draw_header {
+    uint32_t magic, version;
+    uint32_t commands, shapes, vertices, indices, text, matrices, turns;
+    uint32_t command_size, shape_size, vertex_size;
+    float screen_width, screen_height; // The screen the views drew for, in logical pixels...
+    float screen_scale;                // ...and pixels to one of them
+    uint32_t unused;
+} tide_embed_draw_header;
+
+_Static_assert(sizeof(tide_embed_draw_header) == 64, "tide_embed_draw_header has no padding the compiler adds");
+
+const uint8_t *tide_embed_draw(const tide_embed *e, uint32_t *size);
 
 // A command from the other program, as local code's Send: `type` its type's
 // place in the schema, sent to the entity `target_index`/`target_generation`

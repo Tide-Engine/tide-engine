@@ -524,8 +524,18 @@
     let heartbeat = null;  // The worker, while the page is hidden
     let beating = false;   // ...which has a frame coming
     let nextFrame = 1000 / 60; // Milliseconds until the program needs a frame, as its last one said
+    // `pageFrames`: while the page is shown, a program of the page's own runs
+    // each frame, with `Tide.frame()` (Unity's player, from its own frame:
+    // com.tide.unity's Tide.jslib), and reads and writes the program's memory
+    // through `Tide.exports()` and `Tide.memory()`. Hidden, frames come from
+    // the worker, as for any page, so a match never waits on the other program.
+    const pageFrames = !!config.pageFrames;
+    config.frame = () => { if (looping && !heartbeat && !scheduled) frame(); };
+    config.exports = () => exports;
+    config.memory = () => memory;
     function scheduleFrame() {
         if (scheduled || heartbeat) return;
+        if (pageFrames && !document.hidden) return; // The page's own program runs it
         scheduled = true;
         if (timerFrames || document.hidden) setTimeout(scheduledFrame, 0);
         else requestAnimationFrame(scheduledFrame);

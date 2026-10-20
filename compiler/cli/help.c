@@ -154,7 +154,8 @@ static const argument_help arguments[] = {
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
      "build --release produces one self-contained HTML file. run serves the\n"
      "page and opens a browser unless --no-open or TIDE_HIDDEN is set.\n"
-     "Choose one target: native (default), --web or --android.", RUN | BUILD},
+     "unity --web builds tide-game.js, for a Unity WebGL player's page, once.\n"
+     "Choose one target: native (default), --web or --android.", RUN | BUILD | UNITY},
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
      "Saving rebuilds and restarts the app. Release builds also make an app\n"
