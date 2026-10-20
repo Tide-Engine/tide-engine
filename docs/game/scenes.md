@@ -15,6 +15,24 @@ scene Arena
 
 A loaded scene is an entity like any other. The declaration is its component, and its fields are the scene's state, so a system that takes `Arena` runs once per loaded arena.
 
+## Systems for one scene's entities
+
+`with scene Arena` runs a system, a view or an event handler only for the
+entities of a loaded arena; `without scene Arena`, only for the others:
+
+```csharp
+system Spinning(Spin spin, mut Transform transform, Time time, with scene Arena)
+{
+    transform.localRotation = Math.Mul(quaternion.Euler(0, spin.speed * time.dt, 0), transform.localRotation);
+}
+```
+
+An entity is in the scene it was spawned into: the scene of the entity the code
+that spawned it runs for. A loaded scene's own entity is one of its entities
+too. `with Arena`, without `scene`, still takes that entity alone, as it does
+for any component, so `event(Spawned) Setup(with Arena)` runs once per loaded
+arena. A scene filter on its own runs for every entity of the scene.
+
 For an empty scene, use `scene Arena;` as shorthand for `scene Arena { }`.
 The same works for local scenes: `local scene Main;`. Both forms are complete
 declarations, and braces remain valid.

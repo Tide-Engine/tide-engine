@@ -234,6 +234,7 @@ tide_e2e_test(enums)
 tide_e2e_test(scenes)
 tide_e2e_test(scenes_local)
 tide_e2e_test(scenes_fallback)
+tide_e2e_test(scene_filters) # with scene, without scene: systems, views and handlers by an entity's scene
 tide_e2e_test(gui)
 tide_e2e_test(gui_entered) # TextField, IntField and FloatField with `out entered`: whether Enter ended the typing
 tide_e2e_test(actions)

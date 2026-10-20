@@ -9806,6 +9806,80 @@ static void gen_hierarchy_scenes(gen *g, const bool local)
     sb_put(o, "    default: break;\n    }\n}\n\n");
 }
 
+// `with scene Arena` and `without scene Arena` (decl.in_scenes, out_scenes): whether an entity's scene, the entity a
+// row keeps in its archetype's column 1, is a loaded Arena, as tide_in_scene_Arena(entities, scene) for each scene
+// some code filters by: its entity alive, and in an archetype that has Arena.
+static bool scene_used(const program *prog, const decl *scene)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        for (int k = 0; k < d->in_scenes.count; k++) if (d->in_scenes.items[k] == scene) return true;
+        for (int k = 0; k < d->out_scenes.count; k++) if (d->out_scenes.items[k] == scene) return true;
+    }
+    return false;
+}
+
+static void gen_scene_filters(gen *g)
+{
+    const program *prog = g->prog;
+    for (int c = 0; c < prog->components.count; c++) {
+        const decl *scene = prog->components.items[c];
+        if (!scene->is_scene || !scene_used(prog, scene)) continue;
+        sb_printf(&g->c, "TIDE_HELPER bool tide_in_scene_%s(const tide_entities *t, tide_entity scene)\n{\n"
+                         "    if (tide_entity_is_null(scene) || !tide_entity_alive(t, scene)) return false;\n"
+                         "    switch (tide_entity_location(t, scene).archetype) {\n", type_cname(scene));
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (arch_local(g, a) == scene->is_local && arch_stores(g, a, c)) sb_printf(&g->c, "    case %d: return true;\n", a);
+        }
+        sb_put(&g->c, "    default: return false;\n    }\n}\n\n");
+        // ...and whether an entity is in one, by its row's scene: for code that has the entity, as a handler does
+        const char *world = world_type(scene->is_local);
+        sb_printf(&g->c, "TIDE_HELPER bool tide_entity_in_scene_%s(const %s *w, tide_entity e)\n{\n"
+                         "    if (!w || !tide_entity_alive(&w->entities, e)) return false;\n"
+                         "    const tide_location loc = tide_entity_location(&w->entities, e);\n    switch (loc.archetype) {\n",
+                  type_cname(scene), world);
+        for (int a = 0; a < prog->archetypes.count; a++) {
+            if (arch_local(g, a) != scene->is_local || !arch_scene_column(g, a)) continue;
+            sb_printf(&g->c, "    case %d: return tide_in_scene_%s(&w->entities, *%s);\n", a, type_cname(scene),
+                      arch_cell(g, "w", a, 1, "tide_entity", "loc.row", false));
+        }
+        sb_put(&g->c, "    default: return false;\n    }\n}\n\n");
+    }
+}
+
+// Whether entity `e` (C) of world `w` (C) passes `sys`'s scene filters, as C.
+static void entity_scene_pass(const decl *sys, const char *w, const char *e, sb *out)
+{
+    bool first = true;
+    for (int i = 0; i < sys->in_scenes.count; i++, first = false) {
+        sb_printf(out, "%stide_entity_in_scene_%s(%s, %s)", first ? "" : " && ", type_cname(sys->in_scenes.items[i]), w, e);
+    }
+    for (int i = 0; i < sys->out_scenes.count; i++, first = false) {
+        sb_printf(out, "%s!tide_entity_in_scene_%s(%s, %s)", first ? "" : " && ", type_cname(sys->out_scenes.items[i]), w, e);
+    }
+    if (first) sb_put(out, "true");
+}
+
+// Whether `sys` leaves some of archetype `a`'s rows out by their scene.
+static bool scene_filtered(const gen *g, const decl *sys, const int a)
+{
+    return (sys->in_scenes.count || sys->out_scenes.count) && a >= 0 && arch_scene_column(g, a);
+}
+
+// Whether a row whose scene is `scene` (C) passes `sys`'s scene filters, as C.
+static void scene_pass(const gen *g, const decl *sys, const int a, const char *scene, sb *out)
+{
+    const char *entities = arch_local(g, a) ? "&tide_l->entities" : "&tide_w->entities";
+    bool first = true;
+    for (int i = 0; i < sys->in_scenes.count; i++, first = false) {
+        sb_printf(out, "%stide_in_scene_%s(%s, %s)", first ? "" : " && ", type_cname(sys->in_scenes.items[i]), entities, scene);
+    }
+    for (int i = 0; i < sys->out_scenes.count; i++, first = false) {
+        sb_printf(out, "%s!tide_in_scene_%s(%s, %s)", first ? "" : " && ", type_cname(sys->out_scenes.items[i]), entities, scene);
+    }
+    if (first) sb_put(out, "true");
+}
+
 #include "hierarchy_codegen.inc"
 #include "visibility_codegen.inc"
 
@@ -10115,6 +10189,11 @@ static void gen_dispatch_prototypes(gen *g)
             if (h->ownership) sb_printf(&when, "%s(!player || %s(tide_has_%s(w, target) && tide_player_equal(tide_get_%s(w, target).%s, *player)))",
                                       when.len ? " && " : "", h->ownership == OWNERSHIP_WITH ? "" : "!", type_cname(prog->owner),
                                       type_cname(prog->owner), field_cname(&prog->owner->fields.items[0]));
+            if (h->in_scenes.count || h->out_scenes.count) {
+                sb_printf(&when, "%s(", when.len ? " && " : "");
+                entity_scene_pass(h, "w", "target", &when);
+                sb_put(&when, ")");
+            }
             sb_put(o, "    ");
             if (when.len) sb_printf(o, "if (%s) ", when.data);
             sb_printf(o, "handlers |= UINT64_C(1) << %d;\n", k);
@@ -10983,6 +11062,11 @@ static void gen_hear(gen *g)
                     if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
                     if (mask_has(h->need_mask, c)) sb_printf(&when, "%s%s", when.len ? " && " : "", presence_cell(g, "w", a, c, "loc.row", false));
                     else if (mask_has(h->without_mask, c)) sb_printf(&when, "%s!%s", when.len ? " && " : "", presence_cell(g, "w", a, c, "loc.row", false));
+                }
+                if (h->in_scenes.count || h->out_scenes.count) { // ...and in the scenes it takes
+                    sb_printf(&when, "%s(", when.len ? " && " : "");
+                    entity_scene_pass(h, "w", "target", &when);
+                    sb_put(&when, ")");
                 }
                 if (journal) {
                     sb projected = {0};
@@ -12826,6 +12910,11 @@ static void gen_row_filter(gen *g, const decl *sys, const int a, const char *pad
         if (mask_has(sys->need_mask, c)) sb_printf(&g->c, "%sif (!tide_pres_%s[tide_i]) %s;\n", pad, comp, skip);
         else if (mask_has(sys->without_mask, c)) sb_printf(&g->c, "%sif (tide_pres_%s[tide_i]) %s;\n", pad, comp, skip);
     }
+    if (scene_filtered(g, sys, a)) { // By the row's scene (with scene, without scene)
+        sb sb_pass = {0};
+        scene_pass(g, sys, a, "tide_scn[tide_i]", &sb_pass);
+        sb_printf(&g->c, "%sif (!(%s)) %s;\n", pad, sb_pass.data, skip);
+    }
     if (!filters_owner(g, sys, a)) return;
     gen_row_owner(g, sys, pad);
     sb_printf(&g->c, "%sif (%stide_player_equal(tide_owner.%s, tide_me)) %s;\n", pad, sys->ownership == OWNERSHIP_WITH ? "!" : "",
@@ -13211,6 +13300,11 @@ static void gen_dispatcher(gen *g, const decl *event, const bool local)
                     if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
                     if (mask_has(h->need_mask, c)) sb_printf(o, "if (!%s) break; ", presence_cell(g, world, a, c, "tide_loc.row", false));
                     else if (mask_has(h->without_mask, c)) sb_printf(o, "if (%s) break; ", presence_cell(g, world, a, c, "tide_loc.row", false));
+                }
+                if (h->in_scenes.count || h->out_scenes.count) { // ...in the scenes it takes
+                    sb pass = {0};
+                    entity_scene_pass(h, world, "tide_target", &pass);
+                    sb_printf(o, "if (!(%s)) break; ", pass.data);
                 }
                 sb_printf(o, "%stide_target, %s, ", start.data, local ? "true" : "false");
                 if (arch_scene_column(g, a)) {
@@ -14987,6 +15081,7 @@ static void gen_piece_rows(sb *o, const char *pad, const bool pieced)
 // or view's loop: it needs one its rows may lack, or excludes one they may have.
 static bool rows_filtered(const gen *g, const decl *sys, const int a)
 {
+    if (scene_filtered(g, sys, a)) return true;
     for (int c = 0; c < g->prog->components.count; c++) {
         if (comp_sparse(g, c) && arch_stores(g, a, c) && (mask_has(sys->need_mask, c) || mask_has(sys->without_mask, c))) return true;
     }
@@ -15354,6 +15449,11 @@ static void gen_rows_count(gen *g, const decl *sys, const int a, const char *pad
                   mask_has(sys->need_mask, c) ? "!=" : "==");
         first = false;
     }
+    if (scene_filtered(g, sys, a)) { // Its scene, through tide_scenes (gen_rows_presence)
+        sb_printf(o, "%s(", first ? "" : " & ");
+        scene_pass(g, sys, a, "tide_scenes[tide_i]", o);
+        sb_put(o, ")");
+    }
     sb_put(o, ";\n");
 }
 
@@ -15367,6 +15467,10 @@ static void gen_rows_presence(gen *g, const decl *sys, const int a, const char *
         if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
         sb_printf(&g->c, "%sconst uint8_t *tide_pres_%s = tide_table_column(tide_t, %s, tide_c, %d);\n", pad,
                   type_cname(prog->components.items[c]), arch_columns(g, a), arch_presence(g, a, c));
+    }
+    // ...and each row's scene, for a system that filters by it
+    if (scene_filtered(g, sys, a)) {
+        sb_printf(&g->c, "%sconst tide_entity *tide_scenes = tide_table_column(tide_t, %s, tide_c, 1);\n", pad, arch_columns(g, a));
     }
 }
 
@@ -15905,6 +16009,11 @@ static void gen_extern_filtered_call(gen *g, const decl *sys, const int a, const
         if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
         sb_printf(&match, "%s(tide_pres_%s[tide_scan] %s 0)", match.len ? " && " : "",
                   type_cname(g->prog->components.items[c]), mask_has(sys->need_mask, c) ? "!=" : "==");
+    }
+    if (scene_filtered(g, sys, a)) { // ...and in the scenes it takes
+        sb_printf(&match, "%s(", match.len ? " && " : "");
+        scene_pass(g, sys, a, "tide_scenes[tide_scan]", &match);
+        sb_put(&match, ")");
     }
     sb_printf(o, "%suint32_t tide_scan = tide_from;\n%swhile (tide_scan < tide_to) {\n", pad, pad);
     sb_printf(o, "%s    while (tide_scan < tide_to && !(%s)) tide_scan++;\n", pad, match.data);
@@ -20393,6 +20502,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_columns(&g);
     gen_component_access(&g);
     gen_hierarchy(&g);
+    gen_scene_filters(&g);
     gen_visibility(&g);
     gen_local_fields(&g);
     gen_moves(&g);

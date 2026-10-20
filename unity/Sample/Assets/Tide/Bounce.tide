@@ -32,7 +32,8 @@ command(ShowBonus show, PlayerID sender) Toggle(mut Extras extras)
     }
 }
 
-system Spinning(Spinner spinner, mut Transform transform, Time time)
+// Bonus's totem stands still: Unity's scenes are Tide's, and a system can leave one's entities out
+system Spinning(Spinner spinner, mut Transform transform, Time time, without scene Bonus)
 {
     transform.localRotation = Math.Normalize(Math.Mul(quaternion.Euler(0, spinner.speed * time.dt, 0), transform.localRotation));
 }

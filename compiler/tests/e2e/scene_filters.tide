@@ -1,0 +1,106 @@
+// `with scene` and `without scene`: systems, views and handlers for the entities a loaded scene owns, or doesn't.
+
+scene Main { }
+
+scene Arena
+{
+    int round;
+}
+
+scene Lobby { }
+
+component Counter
+{
+    int ticks;   // InArena's
+    int outside; // NotArena's
+    int born;    // Born's
+    int poked;   // Poked's
+    int waited;  // Waited's
+}
+
+singleton Probe
+{
+    int everyArena; // EveryArena's rows, ever
+}
+
+local singleton Seen
+{
+    int lobby;
+    int notArena;
+    int heard;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Scene.Load(Arena { round = 1 });
+    Scene.Load(Lobby);
+    Spawn(Counter); // Main's: Setup runs for Main, a scene too
+}
+
+// The scenes' own entities, which join them
+event(Spawned) SetupArena(with Arena)
+{
+    Spawn(Counter);
+    Spawn(Counter);
+}
+
+event(Spawned) SetupLobby(with Lobby)
+{
+    Spawn(Counter);
+}
+
+// A counter born in an arena knows it
+event(Spawned) Born(mut Counter counter, with scene Arena)
+{
+    counter.born = 1;
+}
+
+system InArena(mut Counter counter, with scene Arena)
+{
+    counter.ticks += 1;
+}
+
+system NotArena(mut Counter counter, without scene Arena)
+{
+    counter.outside += 1;
+}
+
+// A scene filter alone: every entity of an arena, the arena's own too
+system EveryArena(mut Probe probe, with scene Arena)
+{
+    probe.everyArena += 1;
+}
+
+view ShowLobby(Counter counter, mut Seen seen, with scene Lobby, without scene Arena)
+{
+    seen.lobby += counter.ticks + 1;
+}
+
+view ShowNotArena(Counter counter, mut Seen seen, without scene Arena)
+{
+    seen.notArena += 1 + counter.born;
+}
+
+// Handlers of an event every counter gets: the lobby's alone, an arena's alone (async), and a local one
+event Poke { }
+
+system Poking(with Counter)
+{
+    this.Send(Poke { });
+}
+
+event(Poke) Poked(mut Counter counter, with scene Lobby)
+{
+    counter.poked += 1;
+}
+
+async event(Poke) Waited(mut Counter counter, with scene Arena)
+{
+    counter.waited += 1;
+    await Wait.Ticks(1);
+}
+
+local event(Poke) Heard(Counter counter, mut Seen seen, with scene Lobby)
+{
+    seen.heard += 1 + counter.born;
+}

@@ -47,6 +47,9 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     TIDE_CHECK(strstr(declared, "    command Open\n") != NULL);
     TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(Level); break;\n") != NULL);
     TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
+    // A Unity scene is a Tide scene, whose entities are its prefab's, spawned into it as it loads
+    TIDE_CHECK(strstr(declared, "\nscene Level { }\n") != NULL);
+    TIDE_CHECK(strstr(declared, "    event(Spawned) FillLevel(with Level)\n    {\n        Spawn(Unity.Contents.Level);\n    }\n") != NULL);
     // The Tip goes under Thing through Visual, which is no entity: Visual's placement (up 1, twice the size) is the
     // Tip's. The inactive Off isn't there.
     TIDE_CHECK(reads(&s, "Assets/Fixture/Thing.prefab",
@@ -72,6 +75,7 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     // Holder's reference to that Tip as a path from the scene's own entity; the Mark of the scene's own
     TIDE_CHECK(reads(&s, "Assets/Fixture/Level.unity",
         "// From Assets/Fixture/Level.unity, as Tide's package for Unity writes it (TideEntity)\n"
+        "namespace Unity.Contents;\n\n"
         "prefab Level\n{\n"
         "    Unity.Source { asset = 1, node = 0 };\n"
         "    entity Holder // Holder\n    {\n"

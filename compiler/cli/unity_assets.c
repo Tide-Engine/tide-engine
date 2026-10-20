@@ -1155,7 +1155,10 @@ static char *write_prefab(project *p, const asset *a, node **roots, const int co
     emitter e = {p, a, NULL, {0}, number, {0}, 0};
     puts_(&e.nodes, "");
     char *name = asset_name(a->local);
-    putf(&e.out, "// From %s, as Tide's package for Unity writes it (TideEntity)\nprefab %s\n{\n", a->local, name);
+    putf(&e.out, "// From %s, as Tide's package for Unity writes it (TideEntity)\n", a->local);
+    // A scene's is what its scene type, `scene Name`, loads: its prefab is Unity.Contents.Name (unity_declarations)
+    if (scene) puts_(&e.out, "namespace Unity.Contents;\n\n");
+    putf(&e.out, "prefab %s\n{\n", name);
     if (scene || count != 1) {
         // A scene's roots go under an entity of its own: the scene's
         node *top = new_node();
@@ -1265,8 +1268,15 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
                  scenes[i].name);
         }
         puts_(&t, "        }\n    }\n");
+        // Each scene's entities, its prefab's, as it loads
+        for (int i = 0; i < count; i++) {
+            putf(&t, "\n    event(Spawned) Fill%s(with %s)\n    {\n        Spawn(Unity.Contents.%s);\n    }\n", scenes[i].name, scenes[i].name,
+                 scenes[i].name);
+        }
     }
     puts_(&t, "}\n");
+    // The scenes, as Tide's: what game code loads (Scene.Load(Level)) and filters by (with scene Level)
+    for (int i = 0; i < count; i++) putf(&t, "\n// %s.unity, Unity's scene, as Tide's\nscene %s { }\n", scenes[i].name, scenes[i].name);
     return t.s;
 }
 

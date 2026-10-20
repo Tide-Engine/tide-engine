@@ -1,5 +1,38 @@
 # Language features, as tidec builds them
 
+## Scene filters: `with scene Arena` (2026-10-20)
+
+Owner's spelling (`with` alone would change `event(Spawned) Setup(with Main)`,
+which runs once, into every entity of Main); the rest is Provisional in the
+spec's Scenes. Parser: after `with`/`without`, the word `scene` before a name
+sets `param.scene`. Checker (`check_scene_filter`): the name must be a scene
+component (a prefab or another kind says so), pushed to `decl.in_scenes` /
+`out_scenes` (twice, or in and out, are errors), the param typed void with
+`scene_of` the scene; a scene filter alone makes the system per-entity, over
+the scene's side; a scene of the other side is an error. Override signatures
+compare `scene`/`scene_of`, and print `with scene Arena`. Codegen
+(`gen_scene_filters`): `tide_in_scene_<S>(entities, scene)` (alive, in an
+archetype with S) and `tide_entity_in_scene_<S>(w, e)` (by the entity's row's
+scene column) for each scene some code filters by. Rows: `scene_filtered`
+makes `rows_filtered` true; `gen_row_filter` skips by `tide_scn[tide_i]`;
+`gen_rows_count` counts passing rows by `tide_scenes` (from
+`gen_rows_presence`), so chunks with none are skipped and all-pass chunks take
+the unfiltered loop; C systems' run matcher includes it. Handlers: the per-row
+dispatch through `gen_row_filter`, async handlers' task start, availability
+listeners (`tide_available_<E>`) and heard events' listener bits
+(`tide_hear_<E>`) by the target. A scene load sets the root's scene column to
+itself, so the root counts, which the spec says. Also: the never-runs warning
+notes `with scene` when a system needs a scene's component; a filter naming a
+prefab says it's a prefab (`errors/system_filter_by_prefab`).
+
+Tests: `e2e/scene_filters` (systems in and not in an arena, a scene filter
+alone counting the arena's entities with its own, a Spawned handler, a
+targeted event's match handler and async handler, views with both filters; a
+local handler compiles), errors `scene_filter_not_a_scene`,
+`scene_filter_in_and_out`, LSP `lsp_scene_filter_names_its_scene` (rename
+reaches the filter, hover), and the grammar (`keyword.other.scene` right after
+with/without, before a name).
+
 ## Empty scene shorthand (2026-10-20)
 
 Owner-approved: `scene Name;` is a complete empty scene declaration equivalent

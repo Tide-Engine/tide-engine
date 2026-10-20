@@ -444,6 +444,14 @@ editor tells the match which scenes it has open, editor only.
   Bounce and Bonus are the match's; Bonus open alone is the match's and Bounce,
   loaded as Main started, goes. Players checked as before.
 
+**Unity scenes are Tide scenes** (owner, 2026-10-20): a scene asset `N` is
+`scene N { }` (global, in `Unity.tide`), its authored tree the prefab
+`Unity.Contents.N` (`namespace Unity.Contents;` at the top of its text), and
+`Unity.Fill<N>` (`event(Spawned) ... (with N)`) spawns that prefab into each
+loaded N, so every entity of it is N's for `with scene N` (`notes/language.md`,
+Scene filters). The sample's `Spinning` is `without scene Bonus`, and the play
+mode test checks Bonus's totem stays still.
+
 Gaps: what the editor opens while playing isn't sent; a client in the editor
 sends nothing (the server decides); `Scene.Load` of the same Unity scene twice
 binds both roots' entities to one set of GameObjects.
