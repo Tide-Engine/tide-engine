@@ -309,6 +309,8 @@ uint64_t tide_platform_entropy(void);
 
 // The window's size in pixels, which tide_gui_begin takes.
 tide_float2 tide_platform_screen_size(void);
+// Physical pixels per logical pixel on each axis, as the renderer fits them.
+tide_float2 tide_platform_screen_scale(void);
 tide_int2 tide_platform_target_pixels(tide_target_size size);
 
 // How big `text` is drawn `size` tall with the platform's font, in the same

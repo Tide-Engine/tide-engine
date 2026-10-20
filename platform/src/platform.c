@@ -3656,6 +3656,11 @@ tide_float2 tide_platform_screen_size(void)
     return tide_f2((float)screen_width, (float)screen_height);
 }
 
+tide_float2 tide_platform_screen_scale(void)
+{
+    return window_scale();
+}
+
 tide_int2 tide_platform_target_pixels(const tide_target_size size)
 {
     const draw_root window = {.width = (float)screen_width, .height = (float)screen_height,

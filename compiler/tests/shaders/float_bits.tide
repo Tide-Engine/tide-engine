@@ -1,0 +1,30 @@
+local singleton Bits { float4 value; int4 expected; int4 hashes; float2 screen; }
+frag Inspect(Vertex vertex, Bits bits, out Color color)
+{
+    var two = Math.AsInt(bits.value.xy);
+    var three = Math.AsInt(bits.value.xyz);
+    var four = Math.AsInt(bits.value);
+    var f2 = Math.AsFloat(bits.expected.xy);
+    var f3 = Math.AsFloat(bits.expected.xyz);
+    var f4 = Math.AsFloat(bits.expected);
+    bool good = Math.AsInt(bits.value.x) == bits.expected.x
+        && two.x == bits.expected.x && two.y == bits.expected.y
+        && three.x == bits.expected.x && three.y == bits.expected.y && three.z == bits.expected.z
+        && four.x == bits.expected.x && four.y == bits.expected.y && four.z == bits.expected.z && four.w == bits.expected.w
+        && Math.AsFloat(bits.expected.x) == bits.value.x
+        && f2.x == bits.value.x && f2.y == bits.value.y
+        && f3.x == bits.value.x && f3.y == bits.value.y && f3.z == bits.value.z
+        && f4.x == bits.value.x && f4.y == bits.value.y && f4.z == bits.value.z && f4.w == bits.value.w
+        && Math.Hash(bits.value.x) == bits.hashes.x && Math.Hash(bits.value.xy) == bits.hashes.y
+        && Math.Hash(bits.value.xyz) == bits.hashes.z && Math.Hash(bits.value) == bits.hashes.w;
+    color = good ? Color.green : Color.red;
+}
+view Show(mut Bits bits)
+{
+    bits.screen = Screen.scale;
+    Draw.SetScreen();
+    Draw.Clear(Color.black);
+    Draw.Mesh([Vertex { position = float2(0, 0) }, Vertex { position = float2(32, 0) },
+               Vertex { position = float2(32, 32) }, Vertex { position = float2(0, 32) }], [0, 1, 2, 0, 2, 3], Inspect);
+}
+scene Main { }

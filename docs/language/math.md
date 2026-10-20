@@ -101,7 +101,7 @@ Each button below plots a function of `Math` from 0 to 1. The white dot goes alo
 
 **Hashing:**
 
-`Math.Hash(value)` turns an `int`, `long`, `int2`, `int3` or `int4` into a random-looking int from 0 to 2147483647. The same value always gives the same number, on every machine. It keeps no state, so it works anywhere, parallel loops included:
+`Math.Hash(value)` turns an `int`, `long`, `int2`, `int3`, `int4`, `float`, `float2`, `float3` or `float4` into a random-looking int from 0 to 2147483647. The same value always gives the same number, on every machine. It keeps no state, so it works anywhere, parallel loops included:
 
 ```csharp
 // About one cell in four starts as sand, the same cells everywhere.
@@ -111,6 +111,19 @@ if (Math.Hash(int2(x, y)) % 4 == 0) field.cells[x, y] = Material.Sand;
 Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(x, y, seed))`. It's xxHash32, so every bit of the value affects the result. With the match's seed, [`Random.seed`](#the-match-s-seed), matches can get different fields: `Math.Hash(int3(x, y, Random.seed))`. Reusing a seed repeats its field.
 
 It gives the same numbers in a [frag or vert](../game/shaders.md#math), so a pattern drawn from it is the same on every GPU. Only a `long`'s hash stays on the CPU.
+
+Float hashes use the exact input bits: `Math.Hash(value)` equals `Math.Hash(Math.AsInt(value))`. Positive and negative zero hash differently. This hashes represented values; float calculations on the GPU still have their usual rounding.
+
+**Bit casts:**
+
+`Math.AsInt(value)` reinterprets a `float`, `float2`, `float3` or `float4` as the corresponding int type. `Math.AsFloat(bits)` reverses it. These preserve the 32 bits of each component without a numeric conversion:
+
+```csharp
+int bits = Math.AsInt(1.0);          // 0x3f800000
+float value = Math.AsFloat(bits);   // 1.0
+```
+
+Both work on the CPU and in frags/verts. Use the ordinary `int(value)` or `float(value)` constructors for numeric conversions.
 
 ## Noise
 

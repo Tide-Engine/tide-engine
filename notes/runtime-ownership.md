@@ -1,5 +1,19 @@
 # Runtime written by Claude for now
 
+## Inside Out conventional completions (2026-10-20)
+
+Under the owner's conventional API-completion instruction and existing math
+maintenance exception, generated Math calls use inline tide_asint_f/f2/f3/f4,
+tide_asfloat_i/i2/i3/i4 and tide_hash_f/f2/f3/f4. Bit casts use memcpy; float
+hashes reuse existing integer xxHash mixing. No simulation layout or arithmetic
+changed. The standard host additionally obtains the existing window ratios
+through tide_platform_screen_scale and supplies draw-list screen_scale metadata;
+generated frames call no platform function. Hosts/libraries rebuild for that C
+layout addition. Private CPU aggregate borrowing adds no runtime entry point or
+public Tide reference semantics. Contracts/validation: notes/language.md and
+notes/drawing.md.
+
+
 ## Explicit skinned instance adapters (2026-10-20)
 
 The approved `Draw.Instanced` skinned-model overload needs no new runtime API.

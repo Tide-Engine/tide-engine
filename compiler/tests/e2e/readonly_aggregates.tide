@@ -1,0 +1,56 @@
+singleton Big { int[4096] words; int[4096] more; int[1808] tail; }
+struct Large
+{
+    int[4096] words; int[4096] more; int[1808] tail; int head; List<int> entries;
+    int Read(int depth)
+    {
+        if (depth <= 0) return words[0];
+        return Read(depth - 1);
+    }
+    int Before(mut int field) { field = 77; return head; }
+    int Collect(mut List<float> output) { output.Add(1.0); return head + entries.count; }
+    int Forward(mut List<float> output) { return Collect(output); }
+}
+singleton Results { int deep; int plain; int method; int methodAlias; int collect; int alias; int later; int external; int nested; }
+
+int ReadBig(Big value, int depth)
+{
+    if (depth <= 0) return value.words[0];
+    return ReadBig(value, depth - 1);
+}
+int ReadLarge(Large value, int depth)
+{
+    if (depth <= 0) return value.words[0];
+    return ReadLarge(value, depth - 1);
+}
+int Alias(Big before, mut Big current)
+{
+    current.words[0] = 22;
+    return before.words[0];
+}
+int Change(mut Big current) { current.words[0] = 33; return 0; }
+int WithLater(Big value, int other) { return ReadBig(value, 0) + other; }
+extern void readonly_aggregate_change();
+int WithC(Big value) { readonly_aggregate_change(); return ReadBig(value, 0); }
+int Nested(Large before, mut int field) { field = 88; return before.head; }
+void Disjoint(Big value, mut Results result) { result.deep = ReadBig(value, 96); }
+
+system Check(mut Big big, mut Results result)
+{
+    big.words[0] = 11;
+    Disjoint(big, result);
+    mut Large plain = default;
+    plain.words[0] = 17;
+    plain.head = 17;
+    mut List<float> output = [];
+    result.collect = plain.Forward(output);
+    result.plain = ReadLarge(plain, 96);
+    result.method = plain.Read(96);
+    result.methodAlias = plain.Before(plain.head);
+    plain.head = 17;
+    result.alias = Alias(big, big);
+    result.later = WithLater(big, Change(big));
+    result.external = WithC(big);
+    result.nested = Nested(plain, plain.head);
+}
+scene Main { }
