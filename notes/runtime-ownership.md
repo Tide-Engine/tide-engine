@@ -1,5 +1,20 @@
 # Runtime written by Claude for now
 
+## Map views generated code keeps (2026-10-20)
+
+Owner-approved (the performance pass's second round: "a list view resolved
+once per function", for map lookups): generated code now calls `tide/map.h`'s
+`tide_map_view` (a struct of two `tide_list_view`s), `tide_map_views_none`,
+`tide_map_find_in` and `tide_map_view_entry`, and through them
+`tide/list.h`'s `tide_list_view_hold`, `_holds`, `_find` and `_at`, all
+inline. `tide_list_view_of` became `tide_list_view_find`, which fills a view
+in place (it grew a held list's identity and the first 32 chunks' places);
+`tide_map_find` keeps its signature over `tide_map_find_in`. Each function
+declares `tide_mv`, a view for each map it reads or sets by key (codegen's
+`declare_list_caches`), beside `tide_lc`. Contracts in ecs.md and
+language.md, Map views. `tide_list_cache_fill_mut` finds a side-by-side
+list's block once (internal; same results).
+
 ## Performance pass (2026-10-20)
 
 No runtime function is new to generated code. `tide/list.h` gains

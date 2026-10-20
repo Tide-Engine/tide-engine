@@ -1,5 +1,42 @@
 # ECS and simulation state
 
+## Map views across a function (2026-10-20)
+
+Owner-approved: generated code keeps a view of each map it reads or sets by
+key for the whole function (`tide_map_view`, `tide/map.h`), so lookup after
+lookup doesn't find the map's two lists again (heap, page table, block) at
+every one, and a big map's chunks are found once each. Same probe order,
+same entries, same results and hashes; no layout changes.
+
+- `tide_list_view` (`tide/list.h`) is now filled in place
+  (`tide_list_view_find`) and can be held: `tide_list_view_hold` finds the list
+  again only when what it found may have changed, which `tide_list_view_holds`
+  tells from the list's handle (`tide_list.at`), its heap's `moves` (a block
+  grown, moved or released, a page copied to be a world's own, a page's hash
+  asked for) and its count against its block's (elements added or removed in
+  place). Writing an element where it is changes neither, and is read through
+  the view, as it's the same memory. A list in the scratch area is a view of
+  its place, which any list with that handle has.
+- In chunks, the first 32 chunks' element places are found the first time
+  one of theirs is read (`known`, a bit each), so a probe is the chunk's
+  place, from the view, and the element: what was the directory, the page
+  table, the page and the element. Past 32 chunks (1,023 16-byte entries a
+  chunk, so past about 32,000 entries) the rest go the old way.
+- `tide_map_find_in(view, map, kind, probe)` holds both lists' views and
+  probes; `tide_map_find` makes a view of its own for the one lookup, as
+  before. `tide_map_view_entry` reads the entry found.
+- A set through a view (`tide_map%d_cset`) writes the value of a key that's
+  there in place (`tide_list_at_mut`, so a page shared with a snapshot is
+  copied first, as always) when neither list is an asset's or the pack's
+  (`borrowed`), which `tide_map_insert` would make the world's own first;
+  anything else, and every new key, goes through `tide_map%d_set` as before.
+- `tide_list_cache_fill_mut` finds a side-by-side list's block once, where it
+  found it twice (in `tide_list_at_mut`, then again for the cache).
+
+The views are C locals of the function (and of each parallel loop's task),
+not state: nothing is kept between calls, snapshots, threads or reloads.
+Results: notes/benchmarks.md, Map views and Linux cache groups.
+
 ## Performance pass: lists, maps and grid windows (2026-10-20)
 
 Internal, with no layout, hash, order or interface change (pinned hashes are

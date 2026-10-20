@@ -175,6 +175,10 @@ typedef struct gen {
     VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
     size_t lc_patch;       // ...and where the array's size goes in `lc_sb`, once the body says how many (close_list_caches)
     sb *lc_sb;
+    bool map_views;        // ...and tide_mv, a view of each map it looks keys up in (tide/map.h, tide_map_view), by its key too
+    VEC(const char *) mv_keys;
+    size_t mv_patch[2];    // ...where the count goes twice, in the array and in what makes them none
+    sb *mv_sb;
     VEC(task_info) tasks;  // Every async function and handler that runs, callees before what awaits them
     gen_task *task;        // The task whose code is being generated, or NULL
     const decl *code;      // The system, view or handler whose body is being generated, or NULL
@@ -1556,34 +1560,74 @@ static int cache_slot(gen *g, const expr *list)
     return g->lc_keys.count - 1;
 }
 
+// The slot in tide_mv of the view of the map `map` names, as cache_slot.
+static int view_slot(gen *g, const expr *map)
+{
+    sb key = {0};
+    cache_key(map, &key);
+    for (int i = 0; i < g->mv_keys.count; i++) {
+        if (strcmp(g->mv_keys.items[i], key.data) == 0) return i;
+    }
+    vec_push(g->mv_keys, key.data);
+    return g->mv_keys.count - 1;
+}
+
 static void close_list_caches(gen *g);
 
 // The run caches of the function whose body comes next: one for each list it
 // indexes (tide/list.h), through which its reads find each run once and its
-// writes make each run's page the world's own once. How many it has is known
-// once the body is generated, so the size is patched in then.
+// writes make each run's page the world's own once; and a view of each map it
+// looks keys up in (tide/map.h), which finds the map's lists again only when
+// they may have changed. How many it has is known once the body is
+// generated, so the sizes are patched in then. A view's chunks aren't zeroed,
+// as it's only read where it's found something.
 static void declare_list_caches(gen *g, sb *o)
 {
     close_list_caches(g); // One left open by a body that ended elsewhere
-    indent(g, o);
-    sb_put(o, "tide_list_cache tide_lc[");
-    g->lc_patch = o->len;
-    g->lc_sb = o;
-    sb_put(o, "    1] = {{0}};\n");
-    line(g, o, "(void)tide_lc;");
-    g->lc_keys.count = 0;
-    g->list_caches = true;
+    if (g->prog->lists.count) {
+        indent(g, o);
+        sb_put(o, "tide_list_cache tide_lc[");
+        g->lc_patch = o->len;
+        g->lc_sb = o;
+        sb_put(o, "    1] = {{0}};\n");
+        line(g, o, "(void)tide_lc;");
+        g->lc_keys.count = 0;
+        g->list_caches = true;
+    }
+    if (g->prog->maps.count) {
+        indent(g, o);
+        sb_put(o, "tide_map_view tide_mv[");
+        g->mv_patch[0] = o->len;
+        sb_put(o, "    1];\n");
+        indent(g, o);
+        sb_put(o, "tide_map_views_none(tide_mv, ");
+        g->mv_patch[1] = o->len;
+        sb_put(o, "    1);\n");
+        g->mv_sb = o;
+        g->mv_keys.count = 0;
+        g->map_views = true;
+    }
 }
 
 static void close_list_caches(gen *g)
 {
-    if (!g->lc_patch) return;
+    if (!g->lc_patch && !g->mv_patch[0]) return;
     char n[8];
-    snprintf(n, sizeof n, "%5d", g->lc_keys.count > 0 ? g->lc_keys.count : 1);
-    memcpy(g->lc_sb->data + g->lc_patch, n, 5);
+    if (g->lc_patch) {
+        snprintf(n, sizeof n, "%5d", g->lc_keys.count > 0 ? g->lc_keys.count : 1);
+        memcpy(g->lc_sb->data + g->lc_patch, n, 5);
+    }
+    if (g->mv_patch[0]) {
+        snprintf(n, sizeof n, "%5d", g->mv_keys.count > 0 ? g->mv_keys.count : 1);
+        memcpy(g->mv_sb->data + g->mv_patch[0], n, 5);
+        memcpy(g->mv_sb->data + g->mv_patch[1], n, 5);
+    }
     g->lc_patch = 0;
     g->lc_keys.count = 0;
     g->list_caches = false;
+    g->mv_patch[0] = g->mv_patch[1] = 0;
+    g->mv_keys.count = 0;
+    g->map_views = false;
 }
 
 static void line_directive(gen *g, const loc at)
@@ -2160,7 +2204,8 @@ static void gen_ptr(gen *g, sb *o, const expr *e)
         return;
     }
     if (e->kind == E_INDEX && e->object->type.kind == TY_MAP && !e->kept) {
-        sb_printf(o, "tide_map%d_at(", e->object->type.decl->index);
+        if (g->map_views) sb_printf(o, "tide_map%d_cat(&tide_mv[%d], ", e->object->type.decl->index, view_slot(g, e->object));
+        else sb_printf(o, "tide_map%d_at(", e->object->type.decl->index);
         gen_expr(g, o, e->object);
         sb_put(o, ", ");
         gen_as(g, o, e->lhs, e->object->type.decl->fields.items[0].type);
@@ -3484,7 +3529,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             break;
         }
         if (e->object->type.kind == TY_MAP) { // scores[key], or zero where the key isn't
-            sb_printf(o, "tide_map%d_get(", e->object->type.decl->index);
+            if (g->map_views) sb_printf(o, "tide_map%d_cget(&tide_mv[%d], ", e->object->type.decl->index, view_slot(g, e->object));
+            else sb_printf(o, "tide_map%d_get(", e->object->type.decl->index);
             gen_expr(g, o, e->object);
             sb_put(o, ", ");
             gen_as(g, o, e->lhs, e->object->type.decl->fields.items[0].type);
@@ -3852,7 +3898,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         } else if (e->call == CALL_MAP && str_eq_c(e->name, "TryGet")) { // scores.TryGet(k, out v): the variable it makes, by address
             const decl *map = e->type_decl;
             const expr *value = e->args.items[1];
-            sb_printf(o, "tide_map%d_tryget_out(", map->index);
+            if (g->map_views) sb_printf(o, "tide_map%d_ctryget_out(&tide_mv[%d], ", map->index, view_slot(g, e->object));
+            else sb_printf(o, "tide_map%d_tryget_out(", map->index);
             gen_expr(g, o, e->object);
             sb_put(o, ", ");
             gen_as(g, o, e->args.items[0], map->fields.items[0].type);
@@ -3871,7 +3918,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             const char *lower = str_eq_c(e->name, "Has") ? "has" : str_eq_c(e->name, "Get") ? "tryget" : str_eq_c(e->name, "Add") ? "add"
                               : str_eq_c(e->name, "Remove") ? "remove" : "clear";
             const bool slot = !reads && is_slot(e->object); // buckets[key].Add(x): the element's slot (gen_slot)
-            sb_printf(o, "tide_map%d_%s(%s", k, lower, reads || slot ? "" : "&(");
+            if (reads && g->map_views) sb_printf(o, "tide_map%d_c%s(&tide_mv[%d], ", k, lower, view_slot(g, e->object));
+            else sb_printf(o, "tide_map%d_%s(%s", k, lower, reads || slot ? "" : "&(");
             if (slot) gen_slot(g, o, e->object);
             else gen_expr(g, o, e->object);
             if (!reads && !slot) sb_put(o, ")");
@@ -6186,6 +6234,7 @@ static void gen_inline(gen *g, const expr *e)
     g->borrow = inline_borrow;
     for (int i = 0; i < fn->body->stmts.count; i++) gen_stmt(g, fn->body->stmts.items[i]);
     g->list_caches = false;
+    g->map_views = false;
     g->frame = frame.caller;
     g->routine = frame.caller_routine;
     g->borrow = caller_borrow;
@@ -6685,7 +6734,8 @@ static void gen_stmt(gen *g, const stmt *s)
         if (target->kind == E_INDEX && target->object->type.kind == TY_MAP) { // scores[k] = x: added, or the value replaced
             const decl *map = target->object->type.decl;
             indent(g, o);
-            sb_printf(o, "tide_map%d_set(", map->index);
+            if (g->map_views && !is_slot(target->object)) sb_printf(o, "tide_map%d_cset(&tide_mv[%d], ", map->index, view_slot(g, target->object));
+            else sb_printf(o, "tide_map%d_set(", map->index);
             if (is_slot(target->object)) { // rows[i][k] = x: the element's slot (gen_slot)
                 gen_slot(g, o, target->object);
             } else {
@@ -8087,15 +8137,21 @@ static void gen_map_helpers(gen *g, const bool bodies)
             gen_type(g, o, &ed);
             sb_printf(o, "static const tide_map_kind tide_map%d_kind;\n", k);
             if (!set) sb_printf(o, "TIDE_HELPER %s tide_map%d_get(tide_map m, %s key);\n", vv, k, kp);
+            if (!set) sb_printf(o, "TIDE_HELPER %s tide_map%d_cget(tide_map_view *v, tide_map m, %s key);\n", vv, k, kp);
             sb_printf(o, "TIDE_HELPER bool tide_map%d_has(tide_map m, %s key);\n", k, kp);
+            sb_printf(o, "TIDE_HELPER bool tide_map%d_chas(tide_map_view *v, tide_map m, %s key);\n", k, kp);
             if (!set) sb_printf(o, "TIDE_HELPER void tide_map%d_set(tide_map *m, %s key, %s value, uint32_t where);\n", k, kp, vv);
+            if (!set) sb_printf(o, "TIDE_HELPER void tide_map%d_cset(tide_map_view *v, tide_map *m, %s key, %s value, uint32_t where);\n", k, kp, vv);
             if (set) sb_printf(o, "TIDE_HELPER bool tide_map%d_add(tide_map *m, %s key, uint32_t where);\n", k, kp);
             if (set) sb_printf(o, "TIDE_HELPER tide_map tide_map%d_from(const %s *keys, int32_t count);\n", k, kp);
             if (m->optional) sb_printf(o, "TIDE_HELPER %s tide_map%d_tryget(tide_map m, %s key);\n", result_cname(m->optional), k, kp);
+            if (m->optional) sb_printf(o, "TIDE_HELPER %s tide_map%d_ctryget(tide_map_view *v, tide_map m, %s key);\n", result_cname(m->optional), k, kp);
             if (m->tries && value.kind == TY_STRING) {
                 sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(tide_map m, %s key, tide_textref value);\n", k, kp);
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_ctryget_out(tide_map_view *v, tide_map m, %s key, tide_textref value);\n", k, kp);
             } else if (m->tries) {
                 sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(tide_map m, %s key, %s *value, uint32_t where);\n", k, kp, vv);
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_ctryget_out(tide_map_view *v, tide_map m, %s key, %s *value, uint32_t where);\n", k, kp, vv);
             }
             sb_printf(o, "TIDE_HELPER bool tide_map%d_remove(tide_map *m, %s key, uint32_t where);\n", k, kp);
             sb_printf(o, "TIDE_HELPER void tide_map%d_clear(tide_map *m, uint32_t where);\n", k);
@@ -8105,6 +8161,7 @@ static void gen_map_helpers(gen *g, const bool bodies)
             sb_printf(o, "TIDE_HELPER void tide_map%d_release(tide_map *m, uint32_t where);\n", k);
             if (slotted) sb_printf(o, "TIDE_HELPER %s *tide_map%d_slot(tide_map *m, %s key, uint32_t where);\n", vc, k, kp);
             if (paths) sb_printf(o, "TIDE_HELPER const %s *tide_map%d_at(tide_map m, %s key);\n", vc, k, kp);
+            if (paths) sb_printf(o, "TIDE_HELPER const %s *tide_map%d_cat(tide_map_view *v, tide_map m, %s key);\n", vc, k, kp);
             sb_put(o, "\n");
             continue;
         }
@@ -8142,14 +8199,21 @@ static void gen_map_helpers(gen *g, const bool bodies)
         }
         const char *drops = drop_all.data ? drop_all.data : "";
         const char *takes = take_all.data ? take_all.data : "";
+        // Reading by key: through a view of the map's lists the calling function keeps (tide_mv, the `c` ones), or one
+        // of their own
+        const char *own_view = "    tide_map_view v;\n    tide_map_view_none(&v);\n";
         if (!set) {
-            sb_printf(o, "TIDE_HELPER %s tide_map%d_get(const tide_map m, const %s key)\n{\n", vv, k, kp);
-            sb_printf(o, "    const int32_t i = tide_map_find(m, &tide_map%d_kind, &key);\n", k);
+            sb_printf(o, "TIDE_HELPER %s tide_map%d_cget(tide_map_view *v, const tide_map m, const %s key)\n{\n", vv, k, kp);
+            sb_printf(o, "    const int32_t i = tide_map_find_in(v, m, &tide_map%d_kind, &key);\n", k);
             if (value.kind == TY_STRING) sb_put(o, "    if (i < 0) return TIDE_STR_EMPTY;\n");
             else sb_printf(o, "    if (i < 0) return (%s){0};\n", vv);
-            sb_printf(o, "    const %s *e = tide_map_entry(m, i, &tide_map%d_kind);\n", entry, k);
+            sb_printf(o, "    const %s *e = tide_map_view_entry(v, i, &tide_map%d_kind);\n", entry, k);
             sb_printf(o, "    return %s;\n}\n\n", value.kind == TY_STRING ? "tide_text_view(e->value)" : "e->value");
+            sb_printf(o, "TIDE_HELPER %s tide_map%d_get(const tide_map m, const %s key)\n{\n%s    return tide_map%d_cget(&v, m, key);\n}\n\n",
+                      vv, k, kp, own_view, k);
         }
+        sb_printf(o, "TIDE_HELPER bool tide_map%d_chas(tide_map_view *v, const tide_map m, const %s key)\n{\n"
+                     "    return tide_map_find_in(v, m, &tide_map%d_kind, &key) >= 0;\n}\n\n", k, kp, k);
         sb_printf(o, "TIDE_HELPER bool tide_map%d_has(const tide_map m, const %s key)\n{\n"
                      "    return tide_map_find(m, &tide_map%d_kind, &key) >= 0;\n}\n\n", k, kp, k);
         if (!set) {
@@ -8162,11 +8226,24 @@ static void gen_map_helpers(gen *g, const bool bodies)
             sb_put(o, "    }\n");
             gen_map_slot(o, value, "&e->value", "value", "put");
             sb_put(o, "}\n\n");
+            // The same through the function's view (tide_mv): a key that's there, in lists that are the world's own (no
+            // asset's or the pack's, which tide_map_insert would make so first), has its value written where it is;
+            // anything else goes through tide_map%d_set
+            sb_printf(o, "TIDE_HELPER void tide_map%d_cset(tide_map_view *v, tide_map *m, const %s key, const %s value, const uint32_t where)\n{\n",
+                      k, kp, vv);
+            sb_printf(o, "    const int32_t i = tide_map_find_in(v, *m, &tide_map%d_kind, &key);\n", k);
+            sb_printf(o, "    %s *e = i < 0 || v->entries.borrowed || v->index.borrowed ? NULL : tide_list_at_mut(m->entries, i, sizeof(%s));\n",
+                      entry, entry);
+            sb_printf(o, "    if (!e) {\n        tide_map%d_set(m, key, value, where);\n        return;\n    }\n", k);
+            gen_map_slot(o, value, "&e->value", "value", "put");
+            sb_put(o, "}\n\n");
             if (paths) { // A pointer at a value, to read a field of it where it is, or at a zero one for a key that isn't there
                 sb_printf(o, "static const %s tide_map%d_zero = {0};\n", vc, k);
-                sb_printf(o, "TIDE_HELPER const %s *tide_map%d_at(const tide_map m, const %s key)\n{\n", vc, k, kp);
-                sb_printf(o, "    const int32_t i = tide_map_find(m, &tide_map%d_kind, &key);\n    if (i < 0) return &tide_map%d_zero;\n", k, k);
-                sb_printf(o, "    const %s *e = tide_map_entry(m, i, &tide_map%d_kind);\n    return &e->value;\n}\n\n", entry, k);
+                sb_printf(o, "TIDE_HELPER const %s *tide_map%d_cat(tide_map_view *v, const tide_map m, const %s key)\n{\n", vc, k, kp);
+                sb_printf(o, "    const int32_t i = tide_map_find_in(v, m, &tide_map%d_kind, &key);\n    if (i < 0) return &tide_map%d_zero;\n", k, k);
+                sb_printf(o, "    const %s *e = tide_map_view_entry(v, i, &tide_map%d_kind);\n    return &e->value;\n}\n\n", entry, k);
+                sb_printf(o, "TIDE_HELPER const %s *tide_map%d_at(const tide_map m, const %s key)\n{\n%s    return tide_map%d_cat(&v, m, key);\n}\n\n",
+                          vc, k, kp, own_view, k);
             }
             if (slotted) { // A value changed where it is, by its own helpers: its slot, added empty for a key that wasn't there
                 sb_printf(o, "TIDE_HELPER %s *tide_map%d_slot(tide_map *m, const %s key, const uint32_t where)\n{\n", vc, k, kp);
@@ -8185,21 +8262,23 @@ static void gen_map_helpers(gen *g, const bool bodies)
         }
         if (m->optional) { // Get: the value, or nothing
             const char *opt = result_cname(m->optional);
-            sb_printf(o, "TIDE_HELPER %s tide_map%d_tryget(const tide_map m, const %s key)\n{\n", opt, k, kp);
-            sb_printf(o, "    const int32_t i = tide_map_find(m, &tide_map%d_kind, &key);\n    if (i < 0) return (%s){0};\n", k, opt);
-            sb_printf(o, "    const %s *e = tide_map_entry(m, i, &tide_map%d_kind);\n", entry, k);
+            sb_printf(o, "TIDE_HELPER %s tide_map%d_ctryget(tide_map_view *v, const tide_map m, const %s key)\n{\n", opt, k, kp);
+            sb_printf(o, "    const int32_t i = tide_map_find_in(v, m, &tide_map%d_kind, &key);\n    if (i < 0) return (%s){0};\n", k, opt);
+            sb_printf(o, "    const %s *e = tide_map_view_entry(v, i, &tide_map%d_kind);\n", entry, k);
             if (type_has_list(value)) sb_printf(o, "    return (%s){.value = %se->value), .ok = true};\n}\n\n", opt, element_copy_open(value));
             else sb_printf(o, "    return (%s){.value = %s, .ok = true};\n}\n\n", opt, value.kind == TY_STRING ? "tide_text_view(e->value)" : "e->value");
+            sb_printf(o, "TIDE_HELPER %s tide_map%d_tryget(const tide_map m, const %s key)\n{\n%s    return tide_map%d_ctryget(&v, m, key);\n}\n\n",
+                      opt, k, kp, own_view, k);
         }
         if (m->tries) { // TryGet: whether the key is there, and into the caller's variable its value, or the default
             if (value.kind == TY_STRING) {
-                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(const tide_map m, const %s key, const tide_textref value)\n{\n", k, kp);
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_ctryget_out(tide_map_view *v, const tide_map m, const %s key, const tide_textref value)\n{\n", k, kp);
             } else {
-                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(const tide_map m, const %s key, %s *value, const uint32_t where)\n{\n"
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_ctryget_out(tide_map_view *v, const tide_map m, const %s key, %s *value, const uint32_t where)\n{\n"
                              "    (void)where;\n", k, kp, vv);
             }
-            sb_printf(o, "    const int32_t i = tide_map_find(m, &tide_map%d_kind, &key);\n", k);
-            sb_printf(o, "    const %s *e = i < 0 ? NULL : tide_map_entry(m, i, &tide_map%d_kind);\n", entry, k);
+            sb_printf(o, "    const int32_t i = tide_map_find_in(v, m, &tide_map%d_kind, &key);\n", k);
+            sb_printf(o, "    const %s *e = i < 0 ? NULL : tide_map_view_entry(v, i, &tide_map%d_kind);\n", entry, k);
             if (value.kind == TY_STRING) {
                 sb_put(o, "    tide_textref_set(value, e ? tide_text_view(e->value) : TIDE_STR_EMPTY);\n");
             } else {
@@ -8211,6 +8290,13 @@ static void gen_map_helpers(gen *g, const bool bodies)
                 else sb_put(o, "    *value = found;\n");
             }
             sb_put(o, "    return e != NULL;\n}\n\n");
+            if (value.kind == TY_STRING) {
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(const tide_map m, const %s key, const tide_textref value)\n{\n"
+                             "%s    return tide_map%d_ctryget_out(&v, m, key, value);\n}\n\n", k, kp, own_view, k);
+            } else {
+                sb_printf(o, "TIDE_HELPER bool tide_map%d_tryget_out(const tide_map m, const %s key, %s *value, const uint32_t where)\n{\n"
+                             "%s    return tide_map%d_ctryget_out(&v, m, key, value, where);\n}\n\n", k, kp, vv, own_view, k);
+            }
         }
         sb_printf(o, "TIDE_HELPER bool tide_map%d_remove(tide_map *m, const %s key, const uint32_t where)\n{\n", k, kp);
         sb_printf(o, "    const int32_t i = %stide_map_find(*m, &tide_map%d_kind, &key)%s;\n    if (i < 0) return false;\n", has, k, slots ? " : -1" : "");
@@ -8257,7 +8343,7 @@ void grid_shape(const decl *grid, int *cell, int shift[3])
 // doesn't use costs nothing, as the compiler drops it.
 static void gen_grid_caches(gen *g)
 {
-    if (g->prog->lists.count) declare_list_caches(g, &g->c); // And a run cache for each list it indexes (tide/list.h)
+    declare_list_caches(g, &g->c); // And a run cache for each list it indexes and a view of each map (tide/list.h, tide/map.h)
     if (g->prog->grids.count == 0) return;
     line(g, &g->c, "tide_grid_cache tide_gc[%d] = {{0}};", g->prog->grids.count);
     line(g, &g->c, "(void)tide_gc;");
@@ -11821,6 +11907,7 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
     g->task = NULL;
     g->par_loop = s;
     g->list_caches = g->prog->lists.count > 0;
+    g->map_views = g->prog->maps.count > 0;
     g->targets.count = 0;
     const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
     vec_push(g->targets, loop);
@@ -11829,6 +11916,7 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
     if (done.next_used) line(g, o, "%s:;", done.next);
     g->par_loop = NULL;
     g->list_caches = false;
+    g->map_views = false;
     for (int d = depth - 1; d >= base; d--) {
         g->indent = d;
         line(g, o, "}");
@@ -11907,7 +11995,8 @@ static void gen_par_list_batch(gen *g, const decl *sys, const stmt *s, const cap
     g->routine = NULL;
     g->task = NULL;
     g->par_loop = s;
-    g->list_caches = true;
+    g->list_caches = g->prog->lists.count > 0;
+    g->map_views = g->prog->maps.count > 0;
     g->indent = 1;
     line(g, o, "int32_t tide_k0 = tide_x0;");
     line(g, o, "for (; tide_x1 - tide_k0 >= 4; tide_k0 += 4) {");
@@ -11969,7 +12058,7 @@ static void gen_par_steps(gen *g, const decl *sys)
                       c->name, c->name, c->name);
         }
         if (g->prog->grids.count) sb_printf(o, "    tide_grid_cache tide_gc[%d] = {{0}};\n    (void)tide_gc;\n", g->prog->grids.count);
-        if (g->prog->lists.count) {
+        if (g->prog->lists.count || g->prog->maps.count) {
             const int outer_indent = g->indent;
             g->indent = 1;
             declare_list_caches(g, o);

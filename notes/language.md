@@ -1,5 +1,22 @@
 # Language features, as tidec builds them
 
+## Map views (2026-10-20)
+
+Owner-approved runtime use (runtime-ownership.md): every function body that
+can index lists or maps declares, beside `tide_lc`, `tide_map_view tide_mv[n]`
+and `tide_map_views_none(tide_mv, n)` (`declare_list_caches`, both counts
+patched in by `close_list_caches`), a view for each map it reads or sets by
+key, slotted by what names the map (`view_slot`, as `cache_slot`), so
+`scores` and `seen` don't share one. `map_views` is on wherever `list_caches`
+is, parallel loops' tasks included. Through it, `m[k]` calls
+`tide_map%d_cget`, `m.Has` `_chas`, `m.Get` `_ctryget`, `m.TryGet(k, out v)`
+`_ctryget_out`, a path into a value (`m[k].x`) `_cat`, and `m[k] = v` (not on
+an element's slot) `_cset`. The plain helpers stay for the compiler's own
+generated code (visibility, hierarchy, client state) and anywhere without
+views, each now its `c` form with a view of its own. Only the views' handles
+are set at entry; a view's other fields are read only once it's found
+something. ecs.md, Map views across a function, has the runtime contract.
+
 ## Performance pass: list writes and grid windows (2026-10-20)
 
 Two compiler-private changes, no language or runtime-interface change (measured
