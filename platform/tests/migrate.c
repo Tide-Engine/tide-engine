@@ -32,6 +32,80 @@ static void byte_after_defaults(void *value)
     ((byte_after *)value)->narrow = 9;
 }
 
+typedef struct double_before {
+    uint8_t small;
+    int32_t count;
+    int64_t large;
+    float scalar;
+    tide_float3 vector;
+    double retained;
+    double narrowed;
+} double_before;
+
+typedef struct double_after {
+    double small, count, large, scalar;
+    tide_double3 vector;
+    double retained;
+    float narrowed;
+} double_after;
+
+static void double_after_defaults(void *value)
+{
+    memset(value, 0, sizeof(double_after));
+    ((double_after *)value)->narrowed = 7.0f;
+}
+
+TIDE_TEST(migrate_double_fields_widen_and_narrowing_resets_to_defaults)
+{
+    const tide_layout_field before_fields[] = {
+        FIELD(double_before, small, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(double_before, count, "int", TIDE_LAYOUT_INT, 1, -1),
+        FIELD(double_before, large, "long", TIDE_LAYOUT_LONG, 1, -1),
+        FIELD(double_before, scalar, "float", TIDE_LAYOUT_FLOAT, 1, -1),
+        FIELD(double_before, vector, "float3", TIDE_LAYOUT_FLOAT, 3, -1),
+        FIELD(double_before, retained, "double", TIDE_LAYOUT_DOUBLE, 1, -1),
+        FIELD(double_before, narrowed, "double", TIDE_LAYOUT_DOUBLE, 1, -1),
+    };
+    const tide_layout_field after_fields[] = {
+        FIELD(double_after, small, "double", TIDE_LAYOUT_DOUBLE, 1, -1),
+        FIELD(double_after, count, "double", TIDE_LAYOUT_DOUBLE, 1, -1),
+        FIELD(double_after, large, "double", TIDE_LAYOUT_DOUBLE, 1, -1),
+        FIELD(double_after, scalar, "double", TIDE_LAYOUT_DOUBLE, 1, -1),
+        FIELD(double_after, vector, "double3", TIDE_LAYOUT_DOUBLE, 3, -1),
+        FIELD(double_after, retained, "double", TIDE_LAYOUT_DOUBLE, 1, -1),
+        FIELD(double_after, narrowed, "float", TIDE_LAYOUT_FLOAT, 1, -1),
+    };
+    const tide_layout_type before_type = {"Numbers", sizeof(double_before), false, 7, before_fields, NULL};
+    const tide_layout_type after_type = {"Numbers", sizeof(double_after), false, 7, after_fields, double_after_defaults};
+    const tide_layout_place place = {0, 0, false};
+    const tide_layout before = {.type_count = 1, .types = &before_type,
+        .match = {.size = sizeof(double_before), .singleton_count = 1, .singletons = &place, .input = -1}};
+    const tide_layout after = {.type_count = 1, .types = &after_type,
+        .match = {.size = sizeof(double_after), .singleton_count = 1, .singletons = &place, .input = -1}};
+    uint8_t packed[1024];
+    const double_before header = {255, -123, INT64_C(5000000000), .125f, {1, 2, 3}, 1000000000.125, 123};
+    tide_writer writer = {packed, sizeof packed, 0, false, false};
+    tide_write_bytes(&writer, &header, sizeof header);
+    tide_entities entities = {0};
+    tide_entities_pack(&entities, &writer);
+    tide_write_u32(&writer, 0);
+    TIDE_REQUIRE(!writer.overflow);
+    void *bytes = NULL;
+    uint32_t size = 0;
+    tide_migration migration;
+    TIDE_REQUIRE(tide_migrate_world(&before, &before.match, packed, writer.size, &after, &after.match,
+                                   &bytes, &size, &migration));
+    TIDE_REQUIRE(size >= sizeof(double_after));
+    double_after result;
+    memcpy(&result, bytes, sizeof result);
+    TIDE_CHECK(result.small == 255 && result.count == -123 && result.large == 5000000000.0);
+    TIDE_CHECK(result.scalar == .125 && result.vector.x == 1 && result.vector.y == 2 && result.vector.z == 3);
+    TIDE_CHECK(result.retained == 1000000000.125 && result.narrowed == 7.0f);
+    TIDE_CHECK(tide_layout_fields_reset(&before, &after) == 1);
+    free(bytes);
+    tide_entities_free(&entities);
+}
+
 TIDE_TEST(migrate_byte_fields_widen_and_keep_their_unsigned_value)
 {
     const tide_layout_field before_fields[] = {

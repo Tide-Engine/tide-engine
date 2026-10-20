@@ -1,0 +1,3 @@
+// expect: field 'value' is float, not double
+singleton Data { float value = 1.25d; }
+scene Main { }

@@ -1,5 +1,80 @@
 # Language features, as tidec builds them
 
+## Double scalar and vector foundation (2026-10-20)
+
+The owner approved double, double2, double3 and double4 as the first large-world
+increment. Existing literals/default types, Transform, cameras, physics and GPU
+values remain floats. The spec separates this approval from first-build spelling
+and conversion choices. Binary64 type kinds are appended so existing type IDs
+and their simulation-schema records do not change merely by adding the feature.
+
+Decimal d/D literals retain binary64 precision; unsuffixed/f literals still round
+to binary32 first. Byte/char/int/long/float widen to double, and matching int/float
+vectors widen to double vectors. Long conversion can round beyond 53 bits.
+Numeric arithmetic promotes to double before operating, including scalar splats;
+vector constructors/swizzles and explicit narrowing follow existing conventions.
+Float narrowing is nearest/even with signed infinity on overflow and canonical
+NaN; integer narrowing truncates, saturates and maps NaN to zero. Byte keeps the
+int conversion's low eight bits. Numeric defaults and floating remainder rules
+are unchanged. Concrete float operands continue to select float builtins beside
+`default`; a wider double overload is not an ambiguity by itself.
+
+Basic component-wise Math, square roots, interpolation and radians/degrees,
+vector dot/length/distance/normalize/reflect/reductions/cross and exact-bit Hash
+use inline tide_*_d/d2/d3/d4 helpers in the existing math maintenance area.
+Normalize uses the binary64 minimum-normal squared-length threshold. Transcendental
+and noise double functions, double matrices/quaternions, position correction
+attributes and automatic camera-relative rendering are outside this increment.
+Existing Math constants remain floats. Shader checking rejects doubles before
+numeric GPU packing and explains converting in local code before drawing.
+
+Ordinary fields, structs, arrays, list/map values, grid cells, optionals, tasks,
+extern signatures, events/commands, snapshots, packing, recipient codecs and
+view interpolation retain full double values. Each component is eight bytes,
+eight aligned; generated explicit padding/size assertions use that layout.
+Views retain the existing float interpolation fraction and operate on values in
+double precision. Input/command bits use two ordered 32-bit words, low first;
+input deltas use one changed flag plus the 64 bits when changed. Repair and
+bounds walk all double components before input Sanitize. No session protocol,
+container representation or exported networking function changed.
+
+Text generalizes the existing exact integer printer to binary64 with shortest
+round-tripping digits and fixed F0..F17. double.TryParse and scalar JSON double
+fields use exact integer division, not libc parsing. The reader retains 800
+significant digits and a nonzero tail, with 128-word bounded integers; the
+printer uses 40 words. Negative zero and nonfinite JSON match float rules.
+Hot reload adds an appended DOUBLE layout kind, preserves matching double
+fields and widens byte/int/long/float fields of matching dimensions; narrowing
+retains the new declared default.
+
+Coverage: double E2E checks billion-unit offsets, arithmetic, mixed promotions,
+constructors/swizzles, geometry, basic math/hash, safe casts, optional/list/map/
+array/grid values, text/JSON, C value/out ABI, source operand order, waiting tasks,
+commands including truncated payloads, raw input/deltas and repairs, COW replay,
+raw/recipient round trips and view interpolation. Eleven diagnostics cover
+narrowing, invalid operations/sizes/attributes, literal overflow, transcendentals
+and GPU use. Runtime tests cover all finite exponent classes of both signs,
+integer/float narrowing boundaries and NaNs, shortest/JSON round trips, exact
+rounding ties including a 2,200-character subnormal midpoint tail, and a 10,000
+case arithmetic/geometry/text bit pin: 8D8432D419DF4D83. No prior pin changed.
+Lexer, LSP, grammar and migration checks cover the tooling boundaries.
+
+Validation: all 2,465 native debug tests pass (2,431 ordinary and 34 GPU),
+including compiler diagnostics, the LSP harness, migration, Vulkan validation
+and OpenGL. The uppercase degree diagnostic fixture now expects `180DE` rather
+than `180D`: D is a double suffix before the continuation is rejected. The full
+web debug suite passes 2,374/2,374, including WASI, WebGL/ANGLE D3D11 and WebGPU.
+Both final debug builds use clang 23.1.2, Node 24.21.0 and Chrome 155.0.8059.85.
+The initial fallback clang 18.1.8 web build exhausted V8's call stack in the
+existing thousand-deep drawing fixture; rebuilding with clang 23 passes it
+without changing source, test depth or stack limits.
+
+The four focused runtime tests and four double E2E cases also pass optimized
+native and WASI builds. The new bit pin agrees in native/web debug and optimized
+builds; no prior determinism pin changed. Production docs build, all 268 shared
+grammar cases and the staged diff check pass. Linux, macOS, Android, MinGW and
+sanitizer coverage were not run on this Windows machine; CI was not dispatched.
+
 ## Shared player ceiling (2026-10-20)
 
 The owner approved maxPlayers from 1 through 65,536, sharing the ceiling used

@@ -1,5 +1,17 @@
 # Netcode: sessions, prediction, commands
 
+## Double input and command fields (2026-10-20)
+
+Generated double scalar/vector payloads retain all 64 bits per component as two
+ordered 32-bit words, low first. An input delta sends a changed flag followed by
+those bits only when changed; +0/-0 and payload bits remain distinguishable.
+Readers never put two stateful bit reads in one C operand expression. Repair and
+bounds handle double leaves before input Sanitize/command dispatch. Existing
+schema identity distinguishes the new types; the session protocol is unchanged.
+The double E2E covers extreme bit patterns, whole/delta round trips, nonfinite
+repair and actual command submission/dispatch with truncation rejection.
+Full contracts and validation: notes/language.md.
+
 ## Shared player/connection ceiling (2026-10-20)
 
 The owner approved 65,536 as the shared supported ceiling. TIDE_PLAYERS_MOST

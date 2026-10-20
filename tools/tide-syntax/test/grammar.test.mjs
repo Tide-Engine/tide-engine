@@ -536,6 +536,18 @@ for (const [name, lines] of Object.entries(cases)) {
 
 test('no text in probe.tide runs past its line', () => checkLinesEndText('probe.tide', probe));
 
+test('double types and literals retain their complete precision suffix', () => {
+    const lines = tokenize('double value = 1000000000.125d; double3 position = double3(.5D);\n'
+                         + 'double2 pair; double4 four; double2x2 unavailable;');
+    check(lines[0], ['double', 'storage.type.primitive']);
+    check(lines[0], ['double3', 'storage.type.primitive']);
+    check(lines[0], ['1000000000.125d', 'constant.numeric']);
+    check(lines[0], ['.5D', 'constant.numeric']);
+    check(lines[1], ['double2', 'storage.type.primitive']);
+    check(lines[1], ['double4', 'storage.type.primitive']);
+    check(lines[1], ['double2x2', '!storage.type.primitive']);
+});
+
 test('degree literals are whole float tokens with a lowercase suffix', () => {
     const lines = tokenize('float degrees = 180deg + .5deg + 1e2deg + 1_8_0deg + 1.2_5e+1deg - 90deg;\n'
         + 'quaternion turn = quaternion.Euler(0, 180deg, 0);\n'
@@ -638,6 +650,7 @@ for (const program of programs) {
             if (/^(?:local\s+)?(?:component|singleton|struct|input|scene)\b/.test(text) && !text.includes('}')) inType = true;
             else if (text === '}') inType = false;
             let name = null;
+            let nameAt = 0;
             let scope = null;
             for (const [pattern, wanted] of declarations) {
                 const match = pattern.exec(text);
@@ -645,17 +658,19 @@ for (const program of programs) {
                 const last = match[match.length - 1];
                 if (pattern === declarations[5][0] && keywords.has(match[1])) break;
                 name = last.split('.').pop();
+                nameAt = match.index + match[0].lastIndexOf(last) + last.lastIndexOf('.') + 1;
                 scope = wanted;
                 break;
             }
             const inside = inType && method.exec(text);
             if (inside && !keywords.has(inside[1])) {
                 name = inside[2];
+                nameAt = inside.index + inside[0].lastIndexOf(name);
                 scope = 'entity.name.function';
             }
             if (!name) continue;
             found++;
-            const index = text.search(new RegExp(String.raw`\b${name}\b`)) + (whole.length - text.length);
+            const index = nameAt + (whole.length - text.length);
             const pieces = line.pieces.filter(p => p.start < index + name.length && p.end > index);
             for (const piece of pieces) {
                 assert.ok(has(piece.scopes, scope) && !has(piece.scopes, 'entity.name.function.call'),

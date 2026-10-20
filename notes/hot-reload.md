@@ -1,5 +1,16 @@
 # Hot reloading
 
+## Double layout values (2026-10-20)
+
+TIDE_LAYOUT_DOUBLE is appended after the existing layout kinds, leaving their
+values unchanged. Generated double scalar/vector fields use eight-byte elements
+and ordinary numeric dimensions. Migration preserves identical double fields
+and widens matching byte/int/long/float fields, including float vectors; narrowing
+resets to the destination default. The new handwritten migration case checks
+all four widening sources, a vector, an unchanged double and refused narrowing.
+No new runtime function or layout-file structure is required. Validation:
+notes/language.md.
+
 Managed releases (2026-10-15): deployment does not hot-reload production worlds.
 Release IDs identify immutable bundles; Simulation IDs govern admission while
 `tide_game.hash` retains layout/migration identity. The new macro is appended

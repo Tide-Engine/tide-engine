@@ -1693,6 +1693,12 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_printf(o, ", &%s, %uu)", grid_shape_name(have.decl), declared_sampling_bits(e));
         return;
     }
+    if (want.kind == TY_DOUBLE && have.kind != TY_DOUBLE) {
+        sb_put(o, "(double)(");
+        gen_expr(g, o, e);
+        sb_put(o, ")");
+        return;
+    }
     if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
         if (e->kind == E_INT && !e->hoisted) {
             // Same rounding as a runtime conversion, but reads as a plain literal.
@@ -1727,13 +1733,15 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         return;
     }
     const int dim = type_dim(want);
-    if (dim >= 2 && type_dim(have) == 1) {
+    if (dim >= 2 && (type_dim(have) == 1
+                     || (type_is_double_based(want) && (have.kind == TY_LONG || have.kind == TY_CHAR)))) {
         sb_printf(o, "tide_%s_splat(", type_suffix(want));
-        gen_as(g, o, e, vector_type(type_is_float_based(want), 1));
+        gen_as(g, o, e, type_scalar(want));
         sb_put(o, ")");
         return;
     }
-    if (dim >= 2 && type_dim(have) == dim && type_is_float_based(want) && type_is_int_based(have)) {
+    if (dim >= 2 && type_dim(have) == dim && ((type_is_float_based(want) && type_is_int_based(have))
+            || (type_is_double_based(want) && (type_is_int_based(have) || type_is_float_based(have))))) {
         sb_printf(o, "tide_%s_from_%s(", type_suffix(want), type_suffix(have));
         gen_expr(g, o, e);
         sb_put(o, ")");
@@ -1762,9 +1770,11 @@ static const char *object_access(gen *g, const expr *obj)
     return b.data;
 }
 
-// Float literals: always single precision, always with a decimal point.
+// Decimal literals keep their selected binary32/binary64 precision and a decimal point.
 static void gen_float_literal(sb *o, str text)
 {
+    const bool wide = text.len > 0 && (text.ptr[text.len - 1] == 'd' || text.ptr[text.len - 1] == 'D');
+    if (wide) text.len--;
     if (text.len > 0 && (text.ptr[text.len - 1] == 'f' || text.ptr[text.len - 1] == 'F')) text.len--;
     bool has_point = false;
     for (int i = 0; i < text.len; i++) {
@@ -1772,7 +1782,7 @@ static void gen_float_literal(sb *o, str text)
         sb_putn(o, &text.ptr[i], 1);
         if (text.ptr[i] == '.' || text.ptr[i] == 'e' || text.ptr[i] == 'E') has_point = true;
     }
-    sb_put(o, has_point ? "f" : ".0f");
+    sb_put(o, wide ? (has_point ? "" : ".0") : (has_point ? "f" : ".0f"));
 }
 
 // A field's declared default, or NULL for none: `= default` is none too.
@@ -1844,6 +1854,7 @@ static void gen_default(gen *g, sb *o, const type t)
     case TY_INT: sb_put(o, "0"); return;
     case TY_LONG: sb_put(o, "0LL"); return;
     case TY_FLOAT: sb_put(o, "0.0f"); return;
+    case TY_DOUBLE: sb_put(o, "0.0"); return;
     case TY_ENUM: sb_printf(o, "((%s)0)", c_type(t)); return;
     case TY_STRING: sb_put(o, "TIDE_STR_EMPTY"); return;
     case TY_LIST: sb_put(o, "((tide_list){0})"); return;
@@ -2401,7 +2412,7 @@ static bool same_list_place(const expr *a, const expr *b)
 
 static bool scalar_kind(const type t)
 {
-    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT
+    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT || t.kind == TY_DOUBLE
         || t.kind == TY_ENUM;
 }
 
@@ -2555,6 +2566,15 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         sb_put(o, ")");
         return;
     }
+    if (lt.kind == TY_DOUBLE || rt.kind == TY_DOUBLE) {
+        const type wide = {TY_DOUBLE, NULL};
+        sb_put(o, "(");
+        gen_as(g, o, l, wide);
+        sb_printf(o, " %s ", c_op(op));
+        gen_as(g, o, r, wide);
+        sb_put(o, ")");
+        return;
+    }
     if (lt.kind == TY_LONG || rt.kind == TY_LONG) { // & | ^ and comparisons: C widens the int side
         const type long_t = {TY_LONG, NULL};
         sb_put(o, "(");
@@ -2602,6 +2622,17 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         break;
 
     case CTOR_SCALAR:
+        if (t.kind == TY_DOUBLE) {
+            gen_as(g, o, first, t);
+            break;
+        }
+        if (first->type.kind == TY_DOUBLE) {
+            if (t.kind == TY_BYTE) sb_put(o, "(uint8_t)");
+            sb_printf(o, "tide_%s_from_d(", type_suffix(t));
+            gen_expr(g, o, first);
+            sb_put(o, ")");
+            break;
+        }
         if (t.kind == TY_BYTE) {
             sb_put(o, "(uint8_t)(");
             if (first->type.kind == TY_FLOAT) sb_put(o, "tide_i_from_f(");
@@ -2633,12 +2664,13 @@ static void gen_construct(gen *g, sb *o, const expr *e)
 
     case CTOR_SPLAT:
         sb_printf(o, "tide_%s_splat(", type_suffix(t));
-        if (type_is_int_based(t) && first->type.kind == TY_FLOAT) {
-            sb_put(o, "tide_i_from_f(");
+        if ((type_is_int_based(t) && (first->type.kind == TY_FLOAT || first->type.kind == TY_DOUBLE))
+            || (type_is_float_based(t) && first->type.kind == TY_DOUBLE)) {
+            sb_printf(o, "tide_%s_from_%s(", type_suffix(type_scalar(t)), type_suffix(first->type));
             gen_expr(g, o, first);
             sb_put(o, ")");
         } else {
-            gen_as(g, o, first, vector_type(type_is_float_based(t), 1));
+            gen_as(g, o, first, type_scalar(t));
         }
         sb_put(o, ")");
         break;
@@ -2660,30 +2692,32 @@ static void gen_construct(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
-        const bool is_float = type_is_float_based(t) || t.kind == TY_COLOR;
+        const bool is_float = type_is_float_based(t) || type_is_double_based(t) || t.kind == TY_COLOR;
+        const type scalar = type_is_double_based(t) ? (type){TY_DOUBLE, NULL} : float_t;
         sb_printf(o, "(%s){", c_type(t));
         int written = 0;
         for (int i = 0; i < e->args.count; i++) {
             expr *arg = e->args.items[i];
-            const int dim = type_dim(arg->type);
+            const int dim = arg->type.kind == TY_LONG ? 1 : type_dim(arg->type);
             if (dim == 1) {
                 if (written++) sb_put(o, ", ");
-                if (is_float) gen_as(g, o, arg, float_t);
+                if (is_float) gen_as(g, o, arg, scalar);
                 else gen_expr(g, o, arg);
                 continue;
             }
-            const bool widen = is_float && type_is_int_based(arg->type);
+            const bool widen = is_float && arg->type.kind != (type_is_double_based(t) ? double_vector_type(dim).kind : vector_type(true, dim).kind);
+            const char *cast = widen ? (type_is_double_based(t) ? "(double)" : "(float)") : "";
             if (arg->kind == E_MEMBER && arg->swizzle_len > 1 && !arg->hoisted) {
                 // A swizzle argument: read its components straight from the source vector.
                 const char *access = object_access(g, arg->object);
                 for (int k = 0; k < dim; k++) {
-                    sb_printf(o, "%s%s%s%s", written++ ? ", " : "", widen ? "(float)" : "", access, xyzw[arg->swizzle[k]]);
+                    sb_printf(o, "%s%s%s%s", written++ ? ", " : "", cast, access, xyzw[arg->swizzle[k]]);
                 }
                 continue;
             }
             const char *text = expr_text(g, arg);
             for (int k = 0; k < dim; k++) {
-                sb_printf(o, "%s%s(%s).%s", written++ ? ", " : "", widen ? "(float)" : "", text, xyzw[k]);
+                sb_printf(o, "%s%s(%s).%s", written++ ? ", " : "", cast, text, xyzw[k]);
             }
         }
         if (e->ctor == CTOR_COLOR && written == 3) sb_put(o, ", 1.0f");
@@ -2898,6 +2932,7 @@ static void gen_text_add_c(gen *g, sb *o, const char *so_far, const type t, cons
     case TY_INT: sb_printf(o, "tide_str_add_int(%s, %s, %s)", so_far, v, f); return;
     case TY_LONG: sb_printf(o, "tide_str_add_long(%s, %s, %s)", so_far, v, f); return;
     case TY_FLOAT: sb_printf(o, "tide_str_add_float(%s, %s, %s)", so_far, v, f); return;
+    case TY_DOUBLE: sb_printf(o, "tide_str_add_double(%s, %s, %s)", so_far, v, f); return;
     case TY_BOOL: sb_printf(o, "tide_str_add_bool(%s, %s)", so_far, v); return;
     case TY_ENUM: sb_printf(o, "tide_text_%s(%s, %s)", type_cname(t.decl), so_far, v); return;
     case TY_ENTITY:
@@ -5618,9 +5653,12 @@ static void hoist_unit(gen *g, expr *e, const char *name)
 // converts expressions: int to float, int vectors to float vectors.
 static void gen_c_as(sb *o, const char *text, const type have, const type want)
 {
-    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
+    if (want.kind == TY_DOUBLE && have.kind != TY_DOUBLE) {
+        sb_printf(o, "(double)(%s)", text);
+    } else if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
         sb_printf(o, "(float)(%s)", text);
-    } else if (type_dim(want) >= 2 && type_dim(have) == type_dim(want) && type_is_float_based(want) && type_is_int_based(have)) {
+    } else if (type_dim(want) >= 2 && type_dim(have) == type_dim(want) && ((type_is_float_based(want) && type_is_int_based(have))
+            || (type_is_double_based(want) && (type_is_int_based(have) || type_is_float_based(have))))) {
         sb_printf(o, "tide_%s_from_%s(%s)", type_suffix(want), type_suffix(have), text);
     } else {
         sb_put(o, text);
@@ -7800,7 +7838,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const bool paths = prog->lists.items[k]->paths; // rows[i].x: read through a pointer at the element
         char held[32] = "";
         if (container) snprintf(held, sizeof held, "tide_%s%d", e.kind == TY_LIST ? "list" : "map", e.decl->index);
-        const bool compares = e.kind == TY_BYTE || e.kind == TY_CHAR || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_BOOL || e.kind == TY_ENUM
+        const bool compares = e.kind == TY_BYTE || e.kind == TY_CHAR || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_DOUBLE || e.kind == TY_BOOL || e.kind == TY_ENUM
                            || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING;
         if (!bodies) {
             sb_printf(o, "// List<%s>\n", type_name(e));
@@ -8623,6 +8661,7 @@ static void gen_json_read_part(sb *o, const type t, const char *place, const cha
     case TY_BOOL: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_bool(j, &%s)) return false;\n", in, place); return;
     case TY_CHAR: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_char(j, &%s)) return false;\n", in, place); return;
     case TY_FLOAT: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_float(j, &%s)) return false;\n", in, place); return;
+    case TY_DOUBLE: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_double(j, &%s)) return false;\n", in, place); return;
     case TY_STRING: sb_printf(o, "%sif (!tide_json_null(j) && !tide_json_text(j, &%s)) return false;\n", in, place); return;
     case TY_BYTE:
     case TY_INT:
@@ -8648,6 +8687,7 @@ static void gen_json_write_part(sb *o, const type t, const char *v, const char *
     case TY_LONG: sb_printf(o, "%sa = tide_str_add_long(a, %s, 0);\n", in, v); return;
     case TY_CHAR: sb_printf(o, "%sa = tide_json_add_char(a, %s);\n", in, v); return;
     case TY_FLOAT: sb_printf(o, "%sa = tide_json_add_float(a, %s);\n", in, v); return;
+    case TY_DOUBLE: sb_printf(o, "%sa = tide_json_add_double(a, %s);\n", in, v); return;
     case TY_STRING: sb_printf(o, "%sa = tide_json_add_text(a, tide_text_view(%s));\n", in, v); return;
     case TY_STRUCT:
     case TY_ARRAY: sb_printf(o, "%sa = %s(a, &%s);\n", in, json_helper(t, false), v); return; // Where it is: nothing copies it
@@ -8931,10 +8971,10 @@ static void gen_blend_value(gen *g, const char *v, const char *before, const typ
     char b[256];
     const int dim = type_dim(t);
     const int columns = matrix_dim(t);
-    if (t.kind == TY_FLOAT) {
-        line(g, o, "%s = tide_lerp_f(%s, %s, t);", v, before, v);
+    if (t.kind == TY_FLOAT || t.kind == TY_DOUBLE) {
+        line(g, o, "%s = tide_lerp_%s(%s, %s, t);", v, type_suffix(t), before, v);
     } else if (dim >= 2) {
-        line(g, o, "%s = tide_lerp_f%d(%s, %s, tide_f%d_splat(t));", v, dim, before, v, dim);
+        line(g, o, "%s = tide_lerp_%s(%s, %s, tide_%s_splat(t));", v, type_suffix(t), before, v, type_suffix(t));
     } else if (columns > 0) {
         for (int c = 0; c < columns; c++) {
             snprintf(a, sizeof a, "%s.c%d", v, c);
@@ -11298,7 +11338,8 @@ static bool flat_list_value(const type t)
 {
     switch (t.kind) {
     case TY_BOOL: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
-    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION:
+    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION:
     case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_COLOR: case TY_RECT:
     case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_ENUM: return true;
     case TY_STRUCT:
@@ -14415,7 +14456,8 @@ static void gen_predict(gen *g)
 static bool has_floats(const type t)
 {
     switch (t.kind) {
-    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION:
+    case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION:
     case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_COLOR: case TY_RECT:
         return true;
     case TY_STRUCT:
@@ -14529,8 +14571,8 @@ static void gen_repair_value(gen *g, const char *in, const char *def, const type
         sb_printf(&g->c, " break; default: %s = %s; break; }\n", in, def);
     } else if (t.kind == TY_CHAR) { // A number no character has, which char(n) never gives
         line(g, &g->c, "if (tide_char_of(%s) != %s) %s = %s;", in, in, in, def);
-    } else if (t.kind == TY_FLOAT) {
-        line(g, &g->c, "if (!tide_is_finite_f(%s)) %s = %s;", in, in, def);
+    } else if (t.kind == TY_FLOAT || t.kind == TY_DOUBLE) {
+        line(g, &g->c, "if (!tide_is_finite_%s(%s)) %s = %s;", type_suffix(t), in, in, def);
     } else if (columns > 0) {
         for (int c = 0; c < columns; c++) {
             snprintf(a, sizeof a, "%s.c%d", in, c);
@@ -14574,7 +14616,7 @@ static void gen_repair_value(gen *g, const char *in, const char *def, const type
         for (int i = 0; i < type_dim(t); i++) {
             snprintf(a, sizeof a, "%s.%s", in, xyzw[i]);
             snprintf(b, sizeof b, "%s.%s", def, xyzw[i]);
-            gen_repair_value(g, a, b, (type){TY_FLOAT, NULL});
+            gen_repair_value(g, a, b, type_scalar(t));
         }
     }
 }
@@ -16177,7 +16219,7 @@ static void gen_print_value(sb *o, const type t, const char *access)
     case TY_CHAR:
     case TY_INT: sb_printf(o, "        printf(\"%%d\", (int)%s);\n", access); return;
     case TY_LONG: sb_printf(o, "        printf(\"%%lld\", (long long)%s);\n", access); return;
-    case TY_FLOAT: sb_printf(o, "        printf(\"%%g\", (double)%s);\n", access); return;
+    case TY_FLOAT: case TY_DOUBLE: sb_printf(o, "        printf(\"%%g\", (double)%s);\n", access); return;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
         sb_printf(o, "        printf(\"#%%u.%%u\", (unsigned)%s.index, (unsigned)%s.generation);\n", access, access);
@@ -16232,7 +16274,7 @@ static void gen_print_value(sb *o, const type t, const char *access)
         for (int i = 0; i < dim; i++) {
             if (i) sb_put(o, "        printf(\", \");\n");
             snprintf(part, sizeof part, "%s.%s", access, xyzw[i]);
-            gen_print_value(o, vector_type(type_is_float_based(t), 1), part);
+            gen_print_value(o, type_scalar(t), part);
         }
         sb_put(o, "        printf(\")\");\n");
     } else if (n > 0) {
@@ -17562,6 +17604,39 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
     char inner[512];
     const int dim = type_dim(t);
     const int columns = matrix_dim(t);
+    if (t.kind == TY_DOUBLE) {
+        const bool delta = mode == BITS_WRITE_DELTA || mode == BITS_READ_DELTA;
+        line(g, o, "{");
+        g->indent++;
+        if (mode == BITS_WRITE || mode == BITS_WRITE_DELTA) {
+            line(g, o, "const uint64_t value = tide_d_bits(in->%s);", at);
+            if (delta) {
+                line(g, o, "const bool changed = value != tide_d_bits(base->%s);", at);
+                line(g, o, "tide_bits_put_bool(&b, changed);");
+                line(g, o, "if (changed) {");
+                g->indent++;
+            }
+            line(g, o, "tide_bits_put(&b, (uint32_t)value, 32);");
+            line(g, o, "tide_bits_put(&b, (uint32_t)(value >> 32), 32);");
+        } else {
+            if (delta) {
+                line(g, o, "if (tide_bits_get_bool(&b)) {");
+                g->indent++;
+            }
+            line(g, o, "const uint64_t low = tide_bits_get(&b, 32);");
+            line(g, o, "const uint64_t high = tide_bits_get(&b, 32);");
+            line(g, o, "in->%s = tide_d_from_bits(low | (high << 32));", at);
+        }
+        if (delta) {
+            g->indent--;
+            if (mode == BITS_READ_DELTA) line(g, o, "} else { in->%s = base->%s; }", at, at);
+            else line(g, o, "}");
+        }
+        g->indent--;
+        line(g, o, "}");
+        *bits += delta ? 65u : 64u;
+        return;
+    }
     // A value of `width` bits, or a varint: as it packs (`put`, with %s for
     // where it is) and as it unpacks
     const char *put = NULL;
@@ -17709,7 +17784,7 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
     } else if (dim >= 2) {
         for (int i = 0; i < dim; i++) {
             snprintf(inner, sizeof inner, "%s.%s", at, xyzw[i]);
-            gen_bits(g, inner, vector_type(type_is_float_based(t), 1), mode, bits);
+            gen_bits(g, inner, type_scalar(t), mode, bits);
         }
     } else if (columns > 0) {
         for (int i = 0; i < columns; i++) {
@@ -19326,6 +19401,7 @@ static const char *layout_kind(const type t)
     if (t.kind == TY_STRUCT) return "TIDE_LAYOUT_STRUCT";
     if (t.kind == TY_ENUM) return "TIDE_LAYOUT_ENUM";
     if (t.kind == TY_LONG) return "TIDE_LAYOUT_LONG";
+    if (type_is_double_based(t)) return "TIDE_LAYOUT_DOUBLE";
     if (t.kind == TY_BYTE) return "TIDE_LAYOUT_BYTE";
     if (type_dim(t) > 0) return type_is_float_based(t) ? "TIDE_LAYOUT_FLOAT" : "TIDE_LAYOUT_INT";
     return "TIDE_LAYOUT_PLAIN";

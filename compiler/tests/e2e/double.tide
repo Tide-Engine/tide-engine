@@ -1,0 +1,202 @@
+const double FAR = 1_000_000_000.125d;
+
+struct Measurement
+{
+    byte tag = 7;
+    double value = FAR;
+    double? optional;
+}
+
+component Position64
+{
+    double3 position = double3(FAR, .25D, -2d);
+    double2 pair;
+    double4 four;
+    Measurement measurement;
+    double[3] samples;
+    List<double3> trail;
+    Map<int, double> scores;
+    Grid2<double2> cells = Grid2(8, 8);
+}
+
+singleton Results
+{
+    int ticks;
+    double difference;
+    double sum;
+    double product;
+    double quotient;
+    double dot;
+    double length;
+    double parsed;
+    double input;
+    double taskValue;
+    double commandValue;
+    double3 destination;
+    double2 crossPair;
+    double3 normalized;
+    double3 reflected;
+    float3 render;
+    int saturatedInt;
+    long saturatedLong;
+    int fromNaN;
+    string text;
+    string json;
+}
+
+local singleton Display
+{
+    double3 position;
+    double value;
+    bool submit;
+}
+
+command Move64 { double value; double3 destination; }
+
+command(Move64 command, PlayerID sender) Apply(mut Results result)
+{
+    if (sender != PlayerID(0)) return;
+    result.commandValue = command.value;
+    result.destination = command.destination;
+}
+
+input Controls
+{
+    double amount = 0.125d;
+    [Clamp(-10d, 10d)] double3 direction = double3(1d, 2d, 3d);
+    Measurement measurement;
+    double[2] samples;
+}
+
+scene Main { }
+
+extern double DoubleIdentity(double value);
+extern double3 DoubleVectorIdentity(double3 value);
+extern void DoubleOut(out double value);
+
+double Choose(double value) { return value; }
+int Choose(float value) { return int(value); }
+
+double Accumulate(double value, mut double total)
+{
+    total += value;
+    return total;
+}
+
+async void RetainDouble(double3 value, mut Results result)
+{
+    mut double saved = value.x;
+    await Wait.Ticks(1);
+    saved += .125d;
+    result.taskValue = saved;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Position64, Owner { player = PlayerID(0) }, Visibility);
+}
+
+system Compute(mut Position64 p, Controls controls, mut Results r)
+{
+    r.difference = FAR - 1_000_000_000d;
+    r.sum = 2 + .25d;
+    r.product = DoubleIdentity(1.5d) * 3;
+    r.quotient = 9d / 4;
+    Debug.Assert(Choose(1.25d) == 1.25d && Choose(1.25f) == 1);
+    Debug.Assert(double(1.25f) == 1.25d && double(5000000000L) == 5000000000d);
+    Debug.Assert(1d + 5000000000L == 5000000001d && 5000000000L < 5000000001d);
+    Debug.Assert((true ? 1.25d : 2.5f) == 1.25d);
+    Debug.Assert(1d + 0.0000000000000002220446049250313d > 1d);
+    Debug.Assert(Math.Sqrt(81d) == 9d && Math.Rsqrt(16d) == .25d);
+    Debug.Assert(Math.Floor(-1.25d) == -2d && Math.Ceil(-1.25d) == -1d);
+    Debug.Assert(Math.Trunc(-1.25d) == -1d && Math.Frac(-1.25d) == .75d);
+    Debug.Assert(Math.Round(2.5d) == 2d && Math.Round(3.5d) == 4d);
+    Debug.Assert(Math.Lerp(1d, 3d, .25d) == 1.5d);
+    Debug.Assert(Math.Unlerp(1d, 3d, 1.5d) == .25d);
+    Debug.Assert(Math.SmoothStep(0d, 1d, .5d) == .5d && Math.Step(1d, 2d) == 1d);
+    Debug.Assert(Math.Clamp(20d, 0, 5) == 5d && Math.Min(2d, 3) == 2d && Math.Max(-2, -3d) == -2d);
+    Debug.Assert(Math.Abs(-2d) == 2d && Math.Sign(-2d) == -1d && Math.Saturate(-1d) == 0d);
+    Debug.Assert(Math.Degrees(Math.Radians(90d)) == 90d);
+    Debug.Assert(Math.Hash(0d) != Math.Hash(-0d));
+    Debug.Assert(Math.Hash(double2(1d)) >= 0 && Math.Hash(double3(1d)) >= 0 && Math.Hash(double4(1d)) >= 0);
+    double nan = 0d / 0d;
+    Debug.Assert(Math.Min(nan, 7d) == 7d && Math.Max(7d, nan) == 7d && Math.Clamp(nan, 2d, 3d) == 2d);
+    r.saturatedInt = int(1e300d);
+    r.saturatedLong = long(-1e300d);
+    r.fromNaN = int(nan);
+    Debug.Assert(byte(258.75d) == 2 && int(-12.75d) == -12 && long(5000000000.75d) == 5000000000L);
+
+    double3 a = double3(double2(1d, 2d), 3d);
+    double3 b = float3(4, 5, 6);
+    Debug.Assert(double3(5000000000L, 2L, 3L).x == 5000000000d);
+    Debug.Assert((a + 5000000000L).y == 5000000002d);
+    Debug.Assert(Math.Clamp(a, 0L, 2L).z == 2d);
+    Debug.Assert(Math.Dot(default, float3(1, 2, 3)) == 0);
+    Debug.Assert(Math.Dot(default, double3(1, 2, 3)) == 0d);
+    r.dot = Math.Dot(a, b);
+    r.length = Math.Length(double2(3d, 4d));
+    r.normalized = Math.Normalize(double3(0d, 3d, 4d));
+    r.reflected = Math.Reflect(double3(1d, -2d, 3d), double3(0d, 1d, 0d));
+    var cross = Math.Cross(a, b);
+    r.crossPair = cross.xz;
+    Debug.Assert(cross.x == -3d && cross.y == 6d && cross.z == -3d);
+    Debug.Assert(Math.LengthSq(a) == 14d && Math.DistanceSq(a, b) == 27d);
+    Debug.Assert(Math.Distance(double2(1d), double2(4d, 5d)) == 5d);
+    Debug.Assert(Math.Csum(a) == 6d && Math.Cmin(a) == 1d && Math.Cmax(a) == 3d);
+    Debug.Assert(Math.Normalize(double3(0d)).x == 0d);
+    Debug.Assert(Math.Csum(double4(a, 4d)) == 10d);
+    Debug.Assert(Math.LengthSq(double4(1d)) == 4d && Math.LengthSq(double2(1d)) == 2d);
+    p.pair = double2(int2(2, 3)) + float2(1, 2);
+    p.four = double4(a, 4d) * 2d;
+    p.four.yx = double2(11d, 12d);
+    Debug.Assert(p.four.x == 12d && p.four.y == 11d && p.four.z == 6d && p.four.w == 8d);
+    Debug.Assert(int3(double3(1.75d, -2.75d, 1e300d)).z == 2147483647);
+    Debug.Assert(int2(2.5d).x == 2 && float2(2.5d).y == 2.5f);
+    r.render = float3(p.position - double3(1_000_000_000d, 0d, 0d));
+    p.position = DoubleVectorIdentity(p.position) + double3(.125d, .25d, .5d);
+    p.samples = [FAR, .5d, 2d];
+    mut double total = 0d;
+    foreach (var value in p.samples) total += value;
+    Debug.Assert(total == FAR + 2.5d);
+    p.trail.Add(p.position);
+    p.trail[0].xy = double2(FAR, 4d);
+    Debug.Assert(p.trail[0].x == FAR && p.trail[0].y == 4d);
+    p.scores[1] = FAR;
+    Debug.Assert(p.scores[1] == FAR);
+    p.cells[int2(0, 0)] = p.pair;
+    Debug.Assert(p.cells[int2(0, 0)].x == 3d);
+    p.measurement.optional = FAR;
+    Debug.Assert(p.measurement.optional! == FAR);
+    double? maybe = FAR;
+    double present = maybe ?? 0d;
+    Debug.Assert(present == FAR);
+    double? absent = null;
+    Debug.Assert((absent ?? 2d) == 2d);
+    r.text = $"{FAR} {double2(1.25d, -2.5d):F2} {1.25d:F17}";
+    r.json = Json.Write(Measurement { value = FAR, optional = .125d });
+    var restored = Json.Read<Measurement>(r.json)!;
+    Debug.Assert(restored.tag == 7 && restored.value == FAR && restored.optional! == .125d);
+    Debug.Assert(double.TryParse("1000000000.125", out var parsed) && parsed == FAR);
+    r.parsed = parsed;
+    DoubleOut(out mut var output);
+    Debug.Assert(output == FAR);
+    output++;
+    Debug.Assert(++output == FAR + 2d);
+    mut double sum = 0d;
+    double ordered = Accumulate(1d, sum) + Accumulate(2d, sum);
+    Debug.Assert(ordered == 4d && sum == 3d);
+    r.input = controls.amount + controls.direction.x;
+    if (r.ticks == 0) RetainDouble(p.position, r);
+    r.ticks++;
+}
+
+view Present(Position64 p, mut Display display)
+{
+    display.position = p.position;
+    display.value = p.measurement.value;
+    if (display.submit)
+    {
+        Send(Move64 { value = FAR, destination = p.position });
+        display.submit = false;
+    }
+}

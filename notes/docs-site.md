@@ -1,5 +1,15 @@
 # The docs site
 
+## Double numeric documentation (2026-10-20)
+
+Basics, Math, Text and lists, JSON, Input, Determinism and the spec document the new
+binary64 scalar/vector values. They keep defaults and float rendering APIs clear,
+show subtract-before-narrowing for large coordinates, describe full precision
+text/JSON/input and distinguish the owner-approved types from first-build
+conversion/wire choices and the deferred double math/rendering work. Production
+build and all 268 shared grammar cases pass; no site deployment or CI dispatch.
+Compiler/runtime validation: notes/language.md.
+
 ## Shared player ceiling documentation (2026-10-20)
 
 The language settings table, Matches player-count section and spec report the

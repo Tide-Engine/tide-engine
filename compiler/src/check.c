@@ -197,7 +197,11 @@ static bool is_scalar_number(const type t)
 // enum and its number convert neither way by themselves.
 static void note_conversion(const type want, const type have)
 {
-    if (want.kind == TY_LONG && have.kind == TY_FLOAT) {
+    if (type_is_double_based(have) && type_is_numeric(want)) {
+        diag_note("%s(x) converts explicitly from %s", type_name(want), type_name(have));
+    } else if (want.kind == TY_LONG && have.kind == TY_DOUBLE) {
+        diag_note("long(x) truncates toward zero, saturates at the long range and maps NaN to zero");
+    } else if (want.kind == TY_LONG && have.kind == TY_FLOAT) {
         diag_note("long(x) makes a float a long, truncated toward zero");
     } else if (want.kind == TY_FLOAT && have.kind == TY_LONG) {
         diag_note("float(x) makes a long a float, rounded to the nearest");
@@ -1349,7 +1353,7 @@ static bool map_key_ok(const type t, const loc at, const bool set)
     default:
         diag_error(at, "a %s's key is an int, a long, a char, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
                    type_name(t));
-        if (t.kind == TY_FLOAT) diag_note("floats that look equal can differ in a bit; key by an int, like 'int(x * 100)'");
+        if (t.kind == TY_FLOAT || t.kind == TY_DOUBLE) diag_note("floats that look equal can differ in a bit; key by an int, like 'int(x * 100)'");
         else if (t.kind == TY_STRUCT) diag_note("key by one of its fields");
         return false;
     }
@@ -1599,8 +1603,8 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
-    case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_DOUBLE: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
         return true;
@@ -1676,8 +1680,8 @@ static bool grid_cell_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
-    case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_DOUBLE: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
     case TY_STRUCT:
@@ -2076,8 +2080,8 @@ static bool array_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
-    case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_DOUBLE: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
     case TY_STRUCT:
@@ -2201,7 +2205,7 @@ static bool element_path_in_place(const expr *target)
 static bool equatable(const type t)
 {
     switch (t.kind) {
-    case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
+    case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_DOUBLE: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
     case TY_STRING:
         return true;
     default:
@@ -2897,7 +2901,7 @@ static type check_construct(checker *c, expr *e, const type target)
         int total = 0;
         for (int i = 0; i < argc; i++) {
             const type t = e->args.items[i]->type;
-            if (!type_is_numeric(t)) {
+            if (!type_is_numeric(t) || type_is_double_based(t)) {
                 diag_error(e->args.items[i]->at, "Color takes numbers and vectors, not %s", type_name(t));
                 return T_ERR;
             }
@@ -2951,8 +2955,8 @@ static type check_construct(checker *c, expr *e, const type target)
 
     // float(x), int(x), long(x): conversions between the number types, and of a
     // char, which is its code point.
-    if (is_scalar_number(target) || target.kind == TY_LONG) {
-        if (argc == 1 && (is_scalar_number(first) || first.kind == TY_LONG || first.kind == TY_CHAR)) {
+    if (is_scalar_number(target) || target.kind == TY_LONG || target.kind == TY_DOUBLE) {
+        if (argc == 1 && (is_scalar_number(first) || first.kind == TY_LONG || first.kind == TY_DOUBLE || first.kind == TY_CHAR)) {
             e->ctor = CTOR_SCALAR;
             return target;
         }
@@ -2962,7 +2966,8 @@ static type check_construct(checker *c, expr *e, const type target)
 
     const int dim = type_dim(target);
     if (dim >= 2) {
-        if (argc == 1 && is_scalar_number(first)) {
+        if (argc == 1 && (is_scalar_number(first) || first.kind == TY_DOUBLE
+                          || (type_is_double_based(target) && first.kind == TY_LONG))) {
             e->ctor = CTOR_SPLAT;
             return target;
         }
@@ -2973,16 +2978,22 @@ static type check_construct(checker *c, expr *e, const type target)
         int total = 0;
         for (int i = 0; i < argc; i++) {
             const type t = e->args.items[i]->type;
-            if (!type_is_numeric(t)) {
+            if (!type_is_numeric(t) && !(type_is_double_based(target) && t.kind == TY_LONG)) {
                 diag_error(e->args.items[i]->at, "%s takes numbers and vectors, not %s", name, type_name(t));
                 return T_ERR;
             }
-            if (type_is_int_based(target) && type_is_float_based(t)) {
-                diag_error(e->args.items[i]->at, "%s takes ints, not %s", name, type_name(t));
-                diag_note("convert explicitly, for example int(x) or %s(v)", name);
+            if ((type_is_int_based(target) && (type_is_float_based(t) || type_is_double_based(t)))
+                || (type_is_float_based(target) && type_is_double_based(t))) {
+                if (type_is_int_based(target)) {
+                    diag_error(e->args.items[i]->at, "%s takes ints, not %s", name, type_name(t));
+                    diag_note("convert explicitly, for example int(x) or %s(v)", name);
+                } else {
+                    diag_error(e->args.items[i]->at, "%s needs an explicit conversion from %s", name, type_name(t));
+                    diag_note("convert explicitly with float(x) or %s(v)", name);
+                }
                 return T_ERR;
             }
-            total += type_dim(t);
+            total += t.kind == TY_LONG ? 1 : type_dim(t);
         }
         if (total != dim) {
             diag_error(e->at, "%s needs %d components, got %d", name, dim, total);
@@ -6747,7 +6758,7 @@ static void check_json_attribute(const decl *d, const field *f, const attribute 
 static bool json_holds(const type t, type *why, const decl **in, const field **at, const decl **outer, const int depth)
 {
     switch (t.kind) {
-    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_STRING: case TY_ENUM:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_DOUBLE: case TY_FLOAT: case TY_STRING: case TY_ENUM:
         return true;
     case TY_STRUCT:
         // A T? field: what its value is, or `null` and a key left out for none
@@ -7630,8 +7641,8 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
 static bool text_shows_value(const type t)
 {
     switch (t.kind) {
-    case TY_STRING: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
-    case TY_PLAYER: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
+    case TY_STRING: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_DOUBLE: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
+    case TY_PLAYER: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4:
     case TY_QUATERNION: case TY_COLOR: case TY_RECT: case TY_ERROR:
         return true;
     default:
@@ -7726,16 +7737,17 @@ static int32_t text_format(const expr *value, const str format)
         digits_ok = format.ptr[i] >= '0' && format.ptr[i] <= '9';
         digits = digits * 10 + format.ptr[i] - '0';
     }
-    const bool floats = type_is_float_based(t) || t.kind == TY_QUATERNION || t.kind == TY_COLOR || t.kind == TY_RECT;
+    const bool floats = type_is_float_based(t) || type_is_double_based(t) || t.kind == TY_QUATERNION || t.kind == TY_COLOR || t.kind == TY_RECT;
     const bool ints = type_is_int_based(t) || t.kind == TY_LONG;
     bool ok = false;
-    if (letter == 'F' || letter == 'f') ok = (floats || ints) && digits <= 9;
+    if (letter == 'F' || letter == 'f') ok = (floats || ints) && digits <= (type_is_double_based(t) ? 17 : 9);
     if (letter == 'D' || letter == 'd') ok = ints && digits <= 32;
     if (letter == 'X' || letter == 'x') ok = ints && digits <= (t.kind == TY_LONG ? 16 : 8);
     if (ok && digits_ok) return (int32_t)letter << 8 | digits;
     if (t.kind == TY_ERROR) return 0;
     diag_error(value->at, "'" STR_FMT "' isn't a format for %s", STR_ARG(format), type_name(t));
-    if (floats) diag_note("floats take F and how many decimals, like '{x:F2}', up to F9");
+    if (type_is_double_based(t)) diag_note("doubles take F and how many decimals, up to F17");
+    else if (floats) diag_note("floats take F and how many decimals, like '{x:F2}', up to F9");
     else if (t.kind == TY_CHAR) diag_note("a char shows as the character it is; its code point is a number, which has formats: '{int(c):X4}'");
     else if (ints) diag_note("ints and longs take D and how many digits ('{n:D3}' shows 007), X for hex, or F for decimals");
     else diag_note("only numbers have formats; %s shows as it is", type_name(t));
@@ -7777,6 +7789,20 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     // (or a bool), never a char: char(c + 1) is the next one.
     if (l.kind == TY_CHAR || r.kind == TY_CHAR) {
         return binary_result(prog, op, l.kind == TY_CHAR ? T_INT_ : l, r.kind == TY_CHAR ? T_INT_ : r, at, overload);
+    }
+
+    // Double arithmetic widens ordinary numeric operands before any operation.
+    // Comparisons remain scalar, as they are for float/int vectors.
+    if (type_is_double_based(l) || type_is_double_based(r)) {
+        const int dl = l.kind == TY_LONG ? 1 : type_dim(l);
+        const int dr = r.kind == TY_LONG ? 1 : type_dim(r);
+        const bool numbers = (type_is_numeric(l) || l.kind == TY_LONG) && (type_is_numeric(r) || r.kind == TY_LONG);
+        if (numbers && (dl == 1 || dr == 1 || dl == dr)) {
+            if (op == T_PLUS || op == T_MINUS || op == T_STAR || op == T_SLASH) return double_vector_type(dl > dr ? dl : dr);
+            if (dl == 1 && dr == 1 && (op == T_LT || op == T_LE || op == T_GT || op == T_GE || op == T_EQ || op == T_NE)) return T_BOOL_;
+        }
+        diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
+        return T_ERR;
     }
 
     // Longs: with ints and longs, which widen to long. Never with floats by
@@ -8348,7 +8374,7 @@ static type check_member(checker *c, expr *e)
                        components[dim]);
             return T_ERR;
         }
-        return vector_type(type_is_float_based(obj), e->swizzle_len);
+        return type_is_double_based(obj) ? double_vector_type(e->swizzle_len) : vector_type(type_is_float_based(obj), e->swizzle_len);
     }
     if (obj.kind == TY_QUATERNION) {
         if (str_eq_c(e->member, "value")) return (type){TY_FLOAT4, NULL};
@@ -10011,7 +10037,7 @@ static type check_expr_any_raw(checker *c, expr *e)
     type t = T_ERR;
     switch (e->kind) {
     case E_INT: t = e->is_char ? T_CHAR_ : e->is_long ? T_LONG_ : T_INT_; break;
-    case E_FLOAT: t = T_FLOAT_; break;
+    case E_FLOAT: t = e->is_double ? (type){TY_DOUBLE, NULL} : T_FLOAT_; break;
     case E_BOOL: t = T_BOOL_; break;
     case E_STRING: t = (type){TY_STRING, NULL}; break;
     case E_NAME: t = check_name(c, e); break;
@@ -11177,7 +11203,7 @@ static void check_assign(checker *c, const stmt *s)
         }
     }
 
-    if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT) {
+    if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {
         diag_error(s->at, "'%s' works on ints, longs and floats, not %s", s->op == T_PLUS_PLUS ? "++" : "--", type_name(target));
         if (target.kind == TY_CHAR) {
             diag_note("the character %s it is 'c = char(c %s 1);': to an operator a char is its code point, an int",
@@ -11212,7 +11238,7 @@ static type check_step_value(checker *c, expr *e)
     while (root->kind == E_MEMBER || root->kind == E_INDEX) root = root->object;
     if (root->kind == E_NAME && root->bind == BIND_LOCAL && root->local) root->local->read = true;
     const type target = e->lhs->type;
-    if (diag_error_count() != errors || (!type_is_integer(target) && target.kind != TY_FLOAT)) return T_ERR;
+    if (diag_error_count() != errors || (!type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE)) return T_ERR;
     return target;
 }
 
@@ -12912,8 +12938,8 @@ static void check_bound(checker *c, const field *f, expr *value)
     while (ft.kind == TY_ARRAY) ft = array_element(ft);
     const type t = check_constant_expr(c, value, ft.kind == TY_BYTE, ft.kind == TY_BYTE ? ft : T_ERR);
     if (t.kind == TY_ERROR || ft.kind == TY_ERROR) return;
-    const bool splat = type_dim(t) == 1 && type_is_numeric(t) && type_dim(ft) > 1
-                    && (type_is_float_based(ft) || type_is_int_based(t));
+    const bool splat = type_dim(ft) > 1 && (type_is_numeric(t) || t.kind == TY_LONG)
+                    && type_assignable(type_scalar(ft), t);
     if (!type_assignable(ft, t) && !splat) {
         diag_error(value->at, "the bound is %s, but field '" STR_FMT "' is %s", type_name(t), STR_ARG(f->name),
                    type_name(f->type));

@@ -12215,3 +12215,23 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
     lsp_free(&server);
     model_metadata_forget();
 }
+
+TIDE_TEST(lsp_double_types_swizzles_parsing_and_signatures)
+{
+    start();
+    open_document("singleton Data { dou$ble value = 1.25d; double3 position; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "64-bit IEEE float"));
+    const char *types = complete("singleton Data { $ }\nscene Main { }\n");
+    TIDE_CHECK(offers(types, "double") && offers(types, "double2") && offers(types, "double3") && offers(types, "double4"));
+    const char *members = complete("singleton Data { double3 position; }\nscene Main { }\nsystem S(Data data) { var x = data.position.$ }\n");
+    TIDE_CHECK(offers(members, "x") && offers(members, "xz") && has(members, "double2"));
+    const char *parsing = complete("scene Main { }\nsystem S() { var ok = double.$ }\n");
+    TIDE_CHECK(offers(parsing, "TryParse") && has(parsing, "out double value"));
+    open_document("scene Main { }\nsystem S() { var v = double3($); Debug.Log(v); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "double3(double x, double y, double z)"));
+    const char *gpu = complete("frag Shade(Vertex3 vertex, out Color color) { $ }\n");
+    TIDE_CHECK(!offers(gpu, "double") && !offers(gpu, "double3"));
+    open_document("singleton Data { float value = 1d; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "field 'value' is float, not double") && has(last_sent(), "float(x) converts explicitly"));
+}

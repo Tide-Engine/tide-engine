@@ -65,6 +65,10 @@ tide_str tide_str_add_cstr(tide_str a, const char *s);
 tide_str tide_str_add_int(tide_str a, int32_t v, int32_t format);
 tide_str tide_str_add_long(tide_str a, int64_t v, int32_t format);
 tide_str tide_str_add_float(tide_str a, float v, int32_t format);
+tide_str tide_str_add_double(tide_str a, double value, int32_t format);
+tide_str tide_str_add_d2(tide_str a, tide_double2 value, int32_t format);
+tide_str tide_str_add_d3(tide_str a, tide_double3 value, int32_t format);
+tide_str tide_str_add_d4(tide_str a, tide_double4 value, int32_t format);
 tide_str tide_str_add_bool(tide_str a, bool v);
 tide_str tide_str_add_entity(tide_str a, tide_entity e, bool local);
 tide_str tide_str_add_player(tide_str a, tide_player_id p);
@@ -112,10 +116,11 @@ tide_str tide_str_replace(tide_str a, tide_str from, tide_str to);
 // the number, a tie going to the even one, worked out with exact integer
 // arithmetic, never strtof: the same text gives the same bits on every
 // platform, and what tide_str_add_float writes reads back as the float it
-// was.
+// was. Double parsing and formatting apply the same rules at binary64 precision.
 bool tide_str_parse_int(tide_str text, int32_t *value);
 bool tide_str_parse_long(tide_str text, int64_t *value);
 bool tide_str_parse_float(tide_str text, float *value);
+bool tide_str_parse_double(tide_str text, double *value);
 
 // Whether `count` bytes are UTF-8 through and through: every one part of a
 // character, in its shortest form, none half of a UTF-16 pair.

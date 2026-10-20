@@ -47,6 +47,7 @@ A struct is an object, and each field is a key: the field's name, or what `[Json
 | `bool` | `true` or `false` |
 | `byte`, `int`, `long` | A number that's whole and fits: `3`, `3.0` and `3e2` are, `3.5` isn't |
 | `float` | A number, read as the nearest float |
+| `double` | A number, read directly as the nearest double |
 | `string` | A string |
 | `char` | A string of one character, or `""` for `'\0'` |
 | An enum | Its member's name, as a string: `"Ranked"` |
@@ -116,7 +117,7 @@ var text = Json.Write(LobbyChange { open = false });
 
 Reading works the same way round: a key that's missing or `null` leaves the field with nothing.
 
-What it writes, `Json.Read` reads back as the same value. A float is written with the fewest digits that read back as the same float, bit for bit. JSON has no number for NaN or an infinity, so those are written as `null`, which reads back as the field's default.
+What it writes, `Json.Read` reads back as the same value. A float or double is written with the fewest digits that read back as the same value, bit for bit. Double fields retain binary64 precision without first rounding to float. JSON has no number for NaN or an infinity, so those are written as `null`, which reads back as the field's default.
 
 To send it, turn the text into bytes:
 

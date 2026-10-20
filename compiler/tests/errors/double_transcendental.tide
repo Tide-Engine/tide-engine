@@ -1,0 +1,4 @@
+// expect: Math.Sin has no double version
+singleton Data { double value; }
+scene Main { }
+system S(mut Data data) { data.value = Math.Sin(1d); }

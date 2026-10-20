@@ -24,8 +24,9 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 | `byte` | An unsigned 8-bit integer, from 0 to 255; binary file contents use `List<byte>` |
 | `int` | A 32-bit integer |
 | `long` | A 64-bit integer, for what outgrows an `int`: scores, money, tick counts over months |
-| `float` | A 32-bit float. There's no `double`. |
-| `float2`, `float3`, `float4`, `int2`, `int3`, `int4` | Vectors (see [Math](./math.md)) |
+| `float` | A 32-bit float |
+| `double` | A 64-bit float, for values needing more precision |
+| `double2`, `double3`, `double4`, `float2`, `float3`, `float4`, `int2`, `int3`, `int4` | Vectors (see [Math](./math.md)) |
 | `quaternion`, `float2x2`, `float3x3`, `float4x4` | Rotations and matrices (see [Math](./math.md)) |
 | `Color` | A color, with `r`, `g`, `b` and `a` from 0 to 1 (see [Views](../game/views.md)) |
 | `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](../game/gui.md)) |
@@ -50,6 +51,8 @@ The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what 
 
 - `byte` stores one byte. It converts to `int`, `long` and `float` by itself, and arithmetic promotes it to `int`. Integer constants from 0 to 255 fit a byte: `byte value = 255; List<byte> bytes = [0, 128, 255];`. Other numbers need `byte(x)`, which keeps their low 8 bits; a float first converts with `int(x)`. Compound assignments and `++`/`--` wrap back into the byte range.
 - `1.5` is a `float`, and the `f` suffix is optional. The zero before the point can be left out: `.5f` is `0.5`. An `int` converts to `float` by itself, never the other way: `int(x)` truncates toward zero.
+- `1.25d`, `.5D` and `1e100d` are `double` literals. Unsuffixed decimals remain floats, even in `double value = 1.25;`: use `d` when the literal needs double precision. `byte`, `char`, `int`, `long` and `float` widen to `double` implicitly. Int and float vectors widen to the matching double vector. A long can round when converted to double, whose integer precision is 53 bits.
+- Double arithmetic and mixed float/double arithmetic give doubles. Narrowing is explicit: `float(value)`, `float3(position)`, `int(value)` or `long(value)`. Integer conversions truncate, saturate at the destination's range and map NaN to zero. Double to float rounds to the nearest float, overflowing to a signed infinity.
 - A decimal number ending in lowercase `deg` is a `float` in radians: `180deg`, `.5deg`, `1e2deg`, `1_8_0deg` and `-90deg`. The compiler converts the number from degrees once; use it anywhere a float is accepted, such as `quaternion.Euler(0, 180deg, 0)`.
 - An `int` converts to `long` by itself too, and the two mix: `total + 1` is a `long` when `total` is. A `long` and a `float` don't: write `float(x)` or `long(x)` to say which way the value goes, and `int(x)` to cut a `long` down to its low 32 bits. `5L` is a `long` literal, and so is any integer literal past the `int` range.
 - Integers can be written in decimal (`255`), hex (`0xFF`) or binary (`0b1010`), and `_` separates digits: `1_000_000`.

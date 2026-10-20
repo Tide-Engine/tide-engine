@@ -11,6 +11,7 @@ syntax keyword tideConditional if else switch case default
 syntax keyword tideRepeat while for foreach parallel
 syntax keyword tideStatement return break continue fail try await
 syntax keyword tideType void bool byte ushort char int int2 int3 int4 long
+syntax keyword tideType double double2 double3 double4
 syntax keyword tideType float float2 float3 float4 float2x2 float3x3 float4x4 quaternion string
 syntax keyword tideType Entity LocalEntity PlayerID Color Rect World List Map Set Grid2 Grid3 Asset
 syntax keyword tideBoolean true false null
@@ -18,8 +19,8 @@ syntax match tideType '\<[A-Z][A-Za-z0-9_]*\>'
 syntax match tideDirective '^\s*#\s*\(if\|elif\|else\|endif\|define\|undef\)\>'
 syntax match tideNumber '\<0[xX][0-9A-Fa-f_]\+\>'
 syntax match tideNumber '\<0[bB][01_]\+\>'
-syntax match tideNumber '\<\d[0-9_]*\(\.[0-9_]\+\)\?\([eE][+-]\?[0-9_]\+\)\?\(deg\|[fF]\)\?\>'
-syntax match tideNumber '\%([[:alnum:]_.)\]]\)\@<!\.[0-9_]\+\([eE][+-]\?[0-9_]\+\)\?\(deg\|[fF]\)\?\>'
+syntax match tideNumber '\<\d[0-9_]*\(\.[0-9_]\+\)\?\([eE][+-]\?[0-9_]\+\)\?\(deg\|[fFdD]\)\?\>'
+syntax match tideNumber '\%([[:alnum:]_.)\]]\)\@<!\.[0-9_]\+\([eE][+-]\?[0-9_]\+\)\?\(deg\|[fFdD]\)\?\>'
 syntax match tideEscape '\\["\\n]' contained
 syntax region tideString start=+\$\?"+ skip=+\\.+ end=+"+ end=+$+ contains=tideEscape
 syntax match tideCharacter "'\([^'\\]\|\\.\)'"

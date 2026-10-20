@@ -1,5 +1,20 @@
 # The language server and the editors
 
+## Double numeric tooling (2026-10-20)
+
+The LSP offers double/double2/double3/double4 in CPU value/type positions, gives
+binary64 hover and constructor signatures, returns double scalar/vector types
+for swizzles and exposes double.TryParse. GPU type completion omits doubles.
+Shared TextMate and bundled Vim/Emacs grammars recognize the new primitive
+names; number tokens retain d/D suffixes. Existing formatting remains unchanged.
+Lexer/LSP/grammar cases exercise these paths and explicit narrowing guidance.
+
+The grammar's all-E2E declaration check now locates the declaration capture,
+rather than the first same-named identifier on its line. This repairs the existing
+`local event(Shown) Shown(...)` false failure without changing grammar behavior.
+The production docs build and all 268 grammar cases pass. Final native/web and
+editor harness validation: notes/language.md.
+
 ## Float bits and screen scale help (2026-10-20)
 
 Builtin completion/hover/signatures expose Math.AsInt/AsFloat, float Hash overloads

@@ -206,14 +206,15 @@ static const struct {
     const char *name;
     int argc;
     bool ints; // Works on ints too; otherwise ints convert to float.
+    bool transcendental; // Binary64 versions are a separate deterministic-math increment.
 } componentwise[] = {
-    {"Abs", 1, true}, {"Sign", 1, true}, {"Min", 2, true}, {"Max", 2, true}, {"Clamp", 3, true},
-    {"Floor", 1, false}, {"Ceil", 1, false}, {"Round", 1, false}, {"Trunc", 1, false}, {"Frac", 1, false},
-    {"Sqrt", 1, false}, {"Rsqrt", 1, false}, {"Saturate", 1, false}, {"Radians", 1, false}, {"Degrees", 1, false},
-    {"Sin", 1, false}, {"Cos", 1, false}, {"Tan", 1, false}, {"Asin", 1, false}, {"Acos", 1, false},
-    {"Atan", 1, false}, {"Atan2", 2, false}, {"Exp", 1, false}, {"Exp2", 1, false}, {"Log", 1, false},
-    {"Log2", 1, false}, {"Log10", 1, false}, {"Pow", 2, false}, {"Step", 2, false},
-    {"Lerp", 3, false}, {"Unlerp", 3, false}, {"SmoothStep", 3, false},
+    {"Abs", 1, true, false}, {"Sign", 1, true, false}, {"Min", 2, true, false}, {"Max", 2, true, false}, {"Clamp", 3, true, false},
+    {"Floor", 1, false, false}, {"Ceil", 1, false, false}, {"Round", 1, false, false}, {"Trunc", 1, false, false}, {"Frac", 1, false, false},
+    {"Sqrt", 1, false, false}, {"Rsqrt", 1, false, false}, {"Saturate", 1, false, false}, {"Radians", 1, false, false}, {"Degrees", 1, false, false},
+    {"Sin", 1, false, true}, {"Cos", 1, false, true}, {"Tan", 1, false, true}, {"Asin", 1, false, true}, {"Acos", 1, false, true},
+    {"Atan", 1, false, true}, {"Atan2", 2, false, true}, {"Exp", 1, false, true}, {"Exp2", 1, false, true}, {"Log", 1, false, true},
+    {"Log2", 1, false, true}, {"Log10", 1, false, true}, {"Pow", 2, false, true}, {"Step", 2, false, false},
+    {"Lerp", 3, false, false}, {"Unlerp", 3, false, false}, {"SmoothStep", 3, false, false},
 };
 
 #define COMPONENTWISE_COUNT (sizeof componentwise / sizeof componentwise[0])
@@ -246,7 +247,7 @@ typedef struct signature {
     unsigned out;            // A bit per `out` parameter, which the call makes: its bit in `mut` is set too
 } signature;
 
-#define MAX_SIGNATURES 384
+#define MAX_SIGNATURES 448
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -508,6 +509,29 @@ static void build_signatures(void)
              "A float3 of length 1, every direction as likely.");
     describe(add("Random", "NextQuaternionRotation", T_Q, "tide_random_next_quaternion_rotation", 0, T_NONE, T_NONE, T_NONE), NULL,
              "A rotation, every one as likely.");
+
+    // Double hashes and vector geometry
+    for (int n = 1; n <= 4; n++) {
+        const type v = double_vector_type(n);
+        describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", v), 1, v, T_NONE, T_NONE), "value",
+                 "xxHash32 of the double's exact binary64 bits, component by component, without the top bit; signed zeros hash differently.");
+    }
+    for (int n = 2; n <= 4; n++) {
+        const type v = double_vector_type(n);
+        const type scalar = {TY_DOUBLE, NULL};
+        add("Math", "Dot", scalar, c_function("dot", v), 2, v, v, T_NONE);
+        add("Math", "Length", scalar, c_function("length", v), 1, v, T_NONE, T_NONE);
+        add("Math", "LengthSq", scalar, c_function("lengthsq", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Distance", scalar, c_function("distance", v), 2, v, v, T_NONE);
+        add("Math", "DistanceSq", scalar, c_function("distancesq", v), 2, v, v, T_NONE);
+        describe(add("Math", "Normalize", v, c_function("normalize", v), 1, v, T_NONE, T_NONE), "vector",
+                 "A double vector at length 1; a squared length at or below the smallest normal double, or NaN, gives zero.");
+        add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE);
+        add("Math", "Csum", scalar, c_function("csum", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Cmin", scalar, c_function("cmin", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Cmax", scalar, c_function("cmax", v), 1, v, T_NONE, T_NONE);
+    }
+    add("Math", "Cross", double_vector_type(3), "tide_cross_d3", 2, double_vector_type(3), double_vector_type(3), T_NONE);
 
     // Quaternions
     add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE);
@@ -1015,6 +1039,9 @@ static void build_signatures(void)
     // The GUI, in views: tide/gui.h. Codegen passes the view's GUI first, then
     // the widget's ID, then a mut argument's address.
     add_widget("Label", T_NONE, "label", "string text", 0, "Text.");
+    add_gui("double", "TryParse", T_BOOL, "tide_str_parse_double", "string text, out double value", 0,
+            "Reads the whole decimal text as the nearest double, ties to even, with identical bits on every platform. Invalid text or overflow gives false and zero.");
+
     add_widget("Button", T_BOOL, "button", "string text", GUI_ID, "A button. Returns whether it was pressed.");
     add_widget("Toggle", T_BOOL, "toggle", "string text, mut bool value", GUI_ID,
                "A checkbox for `value`. Returns whether it changed it.");
@@ -1273,6 +1300,7 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
 {
     int dim = 1;
     bool is_float = !ints_ok;
+    bool is_double = false;
     bool color = false;
     for (int i = 0; i < e->args.count; i++) {
         if (e->args.items[i]->kind == E_DEFAULT) continue;
@@ -1282,6 +1310,7 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
             continue;
         }
         if (t.kind == TY_CHAR) continue; // Its code point, an int, as a char is wherever an int goes
+        if (t.kind == TY_LONG) { is_double = true; continue; }
         if (!type_is_numeric(t)) return false;
         const int d = type_dim(t);
         if (d > 1) {
@@ -1289,9 +1318,15 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
             dim = d;
         }
         if (type_is_float_based(t)) is_float = true;
+        if (type_is_double_based(t)) is_double = true;
+    }
+    if (is_double) {
+        bool actual_double = false;
+        for (int i = 0; i < e->args.count; i++) actual_double |= type_is_double_based(e->args.items[i]->type);
+        if (!actual_double || color) return false;
     }
     if (color && dim > 1) return false;
-    *out = color ? T_COLOR : vector_type(is_float, dim);
+    *out = color ? T_COLOR : is_double ? double_vector_type(dim) : vector_type(is_float, dim);
     return true;
 }
 
@@ -1451,6 +1486,20 @@ static bool default_ambiguous(const int first, const expr *e)
         int theirs[MAX_PARAMS];
         bind(s, e, mine);
         bind(other, e, theirs);
+        // Concrete operands still determine precision beside a default. In
+        // Dot(default, float3(...)), widening both operands to double3 is a
+        // worse fit than retaining float3, rather than a new ambiguity.
+        bool better = false, no_worse = true;
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *arg = e->args.items[i];
+            if (arg->kind == E_DEFAULT || arg->enum_shorthand || out_untyped(arg)) continue;
+            const type t = real_type(s->params[mine[i]]);
+            const type u = real_type(other->params[theirs[i]]);
+            if (t.kind == u.kind && t.decl == u.decl) continue;
+            if (!type_assignable(u, t)) no_worse = false;
+            else if (!type_assignable(t, u)) better = true;
+        }
+        if (better && no_worse) continue;
         for (int i = 0; i < e->args.count; i++) {
             const type t = real_type(s->params[mine[i]]);
             const type u = real_type(other->params[theirs[i]]);
@@ -1530,6 +1579,11 @@ type resolve_builtin_call(const str owner, expr *e)
                 diag_error(e->at, "Math.%s can't take (%s)", componentwise[i].name, args);
                 diag_note("it takes numbers, vectors and colors; vectors in one call must be the same size, and a color "
                           "goes with colors and numbers");
+                return (type){TY_ERROR, NULL};
+            }
+            if (type_is_double_based(target) && componentwise[i].transcendental) {
+                diag_error(e->at, "Math.%s has no double version", componentwise[i].name);
+                diag_note("convert explicitly to float for this function; double arithmetic, square roots and vector geometry retain 64-bit precision");
                 return (type){TY_ERROR, NULL};
             }
             for (int a = 0; a < e->args.count; a++) vec_push(e->arg_want, target);

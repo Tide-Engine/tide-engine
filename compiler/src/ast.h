@@ -159,6 +159,10 @@ typedef enum type_kind {
     TY_ENUM,       // A value of an enum: one of its members, an int underneath
     TY_OPTIONAL,   // T?: a value or nothing. decl is a DECL_RESULT whose field 0 is the value
     TY_FAILABLE,   // What a function that `fails` gives: its value (field 0, maybe void) or its error (field 1)
+    TY_DOUBLE,    // IEEE binary64; appended to preserve existing type identities
+    TY_DOUBLE2,
+    TY_DOUBLE3,
+    TY_DOUBLE4,
 } type_kind;
 
 typedef struct type {
@@ -981,6 +985,7 @@ struct expr {
     str text;
     int64_t int_value;
     float float_value; // E_FLOAT with is_degrees: the converted, single-precision radians
+    bool is_double; // E_FLOAT with a d/D suffix; unsuffixed literals remain float
     bool is_degrees;  // E_FLOAT: a deg suffix; text keeps the source spelling for editors
     bool is_long; // E_INT: a long literal (an L suffix, or a value past int's range)
     bool is_char; // E_INT: a char literal, 'a', whose value is its code point

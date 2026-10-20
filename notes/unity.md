@@ -127,15 +127,109 @@ Unity object field. At bake tidec maps each GUID to its file through `.meta`:
 
 ## Native boundary
 
-One exported function table (working name `tide_unity_api`): schema, start,
-tick and frame, component table reads, devices, commands, events, and world and
-local pack/unpack. It touches the runtime, so its contents are agreed with the
-owner before either side depends on them (`notes/runtime-ownership.md`).
+It touches the runtime, so its contents are agreed with the owner before either
+side depends on them (`notes/runtime-ownership.md`). Draft below.
 
 **Owner:** in the editor the package loads and unloads the library itself
 through function pointers (`DllImport` would lock it until Unity restarts). A
 rebuild packs the world and local state, swaps the library and unpacks them, as
 Tide's hot reload already does (`notes/hot-reload.md`). Users never see this.
+
+### Phase 1 interface draft (2026-10-20, awaiting the owner)
+
+The standard host (`tide/host.h`) already runs everything a front end needs
+except the window: the session, rooms, dedicated-server admission, host
+migration, local requests, commands, local handlers, files and hot reloading of
+game libraries (`platform/src/reload.c`, `tide_host_game`). So the boundary is
+that host with the window, GPU and audio device taken out, called once per
+frame by another program. The name is engine-neutral, as nothing in it is
+Unity's: `platform/include/tide/embed.h`, agent-maintained like the rest of
+`platform/`.
+
+```c
+typedef struct tide_embed tide_embed;
+
+typedef struct tide_embed_desc {
+    const tide_host_game *game; // A game linked in (players, IL2CPP static builds), or NULL with:
+    const char *library_dir;    // ...the folder tide writes game-<n> libraries to: the editor, hot reloading
+    int tick_rate;              // 0 for the game's tickRate
+    int argc;                   // tide/run.h's --host, --join, --connect, --seed
+    char **argv;
+    const char *files_dir;      // Where the game's files live (Application.persistentDataPath)
+    const char *relay;          // NULL for the default relay
+    void (*log)(void *user, int error, const char *text); // stdout/stderr lines, for Debug.Log
+    void *user;
+} tide_embed_desc;
+
+tide_embed *tide_embed_create(const tide_embed_desc *desc);
+void tide_embed_destroy(tide_embed *e);
+
+// One frame of tide/host.h's loop: the session's update, connection events, local handlers, local
+// requests, then the views, recorded with the frame's view packet (below). `devices` is this
+// machine's input as Unity read it. Returns seconds until the match next needs a frame.
+double tide_embed_frame(tide_embed *e, float seconds, const tide_devices *devices, tide_float2 screen_size,
+                        float screen_scale);
+
+// The view packet the last frame wrote: valid until the next frame. Bytes, never pointers.
+const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
+
+// The session as tide_session_status says it, with the room code: what Unity's own UI shows.
+void tide_embed_status(const tide_embed *e, tide_embed_status *out);
+
+// What local code's Session calls do (tide_session_request): start a scene, join a code, connect to
+// an address, leave, open, close, end, kick. False when it can't be asked now.
+bool tide_embed_request(tide_embed *e, tide_session_request_kind kind, const char *argument);
+
+// A typed command from Unity's UI, as local code's Send: `type` and `value` as the schema lays
+// them out; packed and sent as Tide's own commands are. False for an unknown type or bad size.
+bool tide_embed_command(tide_embed *e, uint32_t type, const void *value, uint32_t size);
+
+// The app went to the background (true) or came back. Phones leave the match there, with host
+// migration where enabled, as Tide's mobile hosts do; desktop changes nothing.
+void tide_embed_background(tide_embed *e, bool background);
+
+// The game's schema (JSON): what the Roslyn generator reads, and its hash, which every view packet
+// carries, so stale bindings refuse to read rather than misread.
+const char *tide_embed_schema(const tide_embed *e, uint32_t *size);
+```
+
+The view packet is the main new piece. Each frame, generated code writes what C#
+reads into one flat buffer, laid out by the schema:
+
+- a header: schema hash, frame, tick, verified tick, alpha;
+- the shown entities: ID and generation, prefab, parent, owner and whether it's
+  this machine's, Shown/Spawned flags;
+- for each component, its entities and their values, floats blended exactly as
+  views see them, and singletons;
+- text and lists copied into the packet's own area, named by offset and length;
+- the events this machine's local handlers heard this frame, for `Tide.On<T>`.
+
+Its benefits: C# never depends on ECS storage (archetypes, lanes, pages, heap),
+which stays free to change; C# memory safety is a bounds check against one size
+and a schema hash; the web copies one buffer a frame (option B), desktop reads
+it in place; C# does no blending. Its cost is writing it each frame, which is
+the same work views reading those values do now.
+
+Generated (tidec, per game), as new `tide_host_game` members: the view packet
+writer, the command packer and the schema. The web build is the same host
+compiled into the Tide program `tide.js` runs: `pageFrames` calls its frame,
+the `.jslib` copies devices in and the packet out.
+
+Decisions for the owner:
+
+1. The engine-neutral name `tide/embed.h` (pick), or Unity-specific naming.
+2. The view packet (pick), or C# reading world storage directly.
+3. Which prefab an entity came from must be known to late joiners, so it has to
+   be match state: a compiler-generated prefab ID on entities spawned from
+   prefabs or scenes, snapshotted and hashed (pick). Nothing records it today.
+4. Packet contents for the first version: every match component of shown
+   entities and singletons, blended; local fields; heard events. Confirmed
+   (verified) values only for components C# asks for, as they double the size.
+5. Unity's UI writing local state directly (not just commands and requests):
+   left out of the first version.
+
+Left for later phases: Tide's draw list for Unity's renderer (phase 5), audio,
+Tide GUI input claims.
 
 ## Web
 
