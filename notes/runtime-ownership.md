@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Double math and matrices (2026-10-20)
+
+The owner's completion request extends the existing temporary math maintenance
+area with tide_*_d transcendental functions and inline tide_*_d2x2/d3x3/d4x4
+matrix helpers, following float naming and operation order. No engine state,
+container or networking runtime API changes. The vendored binary64 kernels
+live in engine/src/math64 and ship as source through the existing recursive
+engine-source installation/CLI build. Float kernels remain in math.c unchanged.
+Contracts, numeric accuracy limits and validation: notes/language.md.
+
 ## Double numeric values (2026-10-20)
 
 The owner-approved scalar/vector addition extends the existing temporary math,

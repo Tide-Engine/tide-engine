@@ -27,7 +27,7 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 | `float` | A 32-bit float |
 | `double` | A 64-bit float, for values needing more precision |
 | `double2`, `double3`, `double4`, `float2`, `float3`, `float4`, `int2`, `int3`, `int4` | Vectors (see [Math](./math.md)) |
-| `quaternion`, `float2x2`, `float3x3`, `float4x4` | Rotations and matrices (see [Math](./math.md)) |
+| `quaternion`, `float2x2`, `float3x3`, `float4x4`, `double2x2`, `double3x3`, `double4x4` | Rotations and matrices (see [Math](./math.md)) |
 | `Color` | A color, with `r`, `g`, `b` and `a` from 0 to 1 (see [Views](../game/views.md)) |
 | `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](../game/gui.md)) |
 | `string` | Text (see [Text and lists](./text-and-lists.md)) |

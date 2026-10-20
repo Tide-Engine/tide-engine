@@ -22,7 +22,8 @@ float2 flat = trs.position.xz;
 | `double2`, `double3`, `double4` | 64-bit double vectors |
 | `int2`, `int3`, `int4` | Int vectors |
 | `quaternion` | A rotation |
-| `float2x2`, `float3x3`, `float4x4` | Matrices, stored column by column |
+| `float2x2`, `float3x3`, `float4x4` | 32-bit matrices, stored column by column |
+| `double2x2`, `double3x3`, `double4x4` | 64-bit matrices with the same column storage |
 
 They're lowercase built-in value types, like `float`. Angles are in radians: `Math.Radians(degrees)` and `Math.Degrees(radians)` convert.
 
@@ -52,7 +53,24 @@ Double math includes `Abs`, `Sign`, `Min`, `Max`, `Clamp`, `Floor`, `Ceil`, `Rou
 
 The same deterministic arithmetic rules apply. `Normalize` gives zero when the squared length is NaN or at or below the smallest normal double (about 2.23e-308); otherwise it uses `v * (1 / Sqrt(Dot(v, v)))`.
 
-Double trigonometric, exponential, logarithmic and noise functions, double matrices and double quaternions are not part of this first addition. Existing `Math.PI`, `Math.TAU`, `Math.E`, matrices and rotations remain floats. Doubles are CPU values: convert to floats in local code before supplying shader data.
+`Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `Exp`, `Exp2`, `Log`, `Log2`, `Log10` and `Pow` also work on doubles and double vectors, retaining binary64 input and output precision. They use portable source compiled with Tide's deterministic flags, including full-range argument reduction for large angles; they do not call the platform math library. Like the float implementations, these are accurate approximations, not a promise of correctly rounded results for every input.
+
+Use `double.PI`, `double.TAU` and `double.E` for binary64 constants. Existing `Math.PI`, `Math.TAU` and `Math.E` remain floats.
+
+Double matrices have the same operations as float matrices: columns, construction from columns or numbers row by row, `identity`, `+`, `-`, scalar `*`/`/`, and `Math.Mul`, `Transpose`, `Inverse` and `Determinant`. Matching float matrices widen implicitly; `float4x4(matrix)` explicitly narrows every component. `double3x3(quaternion)` widens quaternion components before evaluating the matrix. `double4x4(rotation, translation)` takes a double3x3 and a double3.
+
+`Math.Transform` and `Math.Rotate` accept double4x4 and double3. `double4x4` provides `Translate`, `Scale`, `TRS`, `PerspectiveFov` and `Ortho`. `TRS` accepts either a double3x3 rotation or a quaternion; a quaternion retains its original float precision, then the matrix arithmetic is double. Views interpolate double matrices column by column in double precision.
+
+```csharp
+double angle = double.PI / 4d;
+double c = Math.Cos(angle);
+double s = Math.Sin(angle);
+double3x3 rotation = double3x3(c, -s, 0d, s, c, 0d, 0d, 0d, 1d);
+double4x4 transform = double4x4.TRS(objectPosition, rotation, double3(1d));
+double3 worldPoint = Math.Transform(transform, double3(.125d, 0d, 0d));
+```
+
+Double noise and a double quaternion type remain unsupported. Doubles are CPU values: convert to float scalars, vectors or matrices in local code before supplying shader data. The renderer and cameras still take floats.
 
 ## Members
 

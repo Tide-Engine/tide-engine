@@ -1,5 +1,13 @@
 # Hot reloading
 
+## Double matrices (2026-10-20)
+
+Double matrix fields use the existing PLAIN matrix layout category, preserving
+identical types by bytes. A float/double matrix type change retains the new
+default, as other matrix type changes did. Scalar/vector double widening from
+the preceding increment is unchanged. No new migration runtime helper or
+metadata enum is introduced. Validation: notes/language.md.
+
 ## Double layout values (2026-10-20)
 
 TIDE_LAYOUT_DOUBLE is appended after the existing layout kinds, leaving their

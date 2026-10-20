@@ -163,6 +163,9 @@ typedef enum type_kind {
     TY_DOUBLE2,
     TY_DOUBLE3,
     TY_DOUBLE4,
+    TY_DOUBLE2X2,
+    TY_DOUBLE3X3,
+    TY_DOUBLE4X4,
 } type_kind;
 
 typedef struct type {

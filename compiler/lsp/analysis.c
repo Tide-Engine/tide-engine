@@ -1542,6 +1542,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_LONG: return "A 64-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0. An int converts to it "
                          "by itself; floats convert with long(x) and float(x), and int(x) keeps its low 32 bits.";
     case TY_DOUBLE: return "A 64-bit IEEE float. Use d literals for full precision; float(x) explicitly narrows for rendering.";
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4: return "A column-major matrix of 64-bit doubles. Convert explicitly to a float matrix before drawing.";
     case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: return "A vector of 64-bit doubles: x, y, z, w, with ordinary swizzles. Convert to a float vector before drawing.";
     case TY_FLOAT: return "A 32-bit float. Results are identical on every platform.";
     case TY_INT2: case TY_INT3: case TY_INT4: return "A vector of ints: x, y, z, w.";
@@ -5825,6 +5826,7 @@ static bool is_keyword_type(const type t)
     switch (t.kind) {
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
     case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4:
         return true;
     default:
         return false;
@@ -6375,7 +6377,7 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_QUATERNION && str_eq_c(member, "value")) return (type){TY_FLOAT4, NULL};
     const int n = matrix_dim(t);
     if (n > 0 && member.len == 2 && member.ptr[0] == 'c' && member.ptr[1] >= '0' && member.ptr[1] < '0' + n) {
-        return vector_type(true, n);
+        return matrix_column(t);
     }
     return (type){TY_ERROR, NULL};
 }
@@ -6734,7 +6736,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     const int n = matrix_dim(t);
     for (int i = 0; i < n; i++) {
         static const char *const columns[] = {"c0", "c1", "c2", "c3"};
-        item(c, columns[i], CK_PROPERTY, type_name(vector_type(true, n)), "A column.", NULL);
+        item(c, columns[i], CK_PROPERTY, type_name(matrix_column(t)), "A column.", NULL);
     }
     if (t.kind == TY_WORLD) { // world.: its methods, each with the component in <>
         size_t count;
@@ -7271,7 +7273,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 
 static const char *const value_types[] = {
     "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
-    "double", "double2", "double3", "double4", "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
+    "double", "double2", "double3", "double4", "double2x2", "double3x3", "double4x4", "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
     "Texture", "DepthTexture", "Cubemap", "RenderTarget", "Clip",
 };
 
@@ -10096,6 +10098,9 @@ static const struct {
     {"double2", {"double2(double x, double y)", "double2(double value)", "double2(float2 value)", "double2(int2 value)"}, NULL},
     {"double3", {"double3(double x, double y, double z)", "double3(double2 xy, double z)", "double3(double value)", "double3(float3 value)"}, NULL},
     {"double4", {"double4(double x, double y, double z, double w)", "double4(double3 xyz, double w)", "double4(double value)", "double4(float4 value)"}, NULL},
+    {"double2x2", {"double2x2(double2 c0, double2 c1)", "double2x2(float2x2 matrix)"}, "Columns, or numbers row by row. A float matrix widens implicitly."},
+    {"double3x3", {"double3x3(double3 c0, double3 c1, double3 c2)", "double3x3(float3x3 matrix)"}, "Columns, or numbers row by row. A float matrix widens implicitly."},
+    {"double4x4", {"double4x4(double4 c0, double4 c1, double4 c2, double4 c3)", "double4x4(float4x4 matrix)"}, "Columns, or numbers row by row. A float matrix widens implicitly."},
     {"quaternion", {"quaternion(float x, float y, float z, float w)", "quaternion(float4 value)", "quaternion(float3x3 rotation)"}, NULL},
     {"float2x2", {"float2x2(float2 c0, float2 c1)", "float2x2(float m00, float m01, float m10, float m11)"}, "Columns, or numbers row by row."},
     {"float3x3", {"float3x3(float3 c0, float3 c1, float3 c2)", "float3x3(quaternion rotation)"}, NULL},

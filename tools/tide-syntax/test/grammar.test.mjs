@@ -538,14 +538,17 @@ test('no text in probe.tide runs past its line', () => checkLinesEndText('probe.
 
 test('double types and literals retain their complete precision suffix', () => {
     const lines = tokenize('double value = 1000000000.125d; double3 position = double3(.5D);\n'
-                         + 'double2 pair; double4 four; double2x2 unavailable;');
+                         + 'double2 pair; double4 four; double2x3 unavailable; double2x2 a; double3x3 b; double4x4 c;');
     check(lines[0], ['double', 'storage.type.primitive']);
     check(lines[0], ['double3', 'storage.type.primitive']);
     check(lines[0], ['1000000000.125d', 'constant.numeric']);
     check(lines[0], ['.5D', 'constant.numeric']);
     check(lines[1], ['double2', 'storage.type.primitive']);
     check(lines[1], ['double4', 'storage.type.primitive']);
-    check(lines[1], ['double2x2', '!storage.type.primitive']);
+    check(lines[1], ['double2x3', '!storage.type.primitive']);
+    check(lines[1], ['double2x2', 'storage.type.primitive']);
+    check(lines[1], ['double3x3', 'storage.type.primitive']);
+    check(lines[1], ['double4x4', 'storage.type.primitive']);
 });
 
 test('degree literals are whole float tokens with a lowercase suffix', () => {

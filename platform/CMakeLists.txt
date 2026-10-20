@@ -242,6 +242,17 @@ target_link_libraries(tide_platform_jobs PRIVATE tide_platform)
 add_test(NAME tide_platform_jobs COMMAND tide_platform_jobs)
 set_tests_properties(tide_platform_jobs PROPERTIES TIMEOUT 120)
 
+# Tide inside another program's frame (tide/embed.h): no window, GPU or audio device.
+tide_add_game(tide_platform_embed SOURCES tests/embed.tide NAME game
+    HOST tests/embed.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_embed PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_platform_embed PRIVATE tide_platform)
+# Built on the web too, where it needs a page's imports (tide.js), which Node's WASI runner hasn't
+if(NOT TIDE_WEB)
+    add_test(NAME tide_platform_embed COMMAND tide_platform_embed)
+    set_tests_properties(tide_platform_embed PROPERTIES TIMEOUT 60)
+endif()
+
 # The font's glyphs, fitted to the pixels they're drawn on: no window or GPU.
 add_executable(tide_platform_font tests/font.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_font PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)

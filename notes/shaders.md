@@ -1,5 +1,13 @@
 # Code the GPU runs: frags and verts
 
+## Double matrix rejection (2026-10-20)
+
+Double matrices remain CPU values. type_words rejects every binary64 type
+before generic matrix packing; the diagnostic now names explicit conversion to
+a float scalar/vector/matrix in local code. The new GPU matrix fixture pins
+that boundary. Float shader lowering and GPU arithmetic remain unchanged.
+Validation: notes/language.md.
+
 ## Double values stay on the CPU (2026-10-20)
 
 The scalar/vector double foundation keeps shader ABI and rendering types at

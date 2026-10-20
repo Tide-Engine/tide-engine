@@ -1693,6 +1693,12 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_printf(o, ", &%s, %uu)", grid_shape_name(have.decl), declared_sampling_bits(e));
         return;
     }
+    if (matrix_dim(want) && matrix_dim(want) == matrix_dim(have) && type_is_double_based(want) && !type_is_double_based(have)) {
+        sb_printf(o, "tide_%s_from_%s(", type_suffix(want), type_suffix(have));
+        gen_expr(g, o, e);
+        sb_put(o, ")");
+        return;
+    }
     if (want.kind == TY_DOUBLE && have.kind != TY_DOUBLE) {
         sb_put(o, "(double)(");
         gen_expr(g, o, e);
@@ -2514,16 +2520,16 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         const char *suffix = type_suffix(result);
         if (matrix_dim(lt) && matrix_dim(rt)) {
             sb_printf(o, "tide_%s_%s(", op == T_PLUS ? "add" : "sub", suffix);
-            gen_expr(g, o, l);
+            gen_as(g, o, l, result);
             sb_put(o, ", ");
-            gen_expr(g, o, r);
+            gen_as(g, o, r, result);
         } else {
             expr *matrix = matrix_dim(lt) ? l : r;
             expr *scalar = matrix == l ? r : l;
             sb_printf(o, "tide_%s_%s(", op == T_STAR ? "scale" : "divs", suffix);
             gen_expr(g, o, matrix);
             sb_put(o, ", ");
-            gen_as(g, o, scalar, float_t);
+            gen_as(g, o, scalar, type_scalar(matrix_column(result)));
         }
         sb_put(o, ")");
         return;
@@ -2676,6 +2682,10 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         break;
 
     case CTOR_CONVERT:
+        if (t.kind == first->type.kind) {
+            gen_expr(g, o, first);
+            break;
+        }
         sb_printf(o, "tide_%s_from_%s(", type_suffix(t), type_suffix(first->type));
         gen_expr(g, o, first);
         sb_put(o, ")");
@@ -2738,7 +2748,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         break;
 
     case CTOR_MAT_COLUMNS: {
-        const type column = vector_type(true, matrix_dim(t));
+        const type column = matrix_column(t);
         sb_printf(o, "(%s){", c_type(t));
         for (int i = 0; i < e->args.count; i++) {
             if (i) sb_put(o, ", ");
@@ -2756,7 +2766,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
             sb_put(o, col ? ", {" : "{");
             for (int row = 0; row < n; row++) {
                 if (row) sb_put(o, ", ");
-                gen_as(g, o, e->args.items[row * n + col], float_t);
+                gen_as(g, o, e->args.items[row * n + col], type_scalar(matrix_column(t)));
             }
             sb_put(o, "}");
         }
@@ -2765,16 +2775,16 @@ static void gen_construct(gen *g, sb *o, const expr *e)
     }
 
     case CTOR_MAT_FROM_QUAT:
-        sb_put(o, "tide_f3x3_from_q(");
+        sb_put(o, type_is_double_based(t) ? "tide_d3x3_from_q(" : "tide_f3x3_from_q(");
         gen_expr(g, o, first);
         sb_put(o, ")");
         break;
 
     case CTOR_MAT_FROM_ROT_T:
-        sb_put(o, "tide_f4x4_from_f3x3_f3(");
-        gen_expr(g, o, first);
+        sb_put(o, type_is_double_based(t) ? "tide_d4x4_from_d3x3_d3(" : "tide_f4x4_from_f3x3_f3(");
+        gen_as(g, o, first, type_is_double_based(t) ? double_matrix_type(3) : matrix_type(3));
         sb_put(o, ", ");
-        gen_as(g, o, e->args.items[1], (type){TY_FLOAT3, NULL});
+        gen_as(g, o, e->args.items[1], type_is_double_based(t) ? double_vector_type(3) : (type){TY_FLOAT3, NULL});
         sb_put(o, ")");
         break;
 
@@ -5653,7 +5663,9 @@ static void hoist_unit(gen *g, expr *e, const char *name)
 // converts expressions: int to float, int vectors to float vectors.
 static void gen_c_as(sb *o, const char *text, const type have, const type want)
 {
-    if (want.kind == TY_DOUBLE && have.kind != TY_DOUBLE) {
+    if (matrix_dim(want) && matrix_dim(want) == matrix_dim(have) && type_is_double_based(want) && !type_is_double_based(have)) {
+        sb_printf(o, "tide_%s_from_%s(%s)", type_suffix(want), type_suffix(have), text);
+    } else if (want.kind == TY_DOUBLE && have.kind != TY_DOUBLE) {
         sb_printf(o, "(double)(%s)", text);
     } else if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
         sb_printf(o, "(float)(%s)", text);
@@ -8979,7 +8991,7 @@ static void gen_blend_value(gen *g, const char *v, const char *before, const typ
         for (int c = 0; c < columns; c++) {
             snprintf(a, sizeof a, "%s.c%d", v, c);
             snprintf(b, sizeof b, "%s.c%d", before, c);
-            gen_blend_value(g, a, b, vector_type(true, columns));
+            gen_blend_value(g, a, b, matrix_column(t));
         }
     } else if (t.kind == TY_QUATERNION) {
         line(g, o, "%s = tide_nlerp_q(%s, %s, t);", v, before, v);
@@ -11340,7 +11352,8 @@ static bool flat_list_value(const type t)
     case TY_BOOL: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
     case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
     case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION:
-    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_COLOR: case TY_RECT:
+    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4: case TY_COLOR: case TY_RECT:
     case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_ENUM: return true;
     case TY_STRUCT:
         for (int i = 0; i < t.decl->fields.count; i++) if (!flat_list_value(t.decl->fields.items[i].type)) return false;
@@ -14458,7 +14471,8 @@ static bool has_floats(const type t)
     switch (t.kind) {
     case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
     case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION:
-    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_COLOR: case TY_RECT:
+    case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4: case TY_COLOR: case TY_RECT:
         return true;
     case TY_STRUCT:
     case TY_ARRAY:
@@ -14577,7 +14591,7 @@ static void gen_repair_value(gen *g, const char *in, const char *def, const type
         for (int c = 0; c < columns; c++) {
             snprintf(a, sizeof a, "%s.c%d", in, c);
             snprintf(b, sizeof b, "%s.c%d", def, c);
-            gen_repair_value(g, a, b, vector_type(true, columns));
+            gen_repair_value(g, a, b, matrix_column(t));
         }
     } else if (t.kind == TY_QUATERNION) {
         snprintf(a, sizeof a, "%s.value", in);
@@ -16282,7 +16296,7 @@ static void gen_print_value(sb *o, const type t, const char *access)
         for (int i = 0; i < n; i++) {
             if (i) sb_put(o, "        printf(\" \");\n");
             snprintf(part, sizeof part, "%s.c%d", access, i);
-            gen_print_value(o, vector_type(true, n), part);
+            gen_print_value(o, matrix_column(t), part);
         }
         sb_put(o, "        printf(\"]\");\n");
     }
@@ -17789,7 +17803,7 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
     } else if (columns > 0) {
         for (int i = 0; i < columns; i++) {
             snprintf(inner, sizeof inner, "%s.c%d", at, i);
-            gen_bits(g, inner, vector_type(true, columns), mode, bits);
+            gen_bits(g, inner, matrix_column(t), mode, bits);
         }
     } else if (t.kind == TY_QUATERNION) {
         snprintf(inner, sizeof inner, "%s.value", at);
@@ -19401,7 +19415,7 @@ static const char *layout_kind(const type t)
     if (t.kind == TY_STRUCT) return "TIDE_LAYOUT_STRUCT";
     if (t.kind == TY_ENUM) return "TIDE_LAYOUT_ENUM";
     if (t.kind == TY_LONG) return "TIDE_LAYOUT_LONG";
-    if (type_is_double_based(t)) return "TIDE_LAYOUT_DOUBLE";
+    if (type_is_double_based(t) && !matrix_dim(t)) return "TIDE_LAYOUT_DOUBLE";
     if (t.kind == TY_BYTE) return "TIDE_LAYOUT_BYTE";
     if (type_dim(t) > 0) return type_is_float_based(t) ? "TIDE_LAYOUT_FLOAT" : "TIDE_LAYOUT_INT";
     return "TIDE_LAYOUT_PLAIN";

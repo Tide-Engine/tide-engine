@@ -26,6 +26,9 @@ static const struct {
     {"double2", TY_DOUBLE2, "d2", "tide_double2"},
     {"double3", TY_DOUBLE3, "d3", "tide_double3"},
     {"double4", TY_DOUBLE4, "d4", "tide_double4"},
+    {"double2x2", TY_DOUBLE2X2, "d2x2", "tide_double2x2"},
+    {"double3x3", TY_DOUBLE3X3, "d3x3", "tide_double3x3"},
+    {"double4x4", TY_DOUBLE4X4, "d4x4", "tide_double4x4"},
     {"quaternion", TY_QUATERNION, "q", "tide_quaternion"},
     {"float2x2", TY_FLOAT2X2, "f2x2", "tide_float2x2"},
     {"float3x3", TY_FLOAT3X3, "f3x3", "tide_float3x3"},
@@ -119,7 +122,8 @@ bool type_is_int_based(const type t)
 
 bool type_is_double_based(const type t)
 {
-    return t.kind == TY_DOUBLE || t.kind == TY_DOUBLE2 || t.kind == TY_DOUBLE3 || t.kind == TY_DOUBLE4;
+    return t.kind == TY_DOUBLE || t.kind == TY_DOUBLE2 || t.kind == TY_DOUBLE3 || t.kind == TY_DOUBLE4
+        || t.kind == TY_DOUBLE2X2 || t.kind == TY_DOUBLE3X3 || t.kind == TY_DOUBLE4X4;
 }
 
 type type_scalar(const type t)
@@ -150,9 +154,9 @@ bool type_is_asset_collection(const type t)
 int matrix_dim(const type t)
 {
     switch (t.kind) {
-    case TY_FLOAT2X2: return 2;
-    case TY_FLOAT3X3: return 3;
-    case TY_FLOAT4X4: return 4;
+    case TY_DOUBLE2X2: case TY_FLOAT2X2: return 2;
+    case TY_DOUBLE3X3: case TY_FLOAT3X3: return 3;
+    case TY_DOUBLE4X4: case TY_FLOAT4X4: return 4;
     default: return 0;
     }
 }
@@ -171,7 +175,7 @@ layout type_layout(const type t)
     if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT) return decl_layout(t.decl);
     if (t.kind == TY_RECORD) return (layout){(int)sizeof(tide_devices), 4}; // The input's devices
     if (t.kind == TY_LONG) return (layout){8, 8};
-    if (type_is_double_based(t)) return (layout){8 * type_dim(t), 8};
+    if (type_is_double_based(t)) return (layout){8 * (matrix_dim(t) ? matrix_dim(t) * matrix_dim(t) : type_dim(t)), 8};
     if (t.kind == TY_RENDER_TARGET) return (layout){24, 8}; // tide_render_target: its id, then its size, four floats
     if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
     if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
@@ -277,6 +281,18 @@ type double_vector_type(const int dim)
     return (type){kinds[dim], NULL};
 }
 
+type double_matrix_type(const int dim)
+{
+    static const type_kind kinds[] = {TY_ERROR, TY_ERROR, TY_DOUBLE2X2, TY_DOUBLE3X3, TY_DOUBLE4X4};
+    if (dim < 2 || dim > 4) return (type){TY_ERROR, NULL};
+    return (type){kinds[dim], NULL};
+}
+
+type matrix_column(const type t)
+{
+    return type_is_double_based(t) ? double_vector_type(matrix_dim(t)) : vector_type(true, matrix_dim(t));
+}
+
 type matrix_type(const int dim)
 {
     static const type_kind kinds[] = {TY_ERROR, TY_ERROR, TY_FLOAT2X2, TY_FLOAT3X3, TY_FLOAT4X4};
@@ -355,6 +371,7 @@ bool type_assignable(const type to, const type from)
     if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
     if (type_is_double_based(to)) {
+        if (matrix_dim(to)) return matrix_dim(to) == matrix_dim(from) && !type_is_double_based(from);
         return (type_dim(to) == type_dim(from) && (type_is_int_based(from) || type_is_float_based(from)))
             || (to.kind == TY_DOUBLE && (from.kind == TY_CHAR || from.kind == TY_LONG));
     }

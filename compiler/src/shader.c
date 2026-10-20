@@ -406,7 +406,8 @@ static bool type_fits(emit *em, const type t, const loc at)
     }
     switch (t.kind) {
     case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4:
-        why = "the GPU's floats are 32 bits: convert to float or a float vector in local code before drawing"; break;
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4:
+        why = "the GPU's floats are 32 bits: convert to a float scalar, vector or matrix in local code before drawing"; break;
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_STRING: why = "text is the CPU's"; break;
     case TY_MESH: why = "a Mesh is drawn, 'Draw.Mesh(mesh, transform, ...)', which sends the GPU its vertices and its triangles"; break;

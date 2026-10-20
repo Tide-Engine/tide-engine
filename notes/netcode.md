@@ -1,5 +1,14 @@
 # Netcode: sessions, prediction, commands
 
+## Double matrix columns (2026-10-20)
+
+Generated input/command codecs walk double matrix columns as double vectors,
+reusing the binary64 low-word-first representation and changed-bit deltas.
+Nonfinite components repair to declared defaults before game input. Command,
+raw/delta input, recipient state and replay E2E coverage now includes matrices;
+no transport/session protocol or runtime networking function changes.
+Validation: notes/language.md.
+
 ## Double input and command fields (2026-10-20)
 
 Generated double scalar/vector payloads retain all 64 bits per component as two
