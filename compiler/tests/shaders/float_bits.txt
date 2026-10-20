@@ -1,0 +1,173 @@
+// Inspect on Vertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+    ivec4 tide_v1;
+};
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+void main() {
+    tt_Vertex tide_vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+}
+
+// Inspect on Vertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+    ivec4 tide_v1;
+};
+out vec4 tide_pixel;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+uint tide_xxh_word(uint h, int w) {
+    uint k = h + uint(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+uint tide_xxh_lane(uint h, int w) {
+    uint k = h + uint(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+int tide_xxh_end(uint h) {
+    uint k = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return int(k & 0x7FFFFFFFu);
+}
+int tide_hash1(int v) {
+    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
+}
+int tide_hash2(ivec2 v) {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(0x165667B9u, v.x), v.y));
+}
+int tide_hash3(ivec3 v) {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+int tide_hash4(ivec4 v) {
+    uint a = tide_xxh_lane(0x24234428u, v.x);
+    uint b = tide_xxh_lane(0x85EBCA77u, v.y);
+    uint c = tide_xxh_lane(0u, v.z);
+    uint d = tide_xxh_lane(0x61C8864Fu, v.w);
+    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
+}
+void ts_Inspect(tt_Vertex t_vertex, inout vec4 t_color) {
+    ivec2 t_two = floatBitsToInt(tide_u0.xy);
+    ivec3 t_three = floatBitsToInt(tide_u0.xyz);
+    ivec4 t_four = floatBitsToInt(tide_u0);
+    vec2 t_f2 = intBitsToFloat(tide_v0.xy);
+    vec3 t_f3 = intBitsToFloat(tide_v0.xyz);
+    vec4 t_f4 = intBitsToFloat(tide_v0);
+    bool t_good = ((((((((((((((((((((((((floatBitsToInt(tide_u0.x) == tide_v0.x) && (t_two.x == tide_v0.x)) && (t_two.y == tide_v0.y)) && (t_three.x == tide_v0.x)) && (t_three.y == tide_v0.y)) && (t_three.z == tide_v0.z)) && (t_four.x == tide_v0.x)) && (t_four.y == tide_v0.y)) && (t_four.z == tide_v0.z)) && (t_four.w == tide_v0.w)) && (intBitsToFloat(tide_v0.x) == tide_u0.x)) && (t_f2.x == tide_u0.x)) && (t_f2.y == tide_u0.y)) && (t_f3.x == tide_u0.x)) && (t_f3.y == tide_u0.y)) && (t_f3.z == tide_u0.z)) && (t_f4.x == tide_u0.x)) && (t_f4.y == tide_u0.y)) && (t_f4.z == tide_u0.z)) && (t_f4.w == tide_u0.w)) && (tide_hash1(floatBitsToInt(tide_u0.x)) == tide_v1.x)) && (tide_hash2(floatBitsToInt(tide_u0.xy)) == tide_v1.y)) && (tide_hash3(floatBitsToInt(tide_u0.xyz)) == tide_v1.z)) && (tide_hash4(floatBitsToInt(tide_u0)) == tide_v1.w));
+    t_color = (t_good ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0));
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Inspect(tt_Vertex(vec2(0.0), vec2(0.0), vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Inspect on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_u0: vec4f,
+    tide_v0: vec4i,
+    tide_v1: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_xxh_word(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+fn tide_xxh_lane(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+fn tide_xxh_end(h: u32) -> i32 {
+    var k: u32 = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return i32(k & 0x7FFFFFFFu);
+}
+fn tide_hash1(v: i32) -> i32 {
+    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
+}
+fn tide_hash2(v: vec2i) -> i32 {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(0x165667B9u, v.x), v.y));
+}
+fn tide_hash3(v: vec3i) -> i32 {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+fn tide_hash4(v: vec4i) -> i32 {
+    var a: u32 = tide_xxh_lane(0x24234428u, v.x);
+    var b: u32 = tide_xxh_lane(0x85EBCA77u, v.y);
+    var c: u32 = tide_xxh_lane(0u, v.z);
+    var d: u32 = tide_xxh_lane(0x61C8864Fu, v.w);
+    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
+}
+fn ts_Inspect(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    var t_two: vec2i = bitcast<vec2i>(tide_block.tide_u0.xy);
+    var t_three: vec3i = bitcast<vec3i>(tide_block.tide_u0.xyz);
+    var t_four: vec4i = bitcast<vec4i>(tide_block.tide_u0);
+    var t_f2: vec2f = bitcast<vec2f>(tide_block.tide_v0.xy);
+    var t_f3: vec3f = bitcast<vec3f>(tide_block.tide_v0.xyz);
+    var t_f4: vec4f = bitcast<vec4f>(tide_block.tide_v0);
+    var t_good: bool = ((((((((((((((((((((((((bitcast<i32>(tide_block.tide_u0.x) == tide_block.tide_v0.x) && (t_two.x == tide_block.tide_v0.x)) && (t_two.y == tide_block.tide_v0.y)) && (t_three.x == tide_block.tide_v0.x)) && (t_three.y == tide_block.tide_v0.y)) && (t_three.z == tide_block.tide_v0.z)) && (t_four.x == tide_block.tide_v0.x)) && (t_four.y == tide_block.tide_v0.y)) && (t_four.z == tide_block.tide_v0.z)) && (t_four.w == tide_block.tide_v0.w)) && (bitcast<f32>(tide_block.tide_v0.x) == tide_block.tide_u0.x)) && (t_f2.x == tide_block.tide_u0.x)) && (t_f2.y == tide_block.tide_u0.y)) && (t_f3.x == tide_block.tide_u0.x)) && (t_f3.y == tide_block.tide_u0.y)) && (t_f3.z == tide_block.tide_u0.z)) && (t_f4.x == tide_block.tide_u0.x)) && (t_f4.y == tide_block.tide_u0.y)) && (t_f4.z == tide_block.tide_u0.z)) && (t_f4.w == tide_block.tide_u0.w)) && (tide_hash1(bitcast<i32>(tide_block.tide_u0.x)) == tide_block.tide_v1.x)) && (tide_hash2(bitcast<vec2i>(tide_block.tide_u0.xy)) == tide_block.tide_v1.y)) && (tide_hash3(bitcast<vec3i>(tide_block.tide_u0.xyz)) == tide_block.tide_v1.z)) && (tide_hash4(bitcast<vec4i>(tide_block.tide_u0)) == tide_block.tide_v1.w));
+    (*t_color) = select(vec4f(1.0, 0.0, 0.0, 1.0), vec4f(0.0, 1.0, 0.0, 1.0), t_good);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Inspect(tt_Vertex(vec2f(), vec2f(), vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

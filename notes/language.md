@@ -21,6 +21,45 @@ separate server slot, Audience word 2047, snapshot/delta transfer and reconnect
 recovery. players now covers 270 real sessions and a 300-player projected
 Audience. Runtime/protocol contracts and final validation: notes/netcode.md.
 
+## Inside Out API and aggregate-copy completions (2026-10-20)
+
+Authorized conventional additions: `Math.AsInt` reinterprets float/float2/float3/
+float4 as int equivalents; `Math.AsFloat` is the inverse. Both use memcpy-based
+inline math helpers, not pointer aliasing or numeric conversions. Float/vector
+`Math.Hash` hashes exactly those int bits through the existing xxHash32 mixers
+and keeps its nonnegative 31-bit result. Positive/negative zero differ. Existing
+integer/long signatures precede float signatures so their overload resolution
+and deterministic pins stay unchanged. CPU tests cover normal/subnormal values,
+infinities and explicit NaN payloads; GPU tests compare finite input bits and
+all four hash arities against CPU results.
+
+Codegen also uses private const-pointer signatures for read-only aggregates of
+at least 128 bytes and read-only method receivers when it can prove no source
+mutation during the call. No Tide alias/reference behavior is added. Overlapping
+mutable input types (including nested fields/containers), world writes, sends,
+spawns, tasks, extern calls and Action helpers keep the ordinary value path.
+Extern, async, operator, Interpolate, audio and input entry ABIs are unchanged.
+Recursive type inspection is bounded and fails conservatively. Later argument
+side effects retain existing ordered snapshots; non-addressable values use
+caller-owned compound literals. Shared GPU helpers retain their shader ABI.
+
+`readonly_aggregates` runs 40 KB values through 96 recursive function and method
+calls and tests disjoint mutable results, overlapping values/fields, implicit
+method forwarding with container outputs, later operand mutation and C mutation.
+`float_bits` checks all scalar/vector bit-cast and hash overloads. `screen_scale`
+checks current-frame metadata, default scale and changes between frames; three
+diagnostics pin match/GPU/write rejection. Editor tests cover new math help and
+Screen metadata. `notes/private-prototypes.md` saves all remaining design ideas.
+
+Validation: full warning-free native/web debug builds pass. All 2,452 native
+CTests (2,418 ordinary plus 34 GPU) and all 2,361 web CTests pass, including WASI
+execution, shader pins/SPIR-V validation and Vulkan/OpenGL/WebGL/WebGPU/D3D11-WARP
+checks. The 241 editor cases and production docs build pass. Actual
+unchanged Inside Out source generates successfully, with SeatOf/Together/HallOf
+receiving `const Workshop *`; that generated C passes strict native and WASI
+syntax checks. No private prototype browser playtest, CI dispatch or deployment
+was performed. Other OSes, Android and sanitizers remain CI coverage.
+
 ## Explicit skinned instance overload (2026-10-20)
 
 Owner-approved `Draw.Instanced(SkinnedMesh<V>, instances, ...)` follows the existing
@@ -901,9 +940,9 @@ are recorded with the networking/editor changes after validation completes.
 Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
 fixture plus 10,000 visible PublicState rows with empty owned fields produced
 1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
-2.12–2.92 ms per recipient canonical hash after changing every added row's integer
-column; unchanged worlds measured 2.22–3.54 ms. Full-world hashes measured
-4.19–9.76 us with that column dirty and 2.57–11.11 us unchanged. These operations
+2.12â€“2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22â€“3.54 ms. Full-world hashes measured
+4.19â€“9.76 us with that column dirty and 2.57â€“11.11 us unchanged. These operations
 do different work: full-world hashing reuses cached page hashes and only rehashes
 the changed integer-column pages, whereas recipient hashing currently traverses
 and serializes every permitted logical value and allocates the temporary byte

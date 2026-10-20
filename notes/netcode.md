@@ -61,6 +61,16 @@ prefix. Its header also compiles under strict C17 with warnings as errors.
 Vulkan tests ran without a configured validation layer. Android, Linux/macOS,
 MinGW and sanitizer coverage remain CI work; no CI was dispatched.
 
+Integration: origin/dev advanced with disjoint math/Screen metadata and private
+aggregate-borrowing codegen. The two notes-only conflicts retain both records;
+code merged without conflicts. Both complete debug builds and the docs build
+pass after integration. The 21 affected native and 22 web checks pass, covering
+the engine/session/player fixtures, incoming float-bit/aggregate/Screen cases,
+Screen diagnostics, shader golden, native Vulkan/OpenGL and WebGL/WebGPU float
+checks, editor harness and native/browser rooms. The exact-ceiling managed
+checkpoint probe passes again against the merged runtime. No full-suite repeat
+was needed for the disjoint compiler hunks.
+
 Scene audience unification (2026-10-15): the compiler removed separate scene
 membership storage/APIs and uses the root Visibility group for the enclosing
 scene limit. Recipient projection, lifecycle journals, authoritative correction

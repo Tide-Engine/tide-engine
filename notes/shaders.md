@@ -1,5 +1,17 @@
 # Code the GPU runs: frags and verts
 
+## Float bit casts and hashes (2026-10-20)
+
+Math.AsInt/AsFloat emit floatBitsToInt/intBitsToFloat in GLSL and dimensioned
+bitcast<int/float vector> expressions in WGSL. Float Math.Hash reinterprets the
+same input bits before the existing integer xxHash helpers; integer paths retain
+their prior text and results. `float_bits` goldens/SPIR-V and the dedicated
+platform pixel fixture cover every scalar/vector arity against CPU-generated
+expected bits and hashes, with distinct inputs across frames. Screen.scale stays
+CPU/frame-only; private aggregate pointer lowering does not change shader helper
+signatures. Final validation is in notes/language.md.
+
+
 ## Skinned instance bindings (2026-10-20)
 
 `Draw.Instanced` now accepts a skinned model. The shader plan retains an optional

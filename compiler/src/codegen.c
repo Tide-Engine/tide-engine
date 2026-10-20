@@ -1006,14 +1006,65 @@ static const char *world_where(const bool local)
     return local ? "TIDE_IN_LOCAL" : "TIDE_IN_MATCH";
 }
 
-// A system's components, singletons, input and devices are passed by pointer,
-// and so are a handler's event and what a method's or function's mut parameter
-// changes.
+// Whether two values can refer to overlapping storage through typed fields.
+static bool value_contains_type(const type value, const type part, const int depth)
+{
+    if (value.kind == part.kind && value.decl == part.decl) return true;
+    if (!value.decl) return false;
+    if (depth >= 64) return true; // Recursive containers conservatively keep value passing.
+    for (int i = 0; i < value.decl->fields.count; i++)
+        if (value_contains_type(value.decl->fields.items[i].type, part, depth + 1)) return true;
+    return false;
+}
+
+// This changes only the private C ABI. Value snapshots remain necessary when
+// C, a callback, world writes or an overlapping mutable argument can reach them.
+static bool indirect_value(const decl *fn, const type value)
+{
+    const type_kind k = value.kind;
+    if ((k != TY_STRUCT && k != TY_COMPONENT && k != TY_SINGLETON && k != TY_EVENT)
+        || type_layout(value).size < 128) return false;
+    for (int j = 0; j < fn->params.count; j++) {
+        const param *mut = &fn->params.items[j];
+        if (mut->mode == PARAM_MUT
+            && (value_contains_type(value, mut->type, 0) || value_contains_type(mut->type, value, 0))) return false;
+    }
+    return true;
+}
+
+static void select_indirect_routine(decl *fn)
+{
+    if ((fn->kind != DECL_FUNCTION && fn->kind != DECL_METHOD) || fn->is_extern || fn->is_async || fn->is_audio
+        || fn->is_operator || fn->is_interpolate || fn->takes_action || fn->calls_c
+        || fn->is_mut_method || fn->world_sets || fn->acts[0] || fn->acts[1] || fn->starts_tasks
+        || (fn->owner && fn->owner->kind == DECL_INPUT)) return;
+    if (fn->owner) {
+        const type self = {fn->owner->kind == DECL_COMPONENT ? TY_COMPONENT
+                           : fn->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, fn->owner};
+        fn->c_self_indirect = indirect_value(fn, self);
+    }
+    for (int i = 0; i < fn->params.count; i++) {
+        param *p = &fn->params.items[i];
+        if (p->function_param && p->mode == PARAM_READ) p->c_indirect = indirect_value(fn, p->type);
+    }
+}
+
+static void select_indirect_params(program *prog)
+{
+    for (int d = 0; d < prog->decls.count; d++) {
+        decl *item = prog->decls.items[d];
+        select_indirect_routine(item);
+        for (int m = 0; m < item->methods.count; m++) select_indirect_routine(item->methods.items[m]);
+    }
+}
+
+// Systems and handlers use pointers for contextual state; private helper
+// signatures also borrow aggregates proven not to change during the call.
 static bool is_pointer_param(const param *p)
 {
     if (p->mode == PARAM_SENDER) return true;
     if (p->task_ref) return true;
-    if (p->function_param) return p->mode == PARAM_MUT || p->type.kind == TY_RECORD || p->type.kind == TY_INPUT;
+    if (p->function_param) return p->c_indirect || p->mode == PARAM_MUT || p->type.kind == TY_RECORD || p->type.kind == TY_INPUT;
     const type_kind k = p->type.kind;
     return k == TY_COMPONENT || k == TY_SINGLETON || k == TY_INPUT || k == TY_RECORD || k == TY_EVENT;
 }
@@ -2916,6 +2967,15 @@ static bool addressable(const expr *e)
     return addressable(e->object);
 }
 
+static void gen_indirect_arg(gen *g, sb *o, expr *arg, const type want)
+{
+    const bool place = (arg->kept || addressable(arg)) && arg->type.kind == want.kind && arg->type.decl == want.decl;
+    if (place) sb_put(o, "&(");
+    else sb_printf(o, "(const %s[1]){", c_type(want));
+    gen_as(g, o, arg, want);
+    sb_put(o, place ? ")" : "}");
+}
+
 static bool extern_takes_lists(const decl *m)
 {
     for (int i = 0; i < m->params.count; i++) {
@@ -3036,7 +3096,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     }
     const type self = {m->owner && m->owner->kind == DECL_COMPONENT ? TY_COMPONENT
                       : m->owner && m->owner->kind == DECL_SINGLETON ? TY_SINGLETON : TY_STRUCT, m->owner};
-    const bool copy_self = m->owner && !m->is_mut_method && mut_list && type_has_list(self);
+    const bool copy_self = m->owner && !m->is_mut_method && !m->c_self_indirect && mut_list && type_has_list(self);
     const borrow_variant *borrowed = m->borrows_queries ? borrow_call(g, g->routine ? g->routine : g->code, g->borrow, e) : NULL;
     sb_printf(o, "%s(", borrowed ? borrow_cname(borrowed) : routine_cname(m));
     int args = 0;
@@ -3067,14 +3127,17 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     if (m->reads_seed) sb_printf(o, "%s%s", args++ ? ", " : "", match_seed(g));
     if (m->owner && args > 0) sb_put(o, ", "); // After what it's handed, its value
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
-        const bool have_address = g->routine->is_mut_method;
+        const bool have_address = g->routine->is_mut_method || g->routine->c_self_indirect;
         if (copy_self) sb_put(o, element_copy_open(self));
-        sb_put(o, m->is_mut_method ? "tide_self, tide_self_where" : have_address ? "*tide_self" : "tide_self");
+        sb_put(o, m->is_mut_method ? "tide_self, tide_self_where"
+                  : m->c_self_indirect ? (have_address ? "tide_self" : "&tide_self")
+                  : have_address ? "*tide_self" : "tide_self");
         if (copy_self) sb_put(o, ")");
         args++;
     } else if (m->owner) {
         if (m->is_mut_method) sb_put(o, "&(");
-        if (copy_self) gen_value_of(g, o, e->object, self);
+        if (m->c_self_indirect) gen_indirect_arg(g, o, e->object, self);
+        else if (copy_self) gen_value_of(g, o, e->object, self);
         else gen_expr(g, o, e->object);
         if (m->is_mut_method) sb_printf(o, "), %s", place_where(g, e->object));
         args++;
@@ -3095,6 +3158,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
             gen_borrow_arg(g, o, e->args.items[i]);
         } else if (m->params.items[i].type.kind == TY_INPUT) {
             sb_printf(o, "%s, %s", local_cname(g, e->args.items[i]->name), prev_input_name(g, e->args.items[i]->name));
+        } else if (m->params.items[i].c_indirect) {
+            gen_indirect_arg(g, o, e->args.items[i], e->arg_want.items[i]);
         } else if (mut_list && m->params.items[i].mode != PARAM_MUT && type_has_list(m->params.items[i].type)
                    && !type_is_asset_collection(m->params.items[i].type)) {
             gen_value_of(g, o, e->args.items[i], e->arg_want.items[i]);
@@ -3500,7 +3565,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (e->bind == BIND_FIELD) {
             // Inside the input's Sample or Sanitize, or a method: a mut method has its value by address.
-            const bool by_address = g->routine && g->routine->is_mut_method;
+            const bool by_address = g->routine && (g->routine->is_mut_method || g->routine->c_self_indirect);
             sb_printf(o, "tide_self%s%s", by_address ? "->" : ".", field_cname(e->field));
         } else if (e->bind == BIND_LOCAL) {
             sb_put(o, local_cname(g, e->name));
@@ -13537,7 +13602,8 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     if (m->reads_seed) sb_printf(o, "%sconst int32_t tide_match_seed", n++ ? ", " : "");
     if (m->owner && !m->is_operator && !m->is_interpolate) {
         if (n > 0) sb_put(o, ", "); // After what it's handed
-        sb_printf(o, m->is_mut_method ? "%s *tide_self, const uint32_t tide_self_where" : "const %s tide_self", type_cname(m->owner));
+        sb_printf(o, m->is_mut_method ? "%s *tide_self, const uint32_t tide_self_where"
+                     : m->c_self_indirect ? "const %s *tide_self" : "const %s tide_self", type_cname(m->owner));
         n++;
     }
     if (m->uses_this) {
@@ -13555,6 +13621,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
             sb_printf(o, "%sconst %s *%s, const %s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name),
                       c_type(p->type), prev_input_name(g, p->name));
         } else if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) sb_printf(o, "%stide_textref %s", n++ ? ", " : "", local_cname(g, p->name));
+        else if (p->c_indirect) sb_printf(o, "%sconst %s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->mode == PARAM_MUT) sb_printf(o, "%s%s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else sb_printf(o, "%s%s", n++ ? ", " : "", const_decl(p->type, local_cname(g, p->name)));
@@ -20115,6 +20182,7 @@ bool codegen(program *prog, const codegen_options *opts)
         vec_push(prog->singletons, state);
     }
     name_program(&g);
+    select_indirect_params(prog);
     collect_borrows(&g);
     if (prog->asset_refs.count) for (int i = 0; i < prog->assets.count; i++) {
         const decl *a = prog->assets.items[i];

@@ -1,5 +1,14 @@
 # The language server and the editors
 
+## Float bits and screen scale help (2026-10-20)
+
+Builtin completion/hover/signatures expose Math.AsInt/AsFloat, float Hash overloads
+and read-only float2 Screen.scale with its physical/logical-axis contract. The
+Screen module description now includes pixel scale. Existing scalar-only vector
+comparison rules are unchanged. Editor regressions check math overload help and
+Screen's property/hover. Final validation is in notes/language.md.
+
+
 ## Skinned instancing signatures (2026-10-20)
 
 Signature help recognizes a `SkinnedMesh<V>` as the whole-model form of

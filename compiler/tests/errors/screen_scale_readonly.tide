@@ -1,0 +1,3 @@
+// expect: can't assign to
+scene Main { }
+view Check() { Screen.scale = float2(2); }

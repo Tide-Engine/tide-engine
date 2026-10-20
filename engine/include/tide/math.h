@@ -362,6 +362,28 @@ static inline tide_int4 tide_i4_from_f4(const tide_float4 v)
 #define TIDE_XXH_P4 0x27D4EB2Fu
 #define TIDE_XXH_P5 0x165667B1u
 
+// Reinterpret bits, without a numeric conversion or pointer aliasing.
+static inline int32_t tide_asint_f(const float value)
+{
+    int32_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return bits;
+}
+
+static inline float tide_asfloat_i(const int32_t bits)
+{
+    float value;
+    memcpy(&value, &bits, sizeof value);
+    return value;
+}
+
+static inline tide_int2 tide_asint_f2(const tide_float2 v) { return (tide_int2){tide_asint_f(v.x), tide_asint_f(v.y)}; }
+static inline tide_int3 tide_asint_f3(const tide_float3 v) { return (tide_int3){tide_asint_f(v.x), tide_asint_f(v.y), tide_asint_f(v.z)}; }
+static inline tide_int4 tide_asint_f4(const tide_float4 v) { return (tide_int4){tide_asint_f(v.x), tide_asint_f(v.y), tide_asint_f(v.z), tide_asint_f(v.w)}; }
+static inline tide_float2 tide_asfloat_i2(const tide_int2 v) { return (tide_float2){tide_asfloat_i(v.x), tide_asfloat_i(v.y)}; }
+static inline tide_float3 tide_asfloat_i3(const tide_int3 v) { return (tide_float3){tide_asfloat_i(v.x), tide_asfloat_i(v.y), tide_asfloat_i(v.z)}; }
+static inline tide_float4 tide_asfloat_i4(const tide_int4 v) { return (tide_float4){tide_asfloat_i(v.x), tide_asfloat_i(v.y), tide_asfloat_i(v.z), tide_asfloat_i(v.w)}; }
+
 static inline uint32_t tide_xxh_rotl(const uint32_t x, const int r) { return (x << r) | (x >> (32 - r)); }
 
 // An input shorter than 16 bytes, a word at a time, from P5 plus its length.
@@ -414,6 +436,11 @@ static inline int32_t tide_hash_i4(const tide_int4 v)
     const uint32_t d = tide_xxh_lane(0u - TIDE_XXH_P1, v.w);
     return tide_xxh_end(tide_xxh_rotl(a, 1) + tide_xxh_rotl(b, 7) + tide_xxh_rotl(c, 12) + tide_xxh_rotl(d, 18) + 16u);
 }
+
+static inline int32_t tide_hash_f(const float v) { return tide_hash_i(tide_asint_f(v)); }
+static inline int32_t tide_hash_f2(const tide_float2 v) { return tide_hash_i2(tide_asint_f2(v)); }
+static inline int32_t tide_hash_f3(const tide_float3 v) { return tide_hash_i3(tide_asint_f3(v)); }
+static inline int32_t tide_hash_f4(const tide_float4 v) { return tide_hash_i4(tide_asint_f4(v)); }
 
 // ---------------------------------------------------------------------------
 // Noise (noise.c): gradient (Perlin), simplex and cellular noise of a point

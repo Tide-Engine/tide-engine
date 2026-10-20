@@ -3093,10 +3093,21 @@ static void ex_math(emit *em, const expr *e)
         if (e->args.count > 1) put_arg(em, e, 1);
         else sb_put(em->o, "0");
         sb_put(em->o, ")");
-    } else if (str_eq_c(e->name, "Hash")) { // Integers: the CPU's number
-        char name[32];
-        snprintf(name, sizeof name, "tide_hash%d", type_dim(first));
-        put_helper_call(em, e, H_HASH1 + type_dim(first) - 1, name);
+    } else if (str_eq_c(e->name, "AsInt") || str_eq_c(e->name, "AsFloat")) {
+        if (em->l == GLSL) sb_put(em->o, str_eq_c(e->name, "AsInt") ? "floatBitsToInt(" : "intBitsToFloat(");
+        else sb_printf(em->o, "bitcast<%s>(", ty(em, e->type));
+        put_arg(em, e, 0);
+        sb_put(em->o, ")");
+    } else if (str_eq_c(e->name, "Hash")) { // xxHash of the same integer or float bits as the CPU
+        need(em, H_HASH1 + type_dim(first) - 1);
+        sb_printf(em->o, "tide_hash%d(", type_dim(first));
+        if (type_is_float_based(first)) {
+            if (em->l == GLSL) sb_put(em->o, "floatBitsToInt(");
+            else sb_printf(em->o, "bitcast<%s>(", ty(em, vector_type(false, type_dim(first))));
+        }
+        put_arg(em, e, 0);
+        if (type_is_float_based(first)) sb_put(em->o, ")");
+        sb_put(em->o, ")");
     } else if (quaternion && str_eq_c(e->name, "Mul")) { // Two rotations, or one and the vector it turns
         const bool turns = e->arg_want.items[1].kind != TY_QUATERNION;
         put_helper_call(em, e, turns ? H_ROTATE_Q : H_MUL_Q, turns ? "tide_rotate_q" : "tide_mul_q");

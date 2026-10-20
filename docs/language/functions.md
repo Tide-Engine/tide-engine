@@ -111,6 +111,8 @@ view HitSound() { Audio.Play(Pick(hits, 0)); }
 
 Pass the asset directly, or forward a borrowed parameter through further helpers. Count, indexing, `foreach` and read-only collection methods work as usual; passing copies no collection. Elements keep their ordinary value rules, so a helper can return a selected clip, texture or mesh. The collection borrow itself cannot be stored, returned, optional, mutated or retained by an async declaration, and has no default. Externs, operators, audio declarations and GPU code take no such borrow. Texture and clip collections remain local code's; mesh geometry retains its existing match-read rules.
 
+Large read-only values can use borrowed storage in generated CPU helpers when the compiler proves it safe, avoiding repeated stack copies. They retain value semantics: overlapping mutable arguments, later argument effects and C calls still preserve the captured value. This needs no annotation or reference syntax.
+
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
 ```csharp

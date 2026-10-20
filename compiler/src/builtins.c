@@ -438,6 +438,11 @@ static void build_signatures(void)
     add("Math", "Cross", T_F3, "tide_cross_f3", 2, T_F3, T_F3, T_NONE);
     for (int n = 1; n <= 4; n++) {
         const type v = vector_type(false, n);
+        const type f = vector_type(true, n);
+        describe(add("Math", "AsInt", v, c_function("asint", f), 1, f, T_NONE, T_NONE), "value",
+                 "The same 32 bits as an int, component by component. This reinterprets float bits without a numeric conversion; Math.AsFloat reverses it.");
+        describe(add("Math", "AsFloat", f, c_function("asfloat", v), 1, v, T_NONE, T_NONE), "bits",
+                 "The same 32 bits as a float, component by component. This reinterprets int bits without a numeric conversion; Math.AsInt reverses it.");
         describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", v), 1, v, T_NONE, T_NONE), "value",
                  "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: random numbers "
                  "from cells, indices and seeds, like `Math.Hash(int3(x, y, seed)) % 6`. It's xxHash32 of the "
@@ -447,6 +452,11 @@ static void build_signatures(void)
              "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: xxHash32 of the "
              "long's 8 bytes, without the top bit. A GPU has no long: a frag or vert hashes its halves, "
              "`Math.Hash(int2(int(x), int(x >> 32)))`, which is the same number.");
+    for (int n = 1; n <= 4; n++) {
+        const type f = vector_type(true, n);
+        describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", f), 1, f, T_NONE, T_NONE), "value",
+                 "xxHash32 of the float's exact bits, component by component, without the top bit. The same as Math.Hash(Math.AsInt(value)); positive and negative zero hash differently.");
+    }
 
     // Noise (engine/src/noise.c): a point, and a seed a call can leave out.
     // On the GPU it's the same formulas (shader.c), so a frag draws what the match computed.
@@ -1171,6 +1181,7 @@ static const struct {
     {"Draw", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
     {"Screen", "height", TY_FLOAT, "tide_ui->height"},
+    {"Screen", "scale", TY_FLOAT2, "tide_f2(tide_draw->screen_scale.x > 0.0f ? tide_draw->screen_scale.x : 1.0f, tide_draw->screen_scale.y > 0.0f ? tide_draw->screen_scale.y : 1.0f)"},
     // In views and the functions they call. The input's Sample reads it of its own devices (see check_member).
     {"Cursor", "locked", TY_BOOL, "tide_ui->devices.mouse.locked"},
     // In local code and the functions it calls: what the host said of this frame (tide_local_frame_time)
@@ -1182,6 +1193,10 @@ static const struct {
 // What editors say of members[i], for the ones a type and a name don't explain; else NULL.
 static const char *member_doc(const size_t i)
 {
+    if (strcmp(members[i].owner, "Screen") == 0 && strcmp(members[i].member, "scale") == 0) {
+        return "Physical pixels per logical window pixel, as a float2 for x and y. Read-only frame metadata, "
+               "like Screen.width and Screen.height. A host that supplies no scale uses (1, 1).";
+    }
     if (strcmp(members[i].owner, "Color") == 0 && strcmp(members[i].member, "none") == 0) {
         return "No color, where one can be left out: a `Shape`'s `color2` by default, for a fill of one color. It's "
                "not a color to draw with: its alpha is under 0, so nothing shows.";
