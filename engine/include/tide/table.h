@@ -100,7 +100,7 @@ void tide_table_scatter(tide_table *t, const tide_columns *c, uint32_t row, uint
 //
 // Every chunk of every system that changes a component goes through these, so
 // what a lane the table alone has costs (written in place) is inline, where a
-// world of few rows spent a fifth of its tick calling them, and what a shared
+// world of few rows spent a quarter of its tick calling them, and what a shared
 // lane costs is a function of its own in each file (tide_table_lane_apart,
 // tide_table_lane_end_apart), not more code at every call.
 static inline bool tide_table_lanes_shared(const tide_table *t, const tide_columns *c, const uint32_t chunk, const uint32_t first,
