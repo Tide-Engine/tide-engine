@@ -106,7 +106,14 @@ Unity object field. At bake tidec maps each GUID to its file through `.meta`:
 
 - When Tide spawns `Enemy`, Unity instantiates `Enemy.prefab` and binds child
   entities to child GameObjects by path. The editor finds prefabs through
-  AssetDatabase; a build step includes them in players without committed files.
+  AssetDatabase.
+- Players include everything Tide can reach because it is referenced, never by
+  name lookup: authored references are real Unity object references (scenes and
+  prefabs keep them), and a scene build processor (`IProcessSceneWithReport`)
+  adds a registry object to the built copy of the first scene referencing every
+  Tide prefab, scene and `.tide` shader sub-asset. Unity's stripping then keeps
+  their assets, shaders and engine modules, with no committed file and no
+  "always included" lists.
 - Loading a Tide scene loads its Unity scene; its `TideEntity` objects bind to
   the entities Tide spawns for it.
 - Views see predicted state blended between ticks (the existing `previous` and
@@ -166,16 +173,20 @@ pages and a plain Tide page in one relay room, 30 s:
 - Unity and Tide both ran about 62 frames a second in each page.
 - The per-frame copy (1 KB here) cost about 2 µs. A sumo-sized measurement is
   still to do.
-- Each player needs its own window in headless runs: background tabs count as
-  hidden, where Unity falls back to one frame a second and `tide.js` to its
-  tick-rate worker heartbeat.
-- Unity strips the Standard shader and primitives' colliders from builds with
-  nothing referencing them: spike visuals use a saved unlit material prefab.
+- A hidden page is fine: Unity's frames throttle to one a second, while
+  `tide.js` keeps the match going on its tick-rate worker heartbeat (measured:
+  Tide at exactly 30 frames a second, the tick rate, in background tabs). Only
+  measuring view frame rates needs a window per player in headless runs.
+- The spike made its sphere and material in code, which Unity's build stripping
+  can't see (the Standard shader, a primitive's collider class). The design
+  avoids this by reference (Runtime binding), not by workarounds.
 
 Still open for phase 0: a native Tide player in the same room (headless native
 runs fake their clock, so it needs a windowed or real-clock run), mobile
 browsers, the sumo-sized copy, and frames driven by Unity rather than two
-animation-frame loops (Tide's frame can trail Unity's by one).
+animation-frame loops (Tide's frame can trail Unity's by one). Unity drives
+Tide's frame only while the page is visible; hidden, `tide.js`'s heartbeat
+keeps driving it, so a throttled Unity never slows the match.
 
 ## Tide drawing in Unity
 
