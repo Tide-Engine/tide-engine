@@ -1007,6 +1007,134 @@ char *packages_folder(const package_line *line, const char *base)
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Games made in Unity
+
+static bool same_package(const package_line *a, const char *a_base, const package_line *b, const char *b_base);
+
+bool packages_unity_assets(const char *folder)
+{
+    char *dir = normalize_folder(folder);
+    const size_t n = strlen(dir);
+    bool is = n >= 7 && strcmp(dir + n - 7, "Assets/") == 0 && (n == 7 || dir[n - 8] == '/');
+    if (is) {
+        char *version = format("%.*sProjectSettings/ProjectVersion.txt", (int)(n - 7), dir);
+        is = file_exists(version);
+        free(version);
+    }
+    free(dir);
+    return is;
+}
+
+char *packages_unity_game(const char *folder)
+{
+    char *dir = normalize_folder(folder);
+    while (is_absolute(dir)) {
+        if (packages_unity_assets(dir)) return dir;
+        char *file = format("%s" PACKAGES_FILE, dir);
+        const bool own = file_exists(file);
+        free(file);
+        if (own) break;
+        size_t up = strlen(dir) - 1; // From its last '/' back over its last part
+        while (up > 0 && dir[up - 1] != '/') up--;
+        if (up == 0) break; // The root: nothing above
+        dir[up] = '\0';
+    }
+    free(dir);
+    return NULL;
+}
+
+bool packages_unity_left_out(const char *relative)
+{
+    const char *part = relative;
+    for (const char *p = relative;; p++) {
+        if (*p != '/' && *p != '\\' && *p) continue;
+        if (!*p) return false; // The file's own name
+        if (p > part && (part[0] == '.' || p[-1] == '~')) return true;
+        part = p + 1;
+    }
+}
+
+// Adds a line to `game` for each folder in `dir` (ending in '/', in the Assets
+// folder `game` is) whose tide.packages says `package Name`, but those it
+// lists already, and the folders in it; a folder with a tide.packages of a
+// game is an error, as the game is all of Assets.
+static bool add_unity_packages(packages_file *game, const char *dir, const packages_report_fn report, void *user)
+{
+    char **subs = NULL;
+    int count = 0;
+#ifdef _WIN32
+    char *pattern = format("%s*", dir);
+    WIN32_FIND_DATAA entry;
+    const HANDLE search = FindFirstFileA(pattern, &entry);
+    free(pattern);
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                continue;
+            subs = realloc(subs, sizeof(char *) * (size_t)(count + 1));
+            if (!subs) abort();
+            subs[count++] = dup(entry.cFileName);
+        } while (FindNextFileA(search, &entry));
+        FindClose(search);
+    }
+#else
+    DIR *listing = opendir(dir);
+    for (const struct dirent *entry; listing && (entry = readdir(listing));) {
+        char *path = format("%s%s", dir, entry->d_name);
+        struct stat info;
+        if (lstat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
+            subs = realloc(subs, sizeof(char *) * (size_t)(count + 1));
+            if (!subs) abort();
+            subs[count++] = dup(entry->d_name);
+        }
+        free(path);
+    }
+    if (listing) closedir(listing);
+#endif
+    if (count > 1) qsort(subs, (size_t)count, sizeof(char *), name_order);
+    bool ok = true;
+    for (int i = 0; i < count; i++) {
+        const char *name = subs[i];
+        const size_t n = strlen(name);
+        if (name[0] == '.' || name[n - 1] == '~') continue; // Hidden, or one Unity leaves out
+        char *sub = format("%s%s/", dir, name);
+        char *file = format("%s" PACKAGES_FILE, sub);
+        if (!file_exists(file)) {
+            ok = add_unity_packages(game, sub, report, user) && ok;
+        } else {
+            packages_file own;
+            packages_read(sub, &own, NULL, NULL);
+            if (!own.name) {
+                report_at(report, user, file, 0,
+                          "move it to the Assets folder, or start it with `package Name` to make this folder a package",
+                          "in a Unity project the game is the whole of Assets, so this folder can't be a game of its own");
+                ok = false;
+            } else {
+                char *source = format("./%.*s", (int)(strlen(sub) - strlen(game->folder) - 1), sub + strlen(game->folder));
+                const package_line line = {0, source, NULL, NULL, true, false};
+                bool listed = false;
+                for (int k = 0; k < game->count && !listed; k++) {
+                    listed = same_package(&line, game->folder, &game->lines[k], game->folder);
+                }
+                if (listed) {
+                    free(source);
+                } else {
+                    game->lines = realloc(game->lines, sizeof(package_line) * (size_t)(game->count + 1));
+                    if (!game->lines) abort();
+                    game->lines[game->count++] = line;
+                }
+            }
+            packages_free_file(&own);
+        }
+        free(file);
+        free(sub);
+    }
+    for (int i = 0; i < count; i++) free(subs[i]);
+    free(subs);
+    return ok;
+}
+
 // The same package, as two lines name it: the same folder, or the same
 // source, which for one that comes with tide is its name. `a_base` and
 // `b_base` are where each line's folder is from.
@@ -1087,6 +1215,7 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
 {
     memset(out, 0, sizeof *out);
     bool ok = packages_read(folder, &out->file, report, user);
+    if (packages_unity_assets(out->file.folder)) ok = add_unity_packages(&out->file, out->file.folder, report, user) && ok;
     const packages_file *game = &out->file;
     if (game->tide_line && !tide_version_at_least(game->tide[0], game->tide[1], game->tide[2])) {
         report_at(report, user, game->path, game->tide_line, "run `tide upgrade`",

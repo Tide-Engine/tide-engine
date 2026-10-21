@@ -287,9 +287,10 @@ as a git URL package with no hard-coded paths. Built:
   `Game/Tide.Generator.dll`, labelled RoslynAnalyzer in its meta) fills with a
   struct for every schema type. The generator reads
   `Library/Tide/schema.json` from the folder Unity compiles in: Unity forwards
-  `.additionalfile`s only from `Assets`. The game folder defaults to
-  `Assets/Tide`, as tide compiles every `.c` in a game's folder. Every package
-  file has its `.meta`, which a git package can't make.
+  `.additionalfile`s only from `Assets`. The game folder defaulted to
+  `Assets/Tide`, as tide compiles every `.c` in a game's folder; since
+  2026-10-21 the game is all of Assets (The game is Assets, below). Every
+  package file has its `.meta`, which a git package can't make.
 - **`unity/Sample`**: Bounce (balls in a box, WASD/stick, Space), its scene and
   ball prefab (`Assets/Editor/SampleSetup.cs` makes them), `BallTint` reading
   the generated `Tide.Game.Ball`, and a play mode test.
@@ -609,6 +610,70 @@ clips, stencil, textures, 3D meshes, shaded runs and blits. The sample's Hud
 view draws its text, which the play mode test finds in the packet. The HLSL
 target and ScriptedImporter for custom frags/verts, Tide's own font, and 3D
 meshes through Unity's renderer remain.
+
+### The game is Assets (2026-10-21)
+
+**Owner:** "anything inside `Assets` is valid", rather than a game folder;
+scoping is like assembly definitions; and in a Unity project C is allowed only
+in packages ("so we can avoid a lot of these issues": Unity's plugins keep C in
+`Assets`). Built on tide's own packages rather than a new file:
+
+- **A Unity project's Assets folder is the game** (`packages_unity_assets` in
+  `compiler/lsp/packages.c`: a folder named `Assets` beside
+  `ProjectSettings/ProjectVersion.txt`; shared by tide and tidels). Every
+  `.tide` in it is the game's, but those in folders Unity leaves out (hidden,
+  or a name ending in `~`; `packages_unity_left_out`, applied in `tide_files`).
+  Its `tide.packages` is `Assets/tide.packages`. Project Settings > Tide lost
+  its Game folder (`TideSettings.GameFolderPath` is `Application.dataPath`), so
+  `tide unity` runs in Assets and messages' paths are from it
+  (`Tide/Playground.tide:1:7`).
+- **Packages are found like assembly definitions:** `resolve` (packages.c)
+  adds a local line, `./Folder`, for each folder under Assets whose
+  `tide.packages` says `package Name` (not inside another package's folder,
+  which is that package's business; not in folders Unity leaves out; skipped
+  where the game's file lists it already). The lines exist only in the
+  resolved game (`line` 0), never in the file, so `tide add`/`update` don't
+  write them; what such a package needs, the game's file lists, as for any
+  package (`tide add` adds it). A folder under Assets with a game's
+  `tide.packages` (no `package` line) is an error at it: "the game is the whole
+  of Assets ... move it to the Assets folder, or start it with `package
+  Name`". `stamp_folder` also stamps every `tide.packages` under Assets, so a
+  new package folder rebuilds.
+- **C only in packages:** `own_files_of` gives nothing for the Assets folder
+  itself, so the game's own C, headers and libraries (Unity's managed DLLs
+  among them) are never built or linked; a package's folder's are, as in any
+  game. `warn_unity_c` warns at each `.c`/`.cpp` beside the game's `.tide`
+  files (`<path>:1:1: warning: tide doesn't build this: in a Unity project, a
+  game's C goes in a package`, located so Unity's Console opens it); other C in
+  Assets is plugins' and says nothing.
+- **Commands from any folder of Assets:** `tide add`, `update`, `eject`,
+  `fetch` and `publish` work on the Assets folder when run in a folder of it
+  that isn't a package's own (`packages_unity_game`, `command_folder` in
+  `compiler/cli/main.c`). `run`, `build` and `unity` take the folder they're
+  given, as before.
+- **The editor knows the generated names:** `tide unity` writes its own
+  declarations (`UnityEngine.Source`, `LoadedScenes`, `OpenScene`, scenes) to
+  `<-o>/Unity.tide`, where messages already said they were, beside the
+  prefabs' texts in `<-o>/prefabs`. tidels takes a Unity project's Assets as a
+  game (`game_folder`, walking up from a file, stops there as at a
+  `tide.packages`), drops files in left-out folders, and adds the project's
+  `Library/Tide/prefabs/**` and `Library/Tide/Unity.tide` after the game's own
+  files, as tide compiles them (`add_unity_game` in `compiler/lsp/server.c`).
+  Until the editor has built once, those names are unknown in the IDE. A folder
+  opened below Assets (Assets/Tide as the root) is still a game of its own
+  there, as before.
+
+Tests: `cli_a_unity_projects_assets_is_a_game_whose_packages_are_found`
+(packages: Assets found, a folder of it gives Assets but a package's own
+doesn't, left-out folders, Physics and Tools found with no lines and Inner
+inside Physics not, a listed one once, a misplaced game file's error) and
+`lsp_unity_game_is_its_assets_with_what_tide_unity_wrote` (a game across two
+folders of Assets using `UnityEngine.Prefabs.Roller` from Library/Tide has no
+diagnostics, a broken `Samples~` file is left out, and without the prefab text
+Roller is unknown). Gaps: the walks over all of Assets (`.tide`, `.tprefab`,
+`tide.packages`, and the converter's own) run each time tide checks for
+changes, which a very large project may feel; older com.tide.unity packages
+still run `tide unity` in `Assets/Tide`, which builds as a plain folder game.
 
 ### Tooling as built (2026-10-20)
 

@@ -372,6 +372,39 @@ static void add_folder(const lsp_server *s, path_list *list, const char *folder,
     if (list->count > start) qsort(list->items + start, (size_t)(list->count - start), sizeof(char *), compare_paths);
 }
 
+// A game made in Unity (packages.h), whose own files have just been added
+// from its Assets folder at `assets`: not those in folders Unity leaves out,
+// and then what tide unity wrote of the project's prefabs and scenes and its
+// own declarations (UnityEngine.Prefabs, UnityEngine.Source...) in the
+// project's Library/Tide, as tide compiles them after the game's.
+static void add_unity_game(const lsp_server *s, path_list *list, const char *assets)
+{
+    const size_t n = strlen(assets);
+    int kept = 0;
+    for (int i = 0; i < list->count; i++) {
+        if (in_folder(list->items[i], assets) && packages_unity_left_out(list->items[i] + n)) {
+            free(list->items[i]);
+            free(list->packages[i]);
+            continue;
+        }
+        list->items[kept] = list->items[i];
+        list->packages[kept++] = list->packages[i];
+    }
+    list->count = kept;
+    jbuf made = {0};
+    jb_printf(&made, "%.*sLibrary/Tide/prefabs/", (int)(n - 7), assets); // Beside Assets/
+    add_folder(s, list, made.data, NULL, false);
+    jb_free(&made);
+    jbuf declared = {0};
+    jb_printf(&declared, "%.*sLibrary/Tide/Unity.tide", (int)(n - 7), assets);
+    FILE *f = fopen(declared.data, "rb");
+    if (f) {
+        fclose(f);
+        add_path(list, declared.data);
+    }
+    jb_free(&declared);
+}
+
 // The files of the game in `folder`, as tide compiles them: each of its
 // packages' (packages.h), then its own. A package's folder is the package on
 // its own, with the packages it needs. Packages from git that aren't
@@ -385,6 +418,7 @@ static void add_game(const lsp_server *s, path_list *list, const char *folder)
         add_root_folder(list, g.items[i].folder);
     }
     add_folder(s, list, g.file.folder, g.file.name, true);
+    if (packages_unity_assets(g.file.folder)) add_unity_game(s, list, g.file.folder);
     free(list->game_folder);
     list->game_folder = copy_string(g.file.folder, strlen(g.file.folder));
     add_root_folder(list, g.file.folder);
@@ -522,7 +556,7 @@ static char *game_folder(const lsp_server *s, const char *path, const manifests 
     char *owner = NULL;
     for (char *dir = parent_folder(path); dir && !owner;) {
         const bool top = root && strlen(dir) <= strlen(root);
-        if (has_packages(dir)) {
+        if (has_packages(dir) || packages_unity_assets(dir)) { // A Unity project's Assets is a game without one
             owner = dir;
             break;
         }

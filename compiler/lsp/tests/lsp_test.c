@@ -6744,6 +6744,75 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
     lsp_free(&server);
 }
 
+// A Unity project open in the editor: its game is every .tide file in Assets
+// (not in a folder Unity leaves out), with what tide unity wrote in Library/Tide
+// of the project's prefabs and its own declarations (notes/unity.md).
+TIDE_TEST(lsp_unity_game_is_its_assets_with_what_tide_unity_wrote)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_unity_game");
+    make_folder("lsp_unity_game/ProjectSettings");
+    make_folder("lsp_unity_game/Assets");
+    make_folder("lsp_unity_game/Assets/Tide");
+    make_folder("lsp_unity_game/Assets/Rules");
+    make_folder("lsp_unity_game/Assets/Samples~");
+    make_folder("lsp_unity_game/Library");
+    make_folder("lsp_unity_game/Library/Tide");
+    make_folder("lsp_unity_game/Library/Tide/prefabs");
+    make_folder("lsp_unity_game/Library/Tide/prefabs/Assets");
+    write_file("lsp_unity_game/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
+    static const char game[] = "using UnityEngine.Prefabs;\n"
+                               "scene Main { }\n"
+                               "event(Spawned) Begin(with Main) { Spawn(Roller); }\n"
+                               "system Go(mut Speed speed) { speed.value += 1; }\n";
+    write_file("lsp_unity_game/Assets/Tide/game.tide", game);
+    write_file("lsp_unity_game/Assets/Rules/rules.tide", "component Speed { float value; }\n");
+    write_file("lsp_unity_game/Assets/Samples~/broken.tide", "this isn't Tide\n"); // Unity leaves it out, and so does tide
+    write_file("lsp_unity_game/Library/Tide/Unity.tide", "namespace UnityEngine;\ncomponent Source { int asset; int node; }\n");
+    write_file("lsp_unity_game/Library/Tide/prefabs/Assets/Roller.prefab.tprefab",
+               "namespace UnityEngine.Prefabs;\n\nprefab Roller\n{\n    UnityEngine.Source { asset = 0, node = 0 };\n"
+               "    Speed { value = 1 };\n}\n");
+    char root[700], uri[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_unity_game", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_unity_game/Assets/Tide/game.tide", dir);
+    start_in(root);
+    open_uri(uri, game);
+    bool seen = false;
+    for (int i = 0; i < sent_count; i++) {
+        TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
+        TIDE_CHECK(!has(sent[i], "broken.tide"));
+        seen = seen || has(sent[i], uri);
+    }
+    TIDE_CHECK(seen);
+
+    // Before tide unity has written them, Roller is unknown
+    remove_game_file("lsp_unity_game/Library/Tide/prefabs/Assets/Roller.prefab.tprefab");
+    start_in(root);
+    open_uri(uri, game);
+    bool unknown = false;
+    for (int i = 0; i < sent_count; i++) unknown = unknown || (has(sent[i], uri) && has(sent[i], "Roller"));
+    TIDE_CHECK(unknown);
+
+    remove_game_file("lsp_unity_game/Library/Tide/Unity.tide");
+    remove_game_file("lsp_unity_game/Assets/Samples~/broken.tide");
+    remove_game_file("lsp_unity_game/Assets/Rules/rules.tide");
+    remove_game_file("lsp_unity_game/Assets/Tide/game.tide");
+    remove_game_file("lsp_unity_game/ProjectSettings/ProjectVersion.txt");
+    remove_folder("lsp_unity_game/Library/Tide/prefabs/Assets");
+    remove_folder("lsp_unity_game/Library/Tide/prefabs");
+    remove_folder("lsp_unity_game/Library/Tide");
+    remove_folder("lsp_unity_game/Library");
+    remove_folder("lsp_unity_game/Assets/Samples~");
+    remove_folder("lsp_unity_game/Assets/Rules");
+    remove_folder("lsp_unity_game/Assets/Tide");
+    remove_folder("lsp_unity_game/Assets");
+    remove_folder("lsp_unity_game/ProjectSettings");
+    remove_folder("lsp_unity_game");
+    clear_sent();
+    lsp_free(&server);
+}
+
 // A folder open in the editor is a game, as `tide run` builds it: every .tide
 // file in it and its subfolders, with no manifest.
 TIDE_TEST(lsp_open_folder_is_a_game)

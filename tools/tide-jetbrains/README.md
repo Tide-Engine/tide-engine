@@ -1,9 +1,13 @@
 # Tide plugin for JetBrains IDEs
 
-On JetBrains Marketplace as `io.github.blenminer.tide`.
-Highlighting from the TextMate grammar in `tools/tide-syntax`, and
-everything else from `tidels` through the LSP4IJ plugin, which JetBrains
-Marketplace installs with it. It runs in every JetBrains IDE from 2024.2 on.
+Public source: [Tide-Engine/tide-jetbrains](https://github.com/Tide-Engine/tide-jetbrains).
+The plugin ID is `io.github.blenminer.tide`. The initial JetBrains Marketplace
+listing still requires a manual upload; until it is available, build the ZIP
+with the instructions below and use Settings > Plugins > Install Plugin from Disk.
+
+Highlighting comes from the bundled TextMate grammar, and
+everything else from `tidels` through the required LSP4IJ plugin, available
+from JetBrains Marketplace. It runs in every JetBrains IDE from 2024.2 on.
 
 The plugin runs, in this order: the `tidels` chosen under Settings >
 Languages & Frameworks > **Tide**; the project's own `build/tools/tidels` (in
@@ -57,6 +61,10 @@ After a server update, restart it (Language Servers tool window) to see changes.
 
 It needs a JDK 21 or later to build; Gradle downloads the JDK 21 it compiles
 with, and the IntelliJ Platform it compiles against, the first time.
+Clone this repository and run the commands from its root (`gradlew.bat` on
+Windows). No engine source checkout is required for the ordinary build/tests.
+Install [Tide](https://tide-engine.dev/guide/install) separately for `tidels`,
+running games and the native prefab editor.
 
 ```sh
 ./gradlew buildPlugin                  # build/distributions/tide-<version>.zip
@@ -71,7 +79,7 @@ context-menu targets and game-folder selection in a headless test application.
 Plugin verification also rejects internal and override-only API calls, including
 tool-window registration, on the minimum IntelliJ platform and newest CLion.
 To exercise the real LSP4IJ client, a three-level child-process tree and JCEF,
-pass this checkout's built server, Node 24.16 or newer on Windows, and opt in
+pass a locally built Tide server, Node 24.16 or newer on Windows, and opt in
 to the muted embedded-browser test:
 
 ```sh
@@ -86,5 +94,20 @@ Add `-PtideTestEditor="<built tide-editor>"` to check actual native PNG renderin
 in the Swing prefab canvas and graceful backend shutdown. That check needs the
 native headless OpenGL context; it uses private temporary project files.
 
-The manually requested Build workflow builds and verifies it, and publishes it to Marketplace with
-each stable release (see `.github/workflows/build.yml`).
+## License and maintenance
+
+The Tide plugin source, icons, tests and bundled TextMate grammar are licensed
+under [MIT](LICENSE). Select **MIT** for the Marketplace listing and use
+https://github.com/Tide-Engine/tide-jetbrains/blob/main/LICENSE as its license URL.
+The Gradle wrapper retains its Apache-2.0 license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The MIT license is also included in the built plugin JAR.
+
+The engine repository keeps the canonical source under `tools/tide-jetbrains`.
+Issues and patches are welcome here; accepted changes are applied there before
+the next public export. Engine builds use the live `tools/tide-syntax` grammar;
+standalone clones use the `textmate` snapshot. Maintainers refresh that snapshot
+and the bundled host-process test fixture before exporting.
+
+The engine's manually requested Build workflow builds and verifies the plugin,
+and publishes it to Marketplace with stable releases after the first manual
+upload. This public source repository does not start a second release workflow.

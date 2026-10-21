@@ -1,5 +1,82 @@
 # The language server and the editors
 
+## Standalone JetBrains publication (2026-10-21)
+
+Published https://github.com/Tide-Engine/tide-jetbrains, public main at
+6862c56c1a37fe6ae80d77fef0f7f9a7bb4917c9, extracted from canonical engine
+commit 11a138a8 after it was merged into dev. GitHub recognizes MIT. The remote
+has only main; no engine tags or release workflow were published. All 23
+reachable historical trees match their original tools/tide-jetbrains subtree
+exactly. The audit checked all 40 historical paths and 88 unique blobs, with
+no credential patterns found; there are no engine/compiler/runtime files.
+The isolated export was repacked without its engine object alternates and
+passes git fsck --full --strict before publication.
+
+An anonymous fresh Git clone of the public URL has the same tree and passes
+buildPlugin with all nine enabled tests, including real process-tree cleanup,
+using JDK 21, Gradle 9.8.0 and Node 24.19.0. Only upstream product/dependency
+metadata was reused to allow offline validation. Plugin Verifier 1.411 reports
+Compatible against both IC-242.26775.15 (IntelliJ 2024.2.6) and
+CL-262.10968.117 (installed CLion 2026.2.3); upstream IDE layout warnings remain
+unrelated to Tide API usage. The ready-for-manual-upload licensed ZIP is at
+build/jetbrains-publication/tide-jetbrains-0.4.0.zip in this checkout. Its JAR
+contains the MIT text. No GitHub release asset was replaced, Marketplace upload
+performed, CI dispatched or engine license changed.
+
+The owner approved a public MIT Tide-Engine/tide-jetbrains repository using the
+Emacs/Vim model: tools/tide-jetbrains remains canonical and the engine retains
+its manually requested build, verification and stable Marketplace publication.
+The plugin's LICENSE covers its own source, icons, tests and bundled grammar;
+there is no engine-wide license change. Gradle's wrapper retains Apache-2.0,
+with its upstream license/notice preserved separately. Its JAR matches Gradle
+v9.8.0 byte for byte (SHA-256
+238e777fcddd7e34f9708186085def2abd6e08e658505b38718d79d74c21abd5).
+
+Standalone builds use the checked-in textmate snapshot. Engine builds continue
+using the live sibling tools/tide-syntax. The real process-host test now loads
+its bundled resource instead of requiring a sibling VS Code checkout. Before
+each public export, refresh textmate/package.json, language-configuration.json
+and syntaxes/tide.tmLanguage.json from tools/tide-syntax, and
+src/test/resources/host-process.cjs from tools/tide-vscode/test; commit those
+snapshots with the source changes. The initial snapshots are byte-identical.
+Public issues/patches are ported to the canonical engine copy before exporting,
+as for Emacs/Vim. No second release workflow is added to the public repository.
+
+Use git-filter-repo in a disposable clone after merging source into dev. The
+first export used this tool, so keep using it for stable public commit IDs:
+
+```sh
+git clone --no-local --no-tags --single-branch --branch dev <engine-repository> <new-export>
+git -C <new-export> filter-repo --subdirectory-filter tools/tide-jetbrains
+git -C <new-export> branch -m main
+git -C <new-export> ls-tree -r --name-only main
+```
+
+Inspect every reachable historical tree before first publication, not just the
+tip. Verify the rewritten tip equals the canonical subdirectory tree and that
+later exports fast-forward public main. Push only main explicitly, with
+push.followTags=false. Never run filter-repo in the engine checkout, publish an
+engine branch/history, or replace existing public history. Public publication
+is recorded separately below.
+
+The MIT text is packaged in META-INF/LICENSE inside the plugin JAR. The README
+provides the public license URL for Marketplace's MIT selection and accurately
+records the first-manual-upload requirement. This does not create a Marketplace
+listing, change its plugin ID, or rerun the failed stable workflow.
+
+Local validation: JDK 21/Gradle 9.8.0 buildPlugin passes in the engine directory
+and a standalone source copy without either sibling project. All nine enabled
+adapter/platform tests pass in both, including real process-tree termination
+with Node 24.19.0. ZIP inspection confirms the MIT text, exact shared grammar
+and absence of tests from the installed payload. Plugin Verifier 1.411 reports
+Compatible on IntelliJ 2024.2.6 (IC-242.26775.15), with the existing restart
+restriction for TextMate enable/disable. The standalone offline build uses
+cached upstream dependency/product metadata, not engine binaries. CLion
+verification and public-clone validation are recorded with publication below.
+No compiler/runtime/build-system code changed; full native/web engine suites
+are outside this tools/README-only scope. Optional real-server, native prefab
+and JCEF cases, other host OSs, CI and deployment were not run for this export.
+
 ## Empty scene shorthand (2026-10-20)
 
 The shared parser accepts semicolon-terminated scenes, including local and
@@ -25,6 +102,18 @@ Unity project's `Assets` also edits the project's prefabs and scenes holding
 com.tide.unity's TideEntity: `analysis_rename` appends `unity_renames`' edits
 (`compiler/lsp/analysis.c`) to its changes, as UTF-16 columns. Details, limits
 and the test: notes/unity.md, Tooling as built.
+
+## A Unity project's game (2026-10-21)
+
+A file under a Unity project's `Assets` (beside `ProjectSettings/
+ProjectVersion.txt`) belongs to the game that folder is, as if it had a
+`tide.packages` (`game_folder`), with its packages found as tide finds them;
+files in folders Unity leaves out are dropped, and tide unity's
+`Library/Tide/prefabs/**` and `Library/Tide/Unity.tide` come after the game's
+own, so `using UnityEngine.Prefabs;` and the project's prefabs resolve
+(`add_unity_game` in `server.c`). Test:
+`lsp_unity_game_is_its_assets_with_what_tide_unity_wrote`; details in
+notes/unity.md, The game is Assets.
 
 ## Double Position hover (2026-10-20)
 

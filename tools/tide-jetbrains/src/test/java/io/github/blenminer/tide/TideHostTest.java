@@ -98,8 +98,12 @@ public final class TideHostTest extends BasePlatformTestCase {
         final String node = System.getProperty("tide.test.node");
         assertNotNull(node);
         final Path folder = Files.createTempDirectory("tide-jb-host-");
-        // Same three-level fixture as VS Code, so both adapters stop equivalent work.
-        Files.copy(Path.of("../tide-vscode/test/host-process.cjs"), folder.resolve("run"));
+        // Bundled copy of the three-level VS Code fixture, so public clones can
+        // exercise the same real process boundary without the engine checkout.
+        try (final var fixture = getClass().getResourceAsStream("/host-process.cjs")) {
+            assertNotNull(fixture);
+            Files.copy(fixture, folder.resolve("run"));
+        }
         final var type = ConfigurationTypeUtil.findConfigurationType(TideRunConfigurationType.class);
         final var factory = type.getConfigurationFactories()[0];
         final var configuration = (TideRunConfiguration) factory.createTemplateConfiguration(getProject());

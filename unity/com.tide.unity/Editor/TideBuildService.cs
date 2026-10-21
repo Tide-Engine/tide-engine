@@ -50,7 +50,7 @@ namespace Tide.Editor
             var folder = settings.GameFolderPath;
             if (!Directory.Exists(folder))
             {
-                state = $"no game folder: {settings.gameFolder} (Project Settings > Tide)";
+                state = $"no Assets folder: {folder}";
                 return;
             }
             var tide = TideToolchain.Find(out var where);
