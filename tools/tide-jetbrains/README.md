@@ -1,9 +1,9 @@
 # Tide plugin for JetBrains IDEs
 
 Public source: [Tide-Engine/tide-jetbrains](https://github.com/Tide-Engine/tide-jetbrains).
-The plugin ID is `io.github.blenminer.tide`. The initial JetBrains Marketplace
-listing still requires a manual upload; until it is available, build the ZIP
-with the instructions below and use Settings > Plugins > Install Plugin from Disk.
+The plugin ID is `io.github.blenminer.tide`. Its initial Stable upload has been
+submitted to JetBrains Marketplace. You can also build the ZIP with the
+instructions below and use Settings > Plugins > Install Plugin from Disk.
 
 Highlighting comes from the bundled TextMate grammar, and
 everything else from `tidels` through the required LSP4IJ plugin, available
@@ -109,5 +109,13 @@ standalone clones use the `textmate` snapshot. Maintainers refresh that snapshot
 and the bundled host-process test fixture before exporting.
 
 The engine's manually requested Build workflow builds and verifies the plugin,
-and publishes it to Marketplace with stable releases after the first manual
-upload. This public source repository does not start a second release workflow.
+then publishes it to the same Tide Marketplace listing after publishing the
+engine release: `release` uses Stable (the `default` channel), and `dev` uses
+`nightly`. Both use the same plugin ID; neither publishes to the former PurrLang
+listing. This public source repository does not start a second release workflow.
+
+To opt into nightly plugin updates, add
+`https://plugins.jetbrains.com/plugins/nightly/list` under Settings > Plugins >
+Manage Plugin Repositories. Stable users do not need that repository. The plugin
+still runs your separately installed `tidels`; choosing its nightly channel does
+not switch the engine's update channel. See [JetBrains' channel documentation](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html#specifying-a-release-channel).

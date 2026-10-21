@@ -571,7 +571,7 @@ jobs:
     if: (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/release') && needs.version.outputs.published == 'true'
     runs-on: ubuntu-24.04
     outputs:
-      published: ${{ steps.publish.outputs.new_release_published }}
+      published: ${{ steps.publish.outputs.new_release_published || steps.nightly.outputs.published }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -597,6 +597,7 @@ jobs:
       # of its tags (which channel it's on, so a stable release still reads
       # the history rightly), and the release with what was built.
       - name: Publish (nightly)
+        id: nightly
         if: github.ref == 'refs/heads/dev'
         shell: bash
         env:
@@ -651,6 +652,7 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "$TAG" \
               --notes-file "$RUNNER_TEMP/tide-release-notes.md" "${assets[@]}"
           fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
       - name: Publish
         id: publish
         if: github.ref == 'refs/heads/release'
@@ -671,13 +673,12 @@ jobs:
     secrets:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-  # Stable releases also go to JetBrains Marketplace, once the repository has a
-  # JETBRAINS_MARKETPLACE_TOKEN secret. Nightlies don't: the plugin only runs
-  # the tidels that tide installed, whichever version that is.
+  # Both channels use the Tide listing: release goes to Stable (default), dev
+  # to the opt-in nightly channel, after the engine release is published.
   marketplace:
     name: JetBrains Marketplace
     needs: [version, release]
-    if: github.ref == 'refs/heads/release' && needs.release.outputs.published == 'true'
+    if: (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/release') && needs.release.outputs.published == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -691,10 +692,12 @@ jobs:
         working-directory: tools/tide-jetbrains
         env:
           JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          PLUGIN_VERSION: ${{ needs.version.outputs.version }}
+          PLUGIN_CHANNEL: ${{ github.ref == 'refs/heads/dev' && 'nightly' || 'default' }}
         run: |
           if [ -z "$JETBRAINS_MARKETPLACE_TOKEN" ]; then
             echo "No JETBRAINS_MARKETPLACE_TOKEN secret: not publishing to Marketplace."
             exit 0
           fi
           chmod +x gradlew
-          ./gradlew publishPlugin -PpluginVersion="${{ needs.version.outputs.version }}"
+          ./gradlew publishPlugin -PpluginVersion="$PLUGIN_VERSION" -PpluginChannel="$PLUGIN_CHANNEL"
