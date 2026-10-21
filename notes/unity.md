@@ -326,7 +326,10 @@ and `Main` was offered until 2026-10-21), draws each field by its schema type (n
 fields; anything else as its literal), shows an unset field with its declared
 default from the schema's `defaults` (a text field's default shows empty), editable
 like a set one (it used to be faded, which read as read-only, and showed zero),
-`×` resets one, and "As tide reads it" shows the raw lists. In a prefab
+and a right click on a set field resets it (Reset to Default). Each component's
+header is a bold foldout with a ⋮ menu (or a right click) holding Remove
+Component: the toolbar bar, the Remove and `×` buttons, and the raw "As tide
+reads it" lists went on 2026-10-21 (owner: simpler). In a prefab
 instance it writes only the fields the instance changes (`Inherited` merges the
 chain of sources), as tide merges. In Play it's grayed out: the match has its
 entities already, and an edit there would reach neither the match nor the

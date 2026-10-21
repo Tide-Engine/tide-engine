@@ -57,7 +57,8 @@ namespace Tide.Editor
     public sealed class TideEntityEditor : UnityEditor.Editor
     {
         static readonly Dictionary<string, bool> folded = new Dictionary<string, bool>();
-        bool raw;
+        static GUIStyle header;
+        string resetting; // "<component>/<field>" its menu put back to its default, which the next draw writes
 
         public override void OnInspectorGUI()
         {
@@ -83,7 +84,8 @@ namespace Tide.Editor
             {
                 for (var i = 0; i < components.arraySize; i++)
                 {
-                    if (!DrawComponent(entity, schema, components, references, i)) break; // Removed: the rest next time
+                    if (i > 0) EditorGUILayout.Space(2);
+                    DrawComponent(entity, schema, components, references, i);
                 }
                 EditorGUILayout.Space();
                 using (new EditorGUILayout.HorizontalScope())
@@ -91,16 +93,6 @@ namespace Tide.Editor
                     GUILayout.FlexibleSpace();
                     if (GUILayout.Button("Add Tide Component", GUILayout.Width(200))) AddMenu(schema, components);
                     GUILayout.FlexibleSpace();
-                }
-            }
-            raw = EditorGUILayout.Foldout(raw, "As tide reads it", true);
-            if (raw)
-            {
-                using (new EditorGUI.IndentLevelScope())
-                using (new EditorGUI.DisabledScope(playing))
-                {
-                    EditorGUILayout.PropertyField(components, true);
-                    EditorGUILayout.PropertyField(references, true);
                 }
             }
             serializedObject.ApplyModifiedProperties();
@@ -132,7 +124,7 @@ namespace Tide.Editor
             serializedObject.ApplyModifiedProperties();
         }
 
-        bool DrawComponent(TideEntity entity, TideSchema schema, SerializedProperty components, SerializedProperty references, int index)
+        void DrawComponent(TideEntity entity, TideSchema schema, SerializedProperty components, SerializedProperty references, int index)
         {
             var element = components.GetArrayElementAtIndex(index);
             var typeProperty = element.FindPropertyRelative("type");
@@ -141,22 +133,37 @@ namespace Tide.Editor
             var type = schema?.Type(schema.TypeIndex(typeName));
             var key = typeName + "@" + entity.GetHashCode(); // Its instance, as GetInstanceID was
             folded.TryGetValue(key, out var closed);
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+
+            // Its name, folding it, and a menu (⋮ or a right click) that removes it
+            header ??= new GUIStyle(EditorStyles.foldout) { fontStyle = FontStyle.Bold };
+            var line = EditorGUILayout.GetControlRect();
+            var options = new Rect(line.xMax - 16, line.y + 1, 16, line.height);
+            var e = Event.current;
+            if (GUI.Button(options, EditorGUIUtility.IconContent("_Menu"), EditorStyles.iconButton)
+                || (e.type == EventType.ContextClick && line.Contains(e.mousePosition)))
             {
-                closed = !EditorGUILayout.Foldout(!closed, string.IsNullOrEmpty(typeName) ? "(no type)" : typeName, true);
-                folded[key] = closed;
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Remove", EditorStyles.toolbarButton, GUILayout.Width(60)))
+                var menu = new GenericMenu();
+                menu.AddItem(new GUIContent("Remove Component"), false, () =>
                 {
-                    components.DeleteArrayElementAtIndex(index);
-                    return false;
-                }
+                    serializedObject.Update();
+                    var list = serializedObject.FindProperty("components");
+                    if (index < list.arraySize && list.GetArrayElementAtIndex(index).FindPropertyRelative("type").stringValue == typeName)
+                    {
+                        list.DeleteArrayElementAtIndex(index);
+                        serializedObject.ApplyModifiedProperties();
+                    }
+                });
+                menu.ShowAsContext();
+                if (e.type == EventType.ContextClick) e.Use();
             }
+            line.xMax -= 20;
+            closed = !EditorGUI.Foldout(line, !closed, string.IsNullOrEmpty(typeName) ? "(no type)" : typeName, true, header);
+            folded[key] = closed;
             if (type == null && schema != null)
             {
                 EditorGUILayout.HelpBox($"The game has no component {typeName}: it was renamed or removed. tide says so as it builds.", MessageType.Warning);
             }
-            if (closed) return true;
+            if (closed) return;
 
             // What tide reads: the prefab's values, with the instance's fields over them
             var instance = PrefabUtility.IsPartOfPrefabInstance(entity);
@@ -172,7 +179,7 @@ namespace Tide.Editor
                     EditorGUI.BeginChangeCheck();
                     var edited = EditorGUILayout.DelayedTextField("Values", values);
                     if (EditorGUI.EndChangeCheck()) valuesProperty.stringValue = edited;
-                    return true;
+                    return;
                 }
                 var defaults = type.DefaultBytes();
                 foreach (var field in type.fields)
@@ -180,13 +187,31 @@ namespace Tide.Editor
                     var literal = TideLiterals.Get(values, field.name);
                     var instanceSets = patching && TideLiterals.Get(own, field.name) != null;
                     var changed = DrawField(schema, field, literal, Default(schema, field, defaults), references, instanceSets, out var next);
+                    // A right click on a field something sets puts it back to its default
+                    var path = typeName + "/" + field.name;
+                    if (literal != null && e.type == EventType.ContextClick && GUILayoutUtility.GetLastRect().Contains(e.mousePosition))
+                    {
+                        var menu = new GenericMenu();
+                        menu.AddItem(new GUIContent("Reset to Default"), false, () =>
+                        {
+                            resetting = path;
+                            Repaint();
+                        });
+                        menu.ShowAsContext();
+                        e.Use();
+                    }
+                    if (resetting == path)
+                    {
+                        resetting = null;
+                        changed = literal != null;
+                        next = null;
+                    }
                     if (!changed) continue;
                     // A prefab instance keeps the fields it sets; anything else keeps them all
                     var basis = instance ? (patching ? own : "") : own;
                     valuesProperty.stringValue = TideLiterals.Set(basis, field.name, next);
                 }
             }
-            return true;
         }
 
         // The values the prefab a TideEntity is an instance of gives its `index`th component, as tide merges them.
@@ -242,8 +267,8 @@ namespace Tide.Editor
         {
             next = literal;
             var set = literal != null;
-            var label = new GUIContent(ObjectNames.NicifyVariableName(field.name), field.type + (set ? "" : " (its default)"));
-            using var row = new EditorGUILayout.HorizontalScope();
+            var label = new GUIContent(ObjectNames.NicifyVariableName(field.name),
+                                       field.type + (set ? " (right click: Reset to Default)" : " (its default)"));
             var bold = instanceSets ? EditorStyles.boldFont : null;
             var before = EditorStyles.label.font;
             if (bold != null) EditorStyles.label.font = bold;
@@ -251,12 +276,6 @@ namespace Tide.Editor
             next = FieldWidget(schema, field, label, set ? literal : shown, references);
             var changed = EditorGUI.EndChangeCheck();
             if (bold != null) EditorStyles.label.font = before;
-            if (set && GUILayout.Button(new GUIContent("×", "Back to its default"), EditorStyles.miniButton, GUILayout.Width(20)))
-            {
-                next = null;
-                return true;
-            }
-            if (!set) GUILayout.Space(24);
             return changed;
         }
 
