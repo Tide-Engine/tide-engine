@@ -4,6 +4,7 @@
 #include "tide/gui.h"
 #include "tide/text.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 // The GUI runtime driven by made-up devices, on a 1920 x 1080 window. The
 // mouse is given from the top left, y down, like the GUI.
@@ -39,6 +40,7 @@ static void end(void)
 {
     tide_draw_reset(&draw);
     tide_gui_end(&gui, &draw);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the tests read them
     devices.keyboard.text.count = 0; // Typed characters last one frame
 }
 
@@ -113,6 +115,7 @@ TIDE_TEST(gui_isnt_drawn_with_what_the_views_set)
     tide_draw_rect(&draw, tide_f2(5.0f, 5.0f), tide_f2(2.0f, 2.0f), TIDE_COLOR_WHITE); // A view's, through all of them
     const uint32_t block = tide_draw_push_tint(&draw, TIDE_COLOR_BLUE);                // ...and one whose block is open
     tide_gui_end(&gui, &draw);
+    tide_test_flatten(&draw);
     TIDE_REQUIRE(draw.count == 6);
     TIDE_CHECK(draw.commands[0].kind == TIDE_DRAW_CAMERA && draw.commands[1].kind == TIDE_DRAW_CLIP);
     TIDE_CHECK(draw.commands[2].kind == TIDE_DRAW_SHAPE && draw.commands[2].blend == TIDE_BLEND_ADD); // Turned: a smooth one
@@ -1145,7 +1148,8 @@ TIDE_TEST(gui_disabled_widgets_dont_work)
     const tide_draw_command *play = &draw.commands[1];
     const tide_draw_command *quit = &draw.commands[3];
     const tide_draw_command *back = &draw.commands[5];
-    TIDE_CHECK(quit->color.a == play->color.a * 0.5f && back->color.a == play->color.a);
+    TIDE_CHECK(tide_test_color_is(quit->color, quit->color.r, quit->color.g, quit->color.b, play->color.a * 0.5f));
+    TIDE_CHECK(back->color.a == play->color.a);
     TIDE_CHECK(draw.commands[4].kind == TIDE_DRAW_TEXT && draw.commands[4].color.a == 0.5f);
     TIDE_CHECK(back->a.y == quit->a.y + 28.0f + 5.0f);
 
@@ -2157,7 +2161,7 @@ TIDE_TEST(gui_controls_made_in_a_loop_are_told_apart_by_their_turn)
 
 static bool same_color(const tide_color a, const tide_color b)
 {
-    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    return tide_test_color_is(a, b.r, b.g, b.b, b.a);
 }
 
 // A frame with one of each kind of part: an area with a button, a toggle that's

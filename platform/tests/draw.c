@@ -1829,8 +1829,88 @@ static void same_shapes(const int way)
     if (way == SAME_BEFORE) tide_draw_arc(&list, tide_f2(200, 300), 12, 0, 1.5f, 4, white);
 }
 
+// Red, green, blue and white, two by two, as `four` starts (which the mesh checks change)
+static const uint8_t upright[2 * 2 * 4] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+static const tide_texture upright_texture = {upright, 2, 2, 1};
+
+// A sprite of `upright`, the texture read at the nearest pixel, or the mesh of its corners as tide_draw_sprite makes
+// them: from its top left round, the top up the world's y under a camera (`up`) and down the screen's on it.
+static void sprite_or_corners(const bool corners, const bool up, const tide_float2 center, const tide_float2 size,
+                              const tide_rect part, const float rotation, const tide_color color)
+{
+    const tide_texture_ref ref = tide_texture_filtered((tide_texture_ref){.image = upright_texture}, TIDE_FILTER_POINT);
+    if (!corners) {
+        if (rotation != 0.0f) tide_draw_sprite_part_rotated(&list, ref, center, size, part, rotation, color);
+        else tide_draw_sprite_part(&list, ref, center, size, part, color);
+        return;
+    }
+    static const uint32_t triangles[6] = {0, 1, 2, 0, 2, 3};
+    const float half = size.x * 0.5f, top = up ? size.y * 0.5f : size.y * -0.5f;
+    const tide_float2 turn = rotation == 0.0f ? tide_f2(1.0f, 0.0f) : tide_f2(tide_cos_f(rotation), tide_sin_f(rotation));
+    const tide_float2 offsets[4] = {{-half, top}, {half, top}, {half, -top}, {-half, -top}};
+    const float u0 = part.x, v0 = part.y, u1 = part.x + part.width, v1 = part.y + part.height;
+    const tide_float2 uvs[4] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
+    tide_vertex v[4];
+    for (int i = 0; i < 4; i++) {
+        const tide_float2 o = offsets[i];
+        v[i] = (tide_vertex){{center.x + (o.x * turn.x - o.y * turn.y), center.y + (o.x * turn.y + o.y * turn.x)}, uvs[i], color};
+    }
+    tide_draw_mesh(&list, v, 4, triangles, 6, &upright_texture, TIDE_FILTER_POINT);
+}
+
+// Sprites at places that aren't whole: plain, mirrored each way, a part of the texture, turned, and tinted. Under a
+// camera they're placed so that they land where they do on the screen: its y the screen's, the other way round.
+static void sprites(const bool corners, const bool up)
+{
+    const tide_rect whole = {0.0f, 0.0f, 1.0f, 1.0f};
+    const float base = up ? screen.y : 0.0f, down = up ? -1.0f : 1.0f; // A pixel row's y
+    sprite_or_corners(corners, up, tide_f2(20.25f, base + down * 20.5f), tide_f2(30, 24), whole, 0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(60.5f, base + down * 20.25f), tide_f2(-30, 24), whole, 0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(100.0f, base + down * 20.0f), tide_f2(24, -30), whole, 0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(20.5f, base + down * 70.75f), tide_f2(24, 30), (tide_rect){0.5f, 0.0f, 0.5f, 1.0f},
+                      0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(60.25f, base + down * 70.5f), tide_f2(30, 20), whole, 0.6f, white);
+    sprite_or_corners(corners, up, tide_f2(100.5f, base + down * 70.0f), tide_f2(20, 20), whole, 0.0f,
+                      (tide_color){0.5f, 1.0f, 0.5f, 0.8f});
+}
+
+// Sprites are the pixels of the meshes of their corners, with the texture's first pixel at their top left, in the
+// screen's pixels and under a camera alike.
+static void sprites_drawn_as_their_corners(void)
+{
+    for (int y = 0; y < SAME_SIDE; y++) {
+        for (int x = 0; x < SAME_SIDE; x++) same_points[y * SAME_SIDE + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    for (int up = 0; up < 2; up++) {
+        for (int k = 0; k < 2; k++) {
+            tide_draw_reset(&list);
+            tide_draw_clear(&list, background);
+            if (up) tide_draw_set_camera(&list, tide_f2(screen.x * 0.5f, screen.y * 0.5f), screen.y * 0.5f);
+            else tide_draw_set_screen(&list);
+            sprites(k == 1, up);
+            tide_platform_read_pixels_as(&list, (int)screen.x, (int)screen.y, 1.0f, same_points, SAME_SIDE * SAME_SIDE,
+                                         same_pixels[k]);
+        }
+        int differ = 0;
+        for (int i = 0; i < SAME_SIDE * SAME_SIDE; i++) differ += same_pixels[0][i] != same_pixels[1][i];
+        char message[160];
+        snprintf(message, sizeof message, "sprites %s are the pixels of the meshes of their corners (%d differ)",
+                 up ? "under a camera" : "in the screen's pixels", differ);
+        expect(differ == 0, message);
+        // The first, from (5.25, 8.5) to (35.25, 32.5) on the screen: red at its top left, green at its top right,
+        // blue at its bottom left; the second, mirrored, green at its top left
+        const uint32_t *got = same_pixels[0];
+        expect(near(got[12 * SAME_SIDE + 10], rgba(red), 8) && near(got[12 * SAME_SIDE + 30], rgba(green), 8)
+                   && near(got[28 * SAME_SIDE + 10], rgba(blue), 8),
+               up ? "a sprite under a camera has the texture's first pixel at its top left"
+                  : "a sprite in the screen's pixels has the texture's first pixel at its top left");
+        expect(near(got[12 * SAME_SIDE + 50], rgba(green), 8), "a sprite of a negative width is mirrored");
+    }
+}
+
 static void runs_drawn_alike(void)
 {
+    sprites_drawn_as_their_corners();
     same_scene(same_quads, 1.0f, "quads");
     same_scene(same_quads, 2.0f, "quads");
     same_scene(same_text, 1.0f, "glyphs as quads");
@@ -3600,13 +3680,14 @@ static const char *bench_names[] = {"nothing", "65536 rects", "65536 circles", "
                                    "a list of 65536 lights a shader reads whole, 16 written a frame",
                                    "a list of 65536 lights a shader reads 7 of 25 numbers of, 16 written a frame",
                                    "a list of 1024 lights made again each frame",
-                                   "a 3D mesh of 16384 corners, every one moved each frame"};
+                                   "a 3D mesh of 16384 corners, every one moved each frame",
+                                   "65536 sprites"};
 enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 
 // 0: nothing (what reading back costs), 1: rects, 2: circles, 3: rects with text between, 4: quads of one mesh,
 // 5: instances of a 3D cube, 6: smooth shapes, 7: rects in one run with a few smooth shapes, which all go
 // through the smooth shapes' pipeline then, 8 to 12: what a game keeps and the GPU reads, of which a frame
-// changes a little or all (bench_kept)
+// changes a little or all (bench_kept), 13: the quads of 4 drawn as sprites (tide_draw_sprite), the same frame
 static int bench_kind;
 static bool bench_one; // --only: that workload alone
 static int bench_frame;
@@ -4015,7 +4096,7 @@ static void bench_kept(void)
 static void bench_scene(void)
 {
     tide_draw_reset(&list);
-    if (bench_kind >= 8) {
+    if (bench_kind >= 8 && bench_kind <= 12) {
         bench_kept();
         return;
     }
@@ -4027,9 +4108,14 @@ static void bench_scene(void)
         }
         return;
     }
+    const tide_texture_ref sprite = tide_texture_filtered((tide_texture_ref){.image = four_texture}, TIDE_FILTER_POINT);
     for (uint32_t i = 0; bench_kind > 0 && i < WIDTH * 256u; i++) {
         const tide_float2 p = at((float)(i % WIDTH) + 0.5f, (float)(i / WIDTH) + 0.5f);
         const tide_color c = {(float)(i % WIDTH) / WIDTH, (float)(i / WIDTH) / 256.0f, 0.5f, 1.0f};
+        if (bench_kind == 13) {
+            tide_draw_sprite(&list, sprite, p, tide_f2(1, 1), c);
+            continue;
+        }
         if (bench_kind == 4) {
             quad(tide_f2(p.x - 0.5f, p.y + 0.5f), tide_f2(p.x + 0.5f, p.y - 0.5f), c, c, &four_texture, TIDE_FILTER_POINT, true);
             continue;

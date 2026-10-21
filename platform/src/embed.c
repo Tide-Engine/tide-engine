@@ -265,8 +265,9 @@ static size_t draw_part(const size_t at, const uint64_t count, const size_t each
     return from;
 }
 
-// The list as the packet has it: its quads (TIDE_DRAW_QUADS) as the meshes they were, a TIDE_DRAW_MESH command over
-// their corners and triangles after the list's own, to the bit (tide_draw_quad_corner). A list with none is as it is.
+// The list as the packet has it: a command for each plain shape (tide_draw_expand, its color its bytes over 255),
+// and its quads (TIDE_DRAW_QUADS) as the meshes they were, a TIDE_DRAW_MESH command over their corners and triangles
+// after the list's own, to the bit (tide_draw_quad_corner). A list with neither is as it is.
 static tide_draw_command *unquad_commands;
 static tide_vertex *unquad_vertices;
 static uint32_t *unquad_indices;
@@ -285,17 +286,18 @@ static bool unquad_room(void **items, size_t *room, const size_t count, const si
 static bool unquad(const tide_draw_list *d, tide_draw_list *out)
 {
     *out = *d;
-    if (!d->quad_count) return true;
+    if (!d->quad_count && !d->plain_count) return true;
+    const uint32_t commands = tide_draw_expand(d, NULL, 0);
     const size_t vertices = (size_t)d->vertex_count + 4u * (size_t)d->quad_count;
     const size_t indices = (size_t)d->index_count + 6u * (size_t)d->quad_count;
-    if (!unquad_room((void **)&unquad_commands, &unquad_command_room, d->count, sizeof(tide_draw_command))
+    if (!unquad_room((void **)&unquad_commands, &unquad_command_room, commands, sizeof(tide_draw_command))
         || !unquad_room((void **)&unquad_vertices, &unquad_vertex_room, vertices, sizeof(tide_vertex))
         || !unquad_room((void **)&unquad_indices, &unquad_index_room, indices, sizeof(uint32_t))) return false;
-    if (d->count) memcpy(unquad_commands, d->commands, d->count * sizeof(tide_draw_command));
+    tide_draw_expand(d, unquad_commands, commands);
     if (d->vertex_count) memcpy(unquad_vertices, d->vertices, d->vertex_count * sizeof(tide_vertex));
     if (d->index_count) memcpy(unquad_indices, d->indices, d->index_count * sizeof(uint32_t));
     uint32_t vertex_count = d->vertex_count, index_count = d->index_count;
-    for (uint32_t i = 0; i < d->count; i++) {
+    for (uint32_t i = 0; i < commands; i++) {
         tide_draw_command *c = &unquad_commands[i];
         if (c->kind != TIDE_DRAW_QUADS) continue;
         const uint32_t from = c->mesh.first < d->quad_count ? c->mesh.first : d->quad_count;
@@ -314,6 +316,9 @@ static bool unquad(const tide_draw_list *d, tide_draw_list *out)
         }
     }
     out->commands = unquad_commands;
+    out->count = commands;
+    out->plains = NULL;
+    out->plain_count = 0;
     out->vertices = unquad_vertices;
     out->vertex_count = vertex_count;
     out->indices = unquad_indices;

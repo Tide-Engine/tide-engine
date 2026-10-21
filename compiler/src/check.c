@@ -2290,6 +2290,15 @@ static bool refuse_raw_grid(const expr *e)
     return false;
 }
 
+// A sprite's texture, checked: a grid of numbers is none, as for a mesh (check_mesh_draw). And the Filter and
+// Wrap it takes after the rest, which a call is resolved with.
+static bool check_sprite_args(const checker *c, const expr *e)
+{
+    if (!str_eq_c(e->name, "Sprite")) return true;
+    builtins_use_sampling(c->prog->filter, c->prog->wrap);
+    return e->args.count == 0 || refuse_raw_grid(e->args.items[0]);
+}
+
 // Every [Raw] Texture asset's name that wasn't a Sample's object.
 static void check_raw_uses(const checker *c)
 {
@@ -7125,7 +7134,7 @@ static type check_method(checker *c, expr *e)
         if (plays && str_eq_c(e->name, "SetEffect")) return check_audio_bus_effect(c, e);
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
         if (str_eq_c(owner, "Frame") && refuse_frame_clock(c, e->at, e->name, true)) return T_ERR; // Frame.Now()
-        if (draws && old_setting(e)) return T_ERR;
+        if (draws && (old_setting(e) || !check_sprite_args(c, e))) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
         if (draws && !check_setting(c, e)) return T_ERR;
@@ -7332,7 +7341,7 @@ static type check_method(checker *c, expr *e)
             if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
         }
         if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
-        if (old_setting(e)) return T_ERR;
+        if (old_setting(e) || !check_sprite_args(c, e)) return T_ERR;
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
         if (!check_setting(c, e)) return T_ERR;

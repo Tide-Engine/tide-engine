@@ -8,6 +8,7 @@
 #include "tide/gui.h"
 #include "tide/stats.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 #define MS UINT64_C(1000000) // Nanoseconds
 
@@ -68,6 +69,7 @@ static void draw_only(void)
 {
     tide_draw_reset(&list);
     tide_stats_draw(&stats, &values, &list, screen, font);
+    tide_test_flatten(&list);
 }
 
 // One made-up tick of the same durations, half a second into the frame. Prime
@@ -121,6 +123,7 @@ TIDE_TEST(stats_closed_are_one_line_in_the_corner)
     tide_draw_set_clip(&list, (tide_rect){0, 0, 10, 10}); // A list's own, left on, with a tint
     tide_draw_set_tint(&list, TIDE_COLOR_RED);
     tide_stats_draw(&stats, &values, &list, screen, font);
+    tide_test_flatten(&list);
     TIDE_REQUIRE(stats.line_count == 1 && stats.shown);
     TIDE_CHECK(line_is(0, "60 fps", "")); // The frame rate, and nothing a host would have to measure
     TIDE_CHECK(!list.place.tinted && text_command("60 fps") && !text_command("cpu"));

@@ -4,6 +4,7 @@
 
 #include "rewind_network.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 // The same harness is compiled against each package's generated game. Nothing
 // fabricates a ViewTime: actual Tide views draw, the host marks presentation,
@@ -88,9 +89,10 @@ static void present(player *p)
     // The oracle is the draw command's actual position, not a reconstruction
     // from velocity or from the latest confirmed/predicted world.
     int rectangles = 0;
-    for (uint32_t i = 0; i < p->draw.count; i++) {
-        if (p->draw.commands[i].kind != TIDE_DRAW_RECT) continue;
-        TIDE_CHECK(p->draw.commands[i].a.x == p->shown_x);
+    const tide_draw_list drawn = tide_test_flat(&p->draw); // Its plain shapes a command each
+    for (uint32_t i = 0; i < drawn.count; i++) {
+        if (drawn.commands[i].kind != TIDE_DRAW_RECT) continue;
+        TIDE_CHECK(drawn.commands[i].a.x == p->shown_x);
         rectangles++;
     }
     TIDE_CHECK(rectangles == 1);

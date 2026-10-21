@@ -369,6 +369,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->vertex_count = 0;
     d->index_count = 0;
     d->quad_count = 0;
+    d->plain_count = d->plain_open = 0;
     d->matrix_count = 0;
     d->run_count = 0;
     d->instance_used = 0;
@@ -438,6 +439,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->vertices);
     free(d->indices);
     free(d->quads);
+    free(d->plains);
     free(d->textures);
     free(d->texture_index);
     free(d->targets);
@@ -565,12 +567,23 @@ static tide_draw_place *place_of(tide_draw_list *d, const uint32_t target)
     return target == d->target ? &d->place : target ? &d->targets[target - 1u].place : &d->window;
 }
 
+// The open run of plain shapes (tide_draw_list.plain_open), closed: its count
+// written, and nothing more recorded into it as it is.
+static __attribute__((noinline)) void close_plain(tide_draw_list *d)
+{
+    tide_draw_command *c = &d->commands[d->plain_open - 1u];
+    c->plain.count = d->plain_count - c->plain.first;
+    d->plain_open = 0;
+}
+
 // What the list keeps beside the settings, so that recording a command asks
 // one thing of each: whether the selected destination plays other than it
 // has, and whether a 2D command is recorded other than as it's given. After
-// anything that changes a setting, or the destination.
+// anything that changes a setting, or the destination, which closes a run of
+// plain shapes: they may be recorded another way now.
 static void refresh(tide_draw_list *d)
 {
+    if (d->plain_open) close_plain(d);
     const tide_draw_place *p = &d->place;
     d->unsettled = p->camera_2d != p->played_2d || p->camera_3d != p->played_3d || p->clip != p->played_clip
                 || p->stencil != p->played_stencil;
@@ -580,6 +593,7 @@ static void refresh(tide_draw_list *d)
 // A command that sets something for the commands after it, and draws nothing.
 static tide_draw_command *push_state(tide_draw_list *d, const tide_draw_kind kind)
 {
+    if (d->plain_open) close_plain(d);
     reserve(d, 1);
     tide_draw_command *c = &d->commands[d->count++];
     *c = (tide_draw_command){.kind = (uint8_t)kind};
@@ -663,6 +677,7 @@ static inline __attribute__((always_inline)) tide_draw_command *push(tide_draw_l
                                                                      const tide_color color)
 {
     if (__builtin_expect(d->unsettled != 0, 0)) settle(d);
+    if (__builtin_expect(d->plain_open != 0, 0)) close_plain(d);
     if (__builtin_expect(d->count == d->capacity, 0)) more_commands(d);
     tide_draw_command *c = &d->commands[d->count++];
     *c = (tide_draw_command){.kind = (uint8_t)kind, .blend = (uint8_t)d->place.blend, .a = a, .b = b,
@@ -722,11 +737,13 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
 void tide_draw_set_blend(tide_draw_list *d, const tide_blend blend)
 {
     d->place.blend = (uint32_t)blend <= TIDE_BLEND_REPLACE ? (uint32_t)blend : TIDE_BLEND_ALPHA;
+    refresh(d);
 }
 
 void tide_draw_unset_blend(tide_draw_list *d)
 {
     d->place.blend = TIDE_BLEND_ALPHA;
+    refresh(d);
 }
 
 uint32_t tide_draw_push_blend(tide_draw_list *d, const tide_blend blend)
@@ -1182,6 +1199,7 @@ void tide_draw_forget(tide_draw_list *d)
     d->saved_count = 0;
     free_meshes(d);
     d->epoch++;
+    d->pack_slot = 0; // Its textures are gone
     // Commands recorded already would draw with textures and meshes that are
     // gone, and with shaders of a build that is
     for (uint32_t i = 0; i < d->count; i++) {
@@ -1275,6 +1293,33 @@ void tide_draw_clear_depth(tide_draw_list *d)
 static void push_shape(tide_draw_list *d, tide_float2 center, tide_float2 size, tide_color color,
                        tide_draw_shape_data shape);
 
+// A plain shape as it's to be drawn: more of the open run, or of the last command's where it can go on with it
+// (the same blend, nothing between them), or a run of its own. The run is open after it, unless it was worked in.
+static void plain_placed(tide_draw_list *d, const tide_draw_plain *shape)
+{
+    if (d->unsettled) settle(d); // What comes before it, which a run of its own goes after
+    d->plains = grow(d->plains, d->plain_count, &d->plain_capacity, 1, sizeof(tide_draw_plain), 1024u);
+    const uint32_t at = d->plain_count++;
+    d->plains[at] = *shape;
+    if (d->plain_open) return; // Out of room, now that there's more
+    tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
+    if (last && last->kind == TIDE_DRAW_PLAIN && last->blend == (uint8_t)d->place.blend && last->plain.first + last->plain.count == at) {
+        last->plain.count++;
+    } else {
+        tide_draw_command *c = push(d, TIDE_DRAW_PLAIN, tide_f2(0.0f, 0.0f), tide_f2(0.0f, 0.0f), TIDE_COLOR_CLEAR);
+        c->plain.first = at;
+        c->plain.count = 1;
+    }
+    if (!d->altered) d->plain_open = d->count;
+}
+
+static void plain_recorded(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b,
+                           const tide_color color)
+{
+    const tide_draw_plain shape = {a, b, tide_draw_color_bytes(color), (uint8_t)kind, {0, 0, 0}};
+    plain_placed(d, &shape);
+}
+
 // A shape that fills whole pixels (or a plain circle), as the settings leave
 // it. A frame of them spends its time in the functions that call this, which
 // only do when there's a tint or a transform.
@@ -1305,14 +1350,14 @@ static __attribute__((noinline)) void plain_altered(tide_draw_list *d, const tid
         a = moved_point(t, a);
         b = kind == TIDE_DRAW_LINE ? moved_point(t, b) : circle ? tide_f2(b.x * p->scale, 0.0f) : tide_f2(b.x * t->x.x, b.y * t->y.y);
     }
-    push(d, kind, a, b, color);
+    plain_recorded(d, kind, a, b, color);
 }
 
 // A plain shape where tide_draw_plain_kind's inline stores aren't all there is to it
-void tide_draw_plain(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b, const tide_color color)
+void tide_draw_plain_placed(tide_draw_list *d, const tide_draw_kind kind, const tide_float2 a, const tide_float2 b, const tide_color color)
 {
     if (d->altered) plain_altered(d, kind, a, b, color);
-    else push(d, kind, a, b, color);
+    else plain_recorded(d, kind, a, b, color);
 }
 
 // ---------------------------------------------------------------------------
@@ -1832,10 +1877,18 @@ static uint32_t pack_texture(tide_draw_list *d, const uint64_t version, const in
 // no texture, as the default Texture is.
 static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture)
 {
+    const uint64_t name = texture->version & TIDE_TEXTURE_NAME;
+    // The one found last, again this frame: what it found then, already noted as drawn
+    if (name && name == d->pack_named && d->pack_frame == d->frame && d->pack_slot && d->pack_slot <= d->texture_count) {
+        return d->pack_slot;
+    }
     tide_texture image;
-    if (!tide_pack_texture_find(texture->version & TIDE_TEXTURE_NAME, &image)) return 0;
+    if (!tide_pack_texture_find(name, &image)) return 0;
     const uint32_t slot = pack_texture(d, image.version, image.width, image.height, image.pixels);
-    d->textures[slot - 1u].compressed = tide_pack_texture_blocks_find(texture->version & TIDE_TEXTURE_NAME);
+    d->textures[slot - 1u].compressed = tide_pack_texture_blocks_find(name);
+    d->pack_named = name;
+    d->pack_slot = slot;
+    d->pack_frame = d->frame;
     return slot;
 }
 
@@ -2005,6 +2058,42 @@ void tide_draw_mesh_placed(tide_draw_list *d, const tide_vertex *vertices, const
     if (vertex_count == 0 || index_count < 3u) return;
     tide_draw_mesh_with(d, vertices, vertex_count, indices, index_count, texture_slot(d, texture), filter, wrap);
 }
+
+// ---------------------------------------------------------------------------
+// Sprites
+
+// A sprite where tide_draw_sprite_part's inline stores aren't all there is to it
+void tide_draw_sprite_placed(tide_draw_list *d, const tide_texture_ref *texture, const tide_float2 center,
+                             const tide_float2 size, const tide_rect part, const float rotation, const tide_color color)
+{
+    const uint32_t slot = tide_draw_texture_source(d, *texture);
+    const tide_filter filter = tide_texture_filter(*texture);
+    const tide_wrap wrap = tide_texture_wrap(*texture);
+    // Its top towards the top of the screen: up under a camera, down the screen's y on it
+    const uint32_t camera = d->place.camera_2d;
+    const bool down = camera && camera <= d->camera_count && d->cameras[camera - 1u].screen;
+    const float half = size.x * 0.5f, top = down ? size.y * -0.5f : size.y * 0.5f;
+    const float u0 = part.x, v0 = part.y, u1 = part.x + part.width, v1 = part.y + part.height;
+    if (rotation == 0.0f && !d->altered) {
+        // p, its top left, and r, its bottom right
+        const tide_draw_quad q = {{center.x - half, center.y + top}, {center.x + half, center.y - top}, {u0, v0}, {u1, v1},
+                                  color_read(&color), TIDE_DRAW_QUAD_ROUND};
+        quad_placed(d, &q, slot, filter, wrap);
+        return;
+    }
+    static const uint32_t triangles[6] = {0, 1, 2, 0, 2, 3};
+    const tide_float2 turn = turn_by(rotation);
+    const tide_float2 corners[4] = {{-half, top}, {half, top}, {half, -top}, {-half, -top}};
+    const tide_float2 uvs[4] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
+    tide_vertex vertices[4];
+    for (int i = 0; i < 4; i++) {
+        const tide_float2 c = corners[i];
+        vertices[i] = (tide_vertex){{center.x + (c.x * turn.x - c.y * turn.y), center.y + (c.x * turn.y + c.y * turn.x)},
+                                    uvs[i], color};
+    }
+    tide_draw_mesh_with(d, vertices, 4u, triangles, 6u, slot, filter, wrap);
+}
+
 
 
 // ---------------------------------------------------------------------------
@@ -3337,6 +3426,27 @@ void tide_draw_gather_levels(const tide_draw_list *d)
     }
 }
 
+uint32_t tide_draw_expand(const tide_draw_list *d, tide_draw_command *out, const uint32_t room)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < d->count; i++) {
+        const tide_draw_command *c = &d->commands[i];
+        if (c->kind != TIDE_DRAW_PLAIN) {
+            if (n < room) out[n] = *c;
+            n++;
+            continue;
+        }
+        const uint32_t count = tide_draw_plain_run(d, c);
+        for (uint32_t k = 0; k < count && c->plain.first + k < d->plain_count; k++, n++) {
+            const tide_draw_plain *p = &d->plains[c->plain.first + k];
+            if (n < room) {
+                out[n] = (tide_draw_command){.kind = p->kind, .blend = c->blend, .a = p->a, .b = p->b, .color = tide_draw_plain_color(p)};
+            }
+        }
+    }
+    return n;
+}
+
 void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
 {
     tide_draw_prepare(from, NULL);
@@ -3347,6 +3457,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
     const uint32_t base = tide_draw_vertices(d, from->vertices, from->vertex_count);
     for (uint32_t i = 0; i < from->count; i++) {
         const tide_draw_command *c = &from->commands[i];
+        if (d->plain_open && c->blend != d->place.blend) close_plain(d); // Its run is another blend's
         d->place.blend = c->blend;
         if (c->kind == TIDE_DRAW_TARGET) {
             if (c->target > from->target_count) {
@@ -3409,11 +3520,17 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
                              r, NULL);
         } else if (c->kind == TIDE_DRAW_SHAPE) {
             if (c->shape < from->shape_count) push_shape(d, c->a, c->b, c->color, from->shapes[c->shape]);
+        } else if (c->kind == TIDE_DRAW_PLAIN) {
+            const uint32_t count = tide_draw_plain_run(from, c);
+            for (uint32_t k = 0; k < count && c->plain.first + k < from->plain_count; k++) {
+                plain_placed(d, &from->plains[c->plain.first + k]);
+            }
         } else {
             push(d, (tide_draw_kind)c->kind, c->a, c->b, c->color);
         }
     }
     for (uint32_t i = 0; i <= d->target_count; i++) place_of(d, i)->blend = TIDE_BLEND_ALPHA;
+    refresh(d);
     // What `from` set after the last command that drew isn't in its commands: its destinations' places have it
     const uint32_t ended = d->target;
     for (uint32_t i = 0; i <= from->target_count; i++) {

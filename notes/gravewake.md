@@ -63,6 +63,37 @@ below; the bosses became three mutants after the third playtest); 4, the
 biomes, and more survivors. All the picks in phase 2 are mine (Provisional): the
 kits, the items, the numbers.
 
+### Fewer upgrades still (2026-10-21)
+
+The owner, after playing the Gunner: "i still think we get too many upgrades
+... i got OP very quick; we need to make them upgrade slower". The numbers are
+mine, Provisional.
+
+- **Where a player's picks came from**: a night roamed gave some eleven (four
+  or five levels, four chests, two or three missions, the boss), near three a
+  minute; the bots, who ignore missions and seldom find chests, took under two,
+  which had hidden most of it.
+- **Every source cut**: two chests a night (nights.tide's `CHESTS_A_NIGHT`, 4);
+  missions 45 to 70 s apart (missions.tide's `MISSION_GAP_LEAST`,
+  `MISSION_GAP_MOST`, 20 to 35), about one a night; a level 60 experience and 1.7
+  times more each (50, 1.5); each level 30% damage and 30 health (40%, 36); a
+  burst's rounds past the first half a round (`BURST_SHARE`, 0.6). Roughly seven
+  picks a night roamed now.
+- **Measured** (`gravewake_balance`, seeds 1 to 16): levels 3, 5, 7 and 9 at
+  about 100, 175, 275 and 380 s (75, 150, 195, 285 before); a pick a minute. The
+  bots now mostly fall at the first night's end: the Gunner's middle run 203 s
+  (805), the Breacher's 314 (585), the Engineer's 188 (193). They don't roll; the
+  owner's play, which found the last build too easy, decides. The levers back:
+  `LEVEL_GROWTH`, `Might`'s 30%, `CHESTS_A_NIGHT`.
+- **The bots as a gauge**: the owner agreed they are "too dumb to be a good
+  benchmark, more so an idea of how easy it is". Their times compare one build
+  with another; a bot dying sooner says the game got harder, not that it is too
+  hard. Difficulty is tuned to the owner's play, not to bot survival.
+- **Tests**: the night's chests two; Burst Fire I half again a round; the Mortar
+  Flare's check given 34 stacks (it had 10, three in ten a hit and not "always" as
+  it said, and the changed rolls missed all ten shots). Native debug and web debug
+  WASI `gravewake_test` pass.
+
 ### The shotgun's pump gone (2026-10-21)
 
 The owner: "the shotgun should just be a thump sound not a draw back and forth

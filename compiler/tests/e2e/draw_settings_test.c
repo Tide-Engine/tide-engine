@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world world;
 static tide_local local;
@@ -30,6 +31,7 @@ static void frame(const bool leave)
     static tide_devices devices;
     tide_gui_begin(&gui, &devices, tide_f2(800, 600), NULL); // A screen, for the conversions
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     draw_count = 0;
     drawn places[8] = {0};
     uint32_t target = 0;
@@ -62,7 +64,7 @@ static void frame(const bool leave)
 
 static bool colored(const tide_color c, const float r, const float g, const float b, const float a)
 {
-    return c.r == r && c.g == g && c.b == b && c.a == a;
+    return tide_test_color_is(c, r, g, b, a); // As a plain shape keeps it, a byte a channel
 }
 
 // Whether what was drawn `i`th is a rect around (x, y) as it was given: white, over what's there, through

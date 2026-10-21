@@ -1,0 +1,32 @@
+// Draw.Sprite: a texture upright over a box in one call (docs/spec.md, Views
+// and drawing, Provisional, A sprite in one call). Each of its forms; an
+// asset's declared filter, and the filter and wrap a call says; a grid and a
+// render target's color as its texture; into a target by its own method; and
+// in the screen's pixels, where its top is the smaller y.
+
+[Filter(Filter.Point)]
+asset Texture hero = "assets/hero.png";
+
+scene Main { }
+
+local singleton Art
+{
+    Grid2<Color> cells = Grid2(2, 2);
+    RenderTarget target;
+    float turn = 0.5;
+}
+
+view Sprites(Art art)
+{
+    Draw.Sprite(hero, float2(10, 20), float2(4, 2));                                        // White, as declared: Point
+    Draw.Sprite(hero, float2(10, 20), float2(4, 2), Color.red);                             // More of the same run
+    Draw.Sprite(hero, float2(0, 0), float2(2, 2), art.turn, Color.white);                   // Turned: corners
+    Draw.Sprite(hero, float2(0, 0), float2(2, 2), Rect(0.5, 0, 0.5, 1), Color.white);       // The right half
+    Draw.Sprite(hero, float2(0, 0), float2(2, 2), Rect(0, 0.5, 1, 0.5), 1, Color.white);    // The bottom half, turned
+    Draw.Sprite(hero, float2(0, 0), float2(2, 2), Color.white, Filter.Bilinear, Wrap.Repeat); // Read as the call says
+    Draw.Sprite(art.cells, float2(0, 0), float2(-2, 2), Filter.Point);                      // A grid, mirrored, a filter alone
+    Draw.Sprite(art.target.color, float2(0, 0), float2(2, 2));                              // A target's color
+    art.target.Sprite(hero, float2(1, 1), float2(2, 2), Color.blue);                        // Into the target
+    Draw.SetScreen();
+    Draw.Sprite(hero, float2(10, 20), float2(4, 2));                                        // Its top at y 19
+}

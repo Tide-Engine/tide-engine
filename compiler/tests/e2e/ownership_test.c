@@ -1,5 +1,6 @@
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world world;
 static tide_local local;
@@ -26,6 +27,7 @@ static void frame_between(const tide_world *previous, const float alpha, const i
     local.Tally.rest = 0;
     tide_draw_reset(&draw);
     tide_frame(&world, previous, alpha, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
 }
 
 static void frame_as(const int32_t index)
@@ -154,6 +156,7 @@ TIDE_TEST(ownership_views_wait_for_a_match)
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     tide_draw_reset(&draw);
     tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     TIDE_CHECK(draw.count == 0);
     TIDE_CHECK(local.Tally.mine == 0 && local.Tally.rest == 0);
 }

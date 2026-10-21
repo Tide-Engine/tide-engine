@@ -52,6 +52,8 @@ void builtins_use_gui(const decl *theme, const decl *control);
 // Call before resolving a draw call.
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
                        const decl *filter, const decl *wrap, const decl *transforms);
+// ...and the Filter and Wrap alone, which Draw.Sprite takes after the rest.
+void builtins_use_sampling(const decl *filter, const decl *wrap);
 
 // The list type owner.name takes as its argument `index`, when every version
 // of it that has one takes the same: what `[a, b, c]` written there is. When

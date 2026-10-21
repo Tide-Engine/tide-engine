@@ -1,10 +1,23 @@
 # Runtime written by Claude for now
 
+## Draw.Sprite (2026-10-21)
+
+Generated code calls four new `tide/draw.h` functions for `Draw.Sprite`, the
+owner having asked for a sprite call ("yes do it", 2026-10-20):
+`tide_draw_sprite(d, texture, center, size, color)`, `tide_draw_sprite_rotated`
+(a rotation before the color), `tide_draw_sprite_part` (a `tide_rect` of uvs)
+and `tide_draw_sprite_part_rotated`, all inline over
+`tide_draw_sprite_placed` (more of a run of quads is stored where the call
+is, as a mesh's is). The texture is a `tide_texture_ref`, as
+`tide_draw_mesh_texture`'s, already sampled as the call says. The list gained
+`pack_named`, `pack_slot` and `pack_frame`, the pack image found last this
+frame. Contracts in drawing.md, A sprite in one call.
+
 ## Drawing's third round (2026-10-20)
 
 Generated code calls the same `tide/draw.h` names as before; several are now
 header-inline over out-of-line functions that are the old bodies
-(`tide_draw_plain`, `tide_draw_round_rect_placed`, `tide_draw_mesh_placed`,
+(`tide_draw_plain_placed`, `tide_draw_round_rect_placed`, `tide_draw_mesh_placed`,
 `tide_draw_mesh_3d_placed`, `tide_draw_instance_stored`), and
 `tide_draw_mesh_with` is what `mesh.c` calls for Tide's lists. The draw list
 gained `quads`, `quad_count`, `quad_capacity` and `mesh_last`, and
@@ -12,6 +25,17 @@ gained `quads`, `quad_count`, `quad_capacity` and `mesh_last`, and
 rebuild with the engine, as for any draw-list layout change. The embed packet
 is unchanged (quads go out as meshes). Contracts in drawing.md, Recording
 inline and quads as quads.
+
+Plain shapes as records, after: the list gained `plains`, `plain_count` and
+`plain_capacity`, `tide_draw_kind` `TIDE_DRAW_PLAIN` (after
+`TIDE_DRAW_QUADS`), the command a `plain` member, and `tide/draw.h`
+`tide_draw_plain`, `tide_draw_color_bytes`, `tide_draw_plain_color` and
+`tide_draw_expand` (a list's commands with each plain shape one of its own,
+which the embed packet goes out as), and `plain_open` and
+`tide_draw_plain_run` (a run's count, the open one's being the list's records
+from its first on). `tide_draw_rect` and the other plain shapes keep their
+names and arguments. `tide_gui_group` gained `panel_plain`, `commands_from`
+and `plains_from`.
 
 ## Map views generated code keeps (2026-10-20)
 

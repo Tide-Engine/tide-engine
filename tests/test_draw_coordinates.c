@@ -359,7 +359,8 @@ TIDE_TEST(draw_coordinates_targets_forget)
     TIDE_CHECK(close2(tide_draw_world_to_screen(&d, tide_f2(40.0f, 0.0f), window), tide_f2(700.0f, 150.0f)));
     TIDE_CHECK(close3(tide_draw_screen_ray_origin(&d, tide_f2(400.0f, 200.0f), window), tide_f3(0.0f, 0.0f, -4.7f)));
     tide_draw_circle(&d, tide_f2(40.0f, 0.0f), 1.0f, TIDE_COLOR_WHITE);
-    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_CIRCLE && d.target == 0);
+    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_PLAIN && d.plains[d.plain_count - 1u].kind == TIDE_DRAW_CIRCLE);
+    TIDE_CHECK(d.target == 0);
     tide_draw_free(&d);
 }
 

@@ -38,8 +38,9 @@ float Crowd(int players)
     return 1 + 0.8 * (players - 1);
 }
 
-// How many chests a night hides, however many there are: each one's a pick for all of them.
-const int CHESTS_A_NIGHT = 4;
+// How many chests a night hides, however many there are: each one's a pick for all of them. (Four till the owner, 2026-10-21, after playing the Gunner: "i still think we get too many upgrades ... i got OP very quick; we need to make them upgrade slower": with
+// the levels, the chests and the missions, a night roamed had given some eleven picks.)
+const int CHESTS_A_NIGHT = 2;
 
 // How many bosses rise at a night's end.
 int NightBosses(int night)
