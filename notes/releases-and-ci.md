@@ -36,6 +36,17 @@ passes all 2,391 CTests, including WebGL, WebGPU and Windows ANGLE D3D11
 (282.52 seconds), with Clang 23.1.2 and Node 24.19.0.
 No CI run or actual Marketplace publication was dispatched.
 
+Implementation commit eb463fad was merged into dev at 4d4a0718. Incoming
+compiler/CLI/build and Unity work merged cleanly; neither the Marketplace
+workflow nor the plugin directory changed during that integration, so the
+scoped workflow checks required no repeat. The full engine suite results above
+precede that unrelated integration. The public plugin main was fast-forwarded
+to efc67411de0ce9c4508d45d629a1379b71d30f1f with only its README changed.
+All 24 public historical trees still match their canonical plugin subtrees;
+40 historical paths and 89 unique blobs were audited. The public remote still
+contains main only, with no engine tags or additional release workflow. This
+enables the next manually requested Build; no older run was retried.
+
 ## Docs export regression gate (2026-10-21)
 
 The existing Docs workflow's Build the site step now runs `npm run test:exports`

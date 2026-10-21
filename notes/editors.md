@@ -12,6 +12,9 @@ documents opting into https://plugins.jetbrains.com/plugins/nightly/list without
 changing the separately installed Tide/tidels channel. No plugin implementation,
 identity or Gradle code changed. Workflow validation and engine-suite results
 are recorded in notes/releases-and-ci.md, Tide Marketplace channels.
+The README update is public at main efc67411de0ce9c4508d45d629a1379b71d30f1f;
+its audited 24-commit history contains only the canonical plugin subdirectory,
+and the update fast-forwards the initial public export without engine tags.
 
 ## Standalone JetBrains publication (2026-10-21)
 
