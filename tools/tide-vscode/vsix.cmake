@@ -43,6 +43,29 @@ if(NOT installed STREQUAL lock)
 endif()
 run("${NPM}" run build)
 
+# The bundle has the language client and what it needs in it: every package
+# the lock file doesn't mark as a development one. Their licenses go in the
+# package (tools/CMakeLists.txt), as WORK/licenses/<package>/.
+file(REMOVE_RECURSE "${WORK}/licenses")
+file(READ "${SOURCE}/package-lock.json" lock_json)
+string(JSON count LENGTH "${lock_json}" packages)
+math(EXPR last "${count} - 1")
+foreach(i RANGE ${last})
+    string(JSON path MEMBER "${lock_json}" packages ${i})
+    string(JSON dev ERROR_VARIABLE no_dev GET "${lock_json}" packages "${path}" dev)
+    if(path STREQUAL "" OR dev)
+        continue()
+    endif()
+    string(REGEX REPLACE "^.*node_modules/" "" name "${path}")
+    file(GLOB notices "${WORK}/${path}/LICENSE*" "${WORK}/${path}/LICENCE*" "${WORK}/${path}/License*"
+        "${WORK}/${path}/license*" "${WORK}/${path}/COPYING*" "${WORK}/${path}/NOTICE*")
+    list(REMOVE_DUPLICATES notices)
+    if(NOT notices)
+        message(FATAL_ERROR "The VS Code extension bundles ${name}, which has no license file in ${WORK}/${path}")
+    endif()
+    file(COPY ${notices} DESTINATION "${WORK}/licenses/${name}")
+endforeach()
+
 set(stage "${WORK}/vsix")
 file(REMOVE_RECURSE "${stage}")
 file(READ "${SOURCE}/package.json" manifest)

@@ -159,6 +159,7 @@ if(TIDE_WEB)
         "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libc.a" "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libm.a"
         DESTINATION wasi/sysroot/lib/${TIDE_WASI_TARGET} COMPONENT tide)
     install(FILES "${TIDE_WASI_BUILTINS}" DESTINATION wasi RENAME libclang_rt.builtins.a COMPONENT tide)
+    install(DIRECTORY "${TIDE_WASI_LICENSES}/" DESTINATION licenses COMPONENT tide)
     # Managed matches are reactors with isolated, non-shared memory, rather
     # than browser programs using wasi-threads.
     install(DIRECTORY "${TIDE_WASI_SYSROOT}/include/wasm32-wasip1" DESTINATION wasi/sysroot/include COMPONENT tide
@@ -184,6 +185,7 @@ elseif(MINGW)
     list(TRANSFORM mingw_libs PREPEND "${mingw_target}/lib/")
     install(FILES ${mingw_libs} DESTINATION mingw/sysroot/x86_64-w64-mingw32/lib COMPONENT tide)
     install(FILES "${TIDE_MINGW_BUILTINS}" DESTINATION mingw COMPONENT tide)
+    install(DIRECTORY "${TIDE_MINGW_LICENSES}/" DESTINATION licenses COMPONENT tide)
 elseif(TIDE_ANDROID)
     # tide builds Android games against the NDK the user has (see
     # compiler/cli/android.c), so only the platform layer for each CPU, and
@@ -196,6 +198,29 @@ endif()
 # On Windows, only the MinGW build's platform layer goes in the package.
 if(TIDE_PACKAGE_LIBS)
     install(FILES $<TARGET_FILE:tide_platform> DESTINATION ${TIDE_PACKAGE_LIBS} COMPONENT tide)
+    # The library has the font in it (public domain), and stb_truetype, whose
+    # license is the end of its header: that part, as the file's own text.
+    install(FILES font/LICENSE.txt DESTINATION licenses/tuffy COMPONENT tide)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS third_party/stb_truetype.h)
+    file(READ third_party/stb_truetype.h stbtt_text)
+    string(FIND "${stbtt_text}" "This software is available under 2 licenses" stbtt_start)
+    string(FIND "${stbtt_text}" "*/" stbtt_end REVERSE)
+    if(stbtt_start EQUAL -1 OR stbtt_end LESS stbtt_start)
+        message(FATAL_ERROR "No license at the end of platform/third_party/stb_truetype.h")
+    endif()
+    math(EXPR stbtt_length "${stbtt_end} - ${stbtt_start}")
+    string(SUBSTRING "${stbtt_text}" ${stbtt_start} ${stbtt_length} stbtt_text)
+    set(stbtt_license "${CMAKE_CURRENT_BINARY_DIR}/licenses/stb_truetype/LICENSE")
+    set(stbtt_old "")
+    if(EXISTS "${stbtt_license}")
+        file(READ "${stbtt_license}" stbtt_old)
+    endif()
+    if(NOT stbtt_old STREQUAL stbtt_text)
+        file(WRITE "${stbtt_license}" "${stbtt_text}")
+    endif()
+    install(FILES "${stbtt_license}" DESTINATION licenses/stb_truetype COMPONENT tide)
+    unset(stbtt_text)
+    unset(stbtt_old)
 endif()
 
 # Carrying a world over to a build whose data layout changed, for hot

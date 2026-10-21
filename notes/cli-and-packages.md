@@ -1,5 +1,55 @@
 # `tide`, packages and the package
 
+## Third-party licenses in the package (2026-10-21)
+
+The package carries the license or notice of everything third-party it
+redistributes, as binary or source, in `licenses/<name>/`, each installed with
+the `tide` component by the tree that ships the work. Texts come from the
+exact tree built, never written by hand: vendored files from the repository,
+FetchContent downloads from their source directories, and archives without
+license files from their pinned source commits (hash-checked raw files).
+
+| `licenses/` | Ships as | Text from | Installed by |
+|---|---|---|---|
+| `llvm/` (`LICENSE.TXT`, `BLAKE3/LICENSE`, `COPYRIGHT.regex`), `clang/`, `lld/` | in tide/tidels; clang's headers in `lib/clang/` | llvm-project at `llvmorg-${TIDE_LLVM_VERSION}`, into `build/llvm-<version>/licenses` (the release archives have none) | `cmake/LLVM.cmake` (package) |
+| `zlib/`, `zstd/` (BSD of its BSD/GPLv2), `libxml2/` (Windows) | linked into tide | FetchContent source dirs | `cmake/LLVM.cmake` (package) |
+| `glfw/` | objects inside `lib/native`'s library | `glfw_SOURCE_DIR/LICENSE.md` | `cmake/GLFW.cmake` (desktop trees) |
+| `moltenvk/` | `lib/native/libMoltenVK.dylib` | release's `LICENSE` | `cmake/MoltenVK.cmake` (macOS) |
+| `vulkan-headers/` | compiled into native/Android platform layers | `platform/third_party/vulkan` | platform (non-web) |
+| `stb_truetype/`, `tuffy/` | font code and font inside every platform layer | the header's own license section, cut out at configure time; `platform/font/LICENSE.txt` | platform (trees with `TIDE_PACKAGE_LIBS`) |
+| `fflate/` | in `web/tide*.js` | `platform/third_party/fflate` | platform (web) |
+| `wasi-libc/` (+ `cloudlibc/`, `musl/`), `wasi-compiler-rt/` | `wasi/` | wasi-libc `b9ef79d7` and llvm-project `26a1d660`, the commits wasi-sdk 24 builds from, into `build/wasi-sdk-24/licenses` | `cmake/wasi-toolchain.cmake`, platform (web) |
+| `mingw-w64/` (`COPYING`, `COPYING.MinGW-w64.txt`, `COPYING.MinGW-w64-runtime.txt`), `llvm-mingw/` | `mingw/` (Windows) | the llvm-mingw archive already downloaded; winpthreads/winstorecompat left out as nothing ships them | `cmake/mingw-toolchain.cmake`, platform (MinGW) |
+| `musl/COPYRIGHT.h` | `src/engine/math64` | `engine/src/math64/COPYRIGHT.h` | engine |
+| `ufbx/`, `dr_libs/`, `stb_image/`, `stb_dxt/` | in tide/tidels/tidec | `compiler/third_party` | compiler (native) |
+| `balanced-match/`, `brace-expansion/`, `minimatch/`, `semver/`, `vscode-*` | bundled into `editors/tide.vsix` | each non-dev `package-lock.json` entry's own license file, collected by `vsix.cmake` (fails if one has none) | `tools/CMakeLists.txt` (package) |
+
+Box2D and Box3D ship as sources in `src/packages/` with their own `LICENSE`
+files, unchanged. Not shipped and so not covered: the Android NDK (fetched on
+the user's machine after Google's license), the Steamworks SDK (declarations
+only, written from its headers) and Microsoft's static C runtime in Windows'
+tide. Not covered: notices that live only inside sources linked from LLVM
+(xxhash's BSD-2 header, ConvertUTF, SipHash), dlmalloc's CC0 statement in
+wasi-libc and Polly (Linux release libraries on the link line, but `cc.cpp`
+stubs its registration). Tide's own license is not installed yet.
+
+The llvm-mingw guard now also requires `licenses/`, so a download from before
+this is taken again once. LLVM's and wasi's license files download beside
+their archives with pinned SHA-256s; a version change needs new hashes.
+
+Validation (Windows, Clang 23.1.2): `cmake --install <tree> --component tide`
+into scratch prefixes from freshly configured `web-debug` (wasi, fflate,
+stb_truetype, tuffy, musl), `mingw-release` (fresh llvm-mingw download:
+mingw-w64, llvm-mingw, glfw, vulkan, stb_truetype, tuffy), `debug` and
+`package` (with the main checkout's unpacked LLVM as `TIDE_LLVM_ROOT` and the
+VS Code extension built: llvm/clang/lld with BLAKE3 and regex, zlib, zstd,
+libxml2, glfw and the nine bundled npm packages). Reconfiguring does not
+download the LLVM files again. The stb_truetype file matches stb's `LICENSE`
+(as in `compiler/third_party/stb_image`) plus the header's closing rule.
+Full native debug passed 2,451/2,451 and web debug 2,394/2,394. Not run: the
+Linux/macOS/Android package trees (their LLVM/GLFW/MoltenVK/platform rules are
+the same code paths) and `cmake/package.cmake` as a whole.
+
 ## Hidden folders and `.build/` (2026-10-21)
 
 The owner's call, after AI trials put probe copies of a game under `build/` and
@@ -496,7 +546,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - It's named as `tide update` names one (`names_line`), and ends with `add_needed`, which resolves the game's packages with reports as `add` and `update` do.
   - Tests: `tide_cli_packages` (`packages_test.cmake`): one that comes with tide and one from git, the comment kept, tide's own files left out, the game building with the copy (a system added to it shows in `tide schedule`), `tide update` finding nothing from git after, a folder in the way, a name the game doesn't list, and no name. `run_exit_test.c` has a stub for it, as for `add`.
 - A game's C is in its folder too, outside hidden folders: every `.c` file compiles with the game's flags, and every `.cpp`, `.cc` and `.cxx` one as C++ with no runtime (see Language), each again only when it, a header there (`.h`, `.hpp`, `.hh`, `.hxx`, `.inl`) or the flags change, and every library (`.a`, `.lib`, `.so`, `.dll`, `.dylib`) links when its contents say it was built for the target's platform and CPU (`compiler/cli/libraries.c`), since `.a` is every platform's. `.so`, `.dll` and `.dylib` files are copied next to the program, and `.so`/`.dylib` ones found there through its rpath; a `.dll` links through its import library. Linux's libraries and Android's are both ELF, for the same CPUs: a shared one is Android's when it has Android's note (`.note.android.ident`, which the NDK's `crtbegin_so.o` puts in everything linked for Android, Go's libraries too), never by what it needs (musl's C library is `libc.so`, as Android's is). A static one has nothing that tells (clang makes the same objects for both), so an ELF archive is Linux's, and Android games bring shared libraries: no folder or name marks one as Android's. An Android build links the game's library for each CPU to that CPU's shared libraries, and they go in the APK and the bundle beside it (`lib/<abi>/`), stored on 16 KiB pages, each under the name the game's library asks for it by: its soname, or its file's name when it has none, which has to be `lib<name>.so`. tide warns about one whose segments are aligned for less than 16 KiB, as phones with those pages may not load it; when an Android link fails, it names the ELF libraries for that CPU it left out as Linux's. A web program may only leave undefined what the prebuilt platform layer does, which are GL's functions, from the page: tide lists them from that library's objects (`page_imports_flag`, `wasm_archive_imports`) for the linker, so any other function nothing defines fails the link, where allowing them all would leave it to fail when it's called. After a failed web link, tide says which of the game's extern functions nothing defines.
-- The package is everything installed as the `tide` component: `bin/` (tide, tidels), `include/`, `src/engine/`, `src/packages/` (the packages that come with tide, as sources), `lib/native/`, `lib/web/` and `lib/android/<abi>/` (the prebuilt platform layer, one library each, with GLFW's objects inside the native one), `wasi/` (wasi-libc and the compiler runtime for wasm), `mingw/` (on Windows: MinGW-w64's headers, C runtime and compiler runtime), `lib/clang/` (clang's own headers), `web/` (the page and `tide.js`), `editors/`, `licenses/ufbx/` (the FBX importer and portable math notices) and `VERSION`. It comes from the `package` preset (clang and lld built in, static C runtime on Windows), the `web-package` preset, the `android-package-arm64` and `android-package-x86_64` presets and, on Windows, the `mingw-release` preset, put together by `cmake -DNAME=tide-windows-x64 -P cmake/package.cmake` into `build/dist`. Anything tide needs at build time must be installed into the package; a game build can't see this repo. The same goes for `tidels`, which reads the engine headers from the package's `include/`. Nothing else goes in: games are C, built for this machine's CPU, Android's and the web, so the package leaves out C++ headers, Windows' interface definitions (`.idl`) and type libraries, and clang's headers for other CPUs, GPUs and the runtimes it doesn't ship (`cmake/LLVM.cmake`, `platform/CMakeLists.txt`). Every C header of the C libraries stays, since a game's C can include any of them.
+- The package is everything installed as the `tide` component: `bin/` (tide, tidels), `include/`, `src/engine/`, `src/packages/` (the packages that come with tide, as sources), `lib/native/`, `lib/web/` and `lib/android/<abi>/` (the prebuilt platform layer, one library each, with GLFW's objects inside the native one), `wasi/` (wasi-libc and the compiler runtime for wasm), `mingw/` (on Windows: MinGW-w64's headers, C runtime and compiler runtime), `lib/clang/` (clang's own headers), `web/` (the page and `tide.js`), `editors/`, `licenses/` (a folder for each third-party work it redistributes: see Third-party licenses in the package, 2026-10-21) and `VERSION`. It comes from the `package` preset (clang and lld built in, static C runtime on Windows), the `web-package` preset, the `android-package-arm64` and `android-package-x86_64` presets and, on Windows, the `mingw-release` preset, put together by `cmake -DNAME=tide-windows-x64 -P cmake/package.cmake` into `build/dist`. Anything tide needs at build time must be installed into the package; a game build can't see this repo. The same goes for `tidels`, which reads the engine headers from the package's `include/`. Nothing else goes in: games are C, built for this machine's CPU, Android's and the web, so the package leaves out C++ headers, Windows' interface definitions (`.idl`) and type libraries, and clang's headers for other CPUs, GPUs and the runtimes it doesn't ship (`cmake/LLVM.cmake`, `platform/CMakeLists.txt`). Every C header of the C libraries stays, since a game's C can include any of them.
 - **Engine private headers ship with its sources** (fixed 2026-10-10): `engine/CMakeLists.txt` installs `.c` and `.h` files from `engine/src/` together, preserving relative subfolders. Installing only `.c` files left the new `skinned_cache.h` behind, so an installed game could not compile even though repository builds passed. Before compiling, `cache_test.mjs` checks every installed engine source/private header's quoted includes against its own folder and the installed public includes. Removing `skinned_cache.h` from a private stage makes this gate fail with the missing include named. An isolated CMake configure/install populated the header, and that private stage passed installed native/web game compilation and stripping checks in debug and release; Node syntax and diff checks passed.
   - Private headers under installed `src/engine/` also enter the engine's aggregate object stamp. Changing one rebuilds engine objects without invalidating generated game, launcher or user C objects; unchanged private headers reuse those engine objects. `cache_test.mjs` changes only `skinned_cache.h` to require a compiler error, restores it, checks that only engine objects rebuild and checks the next unchanged build reuses every object, on native and web. This covers header-only updates with unchanged compiler/public-header/source stamps. The regression failed on the previous packaged CLI; the rebuilt embedded-LLVM CLI passed the full native/web cache, stripping, parallel compilation and debug/release web-watch cases from a private stage, plus Node syntax and diff checks.
 - `editors/tide.vsix` is the VS Code extension (`tools/tide-vscode`), for VS Code, Cursor, VSCodium and Windsurf. Only the `package` preset builds it (`TIDE_EDITOR_EXTENSIONS`), since it needs Node's npm. The installers run `tide editors`, which installs it into every one of those editors it finds, and `tide upgrade` updates it in the editors that have it.

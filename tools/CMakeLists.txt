@@ -34,4 +34,6 @@ if(TIDE_EDITOR_EXTENSIONS)
         VERBATIM)
     add_custom_target(tide_vscode ALL DEPENDS "${vsix}")
     install(FILES "${vsix}" DESTINATION editors COMPONENT tide)
+    # The licenses of what its bundle has in it, which vsix.cmake collects
+    install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tide-vscode/licenses/" DESTINATION licenses COMPONENT tide)
 endif()
