@@ -448,6 +448,24 @@ notification (`TideBuildService.HasErrors`). Errors coming after a result line
 start the list anew, as tide's stdout and stderr can interleave. Checked by hand
 in batch mode (a broken file, the Console cleared, Play attempted).
 
+**Opening the file** (owner, 2026-10-21: a double click opened
+`TideBuildService.cs`, the C# that logged it). A diagnostic naming a file and
+line goes in through Unity's internal `Debug.LogCompilerMessage` (reflection;
+in 6000.6 `(message, file, line, column, forEditor, isError, identifier,
+EntityId)`), as the C# compiler's do: the entry has the file (the project's
+path: `Assets/Tide/X.tide`, or for a prefab or scene the `.tprefab` text tide
+read) and line, and a double click opens it there in the external editor, with
+no C# stack. Ours carry the identifier `0x74696465`; a build's first diagnostic
+(`said`) and a build with nothing to say take the last build's away
+(`Debug.RemoveLogEntriesByIdentifier`), so the "the game's errors are fixed"
+line is left only for errors that went in as ordinary logs (no location, or a
+Unity without those functions, which then logs as before). Re-logging on a
+cleared Console or refused Play removes ours first, so none is there twice.
+`Assets/Tests/Editor/ConsoleTests.cs` logs one and reads the entry back
+(`LogEntries.GetEntryInternal`): its file and line, and its removal. Whether
+Clear leaves them (as it does C# errors) and what the double click opens for a
+`.tide` (the external editor's choice) weren't checked in a live editor.
+
 **The Console is the user's** (owner, 2026-10-20): logging intrudes and needs a
 good reason. tide's errors and warnings go there; its progress ("building ...
 whenever its files change", "built game-N") doesn't, which Project Settings >

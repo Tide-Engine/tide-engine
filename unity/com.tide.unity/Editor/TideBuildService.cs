@@ -181,12 +181,16 @@ namespace Tide.Editor
             {
                 building.Clear();
                 built = true;
-                if (HasErrors) Debug.Log("tide: the game's errors are fixed");
+                if (said == 0) RemoveLocated(); // A build with nothing to say: the last one's errors and warnings go
+                said = 0;
+                if (HasErrors && plainErrors) Debug.Log("tide: the game's errors are fixed");
+                plainErrors = false;
                 SessionState.SetString(ErrorsKey, "");
             }
             else if (first.Contains("keeps running its last build") || first.Contains("will build once its files are fixed"))
             {
                 built = true; // The errors after this are another build's
+                said = 0;
             }
             else if (isError)
             {
@@ -199,15 +203,63 @@ namespace Tide.Editor
         }
 
         // The Console is the user's: only what needs fixing goes there, an error or a warning. Progress is the status
-        // Project Settings > Tide shows.
-        static void Log(string message, bool isError)
+        // Project Settings > Tide shows. One naming its file and line goes in as Unity's compiler messages do, so a
+        // double click opens the file there; a build's first takes the last build's away (`again`: the same ones,
+        // logged again).
+        internal static void Log(string message, bool isError, bool again = false)
         {
             var warning = message.Split('\n')[0].Contains(": warning");
             if (!isError && !warning) return;
-            var context = ContextOf(ref message);
+            if (!again && said++ == 0) RemoveLocated();
+            var context = ContextOf(ref message, out var file, out var line, out var column);
             if (!message.StartsWith("tide: ")) message = "tide: " + message;
+            if (file != null && LogLocated(message, file, line, column, isError)) return;
+            if (isError) plainErrors = true;
             if (isError) Debug.LogError(message, context);
             else Debug.LogWarning(message, context);
+        }
+
+        static int said; // Errors and warnings of the build going on, which tide hasn't said the end of
+        static bool plainErrors; // An error went in as an ordinary log, which stays: a line then says it's fixed
+
+        // Unity's own compiler messages (internal, through reflection): an entry with a file and line, which a double
+        // click opens there, and which Unity's Clear leaves, as a C# error. Ours go by our identifier. Where this Unity
+        // hasn't them, tide's go in as ordinary logs.
+        const int ConsoleIdentifier = 0x74696465; // "tide"
+        const System.Reflection.BindingFlags Internal =
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        static readonly System.Reflection.MethodInfo compilerMessage = typeof(Debug).GetMethod("LogCompilerMessage", Internal);
+        static readonly System.Reflection.MethodInfo removeByIdentifier = typeof(Debug).GetMethod("RemoveLogEntriesByIdentifier", Internal);
+
+        static bool LogLocated(string message, string file, int line, int column, bool isError)
+        {
+            if (compilerMessage == null || removeByIdentifier == null) return false;
+            // (message, file, line, column, forEditor, isError, identifier, the object's id: none)
+            var parameters = compilerMessage.GetParameters();
+            if (parameters.Length != 8) return false;
+            var none = parameters[7].ParameterType.IsValueType ? Activator.CreateInstance(parameters[7].ParameterType) : null;
+            try
+            {
+                compilerMessage.Invoke(null, new[] { message, file, line, column, true, isError, ConsoleIdentifier, none });
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        internal static void RemoveLocated()
+        {
+            if (removeByIdentifier == null) return;
+            try
+            {
+                removeByIdentifier.Invoke(null, new object[] { ConsoleIdentifier });
+            }
+            catch (Exception)
+            {
+                // This Unity's differs: they stay
+            }
         }
 
         // The Console's entries, through Unity's own (internal) count: fewer than before means it was cleared.
@@ -230,7 +282,8 @@ namespace Tide.Editor
             var before = SessionState.GetInt(CountKey, 0);
             SessionState.SetInt(CountKey, count);
             if (count >= before || !HasErrors) return;
-            foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true);
+            RemoveLocated(); // Those Clear left, so none is there twice
+            foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true, true);
             SessionState.SetInt(CountKey, (int)consoleCount.Invoke(null, null));
         }
 
@@ -239,7 +292,8 @@ namespace Tide.Editor
         {
             if (change != PlayModeStateChange.ExitingEditMode || !HasErrors) return;
             EditorApplication.isPlaying = false;
-            foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true);
+            RemoveLocated();
+            foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true, true);
             const string message = "Fix the game's Tide errors before Play: see the Console";
             foreach (SceneView view in SceneView.sceneViews) view.ShowNotification(new GUIContent(message));
             Debug.LogError("tide: the game has errors: fix them before Play (they're above)");
@@ -250,10 +304,16 @@ namespace Tide.Editor
 
         // The asset a message is about, for the Console to select: a .tide file of the game, or a prefab or scene,
         // whose line numbers are of the Tide text tide made of it, which the message then names.
-        static UnityEngine.Object ContextOf(ref string line)
+        // `file` (the project's path, null for none), `lineNumber` and `column`: where a double click opens it, the
+        // Tide text tide read for a prefab or scene.
+        static UnityEngine.Object ContextOf(ref string line, out string file, out int lineNumber, out int column)
         {
+            file = null;
+            lineNumber = column = 0;
             var match = located.Match(line.Split('\n')[0]);
             if (!match.Success) return null;
+            int.TryParse(match.Groups["line"].Value, out lineNumber);
+            int.TryParse(match.Groups["column"].Value, out column);
             var path = match.Groups["path"].Value.Replace('\\', '/');
             var project = TideSettings.ProjectFolder.Replace('\\', '/').TrimEnd('/') + "/";
             string asset = null;
@@ -264,13 +324,17 @@ namespace Tide.Editor
             else if (path.StartsWith("Assets/") && File.Exists(Path.Combine(project, path)))
             {
                 asset = path; // A prefab's or a scene's
-                line += $" (line {match.Groups["line"].Value} of Library/Tide/prefabs/{path}.tprefab, the Tide text tide read)";
+                var text = $"Library/Tide/prefabs/{path}.tprefab";
+                line += $" (line {match.Groups["line"].Value} of {text}, the Tide text tide read)";
+                file = File.Exists(Path.Combine(project, text)) ? text : path;
+                return AssetDatabase.LoadMainAssetAtPath(asset);
             }
             else
             {
                 var full = Path.GetFullPath(Path.Combine(TideSettings.instance.GameFolderPath, path)).Replace('\\', '/');
                 if (full.StartsWith(project, StringComparison.OrdinalIgnoreCase)) asset = full.Substring(project.Length);
             }
+            file = asset;
             return asset != null ? AssetDatabase.LoadMainAssetAtPath(asset) : null;
         }
     }
