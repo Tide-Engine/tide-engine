@@ -269,7 +269,7 @@ Hot reload is for `tide run`. `tide build` makes a plain program, or a page with
 ## Unity
 
 ```sh
-tide unity Assets/Tide -o Library/Tide
+tide unity Assets -o Library/Tide --assets Assets
 ```
 
 Unity's Tide package (`unity/com.tide.unity` in Tide's repository, added to a
@@ -282,6 +282,22 @@ the game each time its files change, which the running game takes over as
 types from. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
+
+In a Unity project the game is the whole of `Assets`: every `.tide` file in it,
+as every C# script is, but those in folders Unity leaves out (hidden ones, and
+those whose names end in `~`). Its `tide.packages` is `Assets/tide.packages`,
+and `tide add`, `update` and `eject` work on it from any folder of `Assets`. A
+folder in `Assets` whose `tide.packages` says `package Name` is one of the
+game's packages, with no line for it, much as an assembly definition makes an
+assembly. C is only ever a package's: tide builds the C, headers and libraries
+of a package's folder and none of the rest of `Assets`, where Unity's plugins
+are, and warns of a `.c` beside the game's `.tide` files.
+
+`--notified` is how the editor's package runs it: rather than going over every
+file of `Assets` to see what changed, it builds when a `changed` line comes on
+its input, which the package writes as Unity imports, moves or deletes the
+game's files, and looks itself only at the files it built, so an edit saved
+while Unity is in the background still builds at once.
 
 `--assets Assets` makes the project's prefabs and scenes part of the game:
 each one holding GameObjects with the package's TideEntity component is a Tide

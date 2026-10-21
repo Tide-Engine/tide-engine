@@ -316,6 +316,7 @@ int main(const int argc, char **argv)
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
         else if (unity && strcmp(a, "--once") == 0) once = true;
+        else if (unity && strcmp(a, "--notified") == 0) opts.notified = true;
         else if ((unity || build || run) && strcmp(a, "--assets") == 0 && i + 1 < argc) opts.unity_assets = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {

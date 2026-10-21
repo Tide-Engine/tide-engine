@@ -672,8 +672,29 @@ folders of Assets using `UnityEngine.Prefabs.Roller` from Library/Tide has no
 diagnostics, a broken `Samples~` file is left out, and without the prefab text
 Roller is unknown). Gaps: the walks over all of Assets (`.tide`, `.tprefab`,
 `tide.packages`, and the converter's own) run each time tide checks for
-changes, which a very large project may feel; older com.tide.unity packages
-still run `tide unity` in `Assets/Tide`, which builds as a plain folder game.
+changes, which a very large project may feel (answered the same day by
+--notified, below); older com.tide.unity packages still run `tide unity` in
+`Assets/Tide`, which builds as a plain folder game.
+
+**Told of changes rather than looking (2026-10-21, owner: "unity handles assets
+and lets us know when they get changed").** `tide unity` polled every 250 ms by
+walking all of Assets several times (`stamp_folder`'s `.tide`, `.tprefab` and
+`tide.packages`, and `unity_assets_stamp`'s every `.prefab`, `.unity` and
+`.meta`). The package now runs it `--notified`: `game_stamp` then stats only
+the files the last generate compiled (`build.sources`) and `Assets/
+tide.packages`, plus local and built-in packages' folders as before (small), and
+a `changed` line on its input starts the settle-then-build any change does.
+`TideChanges` (an AssetPostprocessor in `TideBuildService.cs`) writes it when
+Unity imports, moves or deletes a `.tide`, `.packages`, `.prefab` or `.unity`
+under Assets, or C, headers or libraries in a package's folder; Build
+Settings' scene list changing (`EditorBuildSettings.sceneListChanged`) does
+too. Edits to known files still build while Unity is in the background, since
+Unity imports only on focus; a new file waits for Unity to import it. Declared
+asset files keep their own cheap stat (`asset_stamp`). A build itself still
+walks Assets once (finding the game's files and reading prefabs and scenes).
+Checked by a scratch driver (an edit untold rebuilt, a new file alone didn't,
+`changed` did and the new component was in the schema) and the Sample's
+`ChangesTests` (what counts: the game's files, a package's C, not a plugin's).
 
 ### Icons (2026-10-21)
 
