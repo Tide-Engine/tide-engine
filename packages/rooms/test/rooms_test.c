@@ -235,6 +235,39 @@ TIDE_TEST(rooms_pages_are_driven_by_the_keyboard)
     tide_world_free(&world);
 }
 
+// The room's page copies the invite: the room's code where there's no page to
+// link to, and the page's link where the host says there's one (on the web).
+TIDE_TEST(rooms_copies_the_invite)
+{
+    tide_world_init(&world, DT);
+    const char *const invites[] = {NULL, "https://example.com/game/?join=K7QF2M"};
+    for (int i = 0; i < 2; i++) {
+        machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
+        if (invites[i]) tide_local_set_invite(&local, invites[i]);
+        local.Rooms_Lobby.started = true;
+        local.Rooms_Lobby.page = Rooms_Page_Room;
+        frame(&world);
+        tap(&devices.keyboard.tab);
+        tap(&devices.keyboard.enter);
+        TIDE_CHECK(asked() == TIDE_REQUEST_COPY);
+        TIDE_CHECK(strcmp(last_request.text, invites[i] ? invites[i] : "K7QF2M") == 0);
+        TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Room && local.Rooms_Lobby.copied < 1.0f);
+        tide_local_free(&local);
+    }
+    // Nothing to copy while the room has no code
+    machine(TIDE_SESSION_CONNECTED, 0, true, true, "");
+    local.Rooms_Lobby.started = true;
+    local.Rooms_Lobby.page = Rooms_Page_Room;
+    frame(&world);
+    tap(&devices.keyboard.tab);
+    tap(&devices.keyboard.enter);
+    TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    tide_audio_free(&audio);
+    tide_world_free(&world);
+}
+
 TIDE_TEST(rooms_settings_control_the_master_volume_across_pages_and_matches)
 {
     tide_world_init(&world, DT);

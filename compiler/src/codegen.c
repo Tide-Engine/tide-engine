@@ -7703,6 +7703,8 @@ static void gen_header(gen *g)
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
     // TIDE_NETWORK_ADDRESS_BYTES (tide/network.h): a room's code, or what a game's own network says
     sb_put(o, "    char tide_room[64]; // Session.room: what the match is joined by (a room's code), or \"\"\n");
+    // TIDE_INVITE_BYTES (tide/platform.h): what Clipboard.Copy takes whole
+    sb_put(o, "    char tide_invite[256]; // Session.invite: what others open to join it (tide_local_set_invite), or \"\"\n");
     if (prog->command_types.count) {
         sb_put(o, "    // Commands sent and not yet the session's, in order, TIDE_COMMAND_PENDING a channel\n"
                   "    tide_outgoing_item tide_outgoing[TIDE_COMMAND_OUTBOX];\n"
@@ -7841,7 +7843,11 @@ static void gen_header(gen *g)
     sb_put(o, "// Where this machine stands, for local code: the Session singleton. `state` is a\n");
     sb_put(o, "// tide_session_state, and `room` the code of the room the match is in, \"\" if none.\n");
     sb_put(o, "void tide_local_set_session(tide_local *local, uint32_t state, tide_player_id player, uint32_t ping, bool server,\n"
-              "                            bool open, const char *room);\n\n");
+              "                            bool open, const char *room);\n");
+    sb_put(o, "// Session.invite, after tide_local_set_session (which makes it `room`): what others\n");
+    sb_put(o, "// open to join the match (tide_platform_room_invite: on the web, a link to the page\n");
+    sb_put(o, "// that joins its room). Up to 255 bytes of printable ASCII; \"\" for anything else.\n");
+    sb_put(o, "void tide_local_set_invite(tide_local *local, const char *invite);\n\n");
     sb_put(o, "// Send the local events Connected and Disconnected (`reason` is a tide_disconnect_reason,\n");
     sb_put(o, "// and `message` a kick's, or NULL), handled at the end of the next tide_frame.\n");
     sb_put(o, "void tide_local_connected(tide_local *local);\n");
@@ -19554,7 +19560,16 @@ static void gen_game_api(gen *g)
     sb_put(o, "    size_t n = room ? strlen(room) : 0u;\n");
     sb_put(o, "    if (n >= sizeof local->tide_room) n = sizeof local->tide_room - 1u;\n");
     sb_put(o, "    memcpy(local->tide_room, room ? room : \"\", n);\n");
-    sb_put(o, "    memset(local->tide_room + n, 0, sizeof local->tide_room - n);\n}\n\n");
+    sb_put(o, "    memset(local->tide_room + n, 0, sizeof local->tide_room - n);\n");
+    sb_put(o, "    tide_local_set_invite(local, local->tide_room);\n}\n\n");
+    // Only a whole link is one: printable ASCII that fits, or nothing
+    sb_put(o, "void tide_local_set_invite(tide_local *local, const char *invite)\n{\n");
+    sb_put(o, "    size_t n = 0u;\n");
+    sb_put(o, "    while (invite && n < sizeof local->tide_invite && (unsigned char)invite[n] >= 0x20u\n"
+              "           && (unsigned char)invite[n] <= 0x7Eu) n++;\n");
+    sb_put(o, "    if (!invite || n == sizeof local->tide_invite || invite[n]) n = 0u;\n");
+    sb_put(o, "    memmove(local->tide_invite, n ? invite : \"\", n);\n");
+    sb_put(o, "    memset(local->tide_invite + n, 0, sizeof local->tide_invite - n);\n}\n\n");
     const char *connected = type_cname(prog->connected);
     const char *disconnected = type_cname(prog->disconnected);
     sb_printf(o, "void tide_local_connected(tide_local *local)\n{\n    tide_cmd_send_%s(local, (tide_entity){0}, (%s){0});\n}\n\n",

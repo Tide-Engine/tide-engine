@@ -89,7 +89,7 @@ Match code can't make them, as it runs the same on every machine: calling such a
 
 ## A menu that comes with tide
 
-The bundled [Rooms package](../packages/rooms.md) adds Play, Host and Join menus, room-code sharing and volume settings. List `rooms` in the game's `tide.packages` to use it. For pre-match groups, ready flags, lobby browsing and quick match, use the [Lobby package](../packages/lobby.md). Both menus are optional; sessions and room codes are built into the engine.
+The bundled [Rooms package](../packages/rooms.md) adds Play, Host and Join menus, invite links and room codes to share, and volume settings. List `rooms` in the game's `tide.packages` to use it. For pre-match groups, ready flags, lobby browsing and quick match, use the [Lobby package](../packages/lobby.md). Both menus are optional; sessions and room codes are built into the engine.
 
 ## Rooms
 
@@ -121,6 +121,23 @@ Here are two machines, side by side. Each frame below is the game on its own, st
 
 The relay, a server of ours, only introduces players to each other. Their packets then go straight between them, over WebRTC, which finds a way through their routers. When their networks can't connect directly, a TURN server carries the packets instead. The host's machine picks the code itself, so there's nothing to wait for. If another room had it first, the host picks another before anyone could read it out, and `Session.room` changes. It's `""` while the relay can't be reached, and the room opens again once it can: players already in keep playing, and only joining needs the relay.
 
+### Inviting with a link
+
+`Session.invite` is what a player sends a friend to join their room. On the web it's a link: the game's page, wherever it's served, with `?join=` and the room's code, like `https://example.com/game/?join=K7QF2M`. Opening it starts the game in that room, as `?join=` in a page's address always does. On desktop and Android there's no page to link to, so it's the room's code itself, which the friend types in. It's `""` whenever `Session.room` is.
+
+```csharp
+view Invite(Session session)
+{
+    if (session.invite == "") return;
+    GUILayout.Area(Anchor.UpperCenter)
+    {
+        // A link on the web, the code elsewhere
+        var link = session.invite != session.room;
+        if (GUILayout.Button(link ? "Copy the invite link" : "Copy the code")) Clipboard.Copy(session.invite);
+    }
+}
+```
+
 ## Where this machine stands
 
 `Session` is a built-in local singleton, taken as a parameter like any other, and read-only:
@@ -133,6 +150,7 @@ The relay, a server of ours, only introduces players to each other. Their packet
 | `server` | Whether this machine runs the server |
 | `open` | Whether others can join it (only the server's machine knows) |
 | `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed. On [a network of the game's own](./own-network.md), what that network says the match is joined by |
+| `invite` | What others open to join the match: on the web a link to the game's page with `?join=` and the room's code, elsewhere the code itself (see [Inviting with a link](#inviting-with-a-link)). `""` when `room` is |
 
 A single-player match is a match too, so `state` is `Connected` there as well: this machine runs the server, and its player connects to it without going through the network. That's `server` true and `open` false. `$"{session}"` shows all of it at once.
 
@@ -261,7 +279,7 @@ settings
 }
 ```
 
-`maxPlayers` goes from 1 to 65,536, the same supported ceiling as a dedicated server’s total connections. The settings are separate: one limits a match, the other limits connections across all of the server’s matches. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
+`maxPlayers` goes from 1 to 65,536, the same supported ceiling as a dedicated server's total connections. The settings are separate: one limits a match, the other limits connections across all of the server's matches. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
 
 Pick what the game is built for. In a full-world match every player receives every other's input and simulates the whole world, so traffic can grow with the square of its players. [Visibility](../game/visibility.md) restricts state, simulation and owner-input delivery, while the server still simulates the complete match.
 

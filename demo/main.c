@@ -65,6 +65,9 @@ static tide_view_worlds update(void)
     if (status.open || !status.server) tide_platform_room_code(room, sizeof room);
     tide_local_set_session(&local, status.client.state, status.client.player, status.client.ping_ms, status.server,
                            status.open, room);
+    char invite[TIDE_INVITE_BYTES]; // A link to this page on the web, the room's code elsewhere
+    tide_platform_room_invite(room, invite, sizeof invite);
+    tide_local_set_invite(&local, invite);
     return tide_session_view(session);
 }
 

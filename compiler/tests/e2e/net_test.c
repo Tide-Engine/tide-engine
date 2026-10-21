@@ -874,9 +874,32 @@ TIDE_TEST(net_local_code_joins_rooms_and_connects_to_addresses)
     TIDE_CHECK(local.Menu.inRoom && local.Menu.roomLength == 6);
     TIDE_CHECK(shows(local.Menu.shown, "Session { state = Connected, player = PlayerID(0), ping = 20, server = true, "
                                        "open = true, room = \"K7QF2M\" }"));
+    // Session.invite is the room's code where there's no page to link to...
+    TIDE_CHECK(shows(local.Menu.invite, "K7QF2M"));
+    // ...and what the host says after: a page's link
+    tide_local_set_invite(&local, "https://example.com/game/?join=K7QF2M");
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, "https://example.com/game/?join=K7QF2M") && local.Menu.inRoom);
+    // Only a whole link is one: too long for Clipboard.Copy, or with bytes that aren't printable ASCII, is none
+    char long_link[300];
+    memset(long_link, 'a', sizeof long_link - 1u);
+    long_link[sizeof long_link - 1u] = '\0';
+    tide_local_set_invite(&local, long_link);
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, ""));
+    long_link[255] = '\0';
+    tide_local_set_invite(&local, long_link);
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, long_link));
+    tide_local_set_invite(&local, "https://example.com/\n?join=K7QF2M");
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, ""));
+    tide_local_set_invite(&local, NULL);
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, ""));
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     run_views();
-    TIDE_CHECK(!local.Menu.inRoom && local.Menu.roomLength == 0);
+    TIDE_CHECK(!local.Menu.inRoom && local.Menu.roomLength == 0 && shows(local.Menu.invite, ""));
     TIDE_CHECK(shows(local.Menu.shown, "Session { state = Offline, player = PlayerID(none), ping = 0, server = false, "
                                        "open = false, room = \"\" }"));
 

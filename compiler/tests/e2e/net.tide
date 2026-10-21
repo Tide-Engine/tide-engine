@@ -79,6 +79,7 @@ local singleton Menu
     bool connect;
     bool inRoom; // Session.room, as the view read it
     int roomLength;
+    string invite; // Session.invite, as the view read it
     string shown; // Session, as text
     string gone;  // The last Disconnected, as text
     string why;   // ...and its message
@@ -88,6 +89,7 @@ view Start(mut Menu menu, Session session)
 {
     menu.inRoom = session.room == "K7QF2M";
     menu.roomLength = session.room.length;
+    menu.invite = session.invite;
     menu.shown = $"{session}";
     if (menu.join)
     {

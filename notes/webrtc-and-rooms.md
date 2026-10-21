@@ -1,5 +1,54 @@
 # Desktop WebRTC, rooms and their tests
 
+## Session.invite: host a room, copy a link, send it (2026-10-21)
+
+The owner asked for every web game's multiplayer to be "host a room, copy a
+link, send it", opening the link joining the room. The page already turned
+`?join=<code>` into `--join <code>` (`tide.js`); what was missing was the link.
+`Session.invite` is it, beside `Session.room`, with the same capability rules
+(the name and the native fallback are the agent's picks, which the owner
+accepted; Provisional in the spec's Sessions section). What code relies on:
+
+- **What it is.** On the web, the page's address without its query or fragment
+  (`location.href` cut at the first `?` or `#`, so origin and pathname, file
+  pages included), then `?join=` and the room, URI-encoded: it works wherever
+  the page is served (tide-engine.dev, localhost, a LAN address). Elsewhere,
+  and on the web for anything the link can't carry, the room's text itself:
+  natively there's no page to link to. `""` whenever the room is.
+- **Who makes it.** `tide_platform_room_invite(room, out, size)`
+  (`platform.h`, `rooms.c`) from whatever `Session.room` is (a room's code,
+  `--players`' code, a game's own network's text or a dedicated endpoint).
+  The web backend asks the page (`tide_web_room_invite`, `room_invite` in
+  `tide.js`), which returns 0 for a page that isn't `http:`, `https:` or
+  `file:` (no place to link to: `about:srcdoc`, `blob:`) and for a link that
+  doesn't fit. The C side only asks for a room of letters and digits (all
+  `?join=` passes on, as `tide.js` strips the rest), checks the answer is
+  printable ASCII ending within `TIDE_INVITE_BYTES` (256: `Clipboard.Copy`'s
+  255 bytes and a NUL), and otherwise writes the room.
+- **How local code gets it.** Generated `tide_local` has `char
+  tide_invite[256]`; `tide_local_set_session` sets it to the room (so every
+  host and test harness that calls only that one gets the native behavior),
+  and the new generated `tide_local_set_invite(local, invite)` replaces it,
+  keeping only printable ASCII under 256 bytes (anything else is `""`).
+  `tide/host.h` calls it each frame after `set_session`, through the optional
+  `tide_host_game.set_invite` that `tide/run.h` fills; `demo/main.c` calls it
+  directly. `tide_embed_status` is unchanged (the other program has `room`).
+- Tests: `tidec_e2e_net` (`net_local_code_joins_rooms_and_connects_to_addresses`:
+  the room by default, a host's link, too long, not printable, NULL, none
+  offline), `compiler/tests/errors/singleton_param_session_invite.tide`,
+  `lsp_sessions` completion, `tide_platform_udp`'s
+  `rooms_invite_off_the_web_is_the_room`, `tide_rooms_lobby`'s
+  `rooms_copies_the_invite`, and `tide_platform_web_rooms`: the host prints
+  its invite, the page checks it is `game.html`'s address with `?join=` and
+  the code, and the joiner's frame is that link itself (with the test's own
+  parameters after it), whose program is started `--join <code>` by `tide.js`
+  and has to meet the host.
+- `tide.release.js` was regenerated (69,935 bytes).
+- Validation on Windows: 2,450/2,450 native and 2,394/2,394 web debug tests,
+  and the docs production build. In `tide_platform_web_rooms` the host said
+  `invite http://127.0.0.1:<port>/game.html?join=<code>` and the frame opened
+  from it met the host.
+
 ## Shared connection ceiling (2026-10-20)
 
 Native rooms now use the shared TIDE_PLAYERS_MOST ceiling (65,536), matching

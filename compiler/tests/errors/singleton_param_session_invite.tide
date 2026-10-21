@@ -1,0 +1,4 @@
+// expect: functions and methods can't read Session.invite: it belongs to the local world, not the Session value
+string Invite(Session session) { return session.invite; }
+local scene Main { }
+view Show(Session session) { Draw.Text(Invite(session), float2(0, 0), 16, Color.white); }

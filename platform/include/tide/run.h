@@ -148,6 +148,11 @@ static inline void tide_run_set_session(void *local, const uint32_t state, const
     tide_local_set_session(local, state, player, ping, server, open, room);
 }
 
+static inline void tide_run_set_invite(void *local, const char *invite)
+{
+    tide_local_set_invite(local, invite);
+}
+
 static inline void tide_run_connected(void *local)
 {
     tide_local_connected(local);
@@ -237,6 +242,7 @@ static const tide_host_game tide_host_game_api = {
     .command_sent = tide_run_command_sent,
 #endif
     .set_session = tide_run_set_session,
+    .set_invite = tide_run_set_invite,
     .connected = tide_run_connected,
     .disconnected = tide_run_disconnected,
     .tick = tide_run_tick,

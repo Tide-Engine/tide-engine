@@ -1,8 +1,9 @@
 // Rooms: the menu a game opens on, and the way back to it from a match, so a
 // game is playable with friends before it has a menu of its own. A game lists
 // `rooms` in its tide.packages and gets a title page (Play, Host a room, Join
-// a room), a page to type a room's code into, the room's page (its code to
-// copy, who's in it, Resume, Leave), settings for the volume and a Menu
+// a room), a page to type a room's code into, the room's page (its code, and
+// the invite to copy: on the web a link that joins the room, elsewhere the
+// code; who's in it, Resume, Leave), settings for the volume and a Menu
 // button in the match, all of the GUI's own widgets, in whatever theme the game sets.
 //
 // It's drawn over a live match. `Main` is the match's scene, so a match of
@@ -49,7 +50,7 @@ local singleton Lobby
     bool resume;        // The room's page came up from a match, not from the title
     string code;        // What's typed into the Join page's field
     string message;     // What became of the last match, for the page it left this machine on
-    float copied = 10;  // Seconds since the room's code was copied
+    float copied = 10;  // Seconds since the room's invite or code was copied
     Page settingsFrom = Page.Title; // The page Settings returns to
     float volume = 1;   // This machine's master volume: 0 mutes, 1 is full volume
 
@@ -182,6 +183,15 @@ void Invite()
     Session.Open();
 }
 
+// Copies what others open to join the room, `invite` (`session.invite`: on
+// the web, a link to this page that joins it; elsewhere, its code), and has
+// `copied` count from there.
+void CopyInvite(mut Lobby lobby, string invite)
+{
+    Clipboard.Copy(invite);
+    lobby.copied = 0;
+}
+
 // Copies the room's code, `room`, and has `copied` count from there.
 void CopyCode(mut Lobby lobby, string room)
 {
@@ -262,9 +272,10 @@ virtual void JoinPage(Session session, mut Lobby lobby)
 }
 
 // The room and who's in it: the host's lobby, and the menu from a match.
-// `room` is its code, `session.room`, or "" while it has none: a function is
-// handed it, as the room is no part of the Session value.
-virtual void RoomPage(Session session, string room, mut Lobby lobby)
+// `room` is its code, `session.room`, or "" while it has none, and `invite`
+// what others open to join it, `session.invite`: a link on the web, the code
+// elsewhere. A function is handed them, as they're no part of the Session value.
+virtual void RoomPage(Session session, string room, string invite, mut Lobby lobby)
 {
     var connected = session.state == SessionState.Connected;
     mut var open = true;
@@ -274,16 +285,21 @@ virtual void RoomPage(Session session, string room, mut Lobby lobby)
         GUILayout.Label(alone ? "Playing alone" : session.server ? "Your room" : "Room");
         if (alone)
         {
-            mut var invite = false;
-            GUI.Disabled(!connected) { invite = GUILayout.Button("Invite friends"); }
-            if (invite) Invite();
+            mut var asked = false;
+            GUI.Disabled(!connected) { asked = GUILayout.Button("Invite friends"); }
+            if (asked) Invite();
         }
         else
         {
             GUILayout.Label(room != "" ? $"Code {room}" : "Opening a room...");
+            // A link where there's a page to link to: opening it joins the room
+            var link = invite != room;
             mut var copy = false;
-            GUI.Disabled(room == "") { copy = GUILayout.Button(lobby.copied < 1.5 ? "Copied" : "Copy the code"); }
-            if (copy) CopyCode(lobby, room);
+            GUI.Disabled(invite == "")
+            {
+                copy = GUILayout.Button(lobby.copied < 1.5 ? "Copied" : link ? "Copy the invite link" : "Copy the code");
+            }
+            if (copy) CopyInvite(lobby, invite);
         }
         for (var seat = 0; seat < lobby.seats; seat++)
         {
@@ -345,7 +361,7 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
     if (lobby.page == Page.Settings) SettingsPage(lobby);
     if (lobby.page == Page.Join) JoinPage(session, lobby);
     if (lobby.page == Page.Title) TitlePage(session, lobby);
-    if (lobby.page == Page.Room) RoomPage(session, session.room, lobby);
+    if (lobby.page == Page.Room) RoomPage(session, session.room, session.invite, lobby);
 }
 
 // Bus volumes start over each frame. A default sound uses the master bus,

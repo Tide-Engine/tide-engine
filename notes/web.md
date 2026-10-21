@@ -1,5 +1,12 @@
 # Web builds
 
+Invite links (2026-10-21): `tide.js` gained the `room_invite` import, the link
+that joins a room: `location.href` cut at its query or fragment, `?join=` and
+the URI-encoded room, 0 on a page that isn't `http:`, `https:` or `file:` and
+for one that doesn't fit. It's `Session.invite` on the web
+(`notes/webrtc-and-rooms.md`); `?join=` itself is unchanged. `tide.release.js`
+was regenerated (69,935 bytes).
+
 A page's own program running the frames (2026-10-20): `Tide.pageFrames` makes
 frames while the page is shown come only from `Tide.frame()`, which the page's
 other program calls from its own frame (a Unity WebGL player, through

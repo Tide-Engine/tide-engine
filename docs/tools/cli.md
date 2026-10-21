@@ -397,7 +397,7 @@ A game's web page takes the same from its address, so a link can say which match
 | In the address | What it does |
 |---|---|
 | `?host` | As `--host`: the game opens its match, in a room |
-| `?join=K7QF2M` | As `--join K7QF2M`: the game joins the match in that room |
+| `?join=K7QF2M` | As `--join K7QF2M`: the game joins the match in that room. A game's `Session.invite` is that link to its own page, for a player to send |
 | `?lag=100` | The page's player has a ping of 100 milliseconds, the round trip to the match's server, to see a match as on a slow connection with both players at one desk. What the trip takes already counts: the page holds back what it sends and what it receives by half of what's missing each. A page that hosts the match adds nothing |
 | `?embedded` | The game is part of a page that scrolls, in a frame of it, and leaves that page its scrolling: the wheel, and a finger that swipes up or down, until the player taps the game |
 | `?wait` | The game loads, and starts when the page around it says so |
