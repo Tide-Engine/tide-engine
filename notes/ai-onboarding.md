@@ -151,8 +151,8 @@ Proposals that followed: source discovery scanned `build/` and hidden folders wh
 asset discovery skipped them. The owner chose `.build/` for builds and no hidden folder
 in a game (`notes/cli-and-packages.md`, Hidden folders). Suggestions now fall back to
 a name with the wrong one as a whole word (`notes/language.md`, Word suggestions).
-Still open: a script line that makes a player leave or rejoin, so `--players` runs
-can test `PlayerLeft` and seat reuse.
+Script lines that make a player leave, drop and rejoin followed too
+(`notes/standard-host.md`, Leave, drop and rejoin).
 
 ## Repeat the study
 

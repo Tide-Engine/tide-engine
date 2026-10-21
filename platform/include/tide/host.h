@@ -207,6 +207,9 @@ static double tide_run_now; // Seconds since the program started
 static bool tide_run_dropped;
 // Host migration: when this machine went to its match's room again, or 0
 static double tide_run_migrating_since;
+// The last Join or Connect asked for, which a script's `rejoin` asks for again
+// (tide_platform_players_action): no kind before one
+static tide_session_request tide_run_joined;
 // The game's own network, while the session's match is on one (tide/network.h)
 static tide_network_match tide_run_network;
 // Inside another program's frame (tide/embed.h), which reads the devices,
@@ -425,6 +428,7 @@ static inline void tide_run_request(const tide_session_request *request, const v
     const tide_network *own = tide_run_registered();
     if (request->kind == TIDE_REQUEST_START || request->kind == TIDE_REQUEST_JOIN
         || request->kind == TIDE_REQUEST_CONNECT || request->kind == TIDE_REQUEST_LEAVE) tide_run_hosting_leave();
+    if (request->kind == TIDE_REQUEST_JOIN || request->kind == TIDE_REQUEST_CONNECT) tide_run_joined = *request;
     if ((!own || request->kind == TIDE_REQUEST_CONNECT) && !tide_platform_players()
         && (request->kind == TIDE_REQUEST_JOIN || request->kind == TIDE_REQUEST_CONNECT)
         && tide_run_hosted_request(request)) {
@@ -920,6 +924,13 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_run_alone.profile = measured;
     tide_run_now += seconds;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
+    // A script's leave and rejoin, in a run of several players, as the frame's poll had them
+    for (tide_players_action action; (action = tide_platform_players_action()) != TIDE_PLAYERS_NONE;) {
+        const tide_session_request again = tide_run_joined;
+        if (action == TIDE_PLAYERS_LEAVE) tide_run_request(&(tide_session_request){.kind = TIDE_REQUEST_LEAVE}, NULL);
+        else if (again.kind) tide_run_request(&again, NULL);
+        else fprintf(stderr, "tide: player %u has nothing to rejoin: it never joined a match\n", (unsigned)tide_platform_player());
+    }
 
     tide_session *s = tide_run_session;
     // Existing visual errors age before this update adds fresh corrections.

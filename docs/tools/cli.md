@@ -467,6 +467,7 @@ Each player is a copy of the game, a program of its own, as on a machine of its 
 - **Rooms.** A match that's open is in a room, and each player's room has a code of its own, six of one letter: `AAAAAA` is player 1's, `BBBBBB` player 2's, `CCCCCC` player 3's, and so on through the letters a code has (no `I` or `O`). [`Session.room`](../multiplayer/matches.md#where-this-machine-stands) reads it, and `Session.Join("AAAAAA")` joins player 1's match, so a script types it where a player would: `260 player 2 text AAAAAA`. A room nobody has open fails at once, with `Disconnected` and `Failed`, as a room that isn't one does.
 - **Addresses.** `Session.Connect` reaches the first player whose match is open on the address's port, 7777 unless `Session.Open(port)` picked another. The rest of the address says nothing here, and no name is looked up. A port nobody opened never answers, and the game times out, as on a network.
 - **One script for everyone.** A line says whose it is after its frame: `120 player 2 key d down`. Input that names no player is player 1's, so a script for one player plays as it did. `quit` and `--frames` end the run for everyone.
+- **Leaving and coming back.** `300 player 2 leave`, `drop` and `rejoin` say whose match changes, which tests what a game does when a player goes and returns: `PlayerLeft`, seats that free up, a player who comes back as the same `PlayerID`. A host that leaves or drops ends its match for the others, as on a network.
 - **Pictures from each.** A file gets its player's number before the extension: `capture fight.png` writes `fight-1.png` and `fight-2.png`, and `--capture`, `--capture-audio` and `capture-audio` go the same way. `400 player 2 capture hers.png` takes player 2's alone, as `hers-2.png`.
 - **A game that stops ends the run.** When one player's game ends before the run does (it stopped, or couldn't write a picture), the run says which player's and at which frame, the others end with it, and the exit code is that game's (1, when the system stopped it).
 
@@ -534,6 +535,9 @@ tide run --script play.txt --size 1280 720
 | `capture <file.png>` | Writes the frame, once it drew, as a PNG. A file a script names is beside the script |
 | `capture-audio <file.wav>` | Writes what played since the last such line, or since the run began, as a WAV beside the script |
 | `quit` | Ends the run once this frame drew |
+| `player <n> leave` | In a run of [several players](#several-players), player `n` leaves its match, as `Session.Leave` does: the match hears `PlayerLeft` at once |
+| `player <n> drop` | ...or goes silent both ways, as a phone that went away or a lost connection: nobody hears of it until a side times out, after 5 seconds |
+| `player <n> rejoin` | ...and joins again what it last joined, as the same player: a match that let it go hears `PlayerJoined` with its `PlayerID`, and one that hadn't noticed it go hears nothing |
 | `player <n>` before any of these but `quit` | In a run of [several players](#several-players), the line is player `n`'s: `120 player 2 key d down`. Without it, input is player 1's and a capture is every player's |
 
 What a line does is in the devices at its frame, as if a player had done it since the frame before. So it goes the way a player's input goes: the GUI takes a click on one of its widgets and the game doesn't get it, and a modal keeps the keys from the game.

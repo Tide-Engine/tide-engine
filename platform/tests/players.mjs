@@ -3,11 +3,12 @@
 // and they go a frame at a time together on a made-up network. Every
 // player's pictures are read back (png_read.mjs) and checked, pixel by pixel.
 //
-//   node players.mjs <tide_platform_players> <tide_platform_players_menu> <scratch folder> [refused]
+//   node players.mjs <tide_platform_players> <tide_platform_players_menu> <tide_platform_players_leave> <scratch folder> [refused]
 //
 // players.tide's Main is the match's, so the first player opens it and the
 // others join; players_menu.tide starts in a menu, and the script has its
-// players open and join by the rooms' codes. Without `refused`, the games
+// players open and join by the rooms' codes; players_leave.tide's script has
+// its players leave, drop and rejoin. Without `refused`, the games
 // run, which needs a desktop session with OpenGL, though nothing shows on it.
 // With it, only what a run refuses before it opens anything, which needs no GPU.
 
@@ -16,8 +17,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join, resolve } from 'node:path';
 import { readPng } from './png_read.mjs';
 
-const [programArg, menuArg, scratchArg, mode] = process.argv.slice(2);
-const program = resolve(programArg), menuProgram = resolve(menuArg); // They run in the scratch folder
+const [programArg, menuArg, leaveArg, scratchArg, mode] = process.argv.slice(2);
+const program = resolve(programArg), menuProgram = resolve(menuArg), leaveProgram = resolve(leaveArg); // They run in the scratch folder
 const scratch = resolve(scratchArg);
 rmSync(scratch, { recursive: true, force: true });
 mkdirSync(scratch, { recursive: true });
@@ -71,6 +72,9 @@ if (mode === 'refused') {
     line('5 player 2', 2, 'nothing happens');
     line('5 player 2 quit', 2, '`quit` ends the run', 'it takes no player');
     line('5 player 2 kye d', 2, "'kye' isn't something a line does");
+    line('5 leave', 2, '`leave` says whose match it is', '`5 player 2 leave`');
+    line('5 drop', 0, '`drop` is for a run of several players', '--players 2');
+    line('5 player 2 rejoin now', 2, "'now' is one word too many");
     check(!existsSync(join(scratch, 'x-1.png')), 'and nothing ran');
     process.exit(failures ? 1 : 0);
 }
@@ -262,6 +266,69 @@ if (menuRan.status === 0) {
     const menuFirst = menuNames.map(bytes);
     const menuAgain = run(menuArgs, menuProgram);
     check(menuAgain.status === 0 && menuNames.every((name, i) => bytes(name).equals(menuFirst[i])), 'and that run repeats exactly too');
+}
+
+// ---------------------------------------------------------------------------
+// A script's leave, drop and rejoin, in a game whose Main is the match's. A
+// PlayerID's row is white while it's in the match and black once it left; a
+// fourth row would be a player who came back as someone new.
+const leave = script('leave.txt', [
+    '40 capture all.png',
+    '',
+    '# The second leaves, as Session.Leave does: the match hears it at once',
+    '50 player 2 leave',
+    '60 capture left.png',
+    '',
+    '# The third drops: silent both ways, which nobody hears until it times out',
+    '70 player 3 drop',
+    '100 capture dropping.png',
+    '420 capture dropped.png',
+    '',
+    '# Both rejoin, as the same players',
+    '430 player 2 rejoin',
+    '431 player 3 rejoin',
+    '520 capture back.png',
+    '',
+    "# A drop the match hasn't noticed yet: the rejoin takes over, with no leaving at all",
+    '530 player 2 drop',
+    '540 player 2 rejoin',
+    '600 capture takeover.png',
+    '',
+    "# The host leaves: the others' match ends",
+    '610 player 1 leave',
+    '640 capture hostless.png',
+    '650 quit',
+]);
+const leaveArgs = ['--players', '3', '--script', leave, '--size', '320', '200'];
+const leaveRan = run(leaveArgs, leaveProgram);
+check(leaveRan.status === 0, `a run whose players leave, drop and rejoin ends with exit code 0${leaveRan.status === 0 ? '' : `: ${leaveRan.status}\n${leaveRan.err}`}`);
+if (leaveRan.status === 0) {
+    const shot = (name, player) => read(`${name}-${player}.png`);
+    const seat = (png, i) => block(png, 40, 30 + i * 40, 10, white) ? 'in' : block(png, 40, 30 + i * 40, 10, black) ? 'left' : 'none';
+    const seats = png => [0, 1, 2, 3].map(i => seat(png, i)).join(' ');
+    const connected = png => block(png, 300, 20, 10, green), timedOut = png => block(png, 300, 60, 10, yellow);
+    const serverLeft = png => block(png, 300, 100, 10, white);
+
+    for (const player of [1, 2, 3]) check(seats(shot('all', player)) === 'in in in none' && connected(shot('all', player)), `player ${player} starts in the match with the others`);
+    check(seats(shot('left', 1)) === 'in left in none', `the match hears the second leave at once (${seats(shot('left', 1))})`);
+    check(!connected(shot('left', 2)) && seats(shot('left', 2)) === 'none none none none' && !timedOut(shot('left', 2)),
+          'and the second is in no match, having left rather than timed out');
+    check(seats(shot('dropping', 1)) === 'in left in none' && connected(shot('dropping', 3)),
+          "a drop isn't heard at first: the match and the dropped player each still think the other is there");
+    check(seats(shot('dropped', 1)) === 'in left left none', `until the match times it out (${seats(shot('dropped', 1))})`);
+    check(timedOut(shot('dropped', 3)) && !connected(shot('dropped', 3)), 'and the dropped player times out the match');
+    check(seats(shot('back', 1)) === 'in in in none', `both rejoin as the same players: their rows, and no new one (${seats(shot('back', 1))})`);
+    check(connected(shot('back', 2)) && connected(shot('back', 3)) && seats(shot('back', 3)) === 'in in in none', 'and they see the match again');
+    check(seats(shot('takeover', 1)) === 'in in in none' && connected(shot('takeover', 2)),
+          `a rejoin before the match noticed the drop takes over, with nobody leaving (${seats(shot('takeover', 1))})`);
+    check(!connected(shot('hostless', 1)) && serverLeft(shot('hostless', 2)) && serverLeft(shot('hostless', 3)),
+          "a host that leaves ends the others' match, as their server left");
+
+    const leaveNames = ['all', 'left', 'dropping', 'dropped', 'back', 'takeover', 'hostless']
+        .flatMap(name => [1, 2, 3].map(player => `${name}-${player}.png`));
+    const leaveFirst = leaveNames.map(bytes);
+    const leaveAgain = run(leaveArgs, leaveProgram);
+    check(leaveAgain.status === 0 && leaveNames.every((name, i) => bytes(name).equals(leaveFirst[i])), 'and that run repeats exactly too');
 }
 
 process.exit(failures ? 1 : 0);

@@ -442,6 +442,18 @@ void tide_platform_players_code(char *out, size_t size);
 void tide_platform_players_room(uint32_t player, char *out, size_t size);
 // The room joined has nobody's match open in it, in tide_platform_room_failed's place.
 bool tide_platform_players_failed(void);
+// What the run's script asks of this player's match at the frame just polled,
+// one at a time, in the script's order, for the host to do: TIDE_PLAYERS_LEAVE
+// leaves it as Session.Leave does, and TIDE_PLAYERS_REJOIN joins again what the
+// player last joined, as the same player. TIDE_PLAYERS_NONE once nothing more
+// is asked. A script's `drop` is the platform's own: until a rejoin, nothing
+// this player sends goes and nothing comes, as for a phone that went away.
+typedef enum tide_players_action {
+    TIDE_PLAYERS_NONE,
+    TIDE_PLAYERS_LEAVE,
+    TIDE_PLAYERS_REJOIN,
+} tide_players_action;
+tide_players_action tide_platform_players_action(void);
 
 // Threads to run ticks on (tide/jobs.h): a pool with one for each of the
 // CPU's cores, the caller's among them, made on first use. NULL with one core.

@@ -1,5 +1,43 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Leave, drop and rejoin in a run of several players (2026-10-21)
+
+The owner approved Claude's proposal after AI trials could not test
+`PlayerLeft` or seat reuse: three script lines, each needing `player <n>` and
+`--players` of 2 or more (`script.c` refuses either missing, naming the fix).
+
+- `player <n> leave`: that player's host does what `Session.Leave` does
+  (`tide_run_request` with `TIDE_REQUEST_LEAVE`). The match hears `PlayerLeft` at once.
+- `player <n> drop`: `tide_platform_players_drop` (`players.c`) sets `silent`. From
+  that poll on, `end_send` drops whatever this player's ends send, and `deliver`
+  drops whatever comes for them, so each side times out (`TIMEOUT`, 5 s: 300
+  frames). Routing through the first player's process is untouched: a dropped
+  first player still routes the others.
+- `player <n> rejoin`: clears `silent` and asks the host to join again what it
+  last joined. The host keeps the last Join or Connect it made in
+  `tide_run_joined`; Main's automatic join at `tide_run_begin` and a game's own
+  `Session.Join`/`Connect` both count. The session keeps its cookie for the same
+  server, so the player is the same `PlayerID`. A match that already let it go
+  hears `PlayerJoined`; one that hadn't noticed the drop gets the takeover with
+  no events. A player that never joined says so on stderr and does nothing.
+- Leave and rejoin cross from the platform to the host as
+  `tide_platform_players_action` (`tide/platform.h`), a queue of up to 16
+  actions taken in the script's order right after the frame's poll, in
+  `tide_run_frame`. Drop needs no host. Web and Android compile the queue and
+  never fill it.
+- A host that leaves or drops is allowed (the proposal had refused player 1):
+  in a game that starts in a menu player 1 needn't host, and the others getting
+  `ServerLeft` or timing out is what a network does.
+
+Tests: `tide_platform_players_net_drop` (no GPU; every desktop in CI): a drop
+silences both ways, the queue returns rejoin then leave in order, and speech
+resumes after the rejoin. `tide_platform_players` runs `players_leave.tide`
+with three players. A leave is heard at once; a drop only at the timeout, on
+both sides; both rejoin as their old seats with no new `PlayerID`; a drop and
+rejoin inside the timeout is a takeover; the host leaving gives the others
+`ServerLeft`. The run repeats byte for byte. `tide_platform_players_refused`
+has the three refusals. User docs: CLI Scripts and Several players, and the AI overview.
+
 ## Inside another program's frame (2026-10-20)
 
 `tide/embed.h` (`platform/src/embed.c`) runs the standard host's loop inside
@@ -195,7 +233,7 @@ submitted-geometry counter's scope.
   - **Ending.** `--frames` and `quit` are every process's, so all end at the same frame, and the last frame has no exchange. The first then hangs up and waits for the others (`tide_platform_players_finish`, from `finish`), and the run's exit code is the first that isn't 0. A run of one frame heard from nobody yet, so the first lets the others connect before it hangs up, or they'd find no run. When a player's process ends before the run does (it stopped, or couldn't write a picture), the first finds its connection closed at that frame's end, says whose game ended and at which frame, hangs up, and ends with that process's exit code, or 1 for one the system stopped; each of the others finds nobody at its own frame's end and ends with 1, saying nothing. So no process is left running, and none waits on a time.
   - **Measured** (2026-10-08, Windows, debug): Tag, two players, 1,200 frames at 640 by 360, in 3.4 seconds, where one player's run took 1.6.
   - Tests: `tide_platform_players_net` and `tide_platform_players_net_ended` (`platform/tests/players_net.c`, no GPU, every desktop's tests) are three processes with no window that send text through the network and check, frame by frame, when it arrives, in what order and from whom, what a room nobody opened says, that an end let go of is nobody's, and that a process that ends at frame 3 ends the run there with its exit code. `tide_platform_players` (`players.mjs`, label `gpu`) runs `players.tide`, whose Main is the match's, with two and three players and one, and `players_menu.tide`, which starts in a menu, where the script has the players open and join by the rooms' codes, an address and one nobody is at: it reads every player's pictures, runs each again for the same bytes, and has a game stop and a picture fail. `tide_platform_players_refused` is what such a run refuses, with no GPU, and `tide_cli_hidden` that `tide run` passes `--players` on and refuses it with a window. CI leaves the `gpu` label out, so `tide_platform_players_net` is what runs the processes and the sockets on Linux and macOS.
-  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`); a network that's worse than a frame each way (a made-up lag or loss, which the first player's process could add, as every datagram goes through it); host migration on the made-up network; and players who start apart where `Main` is the match's.
+  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`; `leave`, `drop` and `rejoin`, above, cover its match); a network that's worse than a frame each way (a made-up lag or loss, which the first player's process could add, as every datagram goes through it); host migration on the made-up network; and players who start apart where `Main` is the match's.
 - That nothing an agent runs shows on the owner's screen doesn't rest on the agent remembering: `TIDE_HIDDEN` in the environment, set to anything but nothing or 0, says nobody watches a run (`tide_hidden`, `tide/page.h`), and then no Tide program shows a window or a dialog, or opens an audio device. Desktop only.
   - Where agents' shells get it, and the rules that stand beside it, are in `AGENTS.md`, Rendering and platform.
   - A window that isn't `hidden` has only its closing to end its run, which nobody could do, so the program is refused: it ends with exit code 2 before it opens anything, having said what to give it instead (decided over running hidden for a counted number of frames, which would end with 0 as if something had been checked, and as a run with no window that nothing ends is refused already). `tide_platform_open` refuses any such window (`platform/src/platform.c`), the standard host names its flags first (`tide_run_open` in `tide/host.h`), and `tide run` refuses before it builds (`compiler/cli/main.c`); `tide run --web` serves its page and opens no browser. A window that's `hidden`, as every test's is, and a run with no window go as they do without the variable, but for the window's sound (Nobody listens either, below). Under the refusal, `tide_window_open` shows no window whatever asked (`platform/desktop/glfw.c`).
