@@ -205,6 +205,25 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     tide_draw_free(&list);
 }
 
+// Inside another program's frame (tide/embed.h) its draws are that program's: no draw call, vertex, render or GPU
+// lines, the frame's work and the match's lines still there
+TIDE_TEST(stats_drawn_elsewhere_leave_out_the_other_programs_lines)
+{
+    start(true);
+    values.elsewhere = true;
+    values.render_known = values.gpu_known = true;
+    values.render_ms = 0.25;
+    values.gpu_ms = 1.5;
+    draw();
+    TIDE_CHECK(line_is(1, "cpu", "2.1 ms") && line_is(2, "ping", "34 ms"));
+    for (uint32_t i = 0; i < stats.line_count; i++) {
+        TIDE_CHECK(strcmp(stats.lines[i].label, "draw calls") != 0 && strcmp(stats.lines[i].label, "vertices") != 0
+                   && strcmp(stats.lines[i].label, "render") != 0 && strncmp(stats.lines[i].label, "gpu", 3) != 0);
+    }
+    TIDE_CHECK(!text_command("vertices") && !text_command("draw calls"));
+    tide_draw_free(&list);
+}
+
 TIDE_TEST(stats_panel_keeps_its_width_while_open)
 {
     start(true);

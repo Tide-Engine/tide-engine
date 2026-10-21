@@ -94,7 +94,10 @@ there.
 
 Add a GameObject with a `TideRunner`. In Play mode it runs the game: Main's
 match on this machine, or what its arguments say (`--host`, `--join <code>`,
-`--connect <address>`). A new build of the game is swapped into the running
+`--connect <address>`, `--seed <n>`, `--data-dir <folder>`, and `--stats` for
+Tide's stats drawer over the game: the frame's work, ping, network, entities
+and the slowest systems; the game's `stats` setting shows it too). An argument
+it doesn't take gets a warning in the Console. A new build of the game is swapped into the running
 match.
 
 An entity of a Unity prefab shows through an instance of that prefab, made

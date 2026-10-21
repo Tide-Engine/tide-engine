@@ -75,6 +75,20 @@ screen's middle through Tide's camera, 60 pixels left of it through a camera
 a field of view of 0. A point behind the camera still projects (flipped by
 the division), not to (0, 0).
 
+Stats inside another program (2026-10-21, owner: `--stats` in the runner's
+Arguments did nothing). They were left out embedded ("the other program has
+stats of its own"), and the embed took no `--stats`. Now `embed_options`
+reads `--stats` as `tide run --stats` does (the setting, and the drawer
+starting open), and the game's `stats` setting counts too: `tide_run_frame`
+keeps the drawer embedded, drawn into `tide_run_draw` after the views and the
+GUI, so `tide_embed_draw` has it for the other program to draw, rather than
+into `tide_run_over` for a window. The values say `elsewhere`
+(`tide_stats_values`, `engine/include/tide/stats.h`), which leaves out the
+draw calls, vertices, render and GPU lines (the other program's), and memory
+is 0, as the process is the other program's. Tests: `embed_stats` (the
+packet has the "N fps" line and `cpu`, and no `draw calls`) and
+`stats_drawn_elsewhere_leave_out_the_other_programs_lines` (`tests/test_stats.c`).
+
 - Input is raw, as a window reports it (`tide_embed_input`: held keys as bits,
   cursor, this frame's scroll and locked movement, buttons, one gamepad, typed
   code points, this frame's touch events, all top-left y-down). The approved

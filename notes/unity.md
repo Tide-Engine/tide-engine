@@ -646,6 +646,16 @@ finds the ring within 1.5 pixels of `Camera.main.WorldToScreenPoint` of the
 ball (y flipped). Not done: an orthographic Unity camera (Tide's 3D cameras are
 perspective ones), and Unity's near and far planes for a projected depth.
 
+**Stats and the runner's Arguments (2026-10-21).** The owner put `--stats` in
+TideRunner's Arguments and saw nothing: the embed dropped every flag it didn't
+take, and drew no stats. `--stats` now shows Tide's stats drawer, open, over
+the game (`notes/standard-host.md`), as does the game's `stats` setting; TideDraw
+draws it as any of Tide's drawing (its panel, text and lines). A word the embedded
+game doesn't take gets a Console warning naming it and listing those it takes
+(`TideRunner.UnknownArguments`; Sample's `ArgumentsTests`). Unity's own Stats
+window has the rendering; Tide's drawer has the frame's work, ping, delay,
+network, entities, threads and the slowest systems.
+
 ### The game is Assets (2026-10-21)
 
 **Owner:** "anything inside `Assets` is valid", rather than a game folder;

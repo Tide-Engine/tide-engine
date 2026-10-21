@@ -50,13 +50,20 @@ uint32_t tide_embed_abi(void)
     return TIDE_EMBED_ABI;
 }
 
-// --seed <n> and --data-dir <folder> from `desc`'s command line, as tide/run.h
-// reads them, but a bad one is left out with a line saying so: the program Tide
-// is inside of goes on.
+// --seed <n>, --data-dir <folder> and --stats from `desc`'s command line, as
+// tide/run.h and tide run read them, but a bad one is left out with a line
+// saying so: the program Tide is inside of goes on.
 static void embed_options(const tide_embed_desc *desc)
 {
-    for (int i = 1; i + 1 < desc->argc; i++) {
-        const char *arg = desc->argv[i], *value = desc->argv[i + 1];
+    for (int i = 1; i < desc->argc; i++) {
+        const char *arg = desc->argv[i];
+        if (strcmp(arg, "--stats") == 0) { // The stats' drawer, open, as `tide run --stats` shows it
+            tide_run_settings.stats = true;
+            tide_run_drawer.open = true;
+            continue;
+        }
+        if (i + 1 >= desc->argc) continue;
+        const char *value = desc->argv[i + 1];
         if (strcmp(arg, "--seed") == 0) {
             char *end = NULL;
             const unsigned long seed = strtoul(value, &end, 10);

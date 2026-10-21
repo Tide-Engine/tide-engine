@@ -44,7 +44,7 @@ namespace Tide
     [DisallowMultipleComponent]
     public sealed unsafe class TideRunner : MonoBehaviour
     {
-        [Tooltip("As the game's command line: --host, --join <code>, --connect <address>, --seed <n>")]
+        [Tooltip("As the game's command line: --host [port], --join <code>, --connect <address>, --seed <n>, --data-dir <folder>, --stats")]
         public string arguments = "";
 
         [Tooltip("Another relay's address; empty for Tide's")]
@@ -180,10 +180,43 @@ namespace Tide
             return bytes;
         }
 
+        // What the embedded game takes (tide/embed.h), each with the values it's followed by: the first word it
+        // doesn't take, or null. tide run's others (--players, --capture, --size...) are for its own window.
+        public static string UnknownArguments(List<string> words)
+        {
+            for (var i = 1; i < words.Count; i++)
+            {
+                switch (words[i])
+                {
+                case "--stats":
+                    break;
+                case "--host":
+                    if (i + 1 < words.Count && words[i + 1].Length > 0 && char.IsDigit(words[i + 1][0])) i++;
+                    break;
+                case "--join":
+                case "--connect":
+                case "--seed":
+                case "--data-dir":
+                    if (i + 1 >= words.Count) return words[i] + " with nothing after it";
+                    i++;
+                    break;
+                default:
+                    return words[i];
+                }
+            }
+            return null;
+        }
+
         IntPtr Create()
         {
             var words = new List<string> { "unity" };
             words.AddRange(arguments.Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
+            var unknown = UnknownArguments(words);
+            if (unknown != null)
+            {
+                Debug.LogWarning($"Tide: the runner's Arguments have {unknown}, which the game doesn't take in Unity: it takes " +
+                                 "--host [port], --join <code>, --connect <address>, --seed <n>, --data-dir <folder> and --stats", this);
+            }
             var strings = new List<IntPtr>();
             IntPtr Str(string s)
             {
