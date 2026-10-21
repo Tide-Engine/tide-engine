@@ -4751,6 +4751,7 @@ static void st_outs(emit *em, const expr *e)
 // The variable a step changes: the local or parameter its target is, or is a part of.
 static const expr *step_variable(const expr *e)
 {
+    if (e->property && e->kind == E_METHOD) e = e->object;
     while (e->kind == E_MEMBER) e = e->object;
     return e->kind == E_NAME && (e->bind == BIND_LOCAL || e->bind == BIND_PARAM) ? e : NULL;
 }
@@ -4916,6 +4917,33 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
                    STR_ARG(var->name));
             diag_note("write the '%s' as a statement of its own, before or after this one", op);
             e->hoisted = "0"; // Said already
+            vec_push(*made, e);
+            return;
+        }
+        if (e->step->property_set) {
+            sb old = {0}, next = {0};
+            sb_printf(&old, "tide_property_was%d", em->temps);
+            sb_printf(&next, "tide_property_next%d", em->temps++);
+            line(em);
+            if (em->l == WGSL) sb_printf(em->o, "let %s: %s = ", old.data, ty(em, e->type));
+            else sb_printf(em->o, "%s %s = ", ty(em, e->type), old.data);
+            ex(em, e->lhs);
+            sb_put(em->o, ";\n");
+            expr before = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = old.data};
+            expr value = {.kind = E_BINARY, .at = e->at, .type = e->type, .op = compound_op(e->op), .lhs = &before, .rhs = e->step->value};
+            line(em);
+            if (em->l == WGSL) sb_printf(em->o, "let %s: %s = ", next.data, ty(em, e->type));
+            else sb_printf(em->o, "%s %s = ", ty(em, e->type), next.data);
+            ex(em, &value);
+            sb_put(em->o, ";\n");
+            expr stepped = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = next.data};
+            expr *argument = &stepped;
+            expr setter = *e->step->property_set;
+            setter.args.items = &argument;
+            stmt call = {.kind = S_EXPR, .at = e->at, .value = &setter};
+            line(em);
+            st_call(em, &call);
+            e->hoisted = e->postfix ? old.data : next.data;
             vec_push(*made, e);
             return;
         }

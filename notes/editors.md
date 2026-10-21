@@ -1,5 +1,23 @@
 # The language server and the editors
 
+## Computed properties (2026-10-21)
+
+Properties reuse accessor methods in analysis, with one canonical source symbol
+for both accessors. Completion offers one property without call parentheses;
+hover shows its type and get/set availability; declaration/workspace symbols
+use Property, and semantic tokens use property/readonly. Definitions, references
+and rename treat reads and writes as one member. Setter value and contextual
+world are implicit and cannot be renamed. Component methods complete contextual
+world, and World members include ParentToWorld. Shared grammar recognizes get
+and set contextually before accessor bodies. Explicit discard temporaries no
+longer create an invented identifier span that masks the expression's hover.
+
+lsp_user_properties covers diagnostics, hover, completion, symbols, cross-accessor
+rename, Transform.position and malformed-accessor recovery. An incomplete
+property has no accessor yet, which the checker treats as an error type rather
+than dereferencing a missing setter. Existing editor adapters need no protocol
+change. Full validation is recorded in notes/language.md with the compiler work.
+
 ## CLI-managed JetBrains profiles (2026-10-21)
 
 The engine package now carries the matching Tide plugin plus LSP4IJ in a

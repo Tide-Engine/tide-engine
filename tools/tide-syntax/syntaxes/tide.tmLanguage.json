@@ -437,6 +437,11 @@
     },
     "keywords": {
       "patterns": [
+          {
+            "comment": "Computed property accessors, contextual before their bodies",
+            "name": "keyword.other.accessor.tide",
+            "match": "\\b(get|set)\\b(?=\\s*\\{)"
+          },
         {
           "comment": "A parallel loop's header, whose blocks go 'by' a size from an 'offset': parallel (var at in cells by 2 offset o)",
           "begin": "\\b(parallel)\\s*(\\()",

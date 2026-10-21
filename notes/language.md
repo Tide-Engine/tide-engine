@@ -1,5 +1,88 @@
 # Language features, as tidec builds them
 
+## Computed properties and attached component context (2026-10-21)
+
+Owner-approved: user-defined C#-style get/set properties, with the engine using
+the same facilities; world position on Transform; attached components can reach
+their entity/world; performance is a requirement. The decided/provisional split
+in docs/spec.md distinguishes that direction from the implementation spellings
+and edge choices below.
+
+Parser properties are separate from stored fields. Accessors are ordinary
+methods with independent component-placement bodies. Reads lower to getter
+calls; assignments lower to mut setter calls. `value` is an implicit read-only
+setter argument. Getter-only and setter-only declarations work. Compound
+assignment evaluates the receiver once, getter, RHS, then setter; numeric
+increments retain the calculated value before a clamping setter runs. CPU and
+GPU lowering agree. A returned property value cannot supply a writable subfield
+or mut/out reference. Literals initialize stored fields. Accessors inherit normal
+caller effects, scheduling, permissions, container ownership and GPU restrictions.
+
+Component methods/accessors have contextual `world` and existing entity `this`.
+Only direct component parameters/query bindings supply ownership; synchronous
+forwarding retains it and explicit copies detach. A fixed-point pass requests
+entity and world side arguments only for helper parameters that need them.
+Ordinary field-only helpers keep their existing ABI. `local Transform` on an
+ordinary helper selects local context; a value-only helper retains the existing
+copy rules. Task component references derive context anew on resume. Verified
+bindings retain their world through helper/query/Action forwarding. Recorded
+match-event values retain identity but do not grant historical World access.
+No pointer enters stored components, snapshots, journals or task frames.
+
+A component method uses contextual world access or an explicit World parameter,
+not both. Fields/parameters named world retain their existing shadowing. Structs
+and singletons gain properties but no implicit entity/world. Setter permissions
+follow mut-method permissions; match writes remain forbidden in views and local
+state remains forbidden in the match.
+
+Transform.position is parsed Tide accessor code, using public
+World.ParentToWorld(this) and its current localPosition. ParentToWorld is a
+generated hierarchy query, including retained visibility anchors when a parent
+has been projected away. Ordinary roots/dead handles give identity. The setter
+inverts that parent matrix and changes only localPosition. Nonfinite inputs,
+singular matrices and nonfinite results leave it unchanged. Identity parent
+matrices avoid inversion. Ancestors remain stored-state reads. Engine accessors
+instantiate only when called, so unused properties introduce no hierarchy state.
+Storage stays the three local TRS fields. No runtime export or cache was added.
+
+properties exercises explicit/implicit accessors, getter-only/setter-only forms,
+clamping prefix/postfix increments, compound order with C probes, checked array
+paths (including nested fields and invalid indexes), list ownership/copies,
+attached helper/query/Action forwarding, parent-relative conversion, in-flight
+local writes, local/verified worlds, unchanged frame hashes, singular parents,
+snapshot replay and packing. visibility_projection compares property positions
+bit-for-bit with composed stored matrices at hidden hierarchy boundaries, while
+retaining its existing hash pin. Nine negative fixtures cover invalid access,
+detached context and view writes. The old query-this/helper-this error fixtures
+now detach explicitly; their previous direct bindings are valid. Shader goldens
+and the CPU/frag/vert PropertyProbe cover accessors and clamping increments.
+
+Performance probe: Clang 23.1.2 -O3, no fast-math/FMA; generated game and baseline
+compiled together, linked against this checkout's debug engine. Baseline C takes
+the same bound Transform, checks its parent, returns localPosition at a root,
+otherwise transforms it by the stored parent matrix. No visibility policy in
+the probe. Two noinline wrappers keep call boundaries equal; inputs vary each
+iteration. Minimum of five alternating warmed C/property runs, repeated reads
+at depths 0/1/32/256 (1M/300K/30K/3K iterations per run). Native nanoseconds per
+read, C/property: 11.08/11.83, 74.56/76.81, 2436.88/2426.05,
+19112.60/19020.87. WASI with ordinary SIMD under Node 24.21.0:
+16.83/17.45, 129.18/130.32, 3520.14/3501.62, 27780.27/27621.30.
+Root overhead is below 1 ns in these runs; deeper differences approach noise.
+These are compiler-abstraction comparisons, not release-engine end-to-end
+benchmarks. Existing hierarchy traversal/scratch cost remains; no cache or
+arithmetic reordering was used to improve the numbers.
+
+Validation: complete warning-free native/web debug builds and both full suites
+completed (2,465 native / 2,406 web). Their only initial failures were the three
+obsolete this/query/World diagnostic expectations described above. Updated
+negative cases and final container/Action/packing/recovery additions pass all
+15 selected native and 14 selected web checks, including the full language-server
+test executable. Existing determinism pins are unchanged. Native GPU, OpenGL,
+WebGL/D3D11 and WebGPU tests pass; this machine has no Vulkan validation layer.
+All 274 shared grammar tests and the production docs build pass. Android, other
+operating systems and sanitizers remain CI coverage; no CI was dispatched.
+Final integration checks are recorded below after merging current dev.
+
 ## Word suggestions (2026-10-21)
 
 The owner, of hints: "the better hints the better code". AI trials wrote

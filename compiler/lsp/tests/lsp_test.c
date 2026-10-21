@@ -3578,6 +3578,32 @@ TIDE_TEST(lsp_structs)
     "\n"                                                                       \
     "scene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Unit); }\n"
 
+TIDE_TEST(lsp_user_properties)
+{
+    start();
+#define PROPERTY_GAME "struct Gauge { int stored; int amount { get { return stored; } set { stored = value; } } }\nscene Main;\n"
+    open_document(PROPERTY_GAME "system Tick() { mut var g = Gauge {}; g.amount = 3; _ = g.am$ount; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *property_hover = request("textDocument/hover");
+    TIDE_CHECK(has(property_hover, "int amount { get; set; }"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"amount\",\"detail\":\"int amount { get; set; }\",\"kind\":7"));
+    TIDE_CHECK(count(symbols, "\"name\":\"amount\"") == 1);
+    const char *renamed = request_with("textDocument/rename", "\"newName\":\"level\"");
+    TIDE_CHECK(count(renamed, "\"newText\":\"level\"") == 3);
+    const char *members = complete(PROPERTY_GAME "system Tick() { var g = Gauge {}; _ = g.$amount; }\n");
+    TIDE_CHECK(offers(members, "amount") && has(members, "\"label\":\"amount\",\"kind\":10"));
+    TIDE_CHECK(!has(members, "amount("));
+    open_document("scene Main;\nview Show(Transform t) { _ = t.po$sition; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float3 position { get; set; }"));
+    open_document("struct Gauge { int amount { } }\nscene Main;\nsystem Tick() { mut var g = Gauge {}; g.amount = 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+    open_document("struct Gauge { int amount { get } }\nscene Main;\nsystem Tick() { mut var g = Gauge {}; g.amount = 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+#undef PROPERTY_GAME
+}
+
 TIDE_TEST(lsp_methods_and_functions)
 {
     start();

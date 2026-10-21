@@ -1,0 +1,166 @@
+struct Gauge
+{
+    int stored;
+    int doubled
+    {
+        get { return stored * 2; }
+        set { stored = value / 2; }
+    }
+    int next { get { return doubled + 1; } }
+    int ordered
+    {
+        get { PropertyGet(); return stored; }
+        set { PropertySet(value); stored = value; }
+    }
+    mut void Bump() { doubled += 2; }
+}
+
+struct GaugeHolder { Gauge gauge; }
+struct Bag
+{
+    List<int> values;
+    List<int> items { get { return values; } set { values = value; } }
+    int reset { set { values.Clear(); values.Add(value); } }
+}
+
+component Meter
+{
+    Gauge gauge;
+    Entity identity { get { return this; } }
+    float3 origin { get { return world.LocalToWorld(this).c3.xyz; } }
+    int amount
+    {
+        get { return gauge.doubled; }
+        set { gauge.doubled = value; }
+    }
+}
+
+singleton Results
+{
+    int before;
+    int after;
+    int sum;
+    Entity identity;
+    float3 position;
+    float3 direct;
+    float3 current;
+    float3 writtenLocal;
+    float3 queried;
+    Entity root;
+    int ordered;
+    int heap;
+}
+
+scene Main;
+
+event(Spawned) Init(with Main, mut Results results)
+{
+    results.root = Spawn(Transform { localPosition = float3(10, 0, 0), localScale = float3(2, 3, 4) });
+    var child = Spawn(Meter { gauge = Gauge { stored = 4 } }, Transform { localPosition = float3(2, 3, 4) });
+    child.SetParent(results.root, false);
+}
+
+extern int PropertyIndex();
+extern void PropertyGet();
+extern int PropertyRhs();
+extern void PropertySet(int value);
+
+Entity Identity(Meter meter) { return meter.identity; }
+Entity Forward(Meter meter) { return Identity(meter); }
+float3 Origin(Meter meter) { return meter.origin; }
+float3 Position(Transform transform) { return transform.position; }
+float3 ForwardPosition(Transform transform) { return Position(transform); }
+void WithPosition(Transform transform, mut float3 result, Action content)
+{
+    result = ForwardPosition(transform);
+    content();
+}
+
+float3 QueryPositions(query (Transform transform, with Meter) transforms)
+{
+    mut var sum = float3(0);
+    foreach (var row in transforms) sum += ForwardPosition(row.transform);
+    return sum;
+}
+
+system Query(query (Transform transform, with Meter) transforms, mut Results results)
+{
+    WithQuery(transforms, results.queried) { results.sum += 0; }
+}
+
+void WithQuery(query (Transform transform, with Meter) transforms, mut float3 result, Action content)
+{
+    result = QueryPositions(transforms);
+    content();
+}
+
+system Update(mut Meter meter, mut Transform transform, mut Results results)
+{
+    results.before = meter.amount++;
+    results.after = ++meter.amount;
+    meter.amount += 6;
+    meter.gauge.Bump();
+    results.sum = meter.gauge.next;
+    results.identity = Forward(meter);
+    results.position = Origin(meter);
+    transform.position = float3(5, 6, 7);
+    transform.position += float3(1, 2, 3);
+    results.direct = transform.position;
+    results.writtenLocal = transform.localPosition;
+    transform.localPosition = float3(1, 2, 3);
+    WithPosition(transform, results.current) { results.sum += 0; }
+    mut Gauge[2] gauges = [Gauge { stored = 10 }, Gauge { stored = 20 }];
+    gauges[PropertyIndex()].ordered += PropertyRhs();
+    results.ordered = gauges[0].stored;
+    gauges[-1].doubled = 100;
+    gauges[2147483647].doubled += 6;
+    mut GaugeHolder[1] holders = [GaugeHolder {}];
+    holders[0].gauge.doubled = 6;
+    holders[-1].gauge.doubled = 100;
+    results.ordered += holders[0].gauge.stored;
+    mut var bag = Bag { values = [1, 2] };
+    mut var copy = bag;
+    bag.items = [3, 4];
+    mut var taken = bag.items;
+    taken[0] = 9;
+    copy.reset = 7;
+    results.heap = bag.values[0] + copy.values[0] + taken[0];
+}
+
+component LocalMarker { }
+local singleton LocalResults
+{
+    bool ready;
+    float3 position;
+    float3 verified;
+    float3 query;
+}
+
+float3 LocalPosition(local Transform transform) { return transform.position; }
+
+view LocalSetup(mut LocalResults results)
+{
+    if (!results.ready)
+    {
+        var parent = local Spawn(Transform { localPosition = float3(20, 0, 0) });
+        var child = local Spawn(Transform { localPosition = float3(2, 3, 4) }, LocalMarker);
+        child.SetParent(parent, false);
+        results.ready = true;
+    }
+}
+
+view LocalRead(local mut Transform transform, with local LocalMarker, mut LocalResults results)
+{
+    transform.position = float3(30, 2, 3);
+    results.position = LocalPosition(transform);
+}
+
+view Verified(verified Transform transform, with Meter, mut LocalResults results)
+{
+    results.verified = ForwardPosition(transform);
+}
+
+view VerifiedQuery(query (verified Transform transform, with Meter) transforms, mut LocalResults results)
+{
+    WithQuery(transforms, results.query) { results.ready = true; }
+}

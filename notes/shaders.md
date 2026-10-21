@@ -1,5 +1,16 @@
 # Code the GPU runs: frags and verts
 
+## Computed properties (2026-10-21)
+
+Ordinary numeric properties lower to existing method calls. Property increment
+expressions keep the getter's old value and calculated next value, call the
+setter once, then select old/next for postfix/prefix. Reading the getter again
+would be wrong when a setter clamps. Existing GPU restrictions on conditional
+increments, mutable receivers and entity/world access still apply. The new
+properties golden pins GLSL/WGSL. PropertyProbe in platform/tests/shaders.tide
+checks a clamping setter through the existing CPU/frag/vert comparison without
+changing its expected sum. Native/web coverage is recorded in language.md.
+
 ## Double matrix rejection (2026-10-20)
 
 Double matrices remain CPU values. type_words rejects every binary64 type

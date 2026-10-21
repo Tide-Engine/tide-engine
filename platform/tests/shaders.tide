@@ -1061,8 +1061,29 @@ int SwitchMark(mut int calls, int digit)
 }
 bool SwitchFill(out int value) { value = 6; return true; }
 
+struct PropertyGauge
+{
+    int stored;
+    int doubled
+    {
+        get { return stored * 2; }
+        set { stored = value / 2; }
+    }
+    int next { get { return doubled + 1; } }
+}
+
+int PropertyProbe()
+{
+    mut var gauge = PropertyGauge { stored = 4 };
+    var before = gauge.doubled++;
+    var after = ++gauge.doubled;
+    gauge.doubled += 6;
+    return before + after + gauge.doubled + gauge.next;
+}
+
 int SwitchProbe(int selector)
 {
+    if (PropertyProbe() != 46) return -100;
     int later;
     switch (selector)
     {

@@ -1,0 +1,4 @@
+// expect: a property returns a value, not a writable field
+struct Gauge { float3 stored; float3 amount { get { return stored; } set { stored = value; } } }
+scene Main;
+system Tick() { mut var g = Gauge {}; g.amount.x = 2; }

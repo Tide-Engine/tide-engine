@@ -1,0 +1,3 @@
+// expect: 'stored' is read-only in 'amount'
+struct Gauge { int stored; int amount { get { stored = 1; return stored; } } }
+scene Main;

@@ -1474,7 +1474,9 @@ static bool shaders_roll(const program *prog, const bool seed)
 static const char *routine_cname(const decl *m)
 {
     sb b = {0};
-    if (m->is_operator) {
+    if (m->accessor) {
+        sb_printf(&b, "tide_property_%s_%s_" STR_FMT, decl_cname(m->owner), m->is_mut_method ? "set" : "get", STR_ARG(m->name));
+    } else if (m->is_operator) {
         int index = 0;
         while (m->owner->methods.items[index] != m) index++;
         sb_printf(&b, "tide_operator_%s_%s_%d", decl_cname(m->owner), operator_word(m), index);
@@ -2125,6 +2127,45 @@ static void gen_fields_arg(gen *g, sb *o, const expr *e)
                    type_cname(local_part_of(p->type)), row, row, row, field_cname(e->field));
 }
 
+static const char *owner_name(const gen *g, const param *p, const char *part)
+{
+    sb b = {0};
+    sb_printf(&b, "tide_owner_%s_%s", part, local_cname(g, p->name));
+    return b.data;
+}
+
+static borrow_source query_source(const decl *owner, const borrow_variant *variant, const param *p);
+static const param *source_query(borrow_source source);
+
+static const char *component_owner_world(gen *g, const expr *e)
+{
+    const param *p = query_component(e);
+    if (!p && e->bind == BIND_PARAM) p = e->param;
+    if (!p) return "NULL"; // Invalid detached use is diagnosed before generation.
+    if (p->query_source && p->query_source->function_param) {
+        const param *q = p->query_source;
+        if (q->query_local) return "tide_l";
+        const param *source = source_query(query_source(g->routine, g->borrow, q));
+        bool verified = false;
+        for (int i = 0; i < source->query.count; i++) {
+            const param *binding = &source->query.items[i];
+            if (binding->type.decl == p->type.decl && param_binding(binding)) verified = binding->verified;
+        }
+        return owner_name(g, q, verified ? "verified" : "predicted");
+    }
+    if (p->function_param && !p->task_ref) return owner_name(g, p, "world");
+    if (p->type.decl->is_local) return "tide_l";
+    return p->verified ? "tide_verified" : "tide_w";
+}
+
+static void gen_component_owner(gen *g, sb *o, const expr *e)
+{
+    const param *p = query_component(e);
+    if (p) sb_printf(o, "%s.entity", local_cname(g, e->object->name));
+    else if (e->bind == BIND_PARAM && e->param->function_param && !e->param->task_ref) sb_put(o, owner_name(g, e->param, "entity"));
+    else sb_put(o, "tide_this");
+}
+
 // Where a place's memory is, as C, for its text and lists (see tide/text.h):
 // a world's, for what's part of one, which owns them, or the scratch area's,
 // for what isn't, which borrows. A field or list element is where its value is.
@@ -2288,6 +2329,23 @@ static bool via_element_member(const expr *e)
         if (e->kind == E_MEMBER && under_element(e->object)) return true;
     }
     return false;
+}
+
+// Only compiler-checked array slots and field offsets become addresses. NULL
+// flows through the path and a setter ignores it; no writable zero sentinel.
+static void gen_property_address(gen *g, sb *o, const expr *e)
+{
+    if (e->kind == E_INDEX && e->object->type.kind == TY_ARRAY) {
+        sb_printf(o, "tide_array%d_slot(", e->object->type.decl->index);
+        gen_property_address(g, o, e->object);
+        sb_put(o, ", "); gen_expr(g, o, e->lhs); sb_put(o, ")");
+    } else if (e->kind == E_MEMBER && e->field) {
+        sb_put(o, "tide_property_field(");
+        gen_property_address(g, o, e->object);
+        sb_printf(o, ", offsetof(%s, %s))", c_type(e->object->type), field_cname(e->field));
+    } else {
+        sb_put(o, "&("); gen_expr(g, o, e); sb_put(o, ")");
+    }
 }
 
 static void gen_binary(gen *g, sb *o, tok_kind op, expr *l, expr *r, type result, const decl *overload);
@@ -3200,10 +3258,14 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         args++;
     }
     if (takes_local(m)) {
-        sb_printf(o, "%s%s", args++ ? ", " : "", takes_task(m) && !has_local(g) ? "NULL" : "tide_l");
+        const char *local = m->uses_owner_world && m->owner->is_local && e->kind == E_METHOD ? component_owner_world(g, e->object) : "tide_l";
+        sb_printf(o, "%s%s", args++ ? ", " : "", takes_task(m) && !has_local(g) ? "NULL" : local);
     }
     // What its World argument stands for
-    if (takes_world(m)) sb_printf(o, "%s%s", args++ ? ", " : "", takes_task(m) && !has_world(g) ? "NULL" : "tide_w");
+    if (takes_world(m)) {
+        const char *world = m->uses_owner_world && !m->owner->is_local && e->kind == E_METHOD ? component_owner_world(g, e->object) : "tide_w";
+        sb_printf(o, "%s%s", args++ ? ", " : "", takes_task(m) && !has_world(g) ? "NULL" : world);
+    }
     if (takes_world_bindings(m)) sb_printf(o, "%stide_bindings", args++ ? ", " : "");
     if (takes_scene(g->prog, m)) { // What it spawns joins the scene of the entity this code runs for, when that's of the same world
         const bool same = g->has_scene && g->scene_local == scene_is_local(g->prog, m);
@@ -3228,17 +3290,24 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         if (copy_self) sb_put(o, ")");
         args++;
     } else if (m->owner) {
-        if (m->is_mut_method) sb_put(o, "&(");
-        if (m->c_self_indirect) gen_indirect_arg(g, o, e->object, self);
-        else if (copy_self) gen_value_of(g, o, e->object, self);
-        else gen_expr(g, o, e->object);
-        if (m->is_mut_method) sb_printf(o, "), %s", place_where(g, e->object));
+        if (m->accessor && m->is_mut_method && under_element(e->object)) {
+            gen_property_address(g, o, e->object);
+            sb_printf(o, ", %s", place_where(g, e->object));
+        } else {
+            if (m->is_mut_method) sb_put(o, "&(");
+            if (m->c_self_indirect) gen_indirect_arg(g, o, e->object, self);
+            else if (copy_self) gen_value_of(g, o, e->object, self);
+            else gen_expr(g, o, e->object);
+            if (m->is_mut_method) sb_printf(o, "), %s", place_where(g, e->object));
+        }
         args++;
     }
     // The entity its component belongs to: the one the caller runs for, as
     // the checker only allows it on the caller's own components.
     if (m->uses_this) {
-        sb_put(o, ", tide_this");
+        sb_put(o, ", ");
+        if (e->kind == E_METHOD) gen_component_owner(g, o, e->object);
+        else sb_put(o, "tide_this");
         args++;
     }
     // A read-only list argument is passed as it is, unless a mut argument, or
@@ -3248,7 +3317,7 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         if (m->params.items[i].type.kind == TY_WORLD) continue; // The worlds it's handed, above
         if (args++) sb_put(o, ", ");
         if (m->params.items[i].type.kind == TY_QUERY) {
-            gen_borrow_arg(g, o, e->args.items[i]);
+            gen_borrow_arg(g, o, e->args.items[i], m->params.items[i].owner_world);
         } else if (m->params.items[i].type.kind == TY_INPUT) {
             sb_printf(o, "%s, %s", local_cname(g, e->args.items[i]->name), prev_input_name(g, e->args.items[i]->name));
         } else if (m->params.items[i].c_indirect) {
@@ -3270,6 +3339,10 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         }
         // Its local fields go with it: the caller's own parameter's
         if (has_fields_ptr(&m->params.items[i])) { sb_put(o, ", "); gen_fields_arg(g, o, e->args.items[i]); }
+        if (m->params.items[i].owner_context) {
+            sb_put(o, ", "); gen_component_owner(g, o, e->args.items[i]);
+            if (m->params.items[i].owner_world) sb_printf(o, ", %s", component_owner_world(g, e->args.items[i]));
+        }
     }
     sb_put(o, ")");
 }
@@ -3943,7 +4016,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             gen_expr(g, o, e->object);
             sb_printf(o, "), &%s, %s)", grid_shape_name(e->object->type.decl), place_where(g, e->object));
         } else if (e->call == CALL_TRANSFORM) {
-            sb_printf(o, "%s%s(%s, ", world_prefix(e->local_world), str_eq_c(e->name, "Parent") ? "parent_of" : "local_to_world",
+            sb_printf(o, "%s%s(%s, ", world_prefix(e->local_world), str_eq_c(e->name, "Parent") ? "parent_of"
+                      : str_eq_c(e->name, "ParentToWorld") ? "parent_to_world" : "local_to_world",
                       e->local_world ? "tide_l" : "tide_w");
             gen_expr(g, o, e->args.items[0]);
             sb_put(o, ")");
@@ -5562,6 +5636,7 @@ static void hoist_ordered(gen *g, const ordering *ordered)
     if (!must_hoist(ordered)) return;
     for (int i = 0; i < ordered->items.count; i++) {
         expr *e = ordered->items.items[i].e;
+        if (e->shared_place && e->hoisted) continue;
         sb name = {0};
         if (ordered->items.items[i].read) { // As it is now; skinned draws can borrow until their synchronous capture
             sb_printf(&name, "tide_read%d", g->call_temps++);
@@ -5616,6 +5691,16 @@ static void hoist_ordered(gen *g, const ordering *ordered)
             stmt set = *e->step;
             set.op = T_ASSIGN;
             set.value = &stepped;
+            expr setter = {0};
+            expr *setter_value = &stepped;
+            if (set.property_set) {
+                setter = *set.property_set;
+                setter.args.items = &setter_value;
+                setter.args.count = setter.args.cap = 1;
+                set.kind = S_EXPR;
+                set.value = &setter;
+                set.target = NULL;
+            }
             g->bare = &set; // What its variable runs is in temporaries already
             gen_stmt(g, &set);
             g->bare = NULL;
@@ -6230,6 +6315,17 @@ static void gen_inline(gen *g, const expr *e)
                 line(g, o, "const uint32_t %s = %s;", borrow_count_name(names[i]), borrow_arg_name(g, e->args.items[i], true));
                 line(g, o, "(void)%s;", borrow_count_name(names[i]));
             }
+            if (p->owner_world && !q->query_local) {
+                const char *predicted = borrow_owner_world(g, e->args.items[i], false);
+                const char *verified = borrow_owner_world(g, e->args.items[i], true);
+                g->frame = &frame;
+                const char *to_predicted = owner_name(g, p, "predicted");
+                const char *to_verified = owner_name(g, p, "verified");
+                g->frame = caller;
+                line(g, o, "const tide_world *const %s = %s;", to_predicted, predicted);
+                line(g, o, "const tide_world *const %s = %s;", to_verified, verified);
+                line(g, o, "(void)%s; (void)%s;", to_predicted, to_verified);
+            }
             continue;
         }
         if (p->type.kind == TY_INPUT) {
@@ -6281,6 +6377,20 @@ static void gen_inline(gen *g, const expr *e)
             gen_fields_arg(g, o, e->args.items[i]);
             sb_put(o, ";\n");
             line(g, o, "(void)%s;", fields);
+        }
+        if (p->owner_context) {
+            g->frame = &frame;
+            const char *entity = owner_name(g, p, "entity");
+            const char *world = owner_name(g, p, "world");
+            g->frame = caller;
+            indent(g, o); sb_printf(o, "const tide_entity %s = ", entity);
+            gen_component_owner(g, o, e->args.items[i]); sb_put(o, ";\n");
+            line(g, o, "(void)%s;", entity);
+            if (p->owner_world) {
+                line(g, o, "%s%s *const %s = %s;", p->type.decl->is_local || p->mode == PARAM_MUT ? "" : "const ",
+                     p->type.decl->is_local ? "tide_local" : "tide_world", world, component_owner_world(g, e->args.items[i]));
+                line(g, o, "(void)%s;", world);
+            }
         }
     }
     g->frame = &frame;
@@ -11640,6 +11750,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
         capture(&out, "tide_draw_list *", "tide_draw");
         capture(&out, "tide_gui *", "tide_ui");
         capture(&out, "uint32_t", "tide_seed");
+        if (sys->takes_verified && sys->borrows_owner_world) capture(&out, "const tide_world *", "tide_verified");
     } else if (sys->is_handler) {
         capture(&out, ptr_type("", world_type(sys->is_local)), sys->is_local ? "tide_l" : "tide_w");
         capture(&out, ptr_type("const ", type_cname(sys->event)), trigger_cname(g, sys));
@@ -11848,6 +11959,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
             capture(&out, "tide_draw_list *", "tide_draw");
             capture(&out, "tide_gui *", "tide_ui");
             capture(&out, "uint32_t", "tide_seed");
+            if (sys->takes_verified && sys->borrows_owner_world) capture(&out, "const tide_world *", "tide_verified");
         } else if (sys->is_handler) {
             capture(&out, ptr_type("", world_type(sys->is_local)), sys->is_local ? "tide_l" : "tide_w");
             capture(&out, ptr_type("const ", type_cname(sys->event)), trigger_cname(g, sys));
@@ -11882,6 +11994,8 @@ static capture_list sort_captures(gen *g, const expr *sort)
         for (int i = 0; i < fn->params.count; i++) {
             const param *p = &fn->params.items[i];
             if (p->type.kind == TY_WORLD || p->type.kind == TY_QUERY) continue;
+            if (p->owner_context) capture(&out, "tide_entity", owner_name(g, p, "entity"));
+            if (p->owner_world) capture(&out, p->type.decl->is_local ? "tide_local *" : p->mode == PARAM_MUT ? "tide_world *" : "const tide_world *", owner_name(g, p, "world"));
             if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
             else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
             else if (p->type.kind == TY_RECORD || p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
@@ -12743,6 +12857,7 @@ static void gen_system_body(gen *g, const decl *sys)
         sb_printf(o, "TIDE_HELPER void tide_system_%s(tide_world *tide_w", name);
     }
     if (sys->per_entity) sb_put(o, ", tide_entity tide_this");
+    if (sys->is_view && sys->takes_verified && sys->borrows_owner_world) sb_put(o, ", const tide_world *tide_verified");
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT || p->mode == PARAM_EVENT) continue;
@@ -13401,6 +13516,7 @@ static void gen_system_args(gen *g, const decl *sys, const int a)
 {
     sb *o = &g->c;
     if (a >= 0) sb_put(o, ", tide_ent[tide_i]");
+    if (sys->is_view && sys->takes_verified && sys->borrows_owner_world) sb_put(o, ", tide_verified");
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         switch (p->type.kind) {
@@ -14144,6 +14260,11 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
             sb_printf(o, ", %s%s *%s", p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type)),
                       fields_name(g, p->name));
         }
+        if (p->owner_context) {
+            sb_printf(o, ", tide_entity %s", owner_name(g, p, "entity"));
+            if (p->owner_world) sb_printf(o, ", %s%s *%s", p->type.decl->is_local || p->mode == PARAM_MUT ? "" : "const ",
+                                          p->type.decl->is_local ? "tide_local" : "tide_world", owner_name(g, p, "world"));
+        }
     }
     if (n == 0) sb_put(o, "void");
     sb_put(o, ")");
@@ -14166,6 +14287,7 @@ static void gen_routine(gen *g, const decl *m)
     if (g->has_scene) line(g, o, "(void)tide_scene;");
     if (m->owner && !m->is_operator && !m->is_interpolate) line(g, o, "(void)tide_self;");
     if (m->owner && m->is_mut_method) line(g, o, "(void)tide_self_where;");
+    if (m->accessor && m->is_mut_method && g->prog->property_slots) line(g, o, "if (!tide_self) return;");
     if (m->uses_this) line(g, o, "(void)tide_this;");
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
     if (takes_local(m)) line(g, o, "(void)tide_l;");
@@ -14183,6 +14305,10 @@ static void gen_routine(gen *g, const decl *m)
             line(g, o, "(void)%s;", borrow_count_name(local_cname(g, m->params.items[i].name)));
         if (takes_where(&m->params.items[i])) line(g, o, "(void)%s;", where_name(g, m->params.items[i].name));
         if (has_fields_ptr(&m->params.items[i])) line(g, o, "(void)%s;", fields_name(g, m->params.items[i].name));
+        if (m->params.items[i].owner_context) line(g, o, "(void)%s;", owner_name(g, &m->params.items[i], "entity"));
+        if (m->params.items[i].owner_world && m->params.items[i].owner_context) line(g, o, "(void)%s;", owner_name(g, &m->params.items[i], "world"));
+        if (m->params.items[i].type.kind == TY_QUERY && m->params.items[i].owner_world && !m->params.items[i].query_local)
+            line(g, o, "(void)%s; (void)%s;", owner_name(g, &m->params.items[i], "predicted"), owner_name(g, &m->params.items[i], "verified"));
     }
     gen_grid_caches(g);
     // A call that fails owes its `out` variables nothing, so they hold their type's default until the code
@@ -14691,6 +14817,9 @@ static void gen_routine_prototypes(gen *g)
 // out of generated code.
 static void gen_routines(gen *g)
 {
+    if (g->prog->property_slots)
+        sb_put(&g->c, "TIDE_HELPER void *tide_property_field(void *base, const size_t offset)\n{\n"
+                      "    return base ? (uint8_t *)base + offset : NULL;\n}\n\n");
     sb *o = &g->c;
     // world.TryGet<Health>(e, out health), for each component code asks for that way: whether the entity has
     // one, and into the caller's variable, a copy of it, or the component's default
@@ -20707,7 +20836,8 @@ bool codegen(program *prog, const codegen_options *opts)
     sb from = {0};
     for (int i = 0; i < files; i++) {
         g.paths[i] = forward_slashes(diag_source(i)->path);
-        sb_printf(&from, "%s%s", i ? ", " : "", g.paths[i]);
+        if (strcmp(diag_source(i)->path, "<tide-transform>") != 0)
+            sb_printf(&from, "%s%s", from.len ? ", " : "", g.paths[i]);
     }
     g.from = from.data ? from.data : "nothing";
 
