@@ -2480,7 +2480,8 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 // What tide/embed.h's host gives the program that loads it
 static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create", "tide_embed_destroy", "tide_embed_frame",
                                             "tide_embed_view", "tide_embed_status_of", "tide_embed_request", "tide_embed_command",
-                                            "tide_embed_background", "tide_embed_schema", "tide_embed_draw", NULL};
+                                            "tide_embed_background", "tide_embed_schema", "tide_embed_draw",
+                                            "tide_embed_camera", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -2870,7 +2871,13 @@ static const char unity_web_exports[] =
     "    return tide_embed_command(unity_embed, type, index, generation, value, size);\n"
     "}\n"
     "\n"
-    "TIDE_UNITY_EXPORT(tide_unity_background) void tide_unity_background(int hidden) { tide_embed_background(unity_embed, hidden != 0); }\n";
+    "TIDE_UNITY_EXPORT(tide_unity_background) void tide_unity_background(int hidden) { tide_embed_background(unity_embed, hidden != 0); }\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_camera) void tide_unity_camera(float x, float y, float z, float qx, float qy, float qz, float qw,\n"
+    "                                                            float field_of_view)\n"
+    "{\n"
+    "    tide_embed_camera(unity_embed, x, y, z, qx, qy, qz, qw, field_of_view);\n"
+    "}\n";
 
 // tide-game.js, for the page: the Tide config tide.js reads (the program waits for Unity's TideRunner to start
 // it, its frames are Unity's, and it draws in a canvas of its own that no one sees), the program and its pack as

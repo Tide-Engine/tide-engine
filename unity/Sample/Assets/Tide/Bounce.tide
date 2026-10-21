@@ -104,9 +104,23 @@ event(PlayerJoined joined) Arrive(mut Room room)
 }
 
 // Tide's own drawing, which Unity draws over its frame (TideRunner's drawTide)
+// A ring around each ball, where Unity's camera sees it: views' 3D camera is Unity's, so Draw.WorldToScreen agrees
+// with Unity's picture
+view Ring(Ball ball, Transform transform)
+{
+    var at = Draw.WorldToScreen(transform.localPosition);
+    Draw.Screen()
+    {
+        Draw.WireCircle(at.xy, 24, ball.color);
+    }
+}
+
 view Hud(Room room)
 {
-    Draw.Text($"Balls: {room.arrivals}", float2(16, Screen.height - 30), 18, Color(1, 1, 1));
+    Draw.Screen()
+    {
+        Draw.Text($"Balls: {room.arrivals}", float2(16, 30), 18, Color(1, 1, 1));
+    }
 }
 
 event(PlayerLeft left) Depart(mut Room room)

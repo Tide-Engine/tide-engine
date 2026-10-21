@@ -216,6 +216,13 @@ static double tide_run_migrating_since;
 static tide_session_request tide_run_joined;
 // The game's own network, while the session's match is on one (tide/network.h)
 static tide_network_match tide_run_network;
+// The camera another program draws its scene with (tide_embed_camera): the
+// frame's views start with it rather than Tide's own first camera.
+static bool tide_run_view_camera;
+static tide_float3 tide_run_view_camera_position;
+static tide_quaternion tide_run_view_camera_rotation;
+static float tide_run_view_camera_fov;
+
 // Inside another program's frame (tide/embed.h), which reads the devices,
 // draws and plays itself: the frame leaves the GPU, the audio device and the
 // stats' drawer alone, and the platform takes the devices from that program
@@ -1016,6 +1023,10 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
     tide_run_draw.target_pixels = tide_platform_target_pixels;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
+    if (tide_run_view_camera) {
+        tide_draw_set_camera_3d(&tide_run_draw, tide_run_view_camera_position, tide_run_view_camera_rotation,
+                                tide_run_view_camera_fov);
+    }
     tide_audio_reset(&tide_run_audio);
     // The GUI and the views read the devices, less a press that's on the stats
     const tide_devices *seen = &tide_run_devices;

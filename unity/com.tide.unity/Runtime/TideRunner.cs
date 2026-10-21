@@ -56,6 +56,9 @@ namespace Tide
         [Tooltip("Keep the GameObject of an entity that goes, inactive, for the next entity of its prefab: reset what Unity alone keeps on it (an Animator's state, particles) in OnDisable or OnEnable")]
         public bool pool;
 
+        [Tooltip("The camera the game's views start with, which Draw.WorldToScreen and Tide's 3D draws go through: the main camera when none is set")]
+        public Camera viewCamera;
+
         // Makes and lets go of the GameObjects of the prefabs entities show through, in place of Instantiate and
         // Destroy, or the pool: null for those
         public ITideSpawner Spawner { get; set; }
@@ -292,6 +295,21 @@ namespace Tide
             if (Current == this) Current = null;
         }
 
+        // The camera Unity draws the scene with is the one the game's views start with, so Draw.WorldToScreen and
+        // Tide's 3D draws agree with Unity's picture: `viewCamera`, else the main camera. Tide's cameras are
+        // perspective ones; with none, or an orthographic one, views start with Tide's own.
+        void ViewCamera()
+        {
+            var seen = viewCamera != null ? viewCamera : Camera.main;
+            if (seen == null || seen.orthographic)
+            {
+                library.Camera(embed, Vector3.zero, Quaternion.identity, 0);
+                return;
+            }
+            var t = seen.transform;
+            library.Camera(embed, t.position, t.rotation, seen.fieldOfView);
+        }
+
         void OnApplicationPause(bool paused)
         {
             if (embed != IntPtr.Zero) library.Background(embed, (byte)(paused ? 1 : 0));
@@ -301,6 +319,7 @@ namespace Tide
         {
             if (embed == IntPtr.Zero) return;
             TideInputReader.Read(ref input, 1f);
+            ViewCamera();
             fixed (TideEmbedInput* p = &input)
             {
                 library.Frame(embed, Time.unscaledDeltaTime, p, Screen.width, Screen.height, 1f);

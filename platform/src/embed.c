@@ -440,6 +440,21 @@ bool tide_embed_command(tide_embed *e, const uint32_t type, const uint32_t targe
         && embed->command(tide_run_local, (int32_t)type, target_index, target_generation, value, size);
 }
 
+void tide_embed_camera(tide_embed *e, const float x, const float y, const float z, const float qx, const float qy,
+                       const float qz, const float qw, const float field_of_view)
+{
+    if (e != &the_embed || !running) return;
+    const float values[] = {x, y, z, qx, qy, qz, qw, field_of_view};
+    bool finite = true;
+    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) finite = finite && tide_is_finite_f(values[i]);
+    const float length = qx * qx + qy * qy + qz * qz + qw * qw;
+    tide_run_view_camera = finite && field_of_view > 0.0f && field_of_view < 180.0f && length > 0.0f;
+    if (!tide_run_view_camera) return;
+    tide_run_view_camera_position = tide_f3(x, y, z);
+    tide_run_view_camera_rotation = tide_normalize_q((tide_quaternion){qx, qy, qz, qw});
+    tide_run_view_camera_fov = field_of_view;
+}
+
 void tide_embed_background(tide_embed *e, const bool background)
 {
     if (e != &the_embed || !running || !background || !tide_run_game) return;

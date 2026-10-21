@@ -106,6 +106,13 @@ that GameObject reads the entity's components as Tide's views see them this
 frame: `view.Get<Tide.Game.Health>()`. `TideRunner.Current.Send(command)`
 sends a command, as local code's `Send`.
 
+The game's views draw with Unity's camera: the runner's View Camera, or the
+main camera, is the 3D camera Tide's views start with, so
+`Draw.WorldToScreen(position)` is where Unity shows that point, in screen
+pixels from the top left. Draw at it inside `Draw.Screen() { ... }`, whose
+calls are in screen pixels; outside it, 2D draws go through Tide's 2D camera,
+centered on the screen at a pixel a unit unless the view sets one.
+
 C# doesn't spawn: the match does, in Tide code, which a command from C# can
 ask for (`Spawn(Bullet, ...)` in its handler, `Bullet` being the Unity prefab,
 under `UnityEngine.Prefabs`). Unity sees the newest predicted state once a

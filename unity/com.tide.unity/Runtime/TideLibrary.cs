@@ -20,6 +20,7 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, TideEmbedStatus*, void> statusFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint, byte*, uint, byte> requestFn;
         delegate* unmanaged[Cdecl]<IntPtr, byte, void> backgroundFn;
+        delegate* unmanaged[Cdecl]<IntPtr, float, float, float, float, float, float, float, float, void> cameraFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> viewFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> schemaFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte> commandFn;
@@ -27,7 +28,7 @@ namespace Tide
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 2;
+        public const uint Abi = 3;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
@@ -142,11 +143,13 @@ namespace Tide
             statusFn = (delegate* unmanaged[Cdecl]<IntPtr, TideEmbedStatus*, void>)Find("tide_embed_status_of");
             requestFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, byte*, uint, byte>)Find("tide_embed_request");
             backgroundFn = (delegate* unmanaged[Cdecl]<IntPtr, byte, void>)Find("tide_embed_background");
+            cameraFn = (delegate* unmanaged[Cdecl]<IntPtr, float, float, float, float, float, float, float, float, void>)Find("tide_embed_camera");
             viewFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_view");
             schemaFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_schema");
             commandFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte>)Find("tide_embed_command");
             drawFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_draw");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
+                || cameraFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
@@ -170,6 +173,8 @@ namespace Tide
         public void Status(IntPtr embed, TideEmbedStatus* status) => TideWebStatus(status, sizeof(TideEmbedStatus));
         public byte Request(IntPtr embed, uint kind, byte* text, uint port) => (byte)TideWebRequest(kind, text, port);
         public void Background(IntPtr embed, byte hidden) => TideWebBackground(hidden);
+        public void Camera(IntPtr embed, Vector3 position, Quaternion rotation, float fieldOfView) =>
+            TideWebCamera(position.x, position.y, position.z, rotation.x, rotation.y, rotation.z, rotation.w, fieldOfView);
         public byte* View(IntPtr embed, uint* size) => TideWebView(size);
         public byte* Schema(IntPtr embed, uint* size) => TideWebSchema(size);
         public byte* Draw(IntPtr embed, uint* size) => TideWebDraw(size);
@@ -182,6 +187,7 @@ namespace Tide
         [DllImport("__Internal")] static extern void TideWebStatus(TideEmbedStatus* status, int size);
         [DllImport("__Internal")] static extern int TideWebRequest(uint kind, byte* text, uint port);
         [DllImport("__Internal")] static extern void TideWebBackground(byte hidden);
+        [DllImport("__Internal")] static extern void TideWebCamera(float x, float y, float z, float qx, float qy, float qz, float qw, float fieldOfView);
         [DllImport("__Internal")] static extern byte* TideWebView(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebSchema(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebDraw(uint* size);
@@ -198,6 +204,8 @@ namespace Tide
         public void Status(IntPtr embed, TideEmbedStatus* status) => statusFn(embed, status);
         public byte Request(IntPtr embed, uint kind, byte* text, uint port) => requestFn(embed, kind, text, port);
         public void Background(IntPtr embed, byte hidden) => backgroundFn(embed, hidden);
+        public void Camera(IntPtr embed, Vector3 position, Quaternion rotation, float fieldOfView) =>
+            cameraFn(embed, position.x, position.y, position.z, rotation.x, rotation.y, rotation.z, rotation.w, fieldOfView);
         public byte* View(IntPtr embed, uint* size) => viewFn(embed, size);
         public byte* Schema(IntPtr embed, uint* size) => schemaFn(embed, size);
         public byte* Draw(IntPtr embed, uint* size) => drawFn(embed, size);
