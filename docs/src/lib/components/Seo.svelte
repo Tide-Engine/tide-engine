@@ -38,6 +38,10 @@
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={url} />
+    {#if documentation || path === '/'}
+        <link rel="alternate" type="text/markdown" href={siteUrl(path === '/' ? '/index.md' : `${path}.md`)} />
+        <link rel="describedby" href={siteUrl('/llms.txt')} />
+    {/if}
     <meta property="og:site_name" content={SITE_NAME} />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="en_US" />

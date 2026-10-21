@@ -1,0 +1,27 @@
+local singleton CheckObserved { int pool = -1; int a = -1; int b = -1; int rejected = -1; }
+view CheckState(Pool pool, query (Wallet wallet) wallets, mut CheckObserved observed)
+{
+    mut var a = -1;
+    mut var b = -1;
+    foreach (var row in wallets)
+    {
+        Debug.Assert(row.wallet.credits >= 0 && row.wallet.credits <= 3);
+        if (row.wallet.seat == 0) a = row.wallet.credits;
+        if (row.wallet.seat == 1) b = row.wallet.credits;
+    }
+    if (a < 0 || b < 0) return;
+    Debug.Assert(a + b + pool.credits == 6);
+    if (observed.pool != pool.credits || observed.a != a || observed.b != b || observed.rejected != pool.rejected)
+    {
+        Debug.Log($"CHECK {pool.credits},{a},{b},{pool.rejected}");
+        observed.pool = pool.credits; observed.a = a; observed.b = b; observed.rejected = pool.rejected;
+    }
+}
+view CheckWrongOwner(with Wallet, without ownership)
+{
+    if (GUI.Button(Rect(8, 78, 140, 24), "Probe ownership")) this.Send(Deposit { amount = 1 });
+}
+view CheckBadAmount(with Wallet, with ownership)
+{
+    if (GUI.Button(Rect(160, 78, 140, 24), "Probe amount")) this.Send(Deposit { amount = 4 });
+}

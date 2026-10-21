@@ -53,6 +53,35 @@ function renderFile(file: string) {
     return { data, ...render(snippets(body, file), file.slice(1), isPage) };
 }
 
+export interface SourcePage {
+    path: string;
+    file: string;
+    title: string;
+    description: string;
+    markdown: string;
+    ids: string[];
+    moved?: Record<string, string>;
+}
+
+/** The same authored page and real source includes used by the website. */
+export function sourcePage(at: string): SourcePage | undefined {
+    const file = files.get(at);
+    if (!file) return undefined;
+    const { body } = frontmatter(sources[file]);
+    // The browser supplies this editor's source separately from the Markdown.
+    let markdown = snippets(body.replace(/<div data-tide-playground><\/div>/g, '<<< @/playground/demo.tide'), file);
+    const rendered = renderFile(file);
+    const info = at === '/' ? home() : page(at.slice(1));
+    if (at === '/') {
+        const { hero, features } = info as Home;
+        markdown = `# ${hero.name}\n\n${hero.text}. ${hero.tagline}\n\n`
+            + hero.actions.map((action) => `[${action.text}](${action.link})`).join(' · ') + '\n\n'
+            + features.map((feature) => `**${feature.title}**: ${feature.details}`).join('\n\n') + '\n\n' + markdown;
+    }
+    return { path: at, file: `docs${file}`, title: info.title, description: info.description,
+        markdown, ids: rendered.ids, moved: at === '/' ? undefined : (info as Page).moved };
+}
+
 /** A sentence or two from the start of the page, for search engines. */
 function describe(text: string): string {
     text = text.replace(/\s+/g, ' ').trim();

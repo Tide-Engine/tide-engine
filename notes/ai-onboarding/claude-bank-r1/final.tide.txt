@@ -1,0 +1,81 @@
+settings { title = "Shared Pool"; maxPlayers = 2; }
+
+scene Main { }
+
+component Wallet
+{
+    int credits = 3;
+    int seat;
+}
+
+singleton Pool
+{
+    int credits;
+    int rejected;
+}
+
+singleton Roster { int arrivals; }
+
+command Deposit { int amount; }
+
+local singleton Picker { int amount = 1; }
+
+event(PlayerJoined joined) AddPlayer(mut Roster roster)
+{
+    Spawn(Wallet { seat = roster.arrivals % 2 }, Owner { player = joined.player });
+    roster.arrivals += 1;
+}
+
+command(Deposit action, PlayerID sender) ApplyDeposit(Owner owner, mut Wallet wallet, mut Pool pool)
+{
+    if (sender != owner.player) { pool.rejected += 1; return; }
+    if (action.amount < 1 || action.amount > 3) { pool.rejected += 1; return; }
+    if (action.amount > wallet.credits) { pool.rejected += 1; return; }
+
+    wallet.credits -= action.amount;
+    pool.credits += action.amount;
+}
+
+float2 PanelAt(int seat)
+{
+    return float2(Screen.width * (0.25 + seat * 0.5), 185);
+}
+
+void DrawWallet(Wallet wallet, bool mine)
+{
+    var at = PanelAt(wallet.seat);
+    Draw.RoundRect(at, float2(200, 90), 10, mine ? Color(0.36, 0.26, 0.04) : Color(0.2, 0.2, 0.23));
+    Draw.Text(mine ? "You" : "Opponent", at + float2(0, 28), 16, Color(0.8, 0.8, 0.84), Anchor.MiddleCenter);
+    Draw.Text($"{wallet.credits} credits", at + float2(0, -8), 26, Color.white, Anchor.MiddleCenter);
+}
+
+view Backdrop(Pool pool)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
+    Draw.RoundRect(float2(Screen.width * 0.5, 315), float2(220, 50), 10, Color(0.1, 0.3, 0.35));
+    Draw.Text($"Pool: {pool.credits}", float2(Screen.width * 0.5, 315), 28, Color.white, Anchor.MiddleCenter);
+    Draw.Text($"Rejected: {pool.rejected}", float2(8, 8), 12, Color(0.64, 0.64, 0.68));
+}
+
+view Mine(Wallet wallet, Pool pool, mut Picker picker, with ownership)
+{
+    DrawWallet(wallet, true);
+    var x = Screen.width * (0.25 + wallet.seat * 0.5) - 100;
+    GUI.Label(Rect(x, 225, 80, 28), $"Amount: {picker.amount}");
+    for (var i = 1; i <= 3; i++)
+    {
+        if (GUI.Button(Rect(x + 80 + (i - 1) * 40, 225, 40, 28), $"{i}")) picker.amount = i;
+    }
+    if (GUI.Button(Rect(x, 262, 200, 30), "Deposit")) this.Send(Deposit { amount = picker.amount });
+    var ok = picker.amount <= wallet.credits;
+    var text = ok
+        ? $"After: you {wallet.credits - picker.amount}, pool {pool.credits + picker.amount}"
+        : "Not enough credits";
+    Draw.Text(text, float2(x + 100, 50), 14, ok ? Color(0.64, 0.64, 0.68) : Color.red, Anchor.MiddleCenter);
+}
+
+view Theirs(Wallet wallet, without ownership)
+{
+    DrawWallet(wallet, false);
+}

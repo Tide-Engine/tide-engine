@@ -1,0 +1,5 @@
+This project uses Tide. Before writing code, read the project's instructions and https://tide-engine.dev/guide/ai-context.md (or the attached Tide overview). Use its linked topic references for exact APIs; https://tide-engine.dev/llms.txt is the documentation index.
+
+Inspect the existing project and run tide version. The website can be newer than the installed compiler; use project-pinned documentation when available and do not silently upgrade the toolchain. Build early, fix diagnostics, and validate the requested behavior with bounded hidden runs and captures when execution tools are available. Report what you actually tested and any unavailable coverage.
+
+Task:

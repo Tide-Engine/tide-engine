@@ -8,6 +8,8 @@ This page builds a small game: a ball bouncing around, and a player for everyone
 
 You'll need `tide` [installed](./install.md). [Set up your editor](../tools/editors.md)
 for highlighting, completion and diagnostics before writing your first file.
+Working with an AI coding agent? Use the [Tide overview and starter prompt](./ai.md)
+to give it the language context and validation commands.
 
 ## A folder of files
 
