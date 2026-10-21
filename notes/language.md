@@ -1,5 +1,23 @@
 # Language features, as tidec builds them
 
+## Word suggestions (2026-10-21)
+
+The owner, of hints: "the better hints the better code". AI trials wrote
+`keys.right` and `keys.left` and got no "did you mean", as no key is within two
+edits; the script parser already guessed `leftShift` for `shift`. `suggestion`
+(`compiler/src/common.h`) now also keeps the first candidate with the wrong name
+as a whole word of it, ignoring case (`word_rank` in `common.c`). A word starts
+the name, or starts at a capital, a digit or after a `_`, and ends at the name's
+end, a capital, a digit or a `_`. A first word beats a later one: `up` is
+`upArrow` rather than `pageUp`. Candidates of the same rank go by the order
+they're offered, which for fields is declaration order: `right` is `rightArrow`
+rather than `rightShift`. Wrong names under two characters get none.
+`suggest_note` prefers a close name, unless it is shorter than the wrong one and
+a word candidate exists (`up` is `upArrow`, not `u`). Every `suggest_note` caller
+gets the fallback, and so does the editors' quick fix through the suggestion sink.
+`suggest_close` alone (`tide add`'s package names) is unchanged. Tests:
+`tidec_error_key_word_first`, `_later` and `_prefix_wins`.
+
 ## Scene filters: `with scene Arena` (2026-10-20)
 
 Owner's spelling (`with` alone would change `event(Spawned) Setup(with Main)`,
