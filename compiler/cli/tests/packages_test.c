@@ -568,3 +568,86 @@ TIDE_TEST(cli_packages_compare_tide_versions_by_their_numbers)
     TIDE_CHECK(tide_version_at_least(0, 1, 0)); // This tide is 0.2 or newer
     TIDE_CHECK(!tide_version_at_least(999, 0, 0));
 }
+
+// ---------------------------------------------------------------------------
+// A game made in Unity: the whole of a project's Assets folder, whose packages
+// are the folders in it that say they're one, with no lines for them
+
+// Two folders' paths alike but for slashes (TEMP has Windows' own) and, on Windows, case
+static bool same_folder(const char *a, const char *b)
+{
+    for (; *a || *b; a++, b++) {
+        char x = *a == (char)92 ? '/' : *a;
+        char y = *b == (char)92 ? '/' : *b;
+#ifdef _WIN32
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+#endif
+        if (x != y) return false;
+    }
+    return true;
+}
+
+TIDE_TEST(cli_a_unity_projects_assets_is_a_game_whose_packages_are_found)
+{
+    char *project = path_join(scratch(), "unity_project");
+    sys_remove_tree(project);
+    put(project, "ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
+    put(project, "Assets/Game/game.tide", "scene Main { }\n");
+    put(project, "Assets/Physics/" PACKAGES_FILE, "package Physics\n");
+    put(project, "Assets/Physics/Inner/" PACKAGES_FILE, "package Inner\n"); // A package's own folders are its business
+    put(project, "Assets/Kit/Tools/" PACKAGES_FILE, "package Tools\n");
+    put(project, "Assets/Samples~/Extra/" PACKAGES_FILE, "package Extra\n"); // Folders Unity leaves out
+    put(project, "Assets/.hidden/" PACKAGES_FILE, "package Hidden\n");
+    char *assets = path_join(project, "Assets/");
+    char *game = path_join(project, "Assets/Game/");
+    char *physics = path_join(project, "Assets/Physics/");
+    TIDE_CHECK(packages_unity_assets(assets));
+    TIDE_CHECK(!packages_unity_assets(game));
+    TIDE_CHECK(!packages_unity_assets(project));
+
+    // A command run in a folder of it works on Assets, unless that's a package's own folder
+    char *found = packages_unity_game(game);
+    TIDE_CHECK(found && same_folder(found, assets));
+    free(found);
+    found = packages_unity_game(assets);
+    TIDE_CHECK(found && same_folder(found, assets));
+    free(found);
+    TIDE_CHECK(!packages_unity_game(physics));
+    TIDE_CHECK(!packages_unity_game(project));
+
+    TIDE_CHECK(packages_unity_left_out("Samples~/a.tide"));
+    TIDE_CHECK(packages_unity_left_out(".tide/web/a.tide"));
+    TIDE_CHECK(packages_unity_left_out("Game/Docs~/a.tide"));
+    TIDE_CHECK(!packages_unity_left_out("Game/a~.tide")); // A file's own name isn't a folder
+    TIDE_CHECK(!packages_unity_left_out("Game/a.tide"));
+
+    // Physics and Tools, with no line in a tide.packages, which Assets hasn't
+    game_packages g;
+    said s = {0};
+    TIDE_CHECK(packages_resolve(assets, &g, NULL, say, &s));
+    TIDE_CHECK(s.len == 0);
+    TIDE_REQUIRE(g.count == 2);
+    TIDE_CHECK(strcmp(g.items[0].name, "Physics") == 0 && same_folder(g.items[0].folder, physics));
+    TIDE_CHECK(strcmp(g.items[1].name, "Tools") == 0);
+    TIDE_CHECK(!g.file.exists && !g.file.name);
+    packages_free(&g);
+
+    // One the game's file lists already is one package, not two
+    put(project, "Assets/" PACKAGES_FILE, "./Physics/\n");
+    TIDE_CHECK(packages_resolve(assets, &g, NULL, say, &s));
+    TIDE_CHECK(g.count == 2 && g.file.count == 2);
+    packages_free(&g);
+
+    // A game's tide.packages in a folder of Assets says where it goes
+    put(project, "Assets/Game/" PACKAGES_FILE, "# Made in the wrong folder\n");
+    TIDE_CHECK(!packages_resolve(assets, &g, NULL, say, &s));
+    TIDE_CHECK(strstr(s.text, "the game is the whole of Assets") && strstr(s.text, "move it to the Assets folder"));
+    packages_free(&g);
+
+    free(physics);
+    free(game);
+    free(assets);
+    sys_remove_tree(project);
+    free(project);
+}

@@ -10,10 +10,6 @@ namespace Tide.Editor
     [FilePath("ProjectSettings/TideSettings.asset", FilePathAttribute.Location.ProjectFolder)]
     public sealed class TideSettings : ScriptableSingleton<TideSettings>
     {
-        [Tooltip("The folder of the game's .tide files and C, from the project's folder. Only its C is the game's: " +
-                 "keep other plugins' C sources out of it.")]
-        public string gameFolder = "Assets/Tide";
-
         [Tooltip("The tide command to build with; empty to find it: on PATH, or where tide's installer puts it.")]
         public string tidePath = "";
 
@@ -27,7 +23,9 @@ namespace Tide.Editor
 
         public static string ProjectFolder => Path.GetDirectoryName(Application.dataPath) ?? ".";
 
-        public string GameFolderPath => Path.GetFullPath(Path.Combine(ProjectFolder, string.IsNullOrEmpty(gameFolder) ? "Assets/Tide" : gameFolder));
+        // The game: every .tide file in Assets, and its packages, the folders in it with a tide.packages saying
+        // `package Name`, whose C is the only C tide builds (notes/unity.md)
+        public string GameFolderPath => Path.GetFullPath(Application.dataPath);
     }
 
     sealed class TideSettingsProvider : SettingsProvider
@@ -46,7 +44,6 @@ namespace Tide.Editor
         {
             var settings = TideSettings.instance;
             EditorGUI.BeginChangeCheck();
-            settings.gameFolder = EditorGUILayout.TextField(new GUIContent("Game folder", "The game's .tide files and C, from the project's folder"), settings.gameFolder);
             using (new EditorGUILayout.HorizontalScope())
             {
                 settings.tidePath = EditorGUILayout.TextField(new GUIContent("tide command", "Empty: found on PATH or where tide's installer puts it"), settings.tidePath);

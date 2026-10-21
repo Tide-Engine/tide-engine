@@ -17,9 +17,9 @@ repository's `notes/unity.md`.
    https://github.com/Tide-Engine/tide-engine.git?path=/unity/com.tide.unity#dev
    ```
 
-3. Put the game's `.tide` files (and its C, if any) in `Assets/Tide`, or the
-   folder Project Settings > Tide names. Keep other plugins' C sources out of
-   that folder: tide compiles every `.c` file in it.
+3. Put the game's `.tide` files anywhere in `Assets`: every one is the game's,
+   as every C# script is, but those in folders Unity leaves out (hidden ones,
+   and those ending in `~`).
 4. Set Edit > Project Settings > Editor > Asset Serialization to Force Text
    (Unity's default): tide reads prefabs and scenes from their files.
 
@@ -62,9 +62,16 @@ loads beside the rest and unloads as the match does. In the editor, Play has
 the scenes you have open instead, and makes a `TideRunner` if they have none.
 Put every scene the match loads in Build Settings, for players.
 
-Packages work as in any Tide game: run `tide add rooms` (or a git URL) in the
-game's folder, `Assets/Tide` by default, and `using Rooms;` in its files. The
-build in the editor picks up the `tide.packages` it writes.
+Packages work as in any Tide game: run `tide add rooms` (or a git URL) in any
+folder of `Assets`, and write `using Rooms;` in the game's files. It writes
+`Assets/tide.packages`, which the build in the editor picks up.
+
+A folder in `Assets` with a `tide.packages` saying `package Name` is a package
+of the game's own, much as an assembly definition makes an assembly: its files
+are in the namespace `Name`, it lists the packages it needs, and the game has
+it with no line for it. C is only ever a package's: tide builds the `.c` files
+of a package's folder, and none elsewhere in `Assets`, where Unity's plugins
+are. A `.c` beside the game's `.tide` files gets a warning saying so.
 
 An error or warning tide gives for a line of a `.tide` file opens that file at
 that line on a double click in the Console, as a C# error does, and goes once a

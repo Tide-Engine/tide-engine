@@ -38,10 +38,10 @@ public class ConsoleTests
         LogAssert.ignoreFailingMessages = true;
         TideBuildService.RemoveLocated();
         var before = Count();
-        TideBuildService.Log("Bounce.tide:3:5: error: made up by a test\n    3 | component Spinner", true);
+        TideBuildService.Log("Tide/Bounce.tide:3:5: error: made up by a test\n    3 | component Spinner", true);
         Assert.AreEqual(before + 1, Count());
         var (message, file, line) = Last();
-        StringAssert.StartsWith("tide: Bounce.tide:3:5: error: made up by a test", message);
+        StringAssert.StartsWith("tide: Tide/Bounce.tide:3:5: error: made up by a test", message);
         Assert.AreEqual("Assets/Tide/Bounce.tide", file);
         Assert.AreEqual(3, line);
 
