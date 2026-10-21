@@ -6662,6 +6662,11 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                  "`Session.Join(code)`. On a network of the game's own, it's what that network says the match is "
                  "joined by.",
                  NULL);
+            item(c, "invite", CK_FIELD, "string",
+                 "What others open to join the match, or \"\" if it's in no room. On the web, a link: this page's "
+                 "address with `?join=` and the room's code, like \"https://example.com/game/?join=K7QF2M\". "
+                 "Elsewhere, the room's code itself. For `Clipboard.Copy(session.invite)`.",
+                 NULL);
         }
         if (t.kind == TY_EVENT && t.decl->builtin && str_eq_c(t.decl->name, "Disconnected")) {
             item(c, "message", CK_FIELD, "string", "With `Kicked`: why, as the server's `Session.Kick` said. \"\" otherwise.",

@@ -1,5 +1,19 @@
 # Runtime written by Claude for now
 
+## Session.invite (2026-10-21)
+
+Owner-approved (every web game's multiplayer as "host a room, copy a link,
+send it"). Generated code calls no runtime function for it: `session.invite`
+reads the generated `tide_local.tide_invite` (256 bytes, so a game's layout
+hash changes once), which the generated `tide_local_set_session` sets to the
+room and the new generated `tide_local_set_invite` replaces. New platform
+surface, the agent's: `tide_platform_room_invite(room, out, size)` and
+`TIDE_INVITE_BYTES` (`tide/platform.h`, `platform/src/rooms.c`), the page's
+`tide_web_room_invite` import (`tide_web.h`, `tide.js`), and the optional
+`tide_host_game.set_invite` after `set_session`, which `tide/run.h` fills and
+`tide/host.h` calls each frame: hosts and game libraries rebuild together.
+`tide_embed_status` is unchanged. Contracts and tests: webrtc-and-rooms.md.
+
 ## Draw.Sprite (2026-10-21)
 
 Generated code calls four new `tide/draw.h` functions for `Draw.Sprite`, the

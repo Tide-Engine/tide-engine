@@ -86,6 +86,10 @@ typedef struct tide_host_game {
     // network says it's joined by (up to TIDE_NETWORK_ADDRESS_BYTES with its NUL), "" if none
     void (*set_session)(void *local, uint32_t state, tide_player_id player, uint32_t ping, bool server, bool open,
                         const char *room);
+    // tide_local_set_invite, after set_session: Session.invite, what others
+    // open to join the match (tide_platform_room_invite). Optional for C hosts:
+    // without it, set_session's room is the invite.
+    void (*set_invite)(void *local, const char *invite);
     void (*connected)(void *local);
     void (*disconnected)(void *local, uint32_t reason, const char *message); // `message`: a kick's, or ""
     int32_t (*tick)(const void *world); // Time.tick
@@ -997,6 +1001,11 @@ static inline int tide_run_frame(void *user, const float seconds)
     const uint32_t session_state = tide_run_hosting && !tide_run_hosting_joined ? TIDE_SESSION_CONNECTING : status.client.state;
     game->set_session(tide_run_local, session_state, status.client.player, status.client.ping_ms, status.server,
                       status.open, room);
+    if (game->set_invite) { // A link to this page on the web, the room's code elsewhere
+        char invite[TIDE_INVITE_BYTES];
+        tide_platform_room_invite(room, invite, sizeof invite);
+        game->set_invite(tide_run_local, invite);
+    }
     memcpy(tide_run_room, room, sizeof tide_run_room);
     tide_profiler_mark(profiler, TIDE_FRAME_MATCH);
 

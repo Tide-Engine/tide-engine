@@ -138,7 +138,7 @@ A match component or singleton can also have [local fields](../game/local-state.
 
 A drawing function can also [name a frag or vert](../game/shaders.md#drawing-from-a-helper). Each component or singleton the shader takes must match exactly one explicit input parameter of the function by type. The shader reads that passed value and, where needed, its forwarded local fields. The helper uses its caller's frame and follows ordinary drawing capabilities.
 
-Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
+Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or `session.invite`, or format a whole `Session` as text: pass the room code or the invite as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 

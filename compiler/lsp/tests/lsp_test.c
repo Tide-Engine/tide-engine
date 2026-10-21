@@ -3491,6 +3491,7 @@ TIDE_TEST(lsp_sessions)
     TIDE_CHECK(offers(fields, "ping"));
     TIDE_CHECK(offers(fields, "open"));
     TIDE_CHECK(offers(fields, "room"));
+    TIDE_CHECK(offers(fields, "invite"));
 
     open_document("local scene Main { }\nview Menu()\n{\n    Session.Le$ave();\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Leaves the match"));

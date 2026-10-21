@@ -1174,7 +1174,18 @@
             u8().set(encoder.encode(code), outPtr);
             u8()[outPtr + code.length] = 0;
         },
-        room_failed: () => room && room.failed ? 1 : 0,
+        // The link that joins room `room`, which `?join=` above turns into --join wherever the page is
+        // served: its address without the query or fragment. 0 for none, and for one that needs more
+        // than `size` bytes with its NUL.
+        room_invite(roomPtr, outPtr, size) {
+            if (!/^(https?|file):$/.test(location.protocol)) return 0;
+            const link = encoder.encode(location.href.split(/[?#]/)[0] + '?join=' + encodeURIComponent(string(roomPtr)));
+            if (link.length + 1 > size) return 0;
+            u8().set(link, outPtr);
+            u8()[outPtr + link.length] = 0;
+            return link.length;
+        },
+        room_failed:() => room && room.failed ? 1 : 0,
         room_send(number, to, ptr, size) {
             const peer = room && room.number === number ? room.peers.get(to) : null;
             const channel = peer && peer.open ? peer.channel : null;

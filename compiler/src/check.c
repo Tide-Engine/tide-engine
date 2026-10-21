@@ -8459,18 +8459,24 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
 
-    // session.room: the code of the room the match is in, and gone.message: a
-    // kick's message, for Disconnected. The host keeps them beside the local
-    // state (tide_local's tide_room and tide_message), so they need no heap.
+    // session.room: the code of the room the match is in, session.invite: what
+    // others open to join it (a link on the web, the code elsewhere), and
+    // gone.message: a kick's message, for Disconnected. The host keeps them
+    // beside the local state (tide_local's tide_room, tide_invite and
+    // tide_message), so they need no heap.
     const bool session = has_fields(obj) && obj.decl == c->prog->session;
     const bool disconnected = has_fields(obj) && obj.decl == c->prog->disconnected;
-    if ((session && str_eq_c(e->member, "room")) || (disconnected && str_eq_c(e->member, "message"))) {
+    const bool invite = session && str_eq_c(e->member, "invite");
+    if ((session && (str_eq_c(e->member, "room") || invite)) || (disconnected && str_eq_c(e->member, "message"))) {
         if (session && in_routine(c) && c->method->kind != DECL_SHADER) {
-            diag_error(e->at, "functions and methods can't read Session.room: it belongs to the local world, not the Session value");
-            diag_note("pass the room separately as a string from the view or local handler");
+            diag_error(e->at, "functions and methods can't read Session.%s: it belongs to the local world, not the Session value",
+                       invite ? "invite" : "room");
+            diag_note(invite ? "pass the invite separately as a string from the view or local handler"
+                             : "pass the room separately as a string from the view or local handler");
             return T_ERR;
         }
-        e->c_constant = session ? "tide_str_from_cstr(tide_l->tide_room)" : "tide_str_from_cstr(tide_l->tide_message)";
+        e->c_constant = invite ? "tide_str_from_cstr(tide_l->tide_invite)"
+                      : session ? "tide_str_from_cstr(tide_l->tide_room)" : "tide_str_from_cstr(tide_l->tide_message)";
         return (type){TY_STRING, NULL};
     }
 
@@ -8538,7 +8544,10 @@ static type check_member(checker *c, expr *e)
         }
         suggestion s = suggest_start(e->member);
         suggest_fields(&s, obj.decl);
-        if (session) suggest_consider_c(&s, "room");
+        if (session) {
+            suggest_consider_c(&s, "room");
+            suggest_consider_c(&s, "invite");
+        }
         if (disconnected) suggest_consider_c(&s, "message");
         suggest_note(&s);
         return T_ERR;

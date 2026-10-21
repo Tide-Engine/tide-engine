@@ -28,6 +28,8 @@ static void backend_key(char out[TIDE_ROOM_KEY_LENGTH + 1]);
 static void backend_end(uint32_t number); // The match in room `number`, which this program hosts, ended
 static void backend_close(uint32_t number);
 static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1]);
+// The link that joins room `room` into `out` (`size` bytes, which hold it with its NUL): false for none
+static bool backend_invite(const char *room, char *out, size_t size);
 static bool backend_failed(void);
 static void backend_send(uint32_t number, uint32_t to, const void *data, uint32_t size);
 static uint32_t backend_receive(uint32_t number, uint32_t *from, void *data, uint32_t capacity);
@@ -78,6 +80,12 @@ static void backend_close(const uint32_t number)
 static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1])
 {
     tide_web_room_code(out);
+}
+
+// The page writes the link, as only it knows its own address.
+static bool backend_invite(const char *room, char *out, const size_t size)
+{
+    return tide_web_room_invite(room, out, (uint32_t)size) > 0; // A page's size_t is 32 bits
 }
 
 static bool backend_failed(void)
@@ -602,6 +610,15 @@ static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1])
     snprintf(out, TIDE_ROOM_CODE_LENGTH + 1, "%s", shown ? room->code : "");
 }
 
+// A desktop game has no page to link to: the code is the invite.
+static bool backend_invite(const char *room, char *out, const size_t size)
+{
+    (void)room;
+    (void)out;
+    (void)size;
+    return false;
+}
+
 static bool backend_failed(void)
 {
     goodbyes_update();
@@ -772,6 +789,25 @@ void tide_platform_room_code(char *out, const size_t size)
     char code[TIDE_ROOM_CODE_LENGTH + 1] = {0};
     backend_code(code);
     if (size) snprintf(out, size, "%s", code);
+}
+
+void tide_platform_room_invite(const char *room, char *out, const size_t size)
+{
+    if (!size) return;
+    out[0] = '\0';
+    if (!room || !room[0]) return;
+    // Only letters and digits reach the program from `?join=` as they are
+    bool linkable = true;
+    for (const char *c = room; *c; c++) {
+        linkable &= (*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z');
+    }
+    const size_t most = size < TIDE_INVITE_BYTES ? size : TIDE_INVITE_BYTES;
+    if (linkable && backend_invite(room, out, most) && memchr(out, '\0', most)) {
+        bool printable = true;
+        for (const char *c = out; *c; c++) printable &= *c >= 0x20 && *c <= 0x7E;
+        if (printable) return;
+    }
+    snprintf(out, size, "%s", room);
 }
 
 bool tide_platform_room_failed(void)

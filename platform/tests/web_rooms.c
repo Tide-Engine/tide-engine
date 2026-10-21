@@ -1,6 +1,7 @@
 // Web only: two players in a room, through the relay (relay/) and WebRTC.
 // web_rooms.mjs runs it twice in one page: `host`, which opens a room and
-// says its code, then `join <code>`. The game is written by hand in C, as in
+// says its code and its invite (Session.invite's link), then a frame opened
+// from that link, which the page makes `--join <code>`. The game is written by hand in C, as in
 // udp.c. Once the other's inputs reach it, the host's page goes hidden for
 // longer than players take to time out, as if its player switched tabs, and
 // the match has to go on: the joiner's verified tick keeps up. Each prints
@@ -333,7 +334,10 @@ static int frame(void *user, const float seconds)
     char code[TIDE_ROOM_CODE_LENGTH + 1];
     tide_platform_room_code(code, sizeof code);
     if (me == 1 && !said_code && code[0]) {
-        printf("room %s\n", code);
+        // What its player would send a friend, which the joiner's page is opened from
+        char invite[TIDE_INVITE_BYTES];
+        tide_platform_room_invite(code, invite, sizeof invite);
+        printf("room %s\ninvite %s\n", code, invite);
         said_code = true;
     }
 
@@ -386,7 +390,9 @@ int main(const int argc, char **argv)
     }
     end_host = argc > 1 && strcmp(argv[1], "end-host") == 0;
     handover = end_host || (argc > 1 && strncmp(argv[1], "handover-", 9) == 0);
-    const char *mode = end_host ? "host" : argc > 1 ? argv[1] + (handover ? 9 : 0) : "";
+    // A page opened from the host's invite: tide.js made its `?join=<code>` --join <code>
+    const bool invited = argc > 2 && strcmp(argv[1], "--join") == 0;
+    const char *mode = end_host ? "host" : invited ? "join" : argc > 1 ? argv[1] + (handover ? 9 : 0) : "";
     const bool host = strcmp(mode, "host") == 0;
     const bool join = argc > 2 && strcmp(mode, "join") == 0;
     if (!host && !join) return fail("run it with 'host', 'join <code>', 'handover-host' or 'handover-join <code> <n>'");

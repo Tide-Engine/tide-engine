@@ -1,6 +1,7 @@
 // Two players in a room, in headless Chrome or Edge: a relay on this machine
 // (relay/relay.mjs), and a page with two frames running web_rooms.c's
-// program, one hosting and one joining with the code the host says. Their
+// program, one hosting and one joining from the invite link the host says
+// (Session.invite: the page's address and ?join=<code>, checked here). Their
 // packets go over WebRTC, as between two players' browsers. Once they meet,
 // the host's page goes hidden for a while, as when its player switches tabs,
 // and the match goes on. Passes once both say "ok".
@@ -54,12 +55,14 @@ const page = `<!doctype html>
   let hosted = null; // Its code and key, with \`ended\`
   const policy = ${JSON.stringify(process.env.TIDE_ICE_POLICY || 'all')};
   const playing = {}; // Each player's frame
-  function player(who, args) {
+  function openFrame(who, src) {
     const frame = document.createElement('iframe');
-    frame.src = 'game.html?who=' + who + '&relay=' + encodeURIComponent(relay) + '&policy=' + policy + '&args=' + args;
+    frame.src = src;
     document.body.append(frame);
     playing[who] = frame;
   }
+  const player = (who, args) => openFrame(who, 'game.html?who=' + who + '&relay=' + encodeURIComponent(relay) + '&policy=' + policy + '&args=' + args);
+  let hostCode = '';
   const log = [];
   const ok = new Set();
   const before = {}, after = {};
@@ -85,7 +88,15 @@ const page = `<!doctype html>
       report(data.line === 'migrated -2');
     }
     const room = /^room ([0-9A-Z]{6})$/.exec(data.line);
-    if (room && data.who === 'host' && !handover) player('joiner', 'join,' + room[1]);
+    if (room && data.who === 'host') hostCode = room[1];
+    // The joiner's page is the host's invite, as a friend would open it: the host's page without its query, and
+    // ?join= with the code, which tide.js makes --join. What the page needs besides goes after it.
+    const invite = /^invite (.*)$/.exec(data.line);
+    if (invite && data.who === 'host' && !handover) {
+      const expected = new URL('game.html', location.href).href + '?join=' + hostCode;
+      if (invite[1] !== expected) log.push('the invite is "' + invite[1] + '", not "' + expected + '"'), report(false);
+      else openFrame('joiner', invite[1] + '&who=joiner&relay=' + encodeURIComponent(relay) + '&policy=' + policy);
+    }
     if (room && data.who === 'host' && handover) {
       player('a', 'handover-join,' + room[1] + ',2');
       player('b', 'handover-join,' + room[1] + ',3');
