@@ -33,6 +33,8 @@ function(tide_add_glfw)
     target_compile_options(glfw PRIVATE
         "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-ffunction-sections>"
         "$<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-fdata-sections>")
+    # ...so the package carries its license (zlib).
+    install(FILES "${glfw_SOURCE_DIR}/LICENSE.md" DESTINATION licenses/glfw COMPONENT tide)
 endfunction()
 
 tide_add_glfw()

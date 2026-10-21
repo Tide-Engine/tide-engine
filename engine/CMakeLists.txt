@@ -10,3 +10,5 @@ install(DIRECTORY include/tide DESTINATION include COMPONENT tide)
 # Sources include private headers relative to their own folders.
 install(DIRECTORY src/ DESTINATION src/engine COMPONENT tide
     FILES_MATCHING PATTERN "*.c" PATTERN "*.h")
+# The double math in src/math64 is musl's, under its license (src/math64/README.md).
+install(FILES src/math64/COPYRIGHT.h DESTINATION licenses/musl COMPONENT tide)
