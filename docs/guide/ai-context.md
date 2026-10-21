@@ -8,7 +8,7 @@ Read this before writing a Tide game. It covers the common path; consult the lin
 
 ## Find the project and version
 
-A Tide game is a folder of `.tide` files, including its subfolders. Declarations are visible across files without imports. An ordinary new game needs no project generator, CMake project or C host: create a folder and a `game.tide`. Optional packages are listed in `tide.packages`; [authored scenes and prefabs](../game/scenes.md) also use `.tprefab` files.
+A Tide game is a folder of `.tide` files, including its subfolders. Declarations are visible across files without imports. An ordinary new game needs no project generator, CMake project or C host: create a folder and a `game.tide`. Optional packages are listed in `tide.packages`; [authored scenes and prefabs](../game/scenes.md) also use `.tprefab` files. Every `.tide` file under the folder is compiled, including ones under `build/`: keep scratch or probe copies of the game outside the game folder.
 
 Inspect the existing game and its instructions before changing it. Run `tide version` to identify the installed compiler and `tide help build` or `tide help run` for its actual CLI. These docs describe the website's source revision, which can be newer than an installed release. Prefer documentation supplied with the project's pinned toolchain when available. On a mismatch, report the versions and use compiler diagnostics to check the relevant feature; do not silently upgrade the user's installation.
 
@@ -24,7 +24,7 @@ Build with `tide build`. For a human's interactive session, `tide run` watches f
 
 - **Components** hold each entity's data. A component with no fields is a tag. **Singletons** hold one value per world; declare one with `singleton Score { int value; }` and request it as a parameter.
 - **Systems** run each fixed tick for every entity matching their component parameters. `mut Body body` writes data, `Body body` reads it, and `with Ball` or `without Ball` filters without reading data. Repeat the modifier for each filter: `with Ball, without Frozen`. A system with only singleton/input parameters runs once per tick. Use `this` for its current entity, not an invented entity parameter.
-- **Views** run each rendered frame. They read the presented match and draw; they can change local state, but cannot change match state. `Time.dt` is the fixed tick interval; `Frame.dt` is the frame interval for local animation. [Views](../game/views.md) explains interpolation and drawing order.
+- **Views** run each rendered frame, in declaration order, and later views draw on top. They read the presented match and draw; they can change local state, but cannot change match state. `Time` is a singleton: a system takes a `Time time` parameter and moves by `time.dt`, the fixed tick interval. Views animate local effects by `Frame.dt`, the frame interval. `Frame` and `Screen` are not parameters: views read `Frame.dt`, `Screen.width` and `Screen.height` directly. [Views](../game/views.md) explains interpolation and drawing order.
 - **Events** notify code inside the game. `scene Main;` is the initial scene; `event(Spawned) Setup(with Main)` initializes it once. `event(PlayerJoined joined) ...` initializes a joining player's entities. [Events](../game/events.md) explains handlers and their data parameters.
 - Every game is a networked **match**, including single-player. Keep gameplay state in match components and singletons. Menus, camera preferences and presentation-only effects belong in `local singleton`, `local` fields or local entities. [Local state](../game/local-state.md) explains their lifetimes and access.
 
@@ -53,7 +53,24 @@ This fragment assumes the `Ball` tag and `Score` singleton above. Query bindings
 
 ## Input and submitted actions
 
-Use a declared `input` for per-tick controls, as in the complete game. `Sample(Devices devices)` reads this machine's devices; gameplay systems receive the input of the entity's `Owner`. `Owner.player` is a `PlayerID`. Keyboard `.pressed` means held; `.down` and `.up` are edges. The input sampler starts from field defaults each tick. A view can read local devices, but its device reads cannot directly alter the match. See [Input](../game/input.md).
+Use a declared `input` for per-tick controls, as in the complete game. `Sample(Devices devices)` reads this machine's devices; gameplay systems receive the input of the entity's `Owner`. `Owner.player` is a `PlayerID`. The input sampler starts from field defaults each tick. Keys are named as in Unity's Input System: `a`, `space`, `r`, `leftArrow`, `upArrow`, `digit1`, `leftShift`.
+
+Input carries whether keys are **held**: a late player's input is guessed by repeating it, and a repeated "just pressed" would press twice. In `Sample`, record `.pressed`, not a key's `.down`. Match code gets one-shot edges from the input's own `bool` fields, which have `.down` and `.up`:
+
+```csharp
+input Controls
+{
+    bool restart;
+    Sample(Devices devices) { restart = devices.keyboard.space.pressed; }
+}
+
+system Restart(Controls input, mut Score score, with Owner)
+{
+    if (input.restart.down) score.value = 0;
+}
+```
+
+A view can read local devices, including `.down` edges, but its device reads cannot directly alter the match: a view turns a press into a command, below. See [Input](../game/input.md).
 
 Use typed **commands** for submitted actions from local UI. A minimal entity-targeted action is:
 
@@ -76,13 +93,15 @@ command(SetReady action, PlayerID sender) ApplyReady(Owner owner, mut Ready read
 
 Spawn `Ready` alongside each player's `Owner` to use this fragment. The connection supplies the sender; never trust a sender ID in the payload. Validate ownership and game rules before writing state. Handlers return void, with ordinary guard clauses. They have no acceptance method or transaction. A global command uses `Send(...)`; an entity-targeted command uses `entity.Send(...)`. See [Commands](../game/commands.md) and [GUI](../game/gui.md).
 
-Initialize multiplayer entities in `PlayerJoined`, and clean up their entities/state in `PlayerLeft` when the game needs it. **Treat `PlayerID` as an opaque identity, not a display index:** retain `joined.player` or read an entity's `Owner.player`; do not assume the players are `PlayerID(1)` and `PlayerID(2)`. Store a separate seat/index when the UI needs ordered slots. `with ownership` selects this machine's entities in local code; match systems use `with Owner`. Write separate filters as `with Wallet, with ownership`.
+Initialize multiplayer entities in `PlayerJoined`, and clean up their entities/state in `PlayerLeft` when the game needs it. **Treat `PlayerID` as an opaque identity, not a display index:** retain `joined.player` or read an entity's `Owner.player`; do not assume the players are `PlayerID(1)` and `PlayerID(2)`. When the game needs ordered seats (left and right paddle, wallet slots), assign them in the `PlayerJoined` handler from a singleton, such as `mut Seats seats` holding each seat's `PlayerID`, and free them in `PlayerLeft`. Do not count the entities spawned for earlier players instead: spawns apply at the end of the tick, and two players can join in the same tick. `with ownership` selects this machine's entities in local code; match systems use `with Owner`. Write separate filters as `with Wallet, with ownership`.
 
 All machines in a match must execute identical simulation rules. Read [Matches](../multiplayer/matches.md) before implementing room setup, admission or migration. Optional [Rooms](../packages/rooms.md) supplies a Play/Host/Join menu; it is not automatically included in a new folder.
 
 ## Draw and validate
 
 The default 2D view uses world coordinates centered on the window, with Y up and one world unit per pixel. **`Draw.SetScreen()` changes subsequent drawing to logical pixels from the top left, with X right and Y down**, the same coordinates as GUI rectangles and script `mouse x y`. It also affects later views in that frame until another camera is selected; `Draw.Screen() { ... }` limits the change to a block. For a grid whose row 0 is at the top, screen Y increases with the row. `Draw.Circle(position, radius, color)` and `Draw.Rect(center, size, color)` use the shape's center; a GUI `Rect(x, y, width, height)` uses its top-left corner. `Draw.Text(text, position, size, color)` accepts an `Anchor` to align text.
+
+There is no window-size setting: players resize the window, which opens at 960×540 on desktop. For a game designed at a fixed size such as 640×360, draw the play area in world units and set the camera in the first view, so it scales with the window: `Draw.SetCamera(float2(0, 0), 180)` shows 360 units of height (its size is half the visible height), and `Math.Max(180, 320 * Screen.height / Screen.width)` instead also keeps all 640 units of width visible. The camera stays for later views in that frame.
 
 Device pointer positions use bottom-left, Y-up coordinates even when drawing in screen mode; use `Screen.Flip(devices.pointer.position)` before screen-space hit tests. Read [Views and drawing](../game/views.md), [Cameras](../game/cameras.md) and [GUI](../game/gui.md) for signatures and layout. Do not assume the default world camera and GUI use the same axes. For 3D, read [Drawing in 3D](../game/3d.md) before choosing meshes, depth or lighting.
 
@@ -116,9 +135,9 @@ This finishes after 120 frames and captures the final picture. Add `--size 640 3
 150 quit
 ```
 
-Script times are frames; key actions use `down`/`up`. `--players 2` runs two game processes in one match over a simulated network on this machine, with `player 2` after a frame number to target the second player. It does not exercise real network transports. Read [CLI capture and scripts](../tools/cli.md#without-a-window) for the supported actions, output naming and exit codes. A web build still needs a browser test; native captures do not verify WebGL/WebGPU. Launch automated Chrome/Edge with `--mute-audio` and a bounded test, not an unbounded `tide run --web`.
+Script times are frames, and lines go in frame order; key actions use `down`/`up`, or neither for a one-frame tap. A `capture` path in a script is relative to the script's folder. `--players 2` runs two game processes in one match over a simulated network on this machine, with `player 2` after a frame number to target the second player; each capture name gains the player's number, `after-move-1.png` and `after-move-2.png`. It does not exercise real network transports. Read [CLI capture and scripts](../tools/cli.md#without-a-window) for the supported actions, output naming and exit codes. A web build still needs a browser test; native captures do not verify WebGL/WebGPU. Launch automated Chrome/Edge with `--mute-audio` and a bounded test, not an unbounded `tide run --web`.
 
-For numerical behavior, supplement pictures with `Debug.Log` of state changes or `Debug.Assert` of invariants. A multiplayer money transfer can assert that balances never go negative and that the pool plus all balances stays constant; a collector can log cell and score after each move. Check the actual log as well as the captures. A failed or unclear image inspection is not evidence of a replication bug.
+For numerical behavior, supplement pictures with `Debug.Log` of state changes or `Debug.Assert` of invariants. A multiplayer money transfer can assert that balances never go negative and that the pool plus all balances stays constant; a collector can log cell and score after each move. With several players, a client runs a tick again after a wrong guess about another player's input, and logs in it print again: include `time.tick` in the line. Check the actual log as well as the captures. A failed or unclear image inspection is not evidence of a replication bug.
 
 Fix diagnostics using the current compiler and relevant reference rather than guessing APIs. Report the builds, behavior checks and platforms actually tested. If a tool or backend is unavailable, say which check remains unverified.
 

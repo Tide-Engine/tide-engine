@@ -1,0 +1,122 @@
+settings { title = "Dodge"; maxPlayers = 1; }
+
+// The playfield is 640 by 360 logical pixels, from the top left with y down.
+const float PLAY_WIDTH = 640;
+const float PLAY_HEIGHT = 360;
+const float PLAYER_SIZE = 32;
+const float PLAYER_SPEED = 300;    // pixels per second
+const float PLAYER_START_Y = 320;  // Its center, near the bottom
+const float HAZARD_SIZE = 28;
+const float SPAWN_INTERVAL = 0.5;  // Seconds between hazards
+const float START_SPEED = 120;     // Pixels per second, at the start of a run
+const float SPEED_PER_SECOND = 8;  // Each second of a run adds this much to the fall speed
+
+enum Phase
+{
+    Ready,
+    Playing,
+    Over,
+}
+
+// Where a box is, by its center, and how big it is.
+component Body
+{
+    float2 position;
+    float2 size;
+}
+
+component Player { }
+
+component Hazard { }
+
+singleton Run
+{
+    Phase phase;
+    float time;        // Seconds survived in this run
+    float spawnTimer;  // Seconds since the last hazard
+    float speed = START_SPEED;
+}
+
+// What the player does in one tick. Only the match reads it.
+input Pad
+{
+    [Clamp(-1, 1)] float move;
+    bool start;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move -= 1;
+        start = keys.space.pressed;
+    }
+}
+
+scene Main { }
+
+// Owner gives the player entity that player's input.
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Body { position = float2(PLAY_WIDTH / 2, PLAYER_START_Y), size = float2(PLAYER_SIZE) }, Player, Owner { player = joined.player });
+}
+
+system Steer(Pad pad, Run run, Time time, mut Body body, with Player)
+{
+    if (run.phase != Phase.Playing) return;
+    body.position.x = Math.Clamp(body.position.x + pad.move * PLAYER_SPEED * time.dt, PLAYER_SIZE / 2, PLAY_WIDTH - PLAYER_SIZE / 2);
+}
+
+// Runs once per tick: the clock, the fall speed and the spawns.
+system Clock(mut Run run, Time time)
+{
+    if (run.phase != Phase.Playing) return;
+    run.time += time.dt;
+    run.speed = START_SPEED + SPEED_PER_SECOND * run.time;
+    run.spawnTimer += time.dt;
+    if (run.spawnTimer < SPAWN_INTERVAL) return;
+    run.spawnTimer -= SPAWN_INTERVAL;
+    var x = Random.NextFloat(HAZARD_SIZE / 2, PLAY_WIDTH - HAZARD_SIZE / 2);
+    Spawn(Body { position = float2(x, -HAZARD_SIZE / 2), size = float2(HAZARD_SIZE) }, Hazard);
+}
+
+// Declared after Clock, so it falls at this tick's speed.
+system Fall(Run run, Time time, mut Body body, with Hazard)
+{
+    if (run.phase != Phase.Playing) return;
+    body.position.y += run.speed * time.dt;
+    if (body.position.y - body.size.y / 2 > PLAY_HEIGHT) this.Destroy();
+}
+
+bool Overlaps(Body a, Body b)
+{
+    return Math.Abs(a.position.x - b.position.x) < (a.size.x + b.size.x) / 2
+        && Math.Abs(a.position.y - b.position.y) < (a.size.y + b.size.y) / 2;
+}
+
+system Collide(mut Run run, Body player, with Player, query (Body box, with Hazard) hazards)
+{
+    if (run.phase != Phase.Playing) return;
+    foreach (var hazard in hazards)
+    {
+        if (Overlaps(player, hazard.box))
+        {
+            run.phase = Phase.Over;
+            return;
+        }
+    }
+}
+
+// Space starts a run from the ready screen, and starts a new one after a hit. It runs after
+// Collide: the old hazards it clears still exist until the tick ends, so they must not be
+// checked against the player's reset position in the same tick.
+[After(Collide)]
+system Start(Pad pad, mut Run run, mut Body body, query (with Hazard) hazards, with Player)
+{
+    if (!pad.start.down || run.phase == Phase.Playing) return;
+    run.phase = Phase.Playing;
+    run.time = 0;
+    run.spawnTimer = 0;
+    run.speed = START_SPEED;
+    body.position = float2(PLAY_WIDTH / 2, PLAYER_START_Y);
+    foreach (var hazard in hazards) hazard.entity.Destroy();
+}

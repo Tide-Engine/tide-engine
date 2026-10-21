@@ -1,0 +1,123 @@
+settings
+{
+    title = "Dodge";
+}
+
+const float HALF_W = 320;
+const float FLOOR_Y = -150;
+const float PLAYER_SIZE = 28;
+const float HAZARD_SIZE = 24;
+const float BOTTOM = -180;
+
+component Body
+{
+    [Position] float2 position;
+    float size = 24;
+}
+
+component Player { }
+component Hazard { }
+
+singleton Run
+{
+    bool over;
+    float time;
+    float spawnTimer;
+}
+
+input Controls
+{
+    float move;
+    bool restart;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        if (keys.rightArrow.pressed || keys.d.pressed) move += 1;
+        if (keys.leftArrow.pressed || keys.a.pressed) move -= 1;
+        restart = keys.space.down;
+    }
+}
+
+scene Main { }
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Body { position = float2(0, FLOOR_Y), size = PLAYER_SIZE }, Player, Owner { player = joined.player });
+}
+
+system Steer(Controls input, Time time, mut Body body, mut Run run, query (with Hazard) hazards, with Player, with Owner)
+{
+    if (run.over)
+    {
+        if (input.restart)
+        {
+            foreach (var h in hazards) h.entity.Destroy();
+            run.over = false;
+            run.time = 0;
+            run.spawnTimer = 0;
+            body.position = float2(0, FLOOR_Y);
+        }
+        return;
+    }
+    var half = PLAYER_SIZE * 0.5;
+    body.position.x = Math.Clamp(body.position.x + input.move * 300 * time.dt, -HALF_W + half, HALF_W - half);
+}
+
+system Clock(mut Run run, Time time)
+{
+    if (run.over) return;
+    run.time += time.dt;
+    run.spawnTimer += time.dt;
+    if (run.spawnTimer >= 0.5)
+    {
+        run.spawnTimer -= 0.5;
+        var x = Random.NextFloat(-HALF_W + HAZARD_SIZE * 0.5, HALF_W - HAZARD_SIZE * 0.5);
+        Spawn(Body { position = float2(x, 180 + HAZARD_SIZE), size = HAZARD_SIZE }, Hazard);
+    }
+}
+
+system Fall(mut Body body, Run run, Time time, with Hazard)
+{
+    if (run.over) return;
+    body.position.y -= (120 + run.time * 12) * time.dt;
+    if (body.position.y < BOTTOM - HAZARD_SIZE) this.Destroy();
+}
+
+system Collide(Body body, mut Run run, query (Body body, with Hazard) hazards, with Player)
+{
+    if (run.over) return;
+    foreach (var h in hazards)
+    {
+        var reach = (body.size + h.body.size) * 0.5;
+        var d = Math.Abs(h.body.position - body.position);
+        if (d.x < reach && d.y < reach) run.over = true;
+    }
+}
+
+view DrawPlayer(Body body, with Player)
+{
+    Draw.Rect(body.position, float2(body.size, body.size), Color.cyan);
+}
+
+view DrawHazards(Body body, with Hazard)
+{
+    Draw.Rect(body.position, float2(body.size, body.size), Color.red);
+}
+
+view Hud(Run run)
+{
+    Draw.Screen()
+    {
+        if (run.over)
+        {
+            Draw.Text("Game over", float2(Screen.width * 0.5, Screen.height * 0.5 - 40), 36, Color.white, Anchor.MiddleCenter);
+            Draw.Text($"You survived {Math.Floor(run.time)} seconds", float2(Screen.width * 0.5, Screen.height * 0.5 + 4), 24, Color.white, Anchor.MiddleCenter);
+            Draw.Text("Press Space to restart", float2(Screen.width * 0.5, Screen.height * 0.5 + 40), 18, Color.gray, Anchor.MiddleCenter);
+        }
+        else
+        {
+            Draw.Text($"Time: {Math.Floor(run.time)}", float2(10, 8), 20, Color.white, Anchor.UpperLeft);
+        }
+    }
+}
