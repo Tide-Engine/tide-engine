@@ -35,6 +35,21 @@ public final class TidePlatformTest extends BasePlatformTestCase {
             }
         }
     }
+    // Enter between a block's braces puts the caret on an indented line of its own and the closing brace under
+    // the opening one, as C#'s and C's editors do
+    public void testEnterBetweenBracesOpensTheBlock() {
+        myFixture.configureByText("game.tide", "system Go()\n{\n    if (true)\n    {<caret>}\n}\n");
+        myFixture.type('\n');
+        myFixture.checkResult("system Go()\n{\n    if (true)\n    {\n        <caret>\n    }\n}\n");
+        myFixture.configureByText("level.tprefab", "prefab Level {<caret>}\n");
+        myFixture.type('\n');
+        myFixture.checkResult("prefab Level {\n    <caret>\n}\n");
+        // Elsewhere Enter is the editor's own
+        myFixture.configureByText("game.tide", "scene Main { }<caret>\n");
+        myFixture.type('\n');
+        myFixture.checkResult("scene Main { }\n<caret>\n");
+    }
+
     public void testConsoleHyperlinkUsesFileAndOneBasedCoordinates() throws Exception {
         final Path folder = Files.createTempDirectory("tide-platform-");
         Files.writeString(folder.resolve("game file.tide"), "scene Main {}\n// target\n");

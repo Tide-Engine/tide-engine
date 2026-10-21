@@ -1763,8 +1763,66 @@ static void format_default(const field *f, sb *out)
     format_value_after(f->at, out);
 }
 
+// How many lines of a prefab its hover shows: a big one's first ones, then its closing brace
+#define PREFAB_HOVER_LINES 24
+
+// A prefab as its file writes it, from its `prefab` line to its closing brace: its entities and components are
+// what it is, where a struct's fields are a struct's
+static void format_prefab(const decl *d, sb *out)
+{
+    const source *src = d->unit ? d->unit->src : NULL;
+    if (!src || !src->text || d->end.line < d->at.line) {
+        sb_printf(out, "prefab " STR_FMT, STR_ARG(d->name));
+        return;
+    }
+    const char *at = src->text, *end = src->text + src->len;
+    for (int line = 1; at < end && line < d->at.line; at++) line += *at == '\n';
+    size_t indent = 0;
+    while (at + indent < end && (at[indent] == ' ' || at[indent] == '\t')) indent++;
+    const int lines = d->end.line - d->at.line + 1;
+    for (int line = 0; at < end && line < lines; line++) {
+        const char *eol = memchr(at, '\n', (size_t)(end - at));
+        if (!eol) eol = end;
+        const bool shown = lines <= PREFAB_HOVER_LINES || line < PREFAB_HOVER_LINES - 2 || line == lines - 1;
+        if (shown) {
+            const char *text = at;
+            for (size_t k = 0; k < indent && text < eol && (*text == ' ' || *text == '\t'); k++) text++;
+            size_t n = (size_t)(eol - text);
+            if (n > 0 && text[n - 1] == '\r') n--;
+            if (line > 0) sb_put(out, "\n");
+            sb_putn(out, text, n);
+        } else if (line == PREFAB_HOVER_LINES - 2) {
+            sb_printf(out, "\n    // ...%d more lines", lines - PREFAB_HOVER_LINES + 1);
+        }
+        at = eol < end ? eol + 1 : end;
+    }
+}
+
+// A prefab tide made of a Unity prefab or scene (Library/Tide/prefabs/<asset>.tprefab): the asset's path, or NULL
+static const char *unity_prefab_asset(const decl *d)
+{
+    const char *path = d->unit && d->unit->src ? d->unit->src->path : NULL;
+    if (!path) return NULL;
+    const char *found = NULL;
+    for (const char *p = path; *p; p++) {
+        if (strncmp(p, "Tide/prefabs/", 13) == 0 || strncmp(p, "Tide\\prefabs\\", 13) == 0) found = p + 13;
+    }
+    if (!found) return NULL;
+    const size_t n = strlen(found);
+    if (n <= 8 || strcmp(found + n - 8, ".tprefab") != 0) return NULL;
+    char *asset = str_to_cstr((str){found, (int)n - 8});
+    for (char *p = asset; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    return asset;
+}
+
 static void format_data_decl(const decl *d, sb *out)
 {
+    if (d->kind == DECL_PREFAB) {
+        format_prefab(d, out);
+        return;
+    }
     sb_printf(out, "%s%s " STR_FMT, d->is_local ? "local " : "", decl_keyword(d), STR_ARG(d->name));
     if (d->kind == DECL_ENUM && d->backing.len > 0) sb_printf(out, " : " STR_FMT, STR_ARG(d->backing));
     sb_put(out, "\n{\n");
@@ -2815,7 +2873,9 @@ static void describe(const occurrence *o, sb *out)
         } else if (o->decl) {
             format_data_decl(o->decl, &code);
             code_block(out, code.data);
-            if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
+            if (o->decl->kind == DECL_PREFAB && unity_prefab_asset(o->decl)) {
+                sb_printf(out, "\n\nFrom `%s` in the Unity project, as tide read it.", unity_prefab_asset(o->decl));
+            } else if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
             else if (shader_record_doc(o->decl)) sb_printf(out, "\n\n%s", shader_record_doc(o->decl));
             else if (o->decl == A.prog->shape) {
                 sb_put(out, "\n\nWhat `Draw.Shape` draws: a box with round corners, or an ellipse, turned, with a fill "
@@ -4434,6 +4494,26 @@ static void replace_word_action(const fix *f, jbuf *out, int *written)
     quick_fix_edits(out, written, title.data, true, diagnostic_at(f->at), &edits);
 }
 
+// Removes a parameter that's never used, with the comma that joins it to the others
+static void remove_param_action(const fix *f, jbuf *out, int *written)
+{
+    const param *p = f->param;
+    const int first = token_at(p->at);
+    const int name = token_at(p->name_at);
+    if (first < 0 || name < 0) return;
+    const token *toks = DOC->toks;
+    loc start = p->at;
+    loc end = token_end(&toks[name]);
+    if (toks[name + 1].kind == T_COMMA) {
+        end = toks[name + 2].at; // Up to the next parameter
+    } else if (first > 1 && toks[first - 1].kind == T_COMMA) {
+        start = token_end(&toks[first - 2]); // From the end of the one before
+    }
+    sb title = {0};
+    sb_printf(&title, "Remove '" STR_FMT "'", STR_ARG(p->name));
+    quick_fix(out, written, title.data, true, diagnostic_at(f->at), start, end, "");
+}
+
 static void asset_fix_actions(int start_line, int end_line, jbuf *out, int *written);
 
 void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
@@ -4449,6 +4529,10 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
         if (f->at.file != A.doc || f->at.line - 1 < start_line || f->at.line - 1 > end_line) continue;
         if (f->kind == FIX_USE_THIS) {
             use_this_action(f->param, out, &written);
+            continue;
+        }
+        if (f->kind == FIX_REMOVE_PARAM) {
+            remove_param_action(f, out, &written);
             continue;
         }
         if (f->kind == FIX_UNWRAP) {
@@ -4619,7 +4703,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             }
             break;
         }
-        case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
+        case FIX_USE_THIS: case FIX_REMOVE_PARAM: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
         case FIX_ASSIGN_FIRST: case FIX_ADD_VIRTUAL: case FIX_ADD_OVERRIDE:
             continue; // Their own actions, above
         }
