@@ -107,10 +107,9 @@ static file_list tide_files(const char *folder)
 }
 
 // The game's own files of other kinds (its C, its headers, its libraries):
-// not in a hidden folder, like .tide/, where tide keeps what it makes, or in
-// build/, where builds go.
+// not in a hidden folder, like .tide/, where tide keeps what it makes, or
+// .build/, where builds go (folder_find_own never looks in one).
 typedef struct own_files {
-    size_t prefix; // The folder's length, with its '/'
     const char *const *extensions;
     file_list list;
 } own_files;
@@ -133,19 +132,13 @@ static void add_own_file(void *user, const char *path)
     own_files *o = user;
     bool wanted = false;
     for (int i = 0; o->extensions[i] && !wanted; i++) wanted = has_extension(path, o->extensions[i]);
-    if (!wanted) return;
-    const char *relative = path + o->prefix;
-    if (strncmp(relative, "build/", 6) == 0) return;
-    for (const char *p = relative; *p; p++) {
-        if (*p == '.' && (p == relative || p[-1] == '/') && strchr(p, '/')) return; // A hidden folder
-    }
-    add_file(&o->list, path);
+    if (wanted) add_file(&o->list, path);
 }
 
 static file_list own_files_of(const char *folder, const char *const *extensions)
 {
     char *dir = path_join(folder, "");
-    own_files o = {strlen(dir), extensions, {0}};
+    own_files o = {extensions, {0}};
     folder_find_own(dir, "", add_own_file, &o); // Every file, once
     free(dir);
     return o.list;
@@ -244,10 +237,32 @@ char *tide_work_folder(const char *folder)
     return tide_dir;
 }
 
+// Where a build with no -o puts `file`: the game's .build/, which git ignores,
+// as it does .tide/. Hidden folders are no part of a game; builds went in
+// build/ before, which is a folder of the game like any other now.
+static char *default_output(const char *folder, const char *file)
+{
+    char *old = format("%s/build/%s", folder, file);
+    if (sys_exists(old)) {
+        fprintf(stderr, "tide: build/%s is an older tide's build: builds go in .build/ now, and build/ is part of the "
+                        "game like any folder, so delete it\n", file);
+    }
+    free(old);
+    char *dir = path_join(folder, ".build");
+    sys_mkdirs(dir);
+    char *ignore = path_join(dir, ".gitignore");
+    if (!sys_exists(ignore)) sys_write_text(ignore, "# Made by tide; safe to delete.\n*\n");
+    free(ignore);
+    char *output = path_join(dir, file);
+    free(dir);
+    return output;
+}
+
 // Adds what a build reads of the game or package in `dir` (ending in '/') to
 // `list`: its tide.packages, its .tide files and its C side, each as `under`
 // (the folder's path from the game's, ending in '/' or empty) and its path
-// from `dir`. What tide made itself (.tide/, build/) is no part of a game.
+// from `dir`. What tide made itself (.tide/, .build/) is no part of a game, as
+// no hidden folder is.
 static void add_sources_of(file_list *list, const char *dir, const char *under)
 {
     file_list found = tide_files(dir);
@@ -261,7 +276,6 @@ static void add_sources_of(file_list *list, const char *dir, const char *under)
     for (int i = 0; i < found.count; i++) {
         const char *relative = found.items[i] + prefix;
         while (*relative == '/') relative++;
-        if (strncmp(relative, ".tide/", 6) == 0 || strncmp(relative, "build/", 6) == 0) continue;
         char *path = format("%s%s", under, relative);
         add_file(list, path);
         free(path);
@@ -1962,9 +1976,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
     } else {
         char file[512];
         snprintf(file, sizeof file, "%s%s%s", b.name, opts->server ? "-server" : "", suffix);
-        char *dir = path_join(b.folder, "build");
-        output = path_join(dir, file);
-        free(dir);
+        output = default_output(b.folder, file);
     }
     char *output_dir = path_dir(output);
     sys_mkdirs(output_dir);
@@ -3226,9 +3238,7 @@ static char *build_android(const char *root, const build_options *opts, char *pa
     } else {
         char file[512];
         snprintf(file, sizeof file, "%s.apk", b.name);
-        char *dir = path_join(b.folder, "build");
-        output = path_join(dir, file);
-        free(dir);
+        output = default_output(b.folder, file);
     }
     char *output_dir = path_dir(output);
     sys_mkdirs(output_dir);

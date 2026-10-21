@@ -8,7 +8,7 @@ Read this before writing a Tide game. It covers the common path; consult the lin
 
 ## Find the project and version
 
-A Tide game is a folder of `.tide` files, including its subfolders. Declarations are visible across files without imports. An ordinary new game needs no project generator, CMake project or C host: create a folder and a `game.tide`. Optional packages are listed in `tide.packages`; [authored scenes and prefabs](../game/scenes.md) also use `.tprefab` files. Every `.tide` file under the folder is compiled, including ones under `build/`: keep scratch or probe copies of the game outside the game folder.
+A Tide game is a folder of `.tide` files, including its subfolders. Declarations are visible across files without imports. An ordinary new game needs no project generator, CMake project or C host: create a folder and a `game.tide`. Optional packages are listed in `tide.packages`; [authored scenes and prefabs](../game/scenes.md) also use `.tprefab` files. Every `.tide` file under the folder is compiled, except in hidden folders, whose names start with a dot: `tide build` writes to `.build/`, and scratch or probe copies of the game belong in a hidden folder or outside the game folder.
 
 Inspect the existing game and its instructions before changing it. Run `tide version` to identify the installed compiler and `tide help build` or `tide help run` for its actual CLI. These docs describe the website's source revision, which can be newer than an installed release. Prefer documentation supplied with the project's pinned toolchain when available. On a mismatch, report the versions and use compiler diagnostics to check the relevant feature; do not silently upgrade the user's installation.
 

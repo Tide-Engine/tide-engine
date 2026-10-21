@@ -147,11 +147,12 @@ directly. Haiku missed that views draw in declaration order, which the overview 
 diagnostics. Haiku Pong still logged without `time.tick` and noticed the repeats itself.
 Its report noted scripts cannot make a player leave, so no trial exercised `PlayerLeft`.
 
-Open proposals for the owner, not implemented: source discovery (`folder_find_own`)
-scans `build/` and hidden folders, while asset discovery skips them ("what tide makes is
-no part of a game"). A member-not-found note could also fall back to a field containing
-the name, as script key names already do (`right` → `rightArrow`). A script line that
-makes a player leave or rejoin would let `--players` runs test `PlayerLeft` and seat reuse.
+Proposals that followed: source discovery scanned `build/` and hidden folders while
+asset discovery skipped them. The owner chose `.build/` for builds and no hidden folder
+in a game (`notes/cli-and-packages.md`, Hidden folders). Suggestions now fall back to
+a name with the wrong one as a whole word (`notes/language.md`, Word suggestions).
+Still open: a script line that makes a player leave or rejoin, so `--players` runs
+can test `PlayerLeft` and seat reuse.
 
 ## Repeat the study
 

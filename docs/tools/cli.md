@@ -233,7 +233,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 
 1. Make a developer account in the [Play Console](https://play.google.com/console) (Google charges a one-time fee), and create the app there.
 2. Give the game its `appId`, and build it with `tide build --android --release`.
-3. Upload `build/<name>.aab` to a release: internal testing is the quickest way to try it on your own phone. Play signs the APKs it makes with a key of its own, which it keeps (Play App Signing); `~/.android/tide.pem` is then your upload key, and Play only takes uploads signed with it.
+3. Upload `.build/<name>.aab` to a release: internal testing is the quickest way to try it on your own phone. Play signs the APKs it makes with a key of its own, which it keeps (Play App Signing); `~/.android/tide.pem` is then your upload key, and Play only takes uploads signed with it.
 4. For an update, build again and upload the new `.aab`: its version code is higher than the last one's.
 
 Play's other requirements, like the version of Android an app is made for (Android 16) and support for phones with 16 KiB memory pages, `tide` meets itself. A library the game brings has to be linked for those pages too, and `tide` warns when one isn't (see [Calling C](../c/functions.md#android)). If you lose your upload key, Play can take a new one (the app's **App integrity** page asks for its certificate: the part of the key's file from `-----BEGIN CERTIFICATE-----` on).
@@ -451,7 +451,7 @@ Something has to end a run nobody can close: `--frames`, or the script's `quit`.
 | 1 | A picture couldn't be written. Folders aren't made for it |
 | 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 
-A game `tide build` made takes the same options itself, so a build server needs no `tide`: `build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
+A game `tide build` made takes the same options itself, so a build server needs no `tide`: `.build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
 
 ### Several players
 
@@ -587,6 +587,6 @@ A package that's a folder already is left where it is, and a folder already at `
 
 ## Files
 
-`tide` keeps its work in a hidden `.tide` folder in the game's folder. You can delete it any time, and git ignores it. Packages from git are kept for every game, once each commit: in `%LOCALAPPDATA%\Tide\packages` on Windows and `~/.tide/packages` elsewhere, or where `TIDE_PACKAGES` says. `tide build` puts what it makes in `build/`, with the game's `.dll`, `.so` or `.dylib` libraries next to the program. C files and libraries in hidden folders or in `build/` aren't part of the game.
+`tide` keeps its work in a hidden `.tide` folder in the game's folder. You can delete it any time, and git ignores it. Packages from git are kept for every game, once each commit: in `%LOCALAPPDATA%\Tide\packages` on Windows and `~/.tide/packages` elsewhere, or where `TIDE_PACKAGES` says. `tide build` puts what it makes in `.build/`, with the game's `.dll`, `.so` or `.dylib` libraries next to the program, and git ignores that too. Nothing in a hidden folder, one whose name starts with a dot like these two, is part of the game: not its `.tide` files, its C or its libraries.
 
 A game's first build compiles the engine's C with it, and its packages'; the builds after that compile only what changed. `tide` compiles those files as many at once as the machine has processors, and what a build says and makes is the same however many that is. On a machine short of memory, set the `TIDE_JOBS` environment variable to how many to compile at once.
