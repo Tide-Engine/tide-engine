@@ -58,7 +58,6 @@ namespace Tide.Editor
     {
         static readonly Dictionary<string, bool> folded = new Dictionary<string, bool>();
         static GUIStyle header;
-        string resetting; // "<component>/<field>" its menu put back to its default, which the next draw writes
 
         public override void OnInspectorGUI()
         {
@@ -79,13 +78,12 @@ namespace Tide.Editor
             var references = serializedObject.FindProperty("references");
             // In Play the match has its entities already: what's here is what a match starts with, edited outside Play
             var playing = EditorApplication.isPlayingOrWillChangePlaymode;
-            if (playing) EditorGUILayout.LabelField("What a match starts with: edit it outside Play", EditorStyles.miniLabel);
             using (new EditorGUI.DisabledScope(playing))
             {
                 for (var i = 0; i < components.arraySize; i++)
                 {
                     if (i > 0) EditorGUILayout.Space(2);
-                    DrawComponent(entity, schema, components, references, i);
+                    DrawComponent(entity, schema, references, i);
                 }
                 EditorGUILayout.Space();
                 using (new EditorGUILayout.HorizontalScope())
@@ -124,25 +122,130 @@ namespace Tide.Editor
             serializedObject.ApplyModifiedProperties();
         }
 
-        void DrawComponent(TideEntity entity, TideSchema schema, SerializedProperty components, SerializedProperty references, int index)
+        // A component as the inspector sees it: what tide reads (the prefab's values, with the instance's fields over
+        // them) and what writing it changes.
+        sealed class Part
         {
+            public SerializedProperty property; // Its own values
+            public string type;
+            public TideSchemaType schemaType;
+            public bool instance, patching;
+            public bool sourced; // A component the prefab has, which the instance's fields patch: reverting gives its values
+            public string inherited, own, values;
+            public string patch; // What the instance (or anything else) writes over what's under it
+            public byte[] defaults;
+        }
+
+        Part Read(int index)
+        {
+            var components = serializedObject.FindProperty("components");
+            if (index < 0 || index >= components.arraySize) return null;
+            var entity = (TideEntity)target;
             var element = components.GetArrayElementAtIndex(index);
-            var typeProperty = element.FindPropertyRelative("type");
-            var valuesProperty = element.FindPropertyRelative("values");
-            var typeName = typeProperty.stringValue;
-            var type = schema?.Type(schema.TypeIndex(typeName));
+            var schema = TideEditorSchema.Current;
+            var p = new Part { property = element.FindPropertyRelative("values"), type = element.FindPropertyRelative("type").stringValue };
+            p.schemaType = schema?.Type(schema.TypeIndex(p.type));
+            p.instance = PrefabUtility.IsPartOfPrefabInstance(entity);
+            p.inherited = p.instance ? Inherited(entity, index, p.type) : "";
+            p.own = p.property.stringValue;
+            p.patching = p.instance && p.property.prefabOverride;
+            p.values = p.instance ? (p.patching ? TideLiterals.Merge(p.inherited, p.own) : p.inherited) : p.own;
+            p.sourced = p.instance && Sourced(entity, index, p.type);
+            p.patch = p.instance ? (p.patching ? p.own : "") : p.own;
+            p.defaults = p.schemaType?.DefaultBytes();
+            return p;
+        }
+
+        // What tide reads for the `index`th component.
+        internal string Values(int index) => Read(index)?.values;
+
+        // What Reset (`field` null: every field) writes: each field its declared default. Null where it changes nothing.
+        internal string Resetting(int index, string field = null)
+        {
+            var p = Read(index);
+            if (p == null) return null;
+            var schema = TideEditorSchema.Current;
+            var under = p.sourced ? p.inherited : "";
+            string next;
+            if (field != null)
+            {
+                var f = p.schemaType?.fields.FirstOrDefault(x => x.name == field);
+                if (f == null || TideLiterals.Get(p.values, field) == null) return null;
+                next = Defaulted(p.patch, f, under, Default(schema, f, p.defaults));
+            }
+            else if (!p.sourced) next = "";
+            else
+            {
+                next = p.patch;
+                foreach (var f in p.schemaType?.fields ?? Array.Empty<TideSchemaField>())
+                {
+                    next = Defaulted(next, f, under, Default(schema, f, p.defaults)) ?? next;
+                }
+            }
+            return next != null && next != p.patch ? next : null;
+        }
+
+        // What Revert to Prefab (`field` null: every field) writes in a prefab instance: the prefab's. Null where it
+        // changes nothing.
+        internal string Reverting(int index, string field = null)
+        {
+            var p = Read(index);
+            if (p == null || !p.sourced || !p.patching) return null;
+            var next = field == null ? "" : TideLiterals.Set(p.patch, field, null);
+            return next != p.patch ? next : null;
+        }
+
+        internal void ResetFields(int index, string field = null)
+        {
+            serializedObject.Update();
+            var next = Resetting(index, field);
+            if (next != null) Write(index, next);
+        }
+
+        internal void RevertFields(int index, string field = null)
+        {
+            serializedObject.Update();
+            var next = Reverting(index, field);
+            if (next != null) Write(index, next);
+        }
+
+        // Writes the `index`th component's own values: in a prefab instance, none reverts its override, so it follows
+        // its prefab again.
+        void Write(int index, string values)
+        {
+            var p = Read(index);
+            if (p == null) return;
+            if (p.sourced && string.IsNullOrEmpty(values))
+            {
+                PrefabUtility.RevertPropertyOverride(p.property, InteractionMode.UserAction);
+                serializedObject.Update();
+                return;
+            }
+            p.property.stringValue = values;
+            serializedObject.ApplyModifiedProperties();
+            serializedObject.Update(); // Whether it overrides its prefab now
+        }
+
+        void DrawComponent(TideEntity entity, TideSchema schema, SerializedProperty references, int index)
+        {
+            var p = Read(index);
+            var typeName = p.type;
+            var type = p.schemaType;
             var key = typeName + "@" + entity.GetHashCode(); // Its instance, as GetInstanceID was
             folded.TryGetValue(key, out var closed);
 
-            // Its name, folding it, and a menu (⋮ or a right click) that removes it
+            // Its name, folding it, and a menu (⋮ or a right click): Reset, Revert to Prefab, Remove Component
             header ??= new GUIStyle(EditorStyles.foldout) { fontStyle = FontStyle.Bold };
             var line = EditorGUILayout.GetControlRect();
             var options = new Rect(line.xMax - 16, line.y + 1, 16, line.height);
             var e = Event.current;
             if (GUI.Button(options, EditorGUIUtility.IconContent("_Menu"), EditorStyles.iconButton)
-                || (e.type == EventType.ContextClick && line.Contains(e.mousePosition)))
+                || (GUI.enabled && e.type == EventType.ContextClick && line.Contains(e.mousePosition)))
             {
                 var menu = new GenericMenu();
+                Item(menu, "Reset", Resetting(index) != null, () => ResetFields(index));
+                if (p.sourced) Item(menu, "Revert to Prefab", Reverting(index) != null, () => RevertFields(index));
+                menu.AddSeparator("");
                 menu.AddItem(new GUIContent("Remove Component"), false, () =>
                 {
                     serializedObject.Update();
@@ -165,53 +268,58 @@ namespace Tide.Editor
             }
             if (closed) return;
 
-            // What tide reads: the prefab's values, with the instance's fields over them
-            var instance = PrefabUtility.IsPartOfPrefabInstance(entity);
-            var inherited = instance ? Inherited(entity, index, typeName) : "";
-            var own = valuesProperty.stringValue;
-            var patching = instance && valuesProperty.prefabOverride;
-            var values = instance ? (patching ? TideLiterals.Merge(inherited, own) : inherited) : own;
-
             using (new EditorGUI.IndentLevelScope())
             {
                 if (type == null)
                 {
                     EditorGUI.BeginChangeCheck();
-                    var edited = EditorGUILayout.DelayedTextField("Values", values);
-                    if (EditorGUI.EndChangeCheck()) valuesProperty.stringValue = edited;
+                    var edited = EditorGUILayout.DelayedTextField("Values", p.values);
+                    if (EditorGUI.EndChangeCheck()) p.property.stringValue = edited;
                     return;
                 }
-                var defaults = type.DefaultBytes();
                 foreach (var field in type.fields)
                 {
-                    var literal = TideLiterals.Get(values, field.name);
-                    var instanceSets = patching && TideLiterals.Get(own, field.name) != null;
-                    var changed = DrawField(schema, field, literal, Default(schema, field, defaults), references, instanceSets, out var next);
-                    // A right click on a field something sets puts it back to its default
-                    var path = typeName + "/" + field.name;
-                    if (literal != null && e.type == EventType.ContextClick && GUILayoutUtility.GetLastRect().Contains(e.mousePosition))
+                    var literal = TideLiterals.Get(p.values, field.name);
+                    var instanceSets = p.patching && TideLiterals.Get(p.own, field.name) != null;
+                    var changed = DrawField(schema, field, literal, Default(schema, field, p.defaults), references, instanceSets, out var next);
+                    // A right click: Reset to Default, and in a prefab instance, Revert to Prefab
+                    if (GUI.enabled && e.type == EventType.ContextClick && GUILayoutUtility.GetLastRect().Contains(e.mousePosition))
                     {
                         var menu = new GenericMenu();
-                        menu.AddItem(new GUIContent("Reset to Default"), false, () =>
-                        {
-                            resetting = path;
-                            Repaint();
-                        });
+                        var name = field.name;
+                        Item(menu, "Reset to Default", Resetting(index, name) != null, () => ResetFields(index, name));
+                        if (p.sourced) Item(menu, "Revert to Prefab", Reverting(index, name) != null, () => RevertFields(index, name));
                         menu.ShowAsContext();
                         e.Use();
                     }
-                    if (resetting == path)
-                    {
-                        resetting = null;
-                        changed = literal != null;
-                        next = null;
-                    }
                     if (!changed) continue;
                     // A prefab instance keeps the fields it sets; anything else keeps them all
-                    var basis = instance ? (patching ? own : "") : own;
-                    valuesProperty.stringValue = TideLiterals.Set(basis, field.name, next);
+                    p.property.stringValue = TideLiterals.Set(p.patch, field.name, next);
                 }
             }
+        }
+
+        static void Item(GenericMenu menu, string label, bool on, GenericMenu.MenuFunction run)
+        {
+            if (on) menu.AddItem(new GUIContent(label), false, run);
+            else menu.AddDisabledItem(new GUIContent(label));
+        }
+
+        // `patch` with `field` back to its declared default (`declared`, its literal): left out where what's under it
+        // (`under`, a prefab's values) doesn't set it or sets the default, the default itself where it sets another.
+        // Null where it can't say the default under a prefab that sets it (text).
+        static string Defaulted(string patch, TideSchemaField field, string under, string declared)
+        {
+            var below = TideLiterals.Get(under, field.name);
+            if (below == null || below == declared) return TideLiterals.Set(patch, field.name, null);
+            return declared != null ? TideLiterals.Set(patch, field.name, declared) : null;
+        }
+
+        // Whether the prefab a TideEntity is an instance of has its `index`th component, of `type`.
+        static bool Sourced(TideEntity entity, int index, string type)
+        {
+            var source = PrefabUtility.GetCorrespondingObjectFromSource(entity);
+            return source != null && index < source.components.Count && source.components[index].type == type;
         }
 
         // The values the prefab a TideEntity is an instance of gives its `index`th component, as tide merges them.

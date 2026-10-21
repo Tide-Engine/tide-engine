@@ -326,14 +326,24 @@ and `Main` was offered until 2026-10-21), draws each field by its schema type (n
 fields; anything else as its literal), shows an unset field with its declared
 default from the schema's `defaults` (a text field's default shows empty), editable
 like a set one (it used to be faded, which read as read-only, and showed zero),
-and a right click on a set field resets it (Reset to Default). Each component's
-header is a bold foldout with a ⋮ menu (or a right click) holding Remove
-Component: the toolbar bar, the Remove and `×` buttons, and the raw "As tide
-reads it" lists went on 2026-10-21 (owner: simpler). In a prefab
-instance it writes only the fields the instance changes (`Inherited` merges the
-chain of sources), as tide merges. In Play it's grayed out: the match has its
-entities already, and an edit there would reach neither the match nor the
-scene (owner, 2026-10-20: what can't be changed at runtime is grayed out).
+and a right click on a field has Reset to Default (and Revert to Prefab in an
+instance). Each component's header is a bold foldout with a ⋮ menu (or a right
+click): Reset (every field), Revert to Prefab (an instance's component the
+prefab has) and Remove Component. The toolbar bar, the Remove and `×` buttons,
+the raw "As tide reads it" lists and the Play-mode label went on 2026-10-21
+(owner: simpler; the graying is enough). In a prefab instance it writes only
+the fields the instance changes (`Inherited` merges the chain of sources, nested
+prefabs and variants included), as tide merges. Reset there leaves out a field
+nothing under it sets (or sets to the default) and writes the default over one
+the prefab sets to something else (a text field it can't, its default not being
+in the schema's bytes); Revert to Prefab leaves the field out, and an instance
+left setting nothing has its override reverted (`RevertPropertyOverride`), so
+it follows its prefab again. `Assets/Tests/Editor/EntityEditorTests.cs` (the
+Sample's EditMode tests, through `InternalsVisibleTo`) pins both on a prefab
+inside a prefab with overrides at each level, and on a prefab asset itself. In
+Play it's grayed out: the match has its entities already, and an edit there
+would reach neither the match nor the scene (owner, 2026-10-20: what can't be
+changed at runtime is grayed out).
 Showing the match's live values there instead is a possible next step.
 
 **The converter** (`compiler/cli/unity_assets.c`, owner decision: Unity assets
