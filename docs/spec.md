@@ -12,7 +12,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 
 - Source files use the `.tide` extension.
 - The compiler (transpiler) is `tidec`.
-- A game is one or more `.tide` files: by default, every `.tide` file in the game's folder and its subfolders, and those of the packages it lists (see Packages). Every declaration is visible from every file of the game; there are no imports between files.
+- A game is one or more `.tide` files: by default, every `.tide` file in the game's folder and its subfolders, but for hidden folders (a name starting with `.`, as tide's own `.tide/` and `.build/`), and those of the packages it lists (see Packages). Every declaration is visible from every file of the game; there are no imports between files.
 - A game needs no C: the engine runs it. A custom C host is optional, for tests or special hosts. A game can call C of its own, from `.c` files, `.cpp` files and libraries in its folder (see C functions).
 
 ### Namespaces

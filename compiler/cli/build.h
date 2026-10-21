@@ -11,7 +11,7 @@ typedef struct build_options {
     bool managed;       // Internal deploy target: single-match sandboxed WASM reactor.
     bool server_strip_assets; // Explicit promise that custom C has no hidden asset dependencies.
     bool watch;         // Interactive run: rebuild as the game's files change
-    const char *output; // Where the program goes; NULL for <folder>/build/<name>
+    const char *output; // Where the program goes; NULL for <folder>/.build/<name>
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner
     bool stats_open;    // ...which starts open: tide run's, for whoever typed --stats to read them
@@ -68,7 +68,7 @@ char *tide_work_folder(const char *folder);
 // Every file a build reads from the game's folder: its tide.packages, its
 // .tide files, its C and C++ with their headers and its libraries, and those
 // of its packages in folders inside it (packages from git aren't its files:
-// they're named by their commit). Not what tide made there (.tide/, build/).
+// they're named by their commit). Not what tide made there (.tide/, .build/).
 // Paths from the folder, with forward slashes, in the same order on every
 // machine; `count` gets how many. malloc'd, as each path is. NULL after
 // saying what's wrong: its tide.packages, or a package in a folder outside

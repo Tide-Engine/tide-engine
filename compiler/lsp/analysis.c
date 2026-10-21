@@ -11991,10 +11991,6 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
     for (int i = 0; i < entries.folders.count; i++) {
         sb label = {0};
         sb_printf(&label, "%s/", entries.folders.items[i]);
-        if (strcmp(entries.folders.items[i], "build") == 0 && asset_roots.game_folder
-            && !asset_path_under(base, asset_roots.game_folder) && asset_path_under(label.data, asset_roots.game_folder)) {
-            continue; // What tide makes, at the game's root
-        }
         asset_item(c, label.data, KIND_FOLDER, start, at, label.data, "A folder", '1');
     }
     if (site->many) {

@@ -79,14 +79,19 @@ try {
         'mods/shared/tide.packages': 'package Shared\n',
         'mods/shared/shared.tide': 'namespace Shared;\n\nfloat Half()\n{\n    return 0.5;\n}\n',
         'mods/shared/c/half.c': 'float half(void) { return 0.5f; }\n',
+        // build/ is a folder of the game's like any: builds go in .build/
+        'build/levels.tide': '// The game\'s\n',
         [`${'deep/'.repeat(18)}a file far down.tide`]: '// Down here\n', // Longer than a tar's 100 for a name
     };
     for (const [name, text] of Object.entries(files)) write(join(game, name), text);
     const left = {
         '.tide/web-release/gen/game.c': 'int generated;\n',
         '.tide/key.tide': '// Not the game\'s\n',
-        'build/duel.html': '<p>built</p>\n',
-        'build/old.tide': '// Not the game\'s either\n',
+        '.build/duel.html': '<p>built</p>\n',
+        '.build/old.tide': '// Not the game\'s either\n',
+        // Nor a hidden folder anywhere else
+        'systems/.scratch/copy.tide': '// A copy, not the game\'s\n',
+        'c/.old/noise.c': 'int stale;\n',
         'notes.md': 'What nobody builds\n',
         'art/hero.png': 'pixels\n',
         '.git/hooks/pre-commit.c': 'int hook;\n',

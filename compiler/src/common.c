@@ -408,12 +408,37 @@ int diag_error_count(void)
 
 suggestion suggest_start(const str wrong)
 {
-    return (suggestion){wrong, {NULL, 0}, 1 << 30};
+    return (suggestion){wrong, {NULL, 0}, 1 << 30, {NULL, 0}, 2};
 }
 
 static char lower(const char c)
 {
     return c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c;
+}
+
+static bool upper_or_digit(const char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+// Where `wrong` is a whole word of `candidate`, ignoring case: 0 when it's the
+// first word (`right` of rightArrow), 1 when it's a later one (`shift` of
+// leftShift, `up` of pageUp), 2 when it's neither. A word starts the name, or
+// starts at a capital or after a '_', and ends at the name's end, a capital,
+// a digit or a '_'.
+static int word_rank(const str wrong, const str candidate)
+{
+    if (wrong.len < 2 || candidate.len <= wrong.len) return 2;
+    for (int at = 0; at + wrong.len <= candidate.len; at++) {
+        if (at > 0 && !upper_or_digit(candidate.ptr[at]) && candidate.ptr[at - 1] != '_') continue;
+        bool same = true;
+        for (int i = 0; i < wrong.len && same; i++) same = lower(candidate.ptr[at + i]) == lower(wrong.ptr[i]);
+        if (!same) continue;
+        const int end = at + wrong.len;
+        if (end < candidate.len && !upper_or_digit(candidate.ptr[end]) && candidate.ptr[end] != '_') continue;
+        return at == 0 ? 0 : 1;
+    }
+    return 2;
 }
 
 // Edits (insert, delete, replace, swap two neighbors) between two names,
@@ -449,6 +474,11 @@ void suggest_consider(suggestion *s, const str candidate)
         s->distance = d;
         s->best = candidate;
     }
+    const int rank = word_rank(s->wrong, candidate);
+    if (rank < s->word_rank) {
+        s->word_rank = rank;
+        s->word = candidate;
+    }
 }
 
 void suggest_consider_c(suggestion *s, const char *candidate)
@@ -465,9 +495,13 @@ bool suggest_close(const suggestion *s)
 
 void suggest_note(const suggestion *s)
 {
-    if (!suggest_close(s)) return;
-    diag_note("did you mean '" STR_FMT "'?", STR_ARG(s->best));
-    if (suggestion_sink) suggestion_sink(suggestion_user, s->wrong, s->best);
+    // A close name, unless it's shorter and a word of another fits: `up` is
+    // upArrow, not u.
+    const bool word = s->word.len > 0 && (!suggest_close(s) || s->best.len < s->wrong.len);
+    const str meant = word ? s->word : suggest_close(s) ? s->best : (str){NULL, 0};
+    if (meant.len == 0) return;
+    diag_note("did you mean '" STR_FMT "'?", STR_ARG(meant));
+    if (suggestion_sink) suggestion_sink(suggestion_user, s->wrong, meant);
 }
 
 void suggest_replacement(const str wrong, const char *instead)

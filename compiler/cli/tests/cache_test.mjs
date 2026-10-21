@@ -77,17 +77,26 @@ async function serverTests(tide, root) {
     writeFileSync(join(game, "main.tide"), source);
     writeFileSync(join(game, "rules.txt"), "simulation");
     writeFileSync(join(game, "visual.txt"), "presentation");
-    mkdirSync(join(game, "build"));
-    const player = join(game, "build", `server-cache${process.platform === "win32" ? ".exe" : ""}`);
+    mkdirSync(join(game, ".build"));
+    const player = join(game, ".build", `server-cache${process.platform === "win32" ? ".exe" : ""}`);
     writeFileSync(player, "preserve-player");
-    const server = join(game, "build", `server-cache-server${process.platform === "win32" ? ".exe" : ""}`);
-    const pack = join(game, "build", "server-cache-server.pack");
+    const server = join(game, ".build", `server-cache-server${process.platform === "win32" ? ".exe" : ""}`);
+    const pack = join(game, ".build", "server-cache-server.pack");
     const build = async (...flags) => {
         const result = await run(tide, ["build", game, ...flags], root, { TIDE_HIDDEN: "1" });
         check(result.code === 0, `server build failed:\n${result.said}`);
         check(existsSync(server), "server executable has its own output name");
         check(readFileSync(player, "utf8") === "preserve-player", "server preserves the player executable");
     };
+    // An older tide built into build/, which is a folder of the game's now
+    const old = join(game, "build", basename(server));
+    mkdirSync(join(game, "build"));
+    writeFileSync(old, "an older tide's");
+    const warned = await run(tide, ["build", game, "--server"], root, { TIDE_HIDDEN: "1" });
+    check(warned.code === 0 && warned.said.includes(`build/${basename(server)} is an older tide's build`),
+        `a build beside an older tide's build/ says to delete it:\n${warned.said}`);
+    check(readFileSync(join(game, ".build", ".gitignore"), "utf8").includes("*"), "git ignores .build/");
+    rmSync(join(game, "build"), { recursive: true });
     await build("--server");
     check(readFileSync(pack).readUInt32LE(12) === 1, "Tide-only server retains simulation assets only");
     writeFileSync(join(game, "entry.c"), '#include "game.h"\n#include "tide/hosting.h"\n'
@@ -436,7 +445,7 @@ async function nativeRunTest(tide, root) {
     check(!result.said.includes("saving a .tide or C file"), "headless native run doesn't start the watcher");
     check(readFileSync(capture).subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), "native run captures a PNG");
     const cache = join(game, ".tide", "native-debug");
-    check(!existsSync(join(game, "build")), "native run's executable is private to its run");
+    check(!existsSync(join(game, ".build")), "native run's executable is private to its run");
     check(readFileSync(join(cache, "gen", "main.c"), "utf8").includes("tide_run(&(tide_run_desc)"), "headless native run uses the standalone host");
     check(readdirSync(join(cache, "run")).length === 0, "the native run cleans its private executable and pack");
 }
@@ -639,7 +648,7 @@ async function atOnceTests(tide, root, target) {
     for (let i = 0; i < count; i++) put(join(game, `${name(i)}.c`), text(i), headerTime);
     const args = ["build", game, ...(target === "web" ? ["--web"] : [])];
     const cache = join(game, ".tide", `${target}-debug`);
-    const clean = () => { removeOwned(root, join(game, ".tide")); removeOwned(root, join(game, "build")); };
+    const clean = () => { removeOwned(root, join(game, ".tide")); removeOwned(root, join(game, ".build")); };
     async function build(jobs) {
         return await run(tide, args, game, jobs ? { TIDE_JOBS: String(jobs) } : {});
     }

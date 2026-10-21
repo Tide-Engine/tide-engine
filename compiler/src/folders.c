@@ -67,6 +67,7 @@ static void find(const char *folder, const char *extension, const folder_file_fn
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
         if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue; // A link
+            if (name[0] == '.') continue; // A hidden folder, like .tide/, .build/ and .git/
             char *sub = join(folder, name, "/");
             if (!own || !has_packages_file(sub)) find(sub, extension, found, user, own);
             free(sub);
@@ -87,9 +88,11 @@ static void find(const char *folder, const char *extension, const folder_file_fn
         struct stat info;
         if (lstat(path, &info) == 0) {
             if (S_ISDIR(info.st_mode)) {
-                char *sub = join(folder, name, "/");
-                if (!own || !has_packages_file(sub)) find(sub, extension, found, user, own);
-                free(sub);
+                if (name[0] != '.') { // Not a hidden folder, like .tide/, .build/ and .git/
+                    char *sub = join(folder, name, "/");
+                    if (!own || !has_packages_file(sub)) find(sub, extension, found, user, own);
+                    free(sub);
+                }
             } else if (S_ISREG(info.st_mode) && ends_with(name, extension)) {
                 found(user, path);
             }
@@ -138,7 +141,7 @@ char *folder_of_program(void)
 // Assets: every file, by size, and a folder's entries
 
 #ifdef _WIN32
-static void find_files(const char *folder, const folder_enter_fn enter, const folder_sized_fn found, void *user, const bool root)
+static void find_files(const char *folder, const folder_enter_fn enter, const folder_sized_fn found, void *user)
 {
     char *pattern = join(folder, "*", "");
     WIN32_FIND_DATAA entry;
@@ -150,9 +153,8 @@ static void find_files(const char *folder, const folder_enter_fn enter, const fo
         if (name[0] == '.') continue; // ".", ".." and hidden folders and files
         if (entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
-            if (root && _stricmp(name, "build") == 0) continue;
             char *sub = join(folder, name, "/");
-            if (!enter || enter(user, sub)) find_files(sub, enter, found, user, false);
+            if (!enter || enter(user, sub)) find_files(sub, enter, found, user);
             free(sub);
         } else {
             char *path = join(folder, name, "");
@@ -163,7 +165,7 @@ static void find_files(const char *folder, const folder_enter_fn enter, const fo
     FindClose(search);
 }
 #else
-static void find_files(const char *folder, const folder_enter_fn enter, const folder_sized_fn found, void *user, const bool root)
+static void find_files(const char *folder, const folder_enter_fn enter, const folder_sized_fn found, void *user)
 {
     DIR *dir = opendir(folder);
     if (!dir) return;
@@ -174,11 +176,9 @@ static void find_files(const char *folder, const folder_enter_fn enter, const fo
         struct stat info;
         if (lstat(path, &info) == 0) {
             if (S_ISDIR(info.st_mode)) {
-                if (!(root && strcmp(name, "build") == 0)) {
-                    char *sub = join(folder, name, "/");
-                    if (!enter || enter(user, sub)) find_files(sub, enter, found, user, false);
-                    free(sub);
-                }
+                char *sub = join(folder, name, "/");
+                if (!enter || enter(user, sub)) find_files(sub, enter, found, user);
+                free(sub);
             } else if (S_ISREG(info.st_mode)) {
                 found(user, path, (unsigned long long)info.st_size);
             }
@@ -191,12 +191,12 @@ static void find_files(const char *folder, const folder_enter_fn enter, const fo
 
 void folder_find_files(const char *folder, const folder_sized_fn found, void *user)
 {
-    find_files(folder, NULL, found, user, true);
+    find_files(folder, NULL, found, user);
 }
 
 void folder_find_files_in(const char *folder, const folder_enter_fn enter, const folder_sized_fn found, void *user)
 {
-    find_files(folder, enter, found, user, true);
+    find_files(folder, enter, found, user);
 }
 
 void folder_list(const char *folder, const folder_entry_fn found, void *user)

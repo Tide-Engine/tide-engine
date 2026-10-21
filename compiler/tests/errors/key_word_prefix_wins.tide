@@ -1,0 +1,10 @@
+// expect: did you mean 'upArrow'?
+// No close name, but a word of one: up is upArrow's first word, and pageUp's last
+input Controls
+{
+    bool held;
+
+    Sample(Devices devices) { held = devices.keyboard.up.pressed; }
+}
+
+scene Main { }

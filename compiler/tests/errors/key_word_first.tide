@@ -1,0 +1,9 @@
+// expect: did you mean 'rightArrow'?
+input Controls
+{
+    bool held;
+
+    Sample(Devices devices) { held = devices.keyboard.right.pressed; }
+}
+
+scene Main { }

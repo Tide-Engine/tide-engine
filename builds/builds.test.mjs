@@ -587,8 +587,9 @@ test('a version unpacks to its files, and to nothing else', () => {
     for (const name of ['../up.tide', 'a/../../up.tide', '/etc/passwd', 'a//b.tide', './a.tide', 'a/./b.tide', 'a\\b.tide', 'C:/a.tide', 'a\nb.tide', 'a/']) {
         refused([{ name, data: 'x' }], /isn't a path in the game's folder/);
     }
-    refused([{ name: '.tide/web-release/game.o', data: 'x' }], /a folder tide makes/);
-    refused([{ name: 'build/game.html', data: 'x' }], /a folder tide makes/);
+    refused([{ name: '.tide/web-release/game.o', data: 'x' }], /a hidden folder/);
+    refused([{ name: '.build/game.html', data: 'x' }], /a hidden folder/);
+    refused([{ name: 'levels/.scratch/copy.tide', data: 'x' }], /a hidden folder/);
     // A link, of either kind, a folder's own entry, a device: nothing but files
     for (const type of ['1', '2', '3', '5', 'L', 'x']) refused([{ name: 'link.tide', data: '', type, link: '/etc/passwd' }], /isn't a file/);
     refused([{ name: 'a.tide', data: '1' }, { name: 'a.tide', data: '2' }], /holds a\.tide twice/);
