@@ -148,7 +148,9 @@ Given the same build and inputs, simulation results must be bit-identical across
 
 ## Packaging and releases
 
-Tide is licensed `MIT OR Apache-2.0` (`LICENSE-MIT`, `LICENSE-APACHE`). Users install the `tide` command; see `README.md`. Versions follow conventional commits: `fix:` is a patch, `feat:` is a minor, and breaking changes (`feat!:`) are minor while versions start with 0. Avoid breaking changes where possible. `.releaserc.json` and `notes/releases-and-ci.md` describe release machinery.
+Tide is licensed `MIT OR Apache-2.0` (`LICENSE-MIT`, `LICENSE-APACHE`). Users install the `tide` command; see `README.md`.
+
+The CLI's usage data is anonymous and limited to the fields `docs/tools/telemetry.md` documents, from fixed sets or numbers in ranges: never paths, project or file names, code or message text. Development builds (`-dev` versions) and `TIDE_HIDDEN` runs send nothing. A new field is the owner's decision and updates that page, the CLI and the site's validation together (`notes/cli-and-packages.md`, Usage data). Versions follow conventional commits: `fix:` is a patch, `feat:` is a minor, and breaking changes (`feat!:`) are minor while versions start with 0. Avoid breaking changes where possible. `.releaserc.json` and `notes/releases-and-ci.md` describe release machinery.
 
 ## Notes index
 

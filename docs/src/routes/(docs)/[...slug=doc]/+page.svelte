@@ -74,11 +74,26 @@
             {/if}
         </nav>
     {/if}
+    <p class="site-links"><a href="/privacy">Privacy</a></p>
 </footer>
 
 <style>
     footer {
         margin-top: 64px;
+    }
+
+    .site-links {
+        margin: 32px 0 0;
+        color: var(--text-2);
+        font-size: 13px;
+    }
+
+    .site-links a {
+        color: var(--text-2);
+    }
+
+    .site-links a:hover {
+        color: var(--brand-1);
     }
 
     .pager {

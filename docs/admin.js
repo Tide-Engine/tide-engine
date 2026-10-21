@@ -6,6 +6,7 @@ import { prototypePatterns } from './prototypes.js';
 /** @typedef {import('node:http').IncomingMessage} Request */
 /** @typedef {import('node:http').ServerResponse} Response */
 /** @typedef {ReturnType<typeof import('./analytics.js').createAnalytics>} Analytics */
+/** @typedef {ReturnType<typeof import('./telemetry.js').createTelemetry>} Telemetry */
 
 const sessionAge = 12 * 60 * 60 * 1000;
 const cookieName = 'tide_admin';
@@ -62,11 +63,11 @@ function loginPage(failed, next) {
 }
 
 /**
- * @param {{analytics: Analytics, password?: string, relayUrl?: string,
+ * @param {{analytics: Analytics, telemetry?: Telemetry, password?: string, relayUrl?: string,
  * relayToken?: string, prototypes?: string[], now?: () => number,
  * fetch?: typeof globalThis.fetch}} options
  */
-export function createAdmin({ analytics, password = '', relayUrl = '', relayToken = '', prototypes = [], now = Date.now, fetch = globalThis.fetch }) {
+export function createAdmin({ analytics, telemetry, password = '', relayUrl = '', relayToken = '', prototypes = [], now = Date.now, fetch = globalThis.fetch }) {
     // Keep retired aliases from serving stale builds; games have one public root.
     const { path: prototypePath, retired: retiredPrototype } = prototypePatterns(prototypes);
     const signingKey = createHash('sha256').update(password).digest();
@@ -228,7 +229,7 @@ export function createAdmin({ analytics, password = '', relayUrl = '', relayToke
         }
 
         if (!authenticated(req)) {
-            if (pathname === '/admin/api') text(res, 401, 'Sign in to view analytics.');
+            if (pathname === '/admin/api' || pathname.startsWith('/admin/api/')) text(res, 401, 'Sign in to view analytics.');
             else if (pathname === '/admin/prototypes' || pathname.startsWith('/admin/prototypes/')) {
                 const next = destination(pathname + url.search);
                 redirect(res, `/admin/login?next=${encodeURIComponent(next === '/admin' ? '/admin/prototypes' : next)}`);
@@ -249,6 +250,16 @@ export function createAdmin({ analytics, password = '', relayUrl = '', relayToke
                 const summary = await analytics.summary(days);
                 res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ...summary, relay: { ...summary.relay, status: relayStatus, lastAttempt } }));
             } catch { text(res, 503, 'Analytics could not be loaded.'); }
+            return true;
+        }
+        if (pathname === '/admin/api/telemetry') {
+            if (req.method !== 'GET') { text(res, 405, 'Use GET.'); return true; }
+            const days = Number(url.searchParams.get('days') ?? 30);
+            if (![1, 7, 30, 90].includes(days)) { text(res, 400, 'Choose 1, 7, 30 or 90 days.'); return true; }
+            if (!telemetry) { text(res, 503, 'CLI usage data is not configured.'); return true; }
+            try {
+                res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(telemetry.summary(days)));
+            } catch { text(res, 503, 'CLI usage data could not be loaded.'); }
             return true;
         }
         return false; // Authenticated dashboard page, rendered by SvelteKit.

@@ -25,6 +25,7 @@ const snake = (id) => id.replaceAll('-', '_');
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
     const file = path.join(dir, 'analytics.json');
+    const telemetryFile = path.join(dir, 'telemetry', 'telemetry.db');
     let child;
     t.after(async () => {
         if (child?.exitCode === null) { child.kill(); await once(child, 'exit'); }
@@ -36,7 +37,7 @@ test('production website shares prototypes while protecting analytics, catalog a
     await mkdir(deployment);
     await Promise.all([
         cp(path.join(docs, 'build'), path.join(deployment, 'build'), { recursive: true }),
-        ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'prototypes.js', 'server.js'].map((name) => copyFile(path.join(docs, name), path.join(deployment, name))),
+        ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'telemetry.js', 'prototypes.js', 'server.js'].map((name) => copyFile(path.join(docs, name), path.join(deployment, name))),
         writeFile(path.join(deployment, 'prototypes.json'), JSON.stringify(cards)),
     ]);
     const entries = [];
@@ -94,7 +95,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     const origin = `http://127.0.0.1:${port}`;
     async function start(password) {
         child = spawn(process.execPath, ['server.js', String(port)], { cwd: deployment,
-            env: { ...process.env, TIDE_HIDDEN: '1', TIDE_ADMIN_PASSWORD: password, TIDE_ANALYTICS_FILE: file,
+            env: { ...process.env, TIDE_HIDDEN: '1', TIDE_ADMIN_PASSWORD: password, TIDE_ANALYTICS_FILE: file, TIDE_TELEMETRY_FILE: telemetryFile,
                 TIDE_RELAY_STATS_URL: '', TIDE_RELAY_STATS_TOKEN: '', PROTOCOL_HEADER: 'x-forwarded-proto' },
             stdio: ['ignore', 'pipe', 'pipe'] });
         await new Promise((resolve, reject) => {
@@ -216,6 +217,25 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
+    // The CLI's usage data: accepted from anyone, shown only behind sign-in.
+    const cliEvent = { id: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', command: 'build', target: 'web', version: '0.4.0', os: 'linux', arch: 'x64',
+        ci: false, ms: 2500, outcome: 'ok', files: '2-5', packages: '1', folder: '/home/someone/QuietHarbor' };
+    const sent = await fetch(`${origin}/telemetry`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: [cliEvent] }) });
+    assert.equal(sent.status, 204);
+    assert.equal(sent.headers.get('cross-origin-embedder-policy'), 'require-corp');
+    assert.equal((await fetch(`${origin}/telemetry`)).status, 405);
+    assert.equal((await fetch(`${origin}/admin/api/telemetry`)).status, 401);
+    assert.equal((await fetch(`${origin}/admin/telemetry`, { redirect: 'manual' })).status, 303);
+    const usage = await (await fetch(`${origin}/admin/api/telemetry?days=1`, { headers: { cookie } })).json();
+    assert.equal(usage.totals.events, 1);
+    assert.deepEqual(usage.builds, [{ target: 'web', count: 1, p50: 2500, p90: 2500, p99: 2500 }]);
+    const usagePage = await fetch(`${origin}/admin/telemetry`, { headers: { cookie } });
+    assert.equal(usagePage.status, 200);
+    assert.equal(usagePage.headers.get('cache-control'), 'private, no-store');
+    assert.match(await usagePage.text(), /CLI usage/);
+    const kept = Buffer.concat(await Promise.all([telemetryFile, `${telemetryFile}-wal`].map((name) => readFile(name).catch(() => Buffer.alloc(0)))));
+    assert.ok(kept.includes('a1b2c3d4e5f60718293a4b5c6d7e8f90'));
+    assert.ok(!kept.includes('127.0.0.1') && !kept.includes('QuietHarbor'));
     const sitemap = await (await fetch(`${origin}/sitemap.xml`)).text();
     assert.doesNotMatch(sitemap, /\/admin|\/prototypes\//);
     for (const route of ['/sitemap.xml', '/guide/samples', '/search.json']) {
@@ -232,7 +252,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     child.kill();
     await once(child, 'exit');
     await start('');
-    for (const route of ['/admin', '/admin/api', '/admin/prototypes', '/admin/prototypes/__data.json']) {
+    for (const route of ['/admin', '/admin/api', '/admin/api/telemetry', '/admin/telemetry', '/admin/prototypes', '/admin/prototypes/__data.json']) {
         assert.equal((await fetch(`${origin}${route}`, { redirect: 'manual' })).status, 503);
     }
     for (const [route, bytes] of files) {

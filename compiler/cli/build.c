@@ -18,6 +18,7 @@
 #include "packages.h"
 #include "serve.h"
 #include "sys.h"
+#include "telemetry.h"
 #include "toolchain.h"
 #include "unity_assets.h"
 #include "tide/sha256.h"
@@ -224,9 +225,13 @@ static void warn_unity_c(const char *folder)
 static bool find_packages(const char *folder, game_packages *out)
 {
     packages_free(out);
-    if (!packages_resolve(folder, out, fetch_package, report_package, NULL)) return false;
+    if (!packages_resolve(folder, out, fetch_package, report_package, NULL)) {
+        telemetry_fail(TELEMETRY_ERROR_PACKAGES);
+        return false;
+    }
     warn_unity_c(folder);
     if (out->file.name) {
+        telemetry_fail(TELEMETRY_ERROR_PACKAGES);
         fprintf(stderr, "tide: %s is package %s, not a game\n", folder, out->file.name);
         fprintf(stderr, "  = note: to try it, make a game in a folder of its own whose tide.packages lists this "
                         "folder, like `..` from a folder in it\n");
@@ -263,6 +268,7 @@ static compile_input *game_inputs(const char *folder, const game_packages *packa
         free(names);
         return NULL;
     }
+    telemetry_sizes(paths->count - game_start, packages->count); // Sent in ranges
     compile_input *inputs = malloc(sizeof(compile_input) * (size_t)paths->count);
     if (!inputs) abort();
     for (int i = 0; i < paths->count; i++) inputs[i] = (compile_input){paths->items[i], names[i], NULL};
@@ -940,6 +946,7 @@ static bool run_compiles(build *b, compiles *list)
         }
     }
     const bool ok = stop == list->count;
+    if (!ok) telemetry_fail(TELEMETRY_ERROR_C);
     free_compiles(list);
     return ok;
 }
@@ -954,7 +961,7 @@ static bool compile_c(build *b, const char *source, const char *object, const ch
 
 // Finds the compiler and makes the game's .tide folder. False after saying
 // what's wrong.
-static bool build_setup(build *b, const char *root, const build_options *opts, const bool library)
+static bool setup(build *b, const char *root, const build_options *opts, const bool library)
 {
     b->root = root;
     b->opts = opts;
@@ -1037,6 +1044,13 @@ static bool build_setup(build *b, const char *root, const build_options *opts, c
     free(tide_dir);
     sys_mkdirs(b->cache);
     return true;
+}
+
+static bool build_setup(build *b, const char *root, const build_options *opts, const bool library)
+{
+    if (setup(b, root, opts, library)) return true;
+    telemetry_fail(TELEMETRY_ERROR_SETUP);
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1543,6 +1557,7 @@ static void explain_web_externs(const char *text, const sb *externs)
 // A link that failed, explained where tide knows more than the linker says.
 static void explain_link(const build *b, const char *const *argv)
 {
+    telemetry_fail(TELEMETRY_ERROR_LINK);
     char *text = said(argv);
     explain_cpp_link(text);
     if (b->opts->web) explain_web_externs(text, &b->externs);
@@ -1964,6 +1979,7 @@ static bool generate(build *b, const char *gen, const bool layout)
                                      .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
                                      .editor_source = b->opts->editor_source, .editor_text = editor_text};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
+    if (!ok) telemetry_fail(TELEMETRY_ERROR_COMPILE);
     free(editor_text);
     if (ok) {
         free_asset_paths(&b->info);
@@ -2356,6 +2372,7 @@ int tide_run_native(const char *root, const build_options *opts, const char *con
         for (int i = 0; game_args[i]; i++) arg(&a, game_args[i]);
         code = sys_run(a.items, r.b.folder, false);
         if (code < 0) fprintf(stderr, "tide: couldn't start %s\n", program);
+        else if (code > 0) telemetry_fail(TELEMETRY_ERROR_GAME);
         free(a.items);
     }
     sys_remove_tree(r.dir);
@@ -2437,6 +2454,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
         }
     }
     sys_remove_tree(r.dir);
+    if (code != 0) telemetry_fail(TELEMETRY_ERROR_GAME);
     return code;
 }
 
@@ -3496,7 +3514,10 @@ bool tide_schedule(const build_options *opts, const bool shaders)
     const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder,
                                      .defines = opts->defines, .define_count = opts->define_count};
     sb text = {0};
-    if (!compile_inputs(inputs, count, &codegen, &text)) return false;
+    if (!compile_inputs(inputs, count, &codegen, &text)) {
+        telemetry_fail(TELEMETRY_ERROR_COMPILE);
+        return false;
+    }
     fputs(text.data, stdout);
     return true;
 }

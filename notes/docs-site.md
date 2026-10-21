@@ -1,5 +1,79 @@
 # The docs site
 
+## CLI usage data, admin tab and privacy page (2026-10-21)
+
+The site receives the tide CLI's anonymous usage data (CLI side:
+`notes/cli-and-packages.md`, Usage data).
+
+- **`docs/telemetry.js`** (`createTelemetry({file, now})`): SQLite through
+  Node's built-in `node:sqlite` (`DatabaseSync`; no dependency). Checked in
+  `node:24-alpine` (Node 24.22.0, SQLite 3.53.4) and locally on 24.21.0, with
+  no experimental warning. `TIDE_TELEMETRY_FILE` (`/data/telemetry.db` in
+  `fly.toml`, on the existing `access_requests` volume; `.svelte-kit/telemetry/`
+  locally) names the database; WAL journal. One `events` table, `STRICT`:
+  `hour` (receipt time as hours since 1970, so truncated to the hour), `install`,
+  `command`, `target`, `version`, `os`, `arch`, `ci` (0/1), `ms`, `outcome`,
+  `error`, `files`, `packages`, indexed by `hour`. No address, user agent or
+  any other request data is stored.
+- **`POST /telemetry`** (`handle`, before admin and releases in `server.js`
+  and the Vite dev middleware): `application/json` only (415), body at most
+  64 KiB (413, by header and while reading), `{"events": [...]}` of at most 100
+  (400), 30 requests a minute per address (`Fly-Client-IP` on Fly, the socket
+  locally; in memory, 10,000 addresses at most) (429). `validEvent` keeps an
+  event only if every field is from the CLI's sets (`allowed`, the version
+  pattern, a 32-hex ID, a boolean `ci`, an integer `ms` up to a day, `error`
+  exactly when `failed`) and drops unknown fields; a batch with none valid is
+  400 (the CLI's curl `-f` then drops it), otherwise 204, `no-store`.
+- **Retention**: `prune` deletes rows before 13 calendar months back
+  (`setUTCMonth`); `start()` prunes at once and every six hours (unref'd
+  timer); `stop()` closes the database at shutdown.
+- **Admin**: `createAdmin` takes `telemetry`; `/admin/api/telemetry?days=1|7|30|90`
+  behind the same session (401 anonymous, 503 without a store or password).
+  `summary(days)`: daily commands, active installs and failures; weekly
+  (seven-day windows back from today) distinct installs; totals (installs in
+  range, today, last 7 days; CI share); per-command runs, failures and
+  installs; failures by command and kind; versions and OS/arch by distinct
+  installs; successful `build` times by target at the nearest-rank median, p90
+  and p99. `/admin/telemetry` ("CLI usage") follows the Analytics page's
+  layout, refreshes every minute and sits between Analytics and Prototypes in
+  all three pages' tabs.
+- **Pages**: `docs/tools/telemetry.md` ("Usage data", in Tools) lists every
+  field and value, the notice, opt-outs, the dev-build/`TIDE_HIDDEN` rules,
+  queueing, the endpoint, retention and the settings folder. `/privacy`
+  (`src/routes/privacy`, prerendered, in the sitemap with its own social card
+  and SEO checks) covers the site's aggregate counts and the access form, CLI
+  usage data, and the relay: checked against `relay/`, which keeps addresses
+  only in memory (per-address connection counts while connected, lobby rate
+  buckets for about a minute), never writes them to disk or logs, and passes
+  ICE candidates so players connect directly or through Cloudflare TURN. A
+  small "Privacy" link is in the docs pages' footer (under the pager) and at
+  the bottom of the home page; the site had no global footer. `tools/cli.md`
+  has a `telemetry` row and section; README has a Usage data section.
+- `Dockerfile`'s COPY list, `.dockerignore`'s allowlist, and the deployment
+  copies in `admin-http`, `seo` and `exports` tests include `telemetry.js`
+  (the latter two also gained `prototypes.js`, which `server.js` imports).
+
+Tests: `tests/telemetry.test.mjs` (in `npm run test:analytics`): field
+validation for every allowed value and 26 invalid shapes; a summary over two
+installs and two ranges with exact daily/weekly/totals/commands/failures/
+versions/platforms/percentiles; hour truncation, 13-month pruning by `prune`
+and `start`, and the table's columns; the HTTP handler's 405/415/400/413/204/
+429/404 answers with no address or unknown-field text in the database or its
+WAL; admin API sign-in, ranges and 503 without a store. `admin-http.test.mjs`
+posts an event to the production `server.js`, reads it back through the admin
+API and `/admin/telemetry`, and checks the stored bytes have no address.
+A muted headless Chrome pass over the built site (scratch script, not kept)
+checked the admin tab with 60 events at desktop and 390-pixel widths, the
+privacy page, the docs page and the home footer, with no page exceptions.
+
+Validation (Node 24.21.0): `npm run check` with no errors or warnings, the
+production build (existing allowed unstaged-example 404s), `test:analytics`
+25/25, `test:admin-http` 1/1, `test:seo` 3/3, `test:exports` 2/2,
+`test:access` 8/8, `test:access-http` 1/1, `test:releases` 9/9.
+
+Making it live needs a site deploy (the Docs workflow on `dev`) and a release
+containing the new CLI; the volume needs nothing new.
+
 ## Prototype catalog from its own repository (2026-10-21)
 
 The prototypes moved to `Tide-Engine/tide-prototypes` (`notes/repository.md`,

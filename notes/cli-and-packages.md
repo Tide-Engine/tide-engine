@@ -1,5 +1,92 @@
 # `tide`, packages and the package
 
+## Usage data (2026-10-21)
+
+The owner approved anonymous CLI usage data: anonymous events, a random install
+ID, on by default with a one-time notice, and opt-out. The site side (storage,
+admin tab, privacy page) is in `notes/docs-site.md`, CLI usage data.
+
+`compiler/cli/telemetry.c`. `main` is now a wrapper: `cc`/`-cc1` first (no
+timing, no event), then the internal `_telemetry-send`, then `command_main`
+(the old `main`) timed with `sys_now_ms`, then `tide_telemetry_record`.
+`run_exit_test.c` stubs the three entry points.
+
+- **The event** is one JSON line built only from fixed sets: `id`, `command`
+  (allow-list in `commands[]`, `other` otherwise; `help` for bare `tide`, `help`,
+  `--help`/`-h` and `<command> --help`; `version` for `--version`), `target`
+  (`native`/`web`/`android` from `--web`/`--android` for build/run/unity,
+  otherwise `none`), `version` (the build's, `unknown` if it has odd characters),
+  `os`, `arch` (compile-time macros), `ci` (15 common CI variables, set and not
+  `false`/`0`), `ms` (clamped to a day), `outcome` (exit code 0), `error` only
+  on failure, `files`/`packages` in ranges only when a command read a game.
+  Docs page `docs/tools/telemetry.md` lists every field; the site rejects any
+  other value, so the three must change together.
+- **Error kinds**: `telemetry_fail(enum)`, last one wins: `setup` (`build_setup`,
+  now a wrapper over `setup`), `packages` (`find_packages`), `compile`
+  (`generate`, `tide_schedule`), `c` (`run_compiles`), `link` (`explain_link`,
+  which every failed link calls), `network` (upgrade's list and download),
+  `game` (a native run's game exiting nonzero, watched or not). None noted:
+  exit 2 is `usage`, anything else `other`. Sizes come from `game_inputs`
+  (`telemetry_sizes`: the game's own files, its package count).
+- **Not recorded**: `cc`, `-cc1`, any `_` command (`_editor-preview`, the
+  sender), `telemetry` itself and `editors --update` (what upgrade starts).
+- **Off** (`telemetry_off`, also the reason `status` prints): `TIDE_TELEMETRY`
+  `0`/`false`/`off`/`no`; `DO_NOT_TRACK` anything but empty or `0`; a `-dev` version (`tide_version_dev`, now in `release.c`, shared with
+  the update check) unless `TIDE_TELEMETRY_URL` and `TIDE_TELEMETRY_TEST` are
+  both set (test-only); `TIDE_HIDDEN` (`sys_hidden`), which CI's workflows set
+  globally; `enabled no` in the settings.
+- **Settings and queue**: `<root>/telemetry/` beside `channel` (the
+  installation, `%LOCALAPPDATA%\Tide` / `~/.tide`; upgrade replaces only the
+  release's folders). `settings` is lines `enabled yes|no`, `notice shown`,
+  `id <32 hex>` from `rtc_random` (as signing keys). `queue` is an event a
+  line, capped at the newest 100 (`cap_queue`, temp file + rename).
+- **Notice**: the first run that would send makes the ID, writes settings and
+  prints one stderr line, and queues nothing, so turning it off then has sent
+  nothing. An installation whose settings can't be written never sends.
+  `tide telemetry on` marks the notice shown.
+- **Sending**: after queueing, `start_sender` runs `tide _telemetry-send`
+  through the new `sys_start_detached` (Windows: `DETACHED_PROCESS |
+  CREATE_NEW_PROCESS_GROUP`, no inherited handles, breakaway from the job when
+  allowed; POSIX: double fork, `setsid`, stdio to `/dev/null`, fds closed),
+  unless a live sender's `sending-<pid>` file exists. The sender renames the
+  queue to `sending-<pid>` (plus dead senders' files), POSTs
+  `{"events":[...]}` with curl (`-q -fsS --connect-timeout 3 -m 5`,
+  `--proto =https` for the default `https://tide-engine.dev/telemetry`), quiet.
+  Exit 0 or 22 (HTTP error: refused) drops the batch; anything else appends it
+  back to the queue. It loops (8 rounds at most) while the queue refilled: it
+  removes its file before looking again and a recorder appends before looking
+  for senders, so a command that ends mid-send is never stranded.
+- **`tide telemetry on|off|status`**: one line for on/off (off also deletes the
+  queue); status prints on/off with the reason, the field list, the endpoint
+  (or `TIDE_TELEMETRY_URL`), the install ID, the settings folder and the docs
+  link. Help catalog: `telemetry` command and `setting` argument (the overview
+  is 28 lines with embedded clang, `help_test`'s limit).
+
+Tests: `tide_cli_telemetry` (`compiler/cli/tests/telemetry_test.mjs`, under
+`TIDE_NODE`) copies tide into scratch installations and runs it against local
+servers with `TIDE_HIDDEN`, CI variables and opt-outs removed from the child's
+environment: a dev build without the override and `TIDE_HIDDEN` runs write
+nothing and send nothing; the notice is one line, once, and its run sends
+nothing; IDs differ per installation; eight commands' events (schedule ok and
+compile failure with ranges, usage failure with target web, `other`,
+`--version`, `help`, `<command> --help`, `CI=true`) have only allowed keys and
+values, the settings' ID and the CLI's version, and no request body contains
+the game's folder name, `game.tide`, the work path, user or host name;
+`TIDE_TELEMETRY=0`, `DO_NOT_TRACK` (`1`, `true`; `0` and empty still send), and
+`telemetry off` (queue deleted, status reason, ID shown) send nothing and `on`
+sends again; offline (a server that cuts every connection), a seeded 150-event
+queue is cut to the newest 100 with the run's own event, the command returns
+at once, a second offline run stays at 100, and back online all 100 arrive and
+the queue empties; a 400 answer drops the batch. `tide_cli_help` covers the new
+topics.
+
+Validation (Windows, Clang 23.1.2, Node 24.21.0): full native debug 2,450
+CTests (the telemetry test first ran against a binary built before the last
+`DO_NOT_TRACK` change and failed as expected; rebuilt, all 13 `tide_cli`
+tests pass) and full web debug 2,393/2,393, including WebGL/WebGPU; the
+telemetry test passed four runs in a row. Not run: Linux and macOS (the
+`fork`/`setsid` sender), sanitizers, Android; no CI or deployment.
+
 ## Third-party licenses in the package (2026-10-21)
 
 The package carries the license or notice of everything third-party it

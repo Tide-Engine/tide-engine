@@ -121,6 +121,14 @@ tide upgrade --stable   # back to stable ones
 
 `tide` also tells you, at most once a day, when a new version is out.
 
+## Usage data
+
+`tide` sends a small anonymous event for each command it runs: the command,
+target, version, OS and CPU, whether CI runs it, how long it took and whether
+it worked. Never paths, names, code or error messages. Turn it off with
+`tide telemetry off`, `TIDE_TELEMETRY=0` or `DO_NOT_TRACK=1`; every field is
+listed at https://tide-engine.dev/tools/telemetry.
+
 ## Editors
 
 See [Editor setup](docs/tools/editors.md) for quick setup commands and

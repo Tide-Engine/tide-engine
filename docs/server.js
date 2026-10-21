@@ -1,6 +1,7 @@
 // The site in production (see fly.toml): SvelteKit's handler, which serves the
 // prerendered pages, the demos and the assets, with headers of our own on
-// every response (headers.js), and tide's releases (releases.js).
+// every response (headers.js), tide's releases (releases.js) and the CLI's
+// anonymous usage data (telemetry.js).
 //
 // Run `npm run build`, then `node server.js [port]`; PORT sets the port too
 // (3000).
@@ -13,6 +14,7 @@ import { headers } from './headers.js';
 import { createReleases } from './releases.js';
 import { createAnalytics } from './analytics.js';
 import { createAdmin } from './admin.js';
+import { createTelemetry } from './telemetry.js';
 import { readPrototypes } from './prototypes.js';
 
 // The adapter reads this setting at import time. Fly supplies the protocol;
@@ -31,7 +33,9 @@ catch (error) {
 }
 const knownPaths = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(([, url]) => new URL(url).pathname).filter((name) => name !== '/request-access');
 const analytics = createAnalytics({ file: process.env.TIDE_ANALYTICS_FILE || path.resolve('.svelte-kit/analytics/analytics.json'), knownPaths });
-const admin = createAdmin({ analytics, password: process.env.TIDE_ADMIN_PASSWORD, prototypes: readPrototypes().map((card) => card.id),
+// The tide CLI's anonymous usage data, in SQLite on the same volume (telemetry.js).
+const telemetry = createTelemetry({ file: process.env.TIDE_TELEMETRY_FILE || path.resolve('.svelte-kit/telemetry/telemetry.db') });
+const admin = createAdmin({ analytics, telemetry, password: process.env.TIDE_ADMIN_PASSWORD, prototypes: readPrototypes().map((card) => card.id),
     relayUrl: process.env.TIDE_RELAY_STATS_URL, relayToken: process.env.TIDE_RELAY_STATS_TOKEN });
 const releases = createReleases({ token: process.env.TIDE_RELEASES_TOKEN, repo: process.env.TIDE_RELEASES_REPO,
     onDownload: (download) => analytics.recordDownload(download) });
@@ -67,7 +71,7 @@ const server = http.createServer(async (req, res) => {
     }
     const origin = `${protocol}://${host}`;
     try {
-        if (await admin.handle(req, res, origin) || await releases(req, res, origin)) return;
+        if (await telemetry.handle(req, res) || await admin.handle(req, res, origin) || await releases(req, res, origin)) return;
         handler(req, res, () => {
             res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
         });
@@ -81,12 +85,13 @@ const server = http.createServer(async (req, res) => {
 const port = Number(process.argv[2] ?? process.env.PORT ?? 3000);
 server.listen(port, () => console.log(`Listening on http://localhost:${port}`));
 admin.start();
+telemetry.start();
 
 // Fly stops machines with SIGINT; finish what's in flight.
 for (const signal of ['SIGINT', 'SIGTERM']) {
     process.once(signal, () => {
         server.close(async () => {
-            try { await admin.stop(); await analytics.flush(); }
+            try { await admin.stop(); await analytics.flush(); telemetry.stop(); }
             catch { console.error('analytics: pending counts could not be saved during shutdown'); }
             process.exit(0);
         });

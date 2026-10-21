@@ -43,6 +43,11 @@ sys_process *sys_start(const char *const *argv, const char *cwd);
 // The same, with what it prints and its errors in the file `log`, made anew,
 // rather than on the terminal.
 sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log);
+// Starts a program that outlives tide, with nothing of tide's: no terminal,
+// no window, its input and output nowhere, in a session or process group of
+// its own, so neither the terminal closing nor Ctrl+C ends it. False if it
+// couldn't start.
+bool sys_start_detached(const char *const *argv);
 // Waits up to `ms` milliseconds for it to end. True once it has, with its exit
 // code in `code`; the process is freed then.
 bool sys_wait(sys_process *p, int ms, int *code);

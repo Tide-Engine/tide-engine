@@ -26,6 +26,7 @@ tide <command> [folder] [options]
 | `tide open <file.tprefab>` | Opens the native [scene editor](editors.md#native-scene-editor) |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
+| `tide telemetry on\|off\|status` | Turns anonymous [usage data](telemetry.md) on or off, or shows what's sent |
 | `tide help [command \| argument]` | Lists commands, or shows details for one command or argument |
 | `tide login` / `tide logout` | Authorizes or revokes this CLI's hosting access through the browser |
 | `tide deploy [folder]` | Creates or reuses a project and saves its link in `tide.deploy.json`; builds and uploads locally. `--server-only` omits the client, `--bundle-only` only builds |
@@ -604,6 +605,10 @@ A package that's a folder already is left where it is, and a folder already at `
 | `--version <v>` | Install exactly this version |
 
 `tide` says, at most once a day, when a newer version is out. Set the `TIDE_NO_UPDATE_CHECK` environment variable to stop it looking, as on a build server.
+
+## telemetry
+
+`tide` sends one small anonymous event for each command: which command, its target, the version, OS and CPU, whether CI runs it, how long it took and whether it worked. Never paths, names, code or messages. [Usage data](telemetry.md) lists every field. `tide telemetry off` turns it off, as do `TIDE_TELEMETRY=0` and `DO_NOT_TRACK=1`; `tide telemetry status` shows what's sent, where, and this installation's ID.
 
 ## Files
 

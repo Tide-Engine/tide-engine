@@ -167,6 +167,7 @@
 
     <nav class="admin-nav" aria-label="Admin sections">
         <a href="/admin" aria-current="page">Analytics</a>
+        <a href="/admin/telemetry">CLI usage</a>
         <a href="/admin/prototypes">Prototypes</a>
     </nav>
 

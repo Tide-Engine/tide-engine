@@ -16,6 +16,7 @@
 #include "release.h"
 #include "sha256.h"
 #include "sys.h"
+#include "telemetry.h"
 #include "unzip.h"
 
 #ifndef TIDE_VERSION
@@ -39,13 +40,6 @@
 #else
 #define PACKAGE "tide-linux-x64.tar.gz"
 #endif
-
-static bool is_dev_build(void)
-{
-    const char *version = TIDE_VERSION;
-    const size_t n = strlen(version);
-    return n >= 4 && strcmp(version + n - 4, "-dev") == 0;
-}
 
 const char *tide_channel(const char *root)
 {
@@ -100,7 +94,10 @@ static const json *fetch_releases(const char *work, const bool quiet)
     const char *url = custom ? custom : TIDE_RELEASES ".json";
     const bool ok = download(url, list, quiet);
     if (!ok) {
-        if (!quiet) fprintf(stderr, "tide: couldn't reach tide-engine.dev to look for new versions\n");
+        if (!quiet) {
+            telemetry_fail(TELEMETRY_ERROR_NETWORK);
+            fprintf(stderr, "tide: couldn't reach tide-engine.dev to look for new versions\n");
+        }
         free(list);
         return NULL;
     }
@@ -351,6 +348,7 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     curl_request(curl + n, package_url, package, false);
     const bool downloaded = run_step("Downloading", curl, work, sys_file_size, package, asset_size(release, PACKAGE));
     if (!downloaded) {
+        telemetry_fail(TELEMETRY_ERROR_NETWORK);
         fprintf(stderr, "tide: the download failed\n");
         return 1;
     }
@@ -425,7 +423,7 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
 
 void tide_check_for_update(const char *root)
 {
-    if (is_dev_build() || sys_env("TIDE_NO_UPDATE_CHECK")) return;
+    if (tide_version_dev(TIDE_VERSION) || sys_env("TIDE_NO_UPDATE_CHECK")) return;
     char *stamp = path_join(root, ".last-update-check");
     char *text = sys_read_file(stamp, NULL);
     const long long last = text ? atoll(text) : 0;

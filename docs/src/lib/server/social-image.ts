@@ -19,6 +19,7 @@ const documents = new Map(sidebar.flatMap((group) => group.items.map((item) => [
 export function socialCard(slug: string): SocialCard | undefined {
     if (slug === 'home.png') return { title: 'Tide Engine', section: 'A NETWORKING-FIRST GAME ENGINE', kind: 'home' };
     if (slug === 'request-access.png') return { title: 'Build your next\ngame with Tide.', section: 'EARLY ACCESS', kind: 'access' };
+    if (slug === 'privacy.png') return { title: 'Privacy', section: 'TIDE ENGINE', kind: 'docs' };
     if (!slug.endsWith('.png')) return;
     const document = slug.slice(0, -4);
     const section = documents.get(document);
@@ -26,7 +27,7 @@ export function socialCard(slug: string): SocialCard | undefined {
     return { title: page(document).title, section: section.toUpperCase(), kind: 'docs' };
 }
 
-export const socialEntries = ['home.png', 'request-access.png', ...[...documents.keys()].map((slug) => `${slug}.png`)];
+export const socialEntries = ['home.png', 'request-access.png', 'privacy.png', ...[...documents.keys()].map((slug) => `${slug}.png`)];
 
 function xml(value: string): string {
     return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character]!);

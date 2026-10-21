@@ -41,6 +41,8 @@
     <section class="prose more">
         {@html data.html}
     </section>
+
+    <footer class="site-links"><a href="/privacy">Privacy</a></footer>
 </main>
 
 <style>
@@ -196,6 +198,21 @@
 
     .more :global(h2:first-child + *) {
         margin-top: 0;
+    }
+
+    .site-links {
+        margin-top: 64px;
+        padding-top: 20px;
+        border-top: 1px solid var(--divider);
+        font-size: 13px;
+    }
+
+    .site-links a {
+        color: var(--text-2);
+    }
+
+    .site-links a:hover {
+        color: var(--brand-1);
     }
 
     @media (max-width: 959px) {

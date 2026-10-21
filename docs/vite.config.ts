@@ -9,6 +9,7 @@ import { defineConfig, type Plugin } from 'vite';
 import { headers } from './headers.js';
 import { createAnalytics } from './analytics.js';
 import { createAdmin } from './admin.js';
+import { createTelemetry } from './telemetry.js';
 import { prototypePatterns, readPrototypes } from './prototypes.js';
 import { pages } from './src/lib/nav.ts';
 
@@ -18,10 +19,12 @@ const asInProduction: Plugin = {
     name: 'as-in-production',
     configureServer(server) {
         const analytics = createAnalytics({ file: process.env.TIDE_ANALYTICS_FILE || '.svelte-kit/analytics/analytics.json', knownPaths: ['/', ...pages.map((page) => page.link)] });
-        const admin = createAdmin({ analytics, password: process.env.TIDE_ADMIN_PASSWORD, prototypes: readPrototypes().map((card) => card.id),
+        const telemetry = createTelemetry({ file: process.env.TIDE_TELEMETRY_FILE || '.svelte-kit/telemetry/telemetry.db' });
+        const admin = createAdmin({ analytics, telemetry, password: process.env.TIDE_ADMIN_PASSWORD, prototypes: readPrototypes().map((card) => card.id),
             relayUrl: process.env.TIDE_RELAY_STATS_URL, relayToken: process.env.TIDE_RELAY_STATS_TOKEN });
         admin.start();
-        server.httpServer?.once('close', () => admin.stop());
+        telemetry.start();
+        server.httpServer?.once('close', () => { void admin.stop(); telemetry.stop(); });
         server.middlewares.use((req, res, next) => {
             for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
             const [path, query] = (req.url ?? '').split('?');
@@ -45,7 +48,8 @@ const asInProduction: Plugin = {
         });
         server.middlewares.use((req, res, next) => {
             const origin = `http://${req.headers.host}`;
-            admin.handle(req, res, origin).then((answered) => { if (!answered) next(); }).catch(next);
+            telemetry.handle(req, res).then((answered) => answered || admin.handle(req, res, origin))
+                .then((answered) => { if (!answered) next(); }).catch(next);
         });
     },
 };

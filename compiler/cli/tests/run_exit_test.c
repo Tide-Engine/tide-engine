@@ -111,6 +111,18 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     abort();
 }
 bool tide_schedule(const build_options *opts, const bool shaders) { (void)opts; (void)shaders; abort(); }
+// Usage data is telemetry_test.mjs's: these runs record nothing.
+void tide_telemetry_record(const char *root, const int argc, const char *const *argv, const int code, const int64_t ms,
+                           const char *version)
+{
+    (void)root; (void)argc; (void)argv; (void)code; (void)ms; (void)version;
+}
+int tide_telemetry_send(const char *root, const char *version) { (void)root; (void)version; abort(); }
+int tide_telemetry(const char *root, const int count, const char *const *args, const char *version)
+{
+    (void)root; (void)count; (void)args; (void)version;
+    abort();
+}
 char *tide_build(const char *root, const build_options *opts) { (void)root; (void)opts; abort(); }
 
 int main(void)

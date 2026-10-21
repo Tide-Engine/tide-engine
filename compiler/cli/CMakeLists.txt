@@ -1,7 +1,7 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang.
 add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
-    serve.c sys.c toolchain.c unity_assets.c unity_yaml.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
+    serve.c sys.c telemetry.c toolchain.c unity_assets.c unity_yaml.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
 target_include_directories(tide_cli PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/platform/src/rtc")
@@ -82,6 +82,11 @@ if(TIDE_NODE)
     add_test(NAME tide_cli_installers
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/installers_test.mjs")
     # Assets: the pack tidec writes, and URLs fetched once and kept with their ETag, against a server on this machine
+    # Usage data: the events a copy of tide queues and sends to a server on
+    # this machine, what they hold and never hold, and every way it's off.
+    add_test(NAME tide_cli_telemetry
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/telemetry_test.mjs" --tide "$<TARGET_FILE:tide_cli>"
+                --work "${CMAKE_CURRENT_BINARY_DIR}/telemetry_test")
     add_test(NAME tide_cli_assets
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets_test.mjs" --tidec "$<TARGET_FILE:tidec>"
                 --work "${CMAKE_CURRENT_BINARY_DIR}/assets_test")

@@ -15,6 +15,7 @@
 #include "packages_cmd.h"
 #include "publish.h"
 #include "sys.h"
+#include "telemetry.h"
 #include "toolchain.h"
 #include "upgrade.h"
 
@@ -66,15 +67,8 @@ static char *command_folder(char *folder)
     return unity;
 }
 
-int main(const int argc, char **argv)
+static int command_main(const int argc, char **argv)
 {
-#ifdef TIDE_EMBEDDED_CLANG
-    // tide is its own C compiler: `tide cc` is clang, which runs itself again
-    // as `tide -cc1` when it compiles in another process.
-    if (argc > 1 && (strcmp(argv[1], "cc") == 0 || strcmp(argv[1], "-cc1") == 0)) {
-        return tide_cc(argc, (const char **)argv);
-    }
-#endif
     if (argc < 2) {
         tide_help(0, NULL, TIDE_VERSION);
         return 2;
@@ -88,6 +82,11 @@ int main(const int argc, char **argv)
     char *root = install_root();
     if (strcmp(command, "ide") == 0) {
         const int result = tide_ide(root, argc - 2, (const char *const *)argv + 2);
+        free(root);
+        return result;
+    }
+    if (strcmp(command, "telemetry") == 0) {
+        const int result = tide_telemetry(root, argc - 2, (const char *const *)argv + 2, TIDE_VERSION);
         free(root);
         return result;
     }
@@ -417,5 +416,29 @@ int main(const int argc, char **argv)
     }
     if (!run && !unity) tide_check_for_update(root);
     free(defines);
+    return code;
+}
+
+int main(const int argc, char **argv)
+{
+#ifdef TIDE_EMBEDDED_CLANG
+    // tide is its own C compiler: `tide cc` is clang, which runs itself again
+    // as `tide -cc1` when it compiles in another process.
+    if (argc > 1 && (strcmp(argv[1], "cc") == 0 || strcmp(argv[1], "-cc1") == 0)) {
+        return tide_cc(argc, (const char **)argv);
+    }
+#endif
+    // Usage data waiting to be sent, by a tide started for it alone (telemetry.c)
+    if (argc == 2 && strcmp(argv[1], "_telemetry-send") == 0) {
+        char *root = install_root();
+        const int result = tide_telemetry_send(root, TIDE_VERSION);
+        free(root);
+        return result;
+    }
+    const int64_t start = sys_now_ms();
+    const int code = command_main(argc, argv);
+    char *root = install_root();
+    tide_telemetry_record(root, argc, (const char *const *)argv, code, sys_now_ms() - start, TIDE_VERSION);
+    free(root);
     return code;
 }

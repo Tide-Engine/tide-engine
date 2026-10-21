@@ -13,7 +13,7 @@ import { headers as sharedHeaders } from '../headers.js';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
 const origin = 'https://tide-engine.dev';
-const routes = ['/', ...pages.map(({ link }) => link), '/request-access'];
+const routes = ['/', ...pages.map(({ link }) => link), '/request-access', '/privacy'];
 const imagePath = (route) => `/social/${route === '/' ? 'home' : route.slice(1)}.png`;
 
 function decode(value) {
@@ -155,7 +155,7 @@ test('production HTTP canonicalizes hosts, serves crawlable docs, and excludes r
     });
     await Promise.all([
         cp(path.join(docs, 'build'), path.join(deployment, 'build'), { recursive: true }),
-        ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'server.js'].map((file) => copyFile(path.join(docs, file), path.join(deployment, file))),
+        ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'telemetry.js', 'prototypes.js', 'server.js'].map((file) => copyFile(path.join(docs, file), path.join(deployment, file))),
     ]);
     // Tiny static fixtures keep this check independent of compiled web games.
     const rawPages = ['/examples/seo-probe', '/samples/seo-probe', '/sand', '/duel', '/towers', '/sumo'];

@@ -9,7 +9,7 @@ enum {
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
     EDITORS = 1u << 12, OPEN = 1u << 13, UPGRADE = 1u << 14, VERSION = 1u << 15,
-    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19,
+    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20,
     COMPILE = RUN | BUILD | SCHEDULE | SHADERS | UNITY,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
 };
@@ -110,6 +110,13 @@ static const command_help commands[] = {
     {"version", "version", "Show version, installation and compilers",
      "Shows Tide's version and release channel, installation folder, and\n"
      "the built-in or external compilers it found.", VERSION},
+    {"telemetry", "telemetry <on|off|status>", "Turn anonymous usage data on or off",
+     "Each command sends one small anonymous event: the command, target,\n"
+     "version, OS and CPU, CI or not, duration, outcome and a coarse failure\n"
+     "kind, with file and package counts in ranges. Never paths, names, code\n"
+     "or messages. status shows exactly what is sent, where, and the install's\n"
+     "random ID. TIDE_TELEMETRY=0 or DO_NOT_TRACK=1 also turn it off.\n"
+     "Details: https://tide-engine.dev/tools/telemetry", TELEMETRY},
     {"help", "help [command | argument] [argument]", "Show command or argument details",
      "Without a topic, shows the short command list. Name a command for its\n"
      "usage and options, or an argument for its meaning and defaults. Add a\n"
@@ -289,9 +296,13 @@ static const argument_help arguments[] = {
     {"--version", "--version <v>", "Install an exact Tide version",
      "Example: tide upgrade --version 0.4.0. Use tide version to inspect\n"
      "the current installation; tide --version is also accepted.", UPGRADE},
+    {"setting", "<on|off|status>", "Turn usage data on or off, or show it",
+     "off also deletes events not sent yet; on sends again from the next command.\n"
+     "status says whether anything is sent and why not, what an event holds,\n"
+     "where it goes, the install ID and the settings folder.", TELEMETRY},
     {"--help", "--help, -h", "Show help for a command",
      "Use tide <command> --help or tide <command> -h. For argument details,\n"
-     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | EDITORS | OPEN | UPGRADE | VERSION | HELP},
+     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | EDITORS | OPEN | UPGRADE | VERSION | HELP | TELEMETRY},
 };
 
 static const command_help *find_command(const char *name)

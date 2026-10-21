@@ -19,6 +19,7 @@
     </div>
     <nav class="admin-nav" aria-label="Admin sections">
         <a href="/admin">Analytics</a>
+        <a href="/admin/telemetry">CLI usage</a>
         <a href="/admin/prototypes" aria-current="page">Prototypes</a>
     </nav>
 

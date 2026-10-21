@@ -615,6 +615,29 @@ sys_process *sys_start(const char *const *argv, const char *cwd)
     return sys_start_logged(argv, cwd, NULL);
 }
 
+bool sys_start_detached(const char *const *argv)
+{
+    char *line = NULL;
+    size_t len = 0;
+    size_t cap = 0;
+    for (int i = 0; argv[i]; i++) append_arg(&line, &len, &cap, argv[i]);
+    STARTUPINFOA startup;
+    memset(&startup, 0, sizeof startup);
+    startup.cb = sizeof startup;
+    PROCESS_INFORMATION process;
+    // No console and no handle of tide's: a pipe tide writes to ends when tide
+    // does. Out of tide's job where the job allows it, so whatever ends tide's
+    // job (a terminal, a test runner) doesn't end this.
+    const DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    BOOL started = CreateProcessA(NULL, line, NULL, NULL, FALSE, flags | CREATE_BREAKAWAY_FROM_JOB, NULL, NULL, &startup, &process);
+    if (!started) started = CreateProcessA(NULL, line, NULL, NULL, FALSE, flags, NULL, NULL, &startup, &process);
+    free(line);
+    if (!started) return false;
+    CloseHandle(process.hProcess);
+    CloseHandle(process.hThread);
+    return true;
+}
+
 bool sys_wait(sys_process *p, const int ms, int *code)
 {
     if (WaitForSingleObject(p->info.hProcess, (DWORD)ms) != WAIT_OBJECT_0) return false;
@@ -847,6 +870,34 @@ int sys_processors(void)
 sys_process *sys_start(const char *const *argv, const char *cwd)
 {
     return sys_start_logged(argv, cwd, NULL);
+}
+
+bool sys_start_detached(const char *const *argv)
+{
+    // Twice forked, in a session of its own: init takes it when its first
+    // parent ends, and no terminal is its.
+    const pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        setsid();
+        const pid_t again = fork();
+        if (again != 0) _exit(again < 0 ? 1 : 0);
+        const int null_file = open("/dev/null", O_RDWR);
+        if (null_file >= 0) {
+            dup2(null_file, 0);
+            dup2(null_file, 1);
+            dup2(null_file, 2);
+        }
+        for (int fd = 3; fd < 1024; fd++) close(fd);
+        execvp(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+    int status = 0;
+    pid_t done;
+    do {
+        done = waitpid(pid, &status, 0);
+    } while (done < 0 && errno == EINTR);
+    return done == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 bool sys_wait(sys_process *p, const int ms, int *code)

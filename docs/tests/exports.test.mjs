@@ -178,7 +178,7 @@ test('production HTTP exports are prerendered and work without the repository or
         await rm(deployment, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
     await cp(path.join(docs, 'build'), path.join(deployment, 'build'), { recursive: true });
-    for (const name of ['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'server.js']) await copyFile(path.join(docs, name), path.join(deployment, name));
+    for (const name of ['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'telemetry.js', 'prototypes.js', 'server.js']) await copyFile(path.join(docs, name), path.join(deployment, name));
     const listener = net.createServer().listen(0, '127.0.0.1');
     await once(listener, 'listening');
     const port = listener.address().port;

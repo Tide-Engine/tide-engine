@@ -14,6 +14,9 @@
 int tide_version_compare(const char *a, const char *b);
 // Whether `text` is a version as above.
 bool tide_version_valid(const char *text);
+// Whether `version` is a development build's (it ends in -dev): builds made
+// from this repo, which never look for updates nor send usage data.
+bool tide_version_dev(const char *version);
 
 // A release's version: its tag, without the leading 'v'.
 const char *tide_release_version(const json *release);

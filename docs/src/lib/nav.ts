@@ -112,6 +112,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'The tide command', link: '/tools/cli' },
             { text: 'Debug views', link: '/tools/debug-views' },
+            { text: 'Usage data', link: '/tools/telemetry' },
         ],
     },
     {
