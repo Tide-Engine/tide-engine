@@ -38,8 +38,11 @@ static const command_help commands[] = {
      "(the project's Library/Tide): the host Unity loads, then a library of the\n"
      "game each time its files change, which the running game swaps in. It ends\n"
      "when its input closes, as the Unity editor's package does. --once builds\n"
-     "once and ends.\n\n"
-     "Example: tide unity Assets/Tide -o Library/Tide", UNITY},
+     "once and ends. In a Unity project the game is all of Assets, and C is\n"
+     "only ever a package's. --notified builds when a `changed` line comes on\n"
+     "its input, rather than looking at every file of Assets, as the package\n"
+     "tells it.\n\n"
+     "Example: tide unity Assets -o Library/Tide --assets Assets", UNITY},
     {"deploy", "deploy [folder] [options]", "Build locally and upload to managed hosting",
      "Builds a release client and WASM server locally, then uploads them.\n"
      "Creates or reuses a folder-named project and saves its immutable ID and\n"
@@ -176,6 +179,10 @@ static const argument_help arguments[] = {
      "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
     {"--once", "--once", "Build once and end",
      "unity builds the game once rather than as its files change, as a player build does.", UNITY},
+    {"--notified", "--notified", "Build when told the files changed",
+     "unity builds when a `changed` line comes on its input, and between builds\n"
+     "looks only at the files it built, not every file of Assets: what Unity's\n"
+     "package passes, as Unity says when its assets change.", UNITY},
     {"--assets", "--assets <folder>", "Include a Unity project's prefabs and scenes",
      "Reads a Unity project's Assets folder: each prefab and scene holding\n"
      "TideEntity objects is a Tide prefab named after its file, and Build\n"

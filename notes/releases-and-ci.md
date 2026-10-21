@@ -1,5 +1,52 @@
 # Releases, installing and CI
 
+## Tide Marketplace channels (2026-10-21)
+
+The owner approved publishing both engine channels to the same Tide plugin
+listing, io.github.blenminer.tide: dev uses the opt-in nightly channel and
+release uses Stable (Gradle's default channel). No build publishes to the
+former PurrLang ID. The owner reports submitting the first Tide Stable upload;
+Marketplace approval/access is not established by this local change.
+
+The Release job now exposes published=true after its nightly step has either
+created the GitHub release successfully or verified the existing release and
+all its assets on a retry. The stable output stays semantic-release's
+new_release_published. Marketplace requires the successful Release dependency,
+its true publication output, and either dev or release. It passes the selected
+version and nightly/default channel as quoted Gradle properties, using the
+existing JETBRAINS_MARKETPLACE_TOKEN. A missing token retains the existing
+explicit skip. Upload errors fail the job. Other refs and unpublished versions
+do not reach Marketplace. Build triggers, suites and release gates are unchanged.
+
+The plugin README describes both channels and the custom nightly repository
+https://plugins.jetbrains.com/plugins/nightly/list. Plugin channel selection
+does not change the installed Tide/tidels engine channel. The public plugin
+repository retains source only; publication remains this engine workflow's.
+
+Actionlint 1.7.12 passes with only its unsupported existing concurrency.queue
+key excluded. Parsed workflow comparison confirms the only behavior changes
+are the nightly publication output and Marketplace routing/arguments. Executing
+the exact Bash blocks against isolated local command stubs checks both channel
+argument sets, missing-token skips, Gradle failures, successful new/existing
+nightly releases, failed Git pushes/uploads and invalid existing releases.
+Failed releases never set the publication output. No real token, tag, release
+or Marketplace upload is used by those checks. Full native debug passes all
+2,485 CTests, including 36 native GPU checks (96.98 seconds). Full web debug
+passes all 2,391 CTests, including WebGL, WebGPU and Windows ANGLE D3D11
+(282.52 seconds), with Clang 23.1.2 and Node 24.19.0.
+No CI run or actual Marketplace publication was dispatched.
+
+Implementation commit eb463fad was merged into dev at 4d4a0718. Incoming
+compiler/CLI/build and Unity work merged cleanly; neither the Marketplace
+workflow nor the plugin directory changed during that integration, so the
+scoped workflow checks required no repeat. The full engine suite results above
+precede that unrelated integration. The public plugin main was fast-forwarded
+to efc67411de0ce9c4508d45d629a1379b71d30f1f with only its README changed.
+All 24 public historical trees still match their canonical plugin subtrees;
+40 historical paths and 89 unique blobs were audited. The public remote still
+contains main only, with no engine tags or additional release workflow. This
+enables the next manually requested Build; no older run was retried.
+
 ## Docs export regression gate (2026-10-21)
 
 The existing Docs workflow's Build the site step now runs `npm run test:exports`

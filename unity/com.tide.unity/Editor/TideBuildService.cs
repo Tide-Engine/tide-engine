@@ -26,6 +26,7 @@ namespace Tide.Editor
             EditorApplication.quitting += Stop;
             EditorApplication.update += Drain;
             EditorApplication.playModeStateChanged += RefusePlayWithErrors;
+            EditorBuildSettings.sceneListChanged += Changed; // Its first scene is the one the match starts with
             EditorApplication.delayCall += () =>
             {
                 if (TideSettings.instance.buildWhileEditing) Start();
@@ -64,7 +65,7 @@ namespace Tide.Editor
             {
                 FileName = tide,
                 // The project's prefabs and scenes are the game's too: their TideEntity objects are its prefabs
-                Arguments = $"unity -o \"{TideLibrary.BuildFolder}\" --assets \"{Application.dataPath}\"",
+                Arguments = $"unity -o \"{TideLibrary.BuildFolder}\" --assets \"{Application.dataPath}\" --notified",
                 WorkingDirectory = folder,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -94,10 +95,22 @@ namespace Tide.Editor
         // carrying over.
         public static void RestartGame()
         {
+            Tell("restart");
+        }
+
+        // A file of the project that's the game's changed, as Unity saw it (TideChanges): tide, which Unity runs
+        // --notified, builds then, rather than going over all of Assets to find out.
+        public static void Changed()
+        {
+            Tell("changed");
+        }
+
+        static void Tell(string line)
+        {
             if (process == null || process.HasExited) return;
             try
             {
-                process.StandardInput.WriteLine("restart");
+                process.StandardInput.WriteLine(line);
                 process.StandardInput.Flush();
             }
             catch (Exception)
@@ -336,6 +349,42 @@ namespace Tide.Editor
             }
             file = asset;
             return asset != null ? AssetDatabase.LoadMainAssetAtPath(asset) : null;
+        }
+    }
+
+    // What Unity imports, moves and deletes that's the game's: .tide files, tide.packages, prefabs and scenes, and
+    // a package's C, headers and libraries. Everything else in Assets is nothing to tide.
+    sealed class TideChanges : AssetPostprocessor
+    {
+        static readonly string[] gameFiles = { ".tide", ".packages", ".prefab", ".unity" };
+        static readonly string[] packageFiles =
+            { ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl", ".a", ".lib", ".so", ".dll", ".dylib" };
+
+        static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom)
+        {
+            if (Matters(imported) || Matters(deleted) || Matters(moved) || Matters(movedFrom)) TideBuildService.Changed();
+        }
+
+        internal static bool Matters(string[] paths)
+        {
+            foreach (var path in paths)
+            {
+                if (!path.StartsWith("Assets/")) continue;
+                var extension = Path.GetExtension(path).ToLowerInvariant();
+                if (Array.IndexOf(gameFiles, extension) >= 0) return true;
+                if (Array.IndexOf(packageFiles, extension) >= 0 && InPackage(path)) return true;
+            }
+            return false;
+        }
+
+        static bool InPackage(string path)
+        {
+            for (var folder = Path.GetDirectoryName(path)?.Replace('\\', '/'); !string.IsNullOrEmpty(folder) && folder != "Assets";
+                 folder = Path.GetDirectoryName(folder)?.Replace('\\', '/'))
+            {
+                if (TidePackageFolders.IsPackage(folder)) return true;
+            }
+            return false;
         }
     }
 }

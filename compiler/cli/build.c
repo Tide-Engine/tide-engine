@@ -557,6 +557,7 @@ typedef struct build {
     sb externs;     // ...and the C function of each of its extern functions, a line each
     file_list engine;       // The engine's objects
     game_packages packages; // Found again by each build of the game
+    file_list sources;      // The .tide files its last generate compiled: what a notified run looks at (game_stamp)
     char *unity_map;        // With opts->unity_assets: the map of its UnityEngine.Source numbers, from its last generate (unity_assets.h)
 } build;
 
@@ -1979,7 +1980,8 @@ static bool generate(build *b, const char *gen, const bool layout)
     }
     free(pack);
     free(inputs);
-    free_files(&paths);
+    free_files(&b->sources);
+    b->sources = paths;
     unity_sources_free(&unity);
     return ok;
 }
@@ -2300,12 +2302,22 @@ static void stamp_folder(uint64_t *h, const char *folder)
 static uint64_t game_stamp(const build *b)
 {
     uint64_t h = 0xCBF29CE484222325ull;
-    stamp_folder(&h, b->folder);
+    if (b->opts->notified && packages_unity_assets(b->folder)) {
+        // The editor says what else changes in Assets (a file made, moved or gone, a prefab, a scene, a package):
+        // here, only the files it compiled and its tide.packages, which an editor outside Unity may save while
+        // Unity looks at nothing
+        for (int i = 0; i < b->sources.count; i++) stamp_file(&h, b->sources.items[i]);
+        char *packages = path_join(b->folder, PACKAGES_FILE);
+        stamp_file(&h, packages);
+        free(packages);
+    } else {
+        stamp_folder(&h, b->folder);
+        if (b->opts->unity_assets) h = (h ^ unity_assets_stamp(b->opts->unity_assets)) * 0x100000001B3ull;
+    }
     for (int p = 0; p < b->packages.count; p++) {
         const package_line *line = b->packages.items[p].line;
         if (line->local || line->builtin) stamp_folder(&h, b->packages.items[p].folder);
     }
-    if (b->opts->unity_assets) h = (h ^ unity_assets_stamp(b->opts->unity_assets)) * 0x100000001B3ull;
     return h;
 }
 
@@ -2910,6 +2922,10 @@ int tide_unity(const char *root, const build_options *opts)
         sys_sleep_ms(250);
         char line[64];
         while (sys_typed_line(line, sizeof line)) {
+            if (strcmp(line, "changed") == 0) { // --notified: a file of the project changed, which the editor saw
+                changed_at = sys_now_ms();
+                continue;
+            }
             if (strcmp(line, "restart") != 0) continue; // The editor asks the running game to start over
             char *restart = path_join(r.dir, "restart");
             sys_write_text(restart, "");
