@@ -1,6 +1,27 @@
 # The language server and the editors
 
-## Standalone JetBrains source preparation (2026-10-21)
+## Standalone JetBrains publication (2026-10-21)
+
+Published https://github.com/Tide-Engine/tide-jetbrains, public main at
+6862c56c1a37fe6ae80d77fef0f7f9a7bb4917c9, extracted from canonical engine
+commit 11a138a8 after it was merged into dev. GitHub recognizes MIT. The remote
+has only main; no engine tags or release workflow were published. All 23
+reachable historical trees match their original tools/tide-jetbrains subtree
+exactly. The audit checked all 40 historical paths and 88 unique blobs, with
+no credential patterns found; there are no engine/compiler/runtime files.
+The isolated export was repacked without its engine object alternates and
+passes git fsck --full --strict before publication.
+
+An anonymous fresh Git clone of the public URL has the same tree and passes
+buildPlugin with all nine enabled tests, including real process-tree cleanup,
+using JDK 21, Gradle 9.8.0 and Node 24.19.0. Only upstream product/dependency
+metadata was reused to allow offline validation. Plugin Verifier 1.411 reports
+Compatible against both IC-242.26775.15 (IntelliJ 2024.2.6) and
+CL-262.10968.117 (installed CLion 2026.2.3); upstream IDE layout warnings remain
+unrelated to Tide API usage. The ready-for-manual-upload licensed ZIP is at
+build/jetbrains-publication/tide-jetbrains-0.4.0.zip in this checkout. Its JAR
+contains the MIT text. No GitHub release asset was replaced, Marketplace upload
+performed, CI dispatched or engine license changed.
 
 The owner approved a public MIT Tide-Engine/tide-jetbrains repository using the
 Emacs/Vim model: tools/tide-jetbrains remains canonical and the engine retains
@@ -21,17 +42,22 @@ snapshots with the source changes. The initial snapshots are byte-identical.
 Public issues/patches are ported to the canonical engine copy before exporting,
 as for Emacs/Vim. No second release workflow is added to the public repository.
 
-Use the same audited subtree procedure after merging source into dev:
+Use git-filter-repo in a disposable clone after merging source into dev. The
+first export used this tool, so keep using it for stable public commit IDs:
 
 ```sh
-git fetch origin
-git subtree split --prefix=tools/tide-jetbrains -b publish/tide-jetbrains origin/dev
-git ls-tree -r --name-only publish/tide-jetbrains
+git clone --no-local --no-tags --single-branch --branch dev <engine-repository> <new-export>
+git -C <new-export> filter-repo --subdirectory-filter tools/tide-jetbrains
+git -C <new-export> branch -m main
+git -C <new-export> ls-tree -r --name-only main
 ```
 
 Inspect every reachable historical tree before first publication, not just the
-tip; push only the split ref to the public repository's main. Never publish an
-engine branch or its history. Public publication is recorded separately below.
+tip. Verify the rewritten tip equals the canonical subdirectory tree and that
+later exports fast-forward public main. Push only main explicitly, with
+push.followTags=false. Never run filter-repo in the engine checkout, publish an
+engine branch/history, or replace existing public history. Public publication
+is recorded separately below.
 
 The MIT text is packaged in META-INF/LICENSE inside the plugin JAR. The README
 provides the public license URL for Marketplace's MIT selection and accurately
