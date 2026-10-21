@@ -85,6 +85,10 @@ mine, Provisional.
   (805), the Breacher's 314 (585), the Engineer's 188 (193). They don't roll; the
   owner's play, which found the last build too easy, decides. The levers back:
   `LEVEL_GROWTH`, `Might`'s 30%, `CHESTS_A_NIGHT`.
+- **The bots as a gauge**: the owner agreed they are "too dumb to be a good
+  benchmark, more so an idea of how easy it is". Their times compare one build
+  with another; a bot dying sooner says the game got harder, not that it is too
+  hard. Difficulty is tuned to the owner's play, not to bot survival.
 - **Tests**: the night's chests two; Burst Fire I half again a round; the Mortar
   Flare's check given 34 stacks (it had 10, three in ten a hit and not "always" as
   it said, and the changed rolls missed all ten shots). Native debug and web debug
