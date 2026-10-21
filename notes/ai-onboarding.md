@@ -17,9 +17,11 @@ to compile and fix their own code. Initial attempts were retained before correct
 
 `gpt-6-luna` used medium reasoning and the standard service tier; the comparison
 `claude-sonnet-5-5` used high effort. Both came from the live orchestrator catalog.
-The exact common prompt and task briefs are saved in
-`notes/ai-onboarding/evaluation-prompt.txt`. The overview snapshots in that folder
-are the actual round inputs; later review fixed the published script's frame zero
+The exact common prompt and task briefs were saved in
+`notes/ai-onboarding/evaluation-prompt.txt`, with the overview snapshots that were
+the actual round inputs, the trials' games and reports, and the parent checks; that
+folder was removed on 2026-10-21 and is in git history at `403fc387`. The snapshots
+were the round inputs; later review fixed the published script's frame zero
 to frame one. Reports under each trial are the evaluated agent's own account;
 the parent corrections below take precedence over unsupported visual claims.
 
@@ -68,8 +70,8 @@ that exact four-line script successfully with the starter game.
 ## Independent validation
 
 The parent copied final games into separate ignored check folders and added small,
-read-only observation/assertion views. Their inputs and logs are retained under
-`notes/ai-onboarding/parent-checks/`; `.tide.txt` files are evidence, not build inputs.
+read-only observation/assertion views. Their inputs and logs were kept under
+`notes/ai-onboarding/parent-checks/` (git history, `403fc387`).
 
 - Collector (round 2): observed `(0,1,0) → (1,1,0) → (2,1,1) → (1,1,1) →
   (2,1,1) → (3,1,1) → (4,1,1) → (4,2,2) → (0,1,0) → (0,0,0)` for x/y/count.
