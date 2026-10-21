@@ -1,0 +1,24 @@
+20 capture initial.png
+25 mouse 200 239
+27 button left
+40 capture preview.png
+45 mouse 160 277
+47 button left
+50 player 2 mouse 560 239
+52 player 2 button left
+55 player 2 mouse 480 277
+57 player 2 button left
+70 capture mid.png
+75 player 2 button left
+90 button left
+100 mouse 160 239
+102 button left
+110 mouse 160 277
+112 button left
+140 capture original-final.png
+160 mouse 70 90
+162 button left
+180 mouse 220 90
+182 button left
+210 capture forged-rejected.png
+230 quit

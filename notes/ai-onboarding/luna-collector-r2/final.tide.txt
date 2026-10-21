@@ -1,0 +1,93 @@
+settings { title = "Coin Collector"; maxPlayers = 1; }
+
+input Controls
+{
+    bool left;
+    bool right;
+    bool up;
+    bool down;
+    bool reset;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        left = keys.leftArrow.down;
+        right = keys.rightArrow.down;
+        up = keys.upArrow.down;
+        down = keys.downArrow.down;
+        reset = keys.r.down;
+    }
+}
+
+singleton GameState
+{
+    int x;
+    int y = 1;
+    int coins;
+    bool coinA = true;
+    bool coinB = true;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+}
+
+system Play(Controls controls, mut GameState game)
+{
+    if (controls.reset)
+    {
+        game.x = 0;
+        game.y = 1;
+        game.coins = 0;
+        game.coinA = true;
+        game.coinB = true;
+    }
+    else if (game.coins < 2)
+    {
+        if (controls.left && game.x > 0) game.x -= 1;
+        else if (controls.right && game.x < 4) game.x += 1;
+        else if (controls.up && game.y > 0) game.y -= 1;
+        else if (controls.down && game.y < 2) game.y += 1;
+
+        if (game.x == 2 && game.y == 1 && game.coinA)
+        {
+            game.coinA = false;
+            game.coins += 1;
+        }
+        if (game.x == 4 && game.y == 2 && game.coinB)
+        {
+            game.coinB = false;
+            game.coins += 1;
+        }
+    }
+}
+
+view DrawGame(GameState game)
+{
+    Draw.Clear(Color(0.055, 0.075, 0.12));
+    Draw.SetScreen();
+
+    Draw.Text("COIN COLLECTOR", float2(24, 18), 24, Color.white);
+    Draw.Text($"Coins: {game.coins} / 2", float2(486, 22), 20, Color(1, 0.82, 0.25));
+
+    for (var row = 0; row < 3; row++)
+    {
+        for (var col = 0; col < 5; col++)
+        {
+            var center = float2(120 + col * 100, 100 + row * 78);
+            Draw.RoundRect(center, float2(82, 62), 8, Color(0.12, 0.18, 0.27));
+            Draw.RoundRect(center, float2(78, 58), 7, Color(0.16, 0.23, 0.34));
+        }
+    }
+
+    if (game.coinA) Draw.Circle(float2(320, 178), 15, Color(1, 0.78, 0.12));
+    if (game.coinB) Draw.Circle(float2(520, 256), 15, Color(1, 0.78, 0.12));
+    Draw.Circle(float2(120 + game.x * 100, 100 + game.y * 78), 21, Color(0.22, 0.85, 0.78));
+
+    if (game.coins == 2)
+        Draw.Text("BOARD CLEARED! Press R to play again", float2(118, 338), 18, Color(0.48, 1, 0.62));
+    else
+        Draw.Text("Arrow keys: move one tile     R: reset", float2(24, 338), 16, Color(0.72, 0.78, 0.88));
+}

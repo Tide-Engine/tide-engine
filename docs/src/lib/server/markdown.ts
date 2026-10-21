@@ -124,11 +124,12 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
         token.attrSet('target', '_blank');
         token.attrSet('rel', 'noreferrer');
     } else if (!href.startsWith('#')) {
-        const hash = href.indexOf('#');
-        const target = hash < 0 ? href : href.slice(0, hash);
-        let path = new URL(target, `https://site/${file}`).pathname.replace(/\.md$/, '').replace(/(^|\/)index$/, '$1');
+        const url = new URL(href, `https://site/${file}`);
+        let path = url.pathname.replace(/\.md$/, '').replace(/(^|\/)index$/, '$1');
         if (path !== '/' && path.endsWith('/') && isPage(path.slice(0, -1))) path = path.slice(0, -1);
-        token.attrSet('href', path + (hash < 0 ? '' : href.slice(hash)));
+        // Markdown downloads in static/ keep their extension; only known
+        // documentation sources become the corresponding HTML page route.
+        token.attrSet('href', (isPage(path) ? path : url.pathname) + url.search + url.hash);
     }
     return self.renderToken(tokens, idx, options);
 };

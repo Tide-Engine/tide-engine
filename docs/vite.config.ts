@@ -29,6 +29,19 @@ const asInProduction: Plugin = {
             }
             next();
         });
+        // Vite would otherwise serve guide/foo.md straight from the source
+        // tree before SvelteKit sees its Markdown export endpoint.
+        server.middlewares.use((req, res, next) => {
+            const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+            const at = pathname === '/index.md' ? '/' : pathname.endsWith('.md') ? pathname.slice(0, -3) : undefined;
+            if (!at || (at !== '/' && !pages.some((page) => page.link === at)) || !['GET', 'HEAD'].includes(req.method ?? 'GET')) return next();
+            server.ssrLoadModule('/src/lib/server/exports.ts').then(({ markdownExport, markdownFilename, textResponse }) => {
+                const response = textResponse(markdownExport(at), markdownFilename(at));
+                res.statusCode = response.status;
+                response.headers.forEach((value: string, name: string) => res.setHeader(name, value));
+                return response.text();
+            }).then((body) => res.end(req.method === 'HEAD' ? undefined : body)).catch(next);
+        });
         server.middlewares.use((req, res, next) => {
             const origin = `http://${req.headers.host}`;
             admin.handle(req, res, origin).then((answered) => { if (!answered) next(); }).catch(next);

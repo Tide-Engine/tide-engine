@@ -59,6 +59,11 @@ const server = http.createServer(async (req, res) => {
         res.setHeader('content-type', 'text/plain; charset=utf-8');
         res.setHeader('cache-control', 'no-cache');
     }
+    // Adapter-node's static prerendered responses do not retain endpoint
+    // attachment headers. Keep the overview's project-discoverable filename.
+    if (pathname === '/guide/ai-context.md') {
+        res.setHeader('content-disposition', 'attachment; filename="TIDE.md"');
+    }
     const origin = `${protocol}://${host}`;
     try {
         if (await admin.handle(req, res, origin) || await releases(req, res, origin)) return;

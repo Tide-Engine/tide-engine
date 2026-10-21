@@ -1,0 +1,88 @@
+singleton Board
+{
+    int x;
+    int y = 1;
+    int collected;
+    bool firstCoin;
+    bool secondCoin;
+}
+
+input Controls
+{
+    bool left;
+    bool right;
+    bool up;
+    bool down;
+    bool reset;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        left = keys.leftArrow.down;
+        right = keys.rightArrow.down;
+        up = keys.upArrow.down;
+        down = keys.downArrow.down;
+        reset = keys.r.down;
+    }
+}
+
+scene Main { }
+
+system Play(Controls controls, mut Board board)
+{
+    if (controls.reset)
+    {
+        board.x = 0;
+        board.y = 1;
+        board.collected = 0;
+        board.firstCoin = false;
+        board.secondCoin = false;
+    }
+    else
+    {
+        if (controls.left && board.x > 0) board.x -= 1;
+        if (controls.right && board.x < 4) board.x += 1;
+        if (controls.up && board.y > 0) board.y -= 1;
+        if (controls.down && board.y < 2) board.y += 1;
+
+        if (board.x == 2 && board.y == 1 && !board.firstCoin)
+        {
+            board.firstCoin = true;
+            board.collected += 1;
+        }
+        if (board.x == 4 && board.y == 2 && !board.secondCoin)
+        {
+            board.secondCoin = true;
+            board.collected += 1;
+        }
+    }
+}
+
+view DrawBoard(Board board)
+{
+    Draw.SetScreen();
+    Draw.Rect(float2(Screen.width * 0.5, Screen.height * 0.5), float2(Screen.width, Screen.height), Color(0.055, 0.075, 0.11));
+
+    for (var row = 0; row < 3; row += 1)
+    {
+        for (var column = 0; column < 5; column += 1)
+        {
+            var center = float2(Screen.width * 0.5 + (column - 2) * 64, Screen.height * 0.5 + (row - 1) * 64);
+            Draw.Rect(center, float2(58, 58), Color(0.13, 0.18, 0.25));
+            Draw.Rect(center, float2(54, 54), Color(0.17, 0.23, 0.31));
+
+            if ((column == 2 && row == 1 && !board.firstCoin) ||
+                (column == 4 && row == 2 && !board.secondCoin))
+                Draw.Circle(center, 13, Color(0.98, 0.75, 0.14));
+        }
+    }
+
+    var player = float2(Screen.width * 0.5 + (board.x - 2) * 64, Screen.height * 0.5 + (board.y - 1) * 64);
+    Draw.Circle(player, 19, Color(0.18, 0.83, 0.75));
+    Draw.Circle(player + float2(0, 2), 7, Color(0.82, 0.98, 0.94));
+
+    Draw.Text($"Coins: {board.collected} / 2", float2(24, 24), 24, Color.white);
+    Draw.Text("Arrow keys move  |  R restart", float2(24, 56), 15, Color(0.66, 0.75, 0.85));
+    if (board.collected == 2)
+        Draw.Text("All coins collected!", float2(Screen.width * 0.5, 310), 24, Color(0.98, 0.75, 0.14), Anchor.MiddleCenter);
+}

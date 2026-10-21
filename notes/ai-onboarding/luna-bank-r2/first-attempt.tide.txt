@@ -1,0 +1,42 @@
+settings { title = "Credit Pool"; tickRate = 30; maxPlayers = 2; }
+
+scene Main { }
+
+singleton Bank
+{
+    int pool;
+    Map<PlayerID, int> credits;
+}
+
+local singleton DepositUI { int amount = 1; }
+
+command Deposit { int amount; }
+
+event(PlayerJoined joined) GiveCredits(mut Bank bank)
+{
+    bank.credits[joined.player] = 3;
+}
+
+command(Deposit deposit, PlayerID sender) ApplyDeposit(mut Bank bank)
+{
+    if (deposit.amount < 1 || deposit.amount > 3) return;
+    if (bank.credits[sender] < deposit.amount) return;
+    bank.credits[sender] -= deposit.amount;
+    bank.pool += deposit.amount;
+}
+
+view DrawBank(Bank bank, mut DepositUI ui)
+{
+    Draw.Clear(Color(0.035, 0.06, 0.09));
+    Draw.SetScreen();
+    Draw.RoundRect(float2(320, 75), float2(560, 100), 18, Color(0.08, 0.14, 0.18));
+    Draw.Text("SHARED CREDIT POOL", float2(320, 35), 18, Color(0.55, 0.82, 0.78), Anchor.MiddleCenter);
+    Draw.Text($"{bank.pool}", float2(320, 82), 52, Color.white, Anchor.MiddleCenter);
+    Draw.Text($"PLAYER 1   {bank.credits[PlayerID(1)]} credits", float2(170, 170), 20, Color(0.78, 0.87, 0.94), Anchor.MiddleCenter);
+    Draw.Text($"PLAYER 2   {bank.credits[PlayerID(2)]} credits", float2(470, 170), 20, Color(0.78, 0.87, 0.94), Anchor.MiddleCenter);
+    Draw.Text("YOUR DEPOSIT", float2(320, 218), 14, Color(0.55, 0.82, 0.78), Anchor.MiddleCenter);
+    if (GUI.Button(Rect(185, 245, 70, 42), "−")) ui.amount = Math.Max(1, ui.amount - 1);
+    Draw.Text($"{ui.amount}", float2(320, 266), 26, Color.white, Anchor.MiddleCenter);
+    if (GUI.Button(Rect(385, 245, 70, 42), "+")) ui.amount = Math.Min(3, ui.amount + 1);
+    if (GUI.Button(Rect(220, 305, 200, 42), $"DEPOSIT {ui.amount}")) Send(Deposit { amount = ui.amount });
+}

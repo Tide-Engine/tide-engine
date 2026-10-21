@@ -28,6 +28,8 @@ export const sidebar: Group[] = [
             { text: 'Install', link: '/guide/install' },
             { text: 'Editor setup', link: '/tools/editors' },
             { text: 'Your first game', link: '/guide/first-game' },
+            { text: 'Using Tide with AI', link: '/guide/ai' },
+            { text: 'AI agent overview', link: '/guide/ai-context' },
             { text: 'Playground', link: '/guide/playground' },
             { text: 'Live examples', link: '/guide/examples' },
             { text: 'Samples', link: '/guide/samples' },

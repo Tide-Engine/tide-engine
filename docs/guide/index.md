@@ -53,6 +53,7 @@ The screen updates every **frame**, as fast as the display allows:
 ## Where to go next
 
 - [Install tide](./install.md), then make [your first game](./first-game.md).
+- Give an AI coding agent the [Tide overview, starter prompt and optional skill](./ai.md).
 - Edit and hot reload a running game in the [Playground](./playground.md), or try the [live examples](./examples.md) alongside their code.
 - Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md).
 - See how machines share a match, and how the engine keeps them in step: [matches](../multiplayer/matches.md), [networking](../multiplayer/networking.md) and [determinism](../multiplayer/determinism.md).

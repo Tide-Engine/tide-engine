@@ -1,0 +1,49 @@
+from pathlib import Path
+
+root = Path(__file__).resolve().parent
+page = (root / 'parent-check/collector/build/collector.html').read_text(encoding='utf-8')
+page = page.replace('var Tide = {', 'window.probeLines = [];\nvar Tide = {\n checkGL: true,', 1)
+page = page.replace('print: text => console.log(text),', "print: text => { probeLines.push(String(text)); console.log(text); fetch('/log', {method:'POST', body:String(text)}); },", 1)
+page = page.replace('printErr: text => console.error(text),', "printErr: text => { probeLines.push(String(text)); console.error(text); fetch('/log', {method:'POST', body:String(text)}); },", 1)
+probe = r'''
+<script>
+const report = code => fetch('/result', {method:'POST', body:String(code)});
+const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
+const waitState = async state => {
+    const deadline = performance.now()+10000;
+    while (performance.now()<deadline) {
+        if (probeLines.some(line=>line.includes('CHECK '+state))) return;
+        await delay(30);
+    }
+    throw Error('Missing state '+state+'; observed '+JSON.stringify(probeLines));
+};
+const press = async code => {
+    dispatchEvent(new KeyboardEvent('keydown',{code,key:code,bubbles:true}));
+    await delay(100);
+    dispatchEvent(new KeyboardEvent('keyup',{code,key:code,bubbles:true}));
+    await delay(100);
+};
+addEventListener('error',event=>{fetch('/log',{method:'POST',body:event.message});report(1);});
+addEventListener('unhandledrejection',event=>{fetch('/log',{method:'POST',body:String(event.reason)});report(1);});
+(async()=>{
+    await waitState('0,1,0');
+    await press('ArrowLeft');
+    await press('ArrowRight'); await waitState('1,1,0');
+    await press('ArrowRight'); await waitState('2,1,1');
+    await press('ArrowLeft'); await waitState('1,1,1');
+    await press('ArrowRight');
+    await press('ArrowRight'); await waitState('3,1,1');
+    await press('ArrowRight'); await waitState('4,1,1');
+    await press('ArrowDown'); await waitState('4,2,2');
+    await press('KeyR');
+    const states=probeLines.filter(line=>line.startsWith('CHECK '));
+    if (states.at(-1)!=='CHECK 0,1,0') throw Error('Reset state: '+states.at(-1));
+    await press('ArrowUp'); await waitState('0,0,0');
+    await press('ArrowUp');
+    if (probeLines.filter(line=>line.startsWith('CHECK ')).at(-1)!=='CHECK 0,0,0') throw Error('Top bound failed');
+    await fetch('/log',{method:'POST',body:'ONBOARDING_WEB_PASS'});
+    await report(0);
+})().catch(async error=>{await fetch('/log',{method:'POST',body:String(error)});await report(1);});
+</script>
+'''
+(root / 'collector-probe.html').write_text(page + probe, encoding='utf-8')

@@ -6,6 +6,9 @@ the Tide language, which compiles to C and then to native code or WebAssembly.
 
 **Docs, and the demo running in your browser:** https://tide-engine.dev
 
+**Using an AI coding agent?** Start with the [Tide overview, starter prompt and
+optional skill](https://tide-engine.dev/guide/ai).
+
 ## Install
 
 Windows, in PowerShell:

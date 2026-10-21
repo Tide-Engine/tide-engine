@@ -1,0 +1,49 @@
+settings { title = "Luna Bank"; maxPlayers = 2; }
+
+scene Main { }
+
+singleton Bank { int pool; }
+singleton Seats { int count; PlayerID first; PlayerID second; }
+component Wallet { int credits = 3; int seat; }
+command Deposit { int amount; }
+local singleton DepositUI { int amount = 1; }
+
+event(PlayerJoined joined) AddPlayer(mut Seats seats)
+{
+    mut var seat = seats.count;
+    if (seat == 0) seats.first = joined.player;
+    else seats.second = joined.player;
+    if (seats.count < 2) seats.count += 1;
+    Spawn(Wallet { seat = seat }, Owner { player = joined.player });
+}
+
+command(Deposit transfer, PlayerID sender) DepositCredits(Owner owner, mut Wallet wallet, mut Bank bank)
+{
+    if (sender != owner.player) return;
+    if (transfer.amount < 1 || transfer.amount > 3) return;
+    if (transfer.amount > wallet.credits) { Debug.Log($"rejected {transfer.amount}: balance {wallet.credits}"); return; }
+    wallet.credits -= transfer.amount;
+    bank.pool += transfer.amount;
+    Debug.Log($"accepted {transfer.amount}: pool {bank.pool}, balance {wallet.credits}");
+}
+
+view BankScreen(Bank bank, query (Wallet wallet) wallets, with ownership, mut DepositUI ui)
+{
+    Draw.Clear(Color(0.035, 0.055, 0.09));
+    Draw.SetScreen();
+    Draw.Rect(float2(320, 180), float2(600, 320), Color(0.08, 0.13, 0.19));
+    Draw.Text("LUNA BANK", float2(34, 34), 25, Color(0.45, 0.88, 1));
+    Draw.Text($"SHARED POOL   {bank.pool} credits", float2(34, 84), 21, Color.white);
+    foreach (var row in wallets)
+    {
+        var y = 142 + row.wallet.seat * 48;
+        var color = row.wallet.seat == 0 ? Color(0.4, 0.85, 1) : Color(1, 0.68, 0.38);
+        Draw.Text($"PLAYER {row.wallet.seat + 1}     {row.wallet.credits} credits", float2(34, y), 18, color);
+    }
+    GUILayout.Area(Rect(320, 250, 280, 88))
+    {
+        GUILayout.Label("YOUR DEPOSIT");
+        GUILayout.IntSlider("Amount", ui.amount, 1, 3);
+        if (GUILayout.Button("Deposit credits")) this.Send(Deposit { amount = ui.amount });
+    }
+}

@@ -1,5 +1,17 @@
 # Releases, installing and CI
 
+## Docs export regression gate (2026-10-21)
+
+The existing Docs workflow's Build the site step now runs `npm run test:exports`
+after `npm run build`, before its existing HTTP/browser checks and deployment.
+It validates prerendered AI/Markdown downloads in a source-free copied deployment
+as well as Vite's development responses. The workflow parses as YAML, its scoped
+comparison and whitespace check pass; actionlint is not available on PATH here.
+Local production/export/UI and fresh-model validation are recorded in
+`notes/docs-site.md` and `notes/ai-onboarding.md`. No triggers, release gates or
+deployment conditions changed, and no workflow was dispatched.
+
+
 ## Audio completion and browser scheduling (2026-10-18)
 
 Run `39128917687`, at `2c4c8e29`, failed Android's audio-device state-reclamation

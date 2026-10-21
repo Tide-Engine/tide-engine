@@ -1,5 +1,55 @@
 # The docs site
 
+## AI game-author onboarding and Markdown exports (2026-10-21)
+
+Added `/guide/ai` (setup, copy prompt and download controls) and
+`/guide/ai-context` (compact agent overview), linked from Get started, the
+introduction, first-game page and README. Project AGENTS.md/CLAUDE.md starters
+and a plain starter prompt are served under `/ai/`; these describe game authoring,
+not engine contributor ownership or merge rules. A portable `tide` skill is authored
+under `docs/static/ai/tide`; `/ai/tide-skill.zip` adds the generated overview reference
+and optional agents/openai.yaml. The UI prompt is read by the prerendered server
+loader from the same static source, avoiding Vite's public-asset import warning.
+
+`content.ts` exposes expanded page sources. `exports.ts` generates all 63 public
+page Markdown downloads (`/index.md`, `/guide.md`, `/game/commands.md`, etc.),
+`/llms.txt` from navigation, `/llms-full.txt` excluding the spec, and
+`/llms-full-with-spec.txt` preserving its decided/provisional/open distinctions.
+Sources/code are shared with HTML; includes expand to real code, website controls
+are removed, page anchors remain valid and bundles have unique internal anchors.
+Metadata identifies the Git revision, clean/modified/unknown state and a content
+fingerprint; downloads explicitly are website-source docs, not a release archive.
+No CLI release bundling or automatic update of a game's pinned files is implied.
+
+Exports and ZIP prerender at build time and serve from a copied adapter-node
+deployment without Git, repository sources or node_modules. Unknown export pages
+return 404. Vite intercepts known Markdown downloads before its raw-source file
+middleware. HTML normalizes `.md` only for known documentation routes, preserving
+static AGENTS.md/CLAUDE.md download names and query strings. Public HTML advertises
+its Markdown alternate and llms index. No MCP service or new dependency was added.
+
+Five fresh Luna/Claude game trials informed narrow guide corrections for screen
+axes, player identity versus UI seats, filters, test sizes and evidence checks.
+Inputs, output sources, reports, parent corrections and native/WebGL/WebGPU probes
+are recorded in `notes/ai-onboarding.md` and its evidence folder. The overview download
+uses `TIDE.md`, matching the starter instructions' local lookup; server.js restores
+that attachment header for the prerendered file because adapter-node does not retain
+the endpoint's custom download headers. The reusable skill
+passes quick_validate.py. The exact published bounded input script was executed
+with this checkout's starter game after correcting its first frame to one.
+
+Validation uses Node 24.21.0 and LLVM 23.1.2: Svelte check has zero warnings/errors;
+the production build passes with existing allowed unstaged-game/example 404s.
+`test:exports` tests development and a source-free production deployment, every
+page/code block/inline code/link/anchor, both offline bundles, ZIP membership/CRC,
+static starters, and rejection of unknown exports. Its Windows teardown stops the
+server before removing its working directory. Production desktop/mobile Chrome
+checks verify clipboard contents, downloads, layout and no JS exceptions. All seven
+export/SEO/access-form/admin production HTTP checks pass.
+The Docs workflow now runs test:exports after its production build. No CI or site
+deployment is dispatched by this task; hosted/other-platform checks remain separate.
+
+
 ## Empty scene shorthand (2026-10-20)
 
 The Scenes page and decided spec document `scene Name;` and `local scene Name;`

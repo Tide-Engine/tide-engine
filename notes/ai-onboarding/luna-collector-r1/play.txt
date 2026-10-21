@@ -1,0 +1,23 @@
+2 capture initial.png
+10 key rightArrow
+20 key rightArrow
+25 capture one-coin.png
+30 key rightArrow
+40 key rightArrow
+50 key downArrow
+55 capture complete.png
+60 key r
+65 capture reset.png
+70 key leftArrow
+80 key upArrow
+90 key rightArrow
+100 key downArrow
+110 key leftArrow
+120 key upArrow
+130 key leftArrow
+140 key leftArrow
+150 key upArrow
+160 key upArrow
+170 key upArrow
+180 capture edges.png
+190 quit

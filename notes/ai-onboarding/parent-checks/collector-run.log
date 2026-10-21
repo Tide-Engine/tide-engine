@@ -1,0 +1,13 @@
+CHECK 0,1,0
+CHECK 1,1,0
+CHECK 2,1,1
+CHECK 1,1,1
+CHECK 2,1,1
+CHECK 3,1,1
+CHECK 4,1,1
+CHECK 4,2,2
+tide: captured C:/Users/blenm/.t3/worktrees/PurrEngine/t3-cc8a7a3e/build/onboarding/parent-check/collector/complete.png, 640 by 360 pixels
+CHECK 0,1,0
+tide: captured C:/Users/blenm/.t3/worktrees/PurrEngine/t3-cc8a7a3e/build/onboarding/parent-check/collector/reset.png, 640 by 360 pixels
+CHECK 0,0,0
+tide: captured C:/Users/blenm/.t3/worktrees/PurrEngine/t3-cc8a7a3e/build/onboarding/parent-check/collector/edge.png, 640 by 360 pixels
