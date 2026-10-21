@@ -19,14 +19,4 @@ namespace Tide.Editor
             ctx.SetMainObject(text);
         }
     }
-
-    [CustomEditor(typeof(TidePackagesImporter))]
-    sealed class TidePackagesImporterEditor : ScriptedImporterEditor
-    {
-        protected override bool needsApplyRevert => false;
-
-        public override void OnInspectorGUI()
-        {
-        }
-    }
 }

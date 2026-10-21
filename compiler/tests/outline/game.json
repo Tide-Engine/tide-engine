@@ -1,0 +1,18 @@
+{"declarations": [
+  {"kind": "scene", "name": "Main", "file": "game.tide", "line": 4, "column": 7},
+  {"kind": "component", "name": "Spin", "file": "game.tide", "line": 6, "column": 11, "fields": [{"name": "speed", "type": "float"}, {"name": "shown", "type": "float", "local": true}]},
+  {"kind": "singleton", "name": "Score", "file": "game.tide", "line": 12, "column": 11, "fields": [{"name": "points", "type": "int"}]},
+  {"kind": "event", "name": "Hit", "file": "game.tide", "line": 14, "column": 7, "fields": [{"name": "damage", "type": "int"}], "handlers": ["Ouch"]},
+  {"kind": "command", "name": "Push", "file": "game.tide", "line": 16, "column": 9, "fields": [{"name": "force", "type": "float2"}], "handlers": ["Pushed"]},
+  {"kind": "enum", "name": "Mode", "file": "game.tide", "line": 18, "column": 6, "members": ["Calm", "Angry"]},
+  {"kind": "system", "name": "Spinning", "file": "game.tide", "line": 20, "column": 8, "perEntity": true, "access": [{"name": "Spin"}, {"name": "Transform", "writes": true}, {"name": "Time"}], "stage": 1, "alongside": ["Tally", "Faster"]},
+  {"kind": "system", "name": "Tally", "file": "game.tide", "line": 25, "column": 8, "perEntity": true, "access": [{"name": "Score", "writes": true}], "with": ["Spin"], "stage": 1, "alongside": ["Spinning", "Faster", "Slower"]},
+  {"kind": "system", "name": "Faster", "file": "game.tide", "line": 30, "column": 8, "perEntity": true, "access": [{"name": "Spin", "writes": true}], "without": ["Transform"], "stage": 1, "alongside": ["Spinning", "Tally"]},
+  {"kind": "handler", "name": "Ouch", "file": "game.tide", "line": 35, "column": 16, "event": "Hit", "access": [{"name": "Score", "writes": true}]},
+  {"kind": "handler", "name": "Pushed", "file": "game.tide", "line": 40, "column": 37, "event": "Push", "access": [{"name": "Score", "writes": true}]},
+  {"kind": "view", "name": "Show", "file": "game.tide", "line": 45, "column": 6, "perEntity": true, "access": [{"name": "Spin"}]},
+  {"kind": "handler", "name": "Setup", "file": "game.tide", "line": 49, "column": 16, "perEntity": true, "event": "Spawned", "with": ["Main"]},
+  {"kind": "system", "name": "Slower", "file": "game.tide", "line": 57, "column": 8, "perEntity": true, "access": [{"name": "Spin", "writes": true}], "stage": 2, "after": [{"name": "Spinning", "why": "it reads Spin, which this writes"}, {"name": "Faster", "why": "both write Spin"}], "alongside": ["Tally"]},
+  {"kind": "component", "name": "Combat.Marker", "file": "game.tide", "line": 64, "column": 15, "fields": [{"name": "count", "type": "int"}]},
+  {"kind": "function", "name": "Combat.Help", "file": "game.tide", "line": 66, "column": 10}
+]}

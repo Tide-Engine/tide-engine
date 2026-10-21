@@ -279,8 +279,9 @@ Unity editor: Tide simulates, predicts and rolls back, and Unity draws. The
 package starts this command itself while the editor is open, so you rarely type
 it. It builds into the path it's given: the host Unity loads, then a library of
 the game each time its files change, which the running game takes over as
-`tide run` does, and the game's schema, which the package generates its C#
-types from. It ends when its input closes, as the editor's package closes it.
+`tide run` does, the game's schema, which the package generates its C#
+types from, and an outline of what each file declares and which packages the
+game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
 

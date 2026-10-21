@@ -1,0 +1,70 @@
+// What `tidec --outline` says of a game: every kind of declaration, a component's local field, filters,
+// handlers, and a system that waits for another and why.
+
+scene Main { }
+
+component Spin
+{
+    float speed = 1;
+    local float shown;
+}
+
+singleton Score { int points; }
+
+event Hit { int damage; }
+
+command Push { float2 force; }
+
+enum Mode { Calm, Angry }
+
+system Spinning(Spin spin, mut Transform transform, Time time)
+{
+    transform.localRotation = Math.Normalize(Math.Mul(quaternion.Euler(0, spin.speed * time.dt, 0), transform.localRotation));
+}
+
+system Tally(mut Score score, with Spin)
+{
+    score.points += 1;
+}
+
+system Faster(mut Spin spin, without Transform)
+{
+    spin.speed += 1;
+}
+
+event(Hit hit) Ouch(mut Score score)
+{
+    score.points -= hit.damage;
+}
+
+command(Push push, PlayerID sender) Pushed(mut Score score)
+{
+    score.points += 1;
+}
+
+view Show(Spin spin)
+{
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Spin, Transform);
+    Spawn(Spin);
+    Send(Hit { damage = 1 });
+}
+
+// Writes what Faster writes, so it waits for it
+system Slower(mut Spin spin)
+{
+    spin.speed -= 0.5;
+}
+
+namespace Combat
+{
+    component Marker { int count; }
+
+    void Help(mut Score score)
+    {
+        score.points += 2;
+    }
+}

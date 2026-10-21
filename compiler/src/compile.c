@@ -116,11 +116,16 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         print_shaders(prog, schedule);
         return true;
     }
+    if (schedule && opts->outline) {
+        print_outline(prog, schedule);
+        return true;
+    }
     if (schedule) {
         print_schedule(prog, named.name, schedule);
         return true;
     }
     const bool ok = codegen(prog, &named);
     diag_phase("generating C");
+    if (ok && opts->outline_to) print_outline(prog, opts->outline_to);
     return ok;
 }

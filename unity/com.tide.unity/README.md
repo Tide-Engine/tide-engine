@@ -63,8 +63,11 @@ the scenes you have open instead, and makes a `TideRunner` if they have none.
 Put every scene the match loads in Build Settings, for players.
 
 Packages work as in any Tide game: run `tide add rooms` (or a git URL) in any
-folder of `Assets`, and write `using Rooms;` in the game's files. It writes
-`Assets/tide.packages`, which the build in the editor picks up.
+folder of `Assets`, or type it in `Assets/tide.packages`' inspector and press
+Add, and write `using Rooms;` in the game's files. It writes
+`Assets/tide.packages`, which the build in the editor picks up. That inspector
+lists the game's packages and where each comes from, with Update for a git
+one and Remove.
 
 A folder in `Assets` with a `tide.packages` saying `package Name` is a package
 of the game's own, much as an assembly definition makes an assembly: its files
@@ -75,7 +78,17 @@ are. A `.c` beside the game's `.tide` files gets a warning saying so.
 
 An error or warning tide gives for a line of a `.tide` file opens that file at
 that line on a double click in the Console, as a C# error does, and goes once a
-build has fixed it.
+build has fixed it. `.tide` files and `tide.packages` open in the external code
+editor (Preferences > External Tools): the package lists their extensions in
+Editor Settings' Additional extensions to include, which Rider and Visual
+Studio open files by.
+
+Select a `.tide` file to see, over its text, the last build's errors and
+warnings in it and what it declares: each component's and singleton's fields
+with their defaults, what each system reads and writes, what it waits for and
+why, and each event's handlers. In Play, each component shows how many shown
+entities have it, and each singleton its values. A line number opens the file
+there.
 
 ## Run
 

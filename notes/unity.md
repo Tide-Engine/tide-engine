@@ -470,6 +470,20 @@ and Clear left exactly one (the stacking the owner saw was the package before
 this, whose ordinary logs nothing removed). What the double click opens for a
 `.tide` is the external editor's choice; not seen.
 
+Correction (2026-10-21, owner: opening a `.tide` file didn't use the default
+IDE). Unity gives a file to the external code editor's package
+(`CodeEditor.CurrentEditor.OpenProject`), and Rider's and Visual Studio's
+packages open only their own extensions and those of Editor Settings'
+"Additional extensions to include" (`EditorSettings.projectGenerationUserExtensions`,
+`m_ProjectGenerationIncludedExtensions`), returning false for the rest, so
+Unity fell back. `Editor/TideCodeEditor.cs` adds `tide` and `packages` there
+once, at the first editor update after a script load, and syncs the editor's
+project, so `.tide` files and `tide.packages` open there from the Project
+window, the inspector's Open and the Console, and are in Rider's solution. It
+changes a project setting (`ProjectSettings/EditorSettings.asset`), as a user
+would in Editor Settings. Test: `IconTests.TideFilesOpenInTheCodeEditor`
+(listed once each, the rest kept). The owner's editor is Rider (2025.1).
+
 **The Console is the user's** (owner, 2026-10-20): logging intrudes and needs a
 good reason. tide's errors and warnings go there; its progress ("building ...
 whenever its files change", "built game-N") doesn't, which Project Settings >
@@ -730,6 +744,64 @@ written. Each importer has an editor with no settings and no Apply/Revert,
 so the inspector is the text, as a C# script's is. Tests: `IconTests` checks
 each importer's `m_Script` is its class and that an old `.meta` is written
 again with its GUID.
+
+### File inspectors (2026-10-21)
+
+Owner, on the importers' plain inspectors: "they could likely use some custom
+inspector to depict what they do or visualize some debug or whatever". My
+picks, for the owner to tweak. tide unity writes `Library/Tide/outline.json`
+beside the schema (`notes/cli-and-packages.md`), from `tidec --outline`'s
+`print_outline` (`compiler/src/outline.c`): each declaration of the game's
+files, the converter's and the prefabs' texts (kind, qualified name with an
+overload's parameters, file, line and column, local/async/extern), a type's
+fields with their types (a match component's local fields marked), an enum's
+members, an event's or command's handlers and local handlers, and for systems,
+views and handlers what they read and write (parameters, then World and query
+uses marked `every`), their `with`/`without` filters (scenes and ownership
+included), and in the tick their stage, waits with the schedule's reason, and
+what runs alongside. `Editor/TideOutline.cs` reads it when it changes and names
+its files as the project does (`AssetOf`: absolute under the project, else from
+Assets; `Library/Tide/Unity.tide` as is).
+
+`Editor/TideFileInspectors.cs` replaced the importers' empty editors:
+
+- **A `.tide` file**, above its text: whose it is (the game's, or the package's
+  whose folder holds it); the last finished build's errors and warnings in it
+  (`TideBuildService.LastMessages`: a build's messages gather until tide says
+  how it went, `Locate` finds each one's file), each opening its line; then its
+  declarations grouped by kind, each with a foldout (open at first in a file of
+  six or fewer) and a `line N` link. A component's or singleton's fields show
+  their declared defaults (the schema's bytes through
+  `TideEntityEditor.Default`); in Play a component shows how many shown
+  entities have it (the packet's section count) and a singleton its values
+  (its packet bytes, text read from the packet's strings, an entity by index),
+  repainting constantly. A system says when it runs ("each tick, for each
+  entity it matches, at stage 1"), Reads, Writes, Reads any/Writes any (World
+  and queries), With, Without, Waits for (name and reason) and Alongside; a
+  view, handler and local handler say when they run.
+- **`Assets/tide.packages`**: each resolved package with where it comes from
+  (comes with tide; a git source, `@ref`, at its commit's first 8 digits;
+  a folder; or "this project's Assets/X", found by its `package` line), Show
+  for a folder in the project, Update for git (`tide update <name>`) and
+  Remove for a listed one (takes its line out of the file, keeping its line
+  endings); then Add a package, a text field with a menu of the packages that
+  come with tide (those listed greyed), running `tide add "<source>"` in
+  Assets. tide runs off the editor's thread (`TideToolchain.Run`, polled from
+  `EditorApplication.update`); a failure's output shows under the field, and
+  the file is imported again either way, so the build hears of it.
+- **A package's own `tide.packages`**: its name, whether the game builds it,
+  and how many `.tide` and C files its folder has; a `tide.packages` in a
+  folder of Assets without a `package` line gets the warning tide's error
+  gives.
+
+Tests: `compiler/tests/outline/game.tide` (every kind, a local field, filters,
+handlers, and a system waiting for two others with each reason; tidec run in
+its folder, `RELATIVE` in `expect_schedule.cmake`, so its paths are the file's
+name); the Sample's `OutlineTests` (the JSON's files and folders as the project
+names them, a system's access, waits and filters, and a message located in
+its file). The Sample's PlayMode run wrote a real `outline.json`. Not tested:
+the inspectors' drawing (IMGUI needs a window, which batch runs have none
+of), Add, Update and Remove against a real project.
 
 ### Tooling as built (2026-10-20)
 

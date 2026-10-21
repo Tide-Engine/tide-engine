@@ -1596,6 +1596,9 @@ void put_decl_name(sb *out, const decl *d, const char *quote, const decl *from);
 // The whole tick's schedule as text, for `tidec --schedule`.
 void print_schedule(const program *prog, const char *game, sb *out);
 
+// What the game declares, file by file, as JSON (outline.c), for `tidec --outline` and tide unity's outline.json.
+void print_outline(const program *prog, sb *out);
+
 // Parses one file into `prog`. Without `recover`, stops at the first syntax
 // error and returns false. With it, reports every syntax error it finds and
 // keeps what it could read, skipping a broken statement or declaration: for

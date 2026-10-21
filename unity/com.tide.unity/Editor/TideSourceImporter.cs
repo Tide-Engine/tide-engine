@@ -45,15 +45,4 @@ namespace Tide.Editor
             return File.Exists(meta) && !File.ReadAllText(meta).Contains("\nScriptedImporter:");
         }
     }
-
-    // It has no settings: the inspector is the text, as a C# script's is
-    [CustomEditor(typeof(TideSourceImporter))]
-    sealed class TideSourceImporterEditor : ScriptedImporterEditor
-    {
-        protected override bool needsApplyRevert => false;
-
-        public override void OnInspectorGUI()
-        {
-        }
-    }
 }
