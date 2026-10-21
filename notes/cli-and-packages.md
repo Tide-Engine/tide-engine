@@ -31,7 +31,8 @@ only, written from its headers) and Microsoft's static C runtime in Windows'
 tide. Not covered: notices that live only inside sources linked from LLVM
 (xxhash's BSD-2 header, ConvertUTF, SipHash), dlmalloc's CC0 statement in
 wasi-libc and Polly (Linux release libraries on the link line, but `cc.cpp`
-stubs its registration). Tide's own license is not installed yet.
+stubs its registration). Tide's own `LICENSE-MIT` and `LICENSE-APACHE` install
+to `licenses/tide/` (root `CMakeLists.txt`).
 
 The llvm-mingw guard now also requires `licenses/`, so a download from before
 this is taken again once. LLVM's and wasi's license files download beside

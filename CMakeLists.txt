@@ -106,6 +106,8 @@ set(TIDE_CHANNEL "nightly" CACHE STRING "The update channel tide starts on: stab
 # prebuilt platform layer.
 file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/package/VERSION" CONTENT "${TIDE_VERSION}\n")
 install(FILES "${CMAKE_BINARY_DIR}/package/VERSION" DESTINATION . COMPONENT tide)
+# Tide's own license, beside those of what it redistributes (licenses/<name>/).
+install(FILES LICENSE-MIT LICENSE-APACHE DESTINATION licenses/tide COMPONENT tide)
 # The packages that come with tide (packages/, a folder each) are sources too,
 # beside the engine's in the package: tide compiles one with the games that
 # list it by its name, and with no other. They install as they are, but for
