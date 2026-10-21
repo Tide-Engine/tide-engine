@@ -216,6 +216,13 @@ static double tide_run_migrating_since;
 static tide_session_request tide_run_joined;
 // The game's own network, while the session's match is on one (tide/network.h)
 static tide_network_match tide_run_network;
+// The camera another program draws its scene with (tide_embed_camera): the
+// frame's views start with it rather than Tide's own first camera.
+static bool tide_run_view_camera;
+static tide_float3 tide_run_view_camera_position;
+static tide_quaternion tide_run_view_camera_rotation;
+static float tide_run_view_camera_fov;
+
 // Inside another program's frame (tide/embed.h), which reads the devices,
 // draws and plays itself: the frame leaves the GPU, the audio device and the
 // stats' drawer alone, and the platform takes the devices from that program
@@ -901,8 +908,9 @@ static inline int tide_run_frame(void *user, const float seconds)
 {
     (void)user;
     const tide_host_game *game = tide_run_game;
-    // Asked every frame: a reload can bring the setting, or take it away. The other program has stats of its own.
-    const bool stats = !tide_run_embedded && tide_run_stats();
+    // Asked every frame: a reload can bring the setting, or take it away. Inside another program's frame they're
+    // drawn with the frame, as the views' drawing is, and say only what's Tide's
+    const bool stats = tide_run_stats();
     // What a frame's work takes is in the stats' list: timed while their drawer is open
     const uint64_t began = stats && tide_run_drawer.open ? tide_time_now_ns() : 0;
     // ...and for a page that measures the netcode, with its session's update apart
@@ -1016,6 +1024,10 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
     tide_run_draw.target_pixels = tide_platform_target_pixels;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
+    if (tide_run_view_camera) {
+        tide_draw_set_camera_3d(&tide_run_draw, tide_run_view_camera_position, tide_run_view_camera_rotation,
+                                tide_run_view_camera_fov);
+    }
     tide_audio_reset(&tide_run_audio);
     // The GUI and the views read the devices, less a press that's on the stats
     const tide_devices *seen = &tide_run_devices;
@@ -1107,7 +1119,8 @@ static inline int tide_run_frame(void *user, const float seconds)
             .render_known = tide_run_render_ms >= 0.0,
             .gpu_known = tide_run_gpu_ms >= 0.0,
             .threads = jobs ? jobs->threads : 1u,
-            .memory = tide_run_memory,
+            .elsewhere = tide_run_embedded,
+            .memory = tide_run_embedded ? 0u : tide_run_memory, // Embedded, the process is the other program's
             .gpu_memory = tide_platform_gpu_memory(),
             .renderer = tide_platform_renderer(),
             .draw_calls = tide_platform_draw_calls(),
@@ -1121,9 +1134,14 @@ static inline int tide_run_frame(void *user, const float seconds)
             .entities = open && match ? game->entity_count(match) : 0u,
             .profile = &tide_run_profiler.profile,
         };
-        tide_draw_reset(&tide_run_over);
-        tide_stats_draw(&tide_run_drawer, &values, &tide_run_over, tide_platform_screen_size(), tide_platform_measure_text);
-        tide_platform_draw_over(&tide_run_over);
+        if (tide_run_embedded) {
+            // Over the views' drawing, in the list the other program draws (tide_embed_draw)
+            tide_stats_draw(&tide_run_drawer, &values, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
+        } else {
+            tide_draw_reset(&tide_run_over);
+            tide_stats_draw(&tide_run_drawer, &values, &tide_run_over, tide_platform_screen_size(), tide_platform_measure_text);
+            tide_platform_draw_over(&tide_run_over);
+        }
     }
 
     // The devices keep what happened for the next tick's sample: a key that

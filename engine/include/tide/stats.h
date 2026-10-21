@@ -57,6 +57,9 @@ typedef struct tide_stats_values {
     uint64_t memory;      // Bytes the program has; 0 where the system doesn't say
     uint64_t gpu_memory;  // Bytes the renderer has on the GPU, by its own count; 0 for no line
     const char *renderer; // What draws, like "WebGPU"; NULL for no line
+    // Another program draws the frame (tide/embed.h): the draw calls, vertices and GPU and render times are its,
+    // so they have no lines
+    bool elsewhere;
     uint32_t draw_calls;  // ...and in how many draw calls
     uint64_t vertices;    // Submitted vertices, counting indices and instances in every pass
     // The match's, while there's one

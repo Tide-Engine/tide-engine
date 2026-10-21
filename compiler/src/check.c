@@ -2387,6 +2387,16 @@ static comp_mask bit(const decl *component)
     return mask_bit(component->index);
 }
 
+// Whether a place is in a Unity prefab or scene, whose Tide text tide made of it (unity_assets.c names it after the
+// asset): what's wrong there is fixed in Unity's inspector, not in a .tide file.
+static bool unity_authored(const loc at)
+{
+    const source *src = diag_source(at.file);
+    if (!src || !src->path) return false;
+    const size_t n = strlen(src->path);
+    return (n > 7 && strcmp(src->path + n - 7, ".prefab") == 0) || (n > 6 && strcmp(src->path + n - 6, ".unity") == 0);
+}
+
 // Checks `Transform { position = ... }`, `Stats { armor = 2 }` and `Hit { damage = 5 }`.
 static type check_literal(checker *c, expr *e)
 {
@@ -2431,6 +2441,11 @@ static type check_literal(checker *c, expr *e)
             suggestion s = suggest_start(init->name);
             suggest_fields(&s, d);
             suggest_note(&s);
+            if (unity_authored(init->at)) {
+                diag_note("it's set in Unity, on a TideEntity's " STR_FMT ": select it, and its inspector shows '" STR_FMT
+                          "' in red, with Remove",
+                          STR_ARG(d->name), STR_ARG(init->name));
+            }
             continue;
         }
         for (int j = 0; j < i; j++) {
@@ -15727,6 +15742,13 @@ static void check_params(const checker *c, decl *sys)
 
 }
 
+// Editors offer to remove a parameter the last warning says is never used
+static void remove_param_fix(checker *c, const param *p)
+{
+    const fix f = {.kind = FIX_REMOVE_PARAM, .at = p->name_at, .param = p};
+    vec_push(c->prog->fixes, f);
+}
+
 // Access a system declares but doesn't use makes other systems wait for
 // nothing, so it's worth a warning.
 static void warn_unused_params(checker *c, const decl *sys)
@@ -15741,6 +15763,7 @@ static void warn_unused_params(checker *c, const decl *sys)
         if (kind == TY_QUERY && !p->read) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
             diag_note("remove the query parameter");
+            remove_param_fix(c, p);
         } else if (kind == TY_QUERY) {
             decl nested = *sys;
             nested.params.items = p->query.items;
@@ -15751,6 +15774,7 @@ static void warn_unused_params(checker *c, const decl *sys)
         if (kind == TY_WORLD && !p->read) {
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
             diag_note("remove it");
+            remove_param_fix(c, p);
         } else if (kind == TY_WORLD && p->mode == PARAM_MUT && !p->written) {
             diag_warning(p->at, "'" STR_FMT "' is declared mut but never calls Set", STR_ARG(p->name));
             diag_note("remove 'mut': the %s only reads through it", system_what(sys));
@@ -15765,6 +15789,7 @@ static void warn_unused_params(checker *c, const decl *sys)
             if (!p->read) {
                 diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
                 diag_note("remove it");
+                remove_param_fix(c, p);
             }
             continue;
         }
@@ -15785,6 +15810,7 @@ static void warn_unused_params(checker *c, const decl *sys)
             diag_warning(p->name_at, "'" STR_FMT "' is never used", STR_ARG(p->name));
             if (sys->is_handler || sys->is_view) diag_note("remove it");
             else diag_note("remove it: systems that write " STR_FMT " wait for this one while it's declared", STR_ARG(type));
+            remove_param_fix(c, p);
         } else if (p->mode == PARAM_MUT && !p->written) {
             diag_warning(p->at, "'" STR_FMT "' is declared mut but never written", STR_ARG(p->name));
             if (sys->is_handler || sys->is_view) diag_note("remove 'mut': it only reads " STR_FMT, STR_ARG(type));

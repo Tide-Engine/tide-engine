@@ -50,13 +50,20 @@ uint32_t tide_embed_abi(void)
     return TIDE_EMBED_ABI;
 }
 
-// --seed <n> and --data-dir <folder> from `desc`'s command line, as tide/run.h
-// reads them, but a bad one is left out with a line saying so: the program Tide
-// is inside of goes on.
+// --seed <n>, --data-dir <folder> and --stats from `desc`'s command line, as
+// tide/run.h and tide run read them, but a bad one is left out with a line
+// saying so: the program Tide is inside of goes on.
 static void embed_options(const tide_embed_desc *desc)
 {
-    for (int i = 1; i + 1 < desc->argc; i++) {
-        const char *arg = desc->argv[i], *value = desc->argv[i + 1];
+    for (int i = 1; i < desc->argc; i++) {
+        const char *arg = desc->argv[i];
+        if (strcmp(arg, "--stats") == 0) { // The stats' drawer, open, as `tide run --stats` shows it
+            tide_run_settings.stats = true;
+            tide_run_drawer.open = true;
+            continue;
+        }
+        if (i + 1 >= desc->argc) continue;
+        const char *value = desc->argv[i + 1];
         if (strcmp(arg, "--seed") == 0) {
             char *end = NULL;
             const unsigned long seed = strtoul(value, &end, 10);
@@ -438,6 +445,21 @@ bool tide_embed_command(tide_embed *e, const uint32_t type, const uint32_t targe
     const tide_embed_game *embed = tide_run_game->embed;
     return embed && embed->command
         && embed->command(tide_run_local, (int32_t)type, target_index, target_generation, value, size);
+}
+
+void tide_embed_camera(tide_embed *e, const float x, const float y, const float z, const float qx, const float qy,
+                       const float qz, const float qw, const float field_of_view)
+{
+    if (e != &the_embed || !running) return;
+    const float values[] = {x, y, z, qx, qy, qz, qw, field_of_view};
+    bool finite = true;
+    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) finite = finite && tide_is_finite_f(values[i]);
+    const float length = qx * qx + qy * qy + qz * qz + qw * qw;
+    tide_run_view_camera = finite && field_of_view > 0.0f && field_of_view < 180.0f && length > 0.0f;
+    if (!tide_run_view_camera) return;
+    tide_run_view_camera_position = tide_f3(x, y, z);
+    tide_run_view_camera_rotation = tide_normalize_q((tide_quaternion){qx, qy, qz, qw});
+    tide_run_view_camera_fov = field_of_view;
 }
 
 void tide_embed_background(tide_embed *e, const bool background)

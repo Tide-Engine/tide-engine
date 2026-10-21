@@ -492,6 +492,10 @@ foreach(source IN LISTS TIDE_SCHEDULE_TESTS)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
 endforeach()
 
+add_test(NAME tidec_prefab_error_once
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/prefab_error_once"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/prefab_error_once.cmake")
+
 # Outline tests: `tidec --outline` on outline/<name>.tide, run in its folder so the paths it prints are the
 # file's name, must print outline/<name>.json exactly.
 file(GLOB TIDE_OUTLINE_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/outline/*.tide")

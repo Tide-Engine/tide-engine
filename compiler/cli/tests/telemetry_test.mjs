@@ -265,10 +265,13 @@ test("TIDE_TELEMETRY=0, DO_NOT_TRACK and `tide telemetry off` send nothing; on s
         const status = tide(setup, ["telemetry", "status"], environment(server.url, extra));
         assert.match(status.stdout, /^Usage data: off, as (TIDE_TELEMETRY is 0|DO_NOT_TRACK is set)/);
     }
-    // DO_NOT_TRACK of 0 or nothing turns nothing off.
+    // DO_NOT_TRACK of 0 or nothing turns nothing off. In an installation of its own: the sender these runs start
+    // goes on looking at its queue after its event arrives, and would take the one written below before `off`
+    const other = install();
+    noticed(other, environment(server.url));
     for (const extra of [{ DO_NOT_TRACK: "0" }, { DO_NOT_TRACK: "" }]) {
         const before = server.events().length;
-        tide(setup, ["version"], environment(server.url, extra));
+        tide(other, ["version"], environment(server.url, extra));
         await until("an event with DO_NOT_TRACK unset", () => server.events().length === before + 1);
     }
     // Off removes what's waiting, so a queue left by an offline run is never sent.

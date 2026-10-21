@@ -293,6 +293,85 @@ TIDE_TEST(embed_draw_packet)
     TIDE_CHECK(tide_embed_draw(e, &size) == NULL && size == 0); // Nothing once it's ended
 }
 
+// Where Show's yellow circle is in the draw packet: the point it projected, in screen pixels.
+static bool projected(tide_embed *e, tide_float2 *at)
+{
+    uint32_t size = 0;
+    const uint8_t *p = tide_embed_draw(e, &size);
+    if (!p || size < sizeof(tide_embed_draw_header)) return false;
+    tide_embed_draw_header h;
+    memcpy(&h, p, sizeof h);
+    const size_t commands = (sizeof h + 7u) & ~(size_t)7u;
+    for (uint32_t i = 0; i < h.commands; i++) {
+        tide_draw_command c;
+        memcpy(&c, p + commands + i * sizeof c, sizeof c);
+        if (c.kind == TIDE_DRAW_CIRCLE && c.b.x == 3.0f && c.color.r == 1.0f && c.color.g == 1.0f && c.color.b == 0.0f) {
+            *at = c.a;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The other program's camera is the one views start with (tide_embed_camera): Draw.WorldToScreen goes through it,
+// and a field of view that's none goes back to Tide's first camera.
+TIDE_TEST(embed_camera)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 30, NULL);
+    tide_float2 at = {0};
+    TIDE_REQUIRE(projected(e, &at));
+    TIDE_CHECK(at.x == 400.0f && at.y == 300.0f); // Straight ahead of a camera at the origin: the 800 by 600 screen's middle
+    // A step to the right, a quarter turn wide: 5 ahead and 1 to the left is 0.2 of the half width the field of view
+    // sees there, times 600 / 800 for the screen's shape
+    tide_embed_camera(e, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 90.0f);
+    frames(e, 1, NULL);
+    TIDE_REQUIRE(projected(e, &at));
+    TIDE_CHECK(at.x > 339.9f && at.x < 340.1f && at.y > 299.9f && at.y < 300.1f);
+    tide_embed_camera(e, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    frames(e, 1, NULL);
+    TIDE_REQUIRE(projected(e, &at));
+    TIDE_CHECK(at.x == 400.0f && at.y == 300.0f);
+    tide_embed_destroy(e);
+}
+
+// --stats shows the stats' drawer, open, in the draw packet the other program draws: the frame rate and the
+// frame's work, and no draw calls, which are the other program's.
+TIDE_TEST(embed_stats)
+{
+    char *argv[] = {program, "--stats"};
+    tide_embed *e = start(2, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 30, NULL);
+    uint32_t size = 0;
+    const uint8_t *p = tide_embed_draw(e, &size);
+    TIDE_REQUIRE(p != NULL && size >= sizeof(tide_embed_draw_header));
+    tide_embed_draw_header h;
+    memcpy(&h, p, sizeof h);
+    const size_t commands = (sizeof h + 7u) & ~(size_t)7u;
+    size_t at = commands + (size_t)h.commands * sizeof(tide_draw_command);
+    at = ((at + 7u) & ~(size_t)7u) + (size_t)h.shapes * sizeof(tide_draw_shape_data);
+    at = ((at + 7u) & ~(size_t)7u) + (size_t)h.vertices * sizeof(tide_vertex);
+    at = ((at + 7u) & ~(size_t)7u) + (size_t)h.indices * sizeof(uint32_t);
+    const size_t text = (at + 7u) & ~(size_t)7u;
+    TIDE_REQUIRE(text + h.text <= size);
+    bool fps = false, cpu = false, draw_calls = false;
+    for (uint32_t i = 0; i < h.commands; i++) {
+        tide_draw_command c;
+        memcpy(&c, p + commands + i * sizeof c, sizeof c);
+        if (c.kind != TIDE_DRAW_TEXT || c.text >= h.text) continue;
+        const char *words = (const char *)p + text + c.text;
+        const size_t n = strlen(words);
+        fps |= n > 4 && strcmp(words + n - 4, " fps") == 0;
+        cpu |= strcmp(words, "cpu") == 0;
+        draw_calls |= strcmp(words, "draw calls") == 0;
+    }
+    TIDE_CHECK(fps && cpu && !draw_calls);
+    tide_embed_destroy(e);
+}
+
 // The schema names the packet's types, what they are, and the game's commands and scenes.
 TIDE_TEST(embed_schema)
 {

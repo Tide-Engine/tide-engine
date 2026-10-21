@@ -1530,6 +1530,7 @@ typedef enum fix_kind {
     FIX_ADD_MUT,    // Writing through a read-only parameter: declare it mut
     FIX_REMOVE_MUT, // A mut parameter that's never written
     FIX_USE_WITH,   // A component parameter that's never used: filter with `with` instead
+    FIX_REMOVE_PARAM, // A parameter that's never used and isn't a component's: remove it
     FIX_MUT_LOCAL,  // Writing a read-only local: declare it mut
     FIX_MUT_METHOD, // A read-only method that changes a field or calls a mut method: declare it mut
     FIX_CREATE_FUNCTION,  // A call of an unknown function: declare it, taking the arguments' types

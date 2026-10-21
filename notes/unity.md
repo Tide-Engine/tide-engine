@@ -500,6 +500,18 @@ Pillar under a plain `Pillars` GameObject, each a `Spinner`, loaded by
 both pillars show their entities with the scene's speeds, at Unity's
 positions, turned by Tide.
 
+**Fields the component no longer has (2026-10-21).** Owner: removing a field
+from a component gave each prefab's and scene's error twice (the checker's,
+said once now: `notes/language.md`, A diagnostic is said once). The values
+stay in the assets, by the design above (nothing dropped silently), but the
+inspector drew only the schema's fields, so they couldn't be seen or removed
+there. Now each field a component's values set that its type hasn't is a red
+row, `name   value   (no such field)`, with Remove where this object sets it
+(`Write` with the field left out, which reverts an instance's override once
+it sets nothing) and "its prefab sets it" where only what's under an instance
+does. The error's note says where to look. Not tested: the drawing (IMGUI,
+no window in batch runs).
+
 Gaps: asset fields (a Unity asset in a Tide `Asset<T>` field: the converter
 says it isn't supported; tide resolves asset paths from the declaring file),
 unsaved scene and prefab edits (tide reads saved files), `Name#k` paths when
@@ -618,12 +630,43 @@ so in any render pipeline: rects, circles, their wires, lines, smooth shapes
 a ring; round corners, soft edges and turns not yet), 2D meshes' triangles
 with their corners' colors times the tint, and text in Unity's font at the
 anchor; under Tide's 2D cameras (a size is half the height seen; 0 a pixel a
-unit, y up from the bottom) and in screen pixels after `Draw.Screen`; alpha and
-additive blending. Skipped: clears (Unity's frame is below), render targets,
+unit, y up, the camera's center at the screen's) and in screen pixels after
+`Draw.Screen`; alpha and additive blending. Skipped: clears (Unity's frame is below), render targets,
 clips, stencil, textures, 3D meshes, shaded runs and blits. The sample's Hud
 view draws its text, which the play mode test finds in the packet. The HLSL
 target and ScriptedImporter for custom frags/verts, Tide's own font, and 3D
 meshes through Unity's renderer remain.
+
+**Unity's camera is the views' (2026-10-21).** Owner: a view drawing at
+`Draw.WorldToScreen(worldPos)` drew everything in the bottom left corner. Three
+causes: Tide's 3D camera was its own first one (at the origin facing +z), so
+points about z = 0 had no projection and `WorldToScreen` gave (0, 0); TideDraw
+put the 2D origin with no camera at the screen's bottom left, where Tide's first
+2D camera centers it; and the view drew the screen position as a world one
+(it's for `Draw.Screen() { ... }`). Now TideRunner sends its `viewCamera`, else
+`Camera.main`, each frame before the frame call (`ViewCamera`: position,
+rotation, vertical field of view; an orthographic one or none sends 0, Tide's
+own), through `tide_embed_camera` (`notes/standard-host.md`; ABI 3, the
+package's `TideLibrary.Abi` with it; on the web the `tide_unity_camera` export
+and `TideWebCamera` in the jslib). Unity and Tide share axes and handedness
+and both give the vertical field of view, so `WorldToScreen` lands where
+Unity's camera sees the point. TideDraw's default 2D origin is the screen's
+center. The sample's Hud used the old corner (`float2(16, Screen.height - 30)`
+in world units), so it moved into `Draw.Screen()` at (16, 30), and a `Ring`
+view draws a wire circle at each ball's `WorldToScreen`; the play mode test
+finds the ring within 1.5 pixels of `Camera.main.WorldToScreenPoint` of the
+ball (y flipped). Not done: an orthographic Unity camera (Tide's 3D cameras are
+perspective ones), and Unity's near and far planes for a projected depth.
+
+**Stats and the runner's Arguments (2026-10-21).** The owner put `--stats` in
+TideRunner's Arguments and saw nothing: the embed dropped every flag it didn't
+take, and drew no stats. `--stats` now shows Tide's stats drawer, open, over
+the game (`notes/standard-host.md`), as does the game's `stats` setting; TideDraw
+draws it as any of Tide's drawing (its panel, text and lines). A word the embedded
+game doesn't take gets a Console warning naming it and listing those it takes
+(`TideRunner.UnknownArguments`; Sample's `ArgumentsTests`). Unity's own Stats
+window has the rendering; Tide's drawer has the frame's work, ping, delay,
+network, entities, threads and the slowest systems.
 
 ### The game is Assets (2026-10-21)
 

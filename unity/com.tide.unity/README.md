@@ -94,7 +94,10 @@ there.
 
 Add a GameObject with a `TideRunner`. In Play mode it runs the game: Main's
 match on this machine, or what its arguments say (`--host`, `--join <code>`,
-`--connect <address>`). A new build of the game is swapped into the running
+`--connect <address>`, `--seed <n>`, `--data-dir <folder>`, and `--stats` for
+Tide's stats drawer over the game: the frame's work, ping, network, entities
+and the slowest systems; the game's `stats` setting shows it too). An argument
+it doesn't take gets a warning in the Console. A new build of the game is swapped into the running
 match.
 
 An entity of a Unity prefab shows through an instance of that prefab, made
@@ -105,6 +108,13 @@ with. An entity with Tide's `Transform` is placed by it. `TideEntityView` on
 that GameObject reads the entity's components as Tide's views see them this
 frame: `view.Get<Tide.Game.Health>()`. `TideRunner.Current.Send(command)`
 sends a command, as local code's `Send`.
+
+The game's views draw with Unity's camera: the runner's View Camera, or the
+main camera, is the 3D camera Tide's views start with, so
+`Draw.WorldToScreen(position)` is where Unity shows that point, in screen
+pixels from the top left. Draw at it inside `Draw.Screen() { ... }`, whose
+calls are in screen pixels; outside it, 2D draws go through Tide's 2D camera,
+centered on the screen at a pixel a unit unless the view sets one.
 
 C# doesn't spawn: the match does, in Tide code, which a command from C# can
 ask for (`Spawn(Bullet, ...)` in its handler, `Bullet` being the Unity prefab,

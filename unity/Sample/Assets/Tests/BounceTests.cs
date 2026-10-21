@@ -122,6 +122,23 @@ public sealed unsafe class BounceTests
         return false;
     }
 
+    // Where the Ring view drew its ring (a wire circle of radius 24), in Tide's screen pixels
+    static bool Ringed(TideRunner runner, out Vector2 at)
+    {
+        at = default;
+        var bytes = runner.DrawPacket(out var length);
+        if (bytes == null || length < 64) return false;
+        var header = (uint*)bytes;
+        var commands = (TideDrawCommand*)(bytes + 64);
+        for (var i = 0; i < header[2]; i++)
+        {
+            if (commands[i].kind != 3 || commands[i].b.x != 24f) continue;
+            at = commands[i].a;
+            return true;
+        }
+        return false;
+    }
+
     static TideEntityView Tossed()
     {
         foreach (var view in Object.FindObjectsByType<TideEntityView>())
@@ -239,6 +256,11 @@ public sealed unsafe class BounceTests
         Assert.That(y, Is.InRange(0.45f, 0.6f), "it fell to the floor: " + y);
         Assert.Greater(Tide.Game.TideGameSchema.Hash.Length, 0, "the bindings were made from the game's schema");
         Assert.IsTrue(DrewText(runner, "Balls: 1"), "the draw packet has the Hud's text");
+        // The Ring view's ring is where Unity's camera sees the ball: Tide's views go through Unity's camera
+        Assert.IsTrue(Ringed(runner, out var ring), "the draw packet has the ball's ring");
+        var seen = Camera.main.WorldToScreenPoint(ball.transform.position);
+        var expected = new Vector2(seen.x, Screen.height - seen.y); // Tide's screen is from the top left, y down
+        Assert.Less(Vector2.Distance(ring, expected), 1.5f, $"the ring at {ring} is around the ball at {expected}");
         for (var i = 0; i < 2; i++)
         {
             var pillar = pillars.GetChild(i);

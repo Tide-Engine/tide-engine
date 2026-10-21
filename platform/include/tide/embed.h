@@ -22,7 +22,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 2u
+#define TIDE_EMBED_ABI 3u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -31,7 +31,7 @@ typedef struct tide_embed_desc {
     size_t pack_size;
     int tick_rate;              // Ticks per second, over the game's tickRate setting; 0 for that
     int argc;                   // As main's (argv[0] the program): tide/run.h's --host, --join, --connect, --seed
-                                // and --data-dir; one that's wrong is left out, saying so
+                                // and --data-dir, and --stats; one that's wrong is left out, saying so
     char **argv;
     const char *game_name;      // Its folders' name when the game sets no appId; NULL for "game"
     const char *relay;          // Another relay's address; NULL for TIDE_RELAY or the default
@@ -164,6 +164,16 @@ bool tide_embed_command(tide_embed *e, uint32_t type, uint32_t target_index, uin
 // _KICK_ALL (`text` its message). False for a kind it doesn't take, or a scene
 // the game hasn't.
 bool tide_embed_request(tide_embed *e, tide_session_request_kind kind, const char *text, uint32_t port);
+
+// The camera the frame's views start with, as the program Tide is in draws its
+// scene: where it is (x, y, z), which way it faces (a quaternion x, y, z, w,
+// in Tide's axes: +y up, +z forward) and its vertical field of view in
+// degrees. Draw.WorldToScreen and the 3D draws then agree with that program's
+// picture; a view's own Draw.Camera is still its own. A field of view that
+// isn't between 0 and 180, or a value that isn't finite, goes back to Tide's
+// own first camera, which views start with until this is called.
+void tide_embed_camera(tide_embed *e, float x, float y, float z, float qx, float qy, float qz, float qw,
+                       float field_of_view);
 
 // The app went to the background (true) or came back. A phone leaves its match
 // there, which hands a match it hosted over where host migration is on, rather

@@ -144,7 +144,10 @@ values, the settings' ID and the CLI's version, and no request body contains
 the game's folder name, `game.tide`, the work path, user or host name;
 `TIDE_TELEMETRY=0`, `DO_NOT_TRACK` (`1`, `true`; `0` and empty still send), and
 `telemetry off` (queue deleted, status reason, ID shown) send nothing and `on`
-sends again; offline (a server that cuts every connection), a seeded 150-event
+sends again (the `0` and empty runs use an installation of their own since
+2026-10-21: their sender looks at its queue again after its event arrives,
+and took the queue the case then writes before `off` deleted it, failing two
+runs in three here); offline (a server that cuts every connection), a seeded 150-event
 queue is cut to the newest 100 with the run's own event, the command returns
 at once, a second offline run stays at 100, and back online all 100 arrive and
 the queue empties; a 400 answer drops the batch. `tide_cli_help` covers the new

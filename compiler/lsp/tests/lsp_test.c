@@ -4131,6 +4131,34 @@ TIDE_TEST(lsp_quick_fixes)
                                 "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
 }
 
+// A parameter that's never used, and isn't a component (which `with` replaces), is removed with its comma.
+TIDE_TEST(lsp_quick_fixes_remove_unused_parameters)
+{
+    start();
+    static const char game[] = "component Spin { float speed; }\n"
+                               "singleton Score { int points; }\n"
+                               "scene Main { }\n"
+                               "event(Spawned) Setup(with Main) { Spawn(Spin); }\n"
+                               "system Turn(World world, mut Spin spin) { spin.speed += 1; }\n"
+                               "system Count(mut Spin spin, Score score) { spin.speed += 2; }\n";
+    for (int line = 4; line <= 5; line++) {
+        open_document(game);
+        const char *fix = actions_at(line);
+        TIDE_CHECK(has(fix, line == 4 ? "\"title\":\"Remove 'world'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"
+                                      : "\"title\":\"Remove 'score'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"));
+        const json *reply = json_parse(last_sent(), strlen(last_sent()));
+        const json *edits = json_path(json_get(reply, "result")->items[0], "edit", "changes", "file:///test.tide", NULL);
+        char text[1024];
+        snprintf(text, sizeof text, "%s", game);
+        apply_edits(text, sizeof text, edits);
+        json_release();
+        TIDE_CHECK(has(text, line == 4 ? "system Turn(mut Spin spin) {" : "system Count(mut Spin spin) {"));
+        open_document(text);
+        TIDE_CHECK(!has(last_sent(), line == 4 ? "'world' is never used" : "'score' is never used"));
+        TIDE_CHECK(has(last_sent(), line == 4 ? "'score' is never used" : "'world' is never used"));
+    }
+}
+
 // The checker's "did you mean" is a quick fix, from where the name is, not
 // from the message.
 TIDE_TEST(lsp_quick_fixes_from_suggestions)
@@ -6381,8 +6409,13 @@ TIDE_TEST(lsp_unity_game_is_its_assets_with_what_tide_unity_wrote)
     write_file("lsp_unity_game/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
     static const char game[] = "using UnityEngine.Prefabs;\n"
                                "scene Main { }\n"
-                               "event(Spawned) Begin(with Main) { Spawn(Roller); }\n"
+                               "event(Spawned) Begin(with Main) { Spawn(Roller); Spawn(Big); }\n"
                                "system Go(mut Speed speed) { speed.value += 1; }\n";
+    // A prefab of 31 entities, a line each: its hover shows the first lines and its closing brace
+    char big[4096];
+    int written = snprintf(big, sizeof big, "namespace UnityEngine.Prefabs;\n\nprefab Big\n{\n    Speed { value = 0 };\n");
+    for (int i = 1; i <= 30; i++) written += snprintf(big + written, sizeof big - (size_t)written, "    entity C%d { Speed { value = %d }; }\n", i, i);
+    snprintf(big + written, sizeof big - (size_t)written, "}\n");
     write_file("lsp_unity_game/Assets/Tide/game.tide", game);
     write_file("lsp_unity_game/Assets/Rules/rules.tide", "component Speed { float value; }\n");
     write_file("lsp_unity_game/Assets/Samples~/broken.tide", "this isn't Tide\n");
@@ -6390,6 +6423,7 @@ TIDE_TEST(lsp_unity_game_is_its_assets_with_what_tide_unity_wrote)
     write_file("lsp_unity_game/Library/Tide/prefabs/Assets/Roller.prefab.tprefab",
                "namespace UnityEngine.Prefabs;\n\nprefab Roller\n{\n    UnityEngine.Source { asset = 0, node = 0 };\n"
                "    Speed { value = 1 };\n}\n");
+    write_file("lsp_unity_game/Library/Tide/prefabs/Assets/Big.prefab.tprefab", big);
     char root[700], uri[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
     snprintf(root, sizeof root, "file:///%s/lsp_unity_game", dir);
@@ -6403,7 +6437,21 @@ TIDE_TEST(lsp_unity_game_is_its_assets_with_what_tide_unity_wrote)
         seen = seen || has(sent[i], uri);
     }
     TIDE_CHECK(seen);
+    // A prefab's hover is the prefab as tide read it, and the asset it's of
+    const char *hover = request_at(uri, "textDocument/hover", 2, 41, "");
+    TIDE_CHECK(has(hover, "prefab Roller"));
+    TIDE_CHECK(has(hover, "UnityEngine.Source { asset = 0, node = 0 };"));
+    TIDE_CHECK(has(hover, "Speed { value = 1 };"));
+    TIDE_CHECK(has(hover, "From `Assets/Roller.prefab` in the Unity project"));
+    hover = request_at(uri, "textDocument/hover", 2, 56, "");
+    TIDE_CHECK(has(hover, "prefab Big"));
+    TIDE_CHECK(has(hover, "entity C19 { Speed { value = 19 }; }"));
+    TIDE_CHECK(!has(hover, "entity C20 "));
+    TIDE_CHECK(!has(hover, "entity C30 "));
+    TIDE_CHECK(has(hover, "// ...11 more lines"));
+    TIDE_CHECK(has(hover, "From `Assets/Big.prefab`"));
 
+    remove_game_file("lsp_unity_game/Library/Tide/prefabs/Assets/Big.prefab.tprefab");
     remove_game_file("lsp_unity_game/Library/Tide/prefabs/Assets/Roller.prefab.tprefab");
     start_in(root);
     open_uri(uri, game);

@@ -181,9 +181,11 @@ namespace Tide
         Vector2 Place(Vector2 p)
         {
             if (screen) return p; // Draw.Screen's: pixels from the top left already
-            var scale = size > 0 ? height / (2 * size) : 1f; // A camera's size is half the height it sees; 0, a pixel a unit
-            var x = size > 0 ? (p.x - center.x) * scale + width * 0.5f : p.x;
-            var y = size > 0 ? (p.y - center.y) * scale + height * 0.5f : p.y; // y up
+            // A camera's size is half the height it sees; 0, a pixel a unit. Its center is the screen's, as Tide's
+            // first camera's is (0, 0)
+            var scale = size > 0 ? height / (2 * size) : 1f;
+            var x = (p.x - center.x) * scale + width * 0.5f;
+            var y = (p.y - center.y) * scale + height * 0.5f; // y up
             return new Vector2(x, height - y);
         }
 

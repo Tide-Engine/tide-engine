@@ -55,10 +55,39 @@ told local code), a kick's message and what the game asked of the window
 (typing, cursor lock); `tide_embed_request` takes Session
 requests (Start of Main only for now: named scenes come with the schema);
 `tide_embed_background` leaves the match on Android and iOS, desktop nothing.
-One at a time: the host's statics are the process's. `tide_embed_abi()`
-returns `TIDE_EMBED_ABI` (2, since `tide_embed_draw`), which changes with
-anything another language lays out or calls, so a binding refuses an embed
-built by another tide.
+`tide_embed_camera(e, x, y, z, qx, qy, qz, qw, fov)` (2026-10-21) is the
+camera the frame's views start with, the other program's: `tide/host.h`
+keeps it (`tide_run_view_camera`) and, right after `tide_draw_reset` and
+before the views, sets it with `tide_draw_set_camera_3d`, so
+`Draw.WorldToScreen`/`ScreenToWorld` of a float3 and 3D draws go through it
+and a view's own `Draw.Camera` still wins. A field of view outside 0 to 180,
+a value that isn't finite or a zero quaternion goes back to Tide's first
+camera (at the origin, facing +z, 60 degrees); the rotation is normalized.
+Its near and far planes are Tide's, so a projected depth isn't the other
+program's. One at a time: the host's statics are the process's.
+`tide_embed_abi()` returns `TIDE_EMBED_ABI` (3, since `tide_embed_camera`; 2
+came with `tide_embed_draw`), which changes with anything another language
+lays out or calls, so a binding refuses an embed built by another tide. Test:
+`embed_camera` (`platform/tests/embed.c`): `embed.tide`'s Show projects
+(0, 0, 5) and draws a circle there in screen pixels, at the 800 by 600
+screen's middle through Tide's camera, 60 pixels left of it through a camera
+1 to the right with a 90-degree field of view, and in the middle again after
+a field of view of 0. A point behind the camera still projects (flipped by
+the division), not to (0, 0).
+
+Stats inside another program (2026-10-21, owner: `--stats` in the runner's
+Arguments did nothing). They were left out embedded ("the other program has
+stats of its own"), and the embed took no `--stats`. Now `embed_options`
+reads `--stats` as `tide run --stats` does (the setting, and the drawer
+starting open), and the game's `stats` setting counts too: `tide_run_frame`
+keeps the drawer embedded, drawn into `tide_run_draw` after the views and the
+GUI, so `tide_embed_draw` has it for the other program to draw, rather than
+into `tide_run_over` for a window. The values say `elsewhere`
+(`tide_stats_values`, `engine/include/tide/stats.h`), which leaves out the
+draw calls, vertices, render and GPU lines (the other program's), and memory
+is 0, as the process is the other program's. Tests: `embed_stats` (the
+packet has the "N fps" line and `cpu`, and no `draw calls`) and
+`stats_drawn_elsewhere_leave_out_the_other_programs_lines` (`tests/test_stats.c`).
 
 - Input is raw, as a window reports it (`tide_embed_input`: held keys as bits,
   cursor, this frame's scroll and locked movement, buttons, one gamepad, typed

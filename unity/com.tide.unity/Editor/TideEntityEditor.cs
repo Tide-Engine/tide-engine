@@ -58,6 +58,7 @@ namespace Tide.Editor
     {
         static readonly Dictionary<string, bool> folded = new Dictionary<string, bool>();
         static GUIStyle header;
+        static GUIStyle stale; // A field the component no longer has
 
         public override void OnInspectorGUI()
         {
@@ -290,6 +291,28 @@ namespace Tide.Editor
                     if (!changed) continue;
                     // A prefab instance keeps the fields it sets; anything else keeps them all
                     p.property.stringValue = TideLiterals.Set(p.patch, field.name, next);
+                }
+                // What it sets of fields the component no longer has (renamed or removed in code), which tide
+                // refuses until they're gone: red, with Remove where this object sets it
+                foreach (var set in TideLiterals.Split(p.values))
+                {
+                    if (type.Field(set.Key) != null) continue;
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        stale ??= new GUIStyle(EditorStyles.label) { normal = { textColor = new Color(1f, 0.42f, 0.38f) } };
+                        var label = new GUIContent(set.Key, $"{typeName} has no field '{set.Key}' now: it was renamed or removed. " +
+                                                            "tide refuses the value until it's gone.");
+                        EditorGUILayout.LabelField(label, new GUIContent(set.Value + "   (no such field)"), stale);
+                        if (TideLiterals.Get(p.patch, set.Key) != null)
+                        {
+                            var name = set.Key;
+                            if (GUILayout.Button("Remove", EditorStyles.miniButton, GUILayout.Width(64))) Write(index, TideLiterals.Set(p.patch, name, null));
+                        }
+                        else
+                        {
+                            GUILayout.Label("its prefab sets it", EditorStyles.miniLabel, GUILayout.Width(96));
+                        }
+                    }
                 }
             }
         }

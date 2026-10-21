@@ -44,7 +44,7 @@ namespace Tide
     [DisallowMultipleComponent]
     public sealed unsafe class TideRunner : MonoBehaviour
     {
-        [Tooltip("As the game's command line: --host, --join <code>, --connect <address>, --seed <n>")]
+        [Tooltip("As the game's command line: --host [port], --join <code>, --connect <address>, --seed <n>, --data-dir <folder>, --stats")]
         public string arguments = "";
 
         [Tooltip("Another relay's address; empty for Tide's")]
@@ -55,6 +55,9 @@ namespace Tide
 
         [Tooltip("Keep the GameObject of an entity that goes, inactive, for the next entity of its prefab: reset what Unity alone keeps on it (an Animator's state, particles) in OnDisable or OnEnable")]
         public bool pool;
+
+        [Tooltip("The camera the game's views start with, which Draw.WorldToScreen and Tide's 3D draws go through: the main camera when none is set")]
+        public Camera viewCamera;
 
         // Makes and lets go of the GameObjects of the prefabs entities show through, in place of Instantiate and
         // Destroy, or the pool: null for those
@@ -177,10 +180,43 @@ namespace Tide
             return bytes;
         }
 
+        // What the embedded game takes (tide/embed.h), each with the values it's followed by: the first word it
+        // doesn't take, or null. tide run's others (--players, --capture, --size...) are for its own window.
+        public static string UnknownArguments(List<string> words)
+        {
+            for (var i = 1; i < words.Count; i++)
+            {
+                switch (words[i])
+                {
+                case "--stats":
+                    break;
+                case "--host":
+                    if (i + 1 < words.Count && words[i + 1].Length > 0 && char.IsDigit(words[i + 1][0])) i++;
+                    break;
+                case "--join":
+                case "--connect":
+                case "--seed":
+                case "--data-dir":
+                    if (i + 1 >= words.Count) return words[i] + " with nothing after it";
+                    i++;
+                    break;
+                default:
+                    return words[i];
+                }
+            }
+            return null;
+        }
+
         IntPtr Create()
         {
             var words = new List<string> { "unity" };
             words.AddRange(arguments.Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
+            var unknown = UnknownArguments(words);
+            if (unknown != null)
+            {
+                Debug.LogWarning($"Tide: the runner's Arguments have {unknown}, which the game doesn't take in Unity: it takes " +
+                                 "--host [port], --join <code>, --connect <address>, --seed <n>, --data-dir <folder> and --stats", this);
+            }
             var strings = new List<IntPtr>();
             IntPtr Str(string s)
             {
@@ -292,6 +328,21 @@ namespace Tide
             if (Current == this) Current = null;
         }
 
+        // The camera Unity draws the scene with is the one the game's views start with, so Draw.WorldToScreen and
+        // Tide's 3D draws agree with Unity's picture: `viewCamera`, else the main camera. Tide's cameras are
+        // perspective ones; with none, or an orthographic one, views start with Tide's own.
+        void ViewCamera()
+        {
+            var seen = viewCamera != null ? viewCamera : Camera.main;
+            if (seen == null || seen.orthographic)
+            {
+                library.Camera(embed, Vector3.zero, Quaternion.identity, 0);
+                return;
+            }
+            var t = seen.transform;
+            library.Camera(embed, t.position, t.rotation, seen.fieldOfView);
+        }
+
         void OnApplicationPause(bool paused)
         {
             if (embed != IntPtr.Zero) library.Background(embed, (byte)(paused ? 1 : 0));
@@ -301,6 +352,7 @@ namespace Tide
         {
             if (embed == IntPtr.Zero) return;
             TideInputReader.Read(ref input, 1f);
+            ViewCamera();
             fixed (TideEmbedInput* p = &input)
             {
                 library.Frame(embed, Time.unscaledDeltaTime, p, Screen.width, Screen.height, 1f);

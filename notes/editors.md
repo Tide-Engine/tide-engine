@@ -18,6 +18,50 @@ property has no accessor yet, which the checker treats as an error type rather
 than dereferencing a missing setter. Existing editor adapters need no protocol
 change. Full validation is recorded in notes/language.md with the compiler work.
 
+## Prefab hovers, removing unused parameters and Enter in JetBrains (2026-10-21)
+
+Owner, in Rider on a Unity project: a prefab's hover showed `prefab SpinningCube { }`
+though its file has content; "why cant i have quick actions here too?" on an
+unused `World world`; and Enter between `{}` left the brace beside the caret.
+
+- **Prefab hovers** (`format_prefab` in `compiler/lsp/analysis.c`): a prefab
+  went through `format_data_decl`, which writes a struct's fields, and a prefab
+  has none. It's now the prefab's own text, from its `prefab` line to its
+  closing brace (`decl.end`), dedented by the first line's indentation, CRs
+  dropped; past 24 lines, the first 22, a `// ...N more lines` comment and the
+  closing brace (`PREFAB_HOVER_LINES`). One tide made of a Unity prefab or scene
+  (a file under `.../Tide/prefabs/` ending `.tprefab`: `unity_prefab_asset`)
+  adds "From `Assets/X.prefab` in the Unity project, as tide read it."
+- **Remove an unused parameter** (`FIX_REMOVE_PARAM`): the checker's "never
+  used" warnings whose note says to remove it (a World, a query, a singleton,
+  a frag's or vert's input) now carry a fix (`remove_param_fix` in
+  `check.c`), as a component's already had `FIX_USE_WITH`. tidels's
+  `remove_param_action` removes it from its first token to its name with the
+  comma joining it to the next parameter, or to the one before when it's
+  last, as `use_this_action` does, preferred and tied to its diagnostic.
+  Shared (virtual or override) declarations still get no warning, so no fix.
+- **Enter between braces in JetBrains** (`TideEnterBetweenBraces`, an
+  `enterHandlerDelegate`, first): the plugin colors Tide with TextMate, whose
+  editing support indents on Enter but leaves `}` beside the caret. In a
+  `.tide` or `.tprefab` file, with one caret, no selection and only blanks
+  between the caret and a `{` before and a `}` after, it replaces the blanks
+  with a line indented one level past the opening line (the file's code
+  style: tabs or `INDENT_SIZE` spaces) and a line with the opening line's
+  indentation, the caret on the first, and stops the default handler. VS Code
+  does this itself for the grammar's brackets.
+
+Tests: `lsp_unity_game_is_its_assets_with_what_tide_unity_wrote` (a Unity
+prefab's hover with its components and asset; a 34-line one cut after its 19th
+entity with "...11 more lines"), `lsp_quick_fixes_remove_unused_parameters` (a
+first and a last parameter removed with their commas, the edit applied, and
+that warning gone), and JetBrains `TidePlatformTest.testEnterBetweenBracesOpensTheBlock`
+(nested in a system, a `.tprefab` on one line, and Enter elsewhere unchanged:
+it reproduced the brace beside the caret before the handler). The plugin
+reaches the owner's Rider through the Marketplace nightly the manual Build
+workflow publishes, or `build/distributions` from `buildPlugin` installed
+from disk. The prefab hover and the fix need a tidels with them: the owner's
+Rider runs their own installed tide's.
+
 ## CLI-managed JetBrains profiles (2026-10-21)
 
 The engine package now carries the matching Tide plugin plus LSP4IJ in a

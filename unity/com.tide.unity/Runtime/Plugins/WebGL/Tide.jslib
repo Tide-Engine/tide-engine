@@ -126,6 +126,12 @@ var TideWebLibrary = {
         if (x) x.tide_unity_background(hidden);
     },
 
+    TideWebCamera__deps: ['$TideWeb'],
+    TideWebCamera: function (x, y, z, qx, qy, qz, qw, fieldOfView) {
+        var program = TideWeb.program();
+        if (program) program.tide_unity_camera(x, y, z, qx, qy, qz, qw, fieldOfView);
+    },
+
     TideWebCommand__deps: ['$TideWeb'],
     TideWebCommand: function (type, index, generation, value, size) {
         var x = TideWeb.program();
