@@ -141,6 +141,12 @@ void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *
     transforms_decl = transforms;
 }
 
+void builtins_use_sampling(const decl *filter, const decl *wrap)
+{
+    filter_decl = filter;
+    wrap_decl = wrap;
+}
+
 // Whether `t` stands for one of the program's types Draw.Mesh takes.
 static bool mesh_type(const type t)
 {
@@ -226,7 +232,7 @@ static const struct {
 // The table is built once and kept for the whole process, so its strings are
 // malloc'd rather than taken from the arena, which the language server resets.
 
-#define MAX_PARAMS 6
+#define MAX_PARAMS 8
 
 typedef struct signature {
     const char *owner;
@@ -889,6 +895,27 @@ static void build_signatures(void)
     // and its wrap, where the call says them, are the texture's for this draw (gen_expr)
     describe(sampled(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE), 3),
              "vertices, indices, texture, filter, wrap", mesh_doc);
+    // A texture in one call, upright over a box: its filter and its wrap after the rest, as a mesh's are after its
+    // texture, and white where it says no color (gen_expr)
+    static const char sprite_doc[] =
+        "A texture drawn upright over a box, through the 2D camera: `center` and `size` as `Draw.Rect`'s, the "
+        "texture's top left corner at the box's top left (the top being towards the top of the screen, under a camera "
+        "too), each pixel times `color`, white where the call says none. A negative width or height mirrors it. "
+        "`part` is the part of the texture it shows, in uvs: (0, 0) its top left corner and (1, 1) its bottom right, as "
+        "a sheet's frame or an atlas's picture is. `rotation` turns it about its center, in radians from +x towards +y: "
+        "counterclockwise under a camera, clockwise on the screen. `filter` and `wrap`, after the rest, are how it's "
+        "read, as `Draw.Mesh`'s are: the texture's own where the call leaves them out.";
+    sampled(add_draw("Sprite", "tide_draw_sprite", "texture, center, size, filter, wrap", sprite_doc,
+                     3, &T_TEXTURE, &T_F2, &T_F2), 3);
+    sampled(add_draw("Sprite", "tide_draw_sprite", "texture, center, size, color, filter, wrap", sprite_doc,
+                     4, &T_TEXTURE, &T_F2, &T_F2, &T_COLOR), 4);
+    sampled(add_draw("Sprite", "tide_draw_sprite_rotated", "texture, center, size, rotation, color, filter, wrap",
+                     sprite_doc, 5, &T_TEXTURE, &T_F2, &T_F2, &T_F, &T_COLOR), 5);
+    sampled(add_draw("Sprite", "tide_draw_sprite_part", "texture, center, size, part, color, filter, wrap", sprite_doc,
+                     5, &T_TEXTURE, &T_F2, &T_F2, &T_RECT, &T_COLOR), 5);
+    sampled(add_draw("Sprite", "tide_draw_sprite_part_rotated",
+                     "texture, center, size, part, rotation, color, filter, wrap", sprite_doc,
+                     6, &T_TEXTURE, &T_F2, &T_F2, &T_RECT, &T_F, &T_COLOR), 6);
     static const char mesh3_doc[] =
         "A 3D mesh, placed in the world by `transform`, through the 3D camera: triangles, three of `indices` each, "
         "places in `vertices`, the nearest in front. Each pixel is its corners' colors blended across the "

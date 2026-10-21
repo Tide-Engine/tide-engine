@@ -8,6 +8,7 @@
 #include "tide/profile.h"
 #include "tide/profiler.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 #define MS UINT64_C(1000000) // Nanoseconds
 
@@ -283,12 +284,13 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
     tide_draw_set_tint(&list, TIDE_COLOR_RED);
     tide_draw_rect(&list, tide_f2(5, 5), tide_f2(2, 2), TIDE_COLOR_WHITE);
     tide_profiler_draw(&p, &list, tide_f2(960, 540), font);
+    tide_test_flatten(&list);
     TIDE_REQUIRE(list.count > 5);
     TIDE_CHECK(list.commands[0].kind == TIDE_DRAW_CLIP && list.commands[1].kind == TIDE_DRAW_RECT);
     TIDE_CHECK(list.commands[2].kind == TIDE_DRAW_SCREEN && list.commands[3].kind == TIDE_DRAW_NO_CLIP);
     TIDE_CHECK(list.commands[4].kind == TIDE_DRAW_RECT); // The panel, in the corner, in its own color
     TIDE_CHECK(list.commands[4].a.x - list.commands[4].b.x * 0.5f == 12.0f);
-    TIDE_CHECK(list.commands[4].color.b == 0.08f && !list.place.tinted);
+    TIDE_CHECK(list.commands[4].color.b > 0.078f && list.commands[4].color.b < 0.082f && !list.place.tinted); // 0.08, as a byte
     const tide_draw_command *frame = text_command("Frame");
     const tide_draw_command *tick = text_command("Tick");
     TIDE_REQUIRE(frame && tick);
@@ -313,6 +315,7 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
     // A narrow one: the tick's rows under the frame's, no wider than the screen
     tide_draw_reset(&list);
     tide_profiler_draw(&p, &list, tide_f2(300, 800), font);
+    tide_test_flatten(&list);
     frame = text_command("Frame");
     tick = text_command("Tick");
     TIDE_REQUIRE(frame && tick);
@@ -322,11 +325,14 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
     // No profiler, or nothing measured yet to show: nothing drawn
     tide_draw_reset(&list);
     tide_profiler_draw(NULL, &list, tide_f2(960, 540), font);
+    tide_test_flatten(&list);
     static tide_profiler empty;
     tide_profiler_draw(&empty, &list, tide_f2(960, 540), NULL);
+    tide_test_flatten(&list);
     TIDE_CHECK(list.count == 0);
     tide_profiler_reset(&empty);
     tide_profiler_draw(&empty, &list, tide_f2(960, 540), NULL); // Its width guessed
+    tide_test_flatten(&list);
     TIDE_CHECK(text_command("measuring"));
     tide_draw_free(&list);
     tide_profiler_free(&p);
@@ -355,8 +361,10 @@ TIDE_TEST(profiler_keeps_its_look_whatever_the_guis_theme)
         }
         tide_gui_button(&gui, 1, (tide_rect){500, 400, 100, 30}, "Play");
         tide_gui_end(&gui, to);
+        tide_test_flatten(to);
         first[pass] = to->count; // The profiler's rows go after the GUI's, as a host adds them
         tide_profiler_draw(&p, to, tide_f2(960, 540), font);
+        tide_test_flatten(to);
     }
     TIDE_REQUIRE(first[0] == first[1] && list.count == themed.count && list.count > first[0] + 4);
     TIDE_CHECK(themed.commands[1].kind == TIDE_DRAW_SHAPE && list.commands[1].kind == TIDE_DRAW_RECT); // The button took the theme

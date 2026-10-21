@@ -90,6 +90,36 @@ The argument after the texture says how it's read between pixels: `Filter.Biline
 
 A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
 
+### Sprites
+
+`Draw.Sprite(texture, center, size, color)` draws a texture upright over a box in one call, where a mesh would take four corners and six indices. `center` and `size` are as `Draw.Rect`'s, and the texture's top left is at the box's top left: the top is towards the top of the screen, under a camera (y up) as in [the screen's pixels](./views.md#on-the-screen) (y down). Each pixel is the texture's times `color`, and a call can leave the color out for white.
+
+```csharp
+asset Texture hero = "art/hero.png";
+asset Texture sheet = "art/run.png"; // Four frames side by side
+
+component Runner
+{
+    float2 position;
+    bool left;
+    int frame; // 0 to 3
+    float spin;
+}
+
+view Runners(Runner runner)
+{
+    float2 size = float2(runner.left ? -1 : 1, 1); // A negative width mirrors it
+    Draw.Sprite(sheet, runner.position, size, Rect(runner.frame * 0.25, 0, 0.25, 1), Color.white);
+    Draw.Sprite(hero, runner.position + float2(0, 2), float2(1, 1), runner.spin, Color.white);
+}
+```
+
+- `Draw.Sprite(texture, center, size, part, color)` draws the part of the texture a `Rect` of uvs covers: (0, 0) is its top left corner and (1, 1) its bottom right, so a sheet's frame or an atlas's picture is one call.
+- A `rotation` before the color, in radians from +x towards +y, turns it about its center: `Draw.Sprite(texture, center, size, rotation, color)`, or after the part.
+- A negative width or height mirrors it.
+- A filter and a wrap after everything else read it as they say, as a mesh's do; a call that leaves them out reads it as the texture says.
+- Sprites one after another with the same texture, filter and wrap are drawn together, whatever their colors, as quads of the same texture drawn as meshes are.
+
 ### A Texture is a value
 
 A `Texture` is a small value that names an image: a field or a local holds one, a function takes one and gives one back, and copying it copies no pixels. A grid goes wherever a `Texture` does, and is the texture it is there:

@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world before;
 static tide_world now;
@@ -16,6 +17,7 @@ static void frame(const tide_world *previous, const float alpha)
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
     tide_frame(&now, previous, alpha, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
 }
 
 static const tide_draw_command *nth(const uint32_t kind, int n)
@@ -39,6 +41,7 @@ TIDE_TEST(blend_verified_parameters_and_queries_use_the_confirmed_interval)
     const uint64_t hash = tide_world_hash(&confirmed);
     tide_draw_reset(&draw);
     tide_frame(&predicted, &confirmed, 0.75f, &confirmed, &confirmed_before, 0.25f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     TIDE_CHECK(local.ConfirmedSeen.bodyX == 5.0f && local.ConfirmedSeen.mixedX == 5.0f);
     TIDE_CHECK(local.ConfirmedSeen.queryX == 105.0f && local.ConfirmedSeen.mixedQueryX == 105.0f);
     TIDE_CHECK(local.ConfirmedSeen.heading == 355.0f && local.ConfirmedSeen.radius == 3.0f && local.ConfirmedSeen.lives == 2);
@@ -65,7 +68,7 @@ TIDE_TEST(blend_views_see_the_match_between_ticks)
     TIDE_REQUIRE(first && second);
     TIDE_CHECK(first->a.x == 5.0f);                   // 4 then 8: a quarter of the way
     TIDE_CHECK(first->b.x == 3.0f);                   // [Snap]: as it is, 1 + 2
-    TIDE_CHECK(first->color.r == 0.625f);             // A struct's floats blend too: 0.5 then 1
+    TIDE_CHECK(first->color.r > 0.62f && first->color.r < 0.63f); // A struct's floats blend too: 0.5 then 1 (a byte)
     TIDE_CHECK(second->a.x == 100.0f);                // It wasn't there last tick: as it is
     const tide_draw_command *camera = nth(TIDE_DRAW_CAMERA, 0);
     TIDE_REQUIRE(camera != NULL);

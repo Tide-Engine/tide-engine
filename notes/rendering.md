@@ -18,6 +18,14 @@ binaries).
   So a run that mixes recorded quads and meshes is one step, as before:
   quads then a triangle that isn't one turn back (`triangles_instead`), and
   quads after triangles go on as triangles.
+- **TIDE_DRAW_PLAIN** (`add_plain_run`): a run of the list's plain-shape
+  records goes into the shape step in pieces of 4,096, each one's arithmetic
+  what a plain command's was, to the bit, its color copied as recorded (the
+  same bytes `to_rgba` made of the float). A circle on a scaled destination
+  is still a smooth shape (`add_circle`), between the pieces. Unknown kinds
+  draw nothing, and a run's first and count (`tide_draw_plain_run`, the open
+  run's being the list's records from its first on) are kept within the
+  list's records.
 - **Solid smooth shapes** (`add_smooth_run`): a shape is tested for being
   solid (`solid_shape`'s test: a box or an ellipse, unturned, no outline, no
   fade, its bottom color's bytes its top's) on the numbers its extra would
@@ -28,7 +36,9 @@ binaries).
 - **`to_rgba`** converts a color's four channels in one vector (maxnum and
   minnum, a multiply, an add, a truncating conversion), where four calls of
   `color_channel` did each: the same byte for each of the 2^32 floats, checked
-  exhaustively with the engine's flags (`-O2 -ffp-contract=off`).
+  exhaustively with the engine's flags (`-O2 -ffp-contract=off`). It's
+  `tide_draw_color_bytes` in `tide/draw.h` now, which the list records plain
+  shapes' colors with too.
 - Measured and not built: converting straight into GPU-visible memory. Upload
   is write-combined memory at about 19 GB/s either way (65,536 rects' 1.5 MB
   took 78 µs), so fusing conversion with it saves only their overlap, about

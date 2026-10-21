@@ -1,5 +1,6 @@
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static int observed;
 void Observe(int tag) { observed += tag; }
@@ -12,6 +13,7 @@ TIDE_TEST(editor_views_game_selection)
     TIDE_CHECK(observed == 35); // Main and both authored entities receive Spawned.
     tide_local_init(&local);
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     TIDE_CHECK(observed == 38); // The ordinary view runs in the game.
     TIDE_REQUIRE(draw.count == 2);
     for (uint32_t i = 0; i < draw.count; i++) {

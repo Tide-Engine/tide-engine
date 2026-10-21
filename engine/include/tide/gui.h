@@ -143,7 +143,10 @@ typedef struct tide_gui_group {
     float stretch;            // In a vertical group: the width widgets stretch to, from last frame
     tide_float2 guess;        // An anchored area: its top left, from last frame's size
     int32_t anchor;           // An area: its tide_anchor, or -1 when it's at a rect
-    uint32_t panel;           // An area: its background's command
+    uint32_t panel;           // An area: its background's command, a smooth shape's, or UINT32_MAX
+    uint32_t panel_plain;     // ...or 1 + its plain shape in the list's (tide_draw_list.plains), or 0
+    uint32_t commands_from;   // ...and where the list's commands and plain shapes were as it began: what's
+    uint32_t plains_from;     // moved with it once it's placed
     tide_rect rect;           // An area at a rect: the rect
     uint32_t hot_before;      // An area: what was under the mouse before its content
     uint32_t rects_before;    // An area: how many places were remembered before its content

@@ -999,26 +999,37 @@ static tide_float2 place(const tide_gui *g, int32_t anchor, const tide_float2 si
 }
 
 // An area's background, sized when it closes. It isn't a widget: in a
-// Disabled block, only its widgets fade.
-static uint32_t panel(tide_gui *g, const tide_rect r)
+// Disabled block, only its widgets fade. Where the list has it: a smooth
+// shape's command (the result), or a plain shape (*plain, 1 + it). What's
+// moved with it once it's placed starts at *commands, the commands after it,
+// and *plains, the plain shapes from it on.
+static uint32_t panel(tide_gui *g, const tide_rect r, uint32_t *plain, uint32_t *commands, uint32_t *plains)
 {
-    const uint32_t before = g->list.count;
+    const uint32_t before = g->list.count, plains_before = g->list.plain_count;
     // With round corners it's a shape, which the list leaves out while it has
     // no size: an area that isn't sized yet stands in as a pixel.
     const bool round = g->theme.radius > 0.0f;
     const tide_rect sized = {r.x, r.y, round ? max_f(r.width, 1.0f) : r.width, round ? max_f(r.height, 1.0f) : r.height};
     paint(g, sized, g->theme.panel, g->theme.radius);
+    *commands = g->list.count; // A plain one's run, and what was settled before it, stay where they are
+    *plains = plains_before;
+    *plain = g->list.plain_count > plains_before ? g->list.plain_count : 0u; // A plain one: more of a run, or a run's first
+    if (*plain) return UINT32_MAX;
     return g->list.count > before ? g->list.count - 1u : UINT32_MAX; // The panel itself: a frame's first comes after its screen
 }
 
 int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)
 {
-    const uint32_t background = panel(g, rect);
+    uint32_t plain, commands, plains;
+    const uint32_t background = panel(g, rect, &plain, &commands, &plains);
     const int before = open_group(g, id, AREA, tide_f2(rect.x + AREA_PADDING, rect.y + AREA_PADDING));
     if (g->depth == before) return before;
     top(g)->room = max_f(rect.width - 2.0f * AREA_PADDING, 0.0f);
     top(g)->rect = rect;
     top(g)->panel = background;
+    top(g)->panel_plain = plain;
+    top(g)->commands_from = commands;
+    top(g)->plains_from = plains;
     top(g)->radius = g->theme.radius;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
@@ -1032,13 +1043,17 @@ int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
     const tide_gui_size *last = remembered(g, id);
     const tide_float2 size = last ? last->size : tide_f2(0.0f, 0.0f);
     const tide_float2 at = place(g, anchor, size);
-    const uint32_t background = panel(g, (tide_rect){at.x, at.y, size.x, size.y});
+    uint32_t plain, commands, plains;
+    const uint32_t background = panel(g, (tide_rect){at.x, at.y, size.x, size.y}, &plain, &commands, &plains);
     const int before = open_group(g, id, AREA, tide_f2(at.x + AREA_PADDING, at.y + AREA_PADDING));
     if (g->depth == before) return before;
     top(g)->room = max_f(g->width - 2.0f * (AREA_MARGIN + AREA_PADDING), 0.0f);
     top(g)->guess = at;
     top(g)->anchor = anchor;
     top(g)->panel = background;
+    top(g)->panel_plain = plain;
+    top(g)->commands_from = commands;
+    top(g)->plains_from = plains;
     top(g)->radius = g->theme.radius;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
@@ -1107,11 +1122,15 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         const tide_float2 at = place(g, grp->anchor, size);
         const float dx = at.x - grp->guess.x;
         const float dy = at.y - grp->guess.y;
-        if ((dx != 0.0f || dy != 0.0f) && grp->panel != UINT32_MAX) {
-            for (uint32_t i = grp->panel; i < g->list.count; i++) {
+        if ((dx != 0.0f || dy != 0.0f) && (grp->panel != UINT32_MAX || grp->panel_plain)) {
+            for (uint32_t i = grp->panel != UINT32_MAX ? grp->panel : grp->commands_from; i < g->list.count; i++) {
                 tide_draw_command *c = &g->list.commands[i];
-                c->a = tide_f2(c->a.x + dx, c->a.y + dy);
-                if (c->kind == TIDE_DRAW_LINE) c->b = tide_f2(c->b.x + dx, c->b.y + dy);
+                if (c->kind != TIDE_DRAW_PLAIN) c->a = tide_f2(c->a.x + dx, c->a.y + dy); // A run's are its shapes'
+            }
+            for (uint32_t i = grp->plains_from; i < g->list.plain_count; i++) {
+                tide_draw_plain *p = &g->list.plains[i];
+                p->a = tide_f2(p->a.x + dx, p->a.y + dy);
+                if (p->kind == TIDE_DRAW_LINE) p->b = tide_f2(p->b.x + dx, p->b.y + dy);
             }
         }
         // Its widgets are remembered where they're drawn, too.
@@ -1127,6 +1146,10 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         c->b = tide_f2(r.width, r.height);
         // Round corners were fitted to the size it had then: the list fits them again as it's added
         if (c->kind == TIDE_DRAW_SHAPE) g->list.shapes[c->shape].radius = grp->radius;
+    } else if (grp->panel_plain) {
+        tide_draw_plain *p = &g->list.plains[grp->panel_plain - 1u];
+        p->a = tide_f2(r.x + r.width * 0.5f, r.y + r.height * 0.5f);
+        p->b = tide_f2(r.width, r.height);
     }
     remember(g, grp->id, size, grp->natural, grp->least);
     remember_place(g, grp->id, r, grp->rects_before);
