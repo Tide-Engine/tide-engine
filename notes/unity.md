@@ -462,9 +462,12 @@ line is left only for errors that went in as ordinary logs (no location, or a
 Unity without those functions, which then logs as before). Re-logging on a
 cleared Console or refused Play removes ours first, so none is there twice.
 `Assets/Tests/Editor/ConsoleTests.cs` logs one and reads the entry back
-(`LogEntries.GetEntryInternal`): its file and line, and its removal. Whether
-Clear leaves them (as it does C# errors) and what the double click opens for a
-`.tide` (the external editor's choice) weren't checked in a live editor.
+(`LogEntries.GetEntryInternal`): its file and line, and its removal. In the
+owner's open editor (through the Unity CLI's Pipeline package), two restarts of
+tide's build each logged the error again with the Console's count unchanged,
+and Clear left exactly one (the stacking the owner saw was the package before
+this, whose ordinary logs nothing removed). What the double click opens for a
+`.tide` is the external editor's choice; not seen.
 
 **The Console is the user's** (owner, 2026-10-20): logging intrudes and needs a
 good reason. tide's errors and warnings go there; its progress ("building ...
