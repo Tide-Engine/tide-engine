@@ -700,9 +700,10 @@ Checked by a scratch driver (an edit untold rebuilt, a new file alone didn't,
 
 Owner: "we should add icons for these, the packages, the .tide files etc".
 `Editor/TideIcons.cs`: a `.tide` file imports (`TideSourceImporter`, a
-ScriptedImporter for `tide`) as a TextAsset of its text, so the inspector shows
-the source, with `Editor/Icons/TideFile.png` as its icon; a `.packages` file
-(`TidePackagesImporter`) the same, with `TidePackages.png` when it's named
+ScriptedImporter for `tide`, in a file of its own name) as a TextAsset of its
+text, so the inspector shows the source, with `Editor/Icons/TideFile.png` as
+its icon; a `.packages` file (`TidePackagesImporter`, in its own file too) the
+same, with `TidePackages.png` when it's named
 `tide.packages` and none otherwise; and a folder whose `tide.packages` says
 `package Name` before any other line gets `TidePackageBadge.png` drawn over the
 bottom right of its folder icon (`projectWindowItemOnGUI`, in list and grid;
@@ -713,6 +714,22 @@ transparency and leave them uncompressed. Test: the Sample's
 `Assets/Tests/Editor/IconTests.cs` (the importers' type, text and an icon
 other than plain text's, and which folder is a package's). Not seen in a
 window: how the badge sits on the folder icon at each zoom.
+
+Correction (2026-10-21): the importers were first in `TideIcons.cs`, but Unity
+finds a ScriptedImporter's script by its file's name, so the owner's inspector
+showed "Failed To Load Script Object" over the text and
+`AssetImporter.GetAtPath` gave nothing. A file imported before the importers
+existed also keeps a `.meta` of `DefaultImporter`, which Unity reads into the
+ScriptedImporter and warns of ("contains a <unknown> object at version 1, below
+the supported minimum (2)") at each import of the file, so at each save:
+`TideMetas` (an AssetPostprocessor beside `TideSourceImporter`) writes such a
+`.meta` once, as the importer's, at the next editor update (`SetDirty`, then
+`SaveAndReimport`), keeping its GUID. Both importers are version 2, so a
+project updating the package imports its files again and has its `.meta`s
+written. Each importer has an editor with no settings and no Apply/Revert,
+so the inspector is the text, as a C# script's is. Tests: `IconTests` checks
+each importer's `m_Script` is its class and that an old `.meta` is written
+again with its GUID.
 
 ### Tooling as built (2026-10-20)
 

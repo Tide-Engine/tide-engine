@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
-using UnityEditor.AssetImporters;
 using UnityEngine;
 
 namespace Tide.Editor
@@ -18,34 +17,6 @@ namespace Tide.Editor
         static Texture2D badge;
 
         public static Texture2D Badge => badge ? badge : badge = AssetDatabase.LoadAssetAtPath<Texture2D>(BadgePath);
-    }
-
-    // A .tide file: its text, which the inspector shows, with Tide's icon. tide reads the file itself.
-    [ScriptedImporter(1, "tide")]
-    sealed class TideSourceImporter : ScriptedImporter
-    {
-        public override void OnImportAsset(AssetImportContext ctx)
-        {
-            ctx.DependsOnArtifact(TideIcons.FilePath);
-            var text = new TextAsset(File.ReadAllText(ctx.assetPath));
-            ctx.AddObjectToAsset("text", text, AssetDatabase.LoadAssetAtPath<Texture2D>(TideIcons.FilePath));
-            ctx.SetMainObject(text);
-        }
-    }
-
-    // A tide.packages: the game's packages, or a package's own name and what it needs. Another file ending in
-    // .packages is text with no icon.
-    [ScriptedImporter(1, "packages")]
-    sealed class TidePackagesImporter : ScriptedImporter
-    {
-        public override void OnImportAsset(AssetImportContext ctx)
-        {
-            var ours = Path.GetFileName(ctx.assetPath) == "tide.packages";
-            if (ours) ctx.DependsOnArtifact(TideIcons.PackagesPath);
-            var text = new TextAsset(File.ReadAllText(ctx.assetPath));
-            ctx.AddObjectToAsset("text", text, ours ? AssetDatabase.LoadAssetAtPath<Texture2D>(TideIcons.PackagesPath) : null);
-            ctx.SetMainObject(text);
-        }
     }
 
     // A package's folder gets the waves' badge over its folder icon, in both of the Project window's views.
