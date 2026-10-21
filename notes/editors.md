@@ -1,5 +1,18 @@
 # The language server and the editors
 
+## Stable and nightly Tide Marketplace channels (2026-10-21)
+
+The owner has submitted the initial Tide Stable upload and approved a nightly
+channel under the same io.github.blenminer.tide ID. The engine's manually
+requested Build workflow now publishes dev to nightly and release to Stable
+after the matching engine release succeeds. It keeps the existing token and
+Gradle channel property; the public source repository has no second workflow.
+The README records submission rather than claiming Marketplace approval, and
+documents opting into https://plugins.jetbrains.com/plugins/nightly/list without
+changing the separately installed Tide/tidels channel. No plugin implementation,
+identity or Gradle code changed. Workflow validation and engine-suite results
+are recorded in notes/releases-and-ci.md, Tide Marketplace channels.
+
 ## Standalone JetBrains publication (2026-10-21)
 
 Published https://github.com/Tide-Engine/tide-jetbrains, public main at
