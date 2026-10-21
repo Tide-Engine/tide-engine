@@ -1,5 +1,60 @@
 # `tide`, packages and the package
 
+## Bundled JetBrains installation (2026-10-21)
+
+`tide editors` now installs the release's own JetBrains plugin into existing
+standard IDE profiles, and `editors --update` (called by `tide upgrade`) only
+updates profiles already containing Tide. `compiler/cli/jetbrains.c` finds
+2024.2+ Rider, CLion, IntelliJ and other supported product/version directories:
+Windows APPDATA/JetBrains, macOS Library/Application Support/JetBrains, Linux
+XDG_CONFIG_HOME/JetBrains (default ~/.config) with plugins under
+XDG_DATA_HOME/JetBrains (default ~/.local/share). New IDEs need one launch to
+create their profile; custom idea.config.path/idea.plugins.path are manual.
+
+The offline archive carries Tide and pinned LSP4IJ 0.21.0, with licenses and
+source locations. Missing LSP4IJ is installed; an existing installation stays
+untouched because other plugins may share it. Settings, disabled_plugins.txt
+and unrelated plugins stay intact. Extraction is staged outside plugins, with
+whole-directory replacement and rollback; Windows file locks refuse the update
+with close-IDE/rerun guidance. Successful explicit installation says to restart;
+successful upgrade remains quiet. No IDE is launched and no network is used.
+
+Gradle buildCliInstaller builds editors/tide-jetbrains-installer.zip separately
+from the Marketplace ZIP. cmake/package.cmake takes -DJETBRAINS=<archive>, or
+build/jetbrains/tide-jetbrains-installer.zip from CI, rejects a different VERSION,
+and also copies the dependency notices to licenses/jetbrains. The release
+workflow supplies the same artifact to all three platform packages and runs
+the real archive's installation smoke test on each OS. README, Install, CLI,
+Editor setup and the plugin README document the behavior.
+
+The corrupt-archive fixture exposed an existing unsigned underflow searching
+for a ZIP end record in files shorter than 22 bytes. unzip.c now rejects those
+files before searching; unzip_test.c covers every length 0 through 21.
+
+Validation: Windows Clang 23.1.2/Node 24.21.0 full native debug 2,452/2,452
+(142.30 s), full web debug 2,394/2,394 (299.62 s), including 36 native GPU
+checks, WebGL/WebGPU and ANGLE D3D11. The final CLI/help/editor/archive tests
+pass 5/5, including the additional package fixture after the full run. The
+actual Gradle archive installs byte-for-byte into an isolated Rider profile.
+Tests cover initial install, repeat/upgrade, stale JAR removal, missing LSP4IJ,
+preserving existing LSP4IJ/settings/disabled state/other plugins, old/unrelated
+profiles, EAP, absent/corrupt/incomplete payloads, locked Windows JARs and
+packaging version mismatch/notices. JDK 21/Gradle 9.8.0 buildCliInstaller and
+all eight enabled adapter/platform tests pass. Docs production build, workflow
+YAML/job-graph checks and diff checks pass. Actual Rider UI loading, Linux/macOS
+installation, complete embedded-LLVM platform archives, Android and sanitizers
+were not run; native GPU tests ran without a Vulkan validation layer. No CI was
+dispatched and the public standalone plugin source was not exported again.
+
+A final full native run included the additional package fixture (2,453 tests)
+and exposed upgrade_test.cmake inheriting the real editor profiles: its dummy
+package intentionally has no plugins, so the new missing-payload diagnostic
+correctly broke its one-line-output assertion. The fixture now isolates HOME,
+USERPROFILE, APPDATA, LOCALAPPDATA and both XDG roots. All other 2,452 tests
+passed in that run; the corrected upgrade and both JetBrains fixtures pass
+3/3. The macOS/Linux discovery branches also pass strict warning-free syntax
+checks with the build's CRT definitions; actual OS execution remains untested.
+
 ## Usage data (2026-10-21)
 
 The owner approved anonymous CLI usage data: anonymous events, a random install
@@ -638,7 +693,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - **Engine private headers ship with its sources** (fixed 2026-10-10): `engine/CMakeLists.txt` installs `.c` and `.h` files from `engine/src/` together, preserving relative subfolders. Installing only `.c` files left the new `skinned_cache.h` behind, so an installed game could not compile even though repository builds passed. Before compiling, `cache_test.mjs` checks every installed engine source/private header's quoted includes against its own folder and the installed public includes. Removing `skinned_cache.h` from a private stage makes this gate fail with the missing include named. An isolated CMake configure/install populated the header, and that private stage passed installed native/web game compilation and stripping checks in debug and release; Node syntax and diff checks passed.
   - Private headers under installed `src/engine/` also enter the engine's aggregate object stamp. Changing one rebuilds engine objects without invalidating generated game, launcher or user C objects; unchanged private headers reuse those engine objects. `cache_test.mjs` changes only `skinned_cache.h` to require a compiler error, restores it, checks that only engine objects rebuild and checks the next unchanged build reuses every object, on native and web. This covers header-only updates with unchanged compiler/public-header/source stamps. The regression failed on the previous packaged CLI; the rebuilt embedded-LLVM CLI passed the full native/web cache, stripping, parallel compilation and debug/release web-watch cases from a private stage, plus Node syntax and diff checks.
 - `editors/tide.vsix` is the VS Code extension (`tools/tide-vscode`), for VS Code, Cursor, VSCodium and Windsurf. Only the `package` preset builds it (`TIDE_EDITOR_EXTENSIONS`), since it needs Node's npm. The installers run `tide editors`, which installs it into every one of those editors it finds, and `tide upgrade` updates it in the editors that have it.
-- The JetBrains plugin (`tools/tide-jetbrains`, Gradle and Java; on Marketplace as `io.github.blenminer.tide`) isn't in the package: CI builds it and checks it with the plugin verifier on every run, attaches it to each release, and publishes stable releases to JetBrains Marketplace with the `JETBRAINS_MARKETPLACE_TOKEN` secret. Marketplace installs LSP4IJ, which it needs, along with it.
+- The JetBrains plugin (`tools/tide-jetbrains`, Gradle and Java; Marketplace ID `io.github.blenminer.tide`) ships in editors/tide-jetbrains-installer.zip with pinned LSP4IJ for offline installation by `tide editors`. Upgrades replace Tide where already installed. CI verifies the separate Marketplace ZIP and publishes stable/nightly channels; Marketplace installations and their updates remain available independently. See Bundled JetBrains installation above.
 - `tide build --android` (`compiler/cli/build.c`, `android.c`) builds the game for both of Android's CPUs, as `libgame.so` with `lib/android/<abi>/`'s platform layer, and makes the app with `apk.c`, signed with `~/.android/tide.pem`, or the key `TIDE_ANDROID_KEY` names (made once: a phone only updates an app with the key it was installed with, and it's the user's upload key on Play); `--release` makes the bundle too. The ID is the game's `appId` setting, or `dev.tide.<name>`, which `--release` refuses, and the version people see its `version` setting (1.0 without it). The version code is the minutes from 2020 to now (`SOURCE_DATE_EPOCH`, where it's set), so every build updates the last with no number to keep. `tide run --android` installs it with adb, starts it with the session's flags (the intent's `tide.args`, which the backend gives `main`), and shows what it prints (`adb logcat -s tide`) until it ends. Saving a game's file builds the app again, installs it and starts it over (the match with it: no code is swapped into a running app yet). The NDK and adb are the ones Android's tools installed (ANDROID_NDK_HOME, ANDROID_NDK_ROOT, ANDROID_HOME, ANDROID_SDK_ROOT, or where Android Studio puts them), or else tide fetches them once from Google, pinned and checked against Google's SHA-1s, after the user accepts Google's license (or `TIDE_ACCEPT_ANDROID_LICENSE` is set; editors' runs pass on what's typed, and set `TIDE_INTERACTIVE` so tide asks there though its input isn't a terminal), into `<root>/android/`: only the NDK's C headers, its libraries for Android 10 and its compiler runtime, unpacked by tide's own unzip (`unzip.c`: Linux's tar can't read zips). tide's built-in clang has X86, AArch64 and WebAssembly, and lld's ELF driver, on every host.
 
 ## Authored prefab inputs (2026-10-12)

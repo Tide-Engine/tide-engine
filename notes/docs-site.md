@@ -1,5 +1,16 @@
 # The docs site
 
+## Bundled JetBrains editor setup (2026-10-21)
+
+Install, Editor setup, CLI and README now describe automatic installation into
+existing standard JetBrains profiles, the plugin bundled with the CLI version,
+missing LSP4IJ installation, restart/locked-file guidance and first launch for
+new IDEs. Custom configuration/plugin paths remain manual and Marketplace
+updates retain their independent channel. No site navigation, spec or product
+UI changed. Production npm build passes on Node 24.21.0 with existing allowed
+unstaged-example 404s. CLI/package and full native/web validation are recorded
+in notes/cli-and-packages.md, Bundled JetBrains installation.
+
 ## CLI usage data, admin tab and privacy page (2026-10-21)
 
 The site receives the tide CLI's anonymous usage data (CLI side:

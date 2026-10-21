@@ -11,7 +11,7 @@ description: "Set up Tide in VS Code, JetBrains, Emacs, Vim or Neovim with highl
 | Editor | Setup with Tide | Install through your editor's package manager |
 |---|---|---|
 | [VS Code, Cursor, VSCodium and Windsurf](#vs-code-cursor-vscodium-and-windsurf) | `tide editors` | Installed by Tide |
-| [JetBrains IDEs](#jetbrains-ides) | Install Tide from **Settings > Plugins > Marketplace** | JetBrains Marketplace |
+| [JetBrains IDEs](#jetbrains-ides) | Installed with Tide; run `tide editors` for a new IDE | Bundled plugin; Marketplace also available |
 | [Emacs 29.1+](#emacs) | `tide ide emacs` | [tide-emacs](https://github.com/Tide-Engine/tide-emacs) with built-in `package-vc` |
 | [Vim 8+](#vim-and-neovim) | `tide ide vim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with vim-plug |
 | [Neovim 0.11+](#vim-and-neovim) | `tide ide neovim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with lazy.nvim |
@@ -229,7 +229,28 @@ On the web, each reload says what it did in the page's console: **Tide: Game Dev
 
 ## JetBrains IDEs
 
-CLion, Rider, IntelliJ and the others, 2024.2 or later: install the Tide plugin from **Settings > Plugins > Marketplace**. It brings the LSP4IJ plugin it needs.
+CLion, Rider, IntelliJ and the others, 2024.2 or later: Tide's installer adds
+the bundled plugin to existing IDE profiles. It includes LSP4IJ when that
+dependency isn't installed, without a Marketplace download. `tide upgrade`
+updates Tide in profiles that already have it, using the plugin from the same
+Tide release.
+
+For an IDE installed later, open it once to create its profile, then run:
+
+```sh
+tide editors
+```
+
+Restart the IDE after installation or an upgrade. If it holds the plugin's
+files open, close it and run `tide editors` again. Other plugins, settings and
+an existing LSP4IJ installation are preserved. A disabled Tide plugin stays
+disabled.
+
+Discovery uses the standard JetBrains profile locations on Windows, macOS
+and Linux (including Linux's `XDG_CONFIG_HOME` and `XDG_DATA_HOME`). Custom
+`idea.config.path` or `idea.plugins.path` locations need manual installation.
+You can also install Tide through **Settings > Plugins > Marketplace**;
+Marketplace updates follow its chosen channel independently of your CLI.
 
 An existing `.tprefab` offers **Open Tide Prefab Editor** in its project/editor
 context menu. It saves that prefab and launches the installed `tide` in the

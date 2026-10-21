@@ -21,7 +21,7 @@ tide <command> [folder] [options]
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
-| `tide editors` | Adds Tide to VS Code, Cursor, VSCodium and Windsurf |
+| `tide editors` | Installs bundled plugins into detected VS Code family editors and existing JetBrains IDE profiles |
 | `tide ide <editor>` | Prints setup for Emacs, Vim or Neovim using the installed Tide files |
 | `tide open <file.tprefab>` | Opens the native [scene editor](editors.md#native-scene-editor) |
 | `tide upgrade` | Updates tide to the newest version |
