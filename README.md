@@ -156,3 +156,19 @@ more work across all of them.
 
 See [AGENTS.md](AGENTS.md): how to build the engine and its tests with CMake,
 and how the project is organized.
+
+## License
+
+Tide is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Games made with Tide are yours; the engine code compiled into
+them is under these terms. Third-party code that comes with Tide keeps its own
+license, beside it in this repository and under `licenses/` in the installed
+package.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in Tide by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
