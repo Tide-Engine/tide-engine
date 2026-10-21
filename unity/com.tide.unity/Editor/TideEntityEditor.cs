@@ -44,7 +44,7 @@ namespace Tide.Editor
             foreach (var index in s.components)
             {
                 var t = s.Type(index);
-                if (t != null && !t.name.StartsWith("UnityEngine.") && t.name != "Transform") yield return t;
+                if (t != null && !t.scene && !t.name.StartsWith("UnityEngine.") && t.name != "Transform") yield return t;
             }
         }
     }

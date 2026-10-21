@@ -110,6 +110,7 @@ typedef struct tide_embed_game {
     uint32_t component_count; // The match's components, by the layout's type: what the packet's sections say
     const int32_t *components;
     const int32_t *component_locals; // ...each one's local fields, or -1
+    const bool *component_scenes;    // ...whether it's a scene's: the tag of the entities a loaded scene holds
     uint32_t singleton_count;
     const int32_t *singletons;
     const int32_t *singleton_locals;
@@ -144,8 +145,9 @@ typedef struct tide_embed_game {
 
 // The schema another program binds a game by, as JSON: the layout's types with their fields' offsets, what each
 // is (a component, a singleton, a component's or singleton's local fields, a command after the layout's, or a
-// struct), a component's default value (its bytes as hex), its enums, commands, prefabs and scenes. Into `out`, as much as `capacity` holds with a NUL; returns its
-// whole length, so a call with no room says how much to make.
+// struct), whether a component is a scene's, a component's default value (its bytes as hex), its enums, commands,
+// prefabs and scenes. Into `out`, as much as `capacity` holds with a NUL; returns its whole length, so a call with no
+// room says how much to make.
 #define TIDE_SCHEMA_ABI 1u
 uint32_t tide_schema_json(const tide_layout *layout, const tide_embed_game *embed, uint64_t hash, const char *game,
                           uint32_t tick_rate, char *out, uint32_t capacity);

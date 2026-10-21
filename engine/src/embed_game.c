@@ -240,11 +240,12 @@ static const char *field_kind(const tide_layout_field *f, const tide_embed_field
 }
 
 static void put_type(json *j, const tide_embed_game *embed, const tide_layout_type *t, const int32_t index, const char *kind,
-                     const int32_t local)
+                     const int32_t local, const bool scene)
 {
     put(j, "{\"name\":", 8);
     put_string(j, t->name);
     putf(j, ",\"kind\":\"%s\",\"size\":%u,\"local\":%d", kind, (unsigned)t->size, (int)local);
+    if (scene) put(j, ",\"scene\":true", 13);
     if (embed && embed->defaults && strcmp(kind, "component") == 0 && t->size > 0) {
         uint8_t *value = tide_realloc(NULL, 0, t->size);
         if (embed->defaults(index, value, t->size)) {
@@ -299,9 +300,11 @@ uint32_t tide_schema_json(const tide_layout *layout, const tide_embed_game *embe
         uint32_t at = 0;
         const char *kind = "struct";
         int32_t local = -1;
+        bool scene = false;
         if (embed && listed(embed->components, embed->component_count, (int32_t)i, &at)) {
             kind = "component";
             local = embed->component_locals ? embed->component_locals[at] : -1;
+            scene = embed->component_scenes && embed->component_scenes[at];
         } else if (embed && listed(embed->singletons, embed->singleton_count, (int32_t)i, &at)) {
             kind = "singleton";
             local = embed->singleton_locals ? embed->singleton_locals[at] : -1;
@@ -310,11 +313,11 @@ uint32_t tide_schema_json(const tide_layout *layout, const tide_embed_game *embe
             kind = "local";
         }
         if (i) put(&j, ",", 1);
-        put_type(&j, embed, &layout->types[i], (int32_t)i, kind, local);
+        put_type(&j, embed, &layout->types[i], (int32_t)i, kind, local, scene);
     }
     for (uint32_t i = 0; embed && i < embed->extra_type_count; i++) {
         put(&j, ",", 1);
-        put_type(&j, embed, &embed->extra_types[i], (int32_t)(layout->type_count + i), "command", -1);
+        put_type(&j, embed, &embed->extra_types[i], (int32_t)(layout->type_count + i), "command", -1, false);
     }
     put(&j, "],\"enums\":[", 11);
     for (uint32_t i = 0; i < layout->enum_count; i++) {

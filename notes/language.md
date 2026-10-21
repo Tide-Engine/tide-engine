@@ -182,7 +182,8 @@ heap-holding elements zeroed); command types' layouts appended after the
 layout's types and a dispatcher onto `tide_local_send_<C>` with the target,
 refusing a wrong size and commands holding text or lists; START by scene name
 over `start_scenes` with defaults (text zeroed); tables of components,
-singletons, local parts, commands, scenes, prefabs and non-plain fields (text,
+singletons, local parts, whether each component is a scene's (`is_scene`),
+commands, scenes, prefabs and non-plain fields (text,
 list with element size and type, map, grid, entity); `schema`, through the
 engine's `tide_schema_json`; and `defaults` (`tide_embed_defaults`), each kept
 match component's `gen_value` with no inits, text and lists zeroed under a

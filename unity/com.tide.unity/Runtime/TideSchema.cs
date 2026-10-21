@@ -60,6 +60,7 @@ namespace Tide
         public string kind;  // "component", "singleton", "struct", "input", "command", "event" or "local"
         public uint size;
         public int local = -1; // A match component's or singleton's local fields: their type's index, or -1
+        public bool scene;     // A component that's a scene's: the tag of the entities a loaded scene holds
         public string defaults; // A component's value with its declared defaults, its bytes as hex (text and lists empty)
         public TideSchemaField[] fields = Array.Empty<TideSchemaField>();
 

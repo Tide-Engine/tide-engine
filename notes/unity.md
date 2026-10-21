@@ -262,7 +262,11 @@ as a git URL package with no hard-coded paths. Built:
   through the engine's `tide_schema_json`. Each match component's type there
   has `defaults`, its value with its declared defaults as hex bytes (text and
   lists empty), from the generated `tide_embed_defaults` (the
-  `tide_embed_game.defaults` hook, 2026-10-20). Details: `notes/language.md`.
+  `tide_embed_game.defaults` hook, 2026-10-20). A scene's tag (a `scene`
+  declaration, the game's own or a Unity scene's `UnityEngine.Scenes.<Name>`) is
+  a component there with `"scene":true` (`tide_embed_game.component_scenes`,
+  2026-10-21), distinct from `scenes`, which lists only the scenes C# can start.
+  Details: `notes/language.md`.
 - **`tide unity [folder] -o <path> [--once]`** (`compiler/cli/build.c`): the
   embed host library (`tide_embed`, the installed platform library and engine,
   exporting the ten `tide_embed_*` functions), then `game-<n>`/`pack-<n>`
@@ -315,8 +319,9 @@ fixed: `4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e`, which tide finds it by) holds
 entity field's value `@n` names `references[n]`'s entity, `this` its own). The
 entity handle struct the generator maps entity fields to was renamed
 `TideEntityId` for it. The inspector (`Editor/TideEntityEditor.cs`) lists the
-schema's components (Add Tide Component; not `Transform`, which is Unity's, nor
-`UnityEngine.Source`), draws each field by its schema type (numbers, vectors, `Color`,
+schema's components (Add Tide Component; not `Transform`, which is Unity's,
+`UnityEngine.*`, nor scenes' tags: membership is the Unity scene the object is in,
+and `Main` was offered until 2026-10-21), draws each field by its schema type (numbers, vectors, `Color`,
 `quaternion` as Euler angles, `bool`, `string`, enums, entities as object
 fields; anything else as its literal), shows an unset field with its declared
 default from the schema's `defaults` (a text field's default shows empty), editable

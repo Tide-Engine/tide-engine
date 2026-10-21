@@ -319,6 +319,16 @@ TIDE_TEST(embed_schema)
     TIDE_CHECK(strstr(schema, "{\"name\":\"Tally\",\"kind\":\"singleton\"") != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"Bump\",\"kind\":\"command\"") != NULL);
     TIDE_CHECK(strstr(schema, "\"scenes\":[\"Main\",\"Arena\"]") != NULL || strstr(schema, "\"Arena\"") != NULL);
+    // A scene's tag says it's a scene, an ordinary component doesn't (before its fields)
+    const char *main_tag = strstr(schema, "{\"name\":\"Main\",\"kind\":\"component\"");
+    TIDE_CHECK(main_tag != NULL);
+    const char *main_fields = main_tag ? strstr(main_tag, "\"fields\"") : NULL;
+    const char *main_scene = main_tag ? strstr(main_tag, "\"scene\":true") : NULL;
+    TIDE_CHECK(main_scene != NULL && main_scene < main_fields);
+    const char *counter_tag = strstr(schema, counter);
+    const char *counter_fields = counter_tag ? strstr(counter_tag, "\"fields\"") : NULL;
+    const char *counter_scene = counter_tag ? strstr(counter_tag, "\"scene\":true") : NULL;
+    TIDE_CHECK(counter_fields != NULL && (counter_scene == NULL || counter_scene > counter_fields));
     tide_embed_destroy(e);
 }
 

@@ -78,7 +78,9 @@ no existing function, struct or the generated header changed. The platform's
 `tide/embed.h` host is agent-maintained with the rest of `platform/`.
 `tide_embed_game` later gained a last member, `defaults`, a generated function
 `tide_schema_json` calls for each component's default bytes (Unity's inspector
-shows them); still no generated call into the engine beyond those above.
+shows them), and then `component_scenes` after `component_locals`, a generated
+table of which components are scenes' tags, which the schema marks (2026-10-21);
+still no generated call into the engine beyond those above.
 
 ## Double Position attribute (2026-10-20)
 

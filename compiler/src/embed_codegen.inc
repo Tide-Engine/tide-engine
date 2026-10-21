@@ -320,6 +320,10 @@ static void gen_embed(gen *g)
             const decl *d = prog->components.items[c];
             if (embed_component_kept(g, c)) sb_printf(o, "%d, ", d->local_part ? layout_index(&types, d->local_part) : -1);
         }
+        sb_put(o, "};\nstatic const bool tide_embed_component_scenes[] = {");
+        for (int c = 0; c < prog->components.count; c++) {
+            if (embed_component_kept(g, c)) sb_put(o, prog->components.items[c]->is_scene ? "true, " : "false, ");
+        }
         sb_put(o, "};\n");
     }
     int singletons = 0;
@@ -399,9 +403,10 @@ static void gen_embed(gen *g)
               "    return tide_schema_json(&tide_game_layout, &tide_game_embed, tide_game_api.hash,\n"
               "                            tide_game_api.title ? tide_game_api.title : \"\", tide_game_api.tick_rate, out, capacity);\n}\n");
     sb_printf(o, "\nconst tide_embed_game tide_game_embed = {\n"
-                 "    %d, %s, %s,\n    %d, %s, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n"
+                 "    %d, %s, %s, %s,\n    %d, %s, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n"
                  "    tide_embed_view, tide_embed_command, tide_embed_start, tide_embed_schema, tide_embed_defaults,\n};\n",
               components, components ? "tide_embed_components" : "NULL", components ? "tide_embed_component_locals" : "NULL",
+              components ? "tide_embed_component_scenes" : "NULL",
               singletons, singletons ? "tide_embed_singletons" : "NULL", singletons ? "tide_embed_singleton_locals" : "NULL",
               prog->command_types.count, prog->command_types.count ? "tide_embed_commands" : "NULL",
               prog->start_scenes.count, prog->start_scenes.count ? "tide_embed_scenes" : "NULL",
