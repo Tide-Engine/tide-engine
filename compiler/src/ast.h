@@ -90,6 +90,7 @@ static inline bool mask_intersects(const comp_mask a, const comp_mask b)
 typedef struct decl decl;
 typedef struct expr expr;
 typedef struct stmt stmt;
+typedef struct property property;
 
 // Skinned values use ordinary structs and the ordinary list ownership rules.
 // Catalog members are compile-time views over the model's immutable bytes.
@@ -300,6 +301,8 @@ typedef struct device_leaf {
 #define DEVICE_WORDS 4 // Bits for up to 256 device leaves
 
 typedef struct param {
+    bool owner_context; // Entity identity borrowed from an attached component argument.
+    bool owner_world;   // Its owning world is needed too; no stored component metadata.
     param_mode mode;
     str type_name;
     const type_ref *type_ref; // The type as written; NULL for `ownership` and the parameters the checker makes
@@ -597,6 +600,7 @@ typedef struct decl {
 
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
+    VEC(property *) properties; // Computed members; never part of stored state.
     int index; // Component bit / singleton index / event index / system order / list, map or grid number. Constants: 1 while checking, 2 once checked.
     int match_singleton_index; // Match-only ordinal: local singletons/attached fields do not affect seeding or simulation identity.
     int dims;  // Grids: 2 or 3
@@ -632,9 +636,13 @@ typedef struct decl {
     struct decl *placement_method; // Independently parsed body for a component method's local specialization
     bool body_checked; // Prevents repeated checks of lazily instantiated placement methods
     bool is_mut_method;       // `mut void Damage(...)`: it may change the fields
+    property *accessor;       // A property's ordinary, inlineable getter or setter.
     bool is_operator;         // `Money operator +(Money a, Money b)`: in a struct, with no value of its own
     bool is_interpolate;      // `Angle Interpolate(Angle from, Angle to, float t)`: how views blend its type, no value of its own
     bool uses_this;           // A component's method that reads `this`, itself or through its other methods: it's given the entity
+    struct param *owner_world; // Contextual `world` inside an attached component method.
+    bool uses_owner_world; // Reads the receiver's world, directly or through implicit method calls.
+    bool borrows_owner_world; // A caller needs world access through component bindings.
     loc this_at;              // ...where it first does
     struct decl *interpolate; // Structs and components: their Interpolate, if they have one
     bool snapped;             // Singletons: something calls .Snap() on it, so it counts its snaps
@@ -818,6 +826,16 @@ typedef struct decl {
     VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its mesh draw calls read, which it doesn't take itself
 } decl;
 
+struct property {
+    str name;
+    loc at;
+    loc end;
+    const type_ref *type_ref;
+    decl *owner;
+    decl *get;
+    decl *set;
+};
+
 // ---------------------------------------------------------------------------
 // Expressions
 
@@ -985,6 +1003,7 @@ struct expr {
     str prefab_scope;          // Its source prefab instance's root path.
     int prefab_entity;         // Authored entity reference, when prefab_reference is set.
     bool prefab_reference;
+    bool shared_place; // A property compound operation reuses this receiver path.
     prefab_instance *prefab;
     loc end; // E_SWITCH: just past its closing brace, for editor spans
     type type;
@@ -1015,6 +1034,7 @@ struct expr {
     expr *object;
     str member;
     field *field;          // Field of a component, singleton, input or record; BIND_FIELD's field.
+    property *property;    // Source member, including after lowering its read to a getter call.
     input_edge edge;       // .down / .up on an input field.
     int swizzle_len;       // Vector swizzle: number of components (0 if not a swizzle).
     int swizzle[4];        // Component indices: 0..3 for x, y, z, w.
@@ -1238,6 +1258,7 @@ struct stmt {
 
     // S_ASSIGN
     expr *target;
+    expr *property_set; // Checked setter call; target is the getter for compound assignments.
     tok_kind op; // T_ASSIGN, a compound one like T_PLUS_ASSIGN, or T_PLUS_PLUS and T_MINUS_MINUS (value 1)
     struct decl *operator_decl; // A compound assignment's struct operator: `money += tip` uses `+`
 };
@@ -1460,6 +1481,7 @@ typedef struct program {
     VEC(decl *) optional_fields; // What each T? a field has is kept as: a struct of the value and whether there is one (decl.optional_of)
     decl *owner;         // The built-in Owner component.
     decl *transform;     // Shared Transform component; placement determines its world
+    bool property_slots; // Property writes through checked array element paths.
     decl *hierarchy[2];  // Private per-world hierarchy state, present only when hierarchy operations are used
     decl *hierarchy_node;
     decl *visibility, *visibility_group, *audience;

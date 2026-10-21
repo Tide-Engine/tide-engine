@@ -7,6 +7,11 @@
 extern uint32_t visibility_present_rows;
 extern uint32_t visibility_absent_rows;
 
+void CheckPropertyPosition(tide_float3 expected, tide_float3 actual)
+{
+    TIDE_CHECK(!memcmp(&expected, &actual, sizeof expected));
+}
+
 static uint8_t *project(const tide_world *w, int player, uint32_t *size)
 {
     return tide_game_api.client_state(w, tide_player_from_index(player), size);

@@ -1,0 +1,23 @@
+scene Main { }
+struct Corner { float2 position; float2 uv; }
+struct Gauge
+{
+    float stored;
+    float doubled
+    {
+        get { return stored * 2; }
+        set { stored = value * 0.5; }
+    }
+    float next { get { return doubled + 1; } }
+}
+local singleton Art { List<Corner> corners; }
+frag Property(Corner vertex, out Color color)
+{
+    mut var gauge = Gauge {};
+    gauge.doubled = vertex.uv.x;
+    gauge.doubled += 2;
+    var before = gauge.doubled++;
+    var after = ++gauge.doubled;
+    color = Color(gauge.doubled, gauge.next, before, after);
+}
+view Show(Art art) { Draw.Mesh(art.corners, [0, 1, 2], Property); }

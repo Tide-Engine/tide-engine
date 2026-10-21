@@ -1,0 +1,3 @@
+// expect: a property's type can't be void
+struct Gauge { void amount { get { return; } } }
+scene Main;

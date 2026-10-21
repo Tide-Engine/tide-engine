@@ -1601,13 +1601,84 @@ static bool at_local_field(const parser *p)
     return after == T_IDENT || after == T_DOT || after == T_LT || after == T_QUESTION || after == T_LBRACKET;
 }
 
-// [local] Type name; [= default];
+// Accessors are ordinary methods, with independent syntax trees for each
+// component placement just like methods written with parentheses.
+static void parse_property(parser *p, decl *owner, const type_ref *type, const token *name)
+{
+    property *prop = NEW(property);
+    prop->name = name->text;
+    prop->at = name->at;
+    prop->type_ref = type;
+    prop->owner = owner;
+    vec_push(owner->properties, prop);
+    expect(p, T_LBRACE, "'{' before property accessors");
+    while (!at(p, T_RBRACE)) {
+        const token *word = expect_ident(p, "'get' or 'set'");
+        const bool set = str_eq_c(word->text, "set");
+        if (!set && !str_eq_c(word->text, "get")) fail_at(p, word, "'get' or 'set'");
+        if (set ? prop->set != NULL : prop->get != NULL) {
+            diag_error(word->at, "a property has only one '%s' accessor", set ? "set" : "get");
+            longjmp(p->fail, 1);
+        }
+        decl *m = new_decl(DECL_METHOD, name);
+        m->unit = p->unit;
+        m->owner = owner;
+        m->accessor = prop;
+        m->is_mut_method = set;
+        m->return_type_name = set ? str_from("void") : type->text;
+        m->return_type_at = type->name_at;
+        m->return_type_qual_at = type->at;
+        m->return_type_ref = set ? NULL : type;
+        if (set) {
+            param value = {0};
+            value.name = str_from("value");
+            value.name_at = value.at = word->at;
+            value.type_name = type->text;
+            value.type_ref = type;
+            value.type_at = type->name_at;
+            value.type_qual_at = type->at;
+            value.function_param = true;
+            vec_push(m->params, value);
+        }
+        const int body_start = p->pos;
+        m->body_at = word->at;
+        m->body = parse_block(p);
+        m->end = m->body->end;
+        if (owner->kind == DECL_COMPONENT) {
+            parser placement = *p;
+            placement.pos = body_start;
+            decl *local = NEW(decl);
+            *local = *m;
+            local->params.items = NULL;
+            local->params.count = local->params.cap = 0;
+            if (set) vec_push(local->params, m->params.items[0]);
+            local->body = parse_block(&placement);
+            m->placement_method = local;
+        }
+        if (set) prop->set = m;
+        else prop->get = m;
+        vec_push(owner->methods, m);
+    }
+    if (!prop->get && !prop->set) fail_at(p, peek(p), "'get' or 'set' in the property");
+    prop->end = peek(p)->at;
+    advance(p);
+}
+
+// [local] Type name; [= default]; or Type name { get { ... } set { ... } }
 static void parse_field(parser *p, decl *d)
 {
     // `local List<Vertex3> verts;`: this machine's, outside the match
     const token *local = at_local_field(p) ? advance(p) : NULL;
     const type_ref *type = parse_decl_type(p, "field type or '}'");
     const token *field_name = expect_ident(p, "field name");
+    if (at(p, T_LBRACE)) {
+        if (local || p->field_pending.count) {
+            diag_error(field_name->at, "a computed property has no stored field: put 'local' and field attributes on its backing fields");
+            longjmp(p->fail, 1);
+        }
+        parse_property(p, d, type, field_name);
+        return;
+    }
     field f = {0};
     if (local) {
         f.is_local = true;

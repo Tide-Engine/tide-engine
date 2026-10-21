@@ -148,9 +148,20 @@ static void gen_borrow_param(gen *g, sb *o, const param *p, const borrow_source 
     const char *name = local_cname(g, p->name);
     if (q->query_rows) sb_printf(o, "const %s *%s, const uint32_t %s", query_row_type(source.owner, source.index), name, borrow_count_name(name));
     else sb_printf(o, "const %s *%s", world_type(q->query_local), name);
+    if (p->owner_world && !q->query_local)
+        sb_printf(o, ", const tide_world *%s, const tide_world *%s", owner_name(g, p, "predicted"), owner_name(g, p, "verified"));
 }
 
-static void gen_borrow_arg(gen *g, sb *o, const expr *arg)
+static const char *borrow_owner_world(gen *g, const expr *arg, const bool verified)
+{
+    const param *p = arg->param;
+    if (p->function_param) return owner_name(g, p, verified ? "verified" : "predicted");
+    if (!verified) return "tide_w";
+    for (int i = 0; i < p->query.count; i++) if (p->query.items[i].verified) return "tide_verified";
+    return "NULL";
+}
+
+static void gen_borrow_arg(gen *g, sb *o, const expr *arg, const bool owner_world)
 {
     const param *p = arg->param;
     const decl *owner = p->function_param ? g->routine : g->code;
@@ -158,4 +169,7 @@ static void gen_borrow_arg(gen *g, sb *o, const expr *arg)
     const param *q = source_query(source);
     sb_put(o, borrow_arg_name(g, arg, false));
     if (q->query_rows) sb_printf(o, ", %s", borrow_arg_name(g, arg, true));
+    if (owner_world && !q->query_local) {
+        sb_printf(o, ", %s, %s", borrow_owner_world(g, arg, false), borrow_owner_world(g, arg, true));
+    }
 }

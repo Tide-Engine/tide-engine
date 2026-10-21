@@ -340,6 +340,11 @@ static const field *field_of(const decl *d, const int i)
 static void add_occ(occurrence o)
 {
     if (o.decl && o.decl->placement_of) o.decl = o.decl->placement_of;
+    if (o.decl && o.decl->accessor) {
+        const property *prop = o.decl->accessor;
+        o.write |= o.decl->is_mut_method;
+        o.decl = prop->get ? prop->get : prop->set;
+    }
     o.order = A.occs.count;
     if (o.at.line > 0 && o.len > 0) vec_push(A.occs, o);
 }
@@ -839,7 +844,7 @@ static void walk_value(const expr *e)
     }
 
     case E_CALL: {
-        occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .call = e->call};
+        occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .call = e->call, .write = e == walk_written};
         // cells[x, y] is cells[int2(x, y)] to the checker: that int2 isn't in the source.
         const int name = token_at(e->at);
         const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, e->name);
@@ -881,7 +886,7 @@ static void walk_value(const expr *e)
                                  .name = local->name, .type = local->type});
         }
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .object_type = e->object->type,
-                        .call = e->call};
+                        .call = e->call, .write = e == walk_written};
         if (e->call != CALL_NONE) vec_push(A.calls, e);
         // world.Get<Health>(e): the component in <>; Json.Read<LobbyInfo>(text): the type its T? holds
         if (e->type_arg.len > 0) {
@@ -1030,8 +1035,9 @@ static void walk_stmt(const stmt *s)
         break;
     case S_VAR:
         type_place(s->type_ref, s->type_qual_at.line ? s->type_qual_at : s->type_at, s->type_at, s->type_name, s->type);
-        add_occ((occurrence){.at = s->name_at, .len = s->name.len, .kind = OCC_LOCAL, .declaration = true, .local = s,
-                             .name = s->name, .type = s->type});
+        if (!s->discard)
+            add_occ((occurrence){.at = s->name_at, .len = s->name.len, .kind = OCC_LOCAL, .declaration = true, .local = s,
+                                 .name = s->name, .type = s->type});
         walk_expr(s->value);
         break;
     case S_ASSIGN:
@@ -1122,13 +1128,14 @@ static void walk_params(const decl *d)
 static void walk_routine(const decl *m)
 {
     // An operator's `at` is its `operator` keyword.
-    add_occ((occurrence){.at = m->at, .len = m->is_operator ? 8 : m->name.len, .kind = m->owner ? OCC_METHOD : OCC_FUNCTION,
-                         .declaration = true, .decl = m, .name = m->name});
+    if (!m->accessor || !m->is_mut_method || !m->accessor->get)
+        add_occ((occurrence){.at = m->at, .len = m->is_operator ? 8 : m->name.len, .kind = m->owner ? OCC_METHOD : OCC_FUNCTION,
+                             .declaration = true, .decl = m, .name = m->name});
     if (!str_eq_c(m->return_type_name, "void")) {
         type_place(m->return_type_ref, m->return_type_qual_at, m->return_type_at, m->return_type_name, m->return_type);
     }
     type_place(m->fails_ref, m->fails_type_qual_at, m->fails_type_at, m->fails_name, m->fails);
-    walk_params(m);
+    if (!m->accessor) walk_params(m); // A setter's `value` is implicit, with no declaration token.
     walk_code = m;
     walk_stmt(m->body);
     walk_code = NULL;
@@ -1722,6 +1729,12 @@ static const char *builtin_event_doc(const program *prog, const decl *d)
 // `mut void Damage(float amount)`: a method's or function's signature.
 static void format_routine(const decl *m, sb *out)
 {
+    if (m->accessor) {
+        const property *p = m->accessor;
+        sb_printf(out, STR_FMT " " STR_FMT " { %s%s}", STR_ARG(p->type_ref->text), STR_ARG(p->name),
+                  p->get ? "get; " : "", p->set ? "set; " : "");
+        return;
+    }
     sb_printf(out, "%s%s%s%s" STR_FMT " " STR_FMT "(", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
               m->is_extern ? "extern " : "", m->is_async ? "async " : "", m->is_mut_method ? "mut " : "",
               STR_ARG(m->return_type_name), STR_ARG(m->name));
@@ -1840,6 +1853,7 @@ static void format_data_decl(const decl *d, sb *out)
         sb_put(out, ";\n");
     }
     for (int i = 0; i < d->methods.count; i++) {
+        if (d->methods.items[i]->accessor && d->methods.items[i]->is_mut_method && d->methods.items[i]->accessor->get) continue;
         sb_put(out, i == 0 && d->fields.count > 0 ? "\n    " : "    ");
         format_routine(d->methods.items[i], out);
         sb_put(out, ";\n");
@@ -2260,6 +2274,7 @@ static const method_form entity_calls[] = {
 
 // The World's methods, in code that takes `World world`: T is the component in <>.
 static const method_form world_calls[] = {
+    {"ParentToWorld", "ParentToWorld(Entity entity) -> float4x4", "Maps the entity's parent space into the world, including a retained visibility anchor. Identity for an ordinary root."},
     {"LocalToWorld", "LocalToWorld(Entity entity) -> float4x4", "Reads the entity's composed world transform, including its ancestors."},
     {"Parent", "Parent(Entity entity) -> Entity", "Reads the entity's parent, or the null handle for a root."},
     {"Get", "Get<T>(Entity entity) -> T",
@@ -3427,6 +3442,10 @@ static void describe(const occurrence *o, sb *out)
         if (is_routine(o->decl)) {
             format_routine(o->decl, &code);
             code_block(out, code.data);
+            if (o->decl->accessor) {
+                sb_printf(out, "\n\nComputed property of %s `" STR_FMT "`.", decl_keyword(o->decl->owner), STR_ARG(o->decl->owner->name));
+                break;
+            }
             if (o->decl->is_operator) {
                 sb_printf(out, "\n\nOperator of struct `" STR_FMT "`.", STR_ARG(o->decl->owner->name));
                 break;
@@ -4922,6 +4941,7 @@ void analysis_symbols(jbuf *out)
         }
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = method_written(d->methods.items[k]);
+            if (m->accessor && m->is_mut_method && m->accessor->get) continue;
             sb detail = {0};
             format_routine(m, &detail);
             if (!first_child) jb_put(out, ",");
@@ -4930,10 +4950,11 @@ void analysis_symbols(jbuf *out)
             jb_string_n(out, m->name.ptr, (size_t)m->name.len);
             jb_put(out, ",\"detail\":");
             jb_string(out, detail.data);
-            jb_printf(out, ",\"kind\":%d,\"range\":{\"start\":", SYMBOL_METHOD);
+            jb_printf(out, ",\"kind\":%d,\"range\":{\"start\":", m->accessor ? SYMBOL_PROPERTY : SYMBOL_METHOD);
             write_position(out, m->at);
             jb_put(out, ",\"end\":");
-            write_position(out, (loc){m->end.line, m->end.col + 1, m->end.file});
+            const loc end = m->accessor ? m->accessor->end : m->end;
+            write_position(out, (loc){end.line, end.col + 1, end.file});
             jb_put(out, "},\"selectionRange\":");
             write_range(out, m->at, m->name.len);
             jb_put(out, "}");
@@ -5868,7 +5889,8 @@ void analysis_workspace_symbols(const char *query, const workspace_symbol_fn sym
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = method_written(d->methods.items[k]);
             if (m->is_operator || !fuzzy_match(m->name, query)) continue;
-            workspace_symbol(symbol, user, m->name, SYMBOL_METHOD, m->at, m->name.len, d->qualified);
+            if (m->accessor && m->is_mut_method && m->accessor->get) continue;
+            workspace_symbol(symbol, user, m->name, m->accessor ? SYMBOL_PROPERTY : SYMBOL_METHOD, m->at, m->name.len, d->qualified);
         }
     }
 }
@@ -5972,7 +5994,8 @@ static void classify(const occurrence *o, int *type, int *mods)
             *type = ST_KEYWORD;
             *mods = 0;
         } else if (is_routine(o->decl)) {
-            *type = ST_METHOD;
+            *type = o->decl->accessor ? ST_PROPERTY : ST_METHOD;
+            if (o->decl->accessor && !o->decl->accessor->set) *mods |= SM_READONLY;
         } else if (o->decl && o->decl->kind == DECL_INPUT
                    && (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize") || str_eq_c(o->name, "Predict"))) { // The input's own members
             *type = ST_KEYWORD;
@@ -6489,8 +6512,13 @@ static type loop_variable_type(const scope *sc, const int use)
 
 static void complete_routine(completion *c, const decl *m, const char *name)
 {
+    if (m->accessor && m->is_mut_method && m->accessor->get) return;
     sb detail = {0};
     format_routine(m, &detail);
+    if (m->accessor) {
+        item(c, str_to_cstr(m->accessor->name), CK_PROPERTY, detail.data, "Computed by ordinary inlineable accessors.", NULL);
+        return;
+    }
     sb snippet = {0};
     sb_printf(&snippet, "%s(%s)", name ? name : str_to_cstr(m->name), m->params.count > 0 ? "$1" : "");
     item(c, name ? name : str_to_cstr(m->name), m->owner ? CK_METHOD : CK_FUNCTION, detail.data, NULL, snippet.data);
@@ -7648,6 +7676,8 @@ static void complete_expression(completion *c, const loc at, const bool statemen
             item(c, str_to_cstr(p->name), CK_VARIABLE, detail.data, NULL, NULL);
         }
         if (sc.fields_of) {
+            if (sc.fields_of->kind == DECL_COMPONENT && sc.decl && !sc.decl->is_interpolate)
+                item(c, "world", CK_VARIABLE, "World", "The attached component's owning world, with the caller's capabilities.", NULL);
             for (int i = 0; i < sc.fields_of->fields.count; i++) {
                 const field *f = &sc.fields_of->fields.items[i];
                 if (!f->hidden) item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), NULL, NULL);
@@ -9722,14 +9752,20 @@ static const char *rename_target(const int line, const int character, const occu
     case OCC_ENUM_MEMBER:
         if (!o->decl || o->decl->builtin) return "Members of the engine's enums can't be renamed.";
         return NULL;
-    case OCC_SYSTEM:
     case OCC_PARAM:
+        if (o->param_of && o->param_of->accessor && o->param_of->is_mut_method)
+            return "A setter's 'value' parameter is implicit and can't be renamed.";
+        if (o->param_of && o->param == o->param_of->owner_world)
+            return "A component's contextual 'world' can't be renamed.";
+        return NULL;
+    case OCC_SYSTEM:
     case OCC_LOCAL:
     case OCC_NAMESPACE:
     case OCC_CONST:
         return NULL;
     case OCC_METHOD:
     case OCC_FUNCTION:
+        if (o->decl && o->decl->builtin) return "Built-in names can't be renamed.";
         if (is_operator_decl(o->decl)) return "Operators are named by their symbol, so they can't be renamed.";
         if (is_routine(o->decl)) return NULL;
         return "Built-in names can't be renamed.";

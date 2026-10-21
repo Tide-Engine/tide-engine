@@ -1,5 +1,17 @@
 # No Tide code can corrupt memory
 
+## Computed property receivers (2026-10-21)
+
+Array property setters use checked slot helpers and compiler-known offsetof
+paths. A missing slot remains NULL through nested fields, and the setter returns
+without writing a shared zero sentinel. Receiver indexes are captured once for
+compound operations; RHS evaluation retains ordinary ordering. properties checks
+negative/maximum indexes and nested array fields. Component ownership sidecars
+stay on synchronous call stacks and add no stored world/entity pointers. The
+existing generation checks, hierarchy traversal bounds and scratch lifetimes
+also cover ParentToWorld; projected roots consult anchors only while alive.
+Replay/packing, verified reads and full validation are recorded in language.md.
+
 ## Events in runs (2026-10-20)
 
 A run of events (notes/language.md, Events in runs) is read only by the

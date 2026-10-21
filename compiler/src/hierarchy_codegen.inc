@@ -237,5 +237,13 @@ static void gen_hierarchy(gen *g)
             }
             sb_put(&g->c, "\n");
         }
+        const char *prefix = world_prefix(side != 0);
+        sb_printf(&g->c, "TIDE_HELPER tide_float4x4 %sparent_to_world(const %s *w, tide_entity e)\n{\n"
+                         "    const tide_entity parent = %sparent_of(w, e);\n"
+                         "    if (!tide_entity_is_null(parent)) return %sworld_transform(w, parent, NULL);\n"
+                         "    tide_float4x4 result = tide_identity_f4x4();\n", prefix, world_type(side != 0), prefix, prefix);
+        if (anchors) sb_put(&g->c, "    if (tide_entity_alive(&w->entities, e)) {\n"
+                                 "        tide_quaternion rotation;\n        (void)tide_hierarchy_anchor(w, e, &result, &rotation);\n    }\n");
+        sb_put(&g->c, "    return result;\n}\n\n");
     }
 }

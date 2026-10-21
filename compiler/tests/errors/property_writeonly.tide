@@ -1,0 +1,4 @@
+// expect: property 'amount' has no getter
+struct Gauge { int stored; int amount { set { stored = value; } } }
+scene Main;
+system Tick() { var g = Gauge {}; _ = g.amount; }

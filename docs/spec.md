@@ -122,7 +122,7 @@ system Hurt(mut Unit unit)
 - A method only reads the fields, unless it's `mut`. Calling a `mut` method changes what it's called on, so it needs write access, like an assignment: `unit.stats.Hurt(5)` needs `mut Unit unit`, and the system's signature still says what it writes. A read-only method can't call a `mut` one.
 - A method returns a value with `return value;`, on every path, unless it returns `void`.
 - A method sees its fields, its parameters and `Math`. It can't draw: views do. It sends events, spawns and changes entities as a function does, for the code that calls it (see Functions).
-- A component's method has `this`: the entity whose component it's called on. A method that uses it, itself or through another of its methods, can only be called on a component the code runs for, a parameter of a system, view or handler: a copy belongs to no entity. A struct's methods and `Interpolate` have no `this`.
+- A component's method has `this`: the entity whose component it's called on. Attached component parameters and query bindings retain their owning entity/world through synchronous helper calls. Explicit copies and returned values are detached. A struct's methods and `Interpolate` have no `this`.
 - Methods can share a name when their parameters differ, as functions can (see Default values, named arguments and overloads). A method can't share one with a field.
 - Singleton methods operate on their explicit receiver, with no implicit world access or local sidecar fields. Like struct methods, they have no entity `this`. Inputs have only `Sample`, `Sanitize` and `Predict`.
 - Parameters work as in functions: they can have default values, and calls can name them.
@@ -146,6 +146,13 @@ system Burn(mut Unit unit)
     unit.stats.Hurt(1);
 }
 ```
+
+### Properties
+
+- Structs, components and singletons support user-defined computed properties with C#-style `Type name { get { ... } set { ... } }` accessors. The engine uses the same facilities.
+- Getters read the receiver; setters can change it and need a writable receiver. The assigned value is available as `value`. Properties add no stored component fields or runtime dispatch.
+- An attached component can access its owning entity and world, subject to caller capabilities. Context remains transient and is passed only where needed; ordinary field access retains its existing cost.
+- `Transform.position` exposes world position, including through an attached Transform passed to a helper. Setting it updates `localPosition` by converting through its parent and leaves the parent unchanged.
 
 ### Functions
 
@@ -3393,6 +3400,7 @@ Further authoring/editor work:
 ### Decided
 
 - One built-in `Transform` component works in match or local placement, with `localPosition`, `localRotation` and `localScale`. These values are relative to the parent, and root values place it in the world.
+- Its computed `position` reads world position and writes `localPosition` in parent space. Component storage remains the three local TRS fields.
 - Parenting is an entity relationship, independent of component value types. Descendants move with their parent and are destroyed when their parent is destroyed.
 - Reparenting follows Unity's default of preserving world placement, with an option to retain local values. Detaching preserves world placement by default. Cycles are rejected without changing the hierarchy.
 - Static access and typed entity handles preserve the match/local boundary. Match hierarchy state participates in deterministic snapshots, hashes and transfer; local hierarchy state stays outside it.
@@ -3403,6 +3411,9 @@ Implemented first-build interface and details:
 
 - `entity.SetParent(parent, worldPositionStays = true)` records a deferred structural change. `null` or `default` detaches. Local entity handles require local parents. Commands validate cycles and live generations in deterministic application order.
 - `world.LocalToWorld(entity)` returns a `float4x4` composed root to leaf; `world.Parent(entity)` returns the same kind of handle as its argument. Both read stored state, with normal caller capabilities and Transform read dependencies. Dead entities give identity/null, and absent Transform components contribute identity.
+- `world.ParentToWorld(entity)` returns the root-to-parent matrix, including a retained visibility anchor where a projected parent is hidden. Ordinary roots and dead entities give identity. `Transform.position` applies this to the binding's current local position. Its setter ignores singular parent matrices, nonfinite inputs and nonfinite converted results.
+- Implemented computed properties have explicit accessor bodies, with getter-only and setter-only forms. Compound assignment evaluates the receiver once, then getter, right-hand expression and setter. Numeric prefix increments return the calculated value supplied to the setter, postfix increments the getter's original value. A property cannot be passed by `mut`/`out` or written through a returned subfield. Literals initialize stored fields. Accessors follow ordinary method capabilities, scheduling and GPU restrictions.
+- The component context is written `this` and contextual `world`. A local component helper qualifies its parameter with `local`. Verified bindings retain their selected world. Recorded match-event bindings retain identity but grant no historical World query. Component methods use either contextual world access or an explicit World parameter. These spelling and edge choices are implementation details, not additional owner-approved language designs.
 - Transform defaults are zero position, identity rotation and unit scale. World rotation composes normalized quaternions. Keeping world placement adjusts local TRS; shear from nonuniform scale and rotation cannot be preserved exactly. Singular/nonfinite results are rejected, without changing local values or links. Keeping world placement requires a Transform on the child.
 - Destruction walks descendants before the root and invokes existing Destroyed handlers while each entity still exists. Loaded scene entities remain independent roots. An ordinary subtree parented into another scene transfers membership there; detaching retains its scene.
 - The compiler emits private per-world links using existing world-owned containers and checked command queues. No engine runtime registry or new public runtime entry point is required.
@@ -3488,7 +3499,7 @@ system Shrink(mut Box box) { box.verts.Clear(); }
 
 ### Provisional
 
-Implemented placement spellings: `Spawn(...)` creates match entities; `local Spawn(...)` creates local entities. A `local` component access qualifier selects local storage in views, local handlers, queries, shader bindings and async parameters, for example `mut local Transform transform` or `query (local Transform transform) transforms`. Ordinary function parameters are values without a placement qualifier. Component methods are specialized for each placement they are called on: implicit `this` is `Entity` or `LocalEntity` accordingly. Explicit entity parameter and return types retain their meaning. An unused method is checked once in match placement. `Get`, `Has`, `TryGet`, `Set`, `Add` and `Remove` select placement from the typed entity handle. Component declarations cannot be `local`. Rendering resources and LocalEntity fields restrict a component to local placement. Components with attached `local` fields currently require match placement; supporting those same definitions on local entities remains open.
+Implemented placement spellings: `Spawn(...)` creates match entities; `local Spawn(...)` creates local entities. A `local` component access qualifier selects local storage in views, local handlers, queries, shader bindings and async parameters, for example `mut local Transform transform` or `query (local Transform transform) transforms`. Ordinary helper parameters retain value/`mut` rules; `local Transform transform` selects local ownership when the helper uses component context. Component methods are specialized for each placement they are called on: implicit `this` is `Entity` or `LocalEntity` accordingly. Explicit entity parameter and return types retain their meaning. An unused user method is checked once in match placement; engine accessors are instantiated only when called. `Get`, `Has`, `TryGet`, `Set`, `Add` and `Remove` select placement from the typed entity handle. Component declarations cannot be `local`. Rendering resources and LocalEntity fields restrict a component to local placement. Components with attached `local` fields currently require match placement; supporting those same definitions on local entities remains open.
 
 
 

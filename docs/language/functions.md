@@ -65,6 +65,44 @@ Singleton methods use their explicit receiver and have no entity `this`, implici
 
 A method marked `virtual` can be replaced by another package, and so can a function: see [Virtual and override](overrides.md).
 
+## Properties
+
+Structs, components and singletons can define computed properties with C#-style accessors:
+
+```csharp
+struct Circle
+{
+    float radius;
+    float diameter
+    {
+        get { return radius * 2; }
+        set { radius = value * 0.5; }
+    }
+}
+```
+
+Read `circle.diameter`, or assign `circle.diameter = 10`. The getter reads the fields; the setter can change them and receives an implicit read-only `value` parameter. Setting a property needs a writable receiver, just like calling a `mut` method. A property can have only a getter or only a setter. `+=` and other compound assignments read once and then set; `++` and `--` work on numeric properties. The receiver is evaluated once, before the getter and the right-hand expression. A prefix increment returns the calculated value passed to the setter, even when the setter clamps it.
+
+Accessors use ordinary method capabilities and dependency tracking. They add no stored fields, allocation or runtime dispatch. Properties are values, so assign them whole: to change `circle.center.x`, when `center` is a property, copy `center` into a mutable local, change it, and assign it back. Properties cannot be `mut` or `out` arguments. Literals initialize stored fields; use a mutable value to call a setter.
+
+Inside a component's methods and accessors, `this` is its entity and `world` is its owning world:
+
+```csharp
+component Marker
+{
+    float3 origin
+    {
+        get { return world.LocalToWorld(this).c3.xyz; }
+    }
+}
+
+float3 Origin(Marker marker) { return marker.origin; }
+```
+
+Pass a system/view/handler component parameter or a query's component binding directly to a synchronous helper to retain that context. Forwarding through more helpers preserves it; assigning, storing or returning the component copies its data and detaches it. A context-using helper for local components declares `local Marker marker`. A verified binding retains its verified world. Recorded match-event values provide identity, but no historical World access. Caller permissions still apply: a view cannot write the match and match code cannot read local state.
+
+Ordinary explicit `World` parameters remain available. A component method uses either its contextual `world` or an explicit World parameter. Structs and singletons have no implicit world or entity. See [`Transform.position`](../game/entities.md#transform-and-parenting) for an engine-defined property using these same facilities.
+
 ## Functions
 
 A function is code that other code calls. It has no keyword, just a return type:

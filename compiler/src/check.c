@@ -56,6 +56,8 @@ typedef struct checker {
     const expr *compare;      // Checking a Sort's comparison block: the call
     int compare_locals;       // ...and how many locals were in scope before its own
     const expr *member_object; // a.b's a, about to be checked: a Forgotten handler's component is only named for its local fields
+    const expr *property_target; // The final member of an assignment: no getter for plain '='.
+    bool step_assignment;
     const expr *query_value; // A foreach's direct query parameter name, which is only iterable
     const expr *input_value; // A direct input parameter being borrowed by a synchronous helper
     const expr *asset_value; // A resource asset collection being read or forwarded without escaping
@@ -608,7 +610,16 @@ static field *field_in_scope(const checker *c, const str name)
 static decl *find_method(const decl *d, const str name)
 {
     for (int i = 0; d && i < d->methods.count; i++) {
-        if (str_eq(d->methods.items[i]->name, name)) return d->methods.items[i];
+        if (!d->methods.items[i]->accessor && str_eq(d->methods.items[i]->name, name)) return d->methods.items[i];
+    }
+    return NULL;
+}
+
+static property *find_property(const decl *d, const str name)
+{
+    if (d && d->placement_of) d = d->placement_of;
+    for (int i = 0; d && i < d->properties.count; i++) {
+        if (str_eq(d->properties.items[i]->name, name)) return d->properties.items[i];
     }
     return NULL;
 }
@@ -6319,6 +6330,29 @@ static void check_world_args(checker *c, const expr *e)
     }
 }
 
+static param *component_world(checker *c, const loc at)
+{
+    decl *m = c->method;
+    if (!m || !m->owner || m->owner->kind != DECL_COMPONENT || m->is_interpolate) return NULL;
+    for (int i = 0; i < m->params.count; i++) {
+        if (m->params.items[i].type.kind != TY_WORLD) continue;
+        diag_error(at, "this method already takes a World: use '" STR_FMT "' or remove that parameter to use the component's 'world'",
+                   STR_ARG(m->params.items[i].name));
+        return NULL;
+    }
+    if (!m->owner_world) {
+        m->owner_world = NEW(param);
+        m->owner_world->name = str_from("world");
+        m->owner_world->type = (type){TY_WORLD, NULL};
+        m->owner_world->mode = m->is_mut_method ? PARAM_MUT : PARAM_READ;
+        m->owner_world->at = at;
+        m->owner_world->function_param = true;
+    }
+    m->uses_owner_world = m->borrows_owner_world = m->uses_this = true;
+    m->this_at = at;
+    return m->owner_world;
+}
+
 // world.Get<Health>(e), Has, TryGet and Set: any entity's component by handle through the World parameter. Get gives a copy, or the component's zero value
 // where the entity has none, which Has tells; TryGet is both in one; Set, which `mut World` allows, puts one back and changes nothing there.
 // In a function or method the World is its caller's: what it reaches counts as each caller's, and the rules depending on who calls are checked at the calls (check_world_passing).
@@ -6328,7 +6362,7 @@ static type check_world_call(checker *c, expr *e, param *world)
     e->object->param = world;
     e->object->type = world->type;
     world->read = true;
-    if (str_eq_c(e->name, "LocalToWorld") || str_eq_c(e->name, "Parent")) {
+    if (str_eq_c(e->name, "LocalToWorld") || str_eq_c(e->name, "ParentToWorld") || str_eq_c(e->name, "Parent")) {
         if (e->type_arg.len || e->args.count != 1 || !order_named_args(e, "entity", 0)) {
             diag_error(e->at, STR_FMT " takes one entity handle", STR_ARG(e->name));
             return T_ERR;
@@ -6360,7 +6394,7 @@ static type check_world_call(checker *c, expr *e, param *world)
     if (set) world->written = true;
     if (!set && !try_get && !str_eq_c(e->name, "Get") && !str_eq_c(e->name, "Has")) {
         check_world_args(c, e);
-        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, Parent and LocalToWorld", STR_ARG(e->name));
+        diag_error(e->at, "the World has no method '" STR_FMT "'; it has Get, Has, TryGet, Set, Parent, ParentToWorld and LocalToWorld", STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Get");
         suggest_consider_c(&s, "Has");
@@ -7003,6 +7037,8 @@ static type check_method(checker *c, expr *e)
     if (static_skin_handled) return static_skin;
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
+        if (!world && str_eq_c(e->object->name, "world") && !field_in_scope(c, e->object->name)
+            && !(c->method && find_property(c->method->owner, e->object->name))) world = component_world(c, e->object->at);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
     }
     // Json.Read<LobbyInfo>(text) takes one too, which check_json_call reads
@@ -8149,6 +8185,24 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
     return f->type;
 }
 
+static type check_property(checker *c, expr *e, property *prop, const decl *placement)
+{
+    e->property = prop;
+    if (c->property_target == e) {
+        return prop->get ? prop->get->result : prop->set ? prop->set->params.items[0].type : T_ERR;
+    }
+    if (!prop->get) {
+        diag_error(e->at, "property '" STR_FMT "' has no getter", STR_ARG(prop->name));
+        return T_ERR;
+    }
+    decl *get = prop->get;
+    if (placement && placement->placement_of) get = local_method(c, (decl *)placement, get);
+    e->kind = e->kind == E_NAME ? E_CALL : E_METHOD;
+    e->name = get->name;
+    check_method_args(c, e, get);
+    return get->result;
+}
+
 static type check_member(checker *c, expr *e)
 {
     if (visibility_owner(c, e->object, "Audience")) {
@@ -8249,6 +8303,9 @@ static type check_member(checker *c, expr *e)
     c->member_object = e->object;
     const type obj = check_expr(c, e->object);
     if (obj.kind == TY_ERROR) return T_ERR;
+
+    property *prop = find_property(obj.decl, e->member);
+    if (prop) return check_property(c, e, prop, obj.decl);
 
     bool skin_handled;
     const type skin_result = check_skinned_member(c, e, obj, &skin_handled);
@@ -8620,6 +8677,8 @@ static type check_name(checker *c, expr *e)
         return local->type;
     }
     param *p = find_param(c, e->name);
+    if (!p && str_eq_c(e->name, "world") && !field_in_scope(c, e->name)
+        && !(c->method && find_property(c->method->owner, e->name))) p = component_world(c, e->at);
     if (p) {
         e->bind = BIND_PARAM;
         e->param = p;
@@ -8674,6 +8733,10 @@ static type check_name(checker *c, expr *e)
         e->bind = BIND_FIELD;
         e->field = f;
         return f->type;
+    }
+    if (c->method && c->method->owner) {
+        property *prop = find_property(c->method->owner, e->name);
+        if (prop) return check_property(c, e, prop, c->method->owner);
     }
     // A method's own local fields aren't in scope: a value has none
     if (c->method && c->method->owner && local_field_of(c->method->owner, e->name)) {
@@ -10276,6 +10339,13 @@ static bool check_compare_write(checker *c, const expr *target)
 
 static bool check_writable(checker *c, expr *target, const decl *called, const param *arg_of)
 {
+    for (const expr *part = target; part; part = (part->kind == E_MEMBER || part->kind == E_INDEX) ? part->object : NULL) {
+        if (part->property) {
+            diag_error(target->at, "a property returns a value, not a writable field");
+            diag_note("assign the property whole; to change a member, copy its value into a 'mut var' and assign it back");
+            return false;
+        }
+    }
     // A field declared T? is kept as its value and whether there is one, which no 'mut' or 'out' parameter points at
     if (arg_of && is_optional_field(target)) {
         diag_error(target->at, "a T? field can't be passed as '%s': the call would change it where it's kept, which isn't as a T?",
@@ -10559,6 +10629,10 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     }
     if (root->bind == BIND_FIELD && c->method && !c->method->is_mut_method) {
         diag_error(root->at, "'" STR_FMT "' is read-only in '" STR_FMT "'", STR_ARG(root->name), STR_ARG(c->method->name));
+        if (c->method->accessor) {
+            diag_note("a getter only reads the fields: move this change to a setter or a mut method");
+            return false;
+        }
         diag_note("declare the method as 'mut " STR_FMT " " STR_FMT "(...)' to change the fields",
                   STR_ARG(c->method->return_type_name), STR_ARG(c->method->name));
         const fix f = {.kind = FIX_MUT_METHOD, .at = root->at, .method = c->method};
@@ -11157,6 +11231,17 @@ static void check_parallel(checker *c, stmt *s)
     pop_scope(c);
 }
 
+static void share_property_place(expr *e)
+{
+    if (!e) return;
+    e->shared_place = true;
+    share_property_place(e->object);
+    share_property_place(e->lhs);
+    share_property_place(e->rhs);
+    share_property_place(e->cond);
+    for (int i = 0; i < e->args.count; i++) share_property_place(e->args.items[i]);
+}
+
 static void check_assign(checker *c, const stmt *s)
 {
     // What an assignment writes through isn't read by it: the x of `x = 1`, `x.y += 2` and `x[i]++`
@@ -11164,10 +11249,79 @@ static void check_assign(checker *c, const stmt *s)
     while (written->kind == E_MEMBER || written->kind == E_INDEX) written = written->object;
     const expr *outer_root = c->write_root;
     c->write_root = written->kind == E_NAME ? written : NULL;
+    const expr *outer_property = c->property_target;
+    c->property_target = s->target;
     const type target = check_expr_any(c, s->target); // A T? local, or one that holds a failable call's result
+    c->property_target = outer_property;
     c->write_root = outer_root;
     const type value = check_expr_want(c, s->value, target);
     if (target.kind == TY_ERROR) return;
+    if (s->target->property) {
+        if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {
+            diag_error(s->at, "'%s' works on ints, longs and floats, not %s", s->op == T_PLUS_PLUS ? "++" : "--", type_name(target));
+            return;
+        }
+        property *prop = s->target->property;
+        if (!prop->set) {
+            diag_error(s->target->at, "property '" STR_FMT "' has no setter", STR_ARG(prop->name));
+            return;
+        }
+        expr *set = NEW(expr);
+        set->kind = s->target->kind == E_NAME ? E_CALL : E_METHOD;
+        set->at = s->target->at;
+        set->end = s->target->end;
+        set->object = s->target->object;
+        for (const expr *part = set->object; part && (part->kind == E_MEMBER || part->kind == E_INDEX); part = part->object)
+            if (part->kind == E_INDEX && part->object->type.kind == TY_ARRAY) c->prog->property_slots = true;
+        set->property = prop;
+        set->name = prop->name;
+        decl *method = prop->set;
+        decl *placement = set->object ? set->object->type.decl : c->method->owner;
+        if (placement->placement_of) method = local_method(c, placement, method);
+        check_placement_body(c, method);
+        if (set->object) check_writable(c, set->object, method, NULL);
+        else if (!c->method->is_mut_method) {
+            diag_error(set->at, "setting '" STR_FMT "' changes the fields: declare this method 'mut'", STR_ARG(prop->name));
+        }
+        expr *assigned = s->value;
+        type result = value;
+        if (s->op != T_ASSIGN) {
+            share_property_place(set->object);
+            const expr *saved = c->property_target;
+            c->property_target = NULL;
+            check_property(c, s->target, prop, placement);
+            c->property_target = saved;
+            assigned = NEW(expr);
+            assigned->kind = E_BINARY;
+            assigned->at = s->at;
+            assigned->op = compound_op(s->op);
+            assigned->lhs = s->target;
+            assigned->rhs = s->value;
+            result = binary_result(c->prog, assigned->op, target, value, s->at, &assigned->method);
+            assigned->type = result;
+            note_operator_call(c, assigned->method, assigned);
+        }
+        if (!type_assignable(target, result) && !(target.kind == TY_BYTE && s->op != T_ASSIGN && type_is_integer(result))) {
+            diag_error(s->value->at, "can't assign %s to %s", type_name(result), type_name(target));
+        }
+        set->method = method;
+        set->call = CALL_METHOD;
+        set->type = T_VOID_;
+        vec_push(set->args, assigned);
+        vec_push(set->arg_want, target);
+        decl *from = reading_code(c);
+        if (from) {
+            const call_site site = {from, method, set, c->parallel != NULL, c->compare != NULL, c->in_sanitize, c->in_predict};
+            vec_push(c->calls, site);
+        }
+        ((stmt *)s)->property_set = set;
+        if (!c->step_assignment) {
+            ((stmt *)s)->kind = S_EXPR;
+            ((stmt *)s)->value = set;
+            ((stmt *)s)->target = NULL;
+        }
+        return;
+    }
     if (singleton_has_resident(target)) {
         diag_error(s->target->at, "a singleton with resident state can't be assigned whole");
         diag_note("set its other fields one by one: only the package's C writes its Resident field");
@@ -11261,7 +11415,10 @@ static void check_assign(checker *c, const stmt *s)
 static type check_step_value(checker *c, expr *e)
 {
     const int errors = diag_error_count();
+    const bool outer_step = c->step_assignment;
+    c->step_assignment = true;
     check_assign(c, e->step);
+    c->step_assignment = outer_step;
     // Its value is read, where a statement's isn't
     const expr *root = e->lhs;
     while (root->kind == E_MEMBER || root->kind == E_INDEX) root = root->object;
@@ -13777,7 +13934,7 @@ static void check_signature(checker *c, decl *m)
                 p->is_out = false;
             }
         }
-        if (m->is_async && p->type.kind == TY_COMPONENT) {
+        if (p->type.kind == TY_COMPONENT && (m->is_async || p->placement_local)) {
             p->type.decl = component_placement(c->prog, p->type.decl, p->placement_local, p->type_at);
         } else if (p->placement_local) diag_error(p->placement_at, "local component access belongs on a system, view, handler, query or async parameter; ordinary functions take values");
         if (world) check_world_param(m, p, k);
@@ -14059,7 +14216,7 @@ static void check_method_decls(checker *c, decl *d)
             check_operator_decl(c, d, m, i);
             continue;
         }
-        if (str_eq_c(m->name, "Interpolate") && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT)) {
+        if (!m->accessor && str_eq_c(m->name, "Interpolate") && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT)) {
             if (m->is_virtual) {
                 diag_error(m->virtual_at, "'Interpolate' is how views blend '" STR_FMT "', and isn't replaced", STR_ARG(d->name));
                 diag_note("it can call a virtual method, which a package can replace");
@@ -14079,9 +14236,14 @@ static void check_method_decls(checker *c, decl *d)
         }
         for (int j = 0; j < i; j++) { // Methods that share a name: their parameters tell them apart
             decl *other = d->methods.items[j];
-            if (!other->is_operator && !other->is_interpolate && str_eq(other->name, m->name)) m->shares_name = other->shares_name = true;
+            if (other->accessor && other->accessor == m->accessor) continue;
+            if (str_eq(other->name, m->name) && (m->accessor || other->accessor)) {
+                diag_error(m->at, "'" STR_FMT "' is already a member of '" STR_FMT "'", STR_ARG(m->name), STR_ARG(d->name));
+            } else if (!other->is_operator && !other->is_interpolate && str_eq(other->name, m->name)) m->shares_name = other->shares_name = true;
         }
         check_signature(c, m);
+        if (m->accessor && !m->is_mut_method && m->return_type.kind == TY_VOID)
+            diag_error(m->return_type_at, "a property's type can't be void");
     }
     for (int i = 0; i < d->methods.count; i++) {
         decl *m = d->methods.items[i];
@@ -15935,6 +16097,53 @@ static void add_builtins(program *prog)
             vec_push(f.default_value->args, one);
         }
         vec_push(transform_component->fields, f);
+    }
+    // Engine properties use exactly the parser and method checker available to
+    // game code. Keep the existing stored Transform representation unchanged.
+    source *transform_source = NEW(source);
+    transform_source->path = "<tide-transform>";
+    transform_source->text =
+        "component Transform {\n"
+        " float3 position {\n"
+        "  get {\n"
+        "   return Math.Transform(world.ParentToWorld(this), localPosition);\n"
+        "  }\n"
+        "  set {\n"
+        "   if (!(Math.Abs(value.x) <= 3.4028234663852886e38f &&\n"
+        "         Math.Abs(value.y) <= 3.4028234663852886e38f &&\n"
+        "         Math.Abs(value.z) <= 3.4028234663852886e38f)) return;\n"
+        "   var matrix = world.ParentToWorld(this);\n"
+        "   if (matrix.c0.x == 1 && matrix.c0.y == 0 && matrix.c0.z == 0 &&\n"
+        "       matrix.c1.x == 0 && matrix.c1.y == 1 && matrix.c1.z == 0 &&\n"
+        "       matrix.c2.x == 0 && matrix.c2.y == 0 && matrix.c2.z == 1 &&\n"
+        "       matrix.c3.x == 0 && matrix.c3.y == 0 && matrix.c3.z == 0) { localPosition = value; return; }\n"
+        "   if (Math.Determinant(matrix) == 0) return;\n"
+        "   var candidate = Math.Transform(Math.Inverse(matrix), value);\n"
+        "   if (Math.Abs(candidate.x) <= 3.4028234663852886e38f &&\n"
+        "       Math.Abs(candidate.y) <= 3.4028234663852886e38f &&\n"
+        "       Math.Abs(candidate.z) <= 3.4028234663852886e38f) localPosition = candidate;\n"
+        "  }\n"
+        " }\n"
+        "}\n";
+    transform_source->len = strlen(transform_source->text);
+    diag_add_source(transform_source);
+    program parsed_transform = {0};
+    token *transform_tokens = lex(transform_source);
+    if (transform_tokens && parse_file(&parsed_transform, transform_source, transform_tokens, false)) {
+        decl *parsed = parsed_transform.decls.items[0];
+        transform_component->properties = parsed->properties;
+        transform_component->methods = parsed->methods;
+        transform_component->unit = parsed->unit;
+        for (int i = 0; i < transform_component->properties.count; i++) transform_component->properties.items[i]->owner = transform_component;
+        for (int i = 0; i < transform_component->methods.count; i++) {
+            decl *m = transform_component->methods.items[i];
+            m->builtin = true;
+            m->owner = transform_component;
+            if (m->placement_method) {
+                m->placement_method->owner = transform_component;
+                m->placement_method->builtin = true;
+            }
+        }
     }
     prog->transform = transform_component;
 
@@ -18788,25 +18997,83 @@ static void check_acts(checker *c)
 // belongs to, and so is one that calls it on the same value. The entity is only
 // known for the components code runs for, its parameters: a copy belongs to no
 // entity.
+static param *component_binding(const expr *e)
+{
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param->type.kind == TY_COMPONENT && !e->param->is_out) return e->param;
+    return e->type.kind == TY_COMPONENT ? local_fields_param(e, e->type.decl) : NULL;
+}
+
 static void check_this_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
-            if (site->call->kind != E_CALL || site->from->kind != DECL_METHOD || !site->to->uses_this) continue;
-            if (site->from->uses_this) continue;
-            site->from->uses_this = true;
-            site->from->this_at = site->call->at;
-            changed = true;
+            const expr *call = site->call;
+            if (site->to->uses_this && call->kind == E_CALL && site->from->kind == DECL_METHOD) {
+                if (site->to->uses_owner_world && !site->from->uses_owner_world) {
+                    site->from->uses_owner_world = true;
+                    changed = true;
+                }
+                if (!site->from->uses_this) {
+                    site->from->uses_this = true;
+                    site->from->this_at = call->at;
+                    changed = true;
+                }
+            }
+            if (site->to->borrows_owner_world && !site->from->borrows_owner_world) {
+                site->from->borrows_owner_world = true;
+                changed = true;
+            }
+            if (site->to->uses_this && call->kind == E_METHOD) {
+                param *p = component_binding(call->object);
+                if (p && p->query_source && site->to->uses_owner_world && !p->query_source->owner_world) {
+                    p->query_source->owner_world = true;
+                    changed = true;
+                }
+                if (p && p->function_param && !p->task_ref) {
+                    changed |= !p->owner_context || (site->to->uses_owner_world && !p->owner_world);
+                    p->owner_context = true;
+                    p->owner_world |= site->to->uses_owner_world;
+                }
+            }
+            for (int k = 0; k < call->args.count && k < site->to->params.count; k++) {
+                const param *q = &site->to->params.items[k];
+                if (q->type.kind == TY_QUERY && q->owner_world && call->args.items[k]->param && !call->args.items[k]->param->owner_world) {
+                    call->args.items[k]->param->owner_world = true;
+                    changed = true;
+                }
+                if (!q->owner_context) continue;
+                param *p = component_binding(call->args.items[k]);
+                if (p && p->query_source && q->owner_world && !p->query_source->owner_world) {
+                    p->query_source->owner_world = true;
+                    changed = true;
+                }
+                if (!p || !p->function_param || p->task_ref) continue;
+                changed |= !p->owner_context || (q->owner_world && !p->owner_world);
+                p->owner_context = true;
+                p->owner_world |= q->owner_world;
+            }
         }
     }
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
         const expr *call = site->call;
+        for (int k = 0; k < call->args.count && k < site->to->params.count; k++) {
+            const param *q = &site->to->params.items[k];
+            if (!q->owner_context) continue;
+            const param *p = component_binding(call->args.items[k]);
+            if (!p) {
+                diag_error(call->args.items[k]->at, "'" STR_FMT "' needs an attached component: this value is a detached copy", STR_ARG(q->name));
+                diag_note("pass the component parameter or query binding directly; assigning it to a local copies its data");
+            } else if (p->type.decl->is_local != q->type.decl->is_local) {
+                diag_error(call->args.items[k]->at, "component ownership belongs to a different world: declare the helper parameter '%slocal " STR_FMT "'",
+                           q->type.decl->is_local ? "without " : "", STR_ARG(q->type_name));
+            }
+        }
         if (!site->to->uses_this || call->kind != E_METHOD) continue;
         const expr *object = call->object;
-        if (object->kind == E_NAME && object->bind == BIND_PARAM && !object->param->function_param) continue;
+        if (component_binding(object)) continue;
         const decl *m = site->to;
         char *name = str_to_cstr(m->owner->name);
         name[0] = (char)tolower((unsigned char)name[0]);
@@ -18821,6 +19088,7 @@ static void check_this_calls(const checker *c)
 
 static const param *world_param(const decl *d)
 {
+    if (d->owner_world) return d->owner_world;
     for (int i = 0; i < d->params.count; i++) {
         if (d->params.items[i].type.kind == TY_WORLD) return &d->params.items[i];
     }
@@ -18833,14 +19101,25 @@ static const param *world_param(const decl *d)
 // is this machine's, and a view changes nothing of the match. Mutable component bindings follow a Set of their current entity.
 static void check_world_passing(checker *c)
 {
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        for (int k = -1; k < d->methods.count; k++) {
+            const decl *m = k < 0 ? d : d->methods.items[k];
+            if (!m->uses_owner_world || m->owner_world) continue;
+            for (int j = 0; j < m->params.count; j++) {
+                if (m->params.items[j].type.kind == TY_WORLD)
+                    diag_error(m->params.items[j].at, "a component method uses either its owning 'world' or an explicit World parameter; remove the parameter to use the owning world");
+            }
+        }
+    }
     bool any = false;
-    for (int i = 0; i < c->calls.count && !any; i++) any = world_param(c->calls.items[i].to) != NULL;
+    for (int i = 0; i < c->calls.count && !any; i++) any = world_param(c->calls.items[i].to) != NULL || c->calls.items[i].to->borrows_owner_world;
     if (!any) return;
     for (bool grew = true; grew;) {
         grew = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
-            if (!world_param(site->to) || !world_param(site->from)) continue;
+            if (!(world_param(site->to) && world_param(site->from)) && !site->to->borrows_owner_world) continue;
             for (int k = 0; k < site->to->world_uses.count; k++) {
                 const world_use *theirs = &site->to->world_uses.items[k];
                 if (!theirs->through_world) continue;
@@ -18882,7 +19161,7 @@ static void check_world_passing(checker *c)
         const call_site *site = &c->calls.items[i];
         decl *from = site->from;
         const decl *to = site->to;
-        if (!world_param(to)) continue;
+        if (!world_param(to) && !to->borrows_owner_world) continue;
         const loc at = site->call->at;
         bool writes = false;
         for (int k = 0; k < to->world_uses.count; k++) writes |= to->world_uses.items[k].writes;
@@ -19759,6 +20038,7 @@ bool check(program *prog)
     for (int i = 0; i < prog->components.count; i++) {
         decl *d = prog->components.items[i];
         if (d->placement_of) continue;
+        if (d->builtin) continue; // Engine accessors are instantiated only when called.
         for (int k = 0; k < d->methods.count; k++) {
             decl *m = d->methods.items[k];
             if (!m->body_checked && (!m->placement_method || !m->placement_method->body_checked)) check_placement_body(&c, m);

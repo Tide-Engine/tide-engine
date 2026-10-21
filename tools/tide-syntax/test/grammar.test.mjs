@@ -83,6 +83,13 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('computed property accessors are contextual', () => {
+    const lines = tokenize('float diameter { get { return radius * 2; } set { radius = value / 2; } }\nint get = 1;\n');
+    check(lines[0], ['get', 'keyword.other.accessor']);
+    check(lines[0], ['set', 'keyword.other.accessor']);
+    assert.ok(!piecesOf(lines[1], 'get', 1).some(p => has(p.scopes, 'keyword.other.accessor')));
+});
+
 test('authored prefab and child declarations', () => {
     const lines = tokenize('prefab Enemy\n{\n    entity Weapon : Pistol\n    {\n        Transform;\n    }\n}');
     check(lines[0], ['prefab', 'storage.type']);
