@@ -137,11 +137,16 @@ function noticed(setup, env) {
 
 const version = /^tide (\S+) /.exec(spawnSync(tideBuilt, ["version"], { encoding: "utf8" }).stdout)[1];
 
+// CI builds the tide it tests with the release's version, which isn't a
+// development build: there only TIDE_HIDDEN's half applies.
+const development = version.endsWith("-dev");
+
 test("a development build sends nothing without the test's override, and TIDE_HIDDEN sends nothing", async (t) => {
     const server = await collector(t);
     const setup = install();
-    for (const env of [environment(null, { TIDE_TELEMETRY_URL: server.url }),
-        environment(server.url, { TIDE_HIDDEN: "1" })]) {
+    const silent = [environment(server.url, { TIDE_HIDDEN: "1" })];
+    if (development) silent.unshift(environment(null, { TIDE_TELEMETRY_URL: server.url }));
+    for (const env of silent) {
         for (const args of [["version"], ["version"], ["schedule", setup.game]]) {
             const run = tide(setup, args, env);
             assert.equal(run.code, 0, run.stderr);
@@ -149,8 +154,10 @@ test("a development build sends nothing without the test's override, and TIDE_HI
         }
         assert.equal(existsSync(setup.folder), false, "nothing is written");
     }
-    const status = tide(setup, ["telemetry", "status"], environment(null, { TIDE_TELEMETRY_URL: server.url }));
-    assert.match(status.stdout, /^Usage data: off, as this is a development build/);
+    if (development) {
+        const status = tide(setup, ["telemetry", "status"], environment(null, { TIDE_TELEMETRY_URL: server.url }));
+        assert.match(status.stdout, /^Usage data: off, as this is a development build/);
+    }
     const hidden = tide(setup, ["telemetry", "status"], environment(server.url, { TIDE_HIDDEN: "1" }));
     assert.match(hidden.stdout, /^Usage data: off, as TIDE_HIDDEN is set/);
     await sleep(1500);
