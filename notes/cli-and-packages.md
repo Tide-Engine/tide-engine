@@ -19,6 +19,9 @@ whole-directory replacement and rollback; Windows file locks refuse the update
 with close-IDE/rerun guidance. Successful explicit installation says to restart;
 successful upgrade remains quiet. No IDE is launched and no network is used.
 
+Upstream license texts retain their exact bytes, including original whitespace;
+their cli-licenses directory is marked -text/-whitespace in .gitattributes.
+
 Gradle buildCliInstaller builds editors/tide-jetbrains-installer.zip separately
 from the Marketplace ZIP. cmake/package.cmake takes -DJETBRAINS=<archive>, or
 build/jetbrains/tide-jetbrains-installer.zip from CI, rejects a different VERSION,
@@ -54,6 +57,18 @@ USERPROFILE, APPDATA, LOCALAPPDATA and both XDG roots. All other 2,452 tests
 passed in that run; the corrected upgrade and both JetBrains fixtures pass
 3/3. The macOS/Linux discovery branches also pass strict warning-free syntax
 checks with the build's CRT definitions; actual OS execution remains untested.
+
+Integration: origin/dev through 50112539 merged cleanly, bringing Unity outline
+output and Quick reference docs. Rebuilt tide/tidec/tidels and web's native
+tidec_host for the compiler/CLI dependency overlap. All 36 native CLI/outline/
+schedule checks pass across the run and one telemetry rerun; all 21 web-host
+outline/schedule checks and the merged docs build pass. The telemetry test's
+off/on case once observed one extra event after writing its synthetic queue;
+it passed both earlier full runs and the isolated rerun without a telemetry
+code change. No telemetry behavior is changed by this task. Rebuilt the actual
+CLI bundle as 0.5.0-dev (matching this checkout), repeated the byte-for-byte
+Rider-profile smoke test, and staged it with the real package script against
+a minimal native fixture, verifying version and notice extraction.
 
 ## Usage data (2026-10-21)
 
