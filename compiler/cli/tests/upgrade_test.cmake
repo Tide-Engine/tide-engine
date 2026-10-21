@@ -16,6 +16,14 @@ foreach(var TIDE WORK)
     endif()
 endforeach()
 file(REMOVE_RECURSE "${WORK}")
+# Even a deliberately incomplete package may inspect editor profiles while
+# deciding whether an editor update is needed. Keep the host's profiles out.
+set(ENV{USERPROFILE} "${WORK}/home")
+set(ENV{HOME} "${WORK}/home")
+set(ENV{APPDATA} "${WORK}/roaming")
+set(ENV{LOCALAPPDATA} "${WORK}/local")
+set(ENV{XDG_CONFIG_HOME} "${WORK}/config")
+set(ENV{XDG_DATA_HOME} "${WORK}/data")
 get_filename_component(tide_name "${TIDE}" NAME)
 
 # The package's name for this machine, as upgrade.c has it.

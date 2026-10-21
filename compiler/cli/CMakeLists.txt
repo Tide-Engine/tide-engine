@@ -1,6 +1,6 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
 # front end in-process and calls clang.
-add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
+add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c jetbrains.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
     serve.c sys.c telemetry.c toolchain.c unity_assets.c unity_yaml.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")
 # Android apps are signed with the platform layer's crypto (apk.c).
@@ -96,6 +96,14 @@ endif()
 add_test(NAME tide_cli_editors
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/editors_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editors_test.cmake")
+
+add_test(NAME tide_cli_jetbrains
+    COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/jetbrains test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/jetbrains_test.cmake")
+
+add_test(NAME tide_cli_jetbrains_package
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${PROJECT_SOURCE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/jetbrains package test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/jetbrains_package_test.cmake")
 
 add_test(NAME tide_cli_ide
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DTIDELS=$<TARGET_FILE:tidels>"

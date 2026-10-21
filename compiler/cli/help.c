@@ -88,7 +88,9 @@ static const command_help commands[] = {
      "Use tide deploy for managed hosting of locally built games.", PUBLISH},
     {"editors", "editors", "Install Tide support in supported code editors",
      "Installs Tide support in the VS Code, Cursor, VSCodium and Windsurf\n"
-     "installations it finds. JetBrains support is on JetBrains Marketplace.", EDITORS},
+     "installations it finds, and existing JetBrains IDE profiles (2024.2+).\n"
+     "Uses the plugins bundled with this Tide version. Restart JetBrains IDEs\n"
+     "after installation; open a new IDE once before running tide editors.", EDITORS},
     {"ide", "ide <editor>", "Print setup for Emacs, Vim or Neovim",
      "Prints configuration to copy into your editor's init file, using this\n"
      "installation's bundled modes and tidels. Changes no files and starts\n"

@@ -81,6 +81,12 @@ TIDE_TEST(unzip_extracts_the_entries_asked_for)
     TIDE_REQUIRE(f && fwrite(other, 1, sizeof other - 1, f) == sizeof other - 1);
     fclose(f);
     TIDE_CHECK(unzip_size(archive) == -1);
+    // Short files used to underflow the backwards end-record search.
+    for (size_t n = 0; n < 22; n++) {
+        TIDE_REQUIRE(sys_write_file(archive, other, n));
+        TIDE_CHECK(unzip_size(archive) == -1);
+        TIDE_CHECK(!unzip(archive, "unzip_test_out", in_pkg, NULL));
+    }
     sys_remove(archive);
     TIDE_CHECK(unzip_size(archive) == -1);
 }

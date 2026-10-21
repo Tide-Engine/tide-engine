@@ -21,6 +21,9 @@ compiler/cli/tests/unity_project/** -text
 platform/third_party/* -text
 platform/third_party/fflate/** -text
 
+# Upstream license texts keep their exact bytes and original whitespace.
+tools/tide-jetbrains/cli-licenses/* -text -whitespace
+
 # Box2D, as it came (packages/box2d/box2d/TIDE.md lists what is changed).
 packages/box2d/box2d/** -text
 

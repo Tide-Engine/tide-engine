@@ -202,7 +202,7 @@ function provenance(): string {
 
 export function llmsIndex(): string {
     return `# Tide Engine\n\n> Documentation for Tide's language, deterministic simulation, multiplayer and presentation.\n\n${provenance()}\n`
-        + `Start with [Using Tide with AI](${siteUrl('/guide/ai.md')}) and the [short agent overview](${siteUrl('/guide/ai-context.md')}).\n\n`
+        + `Start with [Using Tide with AI](${siteUrl('/guide/ai.md')}) and the [quick reference](${siteUrl('/guide/ai-context.md')}).\n\n`
         + sidebar.map((group) => `## ${group.text}\n\n` + group.items.map(({ text, link }) => `- [${text}](${siteUrl(markdownPath(link))}): ${document(link).description}`).join('\n')).join('\n\n')
         + `\n\n## Optional\n\n- [Offline documentation bundle](${siteUrl('/llms-full.txt')}): all user pages, without the language spec.\n`
         + `- [Bundle including the spec](${siteUrl('/llms-full-with-spec.txt')}): retains Decided, Provisional and Open sections; proposals are not implemented promises.\n`

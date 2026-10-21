@@ -44,6 +44,29 @@ workflow publishes, or `build/distributions` from `buildPlugin` installed
 from disk. The prefab hover and the fix need a tidels with them: the owner's
 Rider runs their own installed tide's.
 
+## CLI-managed JetBrains profiles (2026-10-21)
+
+The engine package now carries the matching Tide plugin plus LSP4IJ in a
+separate offline installer archive; `tide editors` adds it to standard existing
+2024.2+ JetBrains profiles and upgrades update those already containing Tide.
+No IDE is launched. New IDEs need one launch before discovery; custom profile
+or plugin paths remain manual. Restart after installation/upgrades; locked
+Windows plugin files give close-IDE/rerun guidance without removing the old
+plugin. Existing LSP4IJ, settings, disabled state and other plugins are preserved.
+
+Gradle buildCliInstaller depends on the tested ordinary buildPlugin and takes
+its pluginDirectory plus pinned LSP4IJ from prepareSandbox. Marketplace's ZIP
+stays a single plugin; the CLI archive adds VERSION and upstream license/source
+notices from cli-licenses, also staged in the engine's licenses/jetbrains. No
+Java adapter API or language-server behavior changed. The README documents both
+distribution methods; the public standalone repository has not been re-exported.
+
+Windows JDK 21/Gradle 9.8.0 packaging and all eight enabled adapter/platform tests
+pass. The real archive's installed files match the build byte-for-byte in an
+isolated Rider profile. CLI safety/package fixtures, full native/web suites,
+docs validation and remaining platform coverage are recorded in
+notes/cli-and-packages.md, Bundled JetBrains installation.
+
 ## Stable and nightly Tide Marketplace channels (2026-10-21)
 
 The owner has submitted the initial Tide Stable upload and approved a nightly

@@ -90,7 +90,7 @@ jobs:
 
   checks:
     name: ${{ matrix.preset == 'package' && format('Package ({0})', matrix.platform) || format('Test ({0}, {1})', matrix.platform, matrix.preset) }}
-    needs: version
+    needs: [version, jetbrains]
     strategy:
       fail-fast: false # The other platforms finish, so a run shows every failure
       matrix:
@@ -430,6 +430,11 @@ jobs:
 
       # The package's Android half is the platform layer for each CPU, built
       # with the runner's NDK (ANDROID_NDK_HOME).
+      - uses: actions/download-artifact@v4
+        if: matrix.preset == 'package'
+        with:
+          name: tide-jetbrains-installer
+          path: build/jetbrains
       - name: Package
         if: matrix.preset == 'package'
         run: |
@@ -459,6 +464,9 @@ jobs:
           build/dist/tide/bin/tide build build/try
           build/dist/tide/bin/tide build build/try --release --web
           build/dist/tide/bin/tide build build/try --android
+          cmake -DTIDE="$PWD/build/dist/tide/bin/tide${{ runner.os == 'Windows' && '.exe' || '' }}" \
+            -DBUNDLE="$PWD/build/dist/tide/editors/tide-jetbrains-installer.zip" \
+            -DWORK="$PWD/build/try-editors" -P compiler/cli/tests/jetbrains_test.cmake
       # A game's C++, which builds with no C++ runtime: that it builds for each
       # target with the package's own compiler and headers, and what tide says
       # when it can't.
@@ -551,7 +559,7 @@ jobs:
       - name: Build and verify
         run: |
           chmod +x gradlew
-          ./gradlew buildPlugin verifyPlugin -PpluginVersion="$TIDE_VERSION"
+          ./gradlew buildPlugin buildCliInstaller verifyPlugin -PpluginVersion="$TIDE_VERSION"
           mv build/distributions/tide-*.zip build/distributions/tide-jetbrains.zip
       - uses: actions/upload-artifact@v4
         with:
@@ -560,6 +568,13 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1 # Only the release job reads them, and they count against the account's storage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tide-jetbrains-installer
+          path: tools/tide-jetbrains/build/cli/tide-jetbrains-installer.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
 
   release:
     name: Release

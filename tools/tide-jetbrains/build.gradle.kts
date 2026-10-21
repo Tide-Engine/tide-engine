@@ -76,6 +76,23 @@ intellijPlatform {
 }
 
 tasks {
+    // Marketplace's archive stays a single plugin. Tide's offline installer
+    // also carries the pinned LSP4IJ dependency, already in the sandbox.
+    register<Zip>("buildCliInstaller") {
+        dependsOn(buildPlugin)
+        archiveFileName = "tide-jetbrains-installer.zip"
+        destinationDirectory = layout.buildDirectory.dir("cli")
+        from(resources.text.fromString("${project.version}\n")) { rename { "VERSION" } }
+        from("cli-licenses") { into("lsp4ij/licenses") }
+        from(prepareSandbox.flatMap { it.pluginDirectory }) { into("tide") }
+        from(prepareSandbox.flatMap { it.defaultDestinationDirectory }) {
+            include("lsp4ij/**")
+        }
+        doFirst {
+            val plugins = prepareSandbox.get().defaultDestinationDirectory.get().asFile
+            check(plugins.resolve("lsp4ij/lib").isDirectory) { "Missing LSP4IJ in the CLI installer" }
+        }
+    }
     processResources {
         from("LICENSE") { into("META-INF") }
     }

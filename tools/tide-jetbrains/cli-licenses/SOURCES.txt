@@ -1,0 +1,25 @@
+This installer redistributes LSP4IJ and its libraries without modification.
+Their source code is available under the licenses included here:
+
+LSP4IJ 0.21.0 (EPL-2.0):
+https://github.com/redhat-developer/lsp4ij/tree/0.21.0
+License: https://raw.githubusercontent.com/redhat-developer/lsp4ij/0.21.0/LICENSE
+
+Eclipse LSP4J 1.0.0 and debug libraries 0.21.0 (EPL-2.0 OR BSD-3-Clause):
+https://github.com/eclipse-lsp4j/lsp4j/tree/v1.0.0
+https://github.com/eclipse-lsp4j/lsp4j/tree/v0.21.0
+Licenses: LICENSE at each of the above tags.
+
+JetBrains Java annotations 24.0.1 (Apache-2.0):
+https://github.com/JetBrains/java-annotations/tree/24.0.1
+License: LICENSE.txt at that tag.
+
+autolink-java 0.6.0 (MIT):
+https://github.com/robinst/autolink-java/tree/autolink-0.6.0
+License: LICENSE at that tag.
+
+flexmark-java 0.64.8 (BSD-2-Clause):
+https://github.com/vsch/flexmark-java/tree/4aac7f94967a1f8ea449a0738deae27554747707
+License: LICENSE.txt at that commit (0.64.8's source revision).
+
+The Tide plugin has its MIT license in its JAR's META-INF/LICENSE.

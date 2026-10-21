@@ -144,9 +144,11 @@ more work across all of them.
   the ones it finds, and `tide upgrade` keeps it up to date. Installed one
   later? Run `tide editors`.
 - **JetBrains IDEs** (CLion, Rider, IntelliJ and the others, 2024.2 or later):
-  the [Tide plugin's source and build instructions](https://github.com/Tide-Engine/tide-jetbrains)
-  are public under MIT. Until the initial Marketplace listing is ready, build
-  its ZIP and use Settings > Plugins > Install Plugin from Disk. It requires LSP4IJ.
+  the installer adds the bundled plugin to existing IDE profiles, including
+  LSP4IJ when missing. `tide upgrade` keeps the plugin aligned with Tide.
+  Open a newly installed IDE once, then run `tide editors`. Restart the IDE
+  after installation or upgrades. The [plugin source](https://github.com/Tide-Engine/tide-jetbrains)
+  is public under MIT.
   Dark color schemes show type names as plain text; see
   [tools/tide-jetbrains/README.md](tools/tide-jetbrains/README.md#colors)
   to color them.

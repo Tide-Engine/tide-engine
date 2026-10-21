@@ -1,10 +1,10 @@
 ---
-description: "A compact Tide language and engine overview for AI agents, with a complete game, essential contracts and links to exact API references."
+description: "Tide on one page: a complete game, the essential rules of the language and engine, and links to each topic's full reference."
 ---
 
-# Tide overview for AI agents
+# Quick reference
 
-Read this before writing a Tide game. It covers the common path; consult the linked topic when a task needs more. [Using Tide with AI](./ai.md) explains installation, project instructions and the optional skill.
+Tide on one page: a complete game, the rules most games rely on, and links to each topic's full reference. It covers the common path; follow the links when a task needs more. It's also the page to give an AI agent: [Using Tide with AI](./ai.md) explains how.
 
 ## Find the project and version
 
@@ -18,7 +18,7 @@ Save the following as `game.tide` in an otherwise empty game folder. It is the s
 
 <<< @/examples/first-game.tide
 
-Build with `tide build`. For a human's interactive session, `tide run` watches files and reloads when they change. An agent's validation uses a bounded hidden run instead, as shown below.
+Build with `tide build`. For a human's interactive session, `tide run` watches files and reloads when they change. Automated checks (a script, CI or an AI agent) use a bounded hidden run instead, as shown below.
 
 ## The model
 
@@ -113,7 +113,7 @@ tide build
 tide build --web
 ```
 
-For an agent's native runs, set `TIDE_HIDDEN=1` in that shell before running the game. PowerShell:
+For automated native runs, set `TIDE_HIDDEN=1` in that shell before running the game. PowerShell:
 
 ```powershell
 $env:TIDE_HIDDEN = '1'

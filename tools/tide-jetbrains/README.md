@@ -5,6 +5,13 @@ The plugin ID is `io.github.blenminer.tide`. Its initial Stable upload has been
 submitted to JetBrains Marketplace. You can also build the ZIP with the
 instructions below and use Settings > Plugins > Install Plugin from Disk.
 
+Tide's engine installer includes the matching plugin and adds it to existing
+JetBrains profiles (2024.2+), including LSP4IJ when missing. `tide upgrade`
+updates those profiles with its bundled version. For a newly installed IDE,
+open it once, run `tide editors`, then restart it. Custom IDE configuration or
+plugin paths need manual installation. Marketplace updates follow the IDE's
+chosen channel independently.
+
 Highlighting comes from the bundled TextMate grammar, and
 everything else from `tidels` through the required LSP4IJ plugin, available
 from JetBrains Marketplace. It runs in every JetBrains IDE from 2024.2 on.
@@ -68,6 +75,7 @@ running games and the native prefab editor.
 
 ```sh
 ./gradlew buildPlugin                  # build/distributions/tide-<version>.zip
+./gradlew buildCliInstaller            # build/cli/tide-jetbrains-installer.zip (Tide + LSP4IJ)
 ./gradlew test                         # adapter and isolated IntelliJ platform regressions
 ./gradlew runIde --args="<game folder>"  # an IDE with the plugin, for trying it
 ./gradlew verifyPlugin                 # against IntelliJ 2024.2 and the newest CLion

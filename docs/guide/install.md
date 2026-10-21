@@ -43,7 +43,13 @@ tide version
 
 This shows tide's version and channel, where it's installed, and which compilers it found.
 
-The installer also adds Tide to VS Code, Cursor, VSCodium and Windsurf when it finds them. If you run it again when `tide` is already there, it upgrades it instead, on the channel it's on unless you set `TIDE_CHANNEL`, and adds Tide to those editors installed since.
+The installer also adds Tide to VS Code, Cursor, VSCodium and Windsurf when it
+finds them, and to existing JetBrains IDE profiles (2024.2+). JetBrains gets
+the plugin bundled with your Tide version, including LSP4IJ when missing;
+restart the IDE to load it. Open a new JetBrains IDE once before running
+`tide editors`. If you run the installer again when `tide` is already there,
+it upgrades it instead, on the channel it's on unless you set `TIDE_CHANNEL`,
+and adds Tide to editors installed since.
 
 ## Set up your editor
 

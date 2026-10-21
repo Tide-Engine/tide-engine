@@ -256,6 +256,7 @@ static bool find_directory(FILE *f, const char *archive, uint64_t *start, uint64
 {
     if (seek64(f, 0, SEEK_END) != 0) return fail(archive, "can't read it");
     const uint64_t length = (uint64_t)tell64(f);
+    if (length < 22) return fail(archive, "it isn't a zip");
     const size_t tail = length < 65536 + 22 ? (size_t)length : 65536 + 22; // The end, and a comment that long
     uint8_t *buf = malloc(tail);
     if (!buf || !read_at(f, length - tail, buf, tail)) {

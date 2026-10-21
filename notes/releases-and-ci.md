@@ -1,5 +1,23 @@
 # Releases, installing and CI
 
+## Matching JetBrains plugin in platform packages (2026-10-21)
+
+The JetBrains job also builds and uploads tide-jetbrains-installer.zip, an
+offline Tide/LSP4IJ bundle with the engine's exact version and upstream notices.
+The checks matrix waits for that job; package entries download the artifact to
+build/jetbrains before cmake/package.cmake adds it to editors/ and stages its
+notices under licenses/jetbrains. Packaging rejects absent/mismatched versions.
+The installed-package smoke step runs jetbrains_test.cmake with the real bundle,
+using isolated profiles and checking every installed Tide/LSP4IJ byte.
+
+The original single-plugin ZIP remains the Marketplace/release asset. The
+offline archive travels inside each platform package; no new public release
+asset, trigger, publication condition or Marketplace channel is introduced.
+YAML parsing and the job-dependency graph pass. Local Gradle, version/package
+fixtures, actual-archive install, docs and full native/web validation are in
+notes/cli-and-packages.md, Bundled JetBrains installation. No workflow was
+dispatched; actual hosted Linux/macOS packaging remains CI coverage.
+
 ## Automatic runs and releases without a commit back (2026-10-21)
 
 With the repository public, Actions cost nothing, and the owner asked for workflows to run automatically and for releases not to hold up `dev`. Build now runs on pushes to `dev` and `release`, on pull requests, and on request. Its concurrency group per ref still finishes the current run and keeps only the newest waiting push, so a burst of pushes to `dev` publishes one nightly, of the last; a pull request's newer push cancels its older run. Pull requests publish nothing and, from forks, get no secrets (Docs then builds without the prototypes and doesn't deploy).

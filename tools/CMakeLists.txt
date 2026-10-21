@@ -1,6 +1,6 @@
 # Editor support in the package's editors/ folder. The TextMate grammar is for
-# editors that read TextMate bundles; JetBrains IDEs get the Marketplace plugin
-# instead (tools/tide-jetbrains). Its test stays here.
+# editors that read TextMate bundles. JetBrains' offline installer is built
+# once by Gradle and added to all platform archives by cmake/package.cmake.
 install(DIRECTORY tide-syntax DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 install(DIRECTORY tide-emacs tide-vim DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 
