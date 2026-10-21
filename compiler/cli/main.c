@@ -54,6 +54,18 @@ static int version(const char *root)
     return 0;
 }
 
+// The folder a package command works on, from `folder` (absolute, malloc'd): it, or in a Unity project the Assets
+// folder it's in, which is the game there (packages.h).
+static char *command_folder(char *folder)
+{
+    char *unity = packages_unity_game(folder);
+    if (!unity) return folder;
+    free(folder);
+    const size_t n = strlen(unity);
+    if (n > 1 && unity[n - 1] == '/') unity[n - 1] = '\0'; // As path_absolute gives a folder
+    return unity;
+}
+
 int main(const int argc, char **argv)
 {
 #ifdef TIDE_EMBEDDED_CLANG
@@ -115,7 +127,7 @@ int main(const int argc, char **argv)
                             "comes with tide\n");
             return 2;
         }
-        char *folder = path_absolute(".");
+        char *folder = command_folder(path_absolute("."));
         return tide_add(folder, argv[2]);
     }
 
@@ -125,7 +137,7 @@ int main(const int argc, char **argv)
             fprintf(stderr, "tide: update doesn't take '%s'; it takes the names of packages, or none for all\n", argv[i]);
             return 2;
         }
-        char *folder = path_absolute(".");
+        char *folder = command_folder(path_absolute("."));
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
     }
 
@@ -134,7 +146,7 @@ int main(const int argc, char **argv)
             fprintf(stderr, "tide: eject takes the name of one of the game's packages, like `tide eject rooms`\n");
             return 2;
         }
-        char *folder = path_absolute(".");
+        char *folder = command_folder(path_absolute("."));
         return tide_eject(folder, argv[2]);
     }
 
@@ -143,7 +155,7 @@ int main(const int argc, char **argv)
             fprintf(stderr, "tide: %s takes the game's folder, or none for this one\n", command);
             return 2;
         }
-        char *folder = path_absolute(argc == 3 ? argv[2] : ".");
+        char *folder = command_folder(path_absolute(argc == 3 ? argv[2] : "."));
         return command[0] == 'f' ? tide_fetch(folder) : tide_publish(folder);
     }
 

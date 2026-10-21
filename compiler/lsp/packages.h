@@ -179,3 +179,24 @@ char *packages_builtin_unknown(const char *name, const char *folder);
 // `path` (absolute) relative to the folder `from` (absolute, ending in '/'),
 // like "../shared"; or `path` itself where it can't be. malloc'd.
 char *packages_relative(const char *from, const char *path);
+
+// A game made in Unity (notes/unity.md) is the whole of a Unity project's
+// Assets folder. Each folder in it whose tide.packages says `package Name` is
+// one of its packages with no line for it, found as Unity finds an assembly
+// definition; packages_resolve adds them. The game's own C is only ever a
+// package's: tide builds no C, headers or libraries of the Assets folder
+// itself, where Unity's plugins are. Folders Unity leaves out, hidden ones and
+// those whose names end in '~' (Samples~), are no part of it.
+
+// Whether `folder` is a Unity project's Assets folder: Assets, beside the
+// project's ProjectSettings/ProjectVersion.txt.
+bool packages_unity_assets(const char *folder);
+
+// The Assets folder of the Unity project `folder` (absolute) is in, ending in
+// '/', for a command run in it: the game, unless a folder on the way up has a
+// tide.packages of its own (a package's). NULL for none. malloc'd.
+char *packages_unity_game(const char *folder);
+
+// Whether a path in a game made in Unity, from its Assets folder, is in a
+// folder Unity leaves out: a hidden one or one whose name ends in '~'.
+bool packages_unity_left_out(const char *relative);

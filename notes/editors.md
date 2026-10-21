@@ -26,6 +26,18 @@ com.tide.unity's TideEntity: `analysis_rename` appends `unity_renames`' edits
 (`compiler/lsp/analysis.c`) to its changes, as UTF-16 columns. Details, limits
 and the test: notes/unity.md, Tooling as built.
 
+## A Unity project's game (2026-10-21)
+
+A file under a Unity project's `Assets` (beside `ProjectSettings/
+ProjectVersion.txt`) belongs to the game that folder is, as if it had a
+`tide.packages` (`game_folder`), with its packages found as tide finds them;
+files in folders Unity leaves out are dropped, and tide unity's
+`Library/Tide/prefabs/**` and `Library/Tide/Unity.tide` come after the game's
+own, so `using UnityEngine.Prefabs;` and the project's prefabs resolve
+(`add_unity_game` in `server.c`). Test:
+`lsp_unity_game_is_its_assets_with_what_tide_unity_wrote`; details in
+notes/unity.md, The game is Assets.
+
 ## Double Position hover (2026-10-20)
 
 Position attribute hover now identifies float/double scalars and vectors and

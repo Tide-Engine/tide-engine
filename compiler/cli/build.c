@@ -94,13 +94,22 @@ static int path_order(const void *a, const void *b)
 }
 
 // The .tide files in `folder` and its subfolders, but those of games and
-// packages of their own (subfolders with a tide.packages), by path.
+// packages of their own (subfolders with a tide.packages), by path; in a game
+// made in Unity, not those in folders Unity leaves out (packages.h).
 static file_list tide_files(const char *folder)
 {
     file_list list = {0};
     char *dir = path_join(folder, "");
     folder_find_own(dir, ".tide", add_file, &list);
     folder_find_own(dir, ".tprefab", add_file, &list);
+    if (packages_unity_assets(dir)) {
+        int kept = 0;
+        for (int i = 0; i < list.count; i++) {
+            if (packages_unity_left_out(list.items[i] + strlen(dir))) free(list.items[i]);
+            else list.items[kept++] = list.items[i];
+        }
+        list.count = kept;
+    }
     free(dir);
     if (list.count > 0) qsort(list.items, (size_t)list.count, sizeof(char *), path_order);
     return list;
@@ -142,8 +151,11 @@ static void add_own_file(void *user, const char *path)
     add_file(&o->list, path);
 }
 
+// None for a game made in Unity's Assets folder, whose C is only ever a
+// package's (packages.h): Unity's plugins are there.
 static file_list own_files_of(const char *folder, const char *const *extensions)
 {
+    if (packages_unity_assets(folder)) return (file_list){0};
     char *dir = path_join(folder, "");
     own_files o = {strlen(dir), extensions, {0}};
     folder_find_own(dir, "", add_own_file, &o); // Every file, once
@@ -182,12 +194,46 @@ static void report_package(void *user, const char *where, const int line, const 
     if (note) fprintf(stderr, "  = note: %s\n", note);
 }
 
+// In a game made in Unity, C beside its .tide files, which tide doesn't build
+// there (packages.h): a warning at each such file, which Unity's Console
+// opens. Other C in Assets is Unity's plugins', and nothing to say.
+static void warn_unity_c(const char *folder)
+{
+    char *dir = path_join(folder, "");
+    if (!packages_unity_assets(dir)) {
+        free(dir);
+        return;
+    }
+    file_list tides = tide_files(dir);
+    file_list sources = {0};
+    for (int i = 0; source_extensions[i]; i++) folder_find_own(dir, source_extensions[i], add_file, &sources);
+    for (int i = 0; i < sources.count; i++) {
+        const char *path = sources.items[i];
+        const char *name = strrchr(path, '/');
+        const size_t folder_len = name ? (size_t)(name - path) + 1 : 0;
+        bool beside = false;
+        for (int k = 0; k < tides.count && !beside; k++) {
+            const char *other = strrchr(tides.items[k], '/');
+            beside = other && (size_t)(other - tides.items[k]) + 1 == folder_len && strncmp(tides.items[k], path, folder_len) == 0;
+        }
+        if (!beside || packages_unity_left_out(path + strlen(dir))) continue;
+        fprintf(stderr, "%s:1:1: warning: tide doesn't build this: in a Unity project, a game's C goes in a package\n",
+                path + strlen(dir));
+        fprintf(stderr, "  = note: put it in a folder of its own with a tide.packages that says `package Name`; that "
+                        "folder is then one of the game's packages\n");
+    }
+    free_files(&sources);
+    free_files(&tides);
+    free(dir);
+}
+
 // The packages of the game in `folder`, into `out`. False after saying
 // what's wrong, which includes `folder` being a package rather than a game.
 static bool find_packages(const char *folder, game_packages *out)
 {
     packages_free(out);
     if (!packages_resolve(folder, out, fetch_package, report_package, NULL)) return false;
+    warn_unity_c(folder);
     if (out->file.name) {
         fprintf(stderr, "tide: %s is package %s, not a game\n", folder, out->file.name);
         fprintf(stderr, "  = note: to try it, make a game in a folder of its own whose tide.packages lists this "
@@ -1825,7 +1871,13 @@ static bool generate(build *b, const char *gen, const bool layout)
         char *prefabs = b->opts->unity && b->opts->output ? path_join(b->opts->output, "prefabs") : NULL;
         if (prefabs) sys_remove_tree(prefabs);
         for (int i = 0; prefabs && i < unity.count; i++) {
-            if (strcmp(unity.items[i].path, UNITY_SOURCE_PATH) == 0) continue;
+            if (strcmp(unity.items[i].path, UNITY_SOURCE_PATH) == 0) {
+                // The declarations its own source makes, where its messages say they are, which tidels reads too
+                char *declared = path_join(b->opts->output, "Unity.tide");
+                if (unity.items[i].text) sys_write_text(declared, unity.items[i].text);
+                free(declared);
+                continue;
+            }
             char *name = format("%s.tprefab", unity.items[i].path, NULL);
             char *path = path_join(prefabs, name);
             char *dir = path_dir(path);
@@ -2222,6 +2274,7 @@ static void stamp_folder(uint64_t *h, const char *folder)
     char *packages = path_join(dir, PACKAGES_FILE);
     stamp_file(h, packages);
     free(packages);
+    if (packages_unity_assets(dir)) folder_find(dir, PACKAGES_FILE, stamp_file, h); // A package folder made in it
     free(dir);
     file_list others = own_files_of(folder, c_side_extensions);
     for (int i = 0; i < others.count; i++) stamp_file(h, others.items[i]);
