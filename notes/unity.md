@@ -483,6 +483,15 @@ and Clear left exactly one (the stacking the owner saw was the package before
 this, whose ordinary logs nothing removed). What the double click opens for a
 `.tide` is the external editor's choice; not seen.
 
+Correction (2026-10-21, owner: a two-prefabs-of-one-name error came with a C#
+stack). A message naming a file but no line (`Assets/X.prefab: error: ...`)
+didn't match `located`, so it went in as an ordinary log, which Unity gives the
+package's own stack. The pattern takes the line and column as optional now; one
+about a whole prefab or scene goes in located at the asset itself (line 0), so a
+double click opens it and the Console selects it. Ordinary logs, for a message
+naming nothing, are `Debug.LogFormat(..., LogOption.NoStacktrace, ...)`. Test:
+`ConsoleTests.AnErrorAboutAnAssetOpensItAndNoneHasACSharpStack`.
+
 Correction (2026-10-21, owner: opening a `.tide` file didn't use the default
 IDE). Unity gives a file to the external code editor's package
 (`CodeEditor.CurrentEditor.OpenProject`), and Rider's and Visual Studio's

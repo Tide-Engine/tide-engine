@@ -263,8 +263,8 @@ namespace Tide.Editor
             if (!message.StartsWith("tide: ")) message = "tide: " + message;
             if (file != null && LogLocated(message, file, line, column, isError)) return;
             if (isError) plainErrors = true;
-            if (isError) Debug.LogError(message, context);
-            else Debug.LogWarning(message, context);
+            // With no C# stack under it: where it came from is tide, not this package's code
+            Debug.LogFormat(isError ? LogType.Error : LogType.Warning, LogOption.NoStacktrace, context, "{0}", message);
         }
 
         static int said; // Errors and warnings of the build going on, which tide hasn't said the end of
@@ -348,7 +348,7 @@ namespace Tide.Editor
         }
 
         static readonly System.Text.RegularExpressions.Regex located =
-            new System.Text.RegularExpressions.Regex(@"^(?<path>.+?):(?<line>\d+):(?<column>\d+): (error|warning|note)");
+            new System.Text.RegularExpressions.Regex(@"^(?<path>.+?)(:(?<line>\d+):(?<column>\d+))?: (error|warning|note)");
 
         // The asset a message is about, for the Console to select: a .tide file of the game, or a prefab or scene,
         // whose line numbers are of the Tide text tide made of it, which the message then names.
@@ -372,6 +372,11 @@ namespace Tide.Editor
             else if (path.StartsWith("Assets/") && File.Exists(Path.Combine(project, path)))
             {
                 asset = path; // A prefab's or a scene's
+                if (lineNumber == 0)
+                {
+                    file = path; // About the whole asset: a double click opens it
+                    return AssetDatabase.LoadMainAssetAtPath(asset);
+                }
                 var text = $"Library/Tide/prefabs/{path}.tprefab";
                 line += $" (line {match.Groups["line"].Value} of {text}, the Tide text tide read)";
                 file = File.Exists(Path.Combine(project, text)) ? text : path;

@@ -48,4 +48,27 @@ public class ConsoleTests
         TideBuildService.RemoveLocated(); // As a build with nothing to say does
         Assert.AreEqual(before, Count());
     }
+
+    // One about a whole prefab or scene, with no line, opens the asset; one about no file has no C# stack under it
+    [Test]
+    public void AnErrorAboutAnAssetOpensItAndNoneHasACSharpStack()
+    {
+        Assume.That(entries != null && entryType != null, "this Unity has the Console's entries");
+        LogAssert.ignoreFailingMessages = true;
+        TideBuildService.RemoveLocated();
+        var before = Count();
+        TideBuildService.Log("Assets/Sample/Roller.prefab: error: made up by a test", true);
+        Assert.AreEqual(before + 1, Count());
+        var (message, file, line) = Last();
+        StringAssert.StartsWith("tide: Assets/Sample/Roller.prefab: error: made up by a test", message);
+        Assert.AreEqual("Assets/Sample/Roller.prefab", file);
+        Assert.AreEqual(0, line);
+        TideBuildService.RemoveLocated();
+        Assert.AreEqual(before, Count());
+
+        TideBuildService.Log("tide: can't do what a test made up", true);
+        (message, _, _) = Last();
+        StringAssert.StartsWith("tide: can't do what a test made up", message);
+        StringAssert.DoesNotContain("TideBuildService", message);
+    }
 }
