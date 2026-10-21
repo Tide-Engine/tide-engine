@@ -99,7 +99,7 @@ build arbitrary Tide games without supervision.
 ## Claude Code round (2026-10-21)
 
 A review session ran Claude Code itself (`claude -p`, CLI 2.1.306) rather than T3
-delegation, in game folders under `C:/Users/blenm/tide-ai-trials/`, outside any
+delegation, in game folders under a scratch folder in the user profile, outside any
 repository, so no engine AGENTS.md, CLAUDE.md or memory reached the trials
 (`--setting-sources project,local --strict-mcp-config`). Each folder was laid out as
 `docs/guide/ai.md` tells a Claude Code user: the starter AGENTS.md and CLAUDE.md,

@@ -288,9 +288,9 @@ MELPA's public-maintenance/human-review requirements still apply.
 Prepared tools/tide-emacs and tools/tide-vim as standalone repository roots for
 Tide-Engine/tide-emacs and Tide-Engine/tide-vim. They remain canonical in the
 engine source tree; public issues/patches can be applied there before another
-export. The initial license/publication prerequisites are resolved above; the
-engine remains private and has no top-level license. Do not add a license to
-the engine or claim MELPA registration is complete.
+export. The initial license/publication prerequisites are resolved above. Do
+not claim MELPA registration is complete. (Superseded 2026-10-21: the engine is
+public under `MIT OR Apache-2.0`; see `notes/repository.md`.)
 
 Emacs has Version 0.1.0, maintainer metadata, AI-assistance attribution and a
 MELPA recipe at tools/tide-emacs/melpa/tide-lang-mode. Package lint's warning

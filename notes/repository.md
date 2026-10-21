@@ -46,7 +46,7 @@ How they connect:
 - **`TIDE_EXTERNAL_DIRS`** (root `CMakeLists.txt`) is a list of folders outside this repo built with it, each `add_subdirectory`'d into `external/<folder name>` after the examples, so `PROJECT_SOURCE_DIR` and every engine target are the engine's. The cache variable defaults to the environment variable of that name, a path list in the system's separator, read at first configure. A missing `CMakeLists.txt` stops the configure. It replaces `TIDE_PRIVATE_PROTOTYPES`; the prototypes have no other switch.
 - **The website catalog** comes from what the prototypes' build stages: `private_games` depends on `prototype_catalog`, which copies `catalog/catalog.json` to `docs/prototypes.json` and each card's thumbnail to `docs/static/prototypes/<id>/`, beside the `<id>_page` targets' games (both ignored by git here). `docs/prototypes.js` reads the file (absent: no prototypes, every such address an ordinary path) and makes the public-root and retired-alias patterns from its ids; `admin.js` takes the ids from `server.js` and the dev server, the catalog page reads the cards at request time, and the image includes the file when it exists. Ids are lowercase words joined by dashes.
 - **The engine's code from the other side**: both repos' `engine.mjs` finds the engine checkout (`TIDE_ENGINE_DIR`, else a `tide-engine` folder beside the repo) and imports `relay/relay.mjs` from it; the prototypes' CMake passes `TIDE_ENGINE_DIR` to the browser tests that start a relay.
-- **CI**: the Docs workflow checks out `tide-prototypes` at `dev` with the read-only deploy key in `PROTOTYPES_DEPLOY_KEY` and builds with it; without the key it builds the site with no prototypes, and a run on `dev` (a deploy) fails instead. The services' Hosting workflow checks out this repo's `dev` (with `ENGINE_DEPLOY_KEY` while this repo is private) and writes the engine commit it tested into the run's summary.
+- **CI**: the Docs workflow checks out `tide-prototypes` at `dev` with the read-only deploy key in `PROTOTYPES_DEPLOY_KEY` and builds with it; without the key it builds the site with no prototypes, and a run on `dev` (a deploy) fails instead. The services' Hosting workflow checks out this repo's `dev` (public, so with no key) and writes the engine commit it tested into the run's summary.
 
 Carrying a branch made before the split: its changes to the moved paths go to the new repo as a patch, then the engine branch takes `dev`'s deletion. From the engine branch, with `<base>` its merge base with the commit before the split (`git log -1 --format=%H --diff-filter=D origin/dev -- prototypes/CMakeLists.txt`, then its parent):
 
@@ -56,6 +56,13 @@ git diff <base> HEAD -- notes/gravewake.md | git -C <tide-prototypes> apply -3  
 git diff <base> HEAD -- hosting builds notes/managed-hosting.md | git -C <tide-services> apply -3
 git merge origin/dev   # take the deletions: git rm -r the moved paths it reports
 ```
+
+## Public, with a fresh history (2026-10-21)
+
+The owner made the engine public with one fresh commit instead of its history (1,910 commits on `dev`, with the prototypes', services' and private notes' past in them). The private repository with every commit, tag and release before that moved to `Tide-Engine/tide-engine-history`, which stays private; the public `Tide-Engine/tide-engine` starts from a commit whose tree is the old `dev` at the switch, tagged with the then-current `v0.4.0` and `v0.5.0-nightly.1` so semantic-release continues from them. Those two releases' files were copied to it; older versions are only in the archive. The website's release lookup (`TIDE_RELEASES_REPO`) names the public repository as before. `notes/`, `AGENTS.md` and `CLAUDE.md` are public too.
+
+- A branch made before the switch shares no history with `dev`: git refuses to merge it (unrelated histories). Carry it as a patch: `git diff <its base> <its tip> | git apply -3` on a branch from the new `dev`. Never merge with `--allow-unrelated-histories` or force-push: either would publish the old history.
+- The main checkout's shared `.git` has a `pre-push` hook that refuses to push any commit whose history doesn't start at the fresh root, so no worktree can publish old commits by mistake. Its remote `history` points at the archive, for `git log`/`git show` of old commits.
 
 ## Cleanup (2026-10-21)
 
