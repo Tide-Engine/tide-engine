@@ -83,7 +83,6 @@ typedef struct occurrence {
     bool backing;       // An enum's backing type: byte in `enum Voxel : byte`
 } occurrence;
 
-// One file of the game being analysed.
 typedef struct afile {
     source src;
     const char *uri;
@@ -157,7 +156,6 @@ static struct {
     int root_count;
 } asset_roots;
 
-// The document requests are about.
 #define DOC (&A.files[A.doc])
 
 // ---------------------------------------------------------------------------
@@ -191,7 +189,6 @@ static int decl_col_at(const loc at)
     return u ? u->decl_col : 1;
 }
 
-// Whether a token is the '{' or the '}' of a namespace block.
 static bool namespace_brace(const loc at)
 {
     for (int i = 0; i < A.blocks.count; i++) {
@@ -219,7 +216,6 @@ static int utf16_col(const loc at)
     return units;
 }
 
-// A position in the current document.
 static loc from_lsp(const int line, const int character)
 {
     loc at = {0, 1, A.doc};
@@ -244,7 +240,6 @@ static void write_position(jbuf *out, const loc at)
     jb_printf(out, "{\"line\":%d,\"character\":%d}", at.line > 0 ? at.line - 1 : 0, utf16_col(at));
 }
 
-// A range on one line, `len` bytes long.
 static void write_range(jbuf *out, const loc at, const int len)
 {
     jb_put(out, "{\"start\":");
@@ -1124,7 +1119,6 @@ static void walk_params(const decl *d)
     for (int i = 0; i < d->params.count; i++) walk_param(&d->params.items[i], d);
 }
 
-// A method or function: its name, signature and body.
 static void walk_routine(const decl *m)
 {
     // An operator's `at` is its `operator` keyword.
@@ -1449,7 +1443,6 @@ const char *analysis_file_path(const int file)
 // ---------------------------------------------------------------------------
 // Diagnostics
 
-// A range over the token at `at`, or a character where there's none.
 static void write_token_range(jbuf *out, const loc at)
 {
     const int t = token_at(at);
@@ -1702,7 +1695,6 @@ static int extern_param_number(const decl *sys, const param *p)
     return -1;
 }
 
-// What the engine's own events are for.
 static const char *builtin_event_doc(const program *prog, const decl *d)
 {
     if (d == prog->spawned) return "Sent to each entity as it's spawned: its handlers set new entities up.";
@@ -1845,7 +1837,6 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
     }
 }
 
-// Scene's functions.
 static const method_form scene_calls[] = {
     {"Load", "Scene.Load(scene, components...)",
      "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
@@ -2074,14 +2065,12 @@ static bool is_mesh_draw(const str owner, const str name)
     return builtin_draw_owner(owner) && (str_eq_c(name, "Mesh") || str_eq_c(name, "Instanced") || str_eq_c(name, "SkinnedMesh"));
 }
 
-// A Pixel's one method, in a frag.
 static const method_form pixel_calls[] = {
     {"Discard", "Discard()",
      "Leaves the pixel undrawn, and ends the frag there: what's behind it stays. A statement of its own, in the frag "
      "itself."},
 };
 
-// An Instance's one method, in a frag or a vert.
 static const method_form instance_calls[] = {
     {"Normal", "Normal(float3 normal) -> float3",
      "A normal of the mesh as it is in the world, of length 1: `instance.Normal(vertex.normal)`. It's right however "
@@ -2367,7 +2356,6 @@ static void format_method(const method_form *form, const type t, sb *out)
     }
 }
 
-// The form named `name` in `forms`, or NULL.
 static const method_form *find_form(const method_form *forms, const size_t count, const str name)
 {
     for (size_t i = 0; i < count; i++) {
@@ -2805,7 +2793,6 @@ static void describe_out_param(const param *p, const decl *of, sb *out)
                    "one the code has assigns it, and `out _` leaves it out.", STR_ARG(p->name));
 }
 
-// Markdown for a hover over `o`.
 static void describe_replacing(const occurrence *o, sb *out);
 
 static void describe(const occurrence *o, sb *out)
@@ -3572,7 +3559,6 @@ static void describe(const occurrence *o, sb *out)
     describe_replacing(o, out);
 }
 
-// What a package is to a reader: "package Fast", or "the game".
 static const char *package_text(const decl *d)
 {
     const char *package = d->unit && d->unit->src ? d->unit->src->package : NULL;
@@ -3611,7 +3597,6 @@ static void describe_replacing(const occurrence *o, sb *out)
     }
 }
 
-// "3rd"
 static const char *ordinal(const int n)
 {
     static char buf[16];
@@ -3621,7 +3606,6 @@ static const char *ordinal(const int n)
     return buf;
 }
 
-// Where a system or view runs, and what it runs after: the schedule, visible.
 static void describe_order(const decl *d, sb *out)
 {
     if (d->order_enum && d->order_member) {
@@ -4135,7 +4119,6 @@ static void use_this_action(const param *p, jbuf *out, int *written)
     jb_put(out, "]}}}");
 }
 
-// The diagnostic at `at`, or NULL.
 static const diagnostic *diagnostic_at(const loc at)
 {
     for (int i = 0; i < A.diags.count; i++) {
@@ -4167,7 +4150,6 @@ static void quick_fix(jbuf *out, int *written, const char *title, const bool pre
     jb_put(out, "}]}}}");
 }
 
-// One change of a quick fix that makes several, in any of the game's files.
 typedef struct text_edit {
     loc start;
     loc end;
@@ -4176,7 +4158,6 @@ typedef struct text_edit {
 
 typedef VEC(text_edit) text_edits;
 
-// A quick fix that changes several places at once, file by file.
 static void quick_fix_edits(jbuf *out, int *written, const char *title, const bool preferred, const diagnostic *d,
                             const text_edits *edits)
 {
@@ -4873,7 +4854,6 @@ void analysis_symbols(jbuf *out)
             write_range(out, m->at, m->name.len);
             jb_put(out, "}");
         }
-        // The input's Sample and Sanitize
         for (int k = 0; d->kind == DECL_INPUT && k < 3; k++) {
             const stmt *body = k == 0 ? d->body : k == 1 ? d->sanitize : d->predict;
             if (!body) continue;
@@ -4899,7 +4879,6 @@ void analysis_symbols(jbuf *out)
         }
         jb_put(out, "]}");
     }
-    // settings { ... }, with what it sets
     for (int b = 0; b < A.prog->settings.count; b++) {
         const decl *block = A.prog->settings.items[b];
         if (block->at.file != A.doc) continue;
@@ -5111,7 +5090,6 @@ static bool is_call(const occurrence *o)
     return (o->kind == OCC_FUNCTION || o->kind == OCC_METHOD) && !o->declaration && is_routine(o->decl);
 }
 
-// Who calls the item at the cursor: each caller once, with where it does.
 void analysis_incoming_calls(const int line, const int character, jbuf *out)
 {
     const arena_mark temporary = arena_checkpoint();
@@ -5392,7 +5370,6 @@ static void select_decl(const decl *d, const stmt *body, const loc at, span_list
     add_span(spans, at, (loc){first, 1, d->at.file}, (loc){end.line, end.col + 1, end.file});
 }
 
-// The spans around `at`, outermost first.
 static void selection_spans(const loc at, span_list *spans)
 {
     for (int i = 0; i < A.written.count; i++) {
@@ -5421,7 +5398,6 @@ static void selection_spans(const loc at, span_list *spans)
         for (int f = 0; f < d->fields.count + local_field_count(d); f++) select_in_expr(field_of(d, f)->default_value, at, spans);
         break;
     }
-    // The word at the cursor
     const afile *f = &A.files[at.file];
     for (int i = 0; i < f->tok_count; i++) {
         const token *t = &f->toks[i];
@@ -5553,7 +5529,6 @@ void analysis_folding_ranges(jbuf *out)
         }
         if (i < DOC->tok_count) p = next + token_len(&DOC->toks[i]);
     }
-    // using lines one after another
     const unit *u = doc_unit();
     for (int k = 0; u && k < u->using_at.count;) {
         const loc *at = u->using_at.items;
@@ -5633,7 +5608,6 @@ static int closing(const loc at, const int open)
 
 static loc stmt_end(const stmt *s);
 
-// Just past an expression's last token.
 static loc expr_end(const expr *e)
 {
     const afile *f = &A.files[e->at.file];
@@ -5685,7 +5659,6 @@ static loc expr_end(const expr *e)
     return t >= 0 ? token_end(&f->toks[t]) : e->at; // A literal, this, default, null, or a value's `!`
 }
 
-// Just past a statement's last token: its ';', or its block's '}'.
 static loc stmt_end(const stmt *s)
 {
     switch (s->kind) {
@@ -6098,7 +6071,6 @@ static void item(completion *c, const char *label, const int kind, const char *d
     jb_put(c->out, "}");
 }
 
-// What surrounds the cursor.
 typedef struct scope {
     const decl *decl;           // The system, view, method, function or input whose body holds the cursor, or NULL
     const decl *fields_of;      // Whose fields plain names refer to: the input in Sample, a type in its methods
@@ -6124,7 +6096,6 @@ static bool body_contains(const stmt *body, const loc at)
 
 static void collect_list(stmt *const *stmts, int count, loc at, scope *sc);
 
-// The locals of a body the cursor is in: a block's, or a braceless statement's.
 static void collect_body(stmt *const *body, const loc at, scope *sc)
 {
     if ((*body)->kind == S_BLOCK) collect_list((*body)->stmts.items, (*body)->stmts.count, at, sc);
@@ -6279,7 +6250,6 @@ static type this_type(const scope *sc)
     return (type){TY_ERROR, NULL};
 }
 
-// The type of a name in scope, or TY_ERROR.
 static type name_type(const scope *sc, const str name, const param **param_out)
 {
     *param_out = NULL;
@@ -6433,7 +6403,6 @@ static type loop_variable_type(const scope *sc, const int use)
     return (type){TY_ERROR, NULL};
 }
 
-// A method or function, with its signature, as `name` (its name by default).
 static void complete_routine(completion *c, const decl *m, const char *name)
 {
     sb detail = {0};
@@ -7047,7 +7016,6 @@ static const unit *from_unit(void)
     return block ? block : doc_unit();
 }
 
-// Can the current document name `d` without its namespace, where the request is?
 static bool visible_by_name(const decl *d)
 {
     const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
@@ -7065,7 +7033,6 @@ static bool visible_by_name(const decl *d)
     return false;
 }
 
-// How the current document writes `d`: Health, or Combat.Health.
 static const char *name_for(const decl *d)
 {
     return str_to_cstr(visible_by_name(d) ? d->name : d->qualified);
@@ -7125,7 +7092,6 @@ static void complete_match_types(completion *c, const bool singletons)
     }
 }
 
-// The events code on one side can send.
 static void complete_events_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
@@ -7207,7 +7173,6 @@ static void complete_settings(completion *c, const int open, const int last)
     }
 }
 
-// Systems or views, for [Before(...)] and [After(...)].
 static void complete_systems(completion *c, const bool views)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
@@ -7218,7 +7183,6 @@ static void complete_systems(completion *c, const bool views)
     }
 }
 
-// Enums define scheduling phases, in Stage, Before and After.
 static void complete_phases(completion *c)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
@@ -7745,7 +7709,6 @@ static void complete_declarations(completion *c)
          "using ${1:Name};");
 }
 
-// What `virtual` goes before: the declarations with code.
 static void complete_code_declarations(completion *c)
 {
     item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
@@ -8042,7 +8005,6 @@ typedef struct frame {
 
 static bool is_word(const token *t);
 
-// The header a '(' at the top level opens, at token `i`.
 static header_kind top_header(const int i)
 {
     if (i < 1) return HEADER_NONE;
@@ -8116,7 +8078,6 @@ static bool starts_function(const int i)
     return DOC->toks[k].kind == T_IDENT && DOC->toks[k + 1].kind == T_LPAREN;
 }
 
-// Whether the `{` at token `i` follows `) fails ParseError`: a function's body.
 static bool after_fails(const int i)
 {
     for (int k = i - 1; k > 0; k--) {
@@ -8189,7 +8150,6 @@ static bool loop_variable_named(const int i)
         && (DOC->toks[k - 1].kind == T_FOREACH || DOC->toks[k - 1].kind == T_PARALLEL);
 }
 
-// The '(' of the parallel loop whose header holds token `last`, or -1.
 static int parallel_header(const int last)
 {
     int parens = 0;
@@ -8606,7 +8566,6 @@ static int switch_of_brace(const int open)
     return -1;
 }
 
-// The switch whose `switch` is at `at`, in a statement or the ones inside it.
 static const stmt *switch_in(const stmt *s, const loc at)
 {
     if (!s) return NULL;
@@ -9585,7 +9544,6 @@ done:
 // ---------------------------------------------------------------------------
 // References, highlights and rename: every occurrence of one symbol
 
-// Do `a` and `b` refer to the same thing?
 static bool same_symbol(const occurrence *a, const occurrence *b)
 {
     if (a->kind != b->kind) return false;
@@ -9658,7 +9616,6 @@ void analysis_highlights(const int line, const int character, jbuf *out)
     jb_put(out, "]");
 }
 
-// The occurrence at the cursor if it can be renamed, or an error for the user.
 static const char *rename_target(const int line, const int character, const occurrence **out)
 {
     if (A.syntax_errors > 0) return "Fix the syntax errors first: uses in code that doesn't parse would be missed.";
@@ -9759,7 +9716,6 @@ static bool local_named(const stmt *s, const str name)
     return s->kind == S_IF && (local_named(s->then_stmt, name) || local_named(s->else_stmt, name));
 }
 
-// The system, view or input whose body declares `local`.
 static const decl *decl_of_local(const stmt *local)
 {
     for (int i = 0; i < A.written.count; i++) {
@@ -9778,7 +9734,6 @@ static const decl *decl_of_local(const stmt *local)
     return NULL;
 }
 
-// The system, view or input that declares `p`.
 static const decl *decl_of_param(const param *p)
 {
     for (int i = 0; i < A.written.count; i++) {
@@ -9808,7 +9763,6 @@ static bool param_named(const decl *d, const str name)
     return false;
 }
 
-// Whether `name` can replace the target's name, or why not.
 static const char *check_new_name(const occurrence *target, const str name)
 {
     // Words the parser reads as keywords where a declaration or a part of one
@@ -9944,7 +9898,6 @@ const char *analysis_rename(const char *uri, const int line, const int character
     error = check_new_name(target, str_from(new_name));
     if (error) goto done; // Name checks return only literals or their static message buffer.
 
-    // Edits grouped by file: every file of the game that uses the name.
     (void)uri;
     jb_put(out, "{\"changes\":{");
     int files_written = 0;
@@ -10221,7 +10174,6 @@ static label_spans label_split(const char *label)
     return (label_spans){.count = -1};
 }
 
-// Adds a signature, finding its parameters in the label: "Name(float2 center, float radius)".
 static void add_signature(signature_list *s, const char *label, const char *doc)
 {
     const label_spans spans = label_split(label);
@@ -10990,7 +10942,6 @@ typedef struct fmt_item {
 
 typedef VEC(fmt_item) fmt_line;
 
-// 1-based line holding `p`.
 static int line_of(const char *p)
 {
     int lo = 0;
@@ -11003,7 +10954,6 @@ static int line_of(const char *p)
     return lo + 1;
 }
 
-// A line's text, without its line break.
 static str line_text(const int line)
 {
     const char *start = DOC->lines.items[line - 1];
@@ -11517,7 +11467,6 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
         }
     }
 
-    // End with exactly one line break.
     if (!final_newline && last_content > 0 && last_content == line_count) {
         const loc end = {line_count, line_text(line_count).len + 1, A.doc};
         write_edit(&edits, end, end, newline, strlen(newline));
@@ -11590,7 +11539,6 @@ static char *arena_copy(const char *text)
     return str_to_cstr(str_from(text));
 }
 
-// The SHA-256 of the file at `path`, as hex. False when it can't be read.
 static bool read_hash(const char *path, const unsigned long long size, char hex[65])
 {
     FILE *f = fopen(path, "rb");
@@ -11684,7 +11632,6 @@ static void collect_assets(void)
     }
 }
 
-// The site whose path is token `tok` of the document, or NULL.
 static const asset_site *asset_site_at(const int tok)
 {
     for (int i = 0; i < A.assets.count; i++) {
@@ -11810,7 +11757,6 @@ static void check_assets(void)
     asset_hashes_free(&known);
 }
 
-// Where a site's path is written, between the quotes.
 static loc asset_path_start(const asset_site *site)
 {
     const loc at = A.files[site->file].toks[site->string].at;
@@ -11924,7 +11870,6 @@ static int name_order(const void *a, const void *b)
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
-// A completion item that replaces `start` to `end` with `text`.
 static void asset_item(completion *c, const char *label, const int kind, const loc start, const loc end, const char *text,
                        const char *detail, const char sort)
 {
@@ -11984,7 +11929,6 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
     folder_list(base, add_asset_entry, &entries);
     if (entries.folders.count > 0) qsort(entries.folders.items, (size_t)entries.folders.count, sizeof(char *), name_order);
     if (entries.files.count > 0) qsort(entries.files.items, (size_t)entries.files.count, sizeof(char *), name_order);
-    // Up a folder, while there's one above
     size_t top = 0;
     while (top < strlen(base) && !(base[top] == '/' && (top == 0 || base[top - 1] == ':'))) top++;
     if (strlen(base) > top + 1) asset_item(c, "../", KIND_FOLDER, start, at, "../", "The folder above", '0');

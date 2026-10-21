@@ -86,10 +86,8 @@ TIDE_TEST(box2d_parts_are_the_whole_image)
                "image is %d bytes\n",
                usual ? "as a match has them" : "in parts whenever", (int)whole, (int)in_parts, (int)a.Box2D_Physics.bodies,
                (int)a.Box2D_Physics.shapes, (int)a.Tally.touched, (int)a.Tally.parted, (int)a.Box2D_Physics.size);
-        // What the script is for happened: bodies came and went, and things touched
         TIDE_CHECK(a.Box2D_Physics.bodies == 40 && a.Box2D_Physics.shapes == 42 && a.Tally.touched > 30 && a.Tally.parted > 5);
         TIDE_CHECK(in_parts > (usual ? 300 : 500) && whole > 0);
-        // ...and it all came to rest: the last ticks stepped nothing
         TIDE_CHECK(!a.Box2D_Physics.moved && went[TICKS - 1] != 0);
         tide_world_free(&a);
     }
@@ -137,8 +135,6 @@ TIDE_TEST(box2d_parts_roll_back)
     tide_world_free(&a);
     tide_world_init(&a, DT);
     static uint64_t again[TICKS];
-    // Every 37 ticks the world is kept, goes on for 20 ticks, and goes back to
-    // go on once more, as a client that predicted does
     for (int from = 0; from < TICKS; from += 37) {
         const int to = from + 37 < TICKS ? from + 37 : TICKS;
         tide_world_copy(&kept, &a);
@@ -212,7 +208,6 @@ typedef struct lab {
     int room;
     uint8_t *whole; // The image written whole, to compare
     int whole_room;
-    // The world as it was a while ago, to go back to: its image and whose its bodies were
     uint8_t *old_image;
     int old_size;
     int old_room;
@@ -425,7 +420,6 @@ static void spawn(lab *l, const b2BodyType type, const bool awake)
         def.linearVelocity = (b2Vec2){speed, 0.0f};
     }
     l->bodies[at] = b2CreateBody(l->world, &def);
-    // Some with no shape at all: nothing then says the body is new but its own making
     if (roll(l, 8) != 0) add_shape(l, l->bodies[at], type == b2_staticBody);
     did(l, awake ? "a body made" : "a body made asleep", at);
 }
@@ -511,8 +505,6 @@ static void act(lab *l)
         if (at < 1 || !enabled(l, at) || b2Body_GetShapeCount(body) < 2) return;
         b2ShapeId shapes[8];
         const int count = b2Body_GetShapes(body, shapes, 8);
-        // With its body weighed again or not: one that isn't says nothing of the body but what the
-        // shape's going says itself
         const b2ShapeId gone = shapes[roll(l, (uint32_t)count)];
         const bool weigh = roll(l, 2) == 0;
         if (b2Shape_GetType(gone) == b2_chainSegmentShape) return; // A chain's shapes go with their chain
@@ -555,7 +547,6 @@ static void act(lab *l)
         b2World_SetGravity(l->world, (b2Vec2){0.0f, -10.0f + 2.0f * turn});
         did(l, "gravity set", 0);
     } else if (what < 84) {
-        // A chain: a row of shapes on a body that never moves, which an image has a section of its own for
         const int slot = spare(l);
         if (slot < 0) return;
         b2BodyDef def = b2DefaultBodyDef();
@@ -570,7 +561,6 @@ static void act(lab *l)
         b2CreateChain(l->bodies[slot], &chain);
         did(l, "a chain made", slot);
     } else if (what < 86 && l->size > 0 && !l->recorded) {
-        // The world made again from its last image, in place: its next image is whole
         if (!b2World_Restore(l->world, l->image, l->size)) {
             printf("    the world's own image doesn't restore\n");
             abort();
@@ -578,7 +568,6 @@ static void act(lab *l)
         l->restored++;
         did(l, "the world restored", 0);
     } else if (what < 88 && l->old_size > 0 && !l->recorded) {
-        // ...or from an older one, as a rollback does: the image a match holds is then that one
         if (!b2World_Restore(l->world, l->old_image, l->old_size)) {
             printf("    the world's older image doesn't restore\n");
             abort();
@@ -592,7 +581,6 @@ static void act(lab *l)
         l->restored++;
         did(l, "the world rolled back", 0);
     } else if (what < 91) {
-        // A shape's geometry set, or what it collides with: calls an image in parts doesn't follow
         if (at < 1 || !enabled(l, at) || b2Body_GetShapeCount(body) < 1) return;
         b2ShapeId shapes[8];
         const int count = b2Body_GetShapes(body, shapes, 8);
@@ -619,7 +607,6 @@ static void act(lab *l)
         }
         did(l, "a shape's geometry or filter set", at);
     } else if (what < 96) {
-        // How a body is to be, which is in the body or in what its set has of it: asleep or static as it may be
         if (at < 1) return;
         switch (roll(l, 6)) {
         case 0: b2Body_SetGravityScale(body, between(l, -0.5f, 1.5f)); break;
@@ -636,7 +623,6 @@ static void act(lab *l)
         }
         did(l, "a body's setting set", at);
     } else if (what < 99) {
-        // How the world steps: numbers of its own, which every image writes
         const float one = between(l, 10.0f, 30.0f);
         const float two = between(l, 2.0f, 10.0f);
         const float three = between(l, 1.0f, 3.0f);
@@ -649,7 +635,6 @@ static void act(lab *l)
         }
         did(l, "the world's setting set", 0);
     } else {
-        // A blast, which pushes whatever is near it
         b2ExplosionDef blast = b2DefaultExplosionDef();
         blast.position = b2ToPos((b2Vec2){x, y});
         blast.radius = 2.0f;
@@ -695,8 +680,6 @@ static void begin(lab *l, const uint32_t seed, const int share)
         const b2Polygon crate = b2MakeBox(0.5f, 0.5f);
         b2CreatePolygonShape(l->bodies[1 + i], &shape, &crate);
     }
-    // Shelves away from the rest: with a few static bodies, one that comes or goes doesn't move a section
-    // of the image, which would have it written whole
     for (int i = 0; i < SHELVES; i++) {
         b2BodyDef def = b2DefaultBodyDef();
         def.position = b2ToPos((b2Vec2){30.0f + 4.0f * (float)i, 1.0f});
@@ -714,12 +697,10 @@ static bool go_on(lab *l, const int steps)
 {
     bool right = true;
     for (; l->step < steps && right; l->step++) {
-        // 90 steps of every 240 are busy, and the rest nearly quiet
         const bool busy = l->step % 240 >= 150;
         const uint32_t acts = busy ? roll(l, 3) : roll(l, 40) == 0;
         for (uint32_t i = 0; i < acts; i++) {
             act(l);
-            // Sleeping stays on but for a few steps, or nothing would be asleep
             if (!l->sleeping && roll(l, 4) == 0) {
                 l->sleeping = true;
                 b2World_EnableSleeping(l->world, true);
@@ -727,7 +708,6 @@ static bool go_on(lab *l, const int steps)
         }
         b2World_Step(l->world, DT, 4);
         right = take_image(l);
-        // And once more with nothing done: no part of it is another
         if (right && l->step % 97 == 0) right = take_image(l);
         if (right && l->step % 131 == 60) keep(l);
     }
@@ -753,8 +733,6 @@ static bool run(lab *l, const uint32_t seed, const int steps, const int share)
 
 TIDE_TEST(box2d_parts_whatever_is_done_to_the_world)
 {
-    // The bridge's allocator is Box2D's for the whole program, where it has one
-    // (a web build): it's set before any world is made here
     b2t_forget();
     b2t_check(false, false);
     tide_world_init(&a, DT);
@@ -767,7 +745,6 @@ TIDE_TEST(box2d_parts_whatever_is_done_to_the_world)
     int whole = 0;
     int in_parts = 0;
     int restored = 0;
-    // In parts whenever there can be, and as a match has them, each from a few seeds
     for (uint32_t seed = 1; seed <= 6; seed++) {
         const bool right = run(&l, 2654435761u * seed, 2400, seed % 2);
         whole += l.images_whole;
@@ -790,16 +767,11 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
     static lab l;
     enum { RESTLESS = 10, LONER = 60, LONERS = 8, NEAR = 70, NEARS = 4 };
     begin(&l, 7u, 1);
-    // Bodies that never move, with nothing on them, far off: with these the static set has room in the image
-    // for one more or one less, where a shelf that goes would otherwise move the section after it, and the
-    // image is then written whole whatever else is so
     for (int i = 0; i < 40; i++) {
         b2BodyDef def = b2DefaultBodyDef();
         def.position = b2ToPos((b2Vec2){300.0f + (float)i, 0.0f});
         b2CreateBody(l.world, &def);
     }
-    // Crates by themselves on the floor, away from the stacks: one that goes, or is moved, wakes no other.
-    // Box2D wakes what a body touched when the body goes, and a stack that wakes moves a section of the image
     for (int i = 0; i < LONERS; i++) {
         b2BodyDef def = b2DefaultBodyDef();
         def.type = b2_dynamicBody;
@@ -809,16 +781,12 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
         const b2Polygon crate = b2MakeBox(0.5f, 0.5f);
         b2CreatePolygonShape(l.bodies[LONER + i], &shape, &crate);
     }
-    // A sensor on each of three shelves
     b2ShapeDef sensing = b2DefaultShapeDef();
     sensing.isSensor = true;
     sensing.enableSensorEvents = true;
     const b2Circle ball = {{0.0f, 1.0f}, 0.5f};
     b2ShapeId gates[3];
     for (int i = 0; i < 3; i++) gates[i] = b2CreateCircleShape(l.bodies[SHELF + i], &sensing, &ball);
-    // Crates side by side, a little apart: near enough for Box2D to keep a contact between each two, which
-    // touch nothing. Once they sleep those contacts are the disabled set's, with no island and no set of
-    // either crate's: nothing wakes when one goes
     for (int i = 0; i < NEARS; i++) {
         b2BodyDef def = b2DefaultBodyDef();
         def.type = b2_dynamicBody;
@@ -828,14 +796,9 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
         const b2Polygon crate = b2MakeBox(0.5f, 0.5f);
         b2CreatePolygonShape(l.bodies[NEAR + i], &shape, &crate);
     }
-    // Two more shapes on another shelf, with nothing on them: they go one at a time, while everything
-    // sleeps. A body's shapes are a list from the last one made, so the first to go is the one in the middle
     const b2ShapeDef plain = b2DefaultShapeDef();
     const b2ShapeId middle = b2CreateCircleShape(l.bodies[SHELF + 5], &plain, &ball);
     const b2ShapeId head = b2CreateCircleShape(l.bodies[SHELF + 5], &plain, &ball);
-    // A few bodies that never sleep, away from the rest: with them the awake set has room for one more
-    // body in the image, where one that wakes in a world all asleep moves a section, and the image is
-    // then written whole whatever else is so
     for (int i = 0; i < RESTLESS; i++) {
         b2BodyDef def = b2DefaultBodyDef();
         def.type = b2_dynamicBody;
@@ -849,29 +812,22 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
 
     bool right = true;
     for (l.step = 0; l.step < 300 && right; l.step++) {
-        // Crates and a shelf go, while everything is asleep: their places are there to take
         if (l.step == 120) {
             b2DestroyBody(l.bodies[LONER]);
             b2DestroyBody(l.bodies[LONER + 1]);
             b2DestroyBody(l.bodies[SHELF + 7]);
             did(&l, "two crates and a shelf destroyed", 0);
         }
-        // The first of the crates side by side goes, asleep: its contact with the next one goes with it, the
-        // last contact of the disabled set takes its place there, and the next crate, which stays asleep,
-        // has one contact less
         if (l.step == 135) {
             TIDE_CHECK(b2Body_GetContactCapacity(l.bodies[NEAR + 1]) == 3 && !b2Body_IsAwake(l.bodies[NEAR + 1]));
             b2DestroyBody(l.bodies[NEAR]);
             TIDE_CHECK(b2Body_GetContactCapacity(l.bodies[NEAR + 1]) == 2 && !b2Body_IsAwake(l.bodies[NEAR + 1]));
             did(&l, "a sleeping crate beside another destroyed", 0);
         }
-        // A crate that's asleep is put somewhere else, where nothing is: nothing wakes, and nothing says so
-        // but the move itself
         if (l.step == 150) {
             b2Body_SetTransform(l.bodies[LONER + 2], b2ToPos((b2Vec2){-100.0f, 0.5f}), b2Rot_identity);
             did(&l, "a sleeping crate put elsewhere", 0);
         }
-        // ...and how a sleeping crate and a shelf are to be
         if (l.step == 160) {
             b2Body_SetLinearDamping(l.bodies[LONER + 3], 0.3f);
             did(&l, "a sleeping crate's damping set", 0);
@@ -880,7 +836,6 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
             b2Body_SetGravityScale(l.bodies[SHELF + 6], 0.5f);
             did(&l, "a shelf's gravity scale set", 0);
         }
-        // ...and whether one is a bullet, and one may turn, which are each a bit of the body's own
         if (l.step == 170) {
             b2Body_SetBullet(l.bodies[LONER + 5], true);
             did(&l, "a sleeping crate made a bullet", 0);
@@ -891,9 +846,6 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
             b2Body_SetMotionLocks(l.bodies[LONER + 6], locks);
             did(&l, "a sleeping crate kept from turning", 0);
         }
-        // A shape goes from the middle of a body's list, on a body that never moves and isn't weighed again:
-        // the shape, the one before it and the one after it, whose links change, and the body, which counts
-        // them. Then the one that heads the list, which the body names
         if (l.step == 180) {
             b2DestroyShape(middle, false);
             did(&l, "a shape destroyed from the middle of its body's", 0);
@@ -902,7 +854,6 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
             b2DestroyShape(head, false);
             did(&l, "the shape that heads its body's destroyed", 0);
         }
-        // A shape onto a shelf, and onto a crate that's asleep, which is weighed again and stays asleep
         if (l.step == 200) {
             b2CreateCircleShape(l.bodies[SHELF + 4], &plain, &ball);
             did(&l, "a shape made on a shelf", 0);
@@ -912,19 +863,14 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
             b2CreateCircleShape(l.bodies[LONER + 4], &plain, &bump);
             did(&l, "a shape made on a sleeping crate", 0);
         }
-        // The shelf with the first sensor goes: the last sensor takes its place in Box2D's list, and
-        // its shape, on a static body, is told where it is now
         if (l.step == 250) {
             b2DestroyBody(l.bodies[SHELF]);
             did(&l, "a sensor's shelf destroyed", 0);
         }
-        // ...and the sensor that's first in the list now goes by itself, its shelf staying: the other's shape
-        // is told
         if (l.step == 255) {
             b2DestroyShape(gates[2], false);
             did(&l, "a sensor destroyed", 0);
         }
-        // A static body where there was one, under nothing
         if (l.step == 270) {
             b2BodyDef def = b2DefaultBodyDef();
             def.position = b2ToPos((b2Vec2){60.0f, 1.0f});
@@ -936,7 +882,6 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
         b2World_Step(l.world, DT, 4);
         const int parts = l.images_in_parts;
         right = take_image(&l);
-        // Each of those steps had its image in parts: the world was asleep and followed
         if (l.step == 120 || l.step == 135 || l.step == 150 || l.step == 160 || l.step == 165 || l.step == 170 || l.step == 175
             || l.step == 180 || l.step == 190
             || l.step == 200 || l.step == 210 || l.step == 250 || l.step == 255 || l.step == 270) {

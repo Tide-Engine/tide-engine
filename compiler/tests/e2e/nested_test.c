@@ -103,7 +103,7 @@ TIDE_TEST(nested_crossplatform_hash)
 TIDE_TEST(nested_views_read_both_worlds)
 {
     tide_world_init(&world, 1.0f);
-    tide_world_tick(&world); // Spawns the grid
+    tide_world_tick(&world);
     tide_world_tick(&world); // Checks it: [[0, 2], [1, 3, 9]], and two bags of 3 and 1 parts
     tide_world_copy(&copy, &world);
     for (int i = 0; i < 3; i++) tide_world_tick(&world); // The confirmed world stays a few ticks behind

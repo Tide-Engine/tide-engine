@@ -17,7 +17,7 @@ TIDE_TEST(editor_preview_authored_tree_and_isolation)
         const tide_draw_list *drawn = api->frame(context, .02f, (tide_rect){50,60,400+frame*100,300},
             tide_identity_f4x4(), tide_identity_f4x4(), NULL);
         TIDE_REQUIRE(drawn);
-        const tide_draw_list shown = tide_test_flat(drawn), *draw = &shown; // Its plain shapes a command each
+        const tide_draw_list shown = tide_test_flat(drawn), *draw = &shown;
         int circles = 0;
         for (uint32_t i = 0; i < draw->count; i++) {
             const tide_draw_command *c = &draw->commands[i];
@@ -30,6 +30,5 @@ TIDE_TEST(editor_preview_authored_tree_and_isolation)
         TIDE_CHECK(observed == 0);
     }
     api->destroy(context);
-    // Unloading and constructing a new authored world is repeatable.
     context = api->create(NULL, 0); TIDE_REQUIRE(context); api->destroy(context);
 }

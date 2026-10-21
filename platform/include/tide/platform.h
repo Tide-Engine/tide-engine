@@ -46,7 +46,7 @@ typedef struct tide_window_desc {
 void tide_platform_open(const tide_window_desc *desc);
 
 // A headless window: none on screen, for pictures of what a game draws and
-// for runs nobody watches (an agent's, CI's). It's what tide/run.h opens for
+// for runs nobody watches (automated runs, CI). It's what tide/run.h opens for
 // a game started with --capture, --frames or --script. Nothing about it
 // depends on this machine, so a run repeats exactly, on any:
 //

@@ -9,8 +9,6 @@
 #include "tide/math.h"
 #include "tide/page.h"
 
-// See tide/stats.h.
-
 static const float TEXT = 16.0f;  // Its font size
 static const float PITCH = 20.0f; // From one line to the next
 static const float PAD_X = 8.0f;  // Inside the panel: beside its lines

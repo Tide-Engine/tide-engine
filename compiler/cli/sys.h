@@ -100,7 +100,7 @@ const char *sys_tool(const char *name);
 
 const char *sys_env(const char *name); // NULL if unset or empty
 // Whether this is a run nobody watches: TIDE_HIDDEN is set, to anything but
-// nothing or 0 (an agent's shell, a build server). Nothing tide starts then
+// nothing or 0 (a build server, a script). Nothing tide starts then
 // shows a window, nor one of Windows' dialogs for a program that can't start
 // or crashed.
 bool sys_hidden(void);

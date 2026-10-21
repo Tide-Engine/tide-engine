@@ -58,7 +58,7 @@ endfunction()
 
 # ---------------------------------------------------------------------------
 # Symbols on the command line: every accepted repeat reaches the compiler,
-# including the last one past the old 63-symbol cap. DEBUG still follows mode.
+# including more than 63 of them. DEBUG still follows mode.
 
 file(WRITE "${WORK}/defines/main.tide" "
 #if FLAG0 && FLAG34 && FLAG69
@@ -124,8 +124,8 @@ tide("${games}/game" ARGS schedule . EXPECT "stage 1  Physics.Integrate" "stage 
 tide("${games}/physics/example" ARGS schedule . EXPECT "example: 1 system")
 tide("${games}/physics" ARGS schedule . FAILS EXPECT "is package Physics, not a game")
 
-# Accepted package paths are preserved in full, beyond the old 1024-byte
-# command formatter. Redundant parts keep this portable to short OS paths.
+# Accepted package paths are preserved in full, beyond 1024 bytes.
+# Redundant parts keep this portable to short OS paths.
 file(WRITE "${games}/long-source/main.tide" "scene Main { }\n")
 string(REPEAT "./" 600 repeated)
 set(long_source "../${repeated}maths")

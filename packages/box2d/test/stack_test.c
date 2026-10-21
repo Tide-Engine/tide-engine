@@ -172,7 +172,6 @@ TIDE_TEST(box2d_rolls_back)
         tide_world_tick(&a);
         went[i] = tide_world_hash(&a);
     }
-    // Three times over, as a client that predicted wrong does
     for (int round = 0; round < 3; round++) {
         tide_world_copy(&b, &kept);
         for (int i = 0; i < 80; i++) {
@@ -252,8 +251,6 @@ static void cost(tide_world *w, const char *what, const int ticks)
     int32_t whole_before;
     int32_t parts_before;
     b2t_images(&whole_before, &parts_before);
-    // As a match does: each tick's world is kept (a snapshot, which shares what
-    // the tick left alone) and hashed (what the tick changed)
     uint64_t took = 0;
     uint64_t kept_ns = 0;
     static tide_profile profile;
@@ -339,7 +336,6 @@ TIDE_TEST(box2d_threads_change_nothing)
             if (on) tide_world_tick_on(&b, jobs);
             else tide_world_tick(&a);
             ticks[on] += tide_time_now_ns() - t;
-            // As a client keeps each tick's world: the next tick writes what it changes apart from it
             tide_world_copy(on ? &kept_too : &kept, on ? &b : &a);
             b2t_measure(&step, &image);
             b2t_measure_blocks(&changed, &in_all, &counting);
@@ -350,8 +346,6 @@ TIDE_TEST(box2d_threads_change_nothing)
         if (tide_world_hash(&a) != tide_world_hash(&b)) printf("    tick %d came out different\n", i);
         TIDE_REQUIRE(tide_world_hash(&a) == tide_world_hash(&b));
     }
-    // Where a tick goes: Box2D's step, its state into an image, and the rest,
-    // which is the package's systems (bodies in and out, the image into the match)
     for (int on = 0; on < 2; on++) {
         printf("    %d crates on %u thread%s: a tick takes %.2f ms: %.2f Box2D's step, %.2f its image, %.2f the rest\n", CRATES,
                on ? (unsigned)jobs->threads : 1u, on ? "s" : "", (double)ticks[on] / (TICKS * 1e6), (double)steps[on] / (TICKS * 1e6),
@@ -361,7 +355,6 @@ TIDE_TEST(box2d_threads_change_nothing)
     TIDE_CHECK(b2t_shared_steps() - before > TICKS / 2);
     b2t_share_from(0);
 
-    // What a rollback pays once: C's world made from the match's image
     b2t_forget();
     b2t_measure(&step, &image);
     const uint64_t t = tide_time_now_ns();

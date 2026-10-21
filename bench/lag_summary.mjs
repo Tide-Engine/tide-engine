@@ -2,7 +2,7 @@
 // A frame as a page said it: when, then the numbers in tide_run_netcode's order.
 const F = { at: 0, state: 1, server: 2, ping: 3, answer: 4, verified: 5, predicted: 6, heard: 7, delay: 8, early: 9, late: 10,
     again: 11, ran: 12, ahead: 13, resyncs: 14, corrections: 15, resets: 16, update: 17, work: 18,
-    rollback: 19, most: 20, load: 21 }; // The last three since 2026-10-07: frames from before have none
+    rollback: 19, most: 20, load: 21 }; // The last three are absent from older saved frames
 const CONNECTED = 2;
 
 const sorted = values => [...values].sort((a, b) => a - b);

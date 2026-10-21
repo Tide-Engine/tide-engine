@@ -255,7 +255,7 @@ static void run_target_checks(const char *when)
 }
 
 // Targets that take their size from the window, and one with pixels of its
-// own, made once by the game (pass 6): drawn as windows of several sizes would
+// own, made once by the game: drawn as windows of several sizes would
 // draw them on displays of several scales, they're the same picture in
 // logical pixels, with nothing resized in between.
 static void run_screen_target_checks(const char *when)
@@ -310,7 +310,7 @@ static void run_screen_target_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
-// What a uv past a texture's edges reads (pass 7): each wrap in a mesh draw,
+// What a uv past a texture's edges reads: each wrap in a mesh draw,
 // in a frag and in a vert, for a grid and a target's color, in 2D and 3D. A
 // square's cells are a pixel of its texture each: `column` and `row` are one's,
 // from the square's top left, its texture's first cell at (0, 0).
@@ -399,7 +399,7 @@ static void run_wrap_checks(const char *when)
     }
 }
 
-// Images of the game's own (pass 10): a Texture asset is drawn with the pack's
+// Images of the game's own: a Texture asset is drawn with the pack's
 // pixels, and a texture is sampled as its declaration says ([Filter], [Wrap])
 // wherever a draw or a Sample that names it doesn't say. Squares as the wraps'
 // (run_wrap_checks), each cell a pixel of a texture that's red, green, blue
@@ -481,7 +481,7 @@ static void run_image_checks(const char *when)
     if (!own || copied) failures++;
 }
 
-// A shadow map written in Tide (pass 8): casters drawn into a target of depth
+// A shadow map written in Tide: casters drawn into a target of depth
 // alone through a lamp's camera, a frag that compares each pixel's distance
 // from the lamp with what's stored, and the stored depth read as a number.
 // The window looks straight down on a floor 8 by 8, 32 pixels a unit, x to
@@ -534,7 +534,7 @@ static void run_shadow_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
-// Stencil, from Tide (pass 9): shapes, meshes through frags and a vert, and 3D
+// Stencil, from Tide: shapes, meshes through frags and a vert, and 3D
 // meshes that store a number for each pixel and are tested against it, in the
 // window and in a target of the game's, which has its own. The window is blue
 // where nothing was drawn.
@@ -594,7 +594,7 @@ static void run_stencil_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
-// Several colors from one frag (pass 11): a target of three color images, the
+// Several colors from one frag: a target of three color images, the
 // second and third of floats, drawn into by frags of three outputs and two,
 // by one that discards, and by a shape of the engine's; each image read back
 // through a frag of its own, into a panel of 64 pixels in the window; and a
@@ -667,7 +667,7 @@ static void run_output_checks(const char *when)
     }
 }
 
-// A draw's values (pass 12): blits of one frag with values of their own,
+// A draw's values: blits of one frag with values of their own,
 // meshes whose vert and frag read theirs, the same values twice as one draw,
 // and instances beside them. A point is a pixel of the window.
 static void run_values_checks(const char *when)
@@ -726,7 +726,7 @@ static void run_values_checks(const char *when)
     if (!runs) failures++;
 }
 
-// Grids of floats as textures (pass 13, `Heights` in shaders.tide): one
+// Grids of floats as textures (`Heights` in shaders.tide): one
 // channel, read as red with green and blue 0 and alpha 1, whose numbers are
 // the grid's own (2 is 2, and -1 is -1, where a byte would hold 1 and 0), and
 // a Texture a field holds of one, which carries how it's sampled. Squares as
@@ -791,7 +791,7 @@ static void run_height_checks(const char *when)
     if (!halves) failures++;
 }
 
-// Filter.Trilinear (pass 14, `Mipmaps` in shaders.tide): each square is a
+// Filter.Trilinear (`Mipmaps` in shaders.tide): each square is a
 // texture of stripes drawn an eighth of its size, whose pixels are the mean
 // of the 8 by 8 they cover where it's read between its smaller images, and
 // the ones under a pixel's middle, which have no stripe, where it isn't.
@@ -854,7 +854,7 @@ static void run_mipmap_checks(const float lit, const char *when)
     if (runs != 3) failures++;
 }
 
-// Alpha (pass 15, `Alphas` in shaders.tide): textures hold colors times their
+// Alpha (`Alphas` in shaders.tide): textures hold colors times their
 // alpha and blends take them so, which nothing written in Tide sees. Squares
 // of 48 pixels over white.
 static void run_alpha_checks(const char *when)
@@ -896,7 +896,7 @@ static void run_alpha_checks(const char *when)
     }
 }
 
-// Textures that are numbers (pass 16, `Raws` in shaders.tide): [Raw] ones are
+// Textures that are numbers (`Raws` in shaders.tide): [Raw] ones are
 // read as their file or their grid has them, where a texture of colors has no
 // color in a pixel with no alpha. Squares of 32 pixels, 40 apart.
 static void run_raw_checks(const char *when)
@@ -936,7 +936,7 @@ static void run_raw_checks(const char *when)
     }
 }
 
-// Cubemaps (pass 17, `CubeFaces` and `CubeReads` in shaders.tide): each
+// Cubemaps (`CubeFaces` and `CubeReads` in shaders.tide): each
 // square of 8 pixels reads a cube towards one direction, or across a face.
 // `lit` is how wide the stripes drawn into the painted cube's first face are
 // that frame, 8 apart: 2 or 6, so the pixel under a square's pixel's middle
@@ -1011,7 +1011,7 @@ static void run_cube_checks(const float lit, const char *when)
     if (runs != 12) failures++;
 }
 
-// Lists (pass 18, `ListReads` and `ListOwners` in shaders.tide): frags and a
+// Lists (`ListReads` and `ListOwners` in shaders.tide): frags and a
 // vert read lists by an element, a count and foreach. Squares of 8 pixels, 16
 // apart. `turn` is what the first color's green is that frame.
 static void run_list_checks(const float turn, const char *when)
@@ -1112,7 +1112,7 @@ static void run_list_checks(const float turn, const char *when)
     }
 }
 
-// Rolls (pass 19, `Rolls` in shaders.tide): Random's rolls on the type in
+// Rolls (`Rolls` in shaders.tide): Random's rolls on the type in
 // frags and verts, and Random.seed. The GPU's generator is whole numbers, so
 // every backend rolls the same, and so does this: the state a pixel's or a
 // vertex's starts from is Math.Hash of where it is, which instance of its draw
@@ -1310,7 +1310,7 @@ static tide_float3 normal_through(const tide_float4x4 m, const tide_float3 norma
     return tide_normalize_f3(tide_mul_f3x3_f3(tide_transpose_f3x3(tide_inverse_f3x3(linear)), normal));
 }
 
-// Normals (pass 20): instance.Normal in a frag and in a vert, under the
+// Normals: instance.Normal in a frag and in a vert, under the
 // transforms the game keeps in its Facets. A square's color is the normal it
 // was given, a half for 0, read at its middle, which is where its transform
 // puts the mesh's.
@@ -1378,7 +1378,7 @@ static void run_normal_checks(const char *when)
     if (!apart) failures++;
 }
 
-// Meshes from files (pass 21): squares 16 pixels across, each with its middle
+// Meshes from files: squares 16 pixels across, each with its middle
 // at a pixel, whose corners are red (bottom left, seen from its front), green
 // (bottom right), blue (top right) and white (top left), in two triangles
 // that meet along the line from red to blue. Seen from the front, the file's
@@ -1458,7 +1458,7 @@ static void run_model_checks(const char *when)
     }
 }
 
-// Places (pass 22): verts that put their vertices themselves, `out float4`,
+// Places: verts that put their vertices themselves, `out float4`,
 // from where the engine would have, `this.clip`. Each square is read inside
 // where it has to be and outside it, which is often where its transform
 // alone would have drawn it.

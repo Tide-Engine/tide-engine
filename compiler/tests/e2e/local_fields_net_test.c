@@ -3,16 +3,12 @@
 #include "game.h"
 #include "tide_test.h"
 
-// Local fields on machines of a match, on one loopback network in made-up
-// time: a server and three players, each machine with local state of its own.
-// The second player's shield decides whether a target is destroyed at tick 90,
-// whether another comes at tick 150, and which one comes at tick 240, and the
-// first player's machine hears of it a round trip late: it predicts all three
-// wrong, then the server puts it right. An entity's local fields go once it's
-// in neither the world views draw nor the last one the server confirmed, so
-// the wrong destroy takes nothing and the wrong spawn leaves nothing; and the
-// target that came where it predicted another, on the same handle, gets none
-// of what was kept for the one that never was.
+// Local fields on machines of a match, on one loopback network in made-up time: a server and three players, each
+// with local state of its own. The second player's shield decides whether a target is destroyed at tick 90, whether
+// another comes at 150 and which one comes at 240; the first player's machine hears of it a round trip late and
+// predicts all three wrong. An entity's local fields go once it is in neither the world views draw nor the last one
+// the server confirmed: a wrong destroy takes nothing, a wrong spawn leaves nothing, and a target that came where
+// another was predicted, on the same handle, gets none of what was kept for the one that never was.
 
 static tide_loopback *net;
 static tide_server *server;
@@ -57,7 +53,6 @@ static tide_client *join(const int number)
     return clients[number];
 }
 
-// The target with `id` in a world, or the null entity.
 static tide_entity target(const tide_world *w, const int32_t id)
 {
     for (uint32_t i = 0; w && i < w->entities.next_unused; i++) {
@@ -67,13 +62,12 @@ static tide_entity target(const tide_world *w, const int32_t id)
     return (tide_entity){0};
 }
 
-// A frame on a machine: its views, on what its client has of the match.
 static void frame(tide_local *l, const tide_client *c)
 {
     const tide_view_worlds view = tide_client_view(c);
     tide_draw_reset(&draw);
     tide_frame(view.current, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, l, &draw, &gui);
-    tide_text_use(NULL, &l->heap); // For the lists the checks read
+    tide_text_use(NULL, &l->heap);
 }
 
 // The first player's frame, with what it saw of its wrong predictions: its
@@ -93,20 +87,19 @@ static void first_frame(void)
         wrong_swap_frames++;
         predicted_swap = four;
         predicted_born = tide_entity_born(&drawn->entities, four);
-        TIDE_CHECK(tide_get_Target_local(&local, four).was == 4); // Baked as what it drew
+        TIDE_CHECK(tide_get_Target_local(&local, four).was == 4);
     }
     if (destroyed_wrong) {
         wrong_destroy_frames++;
-        TIDE_CHECK(tide_has_Target_local(&local, one)); // Kept: the server hasn't said it's gone
+        TIDE_CHECK(tide_has_Target_local(&local, one));
     }
     if (spawned_wrong) {
         wrong_spawn_frames++;
         predicted_spawn = three;
-        TIDE_CHECK(tide_has_Target_local(&local, three)); // The view baked what it drew
+        TIDE_CHECK(tide_has_Target_local(&local, three));
     }
 }
 
-// Runs everything until `until`, in frames of 11 and 22 milliseconds.
 static void run(const double until)
 {
     bool odd = false;
@@ -146,9 +139,9 @@ TIDE_TEST(local_fields_net_outlast_wrong_predictions)
     const tide_entity two = target(match, 2);
     TIDE_REQUIRE(match->Time.tick > 100 && match->Time.tick < 145);
     TIDE_REQUIRE(!tide_entity_is_null(one) && !tide_entity_is_null(two));
-    TIDE_CHECK(wrong_destroy_frames > 0); // It did predict it wrong, for a while
-    TIDE_CHECK(tide_has_Target(tide_client_world(clients[0]), one)); // ...and has it back
-    TIDE_CHECK(tide_get_Target_local(&local, one).bakes == 1); // With what it kept for it: not baked again
+    TIDE_CHECK(wrong_destroy_frames > 0);
+    TIDE_CHECK(tide_has_Target(tide_client_world(clients[0]), one));
+    TIDE_CHECK(tide_get_Target_local(&local, one).bakes == 1);
     TIDE_CHECK(local.Seen.bakes == 2 && local.Seen.forgotten == 0);
 
     // Past tick 150: it predicted a target the server never had, and what it
@@ -191,7 +184,7 @@ TIDE_TEST(local_fields_net_outlast_wrong_predictions)
     const tide_entity five = target(match, 5);
     TIDE_REQUIRE(match->Time.tick > 250 && !tide_entity_is_null(five) && tide_entity_is_null(target(match, 4)));
     TIDE_CHECK(wrong_swap_frames > 0);
-    TIDE_REQUIRE(tide_entity_equal(five, predicted_swap)); // One handle, two entities
+    TIDE_REQUIRE(tide_entity_equal(five, predicted_swap));
     const tide_world *mine = tide_client_world(clients[0]);
     TIDE_CHECK(predicted_born != 0u && tide_entity_born(&mine->entities, five) != 0u);
     TIDE_CHECK(tide_entity_born(&mine->entities, five) != predicted_born);
@@ -202,10 +195,10 @@ TIDE_TEST(local_fields_net_outlast_wrong_predictions)
     // spawned since as any other: it predicted the same, and put it right the same
     TIDE_CHECK(tide_get_Target_local(&late, five).was == 5 && tide_get_Target_local(&late, five).bakes == 1);
     TIDE_CHECK(late.Seen.bakes == 4 && late.Seen.forgotten == 2 && late.Seen.forgot == ((1 << 1) | (1 << 4)));
-    TIDE_CHECK(tide_get_Target_local(&late, two).bakes == 1); // Known by its handle: it came with the world
+    TIDE_CHECK(tide_get_Target_local(&late, two).bakes == 1);
     for (int i = 0; i < 3; i++) {
         TIDE_CHECK(tide_client_status_of(clients[i]).state == TIDE_SESSION_CONNECTED);
-        TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0); // Every tick's hash matched the server's
+        TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0);
     }
 
     // Out of the match, a machine keeps nothing for it

@@ -40,13 +40,13 @@ static bytes make(const uint32_t format, const uint32_t channels, const uint32_t
     if (extensible) {
         put_u16(&fmt, 22); // cbSize
         put_u16(&fmt, bits);
-        put_u32(&fmt, 0); // Channel mask
+        put_u32(&fmt, 0);
         put_u16(&fmt, format); // The subformat GUID starts with the format
         put(&fmt, (uint8_t[14]){0}, 14);
     }
     bytes w = {0};
     put(&w, "RIFF", 4);
-    put_u32(&w, 0); // Patched below
+    put_u32(&w, 0);
     put(&w, "WAVEfmt ", 8);
     put_u32(&w, (uint32_t)fmt.size);
     put(&w, fmt.data, fmt.size);
@@ -95,27 +95,23 @@ TIDE_TEST(wav_reads_every_depth_it_says_it_does)
     TIDE_CHECK(s.frames == 2 && s.samples[0] == 0.5f && s.samples[1] == -1.0f);
     tide_sound_free(&s);
     free(w.data);
-    // Floats of 32 bits, extensible
     const float f[3] = {0.25f, -0.75f, 2.0f};
     w = make(3, 1, 22050, 32, f, sizeof f, true, false);
     TIDE_REQUIRE(tide_wav_decode(w.data, w.size, &s));
     TIDE_CHECK(s.frames == 3 && s.rate == 22050 && s.samples[0] == 0.25f && s.samples[1] == -0.75f && s.samples[2] == 2.0f);
     tide_sound_free(&s);
     free(w.data);
-    // Floats of 64 bits, with an odd chunk before the data
     const double d[2] = {0.125, -1.0};
     w = make(3, 1, 96000, 64, d, sizeof d, false, true);
     TIDE_REQUIRE(tide_wav_decode(w.data, w.size, &s));
     TIDE_CHECK(s.frames == 2 && s.rate == 96000 && s.samples[0] == 0.125f && s.samples[1] == -1.0f);
     tide_sound_free(&s);
     free(w.data);
-    // Extensible PCM of 16 bits
     w = make(1, 2, 48000, 16, (uint8_t[4]){0x00, 0x40, 0x00, 0xC0}, 4, true, false);
     TIDE_REQUIRE(tide_wav_decode(w.data, w.size, &s));
     TIDE_CHECK(s.frames == 1 && s.channels == 2 && s.samples[0] == 0.5f && s.samples[1] == -0.5f);
     tide_sound_free(&s);
     free(w.data);
-    // No frames at all
     w = make(1, 1, 8000, 16, NULL, 0, false, false);
     TIDE_REQUIRE(tide_wav_decode(w.data, w.size, &s));
     TIDE_CHECK(s.frames == 0 && s.samples != NULL);
@@ -126,26 +122,25 @@ TIDE_TEST(wav_reads_every_depth_it_says_it_does)
 TIDE_TEST(wav_refuses_what_it_cant_read)
 {
     tide_sound s = {.samples = (float *)1};
-    bytes w = make(1, 3, 48000, 16, (uint8_t[6]){0}, 6, false, false); // Three channels
+    bytes w = make(1, 3, 48000, 16, (uint8_t[6]){0}, 6, false, false);
     TIDE_CHECK(!tide_wav_decode(w.data, w.size, &s) && s.samples == NULL);
     free(w.data);
-    w = make(1, 1, 48000, 12, (uint8_t[3]){0}, 3, false, false); // 12 bits
+    w = make(1, 1, 48000, 12, (uint8_t[3]){0}, 3, false, false);
     TIDE_CHECK(!tide_wav_decode(w.data, w.size, &s));
     free(w.data);
-    w = make(2, 1, 48000, 8, (uint8_t[2]){0}, 2, false, false); // ADPCM
+    w = make(2, 1, 48000, 8, (uint8_t[2]){0}, 2, false, false);
     TIDE_CHECK(!tide_wav_decode(w.data, w.size, &s));
     free(w.data);
-    w = make(3, 1, 48000, 16, (uint8_t[2]){0}, 2, false, false); // Floats of 16 bits
+    w = make(3, 1, 48000, 16, (uint8_t[2]){0}, 2, false, false);
     TIDE_CHECK(!tide_wav_decode(w.data, w.size, &s));
     free(w.data);
     w = make(1, 1, 48000, 16, (uint8_t[4]){0}, 4, false, false);
-    TIDE_CHECK(!tide_wav_decode(w.data, w.size - 1, &s)); // Cut short in its data
-    TIDE_CHECK(!tide_wav_decode(w.data, 30, &s));         // Cut short in its header
-    TIDE_CHECK(!tide_wav_decode(w.data, 11, &s));         // Not even RIFF's
+    TIDE_CHECK(!tide_wav_decode(w.data, w.size - 1, &s));
+    TIDE_CHECK(!tide_wav_decode(w.data, 30, &s));
+    TIDE_CHECK(!tide_wav_decode(w.data, 11, &s));
     w.data[8] = 'X';
-    TIDE_CHECK(!tide_wav_decode(w.data, w.size, &s)); // Not WAVE
+    TIDE_CHECK(!tide_wav_decode(w.data, w.size, &s));
     free(w.data);
-    // A data chunk before any fmt
     bytes w2 = {0};
     put(&w2, "RIFF", 4);
     put_u32(&w2, 20);
@@ -168,9 +163,9 @@ TIDE_TEST(wav_reads_what_it_writes)
     TIDE_CHECK(s.frames == 4 && s.channels == 2 && s.rate == 48000);
     TIDE_CHECK(s.samples[0] == 0.0f && near(s.samples[1], 32767.0f / 32768.0f) && near(s.samples[2], -32767.0f / 32768.0f));
     TIDE_CHECK(near(s.samples[3], 16384.0f / 32768.0f)); // 0.5 rounds away from zero
-    TIDE_CHECK(near(s.samples[4], 32767.0f / 32768.0f) && near(s.samples[5], -32767.0f / 32768.0f)); // Clamped
+    TIDE_CHECK(near(s.samples[4], 32767.0f / 32768.0f) && near(s.samples[5], -32767.0f / 32768.0f));
     TIDE_CHECK(s.samples[6] == 0.0f && s.samples[7] == 0.0f);
     tide_sound_free(&s);
     free(wav);
-    TIDE_CHECK(tide_wav_encode(stereo, 0xFFFFFFFFu, 48000, &size) == NULL); // Past what a file holds
+    TIDE_CHECK(tide_wav_encode(stereo, 0xFFFFFFFFu, 48000, &size) == NULL);
 }

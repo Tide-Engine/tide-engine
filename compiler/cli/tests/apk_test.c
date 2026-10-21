@@ -64,7 +64,6 @@ static const apk_key *test_key(void)
     return made ? &key : NULL;
 }
 
-// A length-prefixed piece of the signature, and what follows it.
 static const uint8_t *piece(const uint8_t *p, const uint8_t *end, const uint8_t **next, uint32_t *size)
 {
     if (end - p < 4) return NULL;
@@ -109,7 +108,6 @@ TIDE_TEST(apk_key_is_made_once)
     free(pem);
     remove("apk_test.pem");
 
-    // Others' keys are refused, with why
     static const char ec[] = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEE\n-----END EC PRIVATE KEY-----\n";
     TIDE_CHECK(!apk_key_parse(ec, sizeof ec - 1, &again, error, sizeof error));
     TIDE_CHECK(strstr(error, "RSA") != NULL);
@@ -144,7 +142,6 @@ TIDE_TEST(apk_is_signed_as_android_checks)
     uint8_t *apk = read_all("apk_test.apk", &size);
     TIDE_REQUIRE(apk && size > 22);
 
-    // The end of the central directory, and the directory
     const uint8_t *end = apk + size - 22;
     TIDE_REQUIRE(get32(end) == 0x06054b50);
     TIDE_CHECK(get16(end + 10) == 2); // The manifest and the library
@@ -172,7 +169,6 @@ TIDE_TEST(apk_is_signed_as_android_checks)
     }
     TIDE_CHECK(found_lib);
 
-    // The signing block, just before the directory
     TIDE_REQUIRE(memcmp(apk + directory - 16, "APK Sig Block 42", 16) == 0);
     const uint64_t block_size = get64(apk + directory - 24);
     const uint8_t *block = apk + directory - block_size - 8;
@@ -227,7 +223,6 @@ TIDE_TEST(apk_is_signed_as_android_checks)
     TIDE_CHECK(memcmp(value, want, 32) == 0);
     free(end_copy);
 
-    // The certificate's key is the signer's, and it signed the signed data
     const uint8_t *certs = piece(certs_at, signed_data + signed_size, &next, &n);
     const uint8_t *cert = piece(certs, certs + n, &next, &n);
     TIDE_REQUIRE(cert);
@@ -285,7 +280,6 @@ TIDE_TEST(apk_has_its_icon)
     }
     TIDE_CHECK(table && icon);
 
-    // Something that isn't a PNG is refused
     const apk_desc wrong = {.package = "dev.tide.test", .label = "Test", .lib_name = "game", .version_code = 1,
                             .version_name = "1.0", .min_sdk = 29, .target_sdk = 36, .lib_count = 1,
                             .abis = {"x86_64"}, .libs = {"apk_test_libgame.so"}, .icon = "apk_test_libgame.so"};
@@ -372,8 +366,6 @@ TIDE_TEST(apk_bundle_is_signed_as_a_jar)
         e += 46 + name_size + get16(e + 30) + get16(e + 32);
     }
 
-    // The manifest has each entry's digest; the signature file the
-    // manifest's, and each of its sections'
     char *manifest = malloc(sizes[0] + 1), *sf = malloc(sizes[1] + 1);
     memcpy(manifest, data[0], sizes[0]);
     manifest[sizes[0]] = 0;
@@ -423,7 +415,7 @@ TIDE_TEST(apk_bundle_is_signed_as_a_jar)
 // app when it loads the game's. In a bundle too, each signed.
 TIDE_TEST(apk_holds_the_libraries_the_game_needs)
 {
-    enum { PER_ABI = 9, NEEDED = 2 * PER_ABI }; // More than a few
+    enum { PER_ABI = 9, NEEDED = 2 * PER_ABI };
     static const char *const abis[2] = {"arm64-v8a", "x86_64"};
     FILE *f = fopen("apk_test_libgame.so", "wb");
     TIDE_REQUIRE(f && fwrite("game", 1, 4, f) == 4);
@@ -508,7 +500,6 @@ TIDE_TEST(apk_holds_the_libraries_the_game_needs)
     free(manifest);
     free(aab);
 
-    // One that isn't there is said, by its path
     needed[3].path = "apk_test_missing.so";
     TIDE_CHECK(!apk_write("apk_test.apk", &desc, key, error, sizeof error));
     TIDE_CHECK(strstr(error, "apk_test_missing.so") != NULL);

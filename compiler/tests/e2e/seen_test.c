@@ -4,15 +4,13 @@
 #include "game.h"
 #include "tide_test.h"
 
-// How late other players see what one does: from the frame a player's key is
-// read to the frame another player's view shows it. A server and two players
-// on a loopback network, in made-up time, frames a 60th of a second.
+// How late other players see what one does: from the frame a player's key is read to the frame
+// another player's view shows it. A server and two players on a loopback network, in simulated
+// time, frames a 60th of a second.
 //
-// What's between the two is the network, and what the engine adds: the wait
-// for a tick to sample the key, how early a client's inputs are sent to be
-// sure to be in time (the server holds each until its tick), the server's own
-// frame, and the watching player's. The players are as a session makes them
-// over a network: their inputs wait a frame at the server, at the least.
+// Between the two are the network and what the engine adds: the wait for a tick to sample the
+// key, how early a client's inputs are sent to be in time (the server holds each until its tick),
+// the server's own frame, and the watching player's. Inputs wait a frame at the server at the least.
 
 typedef struct player {
     tide_client *client;
@@ -112,12 +110,8 @@ static seen measure(const uint32_t rate, const double latency)
     return result;
 }
 
-// Frames, on the whole, at each tick rate and network. With inputs kept 2 to 6
-// ticks early they were 3 and 6 at 60 ticks a second, 6.5 and 9.5 at 30, 8 and
-// 12 at 20. Kept a tick early at the least: 2 and 5, 4.5 and 7.5, 5 and 9.
-// These are what they may be at the most, now that inputs wait a frame at the
-// server at the least, whatever a tick is: a change that makes players see
-// each other later fails here, and one that makes it sooner lowers them.
+// Frames, on the whole, at each tick rate and network. These are the most they may be: a change
+// that makes players see each other later fails here, and one that makes it sooner lowers them.
 TIDE_TEST(seen_how_late_other_players_see_you)
 {
     const uint32_t rates[] = {60, 30, 20};
@@ -280,15 +274,11 @@ static stopped stop_for(const int frames, const bool server_stops, const int aft
     return result;
 }
 
-// A player's machine stops for two seconds (a breakpoint, a tab that slept),
-// and the match goes on. Back, it has 120 ticks of the server's to run, and
-// its clock is where it should be: it went on with the time. It runs those
-// ticks 8 an update, predicts nothing until it has, and samples no input for
-// the ticks it slept through, which the server ran without one: they aren't
-// inputs that came late, though the server says for a while that its inputs
-// are two seconds late. Taken at its word, that had the player put its clock
-// two seconds ahead, which is past what it can sample: there it stayed for
-// most of a minute, a second ahead of what's confirmed.
+// A player's machine stops for two seconds (a breakpoint, a tab that slept) and the match goes
+// on. Back, it has 120 server ticks to run, 8 an update, with its clock where it should be; it
+// predicts nothing until it has, and samples no input for the ticks it slept through. Those
+// aren't inputs that came late, though the server says for a while that they are two seconds
+// late; taking that at its word would put the player's clock two seconds ahead, past what it can sample.
 TIDE_TEST(seen_a_machine_that_stopped_catches_up_and_keeps_its_clock)
 {
     const stopped s = stop_for(120, false, 60);
@@ -302,15 +292,11 @@ TIDE_TEST(seen_a_machine_that_stopped_catches_up_and_keeps_its_clock)
     TIDE_CHECK(s.late <= 1u && s.again == 0);
 }
 
-// The server's machine stops for three seconds, and drops the time: its ticks
-// are three seconds behind where the player's clock has them, which is past
-// what the player can sample. The server only ever says the player's inputs
-// wait about a second, and losing that a tenth of the time at a go took most
-// of a minute. The player's clock comes back at once: as soon as the server
-// says its tick, with nothing of the server's missing here, and a clock set
-// by that would be within what it samples. The inputs it had sampled for the
-// second to come are the server's already, so its inputs wait as ever once
-// those have run.
+// The server's machine stops for three seconds and drops the time: its ticks are three seconds
+// behind the player's clock, past what the player can sample. The server only says the player's
+// inputs wait about a second, so the player's clock must come back at once, as soon as the server
+// reports its tick: a clock set by that is within what it samples. The inputs already sampled
+// for the second to come are the server's, so inputs wait as ever once those have run.
 TIDE_TEST(seen_a_clock_far_ahead_comes_back_at_once)
 {
     const stopped soon = stop_for(180, true, 15);
@@ -324,11 +310,10 @@ TIDE_TEST(seen_a_clock_far_ahead_comes_back_at_once)
     TIDE_CHECK(s.least >= 0.0f && s.longest <= 40.0f);
 }
 
-// A connection that takes longer than the prediction window isn't a server
-// whose clock stopped. Its answers took that long too, so a clock set from
-// them would still be past that window: the existing clock mustn't come
-// back. Restoring the connection also lets fresh packets pass older ones
-// still on their way, which mustn't move the server's last known tick back.
+// A connection slower than the prediction window isn't a server whose clock stopped: its answers
+// took that long too, so a clock set from them would still be past the window, and the existing
+// clock mustn't come back. Fresh packets passing older ones still on their way must not move
+// the server's last known tick back.
 TIDE_TEST(seen_delayed_and_reordered_answers_do_not_reset_a_running_clock)
 {
     tide_loopback *net = tide_loopback_create(14);
@@ -376,8 +361,7 @@ TIDE_TEST(seen_delayed_and_reordered_answers_do_not_reset_a_running_clock)
 static bool every_other(const int frame) { return frame % 2 == 0; }
 static bool but_one_in_97(const int frame) { return frame % 97 != 0; }
 
-// A machine whose frames are longer keeps its inputs one of its own frames
-// early: at 30 frames a second, a 30th of a second.
+// A machine with longer frames keeps its inputs one of its own frames early (a 30th of a second at 30 fps).
 TIDE_TEST(seen_inputs_wait_a_frame_of_the_machine_that_sends_them)
 {
     const waited w = wait_with_frames(every_other);
@@ -385,8 +369,7 @@ TIDE_TEST(seen_inputs_wait_a_frame_of_the_machine_that_sends_them)
     TIDE_CHECK(w.least >= 33.0f && w.least <= 50.0f); // Never a tick, which is 50 ms here
 }
 
-// A frame that never came is what the wait is for: the input it would have
-// sent goes a frame later, and is still in time.
+// A frame that never came is what the wait is for: its input goes a frame later, still in time.
 TIDE_TEST(seen_a_frame_that_never_came_makes_no_input_late)
 {
     const waited w = wait_with_frames(but_one_in_97);

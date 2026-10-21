@@ -1,5 +1,5 @@
-// N-body: every body pulls on every other. Systems can't look at other
-// entities yet, so the bodies are a list in a singleton, which one system
+// N-body: every body pulls on every other. The bodies are a list in a
+// singleton rather than entities, which one system
 // goes through with parallel loops: each body's pull from every other at
 // once, then every move.
 

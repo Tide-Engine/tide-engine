@@ -151,12 +151,11 @@ static file_list own_files_of(const char *folder, const char *const *extensions)
     if (packages_unity_assets(folder)) return (file_list){0};
     char *dir = path_join(folder, "");
     own_files o = {extensions, {0}};
-    folder_find_own(dir, "", add_own_file, &o); // Every file, once
+    folder_find_own(dir, "", add_own_file, &o);
     free(dir);
     return o.list;
 }
 
-// The game's C, and its C++, which builds with no C++ runtime (cpp_flags).
 static const char *const cpp_extensions[] = {".cpp", ".cc", ".cxx", NULL};
 static const char *const source_extensions[] = {".c", ".cpp", ".cc", ".cxx", NULL};
 static const char *const header_extensions[] = {".h", ".hpp", ".hh", ".hxx", ".inl", NULL};
@@ -284,8 +283,7 @@ char *tide_work_folder(const char *folder)
 }
 
 // Where a build with no -o puts `file`: the game's .build/, which git ignores,
-// as it does .tide/. Hidden folders are no part of a game; builds went in
-// build/ before, which is a folder of the game like any other now.
+// as it does .tide/. Hidden folders are no part of a game.
 static char *default_output(const char *folder, const char *file)
 {
     char *old = format("%s/build/%s", folder, file);
@@ -438,14 +436,14 @@ static bool write_main(const char *path, const build_options *opts, const char *
 // ---------------------------------------------------------------------------
 // Compiler flags
 
-// Determinism (see AGENTS.md): no fast-math and no contraction, in this order.
+// Determinism: no fast-math and no contraction.
 static const char *const common_flags[] = {"-fno-fast-math", "-ffp-contract=off", "-w", NULL};
 static const char *const c_flags[] = {"-std=c17", NULL};
-// C++ is the language alone: tide brings no C++ runtime (see AGENTS.md,
-// Language), so no standard library (its headers aren't looked for, the
-// system's neither, so the same code builds on every platform), no exceptions
-// and no RTTI. A function's static with a constructor is made without the
-// runtime's lock (__cxa_guard_acquire).
+// C++ is the language alone: tide brings no C++ runtime, so no standard
+// library (its headers aren't looked for, the system's neither, so the same
+// code builds on every platform), no exceptions and no RTTI. A function's
+// static with a constructor is made without the runtime's lock
+// (__cxa_guard_acquire).
 static const char *const cpp_flags[] = {"-std=c++20",      "-nostdinc++",             "-fno-exceptions",
                                         "-fno-rtti",       "-fno-threadsafe-statics", NULL};
 static const char *const debug_flags[] = {"-O0", "-g", NULL};
@@ -584,8 +582,8 @@ static void config_flags(args *a, const build *b, const bool cpp, const bool eng
     // On Linux and Android, a function whose locals take more than a page
     // touches each page as it makes room for them (-fstack-clash-protection):
     // a stack that runs out, as recursion with no end does, then ends at its
-    // guard page, and never past it in memory that's something else's (see
-    // AGENTS.md, Language). Windows' targets check big frames by themselves.
+    // guard page, and never past it in memory that's something else's.
+    // Windows' targets check big frames by themselves.
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (b->library || b->opts->android) arg(a, "-fPIC");
     if (!b->opts->web) arg(a, "-fstack-clash-protection");

@@ -16,15 +16,12 @@
 // program gets as `--port=<port>` among its arguments.
 //
 // A test that fails ends with an account: what the page asked this server
-// for, and what the browser itself said of the page meanwhile, each with
-// when. The browser says it over DevTools (--remote-debugging-pipe, as
-// platform/tests/rooms.mjs has it): where the page went, what it threw, what
-// it couldn't load and why, and whether its process crashed. A page that
-// gives no result is asked where it is before the test gives up (`where`,
-// below), so that "no result" says which of those it was: a page that never
-// loaded, one that waits for something that never came, one whose thread is
-// busy, or one that's gone. A page says how far it got in `window.tideSteps`,
-// lines its shell adds to as it goes.
+// for, and what the browser said of the page meanwhile (over DevTools,
+// --remote-debugging-pipe), each with when. A page that gives no result is
+// asked where it is before the test gives up (`where`, below), so that "no
+// result" says whether it never loaded, waits for something that never came,
+// has a busy thread, or is gone. A page says how far it got in
+// `window.tideSteps`, lines its shell adds to as it goes.
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';

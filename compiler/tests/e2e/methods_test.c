@@ -31,14 +31,14 @@ TIDE_TEST(methods_and_functions_return_values)
     one_tick();
     TIDE_CHECK(world.Log.width == 30.0f);        // Wider (x3) of the second unit's 0..10, the last recorded
     TIDE_CHECK(world.Log.literal_width == 3.0f); // On a value that isn't stored
-    TIDE_CHECK(world.Log.healed == 101.0f);      // Heal returns the new health
+    TIDE_CHECK(world.Log.healed == 101.0f);
     TIDE_CHECK(world.Log.alive == 1);
 }
 
 TIDE_TEST(functions_change_their_mut_arguments)
 {
     one_tick();
-    TIDE_CHECK(world.Log.bumps == 2); // Bump(log.bumps) for each unit
+    TIDE_CHECK(world.Log.bumps == 2);
 }
 
 TIDE_TEST(component_methods_see_their_entity)
@@ -50,7 +50,7 @@ TIDE_TEST(component_methods_see_their_entity)
     const Tracker tb = tide_get_Tracker(&world, b);
     TIDE_REQUIRE(tide_has_Tracker(&world, a) && tide_has_Tracker(&world, b));
     TIDE_CHECK(tide_entity_equal(ta.me, a) && tide_entity_equal(tb.me, b));
-    TIDE_CHECK(ta.calls == 2 && tb.calls == 2); // Greet as it's spawned, then Watch
+    TIDE_CHECK(ta.calls == 2 && tb.calls == 2);
     TIDE_CHECK(ta.isMe && tb.isMe);
     TIDE_CHECK(!ta.otherIsMe && !tb.otherIsMe); // a's other is null, b's is a
 }

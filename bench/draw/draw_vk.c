@@ -146,9 +146,8 @@ static uint32_t memory_type(const uint32_t bits, const VkMemoryPropertyFlags wan
 }
 
 // A buffer the host writes (or, `reading`, reads) and keeps mapped: the
-// first of these kinds of memory the device has. Instances in device-local
-// memory took a frame of 65,536 rects 0.146 ms here, and 0.18 to 0.20 in the
-// host's, which the GPU reads across the bus as it draws.
+// first of these kinds of memory the device has. Device-local memory is
+// preferred for instances: host memory is read across the bus as the GPU draws.
 static bool make_buffer(vk_buffer *b, const VkDeviceSize size, const VkBufferUsageFlags usage, const bool reading,
                         const void *data)
 {

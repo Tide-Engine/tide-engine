@@ -410,10 +410,9 @@ static bool allocate(const VkMemoryRequirements needs, const vk_memory_use use, 
     uint32_t type = use == USE_READBACK ? memory_type(needs.memoryTypeBits, want | VK_MEMORY_PROPERTY_HOST_CACHED_BIT) : UINT32_MAX;
     // A frame's uploads and uniforms (its ring) in the GPU's own memory where the host can write that, as a
     // desktop GPU lets it through its BAR (all of its memory with resizable BAR, else a window of 256 MB) and an
-    // integrated one does anyway: copies out of it and uniforms then don't cross the bus as the GPU runs. A frame
-    // of 65,536 rects took 0.21 -> 0.14-0.18 ms from submission to its pixel read back, 65,536 cubes'
-    // transforms 0.44 -> 0.27. Rings up to UPLOAD_LOCAL_BYTES, so two frames take a fraction of such a window;
-    // bigger ones (a big texture's upload), or where it's full, are in the host's memory as before.
+    // integrated one does anyway: copies out of it and uniforms then don't cross the bus as the GPU runs.
+    // Rings up to UPLOAD_LOCAL_BYTES, so two frames take a fraction of such a window;
+    // bigger ones (a big texture's upload), or where it's full, are in the host's memory.
     if (use == USE_UPLOAD && needs.size <= UPLOAD_LOCAL_BYTES) {
         const uint32_t local = memory_type(needs.memoryTypeBits, want | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         const VkMemoryAllocateInfo info = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, needs.size, local};
@@ -1751,8 +1750,7 @@ static void vk_target_read_part(const tide_gpu_id id, const int x, const int y, 
         memset(rgba, 0, bytes);
         return;
     }
-    // Apart (restrict), so the loop below takes many pixels at once: done a byte at a time, it took an eighth
-    // of tide_platform_draw --bench's own time when that read whole frames back
+    // Apart (restrict), so the loop below takes many pixels at once
     const uint8_t *restrict from = readback.memory.mapped;
     uint8_t *restrict to = rgba;
     if (c->format == VK_FORMAT_B8G8R8A8_UNORM) { // Blue first: red first, as it's read back

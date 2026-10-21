@@ -164,9 +164,8 @@ static void on_key(GLFWwindow *from, const int key, const int scancode, const in
     (void)from, (void)scancode;
     // Escape gives the player the cursor back, and another key takes it again (cursor.h)
     if (action == GLFW_PRESS) tide_cursor_key(&cursor, key == GLFW_KEY_ESCAPE);
-    // Ctrl+V, or Cmd+V on macOS
     if (key == GLFW_KEY_V && action == GLFW_PRESS && (mods & (GLFW_MOD_CONTROL | GLFW_MOD_SUPER))) paste_asked = true;
-    if (key < 0 || key > GLFW_KEY_LAST || !key_of[key]) return; // A key Tide has no name for
+    if (key < 0 || key > GLFW_KEY_LAST || !key_of[key]) return;
     const int ours = key_of[key] - 1;
     if (action == GLFW_PRESS) keys_held[ours] = keys_tapped[ours] = true;
     else if (action == GLFW_RELEASE) keys_held[ours] = false; // GLFW releases what's held when the window loses focus
@@ -239,8 +238,7 @@ static GLFWwindow *make_window(const tide_window_desc *desc, const bool hidden, 
     } else {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     }
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Shown once it's in its place
-    // Tests keep the size they asked for.
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     glfwWindowHint(GLFW_RESIZABLE, hidden ? GLFW_FALSE : GLFW_TRUE);
     // Pixels are the display's logical ones (see tide/platform.h): the size
     // asked for is in those, so the window is as many times bigger as the
@@ -303,7 +301,6 @@ bool tide_window_open(const tide_window_desc *desc)
             tide_window_close();
             return false;
         }
-        // Frames at the display's pace; tests run as fast as they can.
         glfwSwapInterval(hidden ? 0 : 1);
     }
 
@@ -323,7 +320,6 @@ bool tide_window_open(const tide_window_desc *desc)
 #endif
 
     if (!hidden) {
-        // In the middle of the screen, as far as its work area goes
         GLFWmonitor *monitor = glfwGetPrimaryMonitor();
         if (monitor) {
             int x = 0, y = 0, width = 0, height = 0, across = 0, down = 0;
@@ -433,7 +429,6 @@ static void follow_lock(void)
     const bool hold = tide_cursor_held(&cursor, glfwGetWindowAttrib(window, GLFW_FOCUSED));
     if (hold == locked) return;
     if (hold) glfwGetCursorPos(window, &locked_x, &locked_y);
-    // Letting go puts the cursor back where it was when it was taken
     glfwSetInputMode(window, GLFW_CURSOR, hold ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
     locked = hold;
     glfwGetCursorPos(window, &moved_from_x, &moved_from_y);
@@ -477,7 +472,6 @@ void tide_window_mouse_state(tide_window_mouse *out)
 void tide_window_gamepad_state(tide_window_gamepad *out)
 {
     *out = (tide_window_gamepad){0};
-    // The first joystick GLFW has a gamepad's mapping for
     for (int id = GLFW_JOYSTICK_1; id <= GLFW_JOYSTICK_LAST; id++) {
         GLFWgamepadstate state;
         if (!glfwJoystickIsGamepad(id) || !glfwGetGamepadState(id, &state)) continue;

@@ -443,7 +443,7 @@ TIDE_TEST(draw_targets_say_their_samples_and_keep_them_through_a_reload)
     TIDE_CHECK(tide_render_target_samples(plain.id) == 1 && tide_render_target_samples(smooth.id) == 4);
     TIDE_CHECK(tide_render_target_colors(smooth.id) == 1 && tide_render_target_format(smooth.id) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(smooth.size.width == 64.0f && smooth.size.height == 48.0f && smooth.size.scale == 0.0f);
-    TIDE_CHECK(sizeof(tide_render_target) == 24); // As ever: no field of its own for them
+    TIDE_CHECK(sizeof(tide_render_target) == 24); // No field of its own for them
     // Each count there is, with each way to make a target, and what it holds beside
     const tide_render_target one = tide_render_target_make_sampled(8.0f, 8.0f, two, 2, 1);
     const tide_render_target pair = tide_render_target_make_scaled_sampled(320.0f, 180.0f, 1.0f, two, 2, 2);

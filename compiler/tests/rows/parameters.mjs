@@ -1,7 +1,7 @@
 // A legal game at the component limit: a wide first sparse component and many
 // narrow ones after it. Restrict lane parameters, the fallback arrays and the
-// sparse presence columns together used to exceed V8's 1000-parameter Wasm
-// limit, although the lanes alone were below their cap. Check every signature
+// sparse presence columns together must stay within V8's 1000-parameter Wasm
+// limit, although the lanes alone are below their cap. Check every signature
 // natively, and in web builds compile and validate the actual wasm object too.
 
 import assert from 'node:assert/strict';

@@ -32,7 +32,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
     # Threads, which older clang doesn't take from the target's name. Only when
     # compiling: older clang warns that -pthread does nothing for a link. And
     # WebAssembly's SIMD, whose operations give the same results on every
-    # machine (relaxed SIMD's don't, and stays off: see AGENTS.md, Determinism).
+    # machine (relaxed SIMD's don't, and stays off for determinism).
     add_compile_options(-pthread -msimd128)
 else()
     set(TIDE_WEB OFF)

@@ -166,7 +166,7 @@ TIDE_TEST(players_a_match_takes_more_than_a_word_of_them)
     const int32_t ticks = w->Match.ticks;
     run(1.0);
     w = tide_session_server_world(machines[0]);
-    const int64_t each = (int64_t)MACHINES * (MACHINES + 1) / 2; // 1 + 2 + ... + 270
+    const int64_t each = (int64_t)MACHINES * (MACHINES + 1) / 2;
     TIDE_CHECK(w->Match.pushes - before == each * (w->Match.ticks - ticks));
     // ...and every machine agrees on the world
     const uint32_t verified = status(MACHINES - 1).client.verified_tick;
@@ -193,8 +193,8 @@ TIDE_TEST(players_a_match_takes_more_than_a_word_of_them)
     }
     w = tide_session_server_world(machines[1]);
     TIDE_REQUIRE(w);
-    TIDE_CHECK(w->Match.joined == MACHINES); // No one joined again
-    TIDE_CHECK(w->Match.left == 1);          // The last host's player
+    TIDE_CHECK(w->Match.joined == MACHINES);
+    TIDE_CHECK(w->Match.left == 1);
     TIDE_CHECK(seated(w) == MACHINES - 1);
     teardown();
 }

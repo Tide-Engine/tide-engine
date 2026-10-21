@@ -1,7 +1,7 @@
 # The platform layer: a window, the frame loop, input devices and the renderer,
 # written against src/gpu.h, with Vulkan (src/gpu_vk.c, on desktop and Android), OpenGL
 # (src/gpu_gl.c) and WebGPU (web/gpu_web.c) under it. Hosts and views link it;
-# the simulation never does (see AGENTS.md).
+# the simulation never does.
 file(GLOB TIDE_PLATFORM_SOURCES CONFIGURE_DEPENDS src/*.c)
 if(TIDE_WEB)
     list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c") # The web has WebGPU
@@ -644,8 +644,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
                 "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-refused" refused)
     endif()
 
-    # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
-    # shell and a build server have it): no window shows, a game or a host
+    # A run nobody watches (TIDE_HIDDEN in the environment, as a build
+    # server has it): no window shows, a game or a host
     # that only its window's closing would end doesn't start, and a stop shows
     # no dialog. None of that needs a window. That a run with no window and a
     # test's hidden window go as they do without the variable, but that the

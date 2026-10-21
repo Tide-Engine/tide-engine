@@ -10,13 +10,11 @@
 static tide_draw_list draw;
 static tide_gui gui;
 
-// The second player's shield, around ticks 90, 150 and 240
 static bool shield_at(const uint32_t tick)
 {
     return (tick >= 89u && tick <= 92u) || (tick >= 149u && tick <= 152u) || (tick >= 239u && tick <= 242u);
 }
 
-// The target with `id` in a world, or the null entity.
 static tide_entity target(const tide_world *w, const int32_t id)
 {
     for (uint32_t i = 0; w && i < w->entities.next_unused; i++) {
@@ -26,17 +24,15 @@ static tide_entity target(const tide_world *w, const int32_t id)
     return (tide_entity){0};
 }
 
-// Every Rang from tick 85 to 95, each once and in order
 static void check_rang(const Heard *heard)
 {
     TIDE_CHECK(heard->rang == 11 && heard->rangTicks == 0x7FF);
     TIDE_CHECK(heard->rangAgain == 0 && heard->rangLate == 0);
 }
 
-// A host with one world and no server: what it ticks is all there is, so a
-// tick's events are heard by both kinds of handler, at the next frame. The
-// world goes the same with a log as without. What the world started with was
-// available before any tick: the host records Shown itself (tide_game.hear_arrived).
+// A host with one world and no server: a tick's events are heard by both kinds of handler at the next frame, and the
+// world goes the same with a log as without. What the world started with is recorded as Shown by the host itself
+// (tide_game.hear_arrived).
 TIDE_TEST(local_events_plain_host)
 {
     static tide_world world, quiet, before;
@@ -68,10 +64,10 @@ TIDE_TEST(local_events_plain_host)
     for (uint32_t tick = 0; tick < 260u; tick++) {
         for (int i = 0; i < 2; i++) tide_world_set_input(both[i], tide_player_from_index(1), (Controls){.shield = shield_at(tick)});
         tide_world_tick_events(&world, NULL, &events);
-        tide_world_tick(&quiet); // Nobody listens: the same world
+        tide_world_tick(&quiet);
         TIDE_CHECK(tide_world_hash(&world) == tide_world_hash(&quiet));
         if (tick == 199u) tide_world_copy(&before, &world); // With target 2, and without target 5
-        if (tick % 3u != 2u) continue; // A frame every three ticks: it hears them all, in order
+        if (tick % 3u != 2u) continue;
         tide_local_events(&local, &events);
         TIDE_CHECK(events.count == 0);
         tide_draw_reset(&draw);
@@ -147,7 +143,7 @@ static void sample(void *user, const uint32_t tick, void *input)
 
 static tide_client *join(const int number, tide_event_log *events)
 {
-    if (events) events->taken = true; // Its host takes them, each frame
+    if (events) events->taken = true;
     const tide_client_desc desc = {
         .game = &tide_game_api,
         .transport = tide_loopback_endpoint(net, (uint32_t)number + 2u),
@@ -191,7 +187,7 @@ static void first_frame(void)
     if ((heard->sureSpawned & ~before.sureSpawned) & (1 << 5)) spawn_sure_at = status.verified_tick;
     if (!tide_entity_is_null(four)) {
         predicted_spawn = four;
-        TIDE_CHECK(tide_get_Target_local(&local, four).born == 4); // Its handler heard it spawn, as predicted
+        TIDE_CHECK(tide_get_Target_local(&local, four).born == 4);
     }
     // Nothing is certain before the server said so
     TIDE_CHECK((heard->sure & ((1 << 2) | (1 << 3))) == 0);
@@ -230,7 +226,7 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
     glanced_predicted = glanced_sure = wrong_hit_predicted = wrong_hit_health = spawn_sure_at = wrong_destroy_frames = 0;
     predicted_spawn = (tide_entity){0};
     join(0, &heard_0);
-    join(1, NULL); // Nobody listens there: its ticks record nothing
+    join(1, NULL);
     const Heard *heard = &local.Heard;
 
     // Past tick 30: a hit every machine predicted right is heard once, and
@@ -313,11 +309,11 @@ TIDE_TEST(local_events_net_heard_once_through_wrong_predictions)
     // The machine that joined late predicted the same, and put it right the same
     TIDE_CHECK(late.Heard.sureSpawned == (0xE | 1 << 5) && tide_get_Target_local(&late, five).born == 5);
     TIDE_CHECK(late.Heard.destroyed == 1 << 2 && late.Heard.sureDestroyed == 1 << 2);
-    check_rang(heard); // Nothing rang again
+    check_rang(heard);
     TIDE_CHECK(heard->sureRang == 11 && heard->struck == 4 && heard->sureStruck == 2);
     for (int i = 0; i < 3; i++) {
         TIDE_CHECK(tide_client_status_of(clients[i]).state == TIDE_SESSION_CONNECTED);
-        TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0); // Every tick's hash matched the server's
+        TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0);
     }
     for (int i = 0; i < 3; i++) tide_client_destroy(clients[i]);
     tide_server_destroy(server);
@@ -368,7 +364,7 @@ TIDE_TEST(local_events_a_world_sent_again_says_what_is_new)
     match = tide_server_world(server);
     const tide_entity five = target(match, 5);
     TIDE_REQUIRE(tide_client_status_of(clients[0]).state == TIDE_SESSION_CONNECTED && !tide_entity_is_null(five));
-    TIDE_CHECK(tide_client_status_of(clients[0]).resyncs == 1); // The world, once
+    TIDE_CHECK(tide_client_status_of(clients[0]).resyncs == 1);
     // Target 5 is all that's new to it: heard once, with what its handler wrote for it
     TIDE_CHECK(heard->spawned == (0xE | 1 << 5) && heard->sureSpawned == (0xE | 1 << 5));
     TIDE_CHECK(heard->entities == before.entities + 1);
@@ -422,7 +418,7 @@ TIDE_TEST(local_events_single_machine)
     TIDE_CHECK(heard->sureRang == 11 && heard->glanced == 1 && heard->sureGlanced == 1);
     // What its match started with is new to it too: its own player's world is one it was sent
     TIDE_CHECK(heard->spawned == (0xE | 1 << 5) && heard->sureSpawned == (0xE | 1 << 5));
-    TIDE_CHECK(heard->entities == 6); // The scene, the first targets, its player, target 5
+    TIDE_CHECK(heard->entities == 6);
     TIDE_CHECK(heard->destroyed == 1 << 2 && heard->sureDestroyed == 1 << 2);
     TIDE_CHECK(heard->notes == 2 && heard->looked == 2);
     TIDE_CHECK(tide_session_status_of(s).client.resyncs == 0);

@@ -1,4 +1,4 @@
-# The packages that come with tide (see AGENTS.md, Packaging and releases):
+# The packages that come with tide:
 # games get one by listing it in their tide.packages, and tide compiles it
 # with them. Here, each one's tests build it the way tide would.
 
@@ -49,9 +49,8 @@ add_library(tide_box2d STATIC ${box2d_sources})
 # otherwise there
 target_link_libraries(tide_box2d PRIVATE tide_flags)
 target_compile_options(tide_box2d PRIVATE -w)
-# Optimized in debug builds too: they are the libraries as they came, which nobody here steps through, and
-# their steps are most of what the tests of physics take (a debug run of Sumo's tests went from 302 s to 108).
-# The results are the same either way, which the pins say: they agree in debug and release. Asserts stay on.
+# Optimized in debug builds too: their steps are most of what the physics tests take. Results are the
+# same either way (the pins agree in debug and release). Asserts stay on.
 target_compile_options(tide_box2d PRIVATE $<$<CONFIG:Debug>:-O2>)
 if(TIDE_SANITIZE)
     # As it came, it hands memset no array where it has none to clear (0

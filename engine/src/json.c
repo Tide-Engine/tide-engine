@@ -3,8 +3,6 @@
 #include <stddef.h>
 #include <string.h>
 
-// See tide/json.h, and tide/text.h for the numbers text is read as.
-
 // ---------------------------------------------------------------------------
 // Numbers out of text: a number's digits and its power of ten, read once,
 // then made an int, float or double by exact integer arithmetic. No strtod: the
@@ -16,8 +14,8 @@
 
 typedef struct number {
     bool negative;
-    bool more;        // A nonzero digit past the ones kept
-    int32_t count;    // Digits kept, the first nonzero
+    bool more;
+    int32_t count;
     int64_t exponent; // The value is the digits, as an integer, times ten to this
     uint8_t digits[DIGITS];
 } number;
@@ -29,7 +27,7 @@ static bool is_digit(const uint8_t c)
 
 static void take_digit(number *n, const uint8_t d, const bool fraction)
 {
-    if (n->count == 0 && d == 0) { // A zero before the first digit that counts
+    if (n->count == 0 && d == 0) {
         if (fraction) n->exponent--;
         return;
     }
@@ -459,7 +457,6 @@ bool tide_json_end(tide_json *j)
     return (j->at == j->end && j->depth == 0) || failed(j);
 }
 
-// `word` if it's what comes next, read.
 static bool word(tide_json *j, const char *word)
 {
     if (j->failed) return false;
@@ -627,7 +624,6 @@ static bool decode_string(const uint8_t *p, const uint8_t *close, uint8_t *out, 
     return true;
 }
 
-// Whether a string comes next: `*close` is its closing quote then.
 static bool string_next(tide_json *j, const uint8_t **close)
 {
     if (j->failed) return false;
@@ -680,7 +676,6 @@ bool tide_json_char(tide_json *j, int32_t *v)
 // The longest key or name told apart from the others: a longer one is none of them.
 #define NAME_BYTES 128u
 
-// The string that comes next, as which of `names` it is, or TIDE_JSON_UNKNOWN.
 static bool read_name(tide_json *j, const char *const *names, const int32_t count, int32_t *v)
 {
     const uint8_t *close;
@@ -704,7 +699,6 @@ bool tide_json_name(tide_json *j, const char *const *names, const int32_t count,
     return read_name(j, names, count, v) && (*v != TIDE_JSON_UNKNOWN || failed(j));
 }
 
-// An array's `[` or an object's `{`.
 static bool open(tide_json *j, const uint8_t bracket)
 {
     if (j->failed) return false;

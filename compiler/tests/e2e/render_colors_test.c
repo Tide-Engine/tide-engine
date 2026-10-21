@@ -83,7 +83,7 @@ TIDE_TEST(render_colors_targets_hold_several_and_frags_write_them_in_order)
     gui.width = 1280.0f, gui.height = 720.0f;
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
 
     // Each way to say what a target holds, a format for each color image: after its size, after
     // its pixels per unit, for all of the screen, after a screen's factor, four of them, one, and
@@ -202,7 +202,7 @@ TIDE_TEST(render_colors_targets_hold_several_and_frags_write_them_in_order)
     // A second frame draws through the same references
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
     TIDE_CHECK(local.Stage.frames == 2 && run_through("Fill on Corner") != NULL && drawn_through("Both on Vertex", 0) != NULL);
     TIDE_CHECK(local.Stage.two.id == first.id && holds(local.Stage.two.id, 2, C, F, 0, 0));
 

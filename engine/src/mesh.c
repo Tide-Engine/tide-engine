@@ -222,7 +222,6 @@ typedef struct cells_writer {
     uint32_t cell;             // ...and the bytes a cell is in the grid
 } cells_writer;
 
-// Colors, a byte a channel
 static void color_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
 {
     const tide_color *row = (const tide_color *)(const void *)cells;
@@ -235,7 +234,6 @@ static void color_cells(const cells_writer *w, const uint8_t *cells, const int32
     }
 }
 
-// Floats, 16 bits each
 static void float_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
 {
     (void)w;
@@ -246,7 +244,6 @@ static void float_cells(const cells_writer *w, const uint8_t *cells, const int32
     }
 }
 
-// Each cell's numbers, into ints that are zeros past them
 static void number_cells(const cells_writer *w, const uint8_t *cells, const int32_t count, uint8_t *out)
 {
     for (int32_t x = 0; x < count; x++) w->write(cells + (size_t)x * w->cell, (int32_t *)(void *)(out + (size_t)x * w->bytes));
@@ -282,7 +279,7 @@ static bool chunk_in_box(const cells_box *box, const tide_grid_shape *s, const i
     return some;
 }
 
-enum { GRID_PARTS_MOST = 1 << 20 }; // The most chunks a grid's texture is told apart by
+enum { GRID_PARTS_MOST = 1 << 20 };
 
 // A grid's cells into its texture's pixels, zeros where it has no chunk: all
 // of them, or where the pixels are `kept`, the chunks whose hashes aren't the
@@ -381,7 +378,6 @@ static void grid_cells(tide_draw_list *d, const uint32_t slot, uint8_t *pixels, 
     tide_scratch_reset(mark);
 }
 
-// The kinds of writer here (tide_draw_texture_edit)
 #define KIND_COLORS UINT64_C(0x47434F4C)
 #define KIND_FLOATS UINT64_C(0x47464C54)
 #define KIND_RAW UINT64_C(0x47524157)

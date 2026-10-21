@@ -180,7 +180,7 @@ char *packages_builtin_unknown(const char *name, const char *folder);
 // like "../shared"; or `path` itself where it can't be. malloc'd.
 char *packages_relative(const char *from, const char *path);
 
-// A game made in Unity (notes/unity.md) is the whole of a Unity project's
+// A game made in Unity is the whole of a Unity project's
 // Assets folder. Each folder in it whose tide.packages says `package Name` is
 // one of its packages with no line for it, found as Unity finds an assembly
 // definition; packages_resolve adds them. The game's own C is only ever a

@@ -1,8 +1,6 @@
-// A system's loop over its entities' rows, every way generated code runs it
-// (rows.tide): the world has to come out the same, bit for bit, whether its
-// pages are its own or a snapshot's too, whether a chunk goes whole or in
-// pieces, and on any number of threads. And a page no row changed in stays the
-// snapshot's, with its hash.
+// A system's loop over its entities' rows (rows.tide), every way generated code runs it: the world
+// must come out bit-identical whether its pages are its own or a snapshot's, whether a chunk goes
+// whole or in pieces, and on any thread count. A page no row changed stays the snapshot's, with its hash.
 
 #include <stdio.h>
 
@@ -41,9 +39,8 @@ static void tick(const tide_jobs *jobs)
     else tide_world_tick(&world);
 }
 
-// The match from its start: each tick's hash. With `keep`, a snapshot of the
-// tick before shares the world's pages while each tick runs, as a client's
-// does, and has to stay as it was.
+// The match from its start: each tick's hash. With `keep`, a snapshot of the tick before shares
+// the world's pages while each tick runs, as a client's does, and must stay as it was.
 static void play(const tide_jobs *jobs, const bool keep, uint64_t *hashes)
 {
     tide_world_init(&world, DT);
@@ -80,10 +77,8 @@ static void same_as_plain(const tide_jobs *jobs, const bool keep)
     }
 }
 
-// A pool of one thread that says it has eight: the tick takes the path it
-// takes on threads and runs it all here. A system's four chunks (three of
-// the entities nobody owns, one of the players') are fewer than the threads,
-// so each goes in pieces.
+// A pool of one thread that says it has eight: the tick takes its threaded path and runs it all
+// here. A system's four chunks (three unowned, one the players') are fewer than the threads, so each goes in pieces.
 static bool pooled;
 
 static void alone_run(void *self, void (*work)(void *context, uint32_t thread), void *context)
@@ -98,8 +93,7 @@ static const tide_jobs eight = {.threads = 8, .run = alone_run};
 TIDE_TEST(rows_are_the_same_on_every_platform)
 {
     know_plain();
-    // What the match is after its ticks, and that it's the match the cases
-    // below are about: entities in three chunks, some of every kind
+    // The cases below need entities in three chunks, some of every kind
     tide_world_init(&world, DT);
     for (int t = 0; t < TICKS; t++) {
         drive(&world, t);
@@ -107,7 +101,7 @@ TIDE_TEST(rows_are_the_same_on_every_platform)
     }
     TIDE_CHECK(world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 4990 && world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull.chunks == 3);
     TIDE_CHECK(world.arch2_Owner_Body_Stats_Label_Cargo_Still_Bulk_Hull.count == 10);
-    TIDE_CHECK(world.arch1_Spark.count > 100); // Breed's
+    TIDE_CHECK(world.arch1_Spark.count > 100);
     if (tide_world_hash(&world) != UINT64_C(0x0be24710edabca94)) printf("    the match ends as 0x%016llx\n", (unsigned long long)tide_world_hash(&world));
     TIDE_CHECK(tide_world_hash(&world) == UINT64_C(0x0be24710edabca94));
     TIDE_CHECK(tide_world_hash(&world) == plain[TICKS - 1]);
@@ -147,8 +141,7 @@ TIDE_TEST(rows_on_threads_come_out_as_on_one)
 #endif
 }
 
-// Whether the world and its snapshot still share the page of a chunk's column,
-// with the hash it had: nothing wrote it, and nothing has to hash it again.
+// Whether the world and its snapshot still share a chunk's column page, with its hash: nothing wrote it or has to rehash it.
 static bool shared(const uint32_t chunk, const uint32_t column)
 {
     const tide_table *now = &world.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull, *then = &kept.arch0_Body_Stats_Label_Cargo_Still_Bulk_Hull;
@@ -156,8 +149,8 @@ static bool shared(const uint32_t chunk, const uint32_t column)
     return now->pages[at] == then->pages[at] && now->pages[at]->hashed != UINT32_MAX;
 }
 
-// A tick with a snapshot sharing every page: which pages are still the
-// snapshot's afterwards. Tick 9 is odd, so Rest changes no row.
+// A tick with a snapshot sharing every page: which pages are still the snapshot's afterwards.
+// Tick 9 is odd, so Rest changes no row.
 static void pages_stay(const tide_jobs *jobs)
 {
     enum {

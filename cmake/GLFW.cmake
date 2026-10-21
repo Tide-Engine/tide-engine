@@ -1,6 +1,5 @@
 # GLFW: desktop windows, their OpenGL contexts and input, for the platform
-# layer (see AGENTS.md, Rendering and platform). Downloaded at configure time,
-# pinned to a release. Web and Android builds have windows of their own
+# layer. Downloaded at configure time, pinned to a release. Web and Android builds have windows of their own
 # (platform/web/canvas.c, platform/android/activity.c) and download nothing.
 include(FetchContent)
 

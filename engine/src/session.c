@@ -9,8 +9,6 @@
 #include "tide/sha256.h"
 #include "tide/pack.h"
 
-// See tide/session.h.
-//
 // Every datagram starts with a header: "PU", the protocol version and a type.
 //
 //   HELLO    client: the game's hash, a number for this attempt, its time,
@@ -253,7 +251,6 @@ static double arrived_of(const tide_transport *t, const double now)
     return t->clock && t->arrived ? t->arrived(t->self) : now;
 }
 
-// Whole ticks from `seconds` at `rate`.
 static uint64_t ticks_in(const double seconds, const uint32_t rate)
 {
     const double n = seconds * (double)rate + 1e-7;
@@ -549,7 +546,6 @@ static bool sequence_pending(const uint32_t channel, const uint32_t sequence, co
     return sequence > previous && sequence - previous <= TIDE_COMMAND_PENDING;
 }
 
-// Whether the queue has one of this channel and sequence already
 static bool queued(const command_queue *q, const uint32_t channel, const uint32_t sequence)
 {
     for (uint32_t i = 0; i < q->count; i++) {
@@ -628,7 +624,6 @@ static uint32_t handover_capacity(const uint32_t players)
     return 16u + TIDE_ROOM_CODE_LENGTH + TIDE_ROOM_KEY_LENGTH + (players + 7u) / 7u + 8u * players;
 }
 
-// Whether `a` has a player `b` hasn't.
 static bool players_beyond(const tide_player_set *a, const tide_player_set *b)
 {
     uint64_t more = 0;
@@ -636,7 +631,6 @@ static bool players_beyond(const tide_player_set *a, const tide_player_set *b)
     return more != 0;
 }
 
-// Whether the sets share a player.
 static bool players_meet(const tide_player_set *a, const tide_player_set *b)
 {
     uint64_t both = 0;
@@ -727,7 +721,7 @@ typedef struct connection {
     // Ticks
     uint32_t frame_ack;  // It has every tick before this one
     uint64_t frame_mask; // ...and these after it: the next 64, a second of ticks at 60 a second
-    sent_mark *frame_sent; // history
+    sent_mark *frame_sent;
     stored_frame *client_frames; // Recipient-specific frames; NULL without projections.
     void *verified_world; // Last acknowledged full server endpoint, retained for recovery causes.
     uint32_t verified_tick;
@@ -746,7 +740,7 @@ typedef struct connection {
     // player who's still being sent the world has no tick to sample one for.
     uint32_t newest_sent;
     bool sent_input;
-    uint32_t *input_tick; // inputs
+    uint32_t *input_tick;
     uint16_t *input_size;
     double *input_arrived; // When each first arrived, by its transport's clock
     // The least its inputs waited for the ticks of the last update that ran
@@ -862,7 +856,7 @@ struct tide_server {
     uint32_t published_count;
     uint32_t next_published;
     windows w;
-    stored_frame *frames; // history
+    stored_frame *frames;
     // The whole world as last packed to send, which every player joining in
     // the same tick is sent, so a tick packs it once however many join. NULL
     // once nobody is sent it. A tick's pack is its players' (shared_pack): it
@@ -1234,7 +1228,6 @@ static void send_bye(tide_server *s, const uint32_t transport, const tide_addres
     send_packet(&s->desc.transports[transport], to, &w, &s->traffic);
 }
 
-// Tells a kicked player they were, and why.
 static void send_kicked(tide_server *s, const kicked *k)
 {
     uint8_t data[8u + TIDE_MESSAGE_BYTES];
@@ -2836,13 +2829,13 @@ struct tide_client {
     double verified_view; // Confirmed presentation time, held when no newer confirmed state exists.
     tide_view_time presented_view;
     windows w;              // From the match's tick rate, once welcomed
-    pending_frame *frames;  // history
+    pending_frame *frames;
 
     // Its own inputs, packed, by tick. It samples them for `sampled` on, as
     // its clock says, however far it runs: `delay` ticks short of them
     // (tide_prediction), so an input is sampled that many ticks before the
     // tick it's for is run.
-    uint32_t *input_tick;   // inputs
+    uint32_t *input_tick;
     uint16_t *input_size;
     uint8_t *inputs;
     uint32_t sampled;       // The next tick to sample an input for: at least `ahead`
@@ -4032,20 +4025,15 @@ static void skip_old_inputs(tide_client *c)
     skip_inputs(c, (uint32_t)soonest);
 }
 
-// It's behind what the server ran by more than it runs in an update: with a
-// world that just came, as old as it took to come, or after this machine
-// stopped for a while (a breakpoint, a tab that slept), or heard nothing for
-// longer than it predicts. It catches up with what's confirmed before it
-// predicts again (play): a tick predicted from a world that old is a guess
-// the server's ticks since then put right one by one, each running every
-// tick after it again.
+// It's behind what the server ran by more than it runs in an update: a world that just came, as old as it took to come, or
+// this machine stopped for a while (a breakpoint, a sleeping tab), or heard nothing for longer than it predicts. It catches up
+// with what's confirmed before it predicts again (play): a tick predicted from a world that old is a guess the server's ticks
+// since then put right one by one, each running every tick after it again.
 //
-// What it had predicted goes. No input is sampled for a tick that can't be in
-// time: its clock keeps its inputs `lead` ticks early, so the first that can
-// is that far before the clock's, and never one the server said it ran. From
-// there its inputs go by its clock, as ever, so the server has them in time
-// while it catches up. What the server says of their wait meanwhile is about
-// ticks this machine sampled nothing for, and doesn't count (keep_early).
+// What it had predicted goes. No input is sampled for a tick that can't be in time: its clock keeps its inputs `lead` ticks
+// early, so the first that can is that far before the clock's, and never one the server said it ran. From there its inputs go
+// by its clock, so the server has them in time while it catches up; what the server says of their wait meanwhile doesn't
+// count (keep_early).
 static void fall_behind(tide_client *c)
 {
     if (c->ahead > c->verified) {
@@ -4059,17 +4047,12 @@ static void fall_behind(tide_client *c)
     c->early_settling = true;
 }
 
-// CATCH_UP_TICKS at the most, and twice what passes between its updates where
-// that's more, so a machine whose frames are long still gains on the server.
-// With a clock (tide_client_desc.now_ns), a game whose ticks are dear takes
-// half the time between its updates at the most, so its frames stay about as
-// long as they were: but as many ticks as came due since its last update, and
-// one, or it would never be level, up to CATCH_UP_TICKS mandatory ticks. Past
-// those, the time budget applies whatever came due: a machine that can't run
-// the match's ticks in the time
-// they take falls behind, which the server answers with the world again, and
-// its frames stay as long as those ticks take, where running all that came
-// due would make each frame longer than the last.
+// A moment's allowance of the server's ticks: CATCH_UP_TICKS at the most, and twice what passes between its updates where
+// that's more, so a machine whose frames are long still gains on the server. With a clock (tide_client_desc.now_ns), a game
+// whose ticks are dear takes half the time between its updates at the most, so its frames stay about as long: but always as
+// many ticks as came due since its last update, and one, or it would never be level, up to CATCH_UP_TICKS mandatory ticks.
+// Past those the time budget applies: a machine that can't run the match's ticks in the time they take falls behind, which
+// the server answers with the world again, rather than its frames growing longer each time.
 //
 // It's a moment's allowance, not a call's: a session updates its client twice
 // in a frame, at the same time (tide_session_update), and the second has
@@ -4434,20 +4417,14 @@ static void predict(tide_client *c)
     c->ahead++;
 }
 
-// Keeps its inputs as early as they have to be, and no earlier. All the time
-// an input waits at the server before its tick runs is time later that the
-// other players see what this one did, and time further that this machine runs
-// ahead, guessing what they do. The server says how long this machine's inputs
-// waited for the ticks it last ran, with everything it sends (note_wait). The
-// least of those is what counts: being early is for the input that's nearly
-// late.
+// Keeps its inputs as early as they have to be, and no earlier: time an input waits at the server before its tick runs is
+// time later that the other players see what this one did, and time further this machine runs ahead, guessing. The server says
+// how long this machine's inputs waited for the ticks it last ran (note_wait); the least counts, as being early is for the
+// input that's nearly late.
 //
-// What the least is kept at is the client's lead, in ticks: none on the
-// server's machine, whose inputs go straight in. Over a network (lead_frame)
-// it's one of this machine's frames where that's less, as inputs are read and
-// sent a frame at a time, so one frame that's late, or one datagram lost,
-// still leaves the input in time; and a 60th of a second where its frames are
-// shorter, which is what a match of 60 ticks a second has with a tick.
+// The least is kept at the client's lead, in ticks: none on the server's machine, whose inputs go straight in. Over a network
+// (lead_frame) one of this machine's frames, or a 60th of a second where its frames are shorter, so a late frame or a lost
+// datagram still leaves the input in time.
 static int32_t early_wanted(const tide_client *c)
 {
     const int32_t ticks = (int32_t)((double)c->desc.lead * WAITS / (double)c->tick_rate + 0.5);
@@ -4456,24 +4433,15 @@ static int32_t early_wanted(const tide_client *c)
     return frame < ticks ? frame : ticks;
 }
 
-// The client watches a while at a time. Under what's wanted, an input was
-// nearly late, or late: its clock goes ahead at once by what was missing.
-// Over it for the whole while by as much again (a tick at the most), its
-// inputs wait at the server for nothing: its clock loses the difference, a
-// little of each update, so no tick stands still. The while is short, but
-// after an input was nearly late, when it's long: what made it so may come
-// again, and has to stay away that long. Not for one in its first second in
-// the match, as a machine starting up stutters. A client that sends no inputs
-// (a game without an input) has nothing to keep early: its clock stays as the
-// world's arrival set it.
+// The client watches a while at a time. Under what's wanted, an input was nearly late or late: its clock goes ahead at once by
+// what was missing. Over it for the whole while by as much again (a tick at most), its clock loses the difference, a little of
+// each update, so no tick stands still. The while is long after an input was nearly late, as what made it so may come again,
+// and is not applied in a match's first second (a starting machine stutters). A client that sends no inputs has nothing to
+// keep early.
 //
-// What the server says is about the ticks it ran, so after a change, and as
-// the client joins, it's about inputs sent by another clock for a while, or
-// by none: nothing it says counts until it has run a tick whose input was
-// sampled when its time came by the clock as it is (early_settled). By the
-// tick, never by how long a round trip is taken to be: on a network that's
-// late or loses datagrams, what was said before the change is still the last
-// thing heard well after that.
+// What the server says is about the ticks it ran, so after a clock change and on joining nothing it says counts until a tick
+// whose input was sampled by the clock as it is now has run (early_settled). By the tick, never by an assumed round trip: on
+// a network that's late or loses datagrams, what was said before the change is still heard well after it.
 static void keep_early(tide_client *c)
 {
     if (!c->game->set_input || !c->desc.sample || c->now < c->hold_until || c->early_settling) return;
@@ -4518,27 +4486,18 @@ static void early_settled(tide_client *c, const int64_t due)
     c->early_settling = false;
 }
 
-// A clock far ahead comes back at once. Its inputs go no further than a
-// second past what's confirmed (windows.prediction), so with its clock past
-// that the server only ever says they wait about that long, however much
-// further the clock is, and losing that a little of each update (keep_early)
-// takes round after round of ten seconds and more, with the others seeing
-// this player a second late throughout. A clock gets there when the server's
-// machine stopped for a while: its ticks dropped the time, and this clock
-// didn't.
+// A clock far ahead comes back at once. Its inputs go no further than a second past what's confirmed (windows.prediction), so
+// with its clock past that the server only ever says they wait about that long, and losing it a little of each update
+// (keep_early) takes rounds of ten seconds and more, with the others seeing this player a second late. A clock gets there when
+// the server's machine stopped for a while: its ticks dropped the time, and this clock didn't.
 //
-// It's the server's word that says so, never frames that didn't come: in an
-// update that heard from the server, with every tick it said it ran run here
-// too, the clock is still past what can be sampled, and a clock set now as a
-// join sets one, from the tick it said and what its answer took, would be
-// within that. A datagram that was long on its way took that long to answer,
-// which puts the clock a join would set as much further ahead: only a server
-// whose ticks fell behind the time reads as a clock too far. In two such
-// updates in a row, as one datagram is one datagram.
+// It's the server's word that says so, never frames that didn't come: in an update that heard from the server, with every tick
+// it said it ran run here too, the clock is still past what can be sampled, and a clock set now as a join sets one would be
+// within that. A datagram that was long on its way took that long to answer, which puts the clock a join would set as much
+// further ahead: only a server whose ticks fell behind the time reads as a clock too far. In two such updates in a row.
 //
-// The clock is set as a join sets it. What was predicted past it goes, to be
-// run again as the clock gets there, with the inputs already sampled for
-// those ticks, which the server has: nothing more is sampled until then.
+// The clock is set as a join sets it. What was predicted past it goes, to be run again as the clock gets there, with the
+// inputs already sampled for those ticks, which the server has: nothing more is sampled until then.
 static void clock_back(tide_client *c)
 {
     if (c->heard_update != c->updates || !c->heard_timed) return; // Nothing new from the server in this update
@@ -4679,32 +4638,20 @@ static void play(tide_client *c)
     for (uint32_t n = 0; c->predicts && c->ahead < target && n < 16u && room_ahead(c); n++) predict(c);
 }
 
-// Its input delay (tide_prediction): how many ticks short of the ones it has
-// inputs for it runs.
+// Its input delay (tide_prediction): how many ticks short of the ones it has inputs for it runs.
 //
-// Predicting, it's the least at which running ticks again fits what a frame
-// can afford, by what that costs in practice, so a client whose guesses are
-// right pays nothing for them, and none at all on the server's machine,
-// whose inputs go straight in. A rollback runs the ticks from the one that
-// went otherwise to the one it's predicting again, about its lead: what one
-// would cost now is what the last ones' first ticks cost (rerun_first_cost,
-// or `tick_cost` before any) and a tick's cost for each of the rest, over
-// how far ahead it's been of late and a tick (`lead_mean`, while it's level
-// with the server), and may take up to a frame, the time between its
-// updates, and never less than the budget nor than a 60th of a second
-// (ROLLBACK_FRAMES, ROLLBACK_SECONDS); and what rollbacks cost on the whole,
-// an update, may take up to the budget (`resim_load`, to which an update
-// counts for two budgets at the most, so one rollback a stall made long
-// isn't a load). It takes a tick more when either is over, and one back once
-// both would still hold with a tick less, with a share to spare (ROOM_SHARE),
-// for ROOM_SECONDS. With no rollback for QUIET_SECONDS nothing says either:
-// it takes none more, and takes them back a tick at a time, as what it
-// reckons by may be stale, and a rollback that then comes is measured.
+// Predicting, it's the least at which running ticks again fits what a frame can afford, by what that costs in practice, so a
+// client whose guesses are right pays nothing for them, and none at all on the server's machine. What one rollback would cost
+// now is what the last ones' first ticks cost (rerun_first_cost, or `tick_cost` before any) plus a tick's cost for each of
+// the rest, over how far ahead it's been of late and a tick (`lead_mean`, while level with the server); it may take up to a
+// frame, never less than the budget nor a 60th of a second (ROLLBACK_FRAMES, ROLLBACK_SECONDS). What rollbacks cost on the
+// whole, an update, may take up to the budget (`resim_load`; an update counts for two budgets at most, so one rollback a
+// stall made long isn't a load). It takes a tick more when either is over, and one back once both would still hold with a
+// tick less, with a share to spare (ROOM_SHARE), for ROOM_SECONDS. With no rollback for QUIET_SECONDS it takes none more and
+// takes them back a tick at a time, as what it reckons by may be stale.
 //
-// Not predicting, it takes a tick more when the clock reached a tick whose
-// frame hasn't come, and a tick less once frames have come well before their
-// ticks for a while. Each change takes a round trip to show, so there's one
-// at a time.
+// Not predicting, it takes a tick more when the clock reached a tick whose frame hasn't come, and a tick less once frames
+// have come well before their ticks for a while. Each change takes a round trip to show, so there's one at a time.
 static void adjust_delay(tide_client *c)
 {
     if (!c->loaded) return;

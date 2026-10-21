@@ -87,7 +87,7 @@ TIDE_TEST(net_ended_players_hear_it)
     tide_client *clients[2] = {join(net, 2, now), NULL};
     while (now < 3.0) {
         now += 1.0 / 60.0;
-        if (!clients[1] && now >= 2.0) clients[1] = join(net, 3, now); // Once it's over
+        if (!clients[1] && now >= 2.0) clients[1] = join(net, 3, now);
         tide_loopback_set_time(net, now);
         for (int i = 0; i < 2; i++) {
             if (clients[i]) tide_client_update(clients[i], now);

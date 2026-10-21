@@ -6,8 +6,6 @@
 #include "tide/math.h"
 #include "tide/time.h"
 
-// See tide/profiler.h.
-
 // How long it measures before the panel's numbers change, in seconds.
 #define WINDOW 0.5
 

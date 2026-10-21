@@ -35,8 +35,7 @@ function frontmatter(source: string): { data: Record<string, unknown>; body: str
     return match ? { data: parse(match[1]) ?? {}, body: source.slice(match[0].length) } : { data: {}, body: source };
 }
 
-// `<<< @/../demo/demo.tide` shows a file of the repo as code (`@` is docs/),
-// as VitePress did.
+// `<<< @/../demo/demo.tide` shows a file of the repo as code (`@` is docs/).
 function snippets(source: string, file: string): string {
     return source.replace(/^<<< @\/(\S+)[ \t]*\r?$/gm, (_, relative: string) => {
         const where = path.resolve(relative);

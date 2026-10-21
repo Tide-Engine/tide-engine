@@ -27,7 +27,7 @@ static void frame_between(const tide_world *previous, const float alpha, const i
     local.Tally.rest = 0;
     tide_draw_reset(&draw);
     tide_frame(&world, previous, alpha, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
 }
 
 static void frame_as(const int32_t index)
@@ -142,7 +142,7 @@ TIDE_TEST(ownership_views_blend_like_any_other)
     start();
     static tide_world before;
     tide_world_copy(&before, &world);
-    tide_world_tick(&world); // Drift: y from 1 to 2
+    tide_world_tick(&world);
     frame_between(&before, 0.5f, 0);
     TIDE_REQUIRE(count(TIDE_DRAW_CIRCLE) == 1 && drawn(TIDE_DRAW_CIRCLE, 1.0f));
     TIDE_CHECK(drawn(TIDE_DRAW_CIRCLE, 1.0f)->a.y == 1.5f);
@@ -156,7 +156,7 @@ TIDE_TEST(ownership_views_wait_for_a_match)
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     tide_draw_reset(&draw);
     tide_frame(NULL, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
     TIDE_CHECK(draw.count == 0);
     TIDE_CHECK(local.Tally.mine == 0 && local.Tally.rest == 0);
 }

@@ -33,7 +33,7 @@
 # WINDOW says they open a window, so that on Android they're an app too, rather
 # than a program that runs from a shell.
 # They include the game's generated header, <name>.h (NAME defaults to
-# <target>), and drive the game through its API (see AGENTS.md). LAYOUT also
+# <target>), and drive the game through its API. LAYOUT also
 # describes the game's data layout, as tide run does for hot reloading
 # (tide_game_layout, see engine/include/tide/layout.h). EMBED adds what
 # another program needs to run it (tide_game_embed, tide/embed_game.h, which
@@ -78,7 +78,7 @@ set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
 
 # A game's C++ is the language alone, as tide builds it (cpp_flags in
 # compiler/cli/build.c): no standard library, exceptions or RTTI, since tide
-# brings no C++ runtime (see AGENTS.md, Language). This project is C, so the C
+# brings no C++ runtime. This project is C, so the C
 # compiler compiles those files, and programs link as C: -x c++ and -std=c++20
 # go over what CMake says for a C file, which comes before them.
 set(TIDE_CPP_FLAGS -x c++ -std=c++20 -nostdinc++ -fno-exceptions -fno-rtti -fno-threadsafe-statics)

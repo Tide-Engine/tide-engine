@@ -46,12 +46,12 @@ TIDE_TEST(net_join_big_world_catches_up)
 
     const tide_client_status s = tide_client_status_of(client);
     printf("    the world arrived after %.1f s\n", connected);
-    TIDE_CHECK(connected > 4.0); // Longer than the ticks the server keeps
+    TIDE_CHECK(connected > 4.0);
     TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(s.resyncs == 0);
-    TIDE_CHECK(s.verified_tick + 30u > tide_server_tick(server)); // Caught up
+    TIDE_CHECK(s.verified_tick + 30u > tide_server_tick(server));
     const tide_world *world = tide_client_verified_world(client);
-    TIDE_CHECK(world && world->Archive.total > 0); // Its inputs reached the match
+    TIDE_CHECK(world && world->Archive.total > 0);
 
     tide_client_destroy(client);
     tide_server_destroy(server);
@@ -171,20 +171,12 @@ static void leave(watched *w)
     tide_loopback_destroy(w->net);
 }
 
-// A player who joins runs no further ahead than its inputs need, however long
-// its world took to arrive. The server runs ticks for it meanwhile, with no
-// input of its to run them with, as it has no world to sample one for: those
-// aren't inputs that came late. Counted as late, by as long as the world took,
-// they had the player set its clock that far ahead once it was in, on a
-// network late and lossy enough that this was still the last thing it had
-// heard: a second and more, where it then stayed for a long while, running
-// every tick it predicts again and again, with the other players seeing what
-// it did that much later.
+// A player who joins runs no further ahead than its inputs need, however long its world took to arrive. The
+// server's ticks meanwhile ran with no input of the player's, as it has no world to sample one for: those are not
+// late inputs, and counting them so would set its clock that far ahead once it's in.
 //
-// Nor does it predict from the world that came, which is as old as it took to
-// come: it runs the ticks the server sent since, so many a frame, and predicts
-// once it has run every tick the server said it had. Every other network's
-// player is updated twice a frame, as a session updates it.
+// Nor does it predict from the world that came, which is as old as it took to come: it runs the ticks the server
+// sent since, so many a frame, and predicts once it has run every tick the server said it had.
 TIDE_TEST(net_join_big_world_runs_no_further_ahead_than_its_inputs_need)
 {
     uint32_t furthest = 0;
@@ -203,7 +195,7 @@ TIDE_TEST(net_join_big_world_runs_no_further_ahead_than_its_inputs_need)
         const tide_client_status s = tide_client_status_of(w.client);
         TIDE_CHECK(world_took > 60u); // Ticks the server ran for the player before it had the world
         TIDE_CHECK(s.resyncs == 0);
-        TIDE_CHECK(s.early_ms >= 0.0f); // In time, at the end
+        TIDE_CHECK(s.early_ms >= 0.0f);
         const tide_world *world = tide_client_verified_world(w.client);
         TIDE_CHECK(world && world->Archive.total > 0);
         // It had run every tick the server said it had before it ran one ahead: the ticks the world took among them
@@ -214,11 +206,8 @@ TIDE_TEST(net_join_big_world_runs_no_further_ahead_than_its_inputs_need)
         if (w.most_sent > most_sent) most_sent = w.most_sent;
         leave(&w);
     }
-    // A round trip here is about 7 ticks, and the lead 2. With the ticks
-    // before it had the world counted as late, it ran the 60 a client may,
-    // its inputs waiting most of a second. From the moment it has the world:
-    // before it caught up first, it ran 60 ahead of that world, a guess from
-    // a second and more ago.
+    // A round trip here is about 7 ticks and the lead 2. Counting the ticks before the world as late would have it
+    // run the 60 a client may, its inputs waiting most of a second.
     printf("    of 8 networks, the furthest a player ran ahead of what's confirmed, from when it had the world, was %u ticks,"
            " the longest its inputs waited %.0f ms, and the most ticks it ran in a frame %u, %u of them the server's\n",
            furthest, (double)longest, most, most_sent);
@@ -227,18 +216,11 @@ TIDE_TEST(net_join_big_world_runs_no_further_ahead_than_its_inputs_need)
     TIDE_CHECK(most_sent <= 8u);
 }
 
-// A player's first moments, on a network that's only late, where nothing but
-// the join itself is in the way: 50 ms each way. The world takes over a
-// second to come, and the server ran 70 ticks and more meanwhile. The player
-// runs those as the server sent them, 8 a frame at the most, and nothing
-// ahead until it has; then the ticks up to its clock, 16 an update at the
-// most, as ever. It samples no input for a tick its clock says can't be in
-// time, and the ticks the server ran with no input of its own, which it
-// predicted so, went as predicted: none is run again, as nobody else is in
-// the match to guess wrong about. Before, it ran 60 ticks ahead of the world
-// that came, sampled an input for each, had every one of the server's ticks
-// say it was late, counted them all as late, and ran them all in the one
-// update they came in.
+// A player's first moments on a network that's only late, 50 ms each way. The world takes over a second to come,
+// and the server ran 70 ticks and more meanwhile. The player runs those as the server sent them, 8 a frame at the
+// most, and nothing ahead until it has; then the ticks up to its clock, 16 an update at the most. It samples no
+// input for a tick its clock says can't be in time, and the ticks the server ran with no input of its own went as
+// predicted: none is run again, as nobody else is in the match to guess wrong about.
 static void first_moments(const bool twice)
 {
     tide_loopback *net = tide_loopback_create(21);

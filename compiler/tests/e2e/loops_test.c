@@ -7,7 +7,7 @@ TIDE_TEST(loops_run_as_written)
 {
     tide_world_init(&world, 1.0f);
     tide_world_tick(&world);
-    TIDE_CHECK(tide_world_entity_count(&world) == 5); // Main, the tally and three sparks
+    TIDE_CHECK(tide_world_entity_count(&world) == 5);
     const Spark last = tide_get_Spark(&world, (tide_entity){4, 1});
     TIDE_REQUIRE(tide_has_Spark(&world, (tide_entity){4, 1}));
     TIDE_CHECK(last.index == 2);

@@ -537,9 +537,8 @@ int rtc_tls_receive(rtc_tls *t, const rtc_socket s, void *out, const size_t capa
 #include <errno.h>
 #include <sys/socket.h>
 
-// Secure Transport is deprecated in favour of Network.framework, which runs
-// its own connections on its own queues. This fits the rest (a socket we
-// poll), and does all a relay's connection needs.
+// Secure Transport is deprecated, but Network.framework runs its own
+// connections on its own queues; this one works on a socket we poll.
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 struct rtc_tls {

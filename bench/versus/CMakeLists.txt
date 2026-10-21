@@ -1,7 +1,6 @@
 # C against Tide: each concept written both ways, as fast as each language
 # allows, and timed on the same work, on one thread and on every core (see
-# versus.h and AGENTS.md, Benchmarks). `versus_<concept> --help` lists a run's
-# options. Tests run each one --quick, and fail when the ways end differently.
+# versus.h). `versus_<concept> --help` lists a run's options. Tests run each one --quick, and fail when the ways end differently.
 add_library(tide_versus STATIC versus.c)
 target_include_directories(tide_versus PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(tide_versus PUBLIC tide tide_platform) # tide_platform_jobs

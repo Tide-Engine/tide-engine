@@ -43,7 +43,6 @@ static void grow(void **items, int *capacity, const int count, const size_t size
     if (!*items) abort();
 }
 
-// Text that grows.
 typedef struct text {
     char *s;
     size_t n, capacity;
@@ -576,7 +575,7 @@ static void add_pending(expansion *x, node *n, const int at, const yaml_node *re
     const int64_t id = yaml_reference(ref, guid);
     if (at >= n->ref_count) resize_refs(n, at + 1);
     if (!id && !guid[0]) {
-        memset(&n->refs[at], 0, sizeof n->refs[at]); // None
+        memset(&n->refs[at], 0, sizeof n->refs[at]);
         return;
     }
     grow((void **)&x->refs, &x->ref_capacity, x->ref_count, sizeof *x->refs);

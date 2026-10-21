@@ -27,7 +27,7 @@
 
 typedef struct gl_pipeline {
     GLuint program, vao;         // No program: a place that's free
-    tide_gpu_pipeline_desc desc; // Its slots and attributes, how it blends and tests depth and stencil, and which side it draws
+    tide_gpu_pipeline_desc desc;
     GLint target_height;         // 0 on the window, its height when drawing top-first into a texture
     // Being made in the background (gl_background): its shaders, compiling and linking while frames go on, checked
     // and let go of once the browser says it's done (gl_pipeline_ready). 0 once it's made

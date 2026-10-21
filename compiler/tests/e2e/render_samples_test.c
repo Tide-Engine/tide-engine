@@ -47,7 +47,7 @@ TIDE_TEST(render_samples_are_said_where_a_target_is_made_and_kept_in_its_id)
     gui.width = 1280.0f, gui.height = 720.0f;
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
 
     // Each way to say them: after a size, after its pixels per unit, after one format and after
     // several, for the window, after its factor and its formats, from a constant and a variable
@@ -137,7 +137,7 @@ TIDE_TEST(render_samples_are_said_where_a_target_is_made_and_kept_in_its_id)
     // A second frame draws through the same references
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
     TIDE_CHECK(local.Stage.frames == 2 && drawn_through("Show on Vertex", 0) != NULL);
     TIDE_CHECK(local.Stage.four.id == first.id && holds(local.Stage.four.id, 1, C, 4));
 

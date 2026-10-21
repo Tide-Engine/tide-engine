@@ -1,4 +1,4 @@
-// Opt-in real VS Code host test. Never uses the owner's profile or extensions.
+// Opt-in real VS Code host test. Uses a private profile and extensions.
 // node test/run-host.mjs <Code executable> <built tidels> <Node executable>
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';

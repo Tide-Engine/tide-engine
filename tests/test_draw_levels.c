@@ -218,7 +218,7 @@ TIDE_TEST(draw_levels_group_the_instances_of_a_draw)
     TIDE_REQUIRE(runs_of(&d, runs, 8) == 1);
     TIDE_CHECK(mesh_of(&d, runs[0])->level == 2 && runs[0]->mesh3.count == 3);
     TIDE_CHECK(d.matrices[runs[0]->mesh3.first].c3.x == 0.5f && d.matrices[runs[0]->mesh3.first + 2u].c3.x == 2.5f);
-    // A mesh with no levels is one run, as ever
+    // A mesh with no levels is one run
     frame(&d);
     tide_draw_instances(&d, plain_mesh(&d), given, 6, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_REQUIRE(runs_of(&d, runs, 8) == 1);

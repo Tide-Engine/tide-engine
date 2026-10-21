@@ -1,5 +1,5 @@
-# tide building a game's C++ files, which have no C++ runtime behind them (see
-# AGENTS.md, Language): that they build, natively and for the web, and what
+# tide building a game's C++ files, which have no C++ runtime behind them:
+# that they build, natively and for the web, and what
 # tide says after a build that fails for want of the runtime. On the web, a
 # function nothing defines fails the build too.
 #

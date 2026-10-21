@@ -23,12 +23,8 @@
 
 (async () => {
     'use strict';
-    // `#download` after the page's address: the page is only being downloaded,
-    // by a page that will show the game in a frame later. It loads the game's
-    // page once in a frame nobody sees, so the frame it shows finds the page
-    // in the browser's cache, which keeps a frame's page apart from what a
-    // script fetches. Nothing runs. It's after the `#`, which is no part of
-    // the address a cache goes by.
+    // `#download` after the page's address: the page is loaded once, in a frame nobody sees, to
+    // fill the browser's cache for the frame that shows the game later. Nothing runs.
     if (location.hash === '#download') return;
     const config = typeof Tide !== 'undefined' ? Tide : {};
     const canvas = config.canvas || document.getElementById('canvas');
@@ -860,22 +856,13 @@
     // its host, and introduces the others to it.
 
     const relayUrl = config.relay || 'wss://relay.tide-engine.dev';
-    // `Tide.lag`, or `lag=` in the page's address: the ping this page's
-    // player is to have, in milliseconds, to see a match as on a slow
-    // connection with both players at one desk. A ping is the network's whole
-    // round trip to the match's server, there and back (the session's:
-    // tide_client_status.ping_ms), and what the trip takes already is part of
-    // it: the page adds what's missing (`added`), half to what it sends and
-    // half to what it receives, so a lag of 100 reads as a ping of 100, not as
-    // 100 more than it was. What it holds back arrives, to the program, when
-    // it's let go. A page that hosts adds nothing: its machine runs the
-    // server, and each player who joined says its own. The page can change it
-    // while the game runs, and reads `Tide.minLag`, the least a lag can make
-    // the ping: what it was while the page added nothing, undefined until the
-    // program measured 8 of them so (a page that wants it starts with no lag),
-    // and on a page that hosts. `Tide.room` is the code of the room the
-    // program hosts or joined ("" for none), for the page to show or to link
-    // to.
+    // `Tide.lag`, or `lag=` in the page's address: the ping this page's player is to have, in
+    // milliseconds, to see a match as on a slow connection. A ping is the whole network round trip
+    // (tide_client_status.ping_ms); the page adds only what's missing over what the trip takes
+    // already (`added`), half to what it sends and half to what it receives. A page that hosts adds
+    // nothing. The page can change it while the game runs, and reads `Tide.minLag`, the least a lag
+    // can make the ping (undefined until 8 pings were measured with nothing added, and on a page
+    // that hosts), and `Tide.room`, the code of the room the program hosts or joined ("" for none).
     if (config.lag === undefined) config.lag = Number(new URLSearchParams(location.search).get('lag')) || 0;
     Object.defineProperty(config, 'minLag', { configurable: true, enumerable: true,
         get: () => room && !room.hosting && room.leastOf >= 8 ? Math.round(room.least) : undefined });
@@ -1218,19 +1205,11 @@
             }
         },
         room_arrived: () => room ? room.arrived : 0,
-        // The ping the program measures to its room's host, in milliseconds
-        // (under 0 for none), which it says every frame: what `Tide.lag` is to
-        // make it. Less what the page adds, it's what the ping is by itself,
-        // if all of its trip went with what's added now: it set out after
-        // that last changed, which was `answer` ago, what the program says an
-        // answer took to be read. The program counts that by its frames, each
-        // up to a frame's work behind the page's clock, so a trip that set
-        // out within 50 ms of the change doesn't count. Nor does one said
-        // again with nothing heard since. The page's timers fire a little
-        // late, each its own little, so the page goes by what's left on the
-        // whole. `Tide.minLag` is from the pings with nothing added alone:
-        // their mean, of the last 32 or so once there are that many, as it's
-        // there to be read.
+        // The ping the program measures to its room's host in milliseconds (under 0 for none), said
+        // every frame: what `Tide.lag` is to make it. Pings sent within 50 ms of the last change of
+        // what the page adds, or repeated with nothing heard since, don't count (the program counts
+        // by frames, each up to a frame's work behind the page's clock). `Tide.minLag` is the mean
+        // of the last 32 or so pings with nothing added.
         room_ping(ping, answer) {
             const r = room;
             if (!r) return;
@@ -2612,12 +2591,9 @@
         } catch (error) { filesError = storageError(error); }
     }
     let filesReady = null;
-    // Saves what's changed, after the saves asked for before it. What that is,
-    // it takes when its turn comes, not when it's asked: a change queues a
-    // save and a flush in the same turn is another, and the second, which
-    // comes once the first committed, then finds nothing left to write. What
-    // a save that failed left dirty, and what changed while one was on its
-    // way, the next one takes the same way.
+    // Saves what's changed, after the saves asked for before it. What is dirty is taken when the
+    // save's turn comes, not when it's asked, so a save queued behind another finds nothing left
+    // to write.
     function saveFiles(tree) {
         tree.chain = tree.chain.then(() => {
             if (!filesDB || filesError) return filesError || ioError.unavailable;
@@ -2890,12 +2866,10 @@
         env: lenient('env', glFunctions, (module, name) => { throw new Error(`tide.js has no ${name}`); }),
     };
 
-    // A program and its memory: shared where the page can share it, or else
-    // its own, with the program's import of it changed to match. Compiles on
-    // the spot where the browser allows it (Chrome: up to 8 MB on the main
-    // thread). The page has nothing else to do meanwhile, and headless tests
-    // run on virtual time, which keeps running while a compile happens in the
-    // background, so it can run out before main.
+    // A program and its memory: shared where the page can share it, or else its own, with the
+    // program's import of it changed to match. Compiles on the spot where the browser allows it
+    // (Chrome: up to 8 MB on the main thread): headless tests run on virtual time, which keeps
+    // running during a background compile, so it could run out before main.
     async function instantiate(bytes) {
         const wanted = memoryImport(bytes);
         let made = null, isShared = false;

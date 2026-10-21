@@ -377,7 +377,7 @@ set_tests_properties(tidec_e2e_chain_endless PROPERTIES TIMEOUT 30
 # Safety tests: each safety/<name>.tide is a game of Tide alone that tries to
 # make the generated C or the engine do something undefined: an index anywhere,
 # a handle to nothing, numbers at their limits, a comparison that lies. No Tide
-# code can corrupt memory (see AGENTS.md, Language), so each ends in a defined
+# code can corrupt memory, so each ends in a defined
 # way: it runs to the end having said what its first lines expect, or stops
 # with the engine's own message (safety/expect_safety.cmake). They mean the
 # most under sanitizers (-DTIDE_SANITIZE=ON), where a read or write out of
@@ -456,9 +456,8 @@ foreach(source IN LISTS TIDE_WARNING_TESTS)
 endforeach()
 
 # Scale test: a big game of many namespaces, made up at test time, which tidec
-# has to compile within a generous time (see scale/scale.cmake). It took
-# minutes, and tens of gigabytes, while codegen's time grew with the game's
-# size squared.
+# has to compile within a generous time (see scale/scale.cmake): codegen's
+# time must not grow with the game's size squared.
 add_test(NAME tidec_scale
     COMMAND "${CMAKE_COMMAND}"
         "-DTIDEC=${TIDEC_PATH}"

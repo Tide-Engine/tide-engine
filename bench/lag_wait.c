@@ -16,7 +16,7 @@ void tide_lag_sleep(const double seconds)
 #ifdef _WIN32
     // Sleep's ordinary timer can round a 144 Hz frame up to about 16 ms.
     // A high-resolution waitable timer keeps the requested pace without
-    // changing the owner's timer resolution or spinning through the wait.
+    // changing the system timer resolution or spinning through the wait.
     static HANDLE timer;
     static int tried;
     if (!tried) {

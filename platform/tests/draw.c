@@ -3,7 +3,7 @@
 //
 // It checks that each shape lands where it should, that commands draw in
 // the order they were recorded whatever the renderer batches together, that
-// a frame can draw far more than a list used to hold, that meshes draw
+// a frame can draw tens of thousands of commands, that meshes draw
 // their triangles with their corners' colors, their textures and the clip,
 // that 3D meshes draw through their cameras, nearest in front, or with depth
 // as a setting says, that meshes
@@ -86,7 +86,7 @@ static const tide_color orange = {1.0f, 0.5f, 0.0f, 1.0f};
 static const tide_color magenta = {1.0f, 0.0f, 1.0f, 1.0f};
 static const tide_color purple = {0.5f, 0.0f, 1.0f, 1.0f};
 
-#define BAND 20000u // Far past the 16384 commands a list used to hold
+#define BAND 20000u
 #define BAND_TOP 272
 
 static tide_color band_color(const uint32_t i)
@@ -404,7 +404,7 @@ static void resident_pack_textures(void)
     tide_platform_read_pixels(&list, &point, 1, &got);
     const uint64_t base_memory = tide_platform_gpu_memory();
     uint64_t resident_memory = 0;
-    // (an unused image kept 60 lists here, where a game's is kept far longer: TIDE_TEXTURE_IDLE_FRAMES)
+    // The test lowers TIDE_TEXTURE_IDLE_FRAMES to 60 so an unused image expires
     const uint32_t idle_frames = tide_texture_idle_frames;
     tide_texture_idle_frames = 60;
     for (uint32_t frame = 0; frame < 66; frame++) {

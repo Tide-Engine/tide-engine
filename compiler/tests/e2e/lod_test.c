@@ -45,7 +45,7 @@ static void frame(const int32_t mode)
     local.Art.mode = mode;
     tide_draw_reset(&draw);
     tide_draw_screen_size(&draw, tide_f2(800.0f, 600.0f));
-    tide_gui_begin(&gui, &devices, tide_f2(800.0f, 600.0f), NULL); // The window the view's Draw.CameraProjection() is fitted to
+    tide_gui_begin(&gui, &devices, tide_f2(800.0f, 600.0f), NULL);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_text_use(&world.heap, &local.heap);
 }
@@ -169,7 +169,7 @@ TIDE_TEST(lod_draws_pick_by_how_far_they_are)
     TIDE_CHECK(whole_of(&runs[2]) == ball && mesh_of(&runs[2])->level == far && runs[2].count == 1);
     TIDE_CHECK(mesh_of(&runs[2])->index_count == ball->level_count[far - 1u] && mesh_of(&runs[2])->vertices == NULL);
     TIDE_CHECK(mesh_of(&runs[3])->levels == 0 && mesh_of(&runs[4])->levels == 0 && mesh_of(&runs[5])->levels == 0);
-    TIDE_CHECK(mesh_of(&runs[5])->base == 0 && mesh_of(&runs[5])->index_count == 960 * 3); // The light one, whole
+    TIDE_CHECK(mesh_of(&runs[5])->base == 0 && mesh_of(&runs[5])->index_count == 960 * 3);
     TIDE_CHECK(runs[6].mesh == runs[2].mesh && runs[6].count == 3);
     finish();
 }

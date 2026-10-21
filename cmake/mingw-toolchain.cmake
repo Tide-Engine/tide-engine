@@ -31,8 +31,7 @@ endif()
 # same in every build.
 get_filename_component(_tide_mingw_dir "${CMAKE_CURRENT_LIST_DIR}/../build/llvm-mingw-${TIDE_MINGW_VERSION}" ABSOLUTE)
 # Its licenses too, which the package carries (platform/CMakeLists.txt):
-# MinGW-w64's, and LLVM's for the compiler runtime. A download from before
-# they were taken is taken again.
+# MinGW-w64's, and LLVM's for the compiler runtime.
 if(NOT EXISTS "${_tide_mingw_dir}/done" OR NOT EXISTS "${_tide_mingw_dir}/licenses")
     set(_tide_mingw_name "llvm-mingw-${TIDE_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64")
     set(_tide_mingw_file "${_tide_mingw_dir}/${_tide_mingw_name}.tar.xz")

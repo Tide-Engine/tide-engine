@@ -220,16 +220,14 @@ typedef pthread_cond_t pool_signal;
 // Cores that share a last-level cache are a group (a chiplet of a Ryzen, say,
 // six of its twelve cores). What a tick reads moves between groups slowly, so
 // a world that fits in one group's cache ticks faster on that group's cores
-// alone than on every core: a million particles, 0.086 ms a tick on six of a
-// 7900X's cores, 0.27 on all twelve, 0.38 on three of each group (2026-10-20).
-// Work that's more arithmetic than reading wants every core all the same. So
+// alone than on every core. Work that's more arithmetic than reading wants
+// every core all the same. So
 // each worker keeps to its group's cores, and a round calls in either the
 // caller's group alone or every group: `run` tries both now and then, timing
 // them, and takes what was quicker for that work (`choice`). The caller's group
 // is the one the pool was made on, and a thread that runs rounds keeps to its
 // cores from its first round on, or the system moves it from one group to the
-// other between ticks, and the world with it: unpinned, those six took 0.13 ms
-// where they took 0.086 pinned. Which threads run never changes what they
+// other between ticks, and the world with it. Which threads run never changes what they
 // make (tide/jobs.h), only how soon. Groups are found on Windows and on Linux
 // and Android (cpu_groups.h); elsewhere, and on a machine with one cache,
 // there's one.

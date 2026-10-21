@@ -8,8 +8,6 @@
 #include "tide/list.h"
 #include "tide/pack.h"
 
-// See tide/text.h.
-
 // ---------------------------------------------------------------------------
 // The scratch area: a stack of bytes, one per thread, in pieces (see
 // tide/text.h).

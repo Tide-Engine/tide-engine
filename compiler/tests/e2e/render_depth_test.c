@@ -44,7 +44,7 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
     gui.width = 1280.0f, gui.height = 720.0f;
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
 
     // Each way to say what a target holds: after its size, after its pixels per unit, after a
     // screen's factor, alone for all of the screen, by name for color, and from a variable
@@ -141,7 +141,7 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
     // A second frame draws through the same references
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
     TIDE_CHECK(local.Lamp.frames == 2 && run_through("Lit on Vertex3") != NULL);
 
     tide_local_free(&restored);

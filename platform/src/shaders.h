@@ -20,8 +20,8 @@
 // There are two pipelines of them. The first draws the plain kinds (rects,
 // their outlines, circles and lines a pixel wide) from an instance of 24
 // bytes, and is what a run of those alone goes through, however long: its
-// shaders are what they were before there were smooth shapes, so such a run
-// costs what it did. The second draws every kind: a run with a smooth shape
+// shaders have no smooth-shape work, so such a run costs no more.
+// The second draws every kind: a run with a smooth shape
 // in it goes through that one, each shape with its extra (see shape_extra in
 // platform.c). Both draw the plain kinds from the same lines below, so a rect
 // is the same pixels whichever its run goes through.

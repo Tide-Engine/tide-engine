@@ -79,7 +79,7 @@ TIDE_TEST(map_keys_find_their_values_in_a_world)
     TIDE_CHECK(tide_map_count(world.scores) == 1000);
     for (int32_t i = 0; i < 1000; i++) TIDE_CHECK(get(world.scores, i * 7) == i);
     TIDE_CHECK(get(world.scores, 1) == -1 && get(world.scores, -7) == -1);
-    put(&world.scores, 14, 99, TIDE_IN_MATCH); // Replaces
+    put(&world.scores, 14, 99, TIDE_IN_MATCH);
     TIDE_CHECK(get(world.scores, 14) == 99 && tide_map_count(world.scores) == 1000);
     tide_heap_free(&world.heap);
 }
@@ -162,13 +162,12 @@ TIDE_TEST(map_removing_keeps_the_rest_and_packs_once_mostly_dead)
     TIDE_CHECK(!remove_key(&world.scores, 0, TIDE_IN_MATCH));
     TIDE_CHECK(tide_map_count(world.scores) == 50);
     for (int32_t i = 0; i < 100; i++) TIDE_CHECK(get(world.scores, i) == (i % 2 ? i * 2 : -1));
-    TIDE_CHECK(tide_map_entries(world.scores) == 100); // The dead stay in place
-    for (int32_t i = 1; i < 60; i += 2) remove_key(&world.scores, i, TIDE_IN_MATCH); // Now mostly dead
-    put(&world.scores, 1000, 1, TIDE_IN_MATCH); // Adding packs the live ones first
+    TIDE_CHECK(tide_map_entries(world.scores) == 100);
+    for (int32_t i = 1; i < 60; i += 2) remove_key(&world.scores, i, TIDE_IN_MATCH);
+    put(&world.scores, 1000, 1, TIDE_IN_MATCH);
     TIDE_CHECK(tide_map_entries(world.scores) == 21 && tide_map_count(world.scores) == 21);
     for (int32_t i = 61; i < 100; i += 2) TIDE_CHECK(get(world.scores, i) == i * 2);
     TIDE_CHECK(get(world.scores, 1000) == 1);
-    // Still in order
     int32_t last = -1;
     for (int32_t i = 0; i < tide_map_entries(world.scores); i++) {
         const entry *e = tide_map_entry(world.scores, i, &kind);
@@ -200,13 +199,13 @@ TIDE_TEST(map_copies_and_assignment_dont_share)
 {
     start();
     for (int32_t i = 0; i < 20; i++) put(&world.scores, i, i, TIDE_IN_MATCH);
-    tide_map copy = tide_map_copy(world.scores, &kind); // In the scratch area
+    tide_map copy = tide_map_copy(world.scores, &kind);
     put(&copy, 5, 500, TIDE_IN_SCRATCH);
     put(&copy, 100, 1, TIDE_IN_SCRATCH);
     TIDE_CHECK(get(copy, 5) == 500 && get(copy, 100) == 1 && tide_map_count(copy) == 21);
     TIDE_CHECK(get(world.scores, 5) == 5 && get(world.scores, 100) == -1);
     tide_map other = {0};
-    tide_map_set(&other, copy, &kind, TIDE_IN_MATCH); // Into the world: its own blocks
+    tide_map_set(&other, copy, &kind, TIDE_IN_MATCH);
     TIDE_CHECK(get(other, 100) == 1 && tide_map_count(other) == 21);
     remove_key(&other, 100, TIDE_IN_MATCH);
     TIDE_CHECK(get(copy, 100) == 1);
@@ -229,7 +228,7 @@ TIDE_TEST(map_iteration_reaches_survivors_and_additions_after_compaction)
     int32_t at = tide_map_next(world.scores, &kind, &order, &next);
     TIDE_REQUIRE(at == 12);
     TIDE_CHECK(remove_key(&world.scores, 12, TIDE_IN_MATCH));
-    put(&world.scores, 40, 400, TIDE_IN_MATCH); // Compacts, including the cursor's removed entry
+    put(&world.scores, 40, 400, TIDE_IN_MATCH);
     TIDE_CHECK(tide_map_entries(world.scores) == 8);
     static const int32_t want[] = {13, 14, 15, 16, 17, 18, 19, 40};
     for (size_t i = 0; i < sizeof want / sizeof *want; i++) {
@@ -306,7 +305,7 @@ TIDE_TEST(map_orders_are_wide_and_keep_their_limits_when_removed)
     world.scores.last_order = INT64_MAX - 2;
     put(&world.scores, 3, 30, TIDE_IN_MATCH);
     put(&world.scores, 4, 40, TIDE_IN_MATCH);
-    put(&world.scores, 4, 400, TIDE_IN_MATCH); // Replacing still works at the last order
+    put(&world.scores, 4, 400, TIDE_IN_MATCH);
     order = 0;
     next = 0;
     TIDE_CHECK(tide_map_next(world.scores, &kind, &order, &next) == 0 && order == INT64_MAX - 1);

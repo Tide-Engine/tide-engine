@@ -11,8 +11,6 @@
 #include <errno.h>
 #endif
 
-// See tide/page.h.
-
 _Noreturn void tide_out_of_memory(void)
 {
     fprintf(stderr, "tide: out of memory\n");
@@ -170,27 +168,16 @@ void *tide_realloc(void *p, const size_t old_size, const size_t size)
 
 #endif
 
-// The pages a thread let go of, which it hands out again. A world and its
-// snapshots let go of as many pages every tick as the tick changed and take
-// as many, megabytes of them in a game with a big list or grid. One that was
-// just let go of is still in the CPU's caches and costs no call. A new one of
-// these sizes comes from the system each time, with a page fault as each
-// 4 KiB of it is first written, and copying into those took five times as
-// long.
+// The pages a thread let go of, which it hands out again. A world and its snapshots let go of and take as many
+// pages every tick as the tick changed, megabytes of them in a game with a big list or grid. A page just let go of
+// is still in the CPU's caches; a fresh one from the system page-faults as each 4 KiB of it is first written.
 //
-// By size, for the sizes pages mostly have: a heap's (16 KiB, a list's or a
-// grid's chunk too), and a chunk's lanes, which are a power of two from the
-// 4 bytes of a first chunk's narrowest to the 16 KiB of a full one's widest.
-// A page of another size (a block bigger than a heap's page, a table of
-// structs) is the system's.
+// By size, for the sizes pages mostly have: a heap's (16 KiB, a list's or a grid's chunk too), and a chunk's lanes,
+// powers of two from 4 bytes to 16 KiB. A page of another size is the system's.
 //
-// A thread has its own, which cost it nothing to reach. The thread that lets
-// go of a tick's pages (it drops a snapshot) is often not the one that takes
-// them (it runs the system that writes), so what a thread has too many of
-// goes where the others find them, several at once, and a thread with none
-// looks there first. Each of those keeps as many as a tick of a big world
-// changes: of every size together, 8 MB at most in a thread's own and 32 MB
-// in the others'.
+// A thread has its own, free to reach. A tick's pages are often let go of on one thread and taken on another, so a
+// thread's surplus goes where the others find it, several at once, and a thread with none looks there first. Each
+// keeps what a tick of a big world changes: 8 MB at most in a thread's own, 32 MB in the shared ones.
 #define SPARE_LEAST 2u  // 4 bytes, as a power of two
 #define SPARE_SIZES 13u // To 16 KiB, each twice the last
 #define SPARES 256u
@@ -341,11 +328,9 @@ void tide_page_stale(tide_stale_pages *s, tide_page *p, const uint32_t bytes)
     s->bytes += bytes;
 }
 
-// What it takes for another thread to pay: waking one costs tens of
-// microseconds, which is what a thread hashes a few hundred kilobytes in. And
-// the most that are called in: past three the hash is no quicker, and with
-// every thread of a 12-core machine awake the ticks around it ran a fifth
-// slower (measured with Sumo, whose ticks change 2 MB).
+// What it takes for another thread to pay: waking one costs tens of microseconds, about what a thread hashes a few
+// hundred kilobytes in. At most three are called in: past that the hash is no quicker, and awake threads slow the
+// ticks around it.
 #define SHARED_HASH_BYTES (512u * 1024u)
 #define SHARED_HASH_MOST 3u
 

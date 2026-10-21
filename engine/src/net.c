@@ -8,8 +8,6 @@
 #include <wasm_simd128.h>
 #endif
 
-// See tide/net.h.
-
 // ---------------------------------------------------------------------------
 // Addresses
 
@@ -84,8 +82,8 @@ void tide_address_format(const tide_address a, char *out, const size_t size)
 typedef struct datagram {
     uint32_t to;
     tide_address from;
-    double at;      // When it arrives
-    uint64_t order; // Sent before the ones with higher numbers
+    double at;
+    uint64_t order;
     uint32_t size;
     uint8_t *data;
 } datagram;
@@ -94,7 +92,7 @@ typedef struct endpoint {
     tide_loopback *net;
     uint32_t number;
     bool open;
-    double arrived; // When the datagram it last gave arrived
+    double arrived;
 } endpoint;
 
 struct tide_loopback {
@@ -108,7 +106,6 @@ struct tide_loopback {
     endpoint endpoints[LOOPBACK_ENDPOINTS];
 };
 
-// splitmix64: a number from 0 to 1.
 static double chance(tide_loopback *net)
 {
     uint64_t z = (net->random += 0x9E3779B97F4A7C15ull);

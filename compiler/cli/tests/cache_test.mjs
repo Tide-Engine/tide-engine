@@ -88,7 +88,7 @@ async function serverTests(tide, root) {
         check(existsSync(server), "server executable has its own output name");
         check(readFileSync(player, "utf8") === "preserve-player", "server preserves the player executable");
     };
-    // An older tide built into build/, which is a folder of the game's now
+    // An older tide's build output left in build/
     const old = join(game, "build", basename(server));
     mkdirSync(join(game, "build"));
     writeFileSync(old, "an older tide's");
@@ -248,8 +248,7 @@ int Native(int value)
                 // GLFW's gamma setter shares an archive member (monitor.c)
                 // with the monitor queries the window makes, and no host
                 // calls it. Collect its code/data inside that member, while
-                // debug links keep it available. (GLFW's Vulkan loader was
-                // the sentinel until desktop drew with Vulkan, which uses it.)
+                // debug links keep it available.
                 const unusedGlfw = Buffer.from("Invalid gamma value");
                 check(readFileSync(join(installation, "lib", "native", "libtide_platform.a")).includes(unusedGlfw),
                     "unused GLFW sentinel missing from the prebuilt platform archive");
@@ -653,7 +652,6 @@ async function atOnceTests(tide, root, target) {
         return await run(tide, args, game, jobs ? { TIDE_JOBS: String(jobs) } : {});
     }
 
-    // The same cache whatever ran at once
     const built = [];
     for (const jobs of [1, 0, 3]) {
         const result = await build(jobs);
@@ -711,7 +709,6 @@ async function atOnceTests(tide, root, target) {
     check(!differ.length && !more.length, `the build after the fix left other files than a clean build: ${[...differ, ...more]}`);
     console.log("  a build that failed keeps what compiled, and the next one finishes it");
 
-    // A count that's no count
     const refused = await run(tide, args, game, { TIDE_JOBS: "many" });
     check(refused.code !== 0 && refused.said.includes("TIDE_JOBS is 'many'"), `TIDE_JOBS=many should be refused:\n${refused.said}`);
     console.log("  TIDE_JOBS that's no number is refused");
@@ -725,7 +722,6 @@ async function main() {
     try {
         const original = dirname(dirname(opts.tide));
         mkdirSync(installation);
-        // No links into the installation: the tests edit only private copies.
         for (const part of ["bin", "include", "src", "lib", "web", "mingw", "wasi", "VERSION", "CHANNEL"]) {
             const path = join(original, part);
             if (existsSync(path)) cpSync(path, join(installation, part), { recursive: true, dereference: true });

@@ -5,8 +5,7 @@
 
 #include "tide/session.h"
 
-// Benchmarks: games that stress the engine, played by bots (see AGENTS.md,
-// Benchmarks).
+// Benchmarks: games that stress the engine, played by bots.
 //
 // A run is a match on a dedicated server, which bots join one after another,
 // each a client of its own over the loopback network, as bad as the options

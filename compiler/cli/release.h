@@ -21,9 +21,8 @@ const char *tide_release_version(const json *release);
 // What `channel` ("stable" or "nightly") installs: of `releases` (GitHub's
 // list) and `latest` (GitHub's latest release, or NULL), the highest version
 // that isn't a draft, has `package` (this platform's, as the release workflow
-// names it) and, for stable, isn't a pre-release. NULL if none is. Some old
-// nightlies have no package for macOS, from before its failures held releases
-// back: a Mac stays on the version before.
+// names it) and, for stable, isn't a pre-release. NULL if none is. A release without
+// this platform's package is skipped, so that platform stays on the version before.
 const json *tide_release_pick(const json *releases, const json *latest, const char *channel, const char *package);
 
 // The asset of `release` called `name`, or NULL.

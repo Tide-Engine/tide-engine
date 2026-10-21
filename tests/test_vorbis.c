@@ -74,7 +74,6 @@ TIDE_TEST(vorbis_decodes_what_ffmpeg_decodes)
         printf("        "); printf("%s: %u frames (ffmpeg %u), worst difference %g, mean %g\n", r.name, s.frames, ref_frames, (double)worst,
                        count ? sum / count : 0.0);
         TIDE_CHECK(worst < 2e-4f);
-        // Not silence
         float loudest = 0.0f;
         for (uint32_t i = 0; i < count; i++)
             if (fabsf(s.samples[i]) > loudest) loudest = fabsf(s.samples[i]);
@@ -105,7 +104,6 @@ TIDE_TEST(vorbis_reads_in_pieces_and_rewinds)
     tide_vorbis *f = tide_vorbis_open(r.ogg, r.ogg_size, NULL);
     tide_vorbis_reader *rd = tide_vorbis_reader_open(f);
     float *got = calloc((size_t)whole.frames * 2u + 16u, sizeof(float));
-    // Odd sizes: 1, 7, 100, 1000, 1, 7...
     const uint32_t sizes[4] = {1, 7, 100, 1000};
     uint32_t at = 0, i = 0;
     for (;;) {
@@ -116,7 +114,7 @@ TIDE_TEST(vorbis_reads_in_pieces_and_rewinds)
     }
     TIDE_CHECK(at == whole.frames);
     TIDE_CHECK(memcmp(got, whole.samples, (size_t)whole.frames * 2u * sizeof(float)) == 0);
-    TIDE_CHECK(tide_vorbis_read(rd, got, 10) == 0); // Ended, and stays so
+    TIDE_CHECK(tide_vorbis_read(rd, got, 10) == 0);
     tide_vorbis_rewind(rd);
     TIDE_CHECK(tide_vorbis_read(rd, got, 3000) == 3000);
     TIDE_CHECK(memcmp(got, whole.samples, 3000u * 2u * sizeof(float)) == 0);
@@ -160,7 +158,6 @@ TIDE_TEST(vorbis_refuses_what_isnt_one)
     const reference r = ref(1);
     const char *why = NULL;
     tide_sound s;
-    // Garbage, a WAV, and nothing
     uint8_t garbage[300];
     for (int i = 0; i < 300; i++) garbage[i] = (uint8_t)(i * 7 + 3);
     TIDE_CHECK(tide_vorbis_open(garbage, sizeof garbage, &why) == NULL);
@@ -172,13 +169,11 @@ TIDE_TEST(vorbis_refuses_what_isnt_one)
     TIDE_CHECK(tide_vorbis_open(wav, wav_size, &why) == NULL);
     free(wav);
     TIDE_CHECK(tide_vorbis_open(r.ogg, 0, &why) == NULL);
-    // Cut short anywhere: the headers, a page, the end
     const uint32_t cuts[5] = {3, 30, 100, r.ogg_size / 2u, r.ogg_size - 1u};
     for (int i = 0; i < 5; i++) {
         TIDE_CHECK(tide_vorbis_open(r.ogg, cuts[i], &why) == NULL);
         TIDE_CHECK(strcmp(why, "") != 0);
     }
-    // A byte flipped in a page's body: its checksum says so
     uint8_t *broken = malloc(r.ogg_size);
     memcpy(broken, r.ogg, r.ogg_size);
     broken[r.ogg_size - 10u] ^= 0x55u;
@@ -188,7 +183,6 @@ TIDE_TEST(vorbis_refuses_what_isnt_one)
     broken[0] = 'X';
     TIDE_CHECK(tide_vorbis_open(broken, r.ogg_size, &why) == NULL);
     free(broken);
-    // A reader of nothing
     TIDE_CHECK(tide_vorbis_reader_open(NULL) == NULL);
     TIDE_CHECK(tide_vorbis_read(NULL, stereo, 1) == 0);
     tide_vorbis_reader_close(NULL);

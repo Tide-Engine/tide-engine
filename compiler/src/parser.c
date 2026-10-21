@@ -1499,7 +1499,6 @@ static decl *new_named_decl(parser *p, const decl_kind kind, const char *what)
 }
 
 // Sample() { ... } inside an input declaration, maybe taking local singletons.
-// The input's own name instead of Sample is the constructor it used to be.
 static void parse_sample(parser *p, decl *d, const token *name)
 {
     const bool spelled_sample = str_eq_c(name->text, "Sample") || str_eq_c(name->text, "sample");
@@ -2143,7 +2142,7 @@ static void parse_query_params(parser *p, decl *d)
                 vec_push(d->params, prm);
                 continue;
             }
-            // `chunk mut Field.cells cells` was a chunk system's grid
+            // `chunk mut Field.cells cells`: removed syntax, refused with its replacement
             const token *first = peek(p);
             if (first->kind == T_IDENT && str_eq_c(first->text, "chunk")
                 && (peek_at(p, 1)->kind == T_MUT || (peek_at(p, 1)->kind == T_IDENT && peek_at(p, 2)->kind != T_COMMA
@@ -2163,7 +2162,7 @@ static void parse_query_params(parser *p, decl *d)
                 const token *mut = at(p, T_MUT) ? advance(p) : NULL;
                 prm.mode = mut ? PARAM_MUT : PARAM_READ;
                 if (mut) prm.mode_word = mut->text;
-                // `lookup Health health` and `mut lookup` were any entity's component, by its handle
+                // `lookup Health health` and `mut lookup`: removed syntax, refused with its replacement
                 if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "lookup") && peek_at(p, 1)->kind == T_IDENT
                     && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT)) {
                     const token *keyword = advance(p);

@@ -71,35 +71,28 @@ TIDE_TEST(rooms_a_game_draws_pages_of_its_own)
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, tide_player_from_index(0), 0, true, false, "");
     frame();
     frame();
-    // The title is the game's: no modal of the package's is up
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && gui.modal == 0);
 
-    // Its Friends button hosts, as the package's would: the session is asked
-    // to open, and the room's page, which is the package's, comes up
     press(60.0f, 80.0f);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Room && !local.Rooms_Lobby.resume);
     TIDE_CHECK(asked() == TIDE_REQUEST_OPEN);
     frame();
     TIDE_CHECK(gui.modal != 0 && asked() == TIDE_REQUEST_NONE);
 
-    // The settings are a view of the game's, after the package's: its page draws nothing
     local.Rooms_Lobby.settingsFrom = Rooms_Page_Title;
     local.Rooms_Lobby.page = Rooms_Page_Settings;
     frame();
     frame();
     TIDE_CHECK(local.Look.shown == 2 && gui.modal == 0);
-    // Its Friends button hosts from there too: a view of the game's asks as the package's page does
     press(60.0f, 80.0f);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Room && asked() == TIDE_REQUEST_OPEN);
     frame();
     TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
 
-    // Done goes back to the page the settings came from
     local.Rooms_Lobby.page = Rooms_Page_Settings;
     frame();
     press(60.0f, 30.0f);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title);
-    // Solo: into the match, with a new game for the game to start
     frame();
     finger(TIDE_TOUCH_BEGAN, 60.0f, 30.0f);
     finger(TIDE_TOUCH_ENDED, 60.0f, 30.0f);

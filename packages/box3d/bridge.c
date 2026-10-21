@@ -14,7 +14,7 @@
 //
 // The operation stamp and the library's deterministic digest are hashed.
 // Arena bytes contain pointers and allocator order and are never hashed or
-// sent. The marks that served images in parts now guide resident commits.
+// sent.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -724,8 +724,7 @@ void b3t_share_from(const int32_t bodies)
 }
 
 // How many resident commits marked the whole arena, and how many used sparse
-// marks, since the program started: tests read it to see they test both. The
-// function's image name is kept for existing tests and benchmarks.
+// marks, since the program started: tests read it to see they test both.
 void b3t_images(int32_t *whole, int32_t *in_parts)
 {
     *whole = images_whole;
@@ -775,7 +774,7 @@ void b3t_measure(uint64_t *step, uint64_t *image)
 // Arena pages touched by commits since the last call, and the pages in use
 // at those commits. A touched page is copied even if its bytes stayed the
 // same. `took` is the optional full-arena check's nanoseconds, to take off a
-// measured tick; no match pays it. The API keeps its old block names.
+// measured tick; no match pays it.
 void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 {
     *took = counting_ns;

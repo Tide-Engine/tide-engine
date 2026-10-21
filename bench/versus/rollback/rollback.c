@@ -273,7 +273,7 @@ typedef struct way {
 } way;
 
 // Movers in pieces on threads from about half a million, as particles find
-// pays on a 12-core Ryzen 9 7900X, each a whole number of blocks
+// pays, each a whole number of blocks
 #define MOVE_ENOUGH 500000u
 #define BLOCK 4096u // Elements of 4 bytes: 16 KiB
 

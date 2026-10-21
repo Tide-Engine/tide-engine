@@ -47,7 +47,7 @@ struct machine {
     // What its updates spent in the game's functions
     double tick_ms, copy_ms, hash_ms, pack_ms, unpack_ms;
     uint64_t ticks, copies, hashes, packs, unpacks;
-    uint64_t bytes; // Sent
+    uint64_t bytes;
     counted transport;
 };
 
@@ -549,7 +549,6 @@ static void usage(const bench_desc *d)
     }
 }
 
-// The options from the command line, over a full run's or --quick's.
 static bool read_number(const char *text, uint32_t *out)
 {
     if (*text < '0' || *text > '9') return false;
@@ -562,6 +561,7 @@ static bool read_number(const char *text, uint32_t *out)
     return true;
 }
 
+// The options from the command line, over a full run's or --quick's.
 static bool parse(const bench_desc *d, const int argc, char **argv, bench_options *o, const char **save)
 {
     bool quick = false;
@@ -655,7 +655,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
         }
     }
     bench_options o;
-    const char *save = NULL; // The label to save the results under
+    const char *save = NULL;
     if (!parse(d, argc, argv, &o, &save)) {
         usage(d);
         return 2;
@@ -696,7 +696,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     tide_loopback *net = tide_loopback_create(0x7469646562656e63ull);
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = o.latency, .jitter = o.jitter, .loss = o.loss});
 
-    // The server is machine 0, and bot n machine n + 1.
+    // Machine 0 is the server; bot n is machine n + 1.
     machine *machines = calloc(tide_game_players(d->game) + 1u, sizeof *machines);
     void *first = calloc(1, real->world_size);
     if (!first || !machines) {
@@ -721,8 +721,8 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     free(first);
 
     double now = 0.0;
-    uint32_t bots = 0;     // Made so far
-    double all_in = -1.0;  // When the last one caught up
+    uint32_t bots = 0;
+    double all_in = -1.0; // When the last one caught up
     bool failed = false;
     while (true) {
         if (bots < o.players && now >= (double)bots * o.join_every) {

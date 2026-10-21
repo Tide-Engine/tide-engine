@@ -216,14 +216,7 @@ static uint64_t correction_clock(void)
     return correction_clock_ns;
 }
 
-// With `burst`, the client's next updates after frame 199 are 222 and 257:
-// about 12 ticks, then 19. The first gap stays inside its sampled input lead,
-// so its normal 8-tick allowance leaves confirmed work without replacing
-// presentation. The second update has an allowance of about 25 ticks from
-// twice the shorter interval: enough to reconstruct the pair drawn at 222
-// and confirm past it. Equal 35-frame gaps would instead miss inputs on the
-// first update, exhausting its allowance and correctly entering catch-up,
-// which discards that presentation anchor rather than correcting it.
+// With `burst`, the client's next updates after frame 199 are 222 and 257 (about 12 ticks, then 19): the first gap stays within its sampled input lead, and the second's allowance (about 25 ticks) reconstructs the pair drawn at 222 and confirms past it. Equal 35-frame gaps would exhaust the first allowance and enter catch-up, which discards the presentation anchor.
 #define BURST_FIRST_GAP 23u
 #define BURST_SECOND_GAP 35u
 

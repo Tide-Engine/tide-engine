@@ -101,7 +101,7 @@ TIDE_TEST(overloads_the_engines_functions_take_names)
     tide_local_init(&local);
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
     TIDE_REQUIRE(draw.count == 2);
     const tide_draw_command *circle = &draw.commands[0];
     TIDE_CHECK(circle->kind == TIDE_DRAW_CIRCLE && circle->a.x == 3.0f && circle->a.y == 4.0f && circle->b.x == 2.0f);

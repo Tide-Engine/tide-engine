@@ -16,7 +16,6 @@ static void tick_quiet(tide_world *w)
     tide_world_tick(w);
 }
 
-// Recording what the tick sent, and hearing it
 static void tick_heard(tide_world *w)
 {
     tide_world_tick_events(w, NULL, &events);
@@ -32,7 +31,7 @@ TIDE_TEST(local_events_cost_the_world_nothing)
     same_match_check(&world, &base, tick_heard);
     // Every bounce was heard, and a push for each tick the second player pushed
     TIDE_CHECK(local.Displayed.bounces == world.Field.bounces && local.Displayed.sure == local.Displayed.bounces);
-    TIDE_CHECK(local.Displayed.pushes == 38); // From the tick after the players joined
+    TIDE_CHECK(local.Displayed.pushes == 38);
     tide_event_log_free(&events);
     tide_local_free(&local);
     tide_world_free(&world);
@@ -49,10 +48,10 @@ static void frame(const tide_client *first)
 
 TIDE_TEST(local_events_cost_the_network_nothing)
 {
-    same_traffic_check(NULL, NULL); // Nobody listens
+    same_traffic_check(NULL, NULL);
     tide_local_init(&local);
     events = (tide_event_log){.taken = true};
-    same_traffic_check(&events, frame); // The first player's machine does
+    same_traffic_check(&events, frame);
     // It heard the bounces, each once, though it ran their ticks again, and
     // most of them confirmed (the last ones the server hadn't yet)
     TIDE_CHECK(local.Displayed.bounces > 6 && local.Displayed.sure > 4 && local.Displayed.sure <= local.Displayed.bounces);

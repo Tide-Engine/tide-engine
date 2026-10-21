@@ -178,7 +178,6 @@ static int smoke_frame(const float seconds)
     const uint64_t hash = world_hash(server);
     printf("smoke: %d ticks, %u entities, hash 0x%016llX (expected 0x%016llX)\n", (int)server->Time.tick,
            (unsigned)tide_world_entity_count(server), (unsigned long long)hash, SMOKE_HASH);
-    // A frame loop that doesn't time its frames would say none passed.
     const bool frames = smoke_seconds > 0.0;
     printf("smoke: frames took %.3f s%s\n", smoke_seconds, frames ? "" : ", expected time to pass");
     const bool pixels = smoke_pixels(match);

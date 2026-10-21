@@ -1,5 +1,5 @@
 // Gallery: every player paints on a canvas of their own, which everyone sees,
-// the joining benchmark (see AGENTS.md, Benchmarks). The match starts with
+// the joining benchmark. The match starts with
 // canvases painted long ago, by players who left, so whoever joins gets a big
 // world that doesn't pack.
 

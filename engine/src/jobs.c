@@ -7,7 +7,6 @@
 #include "tide/page.h"
 #include "tide/time.h"
 
-// See tide/jobs.h.
 
 // Below this much work in all (see tide_system_tasks.count), a tick runs on
 // one thread: waking the others, and then reading on this one what they
@@ -53,11 +52,10 @@
 // A system's pages for chunks that go in pieces (system_state.owned)
 enum { OWNING = 1, OWNED };
 
-// The task running on this thread, while systems run.
 typedef struct task_context {
     tide_queue *queue; // Its own, on threads; NULL: the world's
-    uint32_t task;     // Among the tick's
-    uint32_t spawned;  // Temporary handles it gave
+    uint32_t task;
+    uint32_t spawned;
     bool settles;      // Its system's spawns give temporary handles
 } task_context;
 
@@ -159,18 +157,18 @@ static void settle_system(void *world, const tide_tick_systems *tick, const tide
 // others look at the next one's, which they'd otherwise take from each other
 // with every task.
 typedef struct system_state {
-    _Alignas(64) atomic_uint next; // Its next task to start
-    atomic_uint done;            // Its tasks finished
-    atomic_uint waiting;         // Systems it waits for that aren't done
+    _Alignas(64) atomic_uint next;
+    atomic_uint done;
+    atomic_uint waiting;
     atomic_uint settle_waiting;  // Before it settles: its tasks, and the system that spawns before it
     atomic_uint settle_claimed;
     atomic_uint owned;           // Its pages, for chunks that go in pieces (tide_system_tasks.own): not made, being made, made
     uint32_t tasks;
-    uint32_t pieces;      // Each of its chunks runs in this many
-    uint32_t first;       // Its first task among all the tick's
-    uint32_t next_settle; // The system that spawns after it, if it settles its spawns
-    uint32_t batch;       // Its tasks a thread takes at once, one after another (see BATCH_WORK)
-    uint32_t batches;     // ...so how many times a thread takes some
+    uint32_t pieces;
+    uint32_t first;
+    uint32_t next_settle;
+    uint32_t batch;
+    uint32_t batches;
     _Atomic uint64_t began; // Profiling: when its first task started, and its last ended
     _Atomic uint64_t ended;
 } system_state;
@@ -180,7 +178,7 @@ typedef struct loop_job {
     void (*work)(void *context, uint32_t task);
     void *context;
     uint32_t count;
-    atomic_uint next; // Its next task to start
+    atomic_uint next;
     atomic_uint done;
 } loop_job;
 
@@ -207,18 +205,18 @@ typedef struct task_slot {
 typedef struct tick_run {
     loop_slot loops[LOOP_SLOTS];
     task_slot tasks[TASK_SLOTS];
-    atomic_uint tasks_ready; // Those a thread could take now
-    atomic_uint tasks_used;  // C started tasks in this tick
-    uint32_t threads;        // The pool's, and the caller's
+    atomic_uint tasks_ready;
+    atomic_uint tasks_used;
+    uint32_t threads;
     const tide_jobs *jobs;
     void *world;
     const tide_tick_systems *tick;
     system_state *state;
     uint32_t *dependents;      // The systems that wait for each: system s's from first_dependent[s] to first_dependent[s + 1]
     uint32_t *first_dependent;
-    tide_queue *queues;        // Each task's
-    uint32_t *spawned;         // Each task's temporary handles
-    atomic_uint finished;      // Systems done
+    tide_queue *queues;
+    uint32_t *spawned;
+    atomic_uint finished;
     // The first system that may have something left to give out: every one
     // before it has given out all its tasks and its settling, so a thread
     // looking for work starts here rather than going through them again
@@ -226,7 +224,6 @@ typedef struct tick_run {
     tide_profile *profile;     // The pool's, to time each system, or NULL
 } tick_run;
 
-// Waiting for another thread to finish what this one needs: a hint to the CPU.
 static void relax(void)
 {
 #if defined(__x86_64__) || defined(__i386__)
@@ -260,7 +257,6 @@ static void finish_system(tick_run *r, const uint32_t s)
     if (ready > 1u) ask(r, ready - 1u);
 }
 
-// `count` of a system's tasks are done
 static void finish_tasks(tick_run *r, const uint32_t s, const uint32_t count)
 {
     system_state *st = &r->state[s];
@@ -350,7 +346,6 @@ static void may_sleep(const bool can)
 }
 #endif
 
-// A task of a loop a running system shares out, if there's one to do.
 static bool help_loop(tick_run *r)
 {
     for (uint32_t i = 0; i < LOOP_SLOTS; i++) {
@@ -374,7 +369,6 @@ static bool help_loop(tick_run *r)
     return false;
 }
 
-// A task C started that no thread has taken, if there's one.
 static bool help_task(tick_run *r)
 {
     if (!atomic_load_explicit(&r->tasks_ready, memory_order_relaxed)) return false;

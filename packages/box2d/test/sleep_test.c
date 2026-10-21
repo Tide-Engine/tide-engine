@@ -136,31 +136,25 @@ TIDE_TEST(box2d_a_resting_crate_put_to_sleep_costs_nothing)
     tide_world_tick(&a);
     crate = body(&a, 0);
     TIDE_CHECK(crate.asleep && same(crate.position, at) && still(crate));
-    // The other one isn't touching it: a floor that never moves ties nothing together
     TIDE_CHECK(!body(&a, 1).asleep);
 
-    // ...and falls asleep by itself, which `asleep` says. From then no tick steps anything
     TIDE_REQUIRE(rests(&a, 120));
     TIDE_CHECK(body(&a, 0).asleep && body(&a, 1).asleep && still(body(&a, 1)));
     TIDE_CHECK(stays(&a));
     TIDE_CHECK(same(body(&a, 0).position, at));
 
-    // Woken with nothing else changed, in a world at rest: the write is seen, and the crate is stepped again
     const int64_t stamp = a.Box2D_Physics.stamp;
     lull(&a, 0, false);
     tide_world_tick(&a);
     TIDE_CHECK(a.Box2D_Physics.moved && a.Box2D_Physics.stamp != stamp);
     TIDE_CHECK(!body(&a, 0).asleep && body(&a, 1).asleep);
-    // It has nowhere to go, and falls asleep again by itself
     TIDE_REQUIRE(rests(&a, 120));
     TIDE_CHECK(body(&a, 0).asleep);
 
-    // Something hits the other: it's awake, and says so
     throw_ball(&a, 5.0f, 6.0f, 0.0f, -12.0f);
     TIDE_REQUIRE(wakes(&a, 1, 120));
     TIDE_CHECK(body(&a, 0).asleep); // And not the first, which it never touched
 
-    // A sleeping body that's made static is neither asleep nor awake, and says so
     crate = body(&a, 0);
     crate.type = Box2D_BodyType_Static;
     put(&a, 0, crate);
@@ -204,19 +198,16 @@ TIDE_TEST(box2d_a_moving_body_put_to_sleep_stops_where_it_is)
     crate = body(&a, 0);
     printf("    a crate falling at %g, put to sleep at a height of %g: a tick later it's at %g, going at %g\n", (double)falling, (double)at.y,
            (double)crate.position.y, (double)crate.velocity.y);
-    // Where the last step left it, in the air, with none of its speed
     TIDE_CHECK(crate.asleep && same(crate.position, at) && still(crate));
     TIDE_CHECK(stays(&a)); // It's all there was to step
     TIDE_CHECK(same(body(&a, 0).position, at));
 
-    // A ball into it: it wakes by itself, and falls from where it hung
     throw_ball(&a, at.x - 6.0f, at.y, 12.0f, 0.0f);
     TIDE_REQUIRE(wakes(&a, 0, 120));
     tick(&a, 20);
     crate = body(&a, 0);
     TIDE_CHECK(!crate.asleep && crate.position.y < at.y - 0.3f && crate.velocity.y < -1.0f);
 
-    // Put somewhere else and to sleep in one tick: asleep where it was put
     crate.position = tide_f2(7.0f, 7.0f);
     crate.asleep = true;
     put(&a, 0, crate);
@@ -226,13 +217,11 @@ TIDE_TEST(box2d_a_moving_body_put_to_sleep_stops_where_it_is)
     TIDE_REQUIRE(rests(&a, 1200)); // Once the ball has gone
     TIDE_CHECK(stays(&a));
 
-    // Woken with nothing else changed: it falls
     lull(&a, 0, false);
     tick(&a, 20);
     crate = body(&a, 0);
     TIDE_CHECK(!crate.asleep && crate.position.x == 7.0f && crate.position.y < 6.6f);
 
-    // A sleeping body that code moves wakes, as ever, and `asleep` says so
     TIDE_REQUIRE(rests(&a, 600));
     crate = body(&a, 0);
     TIDE_CHECK(crate.asleep && crate.position.y < 0.6f);
@@ -250,7 +239,6 @@ TIDE_TEST(box2d_sleep_takes_what_a_body_touches)
 {
     start(&a, Case_Plank);
     tick(&a, 8);
-    // A crate sliding along a plank. The plank put to sleep: the crate stops where it is
     Box2D_Body slider = body(&a, 1);
     TIDE_CHECK(slider.velocity.x > 2.0f && !slider.asleep && !body(&a, 0).asleep);
     const tide_float2 at = slider.position;
@@ -261,11 +249,8 @@ TIDE_TEST(box2d_sleep_takes_what_a_body_touches)
     printf("    a crate sliding at %g along a plank that's put to sleep: a tick later it's going at %g, at %g where it was at %g\n",
            (double)sliding, (double)slider.velocity.x, (double)slider.position.x, (double)at.x);
     TIDE_CHECK(body(&a, 0).asleep && slider.asleep && same(slider.position, at) && still(slider));
-    // The lift and the crate on it touch neither: awake
     TIDE_CHECK(!body(&a, 2).asleep && !body(&a, 3).asleep);
 
-    // The crate on the lift put to sleep: the lift goes with it, a body that's moved by its speed. Nothing
-    // of the lift's place or speed changes, and its component says it's asleep all the same
     const Box2D_Body lift = body(&a, 2);
     TIDE_CHECK(still(lift));
     lull(&a, 3, true);
@@ -273,13 +258,10 @@ TIDE_TEST(box2d_sleep_takes_what_a_body_touches)
     TIDE_CHECK(body(&a, 3).asleep && body(&a, 2).asleep && same(body(&a, 2).position, lift.position));
     TIDE_CHECK(stays(&a)); // All four are asleep
 
-    // The lift woken: the crate on it wakes with it, and the plank's two don't
     lull(&a, 2, false);
     tide_world_tick(&a);
     TIDE_CHECK(!body(&a, 2).asleep && !body(&a, 3).asleep && body(&a, 0).asleep && body(&a, 1).asleep);
 
-    // One put to sleep and the other pushed in the same tick: both asleep, whichever the package comes to
-    // first, and the push is gone. The plank is before the crate
     lull(&a, 0, false);
     tick(&a, 3);
     TIDE_CHECK(!body(&a, 0).asleep && !body(&a, 1).asleep);
@@ -303,7 +285,6 @@ TIDE_TEST(box2d_sleep_takes_what_a_body_touches)
     tide_world_tick(&a);
     TIDE_CHECK(body(&a, 0).asleep && body(&a, 1).asleep && still(body(&a, 0)) && body(&a, 0).impulse.y == 0.0f);
 
-    // A ball into the crate: the plank wakes with it
     slider = body(&a, 1);
     throw_ball(&a, slider.position.x, slider.position.y + 6.0f, 0.0f, -12.0f);
     TIDE_REQUIRE(wakes(&a, 1, 120));
@@ -318,12 +299,10 @@ TIDE_TEST(box2d_a_stack_goes_to_sleep_from_its_bottom)
     for (int i = 0; i < 7; i++) TIDE_CHECK(!body(&a, i).asleep);
     lull(&a, 0, true);
     tide_world_tick(&a);
-    // All five, and neither the crate that's still on its way down to them nor the one aside
     for (int i = 0; i < 5; i++) TIDE_CHECK(body(&a, i).asleep && still(body(&a, i)));
     TIDE_CHECK(!body(&a, 5).asleep && body(&a, 5).velocity.y < -1.0f && !body(&a, 6).asleep);
     const float top = body(&a, 4).position.y;
 
-    // The one on its way lands on them: they wake
     int landed = 0;
     for (int i = 1; i < 200 && !landed; i++) {
         tide_world_tick(&a);
@@ -335,7 +314,6 @@ TIDE_TEST(box2d_a_stack_goes_to_sleep_from_its_bottom)
     for (int i = 0; i < 5; i++) TIDE_CHECK(!body(&a, i).asleep);
     TIDE_CHECK(tide_abs_f(body(&a, 4).position.y - top) < 0.2f); // It stood where it slept
 
-    // ...and all of it falls asleep by itself once it's at rest
     TIDE_REQUIRE(rests(&a, 900));
     for (int i = 0; i < 7; i++) TIDE_CHECK(body(&a, i).asleep);
     TIDE_CHECK(stays(&a));
@@ -401,7 +379,6 @@ TIDE_TEST(box2d_spawns_a_body_asleep)
     Box2D_Body hung = body(&a, 0);
     Box2D_Body pushed = body(&a, 1);
     TIDE_CHECK(hung.asleep && hung.position.x == 0.0f && hung.position.y == 5.0f && still(hung));
-    // The speed and the push it was spawned with are gone: asleep is what it is
     TIDE_CHECK(pushed.asleep && pushed.position.x == 3.0f && pushed.position.y == 5.0f && still(pushed));
     TIDE_CHECK(pushed.impulse.x == 0.0f && pushed.impulse.y == 0.0f);
     TIDE_CHECK(!body(&a, 2).asleep); // A static body is neither
@@ -411,20 +388,17 @@ TIDE_TEST(box2d_spawns_a_body_asleep)
     TIDE_CHECK(body(&a, 0).position.y == 5.0f && body(&a, 1).position.y == 5.0f);
     TIDE_CHECK(a.Box2D_Physics.moved); // The lift is going
 
-    // The lift put to sleep stops, and then no tick steps anything
     lift = body(&a, 3);
     lull(&a, 3, true);
     tide_world_tick(&a);
     TIDE_CHECK(body(&a, 3).asleep && still(body(&a, 3)) && same(body(&a, 3).position, lift.position));
     TIDE_CHECK(stays(&a));
 
-    // A static body that's written asleep reads awake again, and nothing was stepped for it
     const int64_t stamp = a.Box2D_Physics.stamp;
     lull(&a, 2, true);
     tide_world_tick(&a);
     TIDE_CHECK(!body(&a, 2).asleep && !a.Box2D_Physics.moved && a.Box2D_Physics.stamp == stamp);
 
-    // A speed written into the sleeping lift wakes it
     lift = body(&a, 3);
     lift.velocity = tide_f2(1.0f, 0.0f);
     put(&a, 3, lift);
@@ -432,15 +406,11 @@ TIDE_TEST(box2d_spawns_a_body_asleep)
     TIDE_CHECK(!body(&a, 3).asleep && body(&a, 3).position.x > lift.position.x + 0.1f);
     TIDE_CHECK(body(&a, 0).asleep && body(&a, 1).asleep);
 
-    // A ball into the crate that hangs asleep: it wakes, and falls
     throw_ball(&a, -6.0f, 5.0f, 12.0f, 0.0f);
     TIDE_REQUIRE(wakes(&a, 0, 120));
     tick(&a, 20);
     TIDE_CHECK(body(&a, 0).position.y < 4.7f && body(&a, 1).asleep && body(&a, 1).position.y == 5.0f);
 
-    // Three that were spawned asleep on each other: each is asleep by itself, as Box2D never saw them
-    // touch. A ball into the bottom one wakes it, and the ones on it a step or two after each other, as
-    // each is found to rest on one that's awake
     TIDE_CHECK(body(&a, 4).asleep && body(&a, 5).asleep && body(&a, 6).asleep && body(&a, 6).position.y == 2.5f);
     throw_ball(&a, -18.0f, 0.5f, 12.0f, 0.0f);
     int woke[3] = {0, 0, 0};
@@ -466,11 +436,9 @@ TIDE_TEST(box2d_gravity_wakes_what_sleeps_and_not_what_is_put_to_sleep_with_it)
     lull(&a, 1, true);
     tide_world_tick(&a);
     TIDE_CHECK(body(&a, 1).asleep);
-    // Gravity turned upwards: the one that was put to sleep before wakes with the rest
     a.Box2D_Physics.gravity = tide_f2(0.0f, 10.0f);
     tick(&a, 10);
     TIDE_CHECK(!body(&a, 0).asleep && !body(&a, 1).asleep && body(&a, 1).velocity.y > 1.0f);
-    // ...and back, with one put to sleep in the same tick: that one is asleep, where it was
     const tide_float2 at = body(&a, 0).position;
     a.Box2D_Physics.gravity = tide_f2(0.0f, -10.0f);
     lull(&a, 0, true);
@@ -498,7 +466,6 @@ TIDE_TEST(box2d_gravity_wakes_manual_sleep_when_automatic_sleeping_is_off)
     TIDE_CHECK(!body(&a, 0).asleep && body(&a, 0).velocity.y > 1.0f && body(&a, 0).position.y > at.y);
     TIDE_CHECK(!a.Box2D_Physics.sleeping);
 
-    // A new gravity wakes the old sleep; a sleep written in that tick still goes last
     const tide_float2 above = body(&a, 0).position;
     a.Box2D_Physics.gravity = tide_f2(0.0f, -10.0f);
     lull(&a, 0, true);
@@ -506,8 +473,6 @@ TIDE_TEST(box2d_gravity_wakes_manual_sleep_when_automatic_sleeping_is_off)
     TIDE_CHECK(body(&a, 0).asleep && same(body(&a, 0).position, above) && still(body(&a, 0)));
     TIDE_CHECK(stays(&a));
 
-    // The library's automatic-sleep setting stayed off too: once woken, the crate reaches the floor
-    // and stays awake there, well past the half second after which it would otherwise fall asleep
     lull(&a, 0, false);
     tick(&a, 180);
     TIDE_CHECK(body(&a, 0).position.y < 0.6f && !body(&a, 0).asleep && a.Box2D_Physics.moved);
@@ -548,8 +513,6 @@ static void look(const tide_world *w, const int ticks)
     if (ticks == 180) TIDE_CHECK(!body(w, 7).asleep && body(w, 7).velocity.x == -0.5f && !body(w, 8).asleep);
     if (ticks == 215) TIDE_CHECK(!body(w, 6).asleep && body(w, 6).position.y < 5.8f);
     if (ticks == 229) TIDE_CHECK(body(w, 3).asleep && !body(w, 6).asleep);
-    // Gravity turned over, and woke the stack. The crate that was put to sleep in that tick, on its way down,
-    // hangs asleep. One of the stack was written asleep in it too, which it was already: nothing written
     if (ticks == 236) TIDE_CHECK(body(w, 6).asleep && still(body(w, 6)) && !body(w, 3).asleep && !body(w, 7).asleep);
     if (ticks == 300) TIDE_CHECK(!body(w, 6).asleep);
 }
@@ -586,8 +549,6 @@ TIDE_TEST(box2d_sleep_is_the_matchs)
     TIDE_CHECK(tide_hash_end(images) == SCRIPT_IMAGES_HASH);
     TIDE_CHECK(parts_after - parts_before > SCRIPT_TICKS / 2);
 
-    // A snapshot goes on as the world it was taken of did, three times over, as a client that predicted
-    // wrong does: bodies are put to sleep and woken in the ticks it runs again
     const int32_t before = b2t_restores();
     for (int round = 0; round < 3; round++) {
         tide_world_copy(&b, &kept);
@@ -599,7 +560,6 @@ TIDE_TEST(box2d_sleep_is_the_matchs)
     }
     TIDE_CHECK(b2t_restores() - before >= 3);
 
-    // A player who joins gets the world as bytes, and has none of C's
     const uint32_t size = tide_world_pack(&kept, NULL, 0);
     uint8_t *bytes = malloc(size);
     TIDE_REQUIRE(tide_world_pack(&kept, bytes, size) == size);
@@ -611,8 +571,6 @@ TIDE_TEST(box2d_sleep_is_the_matchs)
         TIDE_REQUIRE(tide_world_hash(&b) == went[i]);
     }
 
-    // A world that's made from its image again before every tick is the world that never was: a body is
-    // put to sleep, and woken, in a world that was just made
     static uint64_t again[SCRIPT_TICKS];
     const int32_t restores = b2t_restores();
     play(&b, again, true, NULL);

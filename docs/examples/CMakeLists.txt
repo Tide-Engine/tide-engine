@@ -1,7 +1,6 @@
 # Each example is a separate game: its displayed source is exactly what runs.
 
-# An example that uses a package that comes with tide (packages/, see
-# AGENTS.md, Packaging and releases) is named here with the package's folder,
+# An example that uses a package that comes with tide (packages/) is named here with the package's folder,
 # as tide_add_game reads no tide.packages. It's built with the package as tide
 # builds a game that lists it: the package's Tide files before its own, the
 # package's C with its own, and the library's sources, which packages/ builds

@@ -197,11 +197,8 @@ static inline int32_t flags_left(const int32_t flags, const bool asleep)
 // out would cost more than it saves. The step itself is quicker shared from a
 // few hundred bodies, but a tick whose C starts jobs runs its systems on
 // threads too (tide/jobs.h), and what that costs the rest of the tick is only
-// made up for from about here: measured, a tick with 1,800 crates awake was
-// slower shared and one with 2,400 quicker. A page's threads cost more to
-// reach: there, 2,400 was slower shared and 4,800 quicker while its step was
-// scalar code, and on WebAssembly's SIMD, which left less of a step to share
-// out, 4,800 is about even and 9,600 quicker.
+// made up for from about this many. A page's threads cost more to reach, and
+// WebAssembly's SIMD leaves less of a step to share out, so there it is higher.
 #ifdef __wasm__
 #define SHARED_BODIES 4096
 #else
@@ -858,7 +855,7 @@ static body_fields fields_of(const tide_rows *rows)
 // code wrote its `type`. There's no field for what it was: Box2D is asked. It's
 // asked once for each body, and its answer kept (world.kinds) until the body
 // goes or the world is made from an image, as every body is looked at every
-// tick and a call into Box2D for each took twice as long as all the rest of
+// tick and a call into Box2D for each would cost more than all the rest of
 // what Enter looks at. What's kept is only ever Box2D's own answer, or what it
 // was just told.
 static bool retyped(world *w, const int32_t id, const int32_t id_high, const int32_t type)

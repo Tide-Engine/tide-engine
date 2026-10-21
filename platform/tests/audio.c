@@ -151,7 +151,7 @@ TIDE_TEST(audio_a_voice_goes_on_loops_and_fades_when_it_isnt_named)
         tide_mixer_render(out, BLOCK);
     }
     TIDE_CHECK(silent(out, SAMPLES));
-    TIDE_CHECK(tide_mixer_voices() == 1); // Still there, silent
+    TIDE_CHECK(tide_mixer_voices() == 1);
     v.playing = false;
     tide_audio_reset(&f);
     tide_audio_voice(&f, &v);
@@ -162,7 +162,7 @@ TIDE_TEST(audio_a_voice_goes_on_loops_and_fades_when_it_isnt_named)
     tide_audio_voice(&f, &v);
     tide_mixer_submit(&f);
     tide_mixer_render(out, BLOCK);
-    TIDE_CHECK(out[2] == ramp_samples[2]); // From its start again
+    TIDE_CHECK(out[2] == ramp_samples[2]);
     tide_audio_free(&f);
 }
 
@@ -516,7 +516,7 @@ TIDE_TEST(audio_big_states_nobody_renders_are_freed_as_their_voices_stop)
     TIDE_CHECK(tide_mixer_states() == 1);
     tide_audio_reset(&f);
     tide_mixer_submit(&f);
-    TIDE_CHECK(tide_mixer_states() == 1); // Still no block since
+    TIDE_CHECK(tide_mixer_states() == 1);
     tide_mixer_render(out, BLOCK);
     tide_audio_reset(&f);
     tide_mixer_submit(&f);
@@ -781,10 +781,10 @@ TIDE_TEST(audio_wav_holds_the_mix_as_16_bit_pcm)
     TIDE_REQUIRE(tide_wav_decode(wav, size, &back));
     TIDE_CHECK(back.channels == 2 && back.rate == TIDE_AUDIO_RATE && back.frames == 4);
     TIDE_CHECK(back.samples[0] == 0.0f && near(back.samples[1], 32767.0f / 32768.0f) && near(back.samples[2], -32767.0f / 32768.0f));
-    TIDE_CHECK(near(back.samples[4], 32767.0f / 32768.0f) && near(back.samples[5], -32767.0f / 32768.0f)); // Clamped
+    TIDE_CHECK(near(back.samples[4], 32767.0f / 32768.0f) && near(back.samples[5], -32767.0f / 32768.0f));
     TIDE_CHECK(back.samples[6] == 0.0f && back.samples[7] == 0.0f);
     tide_sound_free(&back);
-    TIDE_CHECK(!tide_wav_decode(wav, 20, &back)); // Cut short
+    TIDE_CHECK(!tide_wav_decode(wav, 20, &back));
     free(wav);
     uint8_t *empty = tide_wav_encode(NULL, 0, TIDE_AUDIO_RATE, &size);
     TIDE_REQUIRE(empty != NULL);
@@ -805,7 +805,7 @@ TIDE_TEST(audio_a_device_is_filled_at_its_rate_and_channels)
     tide_mixer_submit(&f);
     float out[6 * 300];
     tide_audio_out_fill(out, 300, TIDE_AUDIO_RATE, 2);
-    TIDE_CHECK(out[0] == 0.0f && out[1] == 0.0f); // Before the mixer's first frame
+    TIDE_CHECK(out[0] == 0.0f && out[1] == 0.0f);
     for (uint32_t i = 1; i < 300; i++) {
         TIDE_CHECK(out[2 * i] == ramp_samples[2 * (i - 1)]);
         TIDE_CHECK(out[2 * i + 1] == ramp_samples[2 * (i - 1) + 1]);
@@ -848,7 +848,7 @@ TIDE_TEST(audio_a_streamed_clip_plays_as_its_decode_does_and_loops)
     tide_mixer_render(out, frames);
     uint32_t wrong = 0;
     for (uint32_t i = 0; i < frames; i++) {
-        const uint32_t j = i % 28800u; // Looped
+        const uint32_t j = i % 28800u;
         if (out[2 * i] != whole.samples[2 * j] || out[2 * i + 1] != whole.samples[2 * j + 1]) wrong++;
     }
     TIDE_CHECK(wrong == 0);
@@ -864,7 +864,7 @@ TIDE_TEST(audio_a_streamed_clip_plays_as_its_decode_does_and_loops)
         if (out[2 * i] != whole.samples[2 * i] || out[2 * i + 1] != whole.samples[2 * i + 1]) wrong++;
     }
     TIDE_CHECK(wrong == 0);
-    TIDE_CHECK(silent(out + 2 * (28800 + BLOCK), 2 * BLOCK)); // Silence from the block after the end
+    TIDE_CHECK(silent(out + 2 * (28800 + BLOCK), 2 * BLOCK));
     TIDE_CHECK(tide_mixer_voices() == 0);
     // At another pitch it goes through the same interpolation a decoded clip's samples do
     const tide_clip decoded = {.samples = whole.samples, .frames = whole.frames, .channels = 2, .rate = TIDE_AUDIO_RATE, .id = 78};

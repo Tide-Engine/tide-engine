@@ -28,8 +28,8 @@ class TideLanguageClient extends LanguageClient {
 
 const suffix = process.platform === 'win32' ? '.exe' : '';
 let client = null;
-let output = null; // The Tide output channel, which every client shares
-let trace = null; // Where tide.trace.server shows what VS Code and tidels say
+let output = null;
+let trace = null;
 
 function isFile(file) {
     try {
@@ -220,7 +220,7 @@ function lensCommand(command) {
 async function start() {
     const server = findServer();
     if (server.error) {
-        missing(`Tide: ${server.error}`, 'tide.server.path'); // Not awaited: the editor goes on meanwhile
+        missing(`Tide: ${server.error}`, 'tide.server.path');
         return;
     }
     const next = new TideLanguageClient('tide', 'Tide', { command: server.file }, {
@@ -242,7 +242,6 @@ async function start() {
     try {
         await next.start();
     } catch {
-        // The client said why, in a notification and in the Tide output.
     }
 }
 
@@ -255,7 +254,6 @@ async function stop() {
     try {
         await running.dispose();
     } catch {
-        // It never started, or it stopped already.
     }
 }
 
@@ -418,7 +416,7 @@ class Run {
         this.output = new vscode.EventEmitter();
         this.closed = new vscode.EventEmitter();
         this.process = null;
-        this.line = ''; // Typed, not sent yet
+        this.line = '';
         this.ended = false;
         this.disposed = false;
         this.stopping = false;
@@ -473,7 +471,7 @@ class Run {
         });
         child.stderr.setEncoding('utf8');
         child.stderr.on('data', text => this.print(text));
-        child.stdin.on('error', () => {}); // Typed after tide stopped
+        child.stdin.on('error', () => {});
         child.on('error', error => this.print(`Tide: couldn't run ${tide}: ${error.message}\n`));
         child.on('close', () => {
             this.process = null;
@@ -590,11 +588,11 @@ async function showPage(address, lastAddress, current) {
     return url;
 }
 
-const runs = { desktop: null, web: null, android: null }; // Running, or that ran last
+const runs = { desktop: null, web: null, android: null };
 const runQueues = { desktop: Promise.resolve(), web: Promise.resolve(), android: Promise.resolve() };
 let deactivating = false;
 let lastGame = null;
-let lastPage = null; // The web run's address in the editor
+let lastPage = null;
 
 // Runs the game, starting it over if it's running: in a window of its own, on
 // the web, in the editor, or on Android. Running a game runs its code, so not
@@ -803,7 +801,7 @@ async function editPrefab(resource) {
     if (!isFile(executable)) { vscode.window.showErrorMessage('Tide: tide-editor is missing beside tide. Install a desktop Tide package.'); return; }
     if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
     if (deactivating) return;
-    const opened = prefabPanels.get(uri.fsPath); // Another command may have awaited the same Save.
+    const opened = prefabPanels.get(uri.fsPath);
     if (opened && !opened.disposed) { opened.panel.reveal(); return; }
     const editor = new PrefabPanel(executable,uri,found.folder);
     prefabPanels.set(uri.fsPath, editor); await editor.ready;

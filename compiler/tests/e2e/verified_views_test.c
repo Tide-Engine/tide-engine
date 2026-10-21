@@ -3,10 +3,9 @@
 #include "game.h"
 #include "tide_test.h"
 
-// `verified` parameters in views: what a machine's views read of the world the
-// server has confirmed, beside the one they draw, on a C host with one world,
-// with two worlds that disagree, and on a client that predicts wrong for a
-// while.
+// `verified` parameters in views: what views read of the server-confirmed world beside the one
+// they draw, on a C host with one world, with two worlds that disagree, and on a client that
+// predicts wrong for a while.
 
 static tide_draw_list draw;
 static tide_gui gui;

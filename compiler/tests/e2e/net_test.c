@@ -220,7 +220,7 @@ TIDE_TEST(net_players_keep_the_servers_world)
     for (int i = 0; i < 2; i++) {
         const tide_client_status s = tide_client_status_of(clients[i]);
         TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
-        TIDE_CHECK(s.resyncs == 0); // Every tick's hash matched the server's
+        TIDE_CHECK(s.resyncs == 0);
         TIDE_CHECK(s.player.id == (uint32_t)i + 1u);
         // Close behind the server, and a little ahead of it with prediction
         TIDE_CHECK(s.verified_tick + 30u > tide_server_tick(server));
@@ -409,7 +409,7 @@ TIDE_TEST(net_a_client_over_its_budget_delays_its_input)
     TIDE_CHECK(b.delay_ticks >= 3u);
     TIDE_CHECK(b.predicted_tick - b.verified_tick <= 6u);
     TIDE_CHECK(b.verified_tick + 30u > tide_server_tick(server));
-    TIDE_CHECK(tide_client_status_of(clients[0]).delay_ticks == 0); // No clock: as it always was
+    TIDE_CHECK(tide_client_status_of(clients[0]).delay_ticks == 0);
     // Its ticks get cheap: it takes the delay back, a tick every half second or so
     fake_tick_ns = 1000;
     run(20.0);
@@ -487,7 +487,7 @@ TIDE_TEST(net_a_stall_leaves_no_lasting_delay)
     printf("    after the network stalled for 1.5 s it ran %u ticks ahead at the most, took %u ticks of delay at the most, and has %u"
            " four seconds on\n", furthest, most, a.delay_ticks);
     TIDE_CHECK(a.state == TIDE_SESSION_CONNECTED);
-    TIDE_CHECK(furthest >= 40u); // It did run far ahead: what the check is about
+    TIDE_CHECK(furthest >= 40u);
     TIDE_CHECK(most <= 2u);
     TIDE_CHECK(a.delay_ticks == 0);
     finish();
@@ -536,13 +536,12 @@ TIDE_TEST(net_a_match_costs_little_to_keep_going)
                                          .server = tide_loopback_address(1), .sample = sample, .user = &who[i], .lead = 2};
         clients[i] = tide_client_create(&client, now);
     }
-    run(1.0); // Joined, with the world
+    run(1.0);
     memset(counted_bytes, 0, sizeof counted_bytes);
     run(11.0);
     for (int i = 0; i < 2; i++) TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0);
-    // About 6.5 KB a second to each player and 2.5 KB a second from each, at
-    // 60 ticks a second, most of it the hashes of ticks sent again until a
-    // round trip says they came: 316 KB and 45 KB before the frames shrank.
+    // About 6.5 KB a second to each player and 2.5 KB a second from each, at 60 ticks a second, most of it the
+    // hashes of ticks sent again until a round trip says they came.
     TIDE_CHECK(counted_bytes[0] < 140000u);
     TIDE_CHECK(counted_bytes[1] < 28000u && counted_bytes[2] < 28000u);
     finish();
@@ -650,7 +649,7 @@ TIDE_TEST(net_a_player_who_left_comes_back_as_themselves)
     join(1);
     run(1.0);
     const uint64_t cookie = tide_client_status_of(clients[0]).cookie;
-    tide_client_destroy(clients[0]); // Leaves
+    tide_client_destroy(clients[0]);
     clients[0] = NULL;
     run(1.5);
     TIDE_CHECK(players_in(tide_server_world(server))->left == 1);
@@ -808,7 +807,7 @@ TIDE_TEST(net_local_code_starts_a_match)
     TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
     TIDE_CHECK(request.kind == TIDE_REQUEST_START);
     TIDE_CHECK(start.scene == 0 && start.value.Arena.size == 3);
-    TIDE_CHECK(!tide_local_take_request(&local, &request, &start)); // Taken
+    TIDE_CHECK(!tide_local_take_request(&local, &request, &start));
 
     tide_session_start(s, &start, t);
     bool connected = false;
@@ -1004,7 +1003,7 @@ TIDE_TEST(net_a_session_says_when_it_next_ticks)
             last = ticked;
         }
         TIDE_CHECK(every_one);
-        TIDE_CHECK(tide_session_status_of(s).client.verified_tick == (uint32_t)last); // Its player kept up
+        TIDE_CHECK(tide_session_status_of(s).client.verified_tick == (uint32_t)last);
         tide_session_destroy(s);
     }
 
@@ -1113,7 +1112,7 @@ TIDE_TEST(net_a_session_carries_its_match_over_to_another_layout)
 
     migrations = 0;
     TIDE_REQUIRE(tide_session_migrate(s, &new_build, copy_over, NULL));
-    TIDE_CHECK(migrations == 1); // The server's world: this machine's player takes it
+    TIDE_CHECK(migrations == 1);
     for (int frame = 0; frame < 60; frame++) {
         t += 1.0 / 60.0;
         tide_session_update(s, t);
@@ -1366,12 +1365,12 @@ TIDE_TEST(net_a_client_carries_its_match_over_to_another_layout)
 
     const tide_session_status after = tide_session_status_of(guest);
     TIDE_CHECK(after.client.state == TIDE_SESSION_CONNECTED);
-    TIDE_CHECK(after.client.player.id == before.client.player.id); // Still the same player
+    TIDE_CHECK(after.client.player.id == before.client.player.id);
     TIDE_CHECK(after.client.resyncs == 0);
     TIDE_CHECK(after.client.verified_tick >= before.client.verified_tick + 120u);
     TIDE_CHECK(tide_session_status_of(host).client.resyncs == 0);
     const Players *players = players_in(tide_session_server_world(host));
-    TIDE_CHECK(players->joined == 2 && players->left == 0); // Nobody left and came back
+    TIDE_CHECK(players->joined == 2 && players->left == 0);
     tide_session_destroy(guest);
     tide_session_destroy(host);
     tide_loopback_destroy(network);
@@ -1411,8 +1410,8 @@ TIDE_TEST(net_a_session_goes_on_from_a_world)
     TIDE_CHECK(after.client.state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(after.client.player.id == before.client.player.id);
     const tide_world *w = tide_session_server_world(next);
-    TIDE_CHECK(players_in(w)->joined == 1); // Not twice
-    TIDE_CHECK(w->Time.tick >= left->Time.tick + 55); // Went on from it
+    TIDE_CHECK(players_in(w)->joined == 1);
+    TIDE_CHECK(w->Time.tick >= left->Time.tick + 55);
     TIDE_CHECK(same(tide_session_world(next), w));
     tide_session_destroy(next);
     tide_world_free(left);

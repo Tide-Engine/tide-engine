@@ -153,7 +153,6 @@ TIDE_TEST(extern_systems_leave_what_they_dont_write_shared)
     TIDE_CHECK(shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge + 2));
     TIDE_CHECK(shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge + 3));
     TIDE_CHECK(!shares(&world.arch3_Place_Speed_Badge, &kept.arch3_Place_Speed_Badge, badged, 0, badge + 4));
-    // The snapshot is as it was
     TIDE_CHECK(tide_world_hash(&kept) == before && tide_world_hash(&world) != before);
     float x = 0.0f;
     for (int t = 0; t < 3; t++) x += 1.0f * DT;

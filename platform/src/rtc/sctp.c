@@ -524,12 +524,10 @@ void rtc_sctp_start(rtc_sctp *s, const bool initiator, const uint16_t their_port
 void rtc_sctp_update(rtc_sctp *s, const double now)
 {
     if (s->state == RTC_SCTP_FAILED || s->state == RTC_SCTP_CLOSED) return;
-    // Connecting is the association and then the channel on it, in the one
-    // time. An association that's up says nothing of theirs (ours is, from
-    // their COOKIE ECHO on, whether our COOKIE ACK reaches them or not), and
-    // leaves the side that opened the channel waiting for the acknowledgement
-    // and the other for the open: a wait with no end, were it not counted,
-    // and with nothing to tell whoever is joining that it failed.
+    // Connecting covers the association and the channel on it. An association
+    // that's up (ours is, from their COOKIE ECHO on) can leave one side waiting
+    // for the open and the other for its acknowledgement with no end, so the
+    // whole is timed.
     if (!s->connected && now - s->started > CONNECT_TIMEOUT) {
         rtc_debug("sctp: gave up connecting: %s",
                   s->state == RTC_SCTP_CONNECTING ? "no association"

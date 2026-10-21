@@ -24,7 +24,7 @@ namespace Tide.Editor
         public static string ProjectFolder => Path.GetDirectoryName(Application.dataPath) ?? ".";
 
         // The game: every .tide file in Assets, and its packages, the folders in it with a tide.packages saying
-        // `package Name`, whose C is the only C tide builds (notes/unity.md)
+        // `package Name`, whose C is the only C tide builds
         public string GameFolderPath => Path.GetFullPath(Application.dataPath);
     }
 

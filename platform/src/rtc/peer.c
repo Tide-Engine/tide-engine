@@ -120,16 +120,13 @@ static bool dtls_answers(const rtc_peer *p)
     return p->dtls_started && p->ice.state == RTC_ICE_CONNECTED;
 }
 
-// Their ClientHello can come before that. ICE hands over what comes from any
-// address it knows, and they send it as soon as their side has a pair: before
-// the answer to our own check arrives, when that's late, lost, or from another
-// address than the check went to; and from Chrome, before its description
-// does, as a check of its own that we answered is all it waits for. Answered
-// then, our flight went nowhere, and waited for DTLS's time to send one again,
-// half a second. So what comes before is held, in order, and DTLS gets it once
-// it can answer. A few datagrams: a ClientHello can take more than one
-// (Chrome's takes two), and they send it again meanwhile, which is also how
-// one that found no room here comes back, as one lost on the way does.
+// Their ClientHello can come before that: they send it as soon as their side
+// has a pair, which can be before the answer to our own check arrives (late,
+// lost, or from another address), or, from Chrome, before its description.
+// An answer then goes nowhere and waits half a second for DTLS's resend. So
+// what comes early is held, in order, and DTLS gets it once it can answer. A
+// few datagrams: Chrome's ClientHello takes two, and they resend it meanwhile,
+// which is also how one that found no room here comes back.
 static void hold(rtc_peer *p, const uint8_t *datagram, const size_t size)
 {
     if (p->have_remote && p->dtls_client) return; // We're the client, and nothing answers a ClientHello we haven't sent

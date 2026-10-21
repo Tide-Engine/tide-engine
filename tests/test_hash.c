@@ -5,10 +5,7 @@
 #include "tide/net.h"
 #include "tide_test.h"
 
-// tide_hash_wide, written the plain way: a word at a time, from bytes read one
-// by one, where the engine's goes through two or four words at once in vectors.
-// Its keys, starting values and end are the ones net.c keeps to itself, so
-// they're here again.
+// tide_hash_wide written the plain way, a word at a time, to compare with the engine's vector version. Its keys, start values and end are net.c's, repeated here.
 static const uint64_t key[24] = {
     0xF1D471BF300D2ACAull, 0xB98D6EEDD4DBCB43ull, 0xE41EE98106E4C3FCull, 0x9C8A5940DDCAF100ull,
     0x11B96D3559621C0Full, 0x2F6492F64C4825C7ull, 0x4F68DFF234BD3F70ull, 0x5117AE9AB1A42248ull,
@@ -29,7 +26,6 @@ static uint64_t step(uint64_t h, const uint64_t word)
     return (h << 27 | h >> 37) * 0x94D049BB133111EBull;
 }
 
-// The run's word at `at`, with zeros past its end
 static uint64_t word_at(const uint8_t *p, const size_t at, const size_t size)
 {
     uint64_t word = 0;
@@ -41,7 +37,7 @@ static uint64_t plain(const uint8_t *p, const size_t size)
 {
     uint64_t acc[8];
     memcpy(acc, start, sizeof acc);
-    const size_t stripes = (size + 63u) / 64u; // The last one short, and zeros past its bytes
+    const size_t stripes = (size + 63u) / 64u;
     for (size_t n = 0; n < stripes; n++) {
         for (uint32_t j = 0; j < 8u; j++) {
             const uint64_t d = word_at(p, 64u * n + 8u * j, size);
@@ -77,10 +73,6 @@ static void fill(uint8_t *p, const size_t size, uint32_t dice)
     }
 }
 
-// At every length around its stripes of 64 bytes and blocks of 1 KiB, and at
-// the lengths pages have, wherever the run starts, of bytes and of zeros: both
-// ways the engine has (the machine's widest vectors, where it has AVX2, and
-// those every CPU of the platform has).
 TIDE_TEST(hash_wide_is_stripes_of_products)
 {
     enum { ROOM = 16384 + 64 };
@@ -109,12 +101,6 @@ TIDE_TEST(hash_wide_is_stripes_of_products)
     free(z);
 }
 
-// A page that differs in one bit, anywhere, is another number: every byte of
-// a page of 16 KiB, a bit of each. So is one that differs in the same bit of
-// two stripes, of zeros, as worlds mostly are: the top bit of a word, whose
-// two sums cancel, and the bits either side of its halves. And so is a run
-// that's the same bytes with one more or one fewer: zeros, where nothing else
-// tells lengths apart.
 TIDE_TEST(hash_wide_tells_pages_apart)
 {
     enum { PAGE = 16384 };
@@ -157,7 +143,7 @@ TIDE_TEST(hash_wide_tells_pages_apart)
         }
     }
     TIDE_REQUIRE(count == RUNS);
-    qsort(h, count, sizeof *h, compare_hashes); // Sorted, equal neighbours are equal hashes
+    qsort(h, count, sizeof *h, compare_hashes);
     for (size_t i = 1; i < count; i++) same += h[i] == h[i - 1u];
     TIDE_CHECK(same == 0);
     free(h);
@@ -172,8 +158,6 @@ TIDE_TEST(hash_wide_tells_pages_apart)
     free(p);
 }
 
-// The same numbers on every platform: of nothing, of a byte, of a run that
-// ends in the middle of a stripe, and of a page.
 TIDE_TEST(hash_wide_is_the_same_everywhere)
 {
     enum { PAGE = 16384 };

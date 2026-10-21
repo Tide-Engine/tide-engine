@@ -14,8 +14,7 @@
 
 // A tick goes on threads when its widest stages have this many rows (16,384
 // entities of each kind), in pieces of at least PIECE rows: with less, waking
-// the threads for each of its ten stages costs more than they save (measured
-// on a 12-core Ryzen 9 7900X).
+// the threads for each of its ten stages costs more than they save.
 #define STAGE_ENOUGH 524288u
 #define PIECE 8192u
 

@@ -127,8 +127,7 @@ endif()
 # tide is nearly all LLVM, so how it's linked decides how big it is. Windows'
 # linker (lld-link) leaves out what nothing reaches and keeps one of the
 # functions that are the same code by itself, and a program there has no table
-# of its functions' names. The others have to be told each: without it, tide
-# for Linux was 210 MB to Windows' 121, a sixth of it names. Not in a build to
+# of its functions' names. The others have to be told each. Not in a build to
 # debug.
 set(_tide_small "$<CONFIG:Release,MinSizeRel>")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

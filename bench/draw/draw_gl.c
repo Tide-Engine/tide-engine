@@ -438,9 +438,8 @@ static bool gl_open(const float camera[16], const uint8_t pixels[2 * 2 * 4], cha
 // (unsynchronized): each frame waits for its own pixel to be read back, so the
 // GPU is done with the last frame's instances by then. (A renderer whose
 // frames overlap keeps a ring of these regions and a fence for each.) Orphaning
-// the buffer instead (GL_MAP_INVALIDATE_BUFFER_BIT) had NVIDIA's driver hand
-// out fresh memory: writing 65,536 rects took 0.33 ms a frame that way here,
-// against 0.05 ms unsynchronized (persistent mapping, OpenGL 4.4's, matched it).
+// the buffer instead (GL_MAP_INVALIDATE_BUFFER_BIT) makes NVIDIA's driver hand
+// out fresh memory, several times slower.
 static void *gl_instances(const vd_kind kind, const size_t bytes)
 {
     (void)kind;

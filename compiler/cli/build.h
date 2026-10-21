@@ -28,8 +28,8 @@ typedef struct build_options {
     bool notified;
 } build_options;
 
-// Builds a game with the engine files installed in `root` (see AGENTS.md,
-// Packaging). Returns the program's path (malloc'd), or NULL after reporting
+// Builds a game with the engine files installed in `root`.
+// Returns the program's path (malloc'd), or NULL after reporting
 // what went wrong.
 char *tide_build(const char *root, const build_options *opts);
 // Internal authoring module build; output is a private directory owned by the editor.

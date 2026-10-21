@@ -99,8 +99,6 @@ static uint64_t places(const tide_world *w, uint64_t hash)
 
 TIDE_TEST(box3d_steps_a_match)
 {
-    // Twice: as this CPU solves contacts, 8 at a time where it has AVX2, and 4
-    // at a time, as one without does. A web build has neither, and is the third.
     for (int narrow = 0; narrow < 2; narrow++) {
         int32_t whole = 0;
         int32_t in_parts = 0;
@@ -113,8 +111,6 @@ TIDE_TEST(box3d_steps_a_match)
         // of the world is awake.
         b3t_check(true, narrow == 0);
         start(&a, 12);
-        // Every tick's world hash and resident digest, not only the last:
-        // a divergence that later disappears still shows here
         uint64_t images = 0;
         uint64_t bodies = 0;
         uint64_t bytes = 0;
@@ -172,7 +168,6 @@ TIDE_TEST(box3d_rolls_back)
         tide_world_tick(&a);
         went[i] = tide_world_hash(&a);
     }
-    // Three times over, as a client that predicted wrong does
     for (int round = 0; round < 3; round++) {
         tide_world_copy(&b, &kept);
         for (int i = 0; i < 80; i++) {
@@ -252,8 +247,6 @@ static void cost(tide_world *w, const char *what, const int ticks)
     int32_t whole = 0;
     int32_t in_parts = 0;
     images_since(&whole, &in_parts);
-    // As a match does: each tick's world is kept (a snapshot, which shares what
-    // the tick left alone) and hashed (including the resident stamp and digest)
     uint64_t took = 0;
     uint64_t kept_ns = 0;
     static tide_profile profile;
@@ -304,7 +297,6 @@ TIDE_TEST(box3d_costs)
     a.Size.flip = true;
     cost(&a, "a type changed:", 60);
     a.Size.flip = false;
-    // ...and what is followed uses sparse marks: the same crate, put to sleep and woken in turn
     a.Size.lull = true;
     cost(&a, "a crate put to sleep:", 60);
     a.Size.lull = false;
@@ -345,7 +337,6 @@ TIDE_TEST(box3d_threads_change_nothing)
             if (on) tide_world_tick_on(&b, jobs);
             else tide_world_tick(&a);
             ticks[on] += tide_time_now_ns() - t;
-            // As a client keeps each tick's world: the next tick writes what it changes apart from it
             tide_world_copy(on ? &kept_too : &kept, on ? &b : &a);
             b3t_measure(&step, &image);
             b3t_measure_blocks(&changed, &in_all, &counting);
@@ -356,8 +347,6 @@ TIDE_TEST(box3d_threads_change_nothing)
         if (tide_world_hash(&a) != tide_world_hash(&b)) printf("    tick %d came out different\n", i);
         TIDE_REQUIRE(tide_world_hash(&a) == tide_world_hash(&b));
     }
-    // Where a tick goes: Box3D's step, resident restores and commits, and the
-    // rest, which is the package's systems (bodies and events in and out)
     for (int on = 0; on < 2; on++) {
         printf("    %d crates on %u thread%s: a tick takes %.2f ms: %.2f Box3D's step, %.2f resident restore/commit, %.2f the rest\n", CRATES,
                on ? (unsigned)jobs->threads : 1u, on ? "s" : "", (double)ticks[on] / (TICKS * 1e6), (double)steps[on] / (TICKS * 1e6),
@@ -366,7 +355,6 @@ TIDE_TEST(box3d_threads_change_nothing)
     printf("    %d steps were shared out; the resident arena is %d bytes\n", (int)(b3t_shared_steps() - before), physics_bytes(&a));
     TIDE_CHECK(b3t_shared_steps() - before > TICKS / 2);
 
-    // What a rollback pays once: C's world restored from the match's resident pages
     b3t_forget();
     b3t_measure(&step, &image);
     const uint64_t t = tide_time_now_ns();

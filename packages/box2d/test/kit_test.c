@@ -156,49 +156,37 @@ TIDE_TEST(box2d_parts_are_shapes_of_their_body)
     static uint64_t went[PART_TICKS];
     play_parts(&a, went, false, &kept);
 
-    // With everything at rest, and nothing gone yet
     const tide_world *w = &kept;
     const tide_entity tee = the(w, tide_has_Tee);
     const tide_entity cap = the(w, tide_has_Cap);
     const Box2D_Part part = tide_get_Box2D_Part(w, cap);
     TIDE_CHECK(same(part.of, tee) && part.box != 0 && part.circle == 0);
-    // A bar of 2 with a cap of 1 weighs 3: thrown with an impulse of 3 where it was spawned, it goes at 1. The cap
-    // was on it by the step that threw it
     const Box2D_Body thrown = body_of(w, tide_has_Thrown);
     printf("    a bar of 2 by 1 with a cap of 1 by 1 for a part, thrown with an impulse of 3, goes at %g\n", (double)thrown.velocity.x);
     TIDE_CHECK(near(thrown.velocity.x, 1.0f) && thrown.velocity.y == 0.0f && thrown.spin == 0.0f);
-    // The cap is solid: a marble dropped on it rests on it, two meters up, and one dropped beside it on the bar
     const Box2D_Body on_cap = body_of(w, tide_has_OnCap);
     const Box2D_Body on_bar = body_of(w, tide_has_OnBar);
     printf("    a marble dropped on the cap rests at %g, and one beside it on the bar at %g\n", (double)on_cap.position.y,
            (double)on_bar.position.y);
     TIDE_CHECK(near(on_cap.position.y, 2.25f) && near(on_bar.position.y, 1.15f));
-    // The events say which shapes met: the marble's own, and the tee's cap, which is an entity of its own
     const Heard marble = heard_by(w, tide_has_OnCap);
     const Heard heard = heard_by(w, tide_has_Tee);
     TIDE_CHECK(marble.touched == 1 && same(marble.last, tee) && same(marble.part, the(w, tide_has_OnCap)) && same(marble.otherPart, cap));
-    // The tee heard the floor under its bar, then the two marbles: the one on its bar last
     TIDE_CHECK(heard.touched == 3 && same(heard.last, the(w, tide_has_OnBar)) && same(heard.part, tee));
     TIDE_CHECK(same(heard.otherPart, the(w, tide_has_OnBar)));
     const Heard on_bar_heard = heard_by(w, tide_has_OnBar);
     TIDE_CHECK(on_bar_heard.touched == 1 && same(on_bar_heard.part, the(w, tide_has_OnBar)) && same(on_bar_heard.otherPart, tee));
-    // A part can be a sensor: the ball fell through the post's eye, and each heard of the other, by the eye
     const tide_entity eye = the(w, tide_has_Eye);
     const Heard post = heard_by(w, tide_has_Post);
     const Heard through = heard_by(w, tide_has_Through);
     TIDE_CHECK(post.touched == 1 && post.parted == 1 && same(post.last, the(w, tide_has_Through)) && same(post.part, eye));
     TIDE_CHECK(through.touched == 2 && through.parted == 1 && same(through.last, the(w, tide_has_Floor)));
     TIDE_CHECK(body_of(w, tide_has_Through).position.y < 0.5f);
-    // A part that names no body went, and so did one that names an entity with none: the entity itself is there
     TIDE_CHECK(count(w, tide_has_Stray) == 1 && !tide_has_Box2D_Part(w, the(w, tide_has_Stray)));
-    // Every shape is on a body: the floor's, the tee's two, the marbles', the thrown one's two, the doomed one's three,
-    // the post's two and the ball's
     TIDE_CHECK(w->Box2D_Physics.bodies == 8 && w->Box2D_Physics.shapes == 13);
     TIDE_CHECK(tide_map_count(w->Box2D_Physics.parts) == 5 && count(w, tide_has_Box2D_Part) == 5);
     TIDE_CHECK(!w->Box2D_Physics.moved || body_of(w, tide_has_Thrown).velocity.x > 0.0f);
 
-    // The cap went: its shape with it, and nothing else of the tee. The marble that was on it is on the bar now,
-    // and heard the cap go: a parting from the tee, by no part
     w = &a;
     TIDE_CHECK(!tide_has_Cap(w, cap) && tide_has_Tee(w, tee));
     const Box2D_Body fallen = body_of(w, tide_has_OnCap);
@@ -208,7 +196,6 @@ TIDE_TEST(box2d_parts_are_shapes_of_their_body)
     TIDE_CHECK(after.touched == 2 && after.parted == 1 && same(after.last, tee) && same(after.otherPart, tee));
     const Heard tee_after = heard_by(w, tide_has_Tee);
     TIDE_CHECK(tee_after.parted == 1 && tee_after.touched == 4);
-    // ...and the doomed body, with both its parts: their entities too, the tick after its own
     TIDE_CHECK(count(w, tide_has_Doomed) == 0 && count(w, tide_has_Limb) == 0);
     TIDE_CHECK(tide_map_count(w->Box2D_Physics.parts) == 2 && count(w, tide_has_Box2D_Part) == 2);
     TIDE_CHECK(tide_list_read_count(&w->heap, w->Box2D_Physics.gone) == 0 && tide_list_read_count(&w->heap, w->Box2D_Physics.shed) == 0);
@@ -220,8 +207,6 @@ TIDE_TEST(box2d_parts_are_shapes_of_their_body)
     TIDE_CHECK(went[PART_TICKS - 1] == PARTS_HASH);
     TIDE_CHECK(tide_hash_end(images) == PARTS_IMAGES_HASH);
 
-    // A part's shape is in Box2D's image like any other, and whose it is in the match: a world made from the
-    // image again before every tick goes the same way, tick for tick
     static uint64_t again[PART_TICKS];
     play_parts(&b, again, true, NULL);
     for (int i = 0; i < PART_TICKS; i++) {
@@ -230,7 +215,6 @@ TIDE_TEST(box2d_parts_are_shapes_of_their_body)
     }
     tide_world_free(&b);
 
-    // ...and so does a snapshot taken before the parts went, and the world as a player who joins is sent it
     tide_world_copy(&b, &kept);
     const uint32_t size = tide_world_pack(&kept, NULL, 0);
     uint8_t *bytes = malloc(size);
@@ -269,7 +253,6 @@ TIDE_TEST(box2d_a_body_changes_what_it_is)
     TIDE_REQUIRE(rests(&a, 600));
     TIDE_CHECK(near(body_of(&a, tide_has_Shifter).position.y, 0.5f));
 
-    // Dynamic to static, and put in the air: it hangs there, and the world is at rest again
     Box2D_Body body = body_of(&a, tide_has_Shifter);
     body.type = Box2D_BodyType_Static;
     body.position.y = 5.0f;
@@ -281,7 +264,6 @@ TIDE_TEST(box2d_a_body_changes_what_it_is)
     TIDE_CHECK(body.position.y == 5.0f && body.velocity.y == 0.0f);
     TIDE_CHECK(stays(&a));
 
-    // Static to kinematic, with a speed: it goes at that speed, whatever pulls on it
     body.type = Box2D_BodyType_Kinematic;
     body.velocity = tide_f2(1.0f, 0.0f);
     put(&a, tide_has_Shifter, body);
@@ -290,7 +272,6 @@ TIDE_TEST(box2d_a_body_changes_what_it_is)
     printf("    static, then kinematic at 1 m/s: a second later it's at (%g, %g)\n", (double)body.position.x, (double)body.position.y);
     TIDE_CHECK(near(body.position.x, 1.0f) && body.position.y == 5.0f && body.velocity.x == 1.0f);
 
-    // Kinematic to dynamic: it falls, with the speed it had
     retype(&a, tide_has_Shifter, Box2D_BodyType_Dynamic);
     tick(&a, 20);
     body = body_of(&a, tide_has_Shifter);
@@ -298,7 +279,6 @@ TIDE_TEST(box2d_a_body_changes_what_it_is)
            (double)body.velocity.x, (double)body.velocity.y);
     TIDE_CHECK(body.position.y < 4.6f && body.velocity.y < -3.0f && near(body.velocity.x, 1.0f));
 
-    // Dynamic to kinematic, in the air, with a speed upwards: it rises steadily
     body.type = Box2D_BodyType_Kinematic;
     body.velocity = tide_f2(0.0f, 2.0f);
     put(&a, tide_has_Shifter, body);
@@ -307,7 +287,6 @@ TIDE_TEST(box2d_a_body_changes_what_it_is)
     body = body_of(&a, tide_has_Shifter);
     TIDE_CHECK(near(body.position.y, from + 1.0f) && body.velocity.y == 2.0f && body.velocity.x == 0.0f);
 
-    // Kinematic to static: it stops where it is, and says so
     retype(&a, tide_has_Shifter, Box2D_BodyType_Static);
     const float hung = body_of(&a, tide_has_Shifter).position.y;
     TIDE_REQUIRE(rests(&a, 120));
@@ -315,7 +294,6 @@ TIDE_TEST(box2d_a_body_changes_what_it_is)
     TIDE_CHECK(body.position.y == hung && body.velocity.x == 0.0f && body.velocity.y == 0.0f);
     TIDE_CHECK(stays(&a));
 
-    // Static to dynamic: it falls to the floor
     retype(&a, tide_has_Shifter, Box2D_BodyType_Dynamic);
     TIDE_REQUIRE(rests(&a, 600));
     body = body_of(&a, tide_has_Shifter);
@@ -332,7 +310,6 @@ TIDE_TEST(box2d_what_rests_on_a_body_that_changes_stays_or_falls)
     const float rode = body_of(&a, tide_has_Rider).position.y;
     TIDE_CHECK(near(rode, 1.5f));
 
-    // The crate under another turns static, while both sleep: the one on it stays where it was, and they come to rest
     retype(&a, tide_has_Base, Box2D_BodyType_Static);
     tide_world_tick(&a);
     TIDE_CHECK(a.Box2D_Physics.moved);
@@ -341,7 +318,6 @@ TIDE_TEST(box2d_what_rests_on_a_body_that_changes_stays_or_falls)
     TIDE_CHECK(near(body_of(&a, tide_has_Rider).position.y, rode) && near(body_of(&a, tide_has_Rider).position.x, 10.0f));
     TIDE_CHECK(body_of(&a, tide_has_Base).type == Box2D_BodyType_Static);
     TIDE_CHECK(stays(&a));
-    // It's a body that never moves now: pushed, it stays, and so does what's on it
     Box2D_Body base = body_of(&a, tide_has_Base);
     const float stood = base.position.x;
     base.impulse = tide_f2(50.0f, 0.0f);
@@ -349,7 +325,6 @@ TIDE_TEST(box2d_what_rests_on_a_body_that_changes_stays_or_falls)
     tick(&a, 30);
     TIDE_CHECK(body_of(&a, tide_has_Base).position.x == stood && near(body_of(&a, tide_has_Rider).position.x, 10.0f));
     TIDE_CHECK(body_of(&a, tide_has_Base).impulse.x == 0.0f); // Given, to a body it does nothing to
-    // ...and dynamic again, the same push sends it off, from under the crate, which comes down to the floor
     TIDE_REQUIRE(rests(&a, 600));
     base = body_of(&a, tide_has_Base);
     base.type = Box2D_BodyType_Dynamic;
@@ -359,7 +334,6 @@ TIDE_TEST(box2d_what_rests_on_a_body_that_changes_stays_or_falls)
     TIDE_CHECK(body_of(&a, tide_has_Base).position.x > 12.0f);
     TIDE_CHECK(near(body_of(&a, tide_has_Rider).position.y, 0.5f));
 
-    // A ledge in the air that never moved, with a crate on it, turns dynamic: both fall
     TIDE_CHECK(near(body_of(&a, tide_has_Load).position.y, 5.75f) && body_of(&a, tide_has_Hung).position.y == 5.0f);
     retype(&a, tide_has_Hung, Box2D_BodyType_Dynamic);
     tick(&a, 20);
@@ -435,7 +409,6 @@ TIDE_TEST(box2d_answers_what_code_asks)
     start(&a, Case_Asks);
     tide_local_init(&local);
     memset(&gui, 0, sizeof gui);
-    // Before anything was stepped there's nothing to find, and asking is fine
     tide_world_tick(&a);
     TIDE_CHECK(!a.Asked.before.wall.any && !a.Asked.before.through.any && a.Asked.before.pair.count == 0);
     TIDE_CHECK(!a.Asked.after.wall.any); // The bodies were spawned in that tick: they're in the next one's step
@@ -446,47 +419,34 @@ TIDE_TEST(box2d_answers_what_code_asks)
     const tide_entity floor = the(w, tide_has_Floor);
     const tide_entity tee = the(w, tide_has_Tee);
     const tide_entity wall = the(w, tide_has_Wall);
-    // A ray meets the first thing in its way: where, how far along, and which way that faces
     printf("    a ray along the floor meets the wall at (%g, %g), %g of its way, facing (%g, %g)\n", (double)got.wall.point.x,
            (double)got.wall.point.y, (double)got.wall.fraction, (double)got.wall.normal.x, (double)got.wall.normal.y);
     TIDE_CHECK(got.wall.any && same(got.wall.entity, wall) && same(got.wall.part, wall));
     TIDE_CHECK(near(got.wall.point.x, 4.5f) && near(got.wall.point.y, 0.5f) && near(got.wall.fraction, 0.5625f));
     TIDE_CHECK(near(got.wall.normal.x, -1.0f) && near(got.wall.normal.y, 0.0f));
     TIDE_CHECK(got.ball.any && same(got.ball.entity, the(w, tide_has_Ball)) && near(got.ball.point.x, -4.134f));
-    // A sensor stops nothing, a ray neither: this one goes through it, to the floor
     TIDE_CHECK(got.through.any && same(got.through.entity, floor) && near(got.through.fraction, 6.0f / 7.0f));
     TIDE_CHECK(near(got.through.normal.y, 1.0f));
     TIDE_CHECK(!got.miss.any && none(got.miss.entity) && got.miss.fraction == 0.0f);
-    // What it met says which shape: the tee's cap is a part, an entity of its own, and its bar is the tee's
     TIDE_CHECK(got.cap.any && same(got.cap.entity, tee) && same(got.cap.part, the(w, tide_has_Cap)) && near(got.cap.point.y, 2.0f));
     TIDE_CHECK(got.bar.any && same(got.bar.entity, tee) && same(got.bar.part, tee) && near(got.bar.point.y, 1.0f));
-    // One that starts inside a shape meets it there, with no way it faces
     TIDE_CHECK(got.inside.any && same(got.inside.entity, wall) && got.inside.fraction == 0.0f);
     TIDE_CHECK(got.inside.normal.x == 0.0f && got.inside.normal.y == 0.0f);
-    // Down between two boxes that touch, which are as near as each other: the one that was made first, on
-    // whichever side it is
     TIDE_CHECK(got.twins.any && same(got.twins.entity, the(w, tide_has_First)) && near(got.twins.fraction, 0.8f));
     TIDE_CHECK(got.others.any && same(got.others.entity, the(w, tide_has_Third)) && got.others.fraction == got.twins.fraction);
-    // A shape that's cast stops where it first touches
     printf("    a box 4 wide let down from 5 onto two boxes 1 high touches at (%g, %g), %g of its way; one turned an eighth meets the "
            "floor %g of its way\n",
            (double)got.wide.point.x, (double)got.wide.point.y, (double)got.wide.fraction, (double)got.turned.fraction);
     TIDE_CHECK(got.wide.any && near(got.wide.fraction, 0.75f) && near(got.wide.point.y, 1.0f) && near(got.wide.normal.y, 1.0f));
     TIDE_CHECK(same(got.wide.entity, the(w, tide_has_First)) || same(got.wide.entity, the(w, tide_has_Second)));
-    // A square turned an eighth of a turn reaches half its diagonal down: it touches the floor from 0.707 up
     TIDE_CHECK(got.turned.any && same(got.turned.entity, floor) && near(got.turned.fraction, (5.0f - 0.7071f) / 6.0f));
     TIDE_CHECK(near(got.turned.point.x, 60.0f) && near(got.turned.point.y, 0.0f));
-    // A circle half a meter over where it's cast from, rolled into the wall
     TIDE_CHECK(got.round.any && same(got.round.entity, wall) && near(got.round.fraction, 0.5f) && near(got.round.point.x, 4.5f));
     TIDE_CHECK(near(got.round.point.y, 1.5f));
-    // What's in a shape, each once, in the order the bodies were made in
     TIDE_CHECK(got.pair.count == 2 && same(got.pair.a, the(w, tide_has_First)) && same(got.pair.b, the(w, tide_has_Second)));
     TIDE_CHECK(none(got.pair.c));
     TIDE_CHECK(got.tee.count == 1 && same(got.tee.a, tee));
     TIDE_CHECK(got.none.count == 0 && none(got.none.a));
-    // A body asks with itself left out: a ray from its middle meets itself at once, and past itself, the ball. Its
-    // own box, a little smaller, is free to move to the left along the floor it rests on, and to the right as
-    // far as the ball
     const tide_entity prober = the(w, tide_has_Prober);
     const Mine own = w->Asked.ownAfter;
     TIDE_CHECK(own.self.any && same(own.self.entity, prober) && own.self.fraction == 0.0f);
@@ -494,16 +454,12 @@ TIDE_TEST(box2d_answers_what_code_asks)
     printf("    a crate's own box is free to go 2 m left, and goes %g of 8 m to the right before it touches the ball\n", (double)own.reach.fraction);
     TIDE_CHECK(!own.step.any);
     TIDE_CHECK(own.reach.any && same(own.reach.entity, the(w, tide_has_Ball)) && own.reach.fraction > 0.4f && own.reach.fraction < 0.55f);
-    // What's in an entity's sensors now: the floor the trap reaches and the two crates in it, and for its part, a
-    // sensor of the same body that's an entity of its own, the floor and the one crate in that
     const Some trap = w->Asked.trapAfter;
     const Some eye = w->Asked.eyeAfter;
     printf("    the trap has %d bodies in its sensors, and its part %d\n", (int)trap.count, (int)eye.count);
     TIDE_CHECK(trap.count == 3 && same(trap.a, floor) && tide_has_Caught(w, trap.b) && tide_has_Caught(w, trap.c) && !same(trap.b, trap.c));
     TIDE_CHECK(eye.count == 2 && same(eye.a, floor) && tide_has_Caught(w, eye.b) && !same(eye.b, trap.b) && !same(eye.b, trap.c));
 
-    // Asked by the match after its step, by a view of that tick, and by the match before the next tick's step:
-    // the same world, so the same answers. And the same from a world that's made from the image to answer
     uint64_t answers = 0;
     int restored = 0;
     const tide_entity ghost = the(&a, tide_has_Ghost);
@@ -524,7 +480,6 @@ TIDE_TEST(box2d_answers_what_code_asks)
         TIDE_REQUIRE(same_bytes(&seen.own, &was.ownAfter, sizeof seen.own, "a view's and the match's, for a body"));
         TIDE_REQUIRE(same_bytes(&seen.trap, &was.trapAfter, sizeof seen.trap, "a view's and the match's, of a sensor"));
         TIDE_REQUIRE(same_bytes(&seen.eye, &was.eyeAfter, sizeof seen.eye, "a view's and the match's, of a part that's a sensor"));
-        // Every other tick with none of C's worlds: the view's question has one made, and then the match's
         const int32_t before = b2t_restores();
         if (i % 2 == 1) {
             b2t_forget();
@@ -548,7 +503,6 @@ TIDE_TEST(box2d_answers_what_code_asks)
     }
     TIDE_CHECK(restored == ASK_TICKS / 2);
     TIDE_CHECK(same(a.Asked.after.ghost.entity, floor));
-    // The ball that fell is on the floor, and a ray up from under it meets it at once
     TIDE_CHECK(a.Asked.after.faller.any && tide_has_Faller(&a, a.Asked.after.faller.entity) && a.Asked.after.faller.fraction == 0.0f);
     TIDE_CHECK(got.faller.any && tide_has_Faller(&a, got.faller.entity) && got.faller.fraction > 0.3f);
     TIDE_CHECK(!a.Box2D_Physics.moved); // All of it from a world at rest, by the end
@@ -557,7 +511,6 @@ TIDE_TEST(box2d_answers_what_code_asks)
     TIDE_CHECK(tide_world_hash(&a) == ASKS_HASH);
     TIDE_CHECK(tide_hash_end(answers) == ANSWERS_HASH);
 
-    // What making a world from the image to answer costs: the least of a few
     uint64_t made = UINT64_MAX;
     uint64_t there = UINT64_MAX;
     for (int i = 0; i < 20; i++) {
@@ -591,8 +544,6 @@ TIDE_TEST(box2d_says_how_hard_bodies_meet)
     const Heard floor = heard_by(w, tide_has_Floor);
     const Heard ram = heard_by(w, tide_has_Ram);
     const Heard struck = heard_by(w, tide_has_Struck);
-    // A ball dropped two meters meets the floor at about 6.3 m/s: each hears of it once, with where, which way and
-    // how fast. One let go three centimeters up meets it at under 1 m/s, and nothing is said
     printf("    a ball dropped 2 m hit the floor at (%g, %g), going %g m/s, facing (%g, %g)\n", (double)high.point.x, (double)high.point.y,
            (double)high.speed, (double)high.normal.x, (double)high.normal.y);
     TIDE_CHECK(high.hits == 1 && same(high.last, the(w, tide_has_Floor)) && same(high.part, the(w, tide_has_High)));
@@ -602,7 +553,6 @@ TIDE_TEST(box2d_says_how_hard_bodies_meet)
     TIDE_CHECK(low.hits == 0 && low.touched == 1);
     TIDE_CHECK(floor.hits == 1 && same(floor.last, the(w, tide_has_High)) && floor.speed == high.speed);
     TIDE_CHECK(near(floor.normal.y, 1.0f) && floor.point.x == high.point.x && floor.point.y == high.point.y);
-    // A crate at 3 m/s runs into one that's still
     printf("    a crate at 3 m/s hit another at (%g, %g), going %g m/s, facing (%g, %g)\n", (double)ram.point.x, (double)ram.point.y,
            (double)ram.speed, (double)ram.normal.x, (double)ram.normal.y);
     TIDE_CHECK(ram.hits == 1 && struck.hits == 1 && same(ram.last, the(w, tide_has_Struck)) && same(struck.last, the(w, tide_has_Ram)));
@@ -610,8 +560,6 @@ TIDE_TEST(box2d_says_how_hard_bodies_meet)
     TIDE_CHECK(near(ram.normal.x, 1.0f) && near(struck.normal.x, -1.0f) && ram.point.x > 11.0f && ram.point.x < 13.0f);
     tide_world_free(&a);
 
-    // How fast is fast enough is the world's to say: with the hit speed at half a meter a second, the ball that was
-    // let go just over the floor is heard too, and at seven, neither
     for (int round = 0; round < 2; round++) {
         start(&a, Case_Hits);
         a.Box2D_Physics.hitSpeed = round ? 7.0f : 0.5f;
@@ -631,7 +579,6 @@ TIDE_TEST(box2d_says_how_hard_bodies_meet)
 
 TIDE_TEST(box2d_is_tuned_by_its_singleton)
 {
-    // Whether bodies sleep: with it off, a world where everything lies still is stepped all the same
     start(&a, Case_Kinds);
     TIDE_REQUIRE(rests(&a, 900));
     TIDE_CHECK(stays(&a));
@@ -657,8 +604,6 @@ TIDE_TEST(box2d_is_tuned_by_its_singleton)
     TIDE_CHECK(stays(&a));
     tide_world_free(&a);
 
-    // How fast a shape that bounces has to meet something to bounce: a ball let go 3 cm up meets the floor at
-    // under 1 m/s, and only bounces once that's fast enough
     float rebound[2];
     for (int round = 0; round < 2; round++) {
         start(&a, Case_Tuning);
@@ -674,7 +619,6 @@ TIDE_TEST(box2d_is_tuned_by_its_singleton)
     printf("    a bouncy ball let go 3 cm up comes back at %g m/s, and at %g with a bounce speed of 0.25\n", (double)rebound[0], (double)rebound[1]);
     TIDE_CHECK(rebound[0] < 0.1f && rebound[1] > 0.3f);
 
-    // How fast bodies that overlap are pushed apart: two crates that start half in each other
     float apart[2];
     for (int round = 0; round < 2; round++) {
         start(&a, Case_Tuning);
@@ -687,8 +631,6 @@ TIDE_TEST(box2d_is_tuned_by_its_singleton)
            (double)apart[1]);
     TIDE_CHECK(apart[0] > apart[1] + 0.1f && apart[1] > 0.5f && apart[1] < 0.65f);
 
-    // How stiff contacts are, and how much they spring back: a heavy crate dropped on a light one squeezes it
-    // into the floor, less the stiffer they are, and it comes back out faster the less they're damped
     float sunk[3];
     float sprung[3];
     for (int round = 0; round < 3; round++) {
@@ -711,8 +653,6 @@ TIDE_TEST(box2d_is_tuned_by_its_singleton)
            (double)sunk[0], (double)sunk[1], (double)sprung[1], (double)sprung[2]);
     TIDE_CHECK(sunk[0] < sunk[1] - 0.002f && sprung[2] > sprung[1] * 1.5f);
 
-    // How readily a body sleeps is its own: of two crates that slide at 0.2 m/s, the one that sleeps under 1 m/s
-    // stops where it is
     start(&a, Case_Tuning);
     tick(&a, 120);
     const Box2D_Body slider = body_of(&a, tide_has_Slider);

@@ -176,8 +176,6 @@ TIDE_TEST(skinned_draw_cache_captures_edits_chunked_ownership_and_snapshots)
     TIDE_REQUIRE(tide_draw_skinned_data(&other, data, pose, again, info));
     TIDE_CHECK(captured_matches(&other, again[0], data, pose) && other.skinned != draw.skinned);
     tide_text_use(&heap, NULL);
-    // Distinct exact TRS values exercise index growth; returning to an old
-    // value must recover that capture even after unrelated poses came between.
     for (uint32_t i = 1u; i <= 80u; i++) {
         last = tide_list_at_mut(pose, 127, sizeof *last);
         last->position.y = (float)i;
@@ -226,7 +224,6 @@ TIDE_TEST(skinned_draw_cache_survives_scratch_reuse_reset_forget_and_slot_change
     bone->position.y = 4.0f;
     TIDE_REQUIRE(tide_draw_skinned_data(&draw, data, pose, second, info));
     TIDE_CHECK(second[0] != first[0] && captured_matches(&draw, second[0], data, pose));
-    // A slot's changed version cannot masquerade as the cached capture.
     draw.textures[second[0] - 1u].version ^= 1u;
     TIDE_REQUIRE(tide_draw_skinned_data(&draw, data, pose, again, info));
     TIDE_CHECK(again[0] == second[0] && captured_matches(&draw, again[0], data, pose));
@@ -316,7 +313,6 @@ TIDE_TEST(skinned_draw_cache_rechecks_invalidated_proof_and_owned_models)
     put_word(model, view.palette_at, view.nodes);
     tide_pack_mesh_updated(carrier, carrier_size);
     TIDE_CHECK(!tide_draw_skinned_data(&draw, data, pose, changed, info) && zero_outputs(changed, info));
-    // The owned copy keeps its original content and checked path.
     TIDE_REQUIRE(tide_draw_skinned_data(&owned_draw, owned, pose, changed, info));
     TIDE_CHECK(captured_matches(&owned_draw, changed[0], owned, pose));
     tide_draw_free(&draw);
@@ -377,7 +373,6 @@ TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
     TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, again, repeated));
     TIDE_CHECK(again[0] == textures[0][0] && repeated[3] == info[0][3]);
     TIDE_CHECK(tide_heap_hash(1u, &snapshot) == snapshot_hash);
-    // Equal captures in another list have independent page identities.
     TIDE_REQUIRE(tide_draw_skinned_atlas(&other, data, pose, again, repeated));
     TIDE_CHECK(other.textures[again[0] - 1u].id != draw.textures[textures[0][0] - 1u].id);
     const uint32_t reused = tide_scratch_mark();
@@ -394,7 +389,6 @@ TIDE_TEST(skinned_atlas_captures_owned_dependencies_before_prepare)
     tide_heap_free(&heap);
     tide_heap_free(&snapshot);
     tide_pack_unload();
-    // All dependencies are now gone or overwritten; preparation owns them.
     tide_draw_prepare(&draw, NULL);
     tide_draw_prepare(&other, NULL);
     for (uint32_t i = 0; i < 3u; i++) TIDE_CHECK(atlas_matches(&draw, textures[i][0], info[i][3], expected[i], 2u));
@@ -480,7 +474,6 @@ TIDE_TEST(skinned_atlas_grows_splits_and_prepares_through_jobs)
         if (!frame) { tide_draw_reset(&draw); jobs.run_some = NULL; }
     }
     tide_draw_reset(&draw);
-    // Reset discards pending work before textures are compacted.
     TIDE_REQUIRE(tide_draw_skinned_atlas(&draw, data, pose, textures[0], info[0]));
     tide_draw_reset(&draw);
     tide_draw_prepare(&draw, &jobs);
@@ -537,7 +530,6 @@ TIDE_TEST(skinned_atlas_append_preserves_two_source_frame_snapshots)
     }
     TIDE_CHECK(destination.runs[0].textures[0] != destination.runs[1].textures[0]);
     tide_draw_free(&source);
-    // A second append recognizes the copied writer kind as well.
     tide_draw_append(&copied, &destination);
     TIDE_REQUIRE(copied.run_count == 2u);
     for (uint32_t i = 0; i < 2u; i++) TIDE_CHECK(atlas_matches(&copied, copied.runs[i].textures[0], 0, expected[i], 2u));
@@ -668,8 +660,6 @@ TIDE_TEST(skinned_rest_capture_reuses_owned_rest_after_edits_growth_and_slot_cha
                            : tide_draw_skinned_data(&draw[atlas], data, pose, next, info));
         TIDE_CHECK(next[0] != first[0] || info[3] != first_info[3]);
         tide_draw_prepare(&draw[atlas], NULL);
-        // Other atlas captures have changed the page's version and dimensions;
-        // preparation has finished, but the rest slice remains a valid hit.
         const uint32_t textures = draw[atlas].texture_count, scratch = tide_scratch_mark();
         for (uint32_t i = 0; i < 100u; i++) {
             memset(info, 0, sizeof info);
@@ -688,8 +678,6 @@ TIDE_TEST(skinned_rest_capture_reuses_owned_rest_after_edits_growth_and_slot_cha
             TIDE_REQUIRE(tide_draw_skinned_rest_data(&draw[0], data, next, info));
             TIDE_CHECK(atlas_matches(&draw[0], next[0], 0, expected, 2u));
         } else {
-            // Both capture forms share one rest entry and may alternate after
-            // the atlas page has grown and its deferred writes have completed.
             for (uint32_t i = 0; i < 3u; i++) {
                 TIDE_REQUIRE(tide_draw_skinned_rest_data(&draw[1], data, next, info));
                 TIDE_CHECK(atlas_matches(&draw[1], next[0], 0, expected, 2u));
@@ -766,7 +754,6 @@ TIDE_TEST(skinned_rest_capture_keeps_append_snapshots_and_rechecks_reloaded_toke
         int32_t info[4];
         TIDE_REQUIRE(tide_draw_skinned_rest_atlas(&source, data, textures, info));
         atlas_command(&source, vertices, indices, textures, info[3]);
-        // Append prepares owned source bytes, even after their pack disappears.
         tide_pack_unload();
         tide_draw_append(&destination, &source);
         for (uint32_t i = 0; i <= frame; i++) {
@@ -796,8 +783,6 @@ TIDE_TEST(skinned_rest_capture_keeps_append_snapshots_and_rechecks_reloaded_toke
     TIDE_CHECK(atlas_matches(&source, first[0], first_info[3], expected[0], 2u));
     TIDE_CHECK(atlas_matches(&source, next[0], info[3], expected[1], 2u));
     TIDE_CHECK(!tide_draw_skinned_rest_atlas(&source, packed_model(), next, info) && zero_outputs(next, info) && info[3] == 0);
-    // Distinct reload identities grow and rehash the frame-local rest index,
-    // even when exact model bytes allow the owned palette capture to be reused.
     for (uint32_t i = 0; i < 24u; i++) {
         TIDE_REQUIRE(tide_pack_load(packs[0], sizes[0]));
         TIDE_REQUIRE(tide_pack_skinned_proof(packed_model(), &next_identity, &next_version));
@@ -843,7 +828,6 @@ TIDE_TEST(skinned_rest_capture_rechecks_invalidated_proof_and_owned_fallback)
     uint32_t count;
     void *carrier = tide_pack_mesh_open(tide_pack_find("Game.writable", TIDE_PACK_MESH), 0u, carrier_size, &count);
     TIDE_REQUIRE(carrier && count == 1u);
-    // Invalidating unchanged, valid bytes must still take the checked fallback.
     tide_pack_mesh_updated(carrier, carrier_size);
     uint64_t identity, version;
     TIDE_CHECK(!tide_pack_skinned_proof(data, &identity, &version));

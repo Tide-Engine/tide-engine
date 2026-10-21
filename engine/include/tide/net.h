@@ -246,10 +246,7 @@ uint64_t tide_hash_end(uint64_t h);
 // tide_hash's of the same bytes, and the same on every platform too. It's
 // XXH3's accumulation, 64 bytes a stripe into eight sums of 32 by 32-bit
 // products, which SSE2, NEON and WebAssembly's SIMD each do two or four at a
-// time, ending in tide_hash's steps (net.c defines it). Until 2026-10-20 it
-// was four of tide_hash's chains side by side; on a page in cache this is
-// twice that natively, 1.5 times under Node and 4 times on a CPU with AVX2.
-// What a world's pages keep is this one's (tide_page_hash).
+// time, ending in tide_hash's steps (net.c defines it). What a world's pages keep is this one's (tide_page_hash).
 uint64_t tide_hash_wide(const void *data, size_t size);
 
 // The same number by the vectors every CPU of a platform has (SSE2's, NEON's,

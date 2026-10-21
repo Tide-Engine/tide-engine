@@ -17,7 +17,6 @@ static Big big_in(const tide_world *w)
     return (Big){0};
 }
 
-// Whether an entity has the Results, and they
 static bool results_in(const tide_world *w, Results *r)
 {
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
@@ -53,18 +52,17 @@ TIDE_TEST(lists_big_all_checks_pass)
 TIDE_TEST(lists_big_snapshots_share_chunks)
 {
     tide_world_init(&world, 1.0f);
-    tide_world_tick(&world); // The lists filled
+    tide_world_tick(&world);
     tide_world_tick(&world);
     tide_world_copy(&snapshot, &world);
     const uint64_t before = tide_world_hash(&snapshot);
     const int32_t id = cell_id(&world, 1500);
-    tide_world_tick(&world); // One cell changes
+    tide_world_tick(&world);
     TIDE_CHECK(cell_id(&world, 1500) == id + 1);
     TIDE_CHECK(cell_id(&snapshot, 1500) == id);
     TIDE_CHECK(tide_world_hash(&snapshot) == before);
     TIDE_CHECK(tide_world_hash(&world) != before);
 
-    // Of the heap's pages, the snapshot shares all but the changed chunk
     uint32_t different = 0;
     TIDE_REQUIRE(world.heap.pages == snapshot.heap.pages);
     for (uint32_t i = 0; i < world.heap.pages; i++) different += world.heap.page[i] != snapshot.heap.page[i];

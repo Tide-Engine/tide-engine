@@ -1,5 +1,5 @@
-// A run nobody watches: TIDE_HIDDEN in the environment (tide/page.h), as an
-// agent's shell and a build server have it. No program on the platform layer
+// A run nobody watches: TIDE_HIDDEN in the environment (tide/page.h), as a
+// build server has it. No program on the platform layer
 // shows a window then, and one that only its window's closing would end
 // doesn't start: it says what to give it instead, with exit code 2. A program
 // that stops shows no dialog either.
@@ -14,7 +14,7 @@
 // variable, but that the window opens no audio device, and a window asked to
 // show doesn't.
 //
-// Whoever runs this may have the variable set (an agent has), so every run
+// Whoever runs this may have the variable set (a build shell may), so every run
 // here says which it's for: set, or taken out of the environment.
 
 import { spawnSync } from 'node:child_process';

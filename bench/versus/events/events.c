@@ -101,9 +101,8 @@ static void *make_deferred(const versus_flag *flags)
 }
 
 // One thread: taking the hits on threads, each piece the targets in a range of
-// its own going through every hit, took 0.5 ms a tick on 4 to 12 threads
-// against 0.2 on one (2026-10-20), as every thread reads every hit and
-// branches on where its target is.
+// its own going through every hit, was slower than one thread, as every thread
+// reads every hit and branches on where its target is.
 static void tick_deferred(void *state, const tide_jobs *jobs)
 {
     (void)jobs;

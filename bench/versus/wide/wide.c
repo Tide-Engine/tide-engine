@@ -185,7 +185,7 @@ static void tick(void *state, const tide_jobs *jobs)
         w->kept_count = w->count;
     }
     if (!w->moving) return;
-    // Threads pay from about a quarter of a million (on a 12-core Ryzen 9 7900X)
+    // Threads pay from about a quarter of a million bodies
     move_job j = {w, versus_pieces(jobs, w->count, 250000u)};
     versus_for(jobs, j.pieces, move, &j);
 }

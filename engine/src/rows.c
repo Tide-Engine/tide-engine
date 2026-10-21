@@ -5,8 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// See tide/rows.h.
-
 // Ends the program over a call C got wrong: which function, in which system,
 // and what to write instead.
 __attribute__((format(printf, 3, 4))) _Noreturn static void stop(const tide_rows *rows, const char *function, const char *format, ...)

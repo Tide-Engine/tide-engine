@@ -9,8 +9,7 @@
 // An unused image is kept for TIDE_TEXTURE_IDLE_FRAMES rendered lists at most,
 // ten minutes' at 60 a second, so one a game shows now and then (a boss's, a
 // level's) isn't sent to the GPU again each time it comes back: the budget is
-// what bounds the memory. (60 lists till 2026-10-20, which sent a game's
-// boss's animation again every time one rose.)
+// what bounds the memory.
 enum { TIDE_TEXTURE_IDLE_FRAMES = 36000, TIDE_TEXTURE_IDLE_COUNT = 4096 };
 #define TIDE_TEXTURE_IDLE_BYTES (UINT64_C(128) * 1024u * 1024u)
 

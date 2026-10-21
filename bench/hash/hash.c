@@ -1,11 +1,9 @@
-// Page hashes measured: the engine's (tide_hash_wide) beside the candidates
-// that were measured for its place, on the shapes a world's hash reads (8 KiB
-// lane pages, 16 KiB pages, worlds of many in cache and out of it, small
-// runs), natively and as WebAssembly under Node. The engine's is "stripes"
-// (since 2026-10-20; "chains4" before), and the ways of computing it here are
-// the ones tried for it. Every candidate is integer arithmetic only, so a SIMD
-// way of one gives the bits its plain C gives on every machine, which every
-// run checks before anything else (notes/benchmarks.md, Page hash, measured).
+// Page hashes timed: the engine's (tide_hash_wide) beside candidate hashes, on
+// the shapes a world's hash reads (8 KiB lane pages, 16 KiB pages, worlds of
+// many in cache and out of it, small runs), natively and as WebAssembly under
+// Node. The engine's is "stripes". Every candidate is integer arithmetic only,
+// so a SIMD way of one gives the bits its plain C gives on every machine, which
+// every run checks before anything else.
 //
 //   bench_hash [--rounds n] [--only name] [--quick] [--quality]
 //
@@ -59,7 +57,7 @@ static inline uint64_t read64(const uint8_t *p)
 // ---------------------------------------------------------------------------
 // The engine's, as it is
 
-// The page hash until 2026-10-20: four of tide_hash's chains side by side,
+// Four of tide_hash's chains side by side,
 // chain k taking the words at 8k, 32 + 8k and on, what's left after the last
 // round a word a chain, the last short and zeros past its bytes, then the size
 // and the chains one chain's words.
@@ -99,7 +97,7 @@ static uint64_t hash_engine_baseline(const void *data, const size_t size)
     return tide_hash_wide_baseline(data, size);
 }
 
-// Four chains, as they were, with eight instead: 64 bytes a round
+// Eight chains instead of four: 64 bytes a round
 
 static uint64_t hash_chains8(const void *data, const size_t size)
 {
@@ -228,8 +226,8 @@ WY_HASH(hash_wy32, wy_mum32)
 // ((a ^ a >> 47) ^ key[16 + j]) * 0x9E3779B1. Then the size and the eight
 // accumulators are tide_hash's chain's words, and its end is tide_hash's.
 // Multiplies of 32 by 32 bits to 64 are what SSE2, NEON and WebAssembly's
-// SIMD all have. It's the engine's page hash now; its plain definition here
-// is what "engine" is checked against.
+// SIMD all have. This is the engine's page hash; its plain definition here is
+// what "engine" is checked against.
 
 static const uint64_t stripe_key[24] = {
     0xF1D471BF300D2ACAull, 0xB98D6EEDD4DBCB43ull, 0xE41EE98106E4C3FCull, 0x9C8A5940DDCAF100ull,
@@ -444,8 +442,8 @@ static uint64_t hash_chains4_prefetch(const void *data, const size_t size)
 }
 
 #if defined(__x86_64__) || defined(_M_X64)
-// AVX2's 256-bit vectors: a stripe in two, for machines that have it (this
-// one's checked as it starts). Measured to see what's left beside SSE2.
+// AVX2's 256-bit vectors: a stripe in two, for machines that have it (checked
+// as it starts).
 #define HASH_AVX2 1
 typedef uint64_t u64x4 __attribute__((vector_size(32)));
 

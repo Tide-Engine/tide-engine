@@ -52,7 +52,6 @@ static uint32_t shader_mesh(tide_draw_list *d, const uint32_t vertex_size)
     return mesh;
 }
 
-// Every frame starts from the defaults, whatever the last one left set.
 TIDE_TEST(draw_settings_start_over_each_frame)
 {
     tide_draw_list d = {0};
@@ -68,7 +67,7 @@ TIDE_TEST(draw_settings_start_over_each_frame)
     tide_draw_set_clip(&d, (tide_rect){0.0f, 0.0f, 4.0f, 4.0f});
     tide_draw_set_screen(&d);
     tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
-    tide_draw_push_tint(&d, TIDE_COLOR_BLUE); // A block the frame never closed
+    tide_draw_push_tint(&d, TIDE_COLOR_BLUE);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD && shown(&d).count > 2);
 
@@ -76,14 +75,11 @@ TIDE_TEST(draw_settings_start_over_each_frame)
     TIDE_CHECK(d.place.blend == TIDE_BLEND_ALPHA && !d.place.tinted && !d.place.moved && !d.place.clip && !d.saved_count);
     TIDE_CHECK(!d.place.camera_2d && !d.place.camera_3d && d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_RED);
-    // Nothing but the rect, as it was given
     TIDE_REQUIRE(shown(&d).count == 1 && shown(&d).commands[0].kind == TIDE_DRAW_RECT && shown(&d).commands[0].blend == TIDE_BLEND_ALPHA);
     TIDE_CHECK(color_is(shown(&d).commands[0].color, 1, 0, 0, 1) && shown(&d).commands[0].a.x == 0.0f && shown(&d).commands[0].b.x == 1.0f);
     tide_draw_free(&d);
 }
 
-// A block puts back what it found, a Set inside it or not, and leaving
-// several at once puts back what the outermost found.
 TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
 {
     tide_draw_list d = {0};
@@ -91,7 +87,7 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     const uint32_t add = tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD);
-    tide_draw_set_blend(&d, TIDE_BLEND_REPLACE); // Set inside the block: for the rest of it
+    tide_draw_set_blend(&d, TIDE_BLEND_REPLACE);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->blend == TIDE_BLEND_REPLACE);
     tide_draw_pop(&d, add);
@@ -100,7 +96,6 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     tide_draw_unset_blend(&d);
     TIDE_CHECK(d.place.blend == TIDE_BLEND_ALPHA);
 
-    // Tints multiply, one inside the other
     tide_draw_set_tint(&d, (tide_color){1.0f, 0.5f, 1.0f, 1.0f});
     const uint32_t outer = tide_draw_push_tint(&d, (tide_color){0.5f, 1.0f, 1.0f, 0.5f});
     const uint32_t inner = tide_draw_push_tint(&d, (tide_color){1.0f, 1.0f, 0.5f, 0.5f});
@@ -110,7 +105,6 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     tide_draw_pop(&d, inner);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(color_is(last(&d)->color, 0.5f, 0.5f, 1.0f, 0.5f));
-    // Left early, from inside both: the outer mark puts back what the outer found
     tide_draw_push_tint(&d, TIDE_COLOR_RED);
     tide_draw_set_tint(&d, TIDE_COLOR_GREEN);
     tide_draw_pop(&d, outer);
@@ -120,12 +114,10 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(color_is(last(&d)->color, 1, 1, 1, 1) && !d.altered);
 
-    // A block that found no tint leaves none
     const uint32_t only = tide_draw_push_tint(&d, TIDE_COLOR_RED);
     tide_draw_pop(&d, only);
     TIDE_CHECK(!d.place.tinted);
 
-    // Transforms: the inner one is inside the outer
     const uint32_t moved = tide_draw_push_transform(&d, tide_draw_transform_moved(tide_f2(10.0f, 0.0f)));
     const uint32_t scaled = tide_draw_push_transform(&d, tide_draw_transform_scaled(tide_f2(0.0f, 5.0f), 0.0f, 2.0f));
     tide_draw_rect(&d, tide_f2(1.0f, 1.0f), unit, TIDE_COLOR_WHITE);
@@ -137,7 +129,6 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     tide_draw_rect(&d, tide_f2(1.0f, 1.0f), unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->a.x == 1.0f && !(d.place.moved & TIDE_DRAW_MOVED) && !d.altered);
 
-    // Cameras: the screen around a label, and the camera it found is back
     tide_draw_set_camera(&d, tide_f2(3.0f, 4.0f), 5.0f);
     const uint32_t camera = d.place.camera_2d;
     const uint32_t screen = tide_draw_push_screen(&d);
@@ -151,8 +142,6 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     tide_draw_free(&d);
 }
 
-// A clip in a block is what of its rect is inside the clip there was; set, it
-// stands alone. A command names the clip it draws through.
 TIDE_TEST(draw_settings_clips_nest)
 {
     tide_draw_list d = {0};
@@ -164,7 +153,7 @@ TIDE_TEST(draw_settings_clips_nest)
     TIDE_REQUIRE(inner != outer && d.clips[inner - 1u].parent == outer && d.clips[inner - 1u].rect.x == 50.0f);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_REQUIRE(d.count == 2 && d.commands[0].kind == TIDE_DRAW_CLIP && d.commands[0].clip == inner);
-    tide_draw_set_clip(&d, (tide_rect){1.0f, 2.0f, 3.0f, 4.0f}); // Set: not inside the panel's
+    tide_draw_set_clip(&d, (tide_rect){1.0f, 2.0f, 3.0f, 4.0f});
     TIDE_CHECK(d.clips[d.place.clip - 1u].parent == 0);
     tide_draw_pop(&d, row);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
@@ -173,7 +162,6 @@ TIDE_TEST(draw_settings_clips_nest)
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(d.count == 6 && d.commands[4].kind == TIDE_DRAW_NO_CLIP && d.place.clip == 0);
 
-    // Inside a transform, it's the upright rect around what its rect becomes, under the camera there is
     tide_draw_set_camera(&d, tide_f2(7.0f, 8.0f), 9.0f);
     tide_draw_set_transform(&d, tide_draw_transform_turned(tide_f2(10.0f, 0.0f), TIDE_PI_F * 0.5f));
     tide_draw_set_clip(&d, (tide_rect){0.0f, 0.0f, 4.0f, 2.0f});
@@ -184,13 +172,10 @@ TIDE_TEST(draw_settings_clips_nest)
     tide_draw_free(&d);
 }
 
-// A setting that's set to what it was, or set and put back around nothing,
-// records nothing: instances drawn one after another are still one command.
 TIDE_TEST(draw_settings_never_split_a_run)
 {
     tide_draw_list d = {0};
     const tide_rect arena = {0.0f, 0.0f, 10.0f, 10.0f};
-    // A view that runs for each entity: the same settings around each one's mesh
     for (int entity = 0; entity < 3; entity++) {
         const uint32_t mark = tide_draw_push_clip(&d, arena);
         tide_draw_push_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
@@ -205,11 +190,9 @@ TIDE_TEST(draw_settings_never_split_a_run)
     const tide_draw_command *run = &d.commands[2];
     TIDE_REQUIRE(run->kind == TIDE_DRAW_MESH_3D && run->mesh3.count == 3 && run->blend == TIDE_BLEND_ADD);
     TIDE_CHECK(color_is(run->color, 1.0f, 0.5f, 0.25f, 1.0f));
-    // Each instance through the block's transform, on its way to the world
     TIDE_CHECK(d.matrices[run->mesh3.first + 2u].c3.x == 2.0f && d.matrices[run->mesh3.first + 2u].c3.y == 10.0f);
     TIDE_CHECK(d.saved_count == 0 && d.place.clip == 0 && d.place.camera_3d == 0);
 
-    // Set and put back with nothing drawn: nothing recorded, and the run goes on
     const uint32_t empty = tide_draw_push_camera(&d, tide_f2(5.0f, 5.0f), 3.0f);
     tide_draw_push_clip(&d, (tide_rect){1.0f, 1.0f, 2.0f, 2.0f});
     tide_draw_push_camera_matrices(&d, tide_identity_f4x4(), tide_identity_f4x4());
@@ -222,7 +205,6 @@ TIDE_TEST(draw_settings_never_split_a_run)
     tide_draw_pop(&d, again);
     TIDE_CHECK(d.count == 3 && d.commands[2].mesh3.count == 4);
 
-    // Another tint, or another blend, is another run
     tide_draw_set_clip(&d, arena);
     tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
     tide_draw_set_blend(&d, TIDE_BLEND_ADD);
@@ -233,7 +215,6 @@ TIDE_TEST(draw_settings_never_split_a_run)
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 5 && last(&d)->blend == TIDE_BLEND_ALPHA);
 
-    // The same camera set again is the camera there is
     const uint32_t cameras = d.camera_count;
     tide_draw_set_camera(&d, tide_f2(1.0f, 2.0f), 3.0f);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
@@ -244,9 +225,6 @@ TIDE_TEST(draw_settings_never_split_a_run)
     tide_draw_free(&d);
 }
 
-// Every setting belongs to its destination, how commands come out (their blend
-// and tint) as much as where they land. A block's end puts back its own
-// destination's.
 TIDE_TEST(draw_settings_of_a_destination_are_its_own)
 {
     tide_draw_list d = {0};
@@ -256,11 +234,9 @@ TIDE_TEST(draw_settings_of_a_destination_are_its_own)
     tide_draw_set_camera(&d, tide_f2(1.0f, 1.0f), 4.0f);
     tide_draw_set_clip(&d, (tide_rect){0.0f, 0.0f, 8.0f, 8.0f});
     tide_draw_to(&d, 17, 64, 64);
-    // A target's own: a frame's first, the window's blend and tint among what doesn't reach it
     TIDE_CHECK(!d.place.moved && !d.place.clip && !d.place.camera_2d && !d.place.tinted && d.place.blend == TIDE_BLEND_ALPHA);
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->a.x == 1.0f && last(&d)->blend == TIDE_BLEND_ALPHA && color_is(last(&d)->color, 1, 1, 1, 1));
-    // Set for the target, they're the target's: the window's are as they were when it's selected again
     tide_draw_set_blend(&d, TIDE_BLEND_MULTIPLY);
     tide_draw_set_tint(&d, (tide_color){1.0f, 0.0f, 0.0f, 1.0f});
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
@@ -268,19 +244,18 @@ TIDE_TEST(draw_settings_of_a_destination_are_its_own)
     tide_draw_to(&d, 0, 0, 0);
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->a.x == 101.0f && last(&d)->blend == TIDE_BLEND_ADD && color_is(last(&d)->color, 0.5f, 1, 1, 1));
-    // A block of the target's blend and tint, left while the window is selected, puts the target's back
     tide_draw_to(&d, 17, 64, 64);
     const uint32_t tinted = tide_draw_push_tint(&d, (tide_color){1.0f, 1.0f, 0.0f, 1.0f});
     tide_draw_push_blend(&d, TIDE_BLEND_REPLACE);
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_REPLACE && color_is(last(&d)->color, 1, 0, 0, 1)); // Inside the red, times yellow
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_REPLACE && color_is(last(&d)->color, 1, 0, 0, 1));
     tide_draw_to(&d, 0, 0, 0);
     tide_draw_pop(&d, tinted);
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD && color_is(last(&d)->color, 0.5f, 1, 1, 1)); // The window's, untouched
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD && color_is(last(&d)->color, 0.5f, 1, 1, 1));
     tide_draw_to(&d, 17, 64, 64);
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_MULTIPLY && color_is(last(&d)->color, 1, 0, 0, 1)); // The target's, as before its block
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_MULTIPLY && color_is(last(&d)->color, 1, 0, 0, 1));
     tide_draw_to(&d, 0, 0, 0);
     tide_draw_set_blend(&d, TIDE_BLEND_ADD);
     tide_draw_set_tint(&d, (tide_color){0.5f, 1.0f, 1.0f, 1.0f});
@@ -290,23 +265,21 @@ TIDE_TEST(draw_settings_of_a_destination_are_its_own)
     const uint32_t block = tide_draw_push_clip(&d, (tide_rect){0.0f, 0.0f, 2.0f, 2.0f});
     tide_draw_push_transform(&d, tide_draw_transform_moved(tide_f2(0.0f, 50.0f)));
     tide_draw_to(&d, 0, 0, 0);
-    TIDE_CHECK(d.place.clip && d.place.moved && d.place.camera_2d); // The window's, as it left them
+    TIDE_CHECK(d.place.clip && d.place.moved && d.place.camera_2d);
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->a.x == 101.0f && last(&d)->a.y == 2.0f);
     const uint32_t window_clip = d.place.clip;
-    tide_draw_pop(&d, block); // The target's block ends while the window is selected
+    tide_draw_pop(&d, block);
     TIDE_CHECK(d.place.clip == window_clip && (d.place.moved & TIDE_DRAW_MOVED));
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(!d.place.clip && !d.place.moved);
     tide_draw_free(&d);
 }
 
-// A 2D transform is recorded into what it moves: shapes stay shapes.
 TIDE_TEST(draw_transforms_move_shapes)
 {
     tide_draw_list d = {0};
     const tide_color red = TIDE_COLOR_RED;
-    // Moved and scaled each way: rects, their outlines and lines fill whole pixels still
     tide_draw_set_transform(&d, tide_draw_transform_trs(tide_f2(10.0f, 20.0f), 0.0f, tide_f2(2.0f, 3.0f)));
     tide_draw_rect(&d, tide_f2(1.0f, 1.0f), tide_f2(4.0f, 2.0f), red);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_RECT && last(&d)->a.x == 12.0f && last(&d)->a.y == 23.0f);
@@ -315,13 +288,11 @@ TIDE_TEST(draw_transforms_move_shapes)
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_WIRE_RECT && last(&d)->b.y == 6.0f);
     tide_draw_line(&d, tide_f2(0.0f, 0.0f), tide_f2(1.0f, 1.0f), red);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_LINE && last(&d)->a.x == 10.0f && last(&d)->b.x == 12.0f && last(&d)->b.y == 23.0f);
-    // ...and a circle, stretched, is the ellipse it becomes
     tide_draw_circle(&d, tide_f2(0.0f, 0.0f), 5.0f, red);
     TIDE_REQUIRE(last(&d)->kind == TIDE_DRAW_SHAPE);
     TIDE_CHECK(last(&d)->b.x == 20.0f && last(&d)->b.y == 30.0f);
     TIDE_CHECK((d.shapes[last(&d)->shape].form & TIDE_SHAPE_FORMS) == TIDE_SHAPE_ELLIPSE);
 
-    // As much each way: circles stay circles, and text is bigger text
     tide_draw_set_transform(&d, tide_draw_transform_scaled(tide_f2(10.0f, 20.0f), 0.0f, 2.0f));
     tide_draw_circle(&d, tide_f2(1.0f, 1.0f), 5.0f, red);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_CIRCLE && last(&d)->a.x == 12.0f && last(&d)->b.x == 10.0f);
@@ -331,7 +302,6 @@ TIDE_TEST(draw_transforms_move_shapes)
     tide_draw_round_rect(&d, tide_f2(0.0f, 0.0f), tide_f2(8.0f, 4.0f), 1.0f, red);
     TIDE_CHECK(last(&d)->b.x == 16.0f && d.shapes[last(&d)->shape].radius == 2.0f);
 
-    // Turned a quarter: a rect is the smooth box it also is, its outline a pixel wide; a circle is a circle
     tide_draw_set_transform(&d, tide_draw_transform_turned(tide_f2(10.0f, 0.0f), TIDE_PI_F * 0.5f));
     tide_draw_rect(&d, tide_f2(2.0f, 0.0f), tide_f2(4.0f, 2.0f), red);
     TIDE_REQUIRE(last(&d)->kind == TIDE_DRAW_SHAPE);
@@ -344,16 +314,13 @@ TIDE_TEST(draw_transforms_move_shapes)
     tide_draw_circle(&d, tide_f2(2.0f, 0.0f), 3.0f, red);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_CIRCLE && about(last(&d)->a.x, 10.0f) && about(last(&d)->a.y, 2.0f)
                && about(last(&d)->b.x, 3.0f));
-    // ...and text is turned text, laid out at the size it was given
     tide_draw_text(&d, "turned", tide_f2(2.0f, 0.0f), 8.0f, red);
     TIDE_REQUIRE(last(&d)->kind == TIDE_DRAW_TEXT && last(&d)->words.turned == d.turn_count && d.turn_count == 1);
     TIDE_CHECK(last(&d)->b.x == 8.0f && about(last(&d)->a.x, 10.0f) && about(last(&d)->a.y, 2.0f));
     TIDE_CHECK(about(d.turns[0].c0.y, 1.0f) && about(d.turns[0].c1.x, -1.0f));
-    // A shape that's turned already is turned further
     tide_draw_rect_rotated(&d, origin, tide_f2(4.0f, 2.0f), TIDE_PI_F * 0.5f, red);
     TIDE_CHECK(about(d.shapes[last(&d)->shape].turn.x, -1.0f) && about(d.shapes[last(&d)->shape].turn.y, 0.0f));
 
-    // Mirrored: a fill's top is where its bottom was
     tide_draw_set_transform(&d, tide_draw_transform_trs(origin, 0.0f, tide_f2(1.0f, -1.0f)));
     tide_shape fade = TIDE_SHAPE_WHITE;
     fade.size = tide_f2(4.0f, 4.0f);
@@ -362,14 +329,12 @@ TIDE_TEST(draw_transforms_move_shapes)
     tide_draw_shape(&d, fade);
     TIDE_CHECK(color_is(last(&d)->color, 0, 0, 1, 1) && color_is(d.shapes[last(&d)->shape].color2, 1, 0, 0, 1));
 
-    // A matrix that skews: a circle is still an ellipse, the one it becomes
     tide_draw_set_transform(&d, tide_draw_transform_matrix((tide_float3x3){{2.0f, 0.0f, 0.0f}, {2.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}}));
     tide_draw_circle(&d, origin, 1.0f, red);
     TIDE_REQUIRE(last(&d)->kind == TIDE_DRAW_SHAPE);
     // Its area is the circle's times the matrix's: pi * a * b = pi * 2
     TIDE_CHECK(about(last(&d)->b.x * last(&d)->b.y * 0.25f, 2.0f) && last(&d)->b.x > last(&d)->b.y);
 
-    // Meshes go through it as they are, corner by corner
     static const tide_vertex triangle[3] = {{{0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
                                             {{1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.0f}},
                                             {{0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}}};
@@ -380,7 +345,6 @@ TIDE_TEST(draw_transforms_move_shapes)
     tide_draw_free(&d);
 }
 
-// A tint multiplies every color a command has; clears and blits have none.
 TIDE_TEST(draw_tints_multiply_colors)
 {
     tide_draw_list d = {0};
@@ -399,7 +363,6 @@ TIDE_TEST(draw_tints_multiply_colors)
     TIDE_CHECK(color_is(last(&d)->color, 0.5f, 1.0f, 0.5f, 0.5f) && color_is(data->color2, 0.5f, 0.0f, 0.0f, 0.5f));
     TIDE_CHECK(color_is(data->outline_color, 0.5f, 1.0f, 0.5f, 0.5f));
 
-    // A shader of the game's: its run's, for its pixels; a 3D one's instances go through the 3D transform
     static const tide_shader flat = {.dims = 2, .vertex_size = 32, .instance_floats = 1};
     static const tide_shader solid = {.dims = 3, .vertex_size = 32, .instance_floats = 4};
     const float instance[4] = {1.0f, 2.0f, 3.0f, 4.0f};
@@ -411,21 +374,19 @@ TIDE_TEST(draw_tints_multiply_colors)
     TIDE_REQUIRE(last(&d)->kind == TIDE_DRAW_SHADED && last(&d)->blend == TIDE_BLEND_MULTIPLY);
     const tide_draw_run *run = &d.runs[last(&d)->shaded.run];
     TIDE_CHECK(color_is(run->tint, 0.5f, 1.0f, 0.5f, 0.5f) && run->moved && run->transform.offset.x == 3.0f);
-    TIDE_CHECK(memcmp(d.instances + run->first, instance, sizeof instance) == 0); // A 2D shader's instance is its own
+    TIDE_CHECK(memcmp(d.instances + run->first, instance, sizeof instance) == 0);
     const tide_float4x4 placed = tide_translate_f4x4(tide_f3(1.0f, 0.0f, 0.0f));
     tide_draw_shaded(&d, &solid, mesh, &placed, NULL, NULL, 0);
     const tide_draw_run *deep = &d.runs[last(&d)->shaded.run];
     tide_float4x4 recorded;
     memcpy(&recorded, d.instances + deep->first, sizeof recorded);
     TIDE_CHECK(!deep->moved && recorded.c3.x == 1.0f && recorded.c3.z == 9.0f);
-    // The same again is more of the run; another tint is another
     tide_draw_shaded(&d, &solid, mesh, &placed, NULL, NULL, 0);
     TIDE_CHECK(d.runs[last(&d)->shaded.run].count == 2);
     tide_draw_set_tint(&d, TIDE_COLOR_RED);
     tide_draw_shaded(&d, &solid, mesh, &placed, NULL, NULL, 0);
     TIDE_CHECK(d.runs[last(&d)->shaded.run].count == 1);
 
-    // A blit is the whole destination as its frag writes it, blended as it's asked to be
     static const tide_shader pass = {.dims = 2, .vertex_size = sizeof(tide_vertex)};
     tide_draw_blit(&d, &pass, TIDE_BLEND_REPLACE, NULL, NULL, NULL, 0);
     TIDE_REQUIRE(last(&d)->kind == TIDE_DRAW_BLIT && last(&d)->blend == TIDE_BLEND_REPLACE);
@@ -435,9 +396,6 @@ TIDE_TEST(draw_tints_multiply_colors)
     tide_draw_free(&d);
 }
 
-// Appended, a list's commands are as it recorded them: nothing the list they
-// join has set changes them, and they leave none of their own behind but
-// their cameras and clips.
 TIDE_TEST(draw_settings_stay_with_their_list)
 {
     tide_draw_list world = {0}, over = {0};
@@ -480,13 +438,12 @@ TIDE_TEST(draw_settings_stay_with_their_list)
             TIDE_CHECK(color_is(ours->color, 1, 1, 0, 1) && world.matrices[ours->mesh3.first].c3.x == 0.0f);
             TIDE_CHECK(ours->depth == TIDE_DEPTH_READ && ours->cull == TIDE_CULL_FRONT);
         }
-        if (theirs->kind == TIDE_DRAW_CLIP) { // The clip it was made in comes with it
+        if (theirs->kind == TIDE_DRAW_CLIP) {
             const tide_draw_clip_data *clip = &world.clips[ours->clip - 1u];
             TIDE_REQUIRE(clip->parent && clip->parent <= world.clip_count);
             TIDE_CHECK(clip->rect.x == 5.0f && world.clips[clip->parent - 1u].rect.width == 10.0f);
         }
     }
-    // What the appended list drew with isn't left set, but its cameras and its clip
     TIDE_CHECK(world.place.blend == TIDE_BLEND_ALPHA && !world.place.tinted && !world.place.moved);
     TIDE_CHECK(world.place.depth == TIDE_DEPTH_READ_WRITE && world.place.cull == TIDE_CULL_BACK);
     TIDE_CHECK(world.place.clip && world.cameras[world.place.camera_2d - 1u].screen == 1);
@@ -494,30 +451,24 @@ TIDE_TEST(draw_settings_stay_with_their_list)
     tide_draw_free(&world);
 }
 
-// What a 3D mesh does with depth is a setting: its command carries it, as it
-// carries how it blends, a block puts back what it found, and it never comes
-// between draws that would go at once. It's its destination's own, as a
-// camera is. Nothing else has depth, whatever is set.
 TIDE_TEST(draw_depth_is_the_3d_meshes_own)
 {
     tide_draw_list d = {0};
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_REQUIRE(d.count == 1 && last(&d)->kind == TIDE_DRAW_MESH_3D);
-    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_READ_WRITE && d.place.depth == TIDE_DEPTH_READ_WRITE); // As it always was
+    TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_READ_WRITE && d.place.depth == TIDE_DEPTH_READ_WRITE);
 
-    // A block puts back what it found, a Set inside it or not
     tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
     const uint32_t read = tide_draw_push_depth(&d, TIDE_DEPTH_READ);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 2 && last(&d)->depth == TIDE_DEPTH_READ);
-    tide_draw_set_depth(&d, TIDE_DEPTH_READ_WRITE); // Set inside the block: for the rest of it
+    tide_draw_set_depth(&d, TIDE_DEPTH_READ_WRITE);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 3 && last(&d)->depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_pop(&d, read);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_NONE && d.saved_count == 0);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 4 && last(&d)->depth == TIDE_DEPTH_NONE);
-    // Left early from inside two: the outer mark puts back what the outer found, the blend with it
     const uint32_t outer = tide_draw_push_depth(&d, TIDE_DEPTH_READ);
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_push_depth(&d, TIDE_DEPTH_READ_WRITE);
@@ -525,10 +476,9 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_NONE && d.place.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
     tide_draw_unset_depth(&d);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
-    tide_draw_set_depth(&d, (tide_depth)77); // None of them: as a frame starts
+    tide_draw_set_depth(&d, (tide_depth)77);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
 
-    // The same setting around each of a view's entities' meshes: still one run
     tide_draw_reset(&d);
     for (int entity = 0; entity < 3; entity++) {
         const uint32_t mark = tide_draw_push_depth(&d, TIDE_DEPTH_READ);
@@ -536,17 +486,14 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
         tide_draw_pop(&d, mark);
     }
     TIDE_REQUIRE(d.count == 1 && last(&d)->mesh3.count == 3 && last(&d)->depth == TIDE_DEPTH_READ);
-    // Set and put back around nothing: the run goes on
     tide_draw_pop(&d, tide_draw_push_depth(&d, TIDE_DEPTH_NONE));
     tide_draw_set_depth(&d, TIDE_DEPTH_READ);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 1 && last(&d)->mesh3.count == 4);
-    // Another depth is another run
     tide_draw_set_depth(&d, TIDE_DEPTH_READ_WRITE);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 2 && last(&d)->mesh3.count == 1 && last(&d)->depth == TIDE_DEPTH_READ_WRITE);
 
-    // A mesh through a 3D shader of the game's has it too: the same again is more of its run, another is another
     static const tide_shader solid = {.dims = 3, .vertex_size = 32, .instance_floats = 4};
     static const tide_shader flat = {.dims = 2, .vertex_size = 32, .instance_floats = 1};
     static const tide_shader pass = {.dims = 2, .vertex_size = sizeof(tide_vertex)};
@@ -563,7 +510,6 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     tide_draw_shaded(&d, &solid, mesh, &placed, NULL, NULL, 0);
     TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_NONE && d.runs[last(&d)->shaded.run].count == 1);
 
-    // Nothing else has depth: a 2D command says none whatever is set, so the setting never comes between two
     const uint32_t count = d.count;
     tide_draw_shaded(&d, &flat, mesh, instance, NULL, NULL, 0);
     tide_draw_set_depth(&d, TIDE_DEPTH_READ);
@@ -578,7 +524,6 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     tide_draw_clear(&d, TIDE_COLOR_BLACK);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_CLEAR && last(&d)->depth == 0);
 
-    // It's a destination's own: a target's meshes start as a frame does, whatever the window's do
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
@@ -588,17 +533,15 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     const uint32_t block = tide_draw_push_depth(&d, TIDE_DEPTH_NONE);
     tide_draw_mesh_3d(&d, &quad, tide_translate_f4x4(tide_f3(5.0f, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_NONE);
-    // ...and the window's is as it was left, while the target's block is open
     tide_draw_to(&d, 0, 0, 0);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(last(&d)->depth == TIDE_DEPTH_READ);
-    tide_draw_pop(&d, block); // The target's block ends while the window is selected: its own is put back
+    tide_draw_pop(&d, block);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ && d.saved_count == 0);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_set_depth(&d, TIDE_DEPTH_NONE);
 
-    // The GUI's and a host's own start from the defaults, every destination's
     tide_draw_defaults(&d);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE && d.target == 0);
     tide_draw_to(&d, 17, 64, 64);
@@ -606,11 +549,6 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     tide_draw_free(&d);
 }
 
-// Which side of a 3D mesh's triangles isn't drawn is a setting as its depth
-// is: its command carries it, a block puts back what it found, it never comes
-// between draws that would go at once, and it's its destination's own.
-// Nothing else has a back. Instances whose transforms mirror their mesh say
-// so, in a run of their own, and so does a camera that mirrors the world.
 TIDE_TEST(draw_cull_is_the_3d_meshes_own)
 {
     tide_draw_list d = {0};
@@ -618,21 +556,19 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     const tide_float4x4 mirror = tide_trs_f4x4(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), tide_f3(-1.0f, 1.0f, 1.0f));
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_REQUIRE(d.count == 1 && last(&d)->kind == TIDE_DRAW_MESH_3D);
-    TIDE_CHECK(last(&d)->cull == TIDE_CULL_BACK && d.place.cull == TIDE_CULL_BACK); // What a frame starts with
+    TIDE_CHECK(last(&d)->cull == TIDE_CULL_BACK && d.place.cull == TIDE_CULL_BACK);
 
-    // A block puts back what it found, a Set inside it or not
     tide_draw_set_cull(&d, TIDE_CULL_NONE);
     const uint32_t front = tide_draw_push_cull(&d, TIDE_CULL_FRONT);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 2 && last(&d)->cull == TIDE_CULL_FRONT);
-    tide_draw_set_cull(&d, TIDE_CULL_BACK); // Set inside the block: for the rest of it
+    tide_draw_set_cull(&d, TIDE_CULL_BACK);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 3 && last(&d)->cull == TIDE_CULL_BACK);
     tide_draw_pop(&d, front);
     TIDE_CHECK(d.place.cull == TIDE_CULL_NONE && d.saved_count == 0);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 4 && last(&d)->cull == TIDE_CULL_NONE);
-    // Left early from inside two: the outer mark puts back what the outer found, the blend with it
     const uint32_t outer = tide_draw_push_cull(&d, TIDE_CULL_FRONT);
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_push_cull(&d, TIDE_CULL_BACK);
@@ -641,10 +577,9 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     tide_draw_unset_cull(&d);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK);
     tide_draw_set_cull(&d, TIDE_CULL_FRONT);
-    tide_draw_set_cull(&d, (tide_cull)77); // None of them: as a frame starts
+    tide_draw_set_cull(&d, (tide_cull)77);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK);
 
-    // The same setting around each of a view's entities' meshes: still one run
     tide_draw_reset(&d);
     for (int entity = 0; entity < 3; entity++) {
         const uint32_t mark = tide_draw_push_cull(&d, TIDE_CULL_FRONT);
@@ -652,18 +587,14 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
         tide_draw_pop(&d, mark);
     }
     TIDE_REQUIRE(d.count == 1 && last(&d)->mesh3.count == 3 && last(&d)->cull == TIDE_CULL_FRONT);
-    // Set and put back around nothing: the run goes on
     tide_draw_pop(&d, tide_draw_push_cull(&d, TIDE_CULL_NONE));
     tide_draw_set_cull(&d, TIDE_CULL_FRONT);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 1 && last(&d)->mesh3.count == 4);
-    // Another cull is another run
     tide_draw_unset_cull(&d);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 2 && last(&d)->mesh3.count == 1 && last(&d)->cull == TIDE_CULL_BACK);
 
-    // An instance whose transform mirrors the mesh has its triangles the other way round by the time a
-    // renderer has them: it says so, apart from the ones that aren't
     tide_draw_reset(&d);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     tide_draw_mesh_3d(&d, &quad, mirror, NULL, TIDE_FILTER_BILINEAR);
@@ -673,7 +604,6 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     TIDE_CHECK(d.commands[0].cull == TIDE_CULL_BACK && d.commands[0].mesh3.count == 1);
     TIDE_CHECK(d.commands[1].cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED) && d.commands[1].mesh3.count == 2);
     TIDE_CHECK(d.commands[2].cull == TIDE_CULL_BACK && d.commands[2].mesh3.count == 1);
-    // ...and so do the ones of a list given at once, which goes on with the run before it
     const tide_float4x4 mixed[5] = {same, same, mirror, same, mirror};
     const uint32_t slot = d.commands[0].mesh3.mesh;
     tide_draw_instances(&d, slot, mixed, 5, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
@@ -681,21 +611,18 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     TIDE_CHECK(d.commands[3].cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED) && d.commands[3].mesh3.count == 1);
     TIDE_CHECK(d.commands[4].cull == TIDE_CULL_BACK && d.commands[4].mesh3.count == 1);
     TIDE_CHECK(d.commands[5].cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED) && d.commands[5].mesh3.count == 1);
-    for (uint32_t i = 0; i < 5; i++) { // Each where its transform is
+    for (uint32_t i = 0; i < 5; i++) {
         TIDE_CHECK(memcmp(&d.matrices[d.commands[2].mesh3.first + 1u + i], &mixed[i], sizeof mixed[i]) == 0);
     }
-    // With no front drawn they're apart the same way
     tide_draw_set_cull(&d, TIDE_CULL_FRONT);
     tide_draw_instances(&d, slot, mixed + 1, 2, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_REQUIRE(d.count == 8);
     TIDE_CHECK(d.commands[6].cull == TIDE_CULL_FRONT && last(&d)->cull == (TIDE_CULL_FRONT | TIDE_DRAW_MIRRORED));
-    // With both sides drawn there's nothing to tell them apart by: one run, and nothing said
     tide_draw_set_cull(&d, TIDE_CULL_NONE);
     tide_draw_instances(&d, slot, mixed, 5, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_CHECK(d.count == 9 && last(&d)->cull == TIDE_CULL_NONE && last(&d)->mesh3.count == 5);
     tide_draw_unset_cull(&d);
 
-    // What they go through on their way to the world counts too: mirrored by it, and not when both do
     tide_draw_reset(&d);
     const uint32_t through = tide_draw_push_transform_3d(&d, mirror);
     TIDE_CHECK(d.place.moved & TIDE_DRAW_MOVED_MIRROR);
@@ -704,10 +631,10 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     tide_draw_mesh_3d(&d, &quad, mirror, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 2 && last(&d)->cull == TIDE_CULL_BACK);
     const uint32_t again = tide_draw_push_transform_3d(&d, tide_mul_f4x4(mirror, tide_translate_f4x4(tide_f3(3.0f, 0.0f, 0.0f))));
-    TIDE_CHECK(!(d.place.moved & TIDE_DRAW_MOVED_MIRROR)); // Inside the one there is: mirrored twice
+    TIDE_CHECK(!(d.place.moved & TIDE_DRAW_MOVED_MIRROR));
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 2 && last(&d)->mesh3.count == 2);
-    tide_draw_pop(&d, again); // The block's end puts back the one it found, which mirrors
+    tide_draw_pop(&d, again);
     TIDE_CHECK(d.place.moved & TIDE_DRAW_MOVED_MIRROR);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 3 && last(&d)->cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED));
@@ -715,20 +642,17 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     TIDE_CHECK(!(d.place.moved & (TIDE_DRAW_MOVED_3D | TIDE_DRAW_MOVED_MIRROR)));
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.count == 4 && last(&d)->cull == TIDE_CULL_BACK);
-    // A 2D transform set meanwhile leaves what's known of the 3D one
     tide_draw_set_transform_3d(&d, mirror);
     tide_draw_pop(&d, tide_draw_push_transform(&d, tide_draw_transform_moved(tide_f2(4.0f, 0.0f))));
     tide_draw_set_transform(&d, tide_draw_transform_moved(tide_f2(4.0f, 0.0f)));
     tide_draw_unset_transform(&d);
     TIDE_CHECK((d.place.moved & TIDE_DRAW_MOVED_MIRROR) && (d.place.moved & TIDE_DRAW_MOVED_3D));
-    // One that flattens mirrors nothing: what it makes has no front
     tide_draw_set_transform_3d(&d, tide_trs_f4x4(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), tide_f3(1.0f, 0.0f, 1.0f)));
     TIDE_CHECK((d.place.moved & TIDE_DRAW_MOVED_3D) && !(d.place.moved & TIDE_DRAW_MOVED_MIRROR));
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(last(&d)->cull == TIDE_CULL_BACK);
     tide_draw_unset_transform_3d(&d);
 
-    // A mesh through a 3D shader of the game's has it too, by the transform that starts its instance
     static const tide_shader solid = {.dims = 3, .vertex_size = 32, .instance_floats = 4};
     static const tide_shader bare = {.dims = 3, .vertex_size = 32};
     static const tide_shader flat = {.dims = 2, .vertex_size = 32, .instance_floats = 1};
@@ -744,25 +668,23 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     TIDE_CHECK(d.commands[0].cull == TIDE_CULL_BACK && d.runs[d.commands[0].shaded.run].count == 1);
     TIDE_CHECK(d.commands[1].cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED) && d.runs[d.commands[1].shaded.run].count == 2);
     TIDE_CHECK(d.commands[2].cull == TIDE_CULL_BACK && d.runs[d.commands[2].shaded.run].count == 1);
-    tide_draw_shaded_instances(&d, &solid, mesh, mixed, 5, NULL, NULL, 0); // Several at once, the first two more of that run
+    tide_draw_shaded_instances(&d, &solid, mesh, mixed, 5, NULL, NULL, 0);
     TIDE_REQUIRE(d.count == 6 && d.runs[d.commands[2].shaded.run].count == 3);
     TIDE_CHECK(d.commands[3].cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED) && d.commands[4].cull == TIDE_CULL_BACK);
     TIDE_CHECK(last(&d)->cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED) && d.runs[last(&d)->shaded.run].count == 1);
-    const tide_draw_run *third = &d.runs[d.commands[3].shaded.run]; // ...each run where its own instances are
+    const tide_draw_run *third = &d.runs[d.commands[3].shaded.run];
     TIDE_CHECK(third->count == 1 && memcmp(d.instances + third->first, &mirror, sizeof mirror) == 0);
-    tide_draw_set_transform_3d(&d, mirror); // What they go through on their way to the world, as a mesh's
+    tide_draw_set_transform_3d(&d, mirror);
     tide_draw_shaded(&d, &solid, mesh, &same, NULL, NULL, 0);
     TIDE_CHECK(d.count == 6 && d.runs[last(&d)->shaded.run].count == 2);
     tide_draw_unset_transform_3d(&d);
     tide_draw_set_cull(&d, TIDE_CULL_NONE);
     tide_draw_shaded_instances(&d, &solid, mesh, mixed, 5, NULL, NULL, 0);
     TIDE_CHECK(d.count == 7 && last(&d)->cull == TIDE_CULL_NONE && d.runs[last(&d)->shaded.run].count == 5);
-    // One whose instances have no transform has none that could mirror it
     tide_draw_set_cull(&d, TIDE_CULL_FRONT);
     tide_draw_shaded(&d, &bare, mesh, NULL, NULL, NULL, 0);
     TIDE_CHECK(d.count == 8 && last(&d)->cull == TIDE_CULL_FRONT);
 
-    // Nothing else has a back: a 2D command says none whatever is set, so the setting never comes between two
     const uint32_t count = d.count;
     tide_draw_shaded(&d, &flat, mesh, instance, NULL, NULL, 0);
     tide_draw_set_cull(&d, TIDE_CULL_NONE);
@@ -777,7 +699,6 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     tide_draw_clear(&d, TIDE_COLOR_BLACK);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_CLEAR && last(&d)->cull == 0);
 
-    // It's a destination's own: a target's meshes start as a frame does, whatever the window's do
     TIDE_CHECK(d.place.cull == TIDE_CULL_NONE);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK);
@@ -787,23 +708,20 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     const uint32_t block = tide_draw_push_cull(&d, TIDE_CULL_FRONT);
     tide_draw_mesh_3d(&d, &quad, tide_translate_f4x4(tide_f3(5.0f, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(last(&d)->cull == TIDE_CULL_FRONT);
-    // ...and the window's is as it was left, while the target's block is open
     tide_draw_to(&d, 0, 0, 0);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(last(&d)->cull == TIDE_CULL_NONE);
-    tide_draw_pop(&d, block); // The target's block ends while the window is selected: its own is put back
+    tide_draw_pop(&d, block);
     TIDE_CHECK(d.place.cull == TIDE_CULL_NONE && d.saved_count == 0);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK);
     tide_draw_set_cull(&d, TIDE_CULL_FRONT);
 
-    // The GUI's and a host's own start from the defaults, every destination's
     tide_draw_defaults(&d);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK && d.target == 0);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK);
 
-    // Appended, commands say what they said, of their instances too: none is asked of its transforms again
     tide_draw_list from = {0}, to = {0};
     tide_draw_mesh_3d(&from, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     tide_draw_mesh_3d(&from, &quad, mirror, NULL, TIDE_FILTER_BILINEAR);
@@ -811,7 +729,7 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     tide_draw_shaded(&from, &solid, shader_mesh(&from, 32), &mirror, NULL, NULL, 0);
     tide_draw_set_cull(&from, TIDE_CULL_NONE);
     tide_draw_mesh_3d(&from, &quad, mirror, NULL, TIDE_FILTER_BILINEAR);
-    tide_draw_set_cull(&to, TIDE_CULL_FRONT); // Nothing to what's appended
+    tide_draw_set_cull(&to, TIDE_CULL_FRONT);
     tide_draw_set_transform_3d(&to, mirror);
     tide_draw_append(&to, &from);
     TIDE_REQUIRE(from.count == 4 && to.count == 4);
@@ -833,7 +751,7 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     TIDE_REQUIRE(d.camera_3d_count == 3 && d.cameras_3d[2].mirrored == 1);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_REQUIRE(d.count == 2 && d.commands[0].kind == TIDE_DRAW_CAMERA_3D && d.commands[0].camera.mirrored == 1);
-    TIDE_CHECK(last(&d)->cull == TIDE_CULL_BACK); // The mesh's own says nothing of the camera: a renderer has both
+    TIDE_CHECK(last(&d)->cull == TIDE_CULL_BACK);
     tide_draw_set_camera_matrices(&d, same, same); // The identity looks back along z
     TIDE_REQUIRE(d.camera_3d_count == 4 && d.cameras_3d[3].mirrored == 1);
     tide_draw_set_camera_matrices(&d, mirror, same);
@@ -841,32 +759,25 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     tide_draw_unset_camera_3d(&d);
     tide_draw_mesh_3d(&d, &quad, same, NULL, TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.commands[d.count - 2u].kind == TIDE_DRAW_CAMERA_3D && d.commands[d.count - 2u].camera.mirrored == 0);
-    tide_draw_append(&to, &d); // ...and appended, it still does
+    tide_draw_append(&to, &d);
     TIDE_REQUIRE(to.count == d.count && to.commands[0].kind == TIDE_DRAW_CAMERA_3D);
     TIDE_CHECK(to.commands[0].camera.mirrored == 1 && to.commands[2].camera.mirrored == 0);
     tide_draw_free(&to);
     tide_draw_free(&d);
 }
 
-// Stencil is a setting too: a test, a number and what becomes of the stored
-// one, which every command that draws takes, in 2D and 3D. It reaches a
-// renderer as a camera or a clip does, in a command of its own before the
-// next one that draws, so one that's set to what it was, or set and put back
-// around nothing, records nothing, and it's its destination's own.
 TIDE_TEST(draw_stencil_is_a_destinations_own)
 {
     tide_draw_list d = {0};
     const tide_stencil mask = tide_stencil_stored(TIDE_STENCIL_ALWAYS, 1, TIDE_STENCIL_REPLACE);
     const tide_stencil inside = tide_stencil_tested(TIDE_STENCIL_EQUAL, 1);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(shown(&d).count == 1 && d.place.stencil == 0); // None, as each frame starts: nothing says so
+    TIDE_REQUIRE(shown(&d).count == 1 && d.place.stencil == 0);
 
-    // What a value is made of: an enum's number that's no member's is its first, and a draw's number is 0 to 255
     TIDE_CHECK(mask.test == TIDE_STENCIL_ALWAYS && mask.operation == TIDE_STENCIL_REPLACE && mask.value == 1);
     TIDE_CHECK(inside.test == TIDE_STENCIL_EQUAL && inside.operation == TIDE_STENCIL_KEEP && inside.value == 1);
     TIDE_CHECK(tide_stencil_tested(TIDE_STENCIL_EQUAL, 999).value == 255 && tide_stencil_tested(TIDE_STENCIL_EQUAL, -3).value == 0);
     TIDE_CHECK(tide_stencil_stored(77, 4, 77).test == TIDE_STENCIL_ALWAYS && tide_stencil_stored(77, 4, 77).operation == TIDE_STENCIL_KEEP);
-    // A number nothing reads is none: two that do the same are the same
     TIDE_CHECK(tide_stencil_packed(tide_stencil_tested(TIDE_STENCIL_ALWAYS, 9)) == 0);
     TIDE_CHECK(tide_stencil_packed(tide_stencil_stored(TIDE_STENCIL_ALWAYS, 9, TIDE_STENCIL_INCREMENT))
                == tide_stencil_packed(tide_stencil_stored(TIDE_STENCIL_ALWAYS, 0, TIDE_STENCIL_INCREMENT)));
@@ -877,27 +788,24 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
         tide_stencil_unpacked(tide_stencil_packed(tide_stencil_stored(TIDE_STENCIL_GREATER_EQUAL, 200, TIDE_STENCIL_INVERT)));
     TIDE_CHECK(back.test == TIDE_STENCIL_GREATER_EQUAL && back.value == 200 && back.operation == TIDE_STENCIL_INVERT);
 
-    // Set, it's said once, before the next command that draws
     tide_draw_set_stencil(&d, mask);
     TIDE_CHECK(shown(&d).count == 1);
     tide_draw_circle(&d, origin, 4.0f, TIDE_COLOR_WHITE);
     tide_draw_circle(&d, unit, 4.0f, TIDE_COLOR_WHITE);
     TIDE_REQUIRE(shown(&d).count == 4 && shown(&d).commands[1].kind == TIDE_DRAW_STENCIL && shown(&d).commands[1].stencil == tide_stencil_packed(mask));
     TIDE_CHECK(shown(&d).commands[2].kind == TIDE_DRAW_CIRCLE && shown(&d).commands[3].kind == TIDE_DRAW_CIRCLE);
-    tide_draw_set_stencil(&d, mask); // To what it was: nothing
+    tide_draw_set_stencil(&d, mask);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(shown(&d).count == 5 && last(&d)->kind == TIDE_DRAW_RECT);
 
-    // A block puts back what it found, a Set inside it or not
     const uint32_t block = tide_draw_push_stencil(&d, inside);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_REQUIRE(shown(&d).count == 7 && shown(&d).commands[5].kind == TIDE_DRAW_STENCIL && shown(&d).commands[5].stencil == tide_stencil_packed(inside));
-    tide_draw_set_stencil(&d, tide_stencil_tested(TIDE_STENCIL_NOT_EQUAL, 1)); // For the rest of the block
+    tide_draw_set_stencil(&d, tide_stencil_tested(TIDE_STENCIL_NOT_EQUAL, 1));
     tide_draw_pop(&d, block);
     TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask) && d.saved_count == 0);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_REQUIRE(shown(&d).count == 9 && shown(&d).commands[7].kind == TIDE_DRAW_STENCIL && shown(&d).commands[7].stencil == tide_stencil_packed(mask));
-    // Left early from inside two: the outer mark puts back what the outer found, the blend with it
     const uint32_t outer = tide_draw_push_stencil(&d, inside);
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_push_stencil(&d, tide_stencil_tested(TIDE_STENCIL_LESS, 3));
@@ -906,7 +814,6 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     tide_draw_unset_stencil(&d);
     TIDE_CHECK(d.place.stencil == 0 && shown(&d).count == 9);
 
-    // The same setting around each of a view's entities' draws: said once, and their shapes are still one run
     tide_draw_reset(&d);
     TIDE_CHECK(d.place.stencil == 0 && d.place.played_stencil == 0);
     for (int entity = 0; entity < 3; entity++) {
@@ -916,12 +823,10 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     }
     TIDE_REQUIRE(shown(&d).count == 4 && shown(&d).commands[0].kind == TIDE_DRAW_STENCIL);
     TIDE_CHECK(shown(&d).commands[1].kind == TIDE_DRAW_RECT && shown(&d).commands[2].kind == TIDE_DRAW_RECT && shown(&d).commands[3].kind == TIDE_DRAW_RECT);
-    // Set and put back around nothing: nothing
     tide_draw_pop(&d, tide_draw_push_stencil(&d, mask));
     tide_draw_set_stencil(&d, inside);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(shown(&d).count == 5 && last(&d)->kind == TIDE_DRAW_RECT);
-    // ...and 3D meshes' instances are still one command, under the same stencil; another is another run
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     tide_draw_pop(&d, tide_draw_push_stencil(&d, mask));
     tide_draw_mesh_3d(&d, &quad, tide_translate_f4x4(tide_f3(1.0f, 0.0f, 0.0f)), NULL, TIDE_FILTER_BILINEAR);
@@ -929,7 +834,6 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     tide_draw_set_stencil(&d, mask);
     tide_draw_mesh_3d(&d, &quad, tide_identity_f4x4(), NULL, TIDE_FILTER_BILINEAR);
     TIDE_REQUIRE(shown(&d).count == 8 && shown(&d).commands[6].kind == TIDE_DRAW_STENCIL && last(&d)->mesh3.count == 1);
-    // Text, a clear and a blit are recorded as ever: what a clear and a blit do with it is a renderer's
     static const tide_shader pass = {.dims = 2, .vertex_size = sizeof(tide_vertex)};
     tide_draw_text(&d, "a", origin, 8.0f, TIDE_COLOR_WHITE);
     tide_draw_clear(&d, TIDE_COLOR_BLACK);
@@ -937,31 +841,28 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     TIDE_CHECK(shown(&d).count == 11 && shown(&d).commands[8].kind == TIDE_DRAW_TEXT && shown(&d).commands[9].kind == TIDE_DRAW_CLEAR);
     TIDE_CHECK(last(&d)->kind == TIDE_DRAW_BLIT && d.place.stencil == tide_stencil_packed(mask));
 
-    // It's a destination's own: a target's draws start as a frame does, whatever the window's do
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.stencil == 0);
     uint32_t count = shown(&d).count;
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(shown(&d).count == count + 1u && last(&d)->kind == TIDE_DRAW_RECT); // Nothing to say there
+    TIDE_CHECK(shown(&d).count == count + 1u && last(&d)->kind == TIDE_DRAW_RECT);
     const uint32_t theirs = tide_draw_push_stencil(&d, inside);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_REQUIRE(shown(&d).count == count + 3u && shown(&d).commands[count + 1u].kind == TIDE_DRAW_STENCIL);
-    // ...and the window's is as it was left, while the target's block is open: nothing more is said for it
     tide_draw_to(&d, 0, 0, 0);
     TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask));
     count = shown(&d).count;
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(shown(&d).count == count + 1u && last(&d)->kind == TIDE_DRAW_RECT);
-    tide_draw_pop(&d, theirs); // The target's block ends while the window is selected: its own is put back
+    tide_draw_pop(&d, theirs);
     TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask) && d.saved_count == 0);
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.stencil == 0 && d.place.played_stencil == tide_stencil_packed(inside));
     count = shown(&d).count;
-    tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE); // The target's draws are told it's back
+    tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_REQUIRE(shown(&d).count == count + 2u && shown(&d).commands[count].kind == TIDE_DRAW_STENCIL && shown(&d).commands[count].stencil == 0);
     tide_draw_set_stencil(&d, inside);
 
-    // The GUI's and a host's own start from the defaults, every destination's
     tide_draw_defaults(&d);
     TIDE_CHECK(d.place.stencil == 0 && d.target == 0);
     count = shown(&d).count;
@@ -970,10 +871,9 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     tide_draw_to(&d, 17, 64, 64);
     TIDE_CHECK(d.place.stencil == 0);
 
-    // One list after another: what the first says, the second has, with what it set after its last draw
     tide_draw_list from = {0}, to = {0};
     tide_draw_rect(&to, origin, unit, TIDE_COLOR_WHITE);
-    tide_draw_set_stencil(&to, mask); // Left set by what was drawn before: the appended list starts from none
+    tide_draw_set_stencil(&to, mask);
     tide_draw_rect(&to, origin, unit, TIDE_COLOR_WHITE);
     tide_draw_rect(&from, origin, unit, TIDE_COLOR_WHITE);
     tide_draw_set_stencil(&from, inside);

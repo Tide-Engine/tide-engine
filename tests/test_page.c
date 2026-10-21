@@ -7,10 +7,7 @@
 #include "tide/table.h"
 #include "tide_test.h"
 
-// tide_same_bytes says what memcmp says, on the web too, where it's the
-// engine's own loop: at every length around the 64 and the 8 bytes it reads at
-// a time, wherever the two runs start, and wherever the one byte that differs
-// is.
+// tide_same_bytes says what memcmp says, at every length around the 64 and 8 bytes it reads at a time, wherever the runs start and the differing byte is.
 TIDE_TEST(page_same_bytes_is_what_memcmp_says)
 {
     enum { ROOM = 4096 + 64 };
@@ -28,25 +25,21 @@ TIDE_TEST(page_same_bytes_is_what_memcmp_says)
     int checked = 0;
     for (size_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
         const int size = sizes[s];
-        // Wherever each run starts: neither has to be aligned
         for (int at = 0; at < 9; at++) {
             for (int other = 0; other < 9; other += 4) {
                 const uint8_t *x = a + at;
                 uint8_t *y = b + other;
                 memmove(y, x, (size_t)size);
                 TIDE_CHECK(tide_same_bytes(x, y, (size_t)size));
-                // One byte apart, at each place: every one for a short run, and for a long one the
-                // places around where a round of 64 or of 8 starts and ends
                 for (int k = 0; k < size; k++) {
                     const int in_round = k % 64;
                     if (size > 200 && in_round > 9 && in_round < 55 && k < size - 9) continue;
                     y[k] ^= 0x40u;
                     TIDE_CHECK(!tide_same_bytes(x, y, (size_t)size));
-                    TIDE_CHECK(tide_same_bytes(x, y, (size_t)k)); // Up to it they're the same
+                    TIDE_CHECK(tide_same_bytes(x, y, (size_t)k));
                     y[k] ^= 0x40u;
                     checked++;
                 }
-                // A byte past the end that differs changes nothing
                 y[size] ^= 0xFFu;
                 TIDE_CHECK(tide_same_bytes(x, y, (size_t)size) == (memcmp(x, y, (size_t)size) == 0));
                 y[size] ^= 0xFFu;
@@ -77,7 +70,7 @@ static void widen(tide_table *t, const uint32_t rows)
 // asked for.
 typedef struct turns {
     uint32_t rounds;
-    uint32_t others; // The last round's
+    uint32_t others;
 } turns;
 
 static void take_turns(void *self, const uint32_t others, void (*work)(void *context, uint32_t thread), void *context)
@@ -95,14 +88,10 @@ static uint32_t stale_in(const tide_table *t, uint64_t *bytes)
     tide_table_stale(t, &wide, &stale);
     const uint32_t count = stale.count;
     if (bytes) *bytes = stale.bytes;
-    (void)tide_pages_hash(&stale, NULL); // Lets the list go: nothing is hashed with no threads
+    (void)tide_pages_hash(&stale, NULL);
     return count;
 }
 
-// The pages a hash would read again are gathered, each once, and hashed on a
-// pool's threads where there are megabytes of them: as many threads as that's
-// worth, never all of a big pool's. The hash that follows is the one a table
-// with the same rows gets on one thread, and finds nothing left to read.
 TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
 {
     tide_table a = {0};
@@ -111,7 +100,6 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
     widen(&b, 60000);
     const uint64_t alone = tide_table_hash(TIDE_HASH_START, &b, &wide);
 
-    // Every page of a table nothing hashed yet, and their bytes: what's in use of each
     uint64_t bytes = 0;
     const uint32_t pages = stale_in(&a, &bytes);
     TIDE_CHECK(pages == a.chunks * wide.count && bytes == 60000u * 24u);
@@ -121,28 +109,23 @@ TIDE_TEST(page_stale_pages_are_hashed_on_threads_before_the_hash)
     tide_stale_pages stale = {0};
     tide_table_stale(&a, &wide, &stale);
     TIDE_CHECK(tide_pages_hash(&stale, &jobs) == pages && stale.pages == NULL && stale.count == 0);
-    // 1.4 MB: two threads beside the caller's, of a pool of twelve
     TIDE_CHECK(pool.rounds == 1 && pool.others == 2);
-    TIDE_CHECK(stale_in(&a, NULL) == 0); // Each page's hash is kept
+    TIDE_CHECK(stale_in(&a, NULL) == 0);
     TIDE_CHECK(tide_table_hash(TIDE_HASH_START, &a, &wide) == alone);
 
-    // A row that changes is a page to hash again, which isn't worth a thread
     *(uint32_t *)tide_table_cell(&a, &wide, 31000, 2) = 7;
     *(uint32_t *)tide_table_cell(&b, &wide, 31000, 2) = 7;
     tide_table_stale(&a, &wide, &stale);
     TIDE_CHECK(stale.count == 1 && stale.bytes == 2048u * 4u);
     TIDE_CHECK(tide_pages_hash(&stale, &jobs) == 0 && pool.rounds == 1);
-    TIDE_CHECK(stale_in(&a, NULL) == 1); // Left to the hash that follows
+    TIDE_CHECK(stale_in(&a, NULL) == 1);
     TIDE_CHECK(tide_table_hash(TIDE_HASH_START, &a, &wide) == tide_table_hash(TIDE_HASH_START, &b, &wide));
     TIDE_CHECK(tide_table_hash(TIDE_HASH_START, &a, &wide) != alone);
 
-    // Most of a megabyte, with pools of other kinds: one of two threads gives its one other, one
-    // whose threads all wake at once (it has no run_some) isn't asked, and neither is a pool of one
     const tide_jobs two = {.self = &pool, .threads = 2, .run_some = take_turns};
     const tide_jobs every = {.self = &pool, .threads = 12};
     const tide_jobs one = {.self = &pool, .threads = 1, .run_some = take_turns};
     for (int kind = 0; kind < 3; kind++) {
-        // A row of every chunk: its entity and one of its numbers, so two pages a chunk, 720 KB
         for (uint32_t row = 0; row < 60000u; row += 2048u) {
             ((tide_entity *)tide_table_cell(&a, &wide, row, 0))->generation += 1;
             ((tide_entity *)tide_table_cell(&b, &wide, row, 0))->generation += 1;

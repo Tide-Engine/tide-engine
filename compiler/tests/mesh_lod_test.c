@@ -393,7 +393,6 @@ TIDE_TEST(mesh_lod_is_kept_for_later_builds)
     TIDE_REQUIRE(made && made->levels >= 3 && mesh_lod_made() == before + 1u);
     const long size = file_size(path[0]);
     TIDE_REQUIRE(size > 0);
-    // Asked again, it's the one it has
     TIDE_CHECK(mesh_lod_cached(first, &source, MESH_LOD_WORK) == made && mesh_lod_made() == before + 1u);
 
     // A file another build left is read, not made

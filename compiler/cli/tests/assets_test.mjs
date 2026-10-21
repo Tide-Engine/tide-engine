@@ -100,7 +100,7 @@ system Note(mut Seen seen)
 `);
 }
 
-// tidec on the game: asynchronous, so the server above answers meanwhile.
+// Asynchronous, so the server above answers meanwhile.
 async function build(extra = []) {
     const out = join(opts.work, "out");
     mkdirSync(out, { recursive: true });
@@ -132,12 +132,10 @@ try {
     const cached = readdirSync(cache);
     check(cached.some((name) => name.endsWith(".etag")) && cached.length >= 2, `the URL is cached with its ETag: ${cached}`);
 
-    // The next build asks whether it changed, and is told it hasn't
     r = await build();
     check(r.code === 0, `the second build failed:\n${r.said}`);
     check(requests.length === 2 && requests[1] === `"v${body.length}"`, `the second build asks with the ETag: ${JSON.stringify(requests)}`);
 
-    // A changed file comes with a new ETag, and the pack changes
     body = "Credits: everyone, and you.\n";
     r = await build();
     check(r.code === 0, `the third build failed:\n${r.said}`);

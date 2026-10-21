@@ -61,12 +61,12 @@ TIDE_TEST(enums_convert_from_their_numbers)
 {
     tide_world_init(&world, 1.0f);
     TIDE_CHECK(world.Picks.spare == Weapon_Bow); // A constant, Weapon(1)
-    ticks(1);                                    // Tick 0
+    ticks(1);
     TIDE_CHECK(world.Picks.rolled == Weapon_Sword);
     TIDE_CHECK(world.Picks.small == Weapon_Bow);
     TIDE_CHECK(world.Picks.voxel == Voxel_Stone);
     TIDE_CHECK(world.Picks.cases == 1); // case Weapon(0)
-    ticks(1);                           // Tick 1
+    ticks(1);
     TIDE_CHECK(world.Picks.rolled == Weapon_Bow);
     TIDE_CHECK(world.Picks.voxel == Voxel_Water);
     TIDE_CHECK(world.Picks.cases == 11); // case SPARE

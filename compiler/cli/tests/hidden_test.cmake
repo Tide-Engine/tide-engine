@@ -1,5 +1,5 @@
-# tide run in a run nobody watches (TIDE_HIDDEN in the environment, as an
-# agent's shell and a build server have it): the game would show no window, so
+# tide run in a run nobody watches (TIDE_HIDDEN in the environment, as a
+# script or build server has it): the game would show no window, so
 # a run that only its window's closing would end is refused before anything is
 # built, with what to give it instead. A run with no window, or on the web,
 # goes on as ever, and so does every run without the variable.

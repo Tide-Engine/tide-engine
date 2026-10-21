@@ -73,7 +73,7 @@ public sealed unsafe class BounceTests
     {
         SceneManager.LoadScene(Bonus);
         yield return null;
-        new GameObject("Tide").AddComponent<TideRunner>(); // As one is made for a level opened alone
+        new GameObject("Tide").AddComponent<TideRunner>();
         yield return Until(() => Totem() != null && !SceneManager.GetSceneByPath(Bounce).isLoaded, 10f);
         Assert.IsNotNull(Totem(), "the match has Bonus's entities");
         // Bounce came as Main started, and went with the editor's command
@@ -122,7 +122,6 @@ public sealed unsafe class BounceTests
         return false;
     }
 
-    // The tossed ball's view (Toss's, seat -1), while it's shown.
     static TideEntityView Tossed()
     {
         foreach (var view in Object.FindObjectsByType<TideEntityView>())
@@ -239,9 +238,7 @@ public sealed unsafe class BounceTests
         var y = ball.transform.position.y;
         Assert.That(y, Is.InRange(0.45f, 0.6f), "it fell to the floor: " + y);
         Assert.Greater(Tide.Game.TideGameSchema.Hash.Length, 0, "the bindings were made from the game's schema");
-        // What the Hud view drew, for Unity to draw over its frame: its text among the draw packet's commands
         Assert.IsTrue(DrewText(runner, "Balls: 1"), "the draw packet has the Hud's text");
-        // The scene's pillars are the match's Spinner entities (both named Pillar), turned by Tide where Unity has them
         for (var i = 0; i < 2; i++)
         {
             var pillar = pillars.GetChild(i);

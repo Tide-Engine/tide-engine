@@ -135,7 +135,6 @@ static void check_placement_body(checker *c, decl *m)
 #undef MERGE_CHECKS
 }
 
-// The type a declaration names: a component, singleton, input, record or struct.
 static type decl_type(decl *d)
 {
     switch (d->kind) {
@@ -150,7 +149,6 @@ static type decl_type(decl *d)
     }
 }
 
-// Does this type have fields (components, singletons, inputs, records, structs, events)?
 static bool has_fields(const type t)
 {
     return t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
@@ -186,7 +184,6 @@ static const char *example_name(const decl *d)
     return name;
 }
 
-// byte, int or float, not a vector.
 static bool is_scalar_number(const type t)
 {
     return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_FLOAT;
@@ -268,7 +265,6 @@ static bool split_qualified(const str text, str *ns, str *name)
     return true;
 }
 
-// Does some file declare this namespace, or one inside it?
 static bool is_namespace(const program *prog, const str ns)
 {
     for (int i = 0; i < prog->units.count; i++) {
@@ -345,8 +341,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 }
 
 // Whether `d` is one of the built-in enums generated C has only in a game
-// whose code names it (decl.named), so that the others' is what it was before
-// there was one: Depth, Cull, Wrap, Format, StencilTest and StencilOp.
+// whose code names it (decl.named): Depth, Cull, Wrap, Format, StencilTest and StencilOp.
 static void ensure_visibility(program *prog);
 static void order_struct(program *prog, decl *d);
 
@@ -363,7 +358,6 @@ static int first_c_named(const decl_index *index, const char *bytes, const size_
     return index->first[name_hash(NAME_HASH, bytes, len) & (uint32_t)(index->buckets - 1)];
 }
 
-// A declaration of that kind named exactly `name` in `ns`.
 static decl *find_in(const program *prog, const str ns, const str name, const name_kind kind)
 {
     const decl_index *index = decls_by(prog, false);
@@ -454,14 +448,12 @@ static bool qualified_text(const expr *e, str *out)
     return true;
 }
 
-// The innermost name of a.b.c.
 static const expr *chain_root(const expr *e)
 {
     while (e->kind == E_MEMBER) e = e->object;
     return e;
 }
 
-// Marks the namespace parts of Game.Combat.Health, for editors.
 static void mark_namespaces(expr *e)
 {
     for (; e && (e->kind == E_MEMBER || e->kind == E_NAME); e = e->kind == E_MEMBER ? e->object : NULL) {
@@ -469,7 +461,6 @@ static void mark_namespaces(expr *e)
     }
 }
 
-// "did you mean" candidates: declared types of the kinds asked for.
 static void suggest_decls(suggestion *s, const program *prog, const bool components, const bool singletons,
                           const bool inputs)
 {
@@ -496,7 +487,6 @@ static void suggest_events(suggestion *s, const program *prog)
     }
 }
 
-// "a component", "an event": what a declaration is, for messages.
 static const char *decl_what(const decl *d)
 {
     switch (d->kind) {
@@ -1238,7 +1228,6 @@ static bool holds_local_handle(const type t, const int depth)
     return false;
 }
 
-// Text or a list: what a world keeps in its heap.
 static bool holds_heap(const type t)
 {
     return holds_text(t) || holds_list(t);
@@ -1255,7 +1244,6 @@ static bool decl_holds_text(const decl *d)
 // ---------------------------------------------------------------------------
 // Lists
 
-// List<T>'s element type.
 static type list_element(const type t)
 {
     return t.decl->fields.items[0].type;
@@ -1285,7 +1273,6 @@ static type list_of(program *prog, const type element)
 // ---------------------------------------------------------------------------
 // Meshes: Mesh<V>, an asset's vertices and its indices (docs/spec.md, Assets, Meshes)
 
-// Mesh<V>'s vertex type.
 static type mesh_vertex(const type t)
 {
     return t.decl->fields.items[0].type;
@@ -1330,7 +1317,6 @@ static bool holds_mesh(const type t)
 // ---------------------------------------------------------------------------
 // Maps and sets
 
-// Map<K, V>'s key and value types; a Set<K>'s key.
 static type map_key(const type t)
 {
     return t.decl->fields.items[0].type;
@@ -1461,7 +1447,6 @@ static bool result_value_ok(const type t, const loc at, const char *what)
     return t.kind != TY_ERROR;
 }
 
-// T? for a declared type `t`.
 static type optional_type(const checker *c, const type t, const loc at)
 {
     if (t.kind == TY_VOID) {
@@ -1501,7 +1486,6 @@ static type optional_field_type(const checker *c, const type t, const loc at)
     return (type){TY_STRUCT, optional.decl->stored};
 }
 
-// Whether `t` is what a T? field is kept as (optional_field_type).
 static bool is_stored_optional(const type t)
 {
     return t.kind == TY_STRUCT && t.decl && t.decl->optional_of;
@@ -1514,13 +1498,11 @@ static type read_type(const type t)
     return is_stored_optional(t) ? (type){TY_OPTIONAL, t.decl->optional_of} : t;
 }
 
-// Whether `e` names a field declared `T?`, where it's kept.
 static bool is_optional_field(const expr *e)
 {
     return (e->kind == E_MEMBER || e->kind == E_NAME) && e->field && is_stored_optional(e->field->type);
 }
 
-// A T?'s or a failable call's value, and a failable call's error.
 static type wrapped_value(const type t)
 {
     return t.decl->fields.items[0].type;
@@ -1649,7 +1631,6 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
 // ---------------------------------------------------------------------------
 // Grids
 
-// Grid2<T>'s or Grid3<T>'s cell type.
 static type grid_cell(const type t)
 {
     return t.decl->fields.items[0].type;
@@ -1881,8 +1862,8 @@ static bool holds_long_array(const type t)
 }
 
 // A type with a long array in it, written where a value of it would be a
-// copy: `what` is what's there. A long array itself is the error an array
-// that's too long always was, with where a longer one goes.
+// copy: `what` is what's there. A long array itself is the error for an array
+// that's too long, with where a longer one goes.
 static void long_array_misplaced(const loc at, const type t, const char *what)
 {
     if (t.kind == TY_ARRAY) {
@@ -1999,7 +1980,6 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     return unknown_type(c, r, at, place);
 }
 
-// `r` without its '?': what a T? holds, for the places that take one.
 static type_ref without_question(const type_ref *r)
 {
     type_ref inner = *r;
@@ -2026,7 +2006,6 @@ static bool fold_int(const expr *e, int64_t *out);
 static bool is_constant(const checker *c, const expr *e);
 static type check_constant_expr(checker *c, expr *value, bool typed, type want);
 
-// T[N]'s element type, and how many it holds.
 static type array_element(const type t)
 {
     return t.decl->fields.items[0].type;
@@ -2208,7 +2187,6 @@ static bool element_path_in_place(const expr *target)
     return false;
 }
 
-// Types `==` compares: what a list's Contains, IndexOf and Remove can look for.
 static bool equatable(const type t)
 {
     switch (t.kind) {
@@ -2253,7 +2231,6 @@ static type check_default_value(checker *c, expr *e, const type want)
     return want;
 }
 
-// `null` where a value of `want` goes that isn't a T?.
 static void null_error(const expr *e, const type want)
 {
     if (want.kind == TY_ERROR) return;
@@ -2267,8 +2244,6 @@ static void null_error(const expr *e, const type want)
 
 static bool fold_int(const expr *e, int64_t *out);
 
-// An expression where a value of `want` goes, which may be a T? or a failable
-// call's value: [a, b], `default` and `null` take their type from it.
 // [Raw] says a texture's pixels are numbers: they're kept as the file or the
 // grid has them, with no alpha worked into them, and a Sample gives them as
 // they are. Everything that draws a texture takes it for colors with how much
@@ -2735,7 +2710,6 @@ static void ensure_visibility(program *prog)
     vec_push(prog->singletons, state);
 }
 
-// Whether `t` is the built-in Format, what a render target is made to hold.
 static bool is_format(const checker *c, const type t)
 {
     return t.kind == TY_ENUM && t.decl == c->prog->format;
@@ -3142,7 +3116,6 @@ static decl *converted_enum(const checker *c, const expr *e)
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
-// The input code being checked, for messages.
 static const char *input_code(const checker *c)
 {
     return c->in_predict ? "Predict" : c->in_sanitize ? "Sanitize" : "Sample";
@@ -3153,20 +3126,17 @@ static bool in_view(const checker *c)
     return c->system && c->system->is_view;
 }
 
-// Local code runs on this machine: views, and local event handlers.
 static bool is_local_code(const decl *d)
 {
     return d && d->kind == DECL_SYSTEM && (d->is_view || d->is_local);
 }
 
-// "a view" or "a local handler", for messages about local code.
 static const char *local_code_what(const decl *d)
 {
     return d->is_view ? "a view" : "a local handler";
 }
 
 
-// Whether the code being checked is local.
 static bool local_code(const checker *c)
 {
     return is_local_code(c->system);
@@ -3227,7 +3197,6 @@ static bool same_world(const expr *call, const bool local, const char *whose)
     return true;
 }
 
-// The frag or vert being checked, which the GPU runs, or NULL.
 static const decl *gpu_code(const checker *c)
 {
     return c->method && c->method->kind == DECL_SHADER ? c->method : NULL;
@@ -3869,7 +3838,6 @@ static int arg_params(const decl *m)
     return m->params.count - (m->takes_action ? 1 : 0);
 }
 
-// How many arguments a call of `m` has to write: its parameters without a default.
 static int args_needed(const decl *m)
 {
     int needed = 0;
@@ -3877,7 +3845,6 @@ static int args_needed(const decl *m)
     return needed;
 }
 
-// An argument's name as the call wrote it, `crit` in `crit: true`, or empty.
 static str arg_name(const expr *e, const int i)
 {
     return i < e->arg_names.count ? e->arg_names.items[i] : (str){"", 0};
@@ -4534,7 +4501,6 @@ static void put_routine(sb *out, const decl *m)
     sb_put(out, ")");
 }
 
-// A call's arguments as their types, for messages: "float, crit: bool".
 static void put_arg_types(sb *out, const expr *e)
 {
     for (int i = 0; i < e->args.count; i++) {
@@ -4777,7 +4743,6 @@ static void check_task_call(checker *c, expr *e, decl *fn)
     }
 }
 
-// Heal(unit.stats, 5), or Combat.Heal(...) from elsewhere.
 static type check_function_call(checker *c, expr *e, decl *fn)
 {
     fn = check_routine_args(c, e, fn);
@@ -4794,7 +4759,6 @@ static type check_function_call(checker *c, expr *e, decl *fn)
     return fn->result;
 }
 
-// content(): runs the Action the function was given, where it was written.
 static type check_block_call(const checker *c, expr *e, param *p)
 {
     (void)c;
@@ -4809,14 +4773,12 @@ static type check_block_call(const checker *c, expr *e, param *p)
     return T_VOID_;
 }
 
-// "methods" or "functions", for messages about the code being checked.
 static const char *routines(const checker *c)
 {
     if (c->method->kind == DECL_SHADER) return c->method->is_frag ? "frags" : "verts";
     return c->method->kind == DECL_FUNCTION ? "functions" : "methods";
 }
 
-// IsDead() inside another of the type's methods: the same value.
 static type check_self_call(checker *c, expr *e, decl *m)
 {
     const bool shared = m->shares_name; // Which of them it is comes first
@@ -4945,7 +4907,6 @@ static type check_call(checker *c, expr *e)
     return T_ERR;
 }
 
-// Random(seed): a generator for a seed, an int or a long.
 static type check_random_seeded(checker *c, expr *e)
 {
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -4973,7 +4934,6 @@ static type check_random_seeded(checker *c, expr *e)
     return result;
 }
 
-// Does `e` name a built-in owner like Math or quaternion, rather than a variable?
 static bool names_builtin_owner(const checker *c, const expr *e)
 {
     return e->kind == E_NAME && builtin_owner(e->name) && !find_local(c, e->name) && !find_param(c, e->name);
@@ -5371,7 +5331,6 @@ static type check_gui_call(checker *c, expr *e, const type result)
         expr *arg = e->args.items[i];
         const bool makes = (e->arg_out & (1u << i)) != 0;
         if (!(e->arg_mut & (1u << i)) && !arg->is_out) continue;
-        // Its messages name the widget and what it changes.
         decl *widget = NEW(decl);
         widget->name = (str){name.data, (int)name.len};
         param *value = NEW(param);
@@ -5459,7 +5418,6 @@ static type check_wait(checker *c, expr *e)
     return T_VOID_;
 }
 
-// Whether `e` names the built-in Wait, not a variable or a namespace.
 static bool names_wait(const checker *c, const expr *e)
 {
     return e->kind == E_NAME && str_eq_c(e->name, "Wait") && !find_local(c, e->name) && !find_param(c, e->name)
@@ -6335,18 +6293,9 @@ static void check_world_args(checker *c, const expr *e)
     }
 }
 
-// world.Get<Health>(e), world.Has<Health>(e), world.TryGet<Health>(e, out h)
-// and world.Set<Health>(e, value): any entity's component by its handle,
-// through the World parameter `world`. Get gives a copy, or the component's
-// zero value where the entity has none, which Has tells; TryGet is both in
-// one, as C#'s TryGetValue, with the component's default where there's none;
-// Set, which `mut World` allows, puts one back and changes nothing there.
-//
-// In a function or method, the World is its caller's: what the code reaches
-// through it counts as each caller's, and the rules that depend on who calls
-// (which world a component is in, what a view may change, a component the
-// caller takes as a parameter too) are checked at the calls, once every body
-// is checked (check_world_passing).
+// world.Get<Health>(e), Has, TryGet and Set: any entity's component by handle through the World parameter. Get gives a copy, or the component's zero value
+// where the entity has none, which Has tells; TryGet is both in one; Set, which `mut World` allows, puts one back and changes nothing there.
+// In a function or method the World is its caller's: what it reaches counts as each caller's, and the rules depending on who calls are checked at the calls (check_world_passing).
 static type check_world_call(checker *c, expr *e, param *world)
 {
     e->object->bind = BIND_PARAM;
@@ -6442,7 +6391,6 @@ static type check_world_call(checker *c, expr *e, param *world)
         }
         return T_ERR;
     }
-    // The entity, then Set's value
     const type_kind want = d->is_local ? TY_LOCAL_ENTITY : TY_ENTITY;
     bool ok = true;
     if (e->args.count > 0) {
@@ -6501,7 +6449,6 @@ static type check_world_call(checker *c, expr *e, param *world)
         }
         if (builds(c->prog)) d->tried = true;
     }
-    // A view only reads the match
     if (set && !d->is_local && !helper && code->is_view) {
         diag_error(e->at, "a view reads the match, and 'Set<" STR_FMT ">' would change it", STR_ARG(d->name));
         diag_note("views draw: a system changes the match");
@@ -6534,14 +6481,12 @@ static type check_world_call(checker *c, expr *e, param *world)
     return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
 }
 
-// What a draw call is called on, for messages: Draw, or a target's name.
 static const char *draw_receiver(const expr *e)
 {
     return e->object && e->object->kind == E_NAME ? str_to_cstr(e->object->name) : "target";
 }
 
-// Draw2D.Circle(...), Draw3D.SetCamera(...): the owners from before there was
-// one Draw. Reports the rename, with Draw's name as the fix.
+// Draw2D.Circle(...), Draw3D.SetCamera(...): the old owners. Reports the rename, with Draw's name as the fix.
 static type old_draw_owner(checker *c, expr *e)
 {
     for (int i = 0; i < e->args.count; i++) {
@@ -6554,12 +6499,11 @@ static type old_draw_owner(checker *c, expr *e)
     return T_ERR;
 }
 
-// The spellings from before settings had two forms: Draw.Clip() and
-// Draw.NoClip() put the clip back. Reports them, with what they are now.
+// Draw.Clip() and Draw.NoClip() put the clip back: the old setting spellings. Reports them, with what they are now.
 static bool old_setting(const expr *e)
 {
     const bool set_pixels = str_eq_c(e->name, "SetPixels");
-    if (set_pixels || str_eq_c(e->name, "Pixels")) { // From the afternoon the screen's pixel space was called Pixels
+    if (set_pixels || str_eq_c(e->name, "Pixels")) {
         const char *on = draw_receiver(e);
         const char *now = set_pixels ? "SetScreen" : "Screen";
         diag_error(e->at, "%s." STR_FMT " is '%s.%s' now", on, STR_ARG(e->name), on, now);
@@ -6651,14 +6595,14 @@ static type check_window_target(checker *c, expr *e)
     for (int i = 0; i < e->args.count; i++) {
         if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
     }
-    if (str_eq_c(e->name, "Screen")) { // From before the window had one word
+    if (str_eq_c(e->name, "Screen")) {
         diag_error(e->at, "RenderTarget.Screen is 'RenderTarget.Window' now");
         diag_note("a target that's always the window's size is named for the window, as 'Draw.window' is; 'Screen' is "
                   "the window's measurements alone, 'Screen.width' and 'Screen.height'");
         suggest_replacement(e->name, "Window");
         return T_ERR;
     }
-    if (str_eq_c(e->name, "Cube")) { // From the afternoon a cube was made through RenderTarget
+    if (str_eq_c(e->name, "Cube")) {
         diag_error(e->at, "RenderTarget.Cube is 'Cubemap' now: a Cubemap has a constructor of its own, as RenderTarget has");
         diag_note("'Cubemap(256)' is a cube whose six faces are drawn into, and 'Cubemap(256, Format.Rgba16f)' one that "
                   "holds floats");
@@ -6864,7 +6808,6 @@ static bool json_takes(const type t, const loc at, const char *call)
     return false;
 }
 
-// The functions generated C has for Json.Read and Json.Write of `t`.
 static int json_root_of(program *prog, const type t)
 {
     for (int i = 0; i < prog->json_roots.count; i++) {
@@ -6877,7 +6820,6 @@ static int json_root_of(program *prog, const type t)
     return prog->json_roots.count - 1;
 }
 
-// Json.Read<LobbyInfo>(text) and Json.Write(info).
 static type check_json_call(checker *c, expr *e)
 {
     const bool reads = str_eq_c(e->name, "Read");
@@ -6949,7 +6891,6 @@ static type check_json_call(checker *c, expr *e)
     return result;
 }
 
-// string.FromBytes(bytes): the text those bytes are, or nothing when they aren't UTF-8.
 static type check_from_bytes(checker *c, expr *e)
 {
     for (int i = 0; i < e->args.count; i++) {
@@ -7034,7 +6975,6 @@ static type check_method(checker *c, expr *e)
     bool static_skin_handled = false;
     const type static_skin = check_skinned_static(c, e, &static_skin_handled);
     if (static_skin_handled) return static_skin;
-    // world.Get<Health>(e): the World parameter's methods
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
         if (world && world->type.kind == TY_WORLD) return check_world_call(c, e, world);
@@ -7350,7 +7290,6 @@ static type check_method(checker *c, expr *e)
         e->draw_dims = 2;
         return result;
     }
-    // name.Contains("cat"), name.Substring(0, 3): text's methods
     if (obj.kind == TY_STRING) {
         if (str_eq_c(e->name, "ToBytes") || str_eq_c(e->name, "Split")) { // The lists they give, as the program has them
             builtins_use_io(list_of(c->prog, (type){TY_BYTE, NULL}).decl, list_of(c->prog, (type){TY_STRING, NULL}).decl);
@@ -7394,7 +7333,6 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_STRUCT && str_eq_c(e->name, "Send") && obj.decl == web_decl(c->prog, "WebRequest", DECL_STRUCT)) {
         return check_web_send(c, e);
     }
-    // camera.Snap(): a singleton that jumped, like a camera cut.
     if (obj.kind == TY_SINGLETON && str_eq_c(e->name, "Snap")) return check_snap(c, e, obj.decl);
     // stats.IsDead(), unit.Heal(5), physics.Raycast(...): explicit value receivers.
     if (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) {
@@ -7586,7 +7524,6 @@ static const char *op_str(const tok_kind op)
     return tok_kind_name(op);
 }
 
-// The operator itself, without op_str's quotes: + for '+'.
 static const char *op_symbol(const tok_kind op)
 {
     static char buf[4][8];
@@ -7599,7 +7536,6 @@ static const char *op_symbol(const tok_kind op)
     return b;
 }
 
-// Result type of `lhs op rhs`, or TY_ERROR after reporting.
 static bool same_type(const type a, const type b)
 {
     if (a.kind == TY_COMPONENT && b.kind == TY_COMPONENT)
@@ -7641,7 +7577,6 @@ static decl *find_operator(const tok_kind op, const type l, const type r, const 
     return best;
 }
 
-// What to declare when a struct has no operator for this.
 static void note_missing_operator(const tok_kind op, const type l, const type r, const bool unary)
 {
     const type t = l.kind == TY_STRUCT ? l : r;
@@ -7660,7 +7595,6 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
     }
 }
 
-// What text shows as it is: numbers, vectors and the like.
 static bool text_shows_value(const type t)
 {
     switch (t.kind) {
@@ -7704,7 +7638,6 @@ static bool text_shows_all(const type t, type *why, const decl **outer, const in
     return true;
 }
 
-// `t` and the types in it are shown: codegen writes their text helpers.
 static void mark_shown(const type t)
 {
     if (!text_shows_inside(t) || t.decl->shown) return;
@@ -7714,7 +7647,6 @@ static void mark_shown(const type t)
 }
 
 
-// What text can show: $"{x}", or "a" + x.
 static bool text_can_hold(const program *prog, const type t)
 {
     const decl *outer[TEXT_DEPTH];
@@ -7735,7 +7667,6 @@ static bool check_text_context(const checker *c, const expr *value)
     return false;
 }
 
-// Text can't show `t`: says what in it is why, and what to show instead.
 static void text_cant_show(const loc at, const type t)
 {
     const decl *outer[TEXT_DEPTH];
@@ -7964,7 +7895,6 @@ static bool parse_swizzle(expr *e, const int dim)
 static type use_constant(checker *c, expr *e, decl *k);
 static type use_asset(checker *c, expr *e, decl *k);
 
-// Combat.Health or Game.Combat where a value belongs: says what the name is.
 static type check_namespace_member(checker *c, expr *e)
 {
     str text;
@@ -8009,15 +7939,13 @@ static bool is_input_field(const expr *e)
     return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->type.kind == TY_INPUT;
 }
 
-// Format.Color, Format.DepthOnly, Format.Float: the formats' names from before
-// they said what an image stores. What each is now, or NULL.
+// Format.Color, Format.DepthOnly, Format.Float: the old names of the formats. What each is now, or NULL.
 static const char *old_format_member(const decl *d, const str member)
 {
     if (!d->builtin || !str_eq_c(d->name, "Format")) return NULL;
     return str_eq_c(member, "Color") ? "Rgba8" : str_eq_c(member, "DepthOnly") ? "Depth" : str_eq_c(member, "Float") ? "Rgba16f" : NULL;
 }
 
-// Page.Title, or Game.Page.Title: one of an enum's members.
 static type check_enum_member(expr *e, decl *d)
 {
     expr *type_name_expr = e->object;
@@ -8070,7 +7998,6 @@ static type check_enum_member(expr *e, decl *d)
     return T_ERR;
 }
 
-// The enum a chain of names like `Game.Page` names, or NULL.
 static decl *named_enum(const checker *c, const expr *e)
 {
     const expr *root = chain_root(e);
@@ -8219,7 +8146,6 @@ static type check_member(checker *c, expr *e)
         if (e->type_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
         return member;
     }
-    // Random.seed: the match's seed
     if (names_random(c, e->object)) {
         if (!str_eq_c(e->member, "seed")) {
             diag_error(e->at, "Random has no member '" STR_FMT "'", STR_ARG(e->member));
@@ -8230,7 +8156,6 @@ static type check_member(checker *c, expr *e)
         e->c_constant = "tide_match_seed"; // Where the code has it, which codegen knows (match_seed)
         return T_INT_;
     }
-    // quaternion.identity, Math.PI
     if (names_builtin_owner(c, e->object)) {
         if (str_eq_c(e->object->name, "Application") && !str_eq_c(e->member, "title")
             && !check_io_use(c, e->at, "Application paths", false)) {
@@ -8570,7 +8495,7 @@ static type check_member(checker *c, expr *e)
                     diag_note("it goes to C as the argument of an extern function's 'in Resident' or 'mut Resident' parameter, and nowhere else");
                     return T_ERR;
                 }
-                if (f == c->prog->seed) { // It was Time's until the rolls were Random's
+                if (f == c->prog->seed) {
                     diag_error(e->at, "the match's seed is 'Random.seed' now");
                     diag_note("it's read with no parameter: 'Math.Hash(int3(x, y, Random.seed))'");
                     if (e->object->kind == E_NAME) suggest_replacement(e->object->name, "Random");
@@ -8835,7 +8760,6 @@ static type check_this(const checker *c, const expr *e)
     return T_ERR;
 }
 
-// A side of cond ? a : b that has to be a value.
 static bool check_side(const expr *side, const type t)
 {
     if (t.kind == TY_VOID) {
@@ -8959,7 +8883,6 @@ static type check_conditional(checker *c, expr *e)
     return T_ERR;
 }
 
-// items[i]: a list's element, a copy.
 static type check_index(checker *c, expr *e)
 {
     c->device_whole_ok = e->object; // devices.touchscreen.touches[0] reads the one it names
@@ -9047,7 +8970,6 @@ static type check_index(checker *c, expr *e)
     return list_element(obj);
 }
 
-// [a, b, c] where a List<T> or a Set<T> goes.
 static type check_list_literal(checker *c, expr *e, const type want, const bool checked)
 {
     if (want.kind == TY_MAP) {
@@ -9197,7 +9119,6 @@ static type check_map_method(checker *c, expr *e, const type map)
     return (type){methods[m].result, NULL};
 }
 
-// "a.x < b.x" for the notes about a Sort's comparison, with its elements' names.
 static const char *compare_example(const expr *sort)
 {
     static char buf[2][160];
@@ -9576,16 +9497,10 @@ static type check_instance_call(expr *e)
     return (type){TY_FLOAT3, NULL};
 }
 
-// shadow.Sample(uv) and shadow.Compare(uv, value): a render target's depth,
-// read in a frag or a vert. Sample gives how far the nearest thing drawn at
-// `uv` is, from 0 at the camera's near plane to 1 at its far limit, as
-// this.depth is: the nearest pixel's, as a depth blended between two pixels
-// is neither's. Compare gives how much of what's stored around `uv` isn't
-// nearer than `value`, from 0 to 1, which the GPU works out between pixels:
-// what a shadow's edge wants. The DepthTexture is a field of a component or a
-// singleton the frag takes, where a view put a target's `depth`; in a
-// function a frag or a vert calls, it's the function's own parameter, which
-// the call names that field for.
+// shadow.Sample(uv) and shadow.Compare(uv, value): a render target's depth, read in a frag or a vert.
+// Sample gives how far the nearest thing drawn at `uv` is, from 0 at the camera's near plane to 1 at its far limit, as this.depth is.
+// Compare gives how much of what's stored around `uv` isn't nearer than `value`, from 0 to 1, which the GPU works out between pixels (a shadow's edge).
+// The DepthTexture is a field of a component or singleton the frag takes; in a function a frag or a vert calls, it's the function's own parameter.
 static type check_depth_read(const checker *c, expr *e)
 {
     const bool compare = str_eq_c(e->name, "Compare");
@@ -10623,7 +10538,6 @@ static bool fold_cell(const expr *e, int dims, int64_t out[3]);
 static void check_stmt(checker *c, stmt *s);
 static type local_type(checker *c, stmt *s);
 
-// Whether `local` is declared somewhere in `s`.
 static bool stmt_inside(const stmt *s, const stmt *local)
 {
     if (!s) return false;
@@ -10646,7 +10560,6 @@ static bool stmt_inside(const stmt *s, const stmt *local)
         || stmt_inside(s->else_stmt, local);
 }
 
-// Whether two places are the same field: field.cells and field.cells.
 static bool same_place(const expr *a, const expr *b)
 {
     if (a->kind != b->kind) return false;
@@ -11652,7 +11565,6 @@ static void check_switch(checker *c, stmt *s)
     c->switch_depth--;
 }
 
-// `return;` everywhere, and `return value;` in a method that returns one.
 static void check_return(checker *c, const stmt *s)
 {
     if (c->compare) { // A comparison's answer: whether the first element goes before the second
@@ -11732,7 +11644,6 @@ static void check_fail(checker *c, const stmt *s)
     }
 }
 
-// Whether every path through `s` ends in a return.
 static bool always_returns(const stmt *s)
 {
     if (!s) return false;
@@ -11895,7 +11806,6 @@ static void allow_bindings(expr *cond)
     allow_bindings(cond->rhs);
 }
 
-// The type a foreach's variable declares, for the list's elements to be checked against.
 static type local_type(checker *c, stmt *s)
 {
     type t;
@@ -11949,7 +11859,6 @@ static void check_stmt(checker *c, stmt *s)
         pop_scope(c);
         break;
     case S_IF: {
-        // Names after `is` in the condition are in scope where it's true.
         allow_bindings(s->cond);
         push_scope(c);
         const type cond = check_expr(c, s->cond);
@@ -12171,7 +12080,6 @@ static void check_stmt(checker *c, stmt *s)
 
 static bool all_constant(const checker *c, const expr *e);
 
-// Whether `e` is only names and members, like Page.Title: maybe an enum's member.
 static bool names_only(const expr *e)
 {
     while (e->kind == E_MEMBER) e = e->object;
@@ -12300,7 +12208,6 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
     return t;
 }
 
-// A constant's type: a value with nothing in it a constant can't be.
 static type constant_type(const checker *c, const decl *k)
 {
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
@@ -12622,7 +12529,6 @@ static void check_settings(checker *c)
     }
 }
 
-// MAX_HEALTH, or Combat.MAX_HEALTH: a constant, which stands for its value.
 static type use_constant(checker *c, expr *e, decl *k)
 {
     e->bind = BIND_CONST;
@@ -13091,17 +12997,10 @@ static void check_dont_predict_attribute(const decl *d, const field *f, const at
     }
 }
 
-// [Clamp(lo, hi)], [Min(x)] and [Max(x)] on input and struct fields. The
-// engine applies them to every input before Sanitize, the fields of structs in
-// it included, so they're a quick way to bound what players send. Elsewhere,
-// a struct field's bounds only describe it. And [Snap] (see check_snap), and
-// [Absolute] (see check_absolute_attribute).
-// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] on a field that's a grid of
-// colors or of floats, or a RenderTarget: how the Texture the grid is, or the
-// target's color is, is sampled where a draw or a Sample doesn't say
-// (declared_sampling reads them). A Texture field holds whichever texture
-// it's given, which says how it's sampled itself, so it has nothing to say
-// for it.
+// [Clamp(lo, hi)], [Min(x)] and [Max(x)] on input and struct fields: the engine applies them to every input before Sanitize, the fields of structs in it
+// included; elsewhere a struct field's bounds only describe it. And [Snap] (see check_snap), and [Absolute] (see check_absolute_attribute).
+// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] on a grid of colors or floats, or a RenderTarget: how its Texture is sampled where a draw or a Sample
+// doesn't say (declared_sampling reads them). A Texture field holds whichever texture it's given, which says how it's sampled itself.
 static void check_field_raw(const field *f, const attribute *a)
 {
     if (f->type.kind == TY_ERROR) return;
@@ -13312,7 +13211,6 @@ static bool optional_field_ok(const decl *d, const field *f, const type t, const
     return true;
 }
 
-// A field's type: a built-in type or a struct.
 static void resolve_field_types(const checker *c, const decl *d)
 {
     for (int i = 0; i < d->fields.count; i++) {
@@ -13404,7 +13302,6 @@ static void check_enum(checker *c, decl *d)
             int64_t number;
             const type t = is_constant(c, m->value) ? check_constant_expr(c, m->value, false, T_ERR) : T_INT_;
             if (t.kind == TY_ERROR) {
-                // Reported
             } else if (!type_assignable(T_INT_, t) || !fold_int(m->value, &number)) {
                 diag_error(m->value->at, "a member's value is an int, like '" STR_FMT " = 3'", STR_ARG(m->name));
                 diag_note("constants work too, and operators on them, like '" STR_FMT " = BASE + 1'", STR_ARG(m->name));
@@ -13467,7 +13364,6 @@ static void order_struct(program *prog, decl *d)
     vec_push(prog->structs, d);
 }
 
-// Whether a value of type `t` has a list in it, or is one.
 static bool holds_list(const type t)
 {
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) return true;
@@ -13503,7 +13399,6 @@ static bool holds_grid(const type t)
     return false;
 }
 
-// Whether a value of type `t` has text in it, in its own fields or its structs'.
 static bool holds_text(const type t)
 {
     if (t.kind == TY_STRING) return true;
@@ -13785,7 +13680,6 @@ static void check_world_param(const decl *m, param *p, const int k)
 
 static void check_entity_query(const checker *c, decl *sys, param *query);
 
-// The types in a method's or function's signature.
 static void check_signature(checker *c, decl *m)
 {
     m->return_type = method_type(c, type_ref_or_text(m->return_type_ref, m->return_type_name), m->return_type_qual_at, true);
@@ -13991,7 +13885,6 @@ static bool is_comparison(const tok_kind op)
     return op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE;
 }
 
-// Whether two operators take the same types.
 static bool same_params(const decl *a, const decl *b)
 {
     if (a->params.count != b->params.count) return false;
@@ -14123,7 +14016,6 @@ static void check_correction_interpolates(const program *prog)
     }
 }
 
-// Where methods go, their names, and their signatures.
 static void check_method_decls(checker *c, decl *d)
 {
     for (int i = 0; i < d->methods.count; i++) {
@@ -14206,7 +14098,6 @@ static const char *c_refuses(const type t)
     }
 }
 
-// The C function an extern names: [NativeName("f")], or its own name.
 static const char *extern_c_name(const decl *fn)
 {
     const attribute *native = NULL;
@@ -14286,7 +14177,7 @@ static void check_extern_param(const checker *c, decl *fn, param *p)
     diag_error(p->type_at, "C functions can't take %s yet", refused);
     if (p->type.kind == TY_ACTION) diag_note("an Action is Tide code, which only Tide functions run");
     else diag_note("pass numbers, vectors, enums, text, lists, and structs of them");
-    fn->takes_action = false; // It's no longer inlined
+    fn->takes_action = false;
 }
 
 // The C function an extern function or system is: its own, among the game's
@@ -14485,7 +14376,6 @@ static void check_function_decl(checker *c, decl *fn)
     if (fn->is_async) check_async_decl(fn);
 }
 
-// What a frag or vert takes that isn't the game's state: a plain value.
 static void refuse_shader_value(const decl *d, const param *p)
 {
     const char *word = shader_word(d);
@@ -14523,15 +14413,10 @@ static void check_handed_struct(const decl *vert, const param *p, const decl *t)
     }
 }
 
-// frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun) and
-// vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time): the vertex
-// first, a struct; what each writes, `out`: a frag's pixel, a Color, with one
-// more for each color image after the first of a target it draws into, and
-// the structs a vert hands the frag it's drawn with; then what the engine
-// supplies as it does to a view: the entity's components, singletons of either
-// side, and Instance. The frag's pixel is `this`. A read-only struct is one the draw's
-// vert writes, or an element of the list an Instanced draw is given: the draw
-// says which (check_shader_binding).
+// frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun) and vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time):
+// the vertex first, a struct; what each writes, `out`: a frag's pixel, a Color (one more per extra color image of its target), and the structs a vert hands its frag;
+// then what the engine supplies as to a view: components, singletons of either side, and Instance. The frag's pixel is `this`.
+// A read-only struct is one the draw's vert writes, or an element of an Instanced draw's list: the draw says which (check_shader_binding).
 static void check_shader_decl(const checker *c, decl *d)
 {
     const program *prog = c->prog;
@@ -14626,7 +14511,7 @@ static void check_shader_decl(const checker *c, decl *d)
                 }
                 p->function_param = false;
             } else if (d->is_frag && value.kind == TY_COLOR && p->mode == PARAM_MUT) {
-                if (changes) { // `mut Color color` was the pixel, which started white
+                if (changes) {
                     diag_error(p->at, "a frag's color is an 'out' parameter: 'out Color " STR_FMT "'", STR_ARG(p->name));
                     diag_note("it starts with no value, where 'mut Color " STR_FMT "' started white: the frag writes it on every "
                               "path that ends, before it reads it", STR_ARG(p->name));
@@ -14862,7 +14747,6 @@ static void check_verified_trigger(const decl *handler, param *p, const decl *d)
     }
 }
 
-// A handler's trigger, `event(Hit hit)`: the event it handles.
 static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
 {
     const loc at = p->type_at.line ? p->type_at : p->at;
@@ -15777,7 +15661,6 @@ static bool call_acts(const expr *e)
     }
 }
 
-// The first call in a checked expression that does something, or NULL.
 static const expr *acting_call(const expr *e)
 {
     if (!e) return NULL;
@@ -15791,7 +15674,6 @@ static const expr *acting_call(const expr *e)
     return found ? found : call_acts(e) ? e : NULL;
 }
 
-// A call as a note names it: Spawn(...), GUI.Button(...), await Load(...).
 static void put_call(sb *out, const expr *e)
 {
     if (e->kind == E_AWAIT || e->kind == E_TRY) {
@@ -15818,14 +15700,9 @@ static int unused_order(const void *a, const void *b)
     return x->name_at.col - y->name_at.col;
 }
 
-// A local that's never read is a mistake more often than not: a value worked
-// out and then not used, as `var fwd = Math.Mul(rot, move);` followed by code
-// that moves by `move`. Assigned but never read counts as never read. The
-// note says what to do, and editors offer it: when the value is a call that
-// does something, the call stays, as a statement of its own.
-// A call written as a statement that gives a value and does nothing else:
-// the value is lost, and so is the call. `request.SetHeader(name, value);`
-// reads as if it changed the request, and gives a request nobody keeps.
+// A local that's never read is usually a mistake: a value worked out and not used. Assigned but never read counts as never read.
+// The note says what to do, and editors offer it: when the value is a call that does something, the call stays as a statement.
+// A call written as a statement that gives a value and does nothing else loses both: `request.SetHeader(name, value);` gives a request nobody keeps.
 static void warn_dropped_values(checker *c)
 {
     for (int i = 0; i < c->dropped.count; i++) {
@@ -16334,7 +16211,7 @@ static void add_builtins(program *prog)
     prog->blend = blend;
     // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth
     // (Draw.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
-    // game whose code names it (decl.named), so the others' is as it was.
+    // game whose code names it (decl.named).
     static const char *const depths[] = {"ReadWrite", "Read", "None"};
     decl *depth = NEW(decl);
     depth->kind = DECL_ENUM;
@@ -16523,7 +16400,6 @@ static void record_field(decl *d, const char *name, const type t)
     vec_push(d->fields, f);
 }
 
-// A record of device values, rather than a value: a Button is one.
 static bool device_group_field(const field *f)
 {
     return f->type.kind == TY_RECORD && !str_eq_c(f->type.decl->name, "Button");
@@ -16590,7 +16466,6 @@ static void list_leaves(program *prog, decl *d, const char *path)
     }
 }
 
-// A field that's a position in this machine's window.
 static void window_field(decl *d, const char *name)
 {
     for (int i = 0; i < d->fields.count; i++) {
@@ -16702,7 +16577,6 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Transform") || str_eq_c(name, "Visibility") || str_eq_c(name, "VisibilityGroup") || str_eq_c(name, "Audience");
 }
 
-// What a declaration is called in generated C: Combat_Health for Combat.Health.
 static void c_name_of(const decl *d, sb *out)
 {
     const str ns = decl_ns(d);
@@ -16951,7 +16825,6 @@ static void collect_decls(program *prog)
 // ---------------------------------------------------------------------------
 // Archetypes
 
-// The match and the local world each have their own archetypes.
 static int find_archetype(const program *prog, const comp_mask mask, const bool local)
 {
     for (int i = 0; i < prog->archetypes.count; i++) {
@@ -16982,7 +16855,6 @@ static int archetype_index(program *prog, pending *p, const comp_mask mask, cons
     return prog->archetypes.count - 1;
 }
 
-// `m` without the sparse components, which no archetype is made of.
 static comp_mask solid(const program *prog, const comp_mask m)
 {
     return mask_andnot(m, prog->sparse_mask);
@@ -17031,16 +16903,10 @@ static comp_mask reaching(const program *prog, const change_sites *sites, const 
     return all;
 }
 
-// What Add and Remove can turn each archetype from `from` on into. The
-// changes recorded for an entity in X apply at the end of the tick in any
-// order, so from X every combination of the components of the sites reaching
-// X is reachable, a component at a time; and since X with a component more or
-// less may be past a site's filters while the change it recorded still
-// applies, the archetypes derived from X inherit what X could still apply
-// (`pending`). Again until nothing changes. False past the limit.
-// Archetype `i`'s entities can have the sparse components `more`: it and
-// every archetype they can move to keep a presence byte for each
-// (`possible`). True if that's new.
+// What Add and Remove can turn each archetype from `from` on into. The changes recorded for an entity in X apply at the end of the tick in any order,
+// so from X every combination of the components of the sites reaching X is reachable; archetypes derived from X inherit what X could still apply (`pending`).
+// Again until nothing changes. False past the limit.
+// Archetype `i`'s entities can have the sparse components `more`: it and every archetype they can move to keep a presence byte for each (`possible`). True if that's new.
 static bool allow_sparse(program *prog, const int i, const comp_mask more)
 {
     if (mask_subset(more, prog->possible.items[i])) return false;
@@ -17135,7 +17001,6 @@ too_many:
               "multiply; one on 'this', or on an entity a Spawn in the same code made, only reaches what it can");
 }
 
-// "system", "view" or "event handler", for messages.
 static const char *system_what(const decl *sys)
 {
     return sys->is_view ? "view" : sys->is_handler ? "event handler" : "system";
@@ -17194,7 +17059,6 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
     }
 }
 
-// A Send without an entity, of an event whose handler reads the entity it's sent to.
 static void check_sends(const checker *c)
 {
     for (int i = 0; i < c->sends.count; i++) {
@@ -17207,7 +17071,6 @@ static void check_sends(const checker *c)
     }
 }
 
-// A handler of an event nothing sends never runs.
 static void warn_unsent(const checker *c)
 {
     for (int i = 0; i < c->prog->handlers.count; i++) {
@@ -17398,7 +17261,6 @@ static void check_packages(const program *prog)
     }
 }
 
-// A cell written as constants, int2(0, -1) or a constant that's one, into `out`.
 static bool fold_cell(const expr *e, const int dims, int64_t out[3])
 {
     if ((e->kind == E_NAME || e->kind == E_MEMBER) && e->bind == BIND_CONST) {
@@ -17921,7 +17783,6 @@ static void order_phases(decl **list, const int n)
     }
 }
 
-// Whether `from` calls `target`, itself or through other functions.
 static bool calls(const decl *from, const decl *target, const decl **seen, int *seen_count, const decl **through)
 {
     for (int i = 0; i < from->callees.count; i++) {
@@ -17939,7 +17800,6 @@ static bool calls(const decl *from, const decl *target, const decl **seen, int *
     return false;
 }
 
-// Whether async function `from` awaits `target`, itself or through others.
 static bool awaits(const decl *from, const decl *target, const decl **seen, int *seen_count)
 {
     for (int i = 0; i < from->awaits.count; i++) {
@@ -18219,18 +18079,9 @@ static void check_io_calls(const checker *c)
     }
 }
 
-// A function that calls one that reads Frame.dt reads it too: each is handed
-// the local state, so only local code calls them, and an async one is a local
-// task. Reading changes nothing, so a comparison and a parallel loop's steps
-// can.
-// A function that plays sounds is local code's to call, as one that reads
-// Frame.dt is.
-// A function that takes a grid is written for the grid each call names, which
-// only the GPU's code is: a frag, a vert and the functions they call. So are
-// the functions that call one.
-// A function that samples a texture is the GPU's alone too, written for the
-// texture each call names: nothing on the CPU reads a texture's pixels, a
-// target's depth or a cube.
+// A function that calls one that reads Frame.dt reads it too: each is handed the local state, so only local code calls them, and an async one is a local task.
+// A function that plays sounds is local code's to call likewise.
+// A function that takes a grid, or samples a texture, is written for the grid or texture each call names, which only the GPU's code has: a frag, a vert and the functions they call.
 static void check_gpu_only_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -18293,12 +18144,9 @@ static void check_audio_calls(const checker *c)
     }
 }
 
-// Where a long array is (holds_long_array): a struct's field, and through
-// structs an audio declaration's state, which a function takes as a 'mut'
-// parameter. Everything else would hold it by copy, or by value on the stack:
-// the fields of whatever isn't a struct, what a list, a map, a set, a grid or
-// a T? holds, a parameter that isn't 'mut', what a function returns, and a
-// struct's methods, whose `this` is a copy. Once every signature is known.
+// Where a long array is (holds_long_array): a struct's field, and through structs an audio declaration's state, which a function takes as a 'mut' parameter.
+// Everywhere else it would be held by copy or by value on the stack: non-struct fields, what a list, map, set, grid or T? holds, a parameter that isn't 'mut',
+// what a function returns, and a struct's methods, whose `this` is a copy. Once every signature is known.
 static void check_long_arrays(const checker *c)
 {
     const program *prog = c->prog;
@@ -18381,14 +18229,10 @@ static void check_audio_bodies(const checker *c)
     }
 }
 
-// What an audio declaration keeps between blocks is its voice's, or its bus's,
-// own bytes in the mixer (tide/audio.h): TIDE_AUDIO_STATE_BYTES at the most,
-// its own state and, when its code rolls with Random, a generator for each
-// voice after it, on the next 8 bytes. Its knobs are the bytes an Effect value
-// carries, TIDE_AUDIO_KNOBS_BYTES. The code reads and writes them as its
-// structs, so a struct that's bigger would reach past them. Sizes are the
-// generated C's (types.h); which declarations roll is known once every call
-// is (check_roll_calls).
+// What an audio declaration keeps between blocks is its voice's, or its bus's, own bytes in the mixer (tide/audio.h): TIDE_AUDIO_STATE_BYTES at the most,
+// its own state and, when its code rolls with Random, a generator for each voice after it, on the next 8 bytes. Its knobs are the bytes an Effect value
+// carries, TIDE_AUDIO_KNOBS_BYTES. The code reads and writes them as its structs, so a bigger struct would reach past them.
+// Sizes are the generated C's (types.h); which declarations roll is known once every call is (check_roll_calls).
 static void check_audio_sizes(const checker *c)
 {
     for (int i = 0; i < c->prog->decls.count; i++) {
@@ -18715,13 +18559,9 @@ static void mark_act_callers(const checker *c)
     }
 }
 
-// A function or method that starts a task does it in the task's world, as it
-// sends in an event's: so it's the match's ([0]) or this machine's ([1]) to
-// call, by what the task does. And a task's world is what it does, what it
-// awaits or starts, and what the functions it calls do. Each follows from the
-// others, so they're settled together, until nothing changes. A task whose
-// world nothing decides starts in the world of the code that calls the
-// function. What disagrees is said by check_acts and resolve_tasks.
+// A function or method that starts a task does it in the task's world, as it sends in an event's: so it's the match's ([0]) or this machine's ([1]) to call,
+// by what the task does. A task's world is what it does, awaits or starts, and what the functions it calls do: they're settled together until nothing changes.
+// A task whose world nothing decides starts in the world of the code that calls the function. What disagrees is said by check_acts and resolve_tasks.
 static void settle_task_sides(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -18799,14 +18639,10 @@ static void check_task_params(const checker *c)
     }
 }
 
-// Nothing is wrong with a function that sends, spawns, changes entities or
-// starts tasks: what's checked is each call of one from code that has
-// abilities of its own, a system, a view, a handler, a task, the input's code
-// or the GPU's, and those in a parallel loop's step or a comparison. A
-// function's own callers answer for it. A system that calls one hands out
-// entity IDs when it spawns, and changes its world's heap when what it records
-// holds text, as if the Spawn or the Send were written in the system, and
-// starts its tasks in order, as if it started them itself.
+// Nothing is wrong with a function that sends, spawns, changes entities or starts tasks: what's checked is each call of one from code with abilities of its own,
+// a system, view, handler, task, the input's code or the GPU's, and those in a parallel loop's step or a comparison. A function's own callers answer for it.
+// A system that calls one hands out entity IDs when it spawns, changes its world's heap when what it records holds text, and starts its tasks in order,
+// as if the Spawn or the Send were written in the system.
 static void check_acts(checker *c)
 {
     bool any = false;
@@ -18937,7 +18773,6 @@ static void check_this_calls(const checker *c)
     }
 }
 
-// A function's or method's World parameter, or NULL.
 static const param *world_param(const decl *d)
 {
     for (int i = 0; i < d->params.count; i++) {
@@ -18946,14 +18781,10 @@ static const param *world_param(const decl *d)
     return NULL;
 }
 
-// Functions and methods that take the World, once every body is checked. What
-// one reaches through it is what each of its callers reaches, through however
-// many functions it's passed: the callers' world_uses get it, so the schedule,
-// the threads a system runs on and generated code go by it as by a system's
-// own calls. Then the rules that depend on who calls are checked at each
-// call a system, view or handler makes: the match can't reach local state, a
-// local handler's World is this machine's, and a view changes nothing of the
-// match. Mutable component bindings follow a Set of their current entity.
+// Functions and methods that take the World, once every body is checked. What one reaches through it is what each of its callers reaches, through however many
+// functions it's passed: the callers' world_uses get it, so the schedule, the threads and generated code go by it as by a system's own calls.
+// Then the rules that depend on who calls are checked at each call a system, view or handler makes: the match can't reach local state, a local handler's World
+// is this machine's, and a view changes nothing of the match. Mutable component bindings follow a Set of their current entity.
 static void check_world_passing(checker *c)
 {
     bool any = false;
@@ -19234,18 +19065,11 @@ static void add_audience_words(program *prog)
 // ---------------------------------------------------------------------------
 // virtual and override
 //
-// As in C#: `virtual` before a declaration with code says another package can
-// replace it, and `override` before one replaces the virtual declaration it
-// names. An override is matched by name and by parameters, both: the name as
-// its file writes any reference (qualified, or through a `using`), and the
-// parameters' types in order, with a system's filters, as overloads are told
-// apart (same_param_lists). It then takes the other's place, while compiling:
-// where it is among the program's declarations, its name and namespace, and
-// its attributes, so every reference, the schedule and generated C have the
-// override where the declaration was. What was replaced is checked for
+// `virtual` before a declaration with code says another package can replace it; `override` replaces the virtual declaration it names, matched by name
+// (as its file writes any reference) and by parameters (same_param_lists). It then takes the other's place while compiling: its position among the program's
+// declarations, name, namespace and attributes, so every reference, the schedule and generated C have the override there. What was replaced is checked for
 // errors and nothing more (check_replaced).
 
-// Whether two declarations are in the same package, the game counting as one.
 static bool same_package(const decl *a, const decl *b)
 {
     const char *x = package_of(a);
@@ -19253,7 +19077,6 @@ static bool same_package(const decl *a, const decl *b)
     return x == y || (x && y && strcmp(x, y) == 0);
 }
 
-// "package Combat", or "the game".
 static const char *package_text(const decl *d)
 {
     const char *package = package_of(d);
@@ -19279,7 +19102,6 @@ static const char *file_of(const decl *d)
     return src ? src->path : "another file";
 }
 
-// What a declaration with code is, with its article: "a system", "an event handler".
 static const char *code_kind(const decl *d)
 {
     if (d->kind == DECL_SHADER) return d->is_frag ? "a frag" : "a vert";
@@ -19651,14 +19473,10 @@ static void place_overrides(const checker *c, const bool systems)
     prog->by_c_name.first = NULL;
 }
 
-// What an override replaced isn't built, but it's still code its developer
-// reads and changes: it's checked for errors as the code it is. Nothing it
-// would add to the program stays: it's checked against a copy of the program
-// and of the checker's lists, so its spawns, Adds and Removes, sends, calls,
-// mesh draws and what it reads count for nothing in the archetypes, the
-// schedule, the input or generated C, and it warns about nothing. The quick
-// fixes its errors offer are kept. Its signature was checked as any is: it's
-// what its override was matched by.
+// What an override replaced isn't built, but it's still checked for errors as the code it is. Nothing it would add to the program stays: it's checked against
+// a copy of the program and of the checker's lists, so its spawns, Adds, Removes, sends, calls, mesh draws and reads count for nothing in the archetypes, the
+// schedule, the input or generated C, and it warns about nothing. The quick fixes its errors offer are kept. Its signature was checked as any is: it's what its
+// override was matched by.
 static void check_replaced(checker *c, decl *v)
 {
     program copy = *c->prog;

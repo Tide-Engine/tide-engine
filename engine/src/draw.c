@@ -648,8 +648,7 @@ static __attribute__((noinline)) void more_commands(tide_draw_list *d)
 // On Windows a struct of more than 8 bytes is passed by its address, and the
 // caller wrote it a float or two at a time: one load of 16 bytes over several
 // of those stores can't be forwarded from them, and waits until they reach the
-// cache, where loads that each fall within one store are forwarded. Reading a
-// rect's color so made recording 65,536 rects 0.337 -> 0.26 ms (Ryzen 9 7900X).
+// cache, where loads that each fall within one store are forwarded.
 // volatile keeps the compiler from joining the loads again; elsewhere (System
 // V passes these in registers) it costs a store of them and the loads.
 static inline tide_color color_read(const tide_color *color)

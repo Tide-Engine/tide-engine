@@ -6,9 +6,9 @@ target_compile_options(tide_flags INTERFACE
     -Wall
     -Wextra
     -Wpedantic
-    -Werror # Warnings are errors (see AGENTS.md, Building)
+    -Werror
 
-    # Determinism (see AGENTS.md). Order matters: -fno-fast-math resets
+    # Determinism: no FMA contraction. Order matters: -fno-fast-math resets
     # contraction to clang's default ("on"), so -ffp-contract=off must follow it.
     -fno-fast-math
     -ffp-contract=off
@@ -25,7 +25,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # locals take more than a page touches each page as it makes room for
     # them, so a stack that runs out, as a game's recursion with no end does,
     # ends at its guard page and never past it in memory that's something
-    # else's (see AGENTS.md, Language). Windows' targets check big frames by
+    # else's. Windows' targets check big frames by
     # themselves, and tide builds games the same way (compiler/cli/build.c).
     target_compile_options(tide_flags INTERFACE -fstack-clash-protection)
 endif()
@@ -37,7 +37,7 @@ endif()
 
 if(UNIX AND NOT TIDE_WEB)
     # Linux keeps the C math library separate. The engine avoids its functions
-    # (see AGENTS.md, Determinism), but clang still calls sqrtf for its error
+    # (determinism), but clang still calls sqrtf for its error
     # case, and tests use the library for reference values.
     target_link_libraries(tide_flags INTERFACE m)
 endif()

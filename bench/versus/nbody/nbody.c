@@ -135,8 +135,7 @@ static void tick(void *state, const tide_jobs *jobs)
 {
     nbody *b = state;
     if (!b->block) setup(b); // Tide's first tick makes them, then moves them
-    // Threads pay from about 256 bodies, or 512 with SIMD (on a 12-core Ryzen
-    // 9 7900X)
+    // Threads pay from about 256 bodies, or 512 with SIMD
     pull_job j = {b, versus_pieces(jobs, b->count, b->simd ? 512u : 256u)};
     versus_for(jobs, j.pieces, pull, &j);
     const float dt = VERSUS_DT;

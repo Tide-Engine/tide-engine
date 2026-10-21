@@ -1,5 +1,5 @@
 // Sand: falling sand and water that every player paints into at once, the
-// cellular automaton benchmark (see AGENTS.md, Benchmarks). Bots play it
+// cellular automaton benchmark. Bots play it
 // there; play.tide makes it a game people play, with the mouse or a finger.
 //
 // The cells are a grid, which a parallel loop steps in 2x2 blocks, every

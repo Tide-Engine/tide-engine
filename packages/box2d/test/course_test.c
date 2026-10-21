@@ -71,9 +71,7 @@ TIDE_TEST(box2d_orders_a_games_systems)
     tick(&a, 2); // The bodies are spawned in the first tick, and made in the second
     Box2D_Body early = body_of(&a, tide_has_Early);
     Box2D_Body late = body_of(&a, tide_has_Late);
-    // Before the step: the speed it wrote is the speed that tick stepped with
     TIDE_CHECK(early.velocity.x == 1.0f && near(early.position.x, DT));
-    // After it: written, and not stepped with yet
     TIDE_CHECK(late.velocity.x == 1.0f && late.position.x == 0.0f);
     tick(&a, 1);
     early = body_of(&a, tide_has_Early);
@@ -179,11 +177,9 @@ TIDE_TEST(box2d_gives_a_new_body_its_impulse)
     const Box2D_Body thrown = body_of(&a, tide_has_Thrown);
     printf("    spawned with an impulse of 3 and a turn of 0.5, a crate goes at %g and spins at %g\n", (double)thrown.velocity.x,
            (double)thrown.spin);
-    // A crate of 1 by 1 weighs 1, and turns as a sixth of that
     TIDE_CHECK(near(thrown.velocity.x, 3.0f) && thrown.velocity.y == 0.0f && near(thrown.spin, 3.0f));
     TIDE_CHECK(thrown.impulse.x == 0.0f && thrown.impulse.y == 0.0f && thrown.turn == 0.0f); // Given, once
     tick(&a, 1);
-    // ...as the same impulses do that are written into a body that's there
     const Box2D_Body nudged = body_of(&a, tide_has_Nudged);
     TIDE_CHECK(nudged.velocity.x == thrown.velocity.x && nudged.velocity.y == thrown.velocity.y && nudged.spin == thrown.spin);
     tick(&a, 30);
@@ -223,7 +219,6 @@ TIDE_TEST(box2d_wakes_a_body_that_code_moves)
     TIDE_REQUIRE(rests(&a, 600));
     TIDE_CHECK(stays(&a));
 
-    // A crate asleep on the floor, put in the air: it falls
     Box2D_Body sleeper = body_of(&a, tide_has_Sleeper);
     TIDE_CHECK(near(sleeper.position.y, 0.5f));
     sleeper.position.y = 5.0f;
@@ -237,7 +232,6 @@ TIDE_TEST(box2d_wakes_a_body_that_code_moves)
     TIDE_CHECK(near(body_of(&a, tide_has_Sleeper).position.y, 0.5f));
     TIDE_CHECK(stays(&a));
 
-    // ...and one that's turned where it lies: it comes to lie on a side again
     Box2D_Body tilted = body_of(&a, tide_has_Tilted);
     tilted.angle = 0.5f;
     put(&a, tide_has_Tilted, tilted);
@@ -248,7 +242,6 @@ TIDE_TEST(box2d_wakes_a_body_that_code_moves)
     printf("    a sleeping crate turned to 0.5 lies at %g once it's at rest\n", (double)lies);
     TIDE_CHECK(tide_abs_f(lies) < 0.05f || tide_abs_f(tide_abs_f(lies) - 0.5f * TIDE_PI_F) < 0.05f);
 
-    // A body that never moves, moved from under a crate asleep on it: the crate falls to the floor
     TIDE_CHECK(body_of(&a, tide_has_Rider).position.y > 3.0f);
     Box2D_Body ledge = body_of(&a, tide_has_Ledge);
     ledge.position.x = 14.0f;
@@ -278,7 +271,6 @@ TIDE_TEST(box2d_gravity_that_changes_wakes_the_world)
     TIDE_CHECK(sleeper.position.y > 1.0f && sleeper.velocity.y > 1.0f);
     TIDE_CHECK(body_of(&a, tide_has_Rider).position.y > 4.2f);
 
-    // ...and back: everything falls again, and comes to rest
     a.Box2D_Physics.gravity = tide_f2(0.0f, -10.0f);
     TIDE_REQUIRE(rests(&a, 900));
     TIDE_CHECK(body_of(&a, tide_has_Sleeper).position.y < 2.0f);
@@ -323,7 +315,6 @@ TIDE_TEST(box2d_sensors_report)
     static uint64_t went[SENSOR_TICKS];
     play_sensors(&a, went, false, &previous);
 
-    // While the probe was still falling: everything else had happened
     const tide_world *w = &previous;
     const Heard gate = heard_by(w, tide_has_Gate);
     const Heard fence = heard_by(w, tide_has_Fence);
@@ -336,33 +327,24 @@ TIDE_TEST(box2d_sensors_report)
     printf("    the gate heard %d come and %d go, the marble %d and %d, the probe %d and %d, the shelf %d and %d, the floor %d and %d\n",
            (int)gate.touched, (int)gate.parted, (int)marble.touched, (int)marble.parted, (int)probe.touched, (int)probe.parted,
            (int)shelf.touched, (int)shelf.parted, (int)floor.touched, (int)floor.parted);
-    // The marble fell through the gate: each heard the other come and go, once
     TIDE_CHECK(gate.touched == 1 && gate.parted == 1 && gate.gone == 0);
     TIDE_CHECK(tide_entity_equal(gate.last, the(w, tide_has_Marble)));
-    // ...and landed on the floor, which is the second thing it touched
     TIDE_CHECK(marble.touched == 2 && marble.parted == 1);
     TIDE_CHECK(tide_entity_equal(marble.last, the(w, tide_has_Floor)));
     TIDE_CHECK(body_of(w, tide_has_Marble).position.y < 1.0f);
-    // A sensor doesn't report another: the fence crosses the gate, and heard nothing
     TIDE_CHECK(fence.touched == 0 && fence.parted == 0);
-    // A sensor that moves reports the bodies it passes through, static ones too: the shelf, then the floor
     TIDE_CHECK(probe.touched == 2 && probe.parted == 2 && shelf.touched == 1 && shelf.parted == 1);
     TIDE_CHECK(tide_entity_equal(shelf.last, the(w, tide_has_Probe)) && tide_entity_equal(probe.last, the(w, tide_has_Floor)));
     TIDE_CHECK(body_of(w, tide_has_Probe).position.y < -2.0f); // Nothing stopped it
-    // A body that's in a sensor from its first step is reported, and stays so while it rests there
     TIDE_CHECK(trap.touched == 1 && trap.parted == 0 && tide_entity_equal(trap.last, the(w, tide_has_Bait)));
     TIDE_CHECK(bait.touched == 2 && bait.parted == 0);
-    // The floor heard the marble, the probe, the bait and the prey, and the probe leave
     TIDE_CHECK(floor.touched == 4 && floor.parted == 1);
 
-    // After it all: the bait went from inside its trap, and the snare from around its prey. Each that stayed
-    // heard a parting, from no entity
     const Heard trap_after = heard_by(&a, tide_has_Trap);
     const Heard prey = heard_by(&a, tide_has_Prey);
     TIDE_CHECK(trap_after.touched == 1 && trap_after.parted == 1 && trap_after.gone == 1);
     TIDE_CHECK(tide_entity_equal(trap_after.last, (tide_entity){0}));
     TIDE_CHECK(prey.touched == 2 && prey.parted == 1 && prey.gone == 1);
-    // ...and so did the floor, which the bait stood on: a solid shape's parting comes the same way
     const Heard floor_after = heard_by(&a, tide_has_Floor);
     TIDE_CHECK(floor_after.touched == 4 && floor_after.parted == 2 && floor_after.gone == 1);
     TIDE_CHECK(a.Box2D_Physics.bodies == 10 && a.Box2D_Physics.shapes == 10);
@@ -376,8 +358,6 @@ TIDE_TEST(box2d_sensors_report)
     TIDE_CHECK(went[SENSOR_TICKS - 1] == SENSORS_HASH);
     TIDE_CHECK(tide_hash_end(images) == SENSORS_IMAGES_HASH);
 
-    // What a sensor holds is in the image: a world made from it again before every tick hears the same, at
-    // the same ticks
     static uint64_t again[SENSOR_TICKS];
     const int32_t before = b2t_restores();
     play_sensors(&b, again, true, NULL);

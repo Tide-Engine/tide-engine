@@ -30,7 +30,7 @@ static void frame(void)
     tide_gui_begin(&gui, &devices, tide_f2(640, 480), NULL);
     tide_frame(&world, NULL, 1, &world, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
-    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
+    tide_test_flatten(&draw);
 }
 
 TIDE_TEST(overrides_systems_run_where_what_they_replace_did)

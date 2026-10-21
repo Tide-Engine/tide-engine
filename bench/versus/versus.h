@@ -6,7 +6,7 @@
 #include "tide/jobs.h"
 
 // C against Tide: a concept written both ways, each as fast as its language
-// allows, timed on the same work (see AGENTS.md, Benchmarks).
+// allows, timed on the same work.
 //
 // Every way of writing it ("Tide", "C", and maybe more C, with a trick Tide
 // can't do) starts from nothing and runs the same ticks, the first of which
@@ -15,7 +15,7 @@
 // result, bit for bit: they did the same work, so their times compare.
 //
 // The C is built with the same flags as the code tidec generates (no fast
-// math, no fused multiply-add: see AGENTS.md, Determinism), so what differs is
+// math, no fused multiply-add), so what differs is
 // the language and the engine under it, not the compiler's options.
 
 // A tick's length, as every way takes it: Time.dt in Tide.

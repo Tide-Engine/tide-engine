@@ -153,7 +153,7 @@ int tide_serve(const tide_serve_desc *desc)
     if (host.ready) host.ready(host.user, h);
 #ifdef _WIN32
     // A per-process timer avoids Sleep(1)'s coarse system timer resolution,
-    // without changing the owner's global multimedia timer settings.
+    // without changing the global multimedia timer settings.
     HANDLE timer = CreateWaitableTimerExW(NULL, NULL, 2u, TIMER_ALL_ACCESS);
 #endif
     uint32_t update = 0;

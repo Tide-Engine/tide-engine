@@ -1696,7 +1696,6 @@ type resolve_builtin_call(const str owner, expr *e)
     }
 
     if (!known) {
-        // There was a NormalizeSafe while Normalize gave NaN for a zero vector
         if (str_eq_c(owner, "Math") && str_eq_c(e->name, "NormalizeSafe")) {
             diag_error(e->at, "Math.NormalizeSafe is gone: write Math.Normalize");
             diag_note("Math.Normalize no longer gives NaN for a vector too short to normalize: it gives zero, and "

@@ -272,7 +272,6 @@ static const char *paint(const char *color)
     return diag_colored() ? color : "";
 }
 
-// An error's red, a warning's yellow.
 static const char *kind_color(const char *kind)
 {
     return kind[0] == 'e' ? "\x1b[1;31m" : "\x1b[1;33m";

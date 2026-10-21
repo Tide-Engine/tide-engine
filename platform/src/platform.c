@@ -42,7 +42,7 @@ uint8_t *tide_platform_pack(size_t *size)
 }
 
 #ifdef __wasm__
-#include "tide_web.h" // The page's frame loop (platform/web/tide.js)
+#include "tide_web.h"
 #endif
 
 #define COUNT_OF(array) (sizeof(array) / sizeof((array)[0]))
@@ -132,7 +132,6 @@ static uint32_t headless_frame; // The frame running, or the last one, counted f
 static float *headless_audio;
 static uint64_t played, captured, kept, audio_capacity;
 
-// Seconds since the window opened.
 static double now(void)
 {
     return (double)(tide_time_now_ns() - opened) * 1e-9;
@@ -314,7 +313,7 @@ static void headless_microphone(void)
         if (run > n) run = n;
         tide_audio_in_push(mic.file.samples + (size_t)mic.file_at * mic.file.channels, run, mic.file.rate, mic.file.channels);
         mic.file_at += run;
-        if (mic.file_at == mic.file.frames) mic.file_at = 0; // Looped
+        if (mic.file_at == mic.file.frames) mic.file_at = 0;
         n -= run;
     }
 }
@@ -577,7 +576,7 @@ static bool poll_mouse(tide_mouse *m)
 }
 
 // Fingers on a touchscreen: the page's on the web, the window's on Windows,
-// the activity's on Android. Other desktops have none yet.
+// the activity's on Android.
 static void poll_touches(tide_touchscreen *s)
 {
     tide_touches_poll(s);
@@ -743,8 +742,7 @@ typedef struct shape {
 // What a smooth shape is drawn with besides. Few shapes are smooth ones, and
 // these are more than a shape again, so only a run that has some has them:
 // one for each of its shapes, in a buffer of their own, which a pipeline of
-// its own reads (see STEP_SHAPES). A run of the plain kinds alone, however
-// long, goes to the GPU as it always did.
+// its own reads (see STEP_SHAPES).
 typedef struct shape_extra {
     float turn[2];     // Its rotation's cos and sin, on the screen; an arc's, to its middle
     float radius;      // Its corners'
@@ -783,10 +781,9 @@ typedef struct mesh_vertex {
 // can be: their six corners' places take two numbers at most on each axis, as
 // their uvs do, and they're of one color. That's a sprite, a tile or a glyph
 // that isn't turned, in whatever order its corners and triangles come. Each
-// corner takes one number or the other on each axis, as its bits were, so
-// the GPU draws the same triangles from the same numbers as from six of the
-// vertices above: the same pixels, from 40 bytes where those were 120. A run
-// of them is one draw call, as the run of triangles it stands for was.
+// corner takes one number or the other on each axis, so the GPU draws the same
+// triangles from the same numbers as from six of the vertices above: the same
+// pixels, from 40 bytes where those are 120. A run of them is one draw call.
 typedef struct quad {
     float box[4];     // The two numbers its places take on each axis, in window pixels: x and y, then the others
     float span[4];    // ...and its uvs'
@@ -956,7 +953,6 @@ static bool target_extent(const tide_target_size size, const draw_root *to, floa
     return true;
 }
 
-// Room for `count` more extras after the ones there.
 static shape_extra *extra_room(const uint32_t count)
 {
     if (count > shape_extra_capacity - shape_extra_count) {
@@ -970,7 +966,6 @@ static shape_extra *extra_room(const uint32_t count)
     return shape_extras + shape_extra_count;
 }
 
-// Room for `count` more shapes after the ones there.
 static shape *shape_room(const uint32_t count)
 {
     if (count > shape_capacity - shape_count) {
@@ -984,9 +979,9 @@ static shape *shape_room(const uint32_t count)
 }
 
 // Every shape of a run that has smooth ones has an extra, in the run's order.
-// Plain shapes don't say so as they're added, which keeps adding one as cheap
-// as it was: the ones added since the run's last smooth shape get theirs
-// here, zeroed, as nothing reads them. Called before the run's next smooth
+// Plain shapes don't say so as they're added, which keeps adding one cheap:
+// the ones added since the run's last smooth shape get theirs here, zeroed,
+// as nothing reads them. Called before the run's next smooth
 // shape, and once the run is over.
 static void settle_extras(void)
 {
@@ -999,7 +994,6 @@ static void settle_extras(void)
     shape_extra_count += missing;
 }
 
-// Room for `count` more radii after the ones there.
 static float *radius_room(const uint32_t count)
 {
     if (count > shape_radius_capacity - shape_radius_count) {
@@ -1230,7 +1224,7 @@ static void add_circle(const bool wire, const float x, const float y, const floa
 
 // A run of the list's plain shapes (TIDE_DRAW_PLAIN: rects, their outlines, lines, and circles where the
 // destination isn't scaled) into the run of shapes there is, in one loop: a frame of many shapes spends its time
-// here. Each one's arithmetic is what it always was, to the bit, its color as the list has it. A circle on a scaled
+// here. Each one's arithmetic matches add_shape's to the bit, its color as the list has it. A circle on a scaled
 // destination goes as the smooth shape it also is (add_circle), between them.
 static void add_plain_run(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
 {
@@ -1302,7 +1296,6 @@ static void add_plain_run(const tide_draw_list *list, const tide_draw_command *c
     }
 }
 
-// Room for `count` more vertices after the ones there.
 static mesh_vertex *mesh_room(const uint32_t count)
 {
     if (count > mesh_vertex_capacity - mesh_vertex_count) {
@@ -1316,7 +1309,6 @@ static mesh_vertex *mesh_room(const uint32_t count)
     return mesh_vertices + mesh_vertex_count;
 }
 
-// Room for `count` more quads after the ones there.
 static quad *quad_room(const uint32_t count)
 {
     if (count > quad_capacity - quad_count) {
@@ -2053,10 +2045,9 @@ static void free_buffer(const tide_gpu_id id)
 
 // Mesh buffers the frame's list has no use for: those of meshes it doesn't
 // draw, and those too small for what's in their place now, for the meshes it
-// draws that need some. Making a buffer costs OpenGL (and WebGL) a tenth of a
-// millisecond or more, and a game that fills a list in a view each frame has
-// its meshes made again each frame. What's left as the frame ends goes, so
-// none is counted after it.
+// draws that need some. Making a buffer is slow on OpenGL (and WebGL), and a
+// game that fills a list in a view each frame has its meshes made again each
+// frame. What's left as the frame ends goes, so none is counted after it.
 typedef struct spare_buffer {
     tide_gpu_id id;
     tide_gpu_buffer_kind kind;
@@ -3279,7 +3270,7 @@ static uint32_t data_shape_hash(const int32_t width, const int32_t height)
 
 // Determine liveness before detaching anything: a later draw can still name a
 // previous frame's unchanged palette. Merely protecting it does not count it
-// as drawn; skipped destinations and invalid reads still prune as before.
+// as drawn; skipped destinations and invalid reads still prune.
 static void prepare_data_textures(const tide_draw_list *list)
 {
     for (uint32_t i = 0; i < gpu_texture_count; i++) gpu_textures[i].protected = false;
@@ -3573,7 +3564,7 @@ static const char *samples_unavailable(const tide_draw_list *list, const draw_st
 // A source recorded after Resize first sees the replacement black image,
 // even when no command draws into it. An older source still aliases the
 // current attachment; it never rolls a target back to an earlier revision.
-// A source at the revision there is, whose image now comes to another number
+// A source at the current revision, whose image now comes to another number
 // of pixels (the display's scale changed, or the window's size under a target
 // that follows it), sees the image made again, black, as a destination would.
 static bool prepare_source_target(const tide_draw_list *list, const uint32_t texture, const bool check)
@@ -4506,7 +4497,7 @@ void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_
     draw_list(list, (draw_root){.gpu = gpu_state.target, .width = (float)logical_width, .height = (float)logical_height,
                               .pixel_width = width, .pixel_height = height}, false, false);
     // Only the pixels from the points' top left to their bottom right come back, where the backend reads parts:
-    // reading all of a 256 by 352 target for one point took Vulkan 0.137 ms a frame where nothing drew, 0.064 now
+    // reading a whole target for a few points is slow
     int left = width, top = height, right = 0, bottom = 0;
     for (int i = 0; i < count; i++) {
         const int x = (int)points[i].x, y = (int)points[i].y;

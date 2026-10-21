@@ -1,5 +1,5 @@
 // Buckets, Tide against C (see bench/versus/versus.h): a list of lists, the
-// flat list a game wrote before a list could hold lists, and C.
+// flat list, and C.
 
 #include <stdlib.h>
 

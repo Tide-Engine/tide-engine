@@ -1,5 +1,5 @@
 # tide: the command users run to build, run and upgrade games. It runs tidec's
-# front end in-process and calls clang (see AGENTS.md, Packaging and releases).
+# front end in-process and calls clang.
 add_executable(tide_cli main.c help.c android.c build.c deploy.c editors.c fetch.c install.c libraries.c line.c open.c packages_cmd.c publish.c release.c
     serve.c sys.c toolchain.c unity_assets.c unity_yaml.c unzip.c upgrade.c ${TIDE_APK_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c" "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c")

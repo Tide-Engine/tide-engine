@@ -6,7 +6,6 @@
 #include "tide/json.h"
 #include "tide_test.h"
 
-// A stand-in for a generated world: a list that's part of it, and its heap.
 typedef struct json_world {
     tide_list bytes;
     tide_heap heap;
@@ -50,28 +49,23 @@ TIDE_TEST(json_floats_read_as_the_nearest_float)
         {"0.1", 0x3DCCCCCDu}, {"0.3", 0x3E99999Au}, {"3.1415927", 0x40490FDBu}, {"100", 0x42C80000u}, {"1e2", 0x42C80000u},
         {"1E+2", 0x42C80000u}, {"1000e-1", 0x42C80000u}, {"0.001e5", 0x42C80000u}, {"5.", 0x40A00000u}, {".5", 0x3F000000u},
         {"007", 0x40E00000u}, {"16777216", 0x4B800000u},
-        // Halfway between two floats goes to the even one; a digit either side of it decides
         {"16777217", 0x4B800000u}, {"16777219", 0x4B800002u}, {"16777217.000000000000000000000000000000001", 0x4B800001u},
         {"16777216.99999999999999999999999999999999", 0x4B800000u},
         {"1.000000178813934326171875", 0x3F800002u}, {"1.00000017881393432617187499999999999999999999", 0x3F800001u},
         {"1.00000017881393432617187500000000000000000001", 0x3F800002u},
         {"1.00000005960464477539062500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
          "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
-         0x3F800001u}, // ...even one past the 128 digits kept
+         0x3F800001u},
         {"1.000000059604644775390625", 0x3F800000u},
-        // A float's own range: the biggest, what rounds to it, and what's past it
         {"3.4028235e38", 0x7F7FFFFFu}, {"340282346638528859811704183484516925440", 0x7F7FFFFFu},
         {"340282356779733661637539395458142568447", 0x7F7FFFFFu}, {"340282356779733661637539395458142568448", NOT_A_FLOAT},
         {"3.4028236e38", NOT_A_FLOAT}, {"1e39", NOT_A_FLOAT}, {"1e40", NOT_A_FLOAT}, {"-1e999999999999999999999", NOT_A_FLOAT},
         {"0.00000000001e50", NOT_A_FLOAT}, {"100000000000000000000000000000000000000000000000000e-12", 0x7E967699u},
-        // The smallest normal float, and the ones under it
         {"1.17549435e-38", 0x00800000u}, {"1.1754942e-38", 0x007FFFFFu}, {"1.1754943e-38", 0x00800000u},
         {"1.401298464324817e-45", 0x00000001u}, {"1e-45", 0x00000001u}, {"7.006492321624085e-46", 0x00000000u},
         {"7.006492321624086e-46", 0x00000001u}, {"7.1e-46", 0x00000001u}, {"7e-46", 0x00000000u}, {"2.1e-45", 0x00000001u},
         {"2.2e-45", 0x00000002u}, {"1e-46", 0x00000000u}, {"1e-999999999999999999999", 0x00000000u}, {"-1e-50", 0x80000000u},
-        // A double in between would round twice
         {"9007199791611905", 0x5A000001u}, {"9007199791611904", 0x5A000000u}, {"1.00000011920928955078125", 0x3F800001u},
-        // What isn't a number
         {"", NOT_A_FLOAT}, {"-", NOT_A_FLOAT}, {".", NOT_A_FLOAT}, {"-.", NOT_A_FLOAT}, {"e5", NOT_A_FLOAT}, {"1e", NOT_A_FLOAT},
         {"1e+", NOT_A_FLOAT}, {"+1", NOT_A_FLOAT}, {" 1", NOT_A_FLOAT}, {"1 ", NOT_A_FLOAT}, {"1f", NOT_A_FLOAT},
         {"0x10", NOT_A_FLOAT}, {"1,5", NOT_A_FLOAT}, {"1.2.3", NOT_A_FLOAT}, {"nan", NOT_A_FLOAT}, {"NaN", NOT_A_FLOAT},
@@ -83,7 +77,7 @@ TIDE_TEST(json_floats_read_as_the_nearest_float)
         TIDE_CHECK(got == cases[i].bits);
     }
     float untouched = 5.0f;
-    TIDE_CHECK(!tide_str_parse_float(text_of("x"), &untouched) && untouched == 0.0f); // What isn't one leaves zero
+    TIDE_CHECK(!tide_str_parse_float(text_of("x"), &untouched) && untouched == 0.0f);
 }
 
 TIDE_TEST(json_floats_read_back_from_what_text_shows)
@@ -99,7 +93,7 @@ TIDE_TEST(json_floats_read_back_from_what_text_shows)
         TIDE_CHECK(tide_str_parse_float(s, &back) && bits_of(back) == bits);
         const tide_str negative = tide_json_add_float(TIDE_STR_EMPTY, -v);
         TIDE_CHECK(tide_str_parse_float(negative, &back) && bits_of(back) == (bits | 0x80000000u));
-        const tide_str fixed = tide_str_add_float(TIDE_STR_EMPTY, v, TIDE_FORMAT('F', 9)); // Nine decimals, of any float
+        const tide_str fixed = tide_str_add_float(TIDE_STR_EMPTY, v, TIDE_FORMAT('F', 9));
         char c_text[128];
         TIDE_REQUIRE(fixed.bytes < (int32_t)sizeof c_text);
         memcpy(c_text, fixed.ptr, (size_t)fixed.bytes);
@@ -131,13 +125,11 @@ TIDE_TEST(json_ints_read_whole_or_not_at_all)
     TIDE_CHECK(tide_str_parse_long(text_of("-9223372036854775808"), &l) && l == INT64_MIN);
     TIDE_CHECK(!tide_str_parse_long(text_of("9223372036854775808"), &l) && !tide_str_parse_long(text_of("-9223372036854775809"), &l));
     TIDE_CHECK(!tide_str_parse_long(text_of("18446744073709551616"), &l) && !tide_str_parse_long(text_of("99999999999999999999"), &l));
-    // A text that's a piece of another ends where it says, whatever follows it
     TIDE_CHECK(tide_str_parse_int((tide_str){"12345", 3, 3}, &i) && i == 123);
     float f;
     TIDE_CHECK(tide_str_parse_float((tide_str){"1.5e10", 3, 3}, &f) && f == 1.5f);
 }
 
-// A reader over `text`, which is JSON's or isn't.
 static tide_json reading(const char *text)
 {
     tide_json j;
@@ -173,14 +165,13 @@ TIDE_TEST(json_reader_takes_each_kind_and_fails_for_good)
     TIDE_CHECK(tide_json_object(&j) && tide_json_field(&j, names, 2) == 1 && tide_json_skip(&j));
     TIDE_CHECK(tide_json_field(&j, names, 2) == TIDE_JSON_UNKNOWN && tide_json_skip(&j));
     TIDE_CHECK(tide_json_field(&j, names, 2) == 0 && tide_json_skip(&j));
-    TIDE_CHECK(tide_json_field(&j, names, 2) == 1 && tide_json_int(&j, 0, 9, &n) && n == 3); // An escaped key is its text
+    TIDE_CHECK(tide_json_field(&j, names, 2) == 1 && tide_json_int(&j, 0, 9, &n) && n == 3);
     TIDE_CHECK(tide_json_field(&j, names, 2) == TIDE_JSON_DONE && tide_json_end(&j));
     j = reading("{\"k\":1,\"long key\":2}");
     TIDE_CHECK(tide_json_object(&j) && tide_json_key(&j, &t, 8) && is(tide_text_view(t), "k") && tide_json_skip(&j));
     TIDE_CHECK(tide_json_key(&j, &t, 8) && is(tide_text_view(t), "long key") && tide_json_skip(&j) && !tide_json_key(&j, &t, 8));
     TIDE_CHECK(tide_json_end(&j));
 
-    // Once it has failed, nothing reads, and what a value was stays
     j = reading("[1,x,3]");
     n = 7;
     TIDE_CHECK(tide_json_array(&j) && tide_json_item(&j, 1) && tide_json_int(&j, 0, 9, &n) && tide_json_item(&j, 1));
@@ -189,7 +180,6 @@ TIDE_TEST(json_reader_takes_each_kind_and_fails_for_good)
     TIDE_CHECK(!tide_json_array(&j) && !tide_json_object(&j) && tide_json_field(&j, names, 2) == TIDE_JSON_DONE);
     TIDE_CHECK(!tide_json_text(&j, &t) && !tide_json_char(&j, &c) && !tide_json_float(&j, &f) && !tide_json_number_next(&j));
 
-    // What an int isn't, and a name none has
     j = reading("3.5");
     TIDE_CHECK(!tide_json_int(&j, 0, 9, &n) && j.failed);
     j = reading("10");
@@ -200,7 +190,7 @@ TIDE_TEST(json_reader_takes_each_kind_and_fails_for_good)
     TIDE_CHECK(!tide_json_char(&j, &c));
     j = reading("\"\"");
     TIDE_CHECK(tide_json_char(&j, &c) && c == 0 && tide_json_end(&j));
-    j = reading("\xEF\xBB\xBF{}"); // A byte order mark before it
+    j = reading("\xEF\xBB\xBF{}");
     TIDE_CHECK(tide_json_skip(&j) && tide_json_end(&j));
     j = reading("{} x");
     TIDE_CHECK(tide_json_skip(&j) && !tide_json_end(&j));
@@ -235,19 +225,18 @@ TIDE_TEST(json_reader_refuses_what_is_not_json)
         if (read) printf("    read: %s\n", bad[i]);
         TIDE_CHECK(!read && j.failed);
     }
-    // A NUL is a control character like any other, and the text ends where its length says
     tide_json j;
     tide_json_begin(&j, (tide_str){"\"a\0b\"", 5, 5});
     TIDE_CHECK(!tide_json_skip(&j));
     tide_json_begin(&j, (tide_str){"[1,2]]]]", 5, 5});
     TIDE_CHECK(tide_json_skip(&j) && tide_json_end(&j));
-    tide_json_begin(&j, (tide_str){"\"abc\"", 4, 4}); // Its closing quote is past its end
+    tide_json_begin(&j, (tide_str){"\"abc\"", 4, 4});
     TIDE_CHECK(!tide_json_skip(&j));
-    tide_json_begin(&j, (tide_str){"\"ab\\\"", 4, 4}); // ...and so is what its backslash escapes
+    tide_json_begin(&j, (tide_str){"\"ab\\\"", 4, 4});
     TIDE_CHECK(!tide_json_skip(&j));
     tide_json_begin(&j, (tide_str){"\"\\u00e9\"", 6, 6});
     TIDE_CHECK(!tide_json_skip(&j));
-    tide_json_begin(&j, (tide_str){"\"\xF0\x9F\x98\x80\"", 4, 4}); // A character cut short
+    tide_json_begin(&j, (tide_str){"\"\xF0\x9F\x98\x80\"", 4, 4});
     TIDE_CHECK(!tide_json_skip(&j));
     tide_json_begin(&j, (tide_str){"12345", 3, 3});
     int64_t n;
@@ -258,7 +247,6 @@ TIDE_TEST(json_reader_refuses_what_is_not_json)
 
 TIDE_TEST(json_reader_bounds_depth_text_and_what_it_makes)
 {
-    // As deep as TIDE_JSON_DEPTH, and no deeper: read by the reader's own calls, and skipped
     char deep[2 * TIDE_JSON_DEPTH + 8];
     for (uint32_t depth = TIDE_JSON_DEPTH - 1; depth <= TIDE_JSON_DEPTH + 1; depth++) {
         memset(deep, '[', depth);
@@ -285,14 +273,12 @@ TIDE_TEST(json_reader_bounds_depth_text_and_what_it_makes)
     TIDE_CHECK(!tide_json_skip(&j));
     free(many);
 
-    // Text of TIDE_JSON_LIMIT bytes or more isn't looked at
     static const char one[] = "1";
     tide_json_begin(&j, (tide_str){one, (int32_t)TIDE_JSON_LIMIT, 0});
     TIDE_CHECK(j.failed && !tide_json_skip(&j) && !tide_json_end(&j));
     tide_json_begin(&j, (tide_str){one, -1, 0});
     TIDE_CHECK(j.failed);
 
-    // What a read makes is counted, and a read that asks for more than TIDE_JSON_ROOM fails before it's made
     j = reading("[1,2,3,4,5,6,7,8,9]");
     TIDE_CHECK(tide_json_array(&j));
     uint32_t items = 0;
@@ -313,7 +299,6 @@ TIDE_TEST(json_reads_bytes_wherever_a_list_keeps_them)
     memset(&world, 0, sizeof world);
     tide_text_use(&world.heap, NULL);
     const uint32_t mark = tide_scratch_mark();
-    // A list in the scratch area, side by side
     static const char small[] = "{\"a\":[1,2,3]}";
     tide_json j;
     tide_json_begin_bytes(&j, tide_list_from(small, (int32_t)strlen(small), 1u));
@@ -321,7 +306,6 @@ TIDE_TEST(json_reads_bytes_wherever_a_list_keeps_them)
     tide_json_begin_bytes(&j, (tide_list){0});
     TIDE_CHECK(!tide_json_skip(&j) && j.failed);
 
-    // A world's list in chunks: an array of forty thousand numbers
     uint8_t *open = tide_list_add(&world.bytes, 1u, TIDE_IN_MATCH);
     TIDE_REQUIRE(open);
     *open = '[';
@@ -345,7 +329,6 @@ TIDE_TEST(json_reads_bytes_wherever_a_list_keeps_them)
         count++;
     }
     TIDE_CHECK(count == 40000 && sum == 180000 && tide_json_end(&j));
-    // The text those bytes are, and bytes that are none
     tide_str text;
     TIDE_CHECK(tide_str_from_bytes(world.bytes, &text) && text.bytes == 80001 && text.chars == 80001 && text.ptr[80000] == ']');
     *(uint8_t *)tide_list_at_mut(world.bytes, 70000, 1u) = 0xC3u;
@@ -366,11 +349,9 @@ TIDE_TEST(json_writes_text_that_is_always_json)
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, text_of("\b\f\n\r\t\x01\x1F\x7F")), "\"\\b\\f\\n\\r\\t\\u0001\\u001f\x7F\""));
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, text_of("\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80")), "\"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\""));
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, (tide_str){"a\0b", 3, 3}), "\"a\\u0000b\""));
-    // Bytes that are no character's: U+FFFD for each run of them
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, text_of("a\xC3z")), "\"a\xEF\xBF\xBDz\""));
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, text_of("\x80\x80z\xED\xA0\x80\xFF")), "\"\xEF\xBF\xBDz\xEF\xBF\xBD\xEF\xBF\xBD\""));
     TIDE_CHECK(is(tide_json_add_text(TIDE_STR_EMPTY, text_of("\xF0\x9F\x98")), "\"\xEF\xBF\xBD\""));
-    // Text longer than what's written at once, of every kind of character
     tide_str long_text = TIDE_STR_EMPTY;
     for (int i = 0; i < 500; i++) long_text = tide_str_add(long_text, text_of("\"\xE2\x82\xAC\n\x02\xF0\x9F\x98\x80z"));
     const tide_str written = tide_json_add_text(TIDE_STR_EMPTY, long_text);
@@ -398,7 +379,6 @@ TIDE_TEST(json_writes_text_that_is_always_json)
     tide_scratch_reset(mark);
 }
 
-// The piece at `i` of a list of text.
 static tide_str piece(const tide_list pieces, const int32_t i)
 {
     const tide_text *t = tide_list_at(pieces, i, sizeof(tide_text));
@@ -420,16 +400,15 @@ TIDE_TEST(text_splits_and_goes_to_bytes_and_back)
     parts = tide_str_split(text_of("--a----b--"), text_of("--"));
     TIDE_CHECK(tide_list_count(parts) == 5 && is(piece(parts, 0), "") && is(piece(parts, 1), "a") && is(piece(parts, 2), ""));
     TIDE_CHECK(is(piece(parts, 3), "b") && is(piece(parts, 4), ""));
-    parts = tide_str_split(text_of("aaa"), text_of("aa")); // From the start, each match after the one before
+    parts = tide_str_split(text_of("aaa"), text_of("aa"));
     TIDE_CHECK(tide_list_count(parts) == 2 && is(piece(parts, 0), "") && is(piece(parts, 1), "a"));
     parts = tide_str_split_char(text_of("x\xE2\x82\xACy\xE2\x82\xAC"), 0x20AC);
     TIDE_CHECK(tide_list_count(parts) == 3 && is(piece(parts, 0), "x") && is(piece(parts, 1), "y") && is(piece(parts, 2), ""));
-    TIDE_CHECK(piece(tide_str_split_char(text_of("\xC3\xA9,\xC3\xA9"), ','), 1).chars == 1); // A piece's characters are counted
-    parts = tide_str_split_char(text_of("a,b"), 0); // No character: nothing to split at
+    TIDE_CHECK(piece(tide_str_split_char(text_of("\xC3\xA9,\xC3\xA9"), ','), 1).chars == 1);
+    parts = tide_str_split_char(text_of("a,b"), 0);
     TIDE_CHECK(tide_list_count(parts) == 1 && is(piece(parts, 0), "a,b"));
     parts = tide_str_split_char(text_of("a,b"), -1);
     TIDE_CHECK(tide_list_count(parts) == 1);
-    // A separator longer than the short patterns' search, and a piece of a text, which ends where it says
     static const char long_separator[] = "0123456789012345678901234567890123456789";
     tide_str joined = text_of("left");
     joined = tide_str_add(tide_str_add(tide_str_add(joined, text_of(long_separator)), text_of("mid")), text_of(long_separator));

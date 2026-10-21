@@ -438,7 +438,7 @@ static uint32_t on_top(const tide_gui *g, const tide_float2 at, tide_rect *where
 // is up) is the GUI's until it's let go: by when the press began, as a press
 // on the stats' drawer is by where. The widget may be gone the frame after,
 // as a menu is once its Play was clicked, with the key that clicked it still
-// down: read as the game's from then, Space on Play fired the cannon too.
+// down: it would read as the game's from then.
 //
 // A frame notes the presses (keep_presses), as it sees each key go down. Views
 // have one hidden until a frame has seen it up, that frame too; samples until

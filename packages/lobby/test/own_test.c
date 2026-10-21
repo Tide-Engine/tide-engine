@@ -176,7 +176,6 @@ TIDE_TEST(lobby_own_service_and_network_take_players_from_a_lobby_into_a_match_t
     TIDE_REQUIRE(until(all_alone));
     TIDE_CHECK(tide_network_get() == NULL); // Nothing is registered until the game's transport slot is asked
 
-    // The matchmaking slot: the first to ask makes a lobby, and the next two find it
     order(ANN, Order_Quick, "duel");
     frame();
     order(BOB, Order_Quick, "duel");
@@ -186,29 +185,24 @@ TIDE_TEST(lobby_own_service_and_network_take_players_from_a_lobby_into_a_match_t
     TIDE_CHECK(is(ANN, CLIENT(ANN).lobby.id, "101") && is(BOB, CLIENT(BOB).lobby.id, "101") && is(CAT, CLIENT(CAT).lobby.id, "101"));
     TIDE_CHECK(CLIENT(ANN).owned && !CLIENT(BOB).owned && !CLIENT(CAT).owned);
 
-    // The lobby slot: a member's data reaches the others
     order(BOB, Order_Ready, "");
     TIDE_REQUIRE(until(ready_seen));
 
-    // The transport slot: the owner's match opens on the game's network, the lobby names it, the members join
     order(ANN, Order_Start, "");
     TIDE_REQUIRE(until(three_play));
     TIDE_CHECK(tide_network_get() != NULL && OwnUpdates() > 0);
     TIDE_CHECK(ANN->status.server && ANN->status.open && !BOB->status.server && !CAT->status.server);
     TIDE_CHECK(ANN->network.on && BOB->network.on && CAT->network.on);
 
-    // A fourth finds the lobby in a list, joins it by its ID, and is in its match
     order(DAN, Order_List, "");
     frame();
     TIDE_REQUIRE(until(dan_listed));
     order(DAN, Order_Join, "");
     TIDE_REQUIRE(until(four_play));
-    // ...until the owner sends it out of the lobby, which takes it out of the match
     order(ANN, Order_Kick, "p4");
     TIDE_REQUIRE(until(dan_out));
     TIDE_CHECK(CLIENT(DAN).failure == Lobbies_LobbyFailure_Kicked);
 
-    // Each runs their own way: inputs go over the network, and every machine's world is the same
     ANN->devices.keyboard.d.held = ANN->devices.keyboard.d.pressed = true;
     BOB->devices.keyboard.a.held = BOB->devices.keyboard.a.pressed = true;
     CAT->devices.keyboard.d.held = CAT->devices.keyboard.d.pressed = true;
@@ -218,14 +212,11 @@ TIDE_TEST(lobby_own_service_and_network_take_players_from_a_lobby_into_a_match_t
     TIDE_CHECK(players_agree(ANN, CAT, &same) > 30u && same);
     TIDE_CHECK(BOB->status.client.resyncs == 0 && CAT->status.client.resyncs == 0);
 
-    // Host migration: the host leaves the lobby, whose owner is Bob now, the member there longest. Bob's
-    // machine takes the match over, Cat's joins it there, and the lobby names the match by its new host
     const int bob_events = BOB->connected + BOB->disconnected, cat_events = CAT->connected + CAT->disconnected;
     const float bob_was = REMOTE(BOB).mine;
     order(ANN, Order_Leave, "");
     TIDE_REQUIRE(until(bob_hosts));
     TIDE_CHECK(CLIENT(BOB).owned && is(BOB, CLIENT(BOB).lobby.owner, "p2"));
-    // Neither saw Connected or Disconnected: the match went on, from where it was
     TIDE_CHECK(BOB->connected + BOB->disconnected == bob_events && CAT->connected + CAT->disconnected == cat_events);
     TIDE_CHECK(REMOTE(BOB).mine <= bob_was);
     TIDE_REQUIRE(until(ann_alone));
@@ -233,8 +224,6 @@ TIDE_TEST(lobby_own_service_and_network_take_players_from_a_lobby_into_a_match_t
     TIDE_CHECK(players_agree(BOB, CAT, &same) > 0 && same);
     TIDE_CHECK(bob_hosts());
 
-    // A match its host ended isn't taken over. Cat hears nothing more (the goodbye is lost with the rest),
-    // goes to the lobby as for a host that went, and is told there that the match ended
     OwnDeafen(3, true);
     cat_gone_before = CAT->disconnected;
     order(BOB, Order_End, "");
@@ -242,7 +231,6 @@ TIDE_TEST(lobby_own_service_and_network_take_players_from_a_lobby_into_a_match_t
     TIDE_CHECK(CAT->reason == TIDE_DISCONNECT_ENDED);
     OwnDeafen(3, false);
 
-    // A match joined at an ID that's nobody's fails as the network says so
     dan_gone_before = DAN->disconnected;
     order(DAN, Order_Stray, "");
     TIDE_REQUIRE(until(dan_failed));

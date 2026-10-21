@@ -38,8 +38,8 @@ TIDE_TEST(mesh_numbers_are_the_nearest_floats)
         {"0.000001", 0x1.0c6f7ap-20f},
         {"123456789012345678901234567890", 0x1.8ee910p+96f}, // More digits than a number keeps
         {"0.00000000000000000000000000000000000000000001", 0x1.cp-147f}, // Seven of the smallest float there is
-        {"1e-45", 0x1p-149f},                                           // ...and one of them
-        {"1e400", 0.0f},  // What no float holds is none
+        {"1e-45", 0x1p-149f},
+        {"1e400", 0.0f}, // What no float holds is none
         {"-1e400", 0.0f},
         {"1e-400", 0.0f},
         {"340282346638528859811704183484516925440", 0x1.fffffep+127f}, // The biggest
@@ -171,7 +171,6 @@ TIDE_TEST(mesh_glb_reads_and_is_never_read_past_its_bytes)
     TIDE_CHECK(mesh.position[3] == -1.0f && mesh.position[7] == 1.0f && mesh.normal[2] == 1.0f);
     TIDE_CHECK(mesh.index[0] == 0 && mesh.index[1] == 2 && mesh.index[2] == 1);
     TIDE_CHECK(mesh.color[0] == 1.0f && mesh.color[3] == 1.0f && mesh.uv[0] == 0.0f && mesh.tangent[3] == 0.0f);
-    // The same file gives the same mesh, to the bit
     mesh_file again;
     TIDE_REQUIRE(read_exactly(glb, size, "triangle.glb", &again, why));
     TIDE_CHECK(memcmp(mesh.hash, again.hash, sizeof mesh.hash) == 0);

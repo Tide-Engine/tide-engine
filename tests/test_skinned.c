@@ -131,9 +131,7 @@ static tide_bone_transform bone(const tide_list pose, const int32_t index)
     return out;
 }
 
-// A separate animation export: an unrelated mesh node precedes the arm, the
-// hand precedes its parent in glTF, and there is no geometry or skin. Node
-// indices and counts differ from model(), while the arm/hand rest rig agrees.
+// A separate animation export: no geometry or skin, an unrelated mesh node before the arm and the hand before its parent; node indices and counts differ from model().
 static const char separate_nodes[] =
     "{\"name\":\"mesh\",\"translation\":[9,0,0]},"
     "{\"name\":\"hand\",\"translation\":[0,3,0]},"
@@ -176,9 +174,7 @@ static uint64_t pose_hash(const tide_list pose)
     return tide_hash_end(hash);
 }
 
-// Typed geometry is deliberately simple: sampling consumes only the portable
-// bytes. The alias variant embeds those bytes in writable packed geometry to
-// exercise proof invalidation after a generated-default-style update.
+// Typed geometry is deliberately simple: sampling consumes only the portable bytes. The alias variant embeds them in writable packed geometry to test proof invalidation.
 static uint8_t *sample_model_pack(const tide_list data, const bool alias, size_t *size)
 {
     tide_pack_builder b = {0};
@@ -212,9 +208,7 @@ static uint8_t *sample_model_pack(const tide_list data, const bool alias, size_t
     return tide_pack_end(&b, size);
 }
 
-// Five nonuniform keys exercise both sides of binary-search decisions and
-// exact-key selection. Equal cubic endpoint slopes make each midpoint the
-// average of its neighboring values, independently of the sampler's search.
+// Five nonuniform keys exercise both sides of the binary-search decisions and exact-key selection; equal cubic endpoint slopes make each midpoint the average of its neighbors.
 static tide_list sampling_search_model(void)
 {
     tide_list data = model();
@@ -253,10 +247,7 @@ static tide_list sampling_search_model(void)
     return data;
 }
 
-// One combined clip and one isolated clip per channel provide an independent
-// search oracle: isolated calls cannot reuse an interval from another channel.
-// Equal arrays occupy different bytes, while distinct arrays and colliding
-// counts exercise exact comparisons. A long track bypasses the bounded cache.
+// One combined clip and one isolated clip per channel give an independent search oracle: isolated calls can't reuse another channel's interval.
 static tide_list sampling_intervals_model(void)
 {
     tide_list data = model();
@@ -474,8 +465,6 @@ TIDE_TEST(skinned_owned_key_scans_check_every_lane_and_tail_before_writing)
     TIDE_REQUIRE(tide_skinned_rest(target, &separate, TIDE_IN_SCRATCH));
     TIDE_REQUIRE(tide_skinned_rest(raw, &stored, TIDE_IN_MATCH));
     const uint64_t scratch_hash = pose_hash(scratch), separate_hash = pose_hash(separate), stored_hash = pose_hash(stored);
-    // Long rotation, cubic rotation and cubic translation tracks cover the
-    // different vector widths, tangents, full batches and trailing scalars.
     const uint32_t tracks[] = {7u, 4u, 3u};
     const uint32_t bad[] = {0x7fc00000u, 0x7f800000u, 0xff800000u};
     for (uint32_t t = 0; t < sizeof tracks / sizeof *tracks; t++) {
@@ -510,8 +499,6 @@ TIDE_TEST(skinned_owned_key_scans_check_every_lane_and_tail_before_writing)
     }
     tide_skinned_channel_data long_track;
     TIDE_REQUIRE(tide_skinned_data_channel(&view, 7u, &long_track));
-    // Truncating the valid track covers every scalar tail of a vector scan,
-    // including one-key clips; corrupt each retained final time/value.
     const uint32_t descriptor = view.channel_at + 7u * TIDE_SKINNED_CHANNEL_SIZE;
     for (uint32_t keys = 1u; keys <= long_track.keys; keys++) {
         word(bytes, descriptor + 12u, keys);
@@ -614,8 +601,6 @@ TIDE_TEST(skinned_packed_samples_match_owned_bits_and_reject_negative_first_keys
         const tide_list packed = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(tide_float3)).data;
         uint64_t version;
         TIDE_REQUIRE(tide_pack_skinned_version(packed, &version));
-        // Replacement reuses the numeric handle, but must recompute the
-        // stronger fact: true -> false -> false -> true (negative zero).
         if (previous_handle) TIDE_CHECK(packed.at == previous_handle);
         previous_handle = packed.at;
         bool nonnegative = variant != 0u && variant != 3u;
@@ -692,7 +677,6 @@ TIDE_TEST(skinned_packed_sampling_rechecks_later_keys_after_proof_invalidation)
     tide_skinned_channel_data channel;
     TIDE_REQUIRE(tide_skinned_data_open(to + sizeof(tide_block), (size_t)tide_list_count(raw), &view));
     TIDE_REQUIRE(tide_skinned_data_channel(&view, 0u, &channel));
-    // Leave the first key valid; the fallback must inspect the later key.
     number(to + sizeof(tide_block), channel.times_at + 4u, 0.0f);
     tide_pack_mesh_updated(to, carrier_size);
     TIDE_CHECK(!tide_pack_skinned_version(packed, &version));
@@ -727,8 +711,6 @@ TIDE_TEST(skinned_sampling_rechecks_later_channel_fields_after_proof_invalidatio
         TIDE_REQUIRE(tide_skinned_data_open(bytes, (size_t)tide_list_count(raw), &view));
         const uint32_t invalid[] = {view.nodes, TIDE_SKINNED_SCALE + 1u, TIDE_SKINNED_CUBICSPLINE + 1u,
                                     0u, view.key_at + view.key_size, view.key_at + view.key_size};
-        // The earlier channel remains valid. Every descriptor field of the
-        // later channel must be checked before any destination mutation.
         word(bytes, view.channel_at + TIDE_SKINNED_CHANNEL_SIZE + field * 4u, invalid[field]);
         tide_pack_mesh_updated(to, carrier_size);
         TIDE_CHECK(!tide_pack_skinned_version(packed, &version));
@@ -823,7 +805,6 @@ TIDE_TEST(skinned_separate_animation_exports_bind_by_required_rig)
     TIDE_REQUIRE(tide_skinned_sample_into(target, source, 0, 0, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(bone(pose, 1).position.x == 2.0f);
 
-    // The reverse binding keeps the animation export's unrelated node at rest.
     TIDE_REQUIRE(tide_skinned_sample_into(source, target, 0, 1, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(tide_list_count(pose) == 4 && bone(pose, 1).position.x == -9.0f && bone(pose, 2).position.x == 3.0f);
     TIDE_CHECK(tide_abs_f(bone(pose, 3).rotation.value.z - 0.70710677f) < 0.000001f);
@@ -939,8 +920,6 @@ TIDE_TEST(skinned_separate_exports_copy_different_default_poses_without_retarget
     TIDE_REQUIRE(tide_skinned_valid(source));
     TIDE_CHECK(!tide_skinned_compatible(target, source));
     tide_list sampled = {0}, into = {0}, rebound = {0};
-    // Clip 1 animates only the hand's translation. The required arm must
-    // use the source's complete local transform, rather than the target rest.
     TIDE_REQUIRE(tide_skinned_sample(source, 1, 1, &sampled, TIDE_IN_SCRATCH));
     TIDE_REQUIRE(tide_skinned_sample_into(target, source, 1, 1, &into, TIDE_IN_SCRATCH));
     TIDE_REQUIRE(tide_skinned_pose_into(target, source, sampled, &rebound, TIDE_IN_SCRATCH));
@@ -951,7 +930,6 @@ TIDE_TEST(skinned_separate_exports_copy_different_default_poses_without_retarget
     TIDE_CHECK(arm.scale.x == 3 && arm.scale.y == 2 && arm.scale.z == 1);
     TIDE_CHECK(hand.position.x == 0 && hand.position.y == 3 && hand.position.z == 0);
     TIDE_CHECK(hand.scale.x == 2 && hand.scale.y == 3 && hand.scale.z == 4);
-    // Persistent output and source aliases keep ordinary snapshot ownership.
     tide_heap heap = {0}, snapshot = {0};
     tide_text_use(&heap, NULL);
     tide_list stored = {0};

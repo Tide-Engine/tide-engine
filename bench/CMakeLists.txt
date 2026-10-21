@@ -1,5 +1,5 @@
-# Benchmarks: games that stress the engine, played by bots on one machine
-# (see AGENTS.md, Benchmarks). `bench_<name> --help` lists a run's options.
+# Benchmarks: games that stress the engine, played by bots on one machine.
+# `bench_<name> --help` lists a run's options.
 # Tests run each one --quick, and fail when a world goes wrong, a bot can't
 # join, or the match ends with another hash than every platform agrees on.
 add_library(tide_bench STATIC bench.c)

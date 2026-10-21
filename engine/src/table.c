@@ -3,8 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// See tide/table.h.
-
 #define FIRST_ROOM 4u // Rows the first chunk starts with room for
 
 static uint32_t full_room(const tide_columns *c)

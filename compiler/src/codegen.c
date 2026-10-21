@@ -6212,7 +6212,6 @@ static void gen_inline(gen *g, const expr *e)
         line(g, o, "const int32_t tide_match_seed = %s;", match_seed(g));
         line(g, o, "(void)tide_match_seed;");
     }
-    // The arguments, in the caller's code
     const char **names = arena_alloc(sizeof(char *) * (size_t)(fn->params.count + 1));
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
@@ -6462,7 +6461,7 @@ static void gen_stmt(gen *g, const stmt *s)
             // What runs in order goes before the condition, each round.
             line(g, o, "while (true) {");
             g->indent++;
-            declare_bindings(g, s->cond); // Names `is` gives, for the body
+            declare_bindings(g, s->cond);
             hoist_spawns(g, s->cond);
             line(g, o, "if (!(%s)) break;", condition_text(g, s->cond));
         } else {
@@ -17301,7 +17300,6 @@ static void gen_assets(gen *g)
     sb_put(o, "    return true;\n}\n\n");
 }
 
-// A Grid2<Color>'s shape, as the game's grid type has it.
 static tide_grid_shape asset_grid_shape(const decl *grid)
 {
     int cell, shift[3];
@@ -19042,7 +19040,7 @@ static bool resource_type(const type t)
 {
     if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET) return true;
     if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) return resource_fields(t.decl);
-    return false; // Containers cannot keep rendering references.
+    return false;
 }
 
 static void gen_resource_fields(gen *g, const decl *d, const char *path, const char *pad)
@@ -19192,7 +19190,6 @@ static void gen_effects(gen *g)
         sb_put(o, ");\n");
         if (d->rolls) sb_put(o, "    memcpy(tide_kept, &tide_rolled, sizeof tide_rolled);\n");
         sb_put(o, "}\n\n");
-        // The Effect value: its id, and its knobs' bytes
         sb_printf(o, "static %s tide_effect_%s(", type_cname(prog->effect), decl_cname(d));
         if (d->audio_knobs >= 0) sb_printf(o, "const %s knobs", type_cname(d->params.items[d->audio_knobs].type.decl));
         else sb_put(o, "void");
@@ -19210,7 +19207,7 @@ static void gen_effects(gen *g)
         const decl *d = prog->decls.items[i];
         if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
         sb state = {0}, knobs = {0};
-        if (d->rolls) sb_printf(&state, "%s + sizeof(tide_random)", rolled_at(d)); // With its generator after it
+        if (d->rolls) sb_printf(&state, "%s + sizeof(tide_random)", rolled_at(d));
         else if (d->audio_state >= 0) sb_printf(&state, "sizeof(%s)", type_cname(d->params.items[d->audio_state].type.decl));
         else sb_put(&state, "0");
         if (d->audio_knobs >= 0) sb_printf(&knobs, "sizeof(%s)", type_cname(d->params.items[d->audio_knobs].type.decl));
