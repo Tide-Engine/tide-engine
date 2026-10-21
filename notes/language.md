@@ -81,7 +81,17 @@ test executable. Existing determinism pins are unchanged. Native GPU, OpenGL,
 WebGL/D3D11 and WebGPU tests pass; this machine has no Vulkan validation layer.
 All 274 shared grammar tests and the production docs build pass. Android, other
 operating systems and sanitizers remain CI coverage; no CI was dispatched.
-Final integration checks are recorded below after merging current dev.
+Integration: merged origin/dev through 97848ffe. Source merged cleanly; both
+notes retain the incoming entries. Rebuilt overlapping compiler/editor, hierarchy,
+prefab, engine/stats and embedding targets; all 1,974 selected native and 1,970
+selected web checks pass, including every compiler diagnostic, complete editor
+tests and the new prefab duplicate-error fixture. CLI/server tools rebuild;
+stdio, pipe, CLI unit and telemetry checks pass (4/4, telemetry repeated against
+the rebuilt CLI). The merged docs production build passes. A final narrow
+regression ensures a property called Interpolate stays a property rather than
+being interpreted as the engine's method callback; properties pass again on
+native/web after that guard. Existing actual Interpolate diagnostics retain
+their callback rules.
 
 ## A diagnostic is said once (2026-10-21)
 

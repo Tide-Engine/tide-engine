@@ -14205,7 +14205,7 @@ static void check_method_decls(checker *c, decl *d)
             check_operator_decl(c, d, m, i);
             continue;
         }
-        if (str_eq_c(m->name, "Interpolate") && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT)) {
+        if (!m->accessor && str_eq_c(m->name, "Interpolate") && (d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT)) {
             if (m->is_virtual) {
                 diag_error(m->virtual_at, "'Interpolate' is how views blend '" STR_FMT "', and isn't replaced", STR_ARG(d->name));
                 diag_note("it can call a virtual method, which a package can replace");

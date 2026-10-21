@@ -7,6 +7,7 @@ struct Gauge
         set { stored = value / 2; }
     }
     int next { get { return doubled + 1; } }
+    int Interpolate { get { return next; } }
     int ordered
     {
         get { PropertyGet(); return stored; }
@@ -100,7 +101,7 @@ system Update(mut Meter meter, mut Transform transform, mut Results results)
     results.after = ++meter.amount;
     meter.amount += 6;
     meter.gauge.Bump();
-    results.sum = meter.gauge.next;
+    results.sum = meter.gauge.Interpolate;
     results.identity = Forward(meter);
     results.position = Origin(meter);
     transform.position = float3(5, 6, 7);
