@@ -2376,6 +2376,16 @@ static comp_mask bit(const decl *component)
     return mask_bit(component->index);
 }
 
+// Whether a place is in a Unity prefab or scene, whose Tide text tide made of it (unity_assets.c names it after the
+// asset): what's wrong there is fixed in Unity's inspector, not in a .tide file.
+static bool unity_authored(const loc at)
+{
+    const source *src = diag_source(at.file);
+    if (!src || !src->path) return false;
+    const size_t n = strlen(src->path);
+    return (n > 7 && strcmp(src->path + n - 7, ".prefab") == 0) || (n > 6 && strcmp(src->path + n - 6, ".unity") == 0);
+}
+
 // Checks `Transform { position = ... }`, `Stats { armor = 2 }` and `Hit { damage = 5 }`.
 static type check_literal(checker *c, expr *e)
 {
@@ -2420,6 +2430,11 @@ static type check_literal(checker *c, expr *e)
             suggestion s = suggest_start(init->name);
             suggest_fields(&s, d);
             suggest_note(&s);
+            if (unity_authored(init->at)) {
+                diag_note("it's set in Unity, on a TideEntity's " STR_FMT ": select it, and its inspector shows '" STR_FMT
+                          "' in red, with Remove",
+                          STR_ARG(d->name), STR_ARG(init->name));
+            }
             continue;
         }
         for (int j = 0; j < i; j++) {

@@ -1,5 +1,27 @@
 # Language features, as tidec builds them
 
+## A diagnostic is said once (2026-10-21)
+
+The owner removed a field from a component and Unity's Console had each of the
+three prefabs' and scene's "has no field" errors twice. A prefab's values are
+checked on their own (`prefab_check_values(..., neutral)` in `check()`, so an
+unused prefab's errors show in editors) and again at each Spawn or Load of it
+(`check_prefab_spawn`), and each check said the same errors: a prefab spawned
+in three places said them four times. `common.c` now keeps a 64-bit FNV hash
+of each error, warning and info said since `diag_reset` (severity, file, line,
+column, message: `said_before`) and drops one it said already, with its
+notes and suggestions (`muted`, until the next diagnostic), and counts it as
+no error of its own; tidels gets one too, through the same path. Messages are
+formatted once (`message_of`, malloc'd past 1024 bytes, where the sink cut
+them at 1024 before). A collision of two hashes would drop a real
+diagnostic, which 64 bits make unlikely. A "has no field" error in a Unity
+prefab or scene (its source's path ends in `.prefab` or `.unity`:
+`unity_authored`) adds a note saying it's set on a TideEntity and its
+inspector shows it in red with Remove (`notes/unity.md`). Test:
+`tidec_prefab_error_once` (`compiler/tests/prefab_error_once.cmake`: a
+`.prefab` spawned twice and loaded locally once says the error once, with the
+note).
+
 ## Word suggestions (2026-10-21)
 
 The owner, of hints: "the better hints the better code". AI trials wrote

@@ -500,6 +500,18 @@ Pillar under a plain `Pillars` GameObject, each a `Spinner`, loaded by
 both pillars show their entities with the scene's speeds, at Unity's
 positions, turned by Tide.
 
+**Fields the component no longer has (2026-10-21).** Owner: removing a field
+from a component gave each prefab's and scene's error twice (the checker's,
+said once now: `notes/language.md`, A diagnostic is said once). The values
+stay in the assets, by the design above (nothing dropped silently), but the
+inspector drew only the schema's fields, so they couldn't be seen or removed
+there. Now each field a component's values set that its type hasn't is a red
+row, `name   value   (no such field)`, with Remove where this object sets it
+(`Write` with the field left out, which reverts an instance's override once
+it sets nothing) and "its prefab sets it" where only what's under an instance
+does. The error's note says where to look. Not tested: the drawing (IMGUI,
+no window in batch runs).
+
 Gaps: asset fields (a Unity asset in a Tide `Asset<T>` field: the converter
 says it isn't supported; tide resolves asset paths from the declaring file),
 unsaved scene and prefab edits (tide reads saved files), `Name#k` paths when
