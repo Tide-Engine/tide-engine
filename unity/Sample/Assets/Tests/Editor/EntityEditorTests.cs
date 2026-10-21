@@ -110,4 +110,29 @@ public class EntityEditorTests
             Object.DestroyImmediate(editor);
         }
     }
+
+    [Test]
+    public void AVariantRevertsAndSavesReverted()
+    {
+        Assume.That(TideEditorSchema.Current?.Type(TideEditorSchema.Current.TypeIndex("Ball")), Is.Not.Null, "the Sample's schema has Ball");
+        var inner = AssetDatabase.LoadAssetAtPath<GameObject>(Folder + "/Inner.prefab");
+        var made = (GameObject)PrefabUtility.InstantiatePrefab(inner);
+        SetValues(made.GetComponent<TideEntity>(), "seat = 5");
+        var variant = PrefabUtility.SaveAsPrefabAsset(made, Folder + "/Variant.prefab").GetComponent<TideEntity>();
+        Object.DestroyImmediate(made);
+        Assume.That(Overrides(variant), Is.True);
+        var editor = (TideEntityEditor)UnityEditor.Editor.CreateEditor(variant);
+        try
+        {
+            editor.RevertFields(0);
+            Assert.IsFalse(Overrides(variant));
+            Assert.AreEqual("2", Field(editor, "seat"));
+            AssetDatabase.SaveAssets(); // As the editor saves an edited prefab asset
+            Assert.IsFalse(System.IO.File.ReadAllText(Folder + "/Variant.prefab").Contains("seat = 5"), "the variant saved reverted");
+        }
+        finally
+        {
+            Object.DestroyImmediate(editor);
+        }
+    }
 }

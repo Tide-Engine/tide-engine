@@ -210,18 +210,13 @@ namespace Tide.Editor
         }
 
         // Writes the `index`th component's own values: in a prefab instance, none reverts its override, so it follows
-        // its prefab again.
+        // its prefab again. Either is one edit, as a field's is: a prefab asset (a variant) is saved once.
         void Write(int index, string values)
         {
             var p = Read(index);
             if (p == null) return;
-            if (p.sourced && string.IsNullOrEmpty(values))
-            {
-                PrefabUtility.RevertPropertyOverride(p.property, InteractionMode.UserAction);
-                serializedObject.Update();
-                return;
-            }
-            p.property.stringValue = values;
+            if (p.sourced && string.IsNullOrEmpty(values)) p.property.prefabOverride = false;
+            else p.property.stringValue = values;
             serializedObject.ApplyModifiedProperties();
             serializedObject.Update(); // Whether it overrides its prefab now
         }

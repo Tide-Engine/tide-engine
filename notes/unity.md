@@ -337,10 +337,16 @@ prefabs and variants included), as tide merges. Reset there leaves out a field
 nothing under it sets (or sets to the default) and writes the default over one
 the prefab sets to something else (a text field it can't, its default not being
 in the schema's bytes); Revert to Prefab leaves the field out, and an instance
-left setting nothing has its override reverted (`RevertPropertyOverride`), so
-it follows its prefab again. `Assets/Tests/Editor/EntityEditorTests.cs` (the
-Sample's EditMode tests, through `InternalsVisibleTo`) pins both on a prefab
-inside a prefab with overrides at each level, and on a prefab asset itself. In
+left setting nothing has its override reverted (`prefabOverride = false` in
+the one `ApplyModifiedProperties`, as a field's edit is: `RevertPropertyOverride`,
+first, saved a variant asset itself, and the owner's Console then showed Quick
+Search's indexer warning "Build asset version error ... modification time",
+its import racing a second save; Unity rescans and recovers, and batch mode
+can't show the interactive editor's saves, so whether the change silences it
+is unconfirmed). `Assets/Tests/Editor/EntityEditorTests.cs` (the Sample's
+EditMode tests, through `InternalsVisibleTo`) pins both on a prefab inside a
+prefab with overrides at each level, on a prefab asset itself, and on a
+variant asset reverted and saved. In
 Play it's grayed out: the match has its entities already, and an edit there
 would reach neither the match nor the scene (owner, 2026-10-20: what can't be
 changed at runtime is grayed out).
