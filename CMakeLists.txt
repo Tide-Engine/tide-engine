@@ -78,7 +78,22 @@ set(TIDE_EXTERNAL_DIRS "${tide_external_default}" CACHE STRING "Folders outside 
 # anything else is a development build, which never looks for updates. tidec
 # has it too, for `#if TIDE_0_3_OR_NEWER`, so web and Android builds' host tidec
 # gets the same (cmake/HostTidec.cmake).
+# A development build is the newest version tagged in this checkout's history
+# (a nightly's or a stable's, without its pre-release part); VERSION is the floor
+# for a checkout with no tags, such as CI's shallow ones. Releases don't commit
+# VERSION back, so release and dev never wait on each other.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TIDE_BASE_VERSION LIMIT_COUNT 1)
+find_package(Git QUIET)
+if(GIT_FOUND AND NOT DEFINED CACHE{TIDE_VERSION})
+    execute_process(COMMAND "${GIT_EXECUTABLE}" describe --tags --abbrev=0 --match "v[0-9]*"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" OUTPUT_VARIABLE tide_tag
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE tide_tag_result)
+    if(tide_tag_result EQUAL 0 AND tide_tag MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)")
+        if(CMAKE_MATCH_1 VERSION_GREATER TIDE_BASE_VERSION)
+            set(TIDE_BASE_VERSION "${CMAKE_MATCH_1}")
+        endif()
+    endif()
+endif()
 set(TIDE_VERSION "${TIDE_BASE_VERSION}-dev" CACHE STRING "tide's version")
 
 # tide_add_game runs tidec: this build's, or in web and Android builds a native

@@ -1,5 +1,15 @@
 # Releases, installing and CI
 
+## Automatic runs and releases without a commit back (2026-10-21)
+
+With the repository public, Actions cost nothing, and the owner asked for workflows to run automatically and for releases not to hold up `dev`. Build now runs on pushes to `dev` and `release`, on pull requests, and on request. Its concurrency group per ref still finishes the current run and keeps only the newest waiting push, so a burst of pushes to `dev` publishes one nightly, of the last; a pull request's newer push cancels its older run. Pull requests publish nothing and, from forks, get no secrets (Docs then builds without the prototypes and doesn't deploy).
+
+A stable release no longer commits anything: `.releaserc.json` lost `@semantic-release/exec` (which wrote `VERSION`) and `@semantic-release/git` (which committed `chore(release): x [skip ci]` to `release`), so semantic-release only tags the commit and makes the GitHub release. `release` therefore never moves ahead of `dev`; a stable release is `git push origin dev:release`, a fast-forward the `release` ruleset allows, and the tag lands on a `dev` commit.
+
+Development builds take their version from the newest `v*` tag in their history (`git describe --tags --abbrev=0`, its pre-release part dropped: `0.5.0-dev` after `v0.5.0-nightly.3`), with `VERSION` as the floor for checkouts without tags (CI's shallow ones, an archive). It's read once, when `TIDE_VERSION` isn't cached yet. `VERSION` is now changed by hand only, to raise that floor.
+
+Validation: configure checks of the tag and fallback paths; the workflow was checked as YAML; no run was dispatched for this change (its first automatic run is the push itself).
+
 ## Tide Marketplace channels (2026-10-21)
 
 The owner approved publishing both engine channels to the same Tide plugin

@@ -79,7 +79,7 @@ The owner's prototype games are in `Tide-Engine/tide-prototypes` and the managed
 - Engine changes need no prototype or service validation unless the task names one. A task changing an interface they use (`tide_add_game`, `docs/static/prototypes/`, `relay/`, `tide deploy`/`tide publish`) also builds or tests that repository against the change and reports any breakage.
 - The split is described, with how to carry a branch made before it, in `notes/repository.md`.
 
-CI runs only when manually requested. Pushes and pull requests trigger neither Build nor Docs. The requested Build workflow tests platforms, builds the docs site, and on `dev` deploys docs and publishes a nightly after success. Do not dispatch it automatically. Report when changes need validation this machine cannot run. When asked to run CI, inspect its completed run and fix failures attributable to this work before anything else. See `notes/releases-and-ci.md`.
+Build runs on every push to `dev` and `release` and on pull requests (the repository is public, so runs cost nothing). It tests every platform, builds the docs site, and after success on `dev` deploys docs and publishes a nightly; on `release` it publishes a stable release by tag alone, committing nothing back, so a stable release is a fast-forward `git push origin dev:release` that nobody waits for. Don't wait on a run after pushing, and don't dispatch extra runs unless asked. Report when changes need validation this machine cannot run. When asked about a run, inspect it and fix failures attributable to this work before anything else. See `notes/releases-and-ci.md`.
 
 ### Cross-platform determinism tests
 
