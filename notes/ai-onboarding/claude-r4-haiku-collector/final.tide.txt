@@ -1,0 +1,114 @@
+settings { title = "Haiku Collector"; maxPlayers = 1; }
+
+// Board is 5 columns by 3 rows. Row 0 is the top row.
+const int COLUMNS = 5;
+const int ROWS = 3;
+const int COINS_TO_WIN = 2;
+const float CELL = 64;
+const float TOP = 72;
+
+scene Main { }
+
+enum Direction { Left, Right, Up, Down }
+
+// The whole match: where the player stands and which coins are collected.
+// It starts at its defaults, which are the initial game that R restores.
+singleton Board
+{
+    int playerX = 0;
+    int playerY = 1;
+    int collected;
+    bool firstCoinTaken;  // The coin at column 2, row 1
+    bool secondCoinTaken; // The coin at column 4, row 2
+}
+
+// A press of an arrow key: the view submits it and the match applies it.
+command Move { Direction direction; }
+
+// R: put the board back to its initial game.
+command Restart { }
+
+command(Move move, PlayerID sender) StepPlayer(mut Board board)
+{
+    mut var x = board.playerX;
+    mut var y = board.playerY;
+    if (move.direction == Direction.Left) x -= 1;
+    else if (move.direction == Direction.Right) x += 1;
+    else if (move.direction == Direction.Up) y -= 1;
+    else y += 1;
+
+    // Board edges block the move.
+    if (x < 0 || x >= COLUMNS || y < 0 || y >= ROWS) return;
+
+    board.playerX = x;
+    board.playerY = y;
+
+    // Each coin is taken the first time the player enters its cell, and only then.
+    if (x == 2 && y == 1 && !board.firstCoinTaken)
+    {
+        board.firstCoinTaken = true;
+        board.collected += 1;
+    }
+    if (x == 4 && y == 2 && !board.secondCoinTaken)
+    {
+        board.secondCoinTaken = true;
+        board.collected += 1;
+    }
+}
+
+command(Restart restart, PlayerID sender) ResetBoard(mut Board board)
+{
+    board.playerX = 0;
+    board.playerY = 1;
+    board.collected = 0;
+    board.firstCoinTaken = false;
+    board.secondCoinTaken = false;
+}
+
+// Local presentation: turns key presses into commands. It never writes the match.
+view ReadKeys(Devices devices)
+{
+    var keys = devices.keyboard;
+    if (keys.leftArrow.down) Send(Move { direction = Direction.Left });
+    if (keys.rightArrow.down) Send(Move { direction = Direction.Right });
+    if (keys.upArrow.down) Send(Move { direction = Direction.Up });
+    if (keys.downArrow.down) Send(Move { direction = Direction.Down });
+    if (keys.r.down) Send(Restart { });
+}
+
+// Screen position of a cell's center. Row 0 is at the top.
+float2 CellCenter(int column, int row, float left)
+{
+    return float2(left + (column + 0.5) * CELL, TOP + (row + 0.5) * CELL);
+}
+
+view DrawBoard(Board board)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
+
+    var left = (Screen.width - COLUMNS * CELL) / 2;
+    var tile = Color(0.18, 0.2, 0.24);
+
+    for (var row = 0; row < ROWS; row++)
+    {
+        for (var column = 0; column < COLUMNS; column++)
+        {
+            Draw.Rect(CellCenter(column, row, left), float2(CELL - 4, CELL - 4), tile);
+        }
+    }
+
+    // Coins that are still on the board.
+    var gold = Color(0.98, 0.78, 0.16);
+    if (!board.firstCoinTaken) Draw.Circle(CellCenter(2, 1, left), 14, gold);
+    if (!board.secondCoinTaken) Draw.Circle(CellCenter(4, 2, left), 14, gold);
+
+    // The player.
+    Draw.Circle(CellCenter(board.playerX, board.playerY, left), 22, Color(0.25, 0.6, 1.0));
+
+    Draw.Text($"Coins: {board.collected} / {COINS_TO_WIN}", float2(16, 16), 20, Color.white);
+    Draw.Text("Arrows: move   R: restart", float2(16, Screen.height - 28), 14, Color(0.64, 0.64, 0.68));
+
+    if (board.collected == COINS_TO_WIN)
+        Draw.Text("All coins collected! Press R to play again.", float2(Screen.width / 2, 300), 20, gold, Anchor.MiddleCenter);
+}

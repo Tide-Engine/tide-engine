@@ -1,0 +1,159 @@
+// Two-player Pong, 640x360. Y is up; the court spans x in [-320,320], y in [-180,180].
+singleton Pong
+{
+    PlayerID left;
+    PlayerID right;
+    float leftY;
+    float rightY;
+    float2 ball;
+    float2 vel;
+    int leftScore;
+    int rightScore;
+    int serveDir = 1;   // +1 serves toward the right player, -1 toward the left
+    int serves;
+    float winTimer;
+    int winner;         // 0 none, 1 left, 2 right
+}
+
+component Pad { }
+
+input Controls
+{
+    float move;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        if (keys.w.pressed || keys.upArrow.pressed) move += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move -= 1;
+    }
+}
+
+scene Main { }
+
+event(PlayerJoined joined) AddPlayer(mut Pong pong)
+{
+    Spawn(Pad, Owner { player = joined.player });
+    if (pong.left == default) pong.left = joined.player;
+    else if (pong.right == default) pong.right = joined.player;
+}
+
+event(PlayerLeft left) RemovePlayer(mut Pong pong)
+{
+    if (pong.left == left.player) pong.left = default;
+    if (pong.right == left.player) pong.right = default;
+    pong.ball = float2(0, 0);
+    pong.vel = float2(0, 0);
+}
+
+system Cleanup(Pong pong, Owner owner, with Pad)
+{
+    if (owner.player != pong.left && owner.player != pong.right) this.Destroy();
+}
+
+system Steer(Controls input, Owner owner, mut Pong pong, Time time, with Pad)
+{
+    var dy = Math.Clamp(input.move, -1, 1) * 260 * time.dt;
+    if (owner.player == pong.left) pong.leftY = Math.Clamp(pong.leftY + dy, -150, 150);
+    else if (owner.player == pong.right) pong.rightY = Math.Clamp(pong.rightY + dy, -150, 150);
+}
+
+system Play(mut Pong pong, Time time)
+{
+    // Win message phase: wait three seconds, then reset.
+    if (pong.winner != 0)
+    {
+        pong.winTimer -= time.dt;
+        if (pong.winTimer <= 0)
+        {
+            pong.winner = 0;
+            pong.leftScore = 0;
+            pong.rightScore = 0;
+            pong.ball = float2(0, 0);
+            pong.vel = float2(0, 0);
+        }
+        return;
+    }
+
+    // Both players are needed; otherwise the ball waits in the center.
+    if (pong.left == default || pong.right == default)
+    {
+        pong.ball = float2(0, 0);
+        pong.vel = float2(0, 0);
+        return;
+    }
+
+    if (pong.vel.x == 0)
+    {
+        // Serve toward the player who conceded (or alternate at the start).
+        pong.serves += 1;
+        var vy = (pong.serves % 2 == 0) ? 90 : -90;
+        pong.vel = float2(220 * pong.serveDir, vy);
+        pong.ball = float2(0, 0);
+    }
+
+    pong.ball += pong.vel * time.dt;
+
+    // Top and bottom walls (ball radius 6).
+    if (pong.ball.y > 174) { pong.ball.y = 174; pong.vel.y = -Math.Abs(pong.vel.y); }
+    if (pong.ball.y < -174) { pong.ball.y = -174; pong.vel.y = Math.Abs(pong.vel.y); }
+
+    // Paddles: 10 wide x 60 tall, centers at x = -300 / 300.
+    if (pong.vel.x < 0 && pong.ball.x < -294 && pong.ball.x > -312
+        && Math.Abs(pong.ball.y - pong.leftY) < 36)
+    {
+        pong.ball.x = -294;
+        pong.vel.x = Math.Min(Math.Abs(pong.vel.x) * 1.05, 520);
+        pong.vel.y += (pong.ball.y - pong.leftY) * 4;
+    }
+    if (pong.vel.x > 0 && pong.ball.x > 294 && pong.ball.x < 312
+        && Math.Abs(pong.ball.y - pong.rightY) < 36)
+    {
+        pong.ball.x = 294;
+        pong.vel.x = -Math.Min(Math.Abs(pong.vel.x) * 1.05, 520);
+        pong.vel.y += (pong.ball.y - pong.rightY) * 4;
+    }
+
+    if (pong.ball.x < -326)
+    {
+        pong.rightScore += 1;
+        pong.serveDir = -1;   // left conceded
+        pong.vel = float2(0, 0);
+        pong.ball = float2(0, 0);
+    }
+    else if (pong.ball.x > 326)
+    {
+        pong.leftScore += 1;
+        pong.serveDir = 1;    // right conceded
+        pong.vel = float2(0, 0);
+        pong.ball = float2(0, 0);
+    }
+
+    if (pong.leftScore >= 5 || pong.rightScore >= 5)
+    {
+        pong.winner = pong.leftScore >= 5 ? 1 : 2;
+        pong.winTimer = 3;
+        pong.vel = float2(0, 0);
+        pong.ball = float2(0, 0);
+    }
+}
+
+view DrawCourt(Pong pong)
+{
+    Draw.SetCamera(float2(0, 0), Math.Max(180, 320 * Screen.height / Screen.width));
+    Draw.Rect(float2(0, 0), float2(640, 360), Color.black);
+    for (var i = 0; i < 9; i++)
+        Draw.Rect(float2(0, -160 + i * 40), float2(4, 20), Color.gray);
+    Draw.Rect(float2(-300, pong.leftY), float2(10, 60), Color.white);
+    Draw.Rect(float2(300, pong.rightY), float2(10, 60), Color.white);
+    if (pong.winner == 0) Draw.Circle(pong.ball, 6, Color.white);
+    Draw.Text($"{pong.leftScore}", float2(-80, 150), 40, Color.white, Anchor.MiddleCenter);
+    Draw.Text($"{pong.rightScore}", float2(80, 150), 40, Color.white, Anchor.MiddleCenter);
+    if (pong.left == default || pong.right == default)
+        Draw.Text("Waiting for a second player", float2(0, -100), 20, Color.gray, Anchor.MiddleCenter);
+    if (pong.winner != 0)
+    {
+        var msg = pong.winner == 1 ? "Left player wins!" : "Right player wins!";
+        Draw.Text(msg, float2(0, 0), 36, Color.yellow, Anchor.MiddleCenter);
+    }
+}

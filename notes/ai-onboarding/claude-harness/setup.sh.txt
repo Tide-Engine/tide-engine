@@ -1,0 +1,17 @@
+#!/bin/sh
+# Creates one trial game folder laid out as docs/guide/ai.md tells a Claude Code user to:
+# AGENTS.md + CLAUDE.md + TIDE.md in the game folder and the skill in .claude/skills/tide.
+# usage: setup.sh <trial-name>
+set -eu
+ROOT=/c/Users/blenm/tide-ai-trials
+SRC=/c/Users/blenm/.t3/worktrees/PurrEngine/t3-fe1e1899/docs/build/prerendered
+T="$ROOT/trials/$1"
+rm -rf "$T"
+mkdir -p "$T/.claude/skills"
+cp /c/Users/blenm/.t3/worktrees/PurrEngine/t3-fe1e1899/docs/static/ai/AGENTS.md /c/Users/blenm/.t3/worktrees/PurrEngine/t3-fe1e1899/docs/static/ai/CLAUDE.md "$T/"
+cp "$SRC/guide/ai-context.md" "$T/TIDE.md"
+(cd "$T/.claude/skills" && unzip -q "$SRC/ai/tide-skill.zip")
+# Local mirror of the undeployed website exports.
+mkdir -p "$T/tide-docs"
+(cd "$SRC" && find . -name '*.md' -o -name 'llms.txt' -o -name 'llms-full.txt' | while read -r f; do mkdir -p "$T/tide-docs/$(dirname "$f")"; cp "$f" "$T/tide-docs/$f"; done)
+echo "$T"

@@ -1,4 +1,4 @@
-// The Tide plugin for JetBrains IDEs: the grammar from ../tide-syntax
+// The Tide plugin for JetBrains IDEs: the shared or bundled TextMate grammar
 // for highlighting, and tidels through LSP4IJ for everything else.
 //
 //   ./gradlew buildPlugin   the plugin, in build/distributions
@@ -16,6 +16,12 @@ plugins {
 }
 
 version = providers.gradleProperty("pluginVersion").getOrElse("0.0.0-dev")
+
+// Engine builds use the live shared grammar; standalone public clones use the
+// snapshot refreshed before exporting tools/tide-jetbrains.
+val sharedTextmate = layout.projectDirectory.dir("../tide-syntax")
+val textmate = if (sharedTextmate.file("package.json").asFile.isFile) sharedTextmate
+    else layout.projectDirectory.dir("textmate")
 
 repositories {
     mavenCentral()
@@ -70,6 +76,9 @@ intellijPlatform {
 }
 
 tasks {
+    processResources {
+        from("LICENSE") { into("META-INF") }
+    }
     compileTestJava {
         options.compilerArgs.add("-Xlint:deprecation")
     }
@@ -102,7 +111,7 @@ tasks {
     }
     // The grammar goes next to the plugin's jar, where the IDE reads it (see TideTextMateBundle).
     withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>().configureEach {
-        from(layout.projectDirectory.dir("../tide-syntax")) {
+        from(textmate) {
             into("tide/textmate")
             exclude("test/**")
         }

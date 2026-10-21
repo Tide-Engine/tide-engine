@@ -100,12 +100,12 @@ elsewhere in your game's folder. The selected root is visible in the window.
 The first version uses folder/package discovery; it does not read CMake game
 manifests. Packages must already be available locally (`tide fetch` downloads them).
 
-`--check` runs the same authoring validation without opening a window and returns
-1 for project errors. It inspects asset metadata, rather than compiling/importing
-the full game. For automated UI runs, `--frames`, `--capture` and `--script` use
+`tide open --check` runs the same authoring validation without opening a window and
+returns 1 for project errors. It inspects asset metadata, rather than compiling/importing
+the full game. For automated editor UI runs, `--frames`, `--capture` and `--script` use
 the normal [hidden input/capture loop](#scripts). The default editor size is
-1440 by 900; `--size W H` accepts 1100..8192 by 650..8192. `TIDE_HIDDEN`
-requires one of these bounded modes or `--check`.
+1440 by 900; the editor's `--size W H` accepts 1100..8192 by 650..8192, unlike a
+game's `tide run --size`. `TIDE_HIDDEN` requires one of these bounded modes or `--check`.
 
 See [the editor controls and current limits](editors.md#native-scene-editor).
 

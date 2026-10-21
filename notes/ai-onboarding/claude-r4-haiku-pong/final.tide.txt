@@ -1,0 +1,223 @@
+settings
+{
+    title = "Pong";
+    tickRate = 60;
+}
+
+// The court is 640 x 360 world units, centered on the window.
+const float COURT_HALF_WIDTH = 320;
+const float COURT_HALF_HEIGHT = 180;
+const float PADDLE_X = 300;          // Paddle centers sit at x = side * PADDLE_X
+const float PADDLE_HALF_WIDTH = 5;
+const float PADDLE_HALF_HEIGHT = 30;
+const float PADDLE_LIMIT = COURT_HALF_HEIGHT - PADDLE_HALF_HEIGHT;
+const float PADDLE_SPEED = 240;
+const float BALL_RADIUS = 6;
+const float BALL_SPEED = 300;
+const int WIN_SCORE = 5;
+const float WIN_SECONDS = 3;
+
+scene Main { }
+
+component Ball
+{
+    float2 position;
+    float2 velocity;
+}
+
+// side is -1 for the left paddle and 1 for the right one.
+component Paddle
+{
+    int side;
+    float y;
+}
+
+singleton Game
+{
+    int leftScore;
+    int rightScore;
+    int serveSide = -1;  // Ball serves toward the side that conceded last
+    int winner;          // 0 while playing, otherwise the winning side
+    float winTimer;
+    bool hasLeft;
+    PlayerID leftPlayer;
+    Entity leftPaddle;
+    bool hasRight;
+    PlayerID rightPlayer;
+    Entity rightPaddle;
+}
+
+input Controls
+{
+    float move;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        if (keys.w.pressed || keys.upArrow.pressed) move += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move -= 1;
+    }
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Ball { });
+}
+
+// The first player to join takes the left paddle, the second the right.
+// Later players watch without a paddle.
+event(PlayerJoined joined) Join(mut Game game)
+{
+    if (!game.hasLeft)
+    {
+        game.hasLeft = true;
+        game.leftPlayer = joined.player;
+        game.leftPaddle = Spawn(Paddle { side = -1 }, Owner { player = joined.player });
+    }
+    else if (!game.hasRight)
+    {
+        game.hasRight = true;
+        game.rightPlayer = joined.player;
+        game.rightPaddle = Spawn(Paddle { side = 1 }, Owner { player = joined.player });
+    }
+}
+
+event(PlayerLeft left) Leave(mut Game game)
+{
+    if (game.hasLeft && game.leftPlayer == left.player)
+    {
+        game.leftPaddle.Destroy();
+        game.leftPaddle = default;
+        game.hasLeft = false;
+    }
+    else if (game.hasRight && game.rightPlayer == left.player)
+    {
+        game.rightPaddle.Destroy();
+        game.rightPaddle = default;
+        game.hasRight = false;
+    }
+}
+
+system Steer(Controls input, Time time, mut Paddle paddle, with Owner)
+{
+    var move = Math.Clamp(input.move, -1, 1);
+    paddle.y = Math.Clamp(paddle.y + move * PADDLE_SPEED * time.dt, -PADDLE_LIMIT, PADDLE_LIMIT);
+}
+
+// Runs after Steer, so it sees this tick's paddle positions.
+system Referee(mut Ball ball, mut Game game, Time time, query (Paddle paddle) paddles)
+{
+    if (game.winner != 0)
+    {
+        // Hold the ball at the center while the win message shows, then reset the scores.
+        ball.position = float2(0, 0);
+        ball.velocity = float2(0, 0);
+        game.winTimer -= time.dt;
+        if (game.winTimer <= 0)
+        {
+            game.winner = 0;
+            game.leftScore = 0;
+            game.rightScore = 0;
+        }
+        return;
+    }
+
+    // The ball waits in the center until both paddles have a player.
+    if (!game.hasLeft || !game.hasRight)
+    {
+        ball.position = float2(0, 0);
+        ball.velocity = float2(0, 0);
+        return;
+    }
+
+    // A ball with no velocity is waiting to be served toward the side that conceded.
+    if (Math.Length(ball.velocity) == 0)
+    {
+        ball.position = float2(0, 0);
+        ball.velocity = float2(BALL_SPEED * game.serveSide, 0);
+        return;
+    }
+
+    ball.position += ball.velocity * time.dt;
+
+    if (ball.position.y > COURT_HALF_HEIGHT - BALL_RADIUS)
+    {
+        ball.position.y = COURT_HALF_HEIGHT - BALL_RADIUS;
+        ball.velocity.y = -ball.velocity.y;
+    }
+    if (ball.position.y < -(COURT_HALF_HEIGHT - BALL_RADIUS))
+    {
+        ball.position.y = -(COURT_HALF_HEIGHT - BALL_RADIUS);
+        ball.velocity.y = -ball.velocity.y;
+    }
+
+    foreach (var row in paddles)
+    {
+        var paddle = row.paddle;
+        // Only a ball heading toward this paddle can hit it.
+        if (ball.velocity.x * paddle.side <= 0) continue;
+        if (Math.Abs(ball.position.x - paddle.side * PADDLE_X) > PADDLE_HALF_WIDTH + BALL_RADIUS) continue;
+        if (Math.Abs(ball.position.y - paddle.y) > PADDLE_HALF_HEIGHT + BALL_RADIUS) continue;
+
+        // The bounce angle depends on where the paddle was struck.
+        var offset = Math.Clamp((ball.position.y - paddle.y) / PADDLE_HALF_HEIGHT, -1, 1);
+        ball.velocity = Math.Normalize(float2(-paddle.side, offset * 0.6)) * BALL_SPEED;
+        ball.position.x = paddle.side * (PADDLE_X - PADDLE_HALF_WIDTH - BALL_RADIUS);
+    }
+
+    // The ball has left the court: the other side scores, and the conceding side gets the next serve.
+    mut var conceded = 0;
+    if (ball.position.x < -(COURT_HALF_WIDTH + BALL_RADIUS)) conceded = -1;
+    if (ball.position.x > COURT_HALF_WIDTH + BALL_RADIUS) conceded = 1;
+    if (conceded == 0) return;
+
+    if (conceded == -1) game.rightScore += 1;
+    else game.leftScore += 1;
+    game.serveSide = conceded;
+    ball.position = float2(0, 0);
+    ball.velocity = float2(0, 0);
+
+    if (game.leftScore >= WIN_SCORE || game.rightScore >= WIN_SCORE)
+    {
+        game.winner = game.leftScore >= WIN_SCORE ? -1 : 1;
+        game.winTimer = WIN_SECONDS;
+    }
+}
+
+view DrawCourt()
+{
+    Draw.Clear(Color(0.05, 0.05, 0.07));
+    for (var y = -COURT_HALF_HEIGHT + 10; y < COURT_HALF_HEIGHT; y += 30)
+        Draw.Rect(float2(0, y + 8), float2(4, 16), Color.gray);
+}
+
+view DrawBall(Ball ball)
+{
+    Draw.Circle(ball.position, BALL_RADIUS, Color.white);
+}
+
+view DrawPaddles(Paddle paddle, Owner owner, Session session)
+{
+    var color = owner.player == session.player ? Color.yellow : Color.white;
+    Draw.Rect(float2(paddle.side * PADDLE_X, paddle.y), float2(PADDLE_HALF_WIDTH * 2, PADDLE_HALF_HEIGHT * 2), color);
+}
+
+view Hud(Game game)
+{
+    Draw.SetScreen();
+    var middle = float2(Screen.width * 0.5, Screen.height * 0.5);
+    Draw.Text($"{game.leftScore}", float2(middle.x - 40, 24), 48, Color.white, Anchor.UpperRight);
+    Draw.Text($"{game.rightScore}", float2(middle.x + 40, 24), 48, Color.white, Anchor.UpperLeft);
+
+    // Messages sit above the center, clear of the ball waiting there.
+    var above = middle - float2(0, 60);
+    if (game.winner != 0)
+    {
+        var winnerName = game.winner < 0 ? "Left" : "Right";
+        Draw.Text($"{winnerName} player wins!", above, 36, Color.yellow, Anchor.MiddleCenter);
+    }
+    else if (!game.hasLeft || !game.hasRight)
+    {
+        Draw.Text("Waiting for another player", above, 20, Color.gray, Anchor.MiddleCenter);
+    }
+}

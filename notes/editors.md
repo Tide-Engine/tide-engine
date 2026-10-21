@@ -1,5 +1,56 @@
 # The language server and the editors
 
+## Standalone JetBrains source preparation (2026-10-21)
+
+The owner approved a public MIT Tide-Engine/tide-jetbrains repository using the
+Emacs/Vim model: tools/tide-jetbrains remains canonical and the engine retains
+its manually requested build, verification and stable Marketplace publication.
+The plugin's LICENSE covers its own source, icons, tests and bundled grammar;
+there is no engine-wide license change. Gradle's wrapper retains Apache-2.0,
+with its upstream license/notice preserved separately. Its JAR matches Gradle
+v9.8.0 byte for byte (SHA-256
+238e777fcddd7e34f9708186085def2abd6e08e658505b38718d79d74c21abd5).
+
+Standalone builds use the checked-in textmate snapshot. Engine builds continue
+using the live sibling tools/tide-syntax. The real process-host test now loads
+its bundled resource instead of requiring a sibling VS Code checkout. Before
+each public export, refresh textmate/package.json, language-configuration.json
+and syntaxes/tide.tmLanguage.json from tools/tide-syntax, and
+src/test/resources/host-process.cjs from tools/tide-vscode/test; commit those
+snapshots with the source changes. The initial snapshots are byte-identical.
+Public issues/patches are ported to the canonical engine copy before exporting,
+as for Emacs/Vim. No second release workflow is added to the public repository.
+
+Use the same audited subtree procedure after merging source into dev:
+
+```sh
+git fetch origin
+git subtree split --prefix=tools/tide-jetbrains -b publish/tide-jetbrains origin/dev
+git ls-tree -r --name-only publish/tide-jetbrains
+```
+
+Inspect every reachable historical tree before first publication, not just the
+tip; push only the split ref to the public repository's main. Never publish an
+engine branch or its history. Public publication is recorded separately below.
+
+The MIT text is packaged in META-INF/LICENSE inside the plugin JAR. The README
+provides the public license URL for Marketplace's MIT selection and accurately
+records the first-manual-upload requirement. This does not create a Marketplace
+listing, change its plugin ID, or rerun the failed stable workflow.
+
+Local validation: JDK 21/Gradle 9.8.0 buildPlugin passes in the engine directory
+and a standalone source copy without either sibling project. All nine enabled
+adapter/platform tests pass in both, including real process-tree termination
+with Node 24.19.0. ZIP inspection confirms the MIT text, exact shared grammar
+and absence of tests from the installed payload. Plugin Verifier 1.411 reports
+Compatible on IntelliJ 2024.2.6 (IC-242.26775.15), with the existing restart
+restriction for TextMate enable/disable. The standalone offline build uses
+cached upstream dependency/product metadata, not engine binaries. CLion
+verification and public-clone validation are recorded with publication below.
+No compiler/runtime/build-system code changed; full native/web engine suites
+are outside this tools/README-only scope. Optional real-server, native prefab
+and JCEF cases, other host OSs, CI and deployment were not run for this export.
+
 ## Empty scene shorthand (2026-10-20)
 
 The shared parser accepts semicolon-terminated scenes, including local and

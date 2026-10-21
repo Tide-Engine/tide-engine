@@ -1,0 +1,47 @@
+// The camera's units are the playfield's pixels, with y up and the middle at 0, so a
+// playfield point becomes a world point here.
+float2 ToWorld(float2 at)
+{
+    return float2(at.x - PLAY_WIDTH / 2, PLAY_HEIGHT / 2 - at.y);
+}
+
+// Clears the window, then fits the playfield in it, with bars where the window's shape differs.
+view Background()
+{
+    Draw.Clear(Color(0.05, 0.05, 0.06));
+    // The camera's size is half the visible height: tall enough for 360 pixels, and wide enough for 640.
+    var half = Math.Max(PLAY_HEIGHT / 2, PLAY_WIDTH / 2 * Screen.height / Screen.width);
+    Draw.SetCamera(float2(0), half);
+    Draw.Rect(float2(0), float2(PLAY_WIDTH, PLAY_HEIGHT), Color(0.086, 0.086, 0.094));
+}
+
+view DrawPlayer(Body body, with Player)
+{
+    Draw.Rect(ToWorld(body.position), body.size, Color(0.98, 0.75, 0.14));
+}
+
+view DrawHazards(Body body, with Hazard)
+{
+    Draw.Rect(ToWorld(body.position), body.size, Color(0.95, 0.35, 0.4));
+}
+
+// Drawn after the shapes, so the text stays readable over a hazard.
+[After(DrawHazards)]
+view Hud(Run run)
+{
+    Draw.Text($"Survived: {run.time:F1} s", ToWorld(float2(12, 10)), 16, Color.white, Anchor.UpperLeft);
+    if (run.phase == Phase.Ready)
+    {
+        Draw.Text("DODGE", ToWorld(float2(PLAY_WIDTH / 2, 140)), 44, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("Arrow keys or A and D to move", ToWorld(float2(PLAY_WIDTH / 2, 190)), 16, Color(0.64, 0.64, 0.68), Anchor.MiddleCenter);
+        Draw.Text("Press Space to start", ToWorld(float2(PLAY_WIDTH / 2, 220)), 18, Color.white, Anchor.MiddleCenter);
+    }
+    if (run.phase == Phase.Over)
+    {
+        // A backing panel keeps the message readable over the frozen hazards.
+        Draw.RoundRect(ToWorld(float2(PLAY_WIDTH / 2, 180)), float2(400, 150), 12, Color(0.05, 0.05, 0.06));
+        Draw.Text("HIT", ToWorld(float2(PLAY_WIDTH / 2, 140)), 44, Color(0.95, 0.35, 0.4), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text($"You survived {run.time:F1} seconds", ToWorld(float2(PLAY_WIDTH / 2, 190)), 20, Color.white, Anchor.MiddleCenter);
+        Draw.Text("Press Space to start a new run", ToWorld(float2(PLAY_WIDTH / 2, 220)), 16, Color(0.64, 0.64, 0.68), Anchor.MiddleCenter);
+    }
+}

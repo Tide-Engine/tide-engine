@@ -94,6 +94,65 @@ were not tested by this study. Simulated --players processes are not real transp
 coverage. The snippets are small authored smoke tasks, not proof that agents can
 build arbitrary Tide games without supervision.
 
+## Claude Code round (2026-10-21)
+
+A review session ran Claude Code itself (`claude -p`, CLI 2.1.306) rather than T3
+delegation, in game folders under `C:/Users/blenm/tide-ai-trials/`, outside any
+repository, so no engine AGENTS.md, CLAUDE.md or memory reached the trials
+(`--setting-sources project,local --strict-mcp-config`). Each folder was laid out as
+`docs/guide/ai.md` tells a Claude Code user: the starter AGENTS.md and CLAUDE.md,
+the exported overview as `TIDE.md`, and the skill ZIP extracted to
+`.claude/skills/tide/`. The undeployed site was mirrored as `tide-docs/<path>.md`.
+The prompt was the published starter prompt plus a task brief and the harness note in
+`claude-harness/`. `TIDE_HIDDEN=1` and the onboarding SDK (`0.4.0-dev`, built from
+`16dcab23`) on PATH came from the launching shell. Browsers were forbidden. Transcripts were
+stream-json, read through `claude-harness/summarize.py.txt`; final games and the
+agents' own reports are in `claude-r4-*`.
+
+Tasks: the collector and bank briefs above, plus a dodging game (random hazards,
+increasing speed, restart) and two-player Pong (seats by join order), in
+`claude-harness/task-*.txt`. Haiku 5.5 ran all four; Sonnet 5.5 ran dodge and Pong.
+All six games built natively and for web and played as asked in their own scripted runs.
+By the CLI's own accounting, Haiku trials took 2–4.5 minutes for $0.04–0.25 and Sonnet
+trials 1–3.6 minutes for $0.21–0.32.
+Haiku invoked the skill in three trials; Sonnet never did, and relied on AGENTS.md and TIDE.md.
+
+| Trial | Diagnostics hit | Parent findings |
+|---|---|---|
+| Haiku collector | Command handler without `PlayerID sender`; no `scene Main` (both diagnostics named the fix) | Correct. Moves are commands sent by a view on `.down`, which is valid local code |
+| Haiku bank | None | Correct; recorded its design decisions in AGENTS.md, as the starter invites |
+| Haiku dodge | None | Correct, with a letterboxing camera. It read the `tide open` editor's `--size`/`--check` limits as `tide run`'s, and reported HUD text drawn under hazards. The parent's rerun of its source shows the text over the hazard: a misread capture, not an engine bug |
+| Haiku Pong | `float2 == float2`; reassigned `var` | Correct; seats in a singleton. Its `Debug.Log` probe copies under `build/checks/` were compiled into the game |
+| Sonnet dodge | `keys.right`/`keys.left` (no suggestion); `Time.dt` as a value, copied from the overview's wording | `restart = keys.space.down` in `Sample`: an edge in input, which a repeated guess presses twice. World coordinates assume a 640×360 window |
+| Sonnet Pong | Script lines out of frame order | Seat chosen by querying earlier players' paddles in `PlayerJoined`. That works only while joins land in different ticks |
+
+Every trial noticed that `settings` has no window size, and five reports raised it.
+Overview corrections from this round: `Time` is a singleton parameter; key names;
+input records held keys and match code reads `.down` from input fields, with a
+compiled example; seats come from a singleton in `PlayerJoined`; a fixed design size
+uses `Draw.SetCamera` with the fit formula; every `.tide` under the folder, `build/`
+included, is compiled; script frame order, capture paths and `-N` capture names; and
+logs repeat under rollback. `tools/cli.md` now names `tide open --check` and the
+editor's `--size` limits explicitly. The parent compiled the new snippets and ran them
+with two players, at a wide size: the seats, the restart edge and the letterboxing work.
+
+**Forward check (`claude-r5-*`).** Fresh sessions with the revised export ran Sonnet
+dodge and Pong and Haiku collector and Pong. All four sampled held keys and read `.down` from
+input fields, used `time.dt`, fitted a 640×360 area with the `SetCamera`/`Math.Max`
+camera, and kept seats in a singleton. All built natively and for web on their first or
+second build. Remaining friction: Sonnet generalized "Time is a singleton" to a
+`Screen screen` parameter, so the overview now says `Frame` and `Screen` are read
+directly. Haiku missed that views draw in declaration order, which the overview now states.
+`float2 == float2` and interpolated ternaries without parentheses failed with clear
+diagnostics. Haiku Pong still logged without `time.tick` and noticed the repeats itself.
+Its report noted scripts cannot make a player leave, so no trial exercised `PlayerLeft`.
+
+Open proposals for the owner, not implemented: source discovery (`folder_find_own`)
+scans `build/` and hidden folders, while asset discovery skips them ("what tide makes is
+no part of a game"). A member-not-found note could also fall back to a field containing
+the name, as script key names already do (`right` → `rightArrow`). A script line that
+makes a player leave or rejoin would let `--players` runs test `PlayerLeft` and seat reuse.
+
 ## Repeat the study
 
 Build a matching local SDK, download the actual skill ZIP/overview/full bundle from

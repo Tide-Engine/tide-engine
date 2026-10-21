@@ -1,0 +1,101 @@
+settings
+{
+    title = "Shared Pool";
+    maxPlayers = 2;
+}
+
+scene Main { }
+
+// Credits one player holds. Each wallet starts with three.
+component Wallet
+{
+    int credits = 3;
+    int refused; // Deposits the match turned down, so both machines can show them
+}
+
+// The shared pool: one per match, starting at zero.
+singleton Pool
+{
+    int credits;
+}
+
+// A submitted deposit. The sender comes from the connection, never from this payload.
+command Deposit { int amount; }
+
+// This machine's amount choice. Changing it only changes this client's preview.
+local singleton Selector
+{
+    int amount = 1;
+}
+
+event(PlayerJoined joined) AddWallet()
+{
+    Spawn(Wallet { }, Owner { player = joined.player });
+}
+
+command(Deposit deposit, PlayerID sender) DepositCredits(Owner owner, mut Wallet wallet, mut Pool pool)
+{
+    if (sender != owner.player) return;
+    if (deposit.amount < 1 || deposit.amount > 3 || deposit.amount > wallet.credits)
+    {
+        wallet.refused += 1;
+        return;
+    }
+    wallet.credits -= deposit.amount;
+    pool.credits += deposit.amount;
+}
+
+// Draws `count` filled coins out of `slots` centered on `center`; empty slots are outlines.
+void Coins(float2 center, int count, int slots, Color color)
+{
+    for (var i = 0; i < slots; i++)
+    {
+        var at = center + float2((i - (slots - 1) * 0.5) * 22, 0);
+        if (i < count) Draw.Circle(at, 8, color);
+        else Draw.WireCircle(at, 8, Color(0.3, 0.3, 0.34));
+    }
+}
+
+view Backdrop(Pool pool)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
+    Draw.Text("Shared pool", float2(Screen.width * 0.5, 22), 16, Color(0.64, 0.64, 0.68), Anchor.MiddleCenter);
+    Draw.Text($"{pool.credits}", float2(Screen.width * 0.5, 58), 36, Color(0.98, 0.75, 0.14), Anchor.MiddleCenter);
+    Coins(float2(Screen.width * 0.5, 100), pool.credits, 6, Color(0.98, 0.75, 0.14));
+    Draw.Rect(float2(Screen.width * 0.5, 210), float2(1, 290), Color(0.2, 0.2, 0.23));
+    Draw.Rect(float2(Screen.width * 0.5, 130), float2(Screen.width - 32, 1), Color(0.2, 0.2, 0.23));
+}
+
+// This machine's own wallet: balance, amount selector with preview, and the Deposit button.
+view YourWallet(Wallet wallet, with ownership, mut Selector selector, Pool pool)
+{
+    var left = 24.0;
+    var width = Screen.width * 0.5 - 48;
+    var mid = left + width * 0.5;
+    Draw.Text("You", float2(left, 150), 18, Color.white);
+    Draw.Text($"Credits: {wallet.credits}", float2(left, 176), 15, Color.white);
+    Coins(float2(mid, 204), wallet.credits, 3, Color.yellow);
+
+    GUI.IntSlider(Rect(left, 226, width, 26), "Amount", selector.amount, 1, 3);
+    var fits = selector.amount <= wallet.credits;
+    var preview = fits
+        ? $"Deposit {selector.amount}: you keep {wallet.credits - selector.amount}, pool becomes {pool.credits + selector.amount}"
+        : "Not enough credits for that amount";
+    Draw.Text(preview, float2(left, 262), 12, fits ? Color.white : Color(1, 0.45, 0.45));
+
+    if (GUI.Button(Rect(left, 292, width, 32), "Deposit")) this.Send(Deposit { amount = selector.amount });
+    Draw.Text($"Refused deposits: {wallet.refused}", float2(left, 334), 12, Color(0.64, 0.64, 0.68));
+}
+
+// The other player's wallet: balance only, no controls.
+view TheirWallet(Wallet wallet, without ownership)
+{
+    var left = Screen.width * 0.5 + 24;
+    var width = Screen.width * 0.5 - 48;
+    var mid = left + width * 0.5;
+    Draw.Text("Opponent", float2(left, 150), 18, Color.white);
+    Draw.Text($"Credits: {wallet.credits}", float2(left, 176), 15, Color.white);
+    Coins(float2(mid, 204), wallet.credits, 3, Color.yellow);
+    Draw.Text($"Refused deposits: {wallet.refused}", float2(left, 334), 12, Color(0.64, 0.64, 0.68));
+}
