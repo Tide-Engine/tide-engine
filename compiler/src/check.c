@@ -2436,15 +2436,7 @@ static type check_literal(checker *c, expr *e)
         }
         if (!init->field && unity_authored(init->at)) {
             // A field taken out of the component, which a Unity prefab or scene still sets: left out, as Unity leaves
-            // out a removed C# field's value, and said, as the value stays in the asset until it's removed there
-            diag_warning(init->at, "component '" STR_FMT "' has no field '" STR_FMT "': left out", STR_ARG(d->name),
-                         STR_ARG(init->name));
-            suggestion s = suggest_start(init->name);
-            suggest_fields(&s, d);
-            suggest_note(&s);
-            diag_note("it's set in Unity, on a TideEntity's " STR_FMT ": select it, and its inspector shows '" STR_FMT
-                      "' in red, with Remove",
-                      STR_ARG(d->name), STR_ARG(init->name));
+            // out a removed C# field's value. Code that still uses the field is what fails
             memmove(init, init + 1, sizeof *init * (size_t)(e->inits.count - i - 1));
             e->inits.count--;
             i--;

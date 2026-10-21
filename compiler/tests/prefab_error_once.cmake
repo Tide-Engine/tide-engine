@@ -1,7 +1,7 @@
 # A field a component no longer has. A Unity prefab's (Tide text named after the asset, as tide unity gives it) is
-# left out with a warning that says to remove it in Unity's inspector, and the game builds. A .tprefab's is an error:
-# in text written by hand it's a mistake. A prefab's values are checked on their own and again at each Spawn of it:
-# either is said once, not once a check. Run with TIDEC and OUT.
+# left out, saying nothing, and the game builds: code that still uses the field is what fails. A .tprefab's is an
+# error, as in text written by hand it's a mistake, and though a prefab's values are checked on their own and again
+# at each Spawn of it, it's said once. Run with TIDEC and OUT.
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}/out")
 file(WRITE "${OUT}/game.tide" "scene Main { }\n"
@@ -10,7 +10,7 @@ file(WRITE "${OUT}/game.tide" "scene Main { }\n"
      "system Turn(mut Spin spin) { spin.speed += 1; }\n")
 set(prefab "prefab Cube\n{\n    Spin { speed = 2, test = 5 };\n}\n")
 
-function(compile prefab_file expect_built)
+function(compile prefab_file expect_built times)
     file(WRITE "${OUT}/${prefab_file}" "${prefab}")
     execute_process(
         COMMAND "${TIDEC}" "${OUT}/game.tide" "${OUT}/${prefab_file}" -o "${OUT}/out"
@@ -25,21 +25,15 @@ function(compile prefab_file expect_built)
     endif()
     string(REGEX MATCHALL "has no field 'test'" said "${stderr}")
     list(LENGTH said count)
-    if(NOT count EQUAL 1)
-        message(FATAL_ERROR "${prefab_file}: it was said ${count} times, not once:\n${stderr}")
+    if(NOT count EQUAL times)
+        message(FATAL_ERROR "${prefab_file}: it was said ${count} times, not ${times}:\n${stderr}")
     endif()
     set(stderr "${stderr}" PARENT_SCOPE)
 endfunction()
 
-compile(Cube.prefab TRUE)
-foreach(expected "warning: component 'Spin' has no field 'test': left out" "it's set in Unity, on a TideEntity's Spin")
-    string(FIND "${stderr}" "${expected}" found)
-    if(found EQUAL -1)
-        message(FATAL_ERROR "the Unity prefab's warning doesn't say \"${expected}\":\n${stderr}")
-    endif()
-endforeach()
+compile(Cube.prefab TRUE 0)
 
-compile(cube.tprefab FALSE)
+compile(cube.tprefab FALSE 1)
 string(FIND "${stderr}" "error: component 'Spin' has no field 'test'" found)
 string(FIND "${stderr}" "in Unity" unity)
 if(found EQUAL -1 OR NOT unity EQUAL -1)

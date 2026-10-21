@@ -109,13 +109,12 @@ formatted once (`message_of`, malloc'd past 1024 bytes, where the sink cut
 them at 1024 before). A collision of two hashes would drop a real
 diagnostic, which 64 bits make unlikely. A "has no field" error in a Unity
 prefab or scene (its source's path ends in `.prefab` or `.unity`:
-`unity_authored`) is a warning rather than an error, the value left out of
-the literal (owner, the same day: `notes/unity.md`, Fields the component no
-longer has), with a note saying it's set on a TideEntity and its inspector
-shows it in red with Remove. Test:
+`unity_authored`) is neither: the value is left out of the literal, saying
+nothing (owner, the same day: `notes/unity.md`, Fields the component no longer
+has). Test:
 `tidec_prefab_error_once` (`compiler/tests/prefab_error_once.cmake`: a
-`.prefab` spawned twice and loaded locally once says the error once, with the
-note).
+`.tprefab` spawned twice says the error once; the same text as a `.prefab`
+builds, saying nothing of it).
 
 ## Word suggestions (2026-10-21)
 

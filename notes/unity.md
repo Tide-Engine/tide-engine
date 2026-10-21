@@ -62,9 +62,11 @@ entity GameObject:
   keeps them correct through hierarchy moves and renames.
 - Nothing is dropped silently: an unknown component or field stays in the text,
   shows red in the inspector and fails the bake with a diagnostic. **Owner
-  (2026-10-21):** a field taken out of a component isn't an error: the bake
-  leaves its value out with a warning (Fields the component no longer has,
-  below). An unknown component still fails it.
+  (2026-10-21):** not for a field taken out of a component: the bake leaves its
+  value out, saying nothing, and the inspector doesn't show it ("we should error
+  when we are using data from views for example that ain't there anymore.
+  inspector tweaking should just hide it and move on"): code still using the
+  field is what fails. An unknown component still fails the bake.
 - The inspector has "Add Tide Component", one foldout per component styled like
   a Unity component, Tide defaults shown greyed out, and `[SceneRequired]`.
 - Plain Unity components (renderers, animators, VFX) sit on the same objects or
@@ -504,29 +506,19 @@ both pillars show their entities with the scene's speeds, at Unity's
 positions, turned by Tide.
 
 **Fields the component no longer has (2026-10-21).** Owner: removing a field
-from a component gave each prefab's and scene's error twice (the checker's,
-said once now: `notes/language.md`, A diagnostic is said once). The values
-stay in the assets, by the design above (nothing dropped silently), but the
-inspector drew only the schema's fields, so they couldn't be seen or removed
-there. Now each field a component's values set that its type hasn't is a red
-row, `name   value   (no such field)`, with Remove where this object sets it
-(`Write` with the field left out, which reverts an instance's override once
-it sets nothing) and "its prefab sets it" where only what's under an instance
-does. The error's note says where to look. Not tested: the drawing (IMGUI,
-no window in batch runs).
-
-Then the owner: "I feel like removing a field on a component should not be an
-error". So `check_literal` (`compiler/src/check.c`) gives a Unity prefab's or
-scene's value of a field its component hasn't (`unity_authored`: its source
-is named `.prefab` or `.unity`) a warning, "component 'Spin' has no field
-'test': left out", with the same notes, and takes it out of the literal, so
-the game builds without it, as Unity leaves out a removed C# field's value.
-The value stays in the asset (adding the field back brings it back), red in
-the inspector with Remove, and the warning comes with each build until it's
-removed. `.tide` and `.tprefab` text keeps the error: written by hand, an
-unknown field is a mistake. Test: `tidec_prefab_error_once` (a `.prefab`
-builds with the warning once; the same text as a `.tprefab` fails with the
-plain error once).
+from a component gave each prefab's and scene's error twice (said once now:
+`notes/language.md`, A diagnostic is said once). The owner's decision, after a
+red inspector row with Remove and then a warning were tried the same day: it's
+no error and no warning. `check_literal` (`compiler/src/check.c`) takes a Unity
+prefab's or scene's value of a field its component hasn't (`unity_authored`:
+its source is named `.prefab` or `.unity`) out of the literal and says nothing,
+as Unity leaves out a removed C# field's value; the inspector draws only the
+component's fields, so it isn't shown. The value stays in the asset, so adding
+the field back brings it back. Code that still uses the field fails as any
+unknown member does. `.tide` and `.tprefab` text keeps the error: written by
+hand, an unknown field is a mistake. Test: `tidec_prefab_error_once` (a
+`.prefab` builds saying nothing of it; the same text as a `.tprefab` fails with
+the error once).
 
 Gaps: asset fields (a Unity asset in a Tide `Asset<T>` field: the converter
 says it isn't supported; tide resolves asset paths from the declaring file),
