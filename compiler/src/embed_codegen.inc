@@ -69,6 +69,14 @@ static bool embed_component_kept(const gen *g, const int c)
     return false;
 }
 
+// Whether the schema lists component `c` as one: every match component the game declares, whether or not an
+// entity has it yet, as an editor can give it to one (a Unity prefab's TideEntity), which then has it
+static bool embed_component_listed(const gen *g, const int c)
+{
+    const decl *d = g->prog->components.items[c];
+    return embed_component_kept(g, c) || (!d->is_local && !d->builtin && !d->placement_of && d->unit);
+}
+
 // For each of the match's rows that have component `c`: `body`, with `e` the
 // entity and `i` the row of archetype `a`.
 static void gen_embed_rows(gen *g, const int c, const char *body)
@@ -291,7 +299,7 @@ static void gen_embed(gen *g)
               "    (void)out;\n    (void)size;\n    switch (type) {\n");
     for (int c = 0; c < prog->components.count; c++) {
         const decl *d = prog->components.items[c];
-        if (!embed_component_kept(g, c)) continue;
+        if (!embed_component_listed(g, c)) continue;
         const char *name = type_cname(d);
         sb_printf(o, "    case %d: { // " STR_FMT "\n        if (size != sizeof(%s)) return false;\n", layout_index(&types, d),
                   STR_ARG(d->qualified), name);
@@ -309,20 +317,20 @@ static void gen_embed(gen *g)
 
     // The tables
     int components = 0;
-    for (int c = 0; c < prog->components.count; c++) components += embed_component_kept(g, c);
+    for (int c = 0; c < prog->components.count; c++) components += embed_component_listed(g, c);
     if (components) {
         sb_put(o, "static const int32_t tide_embed_components[] = {");
         for (int c = 0; c < prog->components.count; c++) {
-            if (embed_component_kept(g, c)) sb_printf(o, "%d, ", layout_index(&types, prog->components.items[c]));
+            if (embed_component_listed(g, c)) sb_printf(o, "%d, ", layout_index(&types, prog->components.items[c]));
         }
         sb_put(o, "};\nstatic const int32_t tide_embed_component_locals[] = {");
         for (int c = 0; c < prog->components.count; c++) {
             const decl *d = prog->components.items[c];
-            if (embed_component_kept(g, c)) sb_printf(o, "%d, ", d->local_part ? layout_index(&types, d->local_part) : -1);
+            if (embed_component_listed(g, c)) sb_printf(o, "%d, ", d->local_part ? layout_index(&types, d->local_part) : -1);
         }
         sb_put(o, "};\nstatic const bool tide_embed_component_scenes[] = {");
         for (int c = 0; c < prog->components.count; c++) {
-            if (embed_component_kept(g, c)) sb_put(o, prog->components.items[c]->is_scene ? "true, " : "false, ");
+            if (embed_component_listed(g, c)) sb_put(o, prog->components.items[c]->is_scene ? "true, " : "false, ");
         }
         sb_put(o, "};\n");
     }

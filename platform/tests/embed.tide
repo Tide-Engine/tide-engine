@@ -4,6 +4,9 @@ settings { tickRate = 30; }
 scene Main { }
 scene Arena { int rounds = 3; }
 
+// No entity has it yet: the schema lists it as a component still, as an editor can give it to one
+component Unplaced { float yes = 69; }
+
 component Counter
 {
     int ticks;

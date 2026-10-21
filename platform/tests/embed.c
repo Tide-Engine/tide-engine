@@ -396,6 +396,9 @@ TIDE_TEST(embed_schema)
     TIDE_CHECK(strstr(schema, "{\"name\":\"label\",\"type\":\"string\",\"kind\":\"text\"") != NULL);
     TIDE_CHECK(strstr(schema, "\"name\":\"marks\",\"type\":\"List<int>\",\"kind\":\"list\"") != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"Tally\",\"kind\":\"singleton\"") != NULL);
+    // A component no entity has yet is a component still, with its defaults (69.0f's bytes)
+    const char *unplaced = strstr(schema, "{\"name\":\"Unplaced\",\"kind\":\"component\"");
+    TIDE_CHECK(unplaced != NULL && strstr(unplaced, "\"defaults\":\"00008a42\"") != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"Bump\",\"kind\":\"command\"") != NULL);
     TIDE_CHECK(strstr(schema, "\"scenes\":[\"Main\",\"Arena\"]") != NULL || strstr(schema, "\"Arena\"") != NULL);
     // A scene's tag says it's a scene, an ordinary component doesn't (before its fields)

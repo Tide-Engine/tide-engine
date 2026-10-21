@@ -271,6 +271,14 @@ as a git URL package with no hard-coded paths. Built:
   declaration, the game's own or a Unity scene's `UnityEngine.Scenes.<Name>`) is
   a component there with `"scene":true` (`tide_embed_game.component_scenes`,
   2026-10-21), distinct from `scenes`, which lists only the scenes C# can start.
+  Every match component the game declares is listed as one, with its defaults
+  (`embed_component_listed` in `embed_codegen.inc`, 2026-10-21): it was only
+  those an archetype stored (`embed_component_kept`), so a new component nothing
+  spawned yet was a "struct" and Add Tide Component didn't offer it, though giving
+  it to a prefab's TideEntity is what gives an entity it (owner: "should i not see
+  this as a component in unity?"). The view packet's sections are still the stored
+  ones'. Test: `embed_schema` (`Unplaced`, which no entity has, is a component with
+  its defaults).
   Details: `notes/language.md`.
 - **`tide unity [folder] -o <path> [--once]`** (`compiler/cli/build.c`): the
   embed host library (`tide_embed`, the installed platform library and engine,
