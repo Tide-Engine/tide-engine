@@ -427,7 +427,7 @@ method forwarding with container outputs, later operand mutation and C mutation.
 `float_bits` checks all scalar/vector bit-cast and hash overloads. `screen_scale`
 checks current-frame metadata, default scale and changes between frames; three
 diagnostics pin match/GPU/write rejection. Editor tests cover new math help and
-Screen metadata. `notes/private-prototypes.md` saves all remaining design ideas.
+Screen metadata. `notes/private-prototypes.md` (tide-prototypes) saves all remaining design ideas.
 
 Validation: full warning-free native/web debug builds pass. All 2,452 native
 CTests (2,418 ordinary plus 34 GPU) and all 2,361 web CTests pass, including WASI
@@ -1070,7 +1070,7 @@ Whole-singleton replacement was a stale report: current checking/codegen accepts
 ordinary `mut` singleton assignment, and `singleton_params` already executes it
 through `Replace`. A fresh direct-system probe also compiles. The documented
 Resident/grid ownership restrictions still apply. The exhaustive report inventory
-and remaining decisions are in `notes/private-prototypes.md`, Engine gap audit;
+and remaining decisions are in tide-prototypes' `notes/private-prototypes.md`, Engine gap audit;
 the host save-directory fix is recorded in `notes/standard-host.md`.
 
 Final validation passes all 2,372 native and 2,282 web debug CTests, including
@@ -1131,7 +1131,7 @@ COW snapshot and packed bytes. Two error fixtures retain repeated-lane and
 temporary-swizzle rejection through an indexed element.
 
 This initial pass left the other reports unverified. The completed follow-up
-inventory in `notes/private-prototypes.md`, Engine gap audit, supersedes that
+inventory in tide-prototypes' `notes/private-prototypes.md`, Engine gap audit, supersedes that
 temporary list: attached arrays and save isolation are addressed, whole-singleton
 replacement already works, and the remaining restrictions/APIs have their actual
 design boundary recorded there. Original observations remain in the game notes.

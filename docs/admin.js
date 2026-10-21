@@ -1,6 +1,7 @@
 // Private website analytics and the admin session. Only aggregate counts are
 // kept; request addresses are used in short-lived abuse limits, never saved.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { prototypePatterns } from './prototypes.js';
 
 /** @typedef {import('node:http').IncomingMessage} Request */
 /** @typedef {import('node:http').ServerResponse} Response */
@@ -9,10 +10,6 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 const sessionAge = 12 * 60 * 60 * 1000;
 const cookieName = 'tide_admin';
 const bot = /bot|crawler|spider|headless|lighthouse|curl|wget|healthcheck/i;
-
-// Keep retired aliases from serving stale builds; games have one public root.
-const retiredPrototype = /(?:^|[\/._-])(?:two[-_]forks|cracked|inside[-_]out|underfoot|foldline|sunday[-_]supper|gravewake)(?:[\/._-]|$)/i;
-const prototypePath = /^\/prototypes\/(?:two-forks|cracked|inside-out|underfoot|foldline|sunday-supper|gravewake)(\/.*)?$/;
 
 /** @param {string | null} value */
 function destination(value) {
@@ -66,9 +63,12 @@ function loginPage(failed, next) {
 
 /**
  * @param {{analytics: Analytics, password?: string, relayUrl?: string,
- * relayToken?: string, now?: () => number, fetch?: typeof globalThis.fetch}} options
+ * relayToken?: string, prototypes?: string[], now?: () => number,
+ * fetch?: typeof globalThis.fetch}} options
  */
-export function createAdmin({ analytics, password = '', relayUrl = '', relayToken = '', now = Date.now, fetch = globalThis.fetch }) {
+export function createAdmin({ analytics, password = '', relayUrl = '', relayToken = '', prototypes = [], now = Date.now, fetch = globalThis.fetch }) {
+    // Keep retired aliases from serving stale builds; games have one public root.
+    const { path: prototypePath, retired: retiredPrototype } = prototypePatterns(prototypes);
     const signingKey = createHash('sha256').update(password).digest();
     /** @type {Map<string, {count: number, until: number}>} */
     const attempts = new Map();

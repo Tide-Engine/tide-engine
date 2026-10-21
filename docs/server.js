@@ -13,6 +13,7 @@ import { headers } from './headers.js';
 import { createReleases } from './releases.js';
 import { createAnalytics } from './analytics.js';
 import { createAdmin } from './admin.js';
+import { readPrototypes } from './prototypes.js';
 
 // The adapter reads this setting at import time. Fly supplies the protocol;
 // local previews derive it from their socket when there is no proxy header.
@@ -30,7 +31,7 @@ catch (error) {
 }
 const knownPaths = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(([, url]) => new URL(url).pathname).filter((name) => name !== '/request-access');
 const analytics = createAnalytics({ file: process.env.TIDE_ANALYTICS_FILE || path.resolve('.svelte-kit/analytics/analytics.json'), knownPaths });
-const admin = createAdmin({ analytics, password: process.env.TIDE_ADMIN_PASSWORD,
+const admin = createAdmin({ analytics, password: process.env.TIDE_ADMIN_PASSWORD, prototypes: readPrototypes().map((card) => card.id),
     relayUrl: process.env.TIDE_RELAY_STATS_URL, relayToken: process.env.TIDE_RELAY_STATS_TOKEN });
 const releases = createReleases({ token: process.env.TIDE_RELEASES_TOKEN, repo: process.env.TIDE_RELEASES_REPO,
     onDownload: (download) => analytics.recordDownload(download) });

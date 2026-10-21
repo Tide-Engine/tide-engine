@@ -71,7 +71,7 @@ picks, Provisional in docs/spec.md. No Tide declaration syntax was approved or
 introduced. Managed/sandboxed hosting and the inactive build service are separate.
 
 The subsequent agreed managed-hosting design is recorded in
-[managed-hosting.md](managed-hosting.md): local artifact builds/uploads, WASM
+`notes/managed-hosting.md` of `Tide-Engine/tide-services`: local artifact builds/uploads, WASM
 match isolation, simulation compatibility, persistent recovery and prepaid
 billing. That first workflow is implemented locally, but has not been deployed.
 Native C globals remain process-wide; managed WASM isolates them per match.

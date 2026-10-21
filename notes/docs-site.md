@@ -1,5 +1,27 @@
 # The docs site
 
+## Prototype catalog from its own repository (2026-10-21)
+
+The prototypes moved to `Tide-Engine/tide-prototypes` (`notes/repository.md`,
+Other repositories), with their notes, cards and thumbnails. The site no longer
+names any: `docs/prototypes.js` reads `prototypes.json` beside the server,
+which that repository's `private_games` stages with the thumbnails and pages
+under `static/prototypes/<id>/` (all ignored by git). Its ids make the public
+roots `admin.js` lets through and the retired-alias patterns that `admin.js`
+and the build's asset check refuse; the catalog page reads the cards at request
+time and still keeps them out of client bundles, search and the sitemap.
+Without the file the catalog is empty and `/prototypes/<id>/` is an ordinary
+path. The Docker image takes the file when present (`prototypes.jso[n]`). The
+Docs workflow checks out the repository with `PROTOTYPES_DEPLOY_KEY` and
+refuses to deploy without it. Earlier entries below name game notes that are
+now in that repository, and their fixed id lists are history.
+
+Tests: `admin.test.mjs` and `admin-http.test.mjs` use stand-in cards
+(`two-forks`, `paper-boat`, `lantern`), or the staged catalog's real games and
+thumbnails when `docs/prototypes.json` exists, generating every retired alias
+from the ids; a new case covers reading/validating the file and the patterns,
+including none.
+
 ## AI game-author onboarding and Markdown exports (2026-10-21)
 
 Added `/guide/ai` (setup, copy prompt and download controls) and

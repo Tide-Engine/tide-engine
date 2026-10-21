@@ -17,7 +17,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ### Runtime written by Claude for now
 
-- `platform/` (the platform layer), `demo/`, `bench/`, `relay/`, `builds/` and `packages/` are Claude's too, on the same terms.
+- `platform/` (the platform layer), `demo/`, `bench/`, `relay/` and `packages/` are Claude's too, on the same terms.
   - The platform layer reads keys by physical position everywhere. On the web, the page reads the DOM's `code`, never the typed character, which follows the keyboard layout. `platform/tests/web_keys.c` guards this with AZERTY-style events. Hosts and views should read input from `Devices` too, never the window's own (GLFW's key functions).
   - The characters typed, which do follow the layout, are a separate channel (`tide_devices.keyboard.text`, since the last poll) that the GUI and views read (`devices.keyboard.text`), and samples never. A poll takes up to `TIDE_TEXT_MAX` (32) of them, and the platform keeps the rest for the next polls, so a long paste comes over a few frames.
   - A key or mouse button pressed and released between two frames reads as held for one, on every platform, so taps aren't lost when frames are slow: each window keeps what's held and what was pressed since it was last asked (not GLFW's sticky keys, which also hold every key a frame past its release). A finger that touches and lifts between two polls does too (`engine/src/devices.c`).

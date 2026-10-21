@@ -51,8 +51,7 @@ An invalid link, a link to a different service or a project your account cannot
 access requires an explicit selection. The dashboard still lets you create a
 project with custom settings before deploying.
 
-`TIDE_HOSTING_URL` selects another configured service origin. The operator setup
-is documented in the repository's `hosting/README.md`. A normal developer CLI
+`TIDE_HOSTING_URL` selects another configured service origin. A normal developer CLI
 credential expires after 30 days and can be revoked with `tide logout`.
 
 ## Deploy from CI
@@ -147,7 +146,8 @@ explains this instead of showing an empty amount selector.
 Long-lived worlds save periodically and recover on the same release and match
 ID after a worker or host restart. Recovery has bounded retries and reports the
 save timestamp in the dashboard. Games can provide their own C save/load
-callbacks; without them, the service uses an exact-release checkpoint. There
+callbacks ([C networking](../c/network.md)); without them, the service uses an
+exact-release checkpoint. There
 is no promised cross-release save migration. Players reconnect after recovery.
 
 Saves of inactive worlds have finite retention, initially seven days, with a

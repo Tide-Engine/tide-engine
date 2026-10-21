@@ -17,7 +17,7 @@ discard-storage source positions, and attached local fixed arrays. Native
 `--data-dir` now isolates test saves explicitly. `notes/language.md`,
 `notes/random.md` and `notes/standard-host.md` record their regressions and
 validation. The complete current report inventory and remaining language/API
-decisions are in `notes/private-prototypes.md`, Engine gap audit; an old
+decisions are in `notes/private-prototypes.md` of `Tide-Engine/tide-prototypes`, Engine gap audit; an old
 prototype workaround alone does not make it a requirement.
 
 ## What was tried

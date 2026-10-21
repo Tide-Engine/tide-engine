@@ -10,4 +10,4 @@ Ignored local data and starter artifacts were copied separately. The source and 
 
 Extraction validation passed 34 service tests, JavaScript checks, muted browser collaboration checks and native/WASI starter checks. Windows and Linux starter replay hashes matched at `6704842711661338406`; the standalone production container passed persistence, routing, preview, SSE and shutdown checks. No engine code or build target changed, so no engine suite was required for this relocation.
 
-The old `builds/` mod build service remains on hold and unrelated to mockup.games.
+The old mod build service (`builds/`, now in tide-services) remains on hold and unrelated to mockup.games.

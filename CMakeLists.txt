@@ -63,7 +63,15 @@ find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it any
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
-option(TIDE_PRIVATE_PROTOTYPES "Build opt-in prototypes (shareable browser staging; no package install)" OFF)
+# Folders outside this repo built as part of it, after the engine's own games:
+# a list of paths, each with a CMakeLists.txt that uses tide_add_game and the
+# engine's targets as the games here do. Defaults to the environment's
+# TIDE_EXTERNAL_DIRS (a list separated as the system's PATH is).
+set(tide_external_default "")
+if(DEFINED ENV{TIDE_EXTERNAL_DIRS})
+    cmake_path(CONVERT "$ENV{TIDE_EXTERNAL_DIRS}" TO_CMAKE_PATH_LIST tide_external_default NORMALIZE)
+endif()
+set(TIDE_EXTERNAL_DIRS "${tide_external_default}" CACHE STRING "Folders outside this repo built with it (games and their tests)")
 
 # What the tide command says it is, and where it looks for updates. Release
 # builds get the version semantic-release picked (.github/workflows/build.yml);
@@ -124,8 +132,6 @@ if(TIDE_NODE)
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs")
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/relay/lobbies.test.mjs")
-    # The build service (builds/), the same way, with a tide that stands in for one.
-    add_test(NAME builds COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/builds/builds.test.mjs")
     # The Android wrapper's file transfers, with adb mocked and no device.
     add_test(NAME tide_android_runner COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_android.test.mjs")
 endif()
@@ -173,7 +179,16 @@ add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
 add_subdirectory(examples/network) # A game on a network of its own, and its test
-add_subdirectory(prototypes) # Private games; catalog staging is explicit
+# Each external folder builds under external/<its folder's name> in this tree.
+foreach(dir IN LISTS TIDE_EXTERNAL_DIRS)
+    cmake_path(ABSOLUTE_PATH dir BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE OUTPUT_VARIABLE external)
+    string(REGEX REPLACE "(.)/+$" "\\1" external "${external}")
+    if(NOT EXISTS "${external}/CMakeLists.txt")
+        message(FATAL_ERROR "TIDE_EXTERNAL_DIRS names ${external}, which has no CMakeLists.txt")
+    endif()
+    cmake_path(GET external FILENAME name)
+    add_subdirectory("${external}" "external/${name}")
+endforeach()
 
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.

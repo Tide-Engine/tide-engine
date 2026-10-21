@@ -9,6 +9,7 @@ import { defineConfig, type Plugin } from 'vite';
 import { headers } from './headers.js';
 import { createAnalytics } from './analytics.js';
 import { createAdmin } from './admin.js';
+import { prototypePatterns, readPrototypes } from './prototypes.js';
 import { pages } from './src/lib/nav.ts';
 
 // `npm run dev` serves what server.js does in production: the site's headers
@@ -17,7 +18,7 @@ const asInProduction: Plugin = {
     name: 'as-in-production',
     configureServer(server) {
         const analytics = createAnalytics({ file: process.env.TIDE_ANALYTICS_FILE || '.svelte-kit/analytics/analytics.json', knownPaths: ['/', ...pages.map((page) => page.link)] });
-        const admin = createAdmin({ analytics, password: process.env.TIDE_ADMIN_PASSWORD,
+        const admin = createAdmin({ analytics, password: process.env.TIDE_ADMIN_PASSWORD, prototypes: readPrototypes().map((card) => card.id),
             relayUrl: process.env.TIDE_RELAY_STATS_URL, relayToken: process.env.TIDE_RELAY_STATS_TOKEN });
         admin.start();
         server.httpServer?.once('close', () => admin.stop());
@@ -63,11 +64,12 @@ const installers: Plugin = {
 const prototypeAssets: Plugin = {
     name: 'prototype-assets',
     buildStart() {
+        const { retired } = prototypePatterns(readPrototypes().map((card) => card.id));
         function check(directory: string) {
             for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
                 const name = `${directory}/${entry.name}`;
                 if (name === 'static/admin' || name === 'static/prototypes') continue;
-                if (/(?:^|[\/._-])(?:two[-_]forks|cracked|inside[-_]out|underfoot|foldline|sunday[-_]supper|gravewake)(?:[\/._-]|$)/i.test(name)) {
+                if (retired.test(name)) {
                     throw new Error(`Prototype asset must live under static/prototypes/: ${name}`);
                 }
                 if (entry.isDirectory()) check(name);

@@ -12,8 +12,8 @@ used to walk every folder, `.tide/` and `.git/` included, with `.tide/` and
 walk never enters a hidden folder, assets skip hidden files and folders, and
 `build/` is an ordinary folder. That covers tide, tidels, `tide-editor`,
 `tide publish`'s sources, `tide eject`'s copy (`copy_entry`: hidden folders and
-`.tide-fetched` at the top), the builder's archive check (`builds/builder.mjs`
-refuses a file under any hidden folder) and `tide_add_game`'s globs in
+`.tide-fetched` at the top), the builder's archive check (tide-services'
+`builds/builder.mjs` refuses a file under any hidden folder) and `tide_add_game`'s globs in
 `cmake/Tide.cmake`. The game folder or package folder passed in may itself be
 hidden: only subfolders are skipped.
 
@@ -25,9 +25,10 @@ it says once per build to delete `build/`, which would otherwise be compiled
 and linked as part of the game (a stale `.dll` there is a game library now).
 No backward compatibility: nothing reads `build/` as tide's.
 
-Tests: `tide_cli_publish` sends `build/levels.tide` as the game's and leaves out
+Tests: tide-services' `builds/publish-cli.mjs` (`tide_cli_publish` until the
+2026-10-21 split) sends `build/levels.tide` as the game's and leaves out
 `.build/`, `.tide/`, `.git/`, `systems/.scratch/copy.tide` and `c/.old/noise.c`;
-`builds.test.mjs` refuses hidden folders at any depth; `cache_test.mjs`
+its `builds.test.mjs` refuses hidden folders at any depth; `cache_test.mjs`
 (the package job) checks `.build/` outputs, its `.gitignore` and the warning.
 User docs: CLI Files, the spec's game definition, Namespaces, Your first game and
 the AI overview.
@@ -266,7 +267,7 @@ variants conservatively. C edits now rebuild game.o to publish the new Simulatio
 ID; ordinary launchers still reuse their objects on body/identity-only edits.
 The managed launcher embeds the ID and must rebuild on it. Cache tests pin this
 distinction. Provider setup, wire bundle format, actual CLI/browser deployment
-tests, quotas and remaining launch work: managed-hosting.md, hosting/README.md.
+tests, quotas and remaining launch work: managed-hosting.md, hosting/README.md (tide-services).
 Custom C also makes asset edits refresh compatibility; the watch regression now
 checks that path, then removes C to verify visual-only pack reload is preserved.
 

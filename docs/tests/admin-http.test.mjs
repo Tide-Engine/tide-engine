@@ -7,9 +7,20 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { readPrototypes } from '../prototypes.js';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'sunday-supper', 'gravewake'];
+// The catalog the prototypes' repository staged, when it did: those exact
+// games are checked. A standalone docs build checks these stand-ins.
+const staged = readPrototypes(path.join(docs, 'prototypes.json'));
+const cards = staged.length ? staged : [
+    { id: 'two-forks', title: 'Two Forks', kind: 'Cooperative puzzle', players: '1–2 players', description: 'A stand-in card.' },
+    { id: 'paper-boat', title: 'PAPER BOAT', kind: 'Puzzle', players: '1 player', description: 'Another stand-in card.' },
+    { id: 'lantern', title: 'Lantern', kind: 'Story', players: '1–4 players', description: 'A third stand-in card.' },
+];
+const prototypeIds = cards.map((card) => card.id);
+const encodeFirst = (id) => id.replace(/./, (character) => `%${character.charCodeAt(0).toString(16)}`);
+const snake = (id) => id.replaceAll('-', '_');
 
 test('production website shares prototypes while protecting analytics, catalog and retired addresses', { timeout: 30_000 }, async (t) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-http-'));
@@ -25,7 +36,8 @@ test('production website shares prototypes while protecting analytics, catalog a
     await mkdir(deployment);
     await Promise.all([
         cp(path.join(docs, 'build'), path.join(deployment, 'build'), { recursive: true }),
-        ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'server.js'].map((name) => copyFile(path.join(docs, name), path.join(deployment, name))),
+        ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'prototypes.js', 'server.js'].map((name) => copyFile(path.join(docs, name), path.join(deployment, name))),
+        writeFile(path.join(deployment, 'prototypes.json'), JSON.stringify(cards)),
     ]);
     const entries = [];
     const aliases = [];
@@ -37,7 +49,12 @@ test('production website shares prototypes while protecting analytics, catalog a
         try {
             files.set(`${root}/compiled.html`, await readFile(path.join(deployment, 'build/client', root, 'index.html')));
         } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        files.set(`${root}/thumbnail.png`, await readFile(path.join(deployment, 'build/client', root, 'thumbnail.png')));
+        try {
+            files.set(`${root}/thumbnail.png`, await readFile(path.join(deployment, 'build/client', root, 'thumbnail.png')));
+        } catch (error) {
+            if (error.code !== 'ENOENT' || staged.length) throw error;
+            files.set(`${root}/thumbnail.png`, Buffer.from('prototype thumbnail fixture'));
+        }
         files.set(`${root}/index.html`, Buffer.from(`<!doctype html><title>Prototype ${id}</title><canvas></canvas>`));
         files.set(`${root}/game.wasm`, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
         files.set(`${root}/game.pack`, Buffer.from('prototype game pack'));
@@ -45,18 +62,13 @@ test('production website shares prototypes while protecting analytics, catalog a
         aliases.push([root, `${root}/index.html`], [`${root}/`, `${root}/index.html`]);
     }
     // Even a stale deployment that contains these bytes must not serve them.
-    for (const name of ['/samples/two-forks/index.html', '/samples/two-forks/game.wasm', '/samples/thumbnails/two-forks.png', '/sample_two_forks.html', '/two-forks/index.html',
-        '/samples/cracked/index.html', '/samples/cracked/game.wasm', '/samples/thumbnails/cracked.png',
-        '/cracked.html', '/cracked/index.html', '/examples/cracked/sfx/radio.ogg',
-        '/samples/inside-out/index.html', '/inside_out.html', '/samples/inside-out/game.wasm',
-        '/samples/thumbnails/inside-out.png',
-        '/samples/underfoot/index.html', '/underfoot.html', '/samples/underfoot/game.wasm',
-        '/samples/thumbnails/underfoot.png',
-        '/samples/foldline/index.html', '/foldline.html', '/samples/foldline/game.wasm',
-        '/samples/thumbnails/foldline.png']) {
-        files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
+    for (const id of prototypeIds) {
+        for (const name of [`/samples/${id}/index.html`, `/samples/${id}/game.wasm`, `/samples/thumbnails/${id}.png`, `/sample_${snake(id)}.html`,
+            `/${id}/index.html`, `/${snake(id)}.html`, `/examples/${id}/sfx/radio.ogg`]) {
+            files.set(name, Buffer.from('STALE PROTOTYPE ALIAS'));
+        }
+        aliases.push([`/samples/${id}`, `/samples/${id}/index.html`], [`/samples/${id}/`, `/samples/${id}/index.html`]);
     }
-    aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
     for (const [url, bytes] of files) {
         const name = url.slice(1);
         const target = path.join(deployment, 'build/client', name);
@@ -120,12 +132,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     const catalog = await fetch(`${origin}/admin/prototypes`, { headers: { cookie } });
     assert.equal(catalog.status, 200);
     const catalogHtml = await catalog.text();
-    assert.match(catalogHtml, /Two Forks/);
-    assert.match(catalogHtml, /CRACKED/);
-    assert.match(catalogHtml, /data-prototype="inside-out"/);
-    assert.match(catalogHtml, /Inside Out/);
-    assert.match(catalogHtml, /Underfoot/);
-    assert.match(catalogHtml, /FOLDLINE/);
+    for (const card of cards) assert.ok(catalogHtml.includes(card.title.replaceAll('&', '&amp;')), card.title);
     assert.deepEqual([...catalogHtml.matchAll(/data-prototype="([^"]+)"/g)].map((match) => match[1]).sort(), [...prototypeIds].sort());
     for (const id of prototypeIds) {
         assert.match(catalogHtml, new RegExp(`href="/prototypes/${id}/"`));
@@ -164,15 +171,14 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.match(response.headers.get('location'), /^\/admin\/login\?next=/);
         assert.equal(response.headers.get('cache-control'), 'private, no-store');
     }
-    for (const route of ['/samples/two%2dforks/index.html', '/sample%5ftwo%5fforks.html', '/samples/%63racked/index.html',
-        '/samples/inside%2dout/index.html', '/inside%5fout.html', '/samples/%66oldline/index.html']) {
+    for (const route of prototypeIds.flatMap((id) => [`/samples/${encodeFirst(id)}/index.html`, `/sample%5f${snake(id).replaceAll('_', '%5f')}.html`])) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(response.status, 404, route);
     }
     // An id outside the catalog is an ordinary unknown path.
     assert.equal((await fetch(`${origin}/prototypes/not-a-game/`, { redirect: 'manual' })).status, 404);
-    for (const id of ['skyworks', 'night-route', 'elsewhere', 'copper-coil', 'hot-swap', 'deadweight', 'swindle']) {
-        const encodedId = id.replace(/./, (character) => `%${character.charCodeAt(0).toString(16)}`);
+    for (const id of ['retired-game', 'unlisted']) {
+        const encodedId = encodeFirst(id);
         for (const suffix of ['', '/', '/index.html', '/thumbnail.png', '/game.wasm', '/game.pack', '/publisher-pitch.pdf']) {
             for (const name of [id, encodedId]) {
                 const route = `/prototypes/${name}${suffix}`;
@@ -181,7 +187,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         }
     }
     for (const id of prototypeIds) {
-        const encodedId = id.replace(/./, (character) => `%${character.charCodeAt(0).toString(16)}`);
+        const encodedId = encodeFirst(id);
         const encodedPublic = await fetch(`${origin}/prototypes/${encodedId}/index.html`, { redirect: 'manual' });
         assert.equal(encodedPublic.status, 200, id);
         assert.equal(encodedPublic.headers.get('x-robots-tag'), 'noindex');
@@ -210,9 +216,13 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|prototypes\/cracked|inside-out|underfoot|foldline|sunday-supper|gravewake|copper-coil|prototypes\/elsewhere|deadweight|DEADWEIGHT|hot-swap|swindle|night-route/);
-    for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|CRACKED|prototypes\/cracked|Inside Out|inside-out|Underfoot|underfoot|FOLDLINE|foldline|SUNDAY SUPPER|sunday-supper|GRAVEWAKE|gravewake|copper-coil|prototypes\/elsewhere|deadweight|DEADWEIGHT|HOT SWAP|hot-swap|SWINDLE|swindle|NIGHT ROUTE|night-route/);
+    const sitemap = await (await fetch(`${origin}/sitemap.xml`)).text();
+    assert.doesNotMatch(sitemap, /\/admin|\/prototypes\//);
+    for (const route of ['/sitemap.xml', '/guide/samples', '/search.json']) {
+        const text = await (await fetch(`${origin}${route}`)).text();
+        for (const card of cards) {
+            assert.ok(!text.includes(`prototypes/${card.id}`) && !text.includes(card.title), `${route} names ${card.title}`);
+        }
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);

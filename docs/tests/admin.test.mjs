@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createAnalytics } from '../analytics.js';
 import { createAdmin } from '../admin.js';
+import { prototypePatterns, readPrototypes } from '../prototypes.js';
 
-const prototypeIds = ['two-forks', 'cracked', 'inside-out', 'underfoot', 'foldline', 'sunday-supper', 'gravewake'];
+const prototypeIds = ['two-forks', 'paper-boat', 'lantern'];
+const snake = (id) => id.replaceAll('-', '_');
 
 async function site(t, options = {}) {
     const folder = await mkdtemp(path.join(os.tmpdir(), 'tide-admin-'));
     const analytics = createAnalytics({ file: path.join(folder, 'analytics.json'), knownPaths: ['/', '/guide'], now: options.now });
-    const admin = createAdmin({ analytics, password: 'a-test-password', ...options });
+    const admin = createAdmin({ analytics, password: 'a-test-password', prototypes: prototypeIds, ...options });
     const server = createServer(async (req, res) => {
         try {
             const protocol = req.headers['x-forwarded-proto'] || 'http';
@@ -129,18 +131,10 @@ test('prototype files are public while the catalog and retired copies remain pro
             assert.notEqual(response.headers.get('cache-control'), 'private, no-store');
         }
     }
-    for (const route of ['/samples/two-forks/', '/samples/two-forks/index.html', '/samples/two-forks/game.wasm',
-        '/samples/thumbnails/two-forks.png', '/samples/two%2dforks/index.html', '/two-forks/',
-        '/examples/two-forks/', '/sample_two_forks.html',
-        '/samples/cracked/', '/samples/cracked/index.html', '/samples/cracked/game.wasm',
-        '/samples/thumbnails/cracked.png', '/examples/cracked/sfx/radio.ogg',
-        '/cracked/', '/cracked.html', '/sample_cracked.html', '/samples/%63racked/index.html',
-        '/samples/inside-out/index.html', '/inside_out.html', '/samples/inside%2dout/game.wasm',
-        '/samples/thumbnails/inside-out.png',
-        '/samples/underfoot/index.html', '/underfoot.html', '/samples/%75nderfoot/game.wasm',
-        '/samples/thumbnails/underfoot.png',
-        '/samples/foldline/index.html', '/foldline.html', '/samples/%66oldline/game.wasm',
-        '/samples/thumbnails/foldline.png']) {
+    const retired = prototypeIds.flatMap((id) => [`/samples/${id}/`, `/samples/${id}/index.html`, `/samples/${id}/game.wasm`,
+        `/samples/thumbnails/${id}.png`, `/examples/${id}/sfx/radio.ogg`, `/${id}/`, `/${snake(id)}.html`, `/sample_${snake(id)}.html`,
+        `/samples/${id.replace(/./, (character) => `%${character.charCodeAt(0).toString(16)}`)}/index.html`]);
+    for (const route of retired) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);
@@ -217,4 +211,25 @@ test('oversized relay snapshots are rejected before buffering arbitrary data', a
     const data = await (await get('/admin/api', cookie)).json();
     assert.equal(data.relay.status, 'unavailable');
     assert.equal(data.relay.latest, null);
+});
+
+test('the catalog comes from the staged file, and without one no address is a prototype', async (t) => {
+    const folder = await mkdtemp(path.join(os.tmpdir(), 'tide-catalog-'));
+    t.after(() => rm(folder, { recursive: true, force: true }));
+    const file = path.join(folder, 'prototypes.json');
+    assert.deepEqual(readPrototypes(file), []);
+    const card = { id: 'paper-boat', title: 'PAPER BOAT', kind: 'Puzzle', players: '1 player', description: 'A card.' };
+    await writeFile(file, JSON.stringify([card]));
+    assert.deepEqual(readPrototypes(file), [card]);
+    for (const id of ['Paper', 'paper_boat', '../up', '', 'two--words', 'trailing-']) {
+        await writeFile(file, JSON.stringify([{ ...card, id }]));
+        assert.throws(() => readPrototypes(file), /lowercase words/, id);
+    }
+    await writeFile(file, JSON.stringify([{ ...card, title: undefined }]));
+    assert.throws(() => readPrototypes(file), /no title/);
+    const none = prototypePatterns([]);
+    assert.ok(!none.path.test('/prototypes/paper-boat/') && !none.retired.test('/samples/paper-boat/'));
+    const { path: root, retired } = prototypePatterns(['paper-boat']);
+    assert.ok(root.test('/prototypes/paper-boat/index.html') && !root.test('/prototypes/paper-boats/'));
+    assert.ok(retired.test('/paper_boat.html') && retired.test('/samples/Paper-Boat/') && !retired.test('/paper-boats/'));
 });

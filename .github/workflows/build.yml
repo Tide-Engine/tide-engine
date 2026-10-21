@@ -457,12 +457,6 @@ jobs:
           build/dist/tide/bin/tide build build/try
           build/dist/tide/bin/tide build build/try --release --web
           build/dist/tide/bin/tide build build/try --android
-      # The build service (builds/) with the package's tide, on the platform
-      # its builders run: the example game published, built with its mod, and
-      # the page played in headless Chrome.
-      - name: Try the package (build service)
-        if: runner.os == 'Linux' && matrix.preset == 'package'
-        run: TIDE=build/dist/tide/bin/tide node --test builds/page.test.mjs
       # A game's C++, which builds with no C++ runtime: that it builds for each
       # target with the package's own compiler and headers, and what tide says
       # when it can't.
@@ -672,6 +666,7 @@ jobs:
     uses: ./.github/workflows/docs.yml
     secrets:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      PROTOTYPES_DEPLOY_KEY: ${{ secrets.PROTOTYPES_DEPLOY_KEY }}
 
   # Both channels use the Tide listing: release goes to Stable (default), dev
   # to the opt-in nightly channel, after the engine release is published.

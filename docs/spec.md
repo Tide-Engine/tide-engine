@@ -3828,7 +3828,7 @@ compatibility are distinct. No production hot reload or native client code
 delivery is implied.
 
 **Provisional, implemented:** `tide login/logout/deploy`, GitHub developer OAuth,
-Stripe prepaid fulfillment and the single-host Fly service in `hosting/`.
+Stripe prepaid fulfillment and the single-host Fly service (a separate repository).
 Each match runs inside a worker-owned WASM instance with bounded imports,
 memory and execution. Project-scoped runtime credentials can control matches
 without publishing authority. Default occupied lifetime has an empty grace;
@@ -3836,7 +3836,7 @@ explicit worlds save/recover on their original release and stable ID, subject
 to credit, capacity and finite save retention. Game C may supply save/load
 callbacks; the default checkpoint has exact-release scope. Concrete interfaces,
 operator limits, tests and unbuilt production/operational work are recorded in
-`notes/managed-hosting.md` and `hosting/README.md`. This adds no Tide syntax and
+the service's own repository. This adds no Tide syntax and
 does not declare a publicly launched hosting service.
 
 Generated `tide_game.simulation`/`TIDE_SIMULATION_ID` use a canonical checked
@@ -4151,7 +4151,7 @@ override system Move(mut Position position, Velocity velocity, Time time)
 - **Names in tools and generated C.** An override in place goes by the replaced declaration's name, with its namespace: `Combat.Move` in `tide schedule`, the profiler and messages, `tide_system_Combat_Move` in generated C. A game that uses neither word generates the C it did, byte for byte.
 - **Editors.** Hover says what an override replaces and what replaced a declaration, and so does a line above each. Go to definition on an override's name, or on `override`, goes to what it replaces; on a use of the name, to what's built under it. Go to implementation on a virtual declaration goes to its override. Find usages and rename treat an override and what it replaces as one name. After `override`, completion lists the virtual declarations of other packages that nothing replaces yet, each written out as the file would write it.
 
-The service's first slice. Implemented, and on hold (the owner, 2026-10-06: it may be too complicated, from the service's side): the code is `builds/` in the repository, and nothing of it is deployed. It ran for a day at `builds.tide-engine.dev`. A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
+The service's first slice. Implemented, and on hold (the owner, 2026-10-06: it may be too complicated, from the service's side): the code is in the services' own repository, and nothing of it is deployed. It ran for a day at `builds.tide-engine.dev`. A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
 
 - Provisional: `tide publish [folder]`, the name proposed below. It sends what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent, as their commits name them, and a package in a folder outside the game's is an error. It doesn't compile the game first: a version that doesn't build is found when a build is asked for.
 - Provisional: the game's key is in the environment, as `TIDE_GAME_KEY`, and nowhere else: no file. A key is the game's id, a dot and a secret, so one variable says which game too. An id is lower-case letters, digits, dots and dashes, as it's part of addresses. `TIDE_BUILDS_URL` names another service than ours.

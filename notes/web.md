@@ -12,7 +12,7 @@ Managed deployment (2026-10-15): normal players retain wasm32-wasip1-threads;
 the new server artifact is a separate single-threaded wasm32-wasip1 reactor,
 without platform/render/audio libraries or Node WASI. Its bounded host ABI,
 guest imports, memory/CPU interruption and actual browser-to-server test are in
-managed-hosting.md and hosting/README.md. No web hot-update behavior changes.
+managed-hosting.md and hosting/README.md (both in tide-services). No web hot-update behavior changes.
 
 Browser playground (2026-10-14): `Tide.reload = 'manual'` opts the docs preview
 into supplied builds. After device setup, `Tide.ready()` is called with

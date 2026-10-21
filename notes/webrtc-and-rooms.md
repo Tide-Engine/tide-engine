@@ -27,7 +27,7 @@ An early-exit control fails both runners immediately with the browser's exit
 code. CTest CPU accounting and remaining hosted uncertainty are documented in
 `notes/testing.md`; full validation is in `notes/releases-and-ci.md`.
 
-Managed service (2026-10-15): hosting/rooms.mjs implements the existing relay
+Managed service (2026-10-15; in tide-services since 2026-10-21): hosting/rooms.mjs implements the existing relay
 signaling protocol with node-datachannel 0.33.4, project room/key persistence,
 bounded peers and TURN configuration. Outer protocol 2 checks Simulation ID
 before creating a guest and routes bound match envelopes to isolated Workers.

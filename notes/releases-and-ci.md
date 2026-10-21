@@ -172,6 +172,10 @@ These final notes are unbuilt text; no additional workflow dispatch is needed.
 
 ## Managed hosting deployment workflow (2026-10-15)
 
+Moved (2026-10-21) with the service to `Tide-Engine/tide-services`, where the
+workflow now checks out this repo's `dev` for the relay (`notes/repository.md`).
+The record below is its history here.
+
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
 from Build and Docs. It runs only through `workflow_dispatch`: every ref runs
 the service's `npm ci`/`npm test` on Ubuntu 24.04 with Node 24.16.0; only `dev`

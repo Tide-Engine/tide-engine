@@ -78,7 +78,6 @@ add_test(NAME tide_cli_packages
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/packages_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/packages_test.cmake")
 
-# tide publish, against the build service (builds/) on this machine.
 if(TIDE_NODE)
     add_test(NAME tide_cli_installers
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/installers_test.mjs")
@@ -86,9 +85,6 @@ if(TIDE_NODE)
     add_test(NAME tide_cli_assets
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets_test.mjs" --tidec "$<TARGET_FILE:tidec>"
                 --work "${CMAKE_CURRENT_BINARY_DIR}/assets_test")
-    add_test(NAME tide_cli_publish
-        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/publish_test.mjs" --tide "$<TARGET_FILE:tide_cli>"
-                --work "${CMAKE_CURRENT_BINARY_DIR}/publish_test")
 endif()
 
 # tide editors, with fake editors where their installers put them.

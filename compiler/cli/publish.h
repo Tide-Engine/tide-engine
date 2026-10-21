@@ -1,7 +1,7 @@
 #pragma once
 
 // `tide publish`: sends a version of a game's source to the build service
-// (builds/ in this repo), which builds the game with mods from it.
+// (Tide-Engine/tide-services, builds/), which builds the game with mods from it.
 
 // Publishes the game in `folder` with the key in TIDE_GAME_KEY, which names
 // the game too: every file a build reads from its folder (tide_game_sources),
