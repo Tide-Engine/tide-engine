@@ -535,18 +535,28 @@ TIDE_TEST(cli_packages_compare_tide_versions_by_their_numbers)
 }
 
 // Two folders' paths alike but for slashes (TEMP has Windows' own) and, on Windows, case
+// Compared resolved: macOS's temporary folder is reached through a link
+// (/var is /private/var), and what's found is the resolved path.
 static bool same_folder(const char *a, const char *b)
 {
-    for (; *a || *b; a++, b++) {
-        char x = *a == (char)92 ? '/' : *a;
-        char y = *b == (char)92 ? '/' : *b;
+    char *const ra = path_absolute(a);
+    char *const rb = path_absolute(b);
+    size_t na = strlen(ra), nb = strlen(rb);
+    while (na > 1 && (ra[na - 1] == '/' || ra[na - 1] == (char)92)) na--;
+    while (nb > 1 && (rb[nb - 1] == '/' || rb[nb - 1] == (char)92)) nb--;
+    bool same = na == nb;
+    for (size_t i = 0; same && i < na; i++) {
+        char x = ra[i] == (char)92 ? '/' : ra[i];
+        char y = rb[i] == (char)92 ? '/' : rb[i];
 #ifdef _WIN32
         if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
         if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
 #endif
-        if (x != y) return false;
+        same = x == y;
     }
-    return true;
+    free(ra);
+    free(rb);
+    return same;
 }
 
 TIDE_TEST(cli_a_unity_projects_assets_is_a_game_whose_packages_are_found)
