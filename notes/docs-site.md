@@ -265,7 +265,7 @@ prints expected 404s for unstaged example pages in this checkout; the build
 still exits successfully. Native/web engine integration validation is tracked
 in the lifecycle/netcode notes. No docs deployment or CI was requested.
 
-Final integration with `origin/dev` `a50f7818` preserves the visibility guide,
+Final integration with `origin/dev` `2c6de193` preserves the visibility guide,
 managed-hosting guide, both sidebar entries and their separate spec contracts.
 The merged production docs build and all three SEO checks pass with Node
 24.21.0, including page/link/anchor validation, both routes' metadata, sitemap
@@ -295,7 +295,7 @@ Both custom-domain `/health` requests return HTTPS 200 with `{"ok":true}`, and
 the console homepage returns 200 with GitHub sign-in. No provider login/payment
 was performed during these probes.
 
-Source 1f81a312 deployed directly to tide-website as release 282, image
+Source 2ca71d1d deployed directly to tide-website as release 282, image
 deployment-01M501F063DS5S441CCCWYX27T, with its existing machine/volume and a
 passing health check. The public homepage now has the Console link; muted
 headless Chrome verifies the live desktop and mobile menu target with no
@@ -347,7 +347,7 @@ retains its existing allowed unstaged-example placeholders. The owner requested 
 workflow after merge to validate Linux setup, all staged examples and deployment.
 
 Hosted confirmation: requested [Docs run 38557265795](https://github.com/Tide-Engine/tide-engine/actions/runs/38557265795)
-on 9b81435d passed and deployed successfully. Both web and native-host CMake
+on 7333e64c passed and deployed successfully. Both web and native-host CMake
 configuration select Clang 23.1.2. The full grammar/access/release/analytics,
 SEO/HTTP and examples/gallery checks pass, including the playground's complete
 WebGL smoke and all five compiler/staging tests. Compiler tools were ready in
@@ -524,7 +524,7 @@ and audio are preserved. Game-only geometry, shadow mapping and SSAO use
 existing rendering APIs. Public routes and catalog authentication are unchanged.
 Current validation and deployment evidence are recorded in `notes/inside-out.md`.
 
-Source `482c066b` deployed to the existing Fly site as release 264, image
+Source `d2da43a1` deployed to the existing Fly site as release 264, image
 `deployment-01M4PHAKNDKRHZZ2MGVTEA16JV`, with passing machine health checks.
 All four public prototype pages and thumbnails match the production package.
 Inside Out uses the final 3D renderer and refreshed gameplay thumbnail.
@@ -540,7 +540,7 @@ with two small robots (`notes/inside-out.md`). Public serving and catalog
 authentication remain unchanged; Underfoot, Inside Out, CRACKED and Two Forks
 are retained. Game-specific contracts and evidence are in `notes/inside-out.md`.
 
-Integrated through `origin/dev` `825c6542`: all 64 playable release pages were
+Integrated through `origin/dev` `c70a0c22`: all 64 playable release pages were
 rebuilt/restaged and agree with the production package, as do all four
 prototype thumbnails. Check has zero errors/warnings; 227 grammar, eighteen
 analytics/admin and five production HTTP/SEO/access tests pass. Production
@@ -548,7 +548,7 @@ build and full WebGL example/gallery smoke pass. Inside Out native/WASI and
 both two-browser GPU backends pass; exact asset hashes are in its notes.
 No CI was dispatched.
 
-Source `7a44440f` deployed directly to the existing Fly site as release 263,
+Source `8c5bdf6d` deployed directly to the existing Fly site as release 263,
 image `deployment-01M4PF2HHN71TH2ZJ2C4S8M4XF`, with passing health checks.
 All four public prototype pages/thumbnails match the package. Inside Out's
 downloaded page passes two-player WebGPU play through the production relay
@@ -787,7 +787,7 @@ the web-release game. Game-specific contracts and validation are recorded in
 `notes/inside-out.md`. The public URL and catalog access boundaries are retained.
 
 The revision was deployed to the existing `tide-website` Fly app directly
-from `0530c23f` (release 255); its health checks passed. Anonymous Inside Out
+from `09b68b4b` (release 255); its health checks passed. Anonymous Inside Out
 HTML/thumbnail requests return 200 and match the tested release bytes. A
 two-browser check of those downloaded bytes with the production relay passed.
 The packaged catalog retains the incoming CRACKED, Inside Out and Two Forks
@@ -801,7 +801,7 @@ production build passes, and all 23 analytics/admin and production HTTP/SEO/
 access checks pass. Camera, audio and gameplay evidence belongs in
 `notes/inside-out.md`.
 
-That focused-view revision deployed directly from `f8f61e9e` to the existing
+That focused-view revision deployed directly from `c298c929` to the existing
 Fly site (release 256); health checks passed. Anonymous game and thumbnail
 requests return 200 and match the validated release hashes. The packaged
 catalog still contains only Inside Out, CRACKED and Two Forks.
@@ -818,7 +818,7 @@ Release, staged and packaged Inside Out HTML are byte-identical. Game-specific
 camera, movement, campaign and audio evidence is in `notes/inside-out.md`.
 
 The maker-passage follow-up retains that public serving contract. After the
-clean integration through `origin/dev` `1e969c61`, all 64 staged pages match
+clean integration through `origin/dev` `6adfbae9`, all 64 staged pages match
 their release artifacts, including the incoming Underfoot and CRACKED pages.
 The authenticated catalog retains Underfoot, Inside Out, CRACKED and Two
 Forks. All 225 grammar checks and the full WebGL docs/gallery smoke pass;
@@ -826,11 +826,11 @@ Svelte check has zero errors/warnings, eighteen analytics/admin checks pass,
 and the final production build and five HTTP/SEO/access checks pass.
 Inside Out's final packaged HTML hash is recorded in `notes/inside-out.md`.
 
-Final integration through `origin/dev` `7c4e0835` brought unrelated CRACKED
+Final integration through `origin/dev` `4df2b647` brought unrelated CRACKED
 and Underfoot updates, which were rebuilt/restaged before deployment. All
 64 playable pages and four prototype thumbnails match the final package;
 the production build and five HTTP/SEO/access checks pass again. Source
-`9d25977b` deployed directly to the existing Fly app as release 258 and passed
+`a701de03` deployed directly to the existing Fly app as release 258 and passed
 health checks. Anonymous Inside Out HTML/thumbnail requests return 200 with
 the tested final hashes, and two-browser gameplay of those downloaded bytes
 through the production relay passes. No CI was dispatched.
@@ -844,14 +844,14 @@ analytics/admin plus five production HTTP/SEO/access tests pass. Release,
 staged and packaged Inside Out page/thumbnail bytes match; their hashes and
 game-specific camera validation are in `notes/inside-out.md`.
 
-The clean merge through `origin/dev` `e377d0a9` brought shared compiler,
+The clean merge through `origin/dev` `39fe3e4f` brought shared compiler,
 platform/web and docs updates plus current Underfoot changes. All 64 playable
 pages were rebuilt/restaged and match their production-package copies; all
 four prototype thumbnails match as well. Docs check has zero errors/warnings,
 226 grammar tests pass, and the production build plus five HTTP/SEO/access
 checks pass again. The integrated Inside Out hash is in `notes/inside-out.md`.
 
-Source `ebbd0649` deployed directly to the existing Fly site as release 259
+Source `ff775a99` deployed directly to the existing Fly site as release 259
 and passed health checks. Public Inside Out HTML and thumbnail return 200
 with the tested integrated hashes; the catalog retains all four prototypes.
 Two-browser gameplay of the downloaded page through the production relay
@@ -868,14 +868,14 @@ admin plus five HTTP/SEO/access tests pass. All 64 playable pages and four
 prototype thumbnails match their release/staged/packaged copies. Final
 hashes and game-specific evidence are recorded in `notes/inside-out.md`.
 
-Integration through `origin/dev` `27ddca74` brought compiler/shared asset
+Integration through `origin/dev` `430961d7` brought compiler/shared asset
 runtime and Underfoot updates. All 64 playable pages were rebuilt/restaged;
 their release, static and production-package bytes agree, as do all four
 thumbnails. The site check stays clean, 227 grammar checks pass, and the final
 production build plus five HTTP/SEO/access tests pass. The final Inside Out
 hash is in `notes/inside-out.md`. No CI was dispatched.
 
-Source `0fa243a2` deployed directly to the existing Fly site as release 260
+Source `421f1f25` deployed directly to the existing Fly site as release 260
 and passed health checks. Public Inside Out page/thumbnail requests return
 200 with the tested final hashes. Two-player WebGPU gameplay of the downloaded
 page through the production relay passes, including the nearby partner glimpse

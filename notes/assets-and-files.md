@@ -108,7 +108,7 @@ After the final test-only key-count/tail addition, both complete runtime test
 executables pass again. No compiler, canonical asset layout or API changes.
 Linux/macOS/MinGW/Android/sanitizer coverage and CI were not run here.
 
-Integration with `origin/dev` through `53f92bf1` keeps incoming Session/Clipboard,
+Integration with `origin/dev` through `14cc6a73` keeps incoming Session/Clipboard,
 package tooling and the LOD triangle floor. The merge is clean; this runtime
 source is byte-identical to the measured candidate. Both complete native/web
 debug builds pass, followed by 36 native/38 web runtime, skinned/GPU, LOD,
@@ -117,7 +117,7 @@ comparison is claimed for the merged compiler/tool changes.
 
 ## Separate animation exports with different defaults (2026-10-11)
 
-Integration with `origin/dev` through `6682a94d` retains incoming automatic texture compression, enum shorthand and omitted-playback editor hints. The notes insertion conflict preserves both entries; runtime binding code had no conflict. Complete native/web builds and the merged docs build pass, followed by 50 native and 56 web dependency checks: the complete runtime suites, animation/catalog/FBX and skinning paths, texture compression, and OpenGL/WebGL/WebGPU draw/shader checks. The earlier performance binaries/results remain frozen; no post-merge timing comparison is claimed.
+Integration with `origin/dev` through `268cc751` retains incoming automatic texture compression, enum shorthand and omitted-playback editor hints. The notes insertion conflict preserves both entries; runtime binding code had no conflict. Complete native/web builds and the merged docs build pass, followed by 50 native and 56 web dependency checks: the complete runtime suites, animation/catalog/FBX and skinning paths, texture compression, and OpenGL/WebGL/WebGPU draw/shader checks. The earlier performance binaries/results remain frozen; no post-merge timing comparison is claimed.
 
 The owner approved binding unique exact bone names and their complete parent chains while copying source local transforms directly, even when authored defaults differ. test project reproduces the previous rejection: the character FBX has a skin and bind pose, while its idle/run/jump exports have neither and store take-specific defaults. Their named hierarchies match. The importer already retained usable animation data; requiring equal defaults at runtime was the blocker.
 
@@ -169,7 +169,7 @@ Automatic color texture compression (2026-10-11): eligible ordinary `Texture` as
       | 261,120 | 7 | 150 | 2.85, 0.89, 0.51 | 2.80, 0.88, 0.85 |
 
       Picked is no slower than whole in any row now. The first row's mesh has no levels, so its three numbers are the same draws as an unmarked mesh's (its two a-draw-each numbers differ by the run's noise; the instanced one is faster as one call records in 0.18 ms where 40,000 take 2.2). The machine was busier than for the numbers above, so set rows against each other, not against those.
-  - **Validation:** full native debug (2,135 tests) and web debug (2,106) suites pass after merging `origin/dev` through `cac116ff` (texture compression and idle GPU assets among it, in the same renderer and pack files), with the pixel test on OpenGL 3.3, WebGL 2 and WebGPU, and the docs site builds. Linux, macOS, MinGW, Android and the sanitizers are a requested CI run's.
+  - **Validation:** full native debug (2,135 tests) and web debug (2,106) suites pass after merging `origin/dev` through `e6a4133a` (texture compression and idle GPU assets among it, in the same renderer and pack files), with the pixel test on OpenGL 3.3, WebGL 2 and WebGPU, and the docs site builds. Linux, macOS, MinGW, Android and the sanitizers are a requested CI run's.
   - **Not built:** a setting in the language for the pixels a level may be off by (`tide_draw_lod_pixels` is there for C); levels for `SkinnedMesh<V>.Decode` models; anything that tells a game its mesh would gain from `[LOD]`. No measurement of a real exporter's model has been made: the fixtures are generated. The first level of the test ball (480 triangles of 960) says it's off by 0.032 of a radius, most of it its normals' and uvs' share, which is where its weights (`WEIGHT_NORMAL`, `WEIGHT_UV`, `WEIGHT_COLOR` in `mesh_lod.c`) would be tuned against real art.
 
 ## Conservative release asset pruning (2026-10-10)

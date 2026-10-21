@@ -1354,11 +1354,11 @@ renames; final incoming integration validation follows below. Android, other
 operating systems and sanitizers were not run; no CI was dispatched.
 
 Final integration validation: both complete standard builds remain warning-free
-after the compiler/session/Box3D overlap through a50f7818. All 2,359 native
+after the compiler/session/Box3D overlap through 2c6de193. All 2,359 native
 CTests pass (69.54 s, 31 GPU tests), as do all 2,272 web CTests (221.93 s,
 including WebGL/WebGPU). All seven simulation-identity cases pass. Cracked and
 Foldline targets/tests pass on native/web. The subsequent hosting-console and
-Foldline redesign merge through 7aff9694 changes no engine/compiler source;
+Foldline redesign merge through 9f1d3581 changes no engine/compiler source;
 the renderer overlap preserves the redesign with eleven Shown-to-Displayed
 helper renames. Fresh scoped Foldline checks pass 2/2 native (10.49 s) and 3/3
 web (92.66 s), including both rendering backends. The final production docs
@@ -1481,7 +1481,7 @@ pass with mocked registry writes, and the production docs build passes.
 Other host OSes, Android, sanitizers and plugin verification against newer IDEs
 were not run; no CI workflow or real installer/association action was invoked.
 
-Integration: origin/dev eb4c09f3 merged cleanly in code; three top-of-file note
+Integration: origin/dev 83075834 merged cleanly in code; three top-of-file note
 conflicts retain both new sections. Incoming input prediction and render-target
 changes touch the compiler/runtime boundary, so complete native/web debug builds
 and suites were repeated: all 2,284 native and 2,249 web CTests pass, including
@@ -2338,7 +2338,7 @@ Remaining work: prefab text/editor authoring, hierarchy presentation interpolati
 world-matrix caching/deep-hierarchy performance measurements, richer hierarchy
 inspection, and broader platform CI (not requested for this Windows task).
 
-Integration through origin/dev f349c31a merges cleanly. Incoming CLI development
+Integration through origin/dev 9ae734b8 merges cleanly. Incoming CLI development
 optimization/cache changes rebuild warning-free and pass all 10 native CLI CTests;
 the production docs build passes again. Other incoming work is prototype content
 and benchmark evidence, with no compiler/runtime overlap requiring full repeats.

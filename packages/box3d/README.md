@@ -165,7 +165,7 @@ These costs depend on how much of the arena is touched, not only on how many bod
 
 ### Resident comparison (2026-10-07)
 
-Three alternating runs of the image-list baseline (`14df837`) and resident build, Windows clang 23 release and WebAssembly release through Node's WASI, not a browser. The machine remained busy: CPU load was 63% before the rounds and 24% after. Each entry is the median (minimum–maximum) across those runs, in milliseconds. The costs combine the tick with keeping its snapshot and hashing on one thread, since the resident commit replaced work formerly split between the image, list and hash.
+Three alternating runs of the image-list baseline (`0cec11e`) and resident build, Windows clang 23 release and WebAssembly release through Node's WASI, not a browser. The machine remained busy: CPU load was 63% before the rounds and 24% after. Each entry is the median (minimum–maximum) across those runs, in milliseconds. The costs combine the tick with keeping its snapshot and hashing on one thread, since the resident commit replaced work formerly split between the image, list and hash.
 
 | 2,400 crates | Windows image list | Windows resident | Node image list | Node resident |
 |---|---|---|---|---|

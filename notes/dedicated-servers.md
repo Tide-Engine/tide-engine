@@ -31,7 +31,7 @@ Requested Build 38772910822 passes the complete native, MinGW, web and sanitizer
 suites and publishes v0.4.0-nightly.3. Both transport integration cases pass on
 Windows, Linux, macOS and MinGW; the natural-exit fixtures pass as well.
 
-Run `38716371711` found two server-build defects in `bfc10e14`.
+Run `38716371711` found two server-build defects in `eea983cb`.
 The optional process hook now has a weak no-op definition on Apple targets:
 a standalone Mach-O executable cannot link an absent weak reference with the
 ordinary link flags, even with `weak_import`. A game's strong C definition

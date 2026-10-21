@@ -57,16 +57,16 @@ git diff <base> HEAD -- hosting builds notes/managed-hosting.md | git -C <tide-s
 git merge origin/dev   # take the deletions: git rm -r the moved paths it reports
 ```
 
-## Public, with a fresh history (2026-10-21)
+## Public, with its history (2026-10-21)
 
-The owner made the engine public with one fresh commit instead of its history (1,910 commits on `dev`, with the prototypes', services' and private notes' past in them). The private repository with every commit, tag and release before that moved to `Tide-Engine/tide-engine-history`, which stays private; the public `Tide-Engine/tide-engine` starts from a commit whose tree is the old `dev` at the switch, tagged with the then-current `v0.4.0` and `v0.5.0-nightly.1` so semantic-release continues from them. Those two releases' files were copied to it; older versions are only in the archive. The website's release lookup (`TIDE_RELEASES_REPO`) names the public repository as before. `notes/`, `AGENTS.md` and `CLAUDE.md` are public too.
+The owner chose to publish the engine with its whole history, the prototypes', services' and notes' past included, after one rewrite of commit metadata only: `Co-Authored-By:` trailers naming Claude or Codex were removed from messages, and the three commits authored as `Claude <noreply@anthropic.com>` were credited to BlenMiner (`git filter-repo` with a mailmap and a message callback, on `dev`, `release` and all 169 tags). Every tree is unchanged, so builds, tags and releases are the same; commit IDs from the first changed commit on are new. Commit IDs cited in notes and `bench/README.md` were mapped to the new ones (`bench/results` keeps its recorded revisions, which its saved digests cover). A full scan of every blob for credentials found only test fixtures. `notes/`, `AGENTS.md` and `CLAUDE.md` are public.
 
-- A branch made before the switch shares no history with `dev`: git refuses to merge it (unrelated histories). Carry it as a patch: `git diff <its base> <its tip> | git apply -3` on a branch from the new `dev`. Never merge with `--allow-unrelated-histories` or force-push: either would publish the old history.
-- The main checkout's shared `.git` has a `pre-push` hook that refuses to push any commit whose history doesn't start at the fresh root, so no worktree can publish old commits by mistake. Its remote `history` points at the archive, for `git log`/`git show` of old commits.
+- The `release` ruleset forbids force-pushes; it was disabled for the rewrite's push and re-enabled.
+- Local branches made before the rewrite hold the old commits. The main checkout's shared `.git` has a `pre-push` hook that refuses to push any of them (`.git/rewritten-commits.txt`, the 1,885 old IDs), and any commit with an AI co-author trailer or an agent author. Carry such a branch over as a patch onto the new `dev`: `git diff <its base> <its tip> | git apply -3`.
 
 ## Cleanup (2026-10-21)
 
-After the split, the owner removed what no longer belonged in the engine: `GAME_TRIAL_FEEDBACK.md` (the 2026-10-06 AI game-builder trial's internal report), `notes/mockup-games.md` (the record that mockup.games moved to `Tide-Engine/mockup-games`), the former self-hosted runners' `.github/runner/README.md` and `start-runner.ps1` (`setup-linux.sh` stays for the Linux cross build's xwin step), the AI onboarding trials' saved games, transcripts and checks under `notes/ai-onboarding/` (their summary stays in `notes/ai-onboarding.md`), and `sandbox/`, the owner's experiments. All are in git history at `403fc387`. `bench/results` stays: the benchmark scripts read and append to it.
+After the split, the owner removed what no longer belonged in the engine: `GAME_TRIAL_FEEDBACK.md` (the 2026-10-06 AI game-builder trial's internal report), `notes/mockup-games.md` (the record that mockup.games moved to `Tide-Engine/mockup-games`), the former self-hosted runners' `.github/runner/README.md` and `start-runner.ps1` (`setup-linux.sh` stays for the Linux cross build's xwin step), the AI onboarding trials' saved games, transcripts and checks under `notes/ai-onboarding/` (their summary stays in `notes/ai-onboarding.md`), and `sandbox/`, the owner's experiments. All are in git history at `bf647de4`. `bench/results` stays: the benchmark scripts read and append to it.
 
 ## Legacy section references
 

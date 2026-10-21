@@ -20,7 +20,7 @@ and the update fast-forwards the initial public export without engine tags.
 
 Published https://github.com/Tide-Engine/tide-jetbrains, public main at
 6862c56c1a37fe6ae80d77fef0f7f9a7bb4917c9, extracted from canonical engine
-commit 11a138a8 after it was merged into dev. GitHub recognizes MIT. The remote
+commit 1bae9b20 after it was merged into dev. GitHub recognizes MIT. The remote
 has only main; no engine tags or release workflow were published. All 23
 reachable historical trees match their original tools/tide-jetbrains subtree
 exactly. The audit checked all 40 historical paths and 88 unique blobs, with
@@ -231,7 +231,7 @@ The Emacs main is 31f1cb13d4d4d0a04ab1284a36d27b5760310147; its initial
 v0.1.0 is aba90c6ee3bcacc2149702558417cfbd7008b332. The later commit only
 corrects the test's compatibility call. Vim main/v0.1.0 is
 015c1b02dd889f52cde4aa341c77b5abe7f3c565. Canonical source changes are
-4c7a69ed, d931ef96 and dcf9e2be on top of the original two editor commits.
+57c19996, 86898a2f and b1612f46 on top of the original two editor commits.
 
 Anonymous fresh Git clones work. Emacs 30.2 package-vc-install fetches the
 documented GitHub URL into an isolated profile; a fresh process proves prefab
@@ -638,7 +638,7 @@ pass with the final transport. Production docs and all ten admin/HTTP checks
 pass. Isometric alignment is pinned with a single flat model so identical
 overlapping models cannot hide a mirrored camera. No CI was dispatched;
 other host operating systems, Rider itself and Android were not run here.
-Integration through origin/dev 7e490870 is clean. Incoming changes touch only
+Integration through origin/dev 10643bcf is clean. Incoming changes touch only
 prototype-removal notes and its docs HTTP check; no editor/compiler/runtime
 dependency changed. The merged production docs build and ten admin/HTTP checks
 pass, including the new removed-route assertions.
@@ -829,7 +829,7 @@ The production docs build passes. A private native install includes tide-editor;
 its installed tide open --check and bounded PNG capture both succeed. Other
 operating systems, Android, sanitizers and CI were not run; no workflow was
 dispatched. The screenshot is a real hidden native capture, not a mockup.
-Integration through origin/dev 9ff7e83b is clean. Incoming prototype/workflow
+Integration through origin/dev 61be0f74 is clean. Incoming prototype/workflow
 changes do not touch editor/compiler/runtime dependencies; documentation overlap
 keeps the relocated package links. The merged production docs build passes.
 

@@ -33,7 +33,7 @@ Every way hashes all of its state each time, and ends with the same world and ri
 
 Any versus program takes `--threads-list 1,2,4,8,12`, which runs every way on each count of threads in turn; the default (one thread, then every core) and its output are unchanged. A pool of fewer threads than the platform's lets its workers sleep and wakes as many as a round asks for, as the platform's does. It doesn't choose which cores take part: on this machine's two CCDs (six cores and 32 MiB of L3 each), past six threads a run's threads straddle both, and curves there mostly show memory moving between the two halves, for C and Tide alike.
 
-Three gated rounds at `1c6befb1` (`coverage-baseline-r1..r3`, Windows 11, Ryzen 9 7900X, Clang 23.1.2), medians of the rounds' medians, milliseconds a period:
+Three gated rounds at `e66b6477` (`coverage-baseline-r1..r3`, Windows 11, Ryzen 9 7900X, Clang 23.1.2), medians of the rounds' medians, milliseconds a period:
 
 | Rollback, 100,000 movers, 25 of each 100 moving first | Tide | C | C, dirty | Tide / C | Tide / C, dirty |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -161,7 +161,7 @@ A dense Life path can remove window/output/chunk staging after the compiler prov
 
 ## Rows and lanes measurements
 
-The [rows and lanes report](results/row-functions.md) compares the compiler/engine baseline at `6e4b60e` with the tested implementation recorded in its [measurement metadata](results/row-functions-measurement-metadata.json). `7a7ba9e` is the compiler/engine full-suite validation point; subsequent benchmark corrections have their own measured source and binary identities. These records describe the benchmark implementation used for the measurement, before later dev integration.
+The [rows and lanes report](results/row-functions.md) compares the compiler/engine baseline at `7bd9777` with the tested implementation recorded in its [measurement metadata](results/row-functions-measurement-metadata.json). `7a7ba9e` is the compiler/engine full-suite validation point; subsequent benchmark corrections have their own measured source and binary identities. These records describe the benchmark implementation used for the measurement, before later dev integration.
 
 `versus_wide` covers a component of twelve float lanes, six changed by each tick, both unfiltered and with a sparse tag. `--tagged 1 --frozen 0`, `50` or `100` selects all, half or none of the rows. The wide and particles `--kept 1` variants retain equivalent prior state in both Tide and handwritten C and validate its contents along with the live state. The same corrected benchmark sources are used in both builds. Historical kept-C records that omitted retained state remain in the ledger for context; their snapshot comparisons are not comparable to these corrected measurements, and their digests belong to separate benchmark groups.
 
@@ -239,7 +239,7 @@ Each case reports median and p95 generated-view/recording CPU time (including sa
 
 `--save` appends one row per count, mode and repeat to `bench/results/skinned.jsonl`, including compiler, revision, machine, fixture SHA-256, resolution and workload dimensions. Process memory and renderer-tracked GPU memory are retained totals after each case, including caches from earlier cases, rather than allocations attributable solely to that case. On the web, `bench_skinned.html?bench&counts=1,10,100,1000&frames=100&warmup=20&repeat=3&save=label&backend=webgpu` prints the same JSONL. Web dimensions are logical pixels; hardware browser measurements should force device scale factor 1. The `bench` argument disables synchronous per-call GL error checking for measurements; omit it for correctness checks. CTest smoke runs exercise every mode on native OpenGL and software WebGL/WebGPU without timing assertions. Use a quiet machine and repeat measurements; software browser smoke timings are not hardware performance results.
 
-The initial 2026-10-10 baseline measures source `b9faf142` on Windows, Ryzen 9 7900X, RTX 4080 SUPER, NVIDIA 595.79 and Clang 23.1.2, using release OpenGL 3.3. Each of the 16 count/mode combinations has three repeats of 100 measured frames after 20 warmup frames. The table takes the median of the three per-repeat medians at 1,000 characters. GPU timings describe this shared desktop under its observed clock conditions: all 15 clock samples during the final independent-pose case report 210 MHz graphics, 405 MHz memory and P8. They do not establish peak GPU throughput. Other user applications remained running; this task's builds and tests had finished before measurement.
+The initial 2026-10-10 baseline measures source `56a0d6ad` on Windows, Ryzen 9 7900X, RTX 4080 SUPER, NVIDIA 595.79 and Clang 23.1.2, using release OpenGL 3.3. Each of the 16 count/mode combinations has three repeats of 100 measured frames after 20 warmup frames. The table takes the median of the three per-repeat medians at 1,000 characters. GPU timings describe this shared desktop under its observed clock conditions: all 15 clock samples during the final independent-pose case report 210 MHz graphics, 405 MHz memory and P8. They do not establish peak GPU throughput. Other user applications remained running; this task's builds and tests had finished before measurement.
 
 | 1,000 characters | CPU views/recording (ms) | CPU submission (ms) | GPU query (ms) | Mesh draw calls | Palette uploads/frame |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -256,9 +256,9 @@ The follow-up removes four repeated costs. Generated skinned draws borrow model/
 
 A baseline phase diagnostic at 1,000 characters attributes about 44 ms/frame to complete model validation and 52 ms/frame to combined model hashing/influence capture. These are instrumented arithmetic means over ten frames, include clock overhead, and sit inside the draw-function interval; they are not the uninstrumented frame medians or an independent before/after comparison. The optimized code passes all 2,041 native and 2,014 web debug tests, including unchanged deterministic pose hashes, argument-order/COW regressions, pack invalidation, and OpenGL/WebGL/WebGPU pixel checks.
 
-The subsequent clean merge with the asset-import changes at `f23e5569` builds on native and web debug and passes 113 native plus 106 web checks for the overlapping imports, diagnostics, metadata, animation and rendering paths. The measurements below retain their exact pre-integration source and executable identities.
+The subsequent clean merge with the asset-import changes at `1008c772` builds on native and web debug and passes 113 native plus 106 web checks for the overlapping imports, diagnostics, metadata, animation and rendering paths. The measurements below retain their exact pre-integration source and executable identities.
 
-The comparison uses the preserved original `b9faf142` release executable and the tested `c06de5f5` executable with unchanged host, fixture and settings. Three rounds alternate before/after, after/before, then before/after; each process measures all 16 cases for 100 frames after 20 warmup frames. Each build contributes 4,800 CPU/GPU samples. Summary times take the median of three per-round medians; paired speedups take the median of the three within-round before/after ratios. Builds and tests finish before the measurements, and a coordination gate and process checks guard the batch. Other user applications remain running, and GPU clocks are observed every 250 ms without changing power settings.
+The comparison uses the preserved original `56a0d6ad` release executable and the tested `280b2180` executable with unchanged host, fixture and settings. Three rounds alternate before/after, after/before, then before/after; each process measures all 16 cases for 100 frames after 20 warmup frames. Each build contributes 4,800 CPU/GPU samples. Summary times take the median of three per-round medians; paired speedups take the median of the three within-round before/after ratios. Builds and tests finish before the measurements, and a coordination gate and process checks guard the batch. Other user applications remain running, and GPU clocks are observed every 250 ms without changing power settings.
 
 | 1,000 characters | CPU views/recording before (ms) | After (ms) | Median paired speedup |
 | --- | ---: | ---: | ---: |
@@ -283,7 +283,7 @@ The next CPU change reuses captured palettes for exact repeated poses within a f
 
 Independent poses exposed another cost: the renderer created and deleted 1,000 palette textures per frame. It now determines which previous textures the complete current draw list references, then reuses obsolete integer-data allocations of the same size for new content identities. Each changed palette still uploads every byte; current and later draws retain separate textures, and unused allocations are freed by frame end. This does not introduce independently posed instancing.
 
-The comparison measures preserved `77be2f24` and tested `625596e8` release executables with the same fixture, host and three alternating pairs described above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after a 90-second quiet window, with no competing build/test jobs during measurement. Times below are medians of three round medians at 1,000 characters.
+The comparison measures preserved `6497cb79` and tested `cffb3752` release executables with the same fixture, host and three alternating pairs described above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after a 90-second quiet window, with no competing build/test jobs during measurement. Times below are medians of three round medians at 1,000 characters.
 
 | 1,000 characters | CPU views before (ms) | After (ms) | CPU submission before (ms) | After (ms) |
 | --- | ---: | ---: | ---: | ---: |
@@ -296,13 +296,13 @@ Median paired view speedups are 5.36× for rest, 3.95× for shared animation and
 
 Draw counts and upload bytes match every before/after case, and the final frame-119 independent-pose captures match PNG bytes and decoded RGB pixels exactly. Separate phase diagnostics confirm one palette/hierarchy computation per frame for repeated rest/shared poses, and zero warmed texture creates/frees plus exactly 1,000 texture updates/frame for 1,000 independent poses. Those diagnostics include instrumentation overhead and do not supply the table's timings. Independently posed characters still issue 1,000 mesh draws and upload 4,096,000 palette bytes/frame. All 2,061 native and 2,032 web debug checks pass, including deterministic pose bits, malformed-data and snapshot boundaries, and OpenGL/WebGL/WebGPU rendering and device loss. [The complete comparison evidence](results/skinned-cpu2/README.md) retains paired rows, ranges, clocks, both diagnostics, validation summaries, reproduction scripts and artifact hashes. The historical 144 ledger rows are preserved alongside the 96 new rows.
 
-The subsequent clean merge with release stripping at `1886fbb9` passes 52 overlapping native/web debug and release checks. A standalone pruned game's native/WASI probe verifies retained used mesh/animation assets, current model validation after pack offsets change, repeated palette reuse and scratch cleanup; release OpenGL/WebGL/WebGPU rendering and benchmark smoke also pass. The measured executable hashes and source identities above remain unchanged.
+The subsequent clean merge with release stripping at `62dafeb8` passes 52 overlapping native/web debug and release checks. A standalone pruned game's native/WASI probe verifies retained used mesh/animation assets, current model validation after pack offsets change, repeated palette reuse and scratch cleanup; release OpenGL/WebGL/WebGPU rendering and benchmark smoke also pass. The measured executable hashes and source identities above remain unchanged.
 
 ### Shared palette pages and worker preparation
 
 The third change captures independent poses into shared integer-texture palette pages. A hidden per-instance matrix offset lets compatible characters form one mesh draw even with different poses. Captured model dependencies and local transforms remain owned by the draw list; the existing worker pool calculates independent palettes before rendering. Small workloads run serially, shaders with fully occupied attribute layouts retain individual palettes, and animation sampling still happens immediately.
 
-Preserved `874422c0` and tested `a10d2f4b` release executables use the unchanged host, fixture and three alternating pairs above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after the 90-second quiet window, without competing builds/tests or excluded attempts. These are medians of three round medians at 1,000 characters:
+Preserved `c75ebcda` and tested `bc3c7b2a` release executables use the unchanged host, fixture and three alternating pairs above. All 96 rows, 9,600 CPU frames and 9,600 GPU samples completed after the 90-second quiet window, without competing builds/tests or excluded attempts. These are medians of three round medians at 1,000 characters:
 
 | Mode | CPU views before (ms) | After (ms) | CPU submission before (ms) | After (ms) |
 | --- | ---: | ---: | ---: | ---: |
@@ -321,11 +321,11 @@ All 2,064 native and 2,034 web debug CTests pass, alongside 40 focused skinned r
 node bench/results/skinned-cpu3/reproduce/export.mjs --verify bench/results/skinned-cpu3
 ```
 
-Integration at `7c5566bf` with the latest web compression/private-header packaging passes 26 bounded native/web debug and release checks. Staged engine headers match their sources, and a standalone pruned game verifies separate-file clip binding, four instances with two poses in one batch, retained pack provenance, scratch cleanup and all 21 pixels across three frames on OpenGL, WebGL and WebGPU. Its release page verifies exact decoded bytes for separately compressed WASM and pack payloads under the generated minified runtime. The actual native standalone completes three hidden frames. Both measured executable identities remain unchanged; this adds no timing comparison.
+Integration at `1af49c5b` with the latest web compression/private-header packaging passes 26 bounded native/web debug and release checks. Staged engine headers match their sources, and a standalone pruned game verifies separate-file clip binding, four instances with two poses in one batch, retained pack provenance, scratch cleanup and all 21 pixels across three frames on OpenGL, WebGL and WebGPU. Its release page verifies exact decoded bytes for separately compressed WASM and pack payloads under the generated minified runtime. The actual native standalone completes three hidden frames. Both measured executable identities remain unchanged; this adds no timing comparison.
 
 ### 10,000-character scaling
 
-The same preserved final `a10d2f4b` executable measures 1,000 and 10,000 characters in three fresh processes, all four modes, 20 warmup and 100 measured frames per case (2026-10-10). The 24 rows contain 2,400 CPU frames and completed GPU samples. The named gate and 90-second quiet window exclude competing builds/tests; no attempts are excluded. At 10,000 characters, medians of three process medians are:
+The same preserved final `bc3c7b2a` executable measures 1,000 and 10,000 characters in three fresh processes, all four modes, 20 warmup and 100 measured frames per case (2026-10-10). The 24 rows contain 2,400 CPU frames and completed GPU samples. The named gate and 90-second quiet window exclude competing builds/tests; no attempts are excluded. At 10,000 characters, medians of three process medians are:
 
 | Mode | CPU views (ms) | CPU submission (ms) | GPU query (ms) |
 | --- | ---: | ---: | ---: |
@@ -340,9 +340,9 @@ Independent poses occupy ten palette pages, issuing ten mesh draws plus clear an
 
 ### Fourth CPU improvement
 
-At `711af038` (2026-10-10), sampling reuses current pack validation for private channel reads while checking each channel's first key time, then reuses binary-search intervals only for exactly equal short time arrays within one call. Pose-cache indexing uses the existing four-chain hash, and synchronous capture borrows contiguous scratch poses before making the retained copy. Animation arithmetic, pose bits, palette layout and rendering work are unchanged. All 2,067 native and 2,037 web debug CTests pass, including 42 focused native skinned checks and OpenGL/WebGL/WebGPU pixels.
+At `09c1cc20` (2026-10-10), sampling reuses current pack validation for private channel reads while checking each channel's first key time, then reuses binary-search intervals only for exactly equal short time arrays within one call. Pose-cache indexing uses the existing four-chain hash, and synchronous capture borrows contiguous scratch poses before making the retained copy. Animation arithmetic, pose bits, palette layout and rendering work are unchanged. All 2,067 native and 2,037 web debug CTests pass, including 42 focused native skinned checks and OpenGL/WebGL/WebGPU pixels.
 
-The comparison against preserved `a10d2f4b` uses three alternating before/after pairs at 1,000 and 10,000 characters, all four modes, 20 warmup and 100 measured frames. All 48 rows contain 4,800 CPU frames and completed GPU queries. At 10,000 characters, medians of three process medians are:
+The comparison against preserved `bc3c7b2a` uses three alternating before/after pairs at 1,000 and 10,000 characters, all four modes, 20 warmup and 100 measured frames. All 48 rows contain 4,800 CPU frames and completed GPU queries. At 10,000 characters, medians of three process medians are:
 
 | Mode | CPU views before → after (ms) | CPU submission before → after (ms) | GPU query before → after (ms) |
 | --- | ---: | ---: | ---: |
@@ -359,9 +359,9 @@ Both 1,000- and 10,000-character final independent captures match exactly in PNG
 
 ### Fifth CPU improvement: known rest and sampling proof
 
-At `42a7ba2d` (2026-10-11), omitted-pose draws reuse one owned rest capture per current pack proof and frame. Repeated instances avoid constructing/hashing TRS and comparing model tables. Explicit poses keep ordinary edit-safe capture. Sampling also reuses a load-time proof that all channels start at nonnegative times, skipping the selected-channel preflight only while that proof remains current. Negative-first models retain selected-clip checks; invalidated and owned models retain full checks. This uses the statically known omitted-pose case; it adds no general hoisting of read-only locals or new `mut` semantics.
+At `57e885b5` (2026-10-11), omitted-pose draws reuse one owned rest capture per current pack proof and frame. Repeated instances avoid constructing/hashing TRS and comparing model tables. Explicit poses keep ordinary edit-safe capture. Sampling also reuses a load-time proof that all channels start at nonnegative times, skipping the selected-channel preflight only while that proof remains current. Negative-first models retain selected-clip checks; invalidated and owned models retain full checks. This uses the statically known omitted-pose case; it adds no general hoisting of read-only locals or new `mut` semantics.
 
-The frozen final implementation passes all 2,067 native and 2,037 web debug CTests, 46 focused native skinned and 30 pack checks, and 406 WASI runtime checks with unchanged exact pose bits. OpenGL/WebGL/WebGPU palette and pixel checks pass, including native serial/pool equality with three workers. Three alternating pairs against immutable CPU4 `711af038` cover 1,000/10,000 characters and all four modes, with 20 warmup/100 measured frames: 48 final rows, 4,800 CPU frames and 4,800 completed GPU queries. At 10,000 characters, medians of three process medians are:
+The frozen final implementation passes all 2,067 native and 2,037 web debug CTests, 46 focused native skinned and 30 pack checks, and 406 WASI runtime checks with unchanged exact pose bits. OpenGL/WebGL/WebGPU palette and pixel checks pass, including native serial/pool equality with three workers. Three alternating pairs against immutable CPU4 `09c1cc20` cover 1,000/10,000 characters and all four modes, with 20 warmup/100 measured frames: 48 final rows, 4,800 CPU frames and 4,800 completed GPU queries. At 10,000 characters, medians of three process medians are:
 
 | Mode | CPU views before → after (ms) | CPU submission before → after (ms) | GPU query before → after (ms) |
 | --- | ---: | ---: | ---: |
@@ -376,7 +376,7 @@ Palette preparation remains in CPU submission on both sides, with sampling seria
 
 All four default/independent capture pairs at 1k/10k match exactly in PNG bytes and RGB pixels. The 10k independent workload still submits 60.48 million triangles/frame, ten mesh draws plus clear, and 40,960,000 palette bytes. Its 100×100 characters are about 4.6 pixels tall in the fixed viewport, with no LOD, culling or match simulation. The final named gate/90-second quiet guard has no detected contention, reset or excluded attempt; other desktop apps remain running and system settings stay unchanged. The six processes have 245 clock observations (243 P0, one P5, one initial P8), spanning 390–2,820 MHz graphics and 405–11,501 MHz memory. These whole-process observations do not normalize individual cases.
 
-The initial candidate `000a5986` completed an adverse comparison: 10k independent views rose 27.08380→30.48430 ms. Its 48 rows and evidence remain under [superseded](results/skinned-cpu5/superseded/README.md). Exploratory timer and private layout experiments show timing sensitivity to code placement; they neither isolate a sole cause nor contribute timings to the final aggregate. The final comparison measures the combined implementation and its compiled layout, rather than isolated savings from the removed scan. [Saved final evidence](results/skinned-cpu5/README.md) retains identities, ranges, clocks, validation, exact generated-adapter comparison and reproduction scripts. The ledger preserves its original 408 rows, then the 48 adverse rows, then 48 separately labeled final rows (504 total).
+The initial candidate `f10e65ff` completed an adverse comparison: 10k independent views rose 27.08380→30.48430 ms. Its 48 rows and evidence remain under [superseded](results/skinned-cpu5/superseded/README.md). Exploratory timer and private layout experiments show timing sensitivity to code placement; they neither isolate a sole cause nor contribute timings to the final aggregate. The final comparison measures the combined implementation and its compiled layout, rather than isolated savings from the removed scan. [Saved final evidence](results/skinned-cpu5/README.md) retains identities, ranges, clocks, validation, exact generated-adapter comparison and reproduction scripts. The ledger preserves its original 408 rows, then the 48 adverse rows, then 48 separately labeled final rows (504 total).
 
 ## Input delay in Sumo
 
@@ -396,9 +396,9 @@ The browser uses three headless Chrome processes, isolated pages with threads, h
 
 Run on an otherwise idle machine and repeat comparisons when sharing CPU or GPU resources. The continuation chats serialize these rounds with `Local\TideClaudeContinuationBenchmark`. The runners themselves do not acquire that coordination gate. Input delay is the extra ticks the engine chooses, rather than the full time between a button press and its display. The measurements propose changes to the budget; they do not change its default or the delay policy. The native harness also takes `--budget <ms>`, the clients' resim budget in place of the engine's 4 ms, which the saved record says as `resim_budget_ms`.
 
-### Observations on dev `7430975` (2026-10-07)
+### Observations on dev `ff70b82` (2026-10-07)
 
-The same sweeps on dev at `7430975`, which has what the Sumo performance work added after `abaa39e` (Box3D's world going on from its image in parts, `tide_same_bytes` on the web, the wide page hash, and what changed of a world hashed on a few threads): labels `page-hash-native` and `page-hash-web`, one run a ping, the same seed, harness and machine, with the user's own programs at about 18% load. Mean/max delay in ticks:
+The same sweeps on dev at `ff70b82`, which has what the Sumo performance work added after `1b5305b` (Box3D's world going on from its image in parts, `tide_same_bytes` on the web, the wide page hash, and what changed of a world hashed on a few threads): labels `page-hash-native` and `page-hash-web`, one run a ping, the same seed, harness and machine, with the user's own programs at about 18% load. Mean/max delay in ticks:
 
 | Ping | Native first | Native late | Browser first | Browser late |
 | ---: | --- | --- | --- | --- |
@@ -407,7 +407,7 @@ The same sweeps on dev at `7430975`, which has what the Sumo performance work ad
 | 100 | 6.6/9 | 6.47/9 | 6.54/13 | 9.59/17 |
 | 150 | 7.71/11 | 7.45/12 | 10.43/15 | 13.43/28 |
 
-Against `abaa39e`: natively the same within a run's noise (the 100 ms run had frames over 50 ms on all three machines, the host's included, and reads two ticks higher); the browser's late joiner lower at 50 and 100 ms (8.65 and 9.59 where it was 16.13 and 26.32), one run each, and its 100 ms run has one 5-second stall of the page. The per-tick costs did fall (`sumo_costs`: keeping and hashing a full ring's world from 0.28 ms to 0.06 with threads called in), and none of it reaches the delay: `adjust_delay` goes by `tick_cost`, a moving mean of what `run_predicted`'s tick alone took, which has neither the hash nor the snapshot's copy in it.
+Against `1b5305b`: natively the same within a run's noise (the 100 ms run had frames over 50 ms on all three machines, the host's included, and reads two ticks higher); the browser's late joiner lower at 50 and 100 ms (8.65 and 9.59 where it was 16.13 and 26.32), one run each, and its 100 ms run has one 5-second stall of the page. The per-tick costs did fall (`sumo_costs`: keeping and hashing a full ring's world from 0.28 ms to 0.06 with threads called in), and none of it reaches the delay: `adjust_delay` goes by `tick_cost`, a moving mean of what `run_predicted`'s tick alone took, which has neither the hash nor the snapshot's copy in it.
 
 What sets the delay is the policy's shape, which the timelines show. It climbs within seconds of a burst of expensive ticks (joining: 100 to 400 ticks in the first second; each round's ring raised: a 9 ms tick natively and 25 in a browser, then a second of 1.3 to 2 ms ticks; the rims falling), one tick per round trip, and comes back one tick per `SLACK_SECONDS` (5 s) plus a round trip, only while `(ahead - verified) * tick_cost` is under a third of the budget. So after a burst a client settles where its lead is about budget / (3 × tick_cost), two ticks natively and one in a browser, and the rest of its round trip is delay. The browser's late joiner at 50 ms goes 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 in its "delay every 5 s" line, one a step, until the next round's ring is raised.
 
@@ -430,7 +430,7 @@ Two cuts came before this one, measured and discarded the same day: one that cha
 
 ### Full-round observations (2026-10-06)
 
-One run at each ping on Windows, Ryzen 9 7900X, a shared four-thread native pool and four threads per browser page, match seed 0 on both platforms. The native target paces frames at 144 Hz; the rendered browser runs use Chrome 154.0.8037.98 and hardware NVIDIA Lovelace WebGPU, verified on every page. All eight runs complete a round, without a replacement world or run/page errors. Native records no host-skipped time; the browser does not expose that counter. These are observations of the final pre-integration runtime `abaa39e`, rather than a repeated controller comparison.
+One run at each ping on Windows, Ryzen 9 7900X, a shared four-thread native pool and four threads per browser page, match seed 0 on both platforms. The native target paces frames at 144 Hz; the rendered browser runs use Chrome 154.0.8037.98 and hardware NVIDIA Lovelace WebGPU, verified on every page. All eight runs complete a round, without a replacement world or run/page errors. Native records no host-skipped time; the browser does not expose that counter. These are observations of the final pre-integration runtime `1b5305b`, rather than a repeated controller comparison.
 
 ![Input delay at each ping over time](results/lag-delay.png)
 
@@ -476,7 +476,7 @@ The unseeded 150 ms browser late client is more severe: mean delay is 30.43 tick
 
 ### Browser join comparison
 
-A fresh 50 ms run of the historical baseline page uses the same seed 0, Chrome, worker count, GPU mode and harness as the final page. The baseline is `6b52015` with counters/hooks added, as documented in the artifact metadata. Browser runs have real scheduling and timed inputs, so this is one observation per build rather than a repeated timing distribution. The join window includes the first recorded connected frame and the following second of completed-frame samples. There is no timestamp inside snapshot loading; a long initial callback can extend this window past one wall-clock second from the actual load. “Predicted” includes explicit replay, and first-prediction time is relative to the first connected sample.
+A fresh 50 ms run of the historical baseline page uses the same seed 0, Chrome, worker count, GPU mode and harness as the final page. The baseline is `c455b97` with counters/hooks added, as documented in the artifact metadata. Browser runs have real scheduling and timed inputs, so this is one observation per build rather than a repeated timing distribution. The join window includes the first recorded connected frame and the following second of completed-frame samples. There is no timestamp inside snapshot loading; a long initial callback can extend this window past one wall-clock second from the actual load. “Predicted” includes explicit replay, and first-prediction time is relative to the first connected sample.
 
 | Client/build | Confirmed | Predicted | Replay | Worst update ms | First prediction ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -502,7 +502,7 @@ The lossless local-events fixture applies identical server inputs throughout. Th
 
 ### Whole-ring join comparison
 
-Three alternating native pairs compare the client before this change (`6b52015`, with counters added) and the final runtime (`abaa39e`) against the same Sumo world and game code. The world is 2,394,422 bytes, received over 118 updates (2.0 seconds of made-up match time), at tick 498. The fixture uses 40 ms one-way latency, 15 ms jitter and 5% loss, without worker jobs, a GPU or a tick-cost clock; it isolates join work rather than adaptive input delay. Both clients reach nine ticks ahead one second later, finish with the same 2,321 crates, and receive no replacement world.
+Three alternating native pairs compare the client before this change (`c455b97`, with counters added) and the final runtime (`1b5305b`) against the same Sumo world and game code. The world is 2,394,422 bytes, received over 118 updates (2.0 seconds of made-up match time), at tick 498. The fixture uses 40 ms one-way latency, 15 ms jitter and 5% loss, without worker jobs, a GPU or a tick-cost clock; it isolates join work rather than adaptive input delay. Both clients reach nine ticks ahead one second later, finish with the same 2,321 crates, and receive no replacement world.
 
 | First second after receiving the world | Before | After |
 | --- | ---: | ---: |
@@ -516,7 +516,7 @@ Three alternating native pairs compare the client before this change (`6b52015`,
 
 The recorded late count changes from 118 to one, but this includes the corrected treatment of inputs that were never sampled; it is not a comparison of packet delivery rates. [Individual join records](results/lag_join.jsonl) retain every pair, artifact hashes and earlier diagnostic runs. [Runtime and validation metadata](results/lag-metadata.json) identifies the final artifacts and the historical browser baseline. The live measurements use this pre-integration Sumo fixture; subsequent changes from other continuation chats can change the game workload.
 
-The subsequent merge of `5bc9de6` passes all 1,475 native debug and 1,461 web-debug checks, plus 14 native release and 15 web-release affected checks. Combined Sumo/Towers pins reproduce across all four configurations; Sand/Gallery pins stay unchanged. A five-second native and eight-second hardware-WebGPU smoke check verifies the rebuilt three-player telemetry. These bounded checks, retained under `catch-up-integration-smoke`, do not replace the pre-integration full-round measurements above. The validation metadata records the merge and its pins.
+The subsequent merge of `7525737` passes all 1,475 native debug and 1,461 web-debug checks, plus 14 native release and 15 web-release affected checks. Combined Sumo/Towers pins reproduce across all four configurations; Sand/Gallery pins stay unchanged. A five-second native and eight-second hardware-WebGPU smoke check verifies the rebuilt three-player telemetry. These bounded checks, retained under `catch-up-integration-smoke`, do not replace the pre-integration full-round measurements above. The validation metadata records the merge and its pins.
 
 ### Provisional budget proposal
 

@@ -654,7 +654,7 @@ A resident tick copies the pages Box3D may have written and computes its digest.
 
 ### Resident comparison (2026-10-07)
 
-Three alternating runs against the image-list baseline (`14df837`), using Windows clang 23 release and WebAssembly release under Node's WASI, not a browser. The machine was contended: CPU load was 63% before the rounds and 24% after. These are medians (minimum–maximum) in milliseconds for 2,400 crates, combining the tick with keeping its snapshot and hashing on one thread. That combined cost accounts for work moved from writing and hashing the image into resident commits.
+Three alternating runs against the image-list baseline (`0cec11e`), using Windows clang 23 release and WebAssembly release under Node's WASI, not a browser. The machine was contended: CPU load was 63% before the rounds and 24% after. These are medians (minimum–maximum) in milliseconds for 2,400 crates, combining the tick with keeping its snapshot and hashing on one thread. That combined cost accounts for work moved from writing and hashing the image into resident commits.
 
 | Workload | Windows image list | Windows resident | Node image list | Node resident |
 |---|---|---|---|---|

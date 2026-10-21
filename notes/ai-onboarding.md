@@ -20,12 +20,12 @@ to compile and fix their own code. Initial attempts were retained before correct
 The exact common prompt and task briefs were saved in
 `notes/ai-onboarding/evaluation-prompt.txt`, with the overview snapshots that were
 the actual round inputs, the trials' games and reports, and the parent checks; that
-folder was removed on 2026-10-21 and is in git history at `403fc387`. The snapshots
+folder was removed on 2026-10-21 and is in git history at `bf647de4`. The snapshots
 were the round inputs; later review fixed the published script's frame zero
 to frame one. Reports under each trial are the evaluated agent's own account;
 the parent corrections below take precedence over unsupported visual claims.
 
-The test SDK was built in this checkout, based on `16dcab23`, version `0.4.0-dev`:
+The test SDK was built in this checkout, based on `eec40580`, version `0.4.0-dev`:
 `mingw-release` with `TIDE_EMBED_LLVM=OFF` and `TIDE_EDITOR_EXTENSIONS=OFF`, targets
 `tide_cli`, `tidels`, `tide_editor`; plus `web-debug`'s `tide_platform`, installed
 into ignored `build/onboarding/sdk`. It uses local LLVM 23.1.2 rather than an embedded
@@ -71,7 +71,7 @@ that exact four-line script successfully with the starter game.
 
 The parent copied final games into separate ignored check folders and added small,
 read-only observation/assertion views. Their inputs and logs were kept under
-`notes/ai-onboarding/parent-checks/` (git history, `403fc387`).
+`notes/ai-onboarding/parent-checks/` (git history, `bf647de4`).
 
 - Collector (round 2): observed `(0,1,0) → (1,1,0) → (2,1,1) → (1,1,1) →
   (2,1,1) → (3,1,1) → (4,1,1) → (4,2,2) → (0,1,0) → (0,0,0)` for x/y/count.
@@ -107,7 +107,7 @@ the exported overview as `TIDE.md`, and the skill ZIP extracted to
 `.claude/skills/tide/`. The undeployed site was mirrored as `tide-docs/<path>.md`.
 The prompt was the published starter prompt plus a task brief and the harness note in
 `claude-harness/`. `TIDE_HIDDEN=1` and the onboarding SDK (`0.4.0-dev`, built from
-`16dcab23`) on PATH came from the launching shell. Browsers were forbidden. Transcripts were
+`eec40580`) on PATH came from the launching shell. Browsers were forbidden. Transcripts were
 stream-json, read through `claude-harness/summarize.py.txt`; final games and the
 agents' own reports are in `claude-r4-*`.
 
