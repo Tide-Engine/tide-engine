@@ -13,7 +13,7 @@ to give it the language context and validation commands.
 
 ## A folder of files
 
-A game is a folder of `.tide` files: every `.tide` file in it and its subfolders. Every declaration is visible from every file, with no imports. Make a new folder, and a file in it called `game.tide`.
+A game is a folder of `.tide` files: every `.tide` file in it and its subfolders, but for hidden ones, whose names start with a dot. Every declaration is visible from every file, with no imports. Make a new folder, and a file in it called `game.tide`.
 
 ## Data: components
 
@@ -201,7 +201,7 @@ This builds the game as a web page, which draws with WebGPU (or WebGL 2 where th
 tide build --release --web
 ```
 
-It goes in `build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
+It goes in `.build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
 
 ## The whole game
 

@@ -519,10 +519,8 @@ static void copy_entry(void *user, const char *name, const bool is_dir)
 {
     copy_walk *w = user;
     if (!w->ok) return;
-    if (w->top && (strcmp(name, ".tide") == 0 || strcmp(name, ".tide-fetched") == 0 || strcmp(name, ".git") == 0
-                   || strcmp(name, "build") == 0)) {
-        return;
-    }
+    // Not its hidden folders (.tide/, .build/, .git/), which are no part of a package
+    if (w->top && ((is_dir && name[0] == '.') || strcmp(name, ".tide-fetched") == 0)) return;
     char *from = path_join(w->from, name);
     char *to = path_join(w->to, name);
     if (is_dir) {

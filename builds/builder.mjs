@@ -70,7 +70,7 @@ export function unpack(tar, folder, { files = 4096, unpacked = 256 * 1024 * 1024
         const parts = name.split('/');
         const fine = name.length <= 255 && parts.every(part => part !== '' && part !== '.' && part !== '..' && !/[\x00-\x1f\x7f\\:]/.test(part));
         if (!fine) throw new Error(`${JSON.stringify(name)} isn't a path in the game's folder`);
-        if (parts[0] === '.tide' || parts[0] === 'build') throw new Error(`${name} is in a folder tide makes, which is no part of a game`);
+        if (parts.slice(0, -1).some(part => part.startsWith('.'))) throw new Error(`${name} is in a hidden folder, like the ones tide makes, which is no part of a game`);
         if (!Number.isSafeInteger(size) || size < 0 || at + size > tar.length) throw new Error('the archive is cut short');
         total += size;
         if (paths.length >= files) throw new Error(`a version holds ${files} files at most`);

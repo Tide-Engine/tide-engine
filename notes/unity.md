@@ -675,6 +675,24 @@ Roller is unknown). Gaps: the walks over all of Assets (`.tide`, `.tprefab`,
 changes, which a very large project may feel; older com.tide.unity packages
 still run `tide unity` in `Assets/Tide`, which builds as a plain folder game.
 
+### Icons (2026-10-21)
+
+Owner: "we should add icons for these, the packages, the .tide files etc".
+`Editor/TideIcons.cs`: a `.tide` file imports (`TideSourceImporter`, a
+ScriptedImporter for `tide`) as a TextAsset of its text, so the inspector shows
+the source, with `Editor/Icons/TideFile.png` as its icon; a `.packages` file
+(`TidePackagesImporter`) the same, with `TidePackages.png` when it's named
+`tide.packages` and none otherwise; and a folder whose `tide.packages` says
+`package Name` before any other line gets `TidePackageBadge.png` drawn over the
+bottom right of its folder icon (`projectWindowItemOnGUI`, in list and grid;
+answers cached until `projectChanged`). The PNGs are 64 px, drawn from the
+favicon's three amber waves (`#f59e0b`) by a throwaway coverage-sampling
+script (no image tool on this machine); their metas clamp, keep alpha as
+transparency and leave them uncompressed. Test: the Sample's
+`Assets/Tests/Editor/IconTests.cs` (the importers' type, text and an icon
+other than plain text's, and which folder is a package's). Not seen in a
+window: how the badge sits on the folder icon at each zoom.
+
 ### Tooling as built (2026-10-20)
 
 - Console context for tide's messages (Authoring, above).

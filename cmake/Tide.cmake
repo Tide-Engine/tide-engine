@@ -157,18 +157,25 @@ function(tide_add_game target)
         set(manifest_paths ${sources})
     else()
         # CONFIGURE_DEPENDS: every build checks for new or deleted files first.
-        file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide" "${CMAKE_CURRENT_SOURCE_DIR}/*.tprefab")
+        # Not in hidden folders, like .tide/ and .build/, where tide keeps what it makes.
+        file(GLOB_RECURSE found CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide" "${CMAKE_CURRENT_SOURCE_DIR}/*.tprefab")
+        set(sources "")
+        foreach(path IN LISTS found)
+            file(RELATIVE_PATH relative "${CMAKE_CURRENT_SOURCE_DIR}" "${path}")
+            if(NOT relative MATCHES "(^|/)\\.")
+                list(APPEND sources "${path}")
+            endif()
+        endforeach()
         if(NOT sources)
             message(FATAL_ERROR "tide_add_game(${target}): there are no .tide files in ${CMAKE_CURRENT_SOURCE_DIR} "
                                 "or its subfolders. Add one, or list the game's files after SOURCES")
         endif()
-        # Not in hidden folders or build/, where tide keeps what it makes (.tide/),
-        # generated C included.
+        # Nor C, generated C included.
         file(GLOB_RECURSE found CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.cc" "${CMAKE_CURRENT_SOURCE_DIR}/*.cxx")
         foreach(path IN LISTS found)
             file(RELATIVE_PATH relative "${CMAKE_CURRENT_SOURCE_DIR}" "${path}")
-            if(NOT relative MATCHES "(^|/)\\." AND NOT relative MATCHES "^build/")
+            if(NOT relative MATCHES "(^|/)\\.")
                 list(APPEND c_sources "${path}")
             endif()
         endforeach()
