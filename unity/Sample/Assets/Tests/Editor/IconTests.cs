@@ -60,6 +60,21 @@ public class IconTests
         Assert.IsFalse(TidePackageFolders.IsPackage(Folder));
     }
 
+    // Rider's and Visual Studio's packages open only the extensions Editor Settings lists beside their own: Tide's
+    // are listed, once each, so a .tide file opens in the external code editor
+    [Test]
+    public void TideFilesOpenInTheCodeEditor()
+    {
+        TideCodeEditor.Include();
+        TideCodeEditor.Include();
+        var listed = EditorSettings.projectGenerationUserExtensions;
+        foreach (var extension in TideCodeEditor.Extensions)
+        {
+            Assert.AreEqual(1, System.Array.FindAll(listed, e => e == extension).Length, extension);
+        }
+        Assert.Contains("asmdef", listed, "what was listed stays");
+    }
+
     // A .tide file imported before Tide's importers were has Unity's DefaultImporter in its .meta, which Unity warned
     // of at every import: the .meta is written again as the importer's, keeping its GUID
     [UnityTest]
@@ -70,8 +85,10 @@ public class IconTests
         File.WriteAllText(Folder + "/old.tide", "namespace Old;\n");
         File.WriteAllText(meta, "fileFormatVersion: 2\nguid: " + guid + "\nDefaultImporter:\n  externalObjects: {}\n" +
                                 "  userData: \n  assetBundleName: \n  assetBundleVariant: \n");
-        AssetDatabase.Refresh();
-        for (var i = 0; i < 20 && !File.ReadAllText(meta).Contains("\nScriptedImporter:"); i++) yield return null;
+        AssetDatabase.ImportAsset(Folder + "/old.tide", ImportAssetOptions.ForceSynchronousImport);
+        // The .meta is written at an editor update after the import
+        var until = EditorApplication.timeSinceStartup + 30;
+        while (EditorApplication.timeSinceStartup < until && !File.ReadAllText(meta).Contains("\nScriptedImporter:")) yield return null;
         var text = File.ReadAllText(meta);
         StringAssert.Contains("\nScriptedImporter:", text);
         StringAssert.Contains("guid: " + guid, text);

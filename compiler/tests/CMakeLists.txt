@@ -491,6 +491,22 @@ foreach(source IN LISTS TIDE_SCHEDULE_TESTS)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
 endforeach()
 
+# Outline tests: `tidec --outline` on outline/<name>.tide, run in its folder so the paths it prints are the
+# file's name, must print outline/<name>.json exactly.
+file(GLOB TIDE_OUTLINE_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/outline/*.tide")
+foreach(source IN LISTS TIDE_OUTLINE_TESTS)
+    get_filename_component(name "${source}" NAME_WE)
+    get_filename_component(dir "${source}" DIRECTORY)
+    add_test(NAME tidec_outline_${name}
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTIDEC=${TIDEC_PATH}"
+            "-DSOURCE=${source}"
+            "-DEXPECTED=${dir}/${name}.json"
+            "-DOPTION=--outline"
+            "-DRELATIVE=ON"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
+endforeach()
+
 # Shader tests: `tidec --shaders` on shaders/<name>.tide must print
 # shaders/<name>.txt exactly: the GLSL and WGSL of each shader its mesh draw
 # calls draw through.

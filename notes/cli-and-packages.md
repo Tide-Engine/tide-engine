@@ -262,7 +262,15 @@ each schema, `unity.json` (the UnityEngine.Source map, kept on `build.unity_map`
 the last good generate) and `Packages/com.tide.game` beside `Assets`
 (`package.json`, `Tide.Game.asmdef`, `schema.json` and a stub naming the hash,
 each written only when it changes: Unity's shared build cache keys a compile by
-its sources, so the stub is what recompiles the generated types).
+its sources, so the stub is what recompiles the generated types). Then
+`outline.json` (2026-10-21, `write_unity_outline`): `packages`, the resolved
+`build.packages` (name, absolute folder, and the game's line for each: `kind`
+`builtin`, `git`, `local`, or `found` for a folder of Assets with its `package`
+line, whose line is 0; `line`, `source`, `ref`, `commit`), `builtin`
+(`packages_builtin_names`), and the declarations `print_outline` gave the last
+good generate (`codegen_options.outline_to`, copied to `build.outline` out of
+the arena, which the next generate resets). The package's inspectors read it
+(`notes/unity.md`, File inspectors).
 
 `tide unity --web` (once: `--web` turns watching off) is `tide_unity_web`: a
 standalone wasm build of `generate`'s game with `unity_web_main` (and

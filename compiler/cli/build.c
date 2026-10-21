@@ -563,6 +563,7 @@ typedef struct build {
     game_packages packages; // Found again by each build of the game
     file_list sources;      // The .tide files its last generate compiled: what a notified run looks at (game_stamp)
     char *unity_map;        // With opts->unity_assets: the map of its UnityEngine.Source numbers, from its last generate (unity_assets.h)
+    char *outline;          // With opts->unity: what its last generate declared (print_outline), for outline.json
 } build;
 
 static uint64_t header_stamp(const char *folder);
@@ -1968,8 +1969,10 @@ static bool generate(build *b, const char *gen, const bool layout)
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
     if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
+    sb outline = {0};
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .embed = b->opts->unity, .externs = &b->externs,
+                                     .outline_to = b->opts->unity ? &outline : NULL,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
                                      .server = b->opts->server,
                                      .strip_server_assets = strip_server_assets(b),
@@ -1986,6 +1989,8 @@ static bool generate(build *b, const char *gen, const bool layout)
         b->info = next_info;
         free(b->unity_map);
         b->unity_map = unity.map;
+        free(b->outline);
+        b->outline = outline.data ? format("%s", outline.data, NULL) : NULL; // The arena's goes with the next build
         unity.map = NULL;
     } else {
         // A bad asset can be fixed without editing code: keep watching the
@@ -2658,6 +2663,70 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
     return ok;
 }
 
+static void put_json_text(sb *o, const char *s)
+{
+    sb_put(o, "\"");
+    for (; s && *s; s++) {
+        if (*s == '"' || *s == '\\') sb_printf(o, "\\%c", *s);
+        else if ((unsigned char)*s < 0x20) sb_printf(o, "\\u%04x", (unsigned char)*s);
+        else sb_putn(o, s, 1);
+    }
+    sb_put(o, "\"");
+}
+
+// What the game is, for the Unity package's inspectors: its packages as tide found them (each one's folder, and the
+// game's line for it: none, line 0, for a folder of Assets found by its `package` line), then what its files
+// declare (print_outline). outline.json, beside schema.json.
+static bool write_unity_outline(const run *r)
+{
+    sb o = {0};
+    sb_put(&o, "{\"packages\": [");
+    const game_packages *g = &r->b.packages;
+    for (int i = 0; i < g->count; i++) {
+        const package *p = &g->items[i];
+        const package_line *line = p->line;
+        sb_put(&o, i ? ",\n  {\"name\": " : "\n  {\"name\": ");
+        put_json_text(&o, p->name);
+        sb_put(&o, ", \"folder\": ");
+        put_json_text(&o, p->folder);
+        if (line) {
+            const char *kind = line->builtin ? "builtin" : line->local ? line->line == 0 ? "found" : "local" : "git";
+            sb_printf(&o, ", \"kind\": \"%s\", \"line\": %d, \"source\": ", kind, line->line);
+            put_json_text(&o, line->source);
+            if (line->ref) {
+                sb_put(&o, ", \"ref\": ");
+                put_json_text(&o, line->ref);
+            }
+            if (line->commit) {
+                sb_put(&o, ", \"commit\": ");
+                put_json_text(&o, line->commit);
+            }
+        }
+        sb_put(&o, "}");
+    }
+    sb_put(&o, g->count ? "\n],\n" : "],\n");
+    // The packages that come with tide, which `tide add` takes by name
+    char **builtin = NULL;
+    const int builtin_count = packages_builtin_names(&builtin);
+    sb_put(&o, "\"builtin\": [");
+    for (int i = 0; i < builtin_count; i++) {
+        if (i) sb_put(&o, ", ");
+        put_json_text(&o, builtin[i]);
+    }
+    sb_put(&o, "],\n");
+    packages_free_names(builtin, builtin_count);
+    // ...and the declarations, after the outline's own opening brace
+    const char *declared = r->b.outline ? r->b.outline : "{\"declarations\": []}\n";
+    sb_put(&o, declared + 1);
+    char *written = path_join(r->dir, "outline.json.tmp");
+    char *path = path_join(r->dir, "outline.json");
+    const bool ok = sys_write_file(written, o.data, o.len) && sys_rename(written, path);
+    if (!ok) fprintf(stderr, "tide: can't write %s\n", path);
+    free(written);
+    free(path);
+    return ok;
+}
+
 // The newest build's schema, from the build itself, as schema.json beside it: what the package's C# bindings are
 // generated from before anything runs. False after saying what's wrong.
 static bool write_unity_schema(const run *r)
@@ -2697,6 +2766,7 @@ static bool write_unity_schema(const run *r)
         free(written);
         free(path);
     }
+    if (ok) ok = write_unity_outline(r);
     return ok;
 }
 

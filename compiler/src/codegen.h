@@ -29,6 +29,8 @@ typedef struct codegen_options {
     sb *externs;             // If set, gets the C function of each extern function, a line each (for tide's checks).
     game_info *info;         // If set, gets what tide needs of the game's settings.
     bool shaders;            // Instead of the schedule, print the game's shaders (tidec --shaders).
+    bool outline;            // ...or what it declares, as JSON (tidec --outline: print_outline).
+    sb *outline_to;          // If set, gets that JSON too as the game generates, once it's checked.
     const char *spirv_dir;   // ...or write each one's SPIR-V into this folder, as <n>.spv (tidec --spirv).
     const char *game_folder; // Where the game's .tide/ is, for its asset hashes and fetched URLs; NULL where nothing says
     const char *pack;        // Where to write the pack of the game's assets (tide/pack.h), or NULL

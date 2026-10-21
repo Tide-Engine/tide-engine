@@ -4,7 +4,7 @@ description: "Give your AI coding agent a Tide overview, persistent project inst
 
 # Using Tide with AI
 
-An AI agent can work with Tide without knowing it beforehand. Give it the [Tide overview](./ai-context.md), access to the relevant references, and a compiler it can use to check its work. Start with the guide; add project instructions or the skill when you want the setup to carry across conversations.
+An AI agent can work with Tide without knowing it beforehand. Give it the [quick reference](./ai-context.md), access to the relevant references, and a compiler it can use to check its work. Start with the guide; add project instructions or the skill when you want the setup to carry across conversations.
 
 <div data-tide-ai-setup></div>
 
@@ -54,7 +54,7 @@ Updating the guide or skill is an explicit download; existing project copies are
 
 Every documentation page has a clean Markdown export at its page URL plus `.md`, for example `/game/commands.md`; the introduction is `/guide.md`. Exports include source examples as code, without needing the website's embedded game controls.
 
-- [Compact Tide overview](./ai-context.md): the first attachment for a new conversation. Use the download button above for the Markdown file.
+- [Quick reference](./ai-context.md): the first attachment for a new conversation. Use the download button above for the Markdown file.
 - [Documentation index](/llms.txt): a small list of topics and Markdown links for agents with web access.
 - [Full documentation bundle](/llms-full.txt): an optional single file for offline search.
 - [Project instructions](/ai/AGENTS.md), [Claude import](/ai/CLAUDE.md), and [starter prompt](/ai/starter-prompt.txt): editable starting points for your game.

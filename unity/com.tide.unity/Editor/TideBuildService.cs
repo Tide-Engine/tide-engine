@@ -155,6 +155,34 @@ namespace Tide.Editor
 
         public static bool HasErrors => SessionState.GetString(ErrorsKey, "").Length > 0;
 
+        // Every error and warning of the last build tide finished, for the .tide files' inspectors: the build going
+        // on's gather in `messages` until tide says how it went.
+        const string MessagesKey = "Tide.Messages";
+        static readonly System.Collections.Generic.List<string> messages = new System.Collections.Generic.List<string>();
+
+        internal static string[] LastMessages
+        {
+            get
+            {
+                var all = SessionState.GetString(MessagesKey, "");
+                return all.Length > 0 ? all.Split(Separator) : Array.Empty<string>();
+            }
+        }
+
+        static void Finished()
+        {
+            SessionState.SetString(MessagesKey, string.Join(Separator.ToString(), messages));
+            messages.Clear();
+        }
+
+        // Where a message of tide's is: the project's path of the file it names (a prefab's or a scene's Tide text,
+        // for one of those), and its line and column. False for one that names none.
+        internal static bool Locate(string message, out string file, out int line, out int column)
+        {
+            ContextOf(ref message, out file, out line, out column);
+            return file != null;
+        }
+
         static void Drain()
         {
             while (lines.TryDequeue(out var entry))
@@ -192,6 +220,7 @@ namespace Tide.Editor
             var isError = first.Contains(": error") || first.StartsWith("tide: can't") || first.Contains("FAILED");
             if (first.StartsWith("tide: built"))
             {
+                Finished();
                 building.Clear();
                 built = true;
                 if (said == 0) RemoveLocated(); // A build with nothing to say: the last one's errors and warnings go
@@ -204,13 +233,19 @@ namespace Tide.Editor
             {
                 built = true; // The errors after this are another build's
                 said = 0;
+                Finished();
             }
             else if (isError)
             {
+                messages.Add(message);
                 if (built) building.Clear();
                 built = false;
                 building.Add(message);
                 SessionState.SetString(ErrorsKey, string.Join(Separator.ToString(), building));
+            }
+            else if (first.Contains(": warning"))
+            {
+                messages.Add(message);
             }
             Log(message, isError);
         }

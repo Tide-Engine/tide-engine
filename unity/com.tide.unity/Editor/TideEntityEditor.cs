@@ -331,7 +331,7 @@ namespace Tide.Editor
         }
 
         // A field's declared default as a literal, from its component's default bytes: null where it can't say.
-        static string Default(TideSchema schema, TideSchemaField field, byte[] defaults)
+        internal static string Default(TideSchema schema, TideSchemaField field, byte[] defaults)
         {
             if (defaults == null || field.offset + field.size > defaults.Length) return null;
             var at = (int)field.offset;
