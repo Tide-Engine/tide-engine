@@ -62,6 +62,14 @@ loads beside the rest and unloads as the match does. In the editor, Play has
 the scenes you have open instead, and makes a `TideRunner` if they have none.
 Put every scene the match loads in Build Settings, for players.
 
+Packages work as in any Tide game: run `tide add rooms` (or a git URL) in the
+game's folder, `Assets/Tide` by default, and `using Rooms;` in its files. The
+build in the editor picks up the `tide.packages` it writes.
+
+An error or warning tide gives for a line of a `.tide` file opens that file at
+that line on a double click in the Console, as a C# error does, and goes once a
+build has fixed it.
+
 ## Run
 
 Add a GameObject with a `TideRunner`. In Play mode it runs the game: Main's
