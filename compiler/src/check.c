@@ -360,6 +360,30 @@ static int first_c_named(const decl_index *index, const char *bytes, const size_
     return index->first[name_hash(NAME_HASH, bytes, len) & (uint32_t)(index->buckets - 1)];
 }
 
+static decl *find_in(const program *prog, str ns, str name, name_kind kind);
+
+// A Unity project's prefabs and scenes are named by their folders, as tide unity declares them
+// (UnityEngine.Prefabs.Enemies.Goblin for Assets/Enemies/Goblin.prefab), and by their file's name alone while only
+// one has it: a name UnityEngine.Prefabs, UnityEngine.Scenes or UnityEngine.SceneContents hasn't is the one
+// declaration of that name in their namespaces, or nothing for none or two (unknown, and the error says which).
+static decl *find_in_folders(const program *prog, const str ns, const str name, const name_kind kind)
+{
+    static const char *const roots[] = {"UnityEngine.Prefabs", "UnityEngine.Scenes", "UnityEngine.SceneContents"};
+    bool root = false;
+    for (size_t i = 0; i < sizeof roots / sizeof roots[0]; i++) root |= str_eq_c(ns, roots[i]);
+    if (!root) return NULL;
+    decl *found = NULL;
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        const str home = decl_ns(d);
+        if (!str_eq(d->name, name) || !is_kind(d, kind) || home.len <= ns.len || home.ptr[ns.len] != '.'
+            || memcmp(home.ptr, ns.ptr, (size_t)ns.len) != 0) continue;
+        if (found) return NULL; // Two of the name: neither is it
+        found = d;
+    }
+    return found ? find_in(prog, decl_ns(found), name, kind) : NULL;
+}
+
 static decl *find_in(const program *prog, const str ns, const str name, const name_kind kind)
 {
     const decl_index *index = decls_by(prog, false);
@@ -382,7 +406,7 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
             return d;
         }
     }
-    return NULL;
+    return find_in_folders(prog, ns, name, kind);
 }
 
 // What a name means as written in `from`. A qualified name (Combat.Health) is
@@ -2385,6 +2409,33 @@ static type check_random_seeded(checker *c, expr *e);
 static comp_mask bit(const decl *component)
 {
     return mask_bit(component->index);
+}
+
+// A name that isn't in scope but is declared in other namespaces: a note naming each (the first few), as code
+// writes them, so a short name two namespaces have says which there are. False when there's none.
+static bool other_namespaces_note(const program *prog, const str name)
+{
+    enum { SHOWN = 4 };
+    const decl *found[SHOWN];
+    int count = 0, more = 0;
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->builtin || !str_eq(d->name, name) || d->qualified.len <= name.len) continue;
+        bool repeated = false;
+        for (int k = 0; k < count; k++) repeated |= str_eq(found[k]->qualified, d->qualified);
+        if (repeated) continue;
+        if (count < SHOWN) found[count++] = d;
+        else more++;
+    }
+    if (count == 0) return false;
+    sb names = {0};
+    for (int k = 0; k < count; k++) {
+        sb_printf(&names, "%s'" STR_FMT "'", k == 0 ? "" : k == count - 1 && !more ? " and " : ", ", STR_ARG(found[k]->qualified));
+    }
+    if (more) sb_printf(&names, " and %d more", more);
+    if (count == 1 && !more) diag_note("there's %s: write it so, or 'using' its namespace", names.data);
+    else diag_note("there's %s: write the one you mean", names.data);
+    return true;
 }
 
 // Whether a place is in a Unity prefab or scene, whose Tide text tide made of it (unity_assets.c names it after the
@@ -8788,7 +8839,7 @@ static type check_name(checker *c, expr *e)
     suggest_consider_c(&s, "Math");
     suggest_consider_c(&s, "Draw");
     suggest_builtin_types(&s);
-    suggest_note(&s);
+    if (!other_namespaces_note(c->prog, e->name)) suggest_note(&s);
     return T_ERR;
 }
 

@@ -1132,6 +1132,37 @@ static void write_entity(emitter *e, node *n, const trs placement, const int dep
     free(kids);
 }
 
+static char *format_name(const char *first, const char *second)
+{
+    const size_t n = strlen(first) + strlen(second) + 2;
+    char *out = grab(n);
+    snprintf(out, n, "%s.%s", first, second);
+    return out;
+}
+
+// The folders an asset is in under Assets, as the tail of its namespace: "Enemies.Bosses" for
+// Assets/Enemies/Bosses/Goblin.prefab, each a name as an entity's is; "" for one in Assets itself. Tide finds it by
+// its file's name alone too while only one has it (find_in_folders in check.c).
+static char *asset_folders(const char *path)
+{
+    const char *start = strncmp(path, "Assets/", 7) == 0 ? path + 7 : path;
+    text t = {0};
+    puts_(&t, "");
+    for (const char *at = start;;) {
+        const char *slash = strchr(at, '/');
+        if (!slash) break;
+        const size_t n = (size_t)(slash - at);
+        char *raw = grab(n + 1);
+        memcpy(raw, at, n);
+        char *part = entity_name(raw);
+        putf(&t, "%s%s", t.s[0] ? "." : "", part);
+        free(part);
+        free(raw);
+        at = slash + 1;
+    }
+    return t.s;
+}
+
 // The base of an asset's file name, as a prefab's name.
 static char *asset_name(const char *path)
 {
@@ -1154,10 +1185,12 @@ static char *write_prefab(project *p, const asset *a, node **roots, const int co
     emitter e = {p, a, NULL, {0}, number, {0}, 0};
     puts_(&e.nodes, "");
     char *name = asset_name(a->local);
+    char *folders = asset_folders(a->local);
     putf(&e.out, "// From %s, as Tide's package for Unity writes it (TideEntity)\n", a->local);
-    // A prefab's is UnityEngine.Prefabs.Name; a scene's, UnityEngine.SceneContents.Name, what its scene type,
-    // UnityEngine.Scenes.Name, loads (unity_declarations)
-    puts_(&e.out, scene ? "namespace UnityEngine.SceneContents;\n\n" : "namespace UnityEngine.Prefabs;\n\n");
+    // A prefab's is UnityEngine.Prefabs.Folders.Name; a scene's, UnityEngine.SceneContents.Folders.Name, what its
+    // scene type, UnityEngine.Scenes.Folders.Name, loads (unity_declarations)
+    putf(&e.out, "namespace UnityEngine.%s%s%s;\n\n", scene ? "SceneContents" : "Prefabs", folders[0] ? "." : "", folders);
+    free(folders);
     putf(&e.out, "prefab %s\n{\n", name);
     if (scene || count != 1) {
         // A scene's roots go under an entity of its own: the scene's
@@ -1195,7 +1228,10 @@ static char *write_prefab(project *p, const asset *a, node **roots, const int co
 
 typedef struct unity_scene {
     int number;  // The asset's in the map, as UnityEngine.Source has it
-    char *name;  // Its prefab's
+    char *name;  // Its name under UnityEngine.Scenes and UnityEngine.SceneContents: its folders' and its own, "Sample.Bonus"
+    char *base;  // ...its own: the file's, "Bonus"
+    char *ns;    // ...and its folders', "Sample", or ""
+    char *handler; // What its Fill handler is called after: the name, with '_' for each '.'
     char guid[33];
 } unity_scene;
 
@@ -1272,15 +1308,15 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
         // Each scene's entities, its prefab's, as it loads
         for (int i = 0; i < count; i++) {
             putf(&t, "\n    event(Spawned) Fill%s(with UnityEngine.Scenes.%s)\n    {\n        Spawn(UnityEngine.SceneContents.%s);\n    }\n",
-                 scenes[i].name, scenes[i].name, scenes[i].name);
+                 scenes[i].handler, scenes[i].name, scenes[i].name);
         }
     }
     puts_(&t, "}\n");
     // The scenes, as Tide's: what game code loads (Scene.Load(UnityEngine.Scenes.Level)) and filters by (with scene ...)
-    if (count) {
-        puts_(&t, "\n// The project's Unity scenes, as Tide's\nnamespace UnityEngine.Scenes\n{\n");
-        for (int i = 0; i < count; i++) putf(&t, "    scene %s { } // %s.unity\n", scenes[i].name, scenes[i].name);
-        puts_(&t, "}\n");
+    if (count) puts_(&t, "\n// The project's Unity scenes, as Tide's, each in its folders' namespace\n");
+    for (int i = 0; i < count; i++) {
+        putf(&t, "namespace UnityEngine.Scenes%s%s\n{\n    scene %s { } // %s.unity\n}\n", scenes[i].ns[0] ? "." : "",
+             scenes[i].ns, scenes[i].base, scenes[i].base);
     }
     return t.s;
 }
@@ -1350,7 +1386,13 @@ bool unity_assets_read(const char *assets, unity_sources *out)
                 grow((void **)&scenes, &scene_capacity, scene_count, sizeof *scenes);
                 unity_scene *u = &scenes[scene_count++];
                 u->number = number;
-                u->name = asset_name(a->local);
+                u->base = asset_name(a->local);
+                u->ns = asset_folders(a->local);
+                u->name = u->ns[0] ? format_name(u->ns, u->base) : dup(u->base);
+                u->handler = dup(u->name);
+                for (char *c = u->handler; *c; c++) {
+                    if (*c == '.') *c = '_';
+                }
                 snprintf(u->guid, sizeof u->guid, "%s", a->guid);
                 if (strcmp(a->guid, first_guid) == 0) first = u->name;
             }
@@ -1362,25 +1404,34 @@ bool unity_assets_read(const char *assets, unity_sources *out)
     puts_(&map, "\n]}\n");
     out->map = map.s;
     out->items[0].text = unity_declarations(scenes, scene_count, first);
-    for (int i = 0; i < scene_count; i++) free(scenes[i].name);
+    for (int i = 0; i < scene_count; i++) {
+        free(scenes[i].name);
+        free(scenes[i].base);
+        free(scenes[i].ns);
+        free(scenes[i].handler);
+    }
     free(scenes);
     if (out->count == 1) { // No asset holds TideEntity objects: no UnityEngine.Source either
         free(out->items[0].path);
         free(out->items[0].text);
         out->count = 0;
     }
-    // Two prefabs, or two scenes, of one name would be one Tide name (UnityEngine.Prefabs.Name, UnityEngine.Scenes.Name)
+    // Two prefabs, or two scenes, of one folder whose names are one Tide name (My Level and My_Level, which a name
+    // can't tell apart)
     for (int i = 1; i < out->count; i++) {
         for (int k = i + 1; k < out->count; k++) {
             if (ends_with(out->items[i].path, ".unity") != ends_with(out->items[k].path, ".unity")) continue;
             char *a = asset_name(out->items[i].path), *b = asset_name(out->items[k].path);
-            if (strcmp(a, b) == 0) {
-                fprintf(stderr, "%s: error: %s is named %s too: Tide names a prefab or a scene after its file, so rename one\n",
-                        out->items[k].path, out->items[i].path, a);
+            char *fa = asset_folders(out->items[i].path), *fb = asset_folders(out->items[k].path);
+            if (strcmp(a, b) == 0 && strcmp(fa, fb) == 0) {
+                fprintf(stderr, "%s: error: %s has the same Tide name, %s%s%s: rename one\n", out->items[k].path,
+                        out->items[i].path, fa, fa[0] ? "." : "", a);
                 p.failed = true;
             }
             free(a);
             free(b);
+            free(fa);
+            free(fb);
         }
     }
     for (int i = 0; i < p.count; i++) {

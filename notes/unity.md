@@ -601,6 +601,35 @@ and `UnityEngine.OpenScene`. Game code writes `using UnityEngine.Scenes;` and
 `using UnityEngine.Prefabs;` for the short names. The entity editor's menu
 leaves out `UnityEngine.` names.
 
+**Named by their folders, short while unique (2026-10-21).** Owner: "i cant
+have 2 prefabs with the same name, we should likely do something about this"
+(the converter refused two of one file name). The owner picked folder names,
+with the short name while it's unique, over folder names alone and over
+references set in the inspector. The converter declares each prefab, scene
+tree and scene in its folders' namespace (`asset_folders` in
+`compiler/cli/unity_assets.c`: each folder under `Assets` a name as an
+entity's is, so `Assets/Enemies/Goblin.prefab` is
+`UnityEngine.Prefabs.Enemies.Goblin`, the Sample's `Assets/Sample/Bonus.unity`
+`UnityEngine.Scenes.Sample.Bonus`; one in `Assets` itself keeps the short
+name); a scene's Fill handler is named after the whole name, dots as `_`. The
+checker's `find_in_folders` (`check.c`, called when `find_in` misses) makes a
+name `UnityEngine.Prefabs`, `UnityEngine.Scenes` or `UnityEngine.SceneContents`
+hasn't the one declaration of that name in their sub-namespaces, and nothing
+for none or two: no copy is declared, so a prefab's errors are said once and a
+scene is one scene. With two, the unknown-name error's new note
+(`other_namespaces_note`, any unknown name) lists the declarations of that
+name in other namespaces: "there's 'UnityEngine.Prefabs.Bosses.Goblin' and
+'UnityEngine.Prefabs.Enemies.Goblin': write the one you mean". Only two of
+one folder whose names sanitize alike (`My Level`, `My_Level`) are still
+refused. Relative qualified names (`Enemies.Goblin` after `using
+UnityEngine.Prefabs;`) aren't in the language. Tests:
+`tidec_unity_folder_names` (`compiler/tests/unity_folder_names.cmake`: the one
+Goblin by its short name and by `UnityEngine.Prefabs.Goblin`, a full name
+beside another of its name, and the short name of two refused with both
+named), `unity_prefabs_and_scenes_as_tide_prefabs` (the fixture's
+`Assets/Fixture` names), and the Sample's play mode test, whose code uses the
+short names.
+
 Gaps: what the editor opens while playing isn't sent; a client in the editor
 sends nothing (the server decides); `Scene.Load` of the same Unity scene twice
 binds both roots' entities to one set of GameObjects.

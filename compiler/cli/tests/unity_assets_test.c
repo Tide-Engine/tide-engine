@@ -43,18 +43,18 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     TIDE_CHECK(strstr(declared, "    component Source\n") != NULL);
     TIDE_CHECK(strstr(declared, "    event(Spawned) Begin(with Main, mut LoadedScenes scenes)\n    {\n"
                                 "        if (scenes.opened) return; // The editor's command came first\n"
-                                "        scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Level);\n") != NULL);
+                                "        scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Fixture.Level);\n") != NULL);
     TIDE_CHECK(strstr(declared, "    command OpenScene\n") != NULL);
-    TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Level); break;\n") != NULL);
+    TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Fixture.Level); break;\n") != NULL);
     TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
     // A Unity scene is a Tide scene, whose entities are its prefab's, spawned into it as it loads
-    TIDE_CHECK(strstr(declared, "namespace UnityEngine.Scenes\n{\n    scene Level { } // Level.unity\n}\n") != NULL);
-    TIDE_CHECK(strstr(declared, "    event(Spawned) FillLevel(with UnityEngine.Scenes.Level)\n    {\n        Spawn(UnityEngine.SceneContents.Level);\n    }\n") != NULL);
+    TIDE_CHECK(strstr(declared, "namespace UnityEngine.Scenes.Fixture\n{\n    scene Level { } // Level.unity\n}\n") != NULL);
+    TIDE_CHECK(strstr(declared, "    event(Spawned) FillFixture_Level(with UnityEngine.Scenes.Fixture.Level)\n    {\n        Spawn(UnityEngine.SceneContents.Fixture.Level);\n    }\n") != NULL);
     // The Tip goes under Thing through Visual, which is no entity: Visual's placement (up 1, twice the size) is the
     // Tip's. The inactive Off isn't there.
     TIDE_CHECK(reads(&s, "Assets/Fixture/Thing.prefab",
         "// From Assets/Fixture/Thing.prefab, as Tide's package for Unity writes it (TideEntity)\n"
-        "namespace UnityEngine.Prefabs;\n\n"
+        "namespace UnityEngine.Prefabs.Fixture;\n\n"
         "prefab Thing\n{\n"
         "    UnityEngine.Source { asset = 2, node = 0 };\n"
         "    Transform { localPosition = float3(0, 0, 0), " IDENTITY " };\n"
@@ -76,7 +76,7 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     // Holder's reference to that Tip as a path from the scene's own entity; the Mark of the scene's own
     TIDE_CHECK(reads(&s, "Assets/Fixture/Level.unity",
         "// From Assets/Fixture/Level.unity, as Tide's package for Unity writes it (TideEntity)\n"
-        "namespace UnityEngine.SceneContents;\n\n"
+        "namespace UnityEngine.SceneContents.Fixture;\n\n"
         "prefab Level\n{\n"
         "    UnityEngine.Source { asset = 1, node = 0 };\n"
         "    entity Holder // Holder\n    {\n"

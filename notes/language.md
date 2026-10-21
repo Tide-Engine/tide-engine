@@ -93,6 +93,19 @@ being interpreted as the engine's method callback; properties pass again on
 native/web after that guard. Existing actual Interpolate diagnostics retain
 their callback rules.
 
+## Names in other namespaces, and Unity's folder names (2026-10-21)
+
+An unknown name's error lists the declarations of that exact name in other
+namespaces, the first four and how many more (`other_namespaces_note` in
+`check.c`, before the "did you mean" note, which it takes the place of): one
+"there's 'A.B.X': write it so, or 'using' its namespace", several "there's
+'A.X' and 'B.X': write the one you mean". `find_in` falls back to
+`find_in_folders` for a name `UnityEngine.Prefabs`, `UnityEngine.Scenes` or
+`UnityEngine.SceneContents` hasn't: the one declaration of that name in their
+sub-namespaces, as tide unity names a project's prefabs and scenes by their
+folders (`notes/unity.md`, Named by their folders). It scans the declarations,
+on a miss in those three namespaces only. Test: `tidec_unity_folder_names`.
+
 ## A diagnostic is said once (2026-10-21)
 
 The owner removed a field from a component and Unity's Console had each of the

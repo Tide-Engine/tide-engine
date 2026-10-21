@@ -39,11 +39,16 @@ field names another TideEntity's GameObject. The GameObject's Transform is the
 entity's, and its parent the entity's parent (through GameObjects that aren't
 entities).
 
-Each prefab holding TideEntity objects is a Tide prefab named after its file,
-`UnityEngine.Prefabs.Enemy`: `Spawn(Enemy)` spawns `Enemy.prefab`'s entities.
-Each such scene is a Tide scene named after its file,
-`UnityEngine.Scenes.Level`: `Scene.Load(Level)` loads `Level.unity`'s
-entities, and `with scene Level` runs a system for them alone.
+Each prefab holding TideEntity objects is a Tide prefab named by its folders
+and its file, `UnityEngine.Prefabs.Enemies.Goblin` for
+`Assets/Enemies/Goblin.prefab`: `Spawn(UnityEngine.Prefabs.Enemies.Goblin)`
+spawns its entities. Each such scene is a Tide scene named the same way,
+`UnityEngine.Scenes.Levels.Cave`: `Scene.Load` of it loads `Cave.unity`'s
+entities, and `with scene` it runs a system for them alone. While only one
+prefab or scene has a file's name, that name alone is it too, so
+`Spawn(Goblin)` and `Scene.Load(Cave)` work after these; when a second one has
+it, code using the short name gets an error naming both, as C# does for an
+ambiguous name.
 
 ```tide
 using UnityEngine.Prefabs;

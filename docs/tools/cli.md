@@ -308,10 +308,14 @@ serialization) with its prefab instances and variants expanded. A TideEntity is
 an entity of that prefab, Unity's Transform and parent are its own, and its
 Tide components are those the TideEntity lists. A prefab instance's component
 values go over its prefab's field by field. Everything from Unity is under the
-`UnityEngine` namespace: a prefab is `UnityEngine.Prefabs.Roller`, which code
-spawns as any prefab, and a scene `UnityEngine.Scenes.Level`, so
-`Scene.Load(Level)` loads its entities and `with scene Level` filters by it,
-after `using UnityEngine.Prefabs;` and `using UnityEngine.Scenes;`.
+`UnityEngine` namespace, named by its folders under `Assets`: a prefab is
+`UnityEngine.Prefabs.Enemies.Goblin` for `Assets/Enemies/Goblin.prefab`, which
+code spawns as any prefab, and a scene `UnityEngine.Scenes.Levels.Cave`, so
+`Scene.Load` loads its entities and `with scene` filters by it. While only one
+prefab or scene has a file's name, that name alone is it too:
+`Spawn(Goblin)` and `Scene.Load(Cave)` after `using UnityEngine.Prefabs;` and
+`using UnityEngine.Scenes;`. With two, the short name is unknown and the error
+names both.
 Build Settings' first scene loads as Main starts, as a player build starts with
 it, and Unity loads and unloads each scene as the match does. Each such entity gets a
 `UnityEngine.Source` component, by which Unity shows it through its own GameObject.
