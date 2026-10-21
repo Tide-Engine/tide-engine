@@ -1,12 +1,13 @@
 # Builds, tests and publishes tide (see AGENTS.md, Packaging).
 #
-# It runs when asked to (Run workflow, or gh workflow run build.yml --ref
-# <branch>), never on a push or a pull request. Every run builds and tests on
-# Windows, Linux and macOS, and the branch it runs on says what's published
-# once all of that passed:
+# It runs on every push to dev or release, on pull requests, and when asked to
+# (Run workflow, or gh workflow run build.yml --ref <branch>). Every run builds
+# and tests on Windows, Linux and macOS, and the branch it runs on says what's
+# published once all of that passed:
 # - dev: a nightly pre-release, like 0.2.0-nightly.3.
-# - release: a stable release, and the new VERSION committed.
-# - any other ref: nothing.
+# - release: a stable release, only tagged: nothing is committed back, so a
+#   stable release is `git push origin dev:release` and nobody waits for it.
+# - a pull request or any other ref: nothing.
 #
 # A release's version comes from conventional commits (feat:, fix:), and a run
 # with neither publishes nothing: semantic-release says for a stable one
@@ -22,6 +23,9 @@ name: Build
 run-name: ${{ github.ref_name == 'dev' && 'Nightly' || github.ref_name == 'release' && 'Stable' || 'Check' }} (${{ github.ref_name }})
 
 on:
+  push:
+    branches: [dev, release]
+  pull_request:
   workflow_dispatch:
 
 # Publishing a commit whose workflows differ from the default branch needs
@@ -34,9 +38,10 @@ env:
 
 concurrency:
   group: build-${{ github.ref }}
-  # Finish the current manual run, then take the newest waiting request.
+  # Finish the current run, then take the newest waiting push: pushes in a burst
+  # publish one nightly, of the last. A pull request's newer push replaces its run.
   queue: single
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version:
@@ -80,9 +85,6 @@ jobs:
         uses: cycjimmy/semantic-release-action@v4
         with:
           dry_run: true
-          extra_plugins: |
-            @semantic-release/exec
-            @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -651,10 +653,6 @@ jobs:
         id: publish
         if: github.ref == 'refs/heads/release'
         uses: cycjimmy/semantic-release-action@v4
-        with:
-          extra_plugins: |
-            @semantic-release/exec
-            @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
 
