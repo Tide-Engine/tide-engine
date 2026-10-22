@@ -2,9 +2,25 @@ using Voice;
 
 scene Main { }
 
-[Before(Voice.ConfigureVoice)]
-view Talk(mut VoiceClient voice, Session session)
+[Bus]
+enum Bus { Master, Voice }
+
+struct Level { float gain; }
+local singleton Controls { int frames; }
+
+audio ProcessVoice(mut Samples samples, Level level)
 {
+    for (var i = 0; i < samples.values.count; i++) samples.values[i] *= level.gain;
+}
+
+[Before(Voice.ConfigureVoice)]
+view Talk(mut VoiceClient voice, Session session, mut Controls controls)
+{
+    controls.frames++;
     voice.enabled = session.player != PlayerID(2);
     voice.transmitting = session.player == PlayerID(0);
+    voice.bus = int(Bus.Voice);
+    Voice.SetBus(PlayerID(0), int(Bus.Voice));
+    // Exercise game-defined processing and live knobs through the standard host.
+    Audio.SetEffect(Bus.Voice, ProcessVoice(Level { gain = (controls.frames / 30) % 2 == 0 ? 0.25 : 0.75 }));
 }

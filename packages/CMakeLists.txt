@@ -357,8 +357,9 @@ add_custom_command(OUTPUT "${voice_speech}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/voice/test/speech.wav"
         "-DOUTPUT=${voice_speech}" -DNAME=tide_voice_test_speech -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     DEPENDS voice/test/speech.wav "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
-target_sources(tide_voice PRIVATE "${voice_speech}")
-target_include_directories(tide_voice PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/voice")
+target_sources(tide_voice PRIVATE "${voice_speech}" "${PROJECT_SOURCE_DIR}/platform/src/mixer.c")
+target_include_directories(tide_voice PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/voice"
+    "${PROJECT_SOURCE_DIR}/platform/src")
 target_link_libraries(tide_voice PRIVATE tide_opus tide_rnnoise)
 add_test(NAME tide_voice COMMAND tide_voice)
 set_tests_properties(tide_voice PROPERTIES TIMEOUT 120)

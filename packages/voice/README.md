@@ -5,6 +5,10 @@ then set the local `Voice.VoiceClient.enabled` and `transmitting` fields.
 Both default to false. A view setting them uses `[Before(Voice.ConfigureVoice)]`.
 `Voice.VoiceClient.noiseSuppression` defaults to true for RNNoise processing
 of outgoing microphone audio. Set it to false to bypass; it can change at runtime.
+`VoiceClient.bus` routes received speech through a normal audio bus (default 0).
+Use `Audio.SetEffect(Bus.Radio, Radio(knobs))` for game-defined processing and
+`Voice.SetBus(player, int(Bus.Radio))` for a per-player receive route; a negative
+bus clears the override. Apply the bus effect each frame for live knobs.
 
 Setup, API, platform requirements and current limits:
 [Voice chat](https://tide-engine.dev/packages/voice).

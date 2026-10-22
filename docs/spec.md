@@ -4394,6 +4394,10 @@ The older microphone implementation notes above describe the pre-package state; 
 
 **Implemented provisional suppression choices:** suppression filters only outgoing capture. RNNoise 0.2's smaller built-in model runs on the frame thread in 480-sample blocks before Opus; its history resets on transmission start and setting changes. State is lazy and retained until client teardown; off means no filter work. The model ships with the optional voice package; games without it compile/link neither RNNoise nor Opus. No engine, simulation or wire-format change is needed.
 
+**Decided (2026-10-22):** game code can process received voice with custom audio effects and dynamic parameters, including radio effects.
+
+**Implemented provisional processing choices:** `VoiceClient.bus` is a local integer receive bus, default 0 (master). `Voice.SetBus(PlayerID, int)` overrides one speaker; negative removes the override, and other out-of-range buses fall back to master. Routes apply to existing playback without restarting codecs. At most 32 player routing overrides persist independently of volume overrides until changed or the local connection/match changes, with initial setup preserving them. The default bus persists across reconnects. Voice uses the existing 16 mixer buses: speakers on one bus are mixed before its ordinary `Audio.SetEffect`, sharing its effect state and live knobs. Processing affects only this receiver's playback, with no compiler, mixer, simulation or packet change.
+
 ### Open
 
 - Effects a game can't write itself: a reverb, which needs more state than a struct of plain fields (a `float[N]` delay line fits once arrays are in `audio` state structs, which is the first thing to try), and sends to a shared reverb bus.
