@@ -7,6 +7,9 @@ using UnityEngine.Scenes;
 
 settings { title = "Bounce"; tickRate = 30; maxPlayers = 8; }
 
+// Heard as a ball lands: Tide's audio plays through Unity's (TideAudio)
+asset Clip bonk = "bonk.wav";
+
 scene Main { }
 
 component Spinner
@@ -15,15 +18,18 @@ component Spinner
     char badge = 'S';
 }
 
-// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them
+// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them. Twice:
+// the scene again beside it, which Unity loads another of
 command ShowBonus
 {
     bool on;
+    bool twice;
 }
 
 singleton Extras
 {
     Entity bonus;
+    Entity again; // Bonus, twice
     Entity tossed;
     string said;
     Set<PlayerID> speakers; // Who's said something
@@ -67,10 +73,16 @@ command(Toss toss, PlayerID sender) Tossing(mut Extras extras)
 command(ShowBonus show, PlayerID sender) Toggle(mut Extras extras)
 {
     if (show.on && extras.bonus == default) extras.bonus = Scene.Load(Bonus);
+    if (show.on && show.twice && extras.again == default) extras.again = Scene.Load(Bonus);
     if (!show.on && extras.bonus != default)
     {
         Scene.Unload(extras.bonus);
         extras.bonus = default;
+    }
+    if (!show.on && extras.again != default)
+    {
+        Scene.Unload(extras.again);
+        extras.again = default;
     }
 }
 
@@ -123,6 +135,7 @@ event Bounced
 local event(Bounced bounced) Heard(mut Ball ball)
 {
     ball.heard += 1;
+    Audio.Play(bonk, Math.Min(bounced.speed / 5, 1));
 }
 
 // Sent to a ball: TideRunner.Send(new Paint { ... }, ballGameObject) in C#

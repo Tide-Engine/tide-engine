@@ -28,10 +28,12 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> schemaFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte> commandFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> drawFn;
+        delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void> audioFn;
+        delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void> microphoneFn;
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 4;
+        public const uint Abi = 5;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
@@ -154,9 +156,11 @@ namespace Tide
             schemaFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_schema");
             commandFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte>)Find("tide_embed_command");
             drawFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_draw");
+            audioFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void>)Find("tide_embed_audio");
+            microphoneFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void>)Find("tide_embed_microphone");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
                 || cameraFn == null || renderFn == null || renderResetFn == null || renderViewFn == null
-                || viewFn == null || schemaFn == null || commandFn == null || drawFn == null)
+                || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
                 return false;
@@ -201,6 +205,13 @@ namespace Tide
         public byte* Draw(IntPtr embed, uint* size) => TideWebDraw(size);
         public byte Command(IntPtr embed, uint type, uint index, uint generation, void* value, uint size) =>
             (byte)TideWebCommand(type, index, generation, value, size);
+        // Tide's program plays through the page, and hears its microphone, itself
+        public void Audio(IntPtr embed, float* samples, uint frames, uint rate, uint channels)
+        {
+        }
+        public void Microphone(IntPtr embed, float* samples, uint frames, uint rate, uint channels)
+        {
+        }
 
         [DllImport("__Internal")] static extern IntPtr TideWebCreate(TideEmbedDesc* desc);
         [DllImport("__Internal")] static extern void TideWebDestroy();
@@ -238,6 +249,10 @@ namespace Tide
         public byte* Draw(IntPtr embed, uint* size) => drawFn(embed, size);
         public byte Command(IntPtr embed, uint type, uint index, uint generation, void* value, uint size) =>
             commandFn(embed, type, index, generation, value, size);
+        public void Audio(IntPtr embed, float* samples, uint frames, uint rate, uint channels) =>
+            audioFn(embed, samples, frames, rate, channels);
+        public void Microphone(IntPtr embed, float* samples, uint frames, uint rate, uint channels) =>
+            microphoneFn(embed, samples, frames, rate, channels);
 #endif
 
         // The library stays loaded for the editor's life: a game running in it may hold memory and threads of it.

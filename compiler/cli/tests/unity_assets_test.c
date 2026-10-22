@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sys.h"
 #include "tide_test.h"
 #include "unity_assets.h"
 
@@ -47,6 +48,9 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     TIDE_CHECK(strstr(declared, "    command OpenScene\n") != NULL);
     TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Fixture.Level); break;\n") != NULL);
     TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
+    // ...and to close one, which the match loaded for it
+    TIDE_CHECK(strstr(declared, "    command(CloseScene close, PlayerID sender) Closing(mut LoadedScenes scenes)\n    {\n"
+                                "        if (sender != scenes.opener || !scenes.loaded.Has(close.asset)) return;\n") != NULL);
     // A Unity scene is a Tide scene, whose entities are its prefab's, spawned into it as it loads
     TIDE_CHECK(strstr(declared, "namespace UnityEngine.Scenes.Fixture\n{\n    scene Level { } // Level.unity\n}\n") != NULL);
     TIDE_CHECK(strstr(declared, "    event(Spawned) FillFixture_Level(with UnityEngine.Scenes.Fixture.Level)\n    {\n        Spawn(UnityEngine.SceneContents.Fixture.Level);\n    }\n") != NULL);
@@ -73,7 +77,8 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     TIDE_CHECK(variant && strstr(variant, "    Health { hp = 20, armor = 1 };\n"));
     // The scene: the Holder it places (first, as its SceneRoots say), moved, with the variant inside it, whose armor
     // the scene sets over the variant's hp; the Tip nested two prefabs deep, longer, as the Holder sets it; the
-    // Holder's reference to that Tip as a path from the scene's own entity; the Mark of the scene's own
+    // Holder's reference to that Tip as a path from the scene's own entity; the scene's own GameObject named M#1/k,
+    // a name with '#' and '/' in it (an entity named M_1_k)
     TIDE_CHECK(reads(&s, "Assets/Fixture/Level.unity",
         "// From Assets/Fixture/Level.unity, as Tide's package for Unity writes it (TideEntity)\n"
         "namespace UnityEngine.SceneContents.Fixture;\n\n"
@@ -97,17 +102,81 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
         "                Part { length = 3 };\n            }\n"
         "        }\n"
         "    }\n"
-        "    entity Mark // Mark\n    {\n"
+        "    entity M_1_k // M#1/k\n    {\n"
         "        UnityEngine.Source { asset = 1, node = 5 };\n"
         "        Transform { localPosition = float3(0, 0, 7), " IDENTITY " };\n"
         "        Part { length = 9 };\n    }\n"
         "}\n"));
     const char *holder = text_of(&s, "Assets/Fixture/Holder.prefab");
     TIDE_CHECK(holder && strstr(holder, "    Link { target = Variant.Tip, self = this };\n"));
-    // Each node's GameObject, for Unity to show it through
+    // Each node's GameObject, for Unity to show it through: a name's own '#' and '/' with a '\' before them
     TIDE_CHECK(s.map && strstr(s.map, "\"path\": \"Assets/Fixture/Level.unity\", \"scene\": true, \"nodes\": "
-                                      "[\"\", \"Holder\", \"Holder/Variant\", \"Holder/Variant/Arm\", \"Holder/Variant/Visual/Tip\", \"Mark\"]"));
+                                      "[\"\", \"Holder\", \"Holder/Variant\", \"Holder/Variant/Arm\", \"Holder/Variant/Visual/Tip\", "
+                                      "\"M\\\\#1\\\\/k\"]"));
     unity_sources_free(&s);
+}
+
+typedef struct copying {
+    const char *from, *to;
+} copying;
+
+static void copy_entry(void *user, const char *name, bool is_dir);
+
+// Every file under `from` into `to`.
+static void copy_tree(const char *from, const char *to)
+{
+    sys_mkdirs(to);
+    copying c = {from, to};
+    sys_list(from, copy_entry, &c);
+}
+
+static void copy_entry(void *user, const char *name, bool is_dir)
+{
+    const copying *c = user;
+    char from[1024], to[1024];
+    snprintf(from, sizeof from, "%s/%s", c->from, name);
+    snprintf(to, sizeof to, "%s/%s", c->to, name);
+    if (is_dir) {
+        copy_tree(from, to);
+        return;
+    }
+    size_t size = 0;
+    char *body = sys_read_file(from, &size);
+    if (body) sys_write_file(to, body, size);
+    free(body);
+}
+
+// A scene the editor hasn't saved its changes to: the copy it wrote of it as it is, at Play, in the project's
+// Library/Tide/unsaved, is read in its place, and changes the stamp; the scene again once the copy's gone.
+TIDE_TEST(unity_unsaved_scene_read_from_the_editor_copy)
+{
+    sys_remove_tree(TIDE_UNITY_SCRATCH);
+    copy_tree(TIDE_UNITY_FIXTURE "/..", TIDE_UNITY_SCRATCH);
+    const char *assets = TIDE_UNITY_SCRATCH "/Assets";
+    const unsigned long long saved = unity_assets_stamp(assets);
+    size_t size = 0;
+    char *scene = sys_read_file(TIDE_UNITY_FIXTURE "/Fixture/Level.unity", &size);
+    TIDE_REQUIRE(scene != NULL);
+    char *nine = strstr(scene, "values: length = 9");
+    TIDE_REQUIRE(nine != NULL);
+    nine[strlen("values: length = ")] = '4'; // The editor's unsaved change: the length 9 is 4
+    const char *copy = TIDE_UNITY_SCRATCH "/" UNITY_UNSAVED_FOLDER "Assets/Fixture/Level.unity";
+    TIDE_REQUIRE(sys_mkdirs(TIDE_UNITY_SCRATCH "/" UNITY_UNSAVED_FOLDER "Assets/Fixture"));
+    TIDE_REQUIRE(sys_write_file(copy, scene, size));
+    free(scene);
+    TIDE_CHECK(unity_assets_stamp(assets) != saved);
+    unity_sources s;
+    TIDE_REQUIRE(unity_assets_read(assets, &s));
+    const char *level = text_of(&s, "Assets/Fixture/Level.unity");
+    TIDE_CHECK(level && strstr(level, "        Part { length = 4 };\n") && !strstr(level, "length = 9"));
+    unity_sources_free(&s);
+    TIDE_REQUIRE(sys_remove(copy));
+    TIDE_CHECK(unity_assets_stamp(assets) == saved);
+    TIDE_REQUIRE(unity_assets_read(assets, &s));
+    level = text_of(&s, "Assets/Fixture/Level.unity");
+    TIDE_CHECK(level && strstr(level, "        Part { length = 9 };\n"));
+    unity_sources_free(&s);
+    sys_remove_tree(TIDE_UNITY_SCRATCH);
 }
 
 // The game's own components (com.tide.game's, as its components.json says how they're serialized), from

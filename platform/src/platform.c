@@ -105,6 +105,10 @@ static bool embedded;
 static tide_embed_input embedded_input;
 static uint32_t embedded_text_at, embedded_touch_at; // The next of the frame's characters and touch events
 static bool embedded_typing, embedded_lock;
+static bool embedded_microphone; // The frame's audio has a voice of the microphone
+#ifdef __wasm__
+static bool embedded_heard; // The page's audio device is open for the program beside it
+#endif
 _Static_assert(TIDE_KEY_COUNT <= 8 * sizeof embedded_input.keys, "a bit for every key");
 
 // Whether nobody hears this window: in a run nobody watches (TIDE_HIDDEN,
@@ -325,6 +329,18 @@ void tide_platform_audio(const tide_audio_frame *frame)
         if (frame->microphone) headless_microphone();
         return;
     }
+    if (embedded) {
+        embedded_microphone = frame->microphone;
+#ifndef __wasm__
+        return; // The other program plays the mixer, and hears the microphone for it (tide_embed_audio, _microphone)
+#else
+        // Beside the other program on the page: Tide's program's own AudioWorklet, and the page's microphone
+        if (!embedded_heard) {
+            embedded_heard = true;
+            tide_audio_out_open(); // With none, it said so, and the mixer goes unheard
+        }
+#endif
+    }
     if (frame->microphone && !unheard) {
         if (mic.open) return;
         if (mic.retry) {
@@ -477,6 +493,11 @@ bool tide_platform_embed_typing(void)
 bool tide_platform_embed_cursor_lock(void)
 {
     return embedded_lock;
+}
+
+bool tide_platform_embed_microphone(void)
+{
+    return embedded_microphone;
 }
 
 static bool key_held(const tide_key key)

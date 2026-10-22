@@ -18,8 +18,11 @@
 #include "tide/embed_game.h"
 #include "tide/host.h"
 #include "tide/migrate.h"
+#include "audio_in.h"
+#include "audio_out.h"
 #include "embedded.h"
 #include "gpu.h"
+#include "mixer.h"
 
 #if !defined(__wasm__)
 // Loading the game's libraries as tide run's host does, on this host's state
@@ -182,6 +185,7 @@ tide_embed *tide_embed_create(const tide_embed_desc *desc)
 void tide_embed_destroy(tide_embed *e)
 {
     if (e != &the_embed || !running) return;
+    tide_platform_audio_forget(); // The clips its voices play go with the game
     if (tide_run_game) {
         tide_run_end();
         if (tide_run_game->unload) tide_run_game->unload();
@@ -402,11 +406,33 @@ void tide_embed_status_of(const tide_embed *e, tide_embed_status *out)
         .open = s.open,
         .typing = tide_platform_embed_typing(),
         .cursor_locked = tide_platform_embed_cursor_lock(),
+        .microphone = tide_platform_embed_microphone(),
     };
     memcpy(out->room, tide_run_room, sizeof out->room);
     out->room[sizeof out->room - 1] = '\0';
     memcpy(out->message, c->message, sizeof out->message);
     out->message[sizeof out->message - 1] = '\0';
+}
+
+void tide_embed_audio(tide_embed *e, float *out, const uint32_t frames, const uint32_t rate, const uint32_t channels)
+{
+    if (!out || !frames) {
+        tide_mixer_rendered_elsewhere(false); // The other program's audio stopped
+        return;
+    }
+    if (channels < 1 || channels > 8) return;
+    if (e != &the_embed || !running) {
+        memset(out, 0, (size_t)frames * channels * sizeof *out);
+        return;
+    }
+    tide_mixer_rendered_elsewhere(true); // So a reload's forget waits for this thread to let the old clips go
+    tide_audio_out_fill(out, frames, rate, channels);
+}
+
+void tide_embed_microphone(tide_embed *e, const float *samples, const uint32_t frames, const uint32_t rate, const uint32_t channels)
+{
+    if (e != &the_embed || !running || !samples || !frames || channels < 1 || channels > 8) return;
+    tide_audio_in_push(samples, frames, rate, channels);
 }
 
 bool tide_embed_request(tide_embed *e, const tide_session_request_kind kind, const char *text, const uint32_t port)

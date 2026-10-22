@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
@@ -63,13 +64,15 @@ namespace Tide
             return (uint)asset < (uint)assets.Length ? assets[asset] : null;
         }
 
-        // The GameObject at `path` under `root` (a prefab's root or instance), or null.
+        // The GameObject at `path` under `root` (a prefab's root or instance), or null. A path is names from the root,
+        // "/" between them and "#1" after a second of one name among siblings; a name's own '/', '#' and '\' have a
+        // '\' before them.
         public static Transform Find(Transform root, string path)
         {
             if (root == null) return null;
             if (string.IsNullOrEmpty(path)) return root;
             var at = root;
-            foreach (var part in path.Split('/'))
+            foreach (var part in Parts(path))
             {
                 at = Child(at, part);
                 if (at == null) return null;
@@ -81,13 +84,14 @@ namespace Tide
         public static Transform FindInScene(UnityEngine.SceneManagement.Scene scene, string path)
         {
             if (!scene.IsValid() || !scene.isLoaded || string.IsNullOrEmpty(path)) return null;
-            var slash = path.IndexOf('/');
-            var first = slash < 0 ? path : path.Substring(0, slash);
-            Split(first, out var name, out var nth);
+            var parts = Parts(path);
+            Split(parts[0], out var name, out var nth);
             foreach (var root in scene.GetRootGameObjects())
             {
                 if (root.name != name || nth-- > 0) continue;
-                return slash < 0 ? root.transform : Find(root.transform, path.Substring(slash + 1));
+                var at = root.transform;
+                for (var i = 1; i < parts.Count && at != null; i++) at = Child(at, parts[i]);
+                return at;
             }
             return null;
         }
@@ -103,17 +107,48 @@ namespace Tide
             return null;
         }
 
+        // A path's parts, split at each '/' that has no '\' before it, escapes kept.
+        static List<string> Parts(string path)
+        {
+            var parts = new List<string>();
+            var start = 0;
+            for (var i = 0; i < path.Length; i++)
+            {
+                if (path[i] == '\\') i++;
+                else if (path[i] == '/')
+                {
+                    parts.Add(path.Substring(start, i - start));
+                    start = i + 1;
+                }
+            }
+            parts.Add(path.Substring(start));
+            return parts;
+        }
+
+        // A part's name, unescaped, and which of its name among its siblings it is: the number after its last '#'
+        // that has no '\' before it, or 0.
         static void Split(string part, out string name, out int nth)
         {
-            var hash = part.LastIndexOf('#');
             nth = 0;
-            if (hash > 0 && int.TryParse(part.Substring(hash + 1), out nth))
+            var hash = -1;
+            for (var i = 0; i < part.Length; i++)
             {
-                name = part.Substring(0, hash);
-                return;
+                if (part[i] == '\\') i++;
+                else if (part[i] == '#') hash = i;
             }
-            nth = 0;
-            name = part;
+            var named = part;
+            if (hash > 0 && int.TryParse(part.Substring(hash + 1), out var n))
+            {
+                nth = n;
+                named = part.Substring(0, hash);
+            }
+            var plain = new System.Text.StringBuilder(named.Length);
+            for (var i = 0; i < named.Length; i++)
+            {
+                if (named[i] == '\\' && i + 1 < named.Length) i++;
+                plain.Append(named[i]);
+            }
+            name = plain.ToString();
         }
     }
 }
