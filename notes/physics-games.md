@@ -1,5 +1,13 @@
 # The physics games: Towers and Sumo
 
+Box3D completion (2026-10-22): all joints, collider controls and live source
+tracking add package components/state. Sumo's generated Brain.dice component
+ordinal and stored-world layout therefore change. The native/WASI network
+pins agree at tick 640 (06b9a92dbfb94c30) and 880 (2100c3d973971896).
+Only those expected hashes change in the game; gameplay, late joining,
+rollback and zero-resync checks remain. Package contracts and final validation
+are in notes/box3d.md.
+
 Match singleton RNG isolation (2026-10-18): the compiler now excludes local
 singletons and attached local storage from match singleton seed ordinals
 (`notes/random.md`). Sumo's ring generator therefore intentionally starts with

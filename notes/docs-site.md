@@ -1072,3 +1072,13 @@ allowed 404s cover unstaged game/example HTML. Node is 24.15.0 in this shell;
 no Node test suite or game was run. The collaborative browser confirms the new
 overview, catalogue and navigation on the local development site. No site
 deployment or CI dispatch was requested.
+
+## Box3D component completion (2026-10-22)
+
+The package page now documents all nine joint settings, HullCollider, static
+HeightFieldCollider, BodySettings, collision/query filters, live geometry and
+material edits, and deferred component removal. Its obsolete read-once and
+missing-feature claims are removed. Contracts, validation, determinism and
+measurements live in notes/box3d.md; the README has the same public API.
+`npm run build` passes, including link/anchor checks. Expected 404s are the
+unstaged playable examples in this fresh checkout. No site deployment.

@@ -970,6 +970,7 @@ B3_API b3ShapeId b3CreateMeshShape( b3BodyId bodyId, const b3ShapeDef* def, cons
 // Tide: copy/deduplicate a cooked mesh into the world's resident geometry store.
 // The returned data remains valid until world destruction or restore.
 B3_API const b3MeshData* b3World_InternMesh( b3WorldId worldId, const b3MeshData* mesh );
+B3_API const b3HeightFieldData* b3World_InternHeightField( b3WorldId worldId, const b3HeightFieldData* heightField );
 
 /// Create a height-field shape and attach it to a body. The shape definition is fully cloned but the height field is not.
 /// Contacts are not created until the next time step.
