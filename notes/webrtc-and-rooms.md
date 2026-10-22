@@ -1,5 +1,50 @@
 # Desktop WebRTC, rooms and their tests
 
+## Web invites wait for registration (2026-10-22)
+
+A correct invite could be copied before the relay knew its host's room.
+Holding the host's registration for 6.5 seconds reproduced the failure:
+the other page opened the generated URL, exhausted its existing five-second
+missing-room retries, and failed with `no room has the code`. Ordinary
+local/public-relay joins also passed, with normal Chrome networking settings
+and with the host hidden before the join. This establishes a startup race,
+not the cause of every intermittent connection failure in the owner's report.
+
+`tide.js` now distinguishes a registration request sent (`announced`) from a
+room confirmed by the relay (`advertised`, set by `hosting`, cleared on socket
+close). A matching built-in web host's `room_invite` writes an empty string
+until confirmation. `Session.room` still has the early code; the standard
+host receives an empty `Session.invite`, so Rooms' existing disabled state
+prevents copying it. Other networks and native code invites retain their
+existing behavior. No connection timeout, relay protocol, match state or
+generated API changed.
+
+The internal `room_invite` import now returns bytes written **including the
+NUL**: one is a successful empty replacement, distinct from zero's existing
+fallback to the room code. Its only C caller still tests for a positive result
+and validates the terminated printable-ASCII output. `tide.release.js` and its
+source manifest were regenerated.
+
+`tide_platform_web_rooms` holds the actual host registration in its page
+until the C program has checked that an invite is unavailable, then releases
+it explicitly and opens the joiner from the eventual invite. It fails on the
+old runtime. Migration and early-end fixtures keep their existing behavior.
+The same 6.5-second registration delay passes with the fix: the host offers
+the link only after registration, and both players meet and keep playing
+through the hidden-host interval.
+
+Validation on Windows with Clang 23.1.2 and Node 24.21.0: full native debug
+build and suite (2,589 passed, 114.34 s, including 39 GPU tests), full web debug
+build and suite (2,451 passed, 279.53 s, including WebGL, D3D11 and WebGPU),
+the three release-runtime checks, the docs production build and diff checks.
+The generated release runtime also joins successfully through the public
+relay in Chrome with normal networking settings and plays through the
+hidden-host interval without skipped time or resyncs.
+Each suite retains the existing disabled MicroDuck right-turn limitation.
+Every run used `TIDE_HIDDEN`; browser runners retained `--mute-audio`.
+Other operating systems, Android and sanitizers were not run on this Windows
+machine. No CI was dispatched or manual deployment made.
+
 ## Session.invite: host a room, copy a link, send it (2026-10-21)
 
 The owner asked for every web game's multiplayer to be "host a room, copy a

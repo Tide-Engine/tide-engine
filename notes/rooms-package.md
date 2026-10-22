@@ -1,5 +1,11 @@
 # The rooms package
 
+Web invite readiness (2026-10-22): the platform now leaves `Session.invite`
+empty until the relay confirms its host's room. `RoomPage` already disables
+copying an empty invite, so no package code changed; the early room code can
+remain visible. The delayed-registration reproduction and browser regression
+are recorded in `notes/webrtc-and-rooms.md`.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Packaging and releases

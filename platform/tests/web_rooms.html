@@ -19,6 +19,24 @@
   };
   const told = new Set();
   addEventListener('message', ({ data }) => { if (data && data.tell) told.add(data.tell); });
+  // Hold the host's registration until its program checks that no invite is
+  // offered yet. Release it by an explicit signal, independently of timing.
+  let registration = null;
+  function releaseRegistration() {
+    if (!registration) return false;
+    registration();
+    registration = null;
+    return true;
+  }
+  if (query.get('args') === 'host') {
+    const Socket = WebSocket;
+    window.WebSocket = class extends Socket {
+      send(text) {
+        if (JSON.parse(text).host) registration = () => super.send(text);
+        else super.send(text);
+      }
+    };
+  }
   var Tide = {
     canvas: document.getElementById('canvas'),
     arguments: (query.get('args') || '').split(',').filter(Boolean),

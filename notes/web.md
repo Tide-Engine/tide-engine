@@ -1,5 +1,13 @@
 # Web builds
 
+Invite readiness (2026-10-22): a built-in web host's `Session.invite` stays
+empty until the relay confirms registration, preventing a fast copied-link
+join from exhausting missing-room retries before its host is registered.
+The internal `room_invite` import returns bytes including the NUL so an empty
+replacement succeeds without falling back to the raw code. The release runtime
+and manifest were regenerated. Reproduction, contracts and validation are in
+`notes/webrtc-and-rooms.md`, Web invites wait for registration.
+
 Prewarmed pipelines (2026-10-22): a page prewarms the game's shaders as
 desktop does (`notes/rendering.md`, Pipelines made before they're drawn),
 in the background where background pipelines are on, so its first frame
