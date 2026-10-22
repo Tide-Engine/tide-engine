@@ -1,5 +1,134 @@
 # The Box3D package
 
+## Vendored feature scope and live components (2026-10-22)
+
+The owner approved all nine vendored joint types, remaining collider,
+filtering and body controls, then explicitly approved live geometry/material
+edits and removal of Body/collider components from surviving entities.
+Implemented in the package; no compiler, engine runtime or generated-C
+boundary API was added. Names, validation limits and policy details below
+follow existing package conventions and remain provisional package API.
+
+- Joint entities have `Joint` plus exactly one of DistanceJoint, MotorJoint,
+  FilterJoint, ParallelJoint, PrismaticJoint, RevoluteJoint, SphericalJoint,
+  WeldJoint and WheelJoint. Endpoints are Body entities; anchors and frame
+  rotations are local to their origins. Base and per-type native settings
+  synchronize each step, setters only on changes. Ordinary edits retain the
+  native handle/warm-start; changed bodies/type recreate. Disabling drops
+  the handle and retains the entity; reenabling recreates. Invalid enabled
+  settings, missing endpoints or missing/ambiguous settings destroy the joint
+  entity. Removing Joint/entity drops the native joint. Forces and torques
+  read back after stepping. Finite scalar/vector bounds are ±1e12; positive
+  distance length, ordered limits, nonnegative rates/strengths and native
+  spherical cone range are checked before native assert-taking calls.
+- HullCollider accepts 4–65536 points, scale/offset and the primitive material
+  and sensor fields. It cooks a convex approximation capped at 128 vertices,
+  on any body type or Part. HeightFieldCollider accepts static grids with
+  row-major heights and optional per-cell byte holes, positive scale,
+  quantization bounds and friction/bounce. Dimensions 2–4096, total heights
+  at most 65536; list counts and finite bounds checked before cooking.
+  Samples clamp to quantization bounds. An overflowing raw compression range
+  is rejected even when scale would put its final extent in bounds. Baked
+  geometry is bounded to ±1e6. Height fields are canonically interned.
+- All six collider types are live, including individual geometry-list edits.
+  Exact owned source bytes detect edits, without hashes or process pointers.
+  Primitives and hulls retain handles for geometry/material edits; meshes and
+  height fields recreate on geometry changes; sensor changes recreate.
+  Material-only edits do not recook. Invalid edits remove the old shape;
+  correcting the component retries. Unchanged rejected data is remembered.
+  Removing Body/collider/Part cleans attachments on the next physics step
+  after Tide's deferred structural change. Body removal destroys its parts
+  and joint entities. Part.of retargets live. Removed surfaces are pruned
+  before applying body controls, permitting a static-to-dynamic type request
+  in that same physics step. Queries still see the last completed step.
+- CollisionFilter has 64-bit category/mask and signed group overrides, shared
+  by shapes on its entity (parts have their own). Removal restores defaults.
+  Sensors retain reserved group -1 and never overlap other sensors. Optional
+  QueryFilter category/mask is available on every live/detached Raycast,
+  Cast, RaycastAll, CastAll and Overlap overload. Both mask directions must
+  pass. Groups affect collision pairs, not queries. Inside uses actual sensor
+  overlaps. Historical filter bits use the geometry's upper endpoint.
+- BodySettings adds per-tick world-space force/torque, enable/disable,
+  automatic sleep permission/threshold, six world-axis motion locks,
+  continuous-collision safety factor, fast rotation and contact recycling.
+  Removal resets defaults once; the common absent path reads a flag lane.
+  Invalid numeric controls are ignored (forces clear); defaults/ranges and
+  units are in the package README and public Box3D guide. Disabled bodies
+  are absent from current and detached current geometry; older opted-in
+  history still represents their prior enabled membership. Opt-in selection
+  is recorded even with no current shapes; removing the last collider must
+  not opt a surviving body out of its historical geometry.
+
+Implementation and persistence:
+
+- `joints.inc`, `controls.inc`, `shapes.inc`, `hull_queries.inc` separate the
+  native bridge's package features without creating runtime infrastructure.
+  Shape source lists, slot/free lists and topology copies belong to match
+  memory and follow COW, packing and rollback. SoA lanes and component slot
+  hints avoid copying a full Body or looking up a map per unchanged collider.
+  Exact entity-slot topology comparisons skip World ownership/presence scans
+  when membership is unchanged. These use existing trusted C APIs only.
+- Private ABI assertions cover Physics 296, Body 176, Part 64, Joint 120,
+  Collider 192, HullGeometry 3592, ShapeRecord 32 and new collider records.
+  Ordinary captured boxes keep the existing eight-point fast path; arbitrary
+  hulls retain up to 128 points/planes in a separate geometry list. Terrain
+  retains triangles excluding holes, as meshes do. Prepared contexts contain
+  values only, preserving old geometry through edits/deletion/restoration.
+- The resident digest now covers joint warm-start impulses, including sleeping
+  joints, without derived solver fields that canonical restore rebuilds.
+  No-joint native digest/body/query pins remain unchanged. The height-field
+  SetType early-return lock bug is fixed in the vendor. Full/delta packing
+  exposed temporary canonical interning writes into an existing geometry
+  directory: mark the whole arena before packing so restoring resident pages
+  discards those writes as well as new allocations. Vendor details: TIDE.md.
+- C fixtures calling generated shallow component setters must explicitly own
+  scratch-created lists and release the replaced owned fields. The older
+  mesh fixture is corrected accordingly; live scans exposed that test's
+  previously dangling geometry list. No runtime setter contract changed.
+
+Coverage and current limits:
+
+- New joints fixture exercises all types, per-type and base edits, live motors,
+  disabling, destruction/removal, invalid values, snapshots and canonical
+  replay. Complete fixture covers tetrahedral/16-vertex/dynamic/sensor hulls,
+  terrain holes, physical masks/groups, query masks, primitive and mesh edits,
+  list element edits, Part retargeting, all collider/Body/Part/settings/filter
+  removals, retained history, disabling/query parity, invalid edits/repair,
+  compression overflow and same-step type changes after surface removal.
+  Fresh-process full and delta join fixtures cover joints and all geometry.
+- Schema/world pins intentionally change for new components and cached source
+  state. Native/WASI agree on stack world fc32a2da876d9905, sequence
+  a6fcf308ade49f5a; bodies ace1f5d330399dd5, native digest sequence
+  2c0f0b8554356083 and query-answer dc5da4ff7c55ceb8 remain unchanged.
+  New sequence pins: joints bef5e27434b19a91, complete 865b46ee1c28e494;
+  mesh 326d43871a6f6e41. Sumo's schema/RNG component ordinals also change
+  (notes/physics-games.md); gameplay and zero-resync checks remain.
+- A contended Windows clang release diagnostic of 2400 resting boxes takes
+  about 0.085 ms/tick (0.063–0.074 checking boxes), versus the historical
+  read-once resident baseline ~0.015 ms. No step/commit at rest. This is a
+  single diagnostic, not a controlled benchmark comparison. First naive
+  World scans/full Body copies were rejected and optimized; current checks
+  are exact and allocation/cook-free while unchanged. Mesh/height source
+  comparisons remain proportional to input size.
+- Native compound-container assets remain unexposed; compound bodies use
+  Parts. No imported render-mesh conversion or new Unity translations.
+  Unique cooked geometry remains retained, and the resident arena is still
+  fixed at 64 MiB with fatal exhaustion. Visibility-aware physics is not
+  added. Existing deleted-entity Parted/default behavior remains.
+
+
+
+Validation: full native debug 2581/2581 and web-debug 2443/2443 pass,
+including native GPU and browser WebGL/WebGPU runners. After the final
+history-selection fix, all 16 Box3D/Sumo tests pass again on native and WASI.
+Stack/course/sleep/mesh/joints/complete/Sumo pass in native and WASI release
+(7 targets each); final joints/complete fixtures also pass in all four
+configurations, pinning the same sequences. Fresh-process full/delta joins
+pass, and canonical delta transfers run native-to-WASI and WASI-to-native
+for both new fixtures, including ten subsequent matching ticks. The docs
+production build and diff checks pass. Linux/macOS/MinGW/Android and
+sanitizers were not run on this Windows machine; they remain CI coverage.
+
 
 ## Unity's components as Box3D's (2026-10-22)
 

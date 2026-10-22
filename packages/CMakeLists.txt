@@ -331,6 +331,39 @@ tide_add_game(tide_box3d_mesh SOURCES box3d/bridge.c box3d/test/mesh.tide NAME m
 target_include_directories(tide_box3d_mesh PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_box3d_mesh PRIVATE tide_box3d)
 add_test(NAME tide_box3d_mesh COMMAND tide_box3d_mesh)
+set_tests_properties(tide_box3d_mesh PROPERTIES TIMEOUT 120)
+
+tide_add_game(tide_box3d_joints SOURCES box3d/bridge.c box3d/test/joints.tide NAME joints PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/joints_test.c)
+target_include_directories(tide_box3d_joints PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_joints PRIVATE tide_box3d)
+add_test(NAME tide_box3d_joints COMMAND tide_box3d_joints)
+set_tests_properties(tide_box3d_joints PROPERTIES TIMEOUT 120)
+
+tide_add_game(tide_box3d_complete SOURCES box3d/bridge.c box3d/test/complete.tide NAME complete PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/complete_test.c)
+target_include_directories(tide_box3d_complete PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_complete PRIVATE tide_box3d)
+add_test(NAME tide_box3d_complete COMMAND tide_box3d_complete)
+set_tests_properties(tide_box3d_complete PROPERTIES TIMEOUT 120)
+
+tide_add_game(tide_box3d_complete_join SOURCES box3d/bridge.c box3d/test/complete.tide NAME complete PACKAGES Box3D box3d/box3d.tide
+    HOST box3d/test/join_test.c)
+target_compile_definitions(tide_box3d_complete_join PRIVATE BOX3D_JOIN_HEADER="complete.h")
+target_link_libraries(tide_box3d_complete_join PRIVATE tide_box3d)
+add_test(NAME tide_box3d_complete_join
+    COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:tide_box3d_complete_join>"
+        "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/box3d_complete_join"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test/join.cmake")
+
+tide_add_game(tide_box3d_joints_join SOURCES box3d/bridge.c box3d/test/joints.tide NAME joints PACKAGES Box3D box3d/box3d.tide
+    HOST box3d/test/join_test.c)
+target_compile_definitions(tide_box3d_joints_join PRIVATE BOX3D_JOIN_HEADER="joints.h")
+target_link_libraries(tide_box3d_joints_join PRIVATE tide_box3d)
+add_test(NAME tide_box3d_joints_join
+    COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:tide_box3d_joints_join>"
+        "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/box3d_joints_join"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test/join.cmake")
 
 tide_add_game(tide_box3d_mesh_join SOURCES box3d/bridge.c box3d/test/mesh.tide NAME mesh PACKAGES Box3D box3d/box3d.tide
     HOST box3d/test/join_test.c)

@@ -1,0 +1,35 @@
+using Box3D;
+
+scene Main { }
+component Moving { int kind; }
+component Connection { int kind; }
+singleton Objects { List<Entity> bodies; List<Entity> joints; }
+
+event(Spawned) Setup(with Main, mut Objects objects)
+{
+    for (int i = 0; i < 9; i++)
+    {
+        var fixedBody = Spawn(Body { type = BodyType.Static, position = float3(i * 10, 5, 0) }, Sphere { radius = 0.1 });
+        var moving = Spawn(Body { position = float3(i * 10, 4, 0), angularVelocity = float3(0, 0, 1) }, Sphere { radius = 0.2, density = 1 }, Moving { kind = i });
+        var joint = Joint { a = fixedBody, b = moving, anchorA = float3(0, -1, 0) };
+        objects.bodies.Add(moving);
+        if (i == 0) objects.joints.Add(Spawn(Joint { a = fixedBody, b = moving }, DistanceJoint, Connection { kind = i }));
+        if (i == 1) objects.joints.Add(Spawn(joint, MotorJoint { linearHertz = 10, linearDampingRatio = 1, maxSpringForce = 100, angularHertz = 10, angularDampingRatio = 1, maxSpringTorque = 100 }, Connection { kind = i }));
+        if (i == 2) objects.joints.Add(Spawn(joint, FilterJoint, Connection { kind = i }));
+        if (i == 3) objects.joints.Add(Spawn(joint, ParallelJoint, Connection { kind = i }));
+        if (i == 4) objects.joints.Add(Spawn(joint, PrismaticJoint { enableLimit = true, lowerTranslation = -0.5, upperTranslation = 0.5, enableMotor = true, maxMotorForce = 10, motorSpeed = 1 }, Connection { kind = i }));
+        if (i == 5) objects.joints.Add(Spawn(joint, RevoluteJoint { enableMotor = true, maxMotorTorque = 10, motorSpeed = 2 }, Connection { kind = i }));
+        if (i == 6) objects.joints.Add(Spawn(joint, SphericalJoint { enableConeLimit = true, coneAngle = 0.5, enableTwistLimit = true, lowerTwistAngle = -0.5, upperTwistAngle = 0.5 }, Connection { kind = i }));
+        if (i == 7) objects.joints.Add(Spawn(joint, WeldJoint, Connection { kind = i }));
+        if (i == 8) objects.joints.Add(Spawn(joint, WheelJoint { enableSpinMotor = true, maxSpinTorque = 10, spinSpeed = 2 }, Connection { kind = i }));
+    }
+}
+
+singleton Request { Entity removeJoint; Entity removeBody; }
+[Before(PhysicsStages.Step)]
+system Commands(mut Request request)
+{
+    request.removeJoint.Remove(Joint);
+    request.removeBody.Remove(Body);
+    request = default;
+}
