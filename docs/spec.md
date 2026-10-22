@@ -4386,9 +4386,13 @@ Picks made as the microphone was built (2026-10-07, the eighth card), awaiting t
 
 **Decided:** working voice chat through sessions is an optional package using Opus and the existing microphone. Games without the package do not compile/link its codec or allocate its buffers. Voice is local presentation, outside ticks, commands, rollback, snapshots and deterministic hashes.
 
+**Decided (2026-10-22):** the optional voice package also supports RNNoise microphone noise suppression, controlled by a local setting.
+
 **Implemented provisional choices:** `voice` / namespace `Voice`, local `VoiceClient.enabled`, `transmitting` and `volume`, `ConfigureVoice` ordering, and `SetVolume(PlayerID, float)`. Both flags default false; microphone capture requires transmission in a connected session. The host relays unreliable packets to other subscribed players. Global chat, 48 kHz mono, 20 ms frames, 24 kbit/s, 40 ms initial receive buffering, Opus DTX/FEC/concealment, 32 receive slots and 32 player gains are first-build choices. C hosts use the optional `tide_voice_provider` and local-data session API; no language builtin or generated runtime call is added. [Voice chat](./packages/voice.md) documents use and limits. Teams, proximity routing, positional voice and embedded Unity audio remain unbuilt.
 
 The older microphone implementation notes above describe the pre-package state; voice chat is no longer deferred.
+
+**Implemented provisional suppression choices:** `VoiceClient.noiseSuppression` defaults false and filters only outgoing capture. RNNoise 0.2's smaller built-in model runs on the frame thread in 480-sample blocks before Opus; its history resets on transmission start and setting changes. State is lazy and retained until client teardown; off means no filter work. The model ships with the optional voice package; games without it compile/link neither RNNoise nor Opus. No engine, simulation or wire-format change is needed.
 
 ### Open
 

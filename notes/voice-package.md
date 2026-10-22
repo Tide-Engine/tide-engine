@@ -6,6 +6,75 @@ than a codec-only package. The host-relayed architecture, API names, packet
 limits and buffering choices below are implementation picks, provisional in
 `docs/spec.md`; the optional feature and simulation exclusion are decided.
 
+## Configurable RNNoise suppression (2026-10-22)
+
+The owner requested RNNoise support controlled by a setting. Local
+`VoiceClient.noiseSuppression` defaults false and filters only outgoing capture.
+The explicit C configure call now takes `noise_suppression` before `volume`;
+the ordinary Tide extern carries the same boolean. No compiler, engine host,
+microphone backend, session protocol or generated-runtime API changes.
+
+RNNoise 0.2 and upstream model archive `0b50c45` are pinned by SHA-256 in
+`packages/voice/import_rnnoise.py` and the package README, with upstream
+COPYING/AUTHORS retained. The importer selects the smaller `little` model,
+rewrites quoted includes and stores C as `.c.h` behind ten portable wrappers.
+It preserves algorithms/weights. Upstream's compile-time SSE2/NEON/scalar
+selection remains; runtime CPU dispatch is off. The scalar `vec.h` includes
+an absent `os_support.h`: a small hand-maintained compatibility header maps
+its only required macro, `OPUS_CLEAR`, to RNNoise's own `RNN_CLEAR`. Vendor
+warnings are disabled and debug vendor code optimized, as for Opus. Strict
+Tide float flags remain. Only the upstream public header's old-style empty
+parameter declarations get a narrow strict-prototypes diagnostic suppression.
+
+On the frame thread, captured normalized mono samples are scaled to PCM16's
+float range, processed in two 480-sample/10 ms blocks, repaired/clamped back
+to normalized finite samples and encoded by the existing 960-sample Opus path.
+No callback gains allocation, filtering or locking. RNNoise's analysis overlap
+and delayed spectrum add about 20 ms of filter delay; no extra queue, wire
+format, receive processing or network messages are introduced.
+
+Filter state is allocated only for an enabled, connected, transmitting client
+requesting suppression. We allocate explicitly and check failure before init;
+upstream `rnnoise_create` does not check malloc before dereferencing. Failure
+leaves transmission stopped and retries later, as encoder failure does.
+The 32,688-byte state remains until client teardown but does no work while
+bypassed. Transmission start, reconnect/migration and a setting change reset
+RNNoise/Opus history and stream numbering, discard partial capture and
+invalidate queued capture generations. Receivers and other game audio are
+unaffected. The model is included in games using Voice even with the flag off;
+games omitting Voice compile/link neither codec nor filter/model. The model
+object has 2,809,098 bytes of native readonly data (before compression).
+
+Two new three-session tests exercise actual RNNoise -> Opus -> session ->
+playback: deterministic steady noise falls below 20% of bypass energy,
+switching off restores above 80%, a stopped/restarted silent utterance has no
+stale history, and synthetic speech retains above 25% of bypass energy.
+These broad signal bounds avoid pinning vendor samples across architectures.
+The speech fixture's provenance is in `packages/voice/test/README.md`.
+All seven package cases pass on native and WASI. The three-process standard
+host fixture now sets `noiseSuppression = true` in Tide and passes its real
+microphone-file/mixer/transport/playback assertions.
+
+Release measurements on Ryzen 9 7900X (clang 23.1.2, three runs, synthesized
+48 kHz mono speech, 200 warmup + 2,000 measured packets per case): median of
+run means is 98.510 us/20 ms frame for Opus encoding alone and 235.472 us with
+RNNoise (about 0.69% of one core extra while transmitting). Encoding p95 is
+121.3 us versus 314.3 us. Mean Opus payload is 42.986 versus 43.172 bytes:
+suppression adds no protocol overhead. This measures frame-thread filtering
+plus encoding, excluding device/network time. Mobile/web CPU, physical
+microphone quality and actual mouth-to-ear latency have not been measured.
+
+Full Windows native debug: 2,469/2,469 pass (517.93 s, serial), including all
+37 GPU tests. Full web debug: 2,409/2,409 pass (331.24 s, 24 CTest jobs),
+including WebGL/D3D11/WebGPU and browser rooms/threading. Both complete builds
+and the docs production build pass. Reinstalling native/web components into
+the scratch prefix succeeds; that installation's checkout-built CLI builds
+the documented push-to-talk game with `noiseSuppression = true` for web,
+and a plain game without Voice. No runtime downloads or special flags are
+needed. `git diff --check` is clean outside the unchanged upstream whitespace
+retained in three vendor lines. Other operating systems, Android, physical
+microphones and sanitizers remain CI/manual coverage; none were run here.
+
 ## Package and cost
 
 `packages/voice/tide.packages` declares `Voice`. `voice.tide` provides local
