@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "kernels/featherstone.inl"
+#include "kernels/contacts.inl"
 #undef float
 #undef int
 
@@ -213,6 +214,151 @@ wp::launch_bounds_t<1> launch_bounds(int n)
     return wp::launch_bounds_t<1>{{static_cast<uint32_t>(n)}, static_cast<size_t>(n), 1};
 }
 
+struct ColliderSlot { uint64_t entity; int input; };
+
+struct Collisions {
+    Buffer<ColliderSlot> order;
+    Buffer<int> body;
+    Buffer<Pose> local, world;
+    Buffer<float> ke, kd, kf, ka, mu;
+    Buffer<Twist> pair_wrench;
+    Buffer<Vec3> force_sum;
+
+    static int compare(const void *a, const void *b)
+    {
+        const uint64_t left = static_cast<const ColliderSlot *>(a)->entity;
+        const uint64_t right = static_cast<const ColliderSlot *>(b)->entity;
+        return left < right ? -1 : left > right ? 1 : 0;
+    }
+
+    int build(const nt_body *bodies, int body_count, const nt_collider *colliders,
+              int count, uint64_t &budget)
+    {
+        if (!count) return NT_OK;
+        EntityMap ids;
+        if (!ids.allocate(static_cast<uint32_t>(body_count), budget) ||
+            !order.allocate(count, budget) || !body.allocate(count, budget) ||
+            !local.allocate(count, budget) || !world.allocate(count, budget) ||
+            !ke.allocate(count, budget) || !kd.allocate(count, budget) ||
+            !kf.allocate(count, budget) || !ka.allocate(count, budget) ||
+            !mu.allocate(count, budget) || !force_sum.allocate(count, budget) ||
+            !pair_wrench.allocate(body_count, budget)) return NT_TOO_LARGE;
+        for (int b = 0; b < body_count; ++b) ids.insert(bodies[b].entity, b);
+        for (int i = 0; i < count; ++i) {
+            const nt_collider &c = colliders[i];
+            if (!c.entity || !c.body || c.exclusion_group < 0 ||
+                (c.type != NT_SPHERE && c.type != NT_PLANE) ||
+                !finite(c.radius) || c.radius < 0.0f || (c.type == NT_SPHERE && c.radius == 0.0f) ||
+                !finite_values(c.position, 3) || !unit_quaternion(c.rotation) ||
+                !finite(c.stiffness) || c.stiffness < 0.0f ||
+                !finite(c.damping) || c.damping < 0.0f ||
+                !finite(c.friction_damping) || c.friction_damping < 0.0f ||
+                !finite(c.friction) || c.friction < 0.0f) return NT_INVALID_COLLIDER;
+            const int b = ids.find(c.body);
+            if (b < 0 || (c.type == NT_PLANE && bodies[b].type != NT_STATIC))
+                return NT_INVALID_COLLIDER;
+            order[i] = ColliderSlot{c.entity, i};
+        }
+        qsort(order.data, static_cast<size_t>(count), sizeof(ColliderSlot), compare);
+        for (int i = 0; i < count; ++i) {
+            if (i && order[i - 1].entity == order[i].entity) return NT_INVALID_COLLIDER;
+            const nt_collider &c = colliders[order[i].input];
+            body[i] = ids.find(c.body);
+            local[i] = pose(c.position, c.rotation);
+            ke[i] = c.stiffness;
+            kd[i] = c.damping;
+            kf[i] = c.friction_damping;
+            mu[i] = c.friction;
+        }
+        return NT_OK;
+    }
+
+    // Narrow phase is a serial analytic Sphere/Plane profile. These are the
+    // pinned collision_primitive.py formulas, including coincident sphere +X.
+    // Solver anchors/thickness follow sim/collide.py's contact writer.
+    bool apply(const nt_body *bodies, const nt_collider *colliders,
+               const Buffer<Pose> &body_q, const Buffer<Twist> &body_qd,
+               const Buffer<Vec3> &com, Buffer<Twist> &body_force)
+    {
+        if (!order.count) return true;
+        for (int i = 0; i < order.count; ++i)
+            world[i] = wp::transform_multiply(body_q[body[i]], local[i]);
+        if (!finite_buffer(world) || !unit_poses(world)) return false;
+        auto bounds = launch_bounds(1);
+        for (int a = 0; a < order.count; ++a) {
+            const nt_collider &ca = colliders[order[a].input];
+            for (int b = a + 1; b < order.count; ++b) {
+                const nt_collider &cb = colliders[order[b].input];
+                const int ba = body[a], bb = body[b];
+                if (ba == bb || (ca.exclusion_group != 0 && ca.exclusion_group == cb.exclusion_group) ||
+                    (bodies[ba].type == NT_STATIC && bodies[bb].type == NT_STATIC)) continue;
+                const float ra = ca.type == NT_SPHERE ? ca.radius : 0.0f;
+                const float rb = cb.type == NT_SPHERE ? cb.radius : 0.0f;
+                Vec3 normal, midpoint;
+                float distance;
+                if (ca.type == NT_SPHERE && cb.type == NT_SPHERE) {
+                    const Vec3 delta = world[b].p - world[a].p;
+                    const float length = wp::length(delta);
+                    if (!finite(length)) return false;
+                    normal = length == 0.0f ? Vec3(1.0f, 0.0f, 0.0f) : delta / length;
+                    distance = length - (ra + rb);
+                    midpoint = world[a].p + normal * (ra + 0.5f * distance);
+                } else {
+                    const int plane = ca.type == NT_PLANE ? a : b;
+                    const int sphere = ca.type == NT_SPHERE ? a : b;
+                    const float radius = ca.type == NT_SPHERE ? ra : rb;
+                    const Vec3 outward = wp::quat_rotate(world[plane].q, Vec3(0.0f, 1.0f, 0.0f));
+                    distance = wp::dot(world[sphere].p - world[plane].p, outward) - radius;
+                    midpoint = world[sphere].p - outward * (radius + 0.5f * distance);
+                    normal = plane == a ? outward : -outward;
+                }
+                if (!finite(distance)) return false;
+                if (distance >= 0.0f) continue;
+                Vec3 point0 = wp::transform_point(wp::transform_inverse(body_q[ba]),
+                    midpoint - normal * (0.5f * distance + ra));
+                Vec3 point1 = wp::transform_point(wp::transform_inverse(body_q[bb]),
+                    midpoint + normal * (0.5f * distance + rb));
+                for (int k = 0; k < 3; ++k)
+                    if (!finite(normal[k]) || !finite(point0[k]) || !finite(point1[k])) return false;
+                int count = 1, shape0 = a, shape1 = b;
+                float margin0 = ra, margin1 = rb;
+                pair_wrench[ba] = Twist();
+                pair_wrench[bb] = Twist();
+                wp_args_eval_body_contact args = {
+                    body_q, body_qd, com, ke, kd, kf, ka, mu, body,
+                    wp::array_t<int>(&count, 1), wp::array_t<Vec3>(&point0, 1),
+                    wp::array_t<Vec3>(&point1, 1), {}, wp::array_t<Vec3>(&normal, 1),
+                    wp::array_t<int>(&shape0, 1), wp::array_t<int>(&shape1, 1),
+                    wp::array_t<float>(&margin0, 1), wp::array_t<float>(&margin1, 1),
+                    {}, {}, {}, false, 0.01f, pair_wrench
+                };
+                // The original Newton force kernel runs once per canonical pair.
+                // A zeroed pair buffer also preserves each static reaction and
+                // collider's exact force contribution before body accumulation.
+                eval_body_contact_cpu_forward(&bounds, &args);
+                for (int k = 0; k < 6; ++k) {
+                    if (!finite(pair_wrench[ba][k]) || !finite(pair_wrench[bb][k])) return false;
+                    if (bodies[ba].type == NT_DYNAMIC) body_force[ba][k] += pair_wrench[ba][k];
+                    if (bodies[bb].type == NT_DYNAMIC) body_force[bb][k] += pair_wrench[bb][k];
+                }
+                for (int k = 0; k < 3; ++k) {
+                    force_sum[a][k] += pair_wrench[ba][k];
+                    force_sum[b][k] += pair_wrench[bb][k];
+                    if (!finite(force_sum[a][k]) || !finite(force_sum[b][k])) return false;
+                }
+            }
+        }
+        return finite_buffer(body_force);
+    }
+
+    void publish(nt_collider *colliders, int substeps) const
+    {
+        for (int i = 0; i < order.count; ++i)
+            for (int k = 0; k < 3; ++k)
+                colliders[order[i].input].contact_force[k] = force_sum[i][k] / static_cast<float>(substeps);
+    }
+};
+
 struct Model {
     Buffer<int> incoming, parent, first_child, next_child, order, body_joint;
     Buffer<int> art_start, art_end, art_J, art_M, art_H, art_rows, art_dofs, art_dof_start;
@@ -406,7 +552,8 @@ struct Model {
         eval_rigid_fk_cpu_forward(&bounds, &args);
     }
 
-    bool step(const nt_body *bodies, const float *gravity, float dt)
+    bool step(const nt_body *bodies, const nt_collider *colliders, Collisions &contacts,
+              const float *gravity, float dt)
     {
         auto body_bounds = launch_bounds(body_q.count);
         auto joint_bounds = launch_bounds(type.count);
@@ -445,6 +592,7 @@ struct Model {
                 body_force[b][k + 3] = bodies[b].type == NT_DYNAMIC ? bodies[b].torque[k] : 0.0f;
             }
         }
+        if (!contacts.apply(bodies, colliders, body_q, body_qd, com, body_force)) return false;
         ft_s.clear();
         wp_args_eval_rigid_tau tau_args = {
             {}, art_start, art_end, type, joint_parent, child, q_start, qd_start,
@@ -527,27 +675,36 @@ struct Model {
 } // namespace
 
 extern "C" int nt_step(nt_body *bodies, uint32_t body_count, nt_joint *joints,
-                       uint32_t joint_count, const float gravity[3], float dt, int32_t substeps)
+                       uint32_t joint_count, nt_collider *colliders, uint32_t collider_count,
+                       const float gravity[3], float dt, int32_t substeps)
 {
     if (!gravity || !finite_values(gravity, 3) || !finite(dt) || dt <= 0.0f || substeps <= 0)
         return NT_UNSTABLE;
     // nq <= 7*n, nd <= 6*n; n+1 sentinels and all kernel int arithmetic must fit.
-    if (body_count > static_cast<uint32_t>((INT_MAX - 1) / 7) || joint_count > INT_MAX)
+    if (body_count > static_cast<uint32_t>((INT_MAX - 1) / 7) ||
+        body_count > scratch_limit / sizeof(nt_body) || joint_count > scratch_limit / sizeof(nt_joint) ||
+        collider_count > scratch_limit / sizeof(nt_collider))
         return NT_TOO_LARGE;
     if (body_count && !bodies) return NT_INVALID_BODY;
     if (joint_count && !joints) return NT_INVALID_JOINT;
+    if (collider_count && !colliders) return NT_INVALID_COLLIDER;
     if (joint_count > body_count) return NT_INVALID_TOPOLOGY;
     const float substep_dt = dt / static_cast<float>(substeps);
     if (!finite(substep_dt) || substep_dt <= 0.0f) return NT_UNSTABLE;
-    if (!body_count) return NT_OK;
+    if (!body_count) return collider_count ? NT_INVALID_COLLIDER : NT_OK;
     uint64_t budget = 0;
     Model model;
     const int status = model.build(bodies, static_cast<int>(body_count), joints,
                                    static_cast<int>(joint_count), budget);
     if (status != NT_OK) return status;
+    Collisions contacts;
+    const int collision_status = contacts.build(bodies, static_cast<int>(body_count), colliders,
+                                                static_cast<int>(collider_count), budget);
+    if (collision_status != NT_OK) return collision_status;
     for (int i = 0; i < substeps; ++i) {
-        if (!model.step(bodies, gravity, substep_dt)) return NT_UNSTABLE;
+        if (!model.step(bodies, colliders, contacts, gravity, substep_dt)) return NT_UNSTABLE;
     }
     model.publish(bodies, joints);
+    contacts.publish(colliders, substeps);
     return NT_OK;
 }

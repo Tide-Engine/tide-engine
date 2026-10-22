@@ -1,5 +1,157 @@
 # The Newton package
 
+## Collision floor and mouse sandbox (2026-10-22)
+
+The owner wanted a physics floor and objects to play with, then requested mouse
+manipulation. The package now exposes `Collider`, initially Sphere and static
+Plane, and MicroDuck uses those colliders instead of its old custom sole-only
+spring system. This extends the same Featherstone runtime; no other engine or
+training-only simulation is selected.
+
+`Collider.body` defaults to its own entity; separate entities reference a body
+for compound shapes. Shape position/rotation are relative to the body origin.
+A plane's local +Y is its outward normal and its negative half-space is solid.
+Planes require static bodies. Radius is positive for spheres, nonnegative and
+unused for planes. Materials are finite and nonnegative; defaults are
+stiffness 2000, damping 5, friction damping 100 and friction 0.8. Equal nonzero
+exclusion groups disable a pair, with negative groups rejected. Same-body and
+static/static pairs are ignored. Disabled colliders are omitted from collection
+and report zero force on a successful tick. Colliders do not infer mass/inertia.
+
+The exporter additionally isolates the unchanged upstream `eval_body_contact`
+entry point and transitive force functions into `kernels/contacts.inl`, avoiding
+unrelated particle/hash-grid services. The original Featherstone and all Warp
+header bytes remain unchanged. The adapter uses upstream's analytic sphere and
+plane geometry/contact-writer formulas in sorted collider-identity pair order;
+coincident sphere centers use +X. Geometry uses current FK and public COM twists
+every substep, before upstream generalized-force evaluation. Force response is
+Newton's compliant normal spring/approach damping and Huber-regularized friction,
+with smoothing fixed at 0.01. It is not a static-friction constraint, and the
+Huber scalar limiter does not strictly bound the vector's Euclidean magnitude
+by a textbook Coulomb cone. There is no contact persistence or warm start.
+
+All native model/contact storage is transient. Per-pair wrenches are zeroed and
+accumulated in canonical order. `Collider.contactForce` is the mean world force
+over successful substeps, including friction and static reactions. Bodies,
+joints and collider outputs publish together only after the whole tick succeeds.
+Invalid shapes/references fail as `InvalidCollider`; overflow/allocation checks
+precede native array access. Private ColliderState is 84 bytes versus native
+nt_collider's 88; bridge copies use their separate strides and full Entity IDs.
+Physics is now 104 bytes. Generated-header/bridge size and offset checks pass
+on native and WASI; no engine/compiler runtime API was added.
+
+The sandbox has 61 original sphere estimates per duck covering all 15 authored
+bodies, including six sole spheres per foot, plus four loose balls and a static
+infinite floor plane: 127 colliders total. Robot-internal collisions are disabled
+by separate nonzero exclusion groups; the ducks, props and floor interact.
+Approximate collision geometry follows the original source frames, converted
+consistently to principal physics frames. It uses no upstream STL geometry.
+Model XML, conversion, masses/full tensors and joints are unchanged. The match
+still ticks at 200 Hz and now uses four substeps. Both contacting surfaces use
+stiffness 5600, damping 3 and friction damping 1; the default 100 produced
+excessive slip response for these small masses in the backend probe.
+
+Mouse picking uses interpolated displayed body poses and analytic ray/sphere
+intersection in views. The local gesture keeps a camera-facing drag plane.
+Sample submits bounded absolute collider identity, body-local anchor, world
+target, body reset revision and frame serial, plus a held-grab action. Match
+code validates Grabbable, live full-generation references, dynamic body,
+revision and an anchor within 2 mm of the sphere surface. Both owners may grab
+any marked body; their springs add in deterministic system order. Each spring
+uses world point velocity and COM torque, with limits 12 N and 0.6 Nm; scaling
+force for the torque cap preserves the point-force relation. No body pose is
+written by grabbing. A fresh nonzero frame serial grants a 0.25 s lease, measured
+from integer tick difference rather than repeated float subtraction. Releasing,
+resetting or stale/reused references stop the grab; missing serial updates expire
+it even when authoritative input repeats its last value.
+
+`ClearSandboxForces` precedes Drive, then ApplyDuckGrab precedes the complete
+physics phase and Record follows it. This prevents failed steps accumulating
+another external wrench. R resets the owner's duck and shared balls, leaving
+the other duck; per-body revisions invalidate either player's prior grab.
+B retains explicit balance/heading/lane help; W/S remains a joint pattern,
+not demonstrated controlled travel. The camera is fixed for mouse manipulation.
+The 44 observation slots remain, but foot load is now the sum of mean world-Y
+contact forces on sole colliders, not an isolated floor-normal sensor. Each ring
+also retains its controller's grab request, accepted body and actual wrench.
+Another player's grab may affect the duck, so this is still not a complete
+world dataset or a verified-tick exporter.
+
+Validation:
+
+- All 33 runtime tests pass in native/WASI debug and release, including nine
+  independent stock-Newton contact samples at 1/8/32 steps. State tolerance is
+  `5e-5`, mean-force tolerance `0.002 N`. Analytic cases cover support and COM
+  torque, rotated/local frames, friction, pair momentum, compound accumulation,
+  filters, articulated contact/reset coupling, malformed inputs, overflow and
+  late-substep failure atomicity. Contact history `ddf1584fd2502ff1` was observed
+  on native/WASI before pinning and agrees in all four builds; the no-contact
+  hash `92249536c6268981` is unchanged. Contact oracle regeneration/check passes.
+- The generated fixture has 24 tests, covering all-body proxy coverage, all
+  four loose balls falling/resting, physical full-body impact, actual input
+  grabs on free/COM-offset and articulated bodies, bounded point force/torque,
+  additive two-player springs, invalid requests, revisions, release and the
+  heartbeat lease boundary. Active-grab snapshots, raw/delta repair, threads,
+  alternating worlds and two-client rollback are included. The fresh-process
+  host restores during contacts and accepted ball/child grabs; it reads lists
+  with an explicit world heap after unpacking. An implicit TLS heap count in
+  that trusted C host was corrected; no runtime defect was involved.
+  Expanded rollback assertions initially assumed client creation order matched
+  assigned owner order. They now resolve each controller's Owner against the
+  actual connected client player ID, retaining both ball/child acceptance,
+  recorded-wrench, lease-expiry and active-release assertions.
+- The final 5600/3/1 material passes the unchanged 20 mm transient-penetration
+  budget for a 0.35 m unassisted toppled drop: minimum collider bottom is
+  -15.692 mm, settling to -0.581 mm with root speed 0.000097 m/s. All four balls
+  settle after four seconds from 0.12–0.15 m drops; maximum penetrations are
+  3.45/4.08/1.71/3.97 mm. These are compliant sphere-proxy measurements, not a
+  guarantee of zero penetration or calibrated hardware contact.
+- Both signed joint patterns retain the original >5 mm whole-foot clearance
+  and sustained support/touchdown criteria: five cycles per foot in ten seconds,
+  with actual sole-sphere-envelope clearances 19.101/19.505 mm for +1 and
+  11.245/11.207 mm for -1. Mean sole loads are 7.232199/7.231452 N, minimum trunk
+  heights 85.029/99.343 mm and peak motor effort 0.675635/0.689867 Nm. This still
+  establishes assisted stepping, not command-aligned travel or self-balance.
+- The intentionally changed 280-tick MicroDuck hash is `f87f0902ec4db694`;
+  the arm's 200-tick hash is `db6cb5835d7c9b26`. Both were observed across
+  native/WASI debug/release before pinning. The arm test now uses real encoded
+  player IDs and asserts that both owners' controls move their arms.
+- Installed-source CLI native/web release builds pass without Python or
+  downloads. All 46 staged source/header files match checkout bytes, and all
+  40 upstream manifest hashes match. A bounded hidden native run and muted
+  WebGL/WebGPU checks demonstrate ball lift/release, head grab/lift/drop with
+  assistance disabled, body-floor rest, reset and resumed recording. No page
+  exceptions or graphics validation errors occurred; only the known browser
+  audio autoplay warning remains. Final captures were inspected on both web
+  backends. The local server remains available for the owner's play test;
+  reloading starts a fresh scene rather than retaining old hot-reloaded values.
+
+Fresh-process native-to-WASI and WASI-to-native continuation passes in debug
+and release, restoring during actual contacts and active ball/child grabs.
+All four transfer files are byte-identical, SHA256
+`1c43d950e7a369177706750c478e8e908ad236cbac2aede4a7460d06dd21ed07`.
+Independent review closed the multiplayer grab/record/expiry and live-release
+coverage gaps; the final scoped review reports no findings. Production docs
+build passes on Node 24.16.0 with existing allowed unstaged-example 404s; all
+16 local documentation links and scoped whitespace checks pass.
+
+All 24 MicroDuck cases, 33 runtime cases, six arm cases, package ordering and
+both join CTests pass in native/WASI debug/release. Release runs rechecked the
+final corrected rollback case after the other 23 cases passed unchanged;
+native/WASI debug full suites execute the complete final source. The two
+clients reach 393/394 verified ticks with 3845/4049 replay ticks and zero
+resyncs, including ball/child grabs, recorded wrenches, early expiry, renewal
+just before release and cleared authority/verified-client grab states.
+
+The complete native debug workflow passes 2,554/2,554 tests (691.22 s), and
+the complete web debug workflow passes 2,416/2,416 (802.59 s). Both first runs
+are clean, including WebGL/WebGPU draw tests; the final MicroDuck CTests take
+117.06 s native and 123.97 s WASI. Reproduction and measurements are under
+`build/newton-collision-*-full.log`, `build/microduck-collision-preview/`,
+`build/newton-sandbox-{release,web-release}-final.log` and the corresponding
+`*-rollback-final.log` files. The release `*-final.log` files retain the initial
+test-host owner-order failure; the corrected case passes in the latter files.
+
 ## MicroDuck physical stepping and closer appearance (2026-10-22)
 
 The owner asked for walking or a useful first motion milestone, and a closer

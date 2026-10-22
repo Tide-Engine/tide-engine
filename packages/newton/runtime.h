@@ -11,11 +11,13 @@ enum nt_status {
     NT_INVALID_JOINT,
     NT_INVALID_TOPOLOGY,
     NT_TOO_LARGE,
-    NT_UNSTABLE
+    NT_UNSTABLE,
+    NT_INVALID_COLLIDER
 };
 
 enum nt_body_type { NT_STATIC, NT_DYNAMIC };
 enum nt_joint_type { NT_FIXED, NT_REVOLUTE, NT_PRISMATIC };
+enum nt_collider_type { NT_SPHERE, NT_PLANE };
 
 typedef struct nt_body {
     uint64_t entity;
@@ -55,6 +57,25 @@ typedef struct nt_joint {
     float applied_effort;
 } nt_joint;
 
+// Compound colliders are separate records referencing a body. Position and
+// rotation are relative to its origin. A plane's normal is local +Y and its
+// body must be static. Matching nonzero exclusion groups suppress collisions.
+typedef struct nt_collider {
+    uint64_t entity;
+    uint64_t body;
+    int32_t type;
+    int32_t exclusion_group;
+    float radius;
+    float position[3];
+    float rotation[4];
+    float stiffness;
+    float damping;
+    float friction_damping;
+    float friction;
+    // Successful tick's mean world contact force, including friction.
+    float contact_force[3];
+} nt_collider;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,6 +84,7 @@ extern "C" {
 // are published only after the entire step succeeds. Scratch is reconstructed
 // on every call; these value records are the complete persistent state.
 int nt_step(nt_body *bodies, uint32_t body_count, nt_joint *joints, uint32_t joint_count,
+            nt_collider *colliders, uint32_t collider_count,
             const float gravity[3], float dt, int32_t substeps);
 
 #ifdef __cplusplus

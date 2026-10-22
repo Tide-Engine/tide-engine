@@ -15,6 +15,11 @@ It does not replace Newton with a solver written for Tide.
   `warp-lang==1.19.0.dev20261020` generator wheel.
 - Upstream solver: `newton/_src/solvers/featherstone/kernels.py` and the
   functions it imports from Newton's articulation/math/semi-implicit modules.
+- Rigid contact response: the unchanged `eval_body_contact` entry point and
+  its `_eval_body_contact`/Warp Huber-norm closure from
+  `newton/_src/solvers/semi_implicit/kernels_contact.py`, statically exported
+  into `kernels/contacts.inl`. The exporter registers that original function
+  in an isolated module, excluding particle/hash-grid entry points.
 - Warp support: the transitive quoted-header closure of
   `warp/native/builtin.h` and `deterministic.h` (38 headers).
 
@@ -75,8 +80,34 @@ mimics, tendons and solver caches disabled. Joint coordinates, free-root poses,
 velocities, controls and external forces live in ordinary Tide values. No native
 allocation or array descriptor survives the call.
 
-The initial package covers articulated rigid-body dynamics. Upstream collision
-pipelines, soft bodies, importers and GPU execution are outside this port's
-current profile. Adding them requires extending the state/portability boundary
-and the native/WebAssembly parity tests; selecting a different solver on one
-target would not preserve the package's simulation contract.
+The collision profile is compound spheres and static infinite planes. The
+adapter evaluates the analytic formulas from upstream
+`geometry/collision_primitive.py` in sorted collider-entity pair order, with
+the same +X normal for coincident sphere centers. Zero-radius spheres are
+rejected. Tide planes use local +Y as their positive exterior; upstream's
+plane convention is local +Z. A plane represents the boundary of a solid
+negative half-space, so spheres below it are pushed toward its positive side.
+Body/local shape transforms are composed after fresh forward kinematics on
+every substep. Contact midpoint/separation/normal are converted to body-frame
+core anchors and effective-radius thickness using `sim/collide.py`'s writer
+formulas, then the actual upstream force kernel evaluates each pair serially.
+Materials are averaged, adhesion and surface velocity are zero, and
+`friction_smoothing` is fixed at 0.01. The force kernel uses penalty stiffness
+and approach damping, with velocity-dependent Huber-regularized friction; it
+does not implement a static-friction constraint or contact history. Its scalar
+friction limiter does not strictly bound the final Euclidean vector magnitude
+by Coulomb's limit because its Huber value differs from vector length.
+
+Exclusion groups are nonnegative; negative values are rejected. Same-body,
+matching nonzero exclusion-group and static/static pairs are skipped.
+A transient zeroed per-pair wrench buffer permits exact per-collider
+force readback, including static reactions, before ordered body accumulation.
+Readback is the mean over all successful substeps, with zero for no contact.
+No contact, matching, warm-start or native solver state survives the call.
+The no-collider and noncontacting paths retain the original dynamics kernels.
+
+The general upstream collision pipeline, meshes, boxes, queries, soft bodies,
+importers and GPU execution remain outside this port's current profile. Adding
+them requires extending the state/portability boundary and the native/WASM
+parity tests; selecting a different solver on one target would not preserve
+the package's simulation contract.

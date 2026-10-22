@@ -18,13 +18,18 @@
 #define DUCK_JOINTS 14
 #define DUCK_BODIES 15
 #define DUCK_OBSERVATIONS 44
-/* Assisted free-root fixture: observed on native and WASI before pinning. */
-#define DUCK_HASH UINT64_C(0xd39953ac3eb20462)
+/* Package contacts: observed on native/WASI debug before pinning. */
+#define DUCK_HASH UINT64_C(0xf87f0902ec4db694)
+
+static tide_entity entity_at(const tide_world *world, tide_list list, int index)
+{
+    const tide_entity *value = tide_list_read(&world->heap, list, index, sizeof(*value));
+    return value ? *value : (tide_entity){0};
+}
 
 static tide_entity body_at(const tide_world *world, Duck duck, int index)
 {
-    const tide_entity *value = tide_list_read(&world->heap, duck.bodies, index, sizeof(*value));
-    return value ? *value : (tide_entity){0};
+    return entity_at(world, duck.bodies, index);
 }
 
 static tide_entity joint_at(const tide_world *world, Duck duck, int index)
@@ -92,17 +97,101 @@ static tide_quaternion original_rotation(const tide_world *world, Duck duck, int
     return tide_mul_q(body.rotation, tide_inverse_q(part.principalRotation));
 }
 
-/* Independently authored source-frame proxy corners, not DuckSolePoint calls. */
-static tide_float3 sole_point(Newton_Body body, tide_quaternion rotation, int corner)
+static tide_entity collider_body(tide_entity entity, Newton_Collider collider)
 {
-    static const float x[4] = {-0.032f, -0.032f, 0.032f, 0.032f};
-    static const float z[4] = {-0.0290852f, 0.0009148f, -0.0290852f, 0.0009148f};
-    return tide_add_f3(body.position, tide_rotate_q(rotation, tide_f3(x[corner], -0.0238146f, z[corner])));
+    return tide_entity_is_null(collider.body) ? entity : collider.body;
+}
+
+static tide_float3 sphere_center(const tide_world *world, tide_entity entity)
+{
+    const Newton_Collider collider = tide_get_Newton_Collider(world, entity);
+    const Newton_Body body = tide_get_Newton_Body(world, collider_body(entity, collider));
+    return tide_add_f3(body.position, tide_rotate_q(body.rotation, collider.position));
+}
+
+static float sole_clearance(const tide_world *world, Duck duck, int foot)
+{
+    float lowest = INFINITY;
+    for (int i = 0; i < tide_list_read_count(&world->heap, duck.soles); ++i) {
+        const tide_entity entity = entity_at(world, duck.soles, i);
+        if (tide_get_DuckSole(world, entity).foot != foot) continue;
+        const Newton_Collider collider = tide_get_Newton_Collider(world, entity);
+        const float height = sphere_center(world, entity).y - collider.radius;
+        if (height < lowest) lowest = height;
+    }
+    return lowest;
 }
 
 static void check_vector(tide_float3 actual, tide_float3 expected, float tolerance)
 {
+    if (tide_distance_f3(actual, expected) > tolerance)
+        printf("    vector actual (%g,%g,%g), expected (%g,%g,%g), tolerance %g\n",
+            (double)actual.x, (double)actual.y, (double)actual.z,
+            (double)expected.x, (double)expected.y, (double)expected.z, (double)tolerance);
     TIDE_CHECK(tide_distance_f3(actual, expected) <= tolerance);
+}
+
+static tide_float3 body_com(Newton_Body body)
+{
+    return tide_add_f3(body.position, tide_rotate_q(body.rotation, body.centerOfMass));
+}
+
+static void disable_ball_colliders(tide_world *world)
+{
+    for (int i = 0; i < tide_list_read_count(&world->heap, world->DuckSandbox.balls); ++i) {
+        const tide_entity entity = entity_at(world, world->DuckSandbox.balls, i);
+        Newton_Collider collider = tide_get_Newton_Collider(world, entity);
+        collider.enabled = false;
+        TIDE_REQUIRE(tide_set_Newton_Collider(world, entity, collider));
+    }
+}
+
+static void place_duck(tide_world *world, tide_entity entity, tide_float3 origin, tide_quaternion turn)
+{
+    Duck duck = tide_get_Duck(world, entity);
+    const tide_float3 previous = tide_get_Newton_Body(world, body_at(world, duck, 0)).position;
+    duck.assisted = false;
+    TIDE_REQUIRE(tide_set_Duck(world, entity, duck));
+    for (int i = 0; i < DUCK_BODIES; ++i) {
+        const tide_entity part = body_at(world, duck, i);
+        Newton_Body body = tide_get_Newton_Body(world, part);
+        body.position = tide_add_f3(origin, tide_rotate_q(turn, tide_sub_f3(body.position, previous)));
+        body.rotation = tide_mul_q(turn, body.rotation);
+        body.velocity = body.angularVelocity = tide_f3(0, 0, 0);
+        TIDE_REQUIRE(tide_set_Newton_Body(world, part, body));
+    }
+}
+
+static tide_entity child_collider(const tide_world *world, Duck duck, int child)
+{
+    const tide_entity body = body_at(world, duck, child);
+    for (int i = 0; i < tide_list_read_count(&world->heap, duck.colliders); ++i) {
+        const tide_entity entity = entity_at(world, duck.colliders, i);
+        if (tide_entity_equal(tide_get_Newton_Collider(world, entity).body, body)) return entity;
+    }
+    return (tide_entity){0};
+}
+
+static DuckControls grab_action(const tide_world *world, tide_entity entity, tide_float3 offset, int serial)
+{
+    const Newton_Collider collider = tide_get_Newton_Collider(world, entity);
+    const tide_entity selected = collider_body(entity, collider);
+    const Newton_Body body = tide_get_Newton_Body(world, selected);
+    const tide_float3 anchor = tide_add_f3(collider.position, tide_f3(collider.radius, 0, 0));
+    const tide_float3 point = tide_add_f3(body.position, tide_rotate_q(body.rotation, anchor));
+    return (DuckControls){.grab = true, .grabCollider = entity, .grabAnchor = anchor,
+        .grabTarget = tide_add_f3(point, offset),
+        .grabRevision = tide_get_SandboxBody(world, selected).revision, .grabSerial = serial};
+}
+
+static tide_float3 duck_momentum(const tide_world *world, Duck duck)
+{
+    tide_float3 result = {0};
+    for (int i = 0; i < DUCK_BODIES; ++i) {
+        const Newton_Body body = tide_get_Newton_Body(world, body_at(world, duck, i));
+        result = tide_add_f3(result, tide_mul_f3(tide_f3_splat(body.mass), body.velocity));
+    }
+    return result;
 }
 
 static void check_observation(const tide_world *world, Duck duck, tide_list observation)
@@ -126,7 +215,7 @@ TIDE_TEST(microduck_spawns_coherent_original_fk_without_a_fixed_root)
     const tide_quaternion up = tide_axisangle_q(tide_f3(1, 0, 0), -TIDE_PI_F / 2);
     for (int seat = 0; seat < 2; ++seat) {
         const Duck duck = tide_get_Duck(&world, seat == 0 ? world.DuckFixture.first : world.DuckFixture.second);
-        TIDE_CHECK(duck.assisted && duck.floorEnabled);
+        TIDE_CHECK(duck.assisted && tide_get_Newton_Collider(&world, world.DuckSandbox.floor).enabled);
         for (int i = 0; i < DUCK_BODIES; ++i) {
             const duck_model_expected_body *source = &duck_model_expected[i];
             const Newton_Body body = tide_get_Newton_Body(&world, body_at(&world, duck, i));
@@ -147,118 +236,6 @@ TIDE_TEST(microduck_spawns_coherent_original_fk_without_a_fixed_root)
     }
     tide_world_tick(&world);
     TIDE_CHECK(tide_list_read_count(&world.heap, world.Newton_Physics.joints) == 2 * DUCK_JOINTS);
-    tide_world_free(&world);
-}
-
-TIDE_TEST(microduck_floor_uses_com_point_velocity_coulomb_friction_and_point_torque)
-{
-    static tide_world world;
-    tide_world_init(&world, DUCK_DT);
-    Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
-    duck.assisted = false;
-    TIDE_REQUIRE(tide_set_Duck(&world, world.DuckFixture.first, duck));
-    const tide_entity root_entity = body_at(&world, duck, 0);
-    Newton_Body root = tide_get_Newton_Body(&world, root_entity);
-    /* Validation rejects before integration, exposing the game's actual applied
-     * wrench without FK replacing these deliberately chosen point states. */
-    root.mass = -1;
-    root.force = tide_f3(21, 22, 23);
-    root.torque = tide_f3(24, 25, 26);
-    TIDE_REQUIRE(tide_set_Newton_Body(&world, root_entity, root));
-    bool saw_angular_effect = false, saw_com_arm_effect = false;
-    for (int scenario = 0; scenario < 6; ++scenario) {
-        tide_float3 force[2], torque[2];
-        float load[2];
-        for (int foot = 0; foot < 2; ++foot) {
-            const int index = foot == 0 ? 5 : 14;
-            const tide_entity entity = body_at(&world, duck, index);
-            Newton_Body body = tide_get_Newton_Body(&world, entity);
-            const DuckPart part = tide_get_DuckPart(&world, entity);
-            const tide_quaternion rotation = tide_euler_q(tide_f3(0.15f, 0.35f, -0.1f));
-            body.rotation = tide_mul_q(rotation, part.principalRotation);
-            body.position = tide_f3(0.8f + (float)foot, scenario == 0 ? 0.1f : scenario == 5 ? -0.08f : 0.020f, -0.3f);
-            body.velocity = scenario == 1 ? tide_f3(0, 0, 0) :
-                tide_f3(scenario == 3 ? 10.0f : 0.4f, scenario == 4 ? 10.0f : -0.2f, -0.3f);
-            body.angularVelocity = scenario >= 2 && scenario != 4 ? tide_f3(1.7f, -2.3f, 3.1f) : tide_f3(0, 0, 0);
-            body.force = tide_f3(31, 32, 33);
-            body.torque = tide_f3(41, 42, 43);
-            TIDE_REQUIRE(tide_set_Newton_Body(&world, entity, body));
-            force[foot] = torque[foot] = tide_f3(0, 0, 0);
-            load[foot] = 0;
-            const tide_float3 center = tide_add_f3(body.position, tide_rotate_q(body.rotation, body.centerOfMass));
-            for (int corner = 0; corner < 4; ++corner) {
-                const tide_float3 point = sole_point(body, rotation, corner);
-                const tide_float3 arm = tide_sub_f3(point, center);
-                const tide_float3 spin = tide_cross_f3(body.angularVelocity, arm);
-                const tide_float3 velocity = tide_add_f3(body.velocity, spin);
-                if (point.y >= 0) continue;
-                const float normal = fminf(12, fmaxf(0, -1000 * point.y - 4 * velocity.y));
-                const float speed = tide_sqrt_f(velocity.x * velocity.x + velocity.z * velocity.z);
-                const float gain = fminf(20, 0.8f * normal / fmaxf(speed, 1e-6f));
-                const tide_float3 f = tide_f3(-gain * velocity.x, normal, -gain * velocity.z);
-                const tide_float3 moment = tide_cross_f3(arm, f);
-                force[foot] = tide_add_f3(force[foot], f);
-                torque[foot] = tide_add_f3(torque[foot], moment);
-                load[foot] += normal;
-                TIDE_CHECK(f.x * velocity.x + f.z * velocity.z <= 0);
-                TIDE_CHECK(tide_sqrt_f(f.x * f.x + f.z * f.z) <= 0.8f * normal + 1e-6f);
-                saw_angular_effect = saw_angular_effect || (normal > 0 && fabsf(spin.y) > 0.01f);
-                saw_com_arm_effect = saw_com_arm_effect ||
-                    tide_distance_f3(moment, tide_cross_f3(tide_sub_f3(point, body.position), f)) > 0.001f;
-            }
-        }
-        for (int repeat = 0; repeat < 2; ++repeat) {
-            tide_world_tick(&world);
-            TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_InvalidBody);
-            duck = tide_get_Duck(&world, world.DuckFixture.first);
-            TIDE_CHECK(tide_list_read_count(&world.heap, duck.transitions) == 0);
-            TIDE_CHECK(fabsf(duck.footLoad.x - load[0]) < 2e-4f);
-            TIDE_CHECK(fabsf(duck.footLoad.y - load[1]) < 2e-4f);
-            for (int foot = 0; foot < 2; ++foot) {
-                const Newton_Body body = tide_get_Newton_Body(&world, body_at(&world, duck, foot == 0 ? 5 : 14));
-                check_vector(body.force, force[foot], 3e-4f);
-                check_vector(body.torque, torque[foot], 2e-5f);
-                if (scenario == 0 || scenario == 4) check_vector(body.force, tide_f3(0, 0, 0), 0);
-                if (scenario == 5) TIDE_CHECK(load[foot] == 48);
-            }
-            check_vector(duck.assistanceForce, tide_f3(0, 0, 0), 0);
-            check_vector(duck.assistanceTorque, tide_f3(0, 0, 0), 0);
-            const Newton_Body cleared = tide_get_Newton_Body(&world, root_entity);
-            check_vector(cleared.force, tide_f3(0, 0, 0), 0);
-            check_vector(cleared.torque, tide_f3(0, 0, 0), 0);
-        }
-    }
-    TIDE_CHECK(saw_angular_effect && saw_com_arm_effect);
-    /* Numeric flat-sole cases independently fix signs, units, friction branches
-     * and load-channel assignment, in addition to the rotated model above. */
-    for (int active_foot = 0; active_foot < 2; ++active_foot) {
-        for (int scenario = 0; scenario < 3; ++scenario) {
-            for (int foot = 0; foot < 2; ++foot) {
-                const tide_entity entity = body_at(&world, duck, foot == 0 ? 5 : 14);
-                Newton_Body body = tide_get_Newton_Body(&world, entity);
-                DuckPart part = tide_get_DuckPart(&world, entity);
-                part.principalRotation = tide_identity_q();
-                body.rotation = tide_identity_q();
-                body.position = tide_f3(0, foot == active_foot ? 0.0218146f : 0.1f, 0);
-                body.centerOfMass = tide_f3(0.01f, 0.02f, 0.03f);
-                body.velocity = scenario == 0 ? tide_f3(0, 0, 0) :
-                    scenario == 1 ? tide_f3(0.01f, 0, 0.02f) : tide_f3(3, 0, 4);
-                body.angularVelocity = tide_f3(0, 0, 0);
-                TIDE_REQUIRE(tide_set_DuckPart(&world, entity, part));
-                TIDE_REQUIRE(tide_set_Newton_Body(&world, entity, body));
-            }
-            tide_world_tick(&world);
-            TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_InvalidBody);
-            duck = tide_get_Duck(&world, world.DuckFixture.first);
-            TIDE_CHECK(fabsf((active_foot == 0 ? duck.footLoad.x : duck.footLoad.y) - 8) < 1e-4f);
-            TIDE_CHECK((active_foot == 0 ? duck.footLoad.y : duck.footLoad.x) == 0);
-            const Newton_Body body = tide_get_Newton_Body(&world, body_at(&world, duck, active_foot == 0 ? 5 : 14));
-            const tide_float3 expected = scenario == 0 ? tide_f3(0, 8, 0) :
-                scenario == 1 ? tide_f3(-0.8f, 8, -1.6f) : tide_f3(-3.84f, 8, -5.12f);
-            check_vector(body.force, expected, 1e-4f);
-            check_vector(body.torque, tide_cross_f3(tide_f3(-0.01f, -0.0438146f, -0.0440852f), expected), 1e-5f);
-        }
-    }
     tide_world_free(&world);
 }
 
@@ -295,6 +272,470 @@ TIDE_TEST(microduck_preserves_each_authored_mass_com_and_full_inertia_tensor)
             TIDE_CHECK(fabsf(inertia - source->full_inertia[k]) <= scale * 2e-6f);
         }
     }
+    tide_world_free(&world);
+}
+
+TIDE_TEST(microduck_package_colliders_cover_every_body_and_report_floor_loads)
+{
+    static tide_world world;
+    tide_world_init(&world, DUCK_DT);
+    for (int seat = 0; seat < 2; ++seat) {
+        const Duck duck = tide_get_Duck(&world, seat ? world.DuckFixture.second : world.DuckFixture.first);
+        int coverage[DUCK_BODIES] = {0};
+        TIDE_REQUIRE(tide_list_read_count(&world.heap, duck.soles) == 12);
+        for (int i = 0; i < tide_list_read_count(&world.heap, duck.colliders); ++i) {
+            const tide_entity entity = entity_at(&world, duck.colliders, i);
+            const Newton_Collider collider = tide_get_Newton_Collider(&world, entity);
+            TIDE_CHECK(collider.enabled && collider.type == Newton_ColliderType_Sphere && collider.radius > 0);
+            TIDE_CHECK(collider.exclusionGroup == seat + 1);
+            TIDE_CHECK(tide_has_Grabbable(&world, entity));
+            bool found = false;
+            for (int body = 0; body < DUCK_BODIES; ++body) {
+                if (tide_entity_equal(collider.body, body_at(&world, duck, body))) { ++coverage[body]; found = true; }
+            }
+            TIDE_CHECK(found);
+        }
+        for (int i = 0; i < DUCK_BODIES; ++i) TIDE_CHECK(coverage[i] > 0);
+    }
+    for (int tick = 0; tick < 80; ++tick) tide_world_tick(&world);
+    TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
+    tide_float3 reactions = tide_get_Newton_Collider(&world, world.DuckSandbox.floor).contactForce;
+    TIDE_CHECK(reactions.y < -1.0f);
+    for (int seat = 0; seat < 2; ++seat) {
+        const Duck duck = tide_get_Duck(&world, seat ? world.DuckFixture.second : world.DuckFixture.first);
+        float loads[2] = {0};
+        for (int i = 0; i < tide_list_read_count(&world.heap, duck.colliders); ++i) {
+            const tide_entity entity = entity_at(&world, duck.colliders, i);
+            const Newton_Collider collider = tide_get_Newton_Collider(&world, entity);
+            reactions = tide_add_f3(reactions, collider.contactForce);
+            if (tide_has_DuckSole(&world, entity)) loads[tide_get_DuckSole(&world, entity).foot] += collider.contactForce.y;
+        }
+        TIDE_CHECK(duck.footLoad.x == loads[0] && duck.footLoad.y == loads[1]);
+    }
+    for (int i = 0; i < 4; ++i)
+        reactions = tide_add_f3(reactions, tide_get_Newton_Collider(&world, entity_at(&world, world.DuckSandbox.balls, i)).contactForce);
+    check_vector(reactions, tide_f3(0, 0, 0), 0.001f);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(microduck_all_four_loose_balls_fall_and_rest_on_the_floor)
+{
+    static tide_world world;
+    tide_world_init(&world, DUCK_DT);
+    TIDE_REQUIRE(tide_list_read_count(&world.heap, world.DuckSandbox.balls) == 4);
+    tide_entity balls[4];
+    float minimum[4] = {1, 1, 1, 1};
+    for (int i = 0; i < 4; ++i) {
+        balls[i] = entity_at(&world, world.DuckSandbox.balls, i);
+        const Newton_Collider collider = tide_get_Newton_Collider(&world, balls[i]);
+        const LooseBall ball = tide_get_LooseBall(&world, balls[i]);
+        TIDE_CHECK(collider.enabled && collider.type == Newton_ColliderType_Sphere && collider.radius == ball.radius);
+        TIDE_CHECK(tide_entity_equal(collider_body(balls[i], collider), balls[i]));
+        for (int other = 0; other < i; ++other) TIDE_CHECK(!tide_entity_equal(balls[i], balls[other]));
+        Newton_Body body = tide_get_Newton_Body(&world, balls[i]);
+        body.position = tide_f3(0.7f + (float)i * 0.15f, 0.12f + (float)i * 0.01f, -0.7f);
+        TIDE_REQUIRE(tide_set_Newton_Body(&world, balls[i], body));
+    }
+    for (int tick = 0; tick < 800; ++tick) {
+        tide_world_tick(&world);
+        TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
+        for (int i = 0; i < 4; ++i) {
+            const Newton_Collider collider = tide_get_Newton_Collider(&world, balls[i]);
+            const float bottom = sphere_center(&world, balls[i]).y - collider.radius;
+            if (bottom < minimum[i]) minimum[i] = bottom;
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        const Newton_Body body = tide_get_Newton_Body(&world, balls[i]);
+        const Newton_Collider collider = tide_get_Newton_Collider(&world, balls[i]);
+        printf("    ball %d: minimum %.6f m, settled %.6f m, support %.6f N\n", i,
+            (double)minimum[i], (double)(body.position.y - collider.radius), (double)collider.contactForce.y);
+        TIDE_CHECK(minimum[i] > -0.02f);
+        TIDE_CHECK(fabsf(body.velocity.y) < 0.001f);
+        TIDE_CHECK(fabsf(collider.contactForce.y - body.mass * 9.81f) < 0.002f);
+        TIDE_CHECK(fabsf(body.position.y - (collider.radius - body.mass * 9.81f / collider.stiffness)) < 0.0001f);
+    }
+    tide_world_free(&world);
+}
+
+TIDE_TEST(microduck_failed_physics_replaces_game_wrenches_without_accumulating_grabs)
+{
+    static tide_world world;
+    tide_world_init(&world, DUCK_DT);
+    Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
+    duck.assisted = false;
+    TIDE_REQUIRE(tide_set_Duck(&world, world.DuckFixture.first, duck));
+    const tide_entity root_entity = body_at(&world, duck, 0);
+    Newton_Body root = tide_get_Newton_Body(&world, root_entity);
+    const float mass = root.mass;
+    root.mass = -1;
+    root.force = tide_f3(100, 200, 300);
+    root.torque = tide_f3(400, 500, 600);
+    TIDE_REQUIRE(tide_set_Newton_Body(&world, root_entity, root));
+    const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
+    Newton_Body body = tide_get_Newton_Body(&world, ball);
+    body.position = tide_f3(0, 1, 0);
+    body.force = tide_f3(100, 200, 300);
+    body.torque = tide_f3(400, 500, 600);
+    TIDE_REQUIRE(tide_set_Newton_Body(&world, ball, body));
+    Newton_Collider collider = tide_get_Newton_Collider(&world, ball);
+    collider.contactForce = tide_f3(1, 2, 3);
+    TIDE_REQUIRE(tide_set_Newton_Collider(&world, ball, collider));
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        tide_world_set_input(&world, tide_player_from_index(0), grab_action(&world, ball, tide_f3(0, 0.02f, 0), repeat + 1));
+        tide_world_tick(&world);
+        TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_InvalidBody);
+        const DuckGrab grab = tide_get_DuckGrab(&world, world.DuckFixture.first);
+        TIDE_CHECK(tide_entity_equal(grab.body, ball));
+        check_vector(grab.force, tide_f3(0, 0.7f, 0), 2e-6f);
+        body = tide_get_Newton_Body(&world, ball);
+        check_vector(body.force, grab.force, 0);
+        check_vector(body.torque, grab.torque, 0);
+        check_vector(tide_get_Newton_Collider(&world, ball).contactForce, tide_f3(1, 2, 3), 0);
+        check_vector(tide_get_Newton_Body(&world, root_entity).force, tide_f3(0, 0, 0), 0);
+        check_vector(tide_get_Newton_Body(&world, root_entity).torque, tide_f3(0, 0, 0), 0);
+        TIDE_CHECK(tide_list_read_count(&world.heap, tide_get_Duck(&world, world.DuckFixture.first).transitions) == 0);
+    }
+    tide_world_set_input(&world, tide_player_from_index(0), (DuckControls){0});
+    tide_world_tick(&world);
+    check_vector(tide_get_Newton_Body(&world, ball).force, tide_f3(0, 0, 0), 0);
+    root = tide_get_Newton_Body(&world, root_entity);
+    root.mass = mass;
+    TIDE_REQUIRE(tide_set_Newton_Body(&world, root_entity, root));
+    tide_world_tick(&world);
+    TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
+    check_vector(tide_get_Newton_Collider(&world, ball).contactForce, tide_f3(0, 0, 0), 0);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(microduck_full_body_topples_onto_package_floor_without_assistance)
+{
+    static tide_world world;
+    tide_world_init(&world, DUCK_DT);
+    disable_ball_colliders(&world);
+    place_duck(&world, world.DuckFixture.first, tide_f3(-0.6f, 0.35f, -0.4f),
+        tide_axisangle_q(tide_f3(0, 0, 1), TIDE_PI_F * 0.5f));
+    const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
+    bool nonsole_contact = false;
+    float minimum = 1.0f, final_minimum = 1.0f;
+    for (int tick = 0; tick < 400; ++tick) {
+        tide_world_tick(&world);
+        TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
+        for (int i = 0; i < tide_list_read_count(&world.heap, duck.colliders); ++i) {
+            const tide_entity entity = entity_at(&world, duck.colliders, i);
+            const Newton_Collider collider = tide_get_Newton_Collider(&world, entity);
+            const float bottom = sphere_center(&world, entity).y - collider.radius;
+            TIDE_REQUIRE(isfinite(bottom));
+            if (bottom < minimum) minimum = bottom;
+            if (tick >= 340 && bottom < final_minimum) final_minimum = bottom;
+            if (!tide_has_DuckSole(&world, entity) && collider.contactForce.y > 0.05f) nonsole_contact = true;
+        }
+    }
+    const Newton_Body root = tide_get_Newton_Body(&world, body_at(&world, duck, 0));
+    printf("    toppled duck: minimum sphere bottom %.6f m, settled %.6f m, root speed %.6f m/s\n",
+        (double)minimum, (double)final_minimum, (double)tide_length_f3(root.velocity));
+    TIDE_CHECK(nonsole_contact);
+    TIDE_CHECK(minimum > -0.02f && final_minimum > -0.01f);
+    TIDE_CHECK(tide_length_f3(root.velocity) < 0.25f);
+    TIDE_CHECK(!tide_get_Duck(&world, world.DuckFixture.first).assisted);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(microduck_loose_ball_transfers_contact_momentum_to_articulation)
+{
+    static tide_world world, without;
+    tide_world_init(&world, DUCK_DT);
+    place_duck(&world, world.DuckFixture.first, tide_f3(-0.4f, 0.6f, -0.4f), tide_identity_q());
+    disable_ball_colliders(&world);
+    Newton_Collider floor = tide_get_Newton_Collider(&world, world.DuckSandbox.floor);
+    floor.enabled = false;
+    TIDE_REQUIRE(tide_set_Newton_Collider(&world, world.DuckSandbox.floor, floor));
+    const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
+    const tide_entity target = child_collider(&world, duck, 0);
+    const Newton_Collider proxy = tide_get_Newton_Collider(&world, target);
+    // Isolate one surface witness rather than starting the ball deeply inside
+    // several overlapping trunk proxies. Full compound coverage is separate.
+    for (int i = 0; i < tide_list_read_count(&world.heap, duck.colliders); ++i) {
+        const tide_entity entity = entity_at(&world, duck.colliders, i);
+        Newton_Collider shape = tide_get_Newton_Collider(&world, entity);
+        shape.enabled = tide_entity_equal(entity, target);
+        TIDE_REQUIRE(tide_set_Newton_Collider(&world, entity, shape));
+    }
+    const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
+    Newton_Collider collider = tide_get_Newton_Collider(&world, ball);
+    collider.enabled = true;
+    TIDE_REQUIRE(tide_set_Newton_Collider(&world, ball, collider));
+    Newton_Body body = tide_get_Newton_Body(&world, ball);
+    body.position = tide_add_f3(sphere_center(&world, target), tide_f3(proxy.radius + collider.radius - 0.001f, 0, 0));
+    body.velocity = tide_f3(-0.2f, 0, 0);
+    TIDE_REQUIRE(tide_set_Newton_Body(&world, ball, body));
+    tide_world_copy(&without, &world);
+    collider.enabled = false;
+    TIDE_REQUIRE(tide_set_Newton_Collider(&without, ball, collider));
+    tide_world_tick(&world);
+    tide_world_tick(&without);
+    TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok && without.Newton_Physics.status == Newton_Status_Ok);
+    const tide_float3 reaction = tide_get_Newton_Collider(&world, ball).contactForce;
+    TIDE_CHECK(tide_length_f3(reaction) > 0.1f);
+    const tide_float3 difference = tide_sub_f3(duck_momentum(&world, duck), duck_momentum(&without, tide_get_Duck(&without, without.DuckFixture.first)));
+    check_vector(difference, tide_mul_f3(tide_f3_splat(-DUCK_DT), reaction), 5e-5f);
+    const Newton_Body hit = tide_get_Newton_Body(&world, ball);
+    const Newton_Body missed = tide_get_Newton_Body(&without, ball);
+    check_vector(tide_mul_f3(tide_f3_splat(body.mass), tide_sub_f3(hit.velocity, missed.velocity)),
+        tide_mul_f3(tide_f3_splat(DUCK_DT), reaction), 5e-6f);
+    tide_world_free(&world);
+    tide_world_free(&without);
+}
+
+TIDE_TEST(microduck_input_grab_applies_com_wrench_without_teleporting)
+{
+    static tide_world world, twice;
+    tide_world_init(&world, DUCK_DT);
+    const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
+    Newton_Body before = tide_get_Newton_Body(&world, ball);
+    before.position = tide_f3(0, 1, 0);
+    before.rotation = tide_axisangle_q(tide_f3(0, 0, 1), TIDE_PI_F * 0.5f);
+    before.centerOfMass = tide_f3(0.005f, 0, 0);
+    TIDE_REQUIRE(tide_set_Newton_Body(&world, ball, before));
+    const DuckControls request = grab_action(&world, ball, tide_f3(0.004f, 0.002f, 0), 1);
+    tide_world_copy(&twice, &world);
+    tide_world_set_input(&world, tide_player_from_index(0), request);
+    tide_world_set_input(&twice, tide_player_from_index(0), request);
+    tide_world_set_input(&twice, tide_player_from_index(1), request);
+    tide_world_tick(&world);
+    tide_world_tick(&twice);
+    TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok && twice.Newton_Physics.status == Newton_Status_Ok);
+    const DuckGrab grab = tide_get_DuckGrab(&world, world.DuckFixture.first);
+    TIDE_CHECK(tide_entity_equal(grab.body, ball) && grab.requested);
+    check_vector(grab.force, tide_f3(0.14f, 0.07f, 0), 3e-6f);
+    const tide_float3 point = tide_add_f3(before.position, tide_rotate_q(before.rotation, request.grabAnchor));
+    check_vector(grab.torque, tide_cross_f3(tide_sub_f3(point, body_com(before)), grab.force), 2e-7f);
+    const Newton_Body after = tide_get_Newton_Body(&world, ball);
+    const tide_float3 acceleration = tide_add_f3(tide_mul_f3(tide_f3_splat(1.0f / before.mass), grab.force), world.Newton_Physics.gravity);
+    check_vector(after.velocity, tide_mul_f3(tide_f3_splat(DUCK_DT), acceleration), 2e-6f);
+    check_vector(body_com(after), tide_add_f3(body_com(before),
+        tide_mul_f3(tide_f3_splat(DUCK_DT * DUCK_DT * 0.625f), acceleration)), 2e-6f);
+    TIDE_CHECK(tide_distance_f3(after.position, request.grabTarget) > 0.02f);
+    printf("    grabbed ball omega.z %.9g, constant COM torque expectation %.9g\n",
+        (double)after.angularVelocity.z, (double)(grab.torque.z / before.inertia.z * DUCK_DT));
+    TIDE_CHECK(fabsf(after.angularVelocity.z - grab.torque.z / before.inertia.z * DUCK_DT) < 2e-4f);
+    const DuckGrab first = tide_get_DuckGrab(&twice, twice.DuckFixture.first);
+    const DuckGrab second = tide_get_DuckGrab(&twice, twice.DuckFixture.second);
+    check_vector(first.force, grab.force, 0);
+    check_vector(second.force, grab.force, 0);
+    const Newton_Body combined = tide_get_Newton_Body(&twice, ball);
+    check_vector(tide_sub_f3(combined.velocity, after.velocity),
+        tide_mul_f3(tide_f3_splat(DUCK_DT / before.mass), grab.force), 2e-6f);
+    const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
+    const DuckTransition sample = transition_at(&world, duck, 0);
+    TIDE_CHECK(sample.grabRequested && tide_entity_equal(sample.grabBody, ball));
+    check_vector(sample.grabForce, grab.force, 0);
+    check_vector(sample.grabTorque, grab.torque, 0);
+    check_vector(sample.grabAnchor, request.grabAnchor, 0);
+    check_vector(sample.grabTarget, request.grabTarget, 0);
+    tide_world_free(&world);
+    tide_world_free(&twice);
+}
+
+TIDE_TEST(microduck_input_grab_child_couples_to_whole_articulation)
+{
+    static tide_world world, without;
+    tide_world_init(&world, DUCK_DT);
+    place_duck(&world, world.DuckFixture.first, tide_f3(-0.4f, 0.7f, -0.4f), tide_identity_q());
+    const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
+    const tide_entity collider = child_collider(&world, duck, 6);
+    TIDE_REQUIRE(!tide_entity_is_null(collider));
+    const DuckControls request = grab_action(&world, collider, tide_f3(0.004f, 0.008f, 0), 1);
+    const Newton_Body before = tide_get_Newton_Body(&world, collider_body(collider, tide_get_Newton_Collider(&world, collider)));
+    tide_world_copy(&without, &world);
+    tide_world_set_input(&world, tide_player_from_index(0), request);
+    tide_world_tick(&world);
+    tide_world_tick(&without);
+    TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok && without.Newton_Physics.status == Newton_Status_Ok);
+    const DuckGrab grab = tide_get_DuckGrab(&world, world.DuckFixture.first);
+    TIDE_CHECK(!tide_entity_is_null(grab.body) && !tide_entity_equal(grab.body, body_at(&world, duck, 0)));
+    TIDE_CHECK(tide_length_f3(grab.force) > 0.1f && tide_length_f3(grab.force) <= 12.00001f);
+    const tide_float3 point = tide_add_f3(before.position, tide_rotate_q(before.rotation, request.grabAnchor));
+    check_vector(grab.torque, tide_cross_f3(tide_sub_f3(point, body_com(before)), grab.force), 2e-7f);
+    check_vector(tide_sub_f3(duck_momentum(&world, duck), duck_momentum(&without, tide_get_Duck(&without, without.DuckFixture.first))),
+        tide_mul_f3(tide_f3_splat(DUCK_DT), grab.force), 2e-5f);
+    TIDE_CHECK(tide_distance_f3(tide_get_Newton_Body(&world, body_at(&world, duck, 0)).velocity,
+                              tide_get_Newton_Body(&without, body_at(&without, tide_get_Duck(&without, without.DuckFixture.first), 0)).velocity) > 1e-5f);
+    tide_world_free(&world);
+    tide_world_free(&without);
+}
+
+TIDE_TEST(microduck_grab_rejects_invalid_requests_and_records_requested_metadata)
+{
+    static tide_world world;
+    for (int scenario = 0; scenario < 6; ++scenario) {
+        tide_world_init(&world, DUCK_DT);
+        const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
+        DuckControls request = grab_action(&world, ball, tide_f3(0, 0.01f, 0), 1);
+        if (scenario == 0) request.grabAnchor = tide_f3(0, 0, 0); // not on the sphere
+        if (scenario == 1) ++request.grabCollider.generation;
+        if (scenario == 2) ++request.grabRevision;
+        if (scenario == 3) request.grabCollider = world.DuckSandbox.floor;
+        if (scenario == 4) {
+            Newton_Collider collider = tide_get_Newton_Collider(&world, ball);
+            collider.enabled = false;
+            TIDE_REQUIRE(tide_set_Newton_Collider(&world, ball, collider));
+        }
+        if (scenario == 5) request.grabAnchor = tide_f3(0.25f, 0.25f, 0.25f);
+        tide_world_set_input(&world, tide_player_from_index(0), request);
+        tide_world_tick(&world);
+        TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
+        const DuckGrab grab = tide_get_DuckGrab(&world, world.DuckFixture.first);
+        TIDE_CHECK(grab.requested && tide_entity_is_null(grab.body) && tide_entity_is_null(grab.collider));
+        check_vector(grab.force, tide_f3(0, 0, 0), 0);
+        check_vector(grab.torque, tide_f3(0, 0, 0), 0);
+        const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
+        const DuckTransition sample = transition_at(&world, duck, 0);
+        TIDE_CHECK(sample.grabRequested && tide_entity_is_null(sample.grabBody));
+        TIDE_CHECK(tide_entity_equal(sample.grabCollider, request.grabCollider));
+        check_vector(sample.grabAnchor, request.grabAnchor, 0);
+        check_vector(sample.grabTarget, request.grabTarget, 0);
+        check_vector(sample.grabForce, tide_f3(0, 0, 0), 0);
+        tide_world_free(&world);
+    }
+}
+
+TIDE_TEST(microduck_grab_caps_force_expires_and_releases_without_extra_impulse)
+{
+    static tide_world world;
+    tide_world_init(&world, DUCK_DT);
+    world.Newton_Physics.gravity = tide_f3(0, 0, 0);
+    const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
+    Newton_Body body = tide_get_Newton_Body(&world, ball);
+    body.position = tide_f3(0, 1, 0);
+    TIDE_REQUIRE(tide_set_Newton_Body(&world, ball, body));
+    DuckControls request = grab_action(&world, ball, tide_f3(0, 0.002f, 0), 17);
+    tide_world_set_input(&world, tide_player_from_index(0), request);
+    tide_world_tick(&world);
+    TIDE_CHECK(tide_entity_equal(tide_get_DuckGrab(&world, world.DuckFixture.first).body, ball));
+    for (int tick = 0; tick < 49; ++tick) tide_world_tick(&world);
+    DuckGrab before_expiry = tide_get_DuckGrab(&world, world.DuckFixture.first);
+    TIDE_CHECK(tide_entity_equal(before_expiry.body, ball) && before_expiry.lease > 0);
+    TIDE_CHECK(tide_length_f3(before_expiry.force) > 0.00001f);
+    for (int tick = 0; tick < 2; ++tick) tide_world_tick(&world);
+    DuckGrab grab = tide_get_DuckGrab(&world, world.DuckFixture.first);
+    TIDE_CHECK(grab.requested && grab.lease == 0 && tide_entity_is_null(grab.body));
+    const Newton_Body coast = tide_get_Newton_Body(&world, ball);
+    tide_world_tick(&world);
+    check_vector(tide_get_Newton_Body(&world, ball).velocity, coast.velocity, 2e-6f);
+    request = grab_action(&world, ball, tide_f3(1, 0.4f, 1), 18);
+    const Newton_Body before_cap = tide_get_Newton_Body(&world, ball);
+    tide_world_set_input(&world, tide_player_from_index(0), request);
+    tide_world_tick(&world);
+    TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
+    grab = tide_get_DuckGrab(&world, world.DuckFixture.first);
+    TIDE_CHECK(tide_entity_equal(grab.body, ball));
+    TIDE_CHECK(fabsf(tide_length_f3(grab.force) - 12.0f) < 2e-6f);
+    const tide_float3 cap_point = tide_add_f3(before_cap.position, tide_rotate_q(before_cap.rotation, request.grabAnchor));
+    const tide_float3 cap_arm = tide_sub_f3(cap_point, body_com(before_cap));
+    check_vector(grab.torque, tide_cross_f3(cap_arm, grab.force), 2e-7f);
+    TIDE_CHECK(tide_length_f3(grab.torque) <= tide_length_f3(cap_arm) * 12.0f + 1e-6f);
+    const Newton_Body before_release = tide_get_Newton_Body(&world, ball);
+    tide_world_set_input(&world, tide_player_from_index(0), (DuckControls){0});
+    tide_world_tick(&world);
+    grab = tide_get_DuckGrab(&world, world.DuckFixture.first);
+    TIDE_CHECK(!grab.requested && tide_entity_is_null(grab.body));
+    check_vector(grab.force, tide_f3(0, 0, 0), 0);
+    check_vector(grab.torque, tide_f3(0, 0, 0), 0);
+    check_vector(tide_get_Newton_Body(&world, ball).velocity, before_release.velocity, 2e-6f);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(microduck_active_grab_survives_snapshot_raw_delta_threads_and_lease_replay)
+{
+    static tide_world source, base, saved, replay, packed, delta, other;
+    tide_world_init(&source, DUCK_DT);
+    source.Newton_Physics.gravity = tide_f3(0, 0, 0);
+    const tide_entity ball = entity_at(&source, source.DuckSandbox.balls, 0);
+    Newton_Body body = tide_get_Newton_Body(&source, ball);
+    body.position = tide_f3(0, 1, 0);
+    TIDE_REQUIRE(tide_set_Newton_Body(&source, ball, body));
+    const DuckControls request = grab_action(&source, ball, tide_f3(0.003f, 0.002f, 0), 1);
+    tide_world_set_input(&source, tide_player_from_index(0), request);
+    for (int tick = 0; tick < 20; ++tick) {
+        tide_world_tick(&source);
+        if (tick == 9) tide_world_copy(&base, &source);
+    }
+    const DuckGrab active = tide_get_DuckGrab(&source, source.DuckFixture.first);
+    TIDE_REQUIRE(tide_entity_equal(active.body, ball) && active.lease > 0.1f && tide_length_f3(active.force) > 0.001f);
+    tide_world_copy(&saved, &source);
+    tide_world_copy(&replay, &saved);
+    const uint32_t size = tide_world_pack(&source, NULL, 0);
+    uint8_t *bytes = malloc(size);
+    TIDE_REQUIRE(bytes && tide_world_pack(&source, bytes, size) == size && tide_world_unpack(&packed, bytes, size));
+    free(bytes);
+    uint32_t delta_size = 0;
+    bytes = tide_world_pack_delta(&source, &base, NULL, 0, &delta_size);
+    TIDE_REQUIRE(bytes && tide_world_unpack_delta(&delta, &base, bytes, delta_size));
+    free(bytes);
+    tide_world_init(&other, DUCK_DT);
+#ifdef NEWTON_TEST_JOBS
+    const tide_jobs *jobs = tide_platform_jobs();
+#endif
+    for (int tick = 20; tick < 70; ++tick) {
+        tide_world_tick(&source);
+        tide_world_tick(&other);
+#ifdef NEWTON_TEST_JOBS
+        tide_world_tick_on(&replay, jobs);
+#else
+        tide_world_tick(&replay);
+#endif
+        tide_world_tick(&packed);
+        tide_world_tick(&delta);
+        TIDE_REQUIRE(source.Newton_Physics.status == Newton_Status_Ok);
+        const uint64_t hash = tide_world_hash(&source);
+        TIDE_REQUIRE(tide_world_hash(&replay) == hash && tide_world_hash(&packed) == hash && tide_world_hash(&delta) == hash);
+        const DuckGrab grab = tide_get_DuckGrab(&source, source.DuckFixture.first);
+        if (tick == 49) TIDE_CHECK(tide_entity_equal(grab.body, ball) && grab.lease > 0);
+        if (tick >= 51) TIDE_CHECK(grab.requested && grab.lease == 0 && tide_entity_is_null(grab.body));
+    }
+    TIDE_CHECK(tide_world_hash(&saved) != tide_world_hash(&source));
+    tide_world_free(&source); tide_world_free(&base); tide_world_free(&saved);
+    tide_world_free(&replay); tide_world_free(&packed); tide_world_free(&delta); tide_world_free(&other);
+}
+
+TIDE_TEST(microduck_reset_only_own_duck_and_shared_balls_rejects_old_grab_revisions)
+{
+    static tide_world world;
+    tide_world_init(&world, DUCK_DT);
+    Duck first = tide_get_Duck(&world, world.DuckFixture.first);
+    Duck second = tide_get_Duck(&world, world.DuckFixture.second);
+    second.selected = 9;
+    second.settleTicks = 200;
+    TIDE_REQUIRE(tide_set_Duck(&world, world.DuckFixture.second, second));
+    const tide_entity own_collider = child_collider(&world, first, 6);
+    DuckControls old_child = grab_action(&world, own_collider, tide_f3(0, 0.005f, 0), 1);
+    const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
+    const DuckControls old_ball = grab_action(&world, ball, tide_f3(0, 0.005f, 0), 2);
+    tide_world_set_input(&world, tide_player_from_index(0), (DuckControls){.reset = true});
+    tide_world_set_input(&world, tide_player_from_index(1), old_child);
+    tide_world_tick(&world);
+    TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
+    first = tide_get_Duck(&world, world.DuckFixture.first);
+    second = tide_get_Duck(&world, world.DuckFixture.second);
+    TIDE_CHECK(first.settleTicks == 1 && first.phase == 0 && first.next == 1);
+    TIDE_CHECK(second.settleTicks == 200 && second.selected == 9);
+    for (int i = 0; i < DUCK_BODIES; ++i) {
+        TIDE_CHECK(tide_get_SandboxBody(&world, body_at(&world, first, i)).revision == 1);
+        TIDE_CHECK(tide_get_SandboxBody(&world, body_at(&world, second, i)).revision == 0);
+    }
+    for (int i = 0; i < 4; ++i)
+        TIDE_CHECK(tide_get_SandboxBody(&world, entity_at(&world, world.DuckSandbox.balls, i)).revision == 1);
+    TIDE_CHECK(tide_entity_is_null(tide_get_DuckGrab(&world, world.DuckFixture.second).body));
+    // A held reset has no second edge. The old shared-ball revision also fails.
+    tide_world_set_input(&world, tide_player_from_index(1), old_ball);
+    tide_world_tick(&world);
+    TIDE_CHECK(tide_get_SandboxBody(&world, ball).revision == 1);
+    TIDE_CHECK(tide_entity_is_null(tide_get_DuckGrab(&world, world.DuckFixture.second).body));
+    tide_world_set_input(&world, tide_player_from_index(0), (DuckControls){0});
+    tide_world_set_input(&world, tide_player_from_index(1), grab_action(&world, ball, tide_f3(0, 0.005f, 0), 3));
+    tide_world_tick(&world);
+    TIDE_CHECK(tide_entity_equal(tide_get_DuckGrab(&world, world.DuckFixture.second).body, ball));
     tide_world_free(&world);
 }
 
@@ -343,7 +784,7 @@ TIDE_TEST(microduck_converted_model_matches_original_full_tensor_newton_dynamics
         const md_oracle_sample *expected = &md_oracle_samples[sample];
         while (steps < expected->steps) {
             TIDE_REQUIRE(nt_step(bodies, MD_ORACLE_BODY_COUNT, joints, MD_ORACLE_DOF_COUNT + 1,
-                md_oracle_gravity, MD_ORACLE_DT, 1) == NT_OK);
+                NULL, 0, md_oracle_gravity, MD_ORACLE_DT, 1) == NT_OK);
             ++steps;
         }
         for (int i = 0; i < MD_ORACLE_DOF_COUNT; ++i) {
@@ -447,7 +888,9 @@ TIDE_TEST(microduck_unanchored_standing_is_supported_by_floor_reactions)
     tide_world_init(&supported, DUCK_DT);
     tide_world_init(&falling, DUCK_DT);
     Duck no_floor = tide_get_Duck(&falling, falling.DuckFixture.first);
-    no_floor.floorEnabled = false;
+    Newton_Collider floor = tide_get_Newton_Collider(&falling, falling.DuckSandbox.floor);
+    floor.enabled = false;
+    TIDE_REQUIRE(tide_set_Newton_Collider(&falling, falling.DuckSandbox.floor, floor));
     no_floor.assisted = false;
     TIDE_REQUIRE(tide_set_Duck(&falling, falling.DuckFixture.first, no_floor));
     const Newton_Body initial = tide_get_Newton_Body(&falling, body_at(&falling, no_floor, 0));
@@ -463,7 +906,7 @@ TIDE_TEST(microduck_unanchored_standing_is_supported_by_floor_reactions)
     tide_world_set_input(&falling, tide_player_from_index(0), (DuckControls){.reset = true});
     tide_world_tick(&falling);
     no_floor = tide_get_Duck(&falling, falling.DuckFixture.first);
-    TIDE_CHECK(!no_floor.floorEnabled && no_floor.assisted);
+    TIDE_CHECK(!tide_get_Newton_Collider(&falling, falling.DuckSandbox.floor).enabled && no_floor.assisted);
     TIDE_CHECK(tide_list_read_count(&falling.heap, no_floor.transitions) == 1);
     TIDE_CHECK(tide_get_Newton_Body(&falling, body_at(&falling, no_floor, 0)).position.y > 0.119f);
     double total_load = 0;
@@ -578,14 +1021,7 @@ TIDE_TEST(microduck_sustained_assisted_gait_has_physical_clearance_and_contact_d
             if (tick < 400) continue;
             load[seat] += duck.footLoad.x + duck.footLoad.y;
             for (int foot = 0; foot < 2; ++foot) {
-                const int index = foot == 0 ? 5 : 14;
-                const Newton_Body body = tide_get_Newton_Body(&world, body_at(&world, duck, index));
-                const tide_quaternion rotation = original_rotation(&world, duck, index);
-                float lowest = 1;
-                for (int corner = 0; corner < 4; ++corner) {
-                    const float height = sole_point(body, rotation, corner).y;
-                    if (height < lowest) lowest = height;
-                }
+                const float lowest = sole_clearance(&world, duck, foot);
                 TIDE_REQUIRE(lowest > -0.015f);
                 if (lowest > clearance[seat][foot]) clearance[seat][foot] = lowest;
                 const float own = foot == 0 ? duck.footLoad.x : duck.footLoad.y;
@@ -690,8 +1126,10 @@ TIDE_TEST(microduck_failed_steps_leave_recorded_transitions_immutable_and_resume
     const Duck before = tide_get_Duck(&world, world.DuckFixture.first);
     float records[64][DUCK_OBSERVATIONS * 2 + DUCK_JOINTS * 2 + 7];
     int ticks[64];
+    DuckTransition metadata[64];
     for (int slot = 0; slot < 64; ++slot) {
         const DuckTransition sample = transition_at(&world, before, slot);
+        metadata[slot] = sample;
         ticks[slot] = sample.tick;
         for (int i = 0; i < DUCK_OBSERVATIONS; ++i) {
             records[slot][i] = number_at(&world, sample.observation, i);
@@ -725,6 +1163,7 @@ TIDE_TEST(microduck_failed_steps_leave_recorded_transitions_immutable_and_resume
     }
     for (int slot = 0; slot < 64; ++slot) {
         const DuckTransition sample = transition_at(&world, failed, slot);
+        TIDE_CHECK(memcmp(&sample, &metadata[slot], sizeof(sample)) == 0);
         TIDE_CHECK(sample.tick == ticks[slot]);
         for (int i = 0; i < DUCK_OBSERVATIONS; ++i) {
             TIDE_CHECK(number_at(&world, sample.observation, i) == records[slot][i]);
@@ -796,9 +1235,25 @@ TIDE_TEST(microduck_threaded_ticks_match_serial_worlds)
 }
 #endif
 
+typedef struct duck_network_policy {
+    int seat;
+    DuckControls grab;
+} duck_network_policy;
+
 static void duck_policy(void *user, uint32_t tick, void *input)
 {
-    *(DuckControls *)input = duck_action(tick, *(const int *)user);
+    const duck_network_policy *policy = user;
+    DuckControls controls = duck_action(tick, policy->seat);
+    if (tick >= 100 && tick < 360) {
+        controls.grab = true;
+        controls.grabCollider = policy->grab.grabCollider;
+        controls.grabAnchor = policy->grab.grabAnchor;
+        controls.grabTarget = policy->grab.grabTarget;
+        controls.grabRevision = policy->grab.grabRevision;
+        // Held packets expire, then a later serial starts another lease.
+        controls.grabSerial = tick < 220 ? 1 : tick < 345 ? 2 : 3;
+    }
+    *(DuckControls *)input = controls;
 }
 
 TIDE_TEST(microduck_two_players_use_the_same_physics_through_rollback)
@@ -809,12 +1264,22 @@ TIDE_TEST(microduck_two_players_use_the_same_physics_through_rollback)
     tide_server *server = tide_server_create(&(tide_server_desc){
         .game = &tide_game_api, .tick_rate = 200, .transports = {tide_loopback_endpoint(net, 1)}}, 0);
     TIDE_REQUIRE(server);
-    int seats[2] = {0, 1};
+    const tide_world *initial = tide_server_world(server);
+    TIDE_REQUIRE(initial);
+    duck_network_policy policies[2];
+    bool grabbed[2] = {false}, recorded[2] = {false}, expired[2] = {false};
+    bool late_active[2] = {false}, released[2] = {false};
     tide_client *clients[2];
     for (int i = 0; i < 2; ++i) {
+        policies[i].seat = i;
+        const Duck owned = tide_get_Duck(initial, initial->DuckFixture.second);
+        const tide_entity collider = i == 0 ? entity_at(initial, initial->DuckSandbox.balls, 0)
+                                           : child_collider(initial, owned, 8);
+        TIDE_REQUIRE(!tide_entity_is_null(collider));
+        policies[i].grab = grab_action(initial, collider, tide_f3(0, 0.005f, 0), 1);
         clients[i] = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
             .transport = tide_loopback_endpoint(net, (uint32_t)i + 2), .server = tide_loopback_address(1),
-            .lead = 2, .sample = duck_policy, .user = &seats[i]}, 0);
+            .lead = 2, .sample = duck_policy, .user = &policies[i]}, 0);
         TIDE_REQUIRE(clients[i]);
     }
     double now = 0;
@@ -823,15 +1288,60 @@ TIDE_TEST(microduck_two_players_use_the_same_physics_through_rollback)
         tide_loopback_set_time(net, now);
         for (int i = 0; i < 2; ++i) tide_client_update(clients[i], now);
         tide_server_update(server, now);
+        const tide_world *current = tide_server_world(server);
+        for (int seat = 0; seat < 2; ++seat) {
+            const tide_entity owner = seat ? current->DuckFixture.second : current->DuckFixture.first;
+            const Duck duck = tide_get_Duck(current, owner);
+            const DuckGrab grab = tide_get_DuckGrab(current, owner);
+            const bool active = !tide_entity_is_null(grab.body) && tide_length_f3(grab.force) > 0.001f;
+            grabbed[seat] = grabbed[seat] || active;
+            if (current->Time.tick >= 351 && current->Time.tick <= 360) late_active[seat] = late_active[seat] || active;
+            if (active) {
+                const DuckTransition latest = transition_at(current, duck, (duck.next + 63) % 64);
+                // Jitter can reverse handshake order. Policy index belongs to
+                // the client, while this Duck belongs to its assigned player.
+                const tide_player_id player = tide_get_Owner(current, owner).player;
+                int policy_index = -1;
+                for (int client = 0; client < 2; ++client)
+                    if (tide_player_equal(tide_client_status_of(clients[client]).player, player)) policy_index = client;
+                TIDE_REQUIRE(policy_index >= 0);
+                const tide_entity requested = policies[policy_index].grab.grabCollider;
+                const tide_entity expected_body = collider_body(requested, tide_get_Newton_Collider(current, requested));
+                TIDE_CHECK(tide_entity_equal(grab.body, expected_body));
+                TIDE_CHECK(latest.grabRequested && tide_entity_equal(latest.grabBody, expected_body));
+                TIDE_CHECK(tide_entity_equal(latest.grabCollider, requested));
+                check_vector(latest.grabForce, grab.force, 0);
+                check_vector(latest.grabTorque, grab.torque, 0);
+                check_vector(latest.grabAnchor, grab.requestedAnchor, 0);
+                check_vector(latest.grabTarget, grab.requestedTarget, 0);
+                TIDE_CHECK(tide_length_f3(latest.grabForce) <= 12.00001f);
+                recorded[seat] = true;
+            }
+            expired[seat] = expired[seat] || (grab.requested && grab.lease == 0 && tide_entity_is_null(grab.body));
+            if (current->Time.tick >= 361 && !grab.requested) {
+                TIDE_CHECK(tide_entity_is_null(grab.body));
+                check_vector(grab.force, tide_f3(0, 0, 0), 0);
+                check_vector(grab.torque, tide_f3(0, 0, 0), 0);
+                released[seat] = true;
+            }
+        }
     }
     const tide_world *authority = tide_server_world(server);
     TIDE_REQUIRE(authority && authority->Newton_Physics.status == Newton_Status_Ok);
     for (int i = 0; i < 2; ++i) {
+        TIDE_CHECK(grabbed[i] && recorded[i] && expired[i] && late_active[i] && released[i]);
         const tide_client_status status = tide_client_status_of(clients[i]);
         TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
         TIDE_CHECK(status.resyncs == 0 && status.again_ticks > 0);
         const tide_world *verified = tide_client_verified_world(clients[i]);
         TIDE_CHECK(verified && verified->Newton_Physics.status == Newton_Status_Ok);
+        TIDE_REQUIRE(verified && verified->Time.tick >= 361);
+        for (int seat = 0; seat < 2; ++seat) {
+            const DuckGrab grab = tide_get_DuckGrab(verified, seat ? verified->DuckFixture.second : verified->DuckFixture.first);
+            TIDE_CHECK(!grab.requested && tide_entity_is_null(grab.body));
+            check_vector(grab.force, tide_f3(0, 0, 0), 0);
+            check_vector(grab.torque, tide_f3(0, 0, 0), 0);
+        }
         printf("    duck player %d: %u verified ticks, %u replayed, %u resyncs\n", i,
             status.verified_tick, status.again_ticks, status.resyncs);
         tide_client_destroy(clients[i]);
