@@ -157,6 +157,18 @@ also retain/include `voice`; no unrelated discovery refactor is intended.
   game/example pages remain. The three documentation files pass whitespace
   checks, all 12 local links resolve, and scoped `git diff --check` passes.
 
+Final integration: commit `87608d55` merged the current `origin/dev` cleanly
+at `e1b1d2c6`. Incoming work changed compiler/platform dependencies and separate
+voice/Unity build sections; Newton sources and fixture behavior were unchanged.
+Rebuilt the affected native/web Newton targets and native CLI/editor tools;
+all four Newton CTests pass on both targets with unchanged pinned hashes. The
+post-merge production docs build passes. Rebuilt the MinGW platform library,
+restaged the installed CLI, and repeated native/web arm/minimal builds and the
+120-frame desktop run: all pass, captures match their pre-merge bytes, package
+source/header bytes and all 39 upstream hashes agree, and omitted-package games
+still compile no Newton objects. An independent second review confirms both
+the LP64 typedef and generated empty-loop read fixes; no findings remain.
+
 Other-platform CI, performance
 measurements and independent physical-fidelity validation remain outstanding.
 Stock Newton reference and analytic checks do not establish realistic robot
