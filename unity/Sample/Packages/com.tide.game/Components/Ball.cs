@@ -11,16 +11,22 @@ namespace Tide.Game
         public global::UnityEngine.Color color = new global::UnityEngine.Color(0f, 0f, 0f, 0f);
         public int seat = 0;
         public int bounces = 0;
+        [global::System.NonSerialized] public int heard;
 
         public override string TideName => "Ball";
 
-        protected override unsafe void ReadLive(byte* values, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        protected override unsafe void ReadLive(byte* values, byte* locals, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
         {
             var v = *(Value*)values;
             velocity = v.velocity;
             color = v.color;
             seat = v.seat;
             bounces = v.bounces;
+            if (locals != null)
+            {
+                var l = *(global::Tide.Game.BallLocal*)locals;
+                heard = l.heard;
+            }
         }
 
         // Tide's component Ball, as the game's C lays it out

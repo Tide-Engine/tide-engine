@@ -170,7 +170,11 @@ typedef struct type {
     field *fields;
     int field_count;
     char *bare, *ns, *cs; // Its name without " local", its C# namespace (NULL for none) and its C# name
-    bool component;       // A TideComponent: its value is the class's nested Value
+    int local;            // A match component's or singleton's local fields: their type, or -1
+    // What class of the package it is, its value the class's nested Value: a TideComponent (an authored match
+    // component), a TideSingleton, a TideEvent (an event this machine hears) or a TideCommand; or none, a struct
+    const char *base;
+    bool component;
 } type;
 
 typedef struct enumeration {
@@ -297,7 +301,18 @@ static bool read_game(const json *schema, game *g)
             }
         }
         t->cs = cs;
+        const json *local_of = json_get(j, "local");
+        t->local = local_of && local_of->kind == JSON_NUMBER && local_of->number >= 0 ? (int)local_of->number : -1;
         t->component = authored(t);
+        t->base = t->component ? "TideComponent"
+                : strcmp(t->kind, "singleton") == 0 && !starts(t->name, "tide_") ? "TideSingleton"
+                : strcmp(t->kind, "event") == 0 ? "TideEvent"
+                : strcmp(t->kind, "command") == 0 ? "TideCommand"
+                : NULL;
+    }
+    for (int i = 0; i < g->type_count; i++) {
+        type *t = &g->types[i];
+        if (t->local >= g->type_count || (t->local >= 0 && strcmp(g->types[t->local].kind, "local") != 0)) t->local = -1;
     }
     g->enum_count = enums && enums->kind == JSON_ARRAY ? enums->count : 0;
     g->enums = calloc((size_t)g->enum_count + 1, sizeof *g->enums);
@@ -333,11 +348,11 @@ static void free_game(game *g)
     free(g->enums);
 }
 
-// A type's C# name where a field holds it: a TideComponent's value is its Value. malloc'd.
+// A type's C# name where a field holds it: a class's value is its Value. malloc'd.
 static char *full_name(const type *t)
 {
     out o = {0};
-    putf(&o, "global::Tide.Game.%s%s%s%s", t->ns ? t->ns : "", t->ns ? "." : "", t->cs, t->component ? ".Value" : "");
+    putf(&o, "global::Tide.Game.%s%s%s%s", t->ns ? t->ns : "", t->ns ? "." : "", t->cs, t->base ? ".Value" : "");
     return o.s;
 }
 
@@ -402,15 +417,13 @@ static void free_taken(taken *t)
     t->count = 0;
 }
 
-// A component's members, which its fields' names keep clear of, as its Value's do, whose ReadLive reads it by them
-static void reserve(taken *t, const type *ty, const bool component)
+// A class's members, which its fields' names keep clear of, as its Value's do, whose ReadLive reads it by them
+static void reserve(taken *t, const type *ty, const bool nested)
 {
     take(t, ty->cs);
-    if (component) {
-        take(t, "Value");
-        take(t, "TideName");
-        take(t, "ReadLive");
-    }
+    if (!nested || !ty->base) return;
+    static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "Tick", "Verified", "Target", "TargetEntity"};
+    for (size_t i = 0; i < sizeof members / sizeof members[0]; i++) take(t, members[i]);
 }
 
 // The identifier of a field among `t`'s: malloc'd.
@@ -527,6 +540,24 @@ static plan plan_of(const game *g, const field *f)
     return p;
 }
 
+// How a field of a class Unity only reads (a singleton, an event) or fills (a command) is held: as authored, but a
+// struct is its value, and what can't be held ("skip": a map, a grid, a list of what holds text) is left out.
+static plan plan_live(const game *g, const field *f)
+{
+    plan p = plan_of(g, f);
+    if (strcmp(p.form, "literal") != 0) return p;
+    if (strcmp(f->kind, "struct") == 0 && f->ref >= 0 && f->ref < g->type_count) {
+        char *name = full_name(&g->types[f->ref]);
+        snprintf(p.form, sizeof p.form, "struct");
+        snprintf(p.cs, sizeof p.cs, "%s", name);
+        free(name);
+        if (strlen(p.cs) + 1 >= sizeof p.cs) snprintf(p.form, sizeof p.form, "skip"); // Too long a name to hold here
+    } else {
+        snprintf(p.form, sizeof p.form, "skip");
+    }
+    return p;
+}
+
 static void put_float(out *o, const float v)
 {
     if (isnan(v)) puts_(o, "float.NaN");
@@ -608,7 +639,7 @@ static const char *text_default(const game *g, const type *t, const field *f)
     const json *declarations = json_get(g->outline, "declarations");
     for (int i = 0; declarations && declarations->kind == JSON_ARRAY && i < declarations->count; i++) {
         const json *d = declarations->items[i];
-        if (strcmp(str(d, "name"), t->bare) != 0 || strcmp(str(d, "kind"), "component") != 0) continue;
+        if (strcmp(str(d, "name"), t->bare) != 0) continue;
         const json *fields = json_get(d, "fields");
         for (int k = 0; fields && fields->kind == JSON_ARRAY && k < fields->count; k++) {
             if (strcmp(str(fields->items[k], "name"), f->name) == 0) return json_str(json_get(fields->items[k], "text"));
@@ -617,31 +648,101 @@ static const char *text_default(const game *g, const type *t, const field *f)
     return NULL;
 }
 
-// A component's C# (its TideComponent, with its Value), and its entry of components.json into `map`.
-static char *write_component(const game *g, const type *t, out *map)
+// A field of a class Unity reads live or fills: its declaration, and its line of ReadLive (`value` the struct read,
+// `v` or `l`) or Pack.
+static void put_live_field(out *o, out *live, const char *id, const char *value, const char *from, const plan *p,
+                           const char *attribute)
 {
-    out o = {0};
-    puts_(&o, header);
-    open_namespace(&o, t->ns);
-    putf(&o, "    // Tide's component %s: its fields as authored outside Play, its entity's values in Play (TideComponent)\n", t->bare);
-    puts_(&o, "    [global::UnityEngine.AddComponentMenu(\"Tide/");
-    for (const char *c = t->bare; *c; c++) {
-        if (*c == '.') puts_(&o, "/");
-        else if (*c == '"' || *c == '\\') {
-            putn(&o, "\\", 1);
-            putn(&o, c, 1);
-        } else putn(&o, c, 1);
+    const char *form = p->form;
+    if (strcmp(form, "skip") == 0) return;
+    if (strcmp(form, "string") == 0) {
+        putf(o, "        %spublic string %s = \"\";\n", attribute, id);
+        putf(live, "            %s = %s.%s.Read(packet);\n", id, from, value);
+    } else if (strcmp(form, "entity") == 0) {
+        putf(o, "        %spublic global::UnityEngine.GameObject %s;\n", attribute, id);
+        putf(live, "            %s = runner.GameObjectOf(%s.%s);\n", id, from, value);
+    } else if (strcmp(form, "list") == 0) {
+        putf(o, "        %spublic global::System.Collections.Generic.List<%s> %s = new global::System.Collections.Generic.List<%s>();\n",
+             attribute, p->cs, id, p->cs);
+        putf(live, "            %s.Clear();\n            %s.AddRange(%s.%s.ToArray<%s>(packet));\n", id, id, from, value, p->cs);
+    } else {
+        putf(o, "        %spublic %s %s;\n", attribute, strcmp(form, "enum") == 0 ? p->enum_full : p->cs, id);
+        putf(live, "            %s = %s.%s;\n", id, from, value);
     }
-    puts_(&o, "\")]\n    [global::UnityEngine.DisallowMultipleComponent]\n");
-    putf(&o, "    public sealed partial class %s : global::Tide.TideComponent\n    {\n", t->cs);
-    char guid[33];
-    unity_code_guid(t->bare, guid);
-    putf(map, "{\"name\": ");
-    jbuf name = {0};
-    jb_string(&name, t->bare);
-    putn(map, name.data, name.len);
-    jb_free(&name);
-    putf(map, ", \"guid\": \"%s\", \"fields\": [", guid);
+}
+
+// The fields of a type's local part, after its own, and their lines of ReadLive: Unity doesn't keep them (they're
+// this machine's, never authored), and the inspector shows them in Play.
+static void put_local_fields(out *o, out *live, const game *g, const type *t, taken *names)
+{
+    if (t->local < 0) return;
+    const type *part = &g->types[t->local];
+    taken own = {0};
+    reserve(&own, part, false); // As write_value names its struct's
+    out lines = {0};
+    puts_(&lines, "");
+    for (int i = 0; i < part->field_count; i++) {
+        const field *f = &part->fields[i];
+        char *id = field_name(names, f->name);
+        char *value = field_name(&own, f->name);
+        const plan p = plan_live(g, f);
+        put_live_field(o, &lines, id, value, "l", &p, "[global::System.NonSerialized] ");
+        free(value);
+        free(id);
+    }
+    free_taken(&own);
+    if (lines.n) {
+        char *name = full_name(part);
+        putf(live, "            if (locals != null)\n            {\n                var l = *(%s*)locals;\n", name);
+        // Indented once more
+        for (const char *line = lines.s; *line;) {
+            const char *end = strchr(line, '\n');
+            const size_t n = end ? (size_t)(end - line) + 1 : strlen(line);
+            puts_(live, "    ");
+            putn(live, line, n);
+            line += n;
+        }
+        puts_(live, "            }\n");
+        free(name);
+    }
+    free(lines.s);
+}
+
+// A class's C# (a TideComponent, TideSingleton, TideEvent or TideCommand, with its Value as the game's C lays it out),
+// inside its namespace; a component's entry of components.json into `map`.
+static void write_class(out *o, const game *g, const type *t, out *map)
+{
+    const bool component = t->component, command = strcmp(t->base, "TideCommand") == 0;
+    const bool event = strcmp(t->base, "TideEvent") == 0;
+    if (component) {
+        putf(o, "    // Tide's component %s: its fields as authored outside Play, its entity's values in Play (TideComponent)\n", t->bare);
+        puts_(o, "    [global::UnityEngine.AddComponentMenu(\"Tide/");
+        for (const char *c = t->bare; *c; c++) {
+            if (*c == '.') puts_(o, "/");
+            else if (*c == '"' || *c == '\\') {
+                putn(o, "\\", 1);
+                putn(o, c, 1);
+            } else putn(o, c, 1);
+        }
+        puts_(o, "\")]\n    [global::UnityEngine.DisallowMultipleComponent]\n");
+    } else if (command) {
+        putf(o, "    // Tide's command %s: TideRunner.Send sends it, as local code's Send does (TideCommand)\n", t->bare);
+    } else if (event) {
+        putf(o, "    // Tide's event %s, as this machine's local handlers hear it: TideRunner.On, OnVerified (TideEvent)\n", t->bare);
+    } else {
+        putf(o, "    // Tide's singleton %s, as Tide's views see it this frame: TideRunner.Get (TideSingleton)\n", t->bare);
+    }
+    putf(o, "    public sealed partial class %s : global::Tide.%s\n    {\n", t->cs, t->base);
+    if (component) {
+        char guid[33];
+        unity_code_guid(t->bare, guid);
+        putf(map, "{\"name\": ");
+        jbuf name = {0};
+        jb_string(&name, t->bare);
+        putn(map, name.data, name.len);
+        jb_free(&name);
+        putf(map, ", \"guid\": \"%s\", \"fields\": [", guid);
+    }
     out live = {0};
     puts_(&live, "");
     taken names = {0};
@@ -651,31 +752,61 @@ static char *write_component(const game *g, const type *t, out *map)
         const field *f = &t->fields[i];
         char *id = field_name(&names, f->name);
         const char *key = id[0] == '@' ? id + 1 : id; // What Unity's YAML calls it
+        if (!component) {
+            const plan p = plan_live(g, f);
+            if (!command) {
+                put_live_field(o, &live, id, id, "v", &p, "");
+            } else if (strcmp(p.form, "skip") != 0) {
+                // A command's: its declared default, as a component's
+                out initial = {0};
+                puts_(&initial, "");
+                if (strcmp(p.form, "string") == 0) {
+                    const char *text = text_default(g, t, f);
+                    putf(o, "        public string %s = \"%s\";\n", id, text ? text : "");
+                    putf(&live, "            v.%s = writer.Text(%s);\n", id, id);
+                } else if (strcmp(p.form, "entity") == 0) {
+                    putf(o, "        public global::UnityEngine.GameObject %s;\n", id);
+                    putf(&live, "            v.%s = writer.Entity(%s);\n", id, id);
+                } else if (strcmp(p.form, "list") == 0) {
+                    putf(o, "        public global::System.Collections.Generic.List<%s> %s = new global::System.Collections.Generic.List<%s>();\n",
+                         p.cs, id, p.cs);
+                    putf(&live, "            v.%s = writer.List(%s);\n", id, id);
+                } else {
+                    putf(o, "        public %s %s", strcmp(p.form, "enum") == 0 ? p.enum_full : p.cs, id);
+                    if (put_default(&initial, t, f, &p)) putf(o, " = %s", initial.s);
+                    puts_(o, ";\n");
+                    putf(&live, "            v.%s = %s;\n", id, id);
+                }
+                free(initial.s);
+            }
+            free(id);
+            continue;
+        }
         const plan p = plan_of(g, f);
         const bool literal = strcmp(p.form, "literal") == 0;
         if (literal) {
-            puts_(&o, "        [global::UnityEngine.Tooltip(\"");
-            put_escaped(&o, f->type);
-            puts_(&o, ", as Tide code writes a value of it: empty for its default\")]\n");
-            putf(&o, "        public string %s = \"\";\n", id);
+            puts_(o, "        [global::UnityEngine.Tooltip(\"");
+            put_escaped(o, f->type);
+            puts_(o, ", as Tide code writes a value of it: empty for its default\")]\n");
+            putf(o, "        public string %s = \"\";\n", id);
         } else if (strcmp(p.form, "string") == 0) {
             const char *text = text_default(g, t, f);
-            putf(&o, "        public string %s = \"%s\";\n", id, text ? text : "");
+            putf(o, "        public string %s = \"%s\";\n", id, text ? text : "");
             putf(&live, "            %s = v.%s.Read(packet);\n", id, id);
         } else if (strcmp(p.form, "entity") == 0) {
-            putf(&o, "        public global::UnityEngine.GameObject %s;\n", id);
+            putf(o, "        public global::UnityEngine.GameObject %s;\n", id);
             putf(&live, "            %s = runner.GameObjectOf(v.%s);\n", id, id);
         } else if (strcmp(p.form, "list") == 0) {
-            putf(&o, "        public global::System.Collections.Generic.List<%s> %s = new global::System.Collections.Generic.List<%s>();\n",
+            putf(o, "        public global::System.Collections.Generic.List<%s> %s = new global::System.Collections.Generic.List<%s>();\n",
                  p.cs, id, p.cs);
             putf(&live, "            %s.Clear();\n            %s.AddRange(v.%s.ToArray<%s>(packet));\n", id, id, id, p.cs);
         } else {
-            putf(&o, "        public %s %s", strcmp(p.form, "enum") == 0 ? p.enum_full : p.cs, id);
+            putf(o, "        public %s %s", strcmp(p.form, "enum") == 0 ? p.enum_full : p.cs, id);
             out initial = {0};
             puts_(&initial, "");
-            if (put_default(&initial, t, f, &p)) putf(&o, " = %s", initial.s);
+            if (put_default(&initial, t, f, &p)) putf(o, " = %s", initial.s);
             free(initial.s);
-            puts_(&o, ";\n");
+            puts_(o, ";\n");
             putf(&live, "            %s = v.%s;\n", id, id);
         }
         if (mapped++) puts_(map, ", ");
@@ -693,19 +824,42 @@ static char *write_component(const game *g, const type *t, out *map)
         puts_(map, "}");
         free(id);
     }
+    out locals = {0};
+    puts_(&locals, "");
+    if (!command && !event) put_local_fields(o, &locals, g, t, &names);
     free_taken(&names);
-    puts_(map, "]}");
-    puts_(&o, "\n        public override string TideName => \"");
-    put_escaped(&o, t->bare);
-    puts_(&o, "\";\n\n        protected override unsafe void ReadLive(byte* values, global::Tide.TidePacket packet, global::Tide.TideRunner runner)\n        {\n");
-    if (live.n) {
-        puts_(&o, "            var v = *(Value*)values;\n");
-        puts_(&o, live.s);
+    if (component) puts_(map, "]}");
+    puts_(o, "\n        public override string TideName => \"");
+    put_escaped(o, t->bare);
+    puts_(o, "\";\n\n");
+    if (command) {
+        puts_(o, "        protected override void Pack(global::Tide.TideCommandWriter writer)\n        {\n            var v = new Value();\n");
+        puts_(o, live.s);
+        puts_(o, "            writer.Value(v);\n        }\n\n");
+    } else {
+        putf(o, "        protected override unsafe void ReadLive(byte* values, %sglobal::Tide.TidePacket packet, global::Tide.TideRunner runner)\n        {\n",
+             event ? "" : "byte* locals, ");
+        if (live.n) {
+            puts_(o, "            var v = *(Value*)values;\n");
+            puts_(o, live.s);
+        }
+        puts_(o, locals.s);
+        puts_(o, "        }\n\n");
     }
+    free(locals.s);
     free(live.s);
-    puts_(&o, "        }\n\n");
-    write_value(&o, g, t, "        ", true);
-    puts_(&o, "    }\n}\n");
+    write_value(o, g, t, "        ", true);
+    puts_(o, "    }\n");
+}
+
+// A component's file (Components/...): its class, and its entry of components.json into `map`.
+static char *write_component(const game *g, const type *t, out *map)
+{
+    out o = {0};
+    puts_(&o, header);
+    open_namespace(&o, t->ns);
+    write_class(&o, g, t, map);
+    puts_(&o, "}\n");
     return o.s;
 }
 
@@ -731,14 +885,14 @@ static char *write_types(const game *g, const json *schema)
         }
         puts_(&o, " };\n");
     }
-    puts_(&o, "    }\n\n    // The game's components as TideComponents, for the runner to write its entities' values into\n"
-              "    static class TideGameComponents\n    {\n"
+    puts_(&o, "    }\n\n    // The game's components, singletons and events as the package's classes, for the runner to read their values into\n"
+              "    static class TideGameTypes\n    {\n"
               "        [global::UnityEngine.RuntimeInitializeOnLoadMethod(global::UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]\n"
               "        static void Register()\n        {\n");
     for (int i = 0; i < g->type_count; i++) {
         const type *t = &g->types[i];
-        if (!t->component) continue;
-        puts_(&o, "            global::Tide.TideComponents.Register(TideGameSchema.Hash, \"");
+        if (!t->base || strcmp(t->base, "TideCommand") == 0) continue;
+        puts_(&o, "            global::Tide.TideTypes.Register(TideGameSchema.Hash, \"");
         put_escaped(&o, t->bare);
         putf(&o, "\", typeof(global::Tide.Game.%s%s%s));\n", t->ns ? t->ns : "", t->ns ? "." : "", t->cs);
     }
@@ -767,7 +921,8 @@ static char *write_types(const game *g, const json *schema)
         const type *t = &g->types[i];
         if (t->component) continue;
         open_namespace(&o, t->ns);
-        write_value(&o, g, t, "    ", false);
+        if (t->base) write_class(&o, g, t, NULL);
+        else write_value(&o, g, t, "    ", false);
         puts_(&o, "}\n");
     }
     return o.s;

@@ -66,5 +66,34 @@ namespace Tide
         {
             return Runner != null ? Runner.Packet.Text(handle) : string.Empty;
         }
+
+        readonly System.Collections.Generic.Dictionary<Type, Delegate> hearing = new System.Collections.Generic.Dictionary<Type, Delegate>();
+        readonly System.Collections.Generic.Dictionary<Type, Delegate> hearingVerified = new System.Collections.Generic.Dictionary<Type, Delegate>();
+
+        // What hears the match's event `T` sent to this entity, as TideRunner.On and OnVerified hear every one.
+        public void On<T>(Action<T> heard) where T : TideEvent
+        {
+            TideRunner.Listen(hearing, heard, true);
+        }
+
+        public void OnVerified<T>(Action<T> heard) where T : TideEvent
+        {
+            TideRunner.Listen(hearingVerified, heard, true);
+        }
+
+        public void Off<T>(Action<T> heard) where T : TideEvent
+        {
+            TideRunner.Listen(hearing, heard, false);
+        }
+
+        public void OffVerified<T>(Action<T> heard) where T : TideEvent
+        {
+            TideRunner.Listen(hearingVerified, heard, false);
+        }
+
+        internal void Hear(TideEvent e)
+        {
+            TideRunner.Tell(e.Verified ? hearingVerified : hearing, e, this);
+        }
     }
 }

@@ -345,6 +345,39 @@ found an unused `out` (fix helpers of types with only maps/grids) and an unused
 `place` (games with no component), both fixed. Runtime contract and tests:
 `notes/standard-host.md`, `notes/runtime-ownership.md`.
 
+**Events, text commands and command defaults for another program (2026-10-22, owner: "yeah I think that makes
+sense"; `notes/unity.md`, Events, commands and singletons in C#).**
+- **Taps.** With `--embed`, `add_embed_taps` (`compiler/src/compile.c`, after parsing, before checking) parses a
+  source `<tide-embed-events>` of two local handlers for each of the game's own match events (not built in, local
+  or a command): `local event(E heard) TideEmbedHeard<n>() { }` and its `verified` twin, flagged `decl.embed_tap`.
+  So another program hears what the game's local handlers would, by their machinery: predicted and verified, once
+  each under rollback, late joiners' arrivals, recorded text. `gen_heard` calls `tide_embed_heard_<E>(&event,
+  verified, target, tick)` for a tap instead of its handler; `collect_heard_reads` marks a tap's event read whole,
+  so its text and lists are recorded. `gen_embed_heard` (embed_codegen.inc, before `gen_heard`) keeps each heard
+  event's record (a 32-byte header, then the value with its text and lists copied into the store's own STRINGS)
+  in a static `tide_packet`, which the next view packet writes as its EVENTS section (the target's place among
+  the packet's entities where it's the same entity) and empties; outside a match it's dropped. The outline leaves
+  taps out, and the header's first line doesn't name their source.
+- **The same game.** A tap must change neither the header nor `TIDE_SIMULATION_ID`, or Unity builds wouldn't play
+  with other builds. The local state's event log (`tide_local.tide_heard`) is now there in any game declaring a
+  match event of its own (`program_has_match_events`), tapped or not, so a game with events and no local handlers
+  has it in every build (its plain header changed once, for that). `listener_wire` (`compiler/src/asset_usage.c`)
+  leaves taps out: they hear only the game's own events, which no server journals to recipients. Checked: every
+  one of the 330 source lists of a debug build gives the same header, but its first line, with `--embed` and
+  without (`TIDE_SIMULATION_ID` included); before `listener_wire` left taps out, two visibility games differed.
+- **Commands with text and lists.** `tide_embed_command` takes such a command's text and `List<byte>`s after its
+  value as STRINGS lays them out (a count, `{offset, length}` entries, bytes), each field holding its entry's
+  place + 1: `tide_embed_command_text` (UTF-8 checked, `tide_text_temp`) and `tide_embed_command_list`
+  (`tide_list_from`), under a scratch mark; the command is then written into a scratch buffer and checked
+  (`tide_write_command_<C>`, `tide_game_check_command`) before `tide_local_send_<C>`, so one too big says false
+  rather than ending the program as local code's Send does.
+- **Schema.** Commands' and tapped events' fields are in `tide_embed_fields` (by the schema's numbers, after the
+  layout's types), so their text and lists say so; extra types are the commands and then the tapped events;
+  `tide_embed_game.events` names the events; `defaults` gives commands' declared defaults too.
+- Tests: `embed_heard_events` (each Ticked heard once as predicted and once confirmed, with its label and its
+  entity's place), `embed_commands_and_scenes` (Rename's text and bytes, cut short, a missing entry, bad UTF-8),
+  `embed_schema` (Ticked an event, listed after the commands), all in `platform/tests/embed.c`.
+
 For `tide unity --assets`: `compile_input.text` gives a file's text in place
 of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
 `parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,

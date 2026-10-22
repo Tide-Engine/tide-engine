@@ -699,6 +699,7 @@ typedef struct decl {
     // It's among its event's `listeners`, not its `handlers`, which the tick runs.
     bool listens;
     bool listens_verified; // ...once the server confirmed the tick: `local event(verified Hit hit)`
+    bool embed_tap;        // ...made by tidec --embed, not written: what it hears goes to another program (tide/embed.h)
     bool per_entity;     // Runs once per matching entity, not once per tick.
     bool entity_local;   // Its entities are the local world's (views of local components)
     bool draws;          // A function that draws or uses the GUI, itself or through the functions it calls

@@ -75,6 +75,18 @@ screen's middle through Tide's camera, 60 pixels left of it through a camera
 a field of view of 0. A point behind the camera still projects (flipped by
 the division), not to (0, 0).
 
+Events and text commands (2026-10-22): the view packet is version 3, with an
+EVENTS section, the match's events this machine heard since the last packet as
+its local handlers hear them, each heard as predicted (flag 1) and again once
+confirmed (flag 2), with its tick, target and the target's place among the
+packet's entities; and `tide_embed_command` takes a command's text and byte
+lists after its value, as STRINGS lays them out, saying false for text that
+isn't UTF-8 or a command too big to send. Both are the generated game's
+(`notes/language.md`, Events, text commands and command defaults); the embed
+host passes them through unchanged, and `TIDE_EMBED_ABI` stays 3 (no function
+or struct of `tide/embed.h` changed; the packet says its own version). Tests:
+`embed_heard_events`, `embed_commands_and_scenes`.
+
 Stats inside another program (2026-10-21, owner: `--stats` in the runner's
 Arguments did nothing). They were left out embedded ("the other program has
 stats of its own"), and the embed took no `--stats`. Now `embed_options`

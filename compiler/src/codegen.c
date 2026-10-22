@@ -1279,6 +1279,18 @@ static bool program_hears(const program *prog)
     return false;
 }
 
+// Whether the game declares events of the match's own, which tidec --embed taps (add_embed_taps in compile.c): the
+// local state has the log local handlers hear from whether or not they're tapped, so a build for another program has
+// the header, and the hash, of any other.
+static bool program_has_match_events(const program *prog)
+{
+    for (int i = 0; i < prog->events.count; i++) {
+        const decl *d = prog->events.items[i];
+        if (!d->builtin && d->unit && !d->is_local && !d->is_command) return true;
+    }
+    return false;
+}
+
 // Whether local handlers hear entities/components becoming available.
 static bool hears_arrivals(const program *prog)
 {
@@ -7788,7 +7800,7 @@ static void gen_header(gen *g)
         sb_put(o, "    uint32_t tide_kept_drawn;    // The tick of the world its last frame drew, plus one, or 0 for none,\n");
         sb_put(o, "    uint32_t tide_kept_verified; // ...and of the verified one: what's kept is looked over when either changes\n");
     }
-    if (program_hears(prog)) {
+    if (program_hears(prog) || program_has_match_events(prog)) { // The same with tidec --embed's taps or without
         sb_put(o, "    tide_event_log tide_heard; // What the match sent that its local handlers hear at the next frame (tide_local_events)\n");
     }
     if (hears_visibility(prog)) {
@@ -14001,7 +14013,7 @@ static void gen_heard(gen *g)
         sb_printf(o, "static void tide_heard_%s_run(tide_local *tide_l, const tide_heard *tide_r, const bool tide_predicted, "
                      "const bool tide_verified%s)\n{\n", name,
                   event_reads_rows(event) ? ", const tide_event_log *tide_log, const uint32_t tide_at" : "");
-        sb_put(o, "    (void)tide_predicted;\n    (void)tide_verified;\n");
+        sb_put(o, "    (void)tide_l;\n    (void)tide_predicted;\n    (void)tide_verified;\n");
         sb_printf(o, "    tide_heard_%s tide_h;\n    memcpy(&tide_h, tide_r + 1, sizeof tide_h);\n", name);
         // As a view's rows name their entity (gen_row_fields)
         sb_put(o, "    const tide_entity tide_ent[1] = {tide_r->target};\n    const uint32_t tide_i = 0;\n"
@@ -14040,6 +14052,11 @@ static void gen_heard(gen *g)
                 if (p->type.kind != TY_QUERY || !p->query_rows) continue;
                 sb_printf(o, "        const tide_heard *tide_rows%d = tide_event_log_rows(tide_log, tide_at, tide_r, %du);\n", n,
                           heard_rows_of(g, p));
+            }
+            if (h->embed_tap) { // tidec --embed's: what it hears goes to another program's packet
+                sb_printf(o, "        tide_embed_heard_%s(&tide_h.event, %s, tide_r->target, tide_r->tick);\n    }\n", name,
+                          h->listens_verified ? "true" : "false");
+                continue;
             }
             sb_printf(o, "        tide_handler_%s(tide_l, &tide_h.event", decl_cname(h));
             if (h->per_entity) sb_put(o, ", tide_r->target");
@@ -20836,7 +20853,7 @@ bool codegen(program *prog, const codegen_options *opts)
     sb from = {0};
     for (int i = 0; i < files; i++) {
         g.paths[i] = forward_slashes(diag_source(i)->path);
-        if (strcmp(diag_source(i)->path, "<tide-transform>") != 0)
+        if (strcmp(diag_source(i)->path, "<tide-transform>") != 0 && strcmp(diag_source(i)->path, "<tide-embed-events>") != 0)
             sb_printf(&from, "%s%s", from.len ? ", " : "", g.paths[i]);
     }
     g.from = from.data ? from.data : "nothing";
@@ -21057,6 +21074,7 @@ bool codegen(program *prog, const codegen_options *opts)
     for (int i = 0; i < prog->events.count; i++) {
         if (event_runs(prog, prog->events.items[i]) || event_batched(prog, prog->events.items[i])) gen_dispatch_each(&g, prog->events.items[i]);
     }
+    if (opts->embed) gen_embed_heard(&g); // What gen_heard's taps call
     gen_heard(&g);
     gen_forget(&g);
     for (int i = 0; i < prog->systems.count; i++) gen_system_run(&g, prog->systems.items[i]);

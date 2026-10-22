@@ -118,7 +118,10 @@ no existing function, struct or the generated header changed. The platform's
 `tide_schema_json` calls for each component's default bytes (Unity's inspector
 shows them), and then `component_scenes` after `component_locals`, a generated
 table of which components are scenes' tags, which the schema marks (2026-10-21);
-still no generated call into the engine beyond those above.
+still no generated call into the engine beyond those above. On 2026-10-22 the packet gained an EVENTS section
+(`TIDE_PACKET_EVENTS`, version 3: the events this machine heard, which the generated code keeps in a `tide_packet`
+of its own and writes with `tide_packet_grow`), `tide_embed_game` its last members `event_count`/`events`, the
+schema an "events" list and kind "event", and `defaults` commands' values too; no new engine function.
 
 ## Double Position attribute (2026-10-20)
 

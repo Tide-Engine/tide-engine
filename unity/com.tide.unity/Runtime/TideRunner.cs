@@ -417,6 +417,8 @@ namespace Tide
                 if (byRow[i] != null) Place(byRow[i], i);
             }
             Live(count);
+            LiveSingletons(read);
+            if (read) Hear(count);
         }
 
         int liveFrame;
@@ -427,21 +429,29 @@ namespace Tide
         // with components generated from the schema of the build running, whose values they lay out.
         void Live(int count)
         {
-            if (count == 0 || Schema == null || TideComponents.Hash != Schema.Hash) return;
+            if (count == 0 || Schema == null || TideTypes.Hash != Schema.Hash) return;
             liveFrame++;
             foreach (var index in Schema.components)
             {
-                var kind = TideComponents.Of(Schema.Type(index)?.name);
-                if (kind == null) continue;
+                var type = Schema.Type(index);
+                var kind = TideTypes.Of(type?.name);
+                if (kind == null || !typeof(TideComponent).IsAssignableFrom(kind)) continue;
                 var n = Packet.Count((uint)index, out _);
                 for (var r = 0; r < n; r++)
                 {
                     var values = Packet.Row((uint)index, r, out var e);
                     if (values == null || (uint)e >= (uint)count || byRow[e] == null) continue;
+                    // Its local fields: the entity's row of its component's local section
+                    byte* locals = null;
+                    if (type.local >= 0)
+                    {
+                        var localRow = RowOf(type.local, e);
+                        if (localRow >= 0) locals = Packet.Row((uint)type.local, localRow, out _, true);
+                    }
                     var made = byRow[e].gameObject;
                     var component = (TideComponent)(made.GetComponent(kind) ?? made.AddComponent(kind));
                     component.LiveFrame = liveFrame;
-                    component.ReadLive(values, Packet, this);
+                    component.ReadLive(values, locals, Packet, this);
                 }
             }
             for (var i = 0; i < count; i++)
@@ -453,6 +463,123 @@ namespace Tide
                     if (component.LiveFrame != liveFrame) Destroy(component);
                 }
             }
+        }
+
+        readonly Dictionary<Type, TideSingleton> singletons = new Dictionary<Type, TideSingleton>();
+
+        // The match's singletons into the TideSingletons the runner keeps (Get), as its components' go into theirs
+        void LiveSingletons(bool read)
+        {
+            if (!read || !Packet.InMatch || Schema == null || TideTypes.Hash != Schema.Hash)
+            {
+                singletons.Clear();
+                return;
+            }
+            foreach (var index in Schema.singletons)
+            {
+                var type = Schema.Type(index);
+                var kind = TideTypes.Of(type?.name);
+                if (kind == null || !typeof(TideSingleton).IsAssignableFrom(kind)) continue;
+                var values = Packet.Singleton((uint)index, out var stride);
+                if (values == null || stride != type.size) continue;
+                var locals = type.local >= 0 ? Packet.Singleton((uint)type.local, out _, true) : null;
+                if (!singletons.TryGetValue(kind, out var singleton))
+                {
+                    singleton = (TideSingleton)Activator.CreateInstance(kind);
+                    singletons[kind] = singleton;
+                }
+                singleton.ReadLive(values, locals, Packet, this);
+            }
+        }
+
+        // The match's singleton `T` this frame, as Tide's views see it: null outside a match.
+        public T Get<T>() where T : TideSingleton
+        {
+            return singletons.TryGetValue(typeof(T), out var singleton) ? (T)singleton : null;
+        }
+
+        readonly Dictionary<Type, Delegate> hearing = new Dictionary<Type, Delegate>();
+        readonly Dictionary<Type, Delegate> hearingVerified = new Dictionary<Type, Delegate>();
+
+        // What hears the match's event `T` as this machine's local handlers would: each one, as soon as this machine
+        // has it (as `local event(Hit hit)` does), which a correction can turn out not to have happened; or once the
+        // server confirmed its tick (OnVerified, as `local event(verified Hit hit)`). Before scripts' Update, after the
+        // frame's components are live. An entity's TideEntityView.On hears only those sent to it.
+        public void On<T>(Action<T> heard) where T : TideEvent
+        {
+            Listen(hearing, heard, true);
+        }
+
+        public void OnVerified<T>(Action<T> heard) where T : TideEvent
+        {
+            Listen(hearingVerified, heard, true);
+        }
+
+        public void Off<T>(Action<T> heard) where T : TideEvent
+        {
+            Listen(hearing, heard, false);
+        }
+
+        public void OffVerified<T>(Action<T> heard) where T : TideEvent
+        {
+            Listen(hearingVerified, heard, false);
+        }
+
+        internal static void Listen<T>(Dictionary<Type, Delegate> table, Action<T> heard, bool on) where T : TideEvent
+        {
+            if (heard == null) return;
+            table.TryGetValue(typeof(T), out var had);
+            var now = on ? Delegate.Combine(had, heard) : Delegate.Remove(had, heard);
+            if (now == null) table.Remove(typeof(T));
+            else table[typeof(T)] = now;
+        }
+
+        internal static void Tell(Dictionary<Type, Delegate> table, TideEvent e, UnityEngine.Object context)
+        {
+            if (!table.TryGetValue(e.GetType(), out var heard)) return;
+            foreach (var one in heard.GetInvocationList())
+            {
+                try
+                {
+                    one.DynamicInvoke(e);
+                }
+                catch (System.Reflection.TargetInvocationException thrown)
+                {
+                    Debug.LogException(thrown.InnerException ?? thrown, context);
+                }
+            }
+        }
+
+        // The packet's events to what hears them: the runner's, then the entity's view's
+        void Hear(int count)
+        {
+            if (Packet.HeardCount == 0 || Schema == null || TideTypes.Hash != Schema.Hash) return;
+            for (var i = 0; i < Packet.HeardCount; i++)
+            {
+                var record = Packet.Heard(i);
+                var type = Schema.Type((int)record.Type);
+                var kind = TideTypes.Of(type?.name);
+                if (kind == null || !typeof(TideEvent).IsAssignableFrom(kind)) continue;
+                var values = Packet.HeardValue(record, type.size);
+                if (values == null) continue;
+                var e = (TideEvent)Activator.CreateInstance(kind);
+                e.Tick = record.Tick;
+                e.Verified = record.Verified;
+                e.TargetEntity = new TideEntityId { index = record.TargetIndex, generation = record.TargetGeneration };
+                var view = record.HasTarget && record.TargetPlace < (uint)count ? byRow[record.TargetPlace] : null;
+                e.Target = view != null ? view.gameObject : null;
+                e.ReadLive(values, Packet, this);
+                Tell(e.Verified ? hearingVerified : hearing, e, this);
+                if (view != null) view.Hear(e);
+            }
+        }
+
+        // The entity a GameObject shows this frame, for an entity field of a command: none for null or one that shows none.
+        public TideEntityId EntityOf(GameObject shown)
+        {
+            if (shown == null) return default;
+            var view = shown.GetComponent<TideEntityView>();
+            return view != null && view.Runner == this && view.Row >= 0 ? (TideEntityId)view.Entity : default;
         }
 
         // The GameObject an entity shows through this frame, for an entity field of a TideComponent: null for none.
@@ -847,7 +974,29 @@ namespace Tide
             fixed (byte* p = bytes) return library.Request(embed, (uint)kind, p, port) != 0;
         }
 
-        // A command, as local code's Send: `T` is the command's type (TideTypeAttribute names it). False for a type
+        // A command, as local code's Send (Tide.Game's class of it): to the entity `target` shows, as local code's
+        // entity.Send, or with none to the match. False for one that isn't the running build's, outside a match, text
+        // that can't be sent, or one too big for a command.
+        public bool Send(TideCommand command, GameObject target = null)
+        {
+            if (command == null || embed == IntPtr.Zero || Schema == null) return false;
+            var type = Schema.TypeIndex(command.TideName);
+            if (type < 0 || Schema.types[type].kind != "command") return false;
+            var writer = new TideCommandWriter(this);
+            command.Pack(writer);
+            var bytes = writer.Bytes();
+            if (bytes.Length < Schema.types[type].size) return false;
+            var to = EntityOf(target);
+            fixed (byte* p = bytes) return library.Command(embed, (uint)type, to.index, to.generation, p, (uint)bytes.Length) != 0;
+        }
+
+        // ...to a component's GameObject's entity
+        public bool Send(TideCommand command, Component target)
+        {
+            return Send(command, target != null ? target.gameObject : null);
+        }
+
+        // A command's value as the schema lays it out: `T` is its Value (TideTypeAttribute names it). False for a type
         // that's no command of the game's, or one holding text or lists.
         public bool Send<T>(T value) where T : unmanaged
         {

@@ -11,7 +11,7 @@ namespace Tide.Game
 
         public override string TideName => "Spinner";
 
-        protected override unsafe void ReadLive(byte* values, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        protected override unsafe void ReadLive(byte* values, byte* locals, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
         {
             var v = *(Value*)values;
             speed = v.speed;

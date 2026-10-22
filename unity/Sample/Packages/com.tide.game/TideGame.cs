@@ -5,22 +5,27 @@ namespace Tide.Game
     // What this game's C# was made from: a view packet of another build isn't read by it.
     public static class TideGameSchema
     {
-        public const string Hash = "FE0AA9F947BDF299";
+        public const string Hash = "2AEEC98922967090";
         public const string Game = "Bounce";
         public const int TickRate = 30;
         public static readonly string[] Scenes = {  };
         public static readonly string[] Prefabs = { "UnityEngine.SceneContents.Sample.Bonus", "UnityEngine.SceneContents.Sample.Bounce", "UnityEngine.Prefabs.Sample.Roller" };
     }
 
-    // The game's components as TideComponents, for the runner to write its entities' values into
-    static class TideGameComponents
+    // The game's components, singletons and events as the package's classes, for the runner to read their values into
+    static class TideGameTypes
     {
         [global::UnityEngine.RuntimeInitializeOnLoadMethod(global::UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
         static void Register()
         {
-            global::Tide.TideComponents.Register(TideGameSchema.Hash, "Owner", typeof(global::Tide.Game.Owner));
-            global::Tide.TideComponents.Register(TideGameSchema.Hash, "Spinner", typeof(global::Tide.Game.Spinner));
-            global::Tide.TideComponents.Register(TideGameSchema.Hash, "Ball", typeof(global::Tide.Game.Ball));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "Owner", typeof(global::Tide.Game.Owner));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "Spinner", typeof(global::Tide.Game.Spinner));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "Ball", typeof(global::Tide.Game.Ball));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "Time", typeof(global::Tide.Game.Time));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "Extras", typeof(global::Tide.Game.Extras));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "Room", typeof(global::Tide.Game.Room));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "UnityEngine.LoadedScenes", typeof(global::Tide.Game.UnityEngine.LoadedScenes));
+            global::Tide.TideTypes.Register(TideGameSchema.Hash, "Bounced", typeof(global::Tide.Game.Bounced));
         }
     }
 }
@@ -251,15 +256,35 @@ namespace Tide.Game
 }
 namespace Tide.Game
 {
-    // Tide's singleton Time
-    [global::Tide.TideType("Time")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 16)]
-    public unsafe partial struct Time
+    // Tide's singleton Time, as Tide's views see it this frame: TideRunner.Get (TideSingleton)
+    public sealed partial class Time : global::Tide.TideSingleton
     {
-        [global::System.Runtime.InteropServices.FieldOffset(0)] public float dt;
-        [global::System.Runtime.InteropServices.FieldOffset(4)] public int tick;
-        [global::System.Runtime.InteropServices.FieldOffset(8)] public float t;
-        [global::System.Runtime.InteropServices.FieldOffset(12)] public int tickRate;
+        public float dt;
+        public int tick;
+        public float t;
+        public int tickRate;
+
+        public override string TideName => "Time";
+
+        protected override unsafe void ReadLive(byte* values, byte* locals, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var v = *(Value*)values;
+            dt = v.dt;
+            tick = v.tick;
+            t = v.t;
+            tickRate = v.tickRate;
+        }
+
+        // Tide's singleton Time, as the game's C lays it out
+        [global::Tide.TideType("Time")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 16)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public float dt;
+            [global::System.Runtime.InteropServices.FieldOffset(4)] public int tick;
+            [global::System.Runtime.InteropServices.FieldOffset(8)] public float t;
+            [global::System.Runtime.InteropServices.FieldOffset(12)] public int tickRate;
+        }
     }
 }
 namespace Tide.Game
@@ -278,37 +303,88 @@ namespace Tide.Game
 }
 namespace Tide.Game
 {
-    // Tide's singleton Extras
-    [global::Tide.TideType("Extras")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 16)]
-    public unsafe partial struct Extras
+    // Tide's singleton Extras, as Tide's views see it this frame: TideRunner.Get (TideSingleton)
+    public sealed partial class Extras : global::Tide.TideSingleton
     {
-        [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideEntityId bonus;
-        [global::System.Runtime.InteropServices.FieldOffset(8)] public global::Tide.TideEntityId tossed;
+        public global::UnityEngine.GameObject bonus;
+        public global::UnityEngine.GameObject tossed;
+        public string said = "";
+
+        public override string TideName => "Extras";
+
+        protected override unsafe void ReadLive(byte* values, byte* locals, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var v = *(Value*)values;
+            bonus = runner.GameObjectOf(v.bonus);
+            tossed = runner.GameObjectOf(v.tossed);
+            said = v.said.Read(packet);
+        }
+
+        // Tide's singleton Extras, as the game's C lays it out
+        [global::Tide.TideType("Extras")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 20)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideEntityId bonus;
+            [global::System.Runtime.InteropServices.FieldOffset(8)] public global::Tide.TideEntityId tossed;
+            [global::System.Runtime.InteropServices.FieldOffset(16)] public global::Tide.TideText said;
+        }
     }
 }
 namespace Tide.Game
 {
-    // Tide's singleton Room
-    [global::Tide.TideType("Room")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
-    public unsafe partial struct Room
+    // Tide's singleton Room, as Tide's views see it this frame: TideRunner.Get (TideSingleton)
+    public sealed partial class Room : global::Tide.TideSingleton
     {
-        [global::System.Runtime.InteropServices.FieldOffset(0)] public int arrivals;
-        [global::System.Runtime.InteropServices.FieldOffset(8)] public fixed byte balls[24]; // Map<PlayerID, Entity>#map-order-2: its bytes
+        public int arrivals;
+
+        public override string TideName => "Room";
+
+        protected override unsafe void ReadLive(byte* values, byte* locals, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var v = *(Value*)values;
+            arrivals = v.arrivals;
+        }
+
+        // Tide's singleton Room, as the game's C lays it out
+        [global::Tide.TideType("Room")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public int arrivals;
+            [global::System.Runtime.InteropServices.FieldOffset(8)] public fixed byte balls[24]; // Map<PlayerID, Entity>#map-order-2: its bytes
+        }
     }
 }
 namespace Tide.Game.UnityEngine
 {
-    // Tide's singleton UnityEngine.LoadedScenes
-    [global::Tide.TideType("UnityEngine.LoadedScenes")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
-    public unsafe partial struct LoadedScenes
+    // Tide's singleton UnityEngine.LoadedScenes, as Tide's views see it this frame: TideRunner.Get (TideSingleton)
+    public sealed partial class LoadedScenes : global::Tide.TideSingleton
     {
-        [global::System.Runtime.InteropServices.FieldOffset(0)] public fixed byte loaded[24]; // Map<int, Entity>#map-order-2: its bytes
-        [global::System.Runtime.InteropServices.FieldOffset(24)] public uint opener;
-        [global::System.Runtime.InteropServices.FieldOffset(28)] public bool heard;
-        [global::System.Runtime.InteropServices.FieldOffset(29)] public bool opened;
+        public uint opener;
+        public bool heard;
+        public bool opened;
+
+        public override string TideName => "UnityEngine.LoadedScenes";
+
+        protected override unsafe void ReadLive(byte* values, byte* locals, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var v = *(Value*)values;
+            opener = v.opener;
+            heard = v.heard;
+            opened = v.opened;
+        }
+
+        // Tide's singleton UnityEngine.LoadedScenes, as the game's C lays it out
+        [global::Tide.TideType("UnityEngine.LoadedScenes")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public fixed byte loaded[24]; // Map<int, Entity>#map-order-2: its bytes
+            [global::System.Runtime.InteropServices.FieldOffset(24)] public uint opener;
+            [global::System.Runtime.InteropServices.FieldOffset(28)] public bool heard;
+            [global::System.Runtime.InteropServices.FieldOffset(29)] public bool opened;
+        }
     }
 }
 namespace Tide.Game
@@ -340,6 +416,16 @@ namespace Tide.Game
 }
 namespace Tide.Game
 {
+    // Tide's local Ball's local fields
+    [global::Tide.TideType("Ball", true)]
+    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 4)]
+    public unsafe partial struct BallLocal
+    {
+        [global::System.Runtime.InteropServices.FieldOffset(0)] public int heard;
+    }
+}
+namespace Tide.Game
+{
     // Tide's struct Roll
     [global::Tide.TideType("Roll")]
     [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 12)]
@@ -351,32 +437,153 @@ namespace Tide.Game
 }
 namespace Tide.Game
 {
-    // Tide's command ShowBonus
-    [global::Tide.TideType("ShowBonus")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 1)]
-    public unsafe partial struct ShowBonus
+    // Tide's command ShowBonus: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    public sealed partial class ShowBonus : global::Tide.TideCommand
     {
-        [global::System.Runtime.InteropServices.FieldOffset(0)] public bool on;
+        public bool on = false;
+
+        public override string TideName => "ShowBonus";
+
+        protected override void Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.on = on;
+            writer.Value(v);
+        }
+
+        // Tide's command ShowBonus, as the game's C lays it out
+        [global::Tide.TideType("ShowBonus")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 1)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public bool on;
+        }
     }
 }
 namespace Tide.Game
 {
-    // Tide's command Toss
-    [global::Tide.TideType("Toss")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 1)]
-    public unsafe partial struct Toss
+    // Tide's command Say: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    public sealed partial class Say : global::Tide.TideCommand
     {
-        [global::System.Runtime.InteropServices.FieldOffset(0)] public bool on;
+        public string text = "";
+
+        public override string TideName => "Say";
+
+        protected override void Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.text = writer.Text(text);
+            writer.Value(v);
+        }
+
+        // Tide's command Say, as the game's C lays it out
+        [global::Tide.TideType("Say")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 4)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideText text;
+        }
+    }
+}
+namespace Tide.Game
+{
+    // Tide's command Toss: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    public sealed partial class Toss : global::Tide.TideCommand
+    {
+        public bool on = false;
+
+        public override string TideName => "Toss";
+
+        protected override void Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.on = on;
+            writer.Value(v);
+        }
+
+        // Tide's command Toss, as the game's C lays it out
+        [global::Tide.TideType("Toss")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 1)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public bool on;
+        }
+    }
+}
+namespace Tide.Game
+{
+    // Tide's command Paint: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    public sealed partial class Paint : global::Tide.TideCommand
+    {
+        public global::UnityEngine.Color color = new global::UnityEngine.Color(0f, 0f, 0f, 0f);
+
+        public override string TideName => "Paint";
+
+        protected override void Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.color = color;
+            writer.Value(v);
+        }
+
+        // Tide's command Paint, as the game's C lays it out
+        [global::Tide.TideType("Paint")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 16)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public global::UnityEngine.Color color;
+        }
     }
 }
 namespace Tide.Game.UnityEngine
 {
-    // Tide's command UnityEngine.OpenScene
-    [global::Tide.TideType("UnityEngine.OpenScene")]
-    [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 8)]
-    public unsafe partial struct OpenScene
+    // Tide's command UnityEngine.OpenScene: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    public sealed partial class OpenScene : global::Tide.TideCommand
     {
-        [global::System.Runtime.InteropServices.FieldOffset(0)] public int asset;
-        [global::System.Runtime.InteropServices.FieldOffset(4)] public bool only;
+        public int asset = 0;
+        public bool only = false;
+
+        public override string TideName => "UnityEngine.OpenScene";
+
+        protected override void Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.asset = asset;
+            v.only = only;
+            writer.Value(v);
+        }
+
+        // Tide's command UnityEngine.OpenScene, as the game's C lays it out
+        [global::Tide.TideType("UnityEngine.OpenScene")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 8)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public int asset;
+            [global::System.Runtime.InteropServices.FieldOffset(4)] public bool only;
+        }
+    }
+}
+namespace Tide.Game
+{
+    // Tide's event Bounced, as this machine's local handlers hear it: TideRunner.On, OnVerified (TideEvent)
+    public sealed partial class Bounced : global::Tide.TideEvent
+    {
+        public float speed;
+
+        public override string TideName => "Bounced";
+
+        protected override unsafe void ReadLive(byte* values, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var v = *(Value*)values;
+            speed = v.speed;
+        }
+
+        // Tide's event Bounced, as the game's C lays it out
+        [global::Tide.TideType("Bounced")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 4)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public float speed;
+        }
     }
 }

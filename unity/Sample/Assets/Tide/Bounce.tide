@@ -24,6 +24,18 @@ singleton Extras
 {
     Entity bonus;
     Entity tossed;
+    string said;
+}
+
+// A line from Unity's UI, which the match keeps for everyone: TideRunner.Get<Extras>().said in C#
+command Say
+{
+    string text;
+}
+
+command(Say say, PlayerID sender) Saying(mut Extras extras)
+{
+    extras.said = say.text;
 }
 
 // A ball nobody rolls, in and out of the box: a GameObject made and let go of as its entity comes and goes, which
@@ -85,6 +97,29 @@ component Ball
     Color color;
     int seat;
     int bounces;
+    local int heard; // This machine's, as its local handler counts its bounces (Heard)
+}
+
+// A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntityView.On)
+event Bounced
+{
+    float speed;
+}
+
+local event(Bounced bounced) Heard(mut Ball ball)
+{
+    ball.heard += 1;
+}
+
+// Sent to a ball: TideRunner.Send(new Paint { ... }, ballGameObject) in C#
+command Paint
+{
+    Color color;
+}
+
+command(Paint paint, PlayerID sender) Painting(mut Ball ball)
+{
+    ball.color = paint.color;
 }
 
 singleton Room
@@ -142,7 +177,11 @@ system Rolling(Roll roll, mut Ball ball, mut Transform transform, Time time)
     if (p.y < 0.5)
     {
         p.y = 0.5;
-        if (ball.velocity.y < -2) ball.bounces += 1;
+        if (ball.velocity.y < -2)
+        {
+            ball.bounces += 1;
+            this.Send(Bounced { speed = -ball.velocity.y });
+        }
         ball.velocity.y = -ball.velocity.y * 0.4;
     }
     if (Math.Abs(p.x) > 5) { p.x = Math.Clamp(p.x, -5, 5); ball.velocity.x = -ball.velocity.x * 0.8; }

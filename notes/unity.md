@@ -570,7 +570,7 @@ already added, as a C# initializer's doesn't).
   first 16 bytes of SHA-256 of `"tide component " + name` (`unity_code_guid`),
   so prefabs keep it across machines and builds; `TideGame.cs` (`TideGameSchema`
   with the hash, game, tick rate, scenes and prefabs;
-  `TideGameComponents.Register()` at `SubsystemRegistration`; the game's enums;
+  `TideGameTypes.Register()` (`TideGameComponents` until the same day, below) at `SubsystemRegistration`; the game's enums;
   a layout struct for every other type); and `components.json`, how each
   component's fields are serialized, which the converter reads. Stale component
   scripts go (`sweep_entry`). Generating in tide rather than in the editor
@@ -592,7 +592,7 @@ already added, as a C# initializer's doesn't).
 - **Live values** (`TideRunner.Live`, after `Show`): for each packet component
   with a registered type, each shown entity's GameObject gets it (added where
   it hasn't) and `ReadLive` writes its fields from the packet; components the
-  entity no longer has are destroyed. Only while `TideComponents.Hash` is the
+  entity no longer has are destroyed. Only while `TideTypes.Hash` (`TideComponents` then) is the
   packet's schema hash, so stale C# never misreads. Writes in a script stay
   Unity's; commands reach the match. `TideComponentEditor` grays them in Play
   and repaints. `TideRunner.GameObjectOf(entity)` gives entity fields.
@@ -647,6 +647,46 @@ their components, live. The Sample was converted by the command (4 components).
 Gaps: asset fields; `char` lists and structs are literals; a field whose C#
 name had `_` added for a clash isn't renamed by tidels; the owner's project
 not yet converted.
+
+### Events, commands and singletons in C# (2026-10-22)
+
+Owner, after components of their own: "this should make views trivial right? what about events and commands"; my
+recommendation (C# hears what local handlers hear, as predicted and as verified; singletons live; text commands;
+a GameObject as a command's target): "yeah I think that makes sense yes".
+
+- **Events.** tidec `--embed` taps every match event of the game's own with a predicted and a verified local
+  handler (`notes/language.md`, Events, text commands and command defaults), and the view packet's EVENTS section
+  carries what they heard. tide writes each event as `sealed partial class E : Tide.TideEvent` (fields read live:
+  text as `string`, entities as `GameObject`, plain lists as `List<T>`, a struct field as its value; maps and grids
+  left out) with `Tick`, `Verified`, `Target` (the GameObject the entity it was sent to shows, or null) and
+  `TargetEntity`. `TideRunner.On<E>(Action<E>)` hears each as soon as this machine has it (a correction can turn it
+  out not to have happened), `OnVerified<E>` once the server confirmed its tick, `Off`/`OffVerified` stop; a
+  `TideEntityView`'s `On`/`OnVerified` hear those sent to its entity. The runner tells them after the frame's
+  components are live (`Hear`, after `Live`), before scripts' Update; a handler's exception is logged and the rest
+  run.
+- **Singletons** are `sealed partial class S : Tide.TideSingleton`, live like components (`LiveSingletons`), their
+  local fields too: `TideRunner.Get<S>()` gives the runner's, null outside a match. `TryGetSingleton` reads the
+  nested `S.Value` as before. Internal ones (`tide_*`) stay structs.
+- **Local fields** of a component or singleton are its class's `[NonSerialized]` fields, read from the packet's
+  local sections; the inspector shows them in Play under "Local fields" (`TideComponentEditor`, by reflection).
+  The converter never sees them: `components.json` lists the match fields alone.
+- **Commands** are `sealed partial class C : Tide.TideCommand`, starting at their declared defaults (the schema's
+  `defaults` for commands now), `Pack` writing their `Value` through `TideCommandWriter` (`Text`, `List`, `Entity`
+  of a GameObject); `TideRunner.Send(C, GameObject target = null)` and `Send(C, Component target)` send them to the
+  match or the entity the target shows, as local code's `Send` and `entity.Send`. `Send<T>(T value)` of a raw
+  `Value` stays for plain commands. False outside a match, for text that isn't UTF-8, or a command too big.
+- **The registry** is `Tide.TideTypes` (was `TideComponents`): components, singletons and events by Tide name,
+  registered by `TideGameTypes` in `TideGame.cs`, which holds every non-component class; the packet reader takes
+  version 3 and lists EVENTS (`TidePacket.HeardCount`, `Heard`, `HeardValue`).
+- **The Sample**: `event Bounced { float speed; }` sent to a ball as it bounces, `local int heard` on `Ball` that a
+  local handler counts, `command Say { string text; }` kept in `Extras.said`, and `command Paint { Color color; }`
+  handled per ball. PlayMode tests: `EventsAreHeardAsLocalHandlersHearThem` (heard, verified and the ball's view's
+  counts equal, the target is the ball, the local field equals them) and `CommandsCarryTextAndGoToGameObjects`
+  (Room live, a non-ASCII `Say` comes back in `Extras`, `Paint` sent to the ball's GameObject colors that ball).
+
+Gaps: command fields that are lists other than `List<byte>` aren't commands' in Tide; events' and singletons' map,
+grid and heap-holding list fields are left out of the classes; a component's struct fields stay Tide literals in
+Play (authoring), not live values.
 
 ### Scenes as built (2026-10-20)
 

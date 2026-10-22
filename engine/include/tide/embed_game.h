@@ -29,6 +29,18 @@
 //                      they're in. A text or list field of a value holds an
 //                      entry's place + 1 here, 0 for empty: a list's length is
 //                      in bytes, its elements side by side.
+//     EVENTS:          count records, in the order they were heard (stride
+//                      0): the match's events this machine heard since the
+//                      last packet, as its local handlers hear them, each a
+//                      32-byte header: u32 size (the record's, a multiple of
+//                      8), u32 type (the schema's), u32 flags (1: heard as
+//                      predicted, as `local event(Hit hit)` hears it; 2: once
+//                      the server confirmed its tick, as `local event(verified
+//                      Hit hit)`), u32 tick, u32 target index, u32 target
+//                      generation (zeros: the world), u32 target place (among
+//                      the entities, UINT32_MAX: none, or not the same entity
+//                      now), u32 0; then its value, its text and lists in
+//                      STRINGS.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -37,10 +49,11 @@
 #include "tide/list.h"
 
 #define TIDE_PACKET_MAGIC 0x56444954u // "TIDV"
-#define TIDE_PACKET_VERSION 2u
+#define TIDE_PACKET_VERSION 3u
 #define TIDE_PACKET_HEADER 48u
 #define TIDE_PACKET_ENTITY 24u
 #define TIDE_PACKET_SECTION 24u
+#define TIDE_PACKET_EVENT 32u // An EVENTS record's header
 #define TIDE_PACKET_NONE 0xFFFFFFFFu
 
 typedef enum tide_packet_kind {
@@ -49,6 +62,7 @@ typedef enum tide_packet_kind {
     TIDE_PACKET_COMPONENT_LOCAL = 3,
     TIDE_PACKET_SINGLETON_LOCAL = 4,
     TIDE_PACKET_STRINGS = 5,
+    TIDE_PACKET_EVENTS = 6,
 } tide_packet_kind;
 
 // A packet being written, and what it keeps from frame to frame to write the
@@ -122,7 +136,8 @@ typedef struct tide_embed_game {
     const char *const *prefabs;
     uint32_t field_count;
     const tide_embed_field *fields;
-    // Types the layout hasn't, which commands are: the schema numbers them after the layout's, in this order
+    // Types the layout hasn't, the commands' and then the events' this program hears: the schema numbers them after
+    // the layout's, in this order
     uint32_t extra_type_count;
     const tide_layout_type *extra_types;
     // Writes the frame's packet: `world` blended from `previous` by `alpha`, as views see it, with this machine's
@@ -130,23 +145,28 @@ typedef struct tide_embed_game {
     void (*view)(const void *world, const void *previous, float alpha, const void *local, uint32_t verified_tick,
                  tide_packet *out);
     // Sends a command from another program, as local code's Send: `type` the schema's, to the entity `target` (index,
-    // generation; zeros for none), `value` its bytes. False for a type that's no command, a size that isn't its, or one
-    // holding text or lists.
+    // generation; zeros for none), `value` its bytes, and for one holding text or lists, theirs after them as STRINGS
+    // lays them out (u32 count, its {offset, length} entries, the bytes), each field holding its entry's place + 1, 0
+    // for empty. False for a type that's no command, bytes that aren't its, text that isn't UTF-8, a list of what
+    // holds text, or one too big for a command, which local code's Send would end the program for.
     bool (*command)(void *local, int32_t type, uint32_t target_index, uint32_t target_generation, const void *value,
                     uint32_t size);
     // A tide_start for the scene named `scene`: false for none of that name.
     bool (*start)(void *start, const char *scene);
     // The game's schema as JSON (tide_schema_json) into `out`, as much as `capacity` holds with its NUL: its length
     uint32_t (*schema)(char *out, uint32_t capacity);
-    // A match component's value with its fields' declared defaults into `out`, its text and lists empty: false for
-    // a type that's none of the match's components or a size that isn't its.
+    // A match component's or a command's value with its fields' declared defaults into `out`, its text and lists
+    // empty: false for a type that's neither or a size that isn't its.
     bool (*defaults)(int32_t type, void *out, uint32_t size);
+    // The match's events whose records the packet carries (EVENTS), by the schema's type
+    uint32_t event_count;
+    const tide_embed_named *events;
 } tide_embed_game;
 
 // The schema another program binds a game by, as JSON: the layout's types with their fields' offsets, what each
-// is (a component, a singleton, a component's or singleton's local fields, a command after the layout's, or a
-// struct), whether a component is a scene's, a component's default value (its bytes as hex), its enums, commands,
-// prefabs and scenes. Into `out`, as much as `capacity` holds with a NUL; returns its whole length, so a call with no
+// is (a component, a singleton, a component's or singleton's local fields, a command or an event after the
+// layout's, or a struct), whether a component is a scene's, a component's or command's default value (its bytes as
+// hex), its enums, commands, events, prefabs and scenes. Into `out`, as much as `capacity` holds with a NUL; returns its whole length, so a call with no
 // room says how much to make.
 #define TIDE_SCHEMA_ABI 1u
 uint32_t tide_schema_json(const tide_layout *layout, const tide_embed_game *embed, uint64_t hash, const char *game,

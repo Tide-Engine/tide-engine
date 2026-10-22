@@ -246,7 +246,7 @@ static void put_type(json *j, const tide_embed_game *embed, const tide_layout_ty
     put_string(j, t->name);
     putf(j, ",\"kind\":\"%s\",\"size\":%u,\"local\":%d", kind, (unsigned)t->size, (int)local);
     if (scene) put(j, ",\"scene\":true", 13);
-    if (embed && embed->defaults && strcmp(kind, "component") == 0 && t->size > 0) {
+    if (embed && embed->defaults && (strcmp(kind, "component") == 0 || strcmp(kind, "command") == 0) && t->size > 0) {
         uint8_t *value = tide_realloc(NULL, 0, t->size);
         if (embed->defaults(index, value, t->size)) {
             put(j, ",\"defaults\":\"", 13);
@@ -317,7 +317,10 @@ uint32_t tide_schema_json(const tide_layout *layout, const tide_embed_game *embe
     }
     for (uint32_t i = 0; embed && i < embed->extra_type_count; i++) {
         put(&j, ",", 1);
-        put_type(&j, embed, &embed->extra_types[i], (int32_t)(layout->type_count + i), "command", -1, false);
+        const int32_t type = (int32_t)(layout->type_count + i);
+        bool event = false;
+        for (uint32_t k = 0; embed->events && k < embed->event_count; k++) event |= embed->events[k].type == type;
+        put_type(&j, embed, &embed->extra_types[i], type, event ? "event" : "command", -1, false);
     }
     put(&j, "],\"enums\":[", 11);
     for (uint32_t i = 0; i < layout->enum_count; i++) {
@@ -343,6 +346,14 @@ uint32_t tide_schema_json(const tide_layout *layout, const tide_embed_game *embe
         put(&j, "{\"name\":", 8);
         put_string(&j, embed->commands[i].name);
         putf(&j, ",\"type\":%d}", (int)embed->commands[i].type);
+    }
+    put(&j, "]", 1);
+    put(&j, ",\"events\":[", 11);
+    for (uint32_t i = 0; embed && embed->events && i < embed->event_count; i++) {
+        if (i) put(&j, ",", 1);
+        put(&j, "{\"name\":", 8);
+        put_string(&j, embed->events[i].name);
+        putf(&j, ",\"type\":%d}", (int)embed->events[i].type);
     }
     put(&j, "]", 1);
     put_names(&j, "prefabs", embed ? embed->prefabs : NULL, embed ? embed->prefab_count : 0);

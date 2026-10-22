@@ -66,15 +66,17 @@ static const char *kind_of(const decl *d)
     }
 }
 
+// tidec --embed's taps, which nobody wrote, are left out
 static void put_names(sb *out, const char *key, const decl *const *items, const int count)
 {
-    if (count == 0) return;
-    sb_printf(out, ", \"%s\": [", key);
+    int written = 0;
     for (int i = 0; i < count; i++) {
-        if (i) sb_put(out, ", ");
+        if (items[i]->embed_tap) continue;
+        if (written++) sb_put(out, ", ");
+        else sb_printf(out, ", \"%s\": [", key);
         put_name(out, items[i]);
     }
-    sb_put(out, "]");
+    if (written) sb_put(out, "]");
 }
 
 // Its fields, then a match component's or singleton's local ones, which are its local part's
@@ -185,7 +187,7 @@ void print_outline(const program *prog, sb *out)
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         const char *kind = kind_of(d);
-        if (!kind || d->builtin || !d->unit || !d->unit->src) continue;
+        if (!kind || d->builtin || !d->unit || !d->unit->src || d->embed_tap) continue;
         sb_put(out, count++ ? ",\n  {" : "\n  {");
         sb_printf(out, "\"kind\": \"%s\", \"name\": ", kind);
         put_name(out, d);

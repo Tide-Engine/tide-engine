@@ -314,6 +314,14 @@ so a script reads them as fields (`GetComponent<Tide.Game.Health>().hp`), and
 the match's writes come through each frame; a script's changes to it don't reach
 the match, which a command's do. A component or field the game no longer has is
 left out with nothing said, as Unity leaves out a removed C# field's value.
+The rest of the game is C# too: `runner.Get<Tide.Game.Score>()` is a singleton
+as views see it this frame; `runner.On<Tide.Game.Hit>(hit => ...)` hears the
+match's events as the game's local handlers do, as soon as this machine has
+them, and `runner.OnVerified` once the server confirms them, with an entity's
+own view hearing those sent to it (`GetComponent<TideEntityView>().On`); and
+`runner.Send(new Tide.Game.Buy { item = "sword" }, target)` sends a command,
+its text included, to the match or to the entity a GameObject shows. Local
+fields are on their components, shown in Play.
 Older projects list components on the TideEntity itself, which tide still reads:
 Tools > Tide > Convert TideEntity Lists to Components makes them components of
 their own. Everything from Unity is under the

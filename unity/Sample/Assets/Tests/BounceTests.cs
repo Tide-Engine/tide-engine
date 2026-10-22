@@ -223,6 +223,71 @@ public sealed unsafe class BounceTests
         Assert.Contains(made, spawner.released, "which it let go of as its entity went");
     }
 
+    static TideEntityView MyBall()
+    {
+        foreach (var view in Object.FindObjectsByType<TideEntityView>())
+        {
+            if (view.Showing && view.Mine && view.GetComponent<Tide.Game.Ball>() != null) return view;
+        }
+        return null;
+    }
+
+    // The match's events reach C# as this machine's local handlers hear them: the ball's bounces as it falls onto the
+    // floor, heard at once and again once confirmed, the ball's own view hearing those sent to it; and its local field
+    // counts them as Tide's local handler does.
+    [UnityTest]
+    public IEnumerator EventsAreHeardAsLocalHandlersHearThem()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        int heard = 0, verified = 0, own = 0;
+        GameObject target = null;
+        var speed = 0f;
+        runner.On<Tide.Game.Bounced>(e =>
+        {
+            heard++;
+            target = e.Target;
+            speed = e.speed;
+        });
+        runner.OnVerified<Tide.Game.Bounced>(e => verified += e.Verified ? 1 : 0);
+        TideEntityView ball = null;
+        // As soon as the ball shows: it's dropped from 2 units up, and bounces as it lands
+        yield return Until(() => (ball = MyBall()) != null, 10f);
+        Assert.IsNotNull(ball, "the player's ball shows");
+        ball.On<Tide.Game.Bounced>(e => own++);
+        yield return Until(() => heard >= 2 && verified >= 2, 10f);
+        Assert.GreaterOrEqual(heard, 2, "the ball bounced, as this machine heard it");
+        Assert.AreEqual(heard, verified, "each heard again once the server confirmed it");
+        Assert.AreEqual(heard, own, "the ball's view heard those sent to its entity");
+        Assert.AreEqual(ball.gameObject, target, "sent to the ball");
+        Assert.Greater(speed, 2f, "with the event's fields");
+        Assert.AreEqual(heard, ball.GetComponent<Tide.Game.Ball>().heard, "its local field, as the local handler counted");
+    }
+
+    // A command's text reaches the match, a command goes to the entity a GameObject shows, and a singleton is live.
+    [UnityTest]
+    public IEnumerator CommandsCarryTextAndGoToGameObjects()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        TideEntityView ball = null;
+        yield return Until(() => (ball = MyBall()) != null, 10f);
+        Assert.IsNotNull(ball, "the player's ball shows");
+        var room = runner.Get<Tide.Game.Room>();
+        Assert.IsNotNull(room, "the match's singleton");
+        Assert.AreEqual(1, room.arrivals, "as the match has it");
+        Assert.IsTrue(runner.Send(new Tide.Game.Say { text = "héllo, Tide" }));
+        yield return Until(() => runner.Get<Tide.Game.Extras>()?.said == "héllo, Tide", 10f);
+        Assert.AreEqual("héllo, Tide", runner.Get<Tide.Game.Extras>()?.said, "the command's text, kept by the match");
+        var red = new Color(1, 0, 0, 1);
+        Assert.IsTrue(runner.Send(new Tide.Game.Paint { color = red }, ball.gameObject));
+        var live = ball.GetComponent<Tide.Game.Ball>();
+        yield return Until(() => live.color == red, 10f);
+        Assert.AreEqual(red, live.color, "the command went to the ball's entity");
+    }
+
     [UnityTest]
     public IEnumerator TheMatchShowsItsBall()
     {

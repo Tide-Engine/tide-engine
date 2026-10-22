@@ -185,6 +185,11 @@ static void heard_read_routine(gen *g, const decl *d, bool *changed)
 static void collect_heard_reads(gen *g)
 {
     if (!program_hears(g->prog)) return;
+    // tidec --embed's taps give another program the whole event
+    for (int i = 0; i < g->prog->decls.count; i++) {
+        const decl *d = g->prog->decls.items[i];
+        if (d->embed_tap && d->params.count) heard_add_read(g, &d->params.items[0], "");
+    }
     for (bool changed = true; changed;) {
         changed = false;
         for (int i = 0; i < g->prog->decls.count; i++) heard_read_routine(g, g->prog->decls.items[i], &changed);

@@ -400,6 +400,11 @@ TIDE_TEST(embed_schema)
     const char *unplaced = strstr(schema, "{\"name\":\"Unplaced\",\"kind\":\"component\"");
     TIDE_CHECK(unplaced != NULL && strstr(unplaced, "\"defaults\":\"00008a42\"") != NULL);
     TIDE_CHECK(strstr(schema, "{\"name\":\"Bump\",\"kind\":\"command\"") != NULL);
+    // An event another program hears is after the commands, and listed
+    TIDE_CHECK(strstr(schema, "{\"name\":\"Ticked\",\"kind\":\"event\"") != NULL);
+    char events[64];
+    snprintf(events, sizeof events, "\"events\":[{\"name\":\"Ticked\",\"type\":%u}]", (unsigned)tide_game_layout.type_count + 2u);
+    TIDE_CHECK(strstr(schema, events) != NULL);
     TIDE_CHECK(strstr(schema, "\"scenes\":[\"Main\",\"Arena\"]") != NULL || strstr(schema, "\"Arena\"") != NULL);
     // A scene's tag says it's a scene, an ordinary component doesn't (before its fields)
     const char *main_tag = strstr(schema, "{\"name\":\"Main\",\"kind\":\"component\"");
@@ -414,6 +419,56 @@ TIDE_TEST(embed_schema)
     tide_embed_destroy(e);
 }
 
+// The match's events, as this machine's local handlers hear them: each frame's packet has those heard since the last
+// one, once as predicted and once confirmed, with their text and the entity they were sent to.
+TIDE_TEST(embed_heard_events)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    const uint32_t ticked = tide_game_layout.type_count + 2u; // After the commands, Bump and Rename
+    int predicted = 0, verified = 0, last_tick = 0;
+    bool targets = true, labels = true, ordered = true;
+    for (int frame = 0; frame < 75; frame++) {
+        frames(e, 1, NULL);
+        uint32_t size = 0, count = 0;
+        const uint8_t *p = tide_embed_view(e, &size);
+        TIDE_REQUIRE(p != NULL);
+        const uint8_t *records = section(p, size, TIDE_PACKET_EVENTS, 0, &count, NULL);
+        if (!records) continue;
+        uint32_t at = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            const uint32_t record = u32_at(records, at), type = u32_at(records, at + 4), flags = u32_at(records, at + 8);
+            const uint32_t tick = u32_at(records, at + 12), place = u32_at(records, at + 24);
+            TIDE_REQUIRE(record >= TIDE_PACKET_EVENT && record % 8u == 0u);
+            if (type == ticked) {
+                Ticked heard;
+                memcpy(&heard, records + at + TIDE_PACKET_EVENT, sizeof heard);
+                if (flags == 1u) {
+                    predicted++;
+                    ordered &= (int)tick > last_tick;
+                    last_tick = (int)tick;
+                } else if (flags == 2u) {
+                    verified++;
+                }
+                // Sent to the counter, which is among the packet's entities, at its handle
+                targets &= place < u32_at(p, 36)
+                           && u32_at(p, TIDE_PACKET_HEADER + place * TIDE_PACKET_ENTITY) == u32_at(records, at + 16);
+                uint32_t length = 0;
+                const uint8_t *label = strings_entry(p, size, heard.label.at, &length);
+                labels &= label && length == 7u && memcmp(label, "counted", 7) == 0 && heard.ticks % 10 == 0;
+            }
+            at += record;
+        }
+    }
+    TIDE_CHECK(predicted >= 3 && predicted <= 4); // 75 frames are 37 ticks: the counter's 10th, 20th and 30th
+    TIDE_CHECK(verified >= predicted - 1 && verified <= predicted);
+    TIDE_CHECK(targets);
+    TIDE_CHECK(labels);
+    TIDE_CHECK(ordered); // Each once, as heard
+    tide_embed_destroy(e);
+}
+
 // A command from the other program reaches its handler as local code's would; a scene starts by its name.
 TIDE_TEST(embed_commands_and_scenes)
 {
@@ -425,7 +480,7 @@ TIDE_TEST(embed_commands_and_scenes)
     const Bump value = {.by = 7};
     TIDE_CHECK(tide_embed_command(e, bump, 0, 0, &value, sizeof value));
     TIDE_CHECK(!tide_embed_command(e, bump, 0, 0, &value, sizeof value - 1u)); // Not its size
-    TIDE_CHECK(!tide_embed_command(e, bump + 1u, 0, 0, &value, sizeof value)); // No command
+    TIDE_CHECK(!tide_embed_command(e, bump + 2u, 0, 0, &value, sizeof value)); // An event, no command
     frames(e, 10, NULL);
     uint32_t size = 0, count = 0;
     const uint8_t *p = tide_embed_view(e, &size);
@@ -434,6 +489,40 @@ TIDE_TEST(embed_commands_and_scenes)
     int32_t bumps;
     memcpy(&bumps, tally + offsetof(Tally, bumps), sizeof bumps);
     TIDE_CHECK(bumps == 7);
+    // A command's text and list after its value: a count, the entries, their bytes
+    const uint32_t rename = bump + 1u;
+    uint8_t bytes[sizeof(Rename) + 4 + 16 + 16] = {0};
+    Rename named = {0};
+    named.name.at = 1;
+    named.marks.at = 2;
+    memcpy(bytes, &named, sizeof named);
+    const uint8_t marks[3] = {7, 8, 9};
+    const uint32_t tail[5] = {2, 0, 4, 4, sizeof marks};
+    memcpy(bytes + sizeof named, tail, sizeof tail);
+    memcpy(bytes + sizeof named + sizeof tail, "tidy", 4);
+    memcpy(bytes + sizeof named + sizeof tail + 4, marks, sizeof marks);
+    const uint32_t whole = (uint32_t)(sizeof named + sizeof tail + 4 + sizeof marks);
+    TIDE_CHECK(!tide_embed_command(e, rename, 0, 0, bytes, whole - 1u)); // The list's bytes cut short
+    named.name.at = 3; // No such entry
+    memcpy(bytes, &named, sizeof named);
+    TIDE_CHECK(!tide_embed_command(e, rename, 0, 0, bytes, whole));
+    named.name.at = 1;
+    memcpy(bytes, &named, sizeof named);
+    bytes[sizeof named + sizeof tail] = 0xFF; // Not UTF-8
+    TIDE_CHECK(!tide_embed_command(e, rename, 0, 0, bytes, whole));
+    bytes[sizeof named + sizeof tail] = 't';
+    TIDE_CHECK(tide_embed_command(e, rename, 0, 0, bytes, whole));
+    frames(e, 10, NULL);
+    p = tide_embed_view(e, &size);
+    tally = section(p, size, TIDE_PACKET_SINGLETON, type_named("Tally"), &count, NULL);
+    TIDE_REQUIRE(tally != NULL);
+    Tally renamed;
+    memcpy(&renamed, tally, sizeof renamed);
+    uint32_t length = 0;
+    const uint8_t *name = strings_entry(p, size, renamed.name.at, &length);
+    TIDE_CHECK(name && length == 4u && memcmp(name, "tidy", 4) == 0);
+    const uint8_t *kept = strings_entry(p, size, renamed.marks.at, &length);
+    TIDE_CHECK(kept && length == sizeof marks && memcmp(kept, marks, sizeof marks) == 0);
     TIDE_CHECK(!tide_embed_request(e, TIDE_REQUEST_START, "Nowhere", 0));
     TIDE_CHECK(tide_embed_request(e, TIDE_REQUEST_START, "Arena", 0));
     frames(e, 10, NULL);

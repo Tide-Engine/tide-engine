@@ -94,6 +94,106 @@ static void gen_embed_rows(gen *g, const int c, const char *body)
     }
 }
 
+// The match's events tidec --embed taps (add_embed_taps in compile.c): those with a tap among their local handlers.
+// The schema numbers them after the commands, in the game's order.
+static bool embed_tapped(const decl *event)
+{
+    for (int i = 0; i < event->listeners.count; i++) {
+        if (event->listeners.items[i]->embed_tap) return true;
+    }
+    return false;
+}
+
+static int embed_event_count(const program *prog)
+{
+    int n = 0;
+    for (int i = 0; i < prog->events.count; i++) n += embed_tapped(prog->events.items[i]);
+    return n;
+}
+
+static int embed_event_type(const program *prog, const layout_decls *types, const decl *event)
+{
+    int n = types->count + prog->command_types.count;
+    for (int i = 0; i < prog->events.count; i++) {
+        if (prog->events.items[i] == event) return n;
+        n += embed_tapped(prog->events.items[i]);
+    }
+    return -1;
+}
+
+// What the taps call as they hear an event (gen_heard), before the frame's views: its record, kept until the next
+// packet takes it, with its text and lists copied out of the heap it was heard with.
+static void gen_embed_heard(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (!embed_event_count(prog)) return;
+    const layout_decls types = layout_types(prog);
+    sb_put(o, "#include \"tide/embed_game.h\"\n\n"
+              "// The match's events this machine heard since the last view packet, as its local handlers would, for another\n"
+              "// program (tide/embed.h): the packet's EVENTS records, and in its text what their text and lists held\n"
+              "static tide_packet tide_embed_heard_store;\nstatic uint32_t tide_embed_heard_count;\n\n"
+              "// A text or list a record kept, into the packet: what its field holds there\n"
+              "TIDE_HELPER uint32_t tide_embed_heard_text(tide_packet *out, const uint32_t at)\n{\n"
+              "    if (!at || at > tide_embed_heard_store.entry_count) return 0u;\n"
+              "    const uint32_t *entry = tide_embed_heard_store.entries + (size_t)(at - 1u) * 2u;\n"
+              "    return tide_packet_text(out, tide_embed_heard_store.text + entry[0], entry[1]);\n}\n\n");
+    for (int i = 0; i < prog->events.count; i++) {
+        const decl *d = prog->events.items[i];
+        if (!embed_tapped(d)) continue;
+        const char *name = type_cname(d);
+        const bool fix = embed_has_fix(d);
+        if (fix) gen_embed_fix(g, d);
+        sb_printf(o, "TIDE_HELPER void tide_embed_heard_%s(const %s *value, const bool verified, const tide_entity target, "
+                     "const uint32_t tick)\n{\n    %s v = *value;\n", name, name, name);
+        if (fix) sb_printf(o, "    tide_embed_fix_%s(&v, &tide_embed_heard_store);\n", name);
+        sb_printf(o, "    const uint32_t value_bytes = ((uint32_t)sizeof v + 7u) & ~7u;\n"
+                     "    const uint32_t head[8] = {TIDE_PACKET_EVENT + value_bytes, %du, verified ? 2u : 1u, tick, target.index,\n"
+                     "                              target.generation, TIDE_PACKET_NONE, 0u};\n"
+                     "    uint8_t *at = tide_packet_grow(&tide_embed_heard_store, TIDE_PACKET_EVENT + value_bytes, true);\n"
+                     "    memcpy(at, head, sizeof head);\n    memcpy(at + TIDE_PACKET_EVENT, &v, sizeof v);\n"
+                     "    tide_embed_heard_count++;\n}\n\n",
+                  embed_event_type(prog, &types, d));
+    }
+    // Into the packet: the records, each with where its entity is among the packet's while it's the same one, and
+    // their text and lists the packet's own
+    sb_put(o, "static void tide_embed_heard_drop(void)\n{\n"
+              "    tide_embed_heard_store.size = 0;\n    tide_embed_heard_store.text_size = 0;\n"
+              "    tide_embed_heard_store.entry_count = 0;\n    tide_embed_heard_count = 0;\n}\n\n"
+              "static void tide_embed_heard_write(tide_packet *out, const uint32_t *place, const uint32_t places)\n{\n"
+              "    if (!tide_embed_heard_count) return;\n"
+              "    const uint32_t size = tide_embed_heard_store.size;\n"
+              "    const uint32_t section[6] = {TIDE_PACKET_EVENTS, 0u, tide_embed_heard_count, 0u, size, 0u};\n"
+              "    uint8_t *records = tide_packet_grow(out, TIDE_PACKET_SECTION + size, true);\n"
+              "    memcpy(records, section, sizeof section);\n    out->sections++;\n    records += TIDE_PACKET_SECTION;\n"
+              "    memcpy(records, tide_embed_heard_store.bytes, size);\n"
+              "    for (uint32_t at = 0; at + TIDE_PACKET_EVENT <= size;) {\n"
+              "        uint32_t head[8];\n        memcpy(head, records + at, sizeof head);\n"
+              "        if (head[4] < places && place[head[4]] != TIDE_PACKET_NONE) {\n"
+              "            uint32_t row[2];\n"
+              "            memcpy(row, out->bytes + TIDE_PACKET_HEADER + (size_t)place[head[4]] * TIDE_PACKET_ENTITY, sizeof row);\n"
+              "            if (row[1] == head[5]) head[6] = place[head[4]];\n        }\n"
+              "        memcpy(records + at, head, sizeof head);\n"
+              "        switch (head[1]) {\n");
+    for (int i = 0; i < prog->events.count; i++) {
+        const decl *d = prog->events.items[i];
+        if (!embed_tapped(d) || !embed_has_fix(d)) continue;
+        const char *name = type_cname(d);
+        sb_printf(o, "        case %du: {\n            %s v;\n            memcpy(&v, records + at + TIDE_PACKET_EVENT, sizeof v);\n",
+                  embed_event_type(prog, &types, d), name);
+        path_list paths = {0};
+        text_paths(d, "", &paths);
+        for (int k = 0; k < paths.count; k++) {
+            const heap_path *hp = &paths.items[k];
+            if (hp->map || hp->grid) continue; // Empty: not in the packet
+            sb_printf(o, "            v.%s.at = tide_embed_heard_text(out, v.%s.at);\n", hp->path, hp->path);
+        }
+        sb_put(o, "            memcpy(records + at + TIDE_PACKET_EVENT, &v, sizeof v);\n            break;\n        }\n");
+    }
+    sb_put(o, "        default: break;\n        }\n        at += head[0] ? head[0] : size;\n    }\n"
+              "    tide_embed_heard_drop();\n}\n\n");
+}
+
 static void gen_embed(gen *g)
 {
     const program *prog = g->prog;
@@ -112,8 +212,9 @@ static void gen_embed(gen *g)
               "    const tide_world *w = world;\n    const tide_world *previous = previous_world;\n"
               "    const tide_local *l = local_state;\n    (void)previous;\n    (void)l;\n"
               "    tide_packet_begin(out);\n");
-    sb_printf(o, "    if (!w) {\n        tide_packet_end(out, 0x%016llXull, false, 0, verified_tick, 1.0f, 0);\n        return;\n    }\n",
-              (unsigned long long)g->game_hash);
+    const bool heard = embed_event_count(prog) > 0;
+    sb_printf(o, "    if (!w) {\n%s        tide_packet_end(out, 0x%016llXull, false, 0, verified_tick, 1.0f, 0);\n        return;\n    }\n",
+              heard ? "        tide_embed_heard_drop(); // Nothing's heard outside a match\n" : "", (unsigned long long)g->game_hash);
     sb_put(o, "    if (!(alpha >= 0.0f && alpha <= 1.0f)) alpha = 1.0f;\n");
     if (world_heap(prog, false) || world_heap(prog, true)) {
         sb_printf(o, "    tide_text_use(%s, %s);\n", world_heap(prog, false) ? "(tide_heap *)(uintptr_t)&w->heap" : "NULL",
@@ -220,13 +321,21 @@ static void gen_embed(gen *g)
                       layout_index(&types, d->local_part));
         }
     }
+    // What this machine heard since the last packet
+    if (heard) sb_put(o, "    tide_embed_heard_write(out, place, w->entities.next_unused);\n");
     sb_printf(o, "    tide_scratch_reset(mark);\n"
                  "    tide_packet_end(out, 0x%016llXull, true, (uint32_t)w->Time.tick, verified_tick, alpha, n);\n}\n\n",
               (unsigned long long)g->game_hash);
 
-    // Commands: their values' layout, after the layout's types, and sending one as local code does
-    for (int k = 0; k < prog->command_types.count; k++) {
-        const decl *d = prog->command_types.items[k];
+    // Commands and the events another program hears: their values' layout, after the layout's types; and sending a
+    // command as local code does
+    layout_decls extras = {0};
+    for (int k = 0; k < prog->command_types.count; k++) vec_push(extras, prog->command_types.items[k]);
+    for (int k = 0; k < prog->events.count; k++) {
+        if (embed_tapped(prog->events.items[k])) vec_push(extras, prog->events.items[k]);
+    }
+    for (int k = 0; k < extras.count; k++) {
+        const decl *d = extras.items[k];
         const char *name = type_cname(d);
         if (!d->fields.count) continue;
         sb_printf(o, "static const tide_layout_field tide_embed_command_fields%d[] = {\n", k);
@@ -240,10 +349,10 @@ static void gen_embed(gen *g)
         }
         sb_put(o, "};\n\n");
     }
-    if (prog->command_types.count) {
+    if (extras.count) {
         sb_put(o, "static const tide_layout_type tide_embed_extra_types[] = {\n");
-        for (int k = 0; k < prog->command_types.count; k++) {
-            const decl *d = prog->command_types.items[k];
+        for (int k = 0; k < extras.count; k++) {
+            const decl *d = extras.items[k];
             const type t = {TY_STRUCT, (decl *)d};
             if (d->fields.count) {
                 sb_printf(o, "    {\"%s\", sizeof(%s), false, %d, tide_embed_command_fields%d, NULL},\n", layout_name(t), type_cname(d),
@@ -254,6 +363,37 @@ static void gen_embed(gen *g)
         }
         sb_put(o, "};\n\n");
     }
+    // A command's text and lists come after its value, as the packet's STRINGS has them (a count, its {offset, length}
+    // entries, then their bytes), each field holding its entry's place + 1, 0 for empty
+    bool any_text = false;
+    for (int k = 0; k < prog->command_types.count; k++) any_text |= decl_has_text(prog->command_types.items[k]);
+    if (any_text) {
+        sb_put(o, "// Entry `handle` of a command's tail: its bytes, or false where the tail doesn't have it whole\n"
+                  "static bool tide_embed_tail(const uint8_t *tail, const uint32_t size, const uint32_t handle, const uint8_t **bytes,\n"
+                  "                            uint32_t *length)\n{\n"
+                  "    *bytes = NULL;\n    *length = 0;\n    if (!handle) return true;\n"
+                  "    uint32_t count;\n    if (size < sizeof count) return false;\n    memcpy(&count, tail, sizeof count);\n"
+                  "    if (handle > count || 4u + (uint64_t)count * 8u > size) return false;\n"
+                  "    uint32_t entry[2];\n    memcpy(entry, tail + 4u + (size_t)(handle - 1u) * 8u, sizeof entry);\n"
+                  "    const uint64_t start = 4u + (uint64_t)count * 8u + entry[0];\n"
+                  "    if (start + entry[1] > size || entry[1] > (uint32_t)INT32_MAX) return false;\n"
+                  "    *bytes = tail + start;\n    *length = entry[1];\n    return true;\n}\n\n"
+                  "// A command's text field, its entry made the scratch area's text: false for one that isn't there or isn't UTF-8\n"
+                  "static bool tide_embed_command_text(const uint8_t *tail, const uint32_t size, tide_text *field)\n{\n"
+                  "    const uint8_t *bytes;\n    uint32_t length;\n"
+                  "    if (!tide_embed_tail(tail, size, field->at, &bytes, &length)) return false;\n"
+                  "    *field = (tide_text){0};\n    if (!length) return true;\n"
+                  "    const char *text = (const char *)bytes;\n"
+                  "    if (!tide_utf8_valid(text, (int32_t)length)) return false;\n"
+                  "    *field = tide_text_temp((tide_str){text, (int32_t)length, tide_utf8_chars(text, (int32_t)length)});\n"
+                  "    return true;\n}\n\n"
+                  "// ...and a list field of `element`-byte elements side by side\n"
+                  "static bool tide_embed_command_list(const uint8_t *tail, const uint32_t size, tide_list *field, const uint32_t element)\n{\n"
+                  "    const uint8_t *bytes;\n    uint32_t length;\n"
+                  "    if (!tide_embed_tail(tail, size, field->at, &bytes, &length) || length % element) return false;\n"
+                  "    *field = length ? tide_list_from(bytes, (int32_t)(length / element), element) : (tide_list){0};\n"
+                  "    return true;\n}\n\n");
+    }
     sb_put(o, "static bool tide_embed_command(void *local_state, int32_t type, uint32_t target_index, uint32_t target_generation,\n"
               "                               const void *value, uint32_t size)\n{\n"
               "    tide_local *l = local_state;\n    const tide_entity target = {target_index, target_generation};\n"
@@ -263,7 +403,37 @@ static void gen_embed(gen *g)
         const char *name = type_cname(d);
         sb_printf(o, "    case %d: { // " STR_FMT "\n", types.count + k, STR_ARG(d->qualified));
         if (decl_has_text(d)) {
-            sb_put(o, "        return false; // It holds text or lists, which another program's bytes can't\n    }\n");
+            sb_printf(o, "        if (size < sizeof(%s)) return false;\n        %s v;\n        memcpy(&v, value, sizeof v);\n"
+                         "        const uint8_t *tail = (const uint8_t *)value + sizeof v;\n"
+                         "        const uint32_t tail_size = size - (uint32_t)sizeof v;\n        (void)tail;\n        (void)tail_size;\n"
+                         "        const uint32_t mark = tide_scratch_mark();\n        bool ok = true;\n", name, name);
+            path_list paths = {0};
+            text_paths(d, "", &paths);
+            for (int i = 0; i < paths.count; i++) {
+                const heap_path *hp = &paths.items[i];
+                if (hp->list && embed_list_plain(hp->list)) {
+                    sb_printf(o, "        ok = ok && tide_embed_command_list(tail, tail_size, &v.%s, (uint32_t)sizeof(%s));\n", hp->path,
+                              elem_ctype(list_elem(hp->list)));
+                } else if (hp->list || hp->map || hp->grid) {
+                    // What another program's bytes can't hold: empty
+                    sb_printf(o, "        ok = ok && !v.%s.at;\n        memset(&v.%s, 0, sizeof v.%s);\n", hp->path, hp->path, hp->path);
+                } else {
+                    sb_printf(o, "        ok = ok && tide_embed_command_text(tail, tail_size, &v.%s);\n", hp->path);
+                }
+            }
+            // What local code's Send would refuse as too big for a command ends the program; this says false
+            sb_put(o, "        if (ok) {\n            uint32_t room = TIDE_COMMAND_BYTES;\n");
+            for (int i = 0; i < paths.count; i++) {
+                const heap_path *hp = &paths.items[i];
+                if (hp->list && type_has_bytes((type){TY_LIST, (decl *)hp->list})) {
+                    sb_printf(o, "            room += 8u + (uint32_t)tide_list_count(v.%s);\n", hp->path);
+                }
+            }
+            sb_printf(o, "            uint8_t *bytes = malloc(room);\n            if (!bytes) tide_out_of_memory();\n"
+                         "            const uint32_t written = tide_write_command_%s(target, v, bytes, room);\n"
+                         "            ok = written && tide_game_check_command(bytes, written, NULL);\n            free(bytes);\n        }\n"
+                         "        if (ok) tide_local_send_%s(l, target, v);\n        tide_scratch_reset(mark);\n        return ok;\n    }\n",
+                      name, name);
             continue;
         }
         sb_printf(o, "        if (size != sizeof(%s)) return false;\n        %s v;\n        memcpy(&v, value, sizeof v);\n"
@@ -310,6 +480,22 @@ static void gen_embed(gen *g)
         gen_value(g, o, d, NULL, 0);
         sb_put(o, ";\n");
         for (int k = 0; k < paths.count; k++) sb_printf(o, "        memset(&v.%s, 0, sizeof v.%s);\n", paths.items[k].path, paths.items[k].path);
+        if (paths.count) sb_put(o, "        tide_scratch_reset(mark);\n");
+        sb_put(o, "        memcpy(out, &v, sizeof v);\n        return true;\n    }\n");
+    }
+    // ...and each command's, which another program's makes start at
+    for (int k = 0; k < prog->command_types.count; k++) {
+        const decl *d = prog->command_types.items[k];
+        const char *name = type_cname(d);
+        sb_printf(o, "    case %d: { // " STR_FMT "\n        if (size != sizeof(%s)) return false;\n", types.count + k,
+                  STR_ARG(d->qualified), name);
+        path_list paths = {0};
+        text_paths(d, "", &paths);
+        if (paths.count) sb_put(o, "        const uint32_t mark = tide_scratch_mark();\n");
+        sb_printf(o, "        %s v = ", name);
+        gen_value(g, o, d, NULL, 0);
+        sb_put(o, ";\n");
+        for (int i = 0; i < paths.count; i++) sb_printf(o, "        memset(&v.%s, 0, sizeof v.%s);\n", paths.items[i].path, paths.items[i].path);
         if (paths.count) sb_put(o, "        tide_scratch_reset(mark);\n");
         sb_put(o, "        memcpy(out, &v, sizeof v);\n        return true;\n    }\n");
     }
@@ -362,6 +548,17 @@ static void gen_embed(gen *g)
         }
         sb_put(o, "};\n");
     }
+    const int events = embed_event_count(prog);
+    if (events) {
+        sb_put(o, "static const tide_embed_named tide_embed_events[] = {\n");
+        for (int k = 0; k < prog->events.count; k++) {
+            const decl *d = prog->events.items[k];
+            if (!embed_tapped(d)) continue;
+            const type t = {TY_STRUCT, (decl *)d};
+            sb_printf(o, "    {\"%s\", %d},\n", layout_name(t), embed_event_type(prog, &types, d));
+        }
+        sb_put(o, "};\n");
+    }
     if (prog->start_scenes.count) {
         sb_put(o, "static const char *const tide_embed_scenes[] = {");
         for (int i = 0; i < prog->start_scenes.count; i++) {
@@ -380,14 +577,18 @@ static void gen_embed(gen *g)
         }
         sb_put(o, "};\n");
     }
+    // The layout's types', then the commands' and events' after them, by the schema's numbers
+    layout_decls described = {0};
+    for (int i = 0; i < types.count; i++) vec_push(described, types.items[i]);
+    for (int i = 0; i < extras.count; i++) vec_push(described, extras.items[i]);
     int fields = 0;
-    for (int i = 0; i < types.count; i++) {
-        for (int k = 0; k < types.items[i]->fields.count; k++) fields += embed_field_kind(types.items[i]->fields.items[k].type) != 0;
+    for (int i = 0; i < described.count; i++) {
+        for (int k = 0; k < described.items[i]->fields.count; k++) fields += embed_field_kind(described.items[i]->fields.items[k].type) != 0;
     }
     if (fields) {
         sb_put(o, "static const tide_embed_field tide_embed_fields[] = {\n");
-        for (int i = 0; i < types.count; i++) {
-            const decl *d = types.items[i];
+        for (int i = 0; i < described.count; i++) {
+            const decl *d = described.items[i];
             for (int k = 0; k < d->fields.count; k++) {
                 const field *f = &d->fields.items[k];
                 const int kind = embed_field_kind(f->type);
@@ -412,7 +613,8 @@ static void gen_embed(gen *g)
               "                            tide_game_api.title ? tide_game_api.title : \"\", tide_game_api.tick_rate, out, capacity);\n}\n");
     sb_printf(o, "\nconst tide_embed_game tide_game_embed = {\n"
                  "    %d, %s, %s, %s,\n    %d, %s, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n    %d, %s,\n"
-                 "    tide_embed_view, tide_embed_command, tide_embed_start, tide_embed_schema, tide_embed_defaults,\n};\n",
+                 "    tide_embed_view, tide_embed_command, tide_embed_start, tide_embed_schema, tide_embed_defaults,\n"
+                 "    %d, %s,\n};\n",
               components, components ? "tide_embed_components" : "NULL", components ? "tide_embed_component_locals" : "NULL",
               components ? "tide_embed_component_scenes" : "NULL",
               singletons, singletons ? "tide_embed_singletons" : "NULL", singletons ? "tide_embed_singleton_locals" : "NULL",
@@ -420,5 +622,5 @@ static void gen_embed(gen *g)
               prog->start_scenes.count, prog->start_scenes.count ? "tide_embed_scenes" : "NULL",
               prefabs, prefabs ? "tide_embed_prefabs" : "NULL",
               fields, fields ? "tide_embed_fields" : "NULL",
-              prog->command_types.count, prog->command_types.count ? "tide_embed_extra_types" : "NULL");
+              extras.count, extras.count ? "tide_embed_extra_types" : "NULL", events, events ? "tide_embed_events" : "NULL");
 }

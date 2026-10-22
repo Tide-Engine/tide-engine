@@ -265,15 +265,20 @@ static void listener_wire_parameters(asset_usage *w, const param *items, const i
     }
 }
 
+// tidec --embed's taps (add_embed_taps in compile.c) listen to the game's own events alone, which servers never journal
+// to recipients (they're each client's own simulation's), so they change nothing sent: a build for another program
+// plays with every other build of the game.
 static void listener_wire(asset_usage *w)
 {
     ctext(w, "Tide recipient listener journals 1");
     int count = 0;
-    for (int i = 0; i < w->prog->handlers.count; i++) if (w->prog->handlers.items[i]->listens) count++;
+    for (int i = 0; i < w->prog->handlers.count; i++) {
+        if (w->prog->handlers.items[i]->listens && !w->prog->handlers.items[i]->embed_tap) count++;
+    }
     number(w, count);
     for (int i = 0; i < w->prog->handlers.count; i++) {
         const decl *h = w->prog->handlers.items[i];
-        if (!h->listens) continue;
+        if (!h->listens || h->embed_tap) continue;
         text(w, h->qualified); // gen_hear includes names in TIDE_HEARD_BUILD.
         queue(w, USAGE_DECL, h->event);
         number(w, h->listens_verified);

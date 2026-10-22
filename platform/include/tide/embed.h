@@ -153,8 +153,10 @@ const uint8_t *tide_embed_draw(const tide_embed *e, uint32_t *size);
 // A command from the other program, as local code's Send: `type` its type's
 // place in the schema, sent to the entity `target_index`/`target_generation`
 // (zeros for none: entity.Send against Send), `value` its bytes as the schema
-// lays them out. False for a type that's no command, a size that isn't its, or
-// one that holds text or lists, which bytes from another program can't.
+// lays them out; a command's text and lists follow its value, as the view
+// packet's STRINGS lays them out (tide/embed_game.h), each field holding its
+// entry's place + 1. False for a type that's no command, bytes that aren't its,
+// text that isn't UTF-8, or a command too big to send.
 bool tide_embed_command(tide_embed *e, uint32_t type, uint32_t target_index, uint32_t target_generation, const void *value,
                         uint32_t size);
 

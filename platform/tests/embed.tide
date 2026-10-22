@@ -20,9 +20,17 @@ singleton Tally
 {
     float level;
     int bumps;
+    string name;
+    List<byte> marks;
 }
 
 command Bump { int by; }
+
+// Text and a list from the other program, after the command's value
+command Rename { string name; List<byte> marks; }
+
+// What the other program hears as this machine's local handlers would (the packet's EVENTS)
+event Ticked { int ticks; string label; }
 
 input Keys
 {
@@ -43,6 +51,7 @@ system Count(Keys keys, mut Counter counter)
 {
     counter.ticks += 1;
     if (keys.space) counter.presses += 1;
+    if (counter.ticks % 10 == 0) this.Send(Ticked { ticks = counter.ticks, label = counter.label });
 }
 
 system Rise(mut Tally tally, Time time)
@@ -53,6 +62,12 @@ system Rise(mut Tally tally, Time time)
 command(Bump bump, PlayerID sender) Apply(mut Tally tally)
 {
     tally.bumps += bump.by;
+}
+
+command(Rename rename, PlayerID sender) Renaming(mut Tally tally)
+{
+    tally.name = rename.name;
+    tally.marks = rename.marks;
 }
 
 extern void Seen(int ticks, int presses, float width, float height);

@@ -38,6 +38,36 @@ const char *path_stem(const char *path)
     return out;
 }
 
+// For another program (tidec --embed): a local handler of each of the match's own events, as it's heard and once it's
+// verified, so the program hears what the game's local handlers would, once each under rollback. Their bodies are
+// generated (gen_heard: tide_embed_heard_<Event>); nothing of them is in the match, as for any local handler.
+static bool add_embed_taps(program *prog)
+{
+    sb text = {0};
+    const int count = prog->decls.count;
+    for (int i = 0; i < count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->kind != DECL_EVENT || d->builtin || !d->unit || d->is_local || d->is_command) continue;
+        // Its name from the global namespace, which the parser hasn't qualified yet
+        sb name = {0};
+        if (d->unit->ns.len) sb_printf(&name, STR_FMT ".", STR_ARG(d->unit->ns));
+        sb_printf(&name, STR_FMT, STR_ARG(d->name));
+        sb_printf(&text, "local event(%s heard) TideEmbedHeard%d() { }\n"
+                         "local event(verified %s heard) TideEmbedVerified%d() { }\n",
+                  name.data, i, name.data, i);
+    }
+    if (!text.len) return true;
+    source *src = NEW(source);
+    src->path = "<tide-embed-events>";
+    src->text = text.data;
+    src->len = text.len;
+    diag_add_source(src);
+    token *toks = lex(src);
+    if (!toks || !parse_file(prog, src, toks, false)) return false;
+    for (int i = count; i < prog->decls.count; i++) prog->decls.items[i]->embed_tap = true;
+    return true;
+}
+
 bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     diag_reset();
@@ -106,6 +136,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (!toks || !parse_file(prog, src, toks, false)) return false;
         prog->editor_create = prog->decls.items[before];
     }
+    if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;
     if (!check(prog)) return false;
 

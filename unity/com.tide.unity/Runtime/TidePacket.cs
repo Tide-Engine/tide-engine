@@ -12,6 +12,22 @@ namespace Tide
         ComponentLocal = 3, // A match component's local fields: rows, then values
         SingletonLocal = 4, // A match singleton's local fields: one value
         Strings = 5,        // Text and lists: {offset, length} entries, then their bytes
+        Events = 6,         // The match's events this machine heard since the last packet: records, each its own size
+    }
+
+    // An event a packet's EVENTS holds: heard as this machine's local handlers hear it.
+    public struct TideHeard
+    {
+        public uint Type;   // The schema's type index
+        public uint Flags;  // 1: heard as predicted; 2: once the server confirmed its tick
+        public uint Tick;   // The tick that sent it
+        public uint TargetIndex, TargetGeneration; // The entity it was sent to (zeros: the world)
+        public uint TargetPlace;                   // ...its index among the packet's entities, uint.MaxValue for none
+        public uint Value;  // Where its value is in the packet
+        public uint Size;   // ...and its bytes
+
+        public bool Verified => (Flags & 2u) != 0;
+        public bool HasTarget => TargetPlace != uint.MaxValue;
     }
 
     // One entity the view packet holds.
@@ -39,7 +55,7 @@ namespace Tide
     public sealed unsafe class TidePacket
     {
         public const uint Magic = 0x56444954; // "TIDV"
-        public const uint Version = 2;
+        public const uint Version = 3;
         const int HeaderSize = 48;
         const int EntitySize = 24;
         const int SectionHeaderSize = 24;
@@ -61,6 +77,7 @@ namespace Tide
         }
 
         readonly List<Section> sections = new List<Section>();
+        readonly List<TideHeard> heard = new List<TideHeard>();
         uint entities; // Where the entities start
         int strings = -1;
 
@@ -70,6 +87,7 @@ namespace Tide
             bytes = null;
             size = 0;
             sections.Clear();
+            heard.Clear();
             strings = -1;
             EntityCount = 0;
             if (data == null || length < HeaderSize) return false;
@@ -98,6 +116,7 @@ namespace Tide
                 if ((ulong)s.Data + s.Bytes > declared) return false;
                 if (!Fits(s)) return false;
                 if (s.Kind == (uint)TideSectionKind.Strings) strings = sections.Count;
+                if (s.Kind == (uint)TideSectionKind.Events && !ReadHeard(data, s, entityCount)) return false;
                 sections.Add(s);
                 at = (ulong)s.Data + s.Bytes;
             }
@@ -105,6 +124,41 @@ namespace Tide
             size = declared;
             EntityCount = (int)entityCount;
             return true;
+        }
+
+        // An EVENTS section's records, each a 32-byte header and its value: false where one isn't whole.
+        bool ReadHeard(byte* data, Section s, uint entityCount)
+        {
+            const uint head = 32;
+            uint at = 0;
+            for (uint i = 0; i < s.Count; i++)
+            {
+                if ((ulong)at + head > s.Bytes) return false;
+                var p = (uint*)(data + s.Data + at);
+                var record = p[0];
+                if (record < head || (record & 7u) != 0 || (ulong)at + record > s.Bytes) return false;
+                heard.Add(new TideHeard
+                {
+                    Type = p[1], Flags = p[2], Tick = p[3], TargetIndex = p[4], TargetGeneration = p[5],
+                    TargetPlace = p[6] < entityCount ? p[6] : uint.MaxValue, Value = s.Data + at + head, Size = record - head,
+                });
+                at += record;
+            }
+            return true;
+        }
+
+        // The events this packet holds, in the order they were heard.
+        public int HeardCount => heard.Count;
+
+        public TideHeard Heard(int i)
+        {
+            return heard[i];
+        }
+
+        // An event's value: its bytes in the packet, or null where it's smaller than `size`.
+        public byte* HeardValue(in TideHeard e, uint size)
+        {
+            return bytes != null && e.Size >= size && (ulong)e.Value + size <= this.size ? bytes + e.Value : null;
         }
 
         // Whether a section's counts fit in its bytes.
