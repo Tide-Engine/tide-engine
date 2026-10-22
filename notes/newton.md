@@ -152,6 +152,19 @@ are clean, including WebGL/WebGPU draw tests; the final MicroDuck CTests take
 `*-rollback-final.log` files. The release `*-final.log` files retain the initial
 test-host owner-order failure; the corrected case passes in the latter files.
 
+Final integration: feature commit `d6b4bd99` merged `origin/dev` cleanly at
+`8b577e46`. Incoming work changes printed schedule grouping, Unity CLI/platform
+integration and docs navigation; Newton/package/example sources do not overlap.
+Rebuilt the affected native/web robotics targets and native CLI/tests. All seven
+selected native CTests and six web CTests pass, including package ordering,
+the complete 24-case fixture and both join hosts, with unchanged history pins.
+Post-merge native-to-WASI and WASI-to-native active-grab joins pass again and
+produce the same canonical file hash above. Production docs build passes with
+the incoming navigation changes. Logs are
+`build/newton-collision-{debug,web-debug}-postmerge-{build,tests}.log`,
+`build/newton-collision-postmerge-cross-join.log` and
+`build/newton-collision-docs-postmerge.log`.
+
 ## MicroDuck physical stepping and closer appearance (2026-10-22)
 
 The owner asked for walking or a useful first motion milestone, and a closer
