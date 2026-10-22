@@ -717,6 +717,8 @@ Owner: "lets bridge any gaps".
   `propertyPath`s (`unity_struct_paths`, `unity_path`); keys are computed as unity_code.c names fields (`unity_key`:
   `Value`, `TideName` and the other members, or the type's own name, get `_`).
 - **Assets**: none to bridge; see the Authoring gaps above.
+- **The owner's project** was converted by the command in batch mode (6 components in 4 prefabs and scenes, none
+  left listed, after a copy of its Assets, Packages and ProjectSettings), and tide bakes the same values from it.
 - **The Sample**: `Trail trail` on `Ball`, `char badge = 'S'` on `Spinner`, `Set<PlayerID> speakers` and
   `Grid2<byte> board` in `Extras` (filled by `Say`). Tests: PlayMode checks the set's count, the grid's size and the
   cell `Say` counted, a cell nothing set, the room's `Dictionary` of balls whose value is the ball's GameObject, the
