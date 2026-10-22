@@ -68,6 +68,13 @@ Tide source and package list builds successfully. Diff whitespace checks pass.
 No physical microphone/device quality, Android, other desktop OS or sanitizer
 run was added; those remain manual/normal CI coverage. No CI was dispatched.
 
+Integration: origin/dev's Unity rendering/HLSL work merged cleanly in
+`dc4e8a52`, changing compiler and standard-host dependencies without voice/audio
+overlap. Rebuilt merged native voice, voice host and CLI; both voice targets
+pass (1.54 s). Rebuilt merged WASI voice and web platform; voice passes (0.82 s).
+The merged docs build and a rebuilt/reinstalled CLI's radio web example pass.
+No broad full-suite repeat was required for the disjoint dependency changes.
+
 ## Configurable RNNoise suppression (2026-10-22)
 
 The owner requested RNNoise support controlled by a setting. Local
