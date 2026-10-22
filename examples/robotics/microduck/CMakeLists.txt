@@ -35,6 +35,13 @@ foreach(declaration IN LISTS microduck_cases)
     set_tests_properties(tide_newton_${case} PROPERTIES TIMEOUT 180 PASS_REGULAR_EXPRESSION "1/1 passed")
 endforeach()
 
+# This case replays thousands of complete two-duck physics ticks. ASan/UBSan
+# exceeded the ordinary 180-second budget on the hosted Linux runner.
+if(TIDE_SANITIZE)
+    set_tests_properties(tide_newton_microduck_two_players_use_the_same_physics_through_rollback
+        PROPERTIES TIMEOUT 600)
+endif()
+
 # The released actor is tested independently of physics, then through the same
 # generated worlds and snapshot paths used by the playable fixture.
 add_executable(tide_microduck_policy

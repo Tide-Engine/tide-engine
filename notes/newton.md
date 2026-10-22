@@ -1,5 +1,37 @@
 # The Newton package
 
+## Instrumented MicroDuck rollback budget (2026-10-22)
+
+Run `39842031157` at `f8468b30` passes all eight ordinary native/web,
+MinGW and Android suites and all three package jobs. Linux sanitizers fail
+only `microduck_two_players_use_the_same_physics_through_rollback`, at its
+180-second deadline, without an assertion or sanitizer diagnostic. The arm
+hash correction below is confirmed by those suites. Docs is still running
+its tool installation when inspected; this is not an overall successful run.
+
+Give only that rollback case a 600-second deadline when `TIDE_SANITIZE` is
+enabled. Other configurations and cases retain their existing budgets.
+The complete 400-frame, 200 Hz two-client simulation, latency/jitter/loss,
+grab/record/lease/release checks, replay and zero-resync assertions, and
+nonempty-run requirement are unchanged. No physics, runtime, hashes,
+workflow gates or compiler instrumentation changes.
+
+A fresh Windows Clang 23.1.2 ASan/UBSan RelWithDebInfo build, platform off,
+reproduces the budget issue while the native/web builds and suites run:
+the unchanged case completes in 184.59 seconds, beyond the old deadline.
+Both clients verify tick 394 with 3,876/4,002 replay ticks and zero resyncs;
+no sanitizer diagnostic occurs. This is a loaded Windows reproduction,
+not a hosted Linux timing claim or a complete sanitizer-suite run.
+CTest JSON checks all discovered cases: only this instrumented case gets
+600 seconds, ordinary cases keep 180 and `1/1 passed` remains required.
+Build/test logs and CTest metadata are under this checkout's `build/`.
+Full native debug passes all 2,593 enabled tests (218.48 seconds), including
+39 GPU checks. Full web debug passes all 2,455 enabled tests (350.18 seconds),
+including WebGL, D3D11 and WebGPU, with Node 24.19.0 and Headless Shell
+154.0.8037.92. Each retains the existing disabled right-turn limitation.
+Actual hosted Linux sanitizer confirmation remains automatic CI coverage;
+no workflow was manually dispatched or retried.
+
 ## Arm fixture hash after joint-state additions (2026-10-22)
 
 Nightly run `39837828628` at `d93f8e3e` failed only the arm fixture's
