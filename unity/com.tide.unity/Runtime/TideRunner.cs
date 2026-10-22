@@ -163,7 +163,7 @@ namespace Tide
                 return;
             }
             LoadSchema();
-            if (drawTide && TideRender.Supported && Application.platform != RuntimePlatform.WebGLPlayer)
+            if (drawTide && TideRender.Supported)
             {
                 render = Ensure<TideRender>(gameObject);
                 render.Runner = this;
@@ -171,7 +171,7 @@ namespace Tide
             }
             else if (drawTide)
             {
-                // A GPU whose shaders can't read buffers (WebGL): the 2D drawing's packet, drawn with Unity's GL
+                // A GPU Tide's renderer can't draw with: the 2D drawing's packet, drawn with Unity's GL
                 var draw = Ensure<TideDraw>(gameObject);
                 draw.Runner = this;
             }
@@ -186,6 +186,18 @@ namespace Tide
             var bytes = library.Draw(embed, &size);
             length = size;
             return bytes;
+        }
+
+        // The frame's 3D again, through another camera (an editor's scene view): tide_embed_render_view's commands,
+        // valid until the next render, or null.
+        public byte* RenderView(Matrix4x4* transform, Matrix4x4* projection, int width, int height, out uint size)
+        {
+            size = 0;
+            if (embed == IntPtr.Zero) return null;
+            uint got = 0;
+            var commands = library.RenderView(embed, transform, projection, width, height, &got);
+            size = got;
+            return commands;
         }
 
         // What the embedded game takes (tide/embed.h), each with the values it's followed by: the first word it

@@ -207,6 +207,16 @@ typedef enum tide_embed_render_op {
 
 const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
 
+// ...and the frame's 3D again, through another camera of the other program's
+// (its editor's scene view): only the 3D drawn on its own target, each through
+// this camera (as tide_embed_camera takes one) whatever camera drew it, onto a
+// target `width` by `height` pixels; its 2D, clips and render targets are the
+// frame's alone. The commands go on from tide_embed_render's, the same objects
+// and their numbers: replayed after them, into that camera. Valid until the
+// next call of either; NULL for a camera or size that isn't one.
+const uint8_t *tide_embed_render_view(tide_embed *e, const float *transform, const float *projection, int width, int height,
+                                      uint32_t *size);
+
 // The other program's GPU objects are gone (it started over): the next
 // tide_embed_render makes everything it draws with again, numbering from 1.
 void tide_embed_render_reset(tide_embed *e);

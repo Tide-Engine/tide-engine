@@ -112,6 +112,8 @@ view Show(Counter counter)
         Vertex { position = float2(50, 80), uv = float2(0, 1), color = blue },
     ];
     Draw.Mesh(corners, [0, 1, 2, 0, 2, 3]);
+    // Some 3D, which a second picture through another camera has alone (tide_embed_render_view)
+    Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color(1, 0, 1));
     // A point in front of the camera: the screen's middle through Tide's first camera, elsewhere through the other
     // program's (tide_embed_camera)
     var seen = Draw.WorldToScreen(float3(0, 0, 5));

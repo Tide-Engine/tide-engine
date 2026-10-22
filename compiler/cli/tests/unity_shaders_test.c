@@ -1,5 +1,5 @@
 // The Unity shaders tide unity writes (unity_shaders.h): the renderer's and the game's, each named by its SPIR-V's
-// hash, and those of shaders gone removed.
+// hash, the web's keys for them, and those of shaders gone removed.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +24,18 @@ typedef struct listed {
     int shaders, metas;
     bool stale;
 } listed;
+
+// The lines of the web's keys, each a WGSL's key and a file's.
+static int key_lines(const char *shaders)
+{
+    char path[1200];
+    snprintf(path, sizeof path, "%s/web-keys.txt", shaders);
+    char *text = sys_read_file(path, NULL);
+    int lines = 0;
+    for (const char *p = text; p && *p; p++) lines += *p == '\n';
+    free(text);
+    return lines;
+}
 
 static void count(void *user, const char *name, const bool is_dir)
 {
@@ -62,6 +74,7 @@ TIDE_TEST(unity_shaders_written)
     sys_list(shaders, count, &l);
     TIDE_CHECK(l.shaders == 11); // The renderer's 10, and the game's
     TIDE_CHECK(l.metas == 0 && !l.stale);
+    TIDE_CHECK(key_lines(shaders) == 11);
 
     snprintf(path, sizeof path, "%s/%016llx.shader", shaders, (unsigned long long)key);
     char *text = sys_read_file(path, NULL);
@@ -80,5 +93,6 @@ TIDE_TEST(unity_shaders_written)
     sys_list(shaders, count, &l);
     TIDE_CHECK(l.shaders == 10);
     TIDE_CHECK(!sys_exists(path));
+    TIDE_CHECK(key_lines(shaders) == 10);
     sys_remove_tree(dir);
 }

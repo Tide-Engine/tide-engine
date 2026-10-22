@@ -1,0 +1,26 @@
+{
+    "name": "Tide.Runtime.URP",
+    "rootNamespace": "Tide",
+    "references": [
+        "Tide.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "TIDE_URP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.render-pipelines.universal",
+            "expression": "17.0.0",
+            "define": "TIDE_URP"
+        }
+    ],
+    "noEngineReferences": false
+}

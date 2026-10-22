@@ -7,7 +7,9 @@
 // words as hex, which is what tide_embed_render's pipelines say they draw
 // with: <package>/Resources/TideShaders/<key>.shader, "Hidden/Tide/<key>",
 // which Resources.Load finds in the editor and in players. Those of shaders
-// gone are removed.
+// gone are removed. A program with no SPIR-V (the web's) knows a pipeline by
+// its WGSL's hash instead: web-keys.txt beside them has a line for each, that
+// key and the file's.
 
 #include <stdbool.h>
 #include <stddef.h>

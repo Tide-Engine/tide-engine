@@ -310,6 +310,54 @@ public sealed unsafe class BounceTests
             Assert.Ignore("no GPU in this run (-nographics)");
             yield break;
         }
+        yield return DrawsIntoUnitysFrame();
+    }
+
+    // ...in URP too, through its pass (Tide.Runtime.URP), with the project's pipeline URP's for the while.
+    [UnityTest]
+    public IEnumerator TideDrawsIntoUnitysFrameInURP()
+    {
+        if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+        {
+            Assert.Ignore("no GPU in this run (-nographics)");
+            yield break;
+        }
+        var before = UnityEngine.Rendering.GraphicsSettings.defaultRenderPipeline;
+        var quality = QualitySettings.renderPipeline;
+        UnityEngine.Rendering.GraphicsSettings.defaultRenderPipeline = UniversalPipeline();
+        QualitySettings.renderPipeline = null;
+        try
+        {
+            yield return DrawsIntoUnitysFrame(true);
+        }
+        finally
+        {
+            UnityEngine.Rendering.GraphicsSettings.defaultRenderPipeline = before;
+            QualitySettings.renderPipeline = quality;
+        }
+    }
+
+    // The Sample's URP asset, made once (Assets/Sample/URP) where it isn't yet.
+    static UnityEngine.Rendering.RenderPipelineAsset UniversalPipeline()
+    {
+#if UNITY_EDITOR
+        const string folder = "Assets/Sample/URP";
+        var asset = UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset>(folder + "/Pipeline.asset");
+        if (asset != null) return asset;
+        if (!UnityEditor.AssetDatabase.IsValidFolder(folder)) UnityEditor.AssetDatabase.CreateFolder("Assets/Sample", "URP");
+        var renderer = ScriptableObject.CreateInstance<UnityEngine.Rendering.Universal.UniversalRendererData>();
+        UnityEditor.AssetDatabase.CreateAsset(renderer, folder + "/Renderer.asset");
+        asset = UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset.Create(renderer);
+        UnityEditor.AssetDatabase.CreateAsset(asset, folder + "/Pipeline.asset");
+        UnityEditor.AssetDatabase.SaveAssets();
+        return asset;
+#else
+        return null;
+#endif
+    }
+
+    IEnumerator DrawsIntoUnitysFrame(bool universal = false)
+    {
         SceneManager.LoadScene(Bounce);
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
@@ -329,6 +377,17 @@ public sealed unsafe class BounceTests
         }, 10f);
         Assert.IsNotNull(ball, "the player's ball is shown");
         yield return Until(() => false, 2.5f); // It falls to the floor
+        if (universal)
+        {
+            // The Sample's materials are the built-in pipeline's: URP's own in their place for the while, as a
+            // project in URP has them, so the scene under Tide's drawing is lit as in the built-in pipeline
+            var lit = Shader.Find("Universal Render Pipeline/Lit");
+            foreach (var r in Object.FindObjectsByType<Renderer>())
+            {
+                var color = r.sharedMaterial != null && r.sharedMaterial.HasColor("_Color") ? r.sharedMaterial.color : Color.gray;
+                r.material = new Material(lit) { color = color };
+            }
+        }
         camera.Render(); // A batch run's frames have no end to wait for: this frame's drawing, again, now
         var read = new Texture2D(640, 480, TextureFormat.RGBA32, false);
         RenderTexture.active = target;
@@ -389,12 +448,80 @@ public sealed unsafe class BounceTests
         Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 4), yellow, 0.03f), $"the target's top left is yellow: {Screen(640 - 80 + 8, 16 + 4)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 50), green, 0.03f), $"its bottom left green: {Screen(640 - 80 + 8, 16 + 50)}");
         Assert.IsTrue(Near(Screen(640 - 80 + 50, 16 + 4), green, 0.03f), $"its top right green: {Screen(640 - 80 + 50, 16 + 4)}");
-        // Stencil: the square is magenta inside the circle alone
-        var magenta = new Color(1f, 0f, 1f);
-        Assert.IsTrue(Near(Screen(640 - 80, 480 - 80), magenta, 0.03f), $"the square shows inside the circle: {Screen(640 - 80, 480 - 80)}");
-        Assert.IsFalse(Near(Screen(640 - 80 - 36, 480 - 80 - 36), magenta, 0.3f), "and not at its corners, outside it");
+        // Stencil: the square is cyan inside the circle alone
+        var cyan = new Color(0f, 1f, 1f);
+        Assert.IsTrue(Near(Screen(640 - 80, 480 - 80), cyan, 0.03f), $"the square shows inside the circle: {Screen(640 - 80, 480 - 80)}");
+        Assert.IsFalse(Near(Screen(640 - 80 - 36, 480 - 80 - 36), cyan, 0.3f), "and not at its corners, outside it");
+        // The multisampled target's depth, resolved: the cube nearer than the far limit in its middle, the far limit
+        // at its corners
+        var middleDepth = Screen(48, 480 - 16 - 32);
+        var cornerDepth = Screen(18, 480 - 16 - 62);
+        Assert.Less(middleDepth.r, 0.95f, $"the cube's depth shows in the middle: {middleDepth}");
+        Assert.Greater(cornerDepth.r, 0.97f, $"and the far limit at the corner: {cornerDepth}");
         camera.targetTexture = null;
         Object.Destroy(target);
+    }
+
+    // An editor scene view shows the frame's 3D through its own camera (tide_embed_render_view): the cube over the ball
+    // where that camera sees it, and none of the 2D (the Hud, the render target, the stencil square).
+    [UnityTest]
+    public IEnumerator SceneViewsShowTidesThreeD()
+    {
+        if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+        {
+            Assert.Ignore("no GPU in this run (-nographics)");
+            yield break;
+        }
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        TideEntityView ball = null;
+        yield return Until(() =>
+        {
+            foreach (var view in Object.FindObjectsByType<TideEntityView>())
+            {
+                if (view.Mine && view.GetComponent<Tide.Game.Ball>() != null) ball = view;
+            }
+            return ball != null;
+        }, 10f);
+        Assert.IsNotNull(ball, "the player's ball is shown");
+        yield return Until(() => false, 2.5f);
+        // A camera as a scene view's, looking down at the ball from above and to the side
+        var scene = new GameObject("Scene View Camera").AddComponent<Camera>();
+        scene.cameraType = CameraType.SceneView;
+        scene.enabled = false;
+        scene.clearFlags = CameraClearFlags.SolidColor;
+        scene.backgroundColor = Color.black;
+        scene.transform.position = ball.transform.position + new Vector3(4f, 6f, -4f);
+        scene.transform.LookAt(ball.transform.position + new Vector3(0, 1.2f, 0));
+        var target = new RenderTexture(320, 240, 24);
+        scene.targetTexture = target;
+        scene.Render();
+        var read = new Texture2D(320, 240, TextureFormat.RGBA32, false);
+        RenderTexture.active = target;
+        read.ReadPixels(new Rect(0, 0, 320, 240), 0, 0);
+        read.Apply();
+        RenderTexture.active = null;
+        var dump = System.Environment.GetEnvironmentVariable("TIDE_UNITY_SCENE_DUMP");
+        if (!string.IsNullOrEmpty(dump)) System.IO.File.WriteAllBytes(dump, read.EncodeToPNG());
+        var live = ball.GetComponent<Tide.Game.Ball>();
+        var p = scene.WorldToScreenPoint(ball.transform.position + new Vector3(0, 1.2f, 0));
+        var cube = read.GetPixel(Mathf.RoundToInt(p.x), Mathf.RoundToInt(p.y));
+        Assert.IsTrue(Near(cube, live.color, 0.03f), $"the cube over the ball, where the scene view sees it: {cube} for {live.color}");
+        var white = 0;
+        for (var x = 0; x < 120; x++)
+        {
+            for (var y = 240 - 60; y < 240; y++)
+            {
+                var c = read.GetPixel(x, y);
+                if (c.r > 0.9f && c.g > 0.9f && c.b > 0.9f) white++;
+            }
+        }
+        Assert.AreEqual(0, white, "and no Hud text");
+        scene.targetTexture = null;
+        Object.Destroy(target);
+        Object.Destroy(scene.gameObject);
     }
 
     [UnityTest]

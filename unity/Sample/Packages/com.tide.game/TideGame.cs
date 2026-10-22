@@ -5,7 +5,7 @@ namespace Tide.Game
     // What this game's C# was made from: a view packet of another build isn't read by it.
     public static class TideGameSchema
     {
-        public const string Hash = "F94EB3DABF6D73DE";
+        public const string Hash = "1295A1CD5E1DE02D";
         public const string Game = "Bounce";
         public const int TickRate = 30;
         public static readonly string[] Scenes = {  };
@@ -733,6 +733,39 @@ namespace Tide.Game
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public fixed byte image[24]; // RenderTarget: its bytes
             [global::System.Runtime.InteropServices.FieldOffset(24)] public bool made;
+        }
+    }
+}
+namespace Tide.Game
+{
+    // Tide's struct Depths, as Unity code has it
+    [global::System.Serializable]
+    public unsafe partial struct Depths
+    {
+        public bool made;
+
+        public static Depths From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var s = new Depths();
+            s.made = v.made;
+            return s;
+        }
+
+        public Value Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.made = made;
+            return v;
+        }
+
+        // Tide's struct Depths, as the game's C lays it out
+        [global::Tide.TideType("Depths")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 56)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public fixed byte image[24]; // RenderTarget: its bytes
+            [global::System.Runtime.InteropServices.FieldOffset(24)] public fixed byte depth[24]; // DepthTexture: its bytes
+            [global::System.Runtime.InteropServices.FieldOffset(48)] public bool made;
         }
     }
 }

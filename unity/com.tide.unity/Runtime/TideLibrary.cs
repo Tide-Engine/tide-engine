@@ -23,6 +23,7 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, float*, float*, void> cameraFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> renderFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> renderResetFn;
+        delegate* unmanaged[Cdecl]<IntPtr, float*, float*, int, int, uint*, byte*> renderViewFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> viewFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> schemaFn;
         delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte> commandFn;
@@ -148,12 +149,13 @@ namespace Tide
             cameraFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, float*, void>)Find("tide_embed_camera");
             renderFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_render");
             renderResetFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_render_reset");
+            renderViewFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, float*, int, int, uint*, byte*>)Find("tide_embed_render_view");
             viewFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_view");
             schemaFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_schema");
             commandFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, uint, uint, void*, uint, byte>)Find("tide_embed_command");
             drawFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_draw");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
-                || cameraFn == null || renderFn == null || renderResetFn == null
+                || cameraFn == null || renderFn == null || renderResetFn == null || renderViewFn == null
                 || viewFn == null || schemaFn == null || commandFn == null || drawFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
@@ -187,12 +189,13 @@ namespace Tide
             }
             TideWebCamera((float*)matrices, transform != null && projection != null ? 1 : 0);
         }
-        public byte* Render(IntPtr embed, uint* size)
+        public byte* Render(IntPtr embed, uint* size) => TideWebRender(size);
+        public void RenderReset(IntPtr embed) => TideWebRenderReset();
+        public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size)
         {
             *size = 0;
-            return null; // The web draws with TideDraw
+            return null;
         }
-        public void RenderReset(IntPtr embed) { }
         public byte* View(IntPtr embed, uint* size) => TideWebView(size);
         public byte* Schema(IntPtr embed, uint* size) => TideWebSchema(size);
         public byte* Draw(IntPtr embed, uint* size) => TideWebDraw(size);
@@ -209,6 +212,8 @@ namespace Tide
         [DllImport("__Internal")] static extern byte* TideWebView(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebSchema(uint* size);
         [DllImport("__Internal")] static extern byte* TideWebDraw(uint* size);
+        [DllImport("__Internal")] static extern byte* TideWebRender(uint* size);
+        [DllImport("__Internal")] static extern void TideWebRenderReset();
         [DllImport("__Internal")] static extern int TideWebCommand(uint type, uint index, uint generation, void* value, uint size);
 
         // Tide's program on the page: it loads beside Unity's (TideWebBuild put it in the page), and starts when
@@ -226,6 +231,8 @@ namespace Tide
             cameraFn(embed, (float*)transform, (float*)projection);
         public byte* Render(IntPtr embed, uint* size) => renderFn(embed, size);
         public void RenderReset(IntPtr embed) => renderResetFn(embed);
+        public byte* RenderView(IntPtr embed, Matrix4x4* transform, Matrix4x4* projection, int width, int height, uint* size) =>
+            renderViewFn(embed, (float*)transform, (float*)projection, width, height, size);
         public byte* View(IntPtr embed, uint* size) => viewFn(embed, size);
         public byte* Schema(IntPtr embed, uint* size) => schemaFn(embed, size);
         public byte* Draw(IntPtr embed, uint* size) => drawFn(embed, size);

@@ -106,6 +106,20 @@ var TideWebLibrary = {
         return at && n ? TideWeb.copyOut('draw', at, n) : 0;
     },
 
+    TideWebRender__deps: ['$TideWeb'],
+    TideWebRender: function (size) {
+        var x = TideWeb.program();
+        var at = x ? x.tide_unity_render() : 0, n = x ? x.tide_unity_render_size() : 0;
+        HEAPU32[size >> 2] = at ? n : 0;
+        return at && n ? TideWeb.copyOut('render', at, n) : 0;
+    },
+
+    TideWebRenderReset__deps: ['$TideWeb'],
+    TideWebRenderReset: function () {
+        var x = TideWeb.program();
+        if (x) x.tide_unity_render_reset();
+    },
+
     TideWebRequest__deps: ['$TideWeb'],
     TideWebRequest: function (kind, text, port) {
         var x = TideWeb.program();

@@ -214,7 +214,7 @@ view Floor(mut Plates plates)
 }
 
 // A render target Tide draws into, shown at the top right (yellow over its top left, green elsewhere), and stencil:
-// a circle storing 1 where it is, and a magenta square drawn only there
+// a circle storing 1 where it is, and a cyan square drawn only there
 local singleton Badge
 {
     RenderTarget image;
@@ -240,8 +240,47 @@ view Badges(mut Badge badge)
         }
         Draw.Stencil(StencilTest.Equal, 1)
         {
-            Draw.Rect(float2(Screen.width - 80, Screen.height - 80), float2(80, 80), Color(1, 0, 1));
+            Draw.Rect(float2(Screen.width - 80, Screen.height - 80), float2(80, 80), Color(0, 1, 1));
         }
+    }
+}
+
+// A multisampled target's depth, which Unity resolves to one sample a pixel for a frag to read: a cube drawn into it,
+// its depth shown at the bottom left, darker where the cube is nearer than the far limit
+local singleton Depths
+{
+    RenderTarget image;
+    DepthTexture depth;
+    bool made;
+}
+
+frag ShowDepth(Vertex vertex, out Color color, Depths depths)
+{
+    float d = depths.depth.Sample(vertex.uv);
+    color = Color(d, d, d);
+}
+
+view DepthView(mut Depths depths)
+{
+    if (!depths.made)
+    {
+        depths.image = RenderTarget(64, 64, samples: 4);
+        depths.depth = depths.image.depth;
+        depths.made = true;
+    }
+    depths.image.Clear(Color(0, 0, 0));
+    depths.image.SetCamera(float3(0, 0, -3), quaternion.identity, 60);
+    depths.image.Cube(float3(0, 0, 0), float3(1, 1, 1), Color(1, 1, 1));
+    var bottom = Screen.height - 16;
+    List<Vertex> corners = [
+        Vertex { position = float2(16, bottom - 64), uv = float2(0, 0), color = Color.white },
+        Vertex { position = float2(80, bottom - 64), uv = float2(1, 0), color = Color.white },
+        Vertex { position = float2(80, bottom), uv = float2(1, 1), color = Color.white },
+        Vertex { position = float2(16, bottom), uv = float2(0, 1), color = Color.white },
+    ];
+    Draw.Screen()
+    {
+        Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], ShowDepth);
     }
 }
 

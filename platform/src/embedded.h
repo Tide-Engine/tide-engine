@@ -22,6 +22,10 @@ bool tide_platform_embed_cursor_lock(void);
 // and that backend's objects forgotten, the other program's being gone.
 const uint8_t *tide_platform_embed_render(const tide_draw_list *list, uint32_t *size);
 void tide_platform_embed_render_reset(void);
+// ...and a second picture of the list's 3D alone, on the window, through `world_to_clip` (no other camera of the
+// list's), for a target `width` by `height` pixels: the other program's editor's scene view.
+const uint8_t *tide_platform_embed_render_view(const tide_draw_list *list, tide_float4x4 world_to_clip, int width, int height,
+                                               uint32_t *size);
 
 // Another relay than TIDE_RELAY's or the default, or NULL for those again (rooms.c).
 void tide_platform_set_relay(const char *url);

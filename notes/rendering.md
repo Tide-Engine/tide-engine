@@ -9,6 +9,10 @@
 `draw_list` on the frame's list into target 0. Target 0 is the other program's, so
 the window's first pass asks to clear it, and the replay ignores that.
 `tide_platform_embed_render_reset` bumps its epoch, so `gpu_ready` makes everything again.
+`tide_platform_embed_render_view` (the other program's scene views) draws the same list again, `over`, with
+`view_only_3d` set: only the window's 3D steps (`window_3d_step`: STEP_MESH_3D, and STEP_SHADED through a 3D
+shader) draw, each through `view_world_to_clip` (`camera_3d_to_clip`), and target switches leave the targets
+alone. Its commands follow the frame's, the same objects.
 Objects are numbers it gives out from 1. A target's color and depth textures get
 theirs when it is made, and a multisampled one's depth gets its number at
 `resolve_depth`. It keeps texture shapes for part writes, sending only the part's

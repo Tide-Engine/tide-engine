@@ -1,4 +1,4 @@
-{"hash": "F94EB3DABF6D73DE", "components": [
+{"hash": "1295A1CD5E1DE02D", "components": [
   {"name": "Owner", "guid": "078ba7e30478d198e2856fdcd6e936f9", "fields": [{"name": "player", "key": "player", "shape": 0}]},
   {"name": "Spinner", "guid": "c1a5056ab9f7b0462fd22449bd7fbbd1", "fields": [{"name": "speed", "key": "speed", "shape": 1}, {"name": "badge", "key": "badge", "shape": 2}]},
   {"name": "Ball", "guid": "ce03b43f744b7347571b2cbb98249f29", "fields": [{"name": "velocity", "key": "velocity", "shape": 3}, {"name": "color", "key": "color", "shape": 4}, {"name": "seat", "key": "seat", "shape": 5}, {"name": "bounces", "key": "bounces", "shape": 5}, {"name": "trail", "key": "trail", "shape": 6}]}

@@ -7,8 +7,10 @@ replays the renderer's GPU calls (`notes/unity.md`, Tide's renderer in Unity). T
 surface is the agent's:
 - `platform/src/gpu_record.c`: `tide_gpu_record` and its begin/end/reset/close,
   declared in `gpu.h`.
-- `tide_platform_embed_render` and `_reset` (`embedded.h`, at the end of
-  `platform.c`), which point `gpu` at it and run `draw_list`.
+- `tide_platform_embed_render`, `_render_view` and `_reset` (`embedded.h`, at the end of
+  `platform.c`), which point `gpu` at it and run `draw_list`. The scene view's picture
+  added `view_only_3d` and `view_world_to_clip`, read in `camera_3d_to_clip` and
+  `draw_list`'s step loop.
 - `TIDE_RENDERER_WGSL` (`shaders.h`), the list `platform/tools/spirv_shaders.c`
   now writes from.
 

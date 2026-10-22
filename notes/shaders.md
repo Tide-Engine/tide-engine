@@ -16,8 +16,11 @@ translation` of their own whose first fields the reader uses.
   The vertex wrapper reads each `@location` from `ByteAddressBuffer`s
   (`_TideVertices0..2`) by the pipeline's layout (`_TideAttributes[16]`:
   slot, offset, tide_gpu_attribute_format; `_TideSlots[3]`: stride, per instance)
-  and the draw's offsets, first vertex and index mode (16- or 32-bit indices read
-  from `_TideIndices`). Unity draws are `DrawProcedural` with no vertex buffers.
+  and the draw's offsets and first vertex. Unity draws are `DrawProcedural` with no
+  vertex buffers, an indexed one through Unity's index buffer (SV_VertexID is the
+  index). Under `TIDEHL_TEXTURE_BUFFERS` (OpenGL ES 3 and WebGL 2, which have no
+  buffers a vertex shader reads), each is an RGBA8 `Texture2D<float4>` of 4,096
+  pixels a row, a word each pixel's bytes (`round(texel * 255)`).
 - **Uniforms:** the block is `cbuffer TideUniforms`, flattened into
   `tidehl_u_<member>`. Float pads go where HLSL would pack a member sooner than
   WGSL's layout does, and matrices are `row_major`. A struct, or a matrix of
@@ -26,11 +29,16 @@ translation` of their own whose first fields the reader uses.
 - **Textures:** texture i is `_TideTexture<i>`, from its binding. A WGSL sampler
   is not an HLSL object. It is the 4 bits of `_TideSampling` at 4i (filter, then
   wrap), which pick one of nine Unity inline sampler states
-  (`tidehl_<point|linear|trilinear>_<clamp|repeat|mirror>_sampler`). Nearest and
-  linear read level 0 (`SampleLevel`), as Vulkan's samplers with maxLod 0 do.
+  (`tidehl_<point|linear|trilinear>_<clamp|repeat|mirror>_sampler`). Under
+  `TIDEHL_OWN_SAMPLERS` (OpenGL, GL ES, WebGL: Unity there has no samplers apart
+  from textures) each texture samples with its own, `sampler_TideTexture<i>`, which
+  TideRender sets. Every helper takes the texture's own sampler (`own`); the D3D
+  path ignores it. Nearest and linear read level 0 (`SampleLevel`), as Vulkan's
+  samplers with maxLod 0 do.
   Mipmaps use `SampleGrad` with derivatives taken before the branch, so fxc keeps
   the branch. Bias scales those derivatives. Depth textures read the nearest
-  texel. A comparison is a 2x2 `GatherRed` blended bilinearly. Both turn depth
+  texel. A comparison is a 2x2 `GatherRed` blended bilinearly (four `Load`s on GL ES 3,
+  which gathers nothing). Both turn depth
   back to 0 near, 1 far where Unity reverses it (`TIDEHL_REVERSED_Z`, from the
   platform defines Unity's HLSLSupport uses).
 - **Matrices are WGSL's transposed:** an HLSL row is a WGSL column, so `m[i]` and
@@ -62,16 +70,29 @@ translation` of their own whose first fields the reader uses.
   `do { } while (false)`: the body's `continue` breaks out of it, and its `break`
   sets `tidehl_broken<n>`. A `continue` inside a `switch` in such a loop is
   refused. A `for` runs in a block of its own, so fxc's for-scope doesn't clash.
-- **fxc's warnings:** the prelude disables X3556 (int modulus speed), X3557
-  (single-iteration unroll), X3571 (pow of a negative) and X4000 (fxc misjudges
-  early returns as uninitialized), except under `UNITY_COMPILER_DXC`. Any other
-  warning would show in Unity's Console, so the tests compile with `/WX`.
+- **Warnings, which Unity shows in the Console:** a `#pragma warning` inline in a
+  Unity shader is ignored (a probe through `ShaderUtil.GetShaderMessages`), so they're
+  avoided where they come from:
+  - Signed `/` and `%` divide unsigned magnitudes (X3556).
+  - `pow` is `tidehl_pow`, `exp2(log2(x) * y)`, as fxc expands pow itself (X3571).
+  - An `if` that returns, with no else, has the statements after it as its else.
+  - A function with a return inside a loop or a switch keeps its value in
+    `tidehl_value` and `tidehl_returned`, leaves the loop or switch by `break` (a
+    `continuing` loop's flag too), skips what's after by `if (!tidehl_returned)` and
+    returns at its end alone (X4000, where fxc and DXC guess at returns inside them).
+  - A loop of no derivatives is a `[loop]`, which fxc doesn't unroll.
+  What's left (X3557, a loop fxc works out runs once, as one of a constant count
+  may; X4000) is disabled by `com.tide.unity/Runtime/Shaders/TideWarnings.hlsl`,
+  which the shaders include: Unity passes standard pragmas on from an included
+  file. The tests compile each program through that include with `/WX`.
 - **`tidec --hlsl <dir>`** writes `<n>.hlsl` in `--shaders`' order. `tide_spirv_shaders --hlsl <dir>`
   does the same for the renderer's shaders, through `TIDE_RENDERER_WGSL` (`platform/src/shaders.h`:
   each pipeline's WGSL pieces by name), which the SPIR-V tool and `tide unity` use too.
 - **Tests:** `tidec_hlsl_<name>` (`compiler/tests/expect_hlsl.cmake`) compile every golden
-  shader's vertex and fragment stage with fxc (`vs_5_0`/`ps_5_0`,
-  `SHADER_API_D3D11`, `/WX`). `tide_hlsl_shaders_valid` compiles the renderer's 10.
+  shader's vertex and fragment stage with fxc (`vs_5_0`/`ps_5_0`, `/WX`) for
+  `SHADER_API_D3D11`, `SHADER_API_GLCORE` and `SHADER_API_GLES3`, as Unity compiles each
+  with fxc first. `tide_hlsl_shaders_valid` compiles the renderer's 10. The Sample's
+  `ShaderTests` compiles the written shaders in Unity on each desktop API with nothing said.
   They exist where CMake finds fxc (`cmake/HlslTests.cmake`, newest Windows Kits
   10 SDK). All 87 golden programs and the 10 built-ins pass. The Sample's PlayMode
   test draws through the built-ins and a game frag in Unity on D3D11
