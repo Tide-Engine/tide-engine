@@ -339,3 +339,36 @@ foreach(dimension 2 3)
     add_test(NAME tide_box${dimension}d_rewind_network COMMAND tide_box${dimension}d_rewind_network)
     set_tests_properties(tide_box${dimension}d_rewind_network PROPERTIES TIMEOUT 120)
 endforeach()
+# Voice's codec belongs only to targets that explicitly link the package.
+# The engine/platform, compiler and games without voice never link it.
+file(GLOB voice_codec_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/voice/codec/*.c")
+add_library(tide_opus STATIC ${voice_codec_sources})
+target_link_libraries(tide_opus PRIVATE tide_flags)
+target_compile_options(tide_opus PRIVATE -w $<$<CONFIG:Debug>:-O2>)
+file(GLOB voice_denoise_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/voice/denoise/*.c")
+add_library(tide_rnnoise STATIC ${voice_denoise_sources})
+target_link_libraries(tide_rnnoise PRIVATE tide_flags)
+target_compile_options(tide_rnnoise PRIVATE -w $<$<CONFIG:Debug>:-O2>)
+tide_add_game(tide_voice SOURCES voice/bridge.c voice/test/game.tide NAME game
+    PACKAGES Voice voice/voice.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" voice/test/voice_test.c)
+set(voice_speech "${CMAKE_CURRENT_BINARY_DIR}/voice_speech.c")
+add_custom_command(OUTPUT "${voice_speech}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/voice/test/speech.wav"
+        "-DOUTPUT=${voice_speech}" -DNAME=tide_voice_test_speech -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS voice/test/speech.wav "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
+target_sources(tide_voice PRIVATE "${voice_speech}")
+target_include_directories(tide_voice PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/voice")
+target_link_libraries(tide_voice PRIVATE tide_opus tide_rnnoise)
+add_test(NAME tide_voice COMMAND tide_voice)
+set_tests_properties(tide_voice PROPERTIES TIMEOUT 120)
+if(TIDE_PLATFORM AND NOT TIDE_ANDROID AND NOT TIDE_WEB AND TIDE_NODE)
+    tide_add_game(tide_voice_host SOURCES voice/bridge.c voice/test/host.tide NAME game
+        PACKAGES Voice voice/voice.tide HOST voice/test/host.c WINDOW)
+    target_link_libraries(tide_voice_host PRIVATE tide_opus tide_rnnoise tide_platform)
+    add_test(NAME tide_voice_host
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/voice/test/host.mjs"
+            "$<TARGET_FILE:tide_voice_host>" "${CMAKE_CURRENT_BINARY_DIR}/voice-host")
+    tide_gpu_test(tide_voice_host)
+    set_tests_properties(tide_voice_host PROPERTIES TIMEOUT 120)
+endif()

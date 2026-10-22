@@ -363,6 +363,10 @@ static void swap(const tide_host_game *next, void *library)
     if (retained && next->rebind_resources) next->rebind_resources(tide_run_local, true);
     fflush(stdout);
     tide_platform_audio_forget(); // The samples the old build's voices play are its own, and go with it
+    if (old->voice) {
+        const tide_voice_provider *voice = old->voice();
+        if (voice && voice->stop) voice->stop(voice->self, tide_run_session);
+    }
     old->unload();
     library_close(reload.library);
     char path[4096];

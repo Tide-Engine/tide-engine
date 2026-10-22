@@ -90,7 +90,7 @@
 #define PROTOCOL 17u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
-       MSG_UPLOAD, MSG_DOWNLOAD };
+       MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
 // What a SERVER says of the player's upload: nothing, the chunks it has of
 // one on its way, or that one is whole (and the number of its download)
 enum { UPLOAD_NONE = 0, UPLOAD_PART = 1, UPLOAD_WHOLE = 2 };
@@ -699,6 +699,8 @@ typedef struct connection {
     bool greeted;
     bool new_player; // Its cookie was made for it: if it never writes back, the cookie goes too
     bool welcoming;  // It said hello and hasn't written back yet: welcomed every update until it does
+    double local_until; // A local-data subscription's lease; zero without one
+    double local_credit, local_time; // Bounded local-data relay work per sender
 
     // The world it's being sent
     bool sending;
@@ -1660,6 +1662,40 @@ static void on_upload(tide_server *s, connection *c, tide_reader *r)
     stop_upload(c);
 }
 
+static void on_local_data(tide_server *s, connection *c, tide_reader *r, const bool interest)
+{
+    const uint32_t player = (uint32_t)(c - s->connections);
+    const uint64_t cookie = tide_read_u64(r);
+    if (r->failed || !c->greeted || s->ended || cookie != s->cookies[player]) return;
+    if (interest) {
+        const uint8_t enabled = tide_read_u8(r);
+        if (r->failed || r->at != r->size || enabled > 1u) return;
+        c->local_until = enabled ? s->now + 1.5 : 0.0;
+        return;
+    }
+    const uint32_t size = r->size - r->at;
+    if (!size || size > TIDE_LOCAL_DATA_BYTES || c->local_until <= s->now) return;
+    if (s->now > c->local_time) {
+        c->local_credit += (s->now - c->local_time) * 60.0;
+        if (c->local_credit > 4.0) c->local_credit = 4.0;
+        c->local_time = s->now;
+    }
+    if (c->local_credit < 1.0) return;
+    c->local_credit -= 1.0;
+    for (uint32_t i = 0; i < s->players; i++) {
+        const connection *to = &s->connections[i];
+        if (i == player || !to->used || !to->greeted || to->local_until <= s->now) continue;
+        uint8_t data[TIDE_NET_MTU];
+        tide_writer w = {data, sizeof data, 0, false, false};
+        header(&w, MSG_LOCAL_DATA);
+        tide_write_u64(&w, s->cookies[i]);
+        tide_write_varint(&w, player + 1u);
+        tide_write_u64(&w, s->digests[player]);
+        tide_write_bytes(&w, r->data + r->at, size);
+        send_packet(&s->desc.transports[to->transport], to->address, &w, &s->traffic);
+    }
+}
+
 static void server_receive(tide_server *s, const uint32_t transport)
 {
     const tide_transport *t = &s->desc.transports[transport];
@@ -1688,6 +1724,7 @@ static void server_receive(tide_server *s, const uint32_t transport)
         if (type == MSG_CLIENT) on_client(s, c, &r);
         else if (type == MSG_COMMAND) on_command(s, c, &r);
         else if (type == MSG_UPLOAD) on_upload(s, c, &r);
+        else if (type == MSG_LOCAL_INTEREST || type == MSG_LOCAL_DATA) on_local_data(s, c, &r, type == MSG_LOCAL_INTEREST);
         else if (type == MSG_BYE) drop_connection(s, c);
     }
 }
@@ -2726,6 +2763,10 @@ typedef struct catch_up {
 
 struct tide_client {
     tide_client_desc desc;
+    tide_local_data_fn local_receive;
+    void *local_user;
+    bool local_subscribed;
+    double local_sent;
     const tide_game *game;
     tide_session_state state;
     tide_disconnect_reason reason;
@@ -3524,6 +3565,17 @@ static void client_receive(tide_client *c)
         case MSG_DOWNLOAD: on_download(c, &r); break;
         case MSG_SERVER: on_server(c, &r); break;
         case MSG_HANDOVER: on_handover(c, &r); break;
+        case MSG_LOCAL_DATA: {
+            const uint64_t cookie = tide_read_u64(&r);
+            const tide_player_id sender = {tide_read_varint(&r)};
+            const uint64_t connection = tide_read_u64(&r);
+            if (r.failed || cookie != c->cookie || !sender.id || sender.id > c->players
+                || sender.id == c->player + 1u || !connection || r.size == r.at
+                || r.size - r.at > TIDE_LOCAL_DATA_BYTES || !c->loaded
+                || c->state != TIDE_SESSION_CONNECTED || !c->local_receive) break;
+            c->local_receive(c->local_user, sender, connection, r.data + r.at, r.size - r.at);
+            break;
+        }
         case MSG_REFUSE: {
             const uint8_t why = tide_read_u8(&r);
             if (r.failed) break;
@@ -5118,6 +5170,17 @@ static void update_client(tide_client *c, const double now)
     if (c->loaded) play(c);
     send_client(c);
     send_commands(c);
+    const bool listening = c->local_receive != NULL && c->state == TIDE_SESSION_CONNECTED;
+    if (c->loaded && (listening != c->local_subscribed || (listening && now - c->local_sent >= 0.5))) {
+        uint8_t data[16];
+        tide_writer w = {data, sizeof data, 0, false, false};
+        header(&w, MSG_LOCAL_INTEREST);
+        tide_write_u64(&w, c->cookie);
+        tide_write_u8(&w, listening ? 1u : 0u);
+        send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
+        c->local_subscribed = listening;
+        c->local_sent = now;
+    }
     adjust_delay(c);
 }
 
@@ -5205,6 +5268,9 @@ void tide_client_mark_presented(tide_client *c)
 
 struct tide_session {
     tide_session_desc desc;
+    tide_local_data_fn local_receive;
+    void *local_user;
+    uint64_t local_generation;
     tide_loopback *loopback;
     tide_server *server;
     tide_client *client;
@@ -5234,6 +5300,8 @@ struct tide_session {
 // The session's own time starts over with each match.
 static void start_clock(tide_session *s, const double now)
 {
+    s->local_generation++;
+    if (!s->local_generation) s->local_generation++;
     s->last_now = now;
     s->paused = 0.0;
 }
@@ -5473,6 +5541,8 @@ static void begin_migration(tide_session *s)
 void tide_session_update(tide_session *s, const double now)
 {
     if (!s->client) return;
+    s->client->local_receive = s->local_receive;
+    s->client->local_user = s->local_user;
     // This machine's server stops whenever the machine does (a breakpoint, a
     // browser that froze the page), and its player with it. Beyond the ticks
     // the server can run in one update, which it would drop anyway, that time
@@ -5532,6 +5602,36 @@ static double until_next(const double start, const uint32_t rate, const double n
 bool tide_session_send_command(tide_session *s, const uint8_t *data, const uint32_t size)
 {
     return s && tide_client_send_command(s->client, data, size);
+}
+
+void tide_session_listen_data(tide_session *s, tide_local_data_fn receive, void *user)
+{
+    if (!s) return;
+    s->local_receive = receive;
+    s->local_user = user;
+    if (s->client) {
+        s->client->local_receive = receive;
+        s->client->local_user = user;
+    }
+}
+
+uint64_t tide_session_data_generation(const tide_session *s)
+{
+    return s ? s->local_generation : 0u;
+}
+
+bool tide_session_send_data(tide_session *s, const uint8_t *data, const uint32_t size)
+{
+    tide_client *c = s ? s->client : NULL;
+    if (!c || !c->local_receive || !c->loaded || c->state != TIDE_SESSION_CONNECTED
+        || !data || !size || size > TIDE_LOCAL_DATA_BYTES) return false;
+    uint8_t packet[TIDE_NET_MTU];
+    tide_writer w = {packet, sizeof packet, 0, false, false};
+    header(&w, MSG_LOCAL_DATA);
+    tide_write_u64(&w, c->cookie);
+    tide_write_bytes(&w, data, size);
+    send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
+    return !w.overflow;
 }
 
 double tide_session_until_tick(const tide_session *s)

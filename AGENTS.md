@@ -183,6 +183,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `packages/lobby/`, the client of the relay's lobbies and its menu | `notes/lobby-package.md` |
 | `tide/network.h`, a game's own match network, `examples/network/`, `packages/test/network_players.h` | `notes/own-network.md` |
 | `packages/steam/`, the lobby package's slots on Steam, and its fake | `notes/lobby-steam-package.md` |
+| `packages/voice/`, Opus voice chat, local session data and host integration | `notes/voice-package.md` |
 | Reload/migration runtime, CLI serving and generated layouts | `notes/hot-reload.md` |
 | `compiler/lsp/`, `tools/` | `notes/editors.md` |
 | Temporary runtime maintenance, generated-C boundary, CPU skinning/pose contracts | `notes/runtime-ownership.md` |

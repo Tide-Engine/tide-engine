@@ -1,5 +1,15 @@
 # The docs site
 
+## Optional Opus voice package (2026-10-22)
+
+Packages now lists `voice` as the sixth optional package, with its own sidebar
+page for setup, push-to-talk, receive gain/mute, optional cost, platform and
+global-audience limits. Audio links to it instead of deferring voice; the spec
+separates the approved feature from provisional APIs/limits. The production
+build passes; the documented sample is also compiled by an installed checkout
+CLI. Implementation, validation and remaining device coverage are recorded in
+`notes/voice-package.md`. No live demo or site infrastructure changes.
+
 ## Bundled JetBrains editor setup (2026-10-21)
 
 Install, Editor setup, CLI and README now describe automatic installation into

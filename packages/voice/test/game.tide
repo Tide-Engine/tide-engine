@@ -1,0 +1,4 @@
+scene Main { }
+
+singleton Counter { int ticks; }
+system Count(mut Counter counter) { counter.ticks++; }

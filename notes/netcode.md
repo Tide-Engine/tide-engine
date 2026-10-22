@@ -1,5 +1,19 @@
 # Netcode: sessions, prediction, commands
 
+## Unreliable local data for optional voice (2026-10-22)
+
+Sessions now expose the C-only listen/send/data-generation API described in
+`notes/voice-package.md`. Additive protocol-17 message kinds 12/13 carry
+leased subscriptions and 1..512-byte local payloads. The server validates an
+existing greeted sender and its cookie, applies a 60-packet/s four-burst limit,
+and forwards only to other subscribed connections with server-supplied sender
+identity/digest and the recipient's cookie. No payload is resent, run in a
+tick, saved, rolled back or hashed. Unused sessions emit no new messages.
+Existing protocol messages, world bytes and deterministic pins are unchanged.
+Servers relay without Opus or a voice provider. Hostile-packet, optional-cost,
+three-session loss/reconnect and actual three-process audio tests are recorded
+with the package, alongside complete native/web validation.
+
 ## Session protocol 17: pages hashed by stripes (2026-10-20)
 
 `tide_hash_wide`, every page's hash and so every world hash, is a new function

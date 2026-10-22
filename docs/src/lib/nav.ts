@@ -81,6 +81,7 @@ export const sidebar: Group[] = [
             { text: 'Rooms — Play, Host and Join', link: '/packages/rooms' },
             { text: 'Lobby — lobbies and matchmaking', link: '/packages/lobby' },
             { text: 'Steam', link: '/packages/steam' },
+            { text: 'Voice chat — Opus', link: '/packages/voice' },
         ],
     },
     {

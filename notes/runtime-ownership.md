@@ -16,6 +16,20 @@ surface is the agent's:
 `_projection`, set with `tide_draw_set_camera_matrices`) for `tide/embed.h`'s new
 `tide_embed_camera`. Generated code calls nothing new.
 
+## Optional session voice (2026-10-22)
+
+The owner requested an optional Opus voice package and selected working session
+voice after the need for local audio/session hooks was explained. This maintains
+the existing agent-owned package/session/platform areas. No new generated-C
+runtime function or language builtin is introduced: ordinary extern calls reach
+the package. New C host surface is `tide_voice_provider`, set/get registration,
+`tide_host_game.voice`, and `tide_session_listen_data`, `_send_data` and
+`_data_generation` with its callback/byte limit. The codec, queues and stream
+state are in `packages/voice`; mixer and capture APIs remain unchanged. Hosts
+and libraries rebuild together for the optional host-table member. Stop runs
+after mixer forget and before unloading package code. Full contracts, limits,
+tests and provisional implementation choices: `notes/voice-package.md`.
+
 ## Session.invite (2026-10-21)
 
 Owner-approved (every web game's multiplayer as "host a room, copy a link,
