@@ -1,10 +1,10 @@
 ---
-description: "Find Tide's bundled physics, multiplayer menu, Steam and Opus voice chat packages, and locate docs for packages from git or local folders."
+description: "Find Tide's optional physics, experimental Newton robotics, multiplayer menu, Steam and voice packages, and docs for git or local packages."
 ---
 
 # Packages
 
-Packages add shared Tide code and C libraries to a game. Tide bundles six optional packages: two physics integrations, two multiplayer menus, a Steam integration and Opus voice chat. Each has its own page here, with setup, API examples and current limits.
+Packages add shared Tide code and C libraries to a game. This source tree contains seven optional packages: three physics integrations, two multiplayer menus, a Steam integration and Opus voice chat. Newton is experimental and requires a checkout or installation containing it. Each package has its own page here, with setup, API examples and current limits.
 
 ## Bundled packages
 
@@ -14,12 +14,15 @@ The name in the first column is what you pass to `tide add` or write in `tide.pa
 |---|---|---|---|
 | `box2d` | `Box2D` | Deterministic 2D rigid bodies, shapes, collisions and queries | [Box2D](./box2d.md) |
 | `box3d` | `Box3D` | Deterministic 3D rigid bodies, shapes, collisions and queries | [Box3D](./box3d.md) |
+| `newton` | `Newton` | Experimental NVIDIA Newton articulated bodies, joints and effort control; no contacts | [Newton](./newton.md) |
 | `rooms` | `Rooms` | Play, Host and Join menus, room-code sharing and volume settings | [Rooms](./rooms.md) |
 | `lobby` | `Lobbies` | Pre-match lobbies, ready flags, browsing and quick match, with a menu | [Lobby](./lobby.md) |
 | `steam` | `Steam` | Steam identity, lobbies, matchmaking and match transport for `lobby` | [Steam](./steam.md) |
 | `voice` | `Voice` | Optional Opus voice chat through sessions, push-to-talk and receive volume | [Voice chat](./voice.md) |
 
 Choose `rooms` for a simple Play/Host/Join flow, or `lobby` when players gather before a match and browse or find games. `steam` extends `lobby` for desktop Steam builds and requires the game's own Steamworks library; that library is not bundled with Tide.
+
+Choose `box2d` or `box3d` for their existing collision APIs. `newton` is a separate experimental articulation/control integration for games and robotics policies using the same match physics. Native/web replay tests agree; colliders, contacts and independent physical-fidelity validation remain future work.
 
 To add one, run this in the game's folder:
 
@@ -35,7 +38,7 @@ Bundled packages compile with games that list them. A game that leaves a package
 
 The [ECS](../game/entities.md), [drawing](../game/views.md), [audio](../game/audio.md), [GUI](../game/gui.md), [math](../language/math.md) and [match networking](../multiplayer/networking.md) are engine features. You use them without adding a package.
 
-In particular, [`Session.Start`, `Open` and `Join`, room codes and host migration](../multiplayer/matches.md) belong to the engine. The `rooms` package supplies a menu over those features. The `lobby` package adds pre-match groups and matchmaking. Rigid-body physics comes from `box2d` or `box3d`.
+In particular, [`Session.Start`, `Open` and `Join`, room codes and host migration](../multiplayer/matches.md) belong to the engine. The `rooms` package supplies a menu over those features. The `lobby` package adds pre-match groups and matchmaking. Rigid-body collision physics comes from `box2d` or `box3d`; experimental articulated dynamics comes from `newton`.
 
 ## Finding a package's docs
 

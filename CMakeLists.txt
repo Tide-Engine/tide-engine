@@ -196,6 +196,7 @@ add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
 add_subdirectory(examples/network) # A game on a network of its own, and its test
+add_subdirectory(examples/robotics/arm)
 # Each external folder builds under external/<its folder's name> in this tree.
 foreach(dir IN LISTS TIDE_EXTERNAL_DIRS)
     cmake_path(ABSOLUTE_PATH dir BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE OUTPUT_VARIABLE external)

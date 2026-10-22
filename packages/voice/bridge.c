@@ -55,10 +55,16 @@ typedef struct gain {
     float volume;
 } gain;
 
+typedef struct route {
+    tide_player_id player;
+    uint32_t bus;
+} route;
+
 struct tide_voice_client {
     bool enabled, transmitting, was_transmitting;
     bool noise_suppression, was_suppressing;
     float volume;
+    uint32_t bus;
     tide_session *session;
     tide_player_id player;
     uint64_t cookie;
@@ -72,6 +78,7 @@ struct tide_voice_client {
     DenoiseState *denoiser;
     speaker speakers[SPEAKERS];
     gain gains[SPEAKERS];
+    route routes[SPEAKERS];
     double now;
 };
 
@@ -193,6 +200,40 @@ static float player_gain(const tide_voice_client *v, const tide_player_id player
         if (tide_player_equal(v->gains[i].player, player)) return v->gains[i].volume;
     }
     return 1.0f;
+}
+
+static uint32_t safe_bus(const int32_t bus)
+{
+    return bus >= 0 && (uint32_t)bus < TIDE_AUDIO_BUSES ? (uint32_t)bus : 0u;
+}
+
+void tide_voice_client_bus(tide_voice_client *v, const int32_t bus)
+{
+    if (v) v->bus = safe_bus(bus);
+}
+
+void tide_voice_client_player_bus(tide_voice_client *v, const tide_player_id player, const int32_t bus)
+{
+    if (!v || tide_player_index(player) < 0) return;
+    route *empty = NULL;
+    for (uint32_t i = 0; i < SPEAKERS; i++) {
+        route *r = &v->routes[i];
+        if (tide_player_equal(r->player, player)) {
+            if (bus < 0) *r = (route){0};
+            else r->bus = safe_bus(bus);
+            return;
+        }
+        if (!r->player.id && !empty) empty = r;
+    }
+    if (bus >= 0 && empty) *empty = (route){player, safe_bus(bus)};
+}
+
+static uint32_t player_bus(const tide_voice_client *v, const tide_player_id player)
+{
+    for (uint32_t i = 0; i < SPEAKERS; i++) {
+        if (tide_player_equal(v->routes[i].player, player)) return v->routes[i].bus;
+    }
+    return v->bus;
 }
 
 static void receive_voice(void *user, const tide_player_id player, const uint64_t connection,
@@ -382,6 +423,7 @@ static void play_speaker(tide_voice_client *v, speaker *s, tide_audio_frame *aud
     const uint32_t index = (uint32_t)(s - v->speakers);
     const tide_voice voice = {.id = VOICE_ID + 1u + index, .playing = true, .pitch = 1.0f,
         .volume = v->volume * player_gain(v, s->player),
+        .bus = player_bus(v, s->player),
         .effect = {.fn = playback_audio, .id = VOICE_ID + 1u + index, .knobs_size = sizeof knobs, .knobs = &knobs}};
     tide_audio_voice(audio, &voice);
 }
@@ -399,6 +441,7 @@ void tide_voice_client_frame(tide_voice_client *v, tide_session *session, tide_a
         for (uint32_t i = 0; i < SPEAKERS; i++) reset_speaker(&v->speakers[i]);
         if (v->session && (session != v->session || match_generation != v->match_generation)) {
             memset(v->gains, 0, sizeof v->gains);
+            memset(v->routes, 0, sizeof v->routes);
         }
         v->session = session;
         v->cookie = status.client.cookie;
@@ -440,6 +483,7 @@ void tide_voice_client_free(tide_voice_client *v, tide_session *session)
 static tide_voice_client *client;
 static bool enabled, transmitting, noise_suppression;
 static float volume = 1.0f;
+static int32_t bus;
 
 static void frame(void *self, tide_session *session, tide_audio_frame *audio, const double now)
 {
@@ -447,6 +491,7 @@ static void frame(void *self, tide_session *session, tide_audio_frame *audio, co
     if (!client && enabled) client = tide_voice_client_create();
     if (!client) return;
     tide_voice_client_configure(client, enabled, transmitting, noise_suppression, volume);
+    tide_voice_client_bus(client, bus);
     tide_voice_client_frame(client, session, audio, now);
 }
 
@@ -457,13 +502,15 @@ static void stop(void *self, tide_session *session)
     client = NULL;
 }
 
-void TideVoiceConfigure(const bool listen, const bool send, const bool suppress, const float gain, const tide_clip_ref microphone)
+void TideVoiceConfigure(const bool listen, const bool send, const bool suppress, const float gain, const int32_t receive_bus,
+                        const tide_clip_ref microphone)
 {
     (void)microphone; // The Tide reference requests microphone permission metadata.
     enabled = listen;
     transmitting = send;
     noise_suppression = suppress;
     volume = gain;
+    bus = receive_bus;
     const tide_voice_provider provider = {.frame = frame, .stop = stop};
     tide_voice_set(&provider);
 }
@@ -472,4 +519,10 @@ void TideVoiceSetVolume(const tide_player_id player, const float gain)
 {
     if (!client && tide_player_index(player) >= 0) client = tide_voice_client_create();
     if (client) tide_voice_client_volume(client, player, gain);
+}
+
+void TideVoiceSetBus(const tide_player_id player, const int32_t receive_bus)
+{
+    if (!client && receive_bus >= 0 && tide_player_index(player) >= 0) client = tide_voice_client_create();
+    if (client) tide_voice_client_player_bus(client, player, receive_bus);
 }

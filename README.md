@@ -111,6 +111,15 @@ folder next to your files, which you can delete any time; it's ignored by git.
 The [docs](https://tide-engine.dev) go through the language a topic at a time, and
 [docs/spec.md](docs/spec.md) is its full spec.
 
+## Packages
+
+Optional [packages](docs/packages/index.md) include `box2d`, `box3d`, `newton`,
+`rooms`, `lobby`, `steam` and `voice`. Add only the ones a game uses with
+`tide add <name>`. [Newton](docs/packages/newton.md) is an experimental NVIDIA
+Newton articulation/control integration for the same game and robotics-policy
+simulation. Native and web replay tests agree; collisions, robot importers and
+physical fidelity validation remain future work. Use a checkout or installation containing it.
+
 ## Stay up to date
 
 ```sh

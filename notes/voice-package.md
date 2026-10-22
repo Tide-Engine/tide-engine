@@ -6,6 +6,75 @@ than a codec-only package. The host-relayed architecture, API names, packet
 limits and buffering choices below are implementation picks, provisional in
 `docs/spec.md`; the optional feature and simulation exclusion are decided.
 
+## Game-defined receive processing (2026-10-22)
+
+The owner requested arbitrary audio processing, specifically a dynamic radio
+effect. This uses the existing mixer bus/effect machinery: `VoiceClient.bus`
+is an integer receive bus (default 0, master), applied to each decoded playback
+voice. Games use `Audio.SetEffect(Bus.Radio, Radio(knobs))` every frame, with
+ordinary `audio` code, state and dynamic knobs. Game enum values convert with
+`int(Bus.Radio)`. This introduces no compiler, generated runtime, mixer,
+capture, codec, protocol, server or engine host changes.
+
+`Voice.SetBus(PlayerID, int)` overrides one speaker; negative clears the
+override and resumes following the default. There are 32 routing overrides,
+independent of the 32 gain overrides. Existing entries update, cleared slots
+are reusable, and a new entry at capacity is ignored. The default and all
+nonnegative overrides outside 0..15 repair to master; a negative default also
+repairs to master. Invalid player IDs are ignored. Clearing an override
+with no standard-host client allocates nothing. The custom C APIs are
+`tide_voice_client_bus` and `tide_voice_client_player_bus`; the existing C
+configure signature is unchanged. The package's ordinary configure extern
+additionally carries the integer bus to the standard provider.
+
+Overrides survive initial connection setup (including calls before enabling),
+and are cleared with gains on a later local reconnect/migration/match change.
+The default bus remains a local setting. Changing routes affects existing
+playback without restarting encoders, decoders or receive queues. A bus effect
+processes its mixed speakers, with one shared state/knob set per bus. Different
+buses give independent processing, within the mixer's existing 16-bus limit.
+Normal voice/player gains happen before the bus effect; its output then passes
+through bus/master volume as usual. This processes only this receiver's audio,
+not transmitted samples, delivery permissions or the game's other buses.
+
+The package test now compiles the existing mixer source into its native/WASI
+test executable (no audio device). An eighth three-session case checks a route
+set before connection, live gain knobs at 0/1/0.25 while preserving effect
+state, clearing a per-player route, changing the default on an active speaker,
+arbitrary integer repair and reset on reconnect. It runs actual Opus/session
+playback through the mixer. A separate dry sound must remain unchanged when
+the voice bus is muted; subtracting that exact dry signal detects accidental
+master processing. Teardown forgets the mixer before freeing voice queues.
+The native three-process host fixture also routes through a real game-defined
+Tide audio effect with knobs changing every 30 frames. All eight package cases
+pass on native/WASI, and the standard host capture test passes.
+
+The public docs include a compilable radio example (band filtering, clipping,
+amplitude-scaled hiss, live signal strength and clean per-player routes).
+The example transpiles without warnings. Both complete debug builds pass.
+The full native run covered 2,469 checks: 2,467 passed in the concurrent
+24-job run (118.27 s); CLI help and the benchmark harness had child-process
+timeouts. Both unchanged checks pass serially with the original deadlines
+(19.22 s). The full web debug suite passes 2,409/2,409 (374.19 s), including
+WebGL/D3D11/WebGPU, browser rooms and threads. The final host fixture also
+calls the Tide per-player SetBus extern and passes again (3.45 s).
+
+The docs production build passes. Native/web component installation succeeds,
+and the installed checkout-built CLI builds the documented radio example for
+web without special flags. The first scratch CLI attempt accidentally included
+transpiled C stored inside the scratch game's source folder and correctly
+failed duplicate symbols; a clean game folder containing only the documented
+Tide source and package list builds successfully. Diff whitespace checks pass.
+No physical microphone/device quality, Android, other desktop OS or sanitizer
+run was added; those remain manual/normal CI coverage. No CI was dispatched.
+
+Integration: origin/dev's Unity rendering/HLSL work merged cleanly in
+`dc4e8a52`, changing compiler and standard-host dependencies without voice/audio
+overlap. Rebuilt merged native voice, voice host and CLI; both voice targets
+pass (1.54 s). Rebuilt merged WASI voice and web platform; voice passes (0.82 s).
+The merged docs build and a rebuilt/reinstalled CLI's radio web example pass.
+No broad full-suite repeat was required for the disjoint dependency changes.
+
 ## Configurable RNNoise suppression (2026-10-22)
 
 The owner requested RNNoise support controlled by a setting. Local

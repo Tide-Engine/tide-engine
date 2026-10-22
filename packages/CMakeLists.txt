@@ -40,6 +40,21 @@ function(tide_package_order_test name namespace source folder)
     set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${name}\t${folder}/order.tide" "${name}\t${source}\t${namespace}")
 endfunction()
 
+# NVIDIA Newton's selected CPU kernels, statically compiled for the same
+# simulation on native and WASM. Python/Warp are regeneration tools only.
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/newton/runtime.cpp"
+    PROPERTIES LANGUAGE C COMPILE_OPTIONS "${TIDE_CPP_FLAGS}")
+add_library(tide_newton STATIC newton/runtime.cpp newton/math.c)
+target_link_libraries(tide_newton PUBLIC tide)
+target_compile_options(tide_newton PRIVATE $<$<CONFIG:Debug>:-O2>)
+add_executable(tide_newton_runtime "${PROJECT_SOURCE_DIR}/tests/test_main.c" newton/test/runtime_test.c)
+target_include_directories(tide_newton_runtime PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_newton_runtime PRIVATE tide_newton)
+add_test(NAME tide_newton_runtime COMMAND tide_newton_runtime)
+set_tests_properties(tide_newton_runtime PROPERTIES TIMEOUT 120)
+tide_package_order_test(tide_newton_order Newton "${CMAKE_CURRENT_SOURCE_DIR}/newton/newton.tide"
+    "${CMAKE_CURRENT_SOURCE_DIR}/newton/test")
+
 # Box2D's own sources, as they came: a library the tests share, with its
 # warnings off. The package's bridge is ours, and compiles with each test.
 file(GLOB box2d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box2d/box2d/src/*.c")
@@ -357,8 +372,9 @@ add_custom_command(OUTPUT "${voice_speech}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/voice/test/speech.wav"
         "-DOUTPUT=${voice_speech}" -DNAME=tide_voice_test_speech -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     DEPENDS voice/test/speech.wav "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
-target_sources(tide_voice PRIVATE "${voice_speech}")
-target_include_directories(tide_voice PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/voice")
+target_sources(tide_voice PRIVATE "${voice_speech}" "${PROJECT_SOURCE_DIR}/platform/src/mixer.c")
+target_include_directories(tide_voice PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/voice"
+    "${PROJECT_SOURCE_DIR}/platform/src")
 target_link_libraries(tide_voice PRIVATE tide_opus tide_rnnoise)
 add_test(NAME tide_voice COMMAND tide_voice)
 set_tests_properties(tide_voice PROPERTIES TIMEOUT 120)

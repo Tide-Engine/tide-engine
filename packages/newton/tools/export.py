@@ -1,0 +1,166 @@
+"""Regenerate the bundled Newton kernels; Python is an authoring dependency only.
+
+Run in an environment with the pinned Warp wheel and Newton source importable:
+    python export.py --newton-root PATH --warp-root PATH
+Game builds compile the checked-in C++ and never run this script.
+"""
+
+import argparse
+import hashlib
+import pathlib
+import re
+import shutil
+import subprocess
+import tempfile
+
+NEWTON_REVISION = "ea4899864046dcd5981f8ba0bc3d8c25e65dcb96"
+WARP_REVISION = "b346b941a4c0cd19c510db67d6506d781464ed5b"
+
+
+def revision(folder):
+    return subprocess.check_output(
+        ["git", "-C", str(folder), "rev-parse", "HEAD"], text=True
+    ).strip()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--newton-root", required=True, type=pathlib.Path)
+    parser.add_argument("--warp-root", required=True, type=pathlib.Path)
+    args = parser.parse_args()
+    if revision(args.newton_root) != NEWTON_REVISION:
+        parser.error("Newton source must be at " + NEWTON_REVISION)
+    if revision(args.warp_root) != WARP_REVISION:
+        parser.error("Warp source must be at " + WARP_REVISION)
+
+    import sys
+
+    sys.path.insert(0, str(args.newton_root.resolve()))
+    import warp as wp
+
+    if wp.config.version != "1.19.0.dev20261020":
+        parser.error("install warp-lang==1.19.0.dev20261020")
+    wp.config.enable_cuda = False
+    wp.config.cpu_compiler_flags = ""
+    wp.init()
+    from newton._src.solvers.featherstone import kernels
+
+    wp.set_module_options(
+        {
+            "enable_backward": False,
+            "fuse_fp": False,
+            "fast_math": False,
+            "cpu_compiler_flags": "",
+            "block_dim": 1,
+        },
+        module=kernels,
+    )
+    package = pathlib.Path(__file__).resolve().parents[1]
+    output = package / "kernels"
+    output.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="tide-newton-") as temporary:
+        wp.compile_aot_module(kernels, device="cpu", module_dir=temporary, strip_hash=True)
+        generated = list(pathlib.Path(temporary).glob("*.cpp"))
+        if len(generated) != 1:
+            raise RuntimeError("expected exactly one generated Featherstone module")
+        source = generated[0].read_text(encoding="utf-8")
+    # Source locations remain useful, but developer checkout paths do not ship.
+    source = re.sub(
+        r"(?m)^// .*?((?:newton|warp)[/\\]_src[/\\].*?:\d+)$",
+        lambda match: "// " + match[1].replace("\\", "/"),
+        source,
+    )
+    source = source.replace('#include "builtin.h"', '#include "../vendor/warp/builtin.h"')
+    source = source.replace('#include "deterministic.h"', '#include "../vendor/warp/deterministic.h"')
+    # These launch wrappers are called only inside runtime.cpp. Keeping them
+    # local avoids exporting Warp's generic kernel names into a game's C ABI.
+    source = re.sub(r"(?m)^WP_API void (\w+_cpu_forward)\(", r"static void \1(", source)
+    # Warp emits dead loop-carried copies of loop indices even when an inner
+    # loop is empty. Value-initialize generated temporaries, avoiding undefined
+    # reads without changing the solver's defined arithmetic or control flow.
+    source = re.sub(r"(?m)^    ((?:wp::[^\n;=]+|bool)) (var_\d+);$", r"    \1 \2{};", source)
+    preamble = (
+        "// Generated from NVIDIA Newton; see ../UPSTREAM.md.\n"
+        "// SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers\n"
+        "// SPDX-License-Identifier: Apache-2.0\n"
+        "#pragma clang diagnostic push\n"
+        '#pragma clang diagnostic ignored "-Weverything"\n'
+        '#include "../math_bindings.h"\n'
+        "#define WP_API\n"
+    )
+    (output / "featherstone.inl").write_text(
+        preamble + source + "\n#pragma clang diagnostic pop\n", encoding="utf-8", newline="\n"
+    )
+
+    native = args.warp_root / "warp" / "native"
+    destination = package / "vendor" / "warp"
+    pending = [pathlib.Path("builtin.h"), pathlib.Path("deterministic.h")]
+    copied = set()
+    while pending:
+        relative = pending.pop()
+        if relative in copied:
+            continue
+        original = native / relative
+        contents = original.read_text(encoding="utf-8")
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(original.read_bytes())
+        copied.add(relative)
+        for included in re.findall(r'^\s*#\s*include\s+"([^"]+)"', contents, re.MULTILINE):
+            dependency = relative.parent / included
+            if (native / dependency).is_file():
+                pending.append(dependency)
+            elif "cuda" not in included and "nv" not in included:
+                raise RuntimeError("missing native include: " + str(dependency))
+
+    # Tide: wasm has no native _Float16. The upstream fallback is sufficient
+    # for these float32 kernels (which never call the half conversion helpers).
+    builtin = destination / "builtin.h"
+    contents = builtin.read_text(encoding="utf-8")
+    old = "#elif defined(__clang__)\n\n// _Float16"
+    new = "#elif defined(__clang__) && !defined(__wasm__) // Tide: no wasm _Float16\n\n// _Float16"
+    if contents.count(old) != 1:
+        raise RuntimeError("half conversion patch no longer matches")
+    builtin.write_text(contents.replace(old, new), encoding="utf-8", newline="\n")
+
+    # Tide: an explicit FMA is still fused when contraction is disabled.
+    matrix = destination / "mat.h"
+    contents = matrix.read_text(encoding="utf-8")
+    for scalar, function in (("float", "fmaf"), ("double", "fma")):
+        old = f"{scalar} muladd({scalar} a, {scalar} b, {scalar} c) {{ return {function}(a, b, c); }}"
+        new = f"{scalar} muladd({scalar} a, {scalar} b, {scalar} c) {{ return c + a * b; }} // Tide: no FMA"
+        if contents.count(old) != 1:
+            raise RuntimeError("matrix FMA patch no longer matches")
+        contents = contents.replace(old, new)
+    matrix.write_text(contents, encoding="utf-8", newline="\n")
+
+    # Tide includes the real C integer types before the standalone kernels.
+    # Upstream's long-long int64_t typedef conflicts with LP64 system headers.
+    crt = destination / "crt.h"
+    contents = crt.read_text(encoding="utf-8")
+    contents, replacements = re.subn(
+        r"/// stdint\.h\n.*?(?=/// math\.h)",
+        '/// stdint.h\n// Tide: preserve the system C typedefs on LP64 and wasm32.\n#include <stdint.h>\n\n',
+        contents,
+        flags=re.DOTALL,
+    )
+    if replacements != 1:
+        raise RuntimeError("standalone CRT integer patch no longer matches")
+    crt.write_text(contents, encoding="utf-8", newline="\n")
+
+    notices = package / "vendor"
+    shutil.copyfile(args.newton_root / "LICENSE.md", notices / "LICENSE-NEWTON.md")
+    shutil.copyfile(args.warp_root / "LICENSE.md", notices / "LICENSE-WARP.md")
+    for name in ("nanovdb", "svd", "reproducible_floating_sums", "moller", "windingnumber"):
+        shutil.copyfile(args.warp_root / "licenses" / (name + "-LICENSE.txt"), notices / ("LICENSE-" + name + ".txt"))
+    files = [output / "featherstone.inl"] + sorted(destination.rglob("*"))
+    manifest = []
+    for path in files:
+        if path.is_file():
+            manifest.append(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.relative_to(package).as_posix())
+    (package / "UPSTREAM.sha256").write_text("\n".join(manifest) + "\n", encoding="utf-8", newline="\n")
+    print(f"Exported Featherstone and {len(copied)} Warp support headers")
+
+
+if __name__ == "__main__":
+    main()
