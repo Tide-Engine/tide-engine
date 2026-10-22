@@ -48,9 +48,7 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     TIDE_CHECK(strstr(declared, "    command OpenScene\n") != NULL);
     TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Fixture.Level); break;\n") != NULL);
     TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
-    // ...and to close one, which the match loaded for it
-    TIDE_CHECK(strstr(declared, "    command(CloseScene close, PlayerID sender) Closing(mut LoadedScenes scenes)\n    {\n"
-                                "        if (sender != scenes.opener || !scenes.loaded.Has(close.asset)) return;\n") != NULL);
+    TIDE_CHECK(strstr(declared, "CloseScene") == NULL); // Scenes loaded by hand during Play are local: none are sent
     // A Unity scene is a Tide scene, whose entities are its prefab's, spawned into it as it loads
     TIDE_CHECK(strstr(declared, "namespace UnityEngine.Scenes.Fixture\n{\n    scene Level { } // Level.unity\n}\n") != NULL);
     TIDE_CHECK(strstr(declared, "    event(Spawned) FillFixture_Level(with UnityEngine.Scenes.Fixture.Level)\n    {\n        Spawn(UnityEngine.SceneContents.Fixture.Level);\n    }\n") != NULL);

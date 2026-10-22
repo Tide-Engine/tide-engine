@@ -817,9 +817,10 @@ named), `unity_prefabs_and_scenes_as_tide_prefabs` (the fixture's
 `Assets/Fixture` names), and the Sample's play mode test, whose code uses the
 short names.
 
-Gaps: a client in the editor sends nothing (the server decides). Scenes opened
-during Play and a scene loaded twice were fixed on 2026-10-22 ("Audio and the
-editor's workflow").
+**Scenes loaded by hand are local (owner, 2026-10-22):** "scenes that are
+matches should be loaded via Tide; unity scenes being loaded manually should be
+left alone and considered local/disconnected". A scene the match loads twice is
+two of Unity's (2026-10-22, "Audio and the editor's workflow").
 
 ### Web as built (2026-10-20): option B, packaged
 
@@ -1130,12 +1131,9 @@ picks below are mine (Provisional).
     comes or goes, when Unity reopens scenes), and the folder is emptied once
     per editor session (`SessionState`), in case an editor quit with copies.
   - A never-saved scene and Prefab Mode: "What was not covered" below.
-- **Scenes during Play.** The runner listens to `sceneLoaded`/`sceneUnloaded`.
-  A load or unload that isn't its own is sent: before the editor's scenes went
-  (`openSent`), it changes the list to send; after, `UnityEngine.OpenScene
-  { asset, only = false }` or the new `UnityEngine.CloseScene { asset }`
-  (opener only, unloads what `LoadedScenes` loaded for that asset). Editor only,
-  and only from the machine that runs the match, as Open is.
+- **Scenes during Play.** First built as sent to the match (OpenScene, a
+  `CloseScene` command); the owner then decided a scene loaded by hand is local
+  ("What was not covered" below), and both went.
 - **A scene loaded twice.** Each scene root entity (node 0 of a scene asset)
   gets its own Unity scene instance (`sceneOf`, by entity id): an open, loaded
   instance of that path no root has, else a new additive load claimed when its
@@ -1157,7 +1155,7 @@ picks below are mine (Provisional).
     0.5, and silence after destroy.
   - `tide_cli_tests`: `unity_unsaved_scene_read_from_the_editor_copy` (a copy
     of the fixture in the build folder; the stamp changes and goes back),
-    CloseScene's handler, and the fixture's `M#1/k` GameObject (entity `M_1_k`,
+    and the fixture's `M#1/k` GameObject (entity `M_1_k`,
     node path `M\#1\/k`).
   - EditMode `UnsavedTests`: a Spinner's speed changed through a
     `SerializedObject` and not saved is in the built `.tprefab` after `Sync`,
@@ -1165,8 +1163,7 @@ picks below are mine (Provisional).
   - PlayMode: `TheGamesSoundPlaysThroughUnitys` (the bonk read on Unity's audio
     thread in a batch run, silent under `TIDE_HIDDEN`), `ASceneLoadedTwiceIsTwo`
     (`ShowBonus { twice }`: two Bonus scenes, each Totem its own entity), and
-    `ScenesLoadedDuringPlayAreTheMatchs` (Bonus loaded and unloaded by a
-    script, twice, which needs CloseScene the second time).
+    `ScenesLoadedByHandAreLocal` (below).
   - Not run: Play's cancel and resume (batch runs skip it), Unity's
     microphone, a phone, and audio in a WebGL player by ear.
   - Runs: native debug 2512/2512, web debug 2413/2413; Unity EditMode 16/16
@@ -1217,8 +1214,19 @@ mine (Provisional).
   does: a runner started after that is silent until Play restarts; one already
   running keeps its sound. The untitled PlayMode test changes the schema, so it's
   its own fixture, `UntitledTests`, which runs after `BounceTests`.
-- **Still the owner's to decide:** an editor that joined as a client sends no
-  scene changes (the match's first player, the server, decides).
+- **Scenes loaded by hand are local** (owner: "scenes that are matches should be
+  loaded via Tide; unity scenes being loaded manually should be left alone and
+  considered local/disconnected"). The runner sends nothing for a scene it didn't
+  load (no `CloseScene`; Open only for the editor's scenes as Play starts) and
+  claims for the match's roots only scenes open as it started (`scenesStarted`:
+  the editor's open scenes, a player's first scene) or ones it loaded; an
+  entity's scene falls back only to the match's instances (`SceneOf`). A match
+  scene something else unloads is dropped from `sceneOf` and loaded again. So a
+  client editor, which sends no Open, has the server's scenes, and whatever it
+  loads itself is its own. PlayMode `ScenesLoadedByHandAreLocal`: Bonus loaded by
+  a script shows no entity; the match's Bonus loads beside it with its Totem
+  showing; unloading the local one leaves the match's, and the match letting its
+  Bonus go leaves a local one.
 - **Tests:** `embed_voice_provider`; `unity_unsaved_scene_read_from_the_editor_copy`
   (an untitled copy read as the scene `Untitled` with path `""`, and the clash's
   error); EditMode `AnUntitledSceneIsTheGames` (a new scene with a Spinner built

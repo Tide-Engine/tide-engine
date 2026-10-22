@@ -2050,8 +2050,7 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
                      "        if (scenes.opened) return; // The editor's command came first\n"
                      "        scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s);\n    }\n", scenes[i].number, scenes[i].name);
         }
-        puts_(&t, "\n    // The editor's: a scene it has open as Play starts there, or opens during Play; `only` unloads the others the\n"
-                  "    // match loaded for it\n"
+        puts_(&t, "\n    // The editor's, as Play starts there: a scene it has open; `only` unloads the others the match loaded for it\n"
                   "    command OpenScene\n    {\n        int asset;\n        bool only;\n    }\n"
                   "\n    command(OpenScene open, PlayerID sender) Opening(mut LoadedScenes scenes)\n    {\n"
                   "        // The first player's, which may come in the first tick, before its PlayerJoined does\n"
@@ -2068,12 +2067,7 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
             putf(&t, "            case %d: scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s); break;\n", scenes[i].number,
                  scenes[i].number, scenes[i].name);
         }
-        puts_(&t, "        }\n    }\n"
-                  "\n    // The editor's: a scene it closes during Play, which the match loaded for it\n"
-                  "    command CloseScene\n    {\n        int asset;\n    }\n"
-                  "\n    command(CloseScene close, PlayerID sender) Closing(mut LoadedScenes scenes)\n    {\n"
-                  "        if (sender != scenes.opener || !scenes.loaded.Has(close.asset)) return;\n"
-                  "        Scene.Unload(scenes.loaded[close.asset]);\n        scenes.loaded.Remove(close.asset);\n    }\n");
+        puts_(&t, "        }\n    }\n");
         // Each scene's entities, its prefab's, as it loads
         for (int i = 0; i < count; i++) {
             putf(&t, "\n    event(Spawned) Fill%s(with UnityEngine.Scenes.%s)\n    {\n        Spawn(UnityEngine.SceneContents.%s);\n    }\n",

@@ -70,10 +70,12 @@ The match decides which scenes are loaded, and Unity follows: Build Settings'
 first scene loads as Main starts, as a player build starts with it, and the
 game's code loads and unloads the others (`Scene.Load(Level)`), which Unity
 loads beside the rest and unloads as the match does. In the editor, Play has
-the scenes you have open instead, and makes a `TideRunner` if they have none;
-a scene you load or unload during Play, in the Hierarchy or from a script, is
-loaded or unloaded in the match too. A scene the match loads twice is two of
-Unity's, each with its own GameObjects. Put every scene the match loads in
+the scenes you have open instead, and makes a `TideRunner` if they have none.
+The match's scenes are Tide's to load: a scene you load by hand during Play, in
+the Hierarchy or from a script, is local, apart from the match, and no entity
+shows through its GameObjects. A scene of the match's that something else
+unloads is loaded again. A scene the match loads twice is two of Unity's, each
+with its own GameObjects. Put every scene the match loads in
 Build Settings, for players.
 
 Packages work as in any Tide game: run `tide add rooms` (or a git URL) in any
