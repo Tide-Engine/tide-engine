@@ -1,5 +1,22 @@
 # The language server and the editors
 
+## Offline installer configuration cache (2026-10-22)
+
+Build run 39790751086 passed plugin compatibility verification but failed while
+storing Gradle's configuration cache: buildCliInstaller's doFirst captured the
+tasks DSL scope through prepareSandbox. The installer now captures the sandbox
+Directory provider, shared with its copy input, and resolves only that value
+at execution. The missing-LSP4IJ check, archive contents, dependency ordering,
+configuration-cache setting and workflow gates remain in place.
+
+On Windows with JDK 21 and Gradle 9.8.0, the original script reproduces the exact
+TaskContainerScope serialization failure. The fixed buildPlugin/buildCliInstaller
+passes all nine ordinary Java/platform tests and stores its configuration cache;
+deleting just the installer ZIP and repeating rebuilds it successfully from the
+reused cache. Full verifier results are recorded below after validation.
+Optional real-process/server/native-canvas/JCEF tests are outside this Gradle-only
+change. No compiler, runtime or IDE adapter implementation changed.
+
 ## Computed properties (2026-10-21)
 
 Properties reuse accessor methods in analysis, with one canonical source symbol

@@ -197,8 +197,25 @@ try {
             // It starts by itself once it's in view, and its frame shows once
             // its game has drawn. Of two players, the first is enough: the
             // second only draws once it's in the first one's match.
-            await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
-            await until('example.querySelector("iframe.shown")', `${id}: starts in view`);
+            // Startup can still move the page (fonts, hydration or scroll
+            // restoration). Keep the viewport in view while waiting for its
+            // automatic start, with the same deadline as before.
+            await until(`(() => {
+                window.example = document.querySelectorAll('.tide-example')[${index}];
+                const viewport = example.querySelector('.example-viewport');
+                const box = viewport.getBoundingClientRect();
+                if (box.top < 0 || box.bottom > innerHeight) viewport.scrollIntoView({block:'center'});
+                return !!example.querySelector('iframe.shown');
+            })()`, `${id}: starts in view`, {
+                failure: `example.querySelector('.example-status').textContent.includes('unavailable')
+                    ? example.querySelector('.example-status').textContent : ''`,
+                details: `({ scrollY, status: example.querySelector('.example-status').textContent,
+                    viewport: example.querySelector('.example-viewport').getBoundingClientRect().toJSON(),
+                    frames: [...example.querySelectorAll('iframe')].map(frame => ({
+                        src: frame.src, ready: frame.contentDocument?.readyState,
+                        start: typeof frame.contentWindow?.Tide?.start, draws: frame.contentWindow?.__draws
+                    })) })`,
+            });
             await until(drawn('example.querySelector("iframe")'), `${id}: draws`);
             await until(`example.querySelectorAll("iframe").length === ${players}`, `${id}: every player's frame`);
             await shoot(id);
