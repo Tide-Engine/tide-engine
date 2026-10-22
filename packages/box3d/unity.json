@@ -1,0 +1,69 @@
+{
+  "about": "Unity's physics components that are Box3D's one to one, which tide unity translates (notes/unity.md, Packages' translations of Unity's components)",
+  "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is, and the Transform follows the body",
+  "source": [
+    "namespace Box3D",
+    "{",
+    "    // A body whose entity has Tide's Transform (in Unity, every one): it starts where the Transform places it, whatever",
+    "    // its position said, and the Transform follows it after each step, so Unity shows the body where it is. A body's",
+    "    // place is the world's: one under an entity that turns isn't turned with it.",
+    "    [Stage(PhysicsStages.Step, 0)]",
+    "    system StartAtTransform(mut Body body, Transform transform)",
+    "    {",
+    "        if (body.id != 0) return;",
+    "        body.position = transform.position;",
+    "        body.rotation = transform.localRotation;",
+    "    }",
+    "",
+    "    [Stage(PhysicsStages.Step, 19)]",
+    "    system FollowTransform(Body body, mut Transform transform)",
+    "    {",
+    "        transform.position = body.position;",
+    "        transform.localRotation = body.rotation;",
+    "    }",
+    "}"
+  ],
+  "unity": {
+    "Rigidbody": {
+      "as": "Box3D.Body",
+      "fields": {
+        "type": {"from": "m_IsKinematic", "values": {"0": "Box3D.BodyType.Dynamic", "1": "Box3D.BodyType.Kinematic"}},
+        "gravityScale": "m_UseGravity",
+        "linearDamping": "m_LinearDamping",
+        "angularDamping": "m_AngularDamping"
+      }
+    },
+    "BoxCollider": {
+      "as": "Box3D.Box",
+      "fields": {
+        "size": "m_Size * absScale",
+        "offset": "m_Center * scale",
+        "sensor": "m_IsTrigger"
+      },
+      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
+      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
+    },
+    "SphereCollider": {
+      "as": "Box3D.Sphere",
+      "fields": {
+        "radius": "m_Radius * largestScale",
+        "offset": "m_Center * scale",
+        "sensor": "m_IsTrigger"
+      },
+      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
+      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
+    },
+    "CapsuleCollider": {
+      "as": "Box3D.Capsule",
+      "when": ["m_Direction", "1", "Box3D's capsules stand along y: set the capsule's Direction to Y-Axis and turn its GameObject"],
+      "fields": {
+        "radius": "m_Radius * largestScaleXZ",
+        "height": "m_Height * scaleY",
+        "offset": "m_Center * scale",
+        "sensor": "m_IsTrigger"
+      },
+      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
+      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
+    }
+  }
+}

@@ -1304,7 +1304,8 @@ web too, before the jslib copies the input over. Test: Sample PlayMode
 `TheGamesOwnInputRollsTheBall` (D held through it rolls the ball right; an
 unknown key refused).
 
-**Proposal, the owner's to decide: Unity's physics components as Box3D's.**
+**Proposal, the owner's to decide: Unity's physics components as Box3D's.** (Decided and built for what's one to
+one: "Packages' translations of Unity's components" below.)
 Items 1 to 4 go away if the converter reads Unity's own physics components on
 TideEntity GameObjects as Box3D's, where the game has the box3d package:
 
@@ -1341,6 +1342,66 @@ For 6: the engine's own types in another namespace (`Tide.Game.Engine`), or no
 C# for the ones Unity has (`Transform`, `Time`, `Font`). For 5: tide could write
 the C# of the game's components from a build that fails only at Unity names it
 doesn't have yet.
+
+### Packages' translations of Unity's components (2026-10-22)
+
+The owner, on the Coin Rush proposal: "if they can be a one to one match then sure we can keep it a translation
+layer", "each package its own mapping".
+
+- **`unity.json` in a package's folder** (`UNITY_MAPPING_FILE`, documented in `unity_assets.h` and
+  docs/packages/using-and-writing.md). Its keys are Unity component types, as a scene file's document names them
+  (`yaml_document.type`). Each gives:
+  - `as`, the package's component;
+  - `fields`, each from a Unity key, optionally `* scale` (signed per axis), `* absScale`, `* largestScale(XY/XZ)` or
+    `* scaleX/Y/Z`, or `{from, values}` mapping values to Tide literals;
+  - `when` [key, value, why];
+  - `needs` (a component declaration the entity gets when nothing else gives that type);
+  - `notUnder` [Unity type, why].
+
+  `source` is Tide lines a Unity project alone compiles, as a source of the package's own
+  (`Library/Tide/Unity.<package>.tide`, written beside `Unity.tide` for messages and editors): as the package's, its
+  systems don't warn when nothing matches them, where the game's would. `tide unity` (and `tide build`/`run
+  --assets`, the web build too) reads the unity.json of each package the game lists: `unity_assets_read` takes their
+  folders and names (`unity_package`), and a `unity_source` says the package it's of. A package the game drops leaves
+  its last `Unity.<package>.tide` in Library/Tide, compiled by nothing.
+- **Reading:** a mapped document is read like a Tide component, an owned slot keyed by a synthetic `map_component`
+  (`map_unity.reader`, its fields the Unity keys, `m_Enabled` and the `when` key, shape -1). So prefab instances'
+  overrides of a collider's fields and removed components work as for Tide components. A second of one type on a
+  GameObject in one file is a warning, left out (`owned.read_in`).
+- **Writing** (`write_translated`, after the GameObject's own components): left out if `m_Enabled` is 0, if the
+  entity has its own component of the target type (on the GameObject or the TideEntity), if `when` fails, or if a
+  GameObject above has the `notUnder` type; the last two with warnings. Each field is written by the target field's
+  shape from components.json: vectors (float2/float3) per axis by the scale, numbers, bools, mapped literals. The
+  scale is the lossy scale through every parent. Without the target in components.json (the first build with the
+  package) the translation is skipped; the build writes components.json, whose stamp builds again. Then `needs`,
+  for a written translation whose entity has no component of that type.
+- **Box3D's** (`packages/box3d/unity.json`): `Rigidbody`→`Body` (`m_IsKinematic` to Kinematic/Dynamic,
+  `m_UseGravity`→`gravityScale`, the dampings). `BoxCollider`→`Box` (size by absScale, centre by scale);
+  `SphereCollider`→`Sphere` (radius by largestScale); `CapsuleCollider`→`Capsule` when `m_Direction` is 1 (radius by
+  largestScaleXZ, height by scaleY). Colliders need a static `Body` and aren't under a `Rigidbody`. Mass, physics
+  materials, constraints, interpolation and MeshCollider aren't translated (not one to one, or C can't read the mesh).
+  Its `source`: `StartAtTransform` (stage offset 0: a body with id 0 takes the entity's `transform.position` and
+  `localRotation`) and `FollowTransform` (offset 19, after the history systems: the Transform follows the body). So
+  Unity's placement starts a body, `Spawn(Roller, Transform { ... })` too, and the runner shows it moving. In the
+  package itself those systems would have put an empty Transform table into every Box3D game's world: every pinned
+  hash and `order.txt` of the package tests changed, though nothing moved differently. Unity's glue lives in the
+  mapping.
+- **Box2D's** (`packages/box2d/unity.json`): `Rigidbody2D`→`Body` (`m_BodyType` 0/1/2 to
+  Dynamic/Kinematic/Static, gravity scale, dampings), `BoxCollider2D`→`Box`, `CircleCollider2D`→`Circle` (radius by
+  largestScaleXY), with density and trigger; colliders need a static body and aren't under a `Rigidbody2D`. Its
+  `source` places a body by the Transform's x and y and its turn about z (2·atan2 of z and w, the short way), and
+  follows it keeping z.
+- **Tests:** `unity_physics_components_as_box3d` (tests/unity_physics, a scene written by hand: a scaled floor, a
+  Rigidbody ball with a sphere and an arm collider under it, a Y capsule, an X capsule, a trigger with its own
+  kinematic `Box3D.Body`, a disabled collider, a collider on no entity; Box3D's real unity.json and its `source`; and
+  none of it without the package). Box3D/Box2D package and example tests unchanged (22/22). Coin Rush with Unity's
+  components and none of its glue systems: its PlayMode tests (the ball scores, the wall holds at 5.505) and the
+  WebGL smoke pass as before.
+- **Runs:** native debug 2538/2538, web debug 2439/2439, docs build; Sample EditMode 17/17 and PlayMode 16/16.
+  Box2D's `source` compiles in a Unity build (Coin Rush with `box2d` listed, no warnings).
+- **Not built:** Box2D's translations are untested in Unity (written from Unity's YAML of the components and Box2D's
+  fields). Physics materials (a reference to an asset whose fields would map), compound colliders as parts, mesh
+  colliders, joints.
 
 ### The game is Assets (2026-10-21)
 

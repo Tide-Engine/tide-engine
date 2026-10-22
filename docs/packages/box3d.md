@@ -633,6 +633,12 @@ An entity that's destroyed takes its body with it, at the next step: `this.Destr
 
 Removing `Body` from an entity that stays doesn't take its body out of the world yet, and removing a shape's component doesn't take the shape off. Destroy the entity: a shape that has to go by itself is a part.
 
+## In Unity
+
+In a Unity project ([Unity](../tools/cli.md#unity)), Unity's own physics components on a TideEntity GameObject are Box3D's: tide translates them as it reads the scene or prefab. A `Rigidbody` is a `Body` (Kinematic when it's kinematic, else Dynamic; `useGravity` as `gravityScale` 1 or 0; its drags as the dampings). A `BoxCollider` is a `Box`, a `SphereCollider` a `Sphere` and a Y-axis `CapsuleCollider` a `Capsule`, sized by the GameObject's scale as Unity sizes them, `isTrigger` as `sensor`. A collider with no `Rigidbody` is on a static body, as in Unity. A body starts where the GameObject is, and Unity shows it where Box3D has it.
+
+Only what's one to one is translated, and what isn't is left out with a warning that says why: a collider under another GameObject's `Rigidbody` (a [part](#parts) in Box3D), a capsule along X or Z, a second collider of one kind on a GameObject. A `Rigidbody`'s mass isn't one to one either, as a body weighs what its shapes' densities make it: give the GameObject the shape's Box3D component to say its density, which then stands in for the collider. A Box3D component of the GameObject's own always wins over the translation of a Unity one.
+
 ## Multiplayer
 
 There's nothing to add for a match with several machines. Box3D's memory is resident in the match: `Physics.state` holds snapshots of the engine's arena, including the bodies, contacts, sleeping sets and geometry. After a step the package commits the 16 KiB pages it may have written; older worlds share the untouched pages. A client that predicted wrong restores the pages that differ from its earlier world, by page identity, and runs its ticks again. It doesn't serialize the world or build Box3D again for a rollback.

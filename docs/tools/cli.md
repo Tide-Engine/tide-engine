@@ -370,6 +370,11 @@ Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
 program plays through the page, and hears its microphone, itself.
 
+Unity's own components are a package's where the package says they're one to
+one, in a `unity.json` of its folder (see
+[Packages](../packages/using-and-writing.md#unity-components)):
+with `box3d`, a `Rigidbody` is a Box3D body and a `BoxCollider` a box on it.
+
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the
 same prefabs and scenes as the Unity players it serves.

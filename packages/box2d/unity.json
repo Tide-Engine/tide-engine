@@ -1,0 +1,64 @@
+{
+  "about": "Unity's 2D physics components that are Box2D's one to one, which tide unity translates (notes/unity.md, Packages' translations of Unity's components)",
+  "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is in x and y, turned about z, and the Transform follows the body",
+  "source": [
+    "namespace Box2D",
+    "{",
+    "    // A body whose entity has Tide's Transform (in Unity, every one): it starts where the Transform places it in x and y,",
+    "    // turned as it's turned about z, whatever its position and angle said, and the Transform follows it after each step,",
+    "    // its z kept, so Unity shows the body where it is. A body's place is the world's: one under an entity that turns",
+    "    // isn't turned with it.",
+    "    [Stage(PhysicsStages.Step, 0)]",
+    "    system StartAtTransform(mut Body body, Transform transform)",
+    "    {",
+    "        if (body.id != 0) return;",
+    "        var at = transform.position;",
+    "        body.position = float2(at.x, at.y);",
+    "        var q = transform.localRotation.value;",
+    "        var sign = q.w < 0 ? -1.0 : 1.0; // The same turn, the short way: an angle from -pi to pi",
+    "        body.angle = 2 * Math.Atan2(q.z * sign, q.w * sign);",
+    "    }",
+    "",
+    "    [Stage(PhysicsStages.Step, 14)]",
+    "    system FollowTransform(Body body, mut Transform transform)",
+    "    {",
+    "        var at = transform.position;",
+    "        transform.position = float3(body.position.x, body.position.y, at.z);",
+    "        transform.localRotation = quaternion.Euler(0, 0, body.angle);",
+    "    }",
+    "}"
+  ],
+  "unity": {
+    "Rigidbody2D": {
+      "as": "Box2D.Body",
+      "fields": {
+        "type": {"from": "m_BodyType", "values": {"0": "Box2D.BodyType.Dynamic", "1": "Box2D.BodyType.Kinematic", "2": "Box2D.BodyType.Static"}},
+        "gravityScale": "m_GravityScale",
+        "linearDamping": "m_LinearDamping",
+        "angularDamping": "m_AngularDamping"
+      }
+    },
+    "BoxCollider2D": {
+      "as": "Box2D.Box",
+      "fields": {
+        "size": "m_Size * absScale",
+        "offset": "m_Offset * scale",
+        "density": "m_Density",
+        "sensor": "m_IsTrigger"
+      },
+      "needs": "Box2D.Body { type = Box2D.BodyType.Static }",
+      "notUnder": ["Rigidbody2D", "a collider under a Rigidbody2D is a shape of that body, which is Box2D.Part, not one to one"]
+    },
+    "CircleCollider2D": {
+      "as": "Box2D.Circle",
+      "fields": {
+        "radius": "m_Radius * largestScaleXY",
+        "offset": "m_Offset * scale",
+        "density": "m_Density",
+        "sensor": "m_IsTrigger"
+      },
+      "needs": "Box2D.Body { type = Box2D.BodyType.Static }",
+      "notUnder": ["Rigidbody2D", "a collider under a Rigidbody2D is a shape of that body, which is Box2D.Part, not one to one"]
+    }
+  }
+}

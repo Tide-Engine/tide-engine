@@ -1899,7 +1899,13 @@ static bool generate(build *b, const char *gen, const bool layout)
     // A Unity project's prefabs and scenes, as the prefabs tide makes of them, after the game's own files
     unity_sources unity = {0};
     if (b->opts->unity_assets) {
-        if (!unity_assets_read(b->opts->unity_assets, &unity)) {
+        // ...with Unity's own components the game's packages translate into theirs (each package's unity.json)
+        unity_package *packages = calloc((size_t)b->packages.count + 1, sizeof *packages);
+        if (!packages) abort();
+        for (int i = 0; i < b->packages.count; i++) packages[i] = (unity_package){b->packages.items[i].folder, b->packages.items[i].name};
+        const bool read = unity_assets_read(b->opts->unity_assets, packages, b->packages.count, &unity);
+        free(packages);
+        if (!read) {
             unity_sources_free(&unity);
             free(inputs);
             free_files(&paths);
@@ -1907,14 +1913,15 @@ static bool generate(build *b, const char *gen, const bool layout)
         }
         inputs = realloc(inputs, sizeof(compile_input) * (size_t)(count + unity.count + 1));
         if (!inputs) abort();
-        for (int i = 0; i < unity.count; i++) inputs[count++] = (compile_input){unity.items[i].path, NULL, unity.items[i].text};
+        for (int i = 0; i < unity.count; i++) inputs[count++] = (compile_input){unity.items[i].path, unity.items[i].package, unity.items[i].text};
         // ...each as tide read it, beside the build, which its messages' lines are of
         char *prefabs = b->opts->unity && b->opts->output ? path_join(b->opts->output, "prefabs") : NULL;
         if (prefabs) sys_remove_tree(prefabs);
         for (int i = 0; prefabs && i < unity.count; i++) {
-            if (strcmp(unity.items[i].path, UNITY_SOURCE_PATH) == 0) {
-                // The declarations its own source makes, where its messages say they are, which tidels reads too
-                char *declared = path_join(b->opts->output, "Unity.tide");
+            if (strcmp(unity.items[i].path, UNITY_SOURCE_PATH) == 0 || unity.items[i].package) {
+                // The declarations its own source makes (and a package's for a Unity project), where its messages say
+                // they are, which tidels reads too
+                char *declared = path_join(b->opts->output, unity.items[i].path + strlen("Library/Tide/"));
                 if (unity.items[i].text) sys_write_text(declared, unity.items[i].text);
                 free(declared);
                 continue;

@@ -576,6 +576,12 @@ An entity that's destroyed takes its body with it, at the next step: `this.Destr
 
 Removing `Body` from an entity that stays doesn't take its body out of the world yet. Destroy the entity.
 
+## In Unity
+
+In a Unity project ([Unity](../tools/cli.md#unity)), Unity's own 2D physics components on a TideEntity GameObject are Box2D's: tide translates them as it reads the scene or prefab. A `Rigidbody2D` is a `Body` (its body type, gravity scale and dampings), a `BoxCollider2D` a `Box` and a `CircleCollider2D` a `Circle`, sized by the GameObject's scale as Unity sizes them, with their density and `isTrigger` as `sensor`. A collider with no `Rigidbody2D` is on a static body, as in Unity. A body starts where the GameObject is in x and y, turned as it's turned about z, and Unity shows it where Box2D has it.
+
+Only what's one to one is translated, and what isn't is left out with a warning that says why, such as a collider under another GameObject's `Rigidbody2D` (a part in Box2D). A Box2D component of the GameObject's own always wins over the translation of a Unity one.
+
 ## Multiplayer
 
 There's nothing to add for a match with several machines. Box2D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package has Box2D's whole state in the match, as bytes in `Physics`: it writes what changed of them. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
