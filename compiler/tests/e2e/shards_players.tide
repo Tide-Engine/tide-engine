@@ -1,0 +1,32 @@
+// A player walking across a shard's border (tests/e2e/shards_players_test.c):
+// they join the world at the root, which spawns their avatar; it moves to the
+// region it's in, and their machine follows it there and on across the border.
+settings
+{
+    shards = true;
+    shardRange = 8;
+    maxPlayers = 4;
+}
+
+input Controls { float2 move; }
+
+component Avatar
+{
+    [Partition] float2 position;
+    int steps;
+    int moved;
+}
+
+scene Main { }
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Avatar { position = float2(-12, 0) }, Owner { player = joined.player });
+}
+
+system Walk(mut Avatar a, Controls input, Time time)
+{
+    a.position += input.move * (8.0 * time.dt);
+    a.steps += 1;
+    if (input.move.x != 0) a.moved += 1;
+}

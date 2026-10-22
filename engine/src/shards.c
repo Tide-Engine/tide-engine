@@ -124,7 +124,17 @@ typedef struct shard {
     map64 *sent;
     uint32_t sent_room;
     uint64_t singletons; // The root's: its singletons' hash, as last sent
+    uint64_t match;      // What its host knows it by (tide_shards_desc.started), 0 in one process
 } shard;
+
+// A player of the world: their cookie, whether they're in it, and the route
+// the shards were last told (its hash)
+typedef struct roster {
+    uint64_t cookie;
+    bool here;
+    uint32_t home;
+    uint64_t route;
+} roster;
 
 typedef struct range {
     uint32_t first, end, shard;
@@ -144,6 +154,8 @@ struct tide_shards {
     uint64_t next_index; // The next range's first
     uint64_t updates;
     double now;
+    roster *players; // tide_game_players(game) of them
+    uint32_t player_count;
 };
 
 static map64 *sent_to(tide_shards *s, const uint32_t from, const uint32_t to)
@@ -254,6 +266,7 @@ static void start_server(tide_shards *s, const uint32_t id, const void *world, c
     d.world = world;
     d.seed = s->desc.seed;
     d.jobs = s->desc.jobs;
+    d.closed = id != TIDE_SHARD_ROOT; // Players join the world at the root, and a region takes those it's told of
     if (s->desc.transports) s->desc.transports(s->desc.user, id, d.transports);
     shard *sh = &s->shards[id];
     sh->server = tide_server_create(&d, now);
@@ -283,6 +296,9 @@ static bool setup(tide_shards *s, const tide_shards_desc *desc)
     s->api = desc->game->shards;
     s->tick_rate = desc->tick_rate ? desc->tick_rate : desc->game->tick_rate ? desc->game->tick_rate : 60u;
     s->dt = desc->dt > 0.0f ? desc->dt : 1.0f / (float)s->tick_rate;
+    s->player_count = tide_game_players(desc->game);
+    s->players = calloc(s->player_count, sizeof *s->players);
+    if (!s->players) tide_out_of_memory();
     return true;
 }
 
@@ -338,6 +354,7 @@ void tide_shards_destroy(tide_shards *s)
     }
     free(s->shards);
     free(s->ranges);
+    free(s->players);
     map_free(&s->directory);
     free(s);
 }
@@ -644,9 +661,128 @@ static void maybe_split(tide_shards *s, const uint32_t id, const double now)
     half->used = true;
     give_range(s, added);
     start_server(s, added, NULL, now);
+    for (uint32_t p = 0; p < s->player_count; p++) {
+        if (s->players[p].here) (void)tide_server_admit(s->shards[added].server, tide_player_from_index((int32_t)p), s->players[p].cookie);
+    }
     // Every shard learns the new regions, and what's in the new half moves
     // there as its shard's next tick ends
     tell_map(s);
+}
+
+// ---------------------------------------------------------------------------
+// Players: a player joins the world at the root, which gives them a cookie;
+// every other shard takes them as the same player with it. The root sends
+// PlayerJoined and PlayerLeft as they come and go from the world as a whole.
+
+static void admit_everywhere(tide_shards *s, const uint32_t player)
+{
+    const roster *r = &s->players[player];
+    for (uint32_t i = 0; i < s->count; i++) {
+        if (s->shards[i].used) (void)tide_server_admit(s->shards[i].server, tide_player_from_index((int32_t)player), r->cookie);
+    }
+}
+
+static void track_players(tide_shards *s)
+{
+    for (uint32_t p = 0; p < s->player_count; p++) {
+        roster *r = &s->players[p];
+        const tide_player_id id = tide_player_from_index((int32_t)p);
+        bool here = false;
+        uint64_t cookie = 0;
+        for (uint32_t i = 0; i < s->count; i++) {
+            if (!s->shards[i].used || !tide_server_connected(s->shards[i].server, id)) continue;
+            here = true;
+            if (!cookie) cookie = tide_server_cookie(s->shards[i].server, id);
+        }
+        if (here == r->here) continue;
+        r->here = here;
+        if (here) {
+            r->cookie = cookie;
+            admit_everywhere(s, p);
+        }
+        tide_shards_player(s, id, here);
+    }
+}
+
+// Where each player's entities are (tide_shard_game.presence): their home is
+// the shard that owns the most of them, and their machine follows each shard
+// owning any, and each region within the range of any. The shards are told
+// when that changes, every shard every player's.
+typedef struct whereabouts {
+    uint32_t count;
+    tide_shard_box box;
+    bool any;
+} whereabouts;
+
+static void route_players(tide_shards *s)
+{
+    if (!s->player_count || !s->api->presence) return;
+    const uint32_t shards = s->count;
+    whereabouts *at = calloc((size_t)s->player_count * shards, sizeof *at);
+    tide_shard_presence *found = malloc(s->player_count * sizeof *found);
+    if (!at || !found) tide_out_of_memory();
+    for (uint32_t i = 0; i < shards; i++) {
+        if (!s->shards[i].used) continue;
+        const uint32_t n = s->api->presence(tide_server_world(s->shards[i].server), found, s->player_count);
+        for (uint32_t k = 0; k < n && k < s->player_count; k++) {
+            const int32_t p = tide_player_index(found[k].player);
+            if (p < 0 || (uint32_t)p >= s->player_count) continue;
+            whereabouts *w = &at[(size_t)p * shards + i];
+            w->count = found[k].count;
+            w->box = found[k].box;
+            w->any = true;
+        }
+    }
+    uint32_t *follows = malloc(shards * sizeof *follows);
+    if (!follows) tide_out_of_memory();
+    for (uint32_t p = 0; p < s->player_count; p++) {
+        roster *r = &s->players[p];
+        const whereabouts *mine = &at[(size_t)p * shards];
+        uint32_t count = 0;
+        if (r->here) {
+            uint32_t home = r->home, most = 0;
+            for (uint32_t i = 0; i < shards; i++) {
+                if (mine[i].any && mine[i].count > most) {
+                    most = mine[i].count;
+                    home = i;
+                }
+            }
+            if (home >= shards || !s->shards[home].used) home = TIDE_SHARD_ROOT;
+            r->home = home;
+            for (uint32_t i = 0; i < shards; i++) {
+                if (!s->shards[i].used) continue;
+                bool follow = i == home || mine[i].any;
+                for (uint32_t k = 0; k < shards && !follow; k++) {
+                    if (mine[k].any && mine[k].count && s->shards[i].region) {
+                        follow = tide_shard_box_near(&mine[k].box, &s->shards[i].box, s->api->range, s->api->dims);
+                    }
+                }
+                if (follow) follows[count++] = i;
+            }
+        }
+        // Told again only when it changed
+        uint64_t hash = tide_hash_more(TIDE_HASH_START, &r->home, sizeof r->home);
+        hash = tide_hash_more(hash, follows, count * sizeof *follows);
+        hash = tide_hash_end(hash) | 1u;
+        if (!r->here) hash = 0;
+        if (hash == r->route) continue;
+        r->route = hash;
+        tide_writer w = {.grows = true};
+        tide_shard_header(&w, TIDE_SHARD_ROUTE, TIDE_SHARD_ORCHESTRATOR, 0u);
+        tide_write_u32(&w, tide_player_from_index((int32_t)p).id);
+        tide_write_u32(&w, r->home);
+        tide_write_u32(&w, count);
+        for (uint32_t k = 0; k < count; k++) {
+            tide_write_u32(&w, follows[k]);
+            tide_write_u64(&w, s->shards[follows[k]].match);
+        }
+        if (w.overflow) tide_out_of_memory();
+        for (uint32_t i = 0; i < s->count; i++) inject(s, i, w.data, w.size);
+        free(w.data);
+    }
+    free(follows);
+    free(found);
+    free(at);
 }
 
 // ---------------------------------------------------------------------------
@@ -658,6 +794,7 @@ void tide_shards_update(tide_shards *s, const double now)
     for (uint32_t i = 0; i < s->count; i++) {
         if (s->shards[i].used) tide_server_update(s->shards[i].server, now);
     }
+    track_players(s);
     for (uint32_t i = 0; i < s->count; i++) {
         if (s->shards[i].used) carry(s, i);
     }
@@ -670,6 +807,7 @@ void tide_shards_update(tide_shards *s, const double now)
             send_ghosts(s, a, b);
         }
     }
+    route_players(s);
     // More indices before a shard runs out, and splits
     for (uint32_t i = 0; i < s->count; i++) {
         if (!s->shards[i].used) continue;

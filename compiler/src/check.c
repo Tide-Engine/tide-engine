@@ -2834,8 +2834,8 @@ static void ensure_shards(program *prog)
     f.name = str_from("regions");
     f.type = list_of(prog, (type){TY_DOUBLE, NULL});
     vec_push(state->fields, f);
-    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held"};
-    for (int i = 0; i < 6; i++) {
+    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes"};
+    for (int i = 0; i < 7; i++) {
         f.name = str_from(long_lists[i]);
         f.type = list_of(prog, (type){TY_LONG, NULL});
         vec_push(state->fields, f);

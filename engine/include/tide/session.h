@@ -403,6 +403,14 @@ bool tide_server_kick(tide_server *s, tide_player_id player, const char *message
 bool tide_server_inject(tide_server *s, const uint8_t *data, uint32_t size);
 // How many handed messages are still waiting for a tick.
 uint32_t tide_server_injected(const tide_server *s);
+// Shards: a player of the world, who joins this shard's match as `player` by
+// presenting `cookie` (the one their first shard gave them), closed or not.
+// False when another player has the slot.
+bool tide_server_admit(tide_server *s, tide_player_id player, uint64_t cookie);
+// Whether a player is in the match on a connection now, and their cookie (0
+// for none).
+bool tide_server_connected(const tide_server *s, tide_player_id player);
+uint64_t tide_server_cookie(const tide_server *s, tide_player_id player);
 
 // ---------------------------------------------------------------------------
 // Client

@@ -35,11 +35,20 @@ static tide_shards_desc desc_of(const uint32_t most)
     };
 }
 
+// A client watching each shard, as one player of the world: it joins at the
+// root, and each region takes it with the cookie the root gave it
 static void watch(const uint32_t shard)
 {
     if (shard >= CLIENTS || clients[shard]) return;
+    uint64_t cookie = 0;
+    if (shard != TIDE_SHARD_ROOT) {
+        if (!clients[TIDE_SHARD_ROOT]) return;
+        const tide_client_status root = tide_client_status_of(clients[TIDE_SHARD_ROOT]);
+        if (root.state != TIDE_SESSION_CONNECTED || !root.cookie) return;
+        cookie = root.cookie;
+    }
     const tide_client_desc d = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 100u + shard),
-                                .server = tide_loopback_address(10u + shard), .lead = 2};
+                                .server = tide_loopback_address(10u + shard), .lead = 2, .cookie = cookie};
     clients[shard] = tide_client_create(&d, now);
 }
 

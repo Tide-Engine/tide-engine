@@ -136,6 +136,16 @@ static void gen_shard_early(gen *g)
               "    *(int64_t *)tide_list_add(l, 8u, TIDE_IN_MATCH) = value;\n}\n\n"
               "TIDE_HELPER void tide_shard_drop(tide_list *l, const int32_t at, const int32_t stride)\n{\n"
               "    for (int32_t k = 0; k < stride; k++) tide_list_remove_at(l, at, 8u);\n}\n\n"
+              // A player's route among the routes: a record each, the player, the
+              // home, how many it follows, then each shard and match
+              "TIDE_HELPER int32_t tide_shard_route_at(const tide_list l, const int64_t player)\n{\n"
+              "    const int32_t n = tide_list_count(l);\n"
+              "    for (int32_t at = 0; at + 3 <= n;) {\n"
+              "        if (tide_shard_long(l, at) == player) return at;\n"
+              "        const int64_t count = tide_shard_long(l, at + 2);\n"
+              "        if (count < 0 || count > n) return -1;\n"
+              "        at += 3 + 2 * (int32_t)count;\n    }\n"
+              "    return -1;\n}\n\n"
               );
     sb_put(o, "TIDE_HELPER bool tide_shard_root(const tide_world *w)\n{\n"
               "    return !w->tide_shard_state.shard || w->tide_shard_state.role == TIDE_SHARD_ROOT_ROLE;\n}\n\n"

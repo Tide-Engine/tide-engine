@@ -75,7 +75,19 @@ typedef enum tide_shard_kind {
     TIDE_SHARD_SINGLETON = 12,
     // Numbered: a shard asks for a singleton (u32 the shard asking, u32 its number).
     TIDE_SHARD_BORROW_SINGLETON = 13,
+    // Orchestrator: where a player plays: u32 PlayerID, u32 its home shard, u32
+    // count, then the shards its machine follows, its home among them, each
+    // u32 shard and u64 the match a host knows it by (0 in one process).
+    // Count 0: the player's gone. Every shard keeps every player's, so a
+    // player's machine reads its own from whichever shard's world it has.
+    TIDE_SHARD_ROUTE = 14,
 } tide_shard_kind;
+
+// A shard a player's machine follows, and the match its host knows it by.
+typedef struct tide_shard_link {
+    uint32_t shard;
+    uint64_t match;
+} tide_shard_link;
 
 // ARRIVE's flags
 #define TIDE_SHARD_BORROWED 1u
@@ -180,6 +192,10 @@ typedef struct tide_shard_game {
     // Each ghost it holds that's the root of what came (a tree comes whole),
     // with the shard whose it is: what a restored orchestrator knows it sent.
     void (*ghosts)(const void *world, void (*each)(void *context, tide_entity e, int32_t source), void *context);
+    // A player's route, as the last ROUTE for them said: their home shard,
+    // and up to `capacity` of the shards their machine follows. How many it
+    // follows, 0 for no route.
+    uint32_t (*route)(const void *world, tide_player_id player, uint32_t *home, tide_shard_link *out, uint32_t capacity);
 } tide_shard_game;
 
 

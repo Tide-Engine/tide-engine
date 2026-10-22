@@ -915,6 +915,7 @@ struct tide_server {
     // a big one has its download's number once published
     struct injected *injected;
     uint32_t injected_count, injected_room;
+    tide_player_set admitted; // Players of a sharded world it takes though closed (tide_server_admit)
 };
 
 static double resend_after(const uint32_t rtt_ms)
@@ -1368,7 +1369,8 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
         return;
     }
     // A closed match takes only the players in it: those of the world it went on from too
-    const bool in_world = player >= 0 && tide_players_has(&s->present, (uint32_t)player);
+    const bool in_world = player >= 0
+                       && (tide_players_has(&s->present, (uint32_t)player) || tide_players_has(&s->admitted, (uint32_t)player));
     if (s->closed && !(s->desc.local_first && transport == 0) && !in_world) {
         refuse(s, transport, from, REFUSE_CLOSED);
         return;
@@ -2020,6 +2022,29 @@ bool tide_server_inject(tide_server *s, const uint8_t *data, const uint32_t size
 uint32_t tide_server_injected(const tide_server *s)
 {
     return s->injected_count;
+}
+
+bool tide_server_admit(tide_server *s, const tide_player_id player, const uint64_t cookie)
+{
+    const int32_t i = tide_player_index(player);
+    if (i < 0 || (uint32_t)i >= s->players || !cookie) return false;
+    if (s->cookies[i] && s->cookies[i] != cookie) return false; // Another player's
+    s->cookies[i] = cookie;
+    s->digests[i] = cookie_digest(cookie);
+    tide_players_add(&s->admitted, (uint32_t)i);
+    return true;
+}
+
+bool tide_server_connected(const tide_server *s, const tide_player_id player)
+{
+    const int32_t i = tide_player_index(player);
+    return i >= 0 && (uint32_t)i < s->players && s->connections[i].used && s->connections[i].greeted;
+}
+
+uint64_t tide_server_cookie(const tide_server *s, const tide_player_id player)
+{
+    const int32_t i = tide_player_index(player);
+    return i >= 0 && (uint32_t)i < s->players ? s->cookies[i] : 0u;
 }
 
 // How long a player's input waited here before its tick ran: from when it

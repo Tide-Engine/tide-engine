@@ -145,6 +145,21 @@ static void gen_shard_receive(gen *g)
                  "        return true;\n    }\n",
               type_cname(prog->player_joined), type_cname(prog->player_joined), type_cname(prog->player_left),
               type_cname(prog->player_left));
+    // ROUTE: a player's home shard and what their machine follows, a record each
+    // (the player, the home, how many, then each shard and match)
+    sb_put(o, "    case TIDE_SHARD_ROUTE: {\n"
+              "        const uint32_t player = tide_read_u32(&r);\n        const uint32_t home = tide_read_u32(&r);\n"
+              "        const uint32_t count = tide_read_u32(&r);\n"
+              "        if (r.failed || count > (r.size - r.at) / 12u) return false;\n"
+              "        const int32_t at = tide_shard_route_at(s->routes, (int64_t)player);\n"
+              "        if (at >= 0) tide_shard_drop(&s->routes, at, 3 + 2 * (int32_t)tide_shard_long(s->routes, at + 2));\n"
+              "        if (!count) return true;\n"
+              "        tide_shard_push(&s->routes, (int64_t)player);\n        tide_shard_push(&s->routes, (int64_t)home);\n"
+              "        tide_shard_push(&s->routes, (int64_t)count);\n"
+              "        for (uint32_t i = 0; i < count; i++) {\n"
+              "            tide_shard_push(&s->routes, (int64_t)tide_read_u32(&r));\n"
+              "            tide_shard_push(&s->routes, (int64_t)tide_read_u64(&r));\n        }\n"
+              "        return !r.failed;\n    }\n");
     sb_put(o, "    case TIDE_SHARD_SINGLETON: {\n"
               "        const uint32_t i = tide_read_u32(&r);\n        tide_read_u32(&r);\n"
               "        if (r.failed || i >= TIDE_SHARD_SINGLETONS || !tide_shard_take_singleton(w, &r, i, true)) return false;\n"
@@ -375,6 +390,18 @@ static void gen_shard_queries(gen *g)
         sb_put(o, "        each(context, e, tide_get_tide_ghost(w, e).source);\n    }\n");
     }
     sb_put(o, "}\n\n");
+    sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_route_of(const void *world, const tide_player_id player, uint32_t *home,\n"
+              "                                          tide_shard_link *out, const uint32_t capacity)\n{\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_list routes = w->tide_shard_state.routes;\n"
+              "    const int32_t at = tide_shard_route_at(routes, (int64_t)player.id);\n"
+              "    if (at < 0) return 0u;\n"
+              "    *home = (uint32_t)tide_shard_long(routes, at + 1);\n"
+              "    const uint32_t count = (uint32_t)tide_shard_long(routes, at + 2);\n"
+              "    for (uint32_t i = 0; i < count && i < capacity; i++) {\n"
+              "        out[i].shard = (uint32_t)tide_shard_long(routes, at + 3 + 2 * (int32_t)i);\n"
+              "        out[i].match = (uint64_t)tide_shard_long(routes, at + 4 + 2 * (int32_t)i);\n    }\n"
+              "    return count;\n}\n\n");
     sb_put(o, "TIDE_SHARD_FN void tide_shard_status_of(const void *world, tide_shard_status *out)\n{\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
               "    const tide_shard_state *s = &w->tide_shard_state;\n"
@@ -424,7 +451,8 @@ static void gen_shard_start(gen *g)
                  "    .range = TIDE_SHARD_REACH,\n    .dims = TIDE_SHARD_DIMS,\n    .start = tide_shard_start,\n"
                  "    .receive = tide_shard_receive,\n    .outbox = tide_shard_outbox,\n    .border = tide_shard_border,\n"
                  "    .singletons = tide_shard_singletons_of,\n    .load = tide_shard_load,\n    .sample = tide_shard_sample,\n"
-                 "    .presence = tide_shard_presence_of,\n    .status = tide_shard_status_of,\n    .ghosts = tide_shard_ghosts_of,\n};\n\n");
+                 "    .presence = tide_shard_presence_of,\n    .status = tide_shard_status_of,\n    .ghosts = tide_shard_ghosts_of,\n"
+                 "    .route = tide_shard_route_of,\n};\n\n");
 }
 
 // A scene unloaded on the shard that owns it: its entities here go too
