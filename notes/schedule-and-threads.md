@@ -25,6 +25,10 @@ checked to change only stable stage ordering and group spacing. Diff checks
 pass. Other operating systems, Android and sanitizers were not run locally;
 no CI workflow was dispatched.
 
+Merged origin/dev's documentation navigation changes, preserving both new
+docs-site note entries at their shared insertion point. The merged production
+docs build passes; there was no compiler or runtime overlap.
+
 Cache groups in the desktop pool (2026-10-20, platform/src/jobs.c): cores that
 share a last-level cache are a group, found on Windows from
 GetLogicalProcessorInformationEx (the largest unified cache level; only where

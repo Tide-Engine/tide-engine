@@ -75,10 +75,11 @@ function withoutWebsite(source: string): string {
     return prose(source, (text) => text
         .replace(/<div data-tide-ai-setup><\/div>/g, '')
         .replace(/<ul\b[^>]*class="sample-grid"[^>]*>([\s\S]*?)<\/ul>/g, (_, cards: string) =>
-            [...cards.matchAll(/<li><a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a><\/li>/g)].map(([, href, body]) => {
+            [...cards.matchAll(/<li><a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)<\/li>/g)].map(([, href, body, links]) => {
                 const field = (name: string) => plainHtml(new RegExp(`<[^>]+class="${name}"[^>]*>([\\s\\S]*?)<\\/(?:span|strong)>`).exec(body)?.[1] ?? '');
                 const title = field('sample-name');
-                return `- [${title}](${href}): ${field('sample-kind')}. ${field('sample-description')}`;
+                const source = /class="sample-source"[^>]*href="([^"]+)"/.exec(links)?.[1];
+                return `- [${title}](${href}): ${field('sample-kind')}. ${field('sample-description')}${source ? ` [Source](${source}).` : ''}`;
             }).join('\n') + '\n')
         .replace(/<iframe\b([^>]*)>[\s\S]*?<\/iframe>/g, (_, attrs: string) => {
             const src = /\bsrc="([^"]+)"/.exec(attrs)?.[1];

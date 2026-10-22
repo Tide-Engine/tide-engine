@@ -52,7 +52,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(301, { location: `https://${canonical}${req.url}` }).end();
         return;
     }
-    // Search results should lead to the gallery or walkthrough, where the
+    // Search results should lead to the gallery or docs page, where the
     // game has a name and explanation. Runtime HTML is a canvas-only player
     // with a generic title. Let crawlers read noindex; keep its assets alone.
     const pathname = (req.url ?? '/').split('?')[0];
