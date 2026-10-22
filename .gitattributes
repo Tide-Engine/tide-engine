@@ -45,6 +45,9 @@ packages/voice/opus/** -text -whitespace
 packages/newton/vendor/** -text -whitespace
 packages/newton/kernels/** text eol=lf
 packages/newton/UPSTREAM.sha256 text eol=lf
+examples/robotics/microduck/upstream/** -text -whitespace
+examples/robotics/microduck/model.tide text eol=lf
+examples/robotics/microduck/test/model_expected.h text eol=lf
 compiler/tests/e2e/audio_import/** -text
 
 # Reproducible skinned fixture and saved measurements retain their hashed bytes.

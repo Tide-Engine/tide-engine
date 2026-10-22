@@ -166,12 +166,35 @@ These records describe executed match state around a step. The example does not 
 
 Use Tide's standard world snapshot/restore path for an episode reset. Bodies, joints, actuators and any controller/reward state you put in the match then reset together. There is no separate Newton simulation to reset or training-only solver to switch to. The package keeps persistent state in ordinary Tide components, lists and maps, with no `Resident` arena; model arrays and native solver scratch are rebuilt on each call. Replay, alternate worlds, snapshots, packing and two-client rollback have focused test coverage.
 
+## Anchored MicroDuck
+
+`examples/robotics/microduck/` is a second two-player fixture using the published
+MicroDuck walking model: 15 bodies and 14 driven hinges. Its trunk is fixed to
+the world. Q/E or the arrow keys select a joint, A/D or the gamepad stick moves
+its target, and R resets the duck. Controls, observations and its bounded
+64-transition recording ring are ordinary match state and use the same Newton
+step during play and replay.
+
+The example converts the pinned MJCF descriptions offline, preserving masses,
+centres of mass and complete inertia tensors through principal-axis body frames.
+Game builds need no Python or MuJoCo. Its original primitive visuals do not use
+Pollen's noncommercial STL meshes; the robot descriptions and generated data
+retain their Apache-2.0 provenance. See the example's README and `UPSTREAM.md`
+for controls, regeneration and the source pin.
+
+It steps at 200 Hz with one physics substep per tick. The small PD controller is
+illustrative: it does not implement BAM servo dynamics, run upstream walking
+policies, balance, or make ground contacts. The recorded observation is 14 joint
+angles followed by 14 velocities; actions are desired angles and efforts are
+actual clamped controls. The same verified-tick and human-view timing limits
+described above apply.
+
 ## Current scope and validation
 
 This first integration covers free/static roots, fixed/revolute/prismatic joints, body forces and torques, effort controls and solver body/joint state. It does not yet provide:
 
 - Collider shapes, collision detection, contacts, contact friction or collision queries.
-- URDF/MJCF import, automatic robot construction or shape-derived mass properties.
+- General URDF/MJCF import, automatic robot construction or shape-derived mass properties.
 - CUDA execution, a Python runtime, differentiable-training APIs or a policy-training framework.
 - Joint friction or velocity constraints, simulated sensors, validated realistic robot dynamics or sim-to-real guarantees.
 
