@@ -1,5 +1,15 @@
 # Audio
 
+## The listener alone includes tide/audio.h (2026-10-22)
+
+A game that called `Audio.SetListener` or `Audio.SetFalloff` before declaring
+any clip or `Sound` got a generated header that named `tide_audio_frame` (its
+local state's audio list, behind `uses_audio`) without including
+`tide/audio.h`, which only followed clips, named sounds and the microphone: a
+C error in the game's header, found while building a prototype. `codegen.c`
+now includes it whenever `uses_audio` is set too. `compiler/tests/e2e/audio_listener_only`
+places the listener with nothing to play, checks `TIDE_HAS_AUDIO`, and runs.
+
 ## Optional Opus voice package (2026-10-22)
 
 `packages/voice` now adds session voice over the existing microphone and

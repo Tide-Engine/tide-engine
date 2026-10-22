@@ -1,0 +1,9 @@
+// A game that places the listener before it has anything to play: the frame's
+// audio list is still in its local state, so its header needs tide/audio.h.
+scene Main { }
+
+view Ears()
+{
+    Audio.SetListener(float3(1, 2, 3), quaternion.identity);
+    Audio.SetFalloff(2, 40);
+}

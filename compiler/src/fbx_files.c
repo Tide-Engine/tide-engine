@@ -621,7 +621,9 @@ bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **o
     opts.ignore_animation = !skinned;
     opts.skip_skin_vertices = !skinned;
     opts.use_blender_pbr_material = true;
-    opts.index_error_handling = UFBX_INDEX_ERROR_HANDLING_ABORT_LOADING;
+    // An index past its array (exporters write them: Synty's POLYGON packs have some) is clamped to the
+    // array's last element, as Blender and Unity read such files, and every index stays in range.
+    opts.index_error_handling = UFBX_INDEX_ERROR_HANDLING_CLAMP;
     opts.force_single_thread_ascii_parsing = true;
     opts.temp_allocator.memory_limit = FBX_BYTES_MOST;
     opts.result_allocator.memory_limit = FBX_BYTES_MOST;

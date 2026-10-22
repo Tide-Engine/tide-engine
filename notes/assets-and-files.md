@@ -35,6 +35,22 @@ Dynamic match Asset<Mesh<V>> types keep every matching declaration and its verte
 defaults. Different pack digests use self-contained network transfer. Source
 validation still processes all assets. Contracts and tests: dedicated-servers.md.
 
+## FBX indices past their arrays are clamped (2026-10-22)
+
+Synty's POLYGON packs, opened by Blender and Unity, include FBX files with an
+attribute index past its array (`SM_Prop_Cabin_01.fbx` of Alpine Mountain);
+the importer refused them as "isn't an FBX that decodes (Bad index)", found
+while building a prototype. `fbx_files.c` and `model_metadata.c` now load with
+`UFBX_INDEX_ERROR_HANDLING_CLAMP` rather than `ABORT_LOADING`: such an index
+reads its array's last element, as those tools read the file. Clamping keeps
+every index in range, where `NO_INDEX` would hand the importer `UFBX_NO_INDEX`
+to guard against. A polygon corner past the vertices is still refused by ufbx
+itself ("Failed to load"), which this does not change.
+`fbx_index_past_its_array_is_clamped_to_the_last_element` (`tidec_fbx_files`)
+rewrites the ASCII triangle's first UV index past the array and checks the
+corner reads the last UV. The cabin itself (a paid asset, not in this
+repository) was checked through the prototype's build.
+
 ## Persistent static model references (2026-10-12)
 
 Approved Asset<Mesh<V>> fields store a checked singular asset declaration's

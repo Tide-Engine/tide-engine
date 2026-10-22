@@ -525,7 +525,7 @@ static bool fbx_read(const uint8_t *data, const size_t size, const bool interact
     opts.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_HELPER_NODES;
     opts.inherit_mode_handling = UFBX_INHERIT_MODE_HANDLING_HELPER_NODES;
     opts.node_depth_limit = 128;
-    opts.index_error_handling = UFBX_INDEX_ERROR_HANDLING_ABORT_LOADING;
+    opts.index_error_handling = UFBX_INDEX_ERROR_HANDLING_CLAMP; // As fbx_files.c: an index past its array is clamped
     opts.use_blender_pbr_material = true;
     opts.force_single_thread_ascii_parsing = true;
     opts.temp_allocator.memory_limit = opts.result_allocator.memory_limit = (interactive ? 128u : 512u) * 1024u * 1024u;
