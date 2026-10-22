@@ -257,6 +257,8 @@ tide run --frames 300 --capture-audio run.wav
 
 A game with a window plays through the system's default output: WASAPI on Windows, CoreAudio on macOS, ALSA on Linux (loaded at run time, so games link nothing), AAudio on Android, and the browser's audio on the web. Whatever rate and channels the device has, the mixer's stereo at 48 kHz is resampled and mapped to it. A machine with no device, or none the game can open, says so once on stderr and plays nothing; nothing else differs.
 
+A game in Unity (see [the command line](../tools/cli.md#unity)) plays through Unity's audio instead, an AudioSource Unity's mixer and volume apply to, and hears Unity's microphone; in a WebGL player it plays through the page as any web game does.
+
 In a browser, sound starts after the player's first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. Tide continues a hidden tab's match with worker timers while the browser lets the page run (see [web builds](../tools/cli.md)). A suspended or closed page cannot keep simulating or playing sound; background execution is not guaranteed on phones.
 
 ## The microphone

@@ -31,7 +31,8 @@ target_include_directories(tide_cli_tests PRIVATE . ../lsp "${PROJECT_SOURCE_DIR
 # A Unity project's Assets, as Unity wrote them, for tide unity --assets
 target_compile_definitions(tide_cli_tests PRIVATE "TIDE_UNITY_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_project/Assets\""
     "TIDE_UNITY_COMPONENTS_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_components/Assets\""
-    "TIDE_UNITY_SAMPLE_PACKAGE=\"${PROJECT_SOURCE_DIR}/unity/Sample/Packages/com.tide.game\"")
+    "TIDE_UNITY_SAMPLE_PACKAGE=\"${PROJECT_SOURCE_DIR}/unity/Sample/Packages/com.tide.game\""
+    "TIDE_UNITY_SCRATCH=\"${CMAKE_CURRENT_BINARY_DIR}/unity_unsaved_test\"")
 target_link_libraries(tide_cli_tests PRIVATE tide tidec_core)
 if(NOT WIN32)
     target_link_libraries(tide_cli_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})

@@ -341,6 +341,22 @@ static void index_meta(void *user, const char *path)
     free(body);
 }
 
+// An asset's text: the editor's unsaved copy of it where there's one (UNITY_UNSAVED_FOLDER), else the file.
+static char *read_asset(const asset *a, size_t *size)
+{
+    const size_t path = strlen(a->path), local = strlen(a->local);
+    if (path >= local) {
+        text copy = {0};
+        put(&copy, a->path, path - local); // The project's folder
+        puts_(&copy, UNITY_UNSAVED_FOLDER);
+        puts_(&copy, a->local);
+        char *body = sys_read_file(copy.s, size);
+        free(copy.s);
+        if (body) return body;
+    }
+    return sys_read_file(a->path, size);
+}
+
 static asset *asset_of(project *p, const char *guid)
 {
     for (int i = 0; i < p->count; i++) {
@@ -360,7 +376,7 @@ static const yaml_file *yaml_of(project *p, asset *a)
     if (!a->read) {
         a->read = true;
         size_t size = 0;
-        char *body = sys_read_file(a->path, &size);
+        char *body = read_asset(a, &size);
         a->readable = body && yaml_read(body, &a->yaml);
         if (body && !a->readable) {
             fprintf(stderr, "%s: error: Unity wrote it in binary: set Edit > Project Settings > Editor > Asset Serialization "
@@ -378,7 +394,7 @@ static bool relevant(project *p, asset *a)
     if (a->relevant) return a->relevant == 1;
     a->relevant = 2; // A prefab that includes itself isn't one, while it's worked out
     size_t size = 0;
-    char *body = sys_read_file(a->path, &size);
+    char *body = read_asset(a, &size);
     bool found = body && strstr(body, TIDE_UNITY_ENTITY_GUID) != NULL;
     for (const char *at = body; body && !found && (at = strstr(at, "m_SourcePrefab: {")) != NULL; at++) {
         const char *g = strstr(at, "guid: ");
@@ -1411,13 +1427,17 @@ static void put_json(text *t, const char *s)
     puts_(t, "\"");
 }
 
-// `n`'s GameObject from the asset's: names from its root, "Arm#1" for a second Arm under one parent.
+// `n`'s GameObject from the asset's: names from its root, "Arm#1" for a second Arm under one parent. A name's own
+// '/', '#' and '\' have a '\' before them, so "A#1" named so is "A\#1", and "A/B" one name "A\/B".
 static void game_object_path(const emitter *e, const node *n, text *out)
 {
     if (!n || n == e->root) return;
     game_object_path(e, n->parent, out);
     if (out->n) puts_(out, "/");
-    puts_(out, n->name);
+    for (const char *c = n->name; *c; c++) {
+        if (*c == '/' || *c == '#' || *c == '\\') put(out, "\\", 1);
+        put(out, c, 1);
+    }
     int before = 0;
     for (int i = 0; n->parent && i < n->parent->child_count && n->parent->children[i] != n; i++) {
         before += strcmp(n->parent->children[i]->name, n->name) == 0;
@@ -2005,7 +2025,8 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
                      "        if (scenes.opened) return; // The editor's command came first\n"
                      "        scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s);\n    }\n", scenes[i].number, scenes[i].name);
         }
-        puts_(&t, "\n    // The editor's, as Play starts there: a scene it has open; `only` unloads the others the match loaded for it\n"
+        puts_(&t, "\n    // The editor's: a scene it has open as Play starts there, or opens during Play; `only` unloads the others the\n"
+                  "    // match loaded for it\n"
                   "    command OpenScene\n    {\n        int asset;\n        bool only;\n    }\n"
                   "\n    command(OpenScene open, PlayerID sender) Opening(mut LoadedScenes scenes)\n    {\n"
                   "        // The first player's, which may come in the first tick, before its PlayerJoined does\n"
@@ -2022,7 +2043,12 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
             putf(&t, "            case %d: scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s); break;\n", scenes[i].number,
                  scenes[i].number, scenes[i].name);
         }
-        puts_(&t, "        }\n    }\n");
+        puts_(&t, "        }\n    }\n"
+                  "\n    // The editor's: a scene it closes during Play, which the match loaded for it\n"
+                  "    command CloseScene\n    {\n        int asset;\n    }\n"
+                  "\n    command(CloseScene close, PlayerID sender) Closing(mut LoadedScenes scenes)\n    {\n"
+                  "        if (sender != scenes.opener || !scenes.loaded.Has(close.asset)) return;\n"
+                  "        Scene.Unload(scenes.loaded[close.asset]);\n        scenes.loaded.Remove(close.asset);\n    }\n");
         // Each scene's entities, its prefab's, as it loads
         for (int i = 0; i < count; i++) {
             putf(&t, "\n    event(Spawned) Fill%s(with UnityEngine.Scenes.%s)\n    {\n        Spawn(UnityEngine.SceneContents.%s);\n    }\n",
@@ -2064,6 +2090,10 @@ unsigned long long unity_assets_stamp(const char *assets)
     char *components = path_join(project, "Packages/com.tide.game/components.json");
     stamp_file(&h, components);
     free(components);
+    // ...and the editor's unsaved copies
+    char *unsaved = path_join(project, UNITY_UNSAVED_FOLDER);
+    folder_find(unsaved, ".unity", stamp_file, &h);
+    free(unsaved);
     free(project);
     free(absolute);
     free(dir);

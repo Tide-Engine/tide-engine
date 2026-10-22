@@ -59,7 +59,8 @@ namespace Tide
         public byte cursorLocked;
         public fixed byte room[64];
         public fixed byte message[256];
-        public fixed byte pad[4];
+        public byte microphone;     // The game listens to the microphone (Clip.Microphone)
+        public fixed byte pad[3];
 
         public const int Size = 376;
     }

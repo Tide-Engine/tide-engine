@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## Tide's audio inside Unity (2026-10-22)
+
+Owner: "lets get audio working". An embedded frame now submits its audio:
+`tide/host.h` calls `tide_platform_audio` embedded too (it skipped it), and
+`platform.c`'s embedded branch submits to the mixer and stops natively, or opens
+the page's own audio device once on the web. The new embed surface is the
+agent's: `tide_embed_audio` and `tide_embed_microphone` (embed ABI 5, `embed.c`,
+over the existing `tide_audio_out_fill` and `tide_audio_in_push`),
+`tide_platform_embed_microphone` (`embedded.h`), and `tide_embed_status`'s
+`microphone` byte. `tide_embed_destroy` forgets the mixer first. Generated code
+calls nothing new. Contracts and tests: `notes/unity.md`, Audio and the editor's
+workflow.
+
 ## Tide's renderer inside Unity (2026-10-22)
 
 Owner: "let's do the 3d drawing and shaders". The Unity front end's drawing

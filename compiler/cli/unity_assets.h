@@ -50,5 +50,11 @@ typedef struct unity_sources {
 bool unity_assets_read(const char *assets, unity_sources *out);
 void unity_sources_free(unity_sources *sources);
 
-// Changes whenever one of the prefabs, scenes or metas under `assets` does, or one comes or goes.
+// A scene the editor has changes to that it hasn't saved is read from the copy the editor writes of it as it is, at
+// Play (UNITY_UNSAVED_FOLDER, then its path from the project's folder), in its place; messages still name the scene.
+// The editor deletes the copy once the scene is saved, or closed without saving.
+#define UNITY_UNSAVED_FOLDER "Library/Tide/unsaved/"
+
+// Changes whenever one of the prefabs, scenes or metas under `assets` does, or one comes or goes, or one of the
+// editor's unsaved copies does.
 unsigned long long unity_assets_stamp(const char *assets);

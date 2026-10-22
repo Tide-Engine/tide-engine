@@ -123,6 +123,33 @@ view Show(Counter counter)
     }
 }
 
+// What the other program plays (tide_embed_audio): a square wave a quarter loud while B is held, and the microphone
+// while M is (tide_embed_microphone)
+local singleton Speaker
+{
+    Sound tone;
+    Sound ear;
+}
+
+struct Wave { int at; }
+
+audio Buzz(mut Samples samples, mut Wave wave)
+{
+    for (var i = 0; i < samples.values.count; i++)
+    {
+        samples.values[i] = (wave.at / 2) % 96 < 48 ? 0.25 : -0.25;
+        wave.at += 1;
+    }
+}
+
+view Sounds(Devices devices, mut Speaker speaker)
+{
+    speaker.tone.effect = Buzz();
+    speaker.tone.playing = devices.keyboard.b.pressed;
+    speaker.ear.clip = Clip.Microphone;
+    speaker.ear.playing = devices.keyboard.m.pressed;
+}
+
 // What makes Arena a scene a match can start in, which the other program can then start by name
 void StartArena()
 {

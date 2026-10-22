@@ -2,7 +2,8 @@
 
 // Tide inside another program's frame loop (Unity's, say), with no window, GPU
 // or audio device of its own: the standard host's loop (tide/host.h), which
-// the other program calls once a frame, handing it what its own window read.
+// the other program calls once a frame, handing it what its own window read,
+// and whose sound it plays (tide_embed_audio).
 // Everything else is the standard host's: the session, rooms, dedicated
 // servers, host migration, local requests, commands and local handlers.
 //
@@ -22,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 4u
+#define TIDE_EMBED_ABI 5u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -93,7 +94,8 @@ typedef struct tide_embed_status {
     uint8_t cursor_locked;   // The game asks for the cursor locked (Cursor.Lock)
     char room[TIDE_NETWORK_ADDRESS_BYTES]; // The code others join the match by, as Session.room says; "" for none
     char message[TIDE_MESSAGE_BYTES];      // A kick's message, once kicked
-    uint8_t tide_pad[4];
+    uint8_t microphone;      // The game listens to the microphone (Clip.Microphone): tide_embed_microphone, please
+    uint8_t tide_pad[3];
 } tide_embed_status;
 
 _Static_assert(sizeof(tide_embed_status) == 52 + TIDE_NETWORK_ADDRESS_BYTES + TIDE_MESSAGE_BYTES + 4,
@@ -249,6 +251,24 @@ bool tide_embed_request(tide_embed *e, tide_session_request_kind kind, const cha
 // isn't finite, goes back to Tide's own first camera, which views start with
 // until this is called.
 void tide_embed_camera(tide_embed *e, const float *transform, const float *projection);
+
+// The frame's sound, for the other program to play: `frames` frames of
+// `channels` (1 to 8, interleaved) at `rate` into `out`, from Tide's mixer as a
+// device of Tide's own is fed (its stereo resampled to the rate, a mono
+// program's the two averaged, more channels the two and silence). From one
+// thread at a time, which may be the other program's audio thread (Unity's
+// OnAudioFilterRead), where everything else here is its frame's thread's; it
+// says no more calls come from there with NULL and 0 frames, which a reload
+// then no longer waits for, and makes sure none comes during
+// tide_embed_destroy. Silence for no embed. On the web Tide's program plays
+// through the page's audio itself, and hears the page's microphone.
+void tide_embed_audio(tide_embed *e, float *out, uint32_t frames, uint32_t rate, uint32_t channels);
+
+// What the other program's microphone heard since the last call, while the
+// status says the game listens (`microphone`): `frames` frames of `channels`
+// (1 to 8, interleaved) at `rate`, which voices of Clip.Microphone play. From
+// the frame's thread.
+void tide_embed_microphone(tide_embed *e, const float *samples, uint32_t frames, uint32_t rate, uint32_t channels);
 
 // The app went to the background (true) or came back. A phone leaves its match
 // there, which hands a match it hosted over where host migration is on, rather

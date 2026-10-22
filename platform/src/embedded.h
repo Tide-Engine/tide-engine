@@ -16,6 +16,8 @@ void tide_platform_embed_frame(const tide_embed_input *input, tide_float2 screen
 // GUI is typing into a field, and the cursor is to be locked.
 bool tide_platform_embed_typing(void);
 bool tide_platform_embed_cursor_lock(void);
+// ...and the frame's audio names a voice of the microphone, which the other program then hears for it.
+bool tide_platform_embed_microphone(void);
 
 // The frame's draw list drawn through gpu.h's backend that writes the calls
 // down (gpu_record.c), for the other program to replay (tide_embed_render),

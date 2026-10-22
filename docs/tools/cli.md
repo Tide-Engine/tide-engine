@@ -299,12 +299,17 @@ are, and warns of a `.c` beside the game's `.tide` files.
 file of `Assets` to see what changed, it builds when a `changed` line comes on
 its input, which the package writes as Unity imports, moves or deletes the
 game's files, and looks itself only at the files it built, so an edit saved
-while Unity is in the background still builds at once.
+while Unity is in the background still builds at once. A `sync <n>` line asks
+it to say `tide: synced <n>` once it has built everything it was told of,
+which Play waits for.
 
 `--assets Assets` makes the project's prefabs and scenes part of the game:
 each one holding GameObjects with the package's TideEntity component is a Tide
 prefab named after its file, read from its saved file (Unity's Force Text
-serialization) with its prefab instances and variants expanded. A TideEntity is
+serialization) with its prefab instances and variants expanded. A scene the
+editor has unsaved changes to is read from the copy of it the package writes
+as Play starts, `Library/Tide/unsaved/<the scene's path>`, while there is
+one. A TideEntity is
 an entity of that prefab, Unity's Transform and parent are its own, and its
 Tide components are the game's components the GameObject has: each match
 component is a Unity component (Add Component > Tide), its fields set in the
@@ -338,7 +343,9 @@ prefab or scene has a file's name, that name alone is it too:
 `using UnityEngine.Scenes;`. With two, the short name is unknown and the error
 names both.
 Build Settings' first scene loads as Main starts, as a player build starts with
-it, and Unity loads and unloads each scene as the match does. Each such entity gets a
+it, and Unity loads and unloads each scene as the match does, a scene the match
+loads twice as two. In the editor, a scene loaded or unloaded during Play is
+loaded or unloaded in the match too. Each such entity gets a
 `UnityEngine.Source` component, by which Unity shows it through its own GameObject.
 A message about a prefab gives lines of the Tide text tide made of it, which it
 writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
@@ -358,7 +365,9 @@ and for Tide's own, into `Packages/com.tide.game/Resources/TideShaders`, which
 Unity compiles for every graphics API: Direct3D 11 and 12, Vulkan, Metal,
 OpenGL and WebGL 2. It draws in Unity's built-in render pipeline and in URP,
 whose pass the package adds by itself. In Play, the editor's scene view shows
-Tide's 3D too, through its own camera.
+Tide's 3D too, through its own camera. The game's sound plays through Unity's
+audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
+program plays through the page, and hears its microphone, itself.
 
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the

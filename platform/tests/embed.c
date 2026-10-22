@@ -66,6 +66,68 @@ TIDE_TEST(embed_runs_main)
     tide_embed_destroy(e);
 }
 
+static float loudest(const float *samples, const size_t count)
+{
+    float most = 0.0f;
+    for (size_t i = 0; i < count; i++) {
+        const float a = samples[i] < 0.0f ? -samples[i] : samples[i];
+        if (a > most) most = a;
+    }
+    return most;
+}
+
+// The frame's sound, which the other program plays (tide_embed_audio): silence till a voice plays, then the game's
+// square wave, at the program's rate and channels; and its microphone (tide_embed_microphone), which the status
+// asks for while a voice of it plays, heard through that voice.
+TIDE_TEST(embed_audio)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    static float out[2 * 4800];
+    frames(e, 10, NULL);
+    tide_embed_audio(e, out, 4800, 48000, 2);
+    TIDE_CHECK(loudest(out, 2 * 4800) == 0.0f);
+    tide_embed_input input = {0};
+    hold_key(&input, 1, true); // b
+    frames(e, 2, &input);
+    tide_embed_audio(e, out, 4800, 48000, 2);
+    TIDE_CHECK(loudest(out + 2 * 2400, 2 * 2400) > 0.24f && loudest(out, 2 * 4800) < 0.26f);
+    TIDE_CHECK(out[2 * 3000] == out[2 * 3000 + 1]); // In the middle
+    tide_embed_audio(e, out, 2205, 44100, 1); // A mono program at another rate
+    TIDE_CHECK(loudest(out, 2205) > 0.24f && loudest(out, 2205) < 0.26f);
+    out[0] = 7.0f;
+    tide_embed_audio(e, out, 100, 48000, 0); // No channels: nothing written
+    TIDE_CHECK(out[0] == 7.0f);
+
+    tide_embed_status status;
+    tide_embed_status_of(e, &status);
+    TIDE_CHECK(!status.microphone);
+    hold_key(&input, 1, false);
+    hold_key(&input, 12, true); // m
+    frames(e, 2, &input);
+    tide_embed_status_of(e, &status);
+    TIDE_CHECK(status.microphone);
+    static float heard[2 * 441];
+    for (size_t i = 0; i < 2 * 441; i++) heard[i] = 0.5f; // Stereo at 44.1 kHz, which the mixer hears as mono at its rate
+    for (int i = 0; i < 40; i++) {
+        tide_embed_microphone(e, heard, 441, 44100, 2);
+        tide_embed_audio(e, out, 480, 48000, 2);
+    }
+    TIDE_CHECK(loudest(out, 2 * 480) > 0.45f && loudest(out, 2 * 480) < 0.55f);
+    hold_key(&input, 12, false);
+    frames(e, 2, &input);
+    tide_embed_status_of(e, &status);
+    TIDE_CHECK(!status.microphone);
+
+    tide_embed_audio(e, NULL, 0, 0, 0); // The program's audio stopped: its thread renders no more
+    tide_embed_destroy(e);
+    out[0] = 7.0f;
+    tide_embed_audio(e, out, 480, 48000, 2);
+    TIDE_CHECK(loudest(out, 2 * 480) == 0.0f); // Silence with the embed gone
+    tide_embed_audio(e, NULL, 0, 0, 0);
+}
+
 // A key held for one frame between two ticks reaches the next tick's input once, as from a window.
 TIDE_TEST(embed_input_reaches_ticks)
 {
