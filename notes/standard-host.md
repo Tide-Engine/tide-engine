@@ -55,25 +55,35 @@ told local code), a kick's message and what the game asked of the window
 (typing, cursor lock); `tide_embed_request` takes Session
 requests (Start of Main only for now: named scenes come with the schema);
 `tide_embed_background` leaves the match on Android and iOS, desktop nothing.
-`tide_embed_camera(e, x, y, z, qx, qy, qz, qw, fov)` (2026-10-21) is the
-camera the frame's views start with, the other program's: `tide/host.h`
-keeps it (`tide_run_view_camera`) and, right after `tide_draw_reset` and
-before the views, sets it with `tide_draw_set_camera_3d`, so
-`Draw.WorldToScreen`/`ScreenToWorld` of a float3 and 3D draws go through it
-and a view's own `Draw.Camera` still wins. A field of view outside 0 to 180,
-a value that isn't finite or a zero quaternion goes back to Tide's first
-camera (at the origin, facing +z, 60 degrees); the rotation is normalized.
-Its near and far planes are Tide's, so a projected depth isn't the other
-program's. One at a time: the host's statics are the process's.
-`tide_embed_abi()` returns `TIDE_EMBED_ABI` (3, since `tide_embed_camera`; 2
-came with `tide_embed_draw`), which changes with anything another language
-lays out or calls, so a binding refuses an embed built by another tide. Test:
-`embed_camera` (`platform/tests/embed.c`): `embed.tide`'s Show projects
-(0, 0, 5) and draws a circle there in screen pixels, at the 800 by 600
-screen's middle through Tide's camera, 60 pixels left of it through a camera
-1 to the right with a 90-degree field of view, and in the middle again after
-a field of view of 0. A point behind the camera still projects (flipped by
-the division), not to (0, 0).
+`tide_embed_camera(e, transform, projection)` is the camera the frame's views
+start with, the other program's, as `tide_draw_set_camera_matrices` takes one:
+16 floats each, column by column. The transform places the camera, which looks
+along its +z (Unity's camera transform, unscaled). The projection is OpenGL's,
+looking down -z (`Camera.projectionMatrix`). It took a position, rotation and
+field of view from 2026-10-21; matrices came on 2026-10-22 so Tide's 3D shares
+Unity's depth, near and far planes, and orthographic cameras.
+`tide/host.h` keeps the matrices (`tide_run_view_camera_transform`,
+`_projection`) and sets them right after `tide_draw_reset` and before the views,
+so `Draw.WorldToScreen`/`ScreenToWorld` of a float3 and 3D draws go through it;
+a view's own `Draw.Camera` still wins. NULL for either, a value that isn't
+finite, or a matrix with a zero determinant goes back to Tide's first camera.
+One at a time: the host's statics are the process's.
+`tide_embed_abi()` returns `TIDE_EMBED_ABI`: 4 since `tide_embed_render` and the
+matrix camera, 3 since the first camera, 2 since `tide_embed_draw`. It changes
+with anything another language lays out or calls, so a binding refuses an
+embed built by another tide. Test: `embed_camera` (`platform/tests/embed.c`).
+`embed.tide`'s Show projects (0, 0, 5) and draws a circle there in screen
+pixels. Through Tide's camera it lands at the 800 by 600 screen's middle; through
+a camera 1 to the right with a 90-degree perspective projection, 60 pixels left
+of it; and in the middle again after a projection of zeros.
+
+`tide_embed_render(e, &size)` (2026-10-22) draws the frame's list with Tide's
+renderer through the recording backend (`notes/rendering.md`, Recording) and
+gives its commands, which Unity's TideRender replays (`notes/unity.md`, Tide's
+renderer in Unity). `tide_embed_render_reset` forgets the objects made, so the
+next render makes everything again. `tide_embed_destroy` frees the backend's
+memory, and the next embed numbers from 1. The embed host exports both.
+Test: `embed_render`.
 
 Events and text commands (2026-10-22): the view packet is version 3, with an
 EVENTS section, the match's events this machine heard since the last packet as

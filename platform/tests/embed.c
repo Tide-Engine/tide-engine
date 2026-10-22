@@ -9,6 +9,9 @@
 #include "tide/embed.h"
 #include "tide/run.h"
 #include "tide_test.h"
+#if !defined(__wasm__)
+#include "shaders_spirv.h"
+#endif
 
 
 // What the game's view saw at the last frame (embed.tide's Show).
@@ -314,7 +317,7 @@ static bool projected(tide_embed *e, tide_float2 *at)
 }
 
 // The other program's camera is the one views start with (tide_embed_camera): Draw.WorldToScreen goes through it,
-// and a field of view that's none goes back to Tide's first camera.
+// and a projection that sees nothing goes back to Tide's first camera.
 TIDE_TEST(embed_camera)
 {
     char *argv[] = {program};
@@ -324,18 +327,115 @@ TIDE_TEST(embed_camera)
     tide_float2 at = {0};
     TIDE_REQUIRE(projected(e, &at));
     TIDE_CHECK(at.x == 400.0f && at.y == 300.0f); // Straight ahead of a camera at the origin: the 800 by 600 screen's middle
-    // A step to the right, a quarter turn wide: 5 ahead and 1 to the left is 0.2 of the half width the field of view
-    // sees there, times 600 / 800 for the screen's shape
-    tide_embed_camera(e, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 90.0f);
+    // A step to the right, a quarter turn wide, as Unity's camera gives its matrices: 5 ahead and 1 to the left is 0.2
+    // of the half width the field of view sees there, times 600 / 800 for the screen's shape
+    const tide_float4x4 transform = tide_translate_f4x4(tide_f3(1.0f, 0.0f, 0.0f));
+    const tide_float4x4 projection = tide_perspectivefov_f4x4(TIDE_PI_F * 0.5f, 800.0f / 600.0f, 0.3f, 1000.0f);
+    tide_embed_camera(e, &transform.c0.x, &projection.c0.x);
     frames(e, 1, NULL);
     TIDE_REQUIRE(projected(e, &at));
     TIDE_CHECK(at.x > 339.9f && at.x < 340.1f && at.y > 299.9f && at.y < 300.1f);
-    tide_embed_camera(e, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    const tide_float4x4 none = {0};
+    tide_embed_camera(e, &transform.c0.x, &none.c0.x);
     frames(e, 1, NULL);
     TIDE_REQUIRE(projected(e, &at));
     TIDE_CHECK(at.x == 400.0f && at.y == 300.0f);
     tide_embed_destroy(e);
 }
+
+#if !defined(__wasm__)
+// What a frame's render commands hold, read as the other program reads them (tide_embed_render).
+typedef struct rendered {
+    uint32_t ops[TIDE_EMBED_RENDER_DRAW_INDEXED + 1];
+    uint64_t keys[32];
+    uint32_t key_count;
+    uint32_t first_pipeline; // The first pipeline's number
+    bool window_cleared;     // A pass on the other program's own target asked to clear it
+    bool whole;              // Each command's bytes were inside the stream
+} rendered;
+
+static rendered render(tide_embed *e)
+{
+    rendered r = {0};
+    uint32_t size = 0;
+    const uint8_t *p = tide_embed_render(e, &size);
+    r.whole = p != NULL;
+    for (uint32_t at = 0; r.whole && at < size;) {
+        uint32_t head[2];
+        if (size - at < 8u) {
+            r.whole = false;
+            break;
+        }
+        memcpy(head, p + at, 8u);
+        at += 8u;
+        if (head[1] % 4u || head[1] > size - at || head[0] == 0 || head[0] > TIDE_EMBED_RENDER_DRAW_INDEXED) {
+            r.whole = false;
+            break;
+        }
+        r.ops[head[0]]++;
+        uint32_t words[4] = {0};
+        memcpy(words, p + at, head[1] < 16u ? head[1] : 16u);
+        if (head[0] == TIDE_EMBED_RENDER_PIPELINE && r.key_count < 32u) {
+            if (!r.first_pipeline) r.first_pipeline = words[0];
+            r.keys[r.key_count++] = (uint64_t)words[1] | (uint64_t)words[2] << 32;
+        }
+        if (head[0] == TIDE_EMBED_RENDER_BEGIN && words[0] == 0 && words[1]) r.window_cleared = true;
+        at += head[1];
+    }
+    return r;
+}
+
+static uint64_t fnv(const uint32_t *words, const uint32_t count)
+{
+    uint64_t h = UINT64_C(14695981039346656037);
+    const uint8_t *b = (const uint8_t *)words;
+    for (size_t i = 0; i < (size_t)count * 4u; i++) h = (h ^ b[i]) * UINT64_C(1099511628211);
+    return h;
+}
+
+// The renderer draws the views' frame through the backend that writes it down: a pass on the other program's
+// target, which asks to be cleared as a window's first pass does, pipelines named by their SPIR-V's hash (what
+// tide unity names the shaders it writes by), the text's atlas, buffers and draws. The next frame makes nothing
+// again, and after a reset everything is made again, numbered from 1.
+TIDE_TEST(embed_render)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 10, NULL);
+    const rendered first = render(e);
+    TIDE_REQUIRE(first.whole);
+    TIDE_CHECK(first.ops[TIDE_EMBED_RENDER_BEGIN] >= 1u && first.ops[TIDE_EMBED_RENDER_END] == first.ops[TIDE_EMBED_RENDER_BEGIN]);
+    TIDE_CHECK(first.window_cleared);
+    TIDE_CHECK(first.ops[TIDE_EMBED_RENDER_TEXTURE] >= 1u); // The text's atlas, and the white pixel
+    TIDE_CHECK(first.ops[TIDE_EMBED_RENDER_BUFFER] >= 1u);
+    TIDE_CHECK(first.ops[TIDE_EMBED_RENDER_DRAW] + first.ops[TIDE_EMBED_RENDER_DRAW_INDEXED] >= 3u);
+    TIDE_REQUIRE(first.key_count >= 3u);
+    const uint64_t known[] = {
+#define KEY(name) fnv(tide_spirv_##name, tide_spirv_##name##_words),
+        TIDE_BUILTIN_SPIRV(KEY)
+#undef KEY
+    };
+    for (uint32_t i = 0; i < first.key_count; i++) {
+        bool found = false;
+        for (size_t k = 0; k < sizeof known / sizeof known[0]; k++) found = found || first.keys[i] == known[k];
+        TIDE_CHECK(found);
+    }
+    frames(e, 1, NULL);
+    const rendered second = render(e);
+    TIDE_REQUIRE(second.whole);
+    TIDE_CHECK(second.ops[TIDE_EMBED_RENDER_PIPELINE] == 0u);
+    TIDE_CHECK(second.ops[TIDE_EMBED_RENDER_DRAW] + second.ops[TIDE_EMBED_RENDER_DRAW_INDEXED] >= 3u);
+    tide_embed_render_reset(e);
+    frames(e, 1, NULL);
+    const rendered again = render(e);
+    TIDE_REQUIRE(again.whole);
+    TIDE_CHECK(again.ops[TIDE_EMBED_RENDER_PIPELINE] == first.ops[TIDE_EMBED_RENDER_PIPELINE]);
+    TIDE_CHECK(again.ops[TIDE_EMBED_RENDER_TEXTURE] >= 1u);
+    TIDE_CHECK(again.first_pipeline > 0u && again.first_pipeline <= first.first_pipeline);
+    tide_embed_destroy(e);
+}
+#endif
 
 // --stats shows the stats' drawer, open, in the draw packet the other program draws: the frame rate and the
 // frame's work, and no draw calls, which are the other program's.

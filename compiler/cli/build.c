@@ -22,6 +22,7 @@
 #include "toolchain.h"
 #include "unity_assets.h"
 #include "unity_code.h"
+#include "unity_shaders.h"
 #include "tide/sha256.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
@@ -565,6 +566,8 @@ typedef struct build {
     file_list sources;      // The .tide files its last generate compiled: what a notified run looks at (game_stamp)
     char *unity_map;        // With opts->unity_assets: the map of its UnityEngine.Source numbers, from its last generate (unity_assets.h)
     char *outline;          // With opts->unity: what its last generate declared (print_outline), for outline.json
+    char *shaders;          // ...and its shaders, each a name and its WGSL, NUL after each (unity_shaders.h)
+    size_t shaders_size;
 } build;
 
 static uint64_t header_stamp(const char *folder);
@@ -1878,6 +1881,14 @@ static bool strip_server_assets(const build *b)
     return true;
 }
 
+// A shader of the game's as codegen checked it, for tide unity's (unity_shaders.h): its name and WGSL, a NUL after each.
+static void collect_shader(void *user, const char *name, const char *wgsl)
+{
+    sb *o = user;
+    sb_putn(o, name, strlen(name) + 1u);
+    sb_putn(o, wgsl, strlen(wgsl) + 1u);
+}
+
 static bool generate(build *b, const char *gen, const bool layout)
 {
     if (!find_packages(b->folder, &b->packages)) return false;
@@ -1970,10 +1981,11 @@ static bool generate(build *b, const char *gen, const bool layout)
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
     if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
-    sb outline = {0};
+    sb outline = {0}, shaders = {0};
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .embed = b->opts->unity, .externs = &b->externs,
                                      .outline_to = b->opts->unity ? &outline : NULL,
+                                     .shader_out = b->opts->unity ? collect_shader : NULL, .shader_user = &shaders,
                                      .info = &next_info, .game_folder = b->folder, .pack = pack,
                                      .server = b->opts->server,
                                      .strip_server_assets = strip_server_assets(b),
@@ -1992,6 +2004,14 @@ static bool generate(build *b, const char *gen, const bool layout)
         b->unity_map = unity.map;
         free(b->outline);
         b->outline = outline.data ? format("%s", outline.data, NULL) : NULL; // The arena's goes with the next build
+        free(b->shaders);
+        b->shaders = NULL;
+        b->shaders_size = shaders.len;
+        if (shaders.len) {
+            b->shaders = malloc(shaders.len);
+            if (!b->shaders) abort();
+            memcpy(b->shaders, shaders.data, shaders.len);
+        }
         unity.map = NULL;
     } else {
         // A bad asset can be fixed without editing code: keep watching the
@@ -2482,7 +2502,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create", "tide_embed_destroy", "tide_embed_frame",
                                             "tide_embed_view", "tide_embed_status_of", "tide_embed_request", "tide_embed_command",
                                             "tide_embed_background", "tide_embed_schema", "tide_embed_draw",
-                                            "tide_embed_camera", NULL};
+                                            "tide_embed_camera", "tide_embed_render", "tide_embed_render_reset", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -2659,6 +2679,7 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
         free(path);
     }
     ok = ok && unity_code_write(dir, schema, r->b.outline);
+    ok = ok && unity_shaders_write(dir, r->b.shaders, r->b.shaders_size);
     free(dir);
     free(project);
     free(assets);
@@ -2874,10 +2895,14 @@ static const char unity_web_exports[] =
     "\n"
     "TIDE_UNITY_EXPORT(tide_unity_background) void tide_unity_background(int hidden) { tide_embed_background(unity_embed, hidden != 0); }\n"
     "\n"
-    "TIDE_UNITY_EXPORT(tide_unity_camera) void tide_unity_camera(float x, float y, float z, float qx, float qy, float qz, float qw,\n"
-    "                                                            float field_of_view)\n"
+    "static float unity_camera_matrices[32];\n"
+    "\n"
+    "// Where tide_unity_camera reads the camera's transform and projection from, 16 floats each, column by column\n"
+    "TIDE_UNITY_EXPORT(tide_unity_camera_matrices) float *tide_unity_camera_matrices(void) { return unity_camera_matrices; }\n"
+    "\n"
+    "TIDE_UNITY_EXPORT(tide_unity_camera) void tide_unity_camera(int given)\n"
     "{\n"
-    "    tide_embed_camera(unity_embed, x, y, z, qx, qy, qz, qw, field_of_view);\n"
+    "    tide_embed_camera(unity_embed, given ? unity_camera_matrices : NULL, given ? unity_camera_matrices + 16 : NULL);\n"
     "}\n";
 
 // tide-game.js, for the page: the Tide config tide.js reads (the program waits for Unity's TideRunner to start

@@ -93,7 +93,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # The renderer's own shaders as SPIR-V, for its Vulkan backend, through
     # tidec's translator: the platform layer's desktop builds run it, with a
     # native one in cross builds (cmake/HostTidec.cmake), as they do tidec.
-    add_executable(tide_spirv_shaders "${PROJECT_SOURCE_DIR}/platform/tools/spirv_shaders.c" src/spirv.c)
+    add_executable(tide_spirv_shaders "${PROJECT_SOURCE_DIR}/platform/tools/spirv_shaders.c" src/spirv.c src/hlsl.c)
     target_include_directories(tide_spirv_shaders PRIVATE src "${PROJECT_SOURCE_DIR}/platform/src")
     target_link_libraries(tide_spirv_shaders PRIVATE tide_flags)
     if(TIDE_TOOLS_ONLY)

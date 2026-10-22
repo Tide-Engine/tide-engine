@@ -14,6 +14,7 @@ static void usage(void)
             "       tidec <file.tide>... --shaders\n"
             "       tidec <file.tide>... --outline\n"
             "       tidec <file.tide>... --spirv <dir>\n"
+            "       tidec <file.tide>... --hlsl <dir>\n"
             "\n"
             "Transpiles a Tide program, made of one or more files, to\n"
             "<output-dir>/<name>.h and <name>.c.\n"
@@ -42,7 +43,8 @@ static void usage(void)
             "                 places, fields, and what systems read, write and wait for,\n"
             "                 instead of generating code\n"
             "  --spirv <dir>  write each of those shaders as SPIR-V, Vulkan's, into <dir>\n"
-            "                 as <n>.spv in --shaders' order, instead of generating code\n");
+            "                 as <n>.spv in --shaders' order, instead of generating code\n"
+            "  --hlsl <dir>   ...or as HLSL, Unity's (tide unity), as <n>.hlsl\n");
 }
 
 // A game's files as they're named, each with the package it's in.
@@ -190,6 +192,10 @@ int main(const int argc, char **argv)
             schedule = true;
             opts.shaders = true;
             opts.spirv_dir = argv[++i];
+        } else if (strcmp(argv[i], "--hlsl") == 0 && i + 1 < argc) {
+            schedule = true;
+            opts.shaders = true;
+            opts.hlsl_dir = argv[++i];
         } else if (strcmp(argv[i], "--package") == 0 && i + 1 < argc) {
             inputs.package = argv[++i];
         } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {

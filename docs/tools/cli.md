@@ -349,6 +349,16 @@ fresh clone compiles before tide has built anything. Renaming a component or a
 field in your editor (tidels) renames it in the project's prefabs and scenes
 too, so they keep their values.
 
+Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
+drawn with the camera's depth (so Tide's meshes and Unity's scene hide each
+other), render targets, stencil and the game's own frags and verts, as Tide
+draws them in its own window. The views' 3D camera is the runner's View Camera,
+or the main camera. tide writes a Unity shader for each of the game's shaders,
+and for Tide's own, into `Packages/com.tide.game/Resources/TideShaders`, which
+Unity compiles for every graphics API. This needs a GPU whose shaders read
+buffers (Direct3D 11 and 12, Vulkan, Metal) and Unity's built-in render
+pipeline. In WebGL players, Tide's 2D drawing is drawn in a simpler way.
+
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the
 same prefabs and scenes as the Unity players it serves.

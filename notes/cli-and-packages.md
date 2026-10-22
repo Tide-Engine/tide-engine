@@ -299,7 +299,17 @@ standalone wasm build of `generate`'s game with `unity_web_main` (and
 the web cache, written as `tide-game.js` by `write_unity_script` (config,
 program and pack as `page_payload` base64, then the release or debug runtime
 with `strip_reloading`), and `unity.json`. `--assets` is taken by `build` and `run` too (for servers of Unity-made games); the prefab texts under `-o` are `tide unity`'s alone. The embed host's exports gained
-`tide_embed_draw`. `tide help unity` lists `--web` through the shared option.
+`tide_embed_draw`, then `tide_embed_render` and `tide_embed_render_reset` (2026-10-22).
+`tide help unity` lists `--web` through the shared option.
+
+With `--assets`, `write_unity_package` also calls `unity_shaders_write`
+(`compiler/cli/unity_shaders.c`). It writes the Unity shaders of the renderer's WGSL
+(`../../platform/src/shaders.h` with `TIDE_SHADERS_WGSL`) and of the game's
+shaders, which `generate` collects through `codegen_options.shader_out` into
+`build.shaders` (name and WGSL, NUL after each, copied out of the arena).
+Test: `unity_shaders_written` (`compiler/cli/tests/unity_shaders_test.c`): it writes 11
+files named by key, with the right Shader names and the HLSL's markers, removes a
+stale file and its meta, and removes the game's file once the game has no shaders.
 
 ## Terminal editor configuration helper (2026-10-18)
 

@@ -50,7 +50,7 @@ namespace Tide
         [Tooltip("Another relay's address; empty for Tide's")]
         public string relay = "";
 
-        [Tooltip("Draw what the game's Tide views draw (Draw's 2D calls) over Unity's frame")]
+        [Tooltip("Draw what the game's Tide views draw over Unity's frame, with Tide's renderer: 2D, text, 3D with the camera's depth, render targets and the game's own shaders")]
         public bool drawTide = true;
 
         [Tooltip("Keep the GameObject of an entity that goes, inactive, for the next entity of its prefab: reset what Unity alone keeps on it (an Animator's state, particles) in OnDisable or OnEnable")]
@@ -72,6 +72,7 @@ namespace Tide
         [HideInInspector] public string map = "";
 
         public static TideRunner Current { get; private set; }
+        TideRender render;
         public TidePacket Packet { get; } = new TidePacket();
         public TideSchema Schema { get; private set; }
         public TideEmbedStatus Status => status;
@@ -162,8 +163,15 @@ namespace Tide
                 return;
             }
             LoadSchema();
-            if (drawTide)
+            if (drawTide && TideRender.Supported && Application.platform != RuntimePlatform.WebGLPlayer)
             {
+                render = Ensure<TideRender>(gameObject);
+                render.Runner = this;
+                render.enabled = true;
+            }
+            else if (drawTide)
+            {
+                // A GPU whose shaders can't read buffers (WebGL): the 2D drawing's packet, drawn with Unity's GL
                 var draw = Ensure<TideDraw>(gameObject);
                 draw.Runner = this;
             }
@@ -322,25 +330,29 @@ namespace Tide
             }
             pooled.Clear();
             if (poolRoot != null) Destroy(poolRoot.gameObject);
+            if (render != null) render.enabled = false; // What it made was the embed's renderer's, which starts over
             if (embed != IntPtr.Zero) library.Destroy(embed);
             embed = IntPtr.Zero;
             library = null;
             if (Current == this) Current = null;
         }
 
-        // The camera Unity draws the scene with is the one the game's views start with, so Draw.WorldToScreen and
-        // Tide's 3D draws agree with Unity's picture: `viewCamera`, else the main camera. Tide's cameras are
-        // perspective ones; with none, or an orthographic one, views start with Tide's own.
-        void ViewCamera()
+        // The camera Unity draws the scene with is the one the game's views start with, so Draw.WorldToScreen,
+        // Tide's 3D draws and their depth agree with Unity's picture: `viewCamera`, else the main camera, perspective
+        // or orthographic, its near and far planes too. With none, views start with Tide's own.
+        Camera ViewCamera()
         {
             var seen = viewCamera != null ? viewCamera : Camera.main;
-            if (seen == null || seen.orthographic)
+            if (seen == null)
             {
-                library.Camera(embed, Vector3.zero, Quaternion.identity, 0);
-                return;
+                library.Camera(embed, null, null);
+                return null;
             }
             var t = seen.transform;
-            library.Camera(embed, t.position, t.rotation, seen.fieldOfView);
+            var transform = Matrix4x4.TRS(t.position, t.rotation, Vector3.one);
+            var projection = seen.projectionMatrix;
+            library.Camera(embed, &transform, &projection);
+            return seen;
         }
 
         void OnApplicationPause(bool paused)
@@ -352,10 +364,24 @@ namespace Tide
         {
             if (embed == IntPtr.Zero) return;
             TideInputReader.Read(ref input, 1f);
-            ViewCamera();
+            var seen = ViewCamera();
+            // The screen the views draw for: the camera's pixels where Tide's renderer draws into it
+            float width = Screen.width, height = Screen.height;
+            if (render != null && seen != null)
+            {
+                width = seen.pixelWidth;
+                height = seen.pixelHeight;
+            }
             fixed (TideEmbedInput* p = &input)
             {
-                library.Frame(embed, Time.unscaledDeltaTime, p, Screen.width, Screen.height, 1f);
+                library.Frame(embed, Time.unscaledDeltaTime, p, width, height, 1f);
+            }
+            if (render != null && render.enabled)
+            {
+                if (render.Fresh) library.RenderReset(embed); // Everything it draws with, made again
+                uint drawn = 0;
+                var commands = library.Render(embed, &drawn);
+                render.Replay(commands, drawn, seen);
             }
             fixed (TideEmbedStatus* p = &status) library.Status(embed, p);
             FollowCursor();

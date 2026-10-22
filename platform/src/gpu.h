@@ -450,6 +450,18 @@ typedef struct tide_gpu {
 extern uint32_t *(*tide_gpu_spirv_of)(const char *wgsl, size_t *count, char *error, size_t error_size);
 
 extern const tide_gpu tide_gpu_gl; // gpu_gl.c
+
+// Inside another program (tide/embed.h): each call written down as
+// tide_embed_render's commands, for that program to replay (gpu_record.c).
+// Begin starts a frame's, which end gives, valid until the next begin. Reset
+// starts over, as a device that was lost does: everything made is gone, so
+// the renderer makes it again (tide_embed_render_reset). Close frees what it
+// held.
+extern const tide_gpu tide_gpu_record;
+void tide_gpu_record_begin(void);
+const uint8_t *tide_gpu_record_end(uint32_t *size);
+void tide_gpu_record_reset(void);
+void tide_gpu_record_close(void);
 // A test's: has OpenGL make its targets as a device that can't draw into
 // floats does, while it's set. The targets there already stay as they are.
 extern bool tide_gpu_gl_no_floats;

@@ -1,5 +1,85 @@
 # Code the GPU runs: frags and verts
 
+## HLSL, for Unity (2026-10-22)
+
+The owner's design (`notes/unity.md`, Tide drawing in Unity) gave custom frags
+and verts an HLSL target in tidec. It translates the WGSL tidec already writes,
+as SPIR-V does, so the renderer's hand-written WGSL gets HLSL from the same code
+and no third emitter over the tree exists. `compiler/src/hlsl.c` (`hlsl.h`:
+`tide_wgsl_to_hlsl`, `tide_hlsl_unity_shader`) shares spirv.c's reader: the
+arena, tokens, tree, type table and parser moved unchanged into
+`wgsl_tree.inc` and `wgsl_read.inc`, which both include around a `struct
+translation` of their own whose first fields the reader uses.
+
+- **What it writes:** one HLSL program per shader. The WGSL entry points stay
+  ordinary functions and are wrapped by `tidehl_vertex` and `tidehl_fragment`.
+  The vertex wrapper reads each `@location` from `ByteAddressBuffer`s
+  (`_TideVertices0..2`) by the pipeline's layout (`_TideAttributes[16]`:
+  slot, offset, tide_gpu_attribute_format; `_TideSlots[3]`: stride, per instance)
+  and the draw's offsets, first vertex and index mode (16- or 32-bit indices read
+  from `_TideIndices`). Unity draws are `DrawProcedural` with no vertex buffers.
+- **Uniforms:** the block is `cbuffer TideUniforms`, flattened into
+  `tidehl_u_<member>`. Float pads go where HLSL would pack a member sooner than
+  WGSL's layout does, and matrices are `row_major`. A struct, or a matrix of
+  vec2 columns, in the block is refused, and so is a member that HLSL could pack
+  into an array's or matrix's last row. tidec and the renderer write neither.
+- **Textures:** texture i is `_TideTexture<i>`, from its binding. A WGSL sampler
+  is not an HLSL object. It is the 4 bits of `_TideSampling` at 4i (filter, then
+  wrap), which pick one of nine Unity inline sampler states
+  (`tidehl_<point|linear|trilinear>_<clamp|repeat|mirror>_sampler`). Nearest and
+  linear read level 0 (`SampleLevel`), as Vulkan's samplers with maxLod 0 do.
+  Mipmaps use `SampleGrad` with derivatives taken before the branch, so fxc keeps
+  the branch. Bias scales those derivatives. Depth textures read the nearest
+  texel. A comparison is a 2x2 `GatherRed` blended bilinearly. Both turn depth
+  back to 0 near, 1 far where Unity reverses it (`TIDEHL_REVERSED_Z`, from the
+  platform defines Unity's HLSLSupport uses).
+- **Matrices are WGSL's transposed:** an HLSL row is a WGSL column, so `m[i]` and
+  constructors read the same. `a * b` is `mul(b, a)`, `m * v` is `mul(v, m)` and
+  `v * m` is `mul(m, v)`.
+- **Arrays are structs of one** (`tidehl_a<type>`, `.v[n]`), so functions return
+  and take them. Array and struct constructors are helpers made on first use
+  (`tidehl_make_*`). fxc can't write an array element by an index worked out as it
+  runs ("not natively addressable"). Such an assignment becomes an unrolled loop
+  over the elements that writes the one it is, with the index and value worked
+  out once.
+- **Safety as SPIR-V has it:** integer `/` and `%` go through `tidehl_div` and
+  `tidehl_rem` (by zero, or the least int by -1, as by 1). Shifts are masked to 5
+  bits. Floats to ints saturate (`tidehl_f2i`, `tidehl_f2u`). Runtime indices are
+  `min`ed to the last element.
+- **Clip space and depth:** the vertex wrapper's `tidehl_clip` multiplies y by
+  `_TideFlip`'s sign, or by `_ProjectionParams.x` for 0 (Unity's camera, which is
+  upside down while it renders into a texture on D3D-like APIs). Depth goes to
+  `w - z` where Unity reverses it, and to OpenGL's -w..w elsewhere. A fragment's
+  position is turned back into target pixels from the top (`_TideHeight`), depth
+  0 near and `w` as 1/w. `frag_depth` and `front_facing` are turned the same way.
+- **Linear projects:** the first color output into Unity's own target goes through
+  `tidehl_output`, which converts sRGB to linear (unpremultiplied, then
+  premultiplied again) while `_TideLinear` is set. TideRender sets it for the
+  camera's passes in a linear-color-space project.
+- **Names:** WGSL names HLSL has (keywords, intrinsics, `float3`-like type names,
+  `in`, `out`, `sample`, `point`...), and names starting `tidehl_` or `_Tide` or
+  ending `_w`, get `_w` appended. Loops with a `continuing` part put their body in
+  `do { } while (false)`: the body's `continue` breaks out of it, and its `break`
+  sets `tidehl_broken<n>`. A `continue` inside a `switch` in such a loop is
+  refused. A `for` runs in a block of its own, so fxc's for-scope doesn't clash.
+- **fxc's warnings:** the prelude disables X3556 (int modulus speed), X3557
+  (single-iteration unroll), X3571 (pow of a negative) and X4000 (fxc misjudges
+  early returns as uninitialized), except under `UNITY_COMPILER_DXC`. Any other
+  warning would show in Unity's Console, so the tests compile with `/WX`.
+- **`tidec --hlsl <dir>`** writes `<n>.hlsl` in `--shaders`' order. `tide_spirv_shaders --hlsl <dir>`
+  does the same for the renderer's shaders, through `TIDE_RENDERER_WGSL` (`platform/src/shaders.h`:
+  each pipeline's WGSL pieces by name), which the SPIR-V tool and `tide unity` use too.
+- **Tests:** `tidec_hlsl_<name>` (`compiler/tests/expect_hlsl.cmake`) compile every golden
+  shader's vertex and fragment stage with fxc (`vs_5_0`/`ps_5_0`,
+  `SHADER_API_D3D11`, `/WX`). `tide_hlsl_shaders_valid` compiles the renderer's 10.
+  They exist where CMake finds fxc (`cmake/HlslTests.cmake`, newest Windows Kits
+  10 SDK). All 87 golden programs and the 10 built-ins pass. The Sample's PlayMode
+  test draws through the built-ins and a game frag in Unity on D3D11
+  (`notes/unity.md`).
+- **Not done:** DXC-specific checks; Unity's other compilers, used for Vulkan, Metal and GL,
+  are only exercised as Unity imports the shaders. WGSL `alias` and `override` are not taken,
+  matching spirv.c. Loops with a `continuing` part don't share body variables with it.
+
 ## Computed properties (2026-10-21)
 
 Ordinary numeric properties lower to existing method calls. Property increment

@@ -296,6 +296,107 @@ public sealed unsafe class BounceTests
         Assert.AreEqual(red, live.color, "the command went to the ball's entity");
     }
 
+    static bool Near(Color a, Color b, float by) =>
+        Mathf.Abs(a.r - b.r) <= by && Mathf.Abs(a.g - b.g) <= by && Mathf.Abs(a.b - b.b) <= by;
+
+    // Tide's renderer draws into Unity's frame (TideRender): the Hud's text, the ball's ring and the cube over it,
+    // and the plates in the game's own frag, the one over Unity's floor showing and the one under it hidden by the
+    // camera's depth. It needs a GPU: a batch run with -nographics has none, and leaves it out.
+    [UnityTest]
+    public IEnumerator TideDrawsIntoUnitysFrame()
+    {
+        if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+        {
+            Assert.Ignore("no GPU in this run (-nographics)");
+            yield break;
+        }
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        var camera = Camera.main;
+        var target = new RenderTexture(640, 480, 24);
+        camera.targetTexture = target;
+        yield return Connected(runner);
+        Assert.IsTrue(runner.TryGetComponent(out TideRender render) && render.enabled, "Tide's renderer draws on this GPU");
+        TideEntityView ball = null;
+        yield return Until(() =>
+        {
+            foreach (var view in Object.FindObjectsByType<TideEntityView>())
+            {
+                if (view.Mine && view.GetComponent<Tide.Game.Ball>() != null) ball = view;
+            }
+            return ball != null;
+        }, 10f);
+        Assert.IsNotNull(ball, "the player's ball is shown");
+        yield return Until(() => false, 2.5f); // It falls to the floor
+        camera.Render(); // A batch run's frames have no end to wait for: this frame's drawing, again, now
+        var read = new Texture2D(640, 480, TextureFormat.RGBA32, false);
+        RenderTexture.active = target;
+        read.ReadPixels(new Rect(0, 0, 640, 480), 0, 0);
+        read.Apply();
+        RenderTexture.active = null;
+        var dump = System.Environment.GetEnvironmentVariable("TIDE_UNITY_DUMP"); // A picture of it, to look at
+        if (!string.IsNullOrEmpty(dump)) System.IO.File.WriteAllBytes(dump, read.EncodeToPNG());
+        Color At(Vector3 world)
+        {
+            var p = camera.WorldToScreenPoint(world);
+            return read.GetPixel(Mathf.RoundToInt(p.x), Mathf.RoundToInt(p.y));
+        }
+        var orange = new Color(1f, 0.5f, 0f);
+        var blue = new Color(0.1f, 0.4f, 1f);
+        Assert.IsTrue(Near(At(new Vector3(-1.1f, 0.02f, -2.25f)), orange, 0.03f), $"the plate over the floor shows its orange stripe: {At(new Vector3(-1.1f, 0.02f, -2.25f))}");
+        Assert.IsTrue(Near(At(new Vector3(-0.375f, 0.02f, -2.25f)), blue, 0.03f), $"and its blue one: {At(new Vector3(-0.375f, 0.02f, -2.25f))}");
+        var under = At(new Vector3(-1.1f, -0.05f, 1.75f));
+        Assert.IsFalse(Near(under, orange, 0.2f) || Near(under, blue, 0.2f), $"the plate under the floor is hidden: {under}");
+        var live = ball.GetComponent<Tide.Game.Ball>();
+        var cube = At(ball.transform.position + new Vector3(0, 1.2f, 0));
+        Assert.IsTrue(Near(cube, live.color, 0.03f), $"the cube over the ball has its color: {cube} for {live.color}");
+        // The ring: a pixel of nearly the ball's color on its lower half, 24 pixels from its middle (its edge is
+        // smooth, so the floor shows through some)
+        var middle = camera.WorldToScreenPoint(ball.transform.position);
+        var ringed = 0;
+        for (var i = 0; i < 16; i++)
+        {
+            var angle = Mathf.PI * (1f + i / 16f);
+            for (var r = 22; r <= 26; r++)
+            {
+                var x = Mathf.RoundToInt(middle.x + Mathf.Cos(angle) * r);
+                var y = Mathf.RoundToInt(middle.y + Mathf.Sin(angle) * r);
+                if (Near(read.GetPixel(x, y), live.color, 0.35f))
+                {
+                    ringed++;
+                    break;
+                }
+            }
+        }
+        Assert.Greater(ringed, 10, "the ring is drawn around the ball");
+        // The Hud's white text, from 16 pixels across and 30 down
+        var white = 0;
+        for (var x = 16; x < 110; x++)
+        {
+            for (var y = 480 - 52; y < 480 - 22; y++)
+            {
+                var c = read.GetPixel(x, y);
+                if (c.r > 0.9f && c.g > 0.9f && c.b > 0.9f) white++;
+            }
+        }
+        Assert.Greater(white, 20, "the Hud's text is drawn at the top left");
+        // The render target, shown at the top right with its rows from the top: yellow at its top left, green
+        // elsewhere. Unity's rows here are from the bottom
+        var yellow = new Color(1f, 1f, 0f);
+        var green = new Color(0f, 0.6f, 0f);
+        Color Screen(int x, int y) => read.GetPixel(x, 480 - 1 - y);
+        Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 4), yellow, 0.03f), $"the target's top left is yellow: {Screen(640 - 80 + 8, 16 + 4)}");
+        Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 50), green, 0.03f), $"its bottom left green: {Screen(640 - 80 + 8, 16 + 50)}");
+        Assert.IsTrue(Near(Screen(640 - 80 + 50, 16 + 4), green, 0.03f), $"its top right green: {Screen(640 - 80 + 50, 16 + 4)}");
+        // Stencil: the square is magenta inside the circle alone
+        var magenta = new Color(1f, 0f, 1f);
+        Assert.IsTrue(Near(Screen(640 - 80, 480 - 80), magenta, 0.03f), $"the square shows inside the circle: {Screen(640 - 80, 480 - 80)}");
+        Assert.IsFalse(Near(Screen(640 - 80 - 36, 480 - 80 - 36), magenta, 0.3f), "and not at its corners, outside it");
+        camera.targetTexture = null;
+        Object.Destroy(target);
+    }
+
     [UnityTest]
     public IEnumerator TheMatchShowsItsBall()
     {

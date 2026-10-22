@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "ast.h"
+#include "hlsl.h"
 #include "spirv.h"
 #include "types.h"
 
@@ -6590,6 +6591,31 @@ bool write_spirv(const program *prog, const char *dir, sb *out)
             return false;
         }
         sb_printf(out, "%d.spv: %s\n", i, sh->name);
+    }
+    return true;
+}
+
+bool write_hlsl(const program *prog, const char *dir, sb *out)
+{
+    for (int i = 0; i < prog->shaders.count; i++) {
+        const shader *sh = prog->shaders.items[i];
+        char error[256];
+        char *hlsl = tide_wgsl_to_hlsl(sh->wgsl, error, sizeof error);
+        if (!hlsl) {
+            diag_error((loc){0}, "the WGSL tidec wrote for %s didn't become HLSL (%s): this is a bug in tidec", sh->name, error);
+            return false;
+        }
+        sb path = {0};
+        sb_printf(&path, "%s/%d.hlsl", dir, i);
+        FILE *file = fopen(path.data, "wb");
+        const size_t length = strlen(hlsl);
+        const bool written = file && fwrite(hlsl, 1, length, file) == length;
+        free(hlsl);
+        if ((file && fclose(file) != 0) || !written) {
+            diag_error((loc){0}, "can't write %s", path.data);
+            return false;
+        }
+        sb_printf(out, "%d.hlsl: %s\n", i, sh->name);
     }
     return true;
 }

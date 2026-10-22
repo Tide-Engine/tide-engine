@@ -1,5 +1,27 @@
 # The platform layer and the renderer
 
+## Recording, for Unity (2026-10-22)
+
+`platform/src/gpu_record.c` is a `tide_gpu` that draws nothing. It writes each call as
+`tide_embed_render`'s commands (`tide/embed.h`, `tide_embed_render_op`), for Unity's
+`TideRender.cs` to replay. The renderer is unchanged.
+`tide_platform_embed_render` (`platform.c`, `embedded.h`) points `gpu` at it and runs
+`draw_list` on the frame's list into target 0. Target 0 is the other program's, so
+the window's first pass asks to clear it, and the replay ignores that.
+`tide_platform_embed_render_reset` bumps its epoch, so `gpu_ready` makes everything again.
+Objects are numbers it gives out from 1. A target's color and depth textures get
+theirs when it is made, and a multisampled one's depth gets its number at
+`resolve_depth`. It keeps texture shapes for part writes, sending only the part's
+rows. A pipeline carries a key: FNV-1a 64 of its SPIR-V words, or of its WGSL where
+it has none. `tide unity` names a shader file by the same key.
+`texture_blocks` returns 0, so the renderer sends RGBA. `target_read` gives
+nothing, because the pixels are drawn later by the other program. `float_targets` is
+true; `target_samples` rounds down to 1, 2, 4 or 8. Test: `embed_render`
+(`platform/tests/embed.c`): the commands parse whole, a pass on target 0 asks to
+clear, every pipeline key is a built-in SPIR-V's hash, the next frame makes no
+pipelines, and after a reset they are made again from low numbers.
+
+
 ## Recorded quads and faster conversion (2026-10-20, third round)
 
 The owner asked to close drawing's gap to hand-written C further, recording

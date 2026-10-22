@@ -547,6 +547,21 @@ if(TIDE_SPIRV_VAL)
     endforeach()
 endif()
 
+# ...and their HLSL, Unity's, which fxc compiles, where there's one
+# (cmake/HlslTests.cmake).
+if(TIDE_FXC)
+    foreach(source IN LISTS TIDE_SHADER_TESTS)
+        get_filename_component(name "${source}" NAME_WE)
+        add_test(NAME tidec_hlsl_${name}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DTIDEC=${TIDEC_PATH}"
+                "-DSOURCE=${source}"
+                "-DFXC=${TIDE_FXC}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/hlsl/${name}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_hlsl.cmake")
+    endforeach()
+endif()
+
 # The mesh files' reader on its own (src/mesh_files.c): the numbers it reads,
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.
