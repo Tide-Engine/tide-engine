@@ -78,9 +78,20 @@ static uint32_t add_entry(tide_packet *p, const uint32_t offset, const uint32_t 
     return ++p->entry_count;
 }
 
+// STRINGS' bytes to a multiple of 8, zeroed, so each entry starts where any element can be read in place.
+static void align_text(tide_packet *p)
+{
+    const uint32_t pad = (8u - (p->text_size & 7u)) & 7u;
+    if (!pad) return;
+    if (!room(&p->text, &p->text_capacity, p->text_size, pad)) tide_out_of_memory();
+    memset(p->text + p->text_size, 0, pad);
+    p->text_size += pad;
+}
+
 uint32_t tide_packet_text(tide_packet *p, const void *bytes, const uint32_t size)
 {
     if (!size || !bytes) return 0;
+    align_text(p);
     if (!room(&p->text, &p->text_capacity, p->text_size, size)) tide_out_of_memory();
     memcpy(p->text + p->text_size, bytes, size);
     const uint32_t offset = p->text_size;
@@ -93,6 +104,7 @@ uint32_t tide_packet_list(tide_packet *p, const tide_list list, const uint32_t e
     const int32_t count = tide_list_count(list);
     if (count <= 0 || !element || (uint64_t)count * element > UINT32_MAX / 4u) return 0;
     const uint32_t size = (uint32_t)count * element;
+    align_text(p);
     if (!room(&p->text, &p->text_capacity, p->text_size, size)) tide_out_of_memory();
     uint8_t *to = p->text + p->text_size;
     for (int32_t i = 0; i < count; i++) {

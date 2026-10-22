@@ -543,10 +543,11 @@ hand, an unknown field is a mistake. Test: `tidec_prefab_error_once` (a
 `.prefab` builds saying nothing of it; the same text as a `.tprefab` fails with
 the error once).
 
-Gaps: asset fields (a Unity asset in a Tide `Asset<T>` field: the converter
-says it isn't supported; tide resolves asset paths from the declaring file),
-unsaved scene and prefab edits (tide reads saved files), `Name#k` paths when
-names include `#`, gizmos, and tidels renames reaching Unity assets.
+Gaps: unsaved scene and prefab edits (tide reads saved files), `Name#k` paths
+when names include `#`, and gizmos. (Asset fields aren't one: a match component
+can't hold a rendering resource, "rendering resources belong to this machine,
+so the match can't use them", and a `Mesh` can't be a field, so nothing of a
+component is a Unity asset; tidels renames reach Unity assets, Tooling below.)
 
 ### Components of their own (2026-10-22)
 
@@ -644,9 +645,8 @@ field of that name); the Sample's `MigrationTests` (a prefab and a prefab holdin
 it: fields, an instance's override, an added component, what stays listed, and
 nothing the second time) and PlayMode tests reading Ball and Spinner through
 their components, live. The Sample was converted by the command (4 components).
-Gaps: asset fields; `char` lists and structs are literals; a field whose C#
-name had `_` added for a clash isn't renamed by tidels; the owner's project
-not yet converted.
+Gaps then, bridged the same day (Every type in C#, below): asset fields, `char` lists and structs as literals, a
+field whose C# name had `_` added for a clash not renamed by tidels, the owner's project not converted.
 
 ### Events, commands and singletons in C# (2026-10-22)
 
@@ -684,9 +684,47 @@ a GameObject as a command's target): "yeah I think that makes sense yes".
   counts equal, the target is the ball, the local field equals them) and `CommandsCarryTextAndGoToGameObjects`
   (Room live, a non-ASCII `Say` comes back in `Extras`, `Paint` sent to the ball's GameObject colors that ball).
 
-Gaps: command fields that are lists other than `List<byte>` aren't commands' in Tide; events' and singletons' map,
-grid and heap-holding list fields are left out of the classes; a component's struct fields stay Tide literals in
-Play (authoring), not live values.
+Gaps then, bridged the same day (below): events' and singletons' map, grid and heap-holding list fields left out
+of the classes; a component's struct fields Tide literals in Play. (Commands hold lists of bytes alone: Tide's rule.)
+
+### Every type in C# (2026-10-22)
+
+Owner: "lets bridge any gaps".
+
+- **The packet carries every container** (`notes/language.md`, Containers in the view packet): lists of anything,
+  maps, sets and grids, each an entry of STRINGS with what it holds the packet's handles too (packet version 4, every
+  entry 8-aligned). A map's or set's field keeps the handle in its first word (`Tide.TideMap`, 24 bytes), a grid's
+  as `Tide.TideGrid`.
+- **C# has every type** (`unity_code.c`, a type tree parsed from the schema's type strings, `parse_ctype`): scalars
+  and vectors as before, text as `string`, an entity as its `GameObject` (as a key, its `TideEntityId`, as
+  GameObjects come and go), an enum as itself, a struct as its own `[Serializable]` C# struct (`write_struct`: its
+  fields, `From` of its laid-out `Value`, `Pack` for a command), `List<T>`, `Tide.TideSet<T>` (insertion order,
+  serializable), `Dictionary<K, V>`, `Tide.TideGrid2<T>`/`TideGrid3<T>` (the chunks the grid has, indexers, `Size`)
+  and arrays as `T[]`. `TideRead` (Runtime) turns a packet's entries into them; the generated conversions are
+  lambdas that take nothing from around them, so C# makes each once.
+- **Authored in Unity**: a component's struct fields, lists of anything but containers, sets of scalars, text or
+  enums, arrays and `char`s are serialized and baked; a map or a grid (no map literal but `[]` in Tide) and a
+  container of containers are `[NonSerialized]`, live in Play only. `components.json` describes each field's
+  shape (`"shapes"`, by Tide type: its form, a struct's fields, an element's shape, an array's length), which the
+  converter reads recursively (`flatten_shaped`, `put_form`): a struct as `Hold { mass = 12, owner = Pilot }`, a set
+  from its `items`, an array of exactly its length, a `char` as `'A'` (`put_char`: Tide's escapes, `char(n)` for a
+  control character), an entity anywhere in it a reference of the component's own, and an instance's change of any
+  of them by its property path (`shape_at_path`). The conversion command reads the same shapes (`TideMigration.Set`:
+  struct literals, sets, arrays, chars). A component's struct field's declared default is its C# initializer
+  (`new Trail { length = 0f, ... }`).
+- **Renames** (tidels): a struct's field is renamed wherever an authored component holds the struct, through
+  structs, lists and arrays, in YAML keys (followed by indent, `- ` items as "[]") and instance changes'
+  `propertyPath`s (`unity_struct_paths`, `unity_path`); keys are computed as unity_code.c names fields (`unity_key`:
+  `Value`, `TideName` and the other members, or the type's own name, get `_`).
+- **Assets**: none to bridge; see the Authoring gaps above.
+- **The Sample**: `Trail trail` on `Ball`, `char badge = 'S'` on `Spinner`, `Set<PlayerID> speakers` and
+  `Grid2<byte> board` in `Extras` (filled by `Say`). Tests: PlayMode checks the set's count, the grid's size and the
+  cell `Say` counted, a cell nothing set, the room's `Dictionary` of balls whose value is the ball's GameObject, the
+  pillars' `badge`; EditMode's `MigrationTests` converts `trail = Trail { ... }` and `badge = 'x'`.
+  `unity_components_as_tide_components` covers every shape, nested entities and instance changes of them;
+  `lsp_rename_reaches_unity_assets` a struct's field in a struct, a list's element and an instance's change, and a
+  `Value` field's `Value_` key. Every one of the repo's 330 games built with `--embed` compiles under `-Werror`
+  (which found unused command helpers in four games with text or byte-list commands: `TIDE_HELPER` now).
 
 ### Scenes as built (2026-10-20)
 

@@ -280,7 +280,15 @@ public sealed unsafe class BounceTests
         Assert.AreEqual(1, room.arrivals, "as the match has it");
         Assert.IsTrue(runner.Send(new Tide.Game.Say { text = "héllo, Tide" }));
         yield return Until(() => runner.Get<Tide.Game.Extras>()?.said == "héllo, Tide", 10f);
-        Assert.AreEqual("héllo, Tide", runner.Get<Tide.Game.Extras>()?.said, "the command's text, kept by the match");
+        var extras = runner.Get<Tide.Game.Extras>();
+        Assert.AreEqual("héllo, Tide", extras?.said, "the command's text, kept by the match");
+        // A set, a grid and a map of the match's, live as C#'s
+        Assert.AreEqual(1, extras.speakers.Count, "who said it, in a set");
+        Assert.AreEqual(new Vector3Int(8, 8, 0), extras.board.Size, "a grid's size");
+        Assert.AreEqual(1, extras.board[3, 4], "and its cell the command counted");
+        Assert.AreEqual(0, extras.board[5, 5], "a cell nothing set is zero");
+        Assert.AreEqual(1, runner.Get<Tide.Game.Room>().balls.Count, "the room's map of balls");
+        foreach (var pair in runner.Get<Tide.Game.Room>().balls) Assert.AreEqual(ball.gameObject, pair.Value, "its value the ball's GameObject");
         var red = new Color(1, 0, 0, 1);
         Assert.IsTrue(runner.Send(new Tide.Game.Paint { color = red }, ball.gameObject));
         var live = ball.GetComponent<Tide.Game.Ball>();
@@ -337,6 +345,7 @@ public sealed unsafe class BounceTests
             var spinner = view.GetComponent<Tide.Game.Spinner>();
             Assert.IsNotNull(spinner, $"pillar {i} has its Spinner");
             Assert.AreEqual(i == 0 ? 1.5f : -0.75f, spinner.speed, 1e-6f, "with the speed the scene gave it");
+            Assert.AreEqual('S', spinner.badge, "and its char's default, its code point");
             Assert.AreEqual(i == 0 ? -3.5f : 3.5f, pillar.position.x, 1e-3f, "placed as Unity has it, under Pillars");
             Assert.AreEqual(3.5f, pillar.position.z, 1e-3f);
             Assert.Greater(Quaternion.Angle(i == 0 ? first : second, pillar.rotation), 10f, $"pillar {i} turned");

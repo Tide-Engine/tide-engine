@@ -94,6 +94,22 @@ PrefabInstance:
       propertyPath: extra
       value: float2(1, 2)
       objectReference: {fileID: 0}
+    - target: {fileID: 103, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+      propertyPath: cargo.mass
+      value: 20
+      objectReference: {fileID: 0}
+    - target: {fileID: 103, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+      propertyPath: holds.Array.data[0].owner
+      value: 
+      objectReference: {fileID: 300}
+    - target: {fileID: 103, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+      propertyPath: initial
+      value: 66
+      objectReference: {fileID: 0}
+    - target: {fileID: 103, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+      propertyPath: tags.items.Array.data[1]
+      value: 7
+      objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 203, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
     m_RemovedGameObjects: []

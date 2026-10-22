@@ -26,9 +26,18 @@
 //                      entities), up to 8 bytes, then count values
 //     SINGLETON, SINGLETON_LOCAL: one value
 //     STRINGS:         count {u32 offset, u32 length} entries, then the bytes
-//                      they're in. A text or list field of a value holds an
-//                      entry's place + 1 here, 0 for empty: a list's length is
-//                      in bytes, its elements side by side.
+//                      they're in, each entry's from a multiple of 8 of them,
+//                      so it's read in place. A text, list, map, set or grid field of a
+//                      value holds an entry's place + 1 here (a map's or set's
+//                      in its first word, the rest zero), 0 for empty. Text is
+//                      its UTF-8; a list, its elements side by side; a map, u32
+//                      count, u32 0, its keys side by side (to 8 bytes), then
+//                      its values, in the order they were added; a set, the
+//                      same with no values; a grid, 12 i32s {dims, cell bytes,
+//                      shift[3], size[3] (0 where open), chunks, 0, 0, 0},
+//                      then each chunk: i32 chunk position[3], 0,
+//                      then its cells (tide_grid_place's order, to 8 bytes).
+//                      Each holds the packet's handles of what it holds in turn.
 //     EVENTS:          count records, in the order they were heard (stride
 //                      0): the match's events this machine heard since the
 //                      last packet, as its local handlers hear them, each a
@@ -49,7 +58,7 @@
 #include "tide/list.h"
 
 #define TIDE_PACKET_MAGIC 0x56444954u // "TIDV"
-#define TIDE_PACKET_VERSION 3u
+#define TIDE_PACKET_VERSION 4u
 #define TIDE_PACKET_HEADER 48u
 #define TIDE_PACKET_ENTITY 24u
 #define TIDE_PACKET_SECTION 24u

@@ -17,14 +17,47 @@ static int embed_field_kind(const type t)
     }
 }
 
-// A list's elements go in the packet when they hold nothing in a heap.
+// A list whose elements hold nothing in a heap: bytes another program's command can give as they are.
 static bool embed_list_plain(const decl *list)
 {
     return !type_has_text(list_elem(list));
 }
 
-// Turns `d`'s text and list fields in `v` (a pointer to its value, as C) into
-// the packet's handles for them, and empties the heap values it can't carry.
+// A value of `t` at `lvalue` (C) made the packet's: its text, lists, maps, sets and grids, wherever they are in it,
+// the packet's handles of them (each list, map, set and grid packed by the packers below, which do the same for what
+// they hold). `out` is the packet being written.
+static void embed_fix_value(sb *o, const type t, const char *lvalue, const char *indent)
+{
+    if (!type_has_text(t)) return;
+    switch (t.kind) {
+    case TY_STRING:
+        sb_printf(o, "%s{\n%s    const tide_str s = tide_text_view(%s);\n%s    %s.at = s.bytes > 0 ? tide_packet_text(out, s.ptr, (uint32_t)s.bytes) : 0u;\n%s}\n",
+                  indent, indent, lvalue, indent, lvalue, indent);
+        break;
+    case TY_LIST:
+        sb_printf(o, "%s%s.at = tide_embed_list%d(%s, out);\n", indent, lvalue, t.decl->index, lvalue);
+        break;
+    case TY_MAP:
+    case TY_SET:
+        // A map's value keeps lists and counts: the packet's handle is its first word, the rest zero
+        sb_printf(o, "%s{\n%s    const uint32_t h = tide_embed_map%d(%s, out);\n%s    memset(&%s, 0, sizeof %s);\n"
+                     "%s    memcpy(&%s, &h, sizeof h);\n%s}\n",
+                  indent, indent, t.decl->index, lvalue, indent, lvalue, lvalue, indent, lvalue, indent);
+        break;
+    case TY_GRID:
+        sb_printf(o, "%s%s.at = tide_embed_%s(%s, out);\n", indent, lvalue, grid_shape_name(t.decl), lvalue);
+        break;
+    case TY_STRUCT:
+        sb_printf(o, "%stide_embed_fix_%s(&%s, out);\n", indent, type_cname(t.decl), lvalue);
+        break;
+    default:
+        // An array or what else keeps text: zeroed, as the packet can't say it
+        sb_printf(o, "%smemset(&%s, 0, sizeof %s);\n", indent, lvalue, lvalue);
+        break;
+    }
+}
+
+// Turns `d`'s heap fields in `v` (a pointer to its value, as C) into the packet's handles for them.
 static void gen_embed_fix(gen *g, const decl *d)
 {
     sb *o = &g->c;
@@ -35,20 +68,13 @@ static void gen_embed_fix(gen *g, const decl *d)
     sb_printf(o, "TIDE_HELPER void tide_embed_fix_%s(%s *v, tide_packet *out)\n{\n    (void)out;\n", name, name);
     for (int i = 0; i < paths.count; i++) {
         const heap_path *hp = &paths.items[i];
-        if (hp->list) {
-            if (embed_list_plain(hp->list)) {
-                sb_printf(o, "    v->%s.at = tide_packet_list(out, v->%s, (uint32_t)sizeof(%s));\n", hp->path, hp->path,
-                          elem_ctype(list_elem(hp->list)));
-            } else {
-                sb_printf(o, "    v->%s.at = 0; // Its elements hold text or lists: not in the packet\n", hp->path);
-            }
-        } else if (hp->map || hp->grid) {
-            sb_printf(o, "    memset(&v->%s, 0, sizeof v->%s); // Not in the packet\n", hp->path, hp->path);
-        } else {
-            sb_printf(o, "    {\n        const tide_str s = tide_text_view(v->%s);\n"
-                         "        v->%s.at = s.bytes > 0 ? tide_packet_text(out, s.ptr, (uint32_t)s.bytes) : 0u;\n    }\n",
-                      hp->path, hp->path);
-        }
+        const type t = hp->list ? (type){TY_LIST, (decl *)hp->list}
+                     : hp->map ? (type){hp->map->is_set ? TY_SET : TY_MAP, (decl *)hp->map}
+                     : hp->grid ? (type){TY_GRID, (decl *)hp->grid}
+                     : (type){TY_STRING, NULL};
+        sb lvalue = {0};
+        sb_printf(&lvalue, "v->%s", hp->path);
+        embed_fix_value(o, t, lvalue.data, "    ");
     }
     sb_put(o, "}\n\n");
 }
@@ -58,6 +84,132 @@ static bool embed_has_fix(const decl *d)
     path_list paths = {0};
     text_paths(d, "", &paths);
     return paths.count > 0;
+}
+
+// The packers: each list, map, set and grid type's value into the packet's STRINGS, as tide/embed_game.h lays it out,
+// what it holds made the packet's too (embed_fix_value): what a field of it holds there, 0 for empty. Their memory is
+// the scratch area's, under the caller's mark.
+static void gen_embed_packers(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    const layout_decls types = layout_types(prog);
+    sb_put(o, "// Lists, maps, sets and grids into a view packet's STRINGS (tide/embed_game.h)\n");
+    for (int i = 0; i < prog->lists.count; i++) {
+        sb_printf(o, "TIDE_HELPER uint32_t tide_embed_list%d(tide_list l, tide_packet *out);\n", prog->lists.items[i]->index);
+    }
+    for (int i = 0; i < prog->maps.count; i++) {
+        sb_printf(o, "TIDE_HELPER uint32_t tide_embed_map%d(tide_map m, tide_packet *out);\n", prog->maps.items[i]->index);
+    }
+    for (int i = 0; i < prog->grids.count; i++) {
+        sb_printf(o, "TIDE_HELPER uint32_t tide_embed_%s(tide_grid g, tide_packet *out);\n", grid_shape_name(prog->grids.items[i]));
+    }
+    // ...and the fixes of the types they hold, the layout's, the events' and the commands'
+    layout_decls fixed = {0};
+    for (int i = 0; i < types.count; i++) vec_push(fixed, types.items[i]);
+    for (int i = 0; i < prog->events.count; i++) vec_push(fixed, prog->events.items[i]);
+    for (int i = 0; i < fixed.count; i++) {
+        if (!embed_has_fix(fixed.items[i])) continue;
+        bool seen = false;
+        for (int k = 0; k < i; k++) seen |= fixed.items[k] == fixed.items[i];
+        if (seen) continue;
+        sb_printf(o, "TIDE_HELPER void tide_embed_fix_%s(%s *v, tide_packet *out);\n", type_cname(fixed.items[i]),
+                  type_cname(fixed.items[i]));
+    }
+    sb_put(o, "\n");
+    for (int i = 0; i < fixed.count; i++) {
+        bool seen = false;
+        for (int k = 0; k < i; k++) seen |= fixed.items[k] == fixed.items[i];
+        if (!seen) gen_embed_fix(g, fixed.items[i]);
+    }
+    // A list: its elements side by side
+    for (int i = 0; i < prog->lists.count; i++) {
+        const decl *list = prog->lists.items[i];
+        const type element = list_elem(list);
+        const char *c = elem_ctype(element);
+        sb_printf(o, "TIDE_HELPER uint32_t tide_embed_list%d(tide_list l, tide_packet *out)\n{\n", list->index);
+        if (!type_has_text(element)) {
+            sb_printf(o, "    return tide_packet_list(out, l, (uint32_t)sizeof(%s));\n}\n\n", c);
+            continue;
+        }
+        sb_printf(o, "    const int32_t count = tide_list_count(l);\n"
+                     "    if (count <= 0 || (uint64_t)count * sizeof(%s) > UINT32_MAX / 4u) return 0u;\n"
+                     "    uint8_t *items = tide_scratch_memory((size_t)count * sizeof(%s));\n"
+                     "    for (int32_t i = 0; i < count; i++) {\n"
+                     "        %s e;\n        const void *at = tide_list_at(l, i, (uint32_t)sizeof e);\n"
+                     "        if (at) memcpy(&e, at, sizeof e);\n        else memset(&e, 0, sizeof e);\n",
+                  c, c, c);
+        embed_fix_value(o, element, "e", "        ");
+        sb_printf(o, "        memcpy(items + (size_t)i * sizeof e, &e, sizeof e);\n    }\n"
+                     "    return tide_packet_text(out, items, (uint32_t)((size_t)count * sizeof(%s)));\n}\n\n", c);
+    }
+    // A map: its count, 0, its keys side by side (to 8 bytes), then its values side by side, in insertion order; a set
+    // its keys alone
+    for (int i = 0; i < prog->maps.count; i++) {
+        const decl *m = prog->maps.items[i];
+        const bool set = m->is_set;
+        const type key = m->fields.items[0].type;
+        const type value = set ? (type){TY_VOID, NULL} : m->fields.items[1].type;
+        const char *kc = elem_ctype(key), *vc = set ? "uint8_t" : elem_ctype(value);
+        sb values = {0}, kept = {0};
+        if (set) {
+            sb_put(&values, "0u");
+            sb_put(&kept, "0u");
+        } else {
+            sb_printf(&values, "(uint64_t)count * sizeof(%s)", vc);
+            sb_printf(&kept, "(uint64_t)n * sizeof(%s)", vc);
+        }
+        sb_printf(o, "TIDE_HELPER uint32_t tide_embed_map%d(tide_map m, tide_packet *out)\n{\n"
+                     "    const int32_t count = tide_map_count(m);\n    if (count <= 0) return 0u;\n"
+                     "    const uint64_t keys = ((uint64_t)count * sizeof(%s) + 7u) & ~7ull;\n"
+                     "    const uint64_t values = %s;\n"
+                     "    if (8u + keys + values > UINT32_MAX / 4u) return 0u;\n"
+                     "    uint8_t *blob = tide_scratch_memory((size_t)(8u + keys + values));\n"
+                     "    memset(blob, 0, (size_t)(8u + keys + values));\n"
+                     "    int64_t order = 0;\n    int32_t next = 0, n = 0;\n"
+                     "    for (int32_t i; n < count && (i = tide_map_next(m, &tide_map%d_kind, &order, &next)) >= 0; n++) {\n"
+                     "        const tide_map%d_entry *entry = tide_map_entry(m, i, &tide_map%d_kind);\n"
+                     "        %s k = entry->%s;\n",
+                  m->index, kc, values.data, m->index, m->index, m->index, kc, field_cname(&m->fields.items[0]));
+        embed_fix_value(o, key, "k", "        ");
+        sb_put(o, "        memcpy(blob + 8u + (size_t)n * sizeof k, &k, sizeof k);\n");
+        if (!set) {
+            sb_printf(o, "        %s v = entry->%s;\n", vc, field_cname(&m->fields.items[1]));
+            embed_fix_value(o, value, "v", "        ");
+            sb_put(o, "        memcpy(blob + 8u + keys + (size_t)n * sizeof v, &v, sizeof v);\n");
+        }
+        sb_printf(o, "    }\n    const uint32_t head[2] = {(uint32_t)n, 0u};\n    memcpy(blob, head, sizeof head);\n"
+                     "    return tide_packet_text(out, blob, (uint32_t)(8u + keys + %s));\n}\n\n",
+                  kept.data);
+    }
+    // A grid: its cells' size, dimensions, chunk shifts and size (0 where open), and each chunk it has: its position,
+    // then its cells (to 8 bytes)
+    for (int i = 0; i < prog->grids.count; i++) {
+        const decl *grid = prog->grids.items[i];
+        const char *shape = grid_shape_name(grid);
+        sb_printf(o, "TIDE_HELPER uint32_t tide_embed_%s(tide_grid g, tide_packet *out)\n{\n", shape);
+        if (type_has_text(grid->fields.items[0].type)) {
+            sb_put(o, "    (void)g;\n    (void)out;\n    return 0u; // Cells that hold text: not in the packet\n}\n\n");
+            continue;
+        }
+        sb_printf(o, "    const tide_grid_shape *s = &%s;\n    const tide_grid_dir *d = tide_grid_dir_of(g);\n"
+                     "    if (!d) return 0u;\n"
+                     "    const uint32_t cells = tide_grid_chunk_bytes(s), each = 16u + ((cells + 7u) & ~7u);\n"
+                     "    const uint64_t size = 48u + (uint64_t)d->records * each;\n"
+                     "    if (size > UINT32_MAX / 4u) return 0u;\n"
+                     "    uint8_t *blob = tide_scratch_memory((size_t)size);\n    memset(blob, 0, (size_t)size);\n"
+                     "    const int32_t head[12] = {(int32_t)s->dims, (int32_t)s->cell, (int32_t)s->shift[0], (int32_t)s->shift[1],\n"
+                     "                              (int32_t)s->shift[2], d->size[0], d->size[1], d->size[2], (int32_t)d->records, 0, 0, 0};\n"
+                     "    memcpy(blob, head, sizeof head);\n"
+                     "    const tide_heap *heap = tide_heap_read(g.at >> 30);\n"
+                     "    const tide_grid_record *records = tide_grid_records(d);\n"
+                     "    for (uint32_t r = 0; r < d->records; r++) {\n"
+                     "        uint8_t *at = blob + 48u + (size_t)r * each;\n"
+                     "        memcpy(at, records[r].chunk, sizeof records[r].chunk);\n"
+                     "        memcpy(at + 16u, tide_grid_chunk_at(heap, records[r].block), cells);\n    }\n"
+                     "    return tide_packet_text(out, blob, (uint32_t)size);\n}\n\n",
+                  shape);
+    }
 }
 
 // Whether any of the match's archetypes keeps component `c`.
@@ -122,31 +274,30 @@ static int embed_event_type(const program *prog, const layout_decls *types, cons
 }
 
 // What the taps call as they hear an event (gen_heard), before the frame's views: its record, kept until the next
-// packet takes it, with its text and lists copied out of the heap it was heard with.
+// packet takes it, with its text and containers copied out of the heap it was heard with into the store's STRINGS. The
+// packet takes those first, before anything of its own, so their handles are the packet's as they are.
 static void gen_embed_heard(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
+    sb_put(o, "#include \"tide/embed_game.h\"\n\n");
+    gen_embed_packers(g);
     if (!embed_event_count(prog)) return;
     const layout_decls types = layout_types(prog);
-    sb_put(o, "#include \"tide/embed_game.h\"\n\n"
-              "// The match's events this machine heard since the last view packet, as its local handlers would, for another\n"
-              "// program (tide/embed.h): the packet's EVENTS records, and in its text what their text and lists held\n"
-              "static tide_packet tide_embed_heard_store;\nstatic uint32_t tide_embed_heard_count;\n\n"
-              "// A text or list a record kept, into the packet: what its field holds there\n"
-              "TIDE_HELPER uint32_t tide_embed_heard_text(tide_packet *out, const uint32_t at)\n{\n"
-              "    if (!at || at > tide_embed_heard_store.entry_count) return 0u;\n"
-              "    const uint32_t *entry = tide_embed_heard_store.entries + (size_t)(at - 1u) * 2u;\n"
-              "    return tide_packet_text(out, tide_embed_heard_store.text + entry[0], entry[1]);\n}\n\n");
+    sb_put(o, "// The match's events this machine heard since the last view packet, as its local handlers would, for another\n"
+              "// program (tide/embed.h): the packet's EVENTS records, and in its text what their heap fields held\n"
+              "static tide_packet tide_embed_heard_store;\nstatic uint32_t tide_embed_heard_count;\n\n");
     for (int i = 0; i < prog->events.count; i++) {
         const decl *d = prog->events.items[i];
         if (!embed_tapped(d)) continue;
         const char *name = type_cname(d);
         const bool fix = embed_has_fix(d);
-        if (fix) gen_embed_fix(g, d);
         sb_printf(o, "TIDE_HELPER void tide_embed_heard_%s(const %s *value, const bool verified, const tide_entity target, "
                      "const uint32_t tick)\n{\n    %s v = *value;\n", name, name, name);
-        if (fix) sb_printf(o, "    tide_embed_fix_%s(&v, &tide_embed_heard_store);\n", name);
+        if (fix) {
+            sb_printf(o, "    const uint32_t mark = tide_scratch_mark();\n    tide_embed_fix_%s(&v, &tide_embed_heard_store);\n"
+                         "    tide_scratch_reset(mark);\n", name);
+        }
         sb_printf(o, "    const uint32_t value_bytes = ((uint32_t)sizeof v + 7u) & ~7u;\n"
                      "    const uint32_t head[8] = {TIDE_PACKET_EVENT + value_bytes, %du, verified ? 2u : 1u, tick, target.index,\n"
                      "                              target.generation, TIDE_PACKET_NONE, 0u};\n"
@@ -155,11 +306,15 @@ static void gen_embed_heard(gen *g)
                      "    tide_embed_heard_count++;\n}\n\n",
                   embed_event_type(prog, &types, d));
     }
-    // Into the packet: the records, each with where its entity is among the packet's while it's the same one, and
-    // their text and lists the packet's own
     sb_put(o, "static void tide_embed_heard_drop(void)\n{\n"
               "    tide_embed_heard_store.size = 0;\n    tide_embed_heard_store.text_size = 0;\n"
               "    tide_embed_heard_store.entry_count = 0;\n    tide_embed_heard_count = 0;\n}\n\n"
+              "// The store's STRINGS into a packet that has none yet: its handles, entry for entry, are the packet's\n"
+              "static void tide_embed_heard_strings(tide_packet *out)\n{\n"
+              "    for (uint32_t i = 0; i < tide_embed_heard_store.entry_count; i++) {\n"
+              "        const uint32_t *entry = tide_embed_heard_store.entries + (size_t)i * 2u;\n"
+              "        tide_packet_text(out, tide_embed_heard_store.text + entry[0], entry[1]);\n    }\n}\n\n"
+              "// The records, each with where its entity is among the packet's while it's the same one\n"
               "static void tide_embed_heard_write(tide_packet *out, const uint32_t *place, const uint32_t places)\n{\n"
               "    if (!tide_embed_heard_count) return;\n"
               "    const uint32_t size = tide_embed_heard_store.size;\n"
@@ -174,23 +329,7 @@ static void gen_embed_heard(gen *g)
               "            memcpy(row, out->bytes + TIDE_PACKET_HEADER + (size_t)place[head[4]] * TIDE_PACKET_ENTITY, sizeof row);\n"
               "            if (row[1] == head[5]) head[6] = place[head[4]];\n        }\n"
               "        memcpy(records + at, head, sizeof head);\n"
-              "        switch (head[1]) {\n");
-    for (int i = 0; i < prog->events.count; i++) {
-        const decl *d = prog->events.items[i];
-        if (!embed_tapped(d) || !embed_has_fix(d)) continue;
-        const char *name = type_cname(d);
-        sb_printf(o, "        case %du: {\n            %s v;\n            memcpy(&v, records + at + TIDE_PACKET_EVENT, sizeof v);\n",
-                  embed_event_type(prog, &types, d), name);
-        path_list paths = {0};
-        text_paths(d, "", &paths);
-        for (int k = 0; k < paths.count; k++) {
-            const heap_path *hp = &paths.items[k];
-            if (hp->map || hp->grid) continue; // Empty: not in the packet
-            sb_printf(o, "            v.%s.at = tide_embed_heard_text(out, v.%s.at);\n", hp->path, hp->path);
-        }
-        sb_put(o, "            memcpy(records + at + TIDE_PACKET_EVENT, &v, sizeof v);\n            break;\n        }\n");
-    }
-    sb_put(o, "        default: break;\n        }\n        at += head[0] ? head[0] : size;\n    }\n"
+              "        at += head[0] ? head[0] : size;\n    }\n"
               "    tide_embed_heard_drop();\n}\n\n");
 }
 
@@ -199,12 +338,7 @@ static void gen_embed(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     const layout_decls types = layout_types(prog);
-    sb_put(o, "// For another program (tide/embed.h): the view packet, commands and scenes by name\n\n"
-              "#include \"tide/embed_game.h\"\n\n");
-
-    for (int i = 0; i < types.count; i++) {
-        if (embed_has_fix(types.items[i])) gen_embed_fix(g, types.items[i]);
-    }
+    sb_put(o, "// For another program (tide/embed.h): the view packet, commands and scenes by name\n\n");
 
     // The view packet: what views see this frame (tide/embed_game.h says its bytes)
     sb_put(o, "static void tide_embed_view(const void *world, const void *previous_world, float alpha, const void *local_state,\n"
@@ -216,6 +350,7 @@ static void gen_embed(gen *g)
     sb_printf(o, "    if (!w) {\n%s        tide_packet_end(out, 0x%016llXull, false, 0, verified_tick, 1.0f, 0);\n        return;\n    }\n",
               heard ? "        tide_embed_heard_drop(); // Nothing's heard outside a match\n" : "", (unsigned long long)g->game_hash);
     sb_put(o, "    if (!(alpha >= 0.0f && alpha <= 1.0f)) alpha = 1.0f;\n");
+    if (heard) sb_put(o, "    tide_embed_heard_strings(out); // First, so the heard events' handles are the packet's\n");
     if (world_heap(prog, false) || world_heap(prog, true)) {
         sb_printf(o, "    tide_text_use(%s, %s);\n", world_heap(prog, false) ? "(tide_heap *)(uintptr_t)&w->heap" : "NULL",
                   world_heap(prog, true) ? "(tide_heap *)(uintptr_t)&l->heap" : "NULL");
@@ -369,7 +504,7 @@ static void gen_embed(gen *g)
     for (int k = 0; k < prog->command_types.count; k++) any_text |= decl_has_text(prog->command_types.items[k]);
     if (any_text) {
         sb_put(o, "// Entry `handle` of a command's tail: its bytes, or false where the tail doesn't have it whole\n"
-                  "static bool tide_embed_tail(const uint8_t *tail, const uint32_t size, const uint32_t handle, const uint8_t **bytes,\n"
+                  "TIDE_HELPER bool tide_embed_tail(const uint8_t *tail, const uint32_t size, const uint32_t handle, const uint8_t **bytes,\n"
                   "                            uint32_t *length)\n{\n"
                   "    *bytes = NULL;\n    *length = 0;\n    if (!handle) return true;\n"
                   "    uint32_t count;\n    if (size < sizeof count) return false;\n    memcpy(&count, tail, sizeof count);\n"
@@ -379,7 +514,7 @@ static void gen_embed(gen *g)
                   "    if (start + entry[1] > size || entry[1] > (uint32_t)INT32_MAX) return false;\n"
                   "    *bytes = tail + start;\n    *length = entry[1];\n    return true;\n}\n\n"
                   "// A command's text field, its entry made the scratch area's text: false for one that isn't there or isn't UTF-8\n"
-                  "static bool tide_embed_command_text(const uint8_t *tail, const uint32_t size, tide_text *field)\n{\n"
+                  "TIDE_HELPER bool tide_embed_command_text(const uint8_t *tail, const uint32_t size, tide_text *field)\n{\n"
                   "    const uint8_t *bytes;\n    uint32_t length;\n"
                   "    if (!tide_embed_tail(tail, size, field->at, &bytes, &length)) return false;\n"
                   "    *field = (tide_text){0};\n    if (!length) return true;\n"
@@ -388,7 +523,7 @@ static void gen_embed(gen *g)
                   "    *field = tide_text_temp((tide_str){text, (int32_t)length, tide_utf8_chars(text, (int32_t)length)});\n"
                   "    return true;\n}\n\n"
                   "// ...and a list field of `element`-byte elements side by side\n"
-                  "static bool tide_embed_command_list(const uint8_t *tail, const uint32_t size, tide_list *field, const uint32_t element)\n{\n"
+                  "TIDE_HELPER bool tide_embed_command_list(const uint8_t *tail, const uint32_t size, tide_list *field, const uint32_t element)\n{\n"
                   "    const uint8_t *bytes;\n    uint32_t length;\n"
                   "    if (!tide_embed_tail(tail, size, field->at, &bytes, &length) || length % element) return false;\n"
                   "    *field = length ? tide_list_from(bytes, (int32_t)(length / element), element) : (tide_list){0};\n"
@@ -594,11 +729,9 @@ static void gen_embed(gen *g)
                 const int kind = embed_field_kind(f->type);
                 if (!kind) continue;
                 if (kind == 2) {
-                    // The element's size where the packet has the elements, 0 where it hasn't
+                    // The element's size, as the packet has the elements (their heap fields its handles)
                     const type element = list_elem(f->type.decl);
-                    sb_printf(o, "    {%d, \"" STR_FMT "\", 2, ", i, STR_ARG(f->name));
-                    if (embed_list_plain(f->type.decl)) sb_printf(o, "(uint32_t)sizeof(%s), ", elem_ctype(element));
-                    else sb_put(o, "0u, ");
+                    sb_printf(o, "    {%d, \"" STR_FMT "\", 2, (uint32_t)sizeof(%s), ", i, STR_ARG(f->name), elem_ctype(element));
                     sb_printf(o, "%d},\n", element.kind == TY_STRUCT ? layout_index(&types, element.decl) : -1);
                 } else {
                     sb_printf(o, "    {%d, \"" STR_FMT "\", %d, 0u, -1},\n", i, STR_ARG(f->name), kind);

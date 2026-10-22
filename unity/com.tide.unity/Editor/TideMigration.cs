@@ -20,10 +20,20 @@ namespace Tide.Editor
     // Unity.exe -batchmode -projectPath . -executeMethod Tide.Editor.TideMigration.ConvertProject -quit
     public static class TideMigration
     {
+        // components.json's: a field names its shape, which says how Unity serializes it (tide's unity_code.c)
         [Serializable]
         internal sealed class MapField
         {
-            public string name, key, form, @enum, element, elementType;
+            public string name, key;
+            public int shape;
+        }
+
+        [Serializable]
+        internal sealed class MapShape
+        {
+            public string form, type, @enum;
+            public int element = -1, length;
+            public MapField[] fields = Array.Empty<MapField>();
         }
 
         [Serializable]
@@ -46,7 +56,10 @@ namespace Tide.Editor
         {
             public string hash;
             public MapComponent[] components;
+            public MapShape[] shapes = Array.Empty<MapShape>();
             public MapEnum[] enums;
+
+            public MapShape Shape(int i) => i >= 0 && i < shapes.Length ? shapes[i] : null;
         }
 
         enum Kind
@@ -479,18 +492,48 @@ namespace Tide.Editor
                 if (field == null) continue; // A field the component no longer has: left out, as tide leaves it out
                 var property = so.FindProperty(field.key);
                 if (property == null) return $"its field {f.Key} isn't in its C#";
-                if (!Set(property, field, field.form, f.Value, r, scene, self, game)) return $"{f.Key} = {f.Value} isn't a value it can hold";
+                if (!Set(property, game.Shape(field.shape), f.Value, r, scene, self, game)) return $"{f.Key} = {f.Value} isn't a value it can hold";
             }
             so.ApplyModifiedPropertiesWithoutUndo();
             return null;
         }
 
-        static bool Set(SerializedProperty p, MapField field, string form, string literal, Recorded r, Scene scene, GameObject self, Map game)
+        static bool Set(SerializedProperty p, MapShape shape, string literal, Recorded r, Scene scene, GameObject self, Map game)
         {
+            if (shape == null) return false;
+            var form = shape.form;
             literal = literal.Trim();
-            if (literal == "default" && form != "list" && form != "literal") return Zero(p);
+            if (literal == "default" && form != "list" && form != "set" && form != "array" && form != "literal" && form != "struct")
+            {
+                return Zero(p);
+            }
             switch (form)
             {
+                case "char":
+                    if (!Character(literal, out var code)) return false;
+                    p.intValue = code;
+                    return true;
+                case "struct":
+                {
+                    // Name { a = 1, b = 2 }: the fields it sets; default sets none
+                    if (literal == "default") return true;
+                    var open = literal.IndexOf('{');
+                    if (open < 0 || !literal.EndsWith("}")) return false;
+                    foreach (var f in TideLiterals.Split(literal.Substring(open + 1, literal.Length - open - 2)))
+                    {
+                        var field = shape.fields.FirstOrDefault(x => x.name == f.Key);
+                        var property = field != null ? p.FindPropertyRelative(field.key) : null;
+                        if (property == null || !Set(property, game.Shape(field.shape), f.Value, r, scene, self, game)) return false;
+                    }
+                    return true;
+                }
+                case "set":
+                {
+                    var items = p.FindPropertyRelative("items");
+                    return items != null && SetItems(items, game.Shape(shape.element), literal, 0, r, scene, self, game);
+                }
+                case "array":
+                    return SetItems(p, game.Shape(shape.element), literal, shape.length, r, scene, self, game);
                 case "number":
                     if (!Number(literal, out var n)) return false;
                     if (p.propertyType == SerializedPropertyType.Integer) p.longValue = (long)n;
@@ -544,7 +587,7 @@ namespace Tide.Editor
                     return true;
                 case "enum":
                 {
-                    var e = game.enums?.FirstOrDefault(x => x.name == field.@enum);
+                    var e = game.enums?.FirstOrDefault(x => x.name == shape.@enum);
                     var member = literal.Substring(literal.LastIndexOf('.') + 1);
                     var at = e == null ? -1 : Array.IndexOf(e.members, member);
                     if (at < 0 || at >= e.values.Length) return false;
@@ -552,21 +595,52 @@ namespace Tide.Editor
                     return true;
                 }
                 case "list":
+                    return SetItems(p, game.Shape(shape.element), literal, 0, r, scene, self, game);
+            }
+            return false;
+        }
+
+        // `[a, b]` into a list or an array property: `length` elements of an array (0: as many as it has)
+        static bool SetItems(SerializedProperty p, MapShape element, string literal, int length, Recorded r, Scene scene, GameObject self, Map game)
+        {
+            if (!p.isArray) return false;
+            List<string> items;
+            if (literal == "default" || literal == "[]") items = new List<string>();
+            else if (literal.Length >= 2 && literal[0] == '[' && literal[literal.Length - 1] == ']') items = Items(literal.Substring(1, literal.Length - 2));
+            else return false;
+            p.arraySize = length > 0 ? length : items.Count;
+            for (var i = 0; i < items.Count && i < p.arraySize; i++)
+            {
+                if (!Set(p.GetArrayElementAtIndex(i), element, items[i], r, scene, self, game)) return false;
+            }
+            return true;
+        }
+
+        // A char as Tide writes one, 'a' (its escapes too) or char(65): its code point
+        static bool Character(string literal, out int code)
+        {
+            code = 0;
+            if (literal.StartsWith("char(") && literal.EndsWith(")")) return int.TryParse(literal.Substring(5, literal.Length - 6), out code);
+            if (literal.Length < 3 || literal[0] != '\'' || literal[literal.Length - 1] != '\'') return false;
+            var inner = literal.Substring(1, literal.Length - 2);
+            if (inner.Length == 2 && inner[0] == '\\')
+            {
+                switch (inner[1])
                 {
-                    if (literal == "default" || literal == "[]")
-                    {
-                        p.arraySize = 0;
-                        return true;
-                    }
-                    if (literal.Length < 2 || literal[0] != '[' || literal[literal.Length - 1] != ']') return false;
-                    var items = Items(literal.Substring(1, literal.Length - 2));
-                    p.arraySize = items.Count;
-                    for (var i = 0; i < items.Count; i++)
-                    {
-                        if (!Set(p.GetArrayElementAtIndex(i), field, field.element, items[i], r, scene, self, game)) return false;
-                    }
-                    return true;
+                    case '\'': code = '\''; return true;
+                    case '"': code = '"'; return true;
+                    case '\\': code = '\\'; return true;
+                    case 'n': code = '\n'; return true;
+                    case 'r': code = '\r'; return true;
+                    case 't': code = '\t'; return true;
+                    case '0': code = 0; return true;
                 }
+                return false;
+            }
+            if (inner.Length == 1 || (inner.Length == 2 && char.IsSurrogatePair(inner[0], inner[1])))
+            {
+                code = char.ConvertToUtf32(inner, 0);
+                return true;
             }
             return false;
         }

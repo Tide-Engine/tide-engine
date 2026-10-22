@@ -1,7 +1,15 @@
-{"hash": "2AEEC98922967090", "components": [
-  {"name": "Owner", "guid": "078ba7e30478d198e2856fdcd6e936f9", "fields": [{"name": "player", "key": "player", "form": "number"}]},
-  {"name": "Spinner", "guid": "c1a5056ab9f7b0462fd22449bd7fbbd1", "fields": [{"name": "speed", "key": "speed", "form": "number"}]},
-  {"name": "Ball", "guid": "ce03b43f744b7347571b2cbb98249f29", "fields": [{"name": "velocity", "key": "velocity", "form": "float3"}, {"name": "color", "key": "color", "form": "color"}, {"name": "seat", "key": "seat", "form": "number"}, {"name": "bounces", "key": "bounces", "form": "number"}]}
+{"hash": "BACA3413D649CA34", "components": [
+  {"name": "Owner", "guid": "078ba7e30478d198e2856fdcd6e936f9", "fields": [{"name": "player", "key": "player", "shape": 0}]},
+  {"name": "Spinner", "guid": "c1a5056ab9f7b0462fd22449bd7fbbd1", "fields": [{"name": "speed", "key": "speed", "shape": 1}, {"name": "badge", "key": "badge", "shape": 2}]},
+  {"name": "Ball", "guid": "ce03b43f744b7347571b2cbb98249f29", "fields": [{"name": "velocity", "key": "velocity", "shape": 3}, {"name": "color", "key": "color", "shape": 4}, {"name": "seat", "key": "seat", "shape": 5}, {"name": "bounces", "key": "bounces", "shape": 5}, {"name": "trail", "key": "trail", "shape": 6}]}
+], "shapes": [
+  {"form": "number", "type": "PlayerID"},
+  {"form": "number", "type": "float"},
+  {"form": "char", "type": "char"},
+  {"form": "float3", "type": "float3"},
+  {"form": "color", "type": "Color"},
+  {"form": "number", "type": "int"},
+  {"form": "struct", "type": "Trail", "fields": [{"name": "length", "key": "length", "shape": 1}, {"name": "tint", "key": "tint", "shape": 4}]}
 ], "enums": [
   {"name": "Prediction", "members": ["Rollback","Delay"], "values": [0,1]},
   {"name": "IOError", "members": ["None","NotFound","AlreadyExists","AccessDenied","InvalidPath","NotDirectory","DirectoryNotEmpty","OutOfSpace","StorageUnavailable","InvalidData","Failed"], "values": [0,1,2,3,4,5,6,7,8,9,10]},

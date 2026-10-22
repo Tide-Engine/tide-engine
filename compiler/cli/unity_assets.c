@@ -142,15 +142,24 @@ typedef struct asset {
 } asset;
 
 // The game's components as Unity has them (Packages/com.tide.game/components.json, which tide unity writes with their
-// C#: unity_code.h): each one's script GUID, and how each field of it is serialized, which its YAML is read by.
+// C#: unity_code.h): each one's script GUID, and how each field of it is serialized, which its YAML is read by. A
+// field names its shape, which says what Unity wrote of it (its form), its Tide type, and what it's made of.
 typedef struct map_field {
-    char *name;    // Tide's
-    char *key;     // Unity's YAML's: the C# field
-    char *form;    // number, bool, float2, float3, float4, int2, int3, quaternion, color, string, enum, entity, list, literal
-    char *enumeration;  // An enum's Tide name
-    char *element;      // A list's elements' form
-    char *element_type; // ...and Tide type
+    char *name; // Tide's
+    char *key;  // Unity's YAML's: the C# field
+    int shape;
 } map_field;
+
+typedef struct map_shape {
+    char *form;        // number, char, bool, float2, float3, float4, int2, int3, quaternion, color, string, enum, entity,
+                       // struct, list, set, array, literal
+    char *type;        // Its Tide type: a struct's literal's name, a list's elements' size in Unity's hex
+    char *enumeration; // An enum's Tide name
+    int element;       // A list's, set's or array's elements' shape, -1 for none
+    int length;        // An array's
+    map_field *fields; // A struct's authored fields
+    int field_count;
+} map_shape;
 
 typedef struct map_component {
     char guid[33];
@@ -174,14 +183,50 @@ typedef struct project {
     bool failed;
     map_component *components;
     int component_count;
+    map_shape *shapes;
+    int shape_count;
     map_enum *enums;
     int enum_count;
 } project;
+
+static const map_shape *shape_of(const project *p, const int i)
+{
+    return i >= 0 && i < p->shape_count ? &p->shapes[i] : NULL;
+}
 
 static char *json_dup(const json *object, const char *key)
 {
     const char *v = json_str(json_get(object, key));
     return v ? dup(v) : NULL;
+}
+
+// Fields of a component or a struct shape, as components.json has them: those with a name, a key and a shape.
+static map_field *read_fields(const json *fields, int *count)
+{
+    const int n = fields && fields->kind == JSON_ARRAY ? fields->count : 0;
+    map_field *out = grab(sizeof *out * (size_t)(n + 1));
+    *count = 0;
+    for (int k = 0; k < n; k++) {
+        const json *f = fields->items[k];
+        const json *shape = json_get(f, "shape");
+        char *name = json_dup(f, "name"), *key = json_dup(f, "key");
+        if (name && key && shape && shape->kind == JSON_NUMBER) {
+            out[(*count)++] = (map_field){name, key, (int)shape->number};
+        } else {
+            free(name);
+            free(key);
+        }
+    }
+    return out;
+}
+
+static void free_fields_of(map_field *fields, const int count)
+{
+    for (int k = 0; k < count; k++) {
+        free(fields[k].name);
+        free(fields[k].key);
+    }
+    free(fields);
 }
 
 // The project's Packages/com.tide.game/components.json, if tide unity has written it.
@@ -194,7 +239,23 @@ static void read_components(project *p)
     char *body = sys_read_file(path, &size);
     free(path);
     const json *map = body ? json_parse(body, size) : NULL;
-    const json *components = json_get(map, "components"), *enums = json_get(map, "enums");
+    const json *components = json_get(map, "components"), *enums = json_get(map, "enums"), *shapes = json_get(map, "shapes");
+    const int shape_count = shapes && shapes->kind == JSON_ARRAY ? shapes->count : 0;
+    p->shapes = grab(sizeof *p->shapes * (size_t)(shape_count + 1));
+    for (int i = 0; i < shape_count; i++) {
+        const json *j = shapes->items[i];
+        map_shape *sh = &p->shapes[p->shape_count++];
+        memset(sh, 0, sizeof *sh);
+        sh->form = json_dup(j, "form");
+        if (!sh->form) sh->form = dup("literal");
+        sh->type = json_dup(j, "type");
+        if (!sh->type) sh->type = dup("");
+        sh->enumeration = json_dup(j, "enum");
+        const json *element = json_get(j, "element"), *length = json_get(j, "length");
+        sh->element = element && element->kind == JSON_NUMBER ? (int)element->number : -1;
+        sh->length = length && length->kind == JSON_NUMBER ? (int)length->number : 0;
+        sh->fields = read_fields(json_get(j, "fields"), &sh->field_count);
+    }
     for (int i = 0; components && components->kind == JSON_ARRAY && i < components->count; i++) {
         const json *c = components->items[i];
         const char *name = json_str(json_get(c, "name")), *guid = json_str(json_get(c, "guid"));
@@ -205,25 +266,7 @@ static void read_components(project *p)
         memset(m, 0, sizeof *m);
         snprintf(m->guid, sizeof m->guid, "%s", guid);
         m->name = dup(name);
-        const json *fields = json_get(c, "fields");
-        const int count = fields && fields->kind == JSON_ARRAY ? fields->count : 0;
-        m->fields = grab(sizeof *m->fields * (size_t)(count + 1));
-        for (int k = 0; k < count; k++) {
-            const json *f = fields->items[k];
-            map_field *to = &m->fields[m->field_count];
-            *to = (map_field){json_dup(f, "name"), json_dup(f, "key"), json_dup(f, "form"), json_dup(f, "enum"),
-                              json_dup(f, "element"), json_dup(f, "elementType")};
-            if (to->name && to->key && to->form) {
-                m->field_count++;
-                continue;
-            }
-            free(to->name);
-            free(to->key);
-            free(to->form);
-            free(to->enumeration);
-            free(to->element);
-            free(to->element_type);
-        }
+        m->fields = read_fields(json_get(c, "fields"), &m->field_count);
     }
     for (int i = 0; enums && enums->kind == JSON_ARRAY && i < enums->count; i++) {
         const json *e = enums->items[i];
@@ -252,19 +295,17 @@ static void read_components(project *p)
 static void free_components(project *p)
 {
     for (int i = 0; i < p->component_count; i++) {
-        map_component *m = &p->components[i];
-        for (int k = 0; k < m->field_count; k++) {
-            free(m->fields[k].name);
-            free(m->fields[k].key);
-            free(m->fields[k].form);
-            free(m->fields[k].enumeration);
-            free(m->fields[k].element);
-            free(m->fields[k].element_type);
-        }
-        free(m->fields);
-        free(m->name);
+        free_fields_of(p->components[i].fields, p->components[i].field_count);
+        free(p->components[i].name);
     }
     free(p->components);
+    for (int i = 0; i < p->shape_count; i++) {
+        free(p->shapes[i].form);
+        free(p->shapes[i].type);
+        free(p->shapes[i].enumeration);
+        free_fields_of(p->shapes[i].fields, p->shapes[i].field_count);
+    }
+    free(p->shapes);
     for (int i = 0; i < p->enum_count; i++) {
         for (int k = 0; k < p->enums[i].count; k++) free(p->enums[i].members[k]);
         free(p->enums[i].members);
@@ -675,12 +716,48 @@ static const char *get_flat(const owned *a, const char *path)
     return NULL;
 }
 
-static const map_field *field_of(const map_component *c, const char *key)
+static const map_field *field_in(const map_field *fields, const int count, const char *key, const size_t n)
 {
-    for (int i = 0; i < c->field_count; i++) {
-        if (strcmp(c->fields[i].key, key) == 0) return &c->fields[i];
+    for (int i = 0; i < count; i++) {
+        if (strlen(fields[i].key) == n && strncmp(fields[i].key, key, n) == 0) return &fields[i];
     }
     return NULL;
+}
+
+// The shape of what a property path names in a component (`stats.Array.data[2].name`, `ids.items.Array.data[0]`),
+// NULL for none (a field the component no longer has, a list's size, a vector's part). Unknown: whether the
+// component has the field at all (*known).
+static const map_shape *shape_at_path(const project *p, const map_component *c, const char *path, bool *known)
+{
+    const char *dot = strchr(path, '.');
+    const map_field *f = field_in(c->fields, c->field_count, path, dot ? (size_t)(dot - path) : strlen(path));
+    *known = f != NULL;
+    const map_shape *s = f ? shape_of(p, f->shape) : NULL;
+    for (const char *at = dot; s && at && *at;) {
+        if (strncmp(at, ".Array.data[", 12) == 0 && (strcmp(s->form, "list") == 0 || strcmp(s->form, "array") == 0)) {
+            const char *close = strchr(at, ']');
+            if (!close) return NULL;
+            s = shape_of(p, s->element);
+            at = close + 1;
+        } else if (strncmp(at, ".items", 6) == 0 && strcmp(s->form, "set") == 0 && (at[6] == '.' || !at[6])) {
+            s = shape_of(p, s->element);
+            if (!at[6]) return NULL; // The set's list itself
+            at += 6;
+            if (strncmp(at, ".Array.data[", 12) != 0) return NULL;
+            const char *close = strchr(at, ']');
+            if (!close) return NULL;
+            at = close + 1;
+        } else if (at[0] == '.' && strcmp(s->form, "struct") == 0) {
+            const char *next = strchr(at + 1, '.');
+            const map_field *sf = field_in(s->fields, s->field_count, at + 1, next ? (size_t)(next - at - 1) : strlen(at + 1));
+            if (!sf) return NULL;
+            s = shape_of(p, sf->shape);
+            at = next;
+        } else {
+            return NULL;
+        }
+    }
+    return s;
 }
 
 static const map_component *component_of(const project *p, const char *guid)
@@ -837,10 +914,11 @@ static void component_reference(expansion *x, node *n, const int slot, const cha
     r->file_id = id;
 }
 
-// Unity's hex of a list of numbers (List<int>, List<float>: each element's bytes, low first) as the list's paths.
-static bool hex_list(owned *a, const char *key, const map_field *f, const char *hex)
+// Unity's hex of a list of numbers (List<int>, List<float>: each element's bytes, low first) as the list's paths, the
+// elements of Tide type `t`.
+static bool hex_list(owned *a, const char *key, const char *t, const char *hex)
 {
-    const char *t = f->element_type ? f->element_type : "";
+    if (!t) t = "";
     const size_t size = strcmp(t, "double") == 0 || strcmp(t, "long") == 0 ? 8 : strcmp(t, "byte") == 0 || strcmp(t, "bool") == 0 ? 1 : 4;
     const size_t n = strlen(hex);
     if (n % (size * 2) != 0) return false;
@@ -849,7 +927,7 @@ static bool hex_list(owned *a, const char *key, const map_field *f, const char *
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
     }
     const size_t count = n / (size * 2);
-    char path[256], value[64];
+    char path[512], value[64];
     snprintf(path, sizeof path, "%s.Array.size", key);
     snprintf(value, sizeof value, "%zu", count);
     set_flat(a, path, value);
@@ -913,19 +991,63 @@ static void flatten(owned *a, const char *path, const yaml_node *v)
     }
 }
 
+static void flatten_shaped(expansion *x, node *n, int slot, const char *path, const map_shape *s, const yaml_node *v);
+
+// A list's or array's items of shape `element` at `path` (or Unity's hex of numbers)
+static void flatten_list(expansion *x, node *n, const int slot, const char *path, const map_shape *element, const yaml_node *v)
+{
+    if (!v) return;
+    if (v->kind == YAML_SCALAR && hex_list(&n->owned[slot], path, element ? element->type : "", v->text ? v->text : "")) return;
+    if (v->kind != YAML_SEQ) {
+        flatten(&n->owned[slot], path, v);
+        return;
+    }
+    char inner[512], size[24];
+    snprintf(inner, sizeof inner, "%s.Array.size", path);
+    snprintf(size, sizeof size, "%d", v->count);
+    set_flat(&n->owned[slot], inner, size);
+    for (int i = 0; i < v->count; i++) {
+        snprintf(inner, sizeof inner, "%s.Array.data[%d]", path, i);
+        flatten_shaped(x, n, slot, inner, element, v->items[i]);
+    }
+}
+
+// What Unity serialized of a value of shape `s` at `path`, as paths (flatten's): an entity anywhere in it as a
+// reference of the component's own (component_reference), a struct by its fields, a set by its list of items.
+static void flatten_shaped(expansion *x, node *n, const int slot, const char *path, const map_shape *s, const yaml_node *v)
+{
+    if (!v) return;
+    if (!s) {
+        flatten(&n->owned[slot], path, v);
+        return;
+    }
+    char inner[512];
+    if (strcmp(s->form, "entity") == 0) {
+        component_reference(x, n, slot, path, v);
+    } else if (strcmp(s->form, "struct") == 0 && v->kind == YAML_MAP) {
+        for (int i = 0; i < s->field_count; i++) {
+            snprintf(inner, sizeof inner, "%s.%s", path, s->fields[i].key);
+            flatten_shaped(x, n, slot, inner, shape_of(x->p, s->fields[i].shape), yaml_get(v, s->fields[i].key));
+        }
+    } else if (strcmp(s->form, "set") == 0 && v->kind == YAML_MAP) {
+        snprintf(inner, sizeof inner, "%s.items", path);
+        flatten_list(x, n, slot, inner, shape_of(x->p, s->element), yaml_get(v, "items"));
+    } else if (strcmp(s->form, "list") == 0 || strcmp(s->form, "array") == 0) {
+        flatten_list(x, n, slot, path, shape_of(x->p, s->element), v);
+    } else {
+        flatten(&n->owned[slot], path, v);
+    }
+}
+
 // A Tide component's document: its serialized fields into its GameObject's slot for it.
 static void read_component(expansion *x, node *n, const map_component *c, const yaml_node *body)
 {
     const int slot = owned_slot(n, c);
-    owned *a = &n->owned[slot];
-    a->removed = false;
+    n->owned[slot].removed = false;
     for (int i = 0; i < c->field_count; i++) {
         const map_field *f = &c->fields[i];
         const yaml_node *v = yaml_get(body, f->key);
-        if (!v) continue; // A field Unity hasn't serialized yet: its default
-        if (strcmp(f->form, "entity") == 0) component_reference(x, n, slot, f->key, v);
-        else if (strcmp(f->form, "list") == 0 && v->kind == YAML_SCALAR && hex_list(a, f->key, f, v->text ? v->text : "")) continue;
-        else flatten(a, f->key, v);
+        if (v) flatten_shaped(x, n, slot, f->key, shape_of(x->p, f->shape), v); // None: Unity hasn't serialized it yet
     }
 }
 
@@ -977,13 +1099,10 @@ static void apply_modification(expansion *x, node **roots, const int count, cons
         const ident *id = find_id(roots, count, guid, target, 3, &owner);
         if (!id || !id->component || owner != n) return;
         const int slot = owned_slot(n, id->component);
-        char key[256];
-        snprintf(key, sizeof key, "%s", path);
-        char *dot = strchr(key, '.');
-        if (dot) *dot = '\0';
-        const map_field *f = field_of(id->component, key);
-        if (!f) return; // A field the component no longer has: left out
-        if (strcmp(f->form, "entity") == 0 && strcmp(path, f->key) == 0) component_reference(x, n, slot, path, yaml_get(m, "objectReference"));
+        bool known = false;
+        const map_shape *s = shape_at_path(x->p, id->component, path, &known);
+        if (!known) return; // A field the component no longer has: left out
+        if (s && strcmp(s->form, "entity") == 0) component_reference(x, n, slot, path, yaml_get(m, "objectReference"));
         else set_flat(&n->owned[slot], path, value);
     }
 }
@@ -1420,10 +1539,73 @@ static void put_string(text *t, const char *v)
     puts_(t, "\"");
 }
 
-// A value of `form` Unity serialized at `path` of an own component, as a Tide value into `t`: false where Unity has
-// nothing of it, which leaves the field its default.
-static bool put_form(emitter *e, const node *n, const owned *o, const map_field *f, const char *form, const char *path, text *t)
+// A char's code point as Tide's literal: the character between quotes, escaped where it has to be.
+static void put_char(text *t, const long c)
 {
+    static const struct { long c; const char *text; } escapes[] = {
+        {'\'', "'\\''"}, {'\\', "'\\\\'"}, {'\n', "'\\n'"}, {'\r', "'\\r'"}, {'\t', "'\\t'"}, {0, "'\\0'"},
+    };
+    for (size_t i = 0; i < sizeof escapes / sizeof escapes[0]; i++) {
+        if (escapes[i].c == c) {
+            puts_(t, escapes[i].text);
+            return;
+        }
+    }
+    if (c < 0x20 || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) {
+        putf(t, "char(%ld)", c); // No character, or one a literal doesn't take as itself
+        return;
+    }
+    char utf8[5] = {0};
+    if (c < 0x80) utf8[0] = (char)c;
+    else if (c < 0x800) {
+        utf8[0] = (char)(0xC0 | (c >> 6));
+        utf8[1] = (char)(0x80 | (c & 0x3F));
+    } else if (c < 0x10000) {
+        utf8[0] = (char)(0xE0 | (c >> 12));
+        utf8[1] = (char)(0x80 | ((c >> 6) & 0x3F));
+        utf8[2] = (char)(0x80 | (c & 0x3F));
+    } else {
+        utf8[0] = (char)(0xF0 | (c >> 18));
+        utf8[1] = (char)(0x80 | ((c >> 12) & 0x3F));
+        utf8[2] = (char)(0x80 | ((c >> 6) & 0x3F));
+        utf8[3] = (char)(0x80 | (c & 0x3F));
+    }
+    putf(t, "'%s'", utf8);
+}
+
+static bool put_form(emitter *e, const node *n, const owned *o, const map_shape *s, const char *path, text *t);
+
+// A list's, set's or array's elements of shape `element` at `path` as Tide's `[a, b]`: an array exactly `length` of
+// them (0: as many as there are), those Unity hasn't `default`. False where Unity has none of it.
+static bool put_items(emitter *e, const node *n, const owned *o, const map_shape *element, const char *path, const int length, text *t)
+{
+    char inner[512];
+    snprintf(inner, sizeof inner, "%s.Array.size", path);
+    const char *size = get_flat(o, inner);
+    if (!size) return false;
+    long count = strtol(size, NULL, 10);
+    if (count < 0) count = 0;
+    if (length > 0) count = length;
+    puts_(t, "[");
+    for (long i = 0; i < count && i < 1000000; i++) {
+        if (i) puts_(t, ", ");
+        snprintf(inner, sizeof inner, "%s.Array.data[%ld]", path, i);
+        text item = {0};
+        puts_(&item, "");
+        const bool given = element && put_form(e, n, o, element, inner, &item);
+        puts_(t, given ? item.s : "default");
+        free(item.s);
+    }
+    puts_(t, "]");
+    return true;
+}
+
+// A value of shape `s` Unity serialized at `path` of an own component, as a Tide value into `t`: false where Unity has
+// nothing of it, which leaves the field its default.
+static bool put_form(emitter *e, const node *n, const owned *o, const map_shape *s, const char *path, text *t)
+{
+    if (!s) return false;
+    const char *form = s->form;
     char inner[512];
     static const struct { const char *form, *tide, *axes; } vectors[] = {
         {"float2", "float2", "xy"}, {"float3", "float3", "xyz"}, {"float4", "float4", "xyzw"}, {"int2", "int2", "xy"},
@@ -1446,27 +1628,40 @@ static bool put_form(emitter *e, const node *n, const owned *o, const map_field 
         puts_(t, ")");
         return true;
     }
-    if (strcmp(form, "list") == 0) {
-        snprintf(inner, sizeof inner, "%s.Array.size", path);
-        const char *size = get_flat(o, inner);
-        if (!size) return false;
-        const long count = strtol(size, NULL, 10);
-        puts_(t, "[");
-        for (long i = 0; i < count && i < 1000000; i++) {
-            if (i) puts_(t, ", ");
-            snprintf(inner, sizeof inner, "%s.Array.data[%ld]", path, i);
-            text element = {0};
-            puts_(&element, "");
-            const bool given = put_form(e, n, o, f, f->element ? f->element : "", inner, &element);
-            puts_(t, given ? element.s : "default");
-            free(element.s);
+    if (strcmp(form, "list") == 0) return put_items(e, n, o, shape_of(e->p, s->element), path, 0, t);
+    if (strcmp(form, "array") == 0) return put_items(e, n, o, shape_of(e->p, s->element), path, s->length, t);
+    if (strcmp(form, "set") == 0) {
+        snprintf(inner, sizeof inner, "%s.items", path);
+        return put_items(e, n, o, shape_of(e->p, s->element), inner, 0, t);
+    }
+    if (strcmp(form, "struct") == 0) {
+        // Its fields Unity has, by Tide's names: none is its default
+        text fields = {0};
+        puts_(&fields, "");
+        for (int i = 0; i < s->field_count; i++) {
+            snprintf(inner, sizeof inner, "%s.%s", path, s->fields[i].key);
+            text value = {0};
+            puts_(&value, "");
+            if (put_form(e, n, o, shape_of(e->p, s->fields[i].shape), inner, &value)) {
+                putf(&fields, "%s%s = %s", fields.n ? ", " : "", s->fields[i].name, value.s);
+            }
+            free(value.s);
         }
-        puts_(t, "]");
-        return true;
+        const bool any = fields.n > 0;
+        if (any) putf(t, "%s { %s }", s->type, fields.s);
+        free(fields.s);
+        return any;
     }
     const char *v = get_flat(o, path);
     if (!v) return false;
     if (strcmp(form, "number") == 0) return put_number(t, v);
+    if (strcmp(form, "char") == 0) {
+        char *end = NULL;
+        const long c = strtol(v, &end, 10);
+        if (end == v) return false;
+        put_char(t, c);
+        return true;
+    }
     if (strcmp(form, "bool") == 0) {
         puts_(t, strtol(v, NULL, 10) ? "true" : "false");
         return true;
@@ -1487,9 +1682,9 @@ static bool put_form(emitter *e, const node *n, const owned *o, const map_field 
     }
     if (strcmp(form, "enum") == 0) {
         const long value = strtol(v, NULL, 10);
-        for (int i = 0; f->enumeration && i < e->p->enum_count; i++) {
+        for (int i = 0; s->enumeration && i < e->p->enum_count; i++) {
             const map_enum *m = &e->p->enums[i];
-            if (strcmp(m->name, f->enumeration) != 0) continue;
+            if (strcmp(m->name, s->enumeration) != 0) continue;
             for (int k = 0; k < m->count; k++) {
                 if (m->values[k] != value) continue;
                 putf(t, "%s.%s", m->name, m->members[k]);
@@ -1510,7 +1705,7 @@ static void write_owned(emitter *e, const node *n, const owned *o, const int dep
         const map_field *f = &o->component->fields[i];
         text value = {0};
         puts_(&value, "");
-        if (put_form(e, n, o, f, f->form, f->key, &value)) putf(&values, "%s%s = %s", values.n ? ", " : "", f->name, value.s);
+        if (put_form(e, n, o, shape_of(e->p, f->shape), f->key, &value)) putf(&values, "%s%s = %s", values.n ? ", " : "", f->name, value.s);
         free(value.s);
     }
     indent(&e->out, depth);
