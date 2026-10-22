@@ -908,6 +908,95 @@ game doesn't take gets a Console warning naming it and listing those it takes
 window has the rendering; Tide's drawer has the frame's work, ping, delay,
 network, entities, threads and the slowest systems.
 
+### Tide's renderer in Unity (2026-10-22): 3D, targets and shaders
+
+Owner: "let's do the 3d drawing and shaders". Tide's own renderer
+(`platform.c`) now draws the frame into Unity's camera through
+`platform/src/gpu_record.c` (`notes/rendering.md`, Recording), and the package
+replays its GPU calls. All of Tide's drawing comes through: 2D shapes, smooth
+shapes, text in Tide's font, sprites, meshes, 3D primitives and meshes,
+instancing, render targets with several colors, depth and cubes, stencil,
+clips, blits, and the game's frags and verts. It is the same pixels the
+renderer draws for its own window. The OnGUI path (`TideDraw.cs`) stays for GPUs
+whose shaders can't read buffers, which means WebGL players.
+
+- **Shaders:** `tide unity` (`compiler/cli/unity_shaders.c`, with `--assets`)
+  writes a Unity shader per pipeline WGSL: the renderer's 10 (`TIDE_RENDERER_WGSL`)
+  and each game shader (`codegen_options.shader_out` collects them as the game
+  generates). Each is its HLSL (`notes/shaders.md`, HLSL) in ShaderLab, at
+  `Packages/com.tide.game/Resources/TideShaders/<key>.shader` named
+  `Hidden/Tide/<key>`. The key is FNV-1a 64 of the shader's SPIR-V, which the
+  recording backend sends with each pipeline. Files are written only when they
+  change, and those of shaders gone are removed with their metas. Resources get
+  them into player builds; `Resources.Load` finds them. Render state is
+  material properties (blend factors, ZTest/ZWrite, Cull, Stencil Ref/Comp/Pass).
+  Unity compiles them for every graphics API.
+- **TideRender.cs:** added by TideRunner with `drawTide` where `TideRender.Supported`
+  (compute shaders, shader level 4.5, constant buffers) and not WebGL. After each
+  frame the runner calls `tide_embed_render` and `Replay`s the commands into a
+  CommandBuffer on the view camera at `CameraEvent.AfterForwardAlpha`, so Tide's
+  3D depth-tests against the scene and draws before image effects.
+  - Buffers are raw `GraphicsBuffer`s written at once (`SetData`). The renderer's
+    writes are all before its draws, and immediate writes survive a frame the camera
+    doesn't render.
+  - Textures are `Texture2D`s (linear, a mip chain where the format allows, and a
+    CPU copy for part writes), `Cubemap`s, or cube `RenderTexture`s.
+  - Targets are linear color `RenderTexture`s with mips, plus a separate D24S8
+    depth `RenderTexture` that is sampled as `RenderTextureSubElement.Depth`.
+  - A pipeline is its shader, with a `Material` for each (flip, stencil value) it
+    draws with.
+  - Each draw sets the globals `hlsl.h` names and the frame's uniform
+    `GraphicsBuffer` at its aligned offset (`SetGlobalConstantBuffer`), then calls
+    `DrawProcedural`.
+  - Frees wait a frame.
+  - Target 0 is `BuiltinRenderTextureType.CameraTarget`, never cleared, with
+    `_TideFlip` 0, so `_ProjectionParams.x` turns it as Unity's own draws are turned.
+  - Tide targets are cleared to black as gpu.h says, flipped only where Unity's
+    texture rows go from the bottom (`!SystemInfo.graphicsUVStartsAtTop`). Cull is
+    swapped there.
+  - Scissor rects go to Unity's bottom-left rows.
+  - A missing shader is one Console error naming the pipeline and the file.
+  - `Fresh` (nothing made yet) has the runner call `tide_embed_render_reset` first.
+  - Disabling the runner disables it, and the next embed's numbers start over.
+- **The camera:** `tide_embed_camera` takes Unity's matrices now (ABI 4): the
+  camera transform unscaled, and `Camera.projectionMatrix`. Tide's 3D is in
+  Unity's depth with its near and far planes, and orthographic cameras work.
+  The frame's screen is the view camera's pixels while TideRender draws. On the
+  web, `tide_unity_camera(given)` reads 32 floats that the jslib copies to
+  `tide_unity_camera_matrices()`.
+- **Tests:** `TideDrawsIntoUnitysFrame` (BounceTests, PlayMode, ignored with
+  `-nographics`). The Sample gained views `Marker` (a 3D cube over each ball),
+  `Floor` (two plates in the game frag `Stripes`, one just over Unity's floor and
+  one just under it) and `Badges` (a 64-pixel render target with a yellow top-left
+  corner, drawn as a sprite at the top right, and a magenta square drawn only
+  inside a stencil circle). The test renders the main camera into a 640x480
+  texture on D3D11 in batch mode and reads it back. It checks:
+  - the stripes' exact colors and the plate under the floor being hidden;
+  - the cube in the ball's color, at Unity's projection of where it is;
+  - the ring around the ball and the Hud's white text;
+  - the target's orientation;
+  - the stencil inside and outside the circle.
+  Batch mode has no `WaitForEndOfFrame`, so the test calls `camera.Render()`.
+  Runs: EditMode 14/14, PlayMode 9/9 with a GPU, 8 and 1 ignored with `-nographics`.
+  `TIDE_UNITY_DUMP=<file.png>` saves the frame it read.
+- **Picks (Provisional, mine):**
+  - The built-in render pipeline first, not URP: the owner's project and the
+    Sample both use it.
+  - The renderer's HLSL is translated, not hand-written.
+  - Shaders are written by `tide unity` into com.tide.game, not by an importer
+    making sub-assets of `.tide` files.
+  - Indices are read by the vertex shader from a raw buffer (no post-transform cache).
+- **Not done:**
+  - URP and HDRP (a ScriptableRendererFeature would replay the same CommandBuffer).
+  - The web, which keeps TideDraw: WebGL has no buffers that shaders read.
+  - A multisampled target's depth texture: Unity doesn't resolve depth, and it
+    reads as far away.
+  - `Draw.ReadPixels` and captures, which read nothing since Unity draws later.
+  - The linear color space, OpenGL backends and a camera rendering straight to the
+    back buffer are written but unverified. The Sample and the owner's project are
+    Gamma, and batch mode renders through a texture.
+  - The scene view (only the view camera gets the CommandBuffer).
+
 ### The game is Assets (2026-10-21)
 
 **Owner:** "anything inside `Assets` is valid", rather than a game folder;
@@ -1230,6 +1319,11 @@ renderer feature, sharing depth and post-processing with the scene:
   as sub-assets of the source file, so Unity compiles them for every graphics
   API and builds include them. The same importer triggers tidec.
 - URP first; HDRP and the Built-in pipeline only on request.
+
+Built 2026-10-22 (Tide's renderer in Unity, above) with Tide's renderer replayed rather than
+a renderer of Unity's, the renderer's HLSL translated rather than hand-written, `tide unity`
+writing the shaders into com.tide.game rather than an importer, and the built-in pipeline
+first, as both projects in use have it: my picks, Provisional.
 
 ## Phases
 

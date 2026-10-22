@@ -1,5 +1,21 @@
 # Runtime written by Claude for now
 
+## Tide's renderer inside Unity (2026-10-22)
+
+Owner: "let's do the 3d drawing and shaders". The Unity front end's drawing
+replays the renderer's GPU calls (`notes/unity.md`, Tide's renderer in Unity). The new platform
+surface is the agent's:
+- `platform/src/gpu_record.c`: `tide_gpu_record` and its begin/end/reset/close,
+  declared in `gpu.h`.
+- `tide_platform_embed_render` and `_reset` (`embedded.h`, at the end of
+  `platform.c`), which point `gpu` at it and run `draw_list`.
+- `TIDE_RENDERER_WGSL` (`shaders.h`), the list `platform/tools/spirv_shaders.c`
+  now writes from.
+
+`tide/host.h`'s embedded camera became matrices (`tide_run_view_camera_transform`,
+`_projection`, set with `tide_draw_set_camera_matrices`) for `tide/embed.h`'s new
+`tide_embed_camera`. Generated code calls nothing new.
+
 ## Optional session voice (2026-10-22)
 
 The owner requested an optional Opus voice package and selected working session

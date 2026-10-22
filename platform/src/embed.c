@@ -19,6 +19,7 @@
 #include "tide/host.h"
 #include "tide/migrate.h"
 #include "embedded.h"
+#include "gpu.h"
 
 #if !defined(__wasm__)
 // Loading the game's libraries as tide run's host does, on this host's state
@@ -205,6 +206,7 @@ void tide_embed_destroy(tide_embed *e)
     free(drawn);
     drawn = NULL;
     drawn_capacity = 0;
+    tide_gpu_record_close(); // The renderer's objects with it: the next embed's start over
     free(schema);
     schema = NULL;
     schema_of = NULL;
@@ -447,19 +449,31 @@ bool tide_embed_command(tide_embed *e, const uint32_t type, const uint32_t targe
         && embed->command(tide_run_local, (int32_t)type, target_index, target_generation, value, size);
 }
 
-void tide_embed_camera(tide_embed *e, const float x, const float y, const float z, const float qx, const float qy,
-                       const float qz, const float qw, const float field_of_view)
+void tide_embed_camera(tide_embed *e, const float *transform, const float *projection)
 {
     if (e != &the_embed || !running) return;
-    const float values[] = {x, y, z, qx, qy, qz, qw, field_of_view};
-    bool finite = true;
-    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) finite = finite && tide_is_finite_f(values[i]);
-    const float length = qx * qx + qy * qy + qz * qz + qw * qw;
-    tide_run_view_camera = finite && field_of_view > 0.0f && field_of_view < 180.0f && length > 0.0f;
-    if (!tide_run_view_camera) return;
-    tide_run_view_camera_position = tide_f3(x, y, z);
-    tide_run_view_camera_rotation = tide_normalize_q((tide_quaternion){qx, qy, qz, qw});
-    tide_run_view_camera_fov = field_of_view;
+    bool finite = transform && projection;
+    for (int i = 0; finite && i < 16; i++) finite = tide_is_finite_f(transform[i]) && tide_is_finite_f(projection[i]);
+    tide_run_view_camera = false;
+    if (!finite) return;
+    memcpy(&tide_run_view_camera_transform, transform, sizeof(tide_float4x4));
+    memcpy(&tide_run_view_camera_projection, projection, sizeof(tide_float4x4));
+    // One that sees nothing (a projection of zeros, or a transform that flattens the world) is none
+    tide_run_view_camera = tide_determinant_f4x4(tide_run_view_camera_projection) != 0.0f
+                        && tide_determinant_f4x4(tide_run_view_camera_transform) != 0.0f;
+}
+
+const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size)
+{
+    if (size) *size = 0;
+    if (e != &the_embed || !running || !tide_run_game || !size) return NULL;
+    return tide_platform_embed_render(&tide_run_draw, size);
+}
+
+void tide_embed_render_reset(tide_embed *e)
+{
+    if (e != &the_embed) return;
+    tide_platform_embed_render_reset();
 }
 
 void tide_embed_background(tide_embed *e, const bool background)

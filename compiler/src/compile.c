@@ -143,6 +143,12 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     codegen_options named = *opts;
     if (!named.name) named.name = path_stem(inputs[0].path);
     if (schedule && opts->spirv_dir) return write_spirv(prog, opts->spirv_dir, schedule);
+    if (schedule && opts->hlsl_dir) return write_hlsl(prog, opts->hlsl_dir, schedule);
+    if (opts->shader_out) {
+        for (int i = 0; i < prog->shaders.count; i++) {
+            opts->shader_out(opts->shader_user, prog->shaders.items[i]->name, prog->shaders.items[i]->wgsl);
+        }
+    }
     if (schedule && opts->shaders) {
         print_shaders(prog, schedule);
         return true;

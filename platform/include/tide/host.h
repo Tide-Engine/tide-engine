@@ -222,9 +222,7 @@ static tide_network_match tide_run_network;
 // The camera another program draws its scene with (tide_embed_camera): the
 // frame's views start with it rather than Tide's own first camera.
 static bool tide_run_view_camera;
-static tide_float3 tide_run_view_camera_position;
-static tide_quaternion tide_run_view_camera_rotation;
-static float tide_run_view_camera_fov;
+static tide_float4x4 tide_run_view_camera_transform, tide_run_view_camera_projection;
 
 // Inside another program's frame (tide/embed.h), which reads the devices,
 // draws and plays itself: the frame leaves the GPU, the audio device and the
@@ -1035,8 +1033,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_run_draw.target_pixels = tide_platform_target_pixels;
     tide_run_draw.screen_scale = tide_platform_screen_scale();
     if (tide_run_view_camera) {
-        tide_draw_set_camera_3d(&tide_run_draw, tide_run_view_camera_position, tide_run_view_camera_rotation,
-                                tide_run_view_camera_fov);
+        tide_draw_set_camera_matrices(&tide_run_draw, tide_run_view_camera_transform, tide_run_view_camera_projection);
     }
     tide_audio_reset(&tide_run_audio);
     // The GUI and the views read the devices, less a press that's on the stats

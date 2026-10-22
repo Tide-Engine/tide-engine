@@ -127,9 +127,11 @@ var TideWebLibrary = {
     },
 
     TideWebCamera__deps: ['$TideWeb'],
-    TideWebCamera: function (x, y, z, qx, qy, qz, qw, fieldOfView) {
+    TideWebCamera: function (matrices, given) {
         var program = TideWeb.program();
-        if (program) program.tide_unity_camera(x, y, z, qx, qy, qz, qw, fieldOfView);
+        if (!program) return;
+        if (given) TideWeb.memory().set(HEAPU8.subarray(matrices, matrices + 128), program.tide_unity_camera_matrices());
+        program.tide_unity_camera(given);
     },
 
     TideWebCommand__deps: ['$TideWeb'],

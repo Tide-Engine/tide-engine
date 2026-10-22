@@ -32,6 +32,10 @@ typedef struct codegen_options {
     bool outline;            // ...or what it declares, as JSON (tidec --outline: print_outline).
     sb *outline_to;          // If set, gets that JSON too as the game generates, once it's checked.
     const char *spirv_dir;   // ...or write each one's SPIR-V into this folder, as <n>.spv (tidec --spirv).
+    const char *hlsl_dir;    // ...or its HLSL, as <n>.hlsl (tidec --hlsl: hlsl.h).
+    // If set, called with each of the game's shaders, its name and WGSL, once it's checked (tide unity's HLSL).
+    void (*shader_out)(void *user, const char *name, const char *wgsl);
+    void *shader_user;
     const char *game_folder; // Where the game's .tide/ is, for its asset hashes and fetched URLs; NULL where nothing says
     const char *pack;        // Where to write the pack of the game's assets (tide/pack.h), or NULL
     const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL

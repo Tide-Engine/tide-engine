@@ -164,6 +164,87 @@ view Ring(Ball ball, Transform transform)
     }
 }
 
+// Tide's 3D, which Unity draws with its camera's depth: a cube over each ball, and two plates in a frag of the
+// game's own (tide unity writes its HLSL into com.tide.game): one just over Unity's floor, which shows, and one just
+// under it, which the floor hides
+view Marker(Ball ball, Transform transform)
+{
+    Draw.Cube(transform.localPosition + float3(0, 1.2, 0), float3(0.4, 0.4, 0.4), ball.color);
+}
+
+struct PlateCorner
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Plates
+{
+    List<PlateCorner> corners;
+    List<int> faces;
+}
+
+frag Stripes(PlateCorner corner, out Color color)
+{
+    color = Math.Frac(corner.uv.x * 2) < 0.5 ? Color(1, 0.5, 0) : Color(0.1, 0.4, 1);
+}
+
+view Floor(mut Plates plates)
+{
+    if (plates.corners.count == 0)
+    {
+        for (var plate = 0; plate < 2; plate++)
+        {
+            var y = plate == 0 ? 0.02 : -0.05;
+            var z = plate == 0 ? -3 : 1;
+            var first = plates.corners.count;
+            plates.corners.Add(PlateCorner { position = float3(-1.5, y, z), uv = float2(0, 0) });
+            plates.corners.Add(PlateCorner { position = float3(-1.5, y, z + 1.5), uv = float2(0, 1) });
+            plates.corners.Add(PlateCorner { position = float3(1.5, y, z + 1.5), uv = float2(1, 1) });
+            plates.corners.Add(PlateCorner { position = float3(1.5, y, z), uv = float2(1, 0) });
+            plates.faces.Add(first);
+            plates.faces.Add(first + 1);
+            plates.faces.Add(first + 2);
+            plates.faces.Add(first);
+            plates.faces.Add(first + 2);
+            plates.faces.Add(first + 3);
+        }
+    }
+    Draw.Mesh(plates.corners, plates.faces, float4x4.identity, Stripes);
+}
+
+// A render target Tide draws into, shown at the top right (yellow over its top left, green elsewhere), and stencil:
+// a circle storing 1 where it is, and a magenta square drawn only there
+local singleton Badge
+{
+    RenderTarget image;
+    bool made;
+}
+
+view Badges(mut Badge badge)
+{
+    if (!badge.made)
+    {
+        badge.image = RenderTarget(64, 64);
+        badge.made = true;
+    }
+    badge.image.Clear(Color(0, 0.6, 0));
+    badge.image.SetScreen();
+    badge.image.Rect(float2(16, 8), float2(32, 16), Color(1, 1, 0));
+    Draw.Screen()
+    {
+        Draw.Sprite(badge.image.color, float2(Screen.width - 48, 48), float2(64, 64), Color(1, 1, 1));
+        Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
+        {
+            Draw.Circle(float2(Screen.width - 80, Screen.height - 80), 30, Color.clear);
+        }
+        Draw.Stencil(StencilTest.Equal, 1)
+        {
+            Draw.Rect(float2(Screen.width - 80, Screen.height - 80), float2(80, 80), Color(1, 0, 1));
+        }
+    }
+}
+
 view Hud(Room room)
 {
     Draw.Screen()

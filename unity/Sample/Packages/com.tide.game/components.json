@@ -1,4 +1,4 @@
-{"hash": "BACA3413D649CA34", "components": [
+{"hash": "F94EB3DABF6D73DE", "components": [
   {"name": "Owner", "guid": "078ba7e30478d198e2856fdcd6e936f9", "fields": [{"name": "player", "key": "player", "shape": 0}]},
   {"name": "Spinner", "guid": "c1a5056ab9f7b0462fd22449bd7fbbd1", "fields": [{"name": "speed", "key": "speed", "shape": 1}, {"name": "badge", "key": "badge", "shape": 2}]},
   {"name": "Ball", "guid": "ce03b43f744b7347571b2cbb98249f29", "fields": [{"name": "velocity", "key": "velocity", "shape": 3}, {"name": "color", "key": "color", "shape": 4}, {"name": "seat", "key": "seat", "shape": 5}, {"name": "bounces", "key": "bounces", "shape": 5}, {"name": "trail", "key": "trail", "shape": 6}]}
@@ -16,6 +16,8 @@
   {"name": "Anchor", "members": ["UpperLeft","UpperCenter","UpperRight","MiddleLeft","MiddleCenter","MiddleRight","LowerLeft","LowerCenter","LowerRight"], "values": [0,1,2,3,4,5,6,7,8]},
   {"name": "Filter", "members": ["Point","Bilinear"], "values": [0,1]},
   {"name": "Blend", "members": ["Alpha","Add","Multiply","Replace"], "values": [0,1,2,3]},
+  {"name": "StencilTest", "members": ["Always","Never","Less","Equal","LessEqual","Greater","NotEqual","GreaterEqual"], "values": [0,1,2,3,4,5,6,7]},
+  {"name": "StencilOp", "members": ["Keep","Replace","Increment","Decrement","Zero","Invert"], "values": [0,1,2,3,4,5]},
   {"name": "Font", "members": ["Regular","Bold"], "values": [0,1]},
   {"name": "SessionState", "members": ["Offline","Connecting","Connected"], "values": [0,1,2]},
   {"name": "DisconnectReason", "members": ["Left","TimedOut","Refused","ServerLeft","Failed","Ended","Kicked"], "values": [0,1,2,3,4,5,6]}
