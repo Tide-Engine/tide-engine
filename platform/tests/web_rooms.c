@@ -144,6 +144,7 @@ static tide_session *session;
 static double now;
 static bool said_code;
 static bool done;
+static bool registration_released;
 
 // The host's page hidden, as browsers hide it when another tab is in front,
 // only stricter: browsers stop its animation frames and slow its timers to
@@ -337,8 +338,13 @@ static int frame(void *user, const float seconds)
         // What its player would send a friend, which the joiner's page is opened from
         char invite[TIDE_INVITE_BYTES];
         tide_platform_room_invite(code, invite, sizeof invite);
-        printf("room %s\ninvite %s\n", code, invite);
-        said_code = true;
+        if (!registration_released) {
+            if (invite[0]) return fail("an unregistered room offered an invite");
+            registration_released = tide_web_eval("releaseRegistration()");
+        } else if (invite[0]) {
+            printf("room %s\ninvite %s\n", code, invite);
+            said_code = true;
+        }
     }
 
     // Each sees the other's input in the match: it went through the room

@@ -404,7 +404,8 @@ void tide_platform_room_code(char *out, size_t size);
 // wherever the page is served. That's for `room` of letters and digits, the
 // only text `?join=` passes on, and a link that fits in `size` and in
 // TIDE_INVITE_BYTES; anything else, and every other platform, has `room`
-// itself. "" for "".
+// itself. "" for "", and on the web while this host waits for the relay to
+// confirm its room.
 #define TIDE_INVITE_BYTES 256u // Clipboard.Copy's 255 bytes and a NUL (TIDE_MESSAGE_BYTES)
 void tide_platform_room_invite(const char *room, char *out, size_t size);
 // The room joined turned out not to be one, or its host couldn't be reached.

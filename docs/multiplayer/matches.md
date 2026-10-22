@@ -123,7 +123,7 @@ The relay, a server of ours, only introduces players to each other. Their packet
 
 ### Inviting with a link
 
-`Session.invite` is what a player sends a friend to join their room. On the web it's a link: the game's page, wherever it's served, with `?join=` and the room's code, like `https://example.com/game/?join=K7QF2M`. Opening it starts the game in that room, as `?join=` in a page's address always does. On desktop and Android there's no page to link to, so it's the room's code itself, which the friend types in. It's `""` whenever `Session.room` is.
+`Session.invite` is what a player sends a friend to join their room. On the web it's a link: the game's page, wherever it's served, with `?join=` and the room's code, like `https://example.com/game/?join=K7QF2M`. Opening it starts the game in that room, as `?join=` in a page's address always does. On desktop and Android there's no page to link to, so it's the room's code itself, which the friend types in. It's `""` whenever `Session.room` is, and on the web until the relay confirms the host's room is registered.
 
 ```csharp
 view Invite(Session session)
@@ -150,7 +150,7 @@ view Invite(Session session)
 | `server` | Whether this machine runs the server |
 | `open` | Whether others can join it (only the server's machine knows) |
 | `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed. On [a network of the game's own](./own-network.md), what that network says the match is joined by |
-| `invite` | What others open to join the match: on the web a link to the game's page with `?join=` and the room's code, elsewhere the code itself (see [Inviting with a link](#inviting-with-a-link)). `""` when `room` is |
+| `invite` | What others open to join the match: on the web a link to the game's page with `?join=` and the room's code, elsewhere the code itself (see [Inviting with a link](#inviting-with-a-link)). `""` when `room` is, and while a web host waits for the relay to register its room |
 
 A single-player match is a match too, so `state` is `Connected` there as well: this machine runs the server, and its player connects to it without going through the network. That's `server` true and `open` false. `$"{session}"` shows all of it at once.
 

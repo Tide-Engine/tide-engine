@@ -881,7 +881,8 @@
         closeRoom();
         room = {
             number: ++rooms, hosting, code, failed: false, reachable: true, connected: false, opened: performance.now(),
-            ws: null, announced: false, ice: [], peers: new Map(), byRelay: new Map(), next: 1, inbox: [],
+            // Announced means requested; advertised means the relay confirmed it, so an invite can be copied.
+            ws: null, announced: false, advertised: false, ice: [], peers: new Map(), byRelay: new Map(), next: 1, inbox: [],
             key: key || (hosting ? newKey() : ''), moving: !!key, moved: 0,
             // When the datagram the program last took arrived (performance.now)
             arrived: 0,
@@ -984,6 +985,7 @@
                 r.announced = true;
             } else if (m.hosting) {
                 r.reachable = true;
+                r.advertised = true;
                 if (r.moving) { // The room's host was gone: this program is now
                     r.moving = false;
                     r.hosting = true;
@@ -1042,6 +1044,7 @@
         ws.onclose = () => {
             if (room !== r || r.ws !== ws) return;
             r.ws = null;
+            r.advertised = false;
             if (!r.hosting) {
                 if (!r.connected && !r.failed && !r.peers.size && performance.now() - r.opened < 10000) {
                     // Not introduced yet: the relay may be waking up (it
@@ -1175,15 +1178,21 @@
             u8()[outPtr + code.length] = 0;
         },
         // The link that joins room `room`, which `?join=` above turns into --join wherever the page is
-        // served: its address without the query or fragment. 0 for none, and for one that needs more
-        // than `size` bytes with its NUL.
+        // served: its address without the query or fragment. Bytes written including the NUL, or
+        // 0 for no replacement. A host's invite stays empty until the relay confirms its room.
         room_invite(roomPtr, outPtr, size) {
+            const code = string(roomPtr);
+            if (room && room.hosting && room.code === code && !room.advertised) {
+                if (size < 1) return 0;
+                u8()[outPtr] = 0;
+                return 1;
+            }
             if (!/^(https?|file):$/.test(location.protocol)) return 0;
-            const link = encoder.encode(location.href.split(/[?#]/)[0] + '?join=' + encodeURIComponent(string(roomPtr)));
+            const link = encoder.encode(location.href.split(/[?#]/)[0] + '?join=' + encodeURIComponent(code));
             if (link.length + 1 > size) return 0;
             u8().set(link, outPtr);
             u8()[outPtr + link.length] = 0;
-            return link.length;
+            return link.length + 1;
         },
         room_failed:() => room && room.failed ? 1 : 0,
         room_send(number, to, ptr, size) {

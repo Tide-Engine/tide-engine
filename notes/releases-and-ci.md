@@ -1,5 +1,22 @@
 # Releases, installing and CI
 
+## MicroDuck sanitizer timeout (2026-10-22)
+
+Run `39842031157` at `f8468b30` confirms the arm-hash correction:
+all ordinary platform suites and all three package jobs pass. Its only
+completed underlying failure is the MicroDuck two-client rollback case's
+180-second Linux sanitizer timeout. Docs is still installing tools when
+inspected, so the overall run is not complete and publication is skipped.
+
+Only that case's instrumented deadline becomes 600 seconds; ordinary budgets,
+simulation work, assertions, sanitizers and workflow gates stay unchanged.
+A fresh Windows ASan/UBSan reproduction passes in 184.59 seconds with zero
+resyncs and no sanitizer diagnostics. Scope, CTest metadata validation and
+remaining hosted Linux confirmation are in `notes/newton.md`, Instrumented
+MicroDuck rollback budget. Full local debug suites pass 2,593 native and
+2,455 web tests, retaining the existing disabled right-turn limitation.
+No manual dispatch or retry was performed.
+
 ## Matching JetBrains plugin in platform packages (2026-10-21)
 
 The JetBrains job also builds and uploads tide-jetbrains-installer.zip, an
