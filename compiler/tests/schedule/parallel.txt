@@ -5,6 +5,11 @@ stage 1  Move  (per entity)
          reads Velocity
          writes Position
          alongside Tally
+stage 1  Tally  (per entity)
+         reads Player
+         writes Score
+         alongside Move, Drag, PushPlayers, PushEnemies, Report
+
 stage 2  Drag  (per entity)
          writes Velocity
          after Move: it reads Velocity, which this writes
@@ -17,10 +22,7 @@ stage 2  PushEnemies  (per entity)
          writes Position
          after Move: both write Position
          alongside Drag, PushPlayers, Tally, Report
-stage 1  Tally  (per entity)
-         reads Player
-         writes Score
-         alongside Move, Drag, PushPlayers, PushEnemies, Report
+
 stage 3  Report  (per entity)
          reads Enemy
          after Drag: this has [After(Drag)]

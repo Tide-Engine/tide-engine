@@ -59,6 +59,9 @@ namespace Tide
         [Tooltip("The camera the game's views start with, which Draw.WorldToScreen and Tide's 3D draws go through: the main camera when none is set")]
         public Camera viewCamera;
 
+        [Tooltip("The mixer group the game's Tide sound plays through: none for Unity's master")]
+        public UnityEngine.Audio.AudioMixerGroup audioOutput;
+
         // Makes and lets go of the GameObjects of the prefabs entities show through, in place of Instantiate and
         // Destroy, or the pool: null for those
         public ITideSpawner Spawner { get; set; }
@@ -73,6 +76,7 @@ namespace Tide
 
         public static TideRunner Current { get; private set; }
         TideRender render;
+        TideAudio audio; // The game's sound, through Unity's (none on the web, where Tide's program plays it itself)
         public TidePacket Packet { get; } = new TidePacket();
         public TideSchema Schema { get; private set; }
         public TideEmbedStatus Status => status;
@@ -149,6 +153,12 @@ namespace Tide
             {
                 scenesOpen.Add(UnityEngine.SceneManagement.SceneManager.GetSceneAt(i).path);
             }
+            openSent = false;
+            sceneOf.Clear();
+            sceneLoads.Clear();
+            scenesClosed.Clear();
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += SceneLoaded;
+            UnityEngine.SceneManagement.SceneManager.sceneUnloaded += SceneUnloaded;
             library = TideLibrary.Open(TideLibrary.BuildFolder);
             if (library == null)
             {
@@ -163,6 +173,15 @@ namespace Tide
                 return;
             }
             LoadSchema();
+#if !UNITY_WEBGL || UNITY_EDITOR
+            if (audio == null)
+            {
+                var speaker = new GameObject("Tide Audio");
+                speaker.transform.SetParent(transform, false);
+                audio = speaker.AddComponent<TideAudio>();
+            }
+            audio.Attach(library, embed, audioOutput);
+#endif
             if (drawTide && TideRender.Supported)
             {
                 render = Ensure<TideRender>(gameObject);
@@ -326,6 +345,8 @@ namespace Tide
 
         void OnDisable()
         {
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= SceneLoaded;
+            UnityEngine.SceneManagement.SceneManager.sceneUnloaded -= SceneUnloaded;
             foreach (var view in shown.Values)
             {
                 if (view == null) continue;
@@ -343,6 +364,7 @@ namespace Tide
             pooled.Clear();
             if (poolRoot != null) Destroy(poolRoot.gameObject);
             if (render != null) render.enabled = false; // What it made was the embed's renderer's, which starts over
+            if (audio != null) audio.Detach(); // Unity's audio thread reads the embed no more
             if (embed != IntPtr.Zero) library.Destroy(embed);
             embed = IntPtr.Zero;
             library = null;
@@ -396,6 +418,7 @@ namespace Tide
                 render.Replay(commands, drawn, seen);
             }
             fixed (TideEmbedStatus* p = &status) library.Status(embed, p);
+            if (audio != null) audio.Listen(status.microphone != 0);
             FollowCursor();
             uint size = 0;
             var bytes = library.View(embed, &size);
@@ -749,7 +772,7 @@ namespace Tide
             if (a.scene)
             {
                 // A scene's own GameObject, where the scene is open
-                found = TideUnityMap.FindInScene(UnityEngine.SceneManagement.SceneManager.GetSceneByPath(a.path), path);
+                found = TideUnityMap.FindInScene(SceneOf(row, asset), path);
             }
             else if (node == 0)
             {
@@ -848,51 +871,152 @@ namespace Tide
         }
 
         // The project's scenes the match has (their entities' roots, UnityEngine.Source's node 0 of a scene's asset): each
-        // loaded beside the others as its root comes, if it isn't open already, and unloaded as it goes. Build
-        // Settings' first is one, which the match loads as Main starts (tide unity's UnityEngine.Begin).
-        readonly HashSet<int> scenesWanted = new HashSet<int>();
-        readonly HashSet<string> scenesLoading = new HashSet<string>();
-        readonly HashSet<string> scenesShown = new HashSet<string>(); // ...that the match has had while this ran
+        // root has its own instance of its Unity scene, one already open that no other root has, else one loaded beside
+        // the others as it comes, unloaded as it goes. A scene the match loads twice is two. Build Settings' first is
+        // one, which the match loads as Main starts (tide unity's UnityEngine.Begin).
+        readonly Dictionary<ulong, int> sceneRoots = new Dictionary<ulong, int>(); // This frame's roots, and their assets
+        readonly Dictionary<ulong, UnityEngine.SceneManagement.Scene> sceneOf = new Dictionary<ulong, UnityEngine.SceneManagement.Scene>();
+        readonly List<(ulong root, string path)> sceneLoads = new List<(ulong, string)>(); // Begun, for roots, in order
+        readonly HashSet<UnityEngine.SceneManagement.Scene> sceneUnloads = new HashSet<UnityEngine.SceneManagement.Scene>(); // Scenes this unloads
+        readonly HashSet<ulong> scenesClosed = new HashSet<ulong>(); // Roots whose scene was unloaded by others
+        readonly List<ulong> scenesGone = new List<ulong>();
         bool openSent;
-        readonly List<string> scenesOpen = new List<string>(); // What the editor had open as this started
+        readonly List<string> scenesOpen = new List<string>(); // What the editor has open, till that's sent
 
         void FollowScenes(int count)
         {
             if (sourceType < 0) return;
-            scenesWanted.Clear();
+            sceneRoots.Clear();
             for (var i = 0; i < count; i++)
             {
                 if (!SourceOf(i, out var asset, out var node) || node != 0) continue;
                 var a = Map.Of(asset);
-                if (a != null && a.scene) scenesWanted.Add(asset);
-            }
-            foreach (var asset in scenesWanted)
-            {
-                var path = Map.Of(asset).path;
-                scenesShown.Add(path);
-                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneByPath(path);
-                if ((scene.IsValid() && scene.isLoaded) || scenesLoading.Contains(path)) continue;
-                var loading = LoadScene(path);
-                if (loading == null) continue;
-                scenesLoading.Add(path);
-                loading.completed += _ => scenesLoading.Remove(path);
+                if (a != null && a.scene) sceneRoots[Packet.Entity(i).Id] = asset;
             }
             // What the match had and has no more
-            foreach (var a in Map.assets)
+            scenesGone.Clear();
+            foreach (var pair in sceneOf)
             {
-                if (!a.scene || !scenesShown.Contains(a.path)) continue;
-                var still = false;
-                foreach (var asset in scenesWanted) still |= Map.Of(asset).path == a.path;
-                if (still) continue;
-                if (scenesLoading.Contains(a.path)) continue; // Let go of while it loads: unloaded once it has
-                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneByPath(a.path);
-                if (scene.IsValid() && scene.isLoaded && UnityEngine.SceneManagement.SceneManager.sceneCount > 1)
+                if (!sceneRoots.ContainsKey(pair.Key)) scenesGone.Add(pair.Key);
+            }
+            foreach (var root in scenesGone)
+            {
+                Unload(sceneOf[root]);
+                sceneOf.Remove(root);
+            }
+            scenesClosed.RemoveWhere(root => !sceneRoots.ContainsKey(root));
+            // What it has that's not shown yet
+            foreach (var pair in sceneRoots)
+            {
+                if (sceneOf.ContainsKey(pair.Key) || scenesClosed.Contains(pair.Key) || Loading(pair.Key)) continue;
+                var path = Map.Of(pair.Value).path;
+                var open = Unclaimed(path);
+                if (open.IsValid())
                 {
-                    UnityEngine.SceneManagement.SceneManager.UnloadSceneAsync(scene);
+                    sceneOf[pair.Key] = open;
+                    continue;
                 }
-                scenesShown.Remove(a.path);
+                if (LoadScene(path) != null) sceneLoads.Add((pair.Key, path));
             }
             OpenEditorScenes();
+        }
+
+        bool Loading(ulong root)
+        {
+            foreach (var load in sceneLoads)
+            {
+                if (load.root == root) return true;
+            }
+            return false;
+        }
+
+        // A loaded instance of the scene at `path` that no root has, or none.
+        UnityEngine.SceneManagement.Scene Unclaimed(string path)
+        {
+            for (var i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded || scene.path != path || sceneUnloads.Contains(scene)) continue;
+                var claimed = false;
+                foreach (var had in sceneOf.Values) claimed |= had == scene;
+                if (!claimed) return scene;
+            }
+            return default;
+        }
+
+        void Unload(UnityEngine.SceneManagement.Scene scene)
+        {
+            if (!scene.IsValid() || !scene.isLoaded || UnityEngine.SceneManagement.SceneManager.sceneCount <= 1) return;
+            sceneUnloads.Add(scene);
+            UnityEngine.SceneManagement.SceneManager.UnloadSceneAsync(scene);
+        }
+
+        // The instance of its scene that shows the scene's entity `row` of `asset`: its root's, the entity up its
+        // parents that's its scene's node 0; else the first open.
+        UnityEngine.SceneManagement.Scene SceneOf(int row, int asset)
+        {
+            for (var at = row; (uint)at < (uint)Packet.EntityCount;)
+            {
+                if (SourceOf(at, out var upAsset, out var upNode) && upAsset == asset && upNode == 0)
+                {
+                    return sceneOf.TryGetValue(Packet.Entity(at).Id, out var scene) ? scene : default;
+                }
+                var entity = Packet.Entity(at);
+                if (!entity.HasParent) break;
+                at = (int)entity.Parent;
+            }
+            return UnityEngine.SceneManagement.SceneManager.GetSceneByPath(Map.Of(asset).path);
+        }
+
+        // A scene loaded: one of this runner's for a root, which it shows (or unloads, if its root's gone meanwhile);
+        // or another's (the editor's, a game's own C#), which the match has too.
+        void SceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+        {
+            for (var i = 0; i < sceneLoads.Count; i++)
+            {
+                if (sceneLoads[i].path != scene.path) continue;
+                var root = sceneLoads[i].root;
+                sceneLoads.RemoveAt(i);
+                if (sceneRoots.ContainsKey(root) && !sceneOf.ContainsKey(root)) sceneOf[root] = scene;
+                else Unload(scene);
+                return;
+            }
+            if (!openSent)
+            {
+                if (!scenesOpen.Contains(scene.path)) scenesOpen.Add(scene.path);
+                return;
+            }
+            SendScene("UnityEngine.OpenScene", AssetOfScene(scene.path), false);
+        }
+
+        // A scene unloaded: one this runner unloaded, or another's doing, which the match lets go of too.
+        void SceneUnloaded(UnityEngine.SceneManagement.Scene scene)
+        {
+            if (sceneUnloads.Remove(scene)) return;
+            var path = scene.path;
+            foreach (var pair in sceneOf)
+            {
+                if (pair.Value != scene) continue;
+                path = Map.Of(sceneRoots.TryGetValue(pair.Key, out var asset) ? asset : -1)?.path ?? path;
+                scenesClosed.Add(pair.Key);
+                sceneOf.Remove(pair.Key);
+                break;
+            }
+            if (!openSent)
+            {
+                scenesOpen.Remove(path);
+                return;
+            }
+            SendScene("UnityEngine.CloseScene", AssetOfScene(path), false);
+        }
+
+        int AssetOfScene(string path)
+        {
+            for (var k = 0; k < Map.assets.Length; k++)
+            {
+                if (Map.assets[k].scene && Map.assets[k].path == path) return k;
+            }
+            return -1;
         }
 
         static AsyncOperation LoadScene(string path)
@@ -909,33 +1033,39 @@ namespace Tide
         }
 
         // In the editor, the match has the scenes the editor has open, of those holding Tide entities, rather than
-        // Build Settings' first: UnityEngine.OpenScene, which the match takes from its first player alone, the server's as it
-        // started. Sent once, as this machine runs the match.
+        // Build Settings' first: UnityEngine.OpenScene, which the match takes from its first player alone, the server's
+        // as it started. Sent once this machine runs the match; scenes loaded and unloaded after, by the editor or the
+        // game's C#, are sent as they are (SceneLoaded, SceneUnloaded).
         void OpenEditorScenes()
         {
-            if (!Application.isEditor || openSent || status.server == 0 || State != TideSessionState.Connected) return;
+            if (openSent || !CanSendScenes()) return;
             openSent = true;
-            var type = Schema.TypeIndex("UnityEngine.OpenScene");
-            var t = Schema.Type(type);
-            var assetField = t?.Field("asset");
-            var onlyField = t?.Field("only");
-            if (assetField == null || onlyField == null) return;
-            var open = new List<int>();
+            var first = true;
             foreach (var path in scenesOpen)
             {
-                for (var k = 0; k < Map.assets.Length; k++)
-                {
-                    if (Map.assets[k].scene && Map.assets[k].path == path) open.Add(k);
-                }
+                var asset = AssetOfScene(path);
+                if (asset < 0) continue;
+                SendScene("UnityEngine.OpenScene", asset, first); // The first: these, and no others
+                first = false;
             }
+            scenesOpen.Clear();
+        }
+
+        bool CanSendScenes() => Application.isEditor && embed != IntPtr.Zero && status.server != 0 && State == TideSessionState.Connected;
+
+        // UnityEngine.OpenScene or CloseScene for the scene `asset` (none for -1, or where this machine can't).
+        void SendScene(string command, int asset, bool only)
+        {
+            if (asset < 0 || !CanSendScenes()) return;
+            var type = Schema.TypeIndex(command);
+            var t = Schema.Type(type);
+            var assetField = t?.Field("asset");
+            if (assetField == null) return;
             var value = new byte[Math.Max(1, (int)t.size)];
-            for (var i = 0; i < open.Count; i++)
-            {
-                Array.Clear(value, 0, value.Length);
-                BitConverter.GetBytes(open[i]).CopyTo(value, (int)assetField.offset);
-                value[onlyField.offset] = (byte)(i == 0 ? 1 : 0); // The first: these, and no others
-                fixed (byte* bytes = value) library.Command(embed, (uint)type, 0, 0, bytes, (uint)value.Length);
-            }
+            BitConverter.GetBytes(asset).CopyTo(value, (int)assetField.offset);
+            var onlyField = t.Field("only");
+            if (onlyField != null) value[onlyField.offset] = (byte)(only ? 1 : 0);
+            fixed (byte* bytes = value) library.Command(embed, (uint)type, 0, 0, bytes, (uint)value.Length);
         }
 
         static T Ensure<T>(GameObject on) where T : Component

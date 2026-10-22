@@ -1,5 +1,19 @@
 # Audio
 
+## Inside another program (2026-10-22)
+
+An embedded game (`tide/embed.h`, Unity) now hands its frames' audio to the
+mixer as a window does, and the other program renders it on its own audio
+thread through `tide_embed_audio`, which is `tide_audio_out_fill` (it says
+`tide_mixer_rendered_elsewhere(true)`, so a reload's forget waits for that
+thread; NULL with 0 frames says the thread stopped). Its microphone comes in
+through `tide_embed_microphone` (`tide_audio_in_push`) while
+`tide_embed_status.microphone` says a frame names a microphone voice. On the
+web the page's program opens its own AudioWorklet at its first audio frame.
+The mixer itself didn't change: the pinned mix is the same. `embed_audio` in
+`tide_platform_embed` covers it; Unity's side is in `notes/unity.md`, Audio and
+the editor's workflow.
+
 ## The listener alone includes tide/audio.h (2026-10-22)
 
 A game that called `Audio.SetListener` or `Audio.SetFalloff` before declaring

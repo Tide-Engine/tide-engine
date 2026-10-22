@@ -66,6 +66,73 @@ public sealed unsafe class BounceTests
         Assert.IsFalse(SceneManager.GetSceneByPath(Bonus).isLoaded, "and unloaded it as the match did");
     }
 
+    // Every Bonus open with its Totem showing an entity
+    static System.Collections.Generic.List<TideEntityView> Totems()
+    {
+        var totems = new System.Collections.Generic.List<TideEntityView>();
+        for (var i = 0; i < SceneManager.sceneCount; i++)
+        {
+            var scene = SceneManager.GetSceneAt(i);
+            if (scene.path != Bonus || !scene.isLoaded) continue;
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                var totem = root.transform.Find("Totem");
+                var view = totem != null ? totem.GetComponent<TideEntityView>() : null;
+                if (view != null && view.Showing) totems.Add(view);
+            }
+        }
+        return totems;
+    }
+
+    static int Open(string path)
+    {
+        var open = 0;
+        for (var i = 0; i < SceneManager.sceneCount; i++) open += SceneManager.GetSceneAt(i).path == path ? 1 : 0;
+        return open;
+    }
+
+    // A scene the match loads twice is two of Unity's, each showing its own entities; both unloaded as the match
+    // unloads them.
+    [UnityTest]
+    public IEnumerator ASceneLoadedTwiceIsTwo()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        Assert.IsTrue(runner.Send(new Tide.Game.ShowBonus { on = true, twice = true }));
+        yield return Until(() => Totems().Count == 2, 10f);
+        var totems = Totems();
+        Assert.AreEqual(2, totems.Count, "two of Bonus, each with its Totem showing");
+        Assert.AreNotEqual(totems[0].Entity.Id, totems[1].Entity.Id, "each its own entity");
+        Assert.IsTrue(totems[0].gameObject.scene != totems[1].gameObject.scene, "in a scene of its own");
+        runner.Send(new Tide.Game.ShowBonus { on = false });
+        yield return Until(() => Open(Bonus) == 0, 10f);
+        Assert.AreEqual(0, Open(Bonus), "both unloaded as the match did");
+    }
+
+    // A scene loaded during Play by others than the match (the editor, the game's own C#) is the match's too, and one
+    // they unload goes from the match: loaded again, it's back.
+    [UnityTest]
+    public IEnumerator ScenesLoadedDuringPlayAreTheMatchs()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        yield return Connected(runner);
+        yield return Until(() => false, 0.5f); // The scenes open as Play started are sent
+        for (var round = 0; round < 2; round++)
+        {
+            yield return SceneManager.LoadSceneAsync(Bonus, LoadSceneMode.Additive);
+            yield return Until(() => Totem() != null, 10f);
+            Assert.IsNotNull(Totem(), $"the match has Bonus's entities, shown in the scene loaded (round {round})");
+            Assert.AreEqual(1, Open(Bonus), "in that one");
+            yield return SceneManager.UnloadSceneAsync(SceneManager.GetSceneByPath(Bonus));
+            yield return Until(() => false, 1f);
+            Assert.AreEqual(0, Open(Bonus), "unloaded, and not loaded again for the match");
+        }
+    }
+
     // With Bonus alone open, the match has it rather than Build Settings' first, Bounce, which it loaded as Main
     // started and then let go, and Unity with it.
     [UnityTest]
@@ -263,6 +330,25 @@ public sealed unsafe class BounceTests
         Assert.AreEqual(ball.gameObject, target, "sent to the ball");
         Assert.Greater(speed, 2f, "with the event's fields");
         Assert.AreEqual(heard, ball.GetComponent<Tide.Game.Ball>().heard, "its local field, as the local handler counted");
+    }
+
+    // The game's sound plays through Unity's: the ball's bonk as it lands (its local handler's Audio.Play), Tide's
+    // mixer read on Unity's audio thread through the runner's AudioSource. Silent in a run nobody watches
+    // (TIDE_HIDDEN), where the mixer's read all the same.
+    [UnityTest]
+    public IEnumerator TheGamesSoundPlaysThroughUnitys()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        var audio = runner.GetComponentInChildren<TideAudio>();
+        Assert.IsNotNull(audio, "the runner plays the game's sound");
+        Assert.IsTrue(audio.GetComponent<AudioSource>().isPlaying, "through an AudioSource");
+        var loudest = 0f;
+        yield return Until(() => (loudest = Mathf.Max(loudest, audio.TakeLoudest())) > 0.1f, 10f);
+        Assert.Greater(audio.Reads, 0, "Unity's audio thread reads the mixer");
+        Assert.Greater(loudest, 0.1f, "the bonk was heard as the ball landed");
+        Assert.Less(loudest, 1f);
     }
 
     // A command's text reaches the match, a command goes to the entity a GameObject shows, and a singleton is live.

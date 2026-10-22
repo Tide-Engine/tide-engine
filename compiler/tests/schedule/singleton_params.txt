@@ -4,6 +4,7 @@ A system starts once everything it runs after is done.
 stage 1  Write  (once)
          writes Counter
          alongside nothing
+
 stage 2  ReadOnce  (once)
          reads Counter
          writes Seen
@@ -14,6 +15,7 @@ stage 2  ReadEach  (per entity)
          writes Unit
          after Write: it writes Counter, which this reads
          alongside ReadOnce
+
 stage 3  WriteAgain  (once)
          writes Counter
          after Write: both write Counter (and through ReadOnce)

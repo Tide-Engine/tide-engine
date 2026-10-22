@@ -137,7 +137,8 @@ Unity object field. At bake tidec maps each GUID to its file through `.meta`:
   Unity UI marks what it consumed.
 - **Owner:** simulation stays threaded; views and everything touching Unity run
   on Unity's main thread, during the frame step.
-- Tide's audio isn't used.
+- Tide's audio plays through Unity's (2026-10-22, asked for by the owner:
+  "Audio and the editor's workflow" below).
 
 ## Native boundary
 
@@ -816,9 +817,9 @@ named), `unity_prefabs_and_scenes_as_tide_prefabs` (the fixture's
 `Assets/Fixture` names), and the Sample's play mode test, whose code uses the
 short names.
 
-Gaps: what the editor opens while playing isn't sent; a client in the editor
-sends nothing (the server decides); `Scene.Load` of the same Unity scene twice
-binds both roots' entities to one set of GameObjects.
+Gaps: a client in the editor sends nothing (the server decides). Scenes opened
+during Play and a scene loaded twice were fixed on 2026-10-22 ("Audio and the
+editor's workflow").
 
 ### Web as built (2026-10-20): option B, packaged
 
@@ -1059,6 +1060,120 @@ OnGUI path (`TideDraw.cs`) remains only for a GPU `TideRender.Supported` refuses
     through its Vulkan one, which runs them.
   - No Tide API reads pixels in an embedded game: `target_read` serves headless
     captures and the platform tests, so it reads nothing in Unity, by design.
+
+### Audio and the editor's workflow (2026-10-22)
+
+The owner asked for "audio working and deal with those editor workflow issues":
+Tide's sound in Unity, and four gaps listed after the renderer: unsaved edits,
+scenes opened during Play, a scene loaded twice, and `#` in names. All the
+picks below are mine (Provisional).
+
+- **Audio.** An embedded frame hands its audio to the mixer as a window's does
+  (`tide/host.h` calls `tide_platform_audio` embedded too; `platform.c`'s
+  embedded branch submits and goes no further natively). Embed ABI 5:
+  - `tide_embed_audio(e, out, frames, rate, channels)` is `tide_audio_out_fill`,
+    the pull every device backend uses, called from the other program's audio
+    thread. It says `tide_mixer_rendered_elsewhere(true)`, so a reload's forget
+    waits for that thread. NULL with 0 frames says the thread stopped. Silence
+    with no embed, nothing for channels outside 1 to 8.
+  - `tide_embed_microphone(e, samples, frames, rate, channels)` is
+    `tide_audio_in_push`, from the frame's thread. `tide_embed_status.microphone`
+    (one of the old pad bytes, same size) says a frame names a microphone voice.
+  - `tide_embed_destroy` forgets the mixer first, as its clips go with the game.
+  - Both are in `embed_exports` (`compiler/cli/build.c`), which the embed DLL
+    exports. A function missing there links into nothing: `Bind` then fails.
+  - **C#:** `TideAudio` (`Runtime/TideAudio.cs`) is made by the runner on a child
+    GameObject, "Tide Audio": an AudioSource of its own (so a user's AudioSource
+    on the runner is never filtered), a silent looping clip so the filter runs,
+    `OnAudioFilterRead` writing the mixer. The runner's `audioOutput` mixer
+    group is the source's. The audio thread reads the embed under a lock;
+    `Detach` (before `library.Destroy`) clears it under the lock and then tells
+    Tide the thread stopped, so destroy's forget never waits on a thread that's
+    waiting on the lock. Under `TIDE_HIDDEN` the block is cleared after it's
+    read: silent, while `TakeLoudest`/`Reads` (public, a level meter) still see
+    the mix. `Listen` opens Unity's `Microphone` (48 kHz asked, its own rate
+    used) while the status says so, never under `TIDE_HIDDEN`, asking Android's
+    and iOS's permission first, tried once a second.
+  - **Web:** Unity's WebGL has no `OnAudioFilterRead` or `Microphone`, so no
+    `TideAudio` is made there. Tide's program on the page opens its own
+    AudioWorklet at its first audio frame (`embedded_heard` in `platform.c`)
+    and the page's microphone through the usual path. tide.js resumes the
+    context on the document's first press, which Unity's canvas gets.
+  - **Sample:** `Assets/Tide/bonk.wav` (made by a script: a falling sine, 0.18 s)
+    plays from the ball's local `Heard` handler, louder for a faster landing.
+- **Unsaved scenes.** At Play, `TideBuildService.Sync` saves a copy of each
+  loaded, dirty scene that has a path (`EditorSceneManager.SaveScene(scene,
+  "Library/Tide/unsaved/<path>", true)`), deletes copies of scenes that aren't
+  dirty, says `changed` when a copy was made, changed or deleted, then
+  `sync <n>`. Play is cancelled and entered again once tide says
+  `tide: synced <n>` for the last n asked (the `tide unity` loop prints it when
+  no build is waiting). A batch run skips all of this. Each Play with a change
+  pending waits for that build, and for the loop's 250 ms ticks.
+  - **Syncs are numbered** because tide takes one stdin line per tick
+    (`sys_typed_line` holds one line at a time): a second `sync` can arrive
+    after the build that answered the first, so tide answers it again. Without
+    numbers, the editor took that stale answer for the next question's and read
+    the build before it happened.
+  - **The copy is saved to `Temp/TideUnsaved.unity` and then copied** into
+    `Library/Tide/unsaved`, as the bytes are compared with the last copy anyway.
+  - **`TideBuildService` does nothing in an asset import worker**
+    (`AssetDatabase.IsAssetImportWorkerProcess`). A worker is a Unity process
+    of its own that runs `[InitializeOnLoad]` constructors with its own
+    `SessionState`: it emptied the unsaved folder as a "new session" in the
+    middle of a test, and its `delayCall` could start another `tide unity`.
+  - tide reads `<project>/Library/Tide/unsaved/<asset>` in an asset's place
+    where it exists (`read_asset` in `unity_assets.c`), and the copies are in
+    `unity_assets_stamp`. A file was picked over stdin commands because tide
+    restarts at every domain reload (entering Play among them): a restarted
+    tide has the copies with no telling.
+  - A copy goes when its scene is saved, closed or opened again (not while Play
+    comes or goes, when Unity reopens scenes), and the folder is emptied once
+    per editor session (`SessionState`), in case an editor quit with copies.
+  - Not covered: an unsaved prefab in Prefab Mode with auto-save off (auto-save
+    is Unity's default), and a scene that was never saved (no path).
+- **Scenes during Play.** The runner listens to `sceneLoaded`/`sceneUnloaded`.
+  A load or unload that isn't its own is sent: before the editor's scenes went
+  (`openSent`), it changes the list to send; after, `UnityEngine.OpenScene
+  { asset, only = false }` or the new `UnityEngine.CloseScene { asset }`
+  (opener only, unloads what `LoadedScenes` loaded for that asset). Editor only,
+  and only from the machine that runs the match, as Open is.
+- **A scene loaded twice.** Each scene root entity (node 0 of a scene asset)
+  gets its own Unity scene instance (`sceneOf`, by entity id): an open, loaded
+  instance of that path no root has, else a new additive load claimed when its
+  `sceneLoaded` comes (`sceneLoads`, in order). `MakeView` finds an entity's
+  scene through its parents to its root. The fallback is the first open
+  instance. A root whose instance someone else unloaded isn't loaded again
+  (`scenesClosed`) until it goes. Unloads the runner does are kept by `Scene`,
+  so their `sceneUnloaded` sends nothing. Unity 6.6's `Scene.handle` is a
+  `SceneHandle`, whose conversion to int is an error, so scenes are compared
+  as `Scene`s.
+- **Names with `#`, `/` or `\`.** A node path escapes them with `\`
+  (`game_object_path`); `TideUnityMap.Parts` splits at an unescaped `/`, and
+  `Split` takes the last unescaped `#` followed by digits as the sibling's
+  number, then unescapes the name.
+- **Tests:**
+  - `tide_platform_embed`'s `embed_audio`: silence, a square wave from an
+    `audio` declaration at 48 kHz stereo and 44.1 kHz mono, channels 0 refused,
+    the microphone flag, a constant pushed at 44.1 kHz stereo heard at about
+    0.5, and silence after destroy.
+  - `tide_cli_tests`: `unity_unsaved_scene_read_from_the_editor_copy` (a copy
+    of the fixture in the build folder; the stamp changes and goes back),
+    CloseScene's handler, and the fixture's `M#1/k` GameObject (entity `M_1_k`,
+    node path `M\#1\/k`).
+  - EditMode `UnsavedTests`: a Spinner's speed changed through a
+    `SerializedObject` and not saved is in the built `.tprefab` after `Sync`,
+    and the scene opened again takes it back out.
+  - PlayMode: `TheGamesSoundPlaysThroughUnitys` (the bonk read on Unity's audio
+    thread in a batch run, silent under `TIDE_HIDDEN`), `ASceneLoadedTwiceIsTwo`
+    (`ShowBonus { twice }`: two Bonus scenes, each Totem its own entity), and
+    `ScenesLoadedDuringPlayAreTheMatchs` (Bonus loaded and unloaded by a
+    script, twice, which needs CloseScene the second time).
+  - Not run: Play's cancel and resume (batch runs skip it), Unity's
+    microphone, a phone, and audio in a WebGL player by ear.
+  - Runs: native debug 2512/2512, web debug 2413/2413; Unity EditMode 16/16
+    and PlayMode 14/14 on D3D11, PlayMode 11 with 3 GPU tests skipped under
+    `-nographics` (Unity's audio thread runs in batch mode); the Sample's WebGL
+    build with `web-smoke.mjs` PASS.
 
 ### The game is Assets (2026-10-21)
 

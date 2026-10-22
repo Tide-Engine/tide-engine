@@ -4,16 +4,19 @@ A system starts once everything it runs after is done.
 stage 1  Paint  (once)
          writes Field
          alongside nothing
+
 stage 2  Blur  (once, 1 parallel loop)
          writes Field
          after Paint: both change text, lists or grids, which the match keeps in one heap; both write Field
          alongside nothing
+
 stage 3  Fall  (once, 2 parallel loops)
          reads Time
          writes Field
          after Paint: both change text, lists or grids, which the match keeps in one heap; both write Field (and through Blur)
          after Blur: both change text, lists or grids, which the match keeps in one heap; both write Field
          alongside nothing
+
 stage 4  Count  (once)
          reads Field
          writes Stats

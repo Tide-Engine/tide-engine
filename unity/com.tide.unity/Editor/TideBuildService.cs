@@ -3,7 +3,9 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Debug = UnityEngine.Debug;
 
 namespace Tide.Editor
@@ -22,16 +24,36 @@ namespace Tide.Editor
 
         static TideBuildService()
         {
+            // An asset import worker is a Unity process of its own, which loads this too: the editor builds, not it
+            if (AssetDatabase.IsAssetImportWorkerProcess()) return;
             AssemblyReloadEvents.beforeAssemblyReload += Stop;
             EditorApplication.quitting += Stop;
             EditorApplication.update += Drain;
             EditorApplication.playModeStateChanged += RefusePlayWithErrors;
             EditorBuildSettings.sceneListChanged += Changed; // Its first scene is the one the match starts with
+            EditorSceneManager.sceneSaved += Saved;
+            EditorSceneManager.sceneClosed += Saved;
+            EditorSceneManager.sceneOpened += (scene, _) => Saved(scene);
+            if (!SessionState.GetBool(SessionKey, false))
+            {
+                // Copies a last session left, of scenes whose changes it never saved
+                SessionState.SetBool(SessionKey, true);
+                try
+                {
+                    if (Directory.Exists(UnsavedFolder)) Directory.Delete(UnsavedFolder, true);
+                }
+                catch (Exception)
+                {
+                    // Another editor of the project has them open: it's that one's
+                }
+            }
             EditorApplication.delayCall += () =>
             {
                 if (TideSettings.instance.buildWhileEditing) Start();
             };
         }
+
+        internal static bool Running => process != null && !process.HasExited;
 
         public static string Describe()
         {
@@ -102,7 +124,94 @@ namespace Tide.Editor
         // --notified, builds then, rather than going over all of Assets to find out.
         public static void Changed()
         {
+            changedSinceBuild = true;
+            changes++;
             Tell("changed");
+        }
+
+        // Play has the open scenes as the editor has them, saved or not: before Play, a copy of each with changes it
+        // hasn't saved goes in Library/Tide/unsaved, which tide reads in its place, and Play waits for tide to have
+        // built everything it's been told of. A scene's copy goes once it's saved, or closed, or opened again.
+        const string SessionKey = "Tide.Session";
+        static bool changedSinceBuild; // tide's been told of a change it hasn't said the build of
+        static int changes, changesSynced; // Changes told; those told before the "sync" asked last
+        static int syncs; // "sync <n>" asked, the last one's answer "tide: synced <n>"
+        static bool copying; // Saving a scene's copy, which is no saving of the scene
+        static bool waiting, resuming; // Play's on hold till tide's synced; Play again
+        internal static bool Synced { get; private set; } = true; // tide said it had built what it was told, last it was asked
+
+        internal static string UnsavedFolder => Path.Combine(TideLibrary.BuildFolder, "unsaved");
+
+        // A scene saved, closed or opened, which has no changes the editor hasn't saved; not as Play comes or goes.
+        static void Saved(Scene scene)
+        {
+            if (!EditorApplication.isPlayingOrWillChangePlaymode) Unsaved(scene.path, false);
+        }
+
+        static string CopyOf(string scene) => "Library/Tide/unsaved/" + scene;
+
+        // Whether `scene` (its path from the project's folder) has a copy, made (`unsaved`) or deleted: true if that
+        // changed it, which tide's then told.
+        static bool Unsaved(string scene, bool unsaved)
+        {
+            if (copying || string.IsNullOrEmpty(scene)) return false;
+            var copy = Path.Combine(TideSettings.ProjectFolder, CopyOf(scene));
+            if (!unsaved)
+            {
+                if (!File.Exists(copy)) return false;
+                File.Delete(copy);
+                Changed();
+                return true;
+            }
+            // Saved where Unity likes, then copied: a file Unity saved a scene's copy to is one it deletes as the scene
+            // closes
+            const string saved = "Temp/TideUnsaved.unity";
+            copying = true;
+            try
+            {
+                var open = SceneManager.GetSceneByPath(scene);
+                if (!open.IsValid() || !EditorSceneManager.SaveScene(open, saved, true)) return false;
+            }
+            finally
+            {
+                copying = false;
+            }
+            var now = File.ReadAllBytes(saved);
+            File.Delete(saved);
+            File.Delete(saved + ".meta");
+            if (File.Exists(copy) && File.ReadAllBytes(copy).AsSpan().SequenceEqual(now)) return false;
+            Directory.CreateDirectory(Path.GetDirectoryName(copy) ?? ".");
+            File.WriteAllBytes(copy, now);
+            Changed();
+            return true;
+        }
+
+        // Copies of the scenes with unsaved changes made, those of others deleted, and tide asked to say when it's
+        // built everything it's been told of: false if there's nothing it hasn't built (or it isn't running).
+        internal static bool Sync()
+        {
+            if (process == null || process.HasExited) return false;
+            var dirty = new System.Collections.Generic.HashSet<string>();
+            for (var i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded || !scene.isDirty || string.IsNullOrEmpty(scene.path)) continue;
+                dirty.Add(scene.path);
+                Unsaved(scene.path, true);
+            }
+            if (Directory.Exists(UnsavedFolder))
+            {
+                foreach (var copy in Directory.GetFiles(UnsavedFolder, "*.unity", SearchOption.AllDirectories))
+                {
+                    var scene = Path.GetRelativePath(UnsavedFolder, copy).Replace('\\', '/');
+                    if (!dirty.Contains(scene)) Unsaved(scene, false);
+                }
+            }
+            if (!changedSinceBuild) return false;
+            Synced = false;
+            changesSynced = changes;
+            Tell("sync " + ++syncs);
+            return true;
         }
 
         static void Tell(string line)
@@ -206,6 +315,13 @@ namespace Tide.Editor
                 state = $"tide ended with {process.ExitCode}";
                 process.Dispose();
                 process = null;
+                Synced = true; // Nothing more comes
+            }
+            if (waiting && Synced)
+            {
+                waiting = false;
+                resuming = true;
+                EditorApplication.isPlaying = true;
             }
             KeepErrorsShown();
         }
@@ -218,7 +334,13 @@ namespace Tide.Editor
             var first = message.Split('\n')[0];
             // A compiler's error or warning says so; the rest of what tide says is progress, and how a build went
             var isError = first.Contains(": error") || first.StartsWith("tide: can't") || first.Contains("FAILED");
-            if (first.StartsWith("tide: built"))
+            if (first.StartsWith("tide: synced"))
+            {
+                if (first != "tide: synced " + syncs) return; // An earlier question's
+                if (changes == changesSynced) changedSinceBuild = false;
+                Synced = true;
+            }
+            else if (first.StartsWith("tide: built"))
             {
                 Finished();
                 building.Clear();
@@ -335,10 +457,19 @@ namespace Tide.Editor
             SessionState.SetInt(CountKey, (int)consoleCount.Invoke(null, null));
         }
 
-        // Play waits for tide's errors to be fixed, as for a script's.
+        // Play waits for tide to build the scenes as they are, saved or not (Sync), and for tide's errors to be fixed,
+        // as for a script's. A batch run (tests) saves what it changes, and has Play as it asks.
         static void RefusePlayWithErrors(PlayModeStateChange change)
         {
-            if (change != PlayModeStateChange.ExitingEditMode || !HasErrors) return;
+            if (change != PlayModeStateChange.ExitingEditMode) return;
+            if (!resuming && !Application.isBatchMode && Sync())
+            {
+                EditorApplication.isPlaying = false;
+                waiting = true;
+                return;
+            }
+            resuming = false;
+            if (!HasErrors) return;
             EditorApplication.isPlaying = false;
             RemoveLocated();
             foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true, true);

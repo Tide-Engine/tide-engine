@@ -2503,7 +2503,7 @@ static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create
                                             "tide_embed_view", "tide_embed_status_of", "tide_embed_request", "tide_embed_command",
                                             "tide_embed_background", "tide_embed_schema", "tide_embed_draw",
                                             "tide_embed_camera", "tide_embed_render", "tide_embed_render_view",
-                                            "tide_embed_render_reset", NULL};
+                                            "tide_embed_render_reset", "tide_embed_audio", "tide_embed_microphone", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -3041,12 +3041,22 @@ int tide_unity(const char *root, const build_options *opts)
     uint64_t stamp = game_stamp(&r.b);
     uint64_t assets = asset_stamp(&r.b);
     int64_t changed_at = -1, assets_changed_at = -1;
+    // The editor waits for the builds of what it said, before Play: "sync <n>", which "tide: synced <n>" answers once
+    // they're done, numbered as lines come one at a time and an answer can cross the next question
+    bool sync = false;
+    char synced[32] = "";
     while (!sys_input_ended()) { // The editor closed tide's input, or went away
         sys_sleep_ms(250);
         char line[64];
         while (sys_typed_line(line, sizeof line)) {
             if (strcmp(line, "changed") == 0) { // --notified: a file of the project changed, which the editor saw
                 changed_at = sys_now_ms();
+                continue;
+            }
+            // Before Play, once the editor's said what changed (its unsaved scenes too)
+            if (strncmp(line, "sync", 4) == 0 && (line[4] == '\0' || line[4] == ' ')) {
+                sync = true;
+                snprintf(synced, sizeof synced, "%s", line + 4);
                 continue;
             }
             if (strcmp(line, "restart") != 0) continue; // The editor asks the running game to start over
@@ -3079,6 +3089,11 @@ int tide_unity(const char *root, const build_options *opts)
             } else {
                 repack(&r);
             }
+        }
+        if (sync && changed_at < 0 && assets_changed_at < 0) { // Nothing waits to build: what was said is built
+            sync = false;
+            printf("tide: synced%s\n", synced);
+            fflush(stdout);
         }
     }
     return 0;

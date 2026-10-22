@@ -1,5 +1,34 @@
 # The schedule and the tick on threads
 
+## Schedule display grouped by stage (2026-10-22)
+
+`print_schedule` groups systems by increasing dependency depth, preserving
+their tick order within each stage, with a blank line between stages. A stable
+counting pass builds a separate display array in linear time; it does not
+reorder the program's systems, dependencies, queued effects or generated jobs.
+`tide schedule`, `tidec --schedule` and game schedule targets share this output.
+Stage numbers remain dependency depths, with no barrier between stages.
+
+The existing exact-output fixtures cover independent late-declared systems
+moving beside earlier systems of their stage, stable ordering within stages,
+named phases and unchanged views/event-handler sections. The schedule guide's
+demo now puts Steer and Expire together and explains when Fire can start.
+The Box3D package's order fixture also reads this display; its expected names
+now follow stage grouping for independent game/package systems.
+Validation: warning-free full native/web debug builds with Clang 23.1.2 and
+Node 24.21.0. The full native suite passed 2,553 of 2,554 tests; its sole failure
+was the Box3D display expectation above. After refreshing it, all 23 schedule
+and package-order checks pass. All 2,416 web tests pass, including WebGL,
+D3D11 and WebGPU. The production docs build passes, the entire demo schedule
+matches its guide example exactly, and all 20 compiler schedule goldens were
+checked to change only stable stage ordering and group spacing. Diff checks
+pass. Other operating systems, Android and sanitizers were not run locally;
+no CI workflow was dispatched.
+
+Merged origin/dev's documentation navigation changes, preserving both new
+docs-site note entries at their shared insertion point. The merged production
+docs build passes; there was no compiler or runtime overlap.
+
 Cache groups in the desktop pool (2026-10-20, platform/src/jobs.c): cores that
 share a last-level cache are a group, found on Windows from
 GetLogicalProcessorInformationEx (the largest unified cache level; only where

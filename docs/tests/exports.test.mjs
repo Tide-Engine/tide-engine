@@ -113,6 +113,11 @@ async function exportsOverHttp(base, compareSource) {
     assert.equal(new Set([...all.values()].map(({ metadata }) => metadata.documentation_sha256)).size, 1, 'one source fingerprint across downloads');
     for (const parsed of all.values()) validateLinks(parsed, all);
 
+    const samples = all.get('/guide/samples');
+    const sourceLinks = destinations(samples.tokens).filter((href) => href.startsWith('https://github.com/Tide-Engine/tide-engine/tree/dev/'));
+    assert.equal(sourceLinks.length, 14, 'every sample keeps its source link in Markdown exports');
+    assert.equal(new Set(sourceLinks).size, 14, 'each sample links to its own source folder');
+
     const indexResponse = await fetch(`${base}/llms.txt`);
     assert.equal(indexResponse.status, 200);
     assert.match(indexResponse.headers.get('content-type'), /^text\/plain/);

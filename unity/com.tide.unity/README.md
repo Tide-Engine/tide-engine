@@ -57,15 +57,21 @@ using UnityEngine.Scenes;
 
 Prefab instances, nested prefabs and
 variants work as in Unity: what an instance changes goes over its prefab's,
-field by field. tide reads saved files, so save a prefab or scene to put it in
-the game.
+field by field. tide reads saved files, so save a prefab to put it in the game.
+A scene you haven't saved is Play's as you have it: Play writes a copy of each
+open scene with unsaved changes, which tide reads in its place, and starts
+once tide has built them. A GameObject's name can be anything, `#` and `/`
+included.
 
 The match decides which scenes are loaded, and Unity follows: Build Settings'
 first scene loads as Main starts, as a player build starts with it, and the
 game's code loads and unloads the others (`Scene.Load(Level)`), which Unity
 loads beside the rest and unloads as the match does. In the editor, Play has
-the scenes you have open instead, and makes a `TideRunner` if they have none.
-Put every scene the match loads in Build Settings, for players.
+the scenes you have open instead, and makes a `TideRunner` if they have none;
+a scene you load or unload during Play, in the Hierarchy or from a script, is
+loaded or unloaded in the match too. A scene the match loads twice is two of
+Unity's, each with its own GameObjects. Put every scene the match loads in
+Build Settings, for players.
 
 Packages work as in any Tide game: run `tide add rooms` (or a git URL) in any
 folder of `Assets`, or type it in `Assets/tide.packages`' inspector and press
@@ -135,9 +141,17 @@ an Animator's state or particles, in `OnDisable` or `OnEnable`. For a pool of
 your own, set `TideRunner.Spawner` to an `ITideSpawner`, whose `Make(prefab)`
 and `Release(prefab, made)` replace Instantiate and Destroy.
 
-What the game's Tide views draw with `Draw` (2D: shapes, lines, meshes and
-text) is drawn over Unity's frame, in any render pipeline, while the runner's
-"Draw Tide" is on. 3D meshes, textures and the game's own shaders aren't yet.
+What the game's Tide views draw with `Draw` is drawn in Unity's frame while
+the runner's "Draw Tide" is on: 2D, text, 3D with the camera's depth, render
+targets and the game's own shaders, in Unity's built-in render pipeline and in
+URP.
+
+The game's sound (`Audio.Play`, `Sound` fields, its `audio` declarations)
+plays through Unity's audio: an AudioSource under the runner, "Tide Audio", so
+Unity's volume and mute apply, through the runner's Audio Output mixer group.
+`Clip.Microphone` is Unity's microphone, which a phone asks the player for the
+first time the game listens. In a WebGL player Tide's program plays through the
+page itself, and hears the page's microphone.
 
 ## Build
 

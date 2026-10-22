@@ -4,23 +4,27 @@ A system starts once everything it runs after is done.
 stage 1  Shiver  (per entity)
          writes Body
          alongside Prowl
+stage 1  Prowl  (per entity)
+         writes Body
+         alongside Shiver, March, Count, Pass
+
 stage 2  March  (per entity)
          writes Body
          after Shiver: both write Body
          alongside Prowl
-stage 1  Prowl  (per entity)
-         writes Body
-         alongside Shiver, March, Count, Pass
+
 stage 3  Count  (per entity)
          reads Body
          writes Timer
          after March: it writes Body, which this reads
          alongside Prowl
+
 stage 4  Pass  (per entity)
          reads Timer
          writes Owner
          after Count: it writes Timer, which this reads
          alongside Prowl
+
 stage 5  Drive  (per entity)
          writes Body
          after Shiver: both write Body (and through March)
@@ -29,6 +33,7 @@ stage 5  Drive  (per entity)
          after Count: it reads Body, which this writes (and through Pass)
          after Pass: it writes Owner, which this reads
          alongside nothing
+
 stage 6  Wander  (per entity)
          writes Body
          after Prowl: both write Body (and through Drive)
