@@ -41,6 +41,7 @@ typedef struct host_match {
     tide_server *server;
     host_queue queue;
     double empty_since, arrived;
+    bool kept; // A shard: it runs with no one in it (tide_hosting_keep)
 } host_match;
 
 typedef struct host_peer {
@@ -63,6 +64,7 @@ struct tide_hosting {
     uint64_t next_match, next_peer;
     uint32_t count;
     double now;
+    uint64_t front; // What a request for match 0 joins (tide_hosting_front), or 0
 };
 
 struct tide_hosting_client {
@@ -350,10 +352,13 @@ bool tide_hosting_resolve(tide_hosting *h, const uint64_t request, const tide_ho
 
 static void on_request(tide_hosting *h, const tide_address from, const uint64_t nonce, tide_reader *r)
 {
-    const uint64_t match = tide_read_u64(r);
+    const uint64_t asked = tide_read_u64(r);
     const uint8_t *simulation = tide_read_bytes(r, 32);
     const uint16_t cn = tide_read_u16(r), pn = tide_read_u16(r);
-    if (cn > TIDE_HOSTING_CREDENTIAL_BYTES || pn > TIDE_HOSTING_PARAMETER_BYTES || (match && pn)) return;
+    if (cn > TIDE_HOSTING_CREDENTIAL_BYTES || pn > TIDE_HOSTING_PARAMETER_BYTES || (asked && pn)) return;
+    // A sharded world's players join it at its front, its root shard, by asking for a match
+    const uint64_t match = !asked && h->front ? h->front : asked;
+    if (match && pn) return;
     const uint8_t *credential = tide_read_bytes(r, cn), *parameters = tide_read_bytes(r, pn);
     if (r->failed || r->at != r->size) return;
     host_peer *p = NULL;
@@ -452,7 +457,7 @@ void tide_hosting_update(tide_hosting *h, const double now)
         if (!m->id) continue;
         tide_server_update(m->server, now);
         if (tide_server_player_count(m->server)) m->empty_since = now;
-        if (now - m->empty_since >= h->desc.idle_seconds
+        if ((!m->kept && now - m->empty_since >= h->desc.idle_seconds)
             || (h->desc.game->ended && h->desc.game->ended(tide_server_world(m->server))))
             (void)tide_hosting_stop(h, m->id);
     }
@@ -467,6 +472,24 @@ void tide_hosting_update(tide_hosting *h, const double now)
 }
 
 uint32_t tide_hosting_match_count(const tide_hosting *h) { return h ? h->count : 0; }
+
+tide_server *tide_hosting_server(tide_hosting *h, const uint64_t match)
+{
+    host_match *m = h ? find_match(h, match) : NULL;
+    return m ? m->server : NULL;
+}
+
+bool tide_hosting_keep(tide_hosting *h, const uint64_t match)
+{
+    host_match *m = h ? find_match(h, match) : NULL;
+    if (m) m->kept = true;
+    return m != NULL;
+}
+
+void tide_hosting_front(tide_hosting *h, const uint64_t match)
+{
+    if (h) h->front = match;
+}
 
 const void *tide_hosting_world(const tide_hosting *h, const uint64_t match)
 {

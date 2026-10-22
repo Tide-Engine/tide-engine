@@ -9,6 +9,7 @@
 #include "tide/sha256.h"
 #include "tide/pack.h"
 #include "tide/shard.h"
+#include "tide/hosting.h"
 #include "tide/shard_client.h"
 #include "tide/shards.h"
 
@@ -5456,6 +5457,12 @@ struct tide_session {
     // this machine's player in it, `client` being its home shard's client
     tide_shards *shards;
     tide_shard_client *shard_client;
+    // ...and on a dedicated server, its admission to each shard it follows but
+    // the first (tide_session_desc.open_shard), by shard
+    struct tide_hosting_client **shard_admissions;
+    bool *shard_handed; // ...and whether its client was made with it
+    uint32_t shard_admission_room;
+    uint64_t shard_nonce;
 };
 
 // The session's own time starts over with each match.
@@ -5500,6 +5507,13 @@ static void tear_down(tide_session *s)
     } else {
         tide_client_destroy(s->client);
     }
+    // The admissions of the shards it followed, after the clients that used their endpoints
+    for (uint32_t i = 0; i < s->shard_admission_room; i++) tide_hosting_client_destroy(s->shard_admissions[i]);
+    free(s->shard_admissions);
+    free(s->shard_handed);
+    s->shard_admissions = NULL;
+    s->shard_handed = NULL;
+    s->shard_admission_room = 0;
     tide_shards_destroy(s->shards);
     s->shards = NULL;
     tide_server_destroy(s->server);
@@ -5717,6 +5731,68 @@ void tide_session_kick_all(tide_session *s, const char *message)
     }
 }
 
+// A shard of the dedicated server's sharded world this session joined at its
+// front: let into its match on a transport of its own, then followed there
+static bool shard_join_reach(void *user, const uint32_t shard, const uint64_t match, tide_transport *transport,
+                             tide_address *server)
+{
+    tide_session *s = user;
+    if (!s->desc.open_shard || !match) return false;
+    if (shard >= s->shard_admission_room) {
+        uint32_t room = s->shard_admission_room ? s->shard_admission_room : 8u;
+        while (room <= shard) room *= 2u;
+        tide_hosting_client **grown = realloc(s->shard_admissions, room * sizeof *grown);
+        if (!grown) return false;
+        s->shard_admissions = grown;
+        bool *handed = realloc(s->shard_handed, room * sizeof *handed);
+        if (!handed) return false;
+        s->shard_handed = handed;
+        memset(grown + s->shard_admission_room, 0, (room - s->shard_admission_room) * sizeof *grown);
+        memset(handed + s->shard_admission_room, 0, (room - s->shard_admission_room) * sizeof *handed);
+        s->shard_admission_room = room;
+    }
+    tide_hosting_client **admission = &s->shard_admissions[shard];
+    if (!*admission) {
+        tide_transport network;
+        tide_address at;
+        if (!s->desc.open_shard(s->desc.user, &network, &at)) return false;
+        tide_hosting_client_desc d = {.transport = network, .server = at, .match = match,
+                                      .nonce = s->desc.entropy ? s->desc.entropy() : 0u};
+        if (!d.nonce) d.nonce = next_random(&s->shard_nonce) | 1u;
+        memcpy(d.simulation, s->desc.game->simulation, 32);
+        *admission = tide_hosting_client_create(&d, s->last_now);
+        if (!*admission && network.close) network.close(network.self);
+        return false; // Once it's let in
+    }
+    const tide_hosting_result result = tide_hosting_client_result(*admission);
+    if (result == TIDE_HOSTING_PENDING) return false;
+    if (result != TIDE_HOSTING_ACCEPTED) { // Asked again at the next update
+        tide_hosting_client_destroy(*admission);
+        *admission = NULL;
+        return false;
+    }
+    *transport = tide_hosting_client_transport(*admission);
+    *server = tide_hosting_client_address(*admission);
+    s->shard_handed[shard] = true;
+    return true;
+}
+
+// Admissions to shards the session follows go on as their clients do: an
+// endpoint goes once its client has
+static void update_admissions(tide_session *s)
+{
+    for (uint32_t i = 0; i < s->shard_admission_room; i++) {
+        tide_hosting_client *a = s->shard_admissions[i];
+        if (!a) continue;
+        tide_hosting_client_update(a, s->last_now);
+        if (s->shard_handed[i] && s->shard_client && !tide_shard_client_session(s->shard_client, i)) {
+            tide_hosting_client_destroy(a);
+            s->shard_admissions[i] = NULL;
+            s->shard_handed[i] = false;
+        }
+    }
+}
+
 void tide_session_join(tide_session *s, const tide_transport network, const tide_address server, const double now)
 {
     // Joining the match's next server, it's the same player, whatever the address
@@ -5747,7 +5823,14 @@ void tide_session_join(tide_session *s, const tide_transport network, const tide
         .correct_views = s->desc.correct_views,
         .events = &s->heard,
     };
-    s->client = tide_client_create(&client, now);
+    if (s->desc.game->shards && !migrating) { // A sharded world, joined at its front: its root shard
+        s->shard_nonce = tide_hash(&server, sizeof server) ^ (uint64_t)(now * 1e6);
+        const tide_shard_client_desc sharded = {.client = client, .reach = shard_join_reach, .user = s};
+        s->shard_client = tide_shard_client_create(&sharded, now);
+        s->client = s->shard_client ? tide_shard_client_home(s->shard_client) : NULL;
+    } else {
+        s->client = tide_client_create(&client, now);
+    }
     if (!s->client) {
         if (network.close) network.close(network.self);
         tide_session_fail(s, TIDE_DISCONNECT_FAILED);
@@ -5799,9 +5882,12 @@ void tide_session_update(tide_session *s, const double now)
 
     if (s->loopback) tide_loopback_set_time(s->loopback, t);
     if (s->shard_client) { // Every shard, then this machine's player, now at home wherever its entities are
+        update_admissions(s);
         tide_shard_client_update(s->shard_client, t);
-        tide_shards_update(s->shards, t);
-        tide_shard_client_update(s->shard_client, t);
+        if (s->shards) {
+            tide_shards_update(s->shards, t);
+            tide_shard_client_update(s->shard_client, t);
+        }
         s->client = tide_shard_client_home(s->shard_client);
         s->client->local_receive = s->local_receive;
         s->client->local_user = s->local_user;

@@ -170,6 +170,15 @@ if(TIDE_PLATFORM)
             add_test(NAME tide_server_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
                 "$<TARGET_FILE:tide_server_smoke>" "$<TARGET_FILE:tide_server_pack_client>" room)
             set_tests_properties(tide_server_room PROPERTIES TIMEOUT 20)
+            # A sharded world on a dedicated server, and a player walking across its border
+            tide_add_game(tide_server_shards SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide")
+            tide_add_game(tide_server_shards_client NAME game
+                SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                HOST "${PROJECT_SOURCE_DIR}/platform/tests/server_shards_client.c")
+            target_link_libraries(tide_server_shards_client PRIVATE tide_platform)
+            add_test(NAME tide_server_shards COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
+                "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards)
+            set_tests_properties(tide_server_shards PROPERTIES TIMEOUT 30)
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"

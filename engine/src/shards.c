@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/hosting.h"
+
 // See tide/shards.h. The orchestrator keeps, outside every world: which shard
 // owns each entity that moved (the directory; one that never moved is the
 // shard's whose range its index is in), which messages of each shard it
@@ -269,7 +271,7 @@ static void start_server(tide_shards *s, const uint32_t id, const void *world, c
     d.closed = id != TIDE_SHARD_ROOT; // Players join the world at the root, and a region takes those it's told of
     if (s->desc.transports) s->desc.transports(s->desc.user, id, d.transports);
     shard *sh = &s->shards[id];
-    sh->server = tide_server_create(&d, now);
+    sh->server = s->desc.host_start ? s->desc.host_start(s->desc.user, id, &d, &sh->match) : tide_server_create(&d, now);
     if (!sh->server) tide_out_of_memory();
     sh->used = true;
     if (started) {
@@ -348,7 +350,11 @@ void tide_shards_destroy(tide_shards *s)
     if (!s) return;
     for (uint32_t i = 0; i < s->count; i++) {
         shard *sh = &s->shards[i];
-        if (sh->server) tide_server_destroy(sh->server);
+        if (sh->server && s->desc.host_start) {
+            if (s->desc.host_stop) s->desc.host_stop(s->desc.user, i, sh->match);
+        } else if (sh->server) {
+            tide_server_destroy(sh->server);
+        }
         for (uint32_t k = 0; k < sh->sent_room; k++) map_free(&sh->sent[k]);
         free(sh->sent);
     }
@@ -792,7 +798,7 @@ void tide_shards_update(tide_shards *s, const double now)
     s->now = now;
     s->updates++;
     for (uint32_t i = 0; i < s->count; i++) {
-        if (s->shards[i].used) tide_server_update(s->shards[i].server, now);
+        if (s->shards[i].used && !s->desc.host_start) tide_server_update(s->shards[i].server, now); // A host updates its own
     }
     track_players(s);
     for (uint32_t i = 0; i < s->count; i++) {
@@ -959,4 +965,23 @@ tide_shards *tide_shards_load(const tide_shards_desc *desc, const uint8_t *data,
 fail:
     tide_shards_destroy(s);
     return NULL;
+}
+
+// ---------------------------------------------------------------------------
+// A dedicated server's matches as shards
+
+tide_server *tide_shards_hosting_start(void *hosting, const uint32_t shard, const tide_server_desc *desc, uint64_t *match)
+{
+    tide_hosting *host = hosting;
+    *match = tide_hosting_start(host, desc);
+    if (!*match) return NULL;
+    (void)tide_hosting_keep(host, *match);
+    if (shard == TIDE_SHARD_ROOT) tide_hosting_front(host, *match);
+    return tide_hosting_server(host, *match);
+}
+
+void tide_shards_hosting_stop(void *hosting, const uint32_t shard, const uint64_t match)
+{
+    (void)shard;
+    (void)tide_hosting_stop(hosting, match);
 }

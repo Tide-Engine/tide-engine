@@ -78,6 +78,13 @@ uint64_t tide_hosting_start(tide_hosting *host, const tide_server_desc *desc);
 bool tide_hosting_stop(tide_hosting *host, uint64_t match);
 uint32_t tide_hosting_match_count(const tide_hosting *host);
 const void *tide_hosting_world(const tide_hosting *host, uint64_t match);
+// A sharded world's shards are matches the host keeps (tide/shards.h): the
+// server of one, and keeping it running though no player is in it. The
+// front match is the one a request for match 0 joins, instead of creating
+// one: a sharded world's root, where its players join it (0: none).
+tide_server *tide_hosting_server(tide_hosting *host, uint64_t match);
+bool tide_hosting_keep(tide_hosting *host, uint64_t match);
+void tide_hosting_front(tide_hosting *host, uint64_t match);
 bool tide_hosting_player_identity(const tide_hosting *host, uint64_t match, tide_player_id player, uint8_t identity[32]);
 
 typedef struct tide_hosting_client_desc {

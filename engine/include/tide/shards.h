@@ -39,7 +39,19 @@ typedef struct tide_shards_desc {
     void (*transports)(void *user, uint32_t shard, tide_transport out[2]);
     void *user;
     const tide_jobs *jobs;
+    // A host of its own runs each shard's server as one of its matches
+    // (tide/hosting.h): `host_start` makes it from `desc` and says the match
+    // the host knows it by, the host updates it, and `host_stop` ends it. NULL: the
+    // orchestrator makes, updates and ends them itself.
+    tide_server *(*host_start)(void *user, uint32_t shard, const tide_server_desc *desc, uint64_t *match);
+    void (*host_stop)(void *user, uint32_t shard, uint64_t match);
 } tide_shards_desc;
+
+// A dedicated server's matches as the shards (tide_shards_desc.host_start
+// and .host_stop, with the tide_hosting as `user`): kept running with no one in them,
+// and the root the host's front match, which players asking for match 0 join.
+tide_server *tide_shards_hosting_start(void *hosting, uint32_t shard, const tide_server_desc *desc, uint64_t *match);
+void tide_shards_hosting_stop(void *hosting, uint32_t shard, uint64_t match);
 
 tide_shards *tide_shards_create(const tide_shards_desc *desc, double now);
 void tide_shards_destroy(tide_shards *s);

@@ -11,6 +11,7 @@
 #include "tide/pack.h"
 #include "tide/page.h"
 #include "tide/platform.h"
+#include "tide/shards.h"
 #include "tide/time.h"
 
 #if defined(__wasm__) || defined(__ANDROID__)
@@ -99,6 +100,10 @@ int tide_serve(const tide_serve_desc *desc)
 {
     if (!desc || !desc->game || !desc->pack_name) return 2;
     uint32_t port = 7777, frames = 0;
+    // A sharded game's world (tide/shards.h): regions along x to start with,
+    // each this wide (0: 16 times its shardRange), and the entities a region's
+    // shard owns before it splits (0: never)
+    uint32_t regions = 1, shard_width = 0, shard_most = 0;
     bool udp_only = false;
     tide_hosting_desc host = {.game = desc->game, .entropy = tide_platform_entropy, .secure_peer = serve_secure};
     for (int i = 1; i < desc->argc; i++) {
@@ -111,17 +116,27 @@ int tide_serve(const tide_serve_desc *desc)
             const uint32_t most = strcmp(a, "--port") == 0 ? 65535u
                                 : strcmp(a, "--max-matches") == 0 ? 4096u
                                 : strcmp(a, "--max-connections") == 0 ? TIDE_PLAYERS_MOST
-                                : strcmp(a, "--frames") == 0 ? 1000000000u : 0u;
+                                : strcmp(a, "--frames") == 0 ? 1000000000u
+                                : strcmp(a, "--shards") == 0 ? 256u
+                                : strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0 ? 2000000000u : 0u;
             if (!most || i + 1 >= desc->argc || !serve_number(desc->argv[++i], most, &value) || !value) {
                 fprintf(stderr, "tide: invalid server option %s; use --port, --max-matches, --max-connections, "
-                                "--anonymous, --udp-only or --frames\n", a);
+                                "--anonymous, --udp-only, --frames, or for a sharded game --shards, --shard-width "
+                                "and --shard-most\n", a);
                 return 2;
             }
             if (strcmp(a, "--port") == 0) port = value;
             else if (strcmp(a, "--max-matches") == 0) host.max_matches = value;
             else if (strcmp(a, "--max-connections") == 0) host.max_connections = value;
+            else if (strcmp(a, "--shards") == 0) regions = value;
+            else if (strcmp(a, "--shard-width") == 0) shard_width = value;
+            else if (strcmp(a, "--shard-most") == 0) shard_most = value;
             else frames = value;
         }
+    }
+    if ((regions > 1u || shard_width || shard_most) && !desc->game->shards) {
+        fputs("tide: --shards, --shard-width and --shard-most are for a sharded game: 'settings { shards = true; }'\n", stderr);
+        return 2;
     }
     if (tide_hidden() && !frames) {
         fputs("tide: TIDE_HIDDEN is set; give the server --frames <n> to bound the run\n", stderr);
@@ -146,6 +161,26 @@ int tide_serve(const tide_serve_desc *desc)
     }
     tide_hosting *h = tide_hosting_create(&host, (double)tide_time_now_ns() * 1e-9);
     if (!h) { host.transport.close(host.transport.self); tide_pack_unload(); return 1; }
+    // A sharded game's server runs one world, each of its shards a match, and
+    // a player asking for match 0 joins it at its root
+    tide_shards *world = NULL;
+    if (desc->game->shards) {
+        const double width = shard_width ? (double)shard_width : 16.0 * desc->game->shards->range;
+        const double half = 0.5 * width * (double)regions;
+        const tide_shards_desc shards = {.game = desc->game, .world = {{-half, -half, -half}, {half, half, half}},
+                                         .split = {regions, 1u, 1u}, .most_entities = shard_most,
+                                         .seed = (uint32_t)tide_platform_entropy() & 0x7FFFFFFFu, .jobs = host.jobs,
+                                         .host_start = tide_shards_hosting_start, .host_stop = tide_shards_hosting_stop,
+                                         .user = h};
+        world = tide_shards_create(&shards, (double)tide_time_now_ns() * 1e-9);
+        if (!world) {
+            fputs("tide: the sharded world couldn't start: --max-matches must take every shard\n", stderr);
+            tide_hosting_destroy(h);
+            tide_pack_unload();
+            return 1;
+        }
+        fprintf(stderr, "tide: sharded world of %u region%s; players join match 0\n", (unsigned)regions, regions == 1u ? "" : "s");
+    }
     serve_stopped = 0;
     void (*previous_int)(int) = signal(SIGINT, serve_stop);
     void (*previous_term)(int) = signal(SIGTERM, serve_stop);
@@ -162,6 +197,7 @@ int tide_serve(const tide_serve_desc *desc)
         const double now = (double)tide_time_now_ns() * 1e-9;
         if (host.poll) host.poll(host.user, h, now);
         tide_hosting_update(h, now);
+        if (world) tide_shards_update(world, now); // What the shards' ticks sent each other, and their ghosts
         if (!udp_only) {
             char room[TIDE_ROOM_CODE_LENGTH + 1] = {0};
             tide_platform_room_code(room, sizeof room);
@@ -184,6 +220,7 @@ int tide_serve(const tide_serve_desc *desc)
 #endif
     if (previous_int != SIG_ERR) signal(SIGINT, previous_int);
     if (previous_term != SIG_ERR) signal(SIGTERM, previous_term);
+    tide_shards_destroy(world); // Its matches, before their host
     tide_hosting_destroy(h);
     tide_pack_unload();
     return 0;

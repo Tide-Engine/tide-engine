@@ -5,6 +5,8 @@ import { createRelay } from '../../relay/relay.mjs';
 
 const [serverPath, clientPath, mode] = process.argv.slice(2);
 const room = mode === 'room';
+// A sharded game's server: two regions, 40 units wide, either side of x = 0
+const shards = mode === 'shards' ? ['--shards', '2', '--shard-width', '40'] : [];
 const relay = room ? createRelay({ iceServers: [] }) : null;
 if (relay) await new Promise(resolve => relay.listen(0, '127.0.0.1', resolve));
 const env = { ...process.env, TIDE_HIDDEN: '1', ...(relay ? {
@@ -15,7 +17,7 @@ socket.bind(0, '127.0.0.1');
 await once(socket, 'listening');
 const port = socket.address().port;
 await new Promise(resolve => socket.close(resolve));
-const server = spawn(serverPath, ['--anonymous', ...(!room ? ['--udp-only'] : []), '--port', String(port), '--frames', '5000'],
+const server = spawn(serverPath, ['--anonymous', ...(!room ? ['--udp-only'] : []), '--port', String(port), '--frames', shards.length ? '20000' : '5000', ...shards],
   { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env });
 let output = '';
 server.stderr.on('data', chunk => { output += chunk; });
@@ -25,7 +27,7 @@ const deadline = setTimeout(() => {
   timedOut = true;
   server.kill();
   client?.kill();
-}, 15000);
+}, shards.length ? 25000 : 15000);
 try {
   await new Promise((resolve, reject) => {
     server.on('error', reject);

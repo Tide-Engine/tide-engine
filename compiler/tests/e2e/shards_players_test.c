@@ -1,4 +1,5 @@
 #include "game.h"
+#include "tide/hosting.h"
 #include "tide/shard_client.h"
 #include "tide/shards.h"
 #include "tide_test.h"
@@ -122,6 +123,94 @@ TIDE_TEST(shards_a_player_follows_their_avatar_across_borders)
 
     tide_shard_client_destroy(player);
     tide_shards_destroy(shards);
+    tide_loopback_destroy(net);
+}
+
+// A sharded world on a dedicated server (tide/hosting.h): each shard one of
+// its matches, the root its front, which a request for match 0 joins. A
+// session let in at the front follows its avatar to the shards it walks into,
+// each a match it's let into over a transport of its own.
+static uint32_t next_endpoint;
+static uint64_t entropy_state;
+
+static bool open_shard(void *user, tide_transport *transport, tide_address *server)
+{
+    (void)user;
+    *transport = tide_loopback_endpoint(net, next_endpoint++);
+    *server = tide_loopback_address(1u);
+    return true;
+}
+
+static uint64_t entropy(void)
+{
+    entropy_state += 0x9E3779B97F4A7C15ull;
+    return entropy_state;
+}
+
+static const tide_world *home_avatar(const tide_session *s, Avatar *found)
+{
+    const tide_world *w = tide_session_world(s);
+    int owned = 0;
+    for (uint32_t index = 0; w && index < w->entities.next_unused; index++) {
+        if (!w->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]) {
+            index |= (1u << TIDE_ENTITY_PAGE_SHIFT) - 1u;
+            continue;
+        }
+        const tide_entity e = tide_entity_in_slot(&w->entities, index);
+        if (tide_entity_is_null(e) || !tide_has_Avatar(w, e) || tide_has_tide_ghost(w, e)) continue;
+        *found = tide_get_Avatar(w, e);
+        owned++;
+    }
+    return owned == 1 ? w : NULL;
+}
+
+TIDE_TEST(shards_a_player_joins_a_dedicated_sharded_world)
+{
+    now = 0;
+    walk_until = 0;
+    next_endpoint = 10u;
+    net = tide_loopback_create(5);
+    tide_hosting *host = tide_hosting_create(&(tide_hosting_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 1u),
+                                                                  .entropy = entropy, .allow_anonymous_join = true}, now);
+    TIDE_REQUIRE(host != NULL);
+    shards = tide_shards_create(&(tide_shards_desc){.game = &tide_game_api, .tick_rate = 60, .world = {{-40, -10, 0}, {40, 10, 0}},
+                                                    .split = {2, 1, 1}, .host_start = tide_shards_hosting_start,
+                                                    .host_stop = tide_shards_hosting_stop, .user = host}, now);
+    TIDE_REQUIRE(shards != NULL);
+    TIDE_CHECK(tide_hosting_match_count(host) == 3);
+    tide_hosting_client_desc front = {.transport = tide_loopback_endpoint(net, 2u), .server = tide_loopback_address(1u),
+                                      .match = 0, .nonce = 77};
+    memcpy(front.simulation, tide_game_api.simulation, 32);
+    tide_hosting_client *admission = tide_hosting_client_create(&front, now);
+    tide_session *s = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample,
+                                                               .open_shard = open_shard});
+    TIDE_REQUIRE(admission != NULL && s != NULL);
+    bool joined = false;
+    for (int step = 0; step < 1200; step++) {
+        now += 1.0 / 120.0;
+        if (step == 240) walk_until = now + 4.0;
+        tide_loopback_set_time(net, now);
+        tide_hosting_update(host, now);
+        tide_shards_update(shards, now);
+        tide_hosting_client_update(admission, now);
+        if (!joined && tide_hosting_client_result(admission) == TIDE_HOSTING_ACCEPTED) {
+            tide_session_join(s, tide_hosting_client_transport(admission), tide_hosting_client_address(admission), now);
+            joined = true;
+        }
+        tide_session_update(s, now);
+    }
+    TIDE_CHECK(joined);
+    TIDE_CHECK(tide_server_player_count(tide_shards_server(shards, 2)) == 1); // Playing in the right region's match
+    Avatar a = {0};
+    TIDE_CHECK(home_avatar(s, &a) != NULL); // It plays in the shard that owns its avatar...
+    TIDE_CHECK(a.position.x > 18.0f && a.position.x < 21.0f); // ...across the border, its input there the whole way
+    const tide_session_status status = tide_session_status_of(s);
+    TIDE_CHECK(status.client.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(status.client.resyncs == 0);
+    tide_session_destroy(s);
+    tide_hosting_client_destroy(admission);
+    tide_shards_destroy(shards);
+    tide_hosting_destroy(host);
     tide_loopback_destroy(net);
 }
 
