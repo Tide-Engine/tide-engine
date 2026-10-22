@@ -156,3 +156,13 @@ ignored build directory; the machine's installed Node 24.15 is unchanged.
 Physical microphone/permission/UI tests, Android/Apple/Linux device runs,
 sanitizers and real Internet voice quality remain untested here. The existing
 capture backends and browser worklets are unchanged.
+
+Integration: `origin/dev` through `3a207f31` merged cleanly, bringing Unity
+container/struct authoring and embed packet changes. Both complete debug builds
+pass again. The affected native voice/host/embed/editor/folder checks pass 5/5;
+web voice/embedded/folder checks pass 3/3; native CLI unit and LSP/stdio/pipe
+checks pass 4/4. The merged docs build passes. Reinstalling both components
+and rebuilding the documented example with the final installed CLI succeeds.
+No full-suite repeat was required for that disjoint dependency integration.
+No CI workflow was dispatched or watched; other-platform coverage follows the
+normal dev push.
