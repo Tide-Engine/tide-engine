@@ -108,6 +108,12 @@ WASI debug/release agree on the pins. The production docs build passed with
 Node 24.21.0; native GPU validation used the local Vulkan SDK. Other operating
 systems, Android and sanitizers were not run on this Windows machine.
 
+After merging `origin/dev` through `ca7f77ff`, both full debug builds and the
+production docs build passed. Incoming changes were confined to web invites,
+Rooms and the sanitizer-only MicroDuck timeout. The affected physics/Towers/
+Rooms/invite group passed 16 native and 18 web tests, including the browser
+registration, handover and ended-room cases. No CI run was dispatched.
+
 
 ## Unity's components as Box2D's (2026-10-22)
 
