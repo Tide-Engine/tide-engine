@@ -130,6 +130,32 @@ static bool rewrite(char *text, const char *from, const char *to)
     return true;
 }
 
+TIDE_TEST(fbx_index_past_its_array_is_clamped_to_the_last_element)
+{
+    size_t size;
+    uint8_t *bytes = fixture("static/triangle_ascii.fbx", &size);
+    TIDE_REQUIRE(bytes);
+    char *text = malloc(size + 64u);
+    TIDE_REQUIRE(text);
+    memcpy(text, bytes, size);
+    text[size] = '\0';
+    // The first corner's uv index is past the three uvs: it reads the last, (0, 1), which is (0, 0) as Tide has uvs
+    TIDE_REQUIRE(rewrite(text, "UVIndex: *3 {\n        a: 0,1,2", "UVIndex: *3 {\n        a: 7,1,2"));
+    mesh_file mesh;
+    TIDE_REQUIRE(read_mesh((const uint8_t *)text, strlen(text), "triangle.fbx", &mesh));
+    TIDE_REQUIRE(mesh.vertices == 3 && mesh.has_uvs);
+    bool found = false;
+    for (uint32_t i = 0; i < mesh.vertices; i++) {
+        if (!vector3(mesh.position + i * 3u, -3, 4, 0)) continue;
+        found = true;
+        TIDE_CHECK(near(mesh.uv[i * 2u], 0) && near(mesh.uv[i * 2u + 1u], 0));
+    }
+    TIDE_CHECK(found);
+    mesh_file_free(&mesh);
+    free(text);
+    free(bytes);
+}
+
 TIDE_TEST(fbx_centimeter_units_and_z_up_axes_convert_to_meters_y_up)
 {
     size_t size;
