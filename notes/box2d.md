@@ -1,5 +1,113 @@
 # The Box2D package
 
+## Joints, collider completion and live settings (2026-10-22)
+
+The owner requested completion of the missing Box2D package features, including
+joints. `box2d.tide`, `bridge.c`, `joints.inc` and `colliders.inc` now expose all
+nine joint types in the pinned Box2D: distance, filter, motor, mover, pogo,
+prismatic, revolute, weld and wheel. A joint entity has `Joint` and exactly one
+settings component. Its anchors and angles are local frames at each body's
+origin. Motors, springs, limits and common settings follow edits through native
+setters; reaction force/torque are read after stepping. Disabling removes the
+native constraint while retaining the entity. Rebinding or changing the type
+recreates it. Pogo's creation-only normal, force bounds and initial state also
+recreate it; hertz, damping and rest length have setters. Missing bodies, the
+same body twice, invalid settings or a missing/ambiguous settings component
+destroy the joint entity. Removing `Joint` removes its native constraint.
+
+Creation stamps explicitly include the joint type. Default prismatic and
+revolute definitions otherwise record identical scalar bytes despite different
+constraints, so their native caches could share an incorrect stamp. The new
+two-world regression checks those otherwise-identical replacements have
+different stamps. The unchanged Box3D adapter uses the same older recording
+pattern and should receive a separate audit; it was not changed here.
+
+Capsules, convex polygons, two-sided segments and one-sided open/loop chains
+join boxes and circles, directly or as parts. Polygons hull three to eight
+vertices. Open-chain ghost vertices extrapolate the endpoint edges; chains
+require static/kinematic bodies and distinct consecutive points more than
+5 mm apart. Geometry/material/filter/sensor edits rebuild fixtures and update
+mass. Invalid geometry removes its fixture and repairing it attaches again.
+The README and user docs specify the finite numeric bounds. Chains enable the
+same contact/hit and sensor-detection events as the other native shapes.
+
+`Physics.fixtures` stores each entity's six attachment records and segment
+handles in ordinary match lists/maps. Component removal and body replacement
+are reconciled against the world, including `Body` removed from a surviving
+entity, a removed shape or `Part`, and `Part.of` changes. Stored handles hide a
+destroyed part from queries immediately and retain end-contact body ownership
+until the step. An exact, bounded snapshot of entity-slot metadata gates the
+cleanup scan; zero body handles also invalidate it. This is match state, not
+process identity. Source bytes are retained through the ordinary Tide writers.
+
+The common box/circle checks run as native row systems. Their per-world cache
+compares the actual source lanes, body generation and filter presence, and is
+invalidated by restore and topology changes. Cache misses reconcile against
+the match's fixture records. Only changed records return through Tide's owned
+list/map writers. Existing sparse `BoxMade`/`CircleMade` registration markers
+are retained: removing them changed ECS traversal and the existing Towers
+simulation. Stage offsets are distinct through preparation, creation and
+reconciliation, so a game's ordering against one named system cannot move
+joint cleanup ahead of opening the correct native world.
+
+`CollisionFilter` provides 64-bit `category`/`mask` and signed `group`, with the
+same defaults/names as Box3D. Optional trailing `QueryFilter` arguments apply
+to current and rewound rays, casts, all-hit queries and overlaps. Capsules,
+polygons and segments have every convex query overload. Historical records
+retain exact geometry kind and filtering, and use native polygon/capsule/
+segment narrow phases, including chain ray sidedness. `Inside` follows the
+sensor's collision masks/groups. Sensors still ignore other sensors, including
+explicit positive groups: a pure native filter callback is installed at every
+create/restore, and enabled for filtered sensors. No callback pointer is saved
+in match state. Existing query ordering and native image/body/answer pins stay
+unchanged.
+
+`Body` gravity scale, linear/angular damping, sleep speed, fixed rotation and
+bullet mode follow later writes. Changed native settings wake the body, before
+the existing final deferred sleep pass. Native setting caches are invalidated
+on restore. `Physics` is 256 bytes (the old fields retain their offsets),
+`Body` remains 96, `Joint` is 88, historical `Collider` is 152, and the checked
+inline polygon `Hull` is 88. The new match records change whole-world/sequence
+pins; native/WASI agree on replacements. The original stack body pin remains
+`a2292c6100587813`, native image-byte pin `b43aa576ef744d1e`, and query-answer
+pin `53abf452b7c6e40b`. The complete fixture sequence is `39d1697495a58b42`.
+
+One vendored correction: `b2GetJointConstraintTorque` now returns zero for
+mover and pogo joints instead of asserting on valid linear constraints. It is
+marked `Tide:` and recorded in `box2d/TIDE.md`. No solver equation, engine,
+compiler or platform API changed, and no game workaround was introduced.
+
+`tide_box2d_complete` adds eleven tests: all joint families actually constrain
+or drive bodies; all live settings replay after native restore; disabling,
+rebinding types and component removal; geometry and filter edits; masks and
+positive/negative groups; sensor contents and one-sided rays; current and
+historical convex query families; malformed geometry/joints; body settings;
+and snapshot/packing/forced-native-restore replay. Every incremental native
+image is checked against a whole image. Its sequence pin agrees in native and
+WASI debug/release. Existing package, Towers, order and rewind-network fixtures
+remain covered, with original motion/image/answer pins unchanged.
+
+Release cost comparison against the previous engine checkout (`f8468b30`),
+2,400 crates, three alternating runs of `box2d_costs`: least moving tick
+0.646 ms before / 0.748 after, one crate pushed 0.070 / 0.109, and rest
+0.013 / 0.044. The added steady edit checks have a fixed per-body cost; the
+image remains 2,549,152 bytes with identical bytes and whole/partial counts.
+These are local timings with other sessions active, not a quiet benchmark.
+An initial per-entity Tide scan cost 1.2 ms at rest and was replaced by the
+gated cleanup/native row path before delivery. Remaining event limits are
+listed in the README: own shapes on one entity share its part identity, and a
+departed destroyed entity is still reported as `default`.
+
+Validation: full native debug ran 2,594 tests (one existing MicroDuck case is
+disabled). The JetBrains installer fixture failed its synthetic update once
+and passed unchanged on its focused rerun; all other native tests passed.
+Full web debug passed 2,456 tests, including WebGL/D3D11/WebGPU (the same
+existing MicroDuck case is disabled). The final native cache fast-path change
+also passed the complete Box2D/Towers group and stack/complete in release;
+WASI debug/release agree on the pins. The production docs build passed with
+Node 24.21.0; native GPU validation used the local Vulkan SDK. Other operating
+systems, Android and sanitizers were not run on this Windows machine.
+
 
 ## Unity's components as Box2D's (2026-10-22)
 

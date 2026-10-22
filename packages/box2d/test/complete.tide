@@ -1,0 +1,109 @@
+using Box2D;
+settings { maxRewind = 0.25; }
+scene Main { }
+component Moving { int kind; }
+component Connection { int kind; }
+singleton Objects { List<Entity> bodies; List<Entity> joints; List<Entity> shapes; List<Entity> filters; Entity part; Entity sensor; }
+singleton Request { Entity removeJoint; Entity removeBody; Entity removeShape; Entity removePart; int shapeKind; Entity replaceJointType; int jointType; }
+singleton Observed { int rays; int casts; int overlaps; int historical; int filtered; float triangleFraction; int inside; int historicalInside; bool chainBack; bool historicalChainBack; }
+
+event(Spawned) Setup(with Main, mut Objects objects)
+{
+    for (int i = 0; i < 9; i++)
+    {
+        var fixedBody = Spawn(Body { type = BodyType.Static, position = float2(i * 10, 5) }, Circle { radius = 0.1 });
+        var moving = Spawn(Body { position = float2(i * 10, 4), spin = 1 }, Circle { radius = 0.2 }, Moving { kind = i });
+        var joint = Joint { a = fixedBody, b = moving, anchorA = float2(0, -1) };
+        objects.bodies.Add(moving);
+        if (i == 0) objects.joints.Add(Spawn(Joint { a = fixedBody, b = moving }, DistanceJoint, Connection { kind = i }));
+        if (i == 1) objects.joints.Add(Spawn(joint, MotorJoint { linearHertz = 10, linearDampingRatio = 1, maxSpringForce = 100, angularHertz = 10, angularDampingRatio = 1, maxSpringTorque = 100 }, Connection { kind = i }));
+        if (i == 2) objects.joints.Add(Spawn(joint, FilterJoint, Connection { kind = i }));
+        if (i == 3) objects.joints.Add(Spawn(joint, MoverJoint { linearVelocity = float2(1, 0), maxVelocityForce = float2(10, 10) }, Connection { kind = i }));
+        if (i == 4) objects.joints.Add(Spawn(joint, PrismaticJoint { enableLimit = true, lowerTranslation = -0.5, upperTranslation = 0.5, enableMotor = true, maxMotorForce = 10, motorSpeed = 1 }, Connection { kind = i }));
+        if (i == 5) objects.joints.Add(Spawn(joint, RevoluteJoint { enableMotor = true, maxMotorTorque = 10, motorSpeed = 2 }, Connection { kind = i }));
+        if (i == 6) objects.joints.Add(Spawn(joint, PogoJoint { restLength = 0, hertz = 10, dampingRatio = 1 }, Connection { kind = i }));
+        if (i == 7) objects.joints.Add(Spawn(joint, WeldJoint, Connection { kind = i }));
+        if (i == 8) objects.joints.Add(Spawn(joint, WheelJoint { enableMotor = true, maxMotorTorque = 10, motorSpeed = 2 }, Connection { kind = i }));
+    }
+    for (int i = 0; i < 6; i++)
+    {
+        var body = Body { type = BodyType.Static, position = float2(150 + i * 10, 0), rewind = true };
+        var filter = CollisionFilter { category = 2 };
+        if (i == 0) objects.shapes.Add(Spawn(body, Box, filter));
+        if (i == 1) objects.shapes.Add(Spawn(body, Circle, filter));
+        if (i == 2) objects.shapes.Add(Spawn(body, Capsule, filter));
+        if (i == 3) objects.shapes.Add(Spawn(body, Polygon { points = [float2(-1,-1), float2(1,-1), float2(0,1)] }, filter));
+        if (i == 4) objects.shapes.Add(Spawn(body, Segment { a = float2(0,-1), b = float2(0,1) }, filter));
+        if (i == 5) objects.shapes.Add(Spawn(body, Chain { points = [float2(1,0), float2(0,0), float2(-1,0)] }, filter));
+    }
+    objects.part = Spawn(Capsule { a = float2(0,2), b = float2(0,3), radius = 0.2 }, Part { of = objects.shapes[0] });
+    for (int i = 0; i < 3; i++)
+    {
+        var filter = CollisionFilter { mask = i == 2 ? -1 : 0, group = i == 1 ? 1 : (i == 2 ? -1 : 0) };
+        objects.filters.Add(Spawn(Body { position = float2(220 + i * 10, 0), gravityScale = 0 }, Box, filter));
+        objects.filters.Add(Spawn(Body { position = float2(220 + i * 10 + 0.2, 0), gravityScale = 0 }, Box, filter));
+    }
+    objects.sensor = Spawn(Body { type = BodyType.Static, position = float2(270,0), rewind = true }, Capsule { sensor = true }, CollisionFilter);
+    Spawn(Body { type = BodyType.Static, position = float2(270,0), rewind = true }, Capsule { sensor = true }, CollisionFilter { group = 1 });
+    Spawn(Body { position = float2(270,0), gravityScale = 0, rewind = true }, Circle { radius = 0.1 });
+}
+
+[Before(PhysicsStages.Step)]
+system Commands(mut Request request)
+{
+    request.removeJoint.Remove(Joint);
+    request.removeBody.Remove(Body);
+    request.removePart.Remove(Part);
+    if (request.replaceJointType != default)
+    {
+        request.replaceJointType.Remove(DistanceJoint);
+        if (request.jointType == 1) request.replaceJointType.Add(PrismaticJoint);
+        else request.replaceJointType.Add(RevoluteJoint);
+    }
+    if (request.shapeKind == 0) request.removeShape.Remove(Box);
+    if (request.shapeKind == 1) request.removeShape.Remove(Circle);
+    if (request.shapeKind == 2) request.removeShape.Remove(Capsule);
+    if (request.shapeKind == 3) request.removeShape.Remove(Polygon);
+    if (request.shapeKind == 4) request.removeShape.Remove(Segment);
+    if (request.shapeKind == 5) request.removeShape.Remove(Chain);
+    request = default;
+}
+
+[After(PhysicsStages.Step)]
+system Probe(Physics physics, Objects objects, mut Observed observed)
+{
+    observed = default;
+    bool prepared = physics.Rewind(ViewTime { valid = true, tick = physics.historyTick, alpha = 1 }, out var query);
+    physics.Inside(objects.sensor, out var inside);
+    observed.inside = inside.count;
+    if (prepared) { query.Inside(objects.sensor, out var historicalInside); observed.historicalInside = historicalInside.count; }
+    observed.chainBack = physics.Raycast(float2(200.25,-2), float2(200.25,2), out _);
+    observed.historicalChainBack = query.Raycast(float2(200.25,-2), float2(200.25,2), out _);
+    for (int i = 0; i < 6; i++)
+    {
+        float x = 150 + i * 10;
+        float2 from = i == 5 ? float2(x + 0.25, 2) : float2(x - 2, 0);
+        float2 to = i == 5 ? float2(x + 0.25, -2) : float2(x + 2, 0);
+        if (physics.Raycast(from, to, out var hit) && hit.entity == objects.shapes[i])
+        {
+            observed.rays++;
+            if (i == 3) observed.triangleFraction = hit.fraction;
+        }
+        if (physics.RaycastAll(from, to, out var all, filter: QueryFilter { mask = 2 }) && all[0].entity == objects.shapes[i]) observed.filtered++;
+        if (physics.Raycast(from, to, out _, filter: QueryFilter { mask = 4 })) observed.filtered -= 100;
+        if (prepared && query.Raycast(from, to, out var past, filter: QueryFilter { mask = 2 }) && past.entity == objects.shapes[i]) observed.historical++;
+        if (prepared && query.RaycastAll(from, to, out _, filter: QueryFilter { mask = 4 })) observed.historical -= 100;
+        var capsule = Capsule { a = float2(0,-0.05), b = float2(0,0.05), radius = 0.05 };
+        var polygon = Polygon { points = [float2(-0.05,-0.05),float2(0.05,-0.05),float2(0,0.05)] };
+        var segment = Segment { a = float2(-0.05,-0.05), b = float2(0.05,0.05) };
+        if (physics.Cast(capsule, from, 0.3, to, out _) && physics.CastAll(capsule, from, 0.3, to, out _)) observed.casts++;
+        if (physics.Cast(polygon, from, 0.3, to, out _) && physics.CastAll(polygon, from, 0.3, to, out _)) observed.casts++;
+        if (physics.Cast(segment, from, 0.3, to, out _) && physics.CastAll(segment, from, 0.3, to, out _)) observed.casts++;
+        if (physics.Overlap(capsule, float2(x,0), 0, out _)) observed.overlaps++;
+        if (physics.Overlap(polygon, float2(x,0), 0, out _)) observed.overlaps++;
+        if (physics.Overlap(segment, float2(x,0), 0, out _)) observed.overlaps++;
+        if (prepared && query.Cast(capsule, from, 0.3, to, out _) && query.CastAll(capsule, from, 0.3, to, out _) && query.Overlap(capsule, float2(x,0), 0, out _)) observed.historical++;
+        if (prepared && query.Cast(polygon, from, 0.3, to, out _) && query.CastAll(polygon, from, 0.3, to, out _) && query.Overlap(polygon, float2(x,0), 0, out _)) observed.historical++;
+        if (prepared && query.Cast(segment, from, 0.3, to, out _) && query.CastAll(segment, from, 0.3, to, out _) && query.Overlap(segment, float2(x,0), 0, out _)) observed.historical++;
+    }
+}

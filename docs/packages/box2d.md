@@ -83,7 +83,7 @@ After each step, `position`, `angle`, `velocity` and `spin` are where Box2D left
 
 [Views](../game/views.md) see a body between its last two ticks, as they see any component. The package says what two of the fields are, for that: `position` is a `[Position]` and `angle` a `[Rotation]` (see [correction smoothing](../game/views.md#provisional-correction-smoothing)). So a view sees a body turn the short way through half a turn, where its angle goes from π to -π, and what it reads there can be a little past π. And when the server corrects where this machine had predicted a body, a view sees it get there over a few frames, where it would jump. Neither changes anything of the match.
 
-`type` can be written at any time: see [Changing what a body is](#changing-what-a-body-is). The fields from `gravityScale` down are read when the body is made, so they're set where the entity is spawned. Changing them later does nothing yet.
+`type` can be written at any time: see [Changing what a body is](#changing-what-a-body-is). Gravity scale, dampings, sleep speed, fixed rotation and bullet mode also follow later writes, waking the body when their native value changes.
 
 The rest of the component is the package's own, and not for a game to write: `id` is Box2D's handle to the body, 0 until its first step, and `stepPosition`, `stepAngle`, `stepVelocity`, `stepSpin` and `stepAsleep` are how the last step left it, which is how the package tells what code wrote since.
 
@@ -126,7 +126,7 @@ With the default density a box of 1 by 1 weighs 1, and an impulse of 1 changes i
 
 An entity has one `Box` at most, and one `Circle`, and both can be on the same body, each at its `offset`. A shape can be added to a body that's already there: `this.Add(Circle { radius = 0.3 });`.
 
-A shape is read once, when it's put on its body, the tick after it's spawned or added. Changing its component later does nothing yet.
+A shape attaches at the next physics step. Later geometry, material and sensor edits rebuild its fixture at the next step too.
 
 A shape with `sensor` touches nothing and reports what's in it: see [Sensors](#sensors).
 
@@ -452,7 +452,7 @@ system Fly(mut Shot shot, Physics physics, Time time)
 }
 ```
 
-**`Cast`** moves a shape along a way, and says where it first touches something: `fraction` is how much of the way it went before it did. The shape is a `Box` or a `Circle` as it would be on a body at `from`, turned by `angle`: its `size` or its `radius`, around its `offset`. So a body's own box, cast from the body's `position` at its `angle`, is the box where it is.
+**`Cast`** moves a shape along a way, and says where it first touches something: `fraction` is how much of the way it went before it did. The shape is a `Box`, `Circle`, `Capsule`, `Polygon` or `Segment` as it would be on a body at `from`, turned by `angle`: its `size` or its `radius`, around its `offset`. So a body's own box, cast from the body's `position` at its `angle`, is the box where it is.
 
 ```csharp
 // Whether there's ground just under the player
@@ -498,7 +498,7 @@ physics.CastAll(Circle { radius = 0.2 }, from, 0, to, out var swept,
     ignore: body, includeSensors: true);
 ```
 
-`CastAll` accepts the same `Box` and `Circle` shapes, `from`, `angle` and `to` as `Cast`. Both all-hit methods accept `ignore: body`, which excludes every shape on that body, including its parts. `includeSensors` defaults to false and can be used with or without an ignored body.
+`CastAll` accepts the same convex shapes, `from`, `angle` and `to` as `Cast`. Both all-hit methods accept `ignore: body`, which excludes every shape on that body, including its parts. `includeSensors` defaults to false and can be used with or without an ignored body.
 
 Each collider contributes its first hit. Separate colliders on one body remain separate results, even if their `entity` and `part` are the same; these are not unique-entity lists or entry-and-exit intersections. The ordinary `RayHit` values can be saved in match or local state. The same methods and options work on a rewound `Query`.
 
@@ -610,13 +610,106 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 - **On the web** the step takes about 0.46 ms for this world with everything moving. Box2D solves four contacts at a time there, on WebAssembly's SIMD, where a desktop with AVX2 solves eight, and gives the same world to the bit.
 - **Building**: Box2D compiles in about 6 seconds, once, and adds about 350 KB to a game.
 
-## Not there yet
+## Joints
 
-- Joints, chains, polygons other than boxes, and capsules.
-- There are no collision or query layers or masks. Queries can ignore one body; `RaycastAll` and `CastAll` allow further filtering in game code.
+A joint is an entity with `Joint` and exactly one settings component. It names
+two different entities with `Body`; anchors and frame angles are local to each
+body's origin. Distances are meters, angles are radians, forces are newtons and
+torques are newton meters.
+
+```csharp
+var ceiling = Spawn(Body { type = BodyType.Static, position = float2(0, 5) });
+var weight = Spawn(Body { position = float2(0, 4) }, Box);
+Spawn(Joint { a = ceiling, b = weight, anchorA = float2(0, -1) },
+      RevoluteJoint { enableMotor = true, motorSpeed = 2, maxMotorTorque = 10 });
+```
+
+The package exposes every joint type in its vendored Box2D:
+
+- `DistanceJoint`: fixed distance, or a spring with length limits and a linear motor.
+- `RevoluteJoint`: a hinge, with angular spring, limits and motor.
+- `PrismaticJoint`: a slider along frame A's local x-axis, with spring, limits and motor.
+- `WheelJoint`: sliding suspension along frame A's x-axis and an angular motor.
+- `WeldJoint`: fixes both local frames, with optional linear and angular softness.
+- `MotorJoint`: drives relative linear/angular velocity or local-frame position with bounded forces.
+- `MoverJoint`: drives linear velocity with independent x/y force limits.
+- `PogoJoint`: a linear suspension along `normal`, with tension/compression limits.
+- `FilterJoint`: prevents the two bodies colliding without constraining movement.
+
+Write the settings component to change a joint at the next step. `Joint.enabled`
+turns its native constraint off and on; `collideConnected` allows collisions
+between constrained bodies (a filter joint always prevents them). `Joint.force`
+and `torque` contain the last step's reaction load. Removing `Joint`, destroying
+its entity, or removing either body removes the constraint. A joint with missing
+bodies, the same body twice, an invalid settings count, or invalid numeric
+settings is destroyed. Disabled joints retain their entity and settings.
+Numeric settings must be finite and within ±1e12, with nonnegative stiffness,
+damping and force/torque magnitudes and ordered limits. Revolute limits clamp to
+±0.99π. `PogoJoint.normal` must be a unit vector.
+
+Motor, spring and limit changes retain the native joint and its warm-start state.
+Changing a Pogo's normal, force bounds or initial impulse/velocity recreates that
+constraint because this Box2D has no setters for those fields. Rebinding bodies
+or replacing the settings type also recreates it. Joints, their loads and all
+native solver state survive snapshots, packing, rollback and joins.
+
+## Additional shapes and live edits
+
+`Capsule` has local endpoints `a`, `b` and a `radius`. `Polygon.points` supplies
+three to eight local vertices; the package computes their convex hull, with an
+optional rounded `radius`. `Segment` has local endpoints `a` and `b` and is
+two-sided. These shapes have the same `friction`, `bounce` and `sensor` settings
+as the original shapes; capsules and polygons also have `density`.
+
+`Chain.points` supplies an open path (at least two points) or a closed path
+(`loop = true`, at least three). Chains are one-sided: the front is to the right
+of each directed edge. Open endpoints use extrapolated ghost vertices. They
+belong to static or kinematic bodies, have `friction` and `bounce`, and cannot be
+sensors. Neighboring points must be more than 5 mm apart. The final point of a
+loop is distinct from its first. Self-intersections are the game's responsibility.
+
+Every shape works on a body's own entity or on a `Part`. Geometry, materials,
+sensor status and collision filters follow later writes. An edited fixture is
+rebuilt, updates the body's mass and can generate new contact begin/end events.
+Removing a shape component removes that fixture. Removing `Body` removes its
+native body and constraints while retaining the entity; adding a body again
+reattaches its shapes. Removing `Part` detaches its shapes, and changing `of`
+reattaches them to the new body. A part whose owner has no body is destroyed.
+
+Invalid geometry produces no fixture or query result. Coordinates, radii and
+material values must be finite and within ±1e6; sizes/radii must be positive
+(a polygon's rounding radius may be zero), density/friction/bounce nonnegative,
+and polygons must form a nondegenerate hull. Repairing a shape attaches it again.
+
+`Cast`, `CastAll` and `Overlap` accept `Capsule`, `Polygon` and `Segment` too,
+including ignore-body and sensor options where applicable. Chains are query
+targets, rather than shapes to sweep. Current and rewound queries use the same
+shape geometry, including polygon surfaces and one-sided chain rays.
+
+## Collision and query filters
+
+An optional `CollisionFilter` applies to every shape on that entity, including a
+part's shapes. `category` defaults to 1, `mask` to -1 (all 64 bits) and `group` to
+0. Two shapes collide when each category intersects the other's mask. Equal
+nonzero groups override masks: positive groups collide and negative groups do
+not. Sensors never report other sensors. Filter edits apply at the next step.
+
+All current and rewound rays, casts and overlaps accept a trailing optional
+`QueryFilter filter`, with the same `category` and `mask` defaults. Query filters
+use both masks and ignore collision groups. For example:
+
+```csharp
+physics.Raycast(from, to, out var hit, filter: QueryFilter { mask = 4 });
+physics.CastAll(Capsule, from, 0, to, out var hits,
+                includeSensors: true, filter: QueryFilter { mask = 4 });
+```
+
+`Inside` reports the sensor's actual visitors and therefore follows collision
+filtering; detached contexts retain the filter values captured at their endpoint.
+
+## Remaining limits
+
 - `Touched` and `Parted` don't say which of an entity's own `Box` and `Circle` it was, and a parting from an entity that was destroyed doesn't say which entity.
-- The fields of a body that are read when it's made don't follow later changes, and a shape's fields don't either: a sensor stays a sensor.
-- Removing `Body` from an entity that stays leaves its body in the world, and removing `Box` or `Circle` leaves the shape on it.
 
 ## Rewinding queries
 

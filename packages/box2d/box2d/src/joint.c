@@ -1201,6 +1201,10 @@ static float b2GetJointConstraintTorque( b2World* world, b2Joint* joint )
 	switch ( joint->type )
 	{
 		case b2_distanceJoint:
+		// Tide: mover and pogo constraints are linear too. Upstream omitted
+		// them here, causing the public torque query to assert for valid joints.
+		case b2_moverJoint:
+		case b2_pogoJoint:
 			return 0.0f;
 
 		case b2_motorJoint:

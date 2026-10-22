@@ -147,11 +147,16 @@ typedef struct physics {
     tide_map selected;
     tide_list pending;
     tide_list history;
+    tide_map joints;
+    tide_map fixtures;
+    tide_list topology;
+    bool topology_changed;
+    uint8_t topology_padding[3];
 } physics;
 
 _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 200 && offsetof(physics, moved) == 60,
+                   && sizeof(physics) == 256 && offsetof(physics, moved) == 60,
                "box2d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 8
@@ -207,6 +212,19 @@ static inline int32_t flags_left(const int32_t flags, const bool asleep)
 
 #define WORLDS 4
 
+typedef struct body_controls {
+    int64_t id;
+    float gravity_scale, linear_damping, angular_damping, sleep_speed;
+    bool fixed_rotation, bullet;
+    uint8_t padding[6];
+} body_controls;
+
+typedef struct shape_source {
+    int64_t body;
+    uint64_t epoch;
+    uint32_t words[15]; // Box/Circle, optional filter, and the presence flag
+} shape_source;
+
 typedef struct world {
     b2WorldId id;
     bool made;
@@ -228,6 +246,11 @@ typedef struct world {
     // for a `type` that code wrote is a comparison and not a call (see retyped)
     uint8_t *kinds;
     uint32_t kinds_room;
+    body_controls *controls;
+    uint32_t controls_room;
+    shape_source *shape_sources;
+    uint32_t shape_sources_room;
+    uint64_t shape_epoch;
 } world;
 
 static world worlds[WORLDS];
@@ -427,6 +450,14 @@ static int workers_now(void)
     return threads > B2_MAX_WORKERS ? B2_MAX_WORKERS : (int)threads;
 }
 
+// Sensors never report another sensor, including when custom categories or
+// positive collision groups would otherwise admit the pair.
+static bool sensor_filter(b2ShapeId a, b2ShapeId b, void *context)
+{
+    (void)context;
+    return !(b2Shape_IsSensor(a) && b2Shape_IsSensor(b));
+}
+
 static void make(world *w, const int workers)
 {
 #ifdef __wasm__
@@ -447,6 +478,13 @@ static void make(world *w, const int workers)
     memset(w->bases, 0, sizeof w->bases);
     w->image_size = 0;
     w->before_good = false;
+    b2World_SetCustomFilterCallback(w->id, sensor_filter, NULL);
+    w->shape_epoch += 1;
+    if (w->shape_epoch == 0) {
+        if (w->shape_sources) memset(w->shape_sources, 0, (size_t)w->shape_sources_room * sizeof *w->shape_sources);
+        w->shape_epoch = 1;
+    }
+    if (w->controls) memset(w->controls, 0, (size_t)w->controls_room * sizeof *w->controls);
     if (w->kinds) memset(w->kinds, 0, w->kinds_room);
 }
 
@@ -556,9 +594,16 @@ static world *restore(const uint8_t *image, const int32_t size, const int64_t st
     }
     if (measuring) image_ns += tide_time_now_ns() - began;
     if (size == 0 || !b2GetSnapshotBases(image, size, w->bases)) memset(w->bases, 0, sizeof w->bases);
+    w->shape_epoch += 1;
+    if (w->shape_epoch == 0) {
+        if (w->shape_sources) memset(w->shape_sources, 0, (size_t)w->shape_sources_room * sizeof *w->shape_sources);
+        w->shape_epoch = 1;
+    }
+    if (w->controls) memset(w->controls, 0, (size_t)w->controls_room * sizeof *w->controls);
     if (w->kinds) memset(w->kinds, 0, w->kinds_room); // Its bodies are the image's now: none is known
     w->image_size = size;
     w->before_good = false; // Its next image is written whole
+    b2World_SetCustomFilterCallback(w->id, sensor_filter, NULL);
     w->stamp = stamp;
     w->chain = (uint64_t)stamp;
     w->used = ++uses;
@@ -608,6 +653,8 @@ void b2t_forget(void)
         free(worlds[i].before);
         free(worlds[i].whole);
         free(worlds[i].kinds);
+        free(worlds[i].controls);
+        free(worlds[i].shape_sources);
         worlds[i] = (world){0};
     }
     active = NULL;
@@ -950,31 +997,6 @@ static b2ShapeDef shape_def(const float density, const float friction, const flo
 static b2Polygon box_shape(const box *s)
 {
     return b2MakeOffsetBox(0.5f * s->size.x, 0.5f * s->size.y, (b2Vec2){s->offset.x, s->offset.y}, b2Rot_identity);
-}
-
-// A box onto a body, and the shape it is in Box2D, or 0 for a body that isn't there.
-int64_t b2t_box(const int64_t on, const box *s)
-{
-    if (on == 0) return 0;
-    const b2BodyId owner = body_of(active, on);
-    if (!b2Body_IsValid(owner)) return 0;
-    note('x', &on, sizeof on);
-    note('x', s, sizeof *s);
-    const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
-    const b2Polygon polygon = box_shape(s);
-    return shape_handle(b2CreatePolygonShape(owner, &def, &polygon));
-}
-
-int64_t b2t_circle(const int64_t on, const circle *s)
-{
-    if (on == 0) return 0;
-    const b2BodyId owner = body_of(active, on);
-    if (!b2Body_IsValid(owner)) return 0;
-    note('c', &on, sizeof on);
-    note('c', s, sizeof *s);
-    const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
-    const b2Circle round = {{s->offset.x, s->offset.y}, s->radius};
-    return shape_handle(b2CreateCircleShape(owner, &def, &round));
 }
 
 // ---------------------------------------------------------------------------
@@ -1551,8 +1573,11 @@ static world *world_at(const int64_t stamp)
     return NULL;
 }
 
+void b2t_query_filter(int64_t category, int64_t mask);
+
 bool b2t_seek(const int64_t stamp)
 {
+    b2t_query_filter(1, -1);
     static TIDE_THREAD_LOCAL bool counted;
     if (!counted) {
         counted = true;
@@ -1590,6 +1615,13 @@ void b2t_hide(const int64_t *bodies, const int32_t body_count, const int64_t *sh
 {
     for (int32_t i = 0; i < body_count; i++) handles_add(&hidden_bodies, bodies[i]);
     for (int32_t i = 0; i < shape_count; i++) handles_add(&hidden_shapes, shapes[i]);
+}
+
+// Query scratch is thread-local, like the selected read-only world.
+static TIDE_THREAD_LOCAL b2QueryFilter query_filter;
+void b2t_query_filter(int64_t category, int64_t mask)
+{
+    query_filter = (b2QueryFilter){(uint64_t)category, (uint64_t)mask};
 }
 
 // What a ray or a shape is looking for: the nearest thing in its way.
@@ -1659,7 +1691,7 @@ met b2t_ray(const tide_float2 from, const tide_float2 to, const int64_t ignore)
     if (!asked || !real2(from) || !real2(to)) return s.best;
     const b2Vec2 along = {to.x - from.x, to.y - from.y};
     if (!real2((tide_float2){along.x, along.y})) return s.best;
-    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), along, b2DefaultQueryFilter(), nearer,
+    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), along, query_filter, nearer,
                     &s);
     return s.best;
 }
@@ -1673,7 +1705,7 @@ static met cast(const b2ShapeProxy *shape, const tide_float2 from, const tide_fl
     search s = {.ignore = ignore};
     const b2Vec2 along = {to.x - from.x, to.y - from.y};
     if (!real2((tide_float2){along.x, along.y})) return s.best;
-    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, along, b2DefaultQueryFilter(),
+    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, along, query_filter,
                       nearer, &s);
     return s.best;
 }
@@ -1781,7 +1813,7 @@ void b2t_ray_all(tide_list_out *out, const tide_float2 from, const tide_float2 t
     hits.count = 0;
     hits.room = 32;
     hits.items = hits.few;
-    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), along, b2DefaultQueryFilter(), collect_cast_hit, &hits);
+    b2World_CastRay(asked->id, b2ToPos((b2Vec2){from.x, from.y}), along, query_filter, collect_cast_hit, &hits);
     give_cast_hits(&hits, out);
 }
 
@@ -1797,7 +1829,7 @@ static void cast_all(tide_list_out *out, const b2ShapeProxy *shape, const tide_f
     hits.count = 0;
     hits.room = 32;
     hits.items = hits.few;
-    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, along, b2DefaultQueryFilter(), collect_cast_hit, &hits);
+    b2World_CastShape(asked->id, b2ToPos((b2Vec2){from.x, from.y}), shape, along, query_filter, collect_cast_hit, &hits);
     give_cast_hits(&hits, out);
 }
 
@@ -1856,7 +1888,7 @@ static bool within(const b2ShapeId shape, void *context)
 static int32_t overlap(const b2ShapeProxy *shape, const tide_float2 at, tide_list_out *out)
 {
     found.count = 0;
-    b2World_OverlapShape(asked->id, b2ToPos((b2Vec2){at.x, at.y}), shape, b2DefaultQueryFilter(), within, NULL);
+    b2World_OverlapShape(asked->id, b2ToPos((b2Vec2){at.x, at.y}), shape, query_filter, within, NULL);
     return give(out);
 }
 
@@ -1896,12 +1928,11 @@ static void visitors(const b2ShapeId sensor)
 
 // The bodies in an entity's sensors: in each of the two shapes given that's
 // there, its box and its circle.
-int32_t b2t_inside(const int64_t first, const int64_t second, tide_list_out *out)
+int32_t b2t_inside(const int64_t *given, const int32_t count, tide_list_out *out)
 {
     found.count = 0;
     if (!asked) return 0;
-    const int64_t given[2] = {first, second};
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < count; i++) {
         if (given[i] == 0) continue;
         const b2ShapeId shape = shape_of(asked, given[i]);
         if (b2Shape_IsValid(shape)) visitors(shape);
@@ -1920,9 +1951,13 @@ typedef struct collider {
     int32_t count;
     float radius;
     bool sensor;
-    uint8_t padding[7];
+    uint8_t padding[3];
+    int32_t kind;
+    int64_t category, mask;
+    int32_t group;
+    uint8_t filter_padding[4];
 } collider;
-_Static_assert(sizeof(collider) == 128 && offsetof(physics, pending) == 192, "historical scene ABI changed");
+_Static_assert(sizeof(collider) == 152 && offsetof(physics, pending) == 192, "historical scene ABI changed");
 
 static b2Vec2 scene_vec(const tide_float2 p) { return (b2Vec2){p.x, p.y}; }
 static tide_float2 scene_float(const b2Vec2 p) { return (tide_float2){p.x, p.y}; }
@@ -1957,10 +1992,30 @@ static int scene_read(const world *w, const int64_t handle, collider **out)
         c.position = (tide_float2){(float)pose.p.x, (float)pose.p.y};
         c.angle = b2Rot_GetAngle(pose.q);
         c.sensor = b2Shape_IsSensor(id);
+        c.kind = b2Shape_GetType(id);
+        const b2Filter filter = b2Shape_GetFilter(id);
+        c.category = (int64_t)filter.categoryBits; c.mask = (int64_t)filter.maskBits;
+        c.group = filter.groupIndex;
         switch (b2Shape_GetType(id)) {
         case b2_circleShape: {
             const b2Circle shape = b2Shape_GetCircle(id);
             c.points[0] = scene_float(shape.center); c.count = 1; c.radius = shape.radius;
+            break;
+        }
+        case b2_capsuleShape: {
+            const b2Capsule shape = b2Shape_GetCapsule(id);
+            c.points[0] = scene_float(shape.center1); c.points[1] = scene_float(shape.center2);
+            c.count = 2; c.radius = shape.radius;
+            break;
+        }
+        case b2_segmentShape: {
+            const b2Segment shape = b2Shape_GetSegment(id);
+            c.points[0] = scene_float(shape.point1); c.points[1] = scene_float(shape.point2); c.count = 2;
+            break;
+        }
+        case b2_chainSegmentShape: {
+            const b2ChainSegment shape = b2Shape_GetChainSegment(id);
+            c.points[0] = scene_float(shape.segment.point1); c.points[1] = scene_float(shape.segment.point2); c.count = 2;
             break;
         }
         case b2_polygonShape: {
@@ -2119,34 +2174,23 @@ met b2t_scene_ray(const collider *c, const tide_float2 from, const tide_float2 t
     if (!real2(scene_float(start)) || !real2(scene_float(direction))) return result;
     const b2RayCastInput input = {.origin = start, .translation = direction, .maxFraction = 1.0f};
     b2CastOutput hit = {0};
-    if (c->count == 1) {
+    if (c->kind == b2_circleShape) {
         const b2Circle shape = {scene_vec(c->points[0]), c->radius};
         hit = b2RayCastCircle(&shape, &input);
-    }
-    else {
-        tide_float2 lo = c->points[0], hi = lo;
-        for (int i = 1; i < c->count; i++) { if (c->points[i].x < lo.x) lo.x = c->points[i].x; if (c->points[i].x > hi.x) hi.x = c->points[i].x; }
-        for (int i = 1; i < c->count; i++) { if (c->points[i].y < lo.y) lo.y = c->points[i].y; if (c->points[i].y > hi.y) hi.y = c->points[i].y; }
-        float enter = 0.0f, leave = 1.0f;
-        if (direction.x == 0) { if (start.x < lo.x || start.x > hi.x) return result; }
-        else {
-            float near = (lo.x - start.x) / direction.x, far = (hi.x - start.x) / direction.x;
-            float sign = -1.0f;
-            if (near > far) { const float temp = near; near = far; far = temp; sign = 1.0f; }
-            if (near > enter) { enter = near; hit.normal = (b2Vec2){0}; hit.normal.x = sign; }
-            if (far < leave) leave = far;
-            if (enter > leave) return result;
-        }
-        if (direction.y == 0) { if (start.y < lo.y || start.y > hi.y) return result; }
-        else {
-            float near = (lo.y - start.y) / direction.y, far = (hi.y - start.y) / direction.y;
-            float sign = -1.0f;
-            if (near > far) { const float temp = near; near = far; far = temp; sign = 1.0f; }
-            if (near > enter) { enter = near; hit.normal = (b2Vec2){0}; hit.normal.y = sign; }
-            if (far < leave) leave = far;
-            if (enter > leave) return result;
-        }
-        hit.hit = true; hit.fraction = enter; hit.point = b2Add(start, b2MulSV(enter, direction));
+    } else if (c->kind == b2_capsuleShape) {
+        const b2Capsule shape = {scene_vec(c->points[0]), scene_vec(c->points[1]), c->radius};
+        hit = b2RayCastCapsule(&shape, &input);
+    } else if (c->kind == b2_segmentShape || c->kind == b2_chainSegmentShape) {
+        const b2Segment shape = {scene_vec(c->points[0]), scene_vec(c->points[1])};
+        hit = b2RayCastSegment(&shape, &input, c->kind == b2_chainSegmentShape);
+        if (!hit.hit) return result; // One-sided back-face misses remain misses.
+    } else {
+        b2Hull hull = {0}; hull.count = c->count;
+        if (hull.count < 3) return result;
+        for (int i = 0; i < hull.count; i++) hull.points[i] = scene_vec(c->points[i]);
+        if (!b2ValidateHull(&hull)) return result;
+        const b2Polygon shape = b2MakePolygon(&hull, c->radius);
+        hit = b2RayCastPolygon(&shape, &input);
     }
     if (!hit.hit) {
         // Box2D's world rays count their starting overlap; low-level rays don't.
@@ -2217,4 +2261,62 @@ scene_bounds b2t_circle_bounds(const circle *shape, const float rotation, const 
     b2ShapeProxy proxy;
     if (!circle_proxy(shape, rotation, &proxy)) return (scene_bounds){0};
     return proxy_bounds(proxy.points, proxy.count, proxy.radius, from, to);
+}
+
+#include "joints.inc"
+
+#include "colliders.inc"
+
+// Only cached copies of native settings live here. Every restore invalidates
+// them, and the first comparison reads the restored native values.
+void b2t_configure_bodies(tide_rows *rows, physics *p)
+{
+    (void)p;
+    const uint32_t count = tide_rows_count(rows);
+    const float *gravity = tide_rows_floats(rows, 0, offsetof(body, gravity_scale));
+    const float *linear = tide_rows_floats(rows, 0, offsetof(body, linear_damping));
+    const float *angular = tide_rows_floats(rows, 0, offsetof(body, angular_damping));
+    const float *sleep = tide_rows_floats(rows, 0, offsetof(body, sleep_speed));
+    body_fields f = fields_of(rows);
+    for (uint32_t i = 0; i < count; i++) {
+        body_controls desired = {0};
+        desired.id = (int64_t)((uint64_t)(uint32_t)f.id[i] | (uint64_t)(uint32_t)f.id_high[i] << 32);
+        desired.gravity_scale = geometry_float(gravity[i]) ? gravity[i] : 1;
+        desired.linear_damping = geometry_float(linear[i]) && linear[i] >= 0 ? linear[i] : 0;
+        desired.angular_damping = geometry_float(angular[i]) && angular[i] >= 0 ? angular[i] : 0;
+        desired.sleep_speed = geometry_float(sleep[i]) && sleep[i] >= 0 ? sleep[i] : 0;
+        desired.fixed_rotation = (f.flags[i] & 0xff) != 0;
+        desired.bullet = ((uint32_t)f.flags[i] >> 8 & 0xff) != 0;
+        const uint32_t at = (uint32_t)desired.id;
+        if (at < active->controls_room && memcmp(&active->controls[at], &desired, sizeof desired) == 0) continue;
+        const b2BodyId id = body_of(active, desired.id);
+        if (!b2Body_IsValid(id)) continue;
+        if (at >= active->controls_room) {
+            uint32_t room = active->controls_room ? active->controls_room : 64;
+            while (room <= at) {
+                if (room > (1u << 30) / (2 * sizeof(body_controls))) tide_out_of_memory();
+                room *= 2;
+            }
+            active->controls = tide_realloc(active->controls, (size_t)active->controls_room * sizeof *active->controls,
+                                           (size_t)room * sizeof *active->controls);
+            memset(active->controls + active->controls_room, 0, (size_t)(room - active->controls_room) * sizeof *active->controls);
+            active->controls_room = room;
+        }
+        bool changed = false;
+        if (b2Body_GetGravityScale(id) != desired.gravity_scale) { b2Body_SetGravityScale(id, desired.gravity_scale); changed = true; }
+        if (b2Body_GetLinearDamping(id) != desired.linear_damping) { b2Body_SetLinearDamping(id, desired.linear_damping); changed = true; }
+        if (b2Body_GetAngularDamping(id) != desired.angular_damping) { b2Body_SetAngularDamping(id, desired.angular_damping); changed = true; }
+        if (b2Body_GetSleepThreshold(id) != desired.sleep_speed) { b2Body_SetSleepThreshold(id, desired.sleep_speed); changed = true; }
+        if (b2Body_IsBullet(id) != desired.bullet) { b2Body_SetBullet(id, desired.bullet); changed = true; }
+        b2MotionLocks locks = b2Body_GetMotionLocks(id);
+        if (locks.angularZ != desired.fixed_rotation) { locks.angularZ = desired.fixed_rotation; b2Body_SetMotionLocks(id, locks); changed = true; }
+        if (changed) {
+            b2Body_SetAwake(id, true);
+            note('U', &desired.id, sizeof desired.id);
+            note('U', &desired.gravity_scale, 4 * sizeof(float));
+            note('U', &desired.fixed_rotation, sizeof desired.fixed_rotation);
+            note('U', &desired.bullet, sizeof desired.bullet);
+        }
+        active->controls[at] = desired;
+    }
 }

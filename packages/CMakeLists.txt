@@ -94,6 +94,13 @@ set_tests_properties(tide_box2d_stack PROPERTIES TIMEOUT 120)
 
 tide_package_order_test(tide_box2d_order Box2D "${CMAKE_CURRENT_SOURCE_DIR}/box2d/box2d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box2d/test")
 
+tide_add_game(tide_box2d_complete SOURCES box2d/bridge.c box2d/test/complete.tide NAME complete PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/complete_test.c)
+target_include_directories(tide_box2d_complete PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_complete PRIVATE tide_box2d)
+add_test(NAME tide_box2d_complete COMMAND tide_box2d_complete)
+set_tests_properties(tide_box2d_complete PROPERTIES TIMEOUT 120)
+
 # What a game does with it: systems ordered against the step, views, impulses,
 # bodies at rest that code moves, and sensors. A game that's built with the
 # package as tide builds one that lists it, the package's files before its own.

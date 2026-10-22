@@ -53,7 +53,7 @@ event(Touched touched) Meet(mut Tally tally, with Crate)
 
 (`test/stack.tide` is a game like this one, which the package's tests run, `test/course.tide` one with a sensor, a body spawned with an impulse, a system before the step and bodies at rest that code moves, `test/kit.tide` one with parts, bodies that change type, every question code can ask, hits and each field the world is tuned by, and `test/yard.tide` one that does to sleeping and static bodies what the step doesn't.)
 
-- **`Body`** is a rigid body: `type` (`Static`, `Kinematic`, `Dynamic`), `position`, `angle`, `velocity`, `spin`, and `gravityScale`, `linearDamping`, `angularDamping`, `sleepSpeed`, `fixedRotation` and `bullet`, which are read when the body is made. After each step the first four are where Box2D left the body. A system that writes them moves the body: the next step starts from what they say. `impulse` and `turn` are given to the body at the next step, once: the ones a body is spawned with at its first, once its shapes are on it.
+- **`Body`** is a rigid body: `type` (`Static`, `Kinematic`, `Dynamic`), `position`, `angle`, `velocity`, `spin`, and `gravityScale`, `linearDamping`, `angularDamping`, `sleepSpeed`, `fixedRotation` and `bullet`. These settings follow later writes. After each step position, angle and speeds are where Box2D left the body. A system that writes them moves the body: the next step starts from what they say. `impulse` and `turn` are given to the body at the next step, once: the ones a body is spawned with at its first, once its shapes are on it.
 - **A body's `type` can be written**, any to any: the next step has it as the new kind, with its shapes. What touched it parts and is found again, and what rested on it wakes.
 - A body at rest is asleep, and whatever code writes into it wakes it: a speed, an impulse, a `type`, and a `position` or an `angle` too, which also wake what was touching it. `sleepSpeed` is how slow it has to be to fall asleep.
 - **`asleep`** says which it is, after each step, and a system that writes it puts the body to sleep or wakes it at the next one: `body.asleep = true` on a body that's moving stops it where it is, with none of its speed, until something touches it or code wakes it. A body spawned with it starts asleep. Box2D sleeps and wakes an island at a time, the bodies that touch each other (through bodies that move, not through static ones), so one that's put to sleep takes what it touches with it, and one that's woken wakes what it fell asleep with. What's put to sleep in a tick is asleep as that tick's step starts, whatever else was written that tick: a push, a move, a new gravity. A static body is never asleep. (`test/sleep.tide` is a game that does all of it.)
@@ -102,10 +102,10 @@ The owner approved the all-hit and ignore-body additions on 2026-10-18. These ea
 - **Names**: `Part` and its `of`; `Hit`; `RayHit`; `Raycast`, `Cast`, `Overlap`, `Inside`; `part` and `otherPart` on the events; `Physics.contactStiffness`, `contactDamping`, `contactSpeed`, `bounceSpeed`, `hitSpeed`, `sleeping`; `Body.sleepSpeed`. They're the Box3D package's names wherever both have the thing, as the two were built side by side from one list: `Inside` takes the sensor's entity in both, and the three `contact` fields are spelled as Box3D's.
 - **A part that names no body is destroyed**, in the tick that finds it so, with nothing said: an error would stop a match over an entity that went a tick before its part was made.
 - **`Inside` takes the entity whose shape the sensor is**, a body's or a part's, and looks in that entity's own sensors: a body's parts are asked one by one. The match keeps which shapes those are (`Physics.sensors`, an entry for each entity that has a sensor), as a function is handed no `World` to look an entity's components up in.
-- **Where this package has more than Box3D's:** `Hit` says which parts met (`part`, `otherPart`), and a `Body` has `sleepSpeed`. **And less:** of a body, only its `type` follows what's written later; Box3D's `gravityScale`, dampings and `bullet` do too.
+- **Where this package has more than Box3D's:** `Hit` says which parts met (`part`, `otherPart`), and a `Body` has `sleepSpeed`. Body type, gravity scale, dampings, sleep speed, fixed rotation and bullet mode follow later writes in this package too.
 - **A body that turns kinematic keeps its `velocity`.**
 - **`Hit` goes to both bodies**, each with the normal pointing from itself, and its threshold is the world's alone.
-- **Tuning is the world's, but for `sleepSpeed`**, which is a body's. Whether one body may sleep at all, and a shape's fields after it's made, were left out.
+- **Tuning is the world's, but for `sleepSpeed`**, which is a body's. Whether one body may sleep at all, was left out. A shape's fields now follow edits at the next step.
 
 ### When its systems run
 
@@ -169,13 +169,106 @@ So a tick takes 0.51 ms with everything moving, 0.06 with one crate pushed and 0
 - What parts, types, hits and tuning added to a tick of these 2,400 crates, old and new in turn, the least of seven runs each: 0.601 ms to 0.611 with everything moving, 0.213 to 0.214 with one crate pushed, 0.017 to 0.018 at rest (of which `Enter`, 0.006 to 0.008: it looks at each body's type too).
 - Compiling Box2D takes about 6 seconds once (9 optimized), and adds about 350 KB to a game.
 
-## Not there yet
+## Joints
 
-- Joints, chains, polygons other than boxes, and capsules.
-- No layers or masks, for collisions or queries. Queries can ignore one body; `RaycastAll` and `CastAll` allow further filtering in game code.
+A joint is an entity with `Joint` and exactly one settings component. It names
+two different entities with `Body`; anchors and frame angles are local to each
+body's origin. Distances are meters, angles are radians, forces are newtons and
+torques are newton meters.
+
+```csharp
+var ceiling = Spawn(Body { type = BodyType.Static, position = float2(0, 5) });
+var weight = Spawn(Body { position = float2(0, 4) }, Box);
+Spawn(Joint { a = ceiling, b = weight, anchorA = float2(0, -1) },
+      RevoluteJoint { enableMotor = true, motorSpeed = 2, maxMotorTorque = 10 });
+```
+
+The package exposes every joint type in its vendored Box2D:
+
+- `DistanceJoint`: fixed distance, or a spring with length limits and a linear motor.
+- `RevoluteJoint`: a hinge, with angular spring, limits and motor.
+- `PrismaticJoint`: a slider along frame A's local x-axis, with spring, limits and motor.
+- `WheelJoint`: sliding suspension along frame A's x-axis and an angular motor.
+- `WeldJoint`: fixes both local frames, with optional linear and angular softness.
+- `MotorJoint`: drives relative linear/angular velocity or local-frame position with bounded forces.
+- `MoverJoint`: drives linear velocity with independent x/y force limits.
+- `PogoJoint`: a linear suspension along `normal`, with tension/compression limits.
+- `FilterJoint`: prevents the two bodies colliding without constraining movement.
+
+Write the settings component to change a joint at the next step. `Joint.enabled`
+turns its native constraint off and on; `collideConnected` allows collisions
+between constrained bodies (a filter joint always prevents them). `Joint.force`
+and `torque` contain the last step's reaction load. Removing `Joint`, destroying
+its entity, or removing either body removes the constraint. A joint with missing
+bodies, the same body twice, an invalid settings count, or invalid numeric
+settings is destroyed. Disabled joints retain their entity and settings.
+Numeric settings must be finite and within ±1e12, with nonnegative stiffness,
+damping and force/torque magnitudes and ordered limits. Revolute limits clamp to
+±0.99π. `PogoJoint.normal` must be a unit vector.
+
+Motor, spring and limit changes retain the native joint and its warm-start state.
+Changing a Pogo's normal, force bounds or initial impulse/velocity recreates that
+constraint because this Box2D has no setters for those fields. Rebinding bodies
+or replacing the settings type also recreates it. Joints, their loads and all
+native solver state survive snapshots, packing, rollback and joins.
+
+## Additional shapes and live edits
+
+`Capsule` has local endpoints `a`, `b` and a `radius`. `Polygon.points` supplies
+three to eight local vertices; the package computes their convex hull, with an
+optional rounded `radius`. `Segment` has local endpoints `a` and `b` and is
+two-sided. These shapes have the same `friction`, `bounce` and `sensor` settings
+as the original shapes; capsules and polygons also have `density`.
+
+`Chain.points` supplies an open path (at least two points) or a closed path
+(`loop = true`, at least three). Chains are one-sided: the front is to the right
+of each directed edge. Open endpoints use extrapolated ghost vertices. They
+belong to static or kinematic bodies, have `friction` and `bounce`, and cannot be
+sensors. Neighboring points must be more than 5 mm apart. The final point of a
+loop is distinct from its first. Self-intersections are the game's responsibility.
+
+Every shape works on a body's own entity or on a `Part`. Geometry, materials,
+sensor status and collision filters follow later writes. An edited fixture is
+rebuilt, updates the body's mass and can generate new contact begin/end events.
+Removing a shape component removes that fixture. Removing `Body` removes its
+native body and constraints while retaining the entity; adding a body again
+reattaches its shapes. Removing `Part` detaches its shapes, and changing `of`
+reattaches them to the new body. A part whose owner has no body is destroyed.
+
+Invalid geometry produces no fixture or query result. Coordinates, radii and
+material values must be finite and within ±1e6; sizes/radii must be positive
+(a polygon's rounding radius may be zero), density/friction/bounce nonnegative,
+and polygons must form a nondegenerate hull. Repairing a shape attaches it again.
+
+`Cast`, `CastAll` and `Overlap` accept `Capsule`, `Polygon` and `Segment` too,
+including ignore-body and sensor options where applicable. Chains are query
+targets, rather than shapes to sweep. Current and rewound queries use the same
+shape geometry, including polygon surfaces and one-sided chain rays.
+
+## Collision and query filters
+
+An optional `CollisionFilter` applies to every shape on that entity, including a
+part's shapes. `category` defaults to 1, `mask` to -1 (all 64 bits) and `group` to
+0. Two shapes collide when each category intersects the other's mask. Equal
+nonzero groups override masks: positive groups collide and negative groups do
+not. Sensors never report other sensors. Filter edits apply at the next step.
+
+All current and rewound rays, casts and overlaps accept a trailing optional
+`QueryFilter filter`, with the same `category` and `mask` defaults. Query filters
+use both masks and ignore collision groups. For example:
+
+```csharp
+physics.Raycast(from, to, out var hit, filter: QueryFilter { mask = 4 });
+physics.CastAll(Capsule, from, 0, to, out var hits,
+                includeSensors: true, filter: QueryFilter { mask = 4 });
+```
+
+`Inside` reports the sensor's actual visitors and therefore follows collision
+filtering; detached contexts retain the filter values captured at their endpoint.
+
+## Remaining limits
+
 - `Touched` and `Parted` don't say which of an entity's own `Box` and `Circle` it was, and a parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
-- The fields of a body that are read when it's made don't follow later changes, and a shape's don't either.
-- Removing `Body` from an entity that stays leaves its body in the world, and removing `Box` or `Circle` leaves its shape on.
 
 ## Rewinding queries
 
