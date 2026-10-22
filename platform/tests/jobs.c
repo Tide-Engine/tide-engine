@@ -349,7 +349,7 @@ TIDE_TEST(jobs_threads_come_back)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
     const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL};
     int ticks = 0;
     // A worker has to have joined the tick while its first system ran to have
@@ -465,7 +465,7 @@ TIDE_TEST(jobs_thousands_of_systems)
     }
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities, NULL, NULL};
     const tide_jobs *jobs = tide_platform_jobs();
     for (int pass = 0; pass < (jobs ? 4 : 2); pass++) {
         const tide_jobs *with = pass >= 2 ? jobs : NULL; // On one thread, then on every core

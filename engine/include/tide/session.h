@@ -242,7 +242,15 @@ typedef struct tide_game {
     // 0 for TIDE_PLAYERS_DEFAULT. The world keeps an input for each, and the
     // server's after them, so it's part of the game's layout: its hash differs.
     uint32_t max_players;
+    // A sharded game's (settings { shards = true; }): tide/shard.h. NULL for others.
+    const struct tide_shard_game *shards;
 } tide_game;
+
+// Shard messages a server takes into one tick (tide_server_inject), and the
+// most bytes one carries in the tick's frame: a bigger one goes to every
+// player first, as a big command does, and into a tick once they all have it.
+#define TIDE_SHARD_MESSAGES_PER_TICK 64u
+#define TIDE_SHARD_MESSAGE_LIMIT (64u << 20)
 
 // A command of up to TIDE_COMMAND_BYTES goes in one datagram, as commands
 // always did. A bigger one, up to TIDE_COMMAND_LIMIT (a command with a
@@ -386,6 +394,15 @@ bool tide_server_player_identity(const tide_server *s, tide_player_id player, ui
 // once they know, they can join again while the match takes players. False
 // if they aren't in the match, or they're on its machine (local_first).
 bool tide_server_kick(tide_server *s, tide_player_id player, const char *message);
+// A shard message (tide/shard.h) for the match, from the orchestrator or
+// another shard: the server applies it at the start of a coming tick, in the
+// order they were handed it, and its players get it in that tick's frame and
+// apply it the same way. The bytes are copied. False when the game isn't
+// sharded, the message is bigger than TIDE_SHARD_MESSAGE_LIMIT, or there's no
+// memory for it.
+bool tide_server_inject(tide_server *s, const uint8_t *data, uint32_t size);
+// How many handed messages are still waiting for a tick.
+uint32_t tide_server_injected(const tide_server *s);
 
 // ---------------------------------------------------------------------------
 // Client

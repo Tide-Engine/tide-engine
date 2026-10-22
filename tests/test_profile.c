@@ -93,7 +93,7 @@ TIDE_TEST(profile_ticks_name_their_systems)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities, NULL, NULL};
     tide_profile p = {0};
     const tide_jobs alone = {.threads = 1, .profile = &p};
     memset(ran, 0, sizeof ran);

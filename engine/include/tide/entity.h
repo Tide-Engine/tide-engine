@@ -88,6 +88,29 @@ static inline bool tide_entity_alive(const tide_entities *t, const tide_entity e
 
 void tide_entity_set_location(tide_entities *t, tide_entity e, tide_location loc);
 
+// Shards (tide/shard.h): an entity's handle is the same on every shard, and
+// each shard makes new ones from ranges of indices its own.
+//
+// A free slot whose entity went to another shard, and lives on there: it's in
+// no free list, so its index isn't given to another entity here.
+#define TIDE_ARCHETYPE_AWAY 0xFFFFFFFEu
+// A new entity at `index`, a slot never used (the table grows to it), or the
+// null entity when it was.
+tide_entity tide_entity_create_at(tide_entities *t, uint32_t index);
+// Puts `e`, another shard's, in its slot, alive with its location still to
+// set: false, changing nothing, when another entity alive here has the slot.
+bool tide_entity_install(tide_entities *t, tide_entity e);
+// Frees `e`'s slot without listing it free: its index is another shard's to
+// give. `away`: it went to another shard, or was a copy of another shard's,
+// and lives on there (TIDE_ARCHETYPE_AWAY); else it was destroyed here.
+void tide_entity_forget(tide_entities *t, tide_entity e, bool away);
+// Sets what views go by to tell that it jumped (tide_entity_snap): an entity
+// coming from another shard brings its own.
+void tide_entity_set_snaps(tide_entities *t, tide_entity e, uint32_t snaps);
+// Whether `e` was destroyed here: it isn't alive, and its slot's last entity
+// was it or later, freed here rather than gone elsewhere.
+bool tide_entity_died_here(const tide_entities *t, tide_entity e);
+
 // It jumped: views draw it as it is, not blended from the tick before.
 void tide_entity_snap(tide_entities *t, tide_entity e);
 

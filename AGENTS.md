@@ -197,6 +197,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Scheduler analysis, tick threads, parallel loops and temporary handles | `notes/schedule-and-threads.md` |
 | Session/net/delta runtime, inputs, commands, lead, migration and verification | `notes/netcode.md` |
 | Dedicated server builds, multiple matches, match IDs and authentication/admission | `notes/dedicated-servers.md` |
+| Shards: one world split across servers, ghosts, handoff, the engine's orchestrator | `notes/sharding.md` |
 | Managed WASM hosting, local-build deployment, simulation compatibility, recovery and prepaid billing | `notes/managed-hosting.md` in `Tide-Engine/tide-services` |
 | Verified/local event handlers and generated listeners | `notes/verified-and-local-handlers.md` |
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |

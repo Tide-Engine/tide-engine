@@ -1,0 +1,69 @@
+// A world split across shards (tests/e2e/shards_test.c runs it with the
+// engine's orchestrator): movers going back and forth across the border,
+// two banks paying each other through the World (a change across the border,
+// which waits until one shard owns both), and movers paying a bank with
+// events, which go to the shard that owns it.
+settings
+{
+    shards = true;
+    shardRange = 8;
+}
+
+component Mover
+{
+    [Partition] float2 position;
+    float2 velocity;
+    int id;
+    int wallet;
+    Entity bank;
+}
+
+component Bank { int coins; int received; }
+component Transfer { Entity to; int amount; int left; }
+event Pay { int amount; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    var a = Spawn(Mover { position = float2(-20, 5), id = 100 }, Bank { coins = 1000 });
+    var b = Spawn(Mover { position = float2(20, 5), id = 101 }, Bank { coins = 1000 });
+    a.Add(Transfer { to = b, amount = 3, left = 40 });
+    b.Add(Transfer { to = a, amount = 5, left = 40 });
+    for (int i = 0; i < 20; i++)
+    {
+        float speed = i % 2 == 0 ? 6.0 : -6.0;
+        Spawn(Mover { position = float2(-28 + i * 3, -5), velocity = float2(speed, 0), id = i, wallet = 10, bank = a });
+    }
+}
+
+system Move(mut Mover m, Time time)
+{
+    m.position += m.velocity * time.dt;
+    if (m.position.x > 36 || m.position.x < -36) m.velocity.x = -m.velocity.x;
+}
+
+// Each bank pays the other a little every few ticks: both banks change at once
+system Pay(mut Transfer t, mut World world, Time time, with Mover)
+{
+    if (t.left <= 0 || time.tick % 4 != 0) return;
+    Bank mine = world.Get<Bank>(this);
+    Bank theirs = world.Get<Bank>(t.to);
+    world.Set<Bank>(this, Bank { coins = mine.coins - t.amount, received = mine.received });
+    world.Set<Bank>(t.to, Bank { coins = theirs.coins + t.amount, received = theirs.received });
+    t.left -= 1;
+}
+
+// Movers pay their bank a coin now and then, wherever it is
+system Spend(mut Mover m, Time time)
+{
+    if (m.wallet <= 0 || (time.tick + m.id * 7) % 31 != 0) return;
+    m.wallet -= 1;
+    m.bank.Send(Pay { amount = 1 });
+}
+
+event(Pay pay) Receive(mut Bank bank)
+{
+    bank.coins += pay.amount;
+    bank.received += 1;
+}

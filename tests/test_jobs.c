@@ -89,7 +89,7 @@ TIDE_TEST(jobs_pieces_are_begun_and_ended_around_their_system)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities, NULL, NULL};
     const tide_jobs eight = {.threads = 8, .run = alone_run, .more = count_more};
     memset(happened, 0, sizeof happened);
     memset(pieces_seen, 0, sizeof pieces_seen);
@@ -132,7 +132,7 @@ TIDE_TEST(jobs_cheap_tasks_are_taken_a_few_at_a_time)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
     const tide_jobs eight = {.threads = 8, .run = alone_run, .more = count_more};
     memset(pieces_seen, 0, sizeof pieces_seen);
     memset(tasks_run, 0, sizeof tasks_run);
@@ -159,7 +159,7 @@ TIDE_TEST(jobs_on_one_thread_make_no_pieces)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
     memset(happened, 0, sizeof happened);
     memset(pieces_seen, 0, sizeof pieces_seen);
     memset(tasks_run, 0, sizeof tasks_run);

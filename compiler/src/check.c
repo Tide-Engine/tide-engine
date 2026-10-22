@@ -2790,6 +2790,67 @@ static void ensure_visibility(program *prog)
     vec_push(prog->singletons, state);
 }
 
+// A sharded game's worlds carry what makes one a shard (notes/sharding.md):
+// ghosts are entities with a hidden sparse component, and the shard's own
+// numbers, its region map, its outbox and what waits on a border are a hidden
+// singleton, so snapshots, hashes and packing keep them like any match state.
+// Its lists hold records of plain numbers and bytes, which the generated shard
+// code reads and writes (shard_codegen.inc).
+static void ensure_shards(program *prog)
+{
+    if (prog->shard_state) return;
+    decl *ghost = NEW(decl);
+    ghost->kind = DECL_COMPONENT;
+    ghost->builtin = true;
+    ghost->name = ghost->qualified = str_from("tide_ghost");
+    ghost->c_name = "tide_ghost";
+    field f = {0};
+    f.hidden = true;
+    f.name = str_from("source"); // The shard whose entity it is
+    f.type = T_INT_;
+    vec_push(ghost->fields, f);
+    ghost->index = prog->components.count;
+    vec_push(prog->components, ghost);
+    prog->shard_ghost = ghost;
+
+    decl *state = NEW(decl);
+    state->kind = DECL_SINGLETON;
+    state->builtin = true;
+    state->name = state->qualified = str_from("tide_shard_state");
+    state->c_name = "tide_shard_state";
+    state->index = prog->singletons.count;
+    static const char *const ints[] = {"shard", "role", "sent", "acked"};
+    for (int i = 0; i < 4; i++) {
+        f.name = str_from(ints[i]); // shard is the id + 1: 0 is a world that's no shard
+        f.type = T_INT_;
+        vec_push(state->fields, f);
+    }
+    static const char *const longs[] = {"next", "end", "singletons"};
+    for (int i = 0; i < 3; i++) {
+        f.name = str_from(longs[i]);
+        f.type = (type){TY_LONG, NULL};
+        vec_push(state->fields, f);
+    }
+    f.name = str_from("regions");
+    f.type = list_of(prog, (type){TY_DOUBLE, NULL});
+    vec_push(state->fields, f);
+    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held"};
+    for (int i = 0; i < 6; i++) {
+        f.name = str_from(long_lists[i]);
+        f.type = list_of(prog, (type){TY_LONG, NULL});
+        vec_push(state->fields, f);
+    }
+    static const char *const byte_lists[] = {"outbox", "waits"};
+    for (int i = 0; i < 2; i++) {
+        f.name = str_from(byte_lists[i]);
+        f.type = list_of(prog, (type){TY_BYTE, NULL});
+        vec_push(state->fields, f);
+    }
+    prog->shard_state = state;
+    prog->uses_heap = true;
+    vec_push(prog->singletons, state);
+}
+
 static bool is_format(const checker *c, const type t)
 {
     return t.kind == TY_ENUM && t.decl == c->prog->format;
@@ -12759,9 +12820,32 @@ static void check_settings(checker *c)
                     diag_note("it's one to three numbers between dots, like '1.2.0'");
                     prog->version = NULL;
                 }
+            } else if (str_eq_c(f->name, "shards")) {
+                const expr *known = bool_literal(value);
+                if (!known) diag_error(value->at, "shards is true or false, or a constant that is");
+                else {
+                    prog->shards = known->bool_value;
+                    prog->shards_at = f->at;
+                }
+            } else if (str_eq_c(f->name, "shardRange")) {
+                float range;
+                if (!setting_float(value, &range, 0) || !(range > 0.0f) || range - range != 0.0f) {
+                    diag_error(value->at, "shardRange is a finite number of world units over 0, like 'shardRange = 64;'");
+                } else {
+                    prog->shard_range = range;
+                    prog->shard_range_at = f->at;
+                }
             }
         }
     }
+    if (prog->shards && prog->shard_range <= 0.0 && prog->shards_at.line) {
+        diag_error(prog->shards_at, "a sharded game needs 'shardRange' too: how far its code looks around, in world units");
+        diag_note("each shard holds copies of its neighbours' entities within that of its border, so the code near one "
+                  "sees what's across it: set it to the farthest your code reads or reaches, like 'shardRange = 64;'");
+    } else if (!prog->shards && prog->shard_range > 0.0) {
+        diag_error(prog->shard_range_at, "shardRange only means something with 'shards = true;'");
+    }
+    if (prog->shards && prog->shard_range > 0.0) ensure_shards(prog);
 }
 
 static type use_constant(checker *c, expr *e, decl *k)
@@ -13302,6 +13386,32 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
                                "[Wrap(Wrap.Mirror)]");
 }
 
+// [Partition]: the position that decides which shard owns an entity (docs/spec.md, Shards).
+static void check_partition_attribute(checker *c, const decl *d, const field *f, const attribute *a)
+{
+    program *prog = c->prog;
+    const bool vector = f->type.kind == TY_FLOAT2 || f->type.kind == TY_FLOAT3 || f->type.kind == TY_DOUBLE2
+                     || f->type.kind == TY_DOUBLE3;
+    if (a->values.count || a->args.count) {
+        diag_error(a->at, "[Partition] takes no arguments");
+    } else if (d->kind != DECL_COMPONENT || d->is_local || d->part_of || f->is_local) {
+        diag_error(a->at, "[Partition] marks a match component's position: where its entity is decides which shard owns it");
+    } else if (f->type.kind != TY_ERROR && !vector) {
+        diag_error(a->at, "[Partition] works on a float2, float3, double2 or double3 position, not %s", type_name(f->type));
+    } else if (prog->partition && !(prog->partition == d && &prog->partition->fields.items[prog->partition_field] == f)) {
+        diag_error(a->at, "a game has one [Partition] position, and '" STR_FMT "." STR_FMT "' is already it",
+                   STR_ARG(prog->partition->name), STR_ARG(prog->partition->fields.items[prog->partition_field].name));
+        diag_note_at(prog->partition_at, "the other [Partition] is here");
+    } else {
+        prog->partition = (decl *)d;
+        prog->partition_field = (int)(f - d->fields.items);
+        prog->partition_at = a->at;
+        if (!prog->shards) {
+            diag_warning(a->at, "[Partition] does nothing without 'settings { shards = true; }'");
+        }
+    }
+}
+
 static void check_field_attributes(checker *c, const decl *d, field *f)
 {
     if (f->attributes.count == 0) return;
@@ -13354,6 +13464,10 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             }
             continue;
         }
+        if (str_eq_c(a->name, "Partition")) {
+            check_partition_attribute(c, d, f, a);
+            continue;
+        }
         if (str_eq_c(a->name, "Snap")) {
             check_snap_attribute(d, f, a);
             continue;
@@ -13392,6 +13506,7 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
             suggest_consider_c(&s, "Json");
+            suggest_consider_c(&s, "Partition");
             suggest_note(&s);
             continue;
         }
@@ -16872,7 +16987,8 @@ static bool is_builtin_name(const str name)
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Json")
         || str_eq_c(name, "Action") || str_eq_c(name, "DrawList") || str_eq_c(name, "string") || str_eq_c(name, "Debug")
-        || str_eq_c(name, "Transform") || str_eq_c(name, "Visibility") || str_eq_c(name, "VisibilityGroup") || str_eq_c(name, "Audience");
+        || str_eq_c(name, "Transform") || str_eq_c(name, "Visibility") || str_eq_c(name, "VisibilityGroup") || str_eq_c(name, "Audience")
+        || str_eq_c(name, "Shards");
 }
 
 static void c_name_of(const decl *d, sb *out)
@@ -17173,7 +17289,7 @@ static bool sparse_component_source(const program *prog, const decl *d)
 
 static bool sparse_component(const program *prog, const decl *d)
 {
-    return (!d->is_local && d->visibility_optional) || sparse_component_source(prog, d);
+    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || sparse_component_source(prog, d);
 }
 
 // Whether a system's (or handler's, or view's) filters admit archetype `mask`:
@@ -17284,6 +17400,10 @@ static void derive_archetypes(const checker *c)
     if (prog->main && archetype_index(prog, &p, bit(prog->main), prog->main->is_local) < 0) goto too_many;
     prog->main_archetype = prog->main ? find_archetype(prog, bit(prog->main), prog->main->is_local) : prog->archetypes.count;
     if (!expand_archetypes(prog, &p, prog->main_archetype)) goto too_many;
+    // Any of a sharded match's entities can be a ghost: another shard's, held here read-only
+    for (int i = 0; prog->shard_ghost && i < prog->archetypes.count; i++) {
+        if (!prog->archetype_local.items[i]) allow_sparse(prog, i, bit(prog->shard_ghost));
+    }
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;
     for (int i = 0; i < c->spawns.count; i++) {
@@ -20194,6 +20314,13 @@ bool check(program *prog)
     if (diag_error_count() > 0) return false;
 
     diag_phase("checking the rest");
+    // A shard runs its systems and handlers for the entities it owns: ghosts,
+    // other shards' entities near its border, are only read (queries, World)
+    for (int i = 0; prog->shard_ghost && i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_SYSTEM || d->is_view || d->listens || !d->per_entity || d->entity_local) continue;
+        d->without_mask = mask_or(d->without_mask, bit(prog->shard_ghost));
+    }
     derive_archetypes(&c);
     check_extern_sparse(prog);
     diag_phase("deriving archetypes");

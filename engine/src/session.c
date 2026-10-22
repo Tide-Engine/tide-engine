@@ -8,6 +8,7 @@
 #include "tide/page.h"
 #include "tide/sha256.h"
 #include "tide/pack.h"
+#include "tide/shard.h"
 
 // Every datagram starts with a header: "PU", the protocol version and a type.
 //
@@ -87,7 +88,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 17u
+#define PROTOCOL 18u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
@@ -116,7 +117,7 @@ enum {
 // What a frame has after its hash, most often nothing: the players who joined
 // or left, a bit per slot whose input changed, and one per slot whose was late.
 enum { FRAME_EVENTS = 1, FRAME_INPUTS = 2, FRAME_LATE = 4, FRAME_COMMANDS = 8, FRAME_DESTROYED = 16,
-       FRAME_REPAIR = 32, FRAME_LOCAL_EVENTS = 64 };
+       FRAME_REPAIR = 32, FRAME_LOCAL_EVENTS = 64, FRAME_SHARD = 128 };
 // What's being sent: the world, as a delta, or the hashes of its pages, to
 // learn which of them the player's world lacks. The hashes come after how the
 // match started: one of START_*, Time.dt's bits, the match's seed in a game
@@ -446,9 +447,22 @@ static uint32_t frame_capacity(const tide_game *g)
     const uint32_t players = tide_game_players(g);
     const uint64_t size = 8u + 1u + 5u + 4ull * EVENTS_PER_PLAYER * players + 2u * ((players + 7u) / 7u)
         + (players + 1ull) * (5ull + g->max_input_bytes)
-        + (g->command ? 5u + TIDE_COMMANDS_PER_TICK * (15u + TIDE_COMMAND_BYTES) : 0u);
+        + (g->command ? 5u + TIDE_COMMANDS_PER_TICK * (15u + TIDE_COMMAND_BYTES) : 0u)
+        + (g->shards ? 5u + TIDE_SHARD_MESSAGES_PER_TICK * (10u + TIDE_COMMAND_BYTES) : 0u);
     return size <= UINT32_MAX / 2u ? (uint32_t)size : 0u;
 }
+
+// A shard message handed to the server for a coming tick (tide_server_inject):
+// up to TIDE_COMMAND_BYTES goes in the frame, and a bigger one is published
+// first, as a big command is, under `published`.
+typedef struct injected {
+    uint8_t *data;
+    uint32_t size;
+    uint32_t published;
+} injected;
+
+// Whose a published download is when it's a shard message: no player's
+#define PUBLISHED_SHARD UINT32_MAX
 
 // A command waiting: at the server, for its turn in a tick; at a client, to
 // be sent, until a verified world has it. `sequence` is its channel's, or an
@@ -897,6 +911,10 @@ struct tide_server {
     double handover_changed;
     double handover_sent;
     uint8_t *handover; // The record as last made, which goes in parts (handover_capacity)
+    // Shard messages handed it for coming ticks (tide_server_inject), in order;
+    // a big one has its download's number once published
+    struct injected *injected;
+    uint32_t injected_count, injected_room;
 };
 
 static double resend_after(const uint32_t rtt_ms)
@@ -1858,7 +1876,8 @@ static void forget_published(tide_server *s)
     for (uint32_t i = 0; i < s->published_count; i++) {
         published *p = &s->published[i];
         const bool stale = p->dispatched ? s->tick - p->tick > s->w.history * HISTORY_MOST
-                                         : !s->connections[p->player].used || !s->connections[p->player].greeted;
+                         : p->player == PUBLISHED_SHARD ? false
+                                                        : !s->connections[p->player].used || !s->connections[p->player].greeted;
         if (!stale) continue;
         for (uint32_t k = 0; k < s->players; k++) {
             if (s->connections[k].download_number == p->number) stop_download(&s->connections[k]);
@@ -1931,6 +1950,76 @@ static uint32_t dispatch_commands(tide_server *s, tide_writer *w)
         }
     }
     return g->client_state ? 0u : count;
+}
+
+// Shard messages into this tick, in the order the server was handed them,
+// each applied to the world before the tick runs (tide_shard_game.receive). A
+// big one goes once every player has its bytes, as a big command does, and
+// nothing after it goes before it. Under client_state players are sent none:
+// what they change reaches them as permitted state.
+static uint32_t dispatch_injected(tide_server *s, tide_writer *w)
+{
+    const tide_game *g = s->game;
+    if (!g->shards || !s->injected_count) return 0;
+    uint32_t count = 0;
+    while (count < s->injected_count && count < TIDE_SHARD_MESSAGES_PER_TICK) {
+        injected *m = &s->injected[count];
+        const published *p = NULL;
+        if (big_command(m->size) && !g->client_state) {
+            if (!m->published && s->published_count < PUBLISHED_MOST) {
+                uint8_t *copy = malloc(m->size);
+                if (!copy) break;
+                memcpy(copy, m->data, m->size);
+                const uint32_t number = ++s->next_published;
+                s->published[s->published_count++] =
+                    (published){number, PUBLISHED_SHARD, UINT32_MAX, 0u, m->size, copy, false, 0, {0}};
+                m->published = number;
+            }
+            p = m->published ? published_by_number(s, m->published) : NULL;
+            if (!p || !everyone_has(s, p)) break;
+        }
+        g->shards->receive(s->world, m->data, m->size);
+        if (!g->client_state) {
+            tide_write_varint(w, m->size);
+            if (p) {
+                published *mine = published_by_number(s, p->number);
+                mine->dispatched = true;
+                mine->tick = s->tick;
+                tide_write_varint(w, p->number);
+            } else {
+                tide_write_bytes(w, m->data, m->size);
+            }
+        }
+        free(m->data);
+        count++;
+    }
+    if (count) {
+        memmove(s->injected, s->injected + count, (size_t)(s->injected_count - count) * sizeof *s->injected);
+        s->injected_count -= count;
+    }
+    return g->client_state ? 0u : count;
+}
+
+bool tide_server_inject(tide_server *s, const uint8_t *data, const uint32_t size)
+{
+    if (!s->game->shards || !size || size > TIDE_SHARD_MESSAGE_LIMIT) return false;
+    if (s->injected_count == s->injected_room) {
+        const uint32_t room = s->injected_room ? s->injected_room * 2u : 16u;
+        injected *grown = realloc(s->injected, (size_t)room * sizeof *grown);
+        if (!grown) return false;
+        s->injected = grown;
+        s->injected_room = room;
+    }
+    uint8_t *copy = malloc(size);
+    if (!copy) return false;
+    memcpy(copy, data, size);
+    s->injected[s->injected_count++] = (injected){copy, size, 0u};
+    return true;
+}
+
+uint32_t tide_server_injected(const tide_server *s)
+{
+    return s->injected_count;
 }
 
 // How long a player's input waited here before its tick ran: from when it
@@ -2159,8 +2248,15 @@ static void server_tick(tide_server *s)
         tide_write_varint(&w, command_count);
         tide_write_bytes(&w, commands.data, commands.size);
     }
+    // Shard messages after the commands, applied in the same order by players
+    tide_writer shard_messages = {s->frame + frame_capacity(g), frame_capacity(g), 0, false, false};
+    const uint32_t shard_count = dispatch_injected(s, &shard_messages);
+    if (shard_count) {
+        tide_write_varint(&w, shard_count);
+        tide_write_bytes(&w, shard_messages.data, shard_messages.size);
+    }
     s->frame[parts_at] = (uint8_t)(events | (any_input ? FRAME_INPUTS : 0u) | (any_late ? FRAME_LATE : 0u)
-                                   | (command_count ? FRAME_COMMANDS : 0u));
+                                   | (command_count ? FRAME_COMMANDS : 0u) | (shard_count ? FRAME_SHARD : 0u));
 
     tide_event_log *journals = g->client_state && g->tick_client_events
         ? calloc(s->players, sizeof *journals) : NULL;
@@ -2516,6 +2612,8 @@ void tide_server_destroy(tide_server *s)
     free(s->away_since);
     free(s->kicks);
     free(s->handover);
+    for (uint32_t i = 0; i < s->injected_count; i++) free(s->injected[i].data);
+    free(s->injected);
     free(s);
 }
 
@@ -2712,7 +2810,7 @@ typedef struct pending_frame {
     uint8_t *data;  // `size` bytes, then a byte per piece: 1 once it came
     // The downloads its commands name (big ones, see DOWNLOAD), read once
     // its pieces are all there: it's complete once it has those too
-    uint32_t names[TIDE_COMMANDS_PER_TICK];
+    uint32_t names[TIDE_COMMANDS_PER_TICK + TIDE_SHARD_MESSAGES_PER_TICK];
     uint8_t name_count;
     bool read;
     tide_entity *destroyed;
@@ -3452,7 +3550,7 @@ static void on_download(tide_client *c, tide_reader *r)
     const uint32_t index = tide_read_varint(r);
     const uint16_t bytes = tide_read_u16(r);
     const uint8_t *data = tide_read_bytes(r, bytes);
-    if (r->failed || !data || !number || !c->loaded || !big_command(size) || size > TIDE_COMMAND_LIMIT) return;
+    if (r->failed || !data || !number || !c->loaded || !big_command(size) || size > (c->game->shards ? TIDE_SHARD_MESSAGE_LIMIT : TIDE_COMMAND_LIMIT)) return;
     const uint32_t chunks = chunks_of(size);
     if (index >= chunks || bytes != (size - index * CHUNK < CHUNK ? size - index * CHUNK : CHUNK)) return;
     download *d = download_by_number(c, number);
@@ -3631,6 +3729,19 @@ static void read_frame_names(const tide_client *c, pending_frame *f)
         }
         f->names[f->name_count++] = tide_read_varint(&r);
     }
+    const uint32_t shard_count = parts & FRAME_SHARD ? tide_read_varint(&r) : 0u;
+    if (shard_count > TIDE_SHARD_MESSAGES_PER_TICK) {
+        f->invalid = true;
+        return;
+    }
+    for (uint32_t i = 0; i < shard_count && !r.failed; i++) {
+        const uint32_t size = tide_read_varint(&r);
+        if (!big_command(size)) {
+            tide_read_bytes(&r, size);
+            continue;
+        }
+        f->names[f->name_count++] = tide_read_varint(&r);
+    }
     if (parts & FRAME_DESTROYED) {
         const uint32_t count_destroyed = tide_read_varint(&r);
         if (r.failed || count_destroyed > (r.size - r.at) / 2u) return;
@@ -3695,7 +3806,7 @@ static bool as_predicted(const tide_client *c, const pending_frame *f)
     tide_reader r = {f->data, f->size, 0, false};
     tide_read_u64(&r);
     const uint8_t parts = tide_read_u8(&r);
-    if (parts & (FRAME_EVENTS | FRAME_COMMANDS | FRAME_DESTROYED)) return false;
+    if (parts & (FRAME_EVENTS | FRAME_COMMANDS | FRAME_DESTROYED | FRAME_SHARD)) return false; // What a guess can't have
     const tide_player_set none = {0};
     const tide_player_set mask = parts & FRAME_INPUTS ? read_players(&r) : none;
     const tide_player_set late = parts & FRAME_LATE ? read_players(&r) : none;
@@ -3886,6 +3997,24 @@ static bool apply_frame(tide_client *c, void *world, const pending_frame *f)
             if (previous == UINT32_MAX || sequence != previous + 1u) return false;
         }
         if (!g->command(world, sender, channel, sequence, data, size)) return false;
+    }
+    // Shard messages, in the server's order, before the tick as the server applied them
+    const uint32_t shard_count = parts & FRAME_SHARD ? tide_read_varint(&r) : 0u;
+    if (shard_count > TIDE_SHARD_MESSAGES_PER_TICK || (shard_count && !g->shards)) return false;
+    for (uint32_t i = 0; i < shard_count; i++) {
+        const uint32_t size = tide_read_varint(&r);
+        if (r.failed || !size || size > TIDE_SHARD_MESSAGE_LIMIT) return false;
+        const uint8_t *data;
+        if (big_command(size)) {
+            download *d = download_by_number(c, tide_read_varint(&r));
+            if (!d || !download_whole(d) || d->size != size) return false;
+            data = d->data;
+            if (d->number > c->download_done) c->download_done = d->number;
+        } else {
+            data = tide_read_bytes(&r, size);
+        }
+        if (!data) return false;
+        g->shards->receive(world, data, size);
     }
     if (parts & FRAME_DESTROYED) {
         const uint32_t count_destroyed = tide_read_varint(&r);

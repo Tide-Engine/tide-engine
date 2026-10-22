@@ -97,6 +97,12 @@ tide_entity tide_new_entity(tide_entities *t)
     return (tide_entity){running->spawned++, TIDE_ENTITY_TEMPORARY | running->task};
 }
 
+tide_entity tide_new_entity_by(tide_entities *t, tide_entity (*create)(void *world), void *world)
+{
+    if (!running || !running->settles) return create ? create(world) : tide_entity_create(t);
+    return (tide_entity){running->spawned++, TIDE_ENTITY_TEMPORARY | running->task};
+}
+
 tide_entity tide_settled(const tide_new_entities *settled, const tide_entity e)
 {
     if (!tide_entity_is_temporary(e)) return e;
@@ -136,7 +142,7 @@ static void settle_system(void *world, const tide_tick_systems *tick, const tide
         return;
     }
     tide_entity *entities = zeroed(start[tasks], sizeof *entities);
-    for (uint32_t i = 0; i < start[tasks]; i++) entities[i] = tide_entity_create(tick->entities);
+    for (uint32_t i = 0; i < start[tasks]; i++) entities[i] = tick->create ? tick->create(world) : tide_entity_create(tick->entities);
     const tide_new_entities settled = {first_task, tasks, start, entities};
     for (uint32_t k = 0; k < tasks; k++) {
         if (!spawned[k]) continue;

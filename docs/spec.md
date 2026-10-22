@@ -3705,6 +3705,51 @@ system Collapse(Arena arena)
 - A general authoritative outward-event API and its explicit audience/payload rules.
 - Server-side task prediction alternatives and opt-in safe projections for opaque resident libraries.
 
+## Shards
+
+One match world split across servers by where things are, for worlds larger than one server holds: a shared canvas with thousands of players, a planet. The agreed design (2026-10-22), built in part since: what's built and what isn't is in `notes/sharding.md`.
+
+### Decided
+
+- **A shard is an ordinary match.** Each region of the world runs as its own match world on its own server. What another shard tells it (state near the border, an entity arriving, a borrowed entity, an event) comes in as input stamped with the receiving shard's tick, like a command. So each shard keeps every guarantee a match has: determinism given its own input log, rollback for its clients, a hash every tick, cheap snapshots, replays.
+- **A split world need not match the same game on one server.** Results depend on when messages crossed between shards; each shard is exactly reproducible from its own log (the owner: "acceptable of course").
+- **Seamless, in one build.** Game code doesn't name shards or borders: the world is split and joined automatically, and the whole design is built together rather than zones first.
+- **Turned on by settings, partitioned by a field attribute.** A game turns sharding on with a setting, and marks the position that decides where an entity lives with an attribute on a component field, as `[Position]` marks a field for correction smoothing. A game that marks none is partitioned by `Transform`'s world position, which the game doesn't own.
+- **A range the game sets.** How far the game's code looks around (sight, reach) is the game's own setting, in world units; region sizes don't change its meaning.
+- **Convenience over explicitness, without duplicating anything.** Code that touches entities across a border works without change, and nothing can be duplicated or lost by it:
+  - Every entity has exactly one owner at every tick. Moving it between shards is a move: the old shard never writes it again once it has sent it.
+  - Messages between shards take effect exactly once, including across crashes and restores.
+  - Code that would change something this shard doesn't own isn't applied from stale copies: it waits until this shard owns everything it changes and then runs again from the start, rechecking its guards with fresh state.
+- **Global entity handles.** An entity's handle is the same on every shard and stays the same when it moves; references never need remapping.
+- **A game can tell.** Code can find out that it ran late because it waited for a border, and whether this shard owns an entity. Code that ignores both still works.
+- **Singletons and the clock live with the orchestrator,** not on any one region's shard. Every shard reads them; changing one is a border write like any other.
+- **Saved worlds.** The record that makes cross-shard messages exactly-once is also the world's durable save, which a hosted world keeps.
+- **Engine and service.** The engine (open source) has the shard protocol and an orchestrator for one machine: all shards in one process or on one box, for development, tests and small self-hosted worlds. Tide's hosting service runs the orchestrator across machines: regions split and merged by load, durable saves, recovery of failed shards and monitoring.
+
+### Provisional
+
+Picks for the first build; names and details to confirm.
+
+- **Settings.** `settings { shards = true; shardRange = 64; }`. `shardRange` is required with `shards`, as no default suits every scale; the error says what the number is. Both are part of the build and the simulation identity.
+- **`[Partition]`** goes on one `float2`, `float3`, `double2` or `double3` field of one component; two are an error that names both. Without one, the world position of an entity's `Transform` root decides. An entity in a `Transform` hierarchy always lives with its root.
+- **Entities with no position** live with their `Transform` root; others stay on the shard that spawned them (the root, for code that runs for no entity). Following the entity whose code spawned them is the intent, not built yet.
+- **Regions** are never narrower than twice `shardRange`, so a shard isn't split a few units from its neighbour unless the game's range is that small. They are chosen by the orchestrator, by load, and change while the world runs.
+- **What a shard runs.** Systems, handlers and tasks run for the entities a shard owns. A shard also holds read-only copies (ghosts) of its neighbours' entities within `shardRange` of its region, and of the singletons; queries, `world.Get` and `world.Has` read them, a tick or two behind. Code running for no entity runs once for the world, beside the singletons.
+- **Events** sent to an entity another shard owns go to that shard and run there, a tick or two later, all of their handlers. An event sent to no entity runs on the shard that sends it; `PlayerJoined` and `PlayerLeft` run on the root.
+- **Waiting on a border.** Changing an entity or singleton this shard doesn't own (`world.Set`, `Add`, `Remove`, `Destroy`, parenting, a `mut` singleton) makes the code that did it wait. The tick runs again without it, so nothing it did is kept; this shard asks for what it touched, and holds what it borrowed while it waits. A waiting handler or command runs once, in full, at the first tick this shard owns everything it changes. A waiting system's row is retried each tick until then. Reading by handle an entity this shard holds no copy of finds nothing, as for one that's destroyed: code that reads what's farther than `shardRange` keeps it in range or sends it an event. A shard keeps what it borrowed (for a while) or what its own waiting code needs from a shard with a higher number that asks for it, until that code has run; a shard with a lower number always gets what it asks for, so no two shards wait on each other forever. Borrowed entities return by position once nothing holds them. `Destroyed` handlers can't wait yet: what they change across a border is dropped.
+- **`Shards.delay`** (int, ticks) is how long the running code waited for a border: 0 except in code that waited. **`Shards.Owns(entity)`** is whether this shard owns it now. Both are read-only, in match code.
+- **Writing a singleton every tick** from systems on every shard serialises the world on it; in a sharded game the compiler warns about a system that writes a singleton unconditionally, and suggests state on an entity or scene instead.
+- **Clients** play in their home shard, the one that owns their player's entities, and see what it holds: its own entities and its ghosts, which reach `shardRange` past its border. Near a border a client also follows the neighbouring shard, watching without input, so moving to it switches at once with nothing to download. A player's input reaches the other shards that own the player's entities through the home shard, a tick later.
+- **The clock.** Shards tick at the same rate with the same tick numbers, set by the orchestrator.
+- **Exactly once by replay.** A shard's input log (players' inputs and shards' messages) is recorded durably before the messages its ticks produce leave it, and its world is checkpointed now and then. A shard that fails is restored from its checkpoint and log, which, being deterministic, reproduces the same messages; receivers drop repeats by sequence number.
+
+### Open
+
+- Physics and other resident C state crossing a border: packages exporting and importing a body's state with its entity.
+- Visibility in sharded games: per-recipient projection over a shard's world.
+- Watching an area far from the player (a zoomed-out canvas): following several shards without a player there.
+- Hot reload of a sharded world.
+
 ## Sessions
 
 ### Decided
@@ -3891,6 +3936,7 @@ settings
 Implemented, awaiting approval:
 
 - `hostMigration` is true or false, or a constant that is.
+- `shards` and `shardRange` (designed, not built): see Shards.
 - `debugViews` is true or false, or a constant that is, false by default: the engine's debug views are on in the game. The standard host then shows the profiler at F7, and hides it at F7 again: where a frame's time goes (input, the match's ticks and its netcode, each view, drawing) and a tick's (each system, then its changes and events), as averages over half a second. `--debug-views` on the game's command line (`debug-views` in a web page's address), `tide run --debug-views` and `tide_run_desc.debug_views` turn them on whatever the setting says. Nothing is measured while the profiler is hidden. In generated C it's `tide_game_api.debug_views`, read each frame, so under `tide run` a reload changes it. The names (`debugViews`, `--debug-views`), the key and what the profiler shows are to confirm.
 - **Confirmed presentation and collider rewind (Decided, implemented).** Verified view values interpolate by default on a separate confirmed clock and hold at the latest confirmation. `settings { maxRewind = 0.25; }` enables a finite nonnegative window in seconds (default 0). With it, the input gains read-only `ViewTime viewTime` (`int tick`, `float alpha`, `bool valid`), stamped after sampling from the last presented confirmed interval. Its time is `tick - 1 + alpha`. The server validates it as an untrusted client claim against fraction/range, its connection snapshot, advertised server time and the configured window. Invalid claims become invalid timestamps; ordinary input remains usable. Physics packages explicitly opt whole bodies into history with `rewind = true`, and `physics.Rewind(time, out query)` returns a detached read-only query scene or false. Historical opted-in geometry collides with current non-opted geometry. All existing query forms are available on `query`; neither preparing nor using it changes simulation geometry or contacts. Missing history never clamps or falls back. Games still validate shooter, origin, aim, weapons and damage from authoritative state; a timestamp cannot prove what a modified client displayed.
 - `maxPlayers` is an int known while compiling: how many players a match takes. The world keeps an input for each, and the server's after them, so it's part of the game's data layout: builds with different `maxPlayers` are different games, which can't share a match, and under `tide run` a reload that changes it starts the match over. In a full-world match every player's input goes to every other each tick, so traffic can grow with the square of the player count. Visibility can restrict recipient input and state delivery; practical capacity depends on the game and workload. In generated C it's `TIDE_GAME_PLAYERS` and `tide_game_api.max_players`.

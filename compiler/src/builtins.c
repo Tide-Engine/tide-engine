@@ -1040,6 +1040,11 @@ static void build_signatures(void)
     // Text's methods: tide/text.h, with the text first. Positions and lengths
     // count characters, and are clamped to the text, never out of range.
     const type t_int = {TY_INT, NULL};
+    // Shards: what a sharded game's code can ask about the border (docs/spec.md, Shards)
+    describe(add("Shards", "Owns", T_BOOL, "tide_shard_owns_now", 1, (type){TY_ENTITY, NULL}, T_NONE, T_NONE), "entity",
+             "Whether this shard owns the entity now, so code running here can change it at once. Code that changes an "
+             "entity another shard owns waits until this one does, and runs again then: see `Shards.delay`. Always true "
+             "in a game that isn't sharded, or a match that isn't split.");
     // Debug: output for whoever runs the game, which changes nothing in the match
     describe(add("Debug", "Log", T_NONE, "tide_debug_log", 1, T_STR, T_NONE, T_NONE), "text",
              "Prints a line: to the terminal under `tide run`, the browser's console on the web and the system's log on "
@@ -1246,6 +1251,7 @@ static const struct {
     const char *c_constant;
 } members[] = {
     {"Application", "title", TY_STRING, "tide_str_from_cstr(tide_game_title)"},
+    {"Shards", "delay", TY_INT, "tide_shard_delay_now"},
     {"Application", "persistentDataPath", TY_STRING, "tide_application_persistent_data_path(tide_l->tide_io)"},
     {"Application", "temporaryCachePath", TY_STRING, "tide_application_temporary_cache_path(tide_l->tide_io)"},
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},
@@ -1360,7 +1366,7 @@ bool builtin_owner(const str name)
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Audio")
-        || str_eq_c(name, "Json") || str_eq_c(name, "Audience")
+        || str_eq_c(name, "Json") || str_eq_c(name, "Audience") || str_eq_c(name, "Shards")
         || builtin_type_named(name, &ignored);
 }
 
@@ -2076,6 +2082,14 @@ static const setting settings[] = {
      "that took longest in the last tick. Nothing is measured for them until then. It's part of the build, so what "
      "`tide build` makes shows them too: take it out before players get the game, unless the frame rate is theirs "
      "to see. `tide run --stats` shows them open."},
+    {"shards", TY_BOOL, "false",
+     "Splits the match's world across servers by where things are, for worlds bigger than one server holds: each "
+     "region a shard of its own, with entities moving between them as they move. Game code doesn't change; code that "
+     "changes something across a border waits until its shard owns it. Needs `shardRange`, and a `[Partition]` field "
+     "or `Transform`'s position to say where each entity is."},
+    {"shardRange", TY_FLOAT, "none",
+     "With `shards`: how far the game's code looks around, in world units, like sight or reach. Each shard holds "
+     "read-only copies of its neighbours' entities within this of its border, and no region is narrower than twice it."},
     {"debugViews", TY_BOOL, "false",
      "The engine's debug views are on in the game: F7 shows the profiler, which says where a frame's time goes (the "
      "match's ticks, each view, drawing) and a tick's (each system, then its changes and events). Nothing is measured "

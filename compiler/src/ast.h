@@ -1524,6 +1524,15 @@ typedef struct program {
     bool stats;                // stats: the host shows its stats overlay
     bool debug_views;          // debugViews: hosts show their debug views when asked
     decl *prediction;          // The built-in enum Prediction
+    // Shards (`settings { shards = true; shardRange = 64; }`, docs/spec.md, Shards)
+    bool shards;
+    double shard_range;        // shardRange, or 0 where it isn't set
+    loc shards_at, shard_range_at;
+    decl *partition;           // The component whose field [Partition] marks, or NULL: Transform's position decides
+    int partition_field;       // ...that field's index
+    loc partition_at;
+    decl *shard_ghost;         // The hidden sparse component a ghost (another shard's entity, read-only) has
+    decl *shard_state;         // The hidden singleton of what makes a world a shard
 } program;
 
 // A change that fixes a diagnostic, which editors offer as a quick fix.

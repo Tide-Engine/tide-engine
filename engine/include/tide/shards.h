@@ -1,0 +1,68 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "tide/session.h"
+#include "tide/shard.h"
+
+// The engine's orchestrator: every shard of a sharded match's world in one
+// process (docs/spec.md, Shards; notes/sharding.md). Each shard is a server
+// (tide/session.h) its players connect to; the orchestrator steps them
+// together, which keeps their ticks in step, carries each shard's messages to
+// the shards they're for, sends each shard copies of its neighbours'
+// entities near its border (ghosts), splits a region whose shard holds too
+// much, and saves every shard at one tick as a checkpoint.
+//
+// Tide's hosting service runs the same shards across machines; this one is
+// for development, tests and worlds one machine holds.
+
+typedef struct tide_shards tide_shards;
+
+typedef struct tide_shards_desc {
+    const tide_game *game;   // A sharded game's (tide_game.shards)
+    uint32_t tick_rate;      // 0: the game's, or else 60
+    float dt;                // 0: 1 / tick_rate
+    const void *start;       // The scene the match starts in (tide_start), NULL: Main
+    uint32_t seed;           // Time.seed, every shard's
+    // Where things are: the box the regions divide, which grow past it to
+    // take what goes outside. `split` regions along each axis to start with
+    // (0 counts as 1).
+    tide_shard_box world;
+    uint32_t split[3];
+    // A region whose shard owns more entities than this is split in two, by
+    // where they are, down to twice the game's range across (0: never).
+    uint32_t most_entities;
+    // Each shard's server's transports (tide_server_desc.transports), made as
+    // the shard starts: `shard` is its id. NULL: none, as in tests that only
+    // tick the shards.
+    void (*transports)(void *user, uint32_t shard, tide_transport out[2]);
+    void *user;
+    const tide_jobs *jobs;
+} tide_shards_desc;
+
+tide_shards *tide_shards_create(const tide_shards_desc *desc, double now);
+void tide_shards_destroy(tide_shards *s);
+// Runs every shard's due ticks, then carries what they sent and their ghosts
+// to the shards they're for, which apply them at their next ticks.
+void tide_shards_update(tide_shards *s, double now);
+
+// Shards are numbered from 0, the root; one that was merged away is NULL.
+uint32_t tide_shards_count(const tide_shards *s);
+tide_server *tide_shards_server(const tide_shards *s, uint32_t shard);
+const void *tide_shards_world(const tide_shards *s, uint32_t shard);
+bool tide_shards_region(const tide_shards *s, uint32_t shard, tide_shard_box *out); // False for the root
+void tide_shards_status(const tide_shards *s, uint32_t shard, tide_shard_status *out);
+// Which shard owns an entity now, as the orchestrator knows it: the shard it
+// last went to, or the one that gave its handle. -1 for none.
+int32_t tide_shards_owner(const tide_shards *s, tide_entity e);
+// A player joined the world, or left it: the root sends PlayerJoined or PlayerLeft.
+void tide_shards_player(tide_shards *s, tide_player_id player, bool joined);
+// The shard whose region holds a position, or the root's (0) outside them all.
+uint32_t tide_shards_at(const tide_shards *s, const double p[3]);
+
+// A checkpoint: every shard's world and what the orchestrator keeps, at one
+// tick, between updates; bytes to free(). Loading one makes the orchestrator
+// it was, its shards' servers new (players connect again).
+uint8_t *tide_shards_save(const tide_shards *s, uint32_t *size);
+tide_shards *tide_shards_load(const tide_shards_desc *desc, const uint8_t *data, uint32_t size, double now);

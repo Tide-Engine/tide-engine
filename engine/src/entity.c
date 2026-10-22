@@ -106,6 +106,61 @@ bool tide_entity_destroy(tide_entities *t, const tide_entity e)
     return true;
 }
 
+// Slot `index` to change, the table grown to have it: slots it passes over
+// stay as they were, never used, and aren't listed free.
+static tide_entity_slot *slot_at(tide_entities *t, const uint32_t index)
+{
+    if (index >= t->next_unused) {
+        const uint32_t pages = (index >> TIDE_ENTITY_PAGE_SHIFT) + 1u;
+        make_room(t, pages);
+        if (t->pages < pages) t->pages = pages;
+        t->next_unused = index + 1u;
+    }
+    return slot_to_change(t, index);
+}
+
+tide_entity tide_entity_create_at(tide_entities *t, const uint32_t index)
+{
+    if (index == UINT32_MAX) return (tide_entity){0};
+    if (index < t->next_unused && slot_of(t, index)->generation != 0) return (tide_entity){0};
+    tide_entity_slot *slot = slot_at(t, index);
+    slot->generation = 1u;
+    slot->archetype = TIDE_ARCHETYPE_NONE;
+    slot->row = 0;
+    slot->snaps = 0;
+    return (tide_entity){index, 1u};
+}
+
+bool tide_entity_install(tide_entities *t, const tide_entity e)
+{
+    if (!(e.generation & 1u) || (e.generation & TIDE_ENTITY_TEMPORARY) || e.index == UINT32_MAX) return false;
+    if (e.index < t->next_unused && (slot_of(t, e.index)->generation & 1u)) return false; // Another's, alive here
+    tide_entity_slot *slot = slot_at(t, e.index);
+    slot->generation = e.generation;
+    slot->archetype = TIDE_ARCHETYPE_NONE;
+    slot->row = 0;
+    slot->snaps = 0;
+    return true;
+}
+
+void tide_entity_forget(tide_entities *t, const tide_entity e, const bool away)
+{
+    if (!tide_entity_alive(t, e)) return;
+    tide_entity_slot *slot = slot_to_change(t, e.index);
+    slot->generation++; // Free here, and in no free list: its index is another shard's to give
+    if (slot->generation & TIDE_ENTITY_TEMPORARY) slot->generation = 2;
+    slot->archetype = away ? TIDE_ARCHETYPE_AWAY : TIDE_ARCHETYPE_NONE;
+    slot->row = 0;
+    slot->snaps = 0;
+}
+
+bool tide_entity_died_here(const tide_entities *t, const tide_entity e)
+{
+    if (e.index >= t->next_unused || tide_entity_alive(t, e)) return false;
+    const tide_entity_slot *slot = slot_of(t, e.index);
+    return slot->archetype != TIDE_ARCHETYPE_AWAY && slot->generation != 0 && slot->generation != e.generation;
+}
+
 void tide_entity_set_location(tide_entities *t, const tide_entity e, const tide_location loc)
 {
     if (!tide_entity_alive(t, e)) return;
@@ -124,6 +179,11 @@ tide_entity tide_entity_in_slot(const tide_entities *t, const uint32_t index)
 void tide_entity_snap(tide_entities *t, const tide_entity e)
 {
     if (tide_entity_alive(t, e)) slot_to_change(t, e.index)->snaps++;
+}
+
+void tide_entity_set_snaps(tide_entities *t, const tide_entity e, const uint32_t snaps)
+{
+    if (tide_entity_alive(t, e) && slot_of(t, e.index)->snaps != snaps) slot_to_change(t, e.index)->snaps = snaps;
 }
 
 uint32_t tide_entity_snaps(const tide_entities *t, const tide_entity e)

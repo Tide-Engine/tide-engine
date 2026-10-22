@@ -729,6 +729,13 @@ static bool has_component(const comp_mask mask, const int component)
     return mask_has(mask, component);
 }
 
+// A sharded game's (settings { shards = true; }): its match is split across
+// servers, and its generated code checks what its shard owns (shard_codegen.inc).
+static bool sharded(const gen *g)
+{
+    return g->prog->shard_state != NULL;
+}
+
 // Whether a component is sparse: a presence byte and its lanes in every
 // archetype whose entities can have it, rather than part of the archetype.
 static bool comp_sparse(const gen *g, const int component)
@@ -4383,8 +4390,13 @@ static bool event_batch_value(const expr *e)
     return true;
 }
 
+// A sharded game sends each event on its own: a shard checks where each one's
+// target is (shard_codegen.inc). Set as a game is generated.
+static bool generating_shards;
+
 static const expr *batch_event(const decl *sys)
 {
+    if (generating_shards) return NULL;
     if (sys->is_view || sys->is_handler || sys->is_local || !sys->per_entity || !sys->body || sys->body->stmts.count != 1) return NULL;
     const stmt *s = sys->body->stmts.items[0];
     if (s->kind != S_EXPR || !s->value || s->value->call != CALL_SEND) return NULL;
@@ -4417,7 +4429,7 @@ static bool event_batched(const program *prog, const decl *event)
 // but commands (their sender) and those that hold text (each releases its own).
 static bool event_runs(const program *prog, const decl *event)
 {
-    return is_queued(prog, event) && !event->is_local && !event->is_command && !decl_has_text(event)
+    return !prog->shard_state && is_queued(prog, event) && !event->is_local && !event->is_command && !decl_has_text(event)
         && (has_handlers(event, false) || event->listeners.count > 0);
 }
 
@@ -7722,6 +7734,7 @@ static void gen_header(gen *g)
         sb_printf(o, "    tide_table %s;\n", arch_name(g, a));
     }
     if (extern_system_count(prog)) sb_put(o, "    struct tide_tick_completion *tide_completions; // Tick-local, never saved\n");
+    if (prog->shard_state) sb_put(o, "    struct tide_shard_tick *tide_shard_now; // What its tick's run noted (tide/shard.h): tick-local, never saved\n");
     sb_put(o, "    tide_queue commands; // Of tide_command\n");
     sb_put(o, "    uint32_t tide_chain; // While changes apply: how far down a chain of events what's recorded now is\n");
     gen_task_tables(g, false);
@@ -9752,6 +9765,7 @@ static void gen_prelude(gen *g)
     if (g->prog->assets.count) sb_put(o, "#include \"tide/pack.h\"\n");
     if (g->prog->skinned_types.count) sb_put(o, "#include \"tide/skinned_data.h\"\n");
     sb_put(o, "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
+    sb_put(o, "#include \"tide/shard.h\" // Shards.Owns and Shards.delay, which any game can read\n\n");
     sb_put(o, "// Determinism: never fuse a*b + c, whatever flags this file is built with.\n");
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
     sb_put(o, "// Helpers are emitted whether or not this program uses them.\n");
@@ -9931,10 +9945,12 @@ static void gen_component_access(gen *g)
                   name, name);
         if (d->world_set_used) {
             sb_printf(o, "TIDE_HELPER void tide_world_set_%s(%s *w, const tide_component_binding *bindings,\n"
-                         "                                     const tide_entity e, const %s value)\n{\n"
+                         "                                     const tide_entity e, const %s value)\n{\n%s"
                          "    %s row;\n    if (!tide_load_%s(w, e, &row)) return;\n"
                          "    %s *const active = tide_bound_component(bindings, w, e, %du);\n"
-                         "    if (active) row = *active;\n", name, w, name, name, name, name, c);
+                         "    if (active) row = *active;\n", name, w, name,
+                      !d->is_local && sharded(g) ? "    if (!tide_shard_may(w, e)) return; // Another shard's waits on the border\n" : "",
+                      name, name, name, c);
             // A mut copy may own newer container handles than its stored row.
             // Release/replace the actual owned value, then refresh both copies.
             if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(&row, value, %s);\n", name, world_where(d->is_local));
@@ -10347,6 +10363,9 @@ static void gen_command_recorders(gen *g)
     for (int side = 0; side < 2; side++) {
         const bool local = side == 1;
         const char *p = world_prefix(local);
+        // A sharded match changes only what its shard owns: changing another
+        // shard's entity waits on the border (tide_shard_may, shard_codegen.inc)
+        const bool shard = !local && sharded(g);
         sb_printf(o,
             "TIDE_HELPER tide_command *%scmd_push(%s *w, uint32_t kind, uint32_t id, tide_entity e, uint32_t size)\n"
             "{\n"
@@ -10360,30 +10379,38 @@ static void gen_command_recorders(gen *g)
             "}\n\n"
             "TIDE_HELPER void %scmd_remove(%s *w, tide_entity e, uint32_t component)\n"
             "{\n"
+            "%s"
             "    %scmd_push(w, TIDE_CMD_REMOVE, component, e, TIDE_COMMAND_HEAD);\n"
             "}\n\n"
             "TIDE_HELPER void %scmd_destroy(%s *w, tide_entity e)\n"
             "{\n"
+            "%s"
             "    %scmd_push(w, TIDE_CMD_DESTROY, 0, e, TIDE_COMMAND_HEAD);\n"
             "}\n\n"
             "TIDE_HELPER void %scmd_unload(%s *w, tide_entity scene)\n"
             "{\n"
+            "%s"
             "    %scmd_push(w, TIDE_CMD_UNLOAD, 0, scene, TIDE_COMMAND_HEAD);\n"
             "}\n\n",
             p, world_type(local),
             // A task on another thread records into its own queue (tide/jobs.h)
             local ? "&w->commands" : "tide_recording(&w->commands)", local ? "frame" : "tick",
-            prog->prefab_sites.count ? "    c->prefab_pending = 0;\n" : "", p, world_type(local), p, p,
-            world_type(local), p, p, world_type(local), p);
+            prog->prefab_sites.count ? "    c->prefab_pending = 0;\n" : "", p, world_type(local),
+            shard ? "    if (!tide_shard_may(w, e)) return;\n" : "", p, p, world_type(local),
+            shard ? "    if (!tide_shard_may(w, e)) return;\n" : "", p, p, world_type(local),
+            shard ? "    if (!tide_shard_may(w, scene)) return;\n" : "", p);
         if (!local) {
             sb_put(o, "// entity.Snap(): views draw it as it is, from the end of this tick\n");
-            sb_put(o, "TIDE_HELPER void tide_cmd_snap(tide_world *w, tide_entity e)\n{\n    tide_cmd_push(w, TIDE_CMD_SNAP, 0, e, TIDE_COMMAND_HEAD);\n}\n\n");
+            sb_printf(o, "TIDE_HELPER void tide_cmd_snap(tide_world *w, tide_entity e)\n{\n%s"
+                         "    tide_cmd_push(w, TIDE_CMD_SNAP, 0, e, TIDE_COMMAND_HEAD);\n}\n\n",
+                      shard ? "    if (!tide_shard_may(w, e)) return;\n" : "");
         }
         if (prog->hierarchy[side]) {
-            sb_printf(o, "TIDE_HELPER void %scmd_parent(%s *w, tide_entity child, tide_entity parent, bool keep)\n{\n"
+            sb_printf(o, "TIDE_HELPER void %scmd_parent(%s *w, tide_entity child, tide_entity parent, bool keep)\n{\n%s"
                          "    tide_command *c = %scmd_push(w, TIDE_CMD_PARENT, 0, child, TIDE_COMMAND_SIZE(parent));\n"
                          "    memset(&c->data.parent, 0, sizeof c->data.parent);\n"
-                         "    c->data.parent.parent = parent;\n    c->data.parent.keep = keep;\n}\n\n", p, world_type(local), p);
+                         "    c->data.parent.parent = parent;\n    c->data.parent.keep = keep;\n}\n\n", p, world_type(local),
+                      shard ? "    if (!tide_shard_may(w, child) || !tide_shard_may(w, parent)) return;\n" : "", p);
         }
     }
     for (int a = 0; a < prog->archetypes.count; a++) {
@@ -10400,7 +10427,8 @@ static void gen_command_recorders(gen *g)
                       world_type(local), a);
         }
         // A system that splits its entities across threads gets a temporary handle (tide/jobs.h)
-        sb_printf(o, "    tide_entity e = %s(&w->entities);\n", local ? "tide_entity_create" : "tide_new_entity");
+        if (!local && sharded(g)) sb_put(o, "    tide_entity e = tide_new_entity_by(&w->entities, tide_shard_create, w);\n");
+        else sb_printf(o, "    tide_entity e = %s(&w->entities);\n", local ? "tide_entity_create" : "tide_new_entity");
         sb_printf(o, "    tide_command *c = %scmd_push(w, TIDE_CMD_SPAWN, %d, e, TIDE_COMMAND_SIZE(spawn%d));\n", world_prefix(local), a, a);
         sb_printf(o, "    c->data.spawn%d.values = values;\n", a);
         if (spawn_has_text(g, a)) sb_printf(o, "    tide_own_spawn%d(&c->data.spawn%d.values, %s);\n", a, a, world_where(local));
@@ -10412,6 +10440,7 @@ static void gen_command_recorders(gen *g)
         const decl *d = prog->components.items[c];
         const char *comp = type_cname(d);
         sb_printf(o, "TIDE_HELPER void tide_cmd_add_%s(%s *w, tide_entity e, %s value)\n{\n", comp, world_type(d->is_local), comp);
+        if (!d->is_local && sharded(g)) sb_put(o, "    if (!tide_shard_may(w, e)) return;\n");
         sb_printf(o, "    tide_command *c = %scmd_push(w, TIDE_CMD_ADD, %d, e, TIDE_COMMAND_SIZE(%s));\n    c->data.%s = value;\n",
                   world_prefix(d->is_local), c, comp, comp);
         if (decl_has_text(d)) sb_printf(o, "    tide_own_%s(&c->data.%s, %s);\n", comp, comp, world_where(d->is_local));
@@ -10804,7 +10833,8 @@ static void gen_apply(gen *g, const bool local)
         sb_printf(o, " tide_table_remove(&w->%s, %s, loc.row, &w->entities, %d); break;\n", arch_name(g, a), arch_columns(g, a), a);
     }
     sb_put(o, "    default: return; // Already destroyed.\n    }\n");
-    sb_put(o, "    tide_entity_destroy(&w->entities, e);\n}\n\n");
+    // A shard lists free only indices it gives (tide_shard_free_slot)
+    sb_put(o, !local && sharded(g) ? "    tide_shard_free_slot(w, e);\n}\n\n" : "    tide_entity_destroy(&w->entities, e);\n}\n\n");
     if (prog->hierarchy[local]) sb_printf(o, "TIDE_HELPER void %sdestroy_now(%s *w, tide_entity e)\n{\n    %shierarchy_destroy(w, e);\n}\n\n", p, world, p);
 
     // Unloading a scene: every entity in it, then the scene itself. Rows are
@@ -10812,6 +10842,8 @@ static void gen_apply(gen *g, const bool local)
     const bool scenes = has_scenes(prog, local);
     if (scenes) {
         sb_printf(o, "TIDE_HELPER void %sunload(%s *w, tide_entity scene)\n{\n", p, world);
+        // Its entities on other shards go too
+        if (!local && sharded(g)) sb_put(o, "    tide_shard_unloaded(w, scene);\n");
         for (int a = 0; a < prog->archetypes.count; a++) {
             if (arch_local(g, a) != local) continue;
             const char *name = arch_name(g, a);
@@ -10930,7 +10962,10 @@ static void gen_apply(gen *g, const bool local)
         "    w->tide_chain = 0;\n"
         "}\n\n",
         p, world, local ? "frame" : "tick", p, p, p, p, p, item_runs ? ", &at" : "", p, parent_case.data ? parent_case.data : "");
-    sb_printf(o, "static void %sapply_commands(%s *w)\n{\n    %sapply_from(w, (tide_queue_place){0, 0});\n", p, world, p);
+    sb_printf(o, "static void %sapply_commands(%s *w)\n{\n", p, world);
+    // A shard's deliveries that waited on its border and can run now, first
+    if (!local && sharded(g)) sb_put(o, "    tide_shard_resume(w);\n");
+    sb_printf(o, "    %sapply_from(w, (tide_queue_place){0, 0});\n", p);
     // The match's tasks go on once the tick's changes are in, and what they do applies after
     if (!local && world_has_tasks(g, false)) {
         sb_put(o, "    const tide_queue_place tide_tasks_from = tide_queue_end(&w->commands);\n    tide_run_tasks(w);\n"
@@ -10942,6 +10977,8 @@ static void gen_apply(gen *g, const bool local)
     if (prog->main->is_local == local && !g->opts->editor_prefab) {
         sb_put(o, "    // Every scene unloaded: Main loads again.\n    if (");
         if (!local && prog->visibility_state) sb_put(o, "!w->tide_visibility_state.client && ");
+        // A shard's scenes are the root's: a region holds none of its own
+        if (!local && sharded(g)) sb_put(o, "!tide_shard_starting_empty && tide_shard_root(w) && ");
         gen_no_scene(g, local);
         const int a = prog->main_archetype;
         sb_printf(o, ") {\n        const tide_queue_place from = tide_queue_end(&w->commands);\n        tide_cmd_load%d(w, (tide_spawn%d){.%s = ", a, a,
@@ -11076,6 +11113,9 @@ static const char *heard_rows_wants(const gen *g, const int n)
 }
 
 #include "value_codec_codegen.inc"
+#include "shard_codegen.inc"
+#include "shard_messages_codegen.inc"
+#include "shard_world_codegen.inc"
 #include "heard_reads_codegen.inc"
 #include "heard_heap_codegen.inc"
 
@@ -12931,6 +12971,7 @@ static void gen_system_body(gen *g, const decl *sys)
         line(g, o, "tide_random *const tide_dice = &tide_rolled;");
         line(g, o, "(void)tide_dice;");
     }
+    gen_shard_system_entry(g, sys); // A sharded game's: what its shard owns, and what waits on the border
     gen_grid_caches(g);
     for (int i = 0; i < sys->body->stmts.count; i++) gen_stmt(g, sys->body->stmts.items[i]);
     g->reserved_send = false;
@@ -13629,6 +13670,7 @@ static void gen_dispatch_handlers(gen *g, const decl *event, const bool local)
     const program *prog = g->prog;
     sb *o = &g->c;
     const char *world = local ? "tide_l" : "tide_w";
+    if (!local) gen_shard_dispatch_entry(g, event); // A sharded game's: to another shard's entity, or waiting on the border
     sb_put(o, "    if (!tide_entity_is_null(tide_target) && tide_loc.archetype == TIDE_ARCHETYPE_NONE) return; // Gone by its turn\n");
     for (int i = 0; i < event->handlers.count; i++) {
         const decl *h = event->handlers.items[i];
@@ -17908,6 +17950,8 @@ static void gen_api(gen *g)
         sb_put(o, "        w->inputs[i] = tide_defaults;\n        w->previous_inputs[i] = tide_defaults;\n    }\n");
     }
     // The scene the match starts in: the one named, or Main if it's the match's.
+    // A sharded match's scenes are its root shard's, and a region starts empty.
+    if (!g->opts->editor_prefab && sharded(g)) sb_put(o, "    if (!tide_shard_starting_empty)\n");
     if (!g->opts->editor_prefab) {
         sb_put(o, "    switch (start ? start->scene : -1) {\n");
         for (int i = 0; i < prog->start_scenes.count; i++) {
@@ -17978,7 +18022,10 @@ static void gen_api(gen *g)
     else sb_put(o, "    (void)w;\n}\n\n");
 
     sb_put(o, "void tide_world_tick(tide_world *w)\n{\n    tide_world_tick_on(w, NULL);\n}\n\n");
-    sb_printf(o, "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n%s", use_match);
+    // A sharded game's tick runs again when code touched what its shard doesn't own (gen_shard_tick)
+    if (sharded(g)) gen_shard_tick(g);
+    sb_printf(o, "%s tide_world_tick_%s(tide_world *w, const tide_jobs *jobs)\n{\n%s", sharded(g) ? "static void" : "void",
+              sharded(g) ? "once" : "on", use_match);
     const int completions = extern_system_count(prog);
     if (completions) sb_printf(o, "    tide_tick_completion tide_completions[%d] = {0};\n    w->tide_completions = tide_completions;\n", completions);
     // A host that shows where ticks' time goes gave its jobs a profile
@@ -17988,8 +18035,8 @@ static void gen_api(gen *g)
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     if (prog->systems.count) {
-        sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s};\n",
-                  prog->systems.count, any_settles ? "tide_settle_item" : "NULL");
+        sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s%s};\n",
+                  prog->systems.count, any_settles ? "tide_settle_item" : "NULL", sharded(g) ? ", tide_shard_create" : ", NULL");
         sb_put(o, "    tide_run_systems(w, &tide_tick, jobs);\n");
     } else {
         sb_put(o, "    (void)tide_prepare;\n");
@@ -18043,6 +18090,7 @@ static void gen_api(gen *g)
     // scene can't start.
     sb_put(o, "bool tide_world_ended(const tide_world *w)\n{\n");
     if (prog->main->is_local && has_scene_archetypes(g, false)) {
+        if (sharded(g)) sb_put(o, "    if (!tide_shard_root(w)) return false; // A region holds no scene: the root's say when it's over\n");
         sb_put(o, "    return ");
         if (prog->visibility_state) sb_put(o, "!w->tide_visibility_state.client && ");
         gen_no_scene(g, false);
@@ -18151,10 +18199,14 @@ static void gen_api(gen *g)
 
     const char *joined = type_cname(prog->player_joined);
     const char *left = type_cname(prog->player_left);
-    sb_printf(o, "void tide_world_player_joined(tide_world *w, tide_player_id player)\n{\n"
-                 "    tide_cmd_send_%s(w, (tide_entity){0}, (%s){.player = player});\n}\n\n", joined, joined);
-    sb_printf(o, "void tide_world_player_left(tide_world *w, tide_player_id player)\n{\n"
-                 "    tide_cmd_send_%s(w, (tide_entity){0}, (%s){.player = player});\n}\n\n", left, left);
+    // A shard's players join and leave its match as they come and go across the
+    // world's borders: the world's PlayerJoined and PlayerLeft are the root's
+    // to send, which the orchestrator tells it (TIDE_SHARD_PLAYER)
+    const char *shard_players = sharded(g) ? "    if (w->tide_shard_state.shard) return;\n" : "";
+    sb_printf(o, "void tide_world_player_joined(tide_world *w, tide_player_id player)\n{\n%s"
+                 "    tide_cmd_send_%s(w, (tide_entity){0}, (%s){.player = player});\n}\n\n", shard_players, joined, joined);
+    sb_printf(o, "void tide_world_player_left(tide_world *w, tide_player_id player)\n{\n%s"
+                 "    tide_cmd_send_%s(w, (tide_entity){0}, (%s){.player = player});\n}\n\n", shard_players, left, left);
 
     if (prog->input) {
         sb_printf(o, "void tide_world_set_input(tide_world *w, tide_player_id player, %s input)\n{\n",
@@ -19947,6 +19999,7 @@ static void gen_game_api(gen *g)
     if (start_is_pure(prog)) sb_put(o, "    .pure_start = true,\n");
     if (prog->uses_seed) sb_put(o, "    .seeded = true,\n");
     sb_put(o, "    .max_players = TIDE_GAME_PLAYERS,\n"); // In the header too: the world's inputs are as many
+    if (sharded(g)) sb_put(o, "    .shards = &tide_shard_api,\n");
     if (prog->command_types.count) sb_put(o, "    .check_command = tide_game_check_command,\n"
                                            "    .command_sequence = tide_game_command_sequence,\n"
                                            "    .command = tide_game_command,\n");
@@ -20941,6 +20994,7 @@ bool codegen(program *prog, const codegen_options *opts)
         }
         vec_push(prog->singletons, state);
     }
+    generating_shards = prog->shard_state != NULL;
     name_program(&g);
     select_indirect_params(prog);
     collect_borrows(&g);
@@ -20959,6 +21013,7 @@ bool codegen(program *prog, const codegen_options *opts)
     collect_heard_rows(&g);
     collect_heard_reads(&g);
     collect_heard_codecs(&g);
+    collect_shard_codecs(&g);
     collect_asset_dependencies(&g);
     if (opts->info && g.asset_dependencies.count) opts->info->assets_affect_match = true;
     if (g.asset_dependencies.count || g.skinned_fingerprints.count) {
@@ -21023,6 +21078,7 @@ bool codegen(program *prog, const codegen_options *opts)
     }
 
     gen_prelude(&g);
+    gen_shard_prelude(&g);
     gen_result_types(&g); // Before routine signatures and maps' Get helpers.
     for (int i = 0; i < prog->systems.count; i++) gen_query_row_types(&g, prog->systems.items[i]);
     for (int i = 0; i < prog->views.count; i++) gen_query_row_types(&g, prog->views.items[i]);
@@ -21044,6 +21100,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_columns(&g);
     gen_component_access(&g);
     gen_hierarchy(&g);
+    gen_shard_early(&g);
     gen_scene_filters(&g);
     gen_visibility(&g);
     gen_local_fields(&g);
@@ -21059,6 +21116,7 @@ bool codegen(program *prog, const codegen_options *opts)
         g.value_schema = 0x811C9DC5u;
         for (size_t i = start; i < g.c.len; i++) g.value_schema = (g.value_schema ^ (uint8_t)g.c.data[i]) * 0x01000193u;
     }
+    gen_shard_main(&g);
     gen_hear(&g);
     gen_shaders(&g);
     gen_shader_table(&g);
