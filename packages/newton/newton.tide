@@ -13,11 +13,13 @@ enum Status
     InvalidJoint,
     InvalidTopology,
     TooLarge,
-    Unstable
+    Unstable,
+    InvalidCollider
 }
 
 enum BodyType { Static, Dynamic }
 enum JointType { Fixed, Revolute, Prismatic }
+enum ColliderType { Sphere, Plane }
 
 // Position is the body origin, velocity the world-space center-of-mass speed,
 // and angularVelocity is world-space radians/second, as in Box3D. Inertia is
@@ -78,6 +80,27 @@ component Actuator
     float appliedEffort; // Last successful step's clamped control, excluding passive forces
 }
 
+// Attach to a Body, or reference a Body explicitly for compound shapes.
+// Shape transforms are local to the body origin; a Plane's normal is local +Y.
+// Planes require static bodies. Spheres use radius; their rotation is harmless.
+// Equal nonzero exclusionGroup values disable a pair (useful for robot parts).
+// These shapes do not change a body's authored mass or inertia.
+component Collider
+{
+    Entity body; // default means the entity carrying this Collider
+    bool enabled = true;
+    ColliderType type;
+    float radius = 0.05;
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    int exclusionGroup;
+    float stiffness = 2000;
+    float damping = 5;
+    float frictionDamping = 100;
+    float friction = 0.8;
+    float3 contactForce; // Mean world force over the last successful tick
+}
+
 // Package implementation records, matching runtime.h in exact field order.
 // Components cannot be fields of these value structs.
 struct BodyState
@@ -120,6 +143,22 @@ struct JointState
     float appliedEffort;
 }
 
+struct ColliderState
+{
+    Entity entity;
+    Entity body;
+    ColliderType type;
+    int exclusionGroup;
+    float radius;
+    float3 position;
+    quaternion rotation;
+    float stiffness;
+    float damping;
+    float frictionDamping;
+    float friction;
+    float3 contactForce;
+}
+
 singleton Physics
 {
     float3 gravity = float3(0, -9.81, 0);
@@ -129,8 +168,10 @@ singleton Physics
     // no native handles, pointers, resident arenas or hidden state are retained.
     List<BodyState> bodies;
     List<JointState> joints;
+    List<ColliderState> colliders;
     Map<Entity, int> bodyIndices;
     Map<Entity, int> jointIndices;
+    Map<Entity, int> colliderIndices;
 }
 
 [Stage(PhysicsStages.Step, 0)]
@@ -138,8 +179,10 @@ system Clear(mut Physics physics)
 {
     physics.bodies.Clear();
     physics.joints.Clear();
+    physics.colliders.Clear();
     physics.bodyIndices.Clear();
     physics.jointIndices.Clear();
+    physics.colliderIndices.Clear();
 }
 
 [Stage(PhysicsStages.Step, 1)]
@@ -170,6 +213,21 @@ system CollectJoints(Joint joint, mut Physics physics)
         parentPosition = joint.parentPosition, parentRotation = joint.parentRotation,
         childPosition = joint.childPosition, childRotation = joint.childRotation,
         axis = joint.axis
+    });
+}
+
+[Stage(PhysicsStages.Step, 2)]
+system CollectColliders(Collider collider, mut Physics physics)
+{
+    if (!collider.enabled) return;
+    Entity entity = this;
+    physics.colliderIndices[entity] = physics.colliders.count;
+    physics.colliders.Add(ColliderState {
+        entity = entity, body = collider.body == default ? entity : collider.body,
+        type = collider.type, exclusionGroup = collider.exclusionGroup,
+        radius = collider.radius, position = collider.position, rotation = collider.rotation,
+        stiffness = collider.stiffness, damping = collider.damping,
+        frictionDamping = collider.frictionDamping, friction = collider.friction
     });
 }
 
@@ -225,4 +283,16 @@ system PublishActuators(mut Actuator actuator, Physics physics, with Joint)
     var state = physics.joints[index];
     if (state.entity != entity) return;
     actuator.appliedEffort = state.appliedEffort;
+}
+
+[Stage(PhysicsStages.Step, 5)]
+system PublishColliders(mut Collider collider, Physics physics)
+{
+    Entity entity = this;
+    if (physics.status != Status.Ok) return;
+    if (!collider.enabled) { collider.contactForce = float3(0); return; }
+    if (!physics.colliderIndices.TryGet(entity, out var index)) return;
+    var state = physics.colliders[index];
+    if (state.entity != entity) return;
+    collider.contactForce = state.contactForce;
 }

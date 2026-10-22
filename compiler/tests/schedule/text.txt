@@ -4,6 +4,7 @@ A system starts once everything it runs after is done.
 stage 1  Rename  (per entity)
          writes Name
          alongside nothing
+
 stage 2  Retitle  (per entity)
          writes Title
          after Rename: both change text, lists or grids, which the match keeps in one heap

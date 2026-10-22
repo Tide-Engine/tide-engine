@@ -1,5 +1,12 @@
 # The docs site
 
+## Schedule display grouped by stage (2026-10-22)
+
+The schedule guide groups Steer and Expire together in stage 1 and separates
+successive stage groups, matching the CLI. It explains stable within-stage tick
+order and Fire starting after Steer even while Expire runs. No language or
+runtime behavior changes. Implementation and validation: schedule-and-threads.md.
+
 ## Simpler navigation and sample source links (2026-10-22)
 
 Package sidebar entries now use just Box2D, Box3D, Newton, Rooms, Lobby,

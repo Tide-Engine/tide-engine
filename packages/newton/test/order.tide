@@ -3,7 +3,7 @@ scene Main;
 component Observed { float value; }
 event(Spawned) Build(with Main)
 {
-    var body = Spawn(Body);
+    var body = Spawn(Body, Collider);
     Spawn(Joint { type = JointType.Revolute, child = body }, Actuator, Observed);
 }
 [Before(PhysicsStages.Step)]

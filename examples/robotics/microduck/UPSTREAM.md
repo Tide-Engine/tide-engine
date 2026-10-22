@@ -19,7 +19,7 @@ meshes. No upstream STL files are included, read, converted or sampled for
 geometry. Original XML references to absent mesh files are retained as
 provenance; this converter never opens them.
 
-## Original appearance and foot-plane proxy
+## Original appearance and collision proxies
 
 The casings, camera/servo details and broad feet in `visuals.tide` are original
 procedural geometry. Appearance references are Pollen Robotics'
@@ -31,23 +31,35 @@ No photographs or photo textures are distributed with the example. These
 references document how the appearance was authored; the XML/data license
 does not describe the press photographs or the separate STL assets.
 
-The game's contact proxy is separately authored: four points on each ankle
-body, at original-frame coordinates
-`(±0.032, -0.0238146, -0.0140852 ± 0.015)` metres. The centre comes from the
-XML's `left_foot` and `right_foot` site positions. The 64 × 30 mm footprint is
-an illustrative approximation informed by the broad feet in the official
-photos, not an imported collision mesh or measured sole outline. The game
-transforms these points through the original body frame using the relationship
-below and applies its own compliant plane/friction forces. No contact proxy
-or appearance change alters the source pin, tensors or converter output.
+The 61 sphere proxies per duck in `sandbox.tide` are separately authored
+estimates covering all 15 bodies, based on the original visual geometry and
+source link frames. They are not imported collision meshes or measured casing
+boundaries. Six marked spheres per foot approximate a 72 × 43 mm sole. Their
+original-frame centres are
+`(shift + x * 0.025, -0.0138146, -0.0140852 + side * 0.011)` metres, with
+`x = -1, 0, 1`, `side = -1, 1`, radius `0.010` m and `shift = -0.005` m
+on the left foot or `0.005` m on the right. Their bottom tangencies retain
+the XML foot site's original-frame Y coordinate `-0.0238146` m. Other spheres
+cover the ankle, leg, trunk, neck and head visuals approximately.
+
+The game converts each proxy into the principal body frame using the
+relationship below. It adds four original loose sphere props and a static
+infinite plane at world Y=0; the drawn floor covers only 4 × 3 m. All game
+colliders use stiffness 5600, damping 3, friction damping 1 and friction 0.8.
+The Newton package evaluates its actual upstream compliant rigid-contact
+kernel, with regularized friction and no static-friction constraint, at four
+substeps per 200 Hz game tick. Matching groups suppress each duck's internal
+collisions. These contact proxies, original visuals and gameplay material
+choices leave the source pin, authored mass/tensors and converter output
+unchanged. No STL files are used for either appearance or collision geometry.
 
 ## Regeneration and validation
 
 From the repository root, with `TIDE_HIDDEN=1` in the agent shell:
 
 ```powershell
-python examples/robotics/microduck/tools/convert.py
-python examples/robotics/microduck/tools/convert.py --check
+python -B examples/robotics/microduck/tools/convert.py
+python -B examples/robotics/microduck/tools/convert.py --check
 ```
 
 Python's standard library is sufficient. No NumPy, MuJoCo, upstream Python
@@ -77,6 +89,16 @@ features and invalid inertia. Nonzero hinge-anchor checks also passed.
 Independent review found no issues; its separate 258-pose FK check stayed
 within `8.08e-9` m and `1.50e-7` rotation-matrix element error. Cross-platform
 regeneration and dynamic simulation validation are outside these checks.
+
+Separate validation of the current collision integration passes all 33
+backend runtime tests on native/WASI debug and release, including nine
+independent stock Newton contact-reference samples checking state and forces.
+All 40 bundled upstream hashes and 46 installed source/header files match
+the checkout. Installed CLI native/web release builds and final-profile
+WebGL/WebGPU interaction checks pass. The [example README](README.md) records
+the sphere-envelope clearance and unassisted-topple measurements. These
+integration checks leave the XML/model pins and conversion unchanged and do
+not establish physical fidelity or sim-to-real transfer.
 
 ## Preserved model and interface
 
@@ -164,10 +186,10 @@ No global axis conversion or root placement is baked into the model records.
 The original root body and STAND free-root coordinates both specify the same
 `0.12` m root height; they are not two offsets to add. A fixture chooses its
 world placement and up-axis conversion. To put the original trunk at rotation
-`Q`, initialize the principal trunk at `Q * P_root`. The stepping fixture keeps
+`Q`, initialize the principal trunk at `Q * P_root`. The sandbox keeps
 the trunk's authored positive mass/inertia as a free dynamic root, without a
 world-parent Fixed joint. Reset reconstructs all body placements from STAND
-joint coordinates at that spawn pose before evaluating foot-plane forces.
+joint coordinates at that spawn pose before the package evaluates contacts.
 
 ## Conversion error bounds and deliberate omissions
 
@@ -199,9 +221,10 @@ It examines sites/cameras/geoms only for frame validation.
 The empty equality section creates no loop; equality defaults do not create
 constraints. Hinge ranges are retained as data; a fixture chooses whether to
 enable Newton's soft limit forces. No mesh, contacts, friction, MuJoCo servo
-or BAM actuator behavior is implemented by this conversion. The stepping
-fixture's authored foot-plane forces and upright/heading/lane assistance are
-ordinary game code, separate from this unchanged conversion. Current upstream
+or BAM actuator behavior is implemented by this conversion. The sandbox's
+original compound sphere geometry and package contacts are separate from this
+unchanged conversion. Its mouse pulls and upright/heading/lane assistance are
+ordinary game forces and torques. Current upstream
 Python training configures different actuators; the XML settings here are a
 specific baseline, not a reproduction of that training environment.
 

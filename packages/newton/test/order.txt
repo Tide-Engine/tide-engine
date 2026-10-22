@@ -2,9 +2,11 @@ Control
 Newton.Clear
 Newton.CollectBodies
 Newton.CollectJoints
+Newton.CollectColliders
 Newton.CollectActuators
 Newton.Simulate
 Newton.PublishBodies
 Newton.PublishJoints
 Newton.PublishActuators
+Newton.PublishColliders
 Observe

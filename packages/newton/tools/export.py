@@ -23,6 +23,46 @@ def revision(folder):
     ).strip()
 
 
+def export_source(module, output, filename, wp):
+    wp.set_module_options(
+        {
+            "enable_backward": False,
+            "fuse_fp": False,
+            "fast_math": False,
+            "cpu_compiler_flags": "",
+            "block_dim": 1,
+        },
+        module=module,
+    )
+    with tempfile.TemporaryDirectory(prefix="tide-newton-") as temporary:
+        wp.compile_aot_module(module, device="cpu", module_dir=temporary, strip_hash=True)
+        generated = list(pathlib.Path(temporary).glob("*.cpp"))
+        if len(generated) != 1:
+            raise RuntimeError("expected exactly one generated module: " + filename)
+        source = generated[0].read_text(encoding="utf-8")
+    source = re.sub(
+        r"(?m)^// .*?((?:newton|warp)[/\\]_src[/\\].*?:\d+)$",
+        lambda match: "// " + match[1].replace("\\", "/"),
+        source,
+    )
+    source = source.replace('#include "builtin.h"', '#include "../vendor/warp/builtin.h"')
+    source = source.replace('#include "deterministic.h"', '#include "../vendor/warp/deterministic.h"')
+    source = re.sub(r"(?m)^WP_API void (\w+_cpu_forward)\(", r"static void \1(", source)
+    source = re.sub(r"(?m)^    ((?:wp::[^\n;=]+|bool)) (var_\d+);$", r"    \1 \2{};", source)
+    preamble = (
+        "// Generated from NVIDIA Newton; see ../UPSTREAM.md.\n"
+        "// SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers\n"
+        "// SPDX-License-Identifier: Apache-2.0\n"
+        "#pragma clang diagnostic push\n"
+        '#pragma clang diagnostic ignored "-Weverything"\n'
+        '#include "../math_bindings.h"\n'
+        "#define WP_API\n"
+    )
+    (output / filename).write_text(
+        preamble + source + "\n#pragma clang diagnostic pop\n", encoding="utf-8", newline="\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--newton-root", required=True, type=pathlib.Path)
@@ -44,53 +84,19 @@ def main():
     wp.config.cpu_compiler_flags = ""
     wp.init()
     from newton._src.solvers.featherstone import kernels
+    from newton._src.solvers.semi_implicit.kernels_contact import eval_body_contact
+    from warp._src.context import Kernel
 
-    wp.set_module_options(
-        {
-            "enable_backward": False,
-            "fuse_fp": False,
-            "fast_math": False,
-            "cpu_compiler_flags": "",
-            "block_dim": 1,
-        },
-        module=kernels,
-    )
     package = pathlib.Path(__file__).resolve().parents[1]
     output = package / "kernels"
     output.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="tide-newton-") as temporary:
-        wp.compile_aot_module(kernels, device="cpu", module_dir=temporary, strip_hash=True)
-        generated = list(pathlib.Path(temporary).glob("*.cpp"))
-        if len(generated) != 1:
-            raise RuntimeError("expected exactly one generated Featherstone module")
-        source = generated[0].read_text(encoding="utf-8")
-    # Source locations remain useful, but developer checkout paths do not ship.
-    source = re.sub(
-        r"(?m)^// .*?((?:newton|warp)[/\\]_src[/\\].*?:\d+)$",
-        lambda match: "// " + match[1].replace("\\", "/"),
-        source,
-    )
-    source = source.replace('#include "builtin.h"', '#include "../vendor/warp/builtin.h"')
-    source = source.replace('#include "deterministic.h"', '#include "../vendor/warp/deterministic.h"')
-    # These launch wrappers are called only inside runtime.cpp. Keeping them
-    # local avoids exporting Warp's generic kernel names into a game's C ABI.
-    source = re.sub(r"(?m)^WP_API void (\w+_cpu_forward)\(", r"static void \1(", source)
-    # Warp emits dead loop-carried copies of loop indices even when an inner
-    # loop is empty. Value-initialize generated temporaries, avoiding undefined
-    # reads without changing the solver's defined arithmetic or control flow.
-    source = re.sub(r"(?m)^    ((?:wp::[^\n;=]+|bool)) (var_\d+);$", r"    \1 \2{};", source)
-    preamble = (
-        "// Generated from NVIDIA Newton; see ../UPSTREAM.md.\n"
-        "// SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers\n"
-        "// SPDX-License-Identifier: Apache-2.0\n"
-        "#pragma clang diagnostic push\n"
-        '#pragma clang diagnostic ignored "-Weverything"\n'
-        '#include "../math_bindings.h"\n'
-        "#define WP_API\n"
-    )
-    (output / "featherstone.inl").write_text(
-        preamble + source + "\n#pragma clang diagnostic pop\n", encoding="utf-8", newline="\n"
-    )
+    export_source(kernels, output, "featherstone.inl", wp)
+    # Rehome the original entry point unchanged, exporting only its transitive
+    # force-function closure. The entire contact module also includes unrelated
+    # particle/hash-grid kernels which need Warp runtime services.
+    contacts = wp.get_module("tide_newton_rigid_contacts")
+    Kernel(eval_body_contact.func, key="eval_body_contact", module=contacts)
+    export_source(contacts, output, "contacts.inl", wp)
 
     native = args.warp_root / "warp" / "native"
     destination = package / "vendor" / "warp"
@@ -153,13 +159,13 @@ def main():
     shutil.copyfile(args.warp_root / "LICENSE.md", notices / "LICENSE-WARP.md")
     for name in ("nanovdb", "svd", "reproducible_floating_sums", "moller", "windingnumber"):
         shutil.copyfile(args.warp_root / "licenses" / (name + "-LICENSE.txt"), notices / ("LICENSE-" + name + ".txt"))
-    files = [output / "featherstone.inl"] + sorted(destination.rglob("*"))
+    files = sorted(output.glob("*.inl")) + sorted(destination.rglob("*"))
     manifest = []
     for path in files:
         if path.is_file():
             manifest.append(hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.relative_to(package).as_posix())
     (package / "UPSTREAM.sha256").write_text("\n".join(manifest) + "\n", encoding="utf-8", newline="\n")
-    print(f"Exported Featherstone and {len(copied)} Warp support headers")
+    print(f"Exported Featherstone, rigid contacts and {len(copied)} Warp support headers")
 
 
 if __name__ == "__main__":

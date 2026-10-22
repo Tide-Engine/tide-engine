@@ -1,5 +1,5 @@
 set(newton_package "${PROJECT_SOURCE_DIR}/packages/newton")
-set(microduck_sources model.tide microduck.tide visuals.tide "${newton_package}/bridge.c")
+set(microduck_sources model.tide microduck.tide visuals.tide sandbox.tide "${newton_package}/bridge.c")
 set(microduck_packages PACKAGES Newton "${newton_package}/newton.tide"
     Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
 

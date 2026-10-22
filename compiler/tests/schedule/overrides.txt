@@ -4,21 +4,23 @@ A system starts once everything it runs after is done.
 stage 1  Combat.Gravity  (per entity)
          writes Combat.Velocity
          alongside Combat.Count, Combat.Rest(Combat.Health, Combat.Log, with Combat.Player), Combat.Rest(Combat.Health, Combat.Log, without Combat.Player)
+stage 1  Combat.Count  (once)
+         writes Combat.Log
+         alongside Combat.Gravity, Combat.Move, Combat.Clamp
+
 stage 2  Combat.Move  (per entity)
          writes Combat.Position, Combat.Velocity
          after Combat.Gravity: both write Velocity
          alongside Combat.Count, Combat.Rest(Combat.Health, Combat.Log, with Combat.Player), Combat.Rest(Combat.Health, Combat.Log, without Combat.Player)
-stage 3  Combat.Clamp  (per entity)
-         writes Combat.Position
-         after Combat.Move: both write Position
-         alongside Combat.Count, Combat.Rest(Combat.Health, Combat.Log, with Combat.Player), Combat.Rest(Combat.Health, Combat.Log, without Combat.Player)
-stage 1  Combat.Count  (once)
-         writes Combat.Log
-         alongside Combat.Gravity, Combat.Move, Combat.Clamp
 stage 2  Combat.Rest(Combat.Health, Combat.Log, with Combat.Player)  (per entity)
          writes Combat.Health, Combat.Log
          after Combat.Count: both write Log
          alongside Combat.Gravity, Combat.Move, Combat.Clamp
+
+stage 3  Combat.Clamp  (per entity)
+         writes Combat.Position
+         after Combat.Move: both write Position
+         alongside Combat.Count, Combat.Rest(Combat.Health, Combat.Log, with Combat.Player), Combat.Rest(Combat.Health, Combat.Log, without Combat.Player)
 stage 3  Combat.Rest(Combat.Health, Combat.Log, without Combat.Player)  (per entity)
          reads Combat.Health
          writes Combat.Log

@@ -17,10 +17,10 @@ Box3D.AttachMeshes
 Box3D.MarkMeshes
 Box3D.PrepareMeshParts
 Box3D.AttachMeshParts
-Box3D.RegisterMeshParts
 BeforeSimulate
-Box3D.Simulate
+Box3D.RegisterMeshParts
 BeforeLeave
+Box3D.Simulate
 Box3D.Leave
 BeforeReport
 Box3D.Report

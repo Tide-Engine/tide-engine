@@ -12,7 +12,8 @@
 #endif
 
 #define DT (1.0f / 120.0f)
-#define ROBOT_HASH UINT64_C(0xb3a702e67f351594)
+/* Both owners receive their actions; observed on native/WASI before pinning. */
+#define ROBOT_HASH UINT64_C(0xdb6cb5835d7c9b26)
 
 static Controls action(uint32_t tick, int seat)
 {
@@ -23,7 +24,7 @@ static Controls action(uint32_t tick, int seat)
 static void advance(tide_world *world, const tide_jobs *jobs)
 {
     for (uint32_t seat = 0; seat < 2; ++seat)
-        tide_world_set_input(world, (tide_player_id){seat}, action((uint32_t)world->Time.tick, (int)seat));
+        tide_world_set_input(world, tide_player_from_index((int32_t)seat), action((uint32_t)world->Time.tick, (int)seat));
     if (jobs) tide_world_tick_on(world, jobs);
     else tide_world_tick(world);
 }
@@ -59,6 +60,19 @@ TIDE_TEST(newton_robot_observations_actions_and_bounded_transitions)
     TIDE_CHECK(isfinite(latest.reward) && latest.reward <= 0);
     const Transition previous = sample(&world, arm, (arm.next + 126) % 128);
     TIDE_CHECK(memcmp(&previous.nextObservation, &latest.observation, sizeof(tide_float4)) == 0);
+    for (int seat = 0; seat < 2; ++seat) {
+        const tide_entity entity = seat == 0 ? world.Fixture.first : world.Fixture.second;
+        const Arm owned = tide_get_Arm(&world, entity);
+        const Transition recorded = sample(&world, owned, (owned.next + 127) % 128);
+        const Controls expected = action((uint32_t)world.Time.tick - 1, seat);
+        TIDE_CHECK(tide_player_equal(tide_get_Owner(&world, entity).player, tide_player_from_index(seat)));
+        TIDE_CHECK(owned.seat == seat && tide_list_count(owned.transitions) == 128);
+        TIDE_CHECK(recorded.action.x == expected.target.x * 1.2f);
+        TIDE_CHECK(recorded.action.y == expected.target.y * 1.2f);
+        TIDE_CHECK(fabsf(recorded.action.x) + fabsf(recorded.action.y) > 0.1f);
+        const Newton_Joint moved = tide_get_Newton_Joint(&world, owned.shoulder);
+        TIDE_CHECK(fabsf(moved.position - 0.3f) > 0.01f);
+    }
     printf("    robot at tick %d: %016llx\n", world.Time.tick, (unsigned long long)tide_world_hash(&world));
     TIDE_CHECK(tide_world_hash(&world) == ROBOT_HASH);
     tide_world_free(&world);

@@ -4,8 +4,9 @@ Experimental Newton (2026-10-22): `packages/newton`, namespace `Newton`, adds
 statically exported NVIDIA Newton Featherstone CPU kernels for articulated
 bodies and effort control, with a two-player arm example in `examples/robotics/arm`.
 Native and WASM compile the same scalar source; articulation, rollback and
-canonical state transfer tests agree. No contacts, CUDA runtime, Box3D fallback
-or separate training engine. Contracts,
+canonical state transfer tests agree. The collision profile adds spheres,
+compound spheres and static planes with upstream rigid-contact forces; no
+CUDA runtime, Box3D fallback or separate training engine. Contracts,
 upstream pins and missing coverage: `notes/newton.md`.
 
 Optional voice (2026-10-22): `packages/voice` is the sixth bundled package,

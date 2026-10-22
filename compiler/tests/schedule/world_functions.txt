@@ -4,17 +4,21 @@ A system starts once everything it runs after is done.
 stage 1  Aim  (per entity)
          writes TestTransform
          alongside Heal, Drain, Rust, Rest
+stage 1  Heal  (per entity)
+         reads Healer
+         reads any entity's Armor, through World
+         writes any entity's Health, through World
+         alongside Aim, Chase, Rest
+stage 1  Rest  (per entity)
+         writes Idle
+         alongside Aim, Chase, Heal, Drain, Rust
+
 stage 2  Chase  (per entity)
          reads Runner
          writes TestTransform
          reads any entity's TestTransform, through World
          after Aim: it writes TestTransform, which this reads
          alongside Heal, Drain, Rust, Rest
-stage 1  Heal  (per entity)
-         reads Healer
-         reads any entity's Armor, through World
-         writes any entity's Health, through World
-         alongside Aim, Chase, Rest
 stage 2  Drain  (per entity)
          writes Health
          after Heal: both write Health
@@ -23,9 +27,6 @@ stage 2  Rust  (per entity)
          writes Armor
          after Heal: it reads Armor, which this writes
          alongside Aim, Chase, Drain, Rest
-stage 1  Rest  (per entity)
-         writes Idle
-         alongside Aim, Chase, Heal, Drain, Rust
 
 Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
