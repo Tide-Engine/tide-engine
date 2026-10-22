@@ -9,7 +9,8 @@ limits and buffering choices below are implementation picks, provisional in
 ## Configurable RNNoise suppression (2026-10-22)
 
 The owner requested RNNoise support controlled by a setting. Local
-`VoiceClient.noiseSuppression` defaults false and filters only outgoing capture.
+`VoiceClient.noiseSuppression` defaults true and filters only outgoing capture.
+The owner selected true after the initial off-by-default implementation.
 The explicit C configure call now takes `noise_suppression` before `volume`;
 the ordinary Tide extern carries the same boolean. No compiler, engine host,
 microphone backend, session protocol or generated-runtime API changes.
@@ -52,7 +53,7 @@ stale history, and synthetic speech retains above 25% of bypass energy.
 These broad signal bounds avoid pinning vendor samples across architectures.
 The speech fixture's provenance is in `packages/voice/test/README.md`.
 All seven package cases pass on native and WASI. The three-process standard
-host fixture now sets `noiseSuppression = true` in Tide and passes its real
+host fixture now relies on the true Tide default and passes its real
 microphone-file/mixer/transport/playback assertions.
 
 Release measurements on Ryzen 9 7900X (clang 23.1.2, three runs, synthesized
@@ -74,6 +75,15 @@ and a plain game without Voice. No runtime downloads or special flags are
 needed. `git diff --check` is clean outside the unchanged upstream whitespace
 retained in three vendor lines. Other operating systems, Android, physical
 microphones and sanitizers remain CI/manual coverage; none were run here.
+
+Default-on follow-up: only the package's Tide initializer, C header comment,
+host fixture and docs changed. The host fixture omits an explicit suppression
+assignment to exercise the ordinary default through generated local state,
+ConfigureVoice and the real microphone-file/mixer/session path. Custom C
+hosts still pass their explicit suppression boolean when configuring a client.
+Both voice targets pass natively (2/2), all seven package cases pass on WASI,
+and the docs production build passes. Generated native/web local initializers
+both explicitly set `noiseSuppression = true`; the diff passes whitespace checks.
 
 ## Package and cost
 

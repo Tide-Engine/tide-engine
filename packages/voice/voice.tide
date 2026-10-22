@@ -6,7 +6,7 @@ local singleton VoiceClient
 {
     bool enabled;
     bool transmitting;
-    bool noiseSuppression;
+    bool noiseSuppression = true;
     float volume = 1;
 }
 

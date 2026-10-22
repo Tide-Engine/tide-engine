@@ -39,7 +39,7 @@ The microphone opens only while transmitting in a connected session. Releasing t
 
 ## Noise suppression
 
-Set `voice.noiseSuppression = true` in the view above, or from an audio settings menu, to filter this player's microphone before encoding. It defaults to false and can change while transmitting. It does not filter incoming players or the game's other sounds.
+`VoiceClient.noiseSuppression` defaults to true, filtering this player's microphone before encoding. Set `voice.noiseSuppression = false` in the view above, or from an audio settings menu, to bypass it. It can change while transmitting. It does not filter incoming players or the game's other sounds.
 
 Suppression uses RNNoise 0.2's built-in smaller model, processing 10 ms blocks at 48 kHz on the frame thread. Its filter adds about 20 ms of delay; it adds no network messages or receive work. State is allocated on first suppressed transmission and retained until shutdown or reload. While off, the filter does no work. Each new transmission or setting change resets filter history and discards pending capture, so an earlier utterance cannot leak into a new one. Changing the setting can cause a short audio gap.
 

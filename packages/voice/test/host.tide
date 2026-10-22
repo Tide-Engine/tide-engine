@@ -7,5 +7,4 @@ view Talk(mut VoiceClient voice, Session session)
 {
     voice.enabled = session.player != PlayerID(2);
     voice.transmitting = session.player == PlayerID(0);
-    voice.noiseSuppression = true;
 }

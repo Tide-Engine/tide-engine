@@ -3,8 +3,8 @@
 Optional Opus voice chat over Tide sessions. Add `voice` to `tide.packages`,
 then set the local `Voice.VoiceClient.enabled` and `transmitting` fields.
 Both default to false. A view setting them uses `[Before(Voice.ConfigureVoice)]`.
-Set `Voice.VoiceClient.noiseSuppression = true` for optional RNNoise processing
-of outgoing microphone audio. It defaults off and can be changed at runtime.
+`Voice.VoiceClient.noiseSuppression` defaults to true for RNNoise processing
+of outgoing microphone audio. Set it to false to bypass; it can change at runtime.
 
 Setup, API, platform requirements and current limits:
 [Voice chat](https://tide-engine.dev/packages/voice).
