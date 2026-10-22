@@ -11,18 +11,24 @@ static tide_world world;
 
 static void run(int count)
 {
-    for (int i = 0; i < count; ++i) tide_world_tick(&world);
+    for (int i = 0; i < count; ++i) {
+        for (uint32_t seat = 0; seat < 2; ++seat)
+            tide_world_set_input(&world, tide_player_from_index((int32_t)seat), (DuckControls){
+                .walk = seat == 0 ? 1.0f : -1.0f,
+                .drive = tide_sin_f((float)world.Time.tick * 0.017f + (float)seat) * 0.25f});
+        tide_world_tick(&world);
+    }
 }
 
 static bool write_state(const char *path)
 {
     tide_world_init(&world, 1.0f / 200.0f);
-    run(40);
+    run(360);
     const uint64_t before = tide_world_hash(&world);
     uint32_t size = 0;
     uint8_t *bytes = tide_world_pack_delta(&world, NULL, NULL, 0, &size);
     if (!bytes) return false;
-    run(20);
+    run(240);
     tide_writer out = {.grows = true};
     tide_write_u64(&out, before);
     tide_write_u64(&out, tide_world_hash(&world));
@@ -59,7 +65,7 @@ static bool read_state(const char *path)
     ok = !in.failed && in.at == in.size && tide_world_unpack_delta(&world, NULL, data, size);
     ok = ok && tide_world_hash(&world) == before;
     if (ok) {
-        run(20);
+        run(240);
         ok = world.Newton_Physics.status == Newton_Status_Ok && tide_world_hash(&world) == after;
     }
     tide_world_free(&world);

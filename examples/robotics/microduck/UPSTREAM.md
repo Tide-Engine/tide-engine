@@ -15,10 +15,31 @@ The original MJCF descriptions and the transformed model data are
 Apache-2.0; the complete upstream license is retained in `upstream/LICENSE`.
 Upstream's pinned [LICENSE-MODELS.md](https://github.com/pollen-robotics/microduck_rl/blob/b02fdea4902c2b93b7d34a83a6f05da4ececb7d3/LICENSE-MODELS.md)
 explicitly separates XML/configuration/data from its CC BY-NC-SA 4.0 STL
-meshes. No mesh, mesh conversion, mesh-derived primitive or asset directory
-is included here. Original XML references to absent mesh files are retained
-as provenance; this converter never opens them. New game visuals can use
-authored primitives and the body-frame relationship below.
+meshes. No upstream STL files are included, read, converted or sampled for
+geometry. Original XML references to absent mesh files are retained as
+provenance; this converter never opens them.
+
+## Original appearance and foot-plane proxy
+
+The casings, camera/servo details and broad feet in `visuals.tide` are original
+procedural geometry. Appearance references are Pollen Robotics'
+[official MicroDuck press-kit photos](https://pollen-robotics.com/microduck/press-kit/)
+and the body, joint, geom/site frames and material metadata in the
+[pinned XML](https://github.com/pollen-robotics/microduck_rl/blob/b02fdea4902c2b93b7d34a83a6f05da4ececb7d3/src/mjlab_microduck/robot/microduck/robot_walk.xml).
+Photo-estimated proportions are approximate, not measurements from exact CAD.
+No photographs or photo textures are distributed with the example. These
+references document how the appearance was authored; the XML/data license
+does not describe the press photographs or the separate STL assets.
+
+The game's contact proxy is separately authored: four points on each ankle
+body, at original-frame coordinates
+`(±0.032, -0.0238146, -0.0140852 ± 0.015)` metres. The centre comes from the
+XML's `left_foot` and `right_foot` site positions. The 64 × 30 mm footprint is
+an illustrative approximation informed by the broad feet in the official
+photos, not an imported collision mesh or measured sole outline. The game
+transforms these points through the original body frame using the relationship
+below and applies its own compliant plane/friction forces. No contact proxy
+or appearance change alters the source pin, tensors or converter output.
 
 ## Regeneration and validation
 
@@ -142,10 +163,11 @@ var visualRotation = Math.Mul(originalRotation, originalLocalRotation);
 No global axis conversion or root placement is baked into the model records.
 The original root body and STAND free-root coordinates both specify the same
 `0.12` m root height; they are not two offsets to add. A fixture chooses its
-world anchor and up-axis conversion. To put the original trunk at rotation
-`Q`, initialize the principal trunk at `Q * P_root`. The trunk keeps its
-authored positive mass/inertia and is anchored with a world-parent **Fixed
-Joint**, rather than made Static.
+world placement and up-axis conversion. To put the original trunk at rotation
+`Q`, initialize the principal trunk at `Q * P_root`. The stepping fixture keeps
+the trunk's authored positive mass/inertia as a free dynamic root, without a
+world-parent Fixed joint. Reset reconstructs all body placements from STAND
+joint coordinates at that spawn pose before evaluating foot-plane forces.
 
 ## Conversion error bounds and deliberate omissions
 
@@ -170,14 +192,16 @@ orthogonality/determinant errors must be below `1e-6`. These checks measure
 coordinate conversion and float32 constant storage; they do not measure
 Newton dynamics, contacts, fidelity, stability or sim-to-real transfer.
 
-The known mesh/material declarations, collision geoms and floor, scene
-lighting/textures, sites/cameras, sensors/noise, position-servo gains/control
-ranges and Coulomb `frictionloss = 0.0048` are explicitly excluded from the
-Newton simulation. Sites/cameras/geoms are examined only for frame validation.
+The converter excludes mesh/material declarations, collision geoms and floor,
+scene lighting/textures, sites/cameras, sensors/noise, position-servo gains/control
+ranges and Coulomb `frictionloss = 0.0048` from its generated dynamics records.
+It examines sites/cameras/geoms only for frame validation.
 The empty equality section creates no loop; equality defaults do not create
 constraints. Hinge ranges are retained as data; a fixture chooses whether to
 enable Newton's soft limit forces. No mesh, contacts, friction, MuJoCo servo
-or BAM actuator behavior is implemented by this conversion. Current upstream
+or BAM actuator behavior is implemented by this conversion. The stepping
+fixture's authored foot-plane forces and upright/heading/lane assistance are
+ordinary game code, separate from this unchanged conversion. Current upstream
 Python training configures different actuators; the XML settings here are a
 specific baseline, not a reproduction of that training environment.
 
