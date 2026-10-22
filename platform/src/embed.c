@@ -470,6 +470,25 @@ const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size)
     return tide_platform_embed_render(&tide_run_draw, size);
 }
 
+const uint8_t *tide_embed_render_view(tide_embed *e, const float *transform, const float *projection, const int width,
+                                      const int height, uint32_t *size)
+{
+    if (size) *size = 0;
+    if (e != &the_embed || !running || !tide_run_game || !size || !transform || !projection) return NULL;
+    if (width < 1 || height < 1 || width > 16384 || height > 16384) return NULL;
+    for (int i = 0; i < 16; i++) {
+        if (!tide_is_finite_f(transform[i]) || !tide_is_finite_f(projection[i])) return NULL;
+    }
+    tide_float4x4 place, project;
+    memcpy(&place, transform, sizeof place);
+    memcpy(&project, projection, sizeof project);
+    if (tide_determinant_f4x4(place) == 0.0f) return NULL;
+    // From the world to what the camera sees, which looks down -z, as tide_draw_set_camera_matrices has it
+    tide_float4x4 view = tide_inverse_f4x4(place);
+    view.c0.z = -view.c0.z, view.c1.z = -view.c1.z, view.c2.z = -view.c2.z, view.c3.z = -view.c3.z;
+    return tide_platform_embed_render_view(&tide_run_draw, tide_mul_f4x4(project, view), width, height, size);
+}
+
 void tide_embed_render_reset(tide_embed *e)
 {
     if (e != &the_embed) return;

@@ -93,7 +93,12 @@ gives its commands, which Unity's TideRender replays (`notes/unity.md`, Tide's
 renderer in Unity). `tide_embed_render_reset` forgets the objects made, so the
 next render makes everything again. `tide_embed_destroy` frees the backend's
 memory, and the next embed numbers from 1. The embed host exports both.
-Test: `embed_render`.
+`tide_embed_render_view(e, transform, projection, width, height, &size)` draws the
+frame's 3D again through another camera (Unity's scene views): the window's 3D alone, through
+that camera's world-to-clip matrix (made as `tide_draw_set_camera_matrices` makes one), the
+2D, clips and targets left out. NULL for a size outside 1 to 16,384 or a value that isn't
+finite. Test: `embed_render` (also: the view's commands draw `embed.tide`'s cube alone,
+through the 3D meshes' pipeline, its uniforms that camera's matrix).
 
 Events and text commands (2026-10-22): the view packet is version 3, with an
 EVENTS section, the match's events this machine heard since the last packet as

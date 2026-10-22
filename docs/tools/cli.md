@@ -355,9 +355,10 @@ other), render targets, stencil and the game's own frags and verts, as Tide
 draws them in its own window. The views' 3D camera is the runner's View Camera,
 or the main camera. tide writes a Unity shader for each of the game's shaders,
 and for Tide's own, into `Packages/com.tide.game/Resources/TideShaders`, which
-Unity compiles for every graphics API. This needs a GPU whose shaders read
-buffers (Direct3D 11 and 12, Vulkan, Metal) and Unity's built-in render
-pipeline. In WebGL players, Tide's 2D drawing is drawn in a simpler way.
+Unity compiles for every graphics API: Direct3D 11 and 12, Vulkan, Metal,
+OpenGL and WebGL 2. It draws in Unity's built-in render pipeline and in URP,
+whose pass the package adds by itself. In Play, the editor's scene view shows
+Tide's 3D too, through its own camera.
 
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the

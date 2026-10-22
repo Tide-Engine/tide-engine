@@ -3702,8 +3702,23 @@ static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 
 // A step's 3D camera, from the world to clip space, fitted to the screen's
 // shape: x divided by its width over its height.
+// Inside another program, a second picture of the frame's 3D through a camera of its own, as its editor's scene
+// view has (tide_platform_embed_render_view): only the window's 3D steps draw, each through this, from the world to
+// clip space for the target as it's shaped.
+static bool view_only_3d;
+static tide_float4x4 view_world_to_clip;
+
+// Whether a step is one of the window's 3D, which such a picture draws.
+static bool window_3d_step(const tide_draw_list *list, const draw_step *s)
+{
+    if (draw_target) return false;
+    if (s->kind == STEP_MESH_3D) return true;
+    return s->kind == STEP_SHADED && list->runs[s->first].shader && list->runs[s->first].shader->dims == 3;
+}
+
 static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_step *s)
 {
+    if (view_only_3d) return view_world_to_clip;
     const tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     return !s->camera || s->fit ? tide_draw_camera_fit(world_to_clip, draw_width, draw_height) : world_to_clip;
@@ -4143,7 +4158,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
                 fprintf(stderr, "draw skipped: render target %llu is invalid or disposed\n", (unsigned long long)f->id);
                 continue;
             }
-            if (draw_target) {
+            if (draw_target && !view_only_3d) {
                 gpu_target *g = target_for(f->id, f->size, f->version);
                 f->gpu = g ? g->target : 0;
                 if (g) g->drawn++; // What reads between its smaller images after this pass has them made again
@@ -4153,6 +4168,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             uniforms = target_uniforms();
         }
         if (!frame_targets[draw_target].valid) continue;
+        if (view_only_3d && !window_3d_step(list, s)) continue; // Its targets, 2D and clips are the frame's own
         if (leaves_nothing(list, s)) continue; // A color, into a target of depth alone
         const char *unavailable = samples_unavailable(list, s);
         if (unavailable) {
@@ -4316,6 +4332,20 @@ const uint8_t *tide_platform_embed_render(const tide_draw_list *list, uint32_t *
     gpu = &tide_gpu_record;
     tide_gpu_record_begin();
     draw_list(list, frame_destination(), false, false);
+    return tide_gpu_record_end(size);
+}
+
+const uint8_t *tide_platform_embed_render_view(const tide_draw_list *list, const tide_float4x4 world_to_clip, const int width,
+                                               const int height, uint32_t *size)
+{
+    gpu = &tide_gpu_record;
+    tide_gpu_record_begin();
+    view_only_3d = true;
+    view_world_to_clip = world_to_clip;
+    // Over the frame: what the frame's own drawing keeps from one to the next stays as it is
+    const draw_root to = {.width = (float)width, .height = (float)height, .pixel_width = width, .pixel_height = height};
+    draw_list(list, to, true, false);
+    view_only_3d = false;
     return tide_gpu_record_end(size);
 }
 

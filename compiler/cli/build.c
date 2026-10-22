@@ -2502,7 +2502,8 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create", "tide_embed_destroy", "tide_embed_frame",
                                             "tide_embed_view", "tide_embed_status_of", "tide_embed_request", "tide_embed_command",
                                             "tide_embed_background", "tide_embed_schema", "tide_embed_draw",
-                                            "tide_embed_camera", "tide_embed_render", "tide_embed_render_reset", NULL};
+                                            "tide_embed_camera", "tide_embed_render", "tide_embed_render_view",
+                                            "tide_embed_render_reset", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -2816,7 +2817,7 @@ static const char unity_web_main[] =
     "static bool unity_fresh; // Unity gave this frame's input: a frame without it (the page hidden) has none\n"
     "static float unity_width = 960.0f, unity_height = 540.0f, unity_scale = 1.0f;\n"
     "static tide_embed_status unity_status;\n"
-    "static uint32_t unity_view_size, unity_schema_size, unity_draw_size;\n"
+    "static uint32_t unity_view_size, unity_schema_size, unity_draw_size, unity_render_size;\n"
     "static uint8_t *unity_scratch;\n"
     "static uint32_t unity_scratch_size;\n"
     "\n"
@@ -2868,6 +2869,9 @@ static const char unity_web_exports[] =
     "TIDE_UNITY_EXPORT(tide_unity_schema_size) uint32_t tide_unity_schema_size(void) { return unity_schema_size; }\n"
     "TIDE_UNITY_EXPORT(tide_unity_draw) const uint8_t *tide_unity_draw(void) { return tide_embed_draw(unity_embed, &unity_draw_size); }\n"
     "TIDE_UNITY_EXPORT(tide_unity_draw_size) uint32_t tide_unity_draw_size(void) { return unity_draw_size; }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_render) const uint8_t *tide_unity_render(void) { return tide_embed_render(unity_embed, &unity_render_size); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_render_size) uint32_t tide_unity_render_size(void) { return unity_render_size; }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_render_reset) void tide_unity_render_reset(void) { tide_embed_render_reset(unity_embed); }\n"
     "\n"
     "// Where the page puts what it passes in (a request's text, a command's value): `size` bytes, till the next call\n"
     "TIDE_UNITY_EXPORT(tide_unity_buffer) uint8_t *tide_unity_buffer(const uint32_t size)\n"

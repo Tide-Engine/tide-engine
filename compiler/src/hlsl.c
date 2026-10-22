@@ -125,6 +125,14 @@ struct translation {
     int ncontrols;
     int loops; // Loops with continuing parts so far, which number their flags
     int temps; // Names of this file's own in functions so far
+    // A function with a return inside a loop or a switch keeps what it returns, and whether it has, and returns it
+    // at its end (see function): fxc and DXC take a return there for a value that may not be there
+    bool flagged;
+    // The functions known to take derivatives (an implicit level's sample, dpdx...), or not: a loop of one is left to
+    // fxc to unroll, as derivatives need; one of none is a [loop], which fxc doesn't unroll however few its iterations
+    const fdecl *derives[256];
+    bool derives_answer[256];
+    int nderives;
     // Indices into arrays an assignment writes by a number worked out as it runs, which fxc can't: each is
     // written as the name in `fixed_names`, a loop's counter, while it's set
     const expr *fixed[4];
@@ -913,24 +921,29 @@ static int texture_call(translation *x, const expr *e, hs *o)
     const int f32 = t_simple(x, K_F32), u32 = t_simple(x, K_U32);
     const int result = tex.depth ? f32 : t_vec(x, tex.elem, 4);
     int t = result;
+    // The texture's own sampler, which OpenGL samples with (TIDEHL_OWN_SAMPLERS): sampler_<texture> for a module's
+    // texture, as Unity names a texture's sampler; one of the inline ones for a texture a function was given
+    char own[64];
+    if (strncmp(a.text[0], "_TideTexture", 12) == 0) snprintf(own, sizeof own, "sampler%s", a.text[0]);
+    else snprintf(own, sizeof own, "tidehl_linear_clamp_sampler");
     if (same(n, len, "textureSample") || same(n, len, "textureSampleLevel") || same(n, len, "textureSampleBias")
         || same(n, len, "textureSampleGrad")) {
         if (a.n < 3) fail(x, line, col, "'%.*s' takes a texture, a sampler and where", len, n);
         if (tex.depth) {
-            hprintf(o, "tidehl_depth(%s, %s)", a.text[0], a.text[2]);
+            hprintf(o, "tidehl_depth(%s, %s, %s)", a.text[0], own, a.text[2]);
         } else if (same(n, len, "textureSample")) {
-            hprintf(o, "tidehl_sample(%s, %s, %s)", a.text[0], a.text[1], a.text[2]);
+            hprintf(o, "tidehl_sample(%s, %s, %s, %s)", a.text[0], own, a.text[1], a.text[2]);
         } else if (same(n, len, "textureSampleGrad")) {
             if (a.n != 5) fail(x, line, col, "textureSampleGrad takes 5 arguments");
-            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s)", a.text[0], a.text[1], a.text[2], a.text[3], a.text[4]);
+            hprintf(o, "tidehl_sample_grad(%s, %s, %s, %s, %s, %s)", a.text[0], own, a.text[1], a.text[2], a.text[3], a.text[4]);
         } else {
             if (a.n != 4) fail(x, line, col, "'%.*s' takes 4 arguments", len, n);
-            hprintf(o, "tidehl_sample_%s(%s, %s, %s, float(%s))", n[13] == 'L' ? "level" : "bias", a.text[0], a.text[1],
+            hprintf(o, "tidehl_sample_%s(%s, %s, %s, %s, float(%s))", n[13] == 'L' ? "level" : "bias", a.text[0], own, a.text[1],
                     a.text[2], a.text[3]);
         }
     } else if (same(n, len, "textureSampleCompare") || same(n, len, "textureSampleCompareLevel")) {
         if (a.n != 4 || !tex.depth) fail(x, line, col, "'%.*s' takes a depth texture, a sampler, where and a depth", len, n);
-        hprintf(o, "tidehl_compare(%s, %s, %s)", a.text[0], a.text[2], a.text[3]);
+        hprintf(o, "tidehl_compare(%s, %s, %s, %s)", a.text[0], own, a.text[2], a.text[3]);
     } else if (same(n, len, "textureLoad")) {
         if (a.n != 3) fail(x, line, col, "textureLoad takes a texture, where and a level or sample");
         hprintf(o, "tidehl_load(%s, int2(%s), int(%s))", a.text[0], a.text[1], a.text[2]);
@@ -968,7 +981,7 @@ static const struct {
     {"atan", "atan", 1, true, false}, {"sinh", "sinh", 1, true, false}, {"cosh", "cosh", 1, true, false},
     {"tanh", "tanh", 1, true, false}, {"asinh", "tidehl_asinh", 1, true, false},
     {"acosh", "tidehl_acosh", 1, true, false}, {"atanh", "tidehl_atanh", 1, true, false},
-    {"atan2", "atan2", 2, true, false}, {"pow", "pow", 2, true, false}, {"exp", "exp", 1, true, false},
+    {"atan2", "atan2", 2, true, false}, {"pow", "tidehl_pow", 2, true, false}, {"exp", "exp", 1, true, false},
     {"exp2", "exp2", 1, true, false}, {"log", "log", 1, true, false}, {"log2", "log2", 1, true, false},
     {"step", "step", 2, true, false}, {"smoothstep", "smoothstep", 3, true, false}, {"fma", "mad", 3, true, false},
     {"normalize", "normalize", 1, true, false}, {"length", "length", 1, true, true},
@@ -1194,13 +1207,151 @@ static void indent(hs *o, const int depth)
 }
 
 static void statement(translation *x, const stmt *s, hs *o, int depth);
+static void emit_block(translation *x, const stmt *b, hs *o, int depth);
+
+static bool stmt_derives(translation *x, const stmt *s);
+
+static bool expr_derives(translation *x, const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == X_CALL && !e->type) {
+        static const char *const implicit[] = {
+            "textureSample", "textureSampleBias", "dpdx", "dpdy", "fwidth", "dpdxFine", "dpdyFine", "fwidthFine",
+            "dpdxCoarse", "dpdyCoarse", "fwidthCoarse",
+        };
+        for (size_t i = 0; i < sizeof implicit / sizeof implicit[0]; i++) {
+            if (same(e->name, e->len, implicit[i])) return true;
+        }
+        const fdecl *f = find_fn(x, e->name, e->len);
+        if (f) {
+            for (int i = 0; i < x->nderives; i++) {
+                if (x->derives[i] == f) return x->derives_answer[i];
+            }
+            if (x->nderives < 256) {
+                const int at = x->nderives++;
+                x->derives[at] = f;
+                x->derives_answer[at] = true; // While it's looked at: a call back into it (WGSL has none) takes them
+                x->derives_answer[at] = stmt_derives(x, f->body);
+                if (x->derives_answer[at]) return true;
+            } else {
+                return true;
+            }
+        }
+    }
+    if (expr_derives(x, e->a) || expr_derives(x, e->b)) return true;
+    for (int i = 0; i < e->nargs; i++) {
+        if (expr_derives(x, e->args[i])) return true;
+    }
+    return false;
+}
+
+static bool stmt_derives(translation *x, const stmt *s)
+{
+    if (!s) return false;
+    if (expr_derives(x, s->e) || expr_derives(x, s->e2)) return true;
+    if (stmt_derives(x, s->body) || stmt_derives(x, s->other) || stmt_derives(x, s->init) || stmt_derives(x, s->update)
+        || stmt_derives(x, s->continuing)) {
+        return true;
+    }
+    for (int i = 0; i < s->count; i++) {
+        if (stmt_derives(x, s->list[i])) return true;
+    }
+    for (int i = 0; i < s->ncases; i++) {
+        if (stmt_derives(x, s->cases[i].body)) return true;
+    }
+    return false;
+}
+
+// Whether a statement has a return in it anywhere; with `controlled`, inside a loop or a switch.
+static bool has_return(const stmt *s, const bool controlled, const bool inside)
+{
+    if (!s) return false;
+    if (s->kind == S_RETURN) return !controlled || inside;
+    const bool in = inside || s->kind == S_FOR || s->kind == S_WHILE || s->kind == S_LOOP || s->kind == S_SWITCH;
+    if (has_return(s->body, controlled, in) || has_return(s->other, controlled, inside) || has_return(s->continuing, controlled, in)) {
+        return true;
+    }
+    for (int i = 0; i < s->count; i++) {
+        if (has_return(s->list[i], controlled, inside)) return true;
+    }
+    for (int i = 0; i < s->ncases; i++) {
+        if (has_return(s->cases[i].body, controlled, true)) return true;
+    }
+    return false;
+}
+
+static const control *innermost(translation *x, bool loop);
+
+// What a return of a flagged function does after keeping its value: leaves the innermost loop or switch, and a
+// loop with a continuing part by its flag, where the code after it is skipped as the flag is seen.
+static void put_return_exit(translation *x, hs *o)
+{
+    const control *c = innermost(x, false);
+    if (!c) return;
+    if (c->loop && c->wrapped) hprintf(o, " tidehl_broken%d = true;", c->wrapped);
+    hput(o, " break;");
+}
+
+// Whether every way through a statement returns.
+static bool returns(const stmt *s)
+{
+    if (!s) return false;
+    if (s->kind == S_RETURN) return true;
+    if (s->kind == S_BLOCK) return s->count > 0 && returns(s->list[s->count - 1]);
+    if (s->kind == S_IF) return s->other && returns(s->body) && returns(s->other);
+    return false;
+}
+
+// A block's statements from `from` on. An `if` that returns, with no else, has the statements after it as its else:
+// fxc and DXC take a return inside a branch, the code after it going on, for a value that may not be there
+// ("use of potentially uninitialized variable"), which Unity shows as a warning.
+static void statements_from(translation *x, stmt *const *list, const int count, const int from, hs *o, const int depth)
+{
+    for (int i = from; i < count; i++) {
+        const stmt *s = list[i];
+        if (x->flagged && s->kind != S_RETURN && has_return(s, false, false) && i + 1 < count) {
+            // A flagged function's statement that may have returned: what's after it, only where it didn't
+            statement(x, s, o, depth);
+            indent(o, depth);
+            if (innermost(x, false)) {
+                hput(o, "if (tidehl_returned) {");
+                put_return_exit(x, o);
+                hput(o, " }\n");
+                continue;
+            }
+            hput(o, "if (!tidehl_returned) {\n");
+            const int scope = x->nscope;
+            statements_from(x, list, count, i + 1, o, depth + 1);
+            x->nscope = scope;
+            indent(o, depth);
+            hput(o, "}\n");
+            return;
+        }
+        if (s->kind == S_IF && !s->other && returns(s->body) && i + 1 < count) {
+            char *c;
+            ex_text(x, s->e, &c);
+            indent(o, depth);
+            hprintf(o, "if (%s) ", c);
+            free(c);
+            emit_block(x, s->body, o, depth);
+            hput(o, " else {\n");
+            const int scope = x->nscope;
+            statements_from(x, list, count, i + 1, o, depth + 1);
+            x->nscope = scope;
+            indent(o, depth);
+            hput(o, "}\n");
+            return;
+        }
+        statement(x, s, o, depth);
+    }
+}
 
 static void emit_block(translation *x, const stmt *b, hs *o, const int depth)
 {
     const int scope = x->nscope;
     hput(o, "{\n");
     if (b->kind == S_BLOCK) {
-        for (int i = 0; i < b->count; i++) statement(x, b->list[i], o, depth + 1);
+        statements_from(x, b->list, b->count, 0, o, depth + 1);
     } else {
         statement(x, b, o, depth + 1);
     }
@@ -1442,7 +1593,7 @@ static void statement(translation *x, const stmt *s, hs *o, const int depth)
         hs update = {0};
         if (s->update) simple(x, s->update, &update);
         indent(o, depth + 1);
-        hprintf(o, "for (; %s; %s) ", c ? c : "", update.s ? update.s : "");
+        hprintf(o, "%sfor (; %s; %s) ", stmt_derives(x, s) ? "" : "[loop] ", c ? c : "", update.s ? update.s : "");
         free(c);
         free(update.s);
         push_control(x, true, 0);
@@ -1458,7 +1609,7 @@ static void statement(translation *x, const stmt *s, hs *o, const int depth)
         char *c;
         ex_text(x, s->e, &c);
         indent(o, depth);
-        hprintf(o, "while (%s) ", c);
+        hprintf(o, "%swhile (%s) ", stmt_derives(x, s) ? "" : "[loop] ", c);
         free(c);
         push_control(x, true, 0);
         emit_block(x, s->body, o, depth);
@@ -1470,7 +1621,7 @@ static void statement(translation *x, const stmt *s, hs *o, const int depth)
         const int scope = x->nscope;
         if (!s->continuing) {
             indent(o, depth);
-            hput(o, "for (;;) ");
+            hput(o, stmt_derives(x, s) ? "for (;;) " : "[loop] for (;;) ");
             push_control(x, true, 0);
             emit_block(x, s->body, o, depth);
             x->ncontrols--;
@@ -1484,7 +1635,7 @@ static void statement(translation *x, const stmt *s, hs *o, const int depth)
         indent(o, depth + 1);
         hprintf(o, "bool tidehl_broken%d = false;\n", id);
         indent(o, depth + 1);
-        hput(o, "for (;;) {\n");
+        hput(o, stmt_derives(x, s) ? "for (;;) {\n" : "[loop] for (;;) {\n");
         indent(o, depth + 2);
         hput(o, "do ");
         push_control(x, true, id);
@@ -1565,7 +1716,18 @@ static void statement(translation *x, const stmt *s, hs *o, const int depth)
     case S_BREAK_IF: fail(x, s->line, s->col, "'break if' ends a loop's continuing part"); return;
     case S_RETURN: {
         indent(o, depth);
-        if (s->e) {
+        if (x->flagged) {
+            hput(o, "{");
+            if (s->e) {
+                char *v;
+                ex_text(x, s->e, &v);
+                hprintf(o, " tidehl_value = %s;", v);
+                free(v);
+            }
+            hput(o, " tidehl_returned = true;");
+            put_return_exit(x, o);
+            hput(o, " }\n");
+        } else if (s->e) {
             char *v;
             ex_text(x, s->e, &v);
             hprintf(o, "return %s;\n", v);
@@ -1615,8 +1777,26 @@ static void function(translation *x, fdecl *f, hs *o)
     put_signature(x, f, o);
     for (int i = 0; i < f->count; i++) bind(x, f->params[i].name, f->params[i].len, f->param_types[i], NULL);
     hput(o, "\n");
-    emit_block(x, f->body, o, 0);
-    hput(o, "\n\n");
+    x->flagged = has_return(f->body, true, false);
+    if (x->flagged) {
+        // Its value kept, and returned at its end alone
+        const bool gives = T(x, f->result_type)->kind != K_VOID;
+        hput(o, "{\n");
+        if (gives) {
+            hput(o, "    ");
+            put_type(x, o, f->result_type);
+            hput(o, " tidehl_value = ");
+            zero_of(x, f->result_type, o);
+            hput(o, ";\n");
+        }
+        hput(o, "    bool tidehl_returned = false;\n    ");
+        emit_block(x, f->body, o, 1);
+        hprintf(o, "\n%s}\n\n", gives ? "    return tidehl_value;\n" : "");
+    } else {
+        emit_block(x, f->body, o, 0);
+        hput(o, "\n\n");
+    }
+    x->flagged = false;
     x->fn = NULL;
 }
 
@@ -1843,22 +2023,33 @@ static void entry_points(translation *x, fdecl *vertex, fdecl *fragment, hs *o)
 // sets, the samplers, and the functions the rest calls.
 static const char *const prelude[] = {
     "// Made by tidec from WGSL (compiler/src/hlsl.c). Do not edit.\n"
-    "#if !defined(UNITY_COMPILER_DXC)\n"
-    "// fxc's guesses: WGSL's early returns, loops it unrolls, WebGPU's int division, pow of what's kept positive\n"
-    "#pragma warning(disable : 3556 3557 3571 4000)\n"
-    "#endif\n"
+
     "#if defined(SHADER_API_D3D11) || defined(SHADER_API_PSSL) || defined(SHADER_API_METAL) || defined(SHADER_API_VULKAN) \\\n"
     "    || defined(SHADER_API_SWITCH) || defined(SHADER_API_XBOXONE) || defined(SHADER_API_GAMECORE) || defined(SHADER_API_WEBGPU)\n"
     "#define TIDEHL_REVERSED_Z 1 // Unity's depth is 1 near and 0 far\n"
     "#else\n"
     "#define TIDEHL_REVERSED_Z 0 // OpenGL's: clip depth from -w near to w far\n"
     "#endif\n"
+    "#if defined(SHADER_API_GLCORE) || defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)\n"
+    "#define TIDEHL_OWN_SAMPLERS 1 // Unity's OpenGL has no samplers apart from textures: each texture's own\n"
+    "#else\n"
+    "#define TIDEHL_OWN_SAMPLERS 0\n"
+    "#endif\n"
+    "#if defined(SHADER_API_GLES3) || defined(SHADER_API_GLES) || defined(SHADER_API_WEBGL)\n"
+    "#define TIDEHL_TEXTURE_BUFFERS 1 // OpenGL ES 3.0's and WebGL 2's: buffers as textures, a word a pixel's bytes, 4,096 a row\n"
+    "#else\n"
+    "#define TIDEHL_TEXTURE_BUFFERS 0\n"
+    "#endif\n"
     "float4 _ProjectionParams;\n"
     "float _TideFlip, _TideHeight, _TideLinear;\n"
     "float4 _TideAttributes[16];\n"
     "float4 _TideSlots[3];\n"
-    "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideIndexed, _TideSampling;\n"
-    "ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2, _TideIndices;\n"
+    "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling;\n"
+    "#if TIDEHL_TEXTURE_BUFFERS\n"
+    "Texture2D<float4> _TideVertices0, _TideVertices1, _TideVertices2;\n"
+    "#else\n"
+    "ByteAddressBuffer _TideVertices0, _TideVertices1, _TideVertices2;\n"
+    "#endif\n"
     "SamplerState tidehl_point_clamp_sampler, tidehl_point_repeat_sampler, tidehl_point_mirror_sampler;\n"
     "SamplerState tidehl_linear_clamp_sampler, tidehl_linear_repeat_sampler, tidehl_linear_mirror_sampler;\n"
     "SamplerState tidehl_trilinear_clamp_sampler, tidehl_trilinear_repeat_sampler, tidehl_trilinear_mirror_sampler;\n"
@@ -1893,21 +2084,30 @@ static const char *const prelude[] = {
     "}\n"
     "\n",
     "// Vertices, from their buffers\n"
-    "uint tidehl_vertex_of(uint v) {\n"
-    "    uint i = _TideFirst + v;\n"
-    "    if (_TideIndexed == 2u) return _TideIndices.Load(i * 4u);\n"
-    "    if (_TideIndexed == 1u) {\n"
-    "        uint w = _TideIndices.Load((i * 2u) & ~3u);\n"
-    "        return (i & 1u) != 0u ? w >> 16 : w & 0xFFFFu;\n"
-    "    }\n"
-    "    return i;\n"
+    "uint tidehl_vertex_of(uint v) { return _TideFirst + v; } // An indexed draw's first is 0: SV_VertexID is the index\n"
+    "#if TIDEHL_TEXTURE_BUFFERS\n"
+    "uint tidehl_word(Texture2D<float4> b, uint at) {\n"
+    "    uint w = at >> 2;\n"
+    "    uint4 bytes = uint4(round(b.Load(int3(int(w & 4095u), int(w >> 12), 0)) * 255.0));\n"
+    "    return bytes.x | bytes.y << 8 | bytes.z << 16 | bytes.w << 24;\n"
     "}\n"
+    "uint4 tidehl_words(Texture2D<float4> b, uint at, uint n) {\n"
+    "    uint4 r = uint4(tidehl_word(b, at), 0u, 0u, 0u);\n"
+    "    if (n > 1u) r.y = tidehl_word(b, at + 4u);\n"
+    "    if (n > 2u) r.z = tidehl_word(b, at + 8u);\n"
+    "    if (n > 3u) r.w = tidehl_word(b, at + 12u);\n"
+    "    return r;\n"
+    "}\n"
+    "#else\n"
     "uint4 tidehl_words(ByteAddressBuffer b, uint at, uint n) {\n"
-    "    if (n == 1u) return uint4(b.Load(at), 0u, 0u, 0u);\n"
-    "    if (n == 2u) return uint4(b.Load2(at), 0u, 0u);\n"
-    "    if (n == 3u) return uint4(b.Load3(at), 0u);\n"
-    "    return b.Load4(at);\n"
+    "    uint4 r;\n"
+    "    if (n == 1u) r = uint4(b.Load(at), 0u, 0u, 0u);\n"
+    "    else if (n == 2u) r = uint4(b.Load2(at), 0u, 0u);\n"
+    "    else if (n == 3u) r = uint4(b.Load3(at), 0u);\n"
+    "    else r = b.Load4(at);\n"
+    "    return r;\n"
     "}\n"
+    "#endif\n"
     "uint4 tidehl_raw(uint location, uint vertex, uint instance, out uint format) {\n"
     "    float4 a = _TideAttributes[location];\n"
     "    uint slot = min((uint)a.x, 2u);\n"
@@ -1915,81 +2115,114 @@ static const char *const prelude[] = {
     "    float4 s = _TideSlots[slot];\n"
     "    uint at = (s.y > 0.5 ? instance : vertex) * (uint)s.x + (uint)a.y;\n"
     "    uint n = format == 4u ? 1u : format < 4u ? format + 1u : format - 4u;\n"
-    "    if (slot == 0u) return tidehl_words(_TideVertices0, at + _TideOffset0, n);\n"
-    "    if (slot == 1u) return tidehl_words(_TideVertices1, at + _TideOffset1, n);\n"
-    "    return tidehl_words(_TideVertices2, at + _TideOffset2, n);\n"
+    "    uint4 r;\n"
+    "    if (slot == 0u) r = tidehl_words(_TideVertices0, at + _TideOffset0, n);\n"
+    "    else if (slot == 1u) r = tidehl_words(_TideVertices1, at + _TideOffset1, n);\n"
+    "    else r = tidehl_words(_TideVertices2, at + _TideOffset2, n);\n"
+    "    return r;\n"
     "}\n"
     "float4 tidehl_float_attribute(uint location, uint vertex, uint instance) {\n"
     "    uint format;\n"
     "    uint4 r = tidehl_raw(location, vertex, instance, format);\n"
-    "    if (format == 4u) return float4(r.x & 255u, (r.x >> 8) & 255u, (r.x >> 16) & 255u, r.x >> 24) / 255.0;\n"
     "    float4 f = asfloat(r);\n"
-    "    if (format == 0u) return float4(f.x, 0.0, 0.0, 1.0);\n"
-    "    if (format == 1u) return float4(f.xy, 0.0, 1.0);\n"
-    "    if (format == 2u) return float4(f.xyz, 1.0);\n"
+    "    if (format == 4u) f = float4(r.x & 255u, (r.x >> 8) & 255u, (r.x >> 16) & 255u, r.x >> 24) / 255.0;\n"
+    "    else if (format == 0u) f = float4(f.x, 0.0, 0.0, 1.0);\n"
+    "    else if (format == 1u) f = float4(f.xy, 0.0, 1.0);\n"
+    "    else if (format == 2u) f = float4(f.xyz, 1.0);\n"
     "    return f;\n"
     "}\n"
     "int4 tidehl_int_attribute(uint location, uint vertex, uint instance) {\n"
     "    uint format;\n"
     "    int4 r = asint(tidehl_raw(location, vertex, instance, format));\n"
-    "    if (format == 5u) return int4(r.x, 0, 0, 1);\n"
-    "    if (format == 6u) return int4(r.xy, 0, 1);\n"
-    "    if (format == 7u) return int4(r.xyz, 1);\n"
+    "    if (format == 5u) r = int4(r.x, 0, 0, 1);\n"
+    "    else if (format == 6u) r = int4(r.xy, 0, 1);\n"
+    "    else if (format == 7u) r = int4(r.xyz, 1);\n"
     "    return r;\n"
     "}\n"
     "\n",
     "// Sampling, as `mode` says (_TideSampling): nearest and linear read a texture's own pixels, mipmaps its smaller ones too\n"
+    "#if TIDEHL_OWN_SAMPLERS\n"
     "#define TIDEHL_SAMPLE(T, C)                                                                            \\\n"
-    "float4 tidehl_sample_grad(T t, uint mode, C at, C dx, C dy) {                                          \\\n"
-    "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
-    "    if (filter == 2u) {                                                                                \\\n"
-    "        if (wrap == 1u) return t.SampleGrad(tidehl_trilinear_repeat_sampler, at, dx, dy);             \\\n"
-    "        if (wrap == 2u) return t.SampleGrad(tidehl_trilinear_mirror_sampler, at, dx, dy);             \\\n"
-    "        return t.SampleGrad(tidehl_trilinear_clamp_sampler, at, dx, dy);                              \\\n"
-    "    }                                                                                                  \\\n"
-    "    if (filter == 1u) {                                                                                \\\n"
-    "        if (wrap == 1u) return t.SampleLevel(tidehl_linear_repeat_sampler, at, 0.0);                  \\\n"
-    "        if (wrap == 2u) return t.SampleLevel(tidehl_linear_mirror_sampler, at, 0.0);                  \\\n"
-    "        return t.SampleLevel(tidehl_linear_clamp_sampler, at, 0.0);                                   \\\n"
-    "    }                                                                                                  \\\n"
-    "    if (wrap == 1u) return t.SampleLevel(tidehl_point_repeat_sampler, at, 0.0);                       \\\n"
-    "    if (wrap == 2u) return t.SampleLevel(tidehl_point_mirror_sampler, at, 0.0);                       \\\n"
-    "    return t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0);                                        \\\n"
+    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, C dx, C dy) {                        \\\n"
+    "    float4 r;                                                                                          \\\n"
+    "    if ((mode & 3u) == 2u) r = t.SampleGrad(own, at, dx, dy);                                          \\\n"
+    "    else r = t.SampleLevel(own, at, 0.0);                                                              \\\n"
+    "    return r;                                                                                          \\\n"
     "}                                                                                                      \\\n"
-    "float4 tidehl_sample(T t, uint mode, C at) { return tidehl_sample_grad(t, mode, at, ddx(at), ddy(at)); } \\\n"
-    "float4 tidehl_sample_bias(T t, uint mode, C at, float bias) {                                          \\\n"
+    "float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \\\n"
+    "    return t.SampleLevel(own, at, (mode & 3u) == 2u ? level : 0.0);                                    \\\n"
+    "}\n"
+    "#else\n"
+    "#define TIDEHL_SAMPLE(T, C)                                                                            \\\n"
+    "float4 tidehl_sample_grad(T t, SamplerState own, uint mode, C at, C dx, C dy) {                        \\\n"
+    "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
+    "    float4 r;                                                                                          \\\n"
+    "    if (filter == 2u) {                                                                                \\\n"
+    "        if (wrap == 1u) r = t.SampleGrad(tidehl_trilinear_repeat_sampler, at, dx, dy);                \\\n"
+    "        else if (wrap == 2u) r = t.SampleGrad(tidehl_trilinear_mirror_sampler, at, dx, dy);           \\\n"
+    "        else r = t.SampleGrad(tidehl_trilinear_clamp_sampler, at, dx, dy);                            \\\n"
+    "    } else if (filter == 1u) {                                                                         \\\n"
+    "        if (wrap == 1u) r = t.SampleLevel(tidehl_linear_repeat_sampler, at, 0.0);                     \\\n"
+    "        else if (wrap == 2u) r = t.SampleLevel(tidehl_linear_mirror_sampler, at, 0.0);                \\\n"
+    "        else r = t.SampleLevel(tidehl_linear_clamp_sampler, at, 0.0);                                 \\\n"
+    "    } else {                                                                                           \\\n"
+    "        if (wrap == 1u) r = t.SampleLevel(tidehl_point_repeat_sampler, at, 0.0);                      \\\n"
+    "        else if (wrap == 2u) r = t.SampleLevel(tidehl_point_mirror_sampler, at, 0.0);                 \\\n"
+    "        else r = t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0);                                  \\\n"
+    "    }                                                                                                  \\\n"
+    "    return r;                                                                                          \\\n"
+    "}                                                                                                      \\\n"
+    "float4 tidehl_sample_level(T t, SamplerState own, uint mode, C at, float level) {                      \\\n"
+    "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
+    "    float4 r;                                                                                          \\\n"
+    "    if (filter != 2u) r = tidehl_sample_grad(t, own, mode, at, (C)0, (C)0);                            \\\n"
+    "    else if (wrap == 1u) r = t.SampleLevel(tidehl_trilinear_repeat_sampler, at, level);               \\\n"
+    "    else if (wrap == 2u) r = t.SampleLevel(tidehl_trilinear_mirror_sampler, at, level);               \\\n"
+    "    else r = t.SampleLevel(tidehl_trilinear_clamp_sampler, at, level);                                \\\n"
+    "    return r;                                                                                          \\\n"
+    "}\n"
+    "#endif\n"
+    ,
+    "#define TIDEHL_SAMPLE_DERIVED(T, C)                                                                    \\\n"
+    "float4 tidehl_sample(T t, SamplerState own, uint mode, C at) { return tidehl_sample_grad(t, own, mode, at, ddx(at), ddy(at)); } \\\n"
+    "float4 tidehl_sample_bias(T t, SamplerState own, uint mode, C at, float bias) {                        \\\n"
     "    float scale = exp2(bias);                                                                          \\\n"
-    "    return tidehl_sample_grad(t, mode, at, ddx(at) * scale, ddy(at) * scale);                          \\\n"
-    "}                                                                                                      \\\n"
-    "float4 tidehl_sample_level(T t, uint mode, C at, float level) {                                        \\\n"
-    "    uint filter = mode & 3u, wrap = (mode >> 2) & 3u;                                                  \\\n"
-    "    if (filter == 2u) {                                                                                \\\n"
-    "        if (wrap == 1u) return t.SampleLevel(tidehl_trilinear_repeat_sampler, at, level);             \\\n"
-    "        if (wrap == 2u) return t.SampleLevel(tidehl_trilinear_mirror_sampler, at, level);             \\\n"
-    "        return t.SampleLevel(tidehl_trilinear_clamp_sampler, at, level);                              \\\n"
-    "    }                                                                                                  \\\n"
-    "    return tidehl_sample_grad(t, mode, at, (C)0, (C)0);                                                \\\n"
+    "    return tidehl_sample_grad(t, own, mode, at, ddx(at) * scale, ddy(at) * scale);                     \\\n"
     "}\n"
     "TIDEHL_SAMPLE(Texture2D<float4>, float2)\n"
     "TIDEHL_SAMPLE(TextureCube<float4>, float3)\n"
+    "TIDEHL_SAMPLE_DERIVED(Texture2D<float4>, float2)\n"
+    "TIDEHL_SAMPLE_DERIVED(TextureCube<float4>, float3)\n"
     "\n",
     "// Depth, 0 near and 1 far whichever way Unity keeps it: the nearest pixel's, or 1 where it isn't nearer than `d`\n"
-    "float tidehl_depth(Texture2D<float> t, float2 at) { return tidehl_depth_in(t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0)); }\n"
-    "float tidehl_depth(TextureCube<float> t, float3 at) { return tidehl_depth_in(t.SampleLevel(tidehl_point_clamp_sampler, at, 0.0)); }\n"
-    "float tidehl_compare(Texture2D<float> t, float2 at, float d) {\n"
+    "#if TIDEHL_OWN_SAMPLERS\n"
+    "#define TIDEHL_NEAREST(own) own // A depth texture's own sampler is the nearest pixel's (TideRender.cs)\n"
+    "#else\n"
+    "#define TIDEHL_NEAREST(own) tidehl_point_clamp_sampler\n"
+    "#endif\n"
+    "float tidehl_depth(Texture2D<float> t, SamplerState own, float2 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }\n"
+    "float tidehl_depth(TextureCube<float> t, SamplerState own, float3 at) { return tidehl_depth_in(t.SampleLevel(TIDEHL_NEAREST(own), at, 0.0)); }\n"
+    "float tidehl_compare(Texture2D<float> t, SamplerState own, float2 at, float d) {\n"
     "    uint w, h;\n"
     "    t.GetDimensions(w, h);\n"
     "    float2 size = float2(w, h);\n"
     "    float2 p = at * size - 0.5;\n"
     "    float2 f = frac(p);\n"
-    "    float4 g = t.GatherRed(tidehl_point_clamp_sampler, (floor(p) + 1.0) / size);\n"
+    "#if TIDEHL_TEXTURE_BUFFERS\n"
+    "    // OpenGL ES 3.0 gathers nothing: the four pixels, each loaded\n"
+    "    int2 i = int2(floor(p)), most = int2(w, h) - 1;\n"
+    "    float4 g = float4(t.Load(int3(clamp(i + int2(0, 1), 0, most), 0)), t.Load(int3(clamp(i + int2(1, 1), 0, most), 0)),\n"
+    "                      t.Load(int3(clamp(i + int2(1, 0), 0, most), 0)), t.Load(int3(clamp(i, 0, most), 0)));\n"
+    "#else\n"
+    "    float4 g = t.GatherRed(TIDEHL_NEAREST(own), (floor(p) + 1.0) / size);\n"
+    "#endif\n"
     "#if TIDEHL_REVERSED_Z\n"
     "    g = 1.0 - g;\n"
     "#endif\n"
     "    float4 lit = step(d.xxxx, g); // Gathered as (0, 1), (1, 1), (1, 0), (0, 0)\n"
     "    return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);\n"
     "}\n"
-    "float tidehl_compare(TextureCube<float> t, float3 at, float d) { return d <= tidehl_depth(t, at) ? 1.0 : 0.0; }\n"
+    "float tidehl_compare(TextureCube<float> t, SamplerState own, float3 at, float d) { return d <= tidehl_depth(t, own, at) ? 1.0 : 0.0; }\n"
     "\n",
     "// Loads and sizes\n"
     "float4 tidehl_load(Texture2D<float4> t, int2 at, int level) { return t.Load(int3(at, level)); }\n"
@@ -2015,8 +2248,17 @@ static const char *const prelude[] = {
     "\n",
     "// Numbers as WebGPU has them: division and remainder by zero, or the least int by -1, as by 1; floats to ints clamped\n"
     "#define TIDEHL_INTS(T, U, F)                                                                           \\\n"
-    "T tidehl_div(T a, T b) { return a / ((b == (T)0) || ((a == (T)(-2147483647 - 1)) && (b == (T)(-1))) ? (T)1 : b); } \\\n"
-    "T tidehl_rem(T a, T b) { return a % ((b == (T)0) || ((a == (T)(-2147483647 - 1)) && (b == (T)(-1))) ? (T)1 : b); } \\\n"
+    "T tidehl_divisor(T a, T b) { return (b == (T)0) || ((a == (T)(-2147483647 - 1)) && (b == (T)(-1))) ? (T)1 : b; } \\\n"
+    "T tidehl_div(T a, T b) {                                                                               \\\n"
+    "    T d = tidehl_divisor(a, b);                                                                        \\\n"
+    "    U q = asuint(a < (T)0 ? -a : a) / asuint(d < (T)0 ? -d : d);                                       \\\n"
+    "    return ((a < (T)0) != (d < (T)0)) ? -asint(q) : asint(q);                                          \\\n"
+    "}                                                                                                      \\\n"
+    "T tidehl_rem(T a, T b) {                                                                               \\\n"
+    "    T d = tidehl_divisor(a, b);                                                                        \\\n"
+    "    U r = asuint(a < (T)0 ? -a : a) % asuint(d < (T)0 ? -d : d);                                       \\\n"
+    "    return a < (T)0 ? -asint(r) : asint(r);                                                            \\\n"
+    "}                                                                                                      \\\n"
     "U tidehl_div(U a, U b) { return a / (b == (U)0 ? (U)1 : b); }                                         \\\n"
     "U tidehl_rem(U a, U b) { return a % (b == (U)0 ? (U)1 : b); }                                         \\\n"
     "T tidehl_f2i(F f) { return (T)clamp(f, -2147483648.0, 2147483520.0); }                               \\\n"
@@ -2024,7 +2266,7 @@ static const char *const prelude[] = {
     "TIDEHL_INTS(int, uint, float)\n"
     "TIDEHL_INTS(int2, uint2, float2)\n"
     "TIDEHL_INTS(int3, uint3, float3)\n"
-    "TIDEHL_INTS(int4, uint4, float4)\n"
+    "TIDEHL_INTS(int4, uint4, float4)\n",
     "uint tidehl_extract(uint e, uint offset, uint count) {\n"
     "    uint o = min(offset, 32u), n = min(count, 32u - o);\n"
     "    return n == 0u ? 0u : (e >> o) & (n == 32u ? 0xFFFFFFFFu : (1u << n) - 1u);\n"
@@ -2040,6 +2282,7 @@ static const char *const prelude[] = {
     "    return (e & ~mask) | ((v << o) & mask);\n"
     "}\n"
     "#define TIDEHL_HYPERBOLIC(T)                                                                           \\\n"
+    "T tidehl_pow(T x, T y) { return exp2(log2(x) * y); }                                                   \\\n"
     "T tidehl_asinh(T v) { return log(v + sqrt(v * v + 1.0)); }                                           \\\n"
     "T tidehl_acosh(T v) { return log(v + sqrt(v * v - 1.0)); }                                           \\\n"
     "T tidehl_atanh(T v) { return 0.5 * log((1.0 + v) / (1.0 - v)); }                                     \\\n"
@@ -2122,7 +2365,7 @@ static void translate(translation *x, hs *out)
             hput(&globals, ";\n");
         } else if (T(x, t)->kind == K_TEXTURE) {
             put_type(x, &globals, t);
-            hprintf(&globals, " _TideTexture%d;\n", handle_slot(x, g, false));
+            hprintf(&globals, " _TideTexture%d;\nSamplerState sampler_TideTexture%d;\n", handle_slot(x, g, false), handle_slot(x, g, false));
         } else if (T(x, t)->kind == K_SAMPLER || T(x, t)->kind == K_SAMPLER_CMP) {
             handle_slot(x, g, true); // Unity's inline samplers, picked by _TideSampling
         } else {
@@ -2203,28 +2446,34 @@ char *tide_hlsl_unity_shader(const char *hlsl, const char *name)
             "        _TideStencilRef (\"\", Float) = 0\n"
             "        _TideStencilComp (\"\", Float) = 8\n"
             "        _TideStencilPass (\"\", Float) = 0\n"
-            "    }\n"
-            "    SubShader\n"
-            "    {\n"
-            "        Pass\n"
-            "        {\n"
-            "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n"
-            "            ZTest [_TideZTest]\n"
-            "            ZWrite [_TideZWrite]\n"
-            "            Cull [_TideCull]\n"
-            "            Stencil\n"
-            "            {\n"
-            "                Ref [_TideStencilRef]\n"
-            "                Comp [_TideStencilComp]\n"
-            "                Pass [_TideStencilPass]\n"
-            "            }\n"
-            "            HLSLPROGRAM\n"
-            "            #pragma vertex tidehl_vertex\n"
-            "            #pragma fragment tidehl_fragment\n"
-            "            #pragma target 4.5\n"
-            "            #pragma exclude_renderers gles\n",
+            "    }\n",
             name);
-    hput(&o, hlsl);
-    hput(&o, "            ENDHLSL\n        }\n    }\n}\n");
+    // Twice: for GPUs whose shaders read buffers, and for OpenGL ES 3.0 and WebGL 2, which read them as textures
+    // (hlsl.h's TIDEHL_TEXTURE_BUFFERS)
+    for (int i = 0; i < 2; i++) {
+        hput(&o, "    SubShader\n"
+                 "    {\n"
+                 "        Pass\n"
+                 "        {\n"
+                 "            Blend [_TideSrcColor] [_TideDstColor], [_TideSrcAlpha] [_TideDstAlpha]\n"
+                 "            ZTest [_TideZTest]\n"
+                 "            ZWrite [_TideZWrite]\n"
+                 "            Cull [_TideCull]\n"
+                 "            Stencil\n"
+                 "            {\n"
+                 "                Ref [_TideStencilRef]\n"
+                 "                Comp [_TideStencilComp]\n"
+                 "                Pass [_TideStencilPass]\n"
+                 "            }\n"
+                 "            HLSLPROGRAM\n"
+                 "            #pragma vertex tidehl_vertex\n"
+                 "            #pragma fragment tidehl_fragment\n");
+        hput(&o, i == 0 ? "            #pragma target 4.5\n            #pragma exclude_renderers gles3\n"
+                        : "            #pragma target 3.5\n            #pragma only_renderers gles3\n");
+        hput(&o, "            #include \"Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl\"\n");
+        hput(&o, hlsl);
+        hput(&o, "            ENDHLSL\n        }\n    }\n");
+    }
+    hput(&o, "}\n");
     return htake(&o);
 }

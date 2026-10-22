@@ -347,6 +347,10 @@ TIDE_TEST(embed_camera)
 // What a frame's render commands hold, read as the other program reads them (tide_embed_render).
 typedef struct rendered {
     uint32_t ops[TIDE_EMBED_RENDER_DRAW_INDEXED + 1];
+    uint32_t used[16]; // The pipelines USE named, the first 16
+    uint32_t used_count;
+    uint32_t pipelines[32]; // ...and those made, by `keys`' places
+    float camera[16];       // The first uniforms' first 16 floats
     uint64_t keys[32];
     uint32_t key_count;
     uint32_t first_pipeline; // The first pipeline's number
@@ -354,11 +358,9 @@ typedef struct rendered {
     bool whole;              // Each command's bytes were inside the stream
 } rendered;
 
-static rendered render(tide_embed *e)
+static rendered read_commands(const uint8_t *p, const uint32_t size)
 {
     rendered r = {0};
-    uint32_t size = 0;
-    const uint8_t *p = tide_embed_render(e, &size);
     r.whole = p != NULL;
     for (uint32_t at = 0; r.whole && at < size;) {
         uint32_t head[2];
@@ -377,12 +379,22 @@ static rendered render(tide_embed *e)
         memcpy(words, p + at, head[1] < 16u ? head[1] : 16u);
         if (head[0] == TIDE_EMBED_RENDER_PIPELINE && r.key_count < 32u) {
             if (!r.first_pipeline) r.first_pipeline = words[0];
+            r.pipelines[r.key_count] = words[0];
             r.keys[r.key_count++] = (uint64_t)words[1] | (uint64_t)words[2] << 32;
         }
+        if (head[0] == TIDE_EMBED_RENDER_USE && r.used_count < 16u) r.used[r.used_count++] = words[0];
+        if (head[0] == TIDE_EMBED_RENDER_UNIFORMS && r.ops[head[0]] == 1u && head[1] >= 68u) memcpy(r.camera, p + at + 4, 64);
         if (head[0] == TIDE_EMBED_RENDER_BEGIN && words[0] == 0 && words[1]) r.window_cleared = true;
         at += head[1];
     }
     return r;
+}
+
+static rendered render(tide_embed *e)
+{
+    uint32_t size = 0;
+    const uint8_t *p = tide_embed_render(e, &size);
+    return read_commands(p, size);
 }
 
 static uint64_t fnv(const uint32_t *words, const uint32_t count)
@@ -426,6 +438,30 @@ TIDE_TEST(embed_render)
     TIDE_REQUIRE(second.whole);
     TIDE_CHECK(second.ops[TIDE_EMBED_RENDER_PIPELINE] == 0u);
     TIDE_CHECK(second.ops[TIDE_EMBED_RENDER_DRAW] + second.ops[TIDE_EMBED_RENDER_DRAW_INDEXED] >= 3u);
+    // The frame's 3D again through another camera: the cube alone, through the 3D meshes' pipeline, with that
+    // camera's matrix as its uniforms say, and none of the 2D
+    uint64_t cube_key = 0, used_key = 0;
+    for (uint32_t i = 0; i < first.key_count; i++) {
+        if (first.keys[i] == fnv(tide_spirv_mesh_3d, tide_spirv_mesh_3d_words)) cube_key = first.keys[i];
+    }
+    TIDE_REQUIRE(cube_key != 0);
+    const tide_float4x4 place = tide_translate_f4x4(tide_f3(0.0f, 2.0f, 0.0f));
+    const tide_float4x4 projection = tide_perspectivefov_f4x4(1.0f, 2.0f, 0.5f, 100.0f);
+    uint32_t view_size = 0;
+    const uint8_t *view_commands = tide_embed_render_view(e, &place.c0.x, &projection.c0.x, 400, 200, &view_size);
+    const rendered view = read_commands(view_commands, view_size);
+    TIDE_REQUIRE(view.whole);
+    TIDE_CHECK(view.ops[TIDE_EMBED_RENDER_DRAW_INDEXED] == 1u && view.ops[TIDE_EMBED_RENDER_DRAW] == 0u);
+    TIDE_REQUIRE(view.used_count == 1u);
+    for (uint32_t i = 0; i < first.key_count; i++) {
+        if (first.pipelines[i] == view.used[0]) used_key = first.keys[i];
+    }
+    TIDE_CHECK(used_key == cube_key);
+    tide_float4x4 seeing = tide_inverse_f4x4(place);
+    seeing.c0.z = -seeing.c0.z, seeing.c1.z = -seeing.c1.z, seeing.c2.z = -seeing.c2.z, seeing.c3.z = -seeing.c3.z;
+    const tide_float4x4 expected = tide_mul_f4x4(projection, seeing);
+    TIDE_CHECK(memcmp(view.camera, &expected, sizeof expected) == 0);
+    TIDE_CHECK(tide_embed_render_view(e, &place.c0.x, &projection.c0.x, 0, 200, &view_size) == NULL);
     tide_embed_render_reset(e);
     frames(e, 1, NULL);
     const rendered again = render(e);

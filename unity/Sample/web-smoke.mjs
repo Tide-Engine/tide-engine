@@ -81,6 +81,14 @@ await ask('Page.enable', {}, sessionId);
 await ask('Emulation.setDeviceMetricsOverride', { width: 960, height: 540, deviceScaleFactor: 1, mobile: false }, sessionId);
 await ask('Page.navigate', { url }, sessionId);
 await Promise.race([finished, new Promise(done => setTimeout(done, 120000))]);
+// A picture of the page as the check ended, where TIDE_SMOKE_SHOT names a file for it
+if (process.env.TIDE_SMOKE_SHOT) {
+    const { result } = await ask('Page.captureScreenshot', { format: 'png' }, sessionId);
+    if (result?.data) {
+        const { writeFile } = await import('node:fs/promises');
+        await writeFile(process.env.TIDE_SMOKE_SHOT, Buffer.from(result.data, 'base64'));
+    }
+}
 chrome.kill();
 server.close();
 await rm(profile, { recursive: true, force: true }).catch(() => {});
