@@ -46,7 +46,7 @@ A floor, and a wall of twenty crates. Tap to throw a ball at it.
 - A tap is a [command](../game/commands.md), with the ray through the pixel it was on. `ThrowBall` spawns a body at its start, with a `velocity` along it.
 - `Fall` destroys what fell off the floor, and its body goes with it.
 
-The [Sumo walkthrough](../guide/sumo.md) shows how impulses drive the balls and blasts, how static floor tiles become falling bodies, and how sensors detect ring-outs and pickups. It also covers deterministic arena construction, the room lobby, instanced drawing and the cost of rollback.
+The [Sumo source](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/sumo) shows how impulses drive the balls and blasts, how static floor tiles become falling bodies, and how sensors detect ring-outs and pickups. It also includes deterministic arena construction, the room lobby and instanced drawing.
 
 ## Bodies
 
@@ -326,7 +326,7 @@ So does a body beside it that's destroyed, and [a new gravity](#the-world). Afte
 
 That's for a body that was awake. Writing `asleep = true` into one that's asleep already writes nothing, so a sleeping body that code moves wakes like any other: `asleep` is false after that tick, and code that wants it asleep where it put it says so then.
 
-A body that's **spawned asleep** starts where it's spawned, with none of the speed or the push it was spawned with. Bodies spawned asleep on each other are each asleep by themselves, as no step has seen them touch: one that's hit wakes, and the ones resting on it a step after each other. That's fine for a few. For a great many stacked on each other it's better to spawn them awake and put them to sleep a tick later, once they have had a step: they then sleep and wake a stack at a time, which costs less when a lot of them wake at once. [Sumo](../guide/sumo.md) does that with the two thousand crates of its ring, which took a second to come to rest by themselves:
+A body that's **spawned asleep** starts where it's spawned, with none of the speed or the push it was spawned with. Bodies spawned asleep on each other are each asleep by themselves, as no step has seen them touch: one that's hit wakes, and the ones resting on it a step after each other. That's fine for a few. For a great many stacked on each other it's better to spawn them awake and put them to sleep a tick later, once they have had a step: they then sleep and wake a stack at a time, which costs less when a lot of them wake at once. [Sumo](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/sumo) does that with the two thousand crates of its ring, which took a second to come to rest by themselves:
 
 ```csharp
 [Sparse]
@@ -666,7 +666,7 @@ Three alternating runs against the image-list baseline (`0cec11e`), using Window
 
 The resident arena spans 7.08 MB, where the former canonical image was 3.48 MB plus 1.4 KB of geometry. Arena span and serialized size measure different representations; neither is total process memory or the memory retained by all snapshots. Conservative marks touch 45–46% of the arena even with one crate pushed. Hashing costs less, but the native total for that case is higher, and everything moving costs more under Node.
 
-The [Sumo example](../guide/sumo.md) benefits most in rollback: five ticks run again averaged 5.29 to 3.48 ms natively and 7.53 to 4.63 under Node; ten averaged 5.53 to 4.12 and 7.59 to 5.10. These are medians of the three runs' rollback means, with snapshots and hashes included. Four bots at a full ring cost 1.20 to 0.95 ms a tick natively and 1.62 to 1.25 under Node, including snapshot/hash. Raising the ring's body-making tick was slower, 8.86 to 9.87 ms and 25.08 to 33.00; settling after it also cost more. Sumo's arena span grows from about 7.1 to 9.1 MB where its canonical image occupied 3.8 to 4.8 MB. The remaining contention limits what these comparisons say about an idle machine.
+The [Sumo example](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/sumo) benefits most in rollback: five ticks run again averaged 5.29 to 3.48 ms natively and 7.53 to 4.63 under Node; ten averaged 5.53 to 4.12 and 7.59 to 5.10. These are medians of the three runs' rollback means, with snapshots and hashes included. Four bots at a full ring cost 1.20 to 0.95 ms a tick natively and 1.62 to 1.25 under Node, including snapshot/hash. Raising the ring's body-making tick was slower, 8.86 to 9.87 ms and 25.08 to 33.00; settling after it also cost more. Sumo's arena span grows from about 7.1 to 9.1 MB where its canonical image occupied 3.8 to 4.8 MB. The remaining contention limits what these comparisons say about an idle machine.
 
 ### Before resident state
 

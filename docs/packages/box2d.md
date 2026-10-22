@@ -47,7 +47,7 @@ A floor, two walls and three stacks of crates. Tap a crate to kick it, and anywh
 - `Expire` destroys a ball after ten seconds, and its body goes with it.
 - `Count` hears `Touched`, which the package sends to a body's entity when it starts touching another.
 
-The [Towers walkthrough](../guide/towers.md) shows how the package steers a falling brick as a kinematic body, turns it into a dynamic body when it lands, and casts shapes to find space for movement. It also covers absolute input, the room lobby and the views that present the physics match.
+The [Towers source](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/towers) shows how the package steers a falling brick as a kinematic body, turns it into a dynamic body when it lands, and casts shapes to find space for movement. It also covers absolute input, the room lobby and the views that present the physics match.
 
 ## Bodies
 
