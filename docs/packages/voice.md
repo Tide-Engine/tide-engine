@@ -104,7 +104,7 @@ The package encodes mono at 48 kHz in 20 ms frames, targeting 24 kbit/s before t
 
 Games that omit `voice` compile and link no Opus or RNNoise code and allocate no voice buffers. Listing the package includes the codecs and suppression model, even when suppression is off; enabling voice or setting a player volume/routing override allocates its buffers, and encoder/decoder/filter state is made as needed. Disabling stops capture, subscription renewal and playback; allocated capacity remains until shutdown or reload. Merely listing the package requests no microphone access and sends no voice traffic.
 
-Headphones and push-to-talk are useful with the default capture devices. Embedded Unity audio is not connected to this package.
+Headphones and push-to-talk are useful with the default capture devices. In Unity, voice plays through Unity's audio and hears Unity's microphone, as the rest of the game's sound does.
 
 ## Testing
 

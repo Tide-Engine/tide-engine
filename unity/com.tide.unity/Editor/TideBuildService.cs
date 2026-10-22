@@ -131,8 +131,11 @@ namespace Tide.Editor
 
         // Play has the open scenes as the editor has them, saved or not: before Play, a copy of each with changes it
         // hasn't saved goes in Library/Tide/unsaved, which tide reads in its place, and Play waits for tide to have
-        // built everything it's been told of. A scene's copy goes once it's saved, or closed, or opened again.
+        // built everything it's been told of. A scene's copy goes once it's saved, or closed, or opened again. The
+        // first scene that was never saved, which has no file, has its copy too (Untitled), the Tide scene
+        // UnityEngine.Scenes.Untitled, which the runner finds as the scene with no path.
         const string SessionKey = "Tide.Session";
+        const string Untitled = "Untitled.unity"; // unity_assets.h's UNITY_UNTITLED_SCENE
         static bool changedSinceBuild; // tide's been told of a change it hasn't said the build of
         static int changes, changesSynced; // Changes told; those told before the "sync" asked last
         static int syncs; // "sync <n>" asked, the last one's answer "tide: synced <n>"
@@ -142,20 +145,33 @@ namespace Tide.Editor
 
         internal static string UnsavedFolder => Path.Combine(TideLibrary.BuildFolder, "unsaved");
 
-        // A scene saved, closed or opened, which has no changes the editor hasn't saved; not as Play comes or goes.
+        // A scene saved, closed or opened, which has no changes the editor hasn't saved; not as Play comes or goes. The
+        // untitled scene's copy goes with the last untitled scene, saved under a name or closed.
         static void Saved(Scene scene)
         {
-            if (!EditorApplication.isPlayingOrWillChangePlaymode) Unsaved(scene.path, false);
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+            Unsaved(scene.path, default, false);
+            if (!UntitledOpen().IsValid()) Unsaved(Untitled, default, false);
         }
 
-        static string CopyOf(string scene) => "Library/Tide/unsaved/" + scene;
-
-        // Whether `scene` (its path from the project's folder) has a copy, made (`unsaved`) or deleted: true if that
-        // changed it, which tide's then told.
-        static bool Unsaved(string scene, bool unsaved)
+        static Scene UntitledOpen()
         {
-            if (copying || string.IsNullOrEmpty(scene)) return false;
-            var copy = Path.Combine(TideSettings.ProjectFolder, CopyOf(scene));
+            for (var i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (scene.isLoaded && string.IsNullOrEmpty(scene.path)) return scene;
+            }
+            return default;
+        }
+
+        static string CopyOf(string asset) => "Library/Tide/unsaved/" + asset;
+
+        // Whether the scene `asset` (its path from the project's folder, or Untitled) has a copy, of `open` as the
+        // editor has it (`unsaved`), or none: true if that changed it, which tide's then told.
+        static bool Unsaved(string asset, Scene open, bool unsaved)
+        {
+            if (copying || string.IsNullOrEmpty(asset)) return false;
+            var copy = Path.Combine(TideSettings.ProjectFolder, CopyOf(asset));
             if (!unsaved)
             {
                 if (!File.Exists(copy)) return false;
@@ -169,7 +185,6 @@ namespace Tide.Editor
             copying = true;
             try
             {
-                var open = SceneManager.GetSceneByPath(scene);
                 if (!open.IsValid() || !EditorSceneManager.SaveScene(open, saved, true)) return false;
             }
             finally
@@ -186,25 +201,32 @@ namespace Tide.Editor
             return true;
         }
 
-        // Copies of the scenes with unsaved changes made, those of others deleted, and tide asked to say when it's
-        // built everything it's been told of: false if there's nothing it hasn't built (or it isn't running).
+        // Copies of the scenes with unsaved changes made, and of the first untitled one, those of others deleted, and
+        // tide asked to say when it's built everything it's been told of: false if there's nothing it hasn't built (or
+        // it isn't running).
         internal static bool Sync()
         {
             if (process == null || process.HasExited) return false;
-            var dirty = new System.Collections.Generic.HashSet<string>();
+            var copied = new System.Collections.Generic.HashSet<string>();
             for (var i = 0; i < SceneManager.sceneCount; i++)
             {
                 var scene = SceneManager.GetSceneAt(i);
                 if (!scene.isLoaded || !scene.isDirty || string.IsNullOrEmpty(scene.path)) continue;
-                dirty.Add(scene.path);
-                Unsaved(scene.path, true);
+                copied.Add(scene.path);
+                Unsaved(scene.path, scene, true);
+            }
+            var untitled = UntitledOpen();
+            if (untitled.IsValid())
+            {
+                copied.Add(Untitled);
+                Unsaved(Untitled, untitled, true);
             }
             if (Directory.Exists(UnsavedFolder))
             {
                 foreach (var copy in Directory.GetFiles(UnsavedFolder, "*.unity", SearchOption.AllDirectories))
                 {
                     var scene = Path.GetRelativePath(UnsavedFolder, copy).Replace('\\', '/');
-                    if (!dirty.Contains(scene)) Unsaved(scene, false);
+                    if (!copied.Contains(scene)) Unsaved(scene, default, false);
                 }
             }
             if (!changedSinceBuild) return false;
@@ -321,6 +343,8 @@ namespace Tide.Editor
             {
                 waiting = false;
                 resuming = true;
+                // The C# tide wrote of the game with it, compiled before Play, which waits for that
+                AssetDatabase.Refresh();
                 EditorApplication.isPlaying = true;
             }
             KeepErrorsShown();

@@ -60,7 +60,10 @@ variants work as in Unity: what an instance changes goes over its prefab's,
 field by field. tide reads saved files, so save a prefab to put it in the game.
 A scene you haven't saved is Play's as you have it: Play writes a copy of each
 open scene with unsaved changes, which tide reads in its place, and starts
-once tide has built them. A GameObject's name can be anything, `#` and `/`
+once tide has built them. A new scene you've never saved is the game's too, as
+the scene `UnityEngine.Scenes.Untitled`, until you save it under a name. With
+Prefab Mode's Auto Save off, Play has the prefab as last saved, as Unity's own
+instances of it do. A GameObject's name can be anything, `#` and `/`
 included.
 
 The match decides which scenes are loaded, and Unity follows: Build Settings'

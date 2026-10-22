@@ -8,6 +8,7 @@
 #include "game.h"
 #include "tide/embed.h"
 #include "tide/run.h"
+#include "tide/voice.h"
 #include "tide_test.h"
 #if !defined(__wasm__)
 #include "shaders_spirv.h"
@@ -126,6 +127,47 @@ TIDE_TEST(embed_audio)
     tide_embed_audio(e, out, 480, 48000, 2);
     TIDE_CHECK(loudest(out, 2 * 480) == 0.0f); // Silence with the embed gone
     tide_embed_audio(e, NULL, 0, 0, 0);
+}
+
+// A voice package's provider runs inside another program as in a window: its frame after the views, its sound in what
+// the other program plays, and its stop as the embed ends.
+static int voice_frames, voice_stops;
+static const float voice_samples[4] = {0.375f, 0.375f, 0.375f, 0.375f};
+
+static void voice_frame(void *self, tide_session *session, tide_audio_frame *audio, const double now)
+{
+    (void)self;
+    (void)now;
+    voice_frames += session != NULL;
+    tide_audio_voice(audio, &(tide_voice){.id = 77, .clip = {.samples = voice_samples, .frames = 4, .channels = 1,
+                                                             .rate = 48000, .id = 77},
+                                          .loop = true, .playing = true, .volume = 1.0f, .pitch = 1.0f});
+}
+
+static void voice_stop(void *self, tide_session *session)
+{
+    (void)self;
+    (void)session;
+    voice_stops++;
+}
+
+TIDE_TEST(embed_voice_provider)
+{
+    static const tide_voice_provider provider = {NULL, voice_frame, voice_stop};
+    tide_voice_set(&provider);
+    voice_frames = voice_stops = 0;
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_REQUIRE(e != NULL);
+    frames(e, 4, NULL);
+    TIDE_CHECK(voice_frames == 4);
+    static float out[2 * 2400];
+    tide_embed_audio(e, out, 2400, 48000, 2);
+    TIDE_CHECK(loudest(out + 2 * 1200, 2 * 1200) > 0.37f && loudest(out, 2 * 2400) < 0.38f); // Its voice, once faded in
+    tide_embed_audio(e, NULL, 0, 0, 0);
+    tide_embed_destroy(e);
+    TIDE_CHECK(voice_stops == 1);
+    tide_voice_set(NULL);
 }
 
 // A key held for one frame between two ticks reaches the next tick's input once, as from a window.

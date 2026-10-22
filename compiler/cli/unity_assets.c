@@ -357,6 +357,31 @@ static char *read_asset(const asset *a, size_t *size)
     return sys_read_file(a->path, size);
 }
 
+// The editor's untitled scene, as an asset of a GUID Unity never gives one: its copy, when there is one.
+static const char untitled_guid[33] = "00000000000000000000000000000000";
+
+static void add_untitled(project *p)
+{
+    text copy = {0};
+    put(&copy, p->assets, p->project_length);
+    puts_(&copy, UNITY_UNSAVED_FOLDER UNITY_UNTITLED_SCENE);
+    if (!sys_exists(copy.s)) {
+        free(copy.s);
+        return;
+    }
+    grow((void **)&p->items, &p->capacity, p->count, sizeof *p->items);
+    asset *a = &p->items[p->count++];
+    memset(a, 0, sizeof *a);
+    memcpy(a->guid, untitled_guid, sizeof a->guid);
+    a->path = copy.s;
+    a->local = dup(UNITY_UNTITLED_SCENE);
+}
+
+static bool untitled(const char *local)
+{
+    return strcmp(local, UNITY_UNTITLED_SCENE) == 0;
+}
+
 static asset *asset_of(project *p, const char *guid)
 {
     for (int i = 0; i < p->count; i++) {
@@ -1955,7 +1980,7 @@ static char *write_prefab(project *p, const asset *a, node **roots, const int co
     puts_(map, "\n    {\"guid\": ");
     put_json(map, a->guid);
     puts_(map, ", \"path\": ");
-    put_json(map, a->local);
+    put_json(map, untitled(a->local) ? "" : a->local);
     putf(map, ", \"scene\": %s, \"nodes\": [%s]}", scene ? "true" : "false", e.nodes.s);
     free(e.nodes.s);
     return e.out.s;
@@ -2111,6 +2136,7 @@ bool unity_assets_read(const char *assets, unity_sources *out)
     const size_t length = strlen(p.assets);
     p.project_length = length >= 7 && strcmp(p.assets + length - 7, "Assets/") == 0 ? length - 7 : length;
     folder_find(p.assets, ".meta", index_meta, &p);
+    add_untitled(&p);
     read_components(&p);
     int capacity = 0;
     text map = {0};
@@ -2177,8 +2203,14 @@ bool unity_assets_read(const char *assets, unity_sources *out)
             char *a = asset_name(out->items[i].path), *b = asset_name(out->items[k].path);
             char *fa = asset_folders(out->items[i].path), *fb = asset_folders(out->items[k].path);
             if (strcmp(a, b) == 0 && strcmp(fa, fb) == 0) {
-                fprintf(stderr, "%s: error: %s has the same Tide name, %s%s%s: rename one\n", out->items[k].path,
-                        out->items[i].path, fa, fa[0] ? "." : "", a);
+                const char *named = untitled(out->items[i].path) ? out->items[k].path : out->items[i].path;
+                if (untitled(out->items[i].path) || untitled(out->items[k].path)) {
+                    fprintf(stderr, "%s: error: the editor's untitled scene has its Tide name, %s: save the untitled scene "
+                                    "under another name, or rename this one\n", named, a);
+                } else {
+                    fprintf(stderr, "%s: error: %s has the same Tide name, %s%s%s: rename one\n", out->items[k].path,
+                            out->items[i].path, fa, fa[0] ? "." : "", a);
+                }
                 p.failed = true;
             }
             free(a);

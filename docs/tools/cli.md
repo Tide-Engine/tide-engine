@@ -309,7 +309,8 @@ prefab named after its file, read from its saved file (Unity's Force Text
 serialization) with its prefab instances and variants expanded. A scene the
 editor has unsaved changes to is read from the copy of it the package writes
 as Play starts, `Library/Tide/unsaved/<the scene's path>`, while there is
-one. A TideEntity is
+one; the editor's first scene that was never saved is
+`Library/Tide/unsaved/Untitled.unity`, the scene `UnityEngine.Scenes.Untitled`. A TideEntity is
 an entity of that prefab, Unity's Transform and parent are its own, and its
 Tide components are the game's components the GameObject has: each match
 component is a Unity component (Add Component > Tide), its fields set in the

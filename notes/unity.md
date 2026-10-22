@@ -1129,8 +1129,7 @@ picks below are mine (Provisional).
   - A copy goes when its scene is saved, closed or opened again (not while Play
     comes or goes, when Unity reopens scenes), and the folder is emptied once
     per editor session (`SessionState`), in case an editor quit with copies.
-  - Not covered: an unsaved prefab in Prefab Mode with auto-save off (auto-save
-    is Unity's default), and a scene that was never saved (no path).
+  - A never-saved scene and Prefab Mode: "What was not covered" below.
 - **Scenes during Play.** The runner listens to `sceneLoaded`/`sceneUnloaded`.
   A load or unload that isn't its own is sent: before the editor's scenes went
   (`openSent`), it changes the list to send; after, `UnityEngine.OpenScene
@@ -1174,6 +1173,63 @@ picks below are mine (Provisional).
     and PlayMode 14/14 on D3D11, PlayMode 11 with 3 GPU tests skipped under
     `-nographics` (Unity's audio thread runs in batch mode); the Sample's WebGL
     build with `web-smoke.mjs` PASS.
+
+### What was "not covered" (2026-10-22)
+
+The owner: "can we try to look into the 'Not covered'". All picks here are
+mine (Provisional).
+
+- **Voice runs embedded.** `tide/host.h` called a game's voice provider only
+  outside an embed, as its audio went nowhere there; it goes to Unity now, so
+  the guard is gone (`notes/voice-package.md`). `embed_voice_provider`
+  (`tide_platform_embed`) registers a fake provider: its frame runs each embedded
+  frame, its constant voice is in `tide_embed_audio`'s samples, its stop runs as
+  the embed ends.
+- **An embed's end starts the audio over.** `tide_embed_destroy` also flushes the
+  mixer's remainder and resets the pull (`tide_audio_out_reset`, new in
+  `audio_out.h`) and the microphone's resampler: the next runner played up to a
+  block of the last one's sound (found by `embed_voice_provider` after
+  `embed_audio`).
+- **The editor's untitled scene.** The first loaded scene with no path is copied
+  at Play to `Library/Tide/unsaved/Untitled.unity` (`UNITY_UNTITLED_SCENE`),
+  dirty or not. tide adds it as an asset of the all-zero GUID, named
+  `UnityEngine.Scenes.Untitled` (`SceneContents.Untitled`), its map path `""`,
+  Unity's for a scene with no file. A saved `Assets/Untitled.unity` clashes with
+  an error saying to save the untitled scene under another name. Its copy goes
+  as the last untitled scene closes or is saved under a name. The runner finds it
+  as the loaded scene with no path (`Unclaimed("")`, `SceneOf`'s fallback), and
+  `LoadScene` loads nothing for `""`. A second untitled scene isn't the game's.
+- **Prefab Mode with Auto Save off isn't a gap:** Unity's prefab instances,
+  Unity's own Play included, are the saved prefab until Prefab Mode saves it, so
+  tide reading the saved file matches Unity.
+- **Play refreshes assets before it resumes** (`AssetDatabase.Refresh`): a sync
+  can rewrite the game's C# (a scene coming or going changes the schema and its
+  hash, which the C# must match), which is then compiled before Play.
+- **TideAudio plays its source only while an AudioListener is active**, looked
+  for each frame, keeping its own playing flag (a source's `isPlaying` reads false
+  a while after `Play`, which restarted it every frame). With none Unity printed
+  "There are no audio listeners in the scene" each block. The Sample's camera had
+  no listener: it has one now (`SampleSetup` and `Bounce.unity`), and its sound
+  test passed before only because Unity runs filters with nothing listening.
+- **Unity, after a script changes in Play, calls the OnAudioFilterRead of no
+  component made later in that Play** (batch runs; its source plays, its time
+  advances, its filter never runs). The game's C# changes in Play when its schema
+  does: a runner started after that is silent until Play restarts; one already
+  running keeps its sound. The untitled PlayMode test changes the schema, so it's
+  its own fixture, `UntitledTests`, which runs after `BounceTests`.
+- **Still the owner's to decide:** an editor that joined as a client sends no
+  scene changes (the match's first player, the server, decides).
+- **Tests:** `embed_voice_provider`; `unity_unsaved_scene_read_from_the_editor_copy`
+  (an untitled copy read as the scene `Untitled` with path `""`, and the clash's
+  error); EditMode `AnUntitledSceneIsTheGames` (a new scene with a Spinner built
+  as `Untitled`, gone as Bounce opens); PlayMode
+  `UntitledTests.TheEditorsUntitledSceneIsTheMatchs` (a copy of Bonus built as the
+  untitled scene, a runtime scene with no path holding Bonus's GameObjects, and
+  its Totem showing its entity with Bonus not loaded).
+- **Runs:** native debug 2515/2515, web debug 2416/2416, docs build; Unity
+  EditMode 17/17, PlayMode 15/15 on D3D11 and 12 with 3 GPU tests skipped under
+  `-nographics`. Not run: Play's cancel and resume with an untitled scene (batch
+  runs skip it), and the refresh before Play resumes.
 
 ### The game is Assets (2026-10-21)
 

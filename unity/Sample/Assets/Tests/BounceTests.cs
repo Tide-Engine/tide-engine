@@ -343,7 +343,9 @@ public sealed unsafe class BounceTests
         var runner = Object.FindAnyObjectByType<TideRunner>();
         var audio = runner.GetComponentInChildren<TideAudio>();
         Assert.IsNotNull(audio, "the runner plays the game's sound");
-        Assert.IsTrue(audio.GetComponent<AudioSource>().isPlaying, "through an AudioSource");
+        var source = audio.GetComponent<AudioSource>();
+        yield return Until(() => source.isPlaying, 2f); // Once the camera's AudioListener is there
+        Assert.IsTrue(source.isPlaying, "through an AudioSource");
         var loudest = 0f;
         yield return Until(() => (loudest = Mathf.Max(loudest, audio.TakeLoudest())) > 0.1f, 10f);
         Assert.Greater(audio.Reads, 0, "Unity's audio thread reads the mixer");

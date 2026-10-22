@@ -1049,7 +1049,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
-    if (game->voice && !tide_run_embedded) {
+    if (game->voice) {
         const tide_voice_provider *voice = game->voice();
         if (voice) voice->frame(voice->self, s, &tide_run_audio, tide_run_now);
     }

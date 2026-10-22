@@ -176,6 +176,28 @@ TIDE_TEST(unity_unsaved_scene_read_from_the_editor_copy)
     level = text_of(&s, "Assets/Fixture/Level.unity");
     TIDE_CHECK(level && strstr(level, "        Part { length = 9 };\n"));
     unity_sources_free(&s);
+
+    // A scene the editor never saved: its copy is the scene UnityEngine.Scenes.Untitled, Unity's path for it ""
+    scene = sys_read_file(TIDE_UNITY_FIXTURE "/Fixture/Level.unity", &size);
+    TIDE_REQUIRE(scene != NULL);
+    const char *untitled = TIDE_UNITY_SCRATCH "/" UNITY_UNSAVED_FOLDER UNITY_UNTITLED_SCENE;
+    TIDE_REQUIRE(sys_write_file(untitled, scene, size));
+    TIDE_CHECK(unity_assets_stamp(assets) != saved);
+    TIDE_REQUIRE(unity_assets_read(assets, &s));
+    const char *contents = text_of(&s, UNITY_UNTITLED_SCENE);
+    TIDE_CHECK(contents && strstr(contents, "namespace UnityEngine.SceneContents;\n\nprefab Untitled\n{\n")
+               && strstr(contents, "    entity M_1_k // M#1/k\n"));
+    TIDE_CHECK(s.map && strstr(s.map, "\"path\": \"\", \"scene\": true"));
+    const char *declared = text_of(&s, UNITY_SOURCE_PATH);
+    TIDE_CHECK(declared && strstr(declared, "namespace UnityEngine.Scenes\n{\n    scene Untitled { } // Untitled.unity\n}\n"));
+    unity_sources_free(&s);
+    // ...whose name a saved Assets/Untitled.unity takes: an error that says what to do
+    TIDE_REQUIRE(sys_write_file(TIDE_UNITY_SCRATCH "/Assets/Untitled.unity", scene, size));
+    TIDE_REQUIRE(sys_write_text(TIDE_UNITY_SCRATCH "/Assets/Untitled.unity.meta",
+                                "fileFormatVersion: 2\nguid: 5e1f0c2a9d3b4e6f8a7b6c5d4e3f2a1b\n"));
+    free(scene);
+    TIDE_CHECK(!unity_assets_read(assets, &s));
+    unity_sources_free(&s);
     sys_remove_tree(TIDE_UNITY_SCRATCH);
 }
 

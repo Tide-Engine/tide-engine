@@ -54,6 +54,9 @@ void unity_sources_free(unity_sources *sources);
 // Play (UNITY_UNSAVED_FOLDER, then its path from the project's folder), in its place; messages still name the scene.
 // The editor deletes the copy once the scene is saved, or closed without saving.
 #define UNITY_UNSAVED_FOLDER "Library/Tide/unsaved/"
+// ...and the editor's first scene that was never saved, which has no file but this copy: the Tide scene
+// UnityEngine.Scenes.Untitled, whose path in the map is Unity's for it, "".
+#define UNITY_UNTITLED_SCENE "Untitled.unity"
 
 // Changes whenever one of the prefabs, scenes or metas under `assets` does, or one comes or goes, or one of the
 // editor's unsaved copies does.

@@ -263,7 +263,9 @@ its session callback and freeing codec/queue state before library unload.
 Voice starts fresh next frame. A reconnect, changed cookie/player or local
 session generation clears receive/capture history. Supported session migration
 resubscribes on the adopted connection; it transfers no speech history.
-Embedded Unity hosts skip voice because their audio is owned elsewhere.
+Embedded hosts (Unity) run voice too since 2026-10-22, as their frames' audio
+reaches the other program (`tide_embed_audio`, `tide_embed_microphone`); until
+then they skipped it. `embed_voice_provider` in `tide_platform_embed` covers it.
 
 ## Validation
 

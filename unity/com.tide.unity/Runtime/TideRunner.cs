@@ -965,7 +965,15 @@ namespace Tide
                 if (!entity.HasParent) break;
                 at = (int)entity.Parent;
             }
-            return UnityEngine.SceneManagement.SceneManager.GetSceneByPath(Map.Of(asset).path);
+            var path = Map.Of(asset).path;
+            if (!string.IsNullOrEmpty(path)) return UnityEngine.SceneManagement.SceneManager.GetSceneByPath(path);
+            for (var i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                // The editor's untitled scene, which has no path: the first, whose copy the match has
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                if (string.IsNullOrEmpty(scene.path)) return scene;
+            }
+            return default;
         }
 
         // A scene loaded: one of this runner's for a root, which it shows (or unloads, if its root's gone meanwhile);
@@ -1021,6 +1029,7 @@ namespace Tide
 
         static AsyncOperation LoadScene(string path)
         {
+            if (string.IsNullOrEmpty(path)) return null; // The editor's untitled scene, which has no file to load again
             var additive = new UnityEngine.SceneManagement.LoadSceneParameters(UnityEngine.SceneManagement.LoadSceneMode.Additive);
 #if UNITY_EDITOR
             // In Play mode, any scene of the project, in Build Settings or not
