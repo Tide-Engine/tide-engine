@@ -78,6 +78,7 @@ export const sidebar: Group[] = [
             { text: 'Using and writing packages', link: '/packages/using-and-writing' },
             { text: 'Box2D — 2D physics', link: '/packages/box2d' },
             { text: 'Box3D — 3D physics', link: '/packages/box3d' },
+            { text: 'Newton — articulated physics (experimental)', link: '/packages/newton' },
             { text: 'Rooms — Play, Host and Join', link: '/packages/rooms' },
             { text: 'Lobby — lobbies and matchmaking', link: '/packages/lobby' },
             { text: 'Steam', link: '/packages/steam' },

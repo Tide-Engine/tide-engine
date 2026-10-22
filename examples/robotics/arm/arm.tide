@@ -1,0 +1,161 @@
+// Human players and policies supply the same two joint targets. The match
+// keeps bounded observation/action transitions alongside ordinary robot state.
+using Newton;
+using Rooms;
+
+settings { title = "Newton arms"; tickRate = 120; maxPlayers = 2; }
+
+scene Main { }
+
+input Controls
+{
+    float2 target;
+    Sample(Devices devices, Lobby lobby)
+    {
+        if (!lobby.playing) return;
+        if (devices.keyboard.a.pressed) target.x -= 1;
+        if (devices.keyboard.d.pressed) target.x += 1;
+        if (devices.keyboard.s.pressed) target.y -= 1;
+        if (devices.keyboard.w.pressed) target.y += 1;
+        target += devices.gamepad.leftStick;
+    }
+    Sanitize() { target = Math.Clamp(target, float2(-1), float2(1)); }
+}
+
+struct Transition
+{
+    int tick;
+    float4 observation; // Shoulder/elbow position, then their velocities
+    float2 action;      // Desired joint angles, in radians
+    float2 effort;      // Actual clamped actuator controls, in Nm
+    float4 nextObservation;
+    float reward;
+}
+
+component Arm
+{
+    int seat;
+    Entity shoulder;
+    Entity elbow;
+    Entity tip;
+    float3 target;
+    float reward;
+    float4 before;
+    float2 action;
+    // A bounded ring for this example. Export ticks in ascending order.
+    List<Transition> transitions;
+    int next;
+}
+
+component Segment { int seat; }
+singleton Fixture { Entity first; Entity second; }
+
+Entity MakeArm(float x, int seat)
+{
+    var base = Spawn(Body { type = BodyType.Static, position = float3(x, 2.5, 0) });
+    var upper = Spawn(Body { centerOfMass = float3(0, -0.5, 0), inertia = float3(0.1) }, Segment { seat = seat });
+    var lower = Spawn(Body { centerOfMass = float3(0, -0.5, 0), inertia = float3(0.1) }, Segment { seat = seat });
+    var shoulder = Spawn(Joint {
+        type = JointType.Revolute, parent = base, child = upper,
+        axis = float3(0, 0, 1), position = 0.3, damping = 0.1
+    }, Actuator { effortLimit = 30 });
+    var elbow = Spawn(Joint {
+        type = JointType.Revolute, parent = upper, child = lower,
+        parentPosition = float3(0, -1, 0), axis = float3(0, 0, 1),
+        position = -0.4, damping = 0.1
+    }, Actuator { effortLimit = 20 });
+    return Spawn(Arm {
+        seat = seat, shoulder = shoulder, elbow = elbow, tip = lower,
+        target = float3(x + 0.6, 1.1, 0)
+    }, Owner { player = PlayerID(seat) });
+}
+
+event(Spawned) Build(mut Fixture fixture, with Main)
+{
+    fixture.first = MakeArm(-1.7, 0);
+    fixture.second = MakeArm(1.7, 1);
+}
+
+// This is ordinary game control. A training host supplies the same Controls
+// input that a player's keyboard/gamepad samples; physics never changes modes.
+[Before(PhysicsStages.Step)]
+system Drive(Controls controls, mut Arm arm, mut World world)
+{
+    if (!world.TryGet<Joint>(arm.shoulder, out var shoulder)) return;
+    if (!world.TryGet<Joint>(arm.elbow, out var elbow)) return;
+    arm.before = float4(shoulder.position, elbow.position, shoulder.velocity, elbow.velocity);
+    arm.action = controls.target * 1.2;
+    if (world.TryGet<Actuator>(arm.shoulder, out mut var first))
+    {
+        first.effort = 30 * (arm.action.x - shoulder.position) - 5 * shoulder.velocity;
+        world.Set<Actuator>(arm.shoulder, first);
+    }
+    if (world.TryGet<Actuator>(arm.elbow, out mut var second))
+    {
+        second.effort = 20 * (arm.action.y - elbow.position) - 3 * elbow.velocity;
+        world.Set<Actuator>(arm.elbow, second);
+    }
+}
+
+[After(PhysicsStages.Step)]
+system Record(mut Arm arm, World world, Physics physics, Time time)
+{
+    if (physics.status != Status.Ok) return;
+    if (!world.TryGet<Joint>(arm.shoulder, out var shoulder)) return;
+    if (!world.TryGet<Joint>(arm.elbow, out var elbow)) return;
+    if (!world.TryGet<Actuator>(arm.shoulder, out var first)) return;
+    if (!world.TryGet<Actuator>(arm.elbow, out var second)) return;
+    if (!world.TryGet<Body>(arm.tip, out var tip)) return;
+    var end = tip.position + Math.Rotate(tip.rotation, float3(0, -1, 0));
+    var difference = end - arm.target;
+    arm.reward = -Math.Dot(difference, difference);
+    var sample = Transition {
+        tick = time.tick, observation = arm.before, action = arm.action,
+        effort = float2(first.appliedEffort, second.appliedEffort),
+        nextObservation = float4(shoulder.position, elbow.position, shoulder.velocity, elbow.velocity),
+        reward = arm.reward
+    };
+    if (arm.transitions.count < 128) arm.transitions.Add(sample);
+    else arm.transitions[arm.next] = sample;
+    arm.next = (arm.next + 1) % 128;
+}
+
+enum Layers { Camera, Robots, Hud }
+
+[Stage(Layers.Camera)]
+view Look()
+{
+    Draw.Clear(Color(0.06, 0.07, 0.09));
+    Draw.SetCamera(float3(0, 2, -9), quaternion.identity, 42);
+}
+
+[Stage(Layers.Robots)]
+view Bases(Body body, without Segment)
+{
+    Draw.Cube(body.position, float3(0.4, 0.3, 0.4), body.rotation, Color(0.4, 0.45, 0.5));
+}
+
+[Stage(Layers.Robots)]
+view Links(Body body, Segment segment)
+{
+    var center = body.position + Math.Rotate(body.rotation, float3(0, -0.5, 0));
+    var color = segment.seat == 0 ? Color(0.95, 0.7, 0.15) : Color(0.15, 0.8, 0.75);
+    Draw.Cylinder(center, 0.08, 1, body.rotation, color);
+    Draw.Sphere(body.position, 0.12, color);
+}
+
+[Stage(Layers.Robots)]
+view Targets(Arm arm)
+{
+    Draw.Sphere(arm.target, 0.12, Color(0.95, 0.35, 0.4));
+}
+
+[Stage(Layers.Hud)]
+view Instructions(Physics physics, Lobby lobby)
+{
+    if (!lobby.playing) return;
+    Draw.SetScreen();
+    Draw.Text("A/D: shoulder   W/S: elbow   |   Gamepad: left stick", float2(20, 20), 18, Color.white);
+    Draw.Text("Newton Featherstone: joint dynamics; geometry is visual only", float2(20, 46), 15, Color(0.65, 0.7, 0.75));
+    if (physics.status != Status.Ok) Draw.Text("Robot configuration failed", float2(20, 72), 18, Color.red);
+}

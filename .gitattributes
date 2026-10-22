@@ -42,6 +42,9 @@ compiler/third_party/ufbx/** -text
 compiler/third_party/stb_image/** -text
 compiler/third_party/dr_libs/** -text
 packages/voice/opus/** -text -whitespace
+packages/newton/vendor/** -text -whitespace
+packages/newton/kernels/** text eol=lf
+packages/newton/UPSTREAM.sha256 text eol=lf
 compiler/tests/e2e/audio_import/** -text
 
 # Reproducible skinned fixture and saved measurements retain their hashed bytes.

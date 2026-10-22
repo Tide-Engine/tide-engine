@@ -1,0 +1,228 @@
+// NVIDIA Newton's Featherstone solver. All persistent simulation state lives
+// in these components; native solver scratch is rebuilt for each tick.
+namespace Newton;
+
+// [Before(PhysicsStages.Step)] supplies this tick's forces, controls and resets.
+// [After(PhysicsStages.Step)] observes the completed tick and Physics.status.
+enum PhysicsStages { Step }
+
+enum Status
+{
+    Ok,
+    InvalidBody,
+    InvalidJoint,
+    InvalidTopology,
+    TooLarge,
+    Unstable
+}
+
+enum BodyType { Static, Dynamic }
+enum JointType { Fixed, Revolute, Prismatic }
+
+// Position is the body origin, velocity the world-space center-of-mass speed,
+// and angularVelocity is world-space radians/second, as in Box3D. Inertia is
+// diagonal about centerOfMass in body space. Static bodies may have zero mass.
+// Root poses/speeds are writable resets. A jointed body's pose/speeds are
+// reconstructed from its root and joint coordinates by the solver.
+component Body
+{
+    BodyType type = BodyType.Dynamic;
+    [Position] float3 position;
+    [Rotation] quaternion rotation = quaternion.identity;
+    float3 velocity;
+    float3 angularVelocity;
+    float mass = 1;
+    float3 inertia = float3(1);
+    float3 centerOfMass;
+    // World-space force and torque, held through the tick's substeps and
+    // cleared only after a successful step. No collision shapes are implied.
+    float3 force;
+    float3 torque;
+}
+
+// A separate entity connects child to parent; default parent means the world.
+// Frames are relative to each body's origin (world space for a world parent).
+// Axis is expressed in the joint frame. Revolute coordinates are radians and
+// prismatic coordinates meters. Writing position/velocity resets the joint.
+// Each child has at most one inbound joint, and the graph must be acyclic.
+// Missing/stale body references fail the step; no joint is silently removed.
+component Joint
+{
+    Entity parent;
+    Entity child;
+    JointType type;
+    float3 parentPosition;
+    quaternion parentRotation = quaternion.identity;
+    float3 childPosition;
+    quaternion childRotation = quaternion.identity;
+    float3 axis = float3(1, 0, 0);
+    float position;
+    float velocity;
+    float damping; // Finite and nonnegative
+    float armature = 0.01; // Finite and nonnegative
+    bool limited;
+    float lower;
+    float upper;
+    float limitStiffness = 10000;
+    float limitDamping = 100;
+}
+
+// Optional on a Joint entity. A game's controller can write effort before the
+// step (torque in Nm for revolute, force in N for prismatic). The package clamps
+// it to +/-effortLimit before handing control to Newton; this is not a native
+// solver effort-limit constraint. Effort persists until game code changes it.
+component Actuator
+{
+    float effort;
+    float effortLimit = 100; // Finite and nonnegative; invalid controls fail the step
+    float appliedEffort; // Last successful step's clamped control, excluding passive forces
+}
+
+// Package implementation records, matching runtime.h in exact field order.
+// Components cannot be fields of these value structs.
+struct BodyState
+{
+    Entity entity;
+    BodyType type;
+    float mass;
+    float3 inertia;
+    float3 centerOfMass;
+    float3 position;
+    quaternion rotation;
+    float3 velocity;
+    float3 angularVelocity;
+    float3 force;
+    float3 torque;
+}
+
+struct JointState
+{
+    Entity entity;
+    Entity parent;
+    Entity child;
+    JointType type;
+    float position;
+    float velocity;
+    float effort;
+    float effortLimit;
+    float damping;
+    float armature;
+    int limited;
+    float lower;
+    float upper;
+    float limitStiffness;
+    float limitDamping;
+    float3 parentPosition;
+    quaternion parentRotation;
+    float3 childPosition;
+    quaternion childRotation;
+    float3 axis;
+    float appliedEffort;
+}
+
+singleton Physics
+{
+    float3 gravity = float3(0, -9.81, 0);
+    int substeps = 4;
+    Status status;
+    // Package-owned collection buffers/maps. Keys include entity generations;
+    // no native handles, pointers, resident arenas or hidden state are retained.
+    List<BodyState> bodies;
+    List<JointState> joints;
+    Map<Entity, int> bodyIndices;
+    Map<Entity, int> jointIndices;
+}
+
+[Stage(PhysicsStages.Step, 0)]
+system Clear(mut Physics physics)
+{
+    physics.bodies.Clear();
+    physics.joints.Clear();
+    physics.bodyIndices.Clear();
+    physics.jointIndices.Clear();
+}
+
+[Stage(PhysicsStages.Step, 1)]
+system CollectBodies(Body body, mut Physics physics)
+{
+    Entity entity = this;
+    physics.bodyIndices[entity] = physics.bodies.count;
+    physics.bodies.Add(BodyState {
+        entity = entity, type = body.type, mass = body.mass,
+        inertia = body.inertia, centerOfMass = body.centerOfMass,
+        position = body.position, rotation = body.rotation,
+        velocity = body.velocity, angularVelocity = body.angularVelocity,
+        force = body.force, torque = body.torque
+    });
+}
+
+[Stage(PhysicsStages.Step, 2)]
+system CollectJoints(Joint joint, mut Physics physics)
+{
+    Entity entity = this;
+    physics.jointIndices[entity] = physics.joints.count;
+    physics.joints.Add(JointState {
+        entity = entity, parent = joint.parent, child = joint.child,
+        type = joint.type, position = joint.position, velocity = joint.velocity,
+        damping = joint.damping, armature = joint.armature,
+        limited = joint.limited ? 1 : 0, lower = joint.lower, upper = joint.upper,
+        limitStiffness = joint.limitStiffness, limitDamping = joint.limitDamping,
+        parentPosition = joint.parentPosition, parentRotation = joint.parentRotation,
+        childPosition = joint.childPosition, childRotation = joint.childRotation,
+        axis = joint.axis
+    });
+}
+
+[Stage(PhysicsStages.Step, 3)]
+system CollectActuators(Actuator actuator, mut Physics physics, with Joint)
+{
+    Entity entity = this;
+    if (!physics.jointIndices.TryGet(entity, out var index)) return;
+    physics.joints[index].effort = actuator.effort;
+    physics.joints[index].effortLimit = actuator.effortLimit;
+}
+
+// One call per tick. C derives counts from the actual lists, and publishes
+// neither list on failure. Time's dt is the duration of the whole tick.
+[Stage(PhysicsStages.Step, 4)]
+[NativeName("nt_simulate")]
+extern system Simulate(mut Physics physics, Time time);
+
+[Stage(PhysicsStages.Step, 5)]
+system PublishBodies(mut Body body, Physics physics)
+{
+    Entity entity = this;
+    if (physics.status != Status.Ok) return;
+    if (!physics.bodyIndices.TryGet(entity, out var index)) return;
+    var state = physics.bodies[index];
+    if (state.entity != entity) return;
+    body.position = state.position;
+    body.rotation = state.rotation;
+    body.velocity = state.velocity;
+    body.angularVelocity = state.angularVelocity;
+    body.force = float3(0);
+    body.torque = float3(0);
+}
+
+[Stage(PhysicsStages.Step, 5)]
+system PublishJoints(mut Joint joint, Physics physics)
+{
+    Entity entity = this;
+    if (physics.status != Status.Ok) return;
+    if (!physics.jointIndices.TryGet(entity, out var index)) return;
+    var state = physics.joints[index];
+    if (state.entity != entity) return;
+    joint.position = state.position;
+    joint.velocity = state.velocity;
+}
+
+[Stage(PhysicsStages.Step, 5)]
+system PublishActuators(mut Actuator actuator, Physics physics, with Joint)
+{
+    Entity entity = this;
+    if (physics.status != Status.Ok) return;
+    if (!physics.jointIndices.TryGet(entity, out var index)) return;
+    var state = physics.joints[index];
+    if (state.entity != entity) return;
+    actuator.appliedEffort = state.appliedEffort;
+}

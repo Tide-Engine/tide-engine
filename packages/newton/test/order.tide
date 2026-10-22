@@ -1,0 +1,15 @@
+using Newton;
+scene Main;
+component Observed { float value; }
+event(Spawned) Build(with Main)
+{
+    var body = Spawn(Body);
+    Spawn(Joint { type = JointType.Revolute, child = body }, Actuator, Observed);
+}
+[Before(PhysicsStages.Step)]
+system Control(mut Actuator actuator) { actuator.effort = 1; }
+[After(PhysicsStages.Step)]
+system Observe(Actuator actuator, Joint joint, mut Observed observed)
+{
+    observed.value = joint.position + actuator.appliedEffort;
+}
