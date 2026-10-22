@@ -1,5 +1,23 @@
 # Code the GPU runs: frags and verts
 
+## LookRotation normalizes, as math.h (2026-10-22)
+
+`H_LOOKROTATION_Q` is math.h's new `tide_lookrotation_q` line for line
+(`notes/language.md`, LookRotation of any length): FromTo's unit helper for
+forward and up, the 1e-10 squared-length test that falls back to
+`tide_fromto_q(vec3(0, 0, 1), f)`, the re-orthogonalized frame and
+`tide_normalize_q`, with one return: the first version returned FromTo's
+value early, and ANGLE's D3D11 compiler warned X4000 (potentially
+uninitialized return) in `tide_platform_shaders_d3d11`. It now needs
+`H_FROMTO_Q` (with FromTo's unit and quaternion helpers), so it moved after `H_FROMTO_Q` in the helper enum, which
+is the order helpers are written in. WGSL comes from the same text through
+`put_helper`, SPIR-V and HLSL from the WGSL. The `math` golden changes only
+this helper's text and place. `platform/tests/shaders.tide`'s Turns probe adds
+`lookLong` (forward scaled by 0.29 and up by 40, which must also equal the
+unit-length `look`), `lookAlong` (forward and up opposite: FromTo from +z),
+`lookNone` (zero forward: w is 1) and `lookNoUp` (a NaN up), compared CPU
+against frag and vert.
+
 ## HLSL, for Unity (2026-10-22)
 
 The owner's design (`notes/unity.md`, Tide drawing in Unity) gave custom frags

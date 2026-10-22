@@ -273,10 +273,6 @@ vec4 tide_q_from_m3(mat3 m) {
     if (s == 0.0) { s = 1.0; }
     return vec4((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);
 }
-vec4 tide_lookrotation_q(vec3 f, vec3 u) {
-    vec3 t = tide_normalize3(cross(u, f));
-    return tide_q_from_m3(mat3(t, cross(f, t), f));
-}
 vec3 tide_fromto_unit3(vec3 v) {
     if ((floatBitsToInt(v.x) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.y) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.z) & 0x7f800000) == 0x7f800000) { return vec3(0.0); }
     float largest = max(max(abs(v.x), abs(v.y)), abs(v.z));
@@ -302,6 +298,18 @@ vec4 tide_fromto_q(vec3 f, vec3 t) {
     float size = length(scaled);
     float sine = sqrt(0.5 * (1.0 - d));
     return tide_normalize_q(vec4(scaled * (sine / size), (largest * size) / (2.0 * sine)));
+}
+vec4 tide_lookrotation_q(vec3 f, vec3 u) {
+    vec3 z = tide_fromto_unit3(f);
+    vec3 side = cross(tide_fromto_unit3(u), z);
+    vec4 q = vec4(0.0, 0.0, 0.0, 1.0);
+    if (dot(side, side) < 1e-10) {
+        q = tide_fromto_q(vec3(0.0, 0.0, 1.0), f);
+    } else {
+        vec3 y = tide_normalize3(cross(z, tide_normalize3(side)));
+        q = tide_normalize_q(tide_q_from_m3(mat3(cross(y, z), y, z)));
+    }
+    return q;
 }
 mat3 tide_m3_from_q(vec4 q) {
     float x = q.x + q.x;
@@ -733,10 +741,6 @@ fn tide_q_from_m3(m: mat3x3f) -> vec4f {
     if (s == 0.0) { s = 1.0; }
     return vec4f((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);
 }
-fn tide_lookrotation_q(f: vec3f, u: vec3f) -> vec4f {
-    var t: vec3f = tide_normalize3(cross(u, f));
-    return tide_q_from_m3(mat3x3f(t, cross(f, t), f));
-}
 fn tide_fromto_unit3(v: vec3f) -> vec3f {
     if ((bitcast<i32>(v.x) & 0x7f800000) == 0x7f800000 || (bitcast<i32>(v.y) & 0x7f800000) == 0x7f800000 || (bitcast<i32>(v.z) & 0x7f800000) == 0x7f800000) { return vec3f(0.0); }
     var largest: f32 = max(max(abs(v.x), abs(v.y)), abs(v.z));
@@ -762,6 +766,18 @@ fn tide_fromto_q(f: vec3f, t: vec3f) -> vec4f {
     var size: f32 = length(scaled);
     var sine: f32 = sqrt(0.5 * (1.0 - d));
     return tide_normalize_q(vec4f(scaled * (sine / size), (largest * size) / (2.0 * sine)));
+}
+fn tide_lookrotation_q(f: vec3f, u: vec3f) -> vec4f {
+    var z: vec3f = tide_fromto_unit3(f);
+    var side: vec3f = cross(tide_fromto_unit3(u), z);
+    var q: vec4f = vec4f(0.0, 0.0, 0.0, 1.0);
+    if (dot(side, side) < 1e-10) {
+        q = tide_fromto_q(vec3f(0.0, 0.0, 1.0), f);
+    } else {
+        var y: vec3f = tide_normalize3(cross(z, tide_normalize3(side)));
+        q = tide_normalize_q(tide_q_from_m3(mat3x3f(cross(y, z), y, z)));
+    }
+    return q;
 }
 fn tide_m3_from_q(q: vec4f) -> mat3x3f {
     var x: f32 = q.x + q.x;

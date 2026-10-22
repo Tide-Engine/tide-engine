@@ -1,5 +1,14 @@
 # Runtime written by Claude for now
 
+## LookRotation normalizes its arguments (2026-10-22)
+
+`tide_lookrotation_q` in `tide/math.h` (existing math maintenance) keeps its
+signature and now normalizes forward and up, with decided fallbacks for a
+zero forward and an up along it. It calls the existing inline
+`tide_fromto_unit_f3`, `tide_fromto_q` and `tide_normalize_q`. No new function,
+structure or generated call. Contracts and tests: `notes/language.md`,
+LookRotation of any length.
+
 ## Tide's audio inside Unity (2026-10-22)
 
 Owner: "lets get audio working". An embedded frame now submits its audio:
