@@ -193,9 +193,9 @@ static int command_main(const int argc, char **argv)
     if (!defines) abort();
     build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, its matches' seed, its data directory, and a run with no window. Each once is 27
-    // arguments
-    const char *game_args[32] = {NULL};
+    // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, and a
+    // run with no window. Each once is 33 arguments
+    const char *game_args[40] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
     bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
@@ -206,7 +206,7 @@ static int command_main(const int argc, char **argv)
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
-        if (run && game_arg_count > 28) { // Room for the longest of them yet, --size's 3, and the NULL after them
+        if (run && game_arg_count > 36) { // Room for the longest of them yet, --size's 3, and the NULL after them
             fprintf(stderr, "tide: run takes each of its options once\n");
             free(defines);
             return 2;
@@ -221,6 +221,12 @@ static int command_main(const int argc, char **argv)
         } else if (run && (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
                           || strcmp(a, "--max-connections") == 0) && left >= 1) {
             server_args = true;
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+        } else if (run && (strcmp(a, "--shards") == 0 || strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0)
+                   && left >= 1) {
+            // A sharded game's regions, for the game's own command line or its server; --shard-most splits a server's
+            server_args |= strcmp(a, "--shard-most") == 0;
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--host") == 0) {
@@ -342,7 +348,7 @@ static int command_main(const int argc, char **argv)
     // The game's tide.packages reads them too: its #if lines say which packages this build has
     packages_set_symbols(defines, opts.define_count);
     if (server_args && !opts.server) {
-        fputs("tide: --anonymous, --udp-only, --port and server capacity options require --server\n", stderr);
+        fputs("tide: --anonymous, --udp-only, --port, --shard-most and server capacity options require --server\n", stderr);
         free(defines);
         return 2;
     }
@@ -352,7 +358,8 @@ static int command_main(const int argc, char **argv)
             if (a[0] != '-') continue;
             if (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0) continue;
             if (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
-                || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0) { i++; continue; }
+                || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0 || strcmp(a, "--shards") == 0
+                || strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0) { i++; continue; }
             fprintf(stderr, "tide: --server does not take %s\n", a);
             free(defines);
             return 2;

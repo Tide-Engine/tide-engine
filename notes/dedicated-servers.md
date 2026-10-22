@@ -1,5 +1,17 @@
 # Dedicated servers
 
+## Sharded worlds (2026-10-23)
+
+`tide_serve` of a sharded game runs the engine's orchestrator over its
+hosting, each shard a hosted match: `tide_hosting_keep` keeps one running
+with no players, and `tide_hosting_front` makes the root the match a request
+for match 0 joins, rather than creating one. `tide_hosting_server` gives a
+match's server. Options `--shards`, `--shard-width` and `--shard-most`, which
+`tide run --server` passes on; the standard host follows further shards over
+new UDP sockets (`tide_session_desc.open_shard`), not through rooms. Tested by
+`tide_server_shards`, a server and a client process. Details and gaps:
+notes/sharding.md.
+
 ## Shared player/connection ceiling (2026-10-20)
 
 TIDE_PLAYERS_MOST is the common 65,536 ceiling for a match's maxPlayers and a

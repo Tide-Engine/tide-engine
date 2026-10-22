@@ -227,6 +227,15 @@ static const argument_help arguments[] = {
      "Requires run --server. Limits admitted and pending connections.", RUN},
     {"--udp-only", "--udp-only", "Disable the server's WebRTC room",
      "Requires run --server. Clients connect by direct UDP address.", RUN},
+    {"--shards", "--shards <n>", "Split a sharded game's world into n regions",
+     "For a game with 'settings { shards = true; }': its match starts as n\n"
+     "regions along x, each a shard. On a server, each shard is one of its\n"
+     "matches and players join the world at match 0.", RUN},
+    {"--shard-width", "--shard-width <units>", "Each region's width, in world units",
+     "Default: 16 times the game's shardRange. Use with --shards.", RUN},
+    {"--shard-most", "--shard-most <n>", "Split a region whose shard owns more entities",
+     "Requires run --server. A region splits in two by where its entities\n"
+     "are, down to twice the game's shardRange across.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
      "The output path is relative to the directory where tide was invoked.", RUN | OPEN},

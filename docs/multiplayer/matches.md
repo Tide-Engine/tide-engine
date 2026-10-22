@@ -189,6 +189,7 @@ server's WebRTC room. Replace `0` with an existing match ID to join that match.
 The command line accepts the same address through `--connect` or `--join`.
 `Session.room` reports the endpoint with its assigned match ID once admitted.
 A match ID identifies a match; it grants no permission by itself.
+A [sharded game](./shards.md)'s server runs one world split across its matches instead, and match 0 joins it.
 
 Anonymous creation and joining are explicit testing policies. Without
 `--anonymous`, configure authentication and admission policy through the

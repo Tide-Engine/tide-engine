@@ -132,6 +132,7 @@ still performs only front-end validation, even with a preview flag.
 | `--capture`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
+| `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `shardRange` without it), all on this machine |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
@@ -404,6 +405,8 @@ reload. Server executables support:
 | `--max-matches <n>` | Concurrent match limit, default 64, maximum 4096 |
 | `--max-connections <n>` | Admitted/pending connection limit, default 256, maximum 65536 |
 | `--udp-only` | Omit the shared WebRTC room |
+| `--shards <n>`, `--shard-width <units>` | A [sharded game](../multiplayer/shards.md)'s world as `n` regions along x, each this wide, each a match; players join the world at match 0 |
+| `--shard-most <n>` | Splits a sharded game's region in two when its shard owns more entities than this |
 | `--frames <n>` | Bound a test run to this many service iterations |
 
 The service uses wall-clock time and sleeps between iterations, normally about

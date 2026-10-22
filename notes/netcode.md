@@ -1,5 +1,17 @@
 # Netcode: sessions, prediction, commands
 
+## Session protocol 18: shard messages (2026-10-23)
+
+A sharded game's servers take messages from other shards
+(`tide_server_inject`), applied before the tick after its commands and written
+in the frame (`FRAME_SHARD` 128) inline or, over `TIDE_COMMAND_BYTES`,
+published and named by download as a big command is. Clients apply them from
+the frame at the same point; such a frame is never as predicted. A closed
+server takes players `tide_server_admit` admitted with their cookie, as those
+players. `PROTOCOL` went to 18 (`tests/test_commands.c` and the voice test
+write it by hand); a game that isn't sharded sends nothing new. A sharded
+session can't migrate. Details, limits and tests: notes/sharding.md.
+
 ## Unreliable local data for optional voice (2026-10-22)
 
 Sessions now expose the C-only listen/send/data-generation API described in

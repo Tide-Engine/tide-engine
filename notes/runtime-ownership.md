@@ -1,5 +1,27 @@
 # Runtime written by Claude for now
 
+## Shards (2026-10-23)
+
+The owner agreed the design (docs/spec.md, Shards) and that the engine has the
+shard protocol and a one-machine orchestrator. New runtime the generated code
+calls, all the agent's, in `tide/shard.h` and `engine/src/shard.c`: the
+thread-locals `tide_shard_code`, `_occurrence`, `_this` and `_delay_now`;
+`tide_shard_use`/`tide_shard_owns_now` (the world a tick or frame reads
+`Shards.Owns` against); the tick reruns `tide_shard_tick_begin`, `_again`,
+`_free`, `_skips` and `_touched`; `tide_shard_note`, `_dropped` and
+`_note_dropped`; `tide_shard_next_outgoing`; the byte lists `tide_shard_bytes_*`;
+and the inlines `tide_shard_header`, `_patch_u32`, `_write_regions`,
+`_box_holds` and `_box_near`. In `tide/entity.h`: `tide_entity_create_at`, `_install`,
+`_forget` (with `TIDE_ARCHETYPE_AWAY`), `_died_here` and `_set_snaps`. In
+`tide/jobs.h`: `tide_new_entity_by` and `tide_tick_systems.create`, a new last
+member every generated initializer fills (`NULL` outside sharded games). In
+`tide/session.h`: `tide_game.shards` (the generated `tide_shard_api`) and the
+server calls `tide_server_inject`, `_injected`, `_admit`, `_connected` and
+`_cookie`. The orchestrator (`tide/shards.h`), the shard client
+(`tide/shard_client.h`) and the hosting calls `tide_hosting_server`, `_keep`
+and `_front` are engine-side and generated code doesn't call them. Contracts
+and tests: notes/sharding.md.
+
 ## The game's shaders, for prewarming (2026-10-22)
 
 The owner asked for shaders to be compiled as a game starts rather than at

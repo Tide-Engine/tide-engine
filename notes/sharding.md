@@ -4,7 +4,8 @@ The language-level design, agreed with the owner on 2026-10-22, is `docs/spec.md
 
 ## Status
 
-Built (2026-10-23): the language surface, the generated shard code, the session's shard messages and the engine's orchestrator, with end-to-end tests of moving, ghosts, waiting on borders, forwarded events, checkpoints and splitting. Players moving between shards (clients following and switching their home shard), the hosting service's orchestrator across machines and the gaps below are not built yet.
+Built (2026-10-23): the language surface, the generated shard code, the session's shard messages, the engine's orchestrator, players moving between shards (`tide/shard_client.h`), a sharded match on this machine through `tide_session_start` (the standard host's `--shards`), and a sharded world on a dedicated server (`tide_serve --shards`), joined at its front and followed over UDP. End-to-end tests cover moving, ghosts, waiting on borders, forwarded events, checkpoints, splitting, a player following their avatar, and a real server and client process. The hosting service's orchestrator across machines and the gaps below are not built.
+
 
 ## The language side
 
@@ -31,6 +32,21 @@ Built (2026-10-23): the language surface, the generated shard code, the session'
 
 - `tide_server_inject` queues a shard message for the server's coming ticks; `dispatch_injected` applies them before the tick (`tide_shard_game.receive`), after the tick's commands, and writes them in the frame (`FRAME_SHARD`): inline up to `TIDE_COMMAND_BYTES`, else published as a big command is and named by its download, the tick waiting for every player to have it. At most `TIDE_SHARD_MESSAGES_PER_TICK` (64) a tick, up to `TIDE_SHARD_MESSAGE_LIMIT` (64 MiB) each.
 - Clients apply them from the frame at the same point. A frame with shard messages is never "as predicted" (`as_predicted`): before that, a region shard's clients asked for the world again every tick.
+- Admission: a region's server is made closed, and takes only players the orchestrator admitted (`tide_server_admit`: a player and the cookie the root gave them), as that player, so a player is one PlayerID in every shard. `tide_server_connected` and `tide_server_cookie` are what the orchestrator reads to see who's in the world.
+- `tide_session_start` of a sharded game (`start_shards`) runs a `tide_shards` in the session over loopback, its servers at endpoints 1 to 512 and this machine's clients from 513 (`SHARDS_HERE`), with `shard_world`/`shard_split`/`shard_most` from the session's desc, and this machine's player a `tide_shard_client`. The session's world, events and status are its home's; `status.server` is true. `tide_session_migrate` is false for a sharded session: a sharded match starts over.
+- `tide_session_join` of a sharded game makes a `tide_shard_client` of what it joined, taken as the root. With `tide_session_desc.open_shard`, each other shard its route names is reached as a hosting admission (`shard_join_reach`: a new transport to the same server, asking for that shard's match, with the session's nonce), its client made once admitted (`shard_handed`: the admission keeps its endpoint until then and isn't made again). Without it, only the first shard is ever played in.
+
+## Players (`tide/shard_client.h`, `engine/src/shard_client.c`; the orchestrator's `track_players`, `route_players`)
+
+- A player joins the world at the root. Once any shard has them connected, the orchestrator admits them everywhere with the root's cookie and has the root send `PlayerJoined` (`PLAYER`); `PlayerLeft` once no shard has them.
+- Each shard reports, for every player, how many entities they own there and the box around them (`tide_shard_game.presence`). A player's home is the shard owning the most; they follow every shard owning any, and every region within the range of their entities' box. A `ROUTE` (the home and, for each followed shard, its id and its host's match) goes to every shard when that changes, so every client of every shard has every player's route as match state (`tide_shard_game.route`).
+- `tide_shard_client` keeps a `tide_client` per followed shard, all with the same player and cookie and the same `sample`, so input reaches every shard owning any of the player's entities. It moves its home to the route's once that shard's client is connected: views draw that world, and only the home's local events go on to the host (each client records into its own log). A client the route no longer names is closed, never the home.
+- A player's avatar spawned by `PlayerJoined` on the root moves to its region by position like anything else, and the player's home follows it.
+
+## Dedicated servers (`platform/src/serve.c`, `engine/src/hosting.c`)
+
+- `tide_serve` of a sharded game runs a `tide_shards` over its `tide_hosting`, each shard a hosted match (`tide_shards_hosting_start`/`_stop`): kept running with no players (`tide_hosting_keep`), the root the host's front (`tide_hosting_front`), so a request for match 0 joins the world. `--shards N` (regions along x), `--shard-width W` (each region's width, 16 times `shardRange` without it) and `--shard-most N` (`most_entities`); they're errors for a game that isn't sharded. `--max-matches` must take every shard, splits included.
+- The standard host's `tide_run_open_shard` opens a new UDP socket to the address the player joined (`host:port/0`), one per followed shard. Not through a room: a program is in one room at a time (`platform/src/rooms.c`), so a player who joined by room code plays only where they joined (gap below).
 
 ## The orchestrator (`engine/include/tide/shards.h`, `engine/src/shards.c`)
 
@@ -42,11 +58,19 @@ Built (2026-10-23): the language surface, the generated shard code, the session'
 
 ## Tests
 
-`compiler/tests/e2e/shards.tide` and `shards_test.c`: twenty movers crossing the border of two regions, two banks paying each other through `World.Set` every four ticks (each change across the border waits until one shard owns both), and movers paying a bank with events forwarded across. Every step, no mover is owned by two shards and what the shards own never holds more coins than there are; at the end, at a moment nothing is in flight, every entity is owned once, all 200 event payments arrived once, every coin is accounted for and every transfer happened; no change was dropped; each shard's client was connected throughout with no resync. The same after a checkpoint restored mid-run, and with splitting on (a fourth and fifth shard appear).
+`compiler/tests/e2e/shards.tide` and `shards_test.c`: twenty movers crossing the border of two regions, two banks paying each other through `World.Set` every four ticks (each change across the border waits until one shard owns both), and movers paying a bank with events forwarded across. Every step, no mover is owned by two shards and what the shards own never holds more coins than there are; at the end, at a moment nothing is in flight, every entity is owned once, all 200 event payments arrived once, every coin is accounted for and every transfer happened; no change was dropped; each shard's client was connected throughout with no resync. The same after a checkpoint restored mid-run, and with splitting on (a fourth and fifth shard appear). The watchers join at the root and the regions with its cookie, as players do.
+
+`compiler/tests/e2e/shards_players.tide` and `shards_players_test.c`: a player joins at the root, whose `PlayerJoined` spawns their avatar at x = -12; it moves to the left region and the player's home with it; walking right for four seconds takes it across x = 0, the home following. Every step the avatar has one owner; at the end it's where its input put it (it moved on every tick input said to, whichever shard had it), the player is one PlayerID on every shard followed and no client resynced. The same through a `tide_hosting` (the shards its matches, the player let in at match 0 and each further shard through `open_shard`), and through `tide_session_start` on this machine.
+
+`tide_server_shards` (root `CMakeLists.txt`, `platform/tests/server_pack.mjs shards`, `platform/tests/server_shards_client.c`): the same game's dedicated server with `--shards 2 --shard-width 40` and a separate client process over UDP, which waits until it plays where its avatar is, walks it right for three seconds and checks it's owned in its home world at x ≈ 12, connected with no resync.
 
 ## Gaps
 
-- Players across shards: global PlayerIDs, clients following neighbouring shards and switching their home shard, and input reaching every shard that owns a player's entities. Next.
+- A player who joined a sharded server through its room (WebRTC) can't follow other shards; nor can the web, which has only rooms. Several room connections per program, or the server's shards behind one connection, would fix it.
+- Each further shard's admission carries no credential (the session has none to give; the standard host gives none for the first either), so a server whose `authorize` wants one refuses it. Admitting by the root's cookie, as the regions' servers already do, would let the hosting skip `authorize` for them.
+- The orchestrator scans every player on every shard each update (`route_players`): players × shards.
+- Exactly once by replay (spec, Provisional): no shard's input log is recorded durably, so a failed shard is restored only from the last whole checkpoint, not replayed to where it was.
+- The compiler's warning for a system writing a singleton on every tick in a sharded game (spec, Provisional) isn't built.
 - `Destroyed` handlers' changes across a border are dropped (counted), as are those of task resumes and other code with no identity.
 - Tasks owned by an entity don't move with it; Resident (physics) state doesn't either (spec, Open).
 - Regions merge back never; index space isn't reclaimed from entities that moved.
