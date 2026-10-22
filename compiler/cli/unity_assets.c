@@ -161,12 +161,53 @@ typedef struct map_shape {
     int field_count;
 } map_shape;
 
+struct map_unity;
+
 typedef struct map_component {
     char guid[33];
     char *name;
     map_field *fields;
     int field_count;
+    const struct map_unity *unity; // A package's translation of a Unity component, its keys what's read; else NULL
 } map_component;
+
+// Unity's own components that a package of the game translates into its own (its unity.json, UNITY_MAPPING_FILE):
+// only what's one to one, a Unity component one of the package's, field by field, a size by the GameObject's scale.
+typedef enum scale_by {
+    SCALE_NONE,
+    SCALE_EACH,        // By the scale of each axis, its sign too: an offset
+    SCALE_EACH_ABS,    // ...without: a size
+    SCALE_LARGEST,     // By the largest scale of the three, as Unity's sphere colliders are
+    SCALE_LARGEST_XY,
+    SCALE_LARGEST_XZ,
+    SCALE_X,
+    SCALE_Y,
+    SCALE_Z,
+} scale_by;
+
+typedef struct map_value {
+    char *unity, *tide; // A value Unity writes, and the Tide value it is
+} map_value;
+
+typedef struct map_translated {
+    char *field; // The package component's
+    char *from;  // Unity's key
+    scale_by scale;
+    map_value *values; // None: Unity's value as it is
+    int value_count;
+} map_translated;
+
+typedef struct map_unity {
+    char *unity;   // Unity's component: "BoxCollider"
+    char *tide;    // The package's: "Box3D.Box"
+    char *mapping; // The unity.json it's of, for messages
+    map_translated *fields;
+    int field_count;
+    char *when_key, *when_value, *when_why; // One to one only with this, else it's left out, saying why
+    char *needs;                            // A component the entity has with it where nothing else gives one of its type
+    char *not_under, *not_under_why;        // A Unity component above it that makes it no one to one
+    map_component reader;                   // What's read of Unity's document: the keys above, and m_Enabled
+} map_unity;
 
 typedef struct map_enum {
     char *name;
@@ -187,6 +228,10 @@ typedef struct project {
     int shape_count;
     map_enum *enums;
     int enum_count;
+    map_unity **unity_maps;
+    int unity_map_count, unity_map_capacity;
+    unity_source *glue; // The packages' Tide for a Unity project (each unity.json's "source")
+    int glue_count, glue_capacity;
 } project;
 
 static const map_shape *shape_of(const project *p, const int i)
@@ -227,6 +272,188 @@ static void free_fields_of(map_field *fields, const int count)
         free(fields[k].key);
     }
     free(fields);
+}
+
+static char *dup_n(const char *s, const size_t n)
+{
+    char *out = grab(n + 1);
+    memcpy(out, s, n);
+    out[n] = '\0';
+    return out;
+}
+
+static char *trimmed(const char *from, const char *to)
+{
+    while (from < to && (*from == ' ' || *from == '\t')) from++;
+    while (to > from && (to[-1] == ' ' || to[-1] == '\t')) to--;
+    return dup_n(from, (size_t)(to - from));
+}
+
+static bool add_reader_key(map_unity *u, const char *key)
+{
+    for (int i = 0; i < u->reader.field_count; i++) {
+        if (strcmp(u->reader.fields[i].key, key) == 0) return true;
+    }
+    u->reader.fields = realloc(u->reader.fields, sizeof *u->reader.fields * (size_t)(u->reader.field_count + 1));
+    if (!u->reader.fields) abort();
+    u->reader.fields[u->reader.field_count++] = (map_field){dup(key), dup(key), -1};
+    return true;
+}
+
+// One field of a translation: "m_Size", "m_Size * absScale", or {"from": "m_IsKinematic", "values": {"0": ..., "1": ...}}.
+static bool read_translated(map_translated *t, const char *field, const json *spec)
+{
+    memset(t, 0, sizeof *t);
+    t->field = dup(field);
+    const char *text = json_str(spec);
+    if (text) {
+        const char *star = strchr(text, '*');
+        t->from = trimmed(text, star ? star : text + strlen(text));
+        if (!star) return t->from[0] != '\0';
+        char *by = trimmed(star + 1, text + strlen(text));
+        static const struct { const char *name; scale_by scale; } scales[] = {
+            {"scale", SCALE_EACH}, {"absScale", SCALE_EACH_ABS}, {"largestScale", SCALE_LARGEST},
+            {"largestScaleXY", SCALE_LARGEST_XY}, {"largestScaleXZ", SCALE_LARGEST_XZ}, {"scaleX", SCALE_X},
+            {"scaleY", SCALE_Y}, {"scaleZ", SCALE_Z},
+        };
+        for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
+            if (strcmp(by, scales[i].name) == 0) t->scale = scales[i].scale;
+        }
+        const bool known = t->scale != SCALE_NONE;
+        free(by);
+        return known && t->from[0] != '\0';
+    }
+    const char *from = json_str(json_get(spec, "from"));
+    const json *values = json_get(spec, "values");
+    if (!from || !values || values->kind != JSON_OBJECT) return false;
+    t->from = dup(from);
+    t->values = grab(sizeof *t->values * (size_t)(values->count + 1));
+    for (int i = 0; i < values->count; i++) {
+        const char *to = json_str(values->items[i]);
+        if (!to) return false;
+        t->values[t->value_count++] = (map_value){dup_n(values->keys[i], values->key_lens[i]), dup(to)};
+    }
+    return true;
+}
+
+// A package's unity.json: its translations into the project's, and its Tide for a Unity project. Says what's wrong
+// with it, if anything.
+static void read_mapping(project *p, const char *path, const char *package)
+{
+    size_t size = 0;
+    char *body = sys_read_file(path, &size);
+    if (!body) return;
+    const json *root = json_parse(body, size);
+    const json *unity = json_get(root, "unity");
+    const json *source = json_get(root, "source");
+    if (source && source->kind == JSON_ARRAY) {
+        text t = {0};
+        putf(&t, "// From %s: the package's Tide for a Unity project\n", path);
+        for (int i = 0; i < source->count; i++) {
+            const char *line = json_str(source->items[i]);
+            putf(&t, "%s\n", line ? line : "");
+        }
+        text name = {0};
+        putf(&name, "Library/Tide/Unity.%s.tide", package);
+        grow((void **)&p->glue, &p->glue_capacity, p->glue_count, sizeof *p->glue);
+        p->glue[p->glue_count++] = (unity_source){name.s, t.s, dup(package)};
+    }
+    if (!unity || unity->kind != JSON_OBJECT) {
+        fprintf(stderr, "%s: error: it isn't a package's translation of Unity's components: an object with \"unity\", of "
+                        "Unity's components each\n", path);
+        p->failed = true;
+    }
+    for (int i = 0; unity && unity->kind == JSON_OBJECT && i < unity->count; i++) {
+        const json *m = unity->items[i];
+        map_unity *u = grab(sizeof *u);
+        memset(u, 0, sizeof *u);
+        u->unity = dup_n(unity->keys[i], unity->key_lens[i]);
+        u->mapping = dup(path);
+        u->tide = json_dup(m, "as");
+        u->needs = json_dup(m, "needs");
+        bool ok = u->tide != NULL;
+        const json *fields = json_get(m, "fields");
+        const int count = fields && fields->kind == JSON_OBJECT ? fields->count : 0;
+        u->fields = grab(sizeof *u->fields * (size_t)(count + 1));
+        for (int k = 0; k < count; k++) {
+            char *field = dup_n(fields->keys[k], fields->key_lens[k]);
+            ok = read_translated(&u->fields[u->field_count++], field, fields->items[k]) && ok;
+            free(field);
+        }
+        const json *when = json_get(m, "when"), *under = json_get(m, "notUnder");
+        if (when) {
+            const bool three = when->kind == JSON_ARRAY && when->count == 3 && json_str(when->items[0]) && json_str(when->items[1]) && json_str(when->items[2]);
+            ok = three && ok;
+            if (three) {
+                u->when_key = dup(json_str(when->items[0]));
+                u->when_value = dup(json_str(when->items[1]));
+                u->when_why = dup(json_str(when->items[2]));
+            }
+        }
+        if (under) {
+            const bool two = under->kind == JSON_ARRAY && under->count == 2 && json_str(under->items[0]) && json_str(under->items[1]);
+            ok = two && ok;
+            if (two) {
+                u->not_under = dup(json_str(under->items[0]));
+                u->not_under_why = dup(json_str(under->items[1]));
+            }
+        }
+        if (!ok) {
+            fprintf(stderr, "%s: error: its translation of %s isn't one tide reads: \"as\", a package's component, and "
+                            "\"fields\", each Unity's key (\"m_Size * absScale\") or {\"from\", \"values\"}\n", path, u->unity);
+            p->failed = true;
+        }
+        // What's read of Unity's document of it: the keys translated, the one it's one to one by, and whether it's on
+        u->reader.name = dup(u->unity);
+        u->reader.unity = u;
+        for (int k = 0; k < u->field_count; k++) {
+            if (u->fields[k].from) add_reader_key(u, u->fields[k].from);
+        }
+        if (u->when_key) add_reader_key(u, u->when_key);
+        add_reader_key(u, "m_Enabled");
+        grow((void **)&p->unity_maps, &p->unity_map_capacity, p->unity_map_count, sizeof *p->unity_maps);
+        p->unity_maps[p->unity_map_count++] = u;
+    }
+    if (root) json_release();
+    free(body);
+}
+
+static const map_unity *unity_map_of(const project *p, const char *type)
+{
+    for (int i = 0; type && i < p->unity_map_count; i++) {
+        if (strcmp(p->unity_maps[i]->unity, type) == 0) return p->unity_maps[i];
+    }
+    return NULL;
+}
+
+static void free_unity_maps(project *p)
+{
+    for (int i = 0; i < p->unity_map_count; i++) {
+        map_unity *u = p->unity_maps[i];
+        for (int k = 0; k < u->field_count; k++) {
+            free(u->fields[k].field);
+            free(u->fields[k].from);
+            for (int v = 0; v < u->fields[k].value_count; v++) {
+                free(u->fields[k].values[v].unity);
+                free(u->fields[k].values[v].tide);
+            }
+            free(u->fields[k].values);
+        }
+        free(u->fields);
+        free_fields_of(u->reader.fields, u->reader.field_count);
+        free(u->reader.name);
+        free(u->unity);
+        free(u->tide);
+        free(u->mapping);
+        free(u->needs);
+        free(u->when_key);
+        free(u->when_value);
+        free(u->when_why);
+        free(u->not_under);
+        free(u->not_under_why);
+        free(u);
+    }
+    free(p->unity_maps);
 }
 
 // The project's Packages/com.tide.game/components.json, if tide unity has written it.
@@ -357,6 +584,31 @@ static char *read_asset(const asset *a, size_t *size)
     return sys_read_file(a->path, size);
 }
 
+// The editor's untitled scene, as an asset of a GUID Unity never gives one: its copy, when there is one.
+static const char untitled_guid[33] = "00000000000000000000000000000000";
+
+static void add_untitled(project *p)
+{
+    text copy = {0};
+    put(&copy, p->assets, p->project_length);
+    puts_(&copy, UNITY_UNSAVED_FOLDER UNITY_UNTITLED_SCENE);
+    if (!sys_exists(copy.s)) {
+        free(copy.s);
+        return;
+    }
+    grow((void **)&p->items, &p->capacity, p->count, sizeof *p->items);
+    asset *a = &p->items[p->count++];
+    memset(a, 0, sizeof *a);
+    memcpy(a->guid, untitled_guid, sizeof a->guid);
+    a->path = copy.s;
+    a->local = dup(UNITY_UNTITLED_SCENE);
+}
+
+static bool untitled(const char *local)
+{
+    return strcmp(local, UNITY_UNTITLED_SCENE) == 0;
+}
+
 static asset *asset_of(project *p, const char *guid)
 {
     for (int i = 0; i < p->count; i++) {
@@ -450,7 +702,8 @@ typedef struct owned {
     int flat_count, flat_capacity;
     reference *refs;
     int ref_count, ref_capacity;
-    bool removed; // An instance's m_RemovedComponents took it away
+    bool removed;         // An instance's m_RemovedComponents took it away
+    const asset *read_in; // A translated Unity component's: the file its document was read in
 } owned;
 
 struct node {
@@ -707,7 +960,7 @@ static int owned_slot(node *n, const map_component *c)
         if (n->owned[i].component == c) return i;
     }
     grow((void **)&n->owned, &n->owned_capacity, n->owned_count, sizeof *n->owned);
-    n->owned[n->owned_count] = (owned){c, NULL, 0, 0, NULL, 0, 0, false};
+    n->owned[n->owned_count] = (owned){c, NULL, 0, 0, NULL, 0, 0, false, NULL};
     return n->owned_count++;
 }
 
@@ -1238,6 +1491,27 @@ static bool expand(project *p, asset *file, const int depth, node ***roots, int 
         read_component(&x, n, c, d->body);
         add_id(n, file->guid, d->file_id, 3, c);
     }
+    // Unity's own components a package of the game translates (its unity.json): read as Unity has them, by their keys,
+    // an instance's changes to them too, and translated as the entity's written (write_translated)
+    for (int i = 0; p->unity_map_count && i < f->count; i++) {
+        const yaml_document *d = &f->documents[i];
+        if (d->stripped) continue;
+        const map_unity *u = unity_map_of(p, d->type);
+        if (!u) continue;
+        char unused[33];
+        node *n = node_of(f, file->guid, x.all, x.count, yaml_reference(yaml_get(d->body, "m_GameObject"), unused));
+        if (!n) continue;
+        bool second = false;
+        for (int k = 0; k < n->owned_count; k++) second |= n->owned[k].component == &u->reader && n->owned[k].read_in == file;
+        if (second) {
+            fprintf(stderr, "%s: warning: %s has a second %s, which no component of %s's is one to one with (an entity has one "
+                            "%s): it's left out\n", file->local, n->name, u->unity, u->mapping, u->tide);
+            continue;
+        }
+        read_component(&x, n, &u->reader, d->body);
+        n->owned[owned_slot(n, &u->reader)].read_in = file;
+        add_id(n, file->guid, d->file_id, 3, &u->reader);
+    }
     // Parents: each own Transform's children in its order, then what went under an instance's objects
     for (int i = 0; i < f->count; i++) {
         const yaml_document *d = &f->documents[i];
@@ -1716,6 +1990,159 @@ static bool put_form(emitter *e, const node *n, const owned *o, const map_shape 
     return false;
 }
 
+static const map_component *component_named(const project *p, const char *name)
+{
+    for (int i = 0; i < p->component_count; i++) {
+        if (strcmp(p->components[i].name, name) == 0) return &p->components[i];
+    }
+    return NULL;
+}
+
+// The GameObject's scale in the world, each axis's, as Unity's lossyScale is
+static void lossy_scale(const node *n, double out[3])
+{
+    out[0] = out[1] = out[2] = 1;
+    for (const node *at = n; at; at = at->parent) {
+        for (int a = 0; a < 3; a++) out[a] *= at->scale[a];
+    }
+}
+
+static double largest(const double a, const double b)
+{
+    return fabs(a) > fabs(b) ? fabs(a) : fabs(b);
+}
+
+static double scale_factor(const scale_by by, const double scale[3], const int axis)
+{
+    switch (by) {
+    case SCALE_EACH: return axis >= 0 && axis < 3 ? scale[axis] : 1;
+    case SCALE_EACH_ABS: return axis >= 0 && axis < 3 ? fabs(scale[axis]) : 1;
+    case SCALE_LARGEST: return largest(largest(scale[0], scale[1]), scale[2]);
+    case SCALE_LARGEST_XY: return largest(scale[0], scale[1]);
+    case SCALE_LARGEST_XZ: return largest(scale[0], scale[2]);
+    case SCALE_X: return fabs(scale[0]);
+    case SCALE_Y: return fabs(scale[1]);
+    case SCALE_Z: return fabs(scale[2]);
+    case SCALE_NONE: break;
+    }
+    return 1;
+}
+
+// One translated field's Tide value, from Unity's (`t`): false where Unity has none, which leaves it its default.
+static bool translated_value(const owned *o, const map_translated *t, const map_shape *s, const double scale[3], text *out)
+{
+    if (t->value_count) {
+        const char *v = get_flat(o, t->from);
+        for (int i = 0; v && i < t->value_count; i++) {
+            if (strcmp(v, t->values[i].unity) != 0) continue;
+            puts_(out, t->values[i].tide);
+            return true;
+        }
+        return false;
+    }
+    const char *form = s ? s->form : "number";
+    const char *axes = strcmp(form, "float2") == 0 ? "xy" : strcmp(form, "float3") == 0 ? "xyz" : NULL;
+    char key[512];
+    if (axes) {
+        putf(out, "%s(", form);
+        for (const char *a = axes; *a; a++) {
+            snprintf(key, sizeof key, "%s.%c", t->from, *a);
+            const char *v = get_flat(o, key);
+            if (a != axes) puts_(out, ", ");
+            number(out, (v ? strtod(v, NULL) : 0) * scale_factor(t->scale, scale, (int)(a - axes)));
+        }
+        puts_(out, ")");
+        return true;
+    }
+    const char *v = get_flat(o, t->from);
+    if (!v) return false;
+    if (strcmp(form, "bool") == 0) {
+        puts_(out, strtol(v, NULL, 10) ? "true" : "false");
+        return true;
+    }
+    if (strcmp(form, "number") != 0) return false; // Nothing else is one to one
+    if (t->scale == SCALE_NONE) return put_number(out, v);
+    number(out, strtod(v, NULL) * scale_factor(t->scale, scale, -1));
+    return true;
+}
+
+// The type a component's declaration ("Box3D.Body { type = ... }") is of, into `out`.
+static void declared_type(const char *declaration, char *out, const size_t size)
+{
+    const char *brace = strchr(declaration, '{');
+    char *type = trimmed(declaration, brace ? brace : declaration + strlen(declaration));
+    snprintf(out, size, "%s", type);
+    free(type);
+}
+
+// Whether the entity has a component of `type` of its own: a Tide component on its GameObject, or on its TideEntity.
+static bool has_own(const node *n, const char *type)
+{
+    for (int i = 0; i < n->owned_count; i++) {
+        if (!n->owned[i].removed && !n->owned[i].component->unity && strcmp(n->owned[i].component->name, type) == 0) return true;
+    }
+    for (int i = 0; i < n->component_count; i++) {
+        if (strcmp(n->components[i].type, type) == 0) return true;
+    }
+    return false;
+}
+
+// A Unity component a package translates, as the package's component (write_owned's for those): false where it's left
+// out, off in Unity, or not one to one here, which a warning says.
+static bool write_translated(emitter *e, const node *n, const owned *o, const int depth)
+{
+    const map_unity *u = o->component->unity;
+    const char *enabled = get_flat(o, "m_Enabled");
+    if (enabled && strtol(enabled, NULL, 10) == 0) return false; // Off in Unity
+    if (has_own(n, u->tide)) return false;                        // The entity's own says it
+    if (u->when_key) {
+        const char *v = get_flat(o, u->when_key);
+        if (!v || strcmp(v, u->when_value) != 0) {
+            fprintf(stderr, "%s: warning: %s's %s isn't one to one with %s here, so it's left out: %s\n", e->file->local, n->name,
+                    u->unity, u->tide, u->when_why);
+            return false;
+        }
+    }
+    for (const node *at = n->parent; u->not_under && at; at = at->parent) {
+        for (int i = 0; i < at->owned_count; i++) {
+            const map_unity *above = at->owned[i].component->unity;
+            if (!above || at->owned[i].removed || strcmp(above->unity, u->not_under) != 0) continue;
+            fprintf(stderr, "%s: warning: %s's %s is under %s's %s, so it's left out: %s\n", e->file->local, n->name, u->unity,
+                    at->name, u->not_under, u->not_under_why);
+            return false;
+        }
+    }
+    // How each field's written: as the package's component has it in Unity (components.json), which the game's first
+    // build with the package writes
+    const map_component *real = component_named(e->p, u->tide);
+    if (!real) return false;
+    double scale[3];
+    lossy_scale(n, scale);
+    text values = {0};
+    puts_(&values, "");
+    for (int i = 0; i < u->field_count; i++) {
+        const map_translated *t = &u->fields[i];
+        const map_field *f = NULL;
+        for (int k = 0; k < real->field_count && !f; k++) {
+            if (strcmp(real->fields[k].name, t->field) == 0) f = &real->fields[k];
+        }
+        if (!f) {
+            fprintf(stderr, "%s: warning: its %s gives %s's field %s, which %s hasn't: the field's left out\n", u->mapping, u->unity,
+                    u->tide, t->field, u->tide);
+            continue;
+        }
+        text value = {0};
+        puts_(&value, "");
+        if (translated_value(o, t, shape_of(e->p, f->shape), scale, &value)) putf(&values, "%s%s = %s", values.n ? ", " : "", f->name, value.s);
+        free(value.s);
+    }
+    indent(&e->out, depth);
+    if (values.n) putf(&e->out, "%s { %s };\n", u->tide, values.s);
+    else putf(&e->out, "%s;\n", u->tide);
+    free(values.s);
+    return true;
+}
+
 // An own component's declaration of an entity: its type, with the fields Unity serialized.
 static void write_owned(emitter *e, const node *n, const owned *o, const int depth)
 {
@@ -1852,7 +2279,31 @@ static void write_entity(emitter *e, node *n, const trs placement, const int dep
         }
     }
     for (int i = 0; i < n->owned_count; i++) {
-        if (!n->owned[i].removed) write_owned(e, n, &n->owned[i], depth);
+        if (!n->owned[i].removed && !n->owned[i].component->unity) write_owned(e, n, &n->owned[i], depth);
+    }
+    // Unity's own components a package translates, and what they need of the entity that nothing else gave it (a
+    // collider with no Rigidbody, a static body)
+    char given[32][128];
+    int given_count = 0;
+    for (int i = 0; i < n->owned_count; i++) {
+        const owned *o = &n->owned[i];
+        if (o->removed || !o->component->unity || !write_translated(e, n, o, depth)) continue;
+        if (given_count < 32) snprintf(given[given_count++], sizeof given[0], "%s", o->component->unity->tide);
+    }
+    for (int i = 0; i < n->owned_count; i++) {
+        const owned *o = &n->owned[i];
+        const map_unity *u = o->component->unity;
+        if (o->removed || !u || !u->needs) continue;
+        bool written = false; // Its translation was
+        for (int k = 0; k < given_count; k++) written |= strcmp(given[k], u->tide) == 0;
+        char type[128];
+        declared_type(u->needs, type, sizeof type);
+        bool had = has_own(n, type);
+        for (int k = 0; k < given_count; k++) had |= strcmp(given[k], type) == 0;
+        if (!written || had) continue;
+        indent(&e->out, depth);
+        putf(&e->out, "%s;\n", u->needs);
+        if (given_count < 32) snprintf(given[given_count++], sizeof given[0], "%s", type);
     }
     node **kids = NULL;
     int count = 0, capacity = 0;
@@ -1955,7 +2406,7 @@ static char *write_prefab(project *p, const asset *a, node **roots, const int co
     puts_(map, "\n    {\"guid\": ");
     put_json(map, a->guid);
     puts_(map, ", \"path\": ");
-    put_json(map, a->local);
+    put_json(map, untitled(a->local) ? "" : a->local);
     putf(map, ", \"scene\": %s, \"nodes\": [%s]}", scene ? "true" : "false", e.nodes.s);
     free(e.nodes.s);
     return e.out.s;
@@ -2025,8 +2476,7 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
                      "        if (scenes.opened) return; // The editor's command came first\n"
                      "        scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s);\n    }\n", scenes[i].number, scenes[i].name);
         }
-        puts_(&t, "\n    // The editor's: a scene it has open as Play starts there, or opens during Play; `only` unloads the others the\n"
-                  "    // match loaded for it\n"
+        puts_(&t, "\n    // The editor's, as Play starts there: a scene it has open; `only` unloads the others the match loaded for it\n"
                   "    command OpenScene\n    {\n        int asset;\n        bool only;\n    }\n"
                   "\n    command(OpenScene open, PlayerID sender) Opening(mut LoadedScenes scenes)\n    {\n"
                   "        // The first player's, which may come in the first tick, before its PlayerJoined does\n"
@@ -2043,12 +2493,7 @@ static char *unity_declarations(const unity_scene *scenes, const int count, cons
             putf(&t, "            case %d: scenes.loaded[%d] = Scene.Load(UnityEngine.Scenes.%s); break;\n", scenes[i].number,
                  scenes[i].number, scenes[i].name);
         }
-        puts_(&t, "        }\n    }\n"
-                  "\n    // The editor's: a scene it closes during Play, which the match loaded for it\n"
-                  "    command CloseScene\n    {\n        int asset;\n    }\n"
-                  "\n    command(CloseScene close, PlayerID sender) Closing(mut LoadedScenes scenes)\n    {\n"
-                  "        if (sender != scenes.opener || !scenes.loaded.Has(close.asset)) return;\n"
-                  "        Scene.Unload(scenes.loaded[close.asset]);\n        scenes.loaded.Remove(close.asset);\n    }\n");
+        puts_(&t, "        }\n    }\n");
         // Each scene's entities, its prefab's, as it loads
         for (int i = 0; i < count; i++) {
             putf(&t, "\n    event(Spawned) Fill%s(with UnityEngine.Scenes.%s)\n    {\n        Spawn(UnityEngine.SceneContents.%s);\n    }\n",
@@ -2100,7 +2545,7 @@ unsigned long long unity_assets_stamp(const char *assets)
     return h;
 }
 
-bool unity_assets_read(const char *assets, unity_sources *out)
+bool unity_assets_read(const char *assets, const unity_package *packages, const int package_count, unity_sources *out)
 {
     *out = (unity_sources){0};
     project p = {0};
@@ -2111,12 +2556,18 @@ bool unity_assets_read(const char *assets, unity_sources *out)
     const size_t length = strlen(p.assets);
     p.project_length = length >= 7 && strcmp(p.assets + length - 7, "Assets/") == 0 ? length - 7 : length;
     folder_find(p.assets, ".meta", index_meta, &p);
+    add_untitled(&p);
+    for (int i = 0; i < package_count; i++) {
+        char *mapping = path_join(packages[i].folder, UNITY_MAPPING_FILE);
+        if (sys_exists(mapping)) read_mapping(&p, mapping, packages[i].name);
+        free(mapping);
+    }
     read_components(&p);
     int capacity = 0;
     text map = {0};
     puts_(&map, "{\"assets\": [");
     grow((void **)&out->items, &capacity, out->count, sizeof *out->items);
-    out->items[out->count++] = (unity_source){dup(UNITY_SOURCE_PATH), NULL}; // Its text once the assets are known
+    out->items[out->count++] = (unity_source){dup(UNITY_SOURCE_PATH), NULL, NULL}; // Its text once the assets are known
     unity_scene *scenes = NULL;
     int scene_count = 0, scene_capacity = 0;
     char first_guid[33];
@@ -2135,6 +2586,7 @@ bool unity_assets_read(const char *assets, unity_sources *out)
             grow((void **)&out->items, &capacity, out->count, sizeof *out->items);
             unity_source *s = &out->items[out->count++];
             s->path = dup(a->local);
+            s->package = NULL;
             if (scene) {
                 grow((void **)&scenes, &scene_capacity, scene_count, sizeof *scenes);
                 unity_scene *u = &scenes[scene_count++];
@@ -2169,6 +2621,12 @@ bool unity_assets_read(const char *assets, unity_sources *out)
         free(out->items[0].text);
         out->count = 0;
     }
+    // The packages' Tide for a Unity project, each a source of its package's
+    for (int i = 0; i < p.glue_count; i++) {
+        grow((void **)&out->items, &capacity, out->count, sizeof *out->items);
+        out->items[out->count++] = p.glue[i];
+    }
+    free(p.glue);
     // Two prefabs, or two scenes, of one folder whose names are one Tide name (My Level and My_Level, which a name
     // can't tell apart)
     for (int i = 1; i < out->count; i++) {
@@ -2177,8 +2635,14 @@ bool unity_assets_read(const char *assets, unity_sources *out)
             char *a = asset_name(out->items[i].path), *b = asset_name(out->items[k].path);
             char *fa = asset_folders(out->items[i].path), *fb = asset_folders(out->items[k].path);
             if (strcmp(a, b) == 0 && strcmp(fa, fb) == 0) {
-                fprintf(stderr, "%s: error: %s has the same Tide name, %s%s%s: rename one\n", out->items[k].path,
-                        out->items[i].path, fa, fa[0] ? "." : "", a);
+                const char *named = untitled(out->items[i].path) ? out->items[k].path : out->items[i].path;
+                if (untitled(out->items[i].path) || untitled(out->items[k].path)) {
+                    fprintf(stderr, "%s: error: the editor's untitled scene has its Tide name, %s: save the untitled scene "
+                                    "under another name, or rename this one\n", named, a);
+                } else {
+                    fprintf(stderr, "%s: error: %s has the same Tide name, %s%s%s: rename one\n", out->items[k].path,
+                            out->items[i].path, fa, fa[0] ? "." : "", a);
+                }
                 p.failed = true;
             }
             free(a);
@@ -2194,6 +2658,7 @@ bool unity_assets_read(const char *assets, unity_sources *out)
     }
     free(p.items);
     free_components(&p);
+    free_unity_maps(&p);
     free(p.assets);
     return !p.failed;
 }
@@ -2203,6 +2668,7 @@ void unity_sources_free(unity_sources *sources)
     for (int i = 0; i < sources->count; i++) {
         free(sources->items[i].path);
         free(sources->items[i].text);
+        free(sources->items[i].package);
     }
     free(sources->items);
     free(sources->map);

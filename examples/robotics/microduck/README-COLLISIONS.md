@@ -71,7 +71,9 @@ The derived collision data is separately identified as CC BY-NC-SA 4.0 in
 `LICENSE-COLLISIONS.md`. Preserve that notice, Pollen Robotics credit, the
 change summary, and provenance with the data. This bundle contains no STLs.
 
-Existing parent-run actual native validation:6/7 locomotion cases pass
-(W/S,all3recoveries,rightturn);the unchanged weakleft turn is+0.196556rad
-against0.25rad. Static visible-casing coverage passes1/1. Staging runs
-no episodes and does not change production files.
+The original geometry staging trial passed 6/7 native locomotion cases and
+1/1 static visible-casing coverage check. Those counts predate the corrected
+A/D mapping and Shift controls. The current native/WASI basis passes 7/8,
+with D/right turning still below its unchanged 0.25 rad threshold; see
+`README.md` for the current measurements and validation scope. Staging itself
+runs no episodes and does not change production files.

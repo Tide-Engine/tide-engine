@@ -782,6 +782,10 @@ struct Turns
     quaternion eulerDegrees;
     float4 degreeLiterals;
     quaternion look;
+    quaternion lookLong;
+    quaternion lookAlong;
+    quaternion lookNone;
+    quaternion lookNoUp;
     quaternion fromTo;
     quaternion fromToOpposite;
     quaternion fromToNearOpposite;
@@ -917,6 +921,10 @@ Turns TurnsOf(Given given)
     turns.eulerDegrees = quaternion.Euler(180deg, -45.5deg, 9e1deg);
     turns.degreeLiterals = float4(180deg, -45.5deg, 1_8e1deg, .5deg);
     turns.look = quaternion.LookRotation(Math.Forward(a), Math.Up(b));
+    turns.lookLong = quaternion.LookRotation(Math.Forward(a) * 0.29, Math.Up(b) * 40); // Neither need be unit length
+    turns.lookAlong = quaternion.LookRotation(given.point * 3, -given.point);       // No side: FromTo from +z
+    turns.lookNone = quaternion.LookRotation(float3(given.zero), given.point);      // The identity
+    turns.lookNoUp = quaternion.LookRotation(given.point, float3(given.nan, 1, 0));
     turns.fromTo = quaternion.FromToRotation(from: given.point, to: given.angles);
     turns.fromToOpposite = quaternion.FromToRotation(given.point, -given.point);
     turns.fromToNearOpposite = quaternion.FromToRotation(float3(1, 0, 0), float3(-1, 0.0001, 0));
@@ -985,6 +993,10 @@ bool SameTurns(Turns a, Turns b)
     same = same && CloseTurn(a.slerp, b.slerp) && CloseTurn(a.slerpNear, b.slerpNear) && CloseTurn(a.slerpFar, b.slerpFar);
     same = same && CloseTurn(a.nlerp, b.nlerp) && CloseTurn(a.nlerpFar, b.nlerpFar) && CloseTurn(a.nlerpNone, b.nlerpNone);
     same = same && CloseTurn(a.axisAngle, b.axisAngle) && CloseTurn(a.euler, b.euler) && CloseTurn(a.look, b.look);
+    same = same && CloseTurn(a.lookLong, b.lookLong) && CloseTurn(a.lookLong, a.look) && CloseTurn(a.lookAlong, b.lookAlong)
+                && CloseTurn(a.lookNone, b.lookNone) && a.lookNone.value.w == 1 && CloseTurn(a.lookNoUp, b.lookNoUp)
+                && CloseTurn(a.lookAlong, quaternion.FromToRotation(float3(0, 0, 1), float3(1, -2, 0.5)))
+                && CloseTurn(a.lookNoUp, a.lookAlong);
     same = same && CloseTurn(a.fromTo, b.fromTo) && CloseTurn(a.fromToOpposite, b.fromToOpposite)
                 && CloseTurn(a.fromToNearOpposite, b.fromToNearOpposite) && CloseTurn(a.fromToNone, b.fromToNone)
                 && CloseTurn(a.fromToBad, b.fromToBad) && CloseTurn(a.fromToHuge, b.fromToHuge) && CloseTurn(a.fromToTiny, b.fromToTiny);

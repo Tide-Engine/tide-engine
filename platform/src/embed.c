@@ -186,6 +186,11 @@ void tide_embed_destroy(tide_embed *e)
 {
     if (e != &the_embed || !running) return;
     tide_platform_audio_forget(); // The clips its voices play go with the game
+    // ...and what's left of its last block, and of what its microphone heard, with it: the next game starts quiet.
+    // The other program's audio thread said it's done (tide_embed_audio's NULL), as it must have
+    tide_mixer_flush();
+    tide_audio_out_reset();
+    tide_audio_in_reset();
     if (tide_run_game) {
         tide_run_end();
         if (tide_run_game->unload) tide_run_game->unload();

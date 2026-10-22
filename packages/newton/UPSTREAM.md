@@ -167,6 +167,9 @@ The no-collider and noncontacting paths retain the original dynamics kernels.
 Runtime SHA-256
 `4f7a91102e1e4cd87bc3906885c02d1bb5e3cbb4578b8cee9495dff14abeb4fa`
 contains the centering, block M×J and ordered four-column JᵀP changes.
+This is the frozen Windows working-copy hash; Git only normalizes CRLF to
+LF. The normalized repository source SHA-256 is
+`b7a046761629b2f30c4f5c7b1d810b6fca97d0df3eba68cd53affee8e980a3e9`.
 
 All 63 backend cases pass on native and WASI in
 `build/microduck-run-check/jtp4-backend-{native,wasi}.log`. Three new

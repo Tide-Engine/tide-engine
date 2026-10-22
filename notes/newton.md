@@ -1,5 +1,22 @@
 # The Newton package
 
+## Dev integration (2026-10-22)
+
+The 45-file local Newton/MicroDuck delta is integrated with current `dev`.
+The existing per-case MicroDuck CTest discovery, platform guard, configure
+dependency, 180-second budgets and nonempty-run assertions are preserved.
+Fresh Release builds and the focused Newton/MicroDuck CTest selections pass
+on native and WASI; the known right-turn acceptance remains explicitly
+disabled. Collision export and all 40 upstream manifest checks also pass.
+These are focused checks, not a new full-repository-suite claim. The missing
+`bench/` limitation recorded below applied to the earlier detached source
+snapshot; the complete integration checkout configures successfully.
+
+The recorded `4f7a9110` SHA below identifies the frozen Windows working
+bytes used for the earlier experiments. Git normalizes this C++ file from
+CRLF to LF without changing any other byte. The normalized repository source
+SHA-256 is `b7a046761629b2f30c4f5c7b1d810b6fca97d0df3eba68cd53affee8e980a3e9`.
+
 ## Final all-direction boost, stability and performance (2026-10-22)
 
 Final runtime SHA-256 is
@@ -384,6 +401,33 @@ wrapper is also absent. Earlier manual-sandbox validation below is historical;
 do not present its full-suite counts as validation of the learned controller.
 
 ## Historical: collision floor and mouse sandbox (2026-10-22)
+## MicroDuck CTest case budgets (2026-10-22)
+
+Build run 39800191824 clears the JetBrains/docs failures, but Android and Linux
+sanitizers time out the combined tide_newton_microduck invocation at 180 seconds.
+All other 2,383 Android and 2,436 sanitizer CTests pass. Ordinary native/web and
+MinGW suites pass the fixture; the original optimized WASI invocation passes
+24/24 locally in 31.40 seconds. This is an aggregate test-budget failure, not
+evidence of a failed physics assertion or a changed deterministic result.
+
+The fixture's CMake now registers every TIDE_TEST as its own CTest, using the
+existing executable's name filter. Each retains the 180-second deadline and
+must print 1/1 passed, so an empty filter cannot silently pass. Source edits
+trigger reconfiguration to discover added cases. The threads case is omitted
+only when tide_platform is absent, matching NEWTON_TEST_JOBS; the separate
+fresh-process join test is unchanged. No solver, simulation length, network
+conditions, assertions, pinned hashes, compiler flags or workflow gate changed.
+
+Native debug passes all 24 cases, runtime and join (26 CTests, 104.87 seconds),
+and WASI debug passes the same set (121.65 seconds). The unchanged rollback case
+takes 54.61/60.15 seconds respectively. Package order passes on both targets.
+CTest metadata matches all 24 compiled cases on native/web and all 23 without
+the platform, with unchanged deadlines and nonempty-run checks. Optimized WASI
+passes all 29 Newton CTests in 36.14 seconds, including both arm hosts and the
+unchanged MicroDuck history pin. Hosted Android/sanitizer confirmation remains
+the next automatic Build run's coverage; no workflow was manually dispatched.
+
+## Collision floor and mouse sandbox (2026-10-22)
 
 The owner wanted a physics floor and objects to play with, then requested mouse
 manipulation. The package now exposes `Collider`, initially Sphere and static

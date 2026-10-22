@@ -1188,13 +1188,20 @@ static inline tide_quaternion tide_q_from_f3x3(const tide_float3x3 m)
     return tide_q((m.c2.x + m.c0.z) / s, (m.c2.y + m.c1.z) / s, 0.25f * s, (m.c0.y - m.c1.x) / s);
 }
 
-// Rotation looking along `forward` (normalized) with `up` as a hint. A forward
-// along `up` (or a zero one) has no side to turn around: normalizing gives
-// zero for it, so the result has no NaN, though it's no rotation either.
+// Rotation whose +z is `forward` and whose +y is as near `up` as it can be.
+// Neither need be unit length. A zero or nonfinite forward gives identity. An
+// up that's zero, nonfinite or within 1e-5 of forward's line (the cross
+// product of the two normalized is shorter than that, Unity's epsilon) gives
+// FromToRotation from +z to forward, as Unity's LookRotation does. The frame
+// is made orthonormal again after the first cross product, which is inexact
+// when up is nearly along forward.
 static inline tide_quaternion tide_lookrotation_q(const tide_float3 forward, const tide_float3 up)
 {
-    const tide_float3 t = tide_normalize_f3(tide_cross_f3(up, forward));
-    return tide_q_from_f3x3((tide_float3x3){t, tide_cross_f3(forward, t), forward});
+    const tide_float3 f = tide_fromto_unit_f3(forward);
+    const tide_float3 side = tide_cross_f3(tide_fromto_unit_f3(up), f);
+    if (tide_dot_f3(side, side) < 1e-10f) return tide_fromto_q(tide_f3(0.0f, 0.0f, 1.0f), forward);
+    const tide_float3 u = tide_normalize_f3(tide_cross_f3(f, tide_normalize_f3(side)));
+    return tide_normalize_q(tide_q_from_f3x3((tide_float3x3){tide_cross_f3(u, f), u, f}));
 }
 
 static inline tide_float4x4 tide_f4x4_from_f3x3_f3(const tide_float3x3 rotation, const tide_float3 translation)

@@ -817,9 +817,10 @@ named), `unity_prefabs_and_scenes_as_tide_prefabs` (the fixture's
 `Assets/Fixture` names), and the Sample's play mode test, whose code uses the
 short names.
 
-Gaps: a client in the editor sends nothing (the server decides). Scenes opened
-during Play and a scene loaded twice were fixed on 2026-10-22 ("Audio and the
-editor's workflow").
+**Scenes loaded by hand are local (owner, 2026-10-22):** "scenes that are
+matches should be loaded via Tide; unity scenes being loaded manually should be
+left alone and considered local/disconnected". A scene the match loads twice is
+two of Unity's (2026-10-22, "Audio and the editor's workflow").
 
 ### Web as built (2026-10-20): option B, packaged
 
@@ -1129,14 +1130,10 @@ picks below are mine (Provisional).
   - A copy goes when its scene is saved, closed or opened again (not while Play
     comes or goes, when Unity reopens scenes), and the folder is emptied once
     per editor session (`SessionState`), in case an editor quit with copies.
-  - Not covered: an unsaved prefab in Prefab Mode with auto-save off (auto-save
-    is Unity's default), and a scene that was never saved (no path).
-- **Scenes during Play.** The runner listens to `sceneLoaded`/`sceneUnloaded`.
-  A load or unload that isn't its own is sent: before the editor's scenes went
-  (`openSent`), it changes the list to send; after, `UnityEngine.OpenScene
-  { asset, only = false }` or the new `UnityEngine.CloseScene { asset }`
-  (opener only, unloads what `LoadedScenes` loaded for that asset). Editor only,
-  and only from the machine that runs the match, as Open is.
+  - A never-saved scene and Prefab Mode: "What was not covered" below.
+- **Scenes during Play.** First built as sent to the match (OpenScene, a
+  `CloseScene` command); the owner then decided a scene loaded by hand is local
+  ("What was not covered" below), and both went.
 - **A scene loaded twice.** Each scene root entity (node 0 of a scene asset)
   gets its own Unity scene instance (`sceneOf`, by entity id): an open, loaded
   instance of that path no root has, else a new additive load claimed when its
@@ -1158,7 +1155,7 @@ picks below are mine (Provisional).
     0.5, and silence after destroy.
   - `tide_cli_tests`: `unity_unsaved_scene_read_from_the_editor_copy` (a copy
     of the fixture in the build folder; the stamp changes and goes back),
-    CloseScene's handler, and the fixture's `M#1/k` GameObject (entity `M_1_k`,
+    and the fixture's `M#1/k` GameObject (entity `M_1_k`,
     node path `M\#1\/k`).
   - EditMode `UnsavedTests`: a Spinner's speed changed through a
     `SerializedObject` and not saved is in the built `.tprefab` after `Sync`,
@@ -1166,14 +1163,245 @@ picks below are mine (Provisional).
   - PlayMode: `TheGamesSoundPlaysThroughUnitys` (the bonk read on Unity's audio
     thread in a batch run, silent under `TIDE_HIDDEN`), `ASceneLoadedTwiceIsTwo`
     (`ShowBonus { twice }`: two Bonus scenes, each Totem its own entity), and
-    `ScenesLoadedDuringPlayAreTheMatchs` (Bonus loaded and unloaded by a
-    script, twice, which needs CloseScene the second time).
+    `ScenesLoadedByHandAreLocal` (below).
   - Not run: Play's cancel and resume (batch runs skip it), Unity's
     microphone, a phone, and audio in a WebGL player by ear.
   - Runs: native debug 2512/2512, web debug 2413/2413; Unity EditMode 16/16
     and PlayMode 14/14 on D3D11, PlayMode 11 with 3 GPU tests skipped under
     `-nographics` (Unity's audio thread runs in batch mode); the Sample's WebGL
     build with `web-smoke.mjs` PASS.
+
+### What was "not covered" (2026-10-22)
+
+The owner: "can we try to look into the 'Not covered'". All picks here are
+mine (Provisional).
+
+- **Voice runs embedded.** `tide/host.h` called a game's voice provider only
+  outside an embed, as its audio went nowhere there; it goes to Unity now, so
+  the guard is gone (`notes/voice-package.md`). `embed_voice_provider`
+  (`tide_platform_embed`) registers a fake provider: its frame runs each embedded
+  frame, its constant voice is in `tide_embed_audio`'s samples, its stop runs as
+  the embed ends.
+- **An embed's end starts the audio over.** `tide_embed_destroy` also flushes the
+  mixer's remainder and resets the pull (`tide_audio_out_reset`, new in
+  `audio_out.h`) and the microphone's resampler: the next runner played up to a
+  block of the last one's sound (found by `embed_voice_provider` after
+  `embed_audio`).
+- **The editor's untitled scene.** The first loaded scene with no path is copied
+  at Play to `Library/Tide/unsaved/Untitled.unity` (`UNITY_UNTITLED_SCENE`),
+  dirty or not. tide adds it as an asset of the all-zero GUID, named
+  `UnityEngine.Scenes.Untitled` (`SceneContents.Untitled`), its map path `""`,
+  Unity's for a scene with no file. A saved `Assets/Untitled.unity` clashes with
+  an error saying to save the untitled scene under another name. Its copy goes
+  as the last untitled scene closes or is saved under a name. The runner finds it
+  as the loaded scene with no path (`Unclaimed("")`, `SceneOf`'s fallback), and
+  `LoadScene` loads nothing for `""`. A second untitled scene isn't the game's.
+- **Prefab Mode with Auto Save off isn't a gap:** Unity's prefab instances,
+  Unity's own Play included, are the saved prefab until Prefab Mode saves it, so
+  tide reading the saved file matches Unity.
+- **Play refreshes assets before it resumes** (`AssetDatabase.Refresh`): a sync
+  can rewrite the game's C# (a scene coming or going changes the schema and its
+  hash, which the C# must match), which is then compiled before Play.
+- **TideAudio plays its source only while an AudioListener is active**, looked
+  for each frame, keeping its own playing flag (a source's `isPlaying` reads false
+  a while after `Play`, which restarted it every frame). With none Unity printed
+  "There are no audio listeners in the scene" each block. The Sample's camera had
+  no listener: it has one now (`SampleSetup` and `Bounce.unity`), and its sound
+  test passed before only because Unity runs filters with nothing listening.
+- **Unity, after a script changes in Play, calls the OnAudioFilterRead of no
+  component made later in that Play** (batch runs; its source plays, its time
+  advances, its filter never runs). The game's C# changes in Play when its schema
+  does: a runner started after that is silent until Play restarts; one already
+  running keeps its sound. The untitled PlayMode test changes the schema, so it's
+  its own fixture, `UntitledTests`, which runs after `BounceTests`.
+- **Scenes loaded by hand are local** (owner: "scenes that are matches should be
+  loaded via Tide; unity scenes being loaded manually should be left alone and
+  considered local/disconnected"). The runner sends nothing for a scene it didn't
+  load (no `CloseScene`; Open only for the editor's scenes as Play starts) and
+  claims for the match's roots only scenes open as it started (`scenesStarted`:
+  the editor's open scenes, a player's first scene) or ones it loaded; an
+  entity's scene falls back only to the match's instances (`SceneOf`). A match
+  scene something else unloads is dropped from `sceneOf` and loaded again. So a
+  client editor, which sends no Open, has the server's scenes, and whatever it
+  loads itself is its own. PlayMode `ScenesLoadedByHandAreLocal`: Bonus loaded by
+  a script shows no entity; the match's Bonus loads beside it with its Totem
+  showing; unloading the local one leaves the match's, and the match letting its
+  Bonus go leaves a local one.
+- **Tests:** `embed_voice_provider`; `unity_unsaved_scene_read_from_the_editor_copy`
+  (an untitled copy read as the scene `Untitled` with path `""`, and the clash's
+  error); EditMode `AnUntitledSceneIsTheGames` (a new scene with a Spinner built
+  as `Untitled`, gone as Bounce opens); PlayMode
+  `UntitledTests.TheEditorsUntitledSceneIsTheMatchs` (a copy of Bonus built as the
+  untitled scene, a runtime scene with no path holding Bonus's GameObjects, and
+  its Totem showing its entity with Bonus not loaded).
+- **Runs:** native debug 2515/2515, web debug 2416/2416, docs build; Unity
+  EditMode 17/17, PlayMode 15/15 on D3D11 and 12 with 3 GPU tests skipped under
+  `-nographics`. Not run: Play's cancel and resume with an untitled scene (batch
+  runs skip it), and the refresh before Play resumes.
+
+### A first game: Coin Rush (2026-10-22)
+
+The owner, away: "try making a small game and seeing what issues you hit. I
+imagine we might need to allow built-in components? for things like colliders
+and physics and what not?"
+
+Coin Rush is in a scratch project, `%LOCALAPPDATA%\TideDev\scratch\coin-rush`
+(not in the repository). It's a fresh Unity 6000.6 project with
+`com.tide.unity` from this checkout and `box3d` in `Assets/tide.packages`. Each
+player's ball (a `Box3D.Body` and `Box3D.Sphere` on a Unity sphere) rolls by
+impulses from a `Move` input, in an arena of static boxes. Five coins are sensor
+spheres on static bodies; `Touched` scores and moves the coin. A kinematic bar
+sweeps the middle. A `Scores` singleton feeds a Tide HUD, and the pickup has a
+`Clip` chime. `Assets/Editor/CoinSetup.cs` builds the prefabs and scene. It
+plays: PlayMode tests roll a ball into a coin (scored in 0.9 s, the chime heard)
+and into a wall (held at x = 5.505, the wall's face less the radius). The
+dedicated server (`tide build --server --assets .`) builds and runs, and the
+WebGL player passes `web-smoke.mjs` with its own smoke script (the ball scores
+in headless Chrome, Box3D in the page's wasm).
+
+What I hit, in order:
+
+1. **Every physics game needs two systems of boilerplate.** The converter gives
+   each entity Unity's placement as Tide's `Transform`, but `Box3D.Body` has its
+   own `position` and `rotation`, which start at zero. So every body sat at the
+   origin until a `Spawned` handler copied `Transform` into `Body`, and Unity
+   showed nothing move until an `[After(PhysicsStages.Step)]` system copied
+   `Body` back into `Transform`.
+2. **Sizes say the same thing twice.** A Unity cube scaled (12, 1, 12) needs
+   `Box3D.Box { size = (12, 1, 12) }` by hand, and the box goes wrong when the
+   scale changes. A sphere's radius likewise.
+3. **Unity's own colliders are silently nothing.** `CreatePrimitive` puts a
+   BoxCollider or SphereCollider on each, which a Unity user expects to be the
+   collider. Tide ignores them, and Unity's physics keeps them as static
+   colliders that move every frame (the ball's). They also draw Unity's collider
+   gizmos, which then don't match Box3D's shapes.
+4. **The package's own fields are authored.** `Box3D.Body`'s inspector shows `id`
+   and every `step*` field, the package's bookkeeping, and they're baked:
+   `stepType = Dynamic` on every static body. `BoxMade`, `SphereMade` and the
+   other markers are in Add Component > Tide.
+5. **A new project can't bootstrap without a detour.** The game's C# is written
+   only once it builds, and code that spawns a Unity prefab doesn't build until
+   the prefab exists, which needs the C# components. I commented the spawn out,
+   built, made the prefab, then restored it.
+6. **`using Tide.Game;` beside `using UnityEngine;` is ambiguous.** Tide's own
+   `Transform`, `Time` singleton and `Font` enum get C# types in `Tide.Game`, so
+   `Transform` and `Time.deltaTime` don't compile in such a script. I used an
+   alias.
+7. **C# had no way to give Tide input** but Unity's real devices, which a test
+   can't press (and which on-screen sticks, bots and replays need).
+   Fixed: `TideRunner.EditInput` (below).
+8. **Smaller ones:** `PlayerID` is opaque, so naming players needs a seat
+   counter, as the Sample keeps (by design). Box3D's water density makes a
+   0.5 m ball weigh 523 kg, so impulses tuned by feel are 40 times too small
+   (documented, but a surprise). The C# comments named a `TideKeys` class that
+   doesn't exist (fixed). The spec still said voice had no Unity audio (fixed).
+
+**Built (small, Provisional):** `TideRunner.EditInput`, an event of `ref
+TideEmbedInput`, raised each frame after Unity's devices are read, and
+`TideEmbedInput.Hold(key, held = true)` by the Input System's key names
+(`TideInputReader.Keys`; false for a name Tide's keyboard hasn't). Works on the
+web too, before the jslib copies the input over. Test: Sample PlayMode
+`TheGamesOwnInputRollsTheBall` (D held through it rolls the ball right; an
+unknown key refused).
+
+**Proposal, the owner's to decide: Unity's physics components as Box3D's.** (Decided and built for what's one to
+one: "Packages' translations of Unity's components" below.)
+Items 1 to 4 go away if the converter reads Unity's own physics components on
+TideEntity GameObjects as Box3D's, where the game has the box3d package:
+
+| Unity | Box3D |
+|---|---|
+| `Rigidbody` | `Body`: `isKinematic` → Kinematic, else Dynamic; `useGravity` → `gravityScale` 1 or 0; drags → dampings; `interpolation` ignored; `mass` → each shape's density, as mass over the shapes' volume |
+| a collider with no `Rigidbody` up its parents | a static `Body` |
+| `BoxCollider` | `Box`: `size` × the lossy scale, `center` × scale → `offset`, `isTrigger` → `sensor` |
+| `SphereCollider` | `Sphere`: radius × the largest scale axis |
+| `CapsuleCollider` (Y) | `Capsule`; X or Z an error that says so (Box3D's capsules stand along y) |
+| `MeshCollider` | `MeshCollider` on a static body, once Unity writes the mesh's triangles where tide reads them (C can't read an FBX) |
+| `PhysicsMaterial` | `friction` (dynamic friction) and `bounce` (bounciness); combine modes are Box3D's |
+| colliders on children | `Part`s of the body |
+
+`Body.position` and `rotation` are baked from the GameObject's world placement.
+The runner (or the package) places a body's GameObject from `Body` rather than
+`Transform`, so neither system is needed. Unity then draws and edits the
+colliders with its own gizmos. Open questions:
+
+- Is the converter knowing box3d acceptable, or should a package say how it maps
+  Unity's components (a mapping file in the package)?
+- Does a body spawned from a prefab at a `Transform` take that position, so
+  `Spawn(Roller, Transform { ... })` keeps working?
+- What about Unity's joints, and 2D (Rigidbody2D and the 2D colliders as Box2D's)?
+
+Without that, smaller fixes for items 1, 2 and 4:
+
+- Box3D's `Body` takes the entity's `Transform` when it starts at zero.
+- A way for a package to keep fields out of authoring, an attribute (a language
+  change).
+- Editor gizmos for Box3D's shapes.
+
+For 6: the engine's own types in another namespace (`Tide.Game.Engine`), or no
+C# for the ones Unity has (`Transform`, `Time`, `Font`). For 5: tide could write
+the C# of the game's components from a build that fails only at Unity names it
+doesn't have yet.
+
+### Packages' translations of Unity's components (2026-10-22)
+
+The owner, on the Coin Rush proposal: "if they can be a one to one match then sure we can keep it a translation
+layer", "each package its own mapping".
+
+- **`unity.json` in a package's folder** (`UNITY_MAPPING_FILE`, documented in `unity_assets.h` and
+  docs/packages/using-and-writing.md). Its keys are Unity component types, as a scene file's document names them
+  (`yaml_document.type`). Each gives:
+  - `as`, the package's component;
+  - `fields`, each from a Unity key, optionally `* scale` (signed per axis), `* absScale`, `* largestScale(XY/XZ)` or
+    `* scaleX/Y/Z`, or `{from, values}` mapping values to Tide literals;
+  - `when` [key, value, why];
+  - `needs` (a component declaration the entity gets when nothing else gives that type);
+  - `notUnder` [Unity type, why].
+
+  `source` is Tide lines a Unity project alone compiles, as a source of the package's own
+  (`Library/Tide/Unity.<package>.tide`, written beside `Unity.tide` for messages and editors): as the package's, its
+  systems don't warn when nothing matches them, where the game's would. `tide unity` (and `tide build`/`run
+  --assets`, the web build too) reads the unity.json of each package the game lists: `unity_assets_read` takes their
+  folders and names (`unity_package`), and a `unity_source` says the package it's of. A package the game drops leaves
+  its last `Unity.<package>.tide` in Library/Tide, compiled by nothing.
+- **Reading:** a mapped document is read like a Tide component, an owned slot keyed by a synthetic `map_component`
+  (`map_unity.reader`, its fields the Unity keys, `m_Enabled` and the `when` key, shape -1). So prefab instances'
+  overrides of a collider's fields and removed components work as for Tide components. A second of one type on a
+  GameObject in one file is a warning, left out (`owned.read_in`).
+- **Writing** (`write_translated`, after the GameObject's own components): left out if `m_Enabled` is 0, if the
+  entity has its own component of the target type (on the GameObject or the TideEntity), if `when` fails, or if a
+  GameObject above has the `notUnder` type; the last two with warnings. Each field is written by the target field's
+  shape from components.json: vectors (float2/float3) per axis by the scale, numbers, bools, mapped literals. The
+  scale is the lossy scale through every parent. Without the target in components.json (the first build with the
+  package) the translation is skipped; the build writes components.json, whose stamp builds again. Then `needs`,
+  for a written translation whose entity has no component of that type.
+- **Box3D's** (`packages/box3d/unity.json`): `Rigidbody`→`Body` (`m_IsKinematic` to Kinematic/Dynamic,
+  `m_UseGravity`→`gravityScale`, the dampings). `BoxCollider`→`Box` (size by absScale, centre by scale);
+  `SphereCollider`→`Sphere` (radius by largestScale); `CapsuleCollider`→`Capsule` when `m_Direction` is 1 (radius by
+  largestScaleXZ, height by scaleY). Colliders need a static `Body` and aren't under a `Rigidbody`. Mass, physics
+  materials, constraints, interpolation and MeshCollider aren't translated (not one to one, or C can't read the mesh).
+  Its `source`: `StartAtTransform` (stage offset 0: a body with id 0 takes the entity's `transform.position` and
+  `localRotation`) and `FollowTransform` (offset 19, after the history systems: the Transform follows the body). So
+  Unity's placement starts a body, `Spawn(Roller, Transform { ... })` too, and the runner shows it moving. In the
+  package itself those systems would have put an empty Transform table into every Box3D game's world: every pinned
+  hash and `order.txt` of the package tests changed, though nothing moved differently. Unity's glue lives in the
+  mapping.
+- **Box2D's** (`packages/box2d/unity.json`): `Rigidbody2D`→`Body` (`m_BodyType` 0/1/2 to
+  Dynamic/Kinematic/Static, gravity scale, dampings), `BoxCollider2D`→`Box`, `CircleCollider2D`→`Circle` (radius by
+  largestScaleXY), with density and trigger; colliders need a static body and aren't under a `Rigidbody2D`. Its
+  `source` places a body by the Transform's x and y and its turn about z (2·atan2 of z and w, the short way), and
+  follows it keeping z.
+- **Tests:** `unity_physics_components_as_box3d` (tests/unity_physics, a scene written by hand: a scaled floor, a
+  Rigidbody ball with a sphere and an arm collider under it, a Y capsule, an X capsule, a trigger with its own
+  kinematic `Box3D.Body`, a disabled collider, a collider on no entity; Box3D's real unity.json and its `source`; and
+  none of it without the package). Box3D/Box2D package and example tests unchanged (22/22). Coin Rush with Unity's
+  components and none of its glue systems: its PlayMode tests (the ball scores, the wall holds at 5.505) and the
+  WebGL smoke pass as before.
+- **Runs:** native debug 2538/2538, web debug 2439/2439, docs build; Sample EditMode 17/17 and PlayMode 16/16.
+  Box2D's `source` compiles in a Unity build (Coin Rush with `box2d` listed, no warnings).
+- **Not built:** Box2D's translations are untested in Unity (written from Unity's YAML of the components and Box2D's
+  fields). Physics materials (a reference to an asset whose fields would map), compound colliders as parts, mesh
+  colliders, joints.
 
 ### The game is Assets (2026-10-21)
 

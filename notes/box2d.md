@@ -1,5 +1,12 @@
 # The Box2D package
 
+
+## Unity's components as Box2D's (2026-10-22)
+
+`packages/box2d/unity.json` says which of Unity's physics components are Box2D's for a game made in Unity,
+and holds the Tide a Unity project alone gets: a body starts at its entity's Transform, which follows it. The
+package's own `.tide` is unchanged, so games outside Unity are too. Contracts and tests: `notes/unity.md`, Packages'
+translations of Unity's components.
 ## All-hit queries and game filtering (2026-10-18)
 
 The owner approved `RaycastAll`/`CastAll` and ignore-body overloads after the

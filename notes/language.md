@@ -1,5 +1,55 @@
 # Language features, as tidec builds them
 
+## LookRotation of any length (2026-10-22)
+
+Found by the BANKED prototype's first-person arm IK:
+`quaternion.LookRotation(elbow - shoulder, up)` with a 0.29 m forward turned the
+bone the wrong way and scaled it by 0.58. `tide_lookrotation_q` used `forward`
+as the matrix's third column unnormalized, so any forward that wasn't unit
+length built a matrix that was no rotation and Shepperd's method returned a
+wrong, non-unit quaternion. The docs gave LookRotation no unit-length
+requirement, and FromToRotation (2026-10-18) and Unity accept any length, so
+it was a trap rather than a contract. A conventional completion under the
+existing math maintenance; no signature, builtin or generated call changed.
+
+- **Behavior (decided, spec and `docs/language/math.md`):** forward and up are
+  normalized with FromTo's rescaling (`tide_fromto_unit_f3`), so finite nonzero
+  vectors across the float range work. A zero or nonfinite forward gives
+  identity. If `cross(unit(up), unit(forward))` has squared length below 1e-10
+  (length 1e-5, Unity's `Vector3.kEpsilon`), which covers a zero or nonfinite
+  up and one along forward either way, the result is
+  `tide_fromto_q(float3(0, 0, 1), forward)`: Unity's own fallback
+  (`Quaternion.LookRotation(Vector3.up)` is euler (270, 0, 0)), reusing
+  FromTo's decided half-turn axis for forward = -z. Otherwise the side is
+  normalized, up becomes `normalize(cross(f, side))` and the right column
+  `cross(up, f)`, so the frame is orthonormal to rounding even when the first
+  cross product is inexact (up within a few degrees of forward), and the
+  quaternion is normalized. The threshold rather than exact zero also keeps
+  GPUs that fuse the cross product's arithmetic on the CPU's branch.
+- **Results change for every call,** unit inputs included, by the rescale and
+  final normalization (a few ulps); no cross-platform pin includes
+  LookRotation, and none changed. The previous parallel case returned the
+  degenerate matrix's quaternion, which only the old test's "no NaN" accepted.
+- **Tests:** `math_lookrotation_takes_any_length_and_keeps_its_frame` (the
+  arm's 0.29 m case, lengths from subnormal to the float maximum, agreement with
+  unit inputs, 10,000 random pairs at four scales checking a unit result,
+  forward equal to normalized forward, up perpendicular, on up's side and in
+  the plane of up and forward, and a frame 2e-5 off up outside the fallback);
+  `math_lookrotation_without_a_side_turns_from_z_and_without_forward_is_identity`
+  (zero/NaN/infinite forward give identity bits; up parallel, opposite, scaled,
+  1e-6 off, zero, NaN, infinite and the float maximum each equal FromTo from
+  +z bit for bit; straight up is Unity's (270, 0, 0)). The old parallel check in
+  `math_normalize_gives_zero_for_what_has_no_direction` now also requires a unit
+  result. GPU side and probes: `notes/shaders.md`. `compiler/tests/safety/math`
+  still calls it with arbitrary values.
+
+Validation: full native debug passed all 2,515 tests (Vulkan and OpenGL
+probes included). The full web debug run passed 2,415 of 2,416; the one
+failure was the new helper's X4000 on ANGLE D3D11, fixed with a single return,
+after which the three web shader pixel tests (WebGL, WebGL on D3D11, WebGPU),
+the golden/HLSL/SPIR-V checks, engine tests and math fixtures passed on both
+native and web. Other platforms are CI's; no workflow was dispatched.
+
 ## Computed properties and attached component context (2026-10-21)
 
 Owner-approved: user-defined C#-style get/set properties, with the engine using

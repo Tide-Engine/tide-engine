@@ -309,7 +309,8 @@ prefab named after its file, read from its saved file (Unity's Force Text
 serialization) with its prefab instances and variants expanded. A scene the
 editor has unsaved changes to is read from the copy of it the package writes
 as Play starts, `Library/Tide/unsaved/<the scene's path>`, while there is
-one. A TideEntity is
+one; the editor's first scene that was never saved is
+`Library/Tide/unsaved/Untitled.unity`, the scene `UnityEngine.Scenes.Untitled`. A TideEntity is
 an entity of that prefab, Unity's Transform and parent are its own, and its
 Tide components are the game's components the GameObject has: each match
 component is a Unity component (Add Component > Tide), its fields set in the
@@ -344,8 +345,8 @@ prefab or scene has a file's name, that name alone is it too:
 names both.
 Build Settings' first scene loads as Main starts, as a player build starts with
 it, and Unity loads and unloads each scene as the match does, a scene the match
-loads twice as two. In the editor, a scene loaded or unloaded during Play is
-loaded or unloaded in the match too. Each such entity gets a
+loads twice as two. A scene loaded by hand, in the editor or by a script, is
+local: nothing of it reaches the match. Each such entity gets a
 `UnityEngine.Source` component, by which Unity shows it through its own GameObject.
 A message about a prefab gives lines of the Tide text tide made of it, which it
 writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
@@ -368,6 +369,11 @@ whose pass the package adds by itself. In Play, the editor's scene view shows
 Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
 program plays through the page, and hears its microphone, itself.
+
+Unity's own components are a package's where the package says they're one to
+one, in a `unity.json` of its folder (see
+[Packages](../packages/using-and-writing.md#unity-components)):
+with `box3d`, a `Rigidbody` is a Box3D body and a `BoxCollider` a box on it.
 
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the

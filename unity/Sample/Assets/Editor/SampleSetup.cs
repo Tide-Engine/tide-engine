@@ -44,6 +44,7 @@ public static class SampleSetup
         camera.transform.rotation = Quaternion.Euler(42, 0, 0);
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = new Color(0.086f, 0.086f, 0.094f);
+        camera.gameObject.AddComponent<AudioListener>(); // What hears the game's sound (TideAudio)
         var light = new GameObject("Light").AddComponent<Light>();
         light.type = LightType.Directional;
         light.transform.rotation = Quaternion.Euler(50, -30, 0);

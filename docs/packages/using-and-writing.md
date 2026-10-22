@@ -216,6 +216,36 @@ Tide still changes from version to version, so a package can have code for the v
 #endif
 ```
 
+### Unity components
+
+A package can say which of Unity's own components are which of its own, for games made in Unity: a `unity.json` in its folder, which `tide unity` reads for each game that lists the package. Box3D's makes a `Rigidbody` its `Body` and a `BoxCollider` its `Box`. Only components that are one to one belong there, field for field:
+
+```json
+{
+  "unity": {
+    "BoxCollider": {
+      "as": "Box3D.Box",
+      "fields": {
+        "size": "m_Size * absScale",
+        "offset": "m_Center * scale",
+        "sensor": "m_IsTrigger"
+      },
+      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
+      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
+    }
+  }
+}
+```
+
+- Each key of `unity` is a Unity component, as Unity's scene files name it. `as` is the package's component it is.
+- `fields` gives each field of that component from Unity's: its serialized name (`m_IsTrigger`), or `{"from": "m_IsKinematic", "values": {"0": "...", "1": "..."}}` for one whose values become others. A size can be by the GameObject's scale, as Unity's are: `* scale` and `* absScale` (each axis, with its sign or without), `* largestScale`, `* largestScaleXY`, `* largestScaleXZ`, and `* scaleX`, `* scaleY` and `* scaleZ`.
+- `when`, `["m_Direction", "1", "why"]`, says the only value of a field with which it's one to one. With another the component is left out, and a warning says why.
+- `needs` is a component the entity has with it when nothing else gives it one of that type: a collider with no `Rigidbody` is on a static body.
+- `notUnder` names a Unity component that, on a GameObject above it, makes it no one to one.
+- `source` is lines of Tide the game has in a Unity project alone: Box3D's starts a body where its entity's Transform is, and has the Transform follow the body.
+
+A component of the package's own on the GameObject always wins over a Unity one's translation.
+
 ## Editors
 
 The editors' language server analyzes a game with its packages, so completion, errors and go to definition reach into them. A package's file you open is analyzed with the open game that uses it, or else on its own, with what it needs. Packages from git it doesn't have yet are left out until `tide` downloads them.

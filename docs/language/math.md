@@ -87,7 +87,7 @@ And these build values:
 
 - `quaternion.AxisAngle(axis, angle)`
 - `quaternion.Euler(radians)` takes a `float3`, or `quaternion.Euler(x, y, z)` takes three angles in radians. The scalar form equals `quaternion.Euler(float3(x, y, z))`. Both rotate Z first, then X, then Y, Unity's default order.
-- `quaternion.LookRotation(forward, up)`
+- `quaternion.LookRotation(forward, up)` turns +z to `forward` and +y as near `up` as it can go. Neither need be normalized. A zero or nonfinite `forward` gives identity; an `up` with no side to it (zero, nonfinite or along `forward`) gives `FromToRotation(float3(0, 0, 1), forward)`, as Unity does.
 - `quaternion.FromToRotation(from, to)` gives the shortest rotation between two `float3` directions. They need not be normalized. Zero or nonfinite directions give identity; opposite directions use a deterministic perpendicular axis.
 - `float4x4.TRS(translation, rotation, scale)`
 - `float4x4.Translate(translation)`
@@ -99,7 +99,11 @@ var aim = quaternion.FromToRotation(float3(0, 0, 1), target - position);
 var size = float4x4.Scale(float3(2, 1, 0.5));
 ```
 
-`FromToRotation` accepts finite nonzero directions across the full float range. For an exact half-turn, it crosses normalized `from` with the least-aligned cardinal axis, preferring X, then Y, then Z when tied. Both builders work in frags and verts too, with the GPU's usual float rounding.
+`FromToRotation` accepts finite nonzero directions across the full float range. For an exact half-turn, it crosses normalized `from` with the least-aligned cardinal axis, preferring X, then Y, then Z when tied.
+
+`LookRotation`'s result is a unit rotation whose forward is `forward` normalized, across the full float range. Its up is `up` with the part along `forward` taken out. When the cross product of the two normalized is shorter than 1e-5 (Unity's epsilon), they're along one line, or within about 1e-5 radians of it, and there's no side to take the up from: the result is `FromToRotation` from +z instead.
+
+These builders work in frags and verts too, with the GPU's usual float rounding.
 
 ## Operators
 

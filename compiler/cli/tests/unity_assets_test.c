@@ -35,7 +35,7 @@ static bool reads(const unity_sources *s, const char *path, const char *expected
 TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
 {
     unity_sources s;
-    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_FIXTURE, &s));
+    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_FIXTURE, NULL, 0, &s));
     TIDE_CHECK(s.count == 5); // UnityEngine.Source's declaration and the four assets
     // UnityEngine.Source, and the scenes the match has: Build Settings' first one on (Level) loaded as Main starts, and
     // the editor's command to have the scenes it has open
@@ -48,9 +48,7 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
     TIDE_CHECK(strstr(declared, "    command OpenScene\n") != NULL);
     TIDE_CHECK(strstr(declared, "            case 1: scenes.loaded[1] = Scene.Load(UnityEngine.Scenes.Fixture.Level); break;\n") != NULL);
     TIDE_CHECK(strstr(declared, "Scene.Load(Thing)") == NULL); // A prefab is no scene to open
-    // ...and to close one, which the match loaded for it
-    TIDE_CHECK(strstr(declared, "    command(CloseScene close, PlayerID sender) Closing(mut LoadedScenes scenes)\n    {\n"
-                                "        if (sender != scenes.opener || !scenes.loaded.Has(close.asset)) return;\n") != NULL);
+    TIDE_CHECK(strstr(declared, "CloseScene") == NULL); // Scenes loaded by hand during Play are local: none are sent
     // A Unity scene is a Tide scene, whose entities are its prefab's, spawned into it as it loads
     TIDE_CHECK(strstr(declared, "namespace UnityEngine.Scenes.Fixture\n{\n    scene Level { } // Level.unity\n}\n") != NULL);
     TIDE_CHECK(strstr(declared, "    event(Spawned) FillFixture_Level(with UnityEngine.Scenes.Fixture.Level)\n    {\n        Spawn(UnityEngine.SceneContents.Fixture.Level);\n    }\n") != NULL);
@@ -166,15 +164,37 @@ TIDE_TEST(unity_unsaved_scene_read_from_the_editor_copy)
     free(scene);
     TIDE_CHECK(unity_assets_stamp(assets) != saved);
     unity_sources s;
-    TIDE_REQUIRE(unity_assets_read(assets, &s));
+    TIDE_REQUIRE(unity_assets_read(assets, NULL, 0, &s));
     const char *level = text_of(&s, "Assets/Fixture/Level.unity");
     TIDE_CHECK(level && strstr(level, "        Part { length = 4 };\n") && !strstr(level, "length = 9"));
     unity_sources_free(&s);
     TIDE_REQUIRE(sys_remove(copy));
     TIDE_CHECK(unity_assets_stamp(assets) == saved);
-    TIDE_REQUIRE(unity_assets_read(assets, &s));
+    TIDE_REQUIRE(unity_assets_read(assets, NULL, 0, &s));
     level = text_of(&s, "Assets/Fixture/Level.unity");
     TIDE_CHECK(level && strstr(level, "        Part { length = 9 };\n"));
+    unity_sources_free(&s);
+
+    // A scene the editor never saved: its copy is the scene UnityEngine.Scenes.Untitled, Unity's path for it ""
+    scene = sys_read_file(TIDE_UNITY_FIXTURE "/Fixture/Level.unity", &size);
+    TIDE_REQUIRE(scene != NULL);
+    const char *untitled = TIDE_UNITY_SCRATCH "/" UNITY_UNSAVED_FOLDER UNITY_UNTITLED_SCENE;
+    TIDE_REQUIRE(sys_write_file(untitled, scene, size));
+    TIDE_CHECK(unity_assets_stamp(assets) != saved);
+    TIDE_REQUIRE(unity_assets_read(assets, NULL, 0, &s));
+    const char *contents = text_of(&s, UNITY_UNTITLED_SCENE);
+    TIDE_CHECK(contents && strstr(contents, "namespace UnityEngine.SceneContents;\n\nprefab Untitled\n{\n")
+               && strstr(contents, "    entity M_1_k // M#1/k\n"));
+    TIDE_CHECK(s.map && strstr(s.map, "\"path\": \"\", \"scene\": true"));
+    const char *declared = text_of(&s, UNITY_SOURCE_PATH);
+    TIDE_CHECK(declared && strstr(declared, "namespace UnityEngine.Scenes\n{\n    scene Untitled { } // Untitled.unity\n}\n"));
+    unity_sources_free(&s);
+    // ...whose name a saved Assets/Untitled.unity takes: an error that says what to do
+    TIDE_REQUIRE(sys_write_file(TIDE_UNITY_SCRATCH "/Assets/Untitled.unity", scene, size));
+    TIDE_REQUIRE(sys_write_text(TIDE_UNITY_SCRATCH "/Assets/Untitled.unity.meta",
+                                "fileFormatVersion: 2\nguid: 5e1f0c2a9d3b4e6f8a7b6c5d4e3f2a1b\n"));
+    free(scene);
+    TIDE_CHECK(!unity_assets_read(assets, NULL, 0, &s));
     unity_sources_free(&s);
     sys_remove_tree(TIDE_UNITY_SCRATCH);
 }
@@ -188,7 +208,7 @@ TIDE_TEST(unity_unsaved_scene_read_from_the_editor_copy)
 TIDE_TEST(unity_components_as_tide_components)
 {
     unity_sources s;
-    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_COMPONENTS_FIXTURE, &s));
+    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_COMPONENTS_FIXTURE, NULL, 0, &s));
     const char *ship = text_of(&s, "Assets/Ship.prefab");
     TIDE_REQUIRE(ship != NULL);
     TIDE_CHECK(strstr(ship, "    Ship { speed = 2.5, heading = float3(0, 0, 1), tint = Color(1, 0.5, 0, 1), title = \"Flag \\\"one\\\"\", "
@@ -209,11 +229,56 @@ TIDE_TEST(unity_components_as_tide_components)
     unity_sources_free(&s);
 }
 
+// Unity's own physics components as Box3D's, by the box3d package's unity.json (tests/unity_physics, a scene of them on
+// TideEntity GameObjects): sizes by the GameObject's scale, a collider with no Rigidbody a static body, the entity's
+// own Box3D.Body over the one a collider needs, and none of what isn't one to one (a collider under a Rigidbody, a
+// capsule along x), nor of what's off or on a GameObject that's no entity.
+TIDE_TEST(unity_physics_components_as_box3d)
+{
+    const unity_package packages[] = {{TIDE_BOX3D_PACKAGE, "Box3D"}};
+    unity_sources s;
+    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_PHYSICS_FIXTURE, packages, 1, &s));
+    const char *yard = text_of(&s, "Assets/Yard.unity");
+    TIDE_REQUIRE(yard != NULL);
+    // A floor scaled (10, 1, 10), its box (and its centre) by the scale, on a static body
+    TIDE_CHECK(strstr(yard, "        Box3D.Box { size = float3(10, 1, 10), offset = float3(0, 0.25, 0), sensor = false };\n"
+                            "        Box3D.Body { type = Box3D.BodyType.Static };\n") != NULL);
+    // A ball's Rigidbody, and its sphere by the largest scale; the arm under it has no shape and no body
+    TIDE_CHECK(strstr(yard, "        Box3D.Body { type = Box3D.BodyType.Dynamic, gravityScale = 1, linearDamping = 0.25, angularDamping = 0.5 };\n"
+                            "        Box3D.Sphere { radius = 1.5, offset = float3(0, 1.5, 0), sensor = false };\n"
+                            "        entity Arm // Arm\n        {\n            UnityEngine.Source { asset = 0, node = 3 };\n"
+                            "            Transform { localPosition = float3(1, 0, 0), localRotation = quaternion(0, 0, 0, 1), localScale = float3(1, 1, 1) };\n"
+                            "        }\n") != NULL);
+    // A capsule along y: its radius by the larger of x and z, its height by y
+    TIDE_CHECK(strstr(yard, "        Box3D.Capsule { radius = 1, height = 3, offset = float3(0, 0, 0), sensor = false };\n"
+                            "        Box3D.Body { type = Box3D.BodyType.Static };\n") != NULL);
+    // One along x: nothing
+    TIDE_CHECK(strstr(yard, "    entity Log // Log\n    {\n        UnityEngine.Source { asset = 0, node = 5 };\n"
+                            "        Transform { localPosition = float3(-4, 1, 0), localRotation = quaternion(0, 0, 0, 1), localScale = float3(1, 1, 1) };\n"
+                            "    }\n") != NULL);
+    // A trigger, a sensor, on the kinematic body its own Box3D.Body says
+    TIDE_CHECK(strstr(yard, "        Box3D.Body { type = Box3D.BodyType.Kinematic };\n"
+                            "        Box3D.Box { size = float3(3, 2, 0.5), offset = float3(0, 0, 0), sensor = true };\n    }\n") != NULL);
+    // A collider that's off, and one on no entity: nothing
+    TIDE_CHECK(strstr(yard, "        Transform { localPosition = float3(0, 0, -5), localRotation = quaternion(0, 0, 0, 1), localScale = float3(1, 1, 1) };\n    }\n") != NULL);
+    TIDE_CHECK(strstr(yard, "Decor") == NULL);
+    // ...and the package's Tide for a Unity project, a source of the package's: bodies placed by Transforms
+    const char *glue = text_of(&s, "Library/Tide/Unity.Box3D.tide");
+    TIDE_CHECK(glue && strstr(glue, "    system StartAtTransform(mut Body body, Transform transform)\n") != NULL);
+    TIDE_CHECK(s.items[s.count - 1].package && strcmp(s.items[s.count - 1].package, "Box3D") == 0);
+    unity_sources_free(&s);
+    // With no package that translates them, Unity's own components are nothing of Tide's
+    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_PHYSICS_FIXTURE, NULL, 0, &s));
+    yard = text_of(&s, "Assets/Yard.unity");
+    TIDE_CHECK(yard && strstr(yard, "Box3D.Box") == NULL && strstr(yard, "Box3D.Body { type = Box3D.BodyType.Kinematic }") != NULL);
+    unity_sources_free(&s);
+}
+
 // A folder with no prefabs or scenes of TideEntity objects: no prefabs, and a map of no assets.
 TIDE_TEST(unity_assets_none_without_tide_entities)
 {
     unity_sources s;
-    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_FIXTURE "/../MissingFolder", &s));
+    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_FIXTURE "/../MissingFolder", NULL, 0, &s));
     TIDE_CHECK(s.count == 0);
     TIDE_CHECK(s.map && strstr(s.map, "\"assets\": [") != NULL);
     unity_sources_free(&s);

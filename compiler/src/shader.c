@@ -64,7 +64,7 @@ enum {
     H_XXH, H_HASH1, H_HASH2, H_HASH3, H_HASH4,
     H_FADE, H_GRAD2, H_GRAD3, H_PERLIN2, H_PERLIN3, H_SIMPLEX2, H_SIMPLEX3, H_NEAREST, H_CELLULAR2, H_CELLULAR3, // noise.c's
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
-    H_Q_FROM_M3, H_LOOKROTATION_Q, H_FROMTO_UNIT3, H_FROMTO_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
+    H_Q_FROM_M3, H_FROMTO_UNIT3, H_FROMTO_Q, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
     H_RECIPROCAL, H_INVERSE2, H_INVERSE3, H_INVERSE4, H_INT4_LANE,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
@@ -1117,10 +1117,6 @@ static const char *const helper_texts[H_COUNT] = {
                     "    if (s == 0.0) { s = 1.0; }\n"
                     "    return vec4((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);\n"
                     "}\n",
-    [H_LOOKROTATION_Q] = "vec4 tide_lookrotation_q(vec3 f, vec3 u) {\n"
-                         "    vec3 t = tide_normalize3(cross(u, f));\n"
-                         "    return tide_q_from_m3(mat3(t, cross(f, t), f));\n"
-                         "}\n",
     [H_FROMTO_UNIT3] = "vec3 tide_fromto_unit3(vec3 v) {\n"
                        "    if ((floatBitsToInt(v.x) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.y) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.z) & 0x7f800000) == 0x7f800000) { return vec3(0.0); }\n"
                        "    float largest = max(max(abs(v.x), abs(v.y)), abs(v.z));\n"
@@ -1147,6 +1143,20 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float sine = sqrt(0.5 * (1.0 - d));\n"
                    "    return tide_normalize_q(vec4(scaled * (sine / size), (largest * size) / (2.0 * sine)));\n"
                    "}\n",
+    // After FromTo, its fallback when up gives no side. One return: ANGLE's
+    // D3D11 compiler warns (X4000) of an early one returning FromTo's value.
+    [H_LOOKROTATION_Q] = "vec4 tide_lookrotation_q(vec3 f, vec3 u) {\n"
+                         "    vec3 z = tide_fromto_unit3(f);\n"
+                         "    vec3 side = cross(tide_fromto_unit3(u), z);\n"
+                         "    vec4 q = vec4(0.0, 0.0, 0.0, 1.0);\n"
+                         "    if (dot(side, side) < 1e-10) {\n"
+                         "        q = tide_fromto_q(vec3(0.0, 0.0, 1.0), f);\n"
+                         "    } else {\n"
+                         "        vec3 y = tide_normalize3(cross(z, tide_normalize3(side)));\n"
+                         "        q = tide_normalize_q(tide_q_from_m3(mat3(cross(y, z), y, z)));\n"
+                         "    }\n"
+                         "    return q;\n"
+                         "}\n",
     [H_M3_FROM_Q] = "mat3 tide_m3_from_q(vec4 q) {\n"
                     "    float x = q.x + q.x;\n"
                     "    float y = q.y + q.y;\n"
@@ -1484,6 +1494,7 @@ static void need(emit *em, const int h)
     case H_LOOKROTATION_Q:
         need(em, H_NORMALIZE3);
         need(em, H_Q_FROM_M3);
+        need(em, H_FROMTO_Q);
         break;
     case H_FROMTO_UNIT3:
         need(em, H_NORMALIZE3);

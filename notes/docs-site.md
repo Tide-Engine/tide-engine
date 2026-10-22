@@ -1,5 +1,40 @@
 # The docs site
 
+## Example startup smoke and late scrolling (2026-10-22)
+
+Build run 39790751086 built the site and passed exports/SEO/HTTP checks, then
+timed out at draw3d's "starts in view" assertion. Its log contains no example
+status or frame geometry, so the hosted cause is not established. The unchanged
+smoke passes locally on Windows and Linux Chrome 155, including a one-CPU Linux
+run and a Windows run with 12x CPU throttling.
+
+The test now reselects the example and keeps its viewport on screen while waiting
+for automatic startup, covering late layout changes or scroll restoration after
+the original single scroll. It still requires iframe.shown and actual draw calls
+within the existing guards. An unavailable example fails immediately; a timeout
+reports scroll position, viewport bounds, visible status and each frame's source,
+document readiness, start function and draw count. No site/runtime behavior or
+timeout changed.
+
+A controlled delayed scroll-to-top reproduces the old exact 20-second draw3d
+timeout with scrollY=0, its viewport below the screen and no frames; the revised
+check passes the same probe. This demonstrates the test race, not proof of the
+original hosted cause. The revised complete WebGL examples/gallery/playground
+smoke, all five playground compiler integration tests, focused draw3d WebGPU
+smoke and all seven exports/SEO/access/admin HTTP tests pass (Node 24.19.0).
+The production build passes and Svelte check reports no errors or warnings.
+
+Integration with origin/dev 3a880ea7 is clean. Its shader/math dependency change
+was rebuilt into all staged docs examples, samples and standalone games before
+rebuilding the production site. All seven HTTP checks pass again. The first
+merged browser run passed every rendering/playground assertion but failed at
+Windows profile removal (EPERM). Teardown now waits for the child's close event,
+including inherited pipes, and awaits asynchronous profile removal with the
+same five retries and 200 ms retry delay. Its five-second shutdown fallback is
+unchanged. The final full WebGL smoke and five compiler integration tests pass
+with that teardown. This task changes only the docs runner and plugin packaging;
+full native/web engine suites were not rerun and no workflow was dispatched.
+
 ## Schedule display grouped by stage (2026-10-22)
 
 The schedule guide groups Steer and Expire together in stage 1 and separates

@@ -17,12 +17,7 @@ public class UnsavedTests
     [UnityTest]
     public IEnumerator AnUnsavedChangeIsWhatTideBuilds()
     {
-        var until = EditorApplication.timeSinceStartup + 30;
-        while (!TideBuildService.Running)
-        {
-            Assert.Less(EditorApplication.timeSinceStartup, until, "tide's building for the editor");
-            yield return null;
-        }
+        yield return Running();
         var scene = EditorSceneManager.OpenScene(Scene, OpenSceneMode.Single);
         SerializedObject Spinner()
         {
@@ -62,6 +57,47 @@ public class UnsavedTests
         Assert.IsTrue(TideBuildService.Sync(), "tide has the scene as saved to build");
         yield return Synced();
         StringAssert.Contains("Spinner { speed = 1.5", File.ReadAllText(Text));
+    }
+
+    // A scene never saved is the game's too: its copy is the Tide scene Untitled, which goes with the scene.
+    [UnityTest]
+    public IEnumerator AnUntitledSceneIsTheGames()
+    {
+        const string untitled = "Library/Tide/unsaved/Untitled.unity";
+        const string text = "Library/Tide/prefabs/Untitled.unity.tprefab";
+        yield return Running();
+        EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        try
+        {
+            var totem = new GameObject("Totem");
+            totem.AddComponent<Tide.TideEntity>();
+            var spinner = new SerializedObject(totem.AddComponent(System.Type.GetType("Tide.Game.Spinner, Tide.Game")));
+            spinner.FindProperty("speed").floatValue = 4.5f;
+            spinner.ApplyModifiedProperties();
+            yield return Synced();
+            Assert.IsTrue(File.Exists(untitled), "the untitled scene's copy");
+            Assert.IsTrue(File.Exists(text), "which tide read");
+            StringAssert.Contains("prefab Untitled", File.ReadAllText(text));
+            StringAssert.Contains("Spinner { speed = 4.5", File.ReadAllText(text));
+            StringAssert.Contains("\"path\": \"\", \"scene\": true", File.ReadAllText("Library/Tide/unity.json"), "Unity's path for it");
+        }
+        finally
+        {
+            EditorSceneManager.OpenScene(Scene, OpenSceneMode.Single);
+        }
+        Assert.IsFalse(File.Exists(untitled), "gone with the scene");
+        yield return Synced();
+        Assert.IsFalse(File.Exists(text));
+    }
+
+    static IEnumerator Running()
+    {
+        var until = EditorApplication.timeSinceStartup + 30;
+        while (!TideBuildService.Running)
+        {
+            Assert.Less(EditorApplication.timeSinceStartup, until, "tide's building for the editor");
+            yield return null;
+        }
     }
 
     static IEnumerator Synced()

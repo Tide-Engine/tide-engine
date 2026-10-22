@@ -59,7 +59,7 @@ namespace Tide
             source.playOnAwake = false;
             source.spatialBlend = 0f;
             source.bypassEffects = false;
-            if (!source.isPlaying) source.Play();
+            Update();
             AudioSettings.OnAudioConfigurationChanged += ConfigurationChanged;
         }
 
@@ -76,6 +76,22 @@ namespace Tide
             }
             had?.Audio(IntPtr.Zero, null, 0, 0, 0);
             StopMicrophone();
+            playing = false;
+            if (this != null && TryGetComponent(out AudioSource source)) source.Stop();
+        }
+
+        // With no AudioListener nobody hears it, and Unity says so in the Console each block a source plays: the source
+        // plays while one listens, looked for each frame
+        bool playing; // As this said: a source's isPlaying is false a while after Play
+
+        void Update()
+        {
+            var heard = library != null && FindAnyObjectByType<AudioListener>() != null; // And while there's a game
+            if (heard == playing) return;
+            playing = heard;
+            var source = GetComponent<AudioSource>();
+            if (heard) source.Play();
+            else source.Stop();
         }
 
         void ConfigurationChanged(bool deviceWasChanged)

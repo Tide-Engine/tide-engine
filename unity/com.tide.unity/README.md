@@ -60,17 +60,22 @@ variants work as in Unity: what an instance changes goes over its prefab's,
 field by field. tide reads saved files, so save a prefab to put it in the game.
 A scene you haven't saved is Play's as you have it: Play writes a copy of each
 open scene with unsaved changes, which tide reads in its place, and starts
-once tide has built them. A GameObject's name can be anything, `#` and `/`
+once tide has built them. A new scene you've never saved is the game's too, as
+the scene `UnityEngine.Scenes.Untitled`, until you save it under a name. With
+Prefab Mode's Auto Save off, Play has the prefab as last saved, as Unity's own
+instances of it do. A GameObject's name can be anything, `#` and `/`
 included.
 
 The match decides which scenes are loaded, and Unity follows: Build Settings'
 first scene loads as Main starts, as a player build starts with it, and the
 game's code loads and unloads the others (`Scene.Load(Level)`), which Unity
 loads beside the rest and unloads as the match does. In the editor, Play has
-the scenes you have open instead, and makes a `TideRunner` if they have none;
-a scene you load or unload during Play, in the Hierarchy or from a script, is
-loaded or unloaded in the match too. A scene the match loads twice is two of
-Unity's, each with its own GameObjects. Put every scene the match loads in
+the scenes you have open instead, and makes a `TideRunner` if they have none.
+The match's scenes are Tide's to load: a scene you load by hand during Play, in
+the Hierarchy or from a script, is local, apart from the match, and no entity
+shows through its GameObjects. A scene of the match's that something else
+unloads is loaded again. A scene the match loads twice is two of Unity's, each
+with its own GameObjects. Put every scene the match loads in
 Build Settings, for players.
 
 Packages work as in any Tide game: run `tide add rooms` (or a git URL) in any
@@ -120,6 +125,12 @@ that GameObject reads the entity's components as Tide's views see them this
 frame: `view.Get<Tide.Game.Health>()`. `TideRunner.Current.Send(command)`
 sends a command, as local code's `Send`.
 
+Tide's devices are what Unity's keyboard, mouse, gamepad and touches say. For
+input of the game's own on top (an on-screen stick, a bot, a replay, a test),
+`TideRunner.EditInput` is called each frame after Unity's devices are read,
+with what Tide's devices are about to say:
+`runner.EditInput += (ref TideEmbedInput input) => input.Hold("space");`.
+
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen
@@ -145,6 +156,15 @@ What the game's Tide views draw with `Draw` is drawn in Unity's frame while
 the runner's "Draw Tide" is on: 2D, text, 3D with the camera's depth, render
 targets and the game's own shaders, in Unity's built-in render pipeline and in
 URP.
+
+Unity's own physics components are a physics package's, where the game has one
+that says so: with `box3d`, a `Rigidbody` is a Box3D body and a `BoxCollider`,
+`SphereCollider` or Y-axis `CapsuleCollider` its shape, sized by the
+GameObject's scale, and a collider with no `Rigidbody` is static; with `box2d`,
+the 2D ones are Box2D's. Unity draws and edits them as it does its own, and the
+GameObject shows where the body is. What isn't one to one (a collider under
+another GameObject's `Rigidbody`, a capsule along X) gets a warning and is left
+out. See the [Box3D](https://tide-engine.dev/packages/box3d) package's page.
 
 The game's sound (`Audio.Play`, `Sound` fields, its `audio` declarations)
 plays through Unity's audio: an AudioSource under the runner, "Tide Audio", so

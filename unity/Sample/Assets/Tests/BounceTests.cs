@@ -111,26 +111,41 @@ public sealed unsafe class BounceTests
         Assert.AreEqual(0, Open(Bonus), "both unloaded as the match did");
     }
 
-    // A scene loaded during Play by others than the match (the editor, the game's own C#) is the match's too, and one
-    // they unload goes from the match: loaded again, it's back.
+    // A scene loaded by hand during Play (in the editor, or by the game's own C#) is local: the match doesn't have it,
+    // and its Totem shows no entity. The match loading Bonus loads its own beside it, whose Totem does, and which a
+    // local scene's going leaves; the match unloading it leaves the local one.
     [UnityTest]
-    public IEnumerator ScenesLoadedDuringPlayAreTheMatchs()
+    public IEnumerator ScenesLoadedByHandAreLocal()
     {
         SceneManager.LoadScene(Bounce);
         yield return null;
         var runner = Object.FindAnyObjectByType<TideRunner>();
         yield return Connected(runner);
-        yield return Until(() => false, 0.5f); // The scenes open as Play started are sent
-        for (var round = 0; round < 2; round++)
-        {
-            yield return SceneManager.LoadSceneAsync(Bonus, LoadSceneMode.Additive);
-            yield return Until(() => Totem() != null, 10f);
-            Assert.IsNotNull(Totem(), $"the match has Bonus's entities, shown in the scene loaded (round {round})");
-            Assert.AreEqual(1, Open(Bonus), "in that one");
-            yield return SceneManager.UnloadSceneAsync(SceneManager.GetSceneByPath(Bonus));
-            yield return Until(() => false, 1f);
-            Assert.AreEqual(0, Open(Bonus), "unloaded, and not loaded again for the match");
-        }
+        yield return SceneManager.LoadSceneAsync(Bonus, LoadSceneMode.Additive);
+        var local = SceneManager.GetSceneAt(SceneManager.sceneCount - 1);
+        Assert.AreEqual(Bonus, local.path);
+        yield return Until(() => false, 1f);
+        Assert.AreEqual(0, Totems().Count, "the local Bonus's Totem shows no entity");
+
+        Assert.IsTrue(runner.Send(new Tide.Game.ShowBonus { on = true }));
+        yield return Until(() => Totems().Count == 1 && Open(Bonus) == 2, 10f);
+        Assert.AreEqual(2, Open(Bonus), "the match's Bonus, beside the local one");
+        var totem = Totems();
+        Assert.AreEqual(1, totem.Count, "one Totem shows the match's entity");
+        Assert.IsTrue(totem[0].gameObject.scene != local, "the match's Bonus's");
+
+        yield return SceneManager.UnloadSceneAsync(local);
+        yield return Until(() => false, 1f);
+        Assert.AreEqual(1, Open(Bonus), "the local one went alone");
+        Assert.AreEqual(1, Totems().Count, "and the match's Totem still shows its entity");
+
+        yield return SceneManager.LoadSceneAsync(Bonus, LoadSceneMode.Additive);
+        local = SceneManager.GetSceneAt(SceneManager.sceneCount - 1);
+        runner.Send(new Tide.Game.ShowBonus { on = false });
+        yield return Until(() => Open(Bonus) == 1, 10f);
+        Assert.AreEqual(1, Open(Bonus), "the match let its Bonus go");
+        Assert.IsTrue(local.isLoaded, "and the local one stays");
+        Assert.AreEqual(0, Totems().Count);
     }
 
     // With Bonus alone open, the match has it rather than Build Settings' first, Bounce, which it loaded as Main
@@ -343,12 +358,38 @@ public sealed unsafe class BounceTests
         var runner = Object.FindAnyObjectByType<TideRunner>();
         var audio = runner.GetComponentInChildren<TideAudio>();
         Assert.IsNotNull(audio, "the runner plays the game's sound");
-        Assert.IsTrue(audio.GetComponent<AudioSource>().isPlaying, "through an AudioSource");
+        var source = audio.GetComponent<AudioSource>();
+        yield return Until(() => source.isPlaying, 2f); // Once the camera's AudioListener is there
+        Assert.IsTrue(source.isPlaying, "through an AudioSource");
         var loudest = 0f;
         yield return Until(() => (loudest = Mathf.Max(loudest, audio.TakeLoudest())) > 0.1f, 10f);
         Assert.Greater(audio.Reads, 0, "Unity's audio thread reads the mixer");
         Assert.Greater(loudest, 0.1f, "the bonk was heard as the ball landed");
         Assert.Less(loudest, 1f);
+    }
+
+    // The game's own input on top of Unity's devices (an on-screen stick, a bot, a replay): D held through
+    // TideRunner.EditInput rolls this machine's ball to the right, as the key would.
+    [UnityTest]
+    public IEnumerator TheGamesOwnInputRollsTheBall()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        TideEntityView ball = null;
+        yield return Until(() => (ball = MyBall()) != null, 10f);
+        Assert.IsNotNull(ball, "the player's ball shows");
+        yield return Until(() => false, 1.5f); // On the floor
+        var from = ball.transform.position.x;
+        var held = true;
+        TideRunner.InputEdit right = (ref TideEmbedInput input) => { if (held) Assert.IsTrue(input.Hold("d")); };
+        runner.EditInput += right;
+        yield return Until(() => ball.transform.position.x > from + 1f, 5f);
+        held = false;
+        runner.EditInput -= right;
+        Assert.Greater(ball.transform.position.x, from + 1f, "the ball rolled right");
+        var input = new TideEmbedInput();
+        Assert.IsFalse(input.Hold("no such key"), "a key Tide's keyboard hasn't");
     }
 
     // A command's text reaches the match, a command goes to the entity a GameObject shows, and a singleton is live.
