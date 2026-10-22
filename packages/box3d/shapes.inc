@@ -522,3 +522,13 @@ void b3t_topology(tide_rows *rows, physics *p)
     tide_scratch_reset(mark);
     free(bytes);
 }
+
+void b3t_check_bodies(tide_rows *rows, physics *p)
+{
+    if (p->topology_changed) return;
+    const int32_t *lo=tide_rows_ints(rows,0,offsetof(body,id));
+    const int32_t *hi=tide_rows_ints(rows,0,offsetof(body,id)+4);
+    for(uint32_t i=0;i<tide_rows_count(rows);i++) {
+        if (!lo[i] && !hi[i]) { p->topology_changed=true; return; }
+    }
+}

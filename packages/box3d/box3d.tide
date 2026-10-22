@@ -12,7 +12,7 @@
 namespace Box3D;
 
 // Where the package's systems are in a tick: all of them are one stage, in
-// the order they're written in here. A system of a game's that has to write
+// the order of their explicit stage offsets. A system of a game's that has to write
 // into this tick's step says so with [Before(PhysicsStages.Step)]: it then
 // runs before any of these, so what it writes into a body is what this tick
 // steps from. Any other runs after them, as a package's files compile before
@@ -1753,3 +1753,9 @@ extern system CheckTopology(mut Physics physics);
 [Stage(PhysicsStages.Step, 18)]
 [NativeName("b3t_apply_filters")]
 extern system ApplyFilters(CollisionFilter filter, mut Physics physics);
+
+// A remove/add can return an entity to exactly the same archetype and row.
+// Its fresh Body still has id zero, so the old owner must be pruned.
+[Stage(PhysicsStages.Step, 0)]
+[NativeName("b3t_check_bodies")]
+extern system CheckBodies(Body body, mut Physics physics);

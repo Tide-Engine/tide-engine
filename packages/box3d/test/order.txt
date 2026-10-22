@@ -1,5 +1,6 @@
 BeforeTheStep
 Box3D.CheckTopology
+Box3D.CheckBodies
 Unordered
 BeforeBegin
 Box3D.Begin

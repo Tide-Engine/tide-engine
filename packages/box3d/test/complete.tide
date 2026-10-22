@@ -23,7 +23,7 @@ singleton Request
 {
     Entity removeBody; Entity removeBox; Entity removeSphere; Entity removeCapsule;
     Entity removeMesh; Entity removeHull; Entity removeHeight; Entity removePart;
-    Entity removeSettings; Entity removeFilter;
+    Entity removeSettings; Entity removeFilter; Entity replaceBody;
     bool capture; ViewTime time;
 }
 singleton Observed
@@ -94,6 +94,12 @@ event(Spawned) Setup(with Main, mut Objects objects)
 [Before(PhysicsStages.Step)]
 system Remove(mut Request request)
 {
+    if (request.replaceBody != default)
+    {
+        request.replaceBody.Remove(Body);
+        request.replaceBody.Add(Body { type = BodyType.Dynamic, position = float3(30,3,0) });
+        request.replaceBody = default;
+    }
     request.removeBody.Remove(Body);
     request.removeBox.Remove(Box);
     request.removeSphere.Remove(Sphere);
