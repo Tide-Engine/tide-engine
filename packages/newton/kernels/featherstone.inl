@@ -7102,10 +7102,6 @@ static WP_FORCEINLINE void integrate_generalized_joints_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_integrate_generalized_joints *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     integrate_generalized_joints_cpu_forward_tasks<false>(dim, _wp_args);
 }
@@ -7187,10 +7183,6 @@ static WP_FORCEINLINE void compute_com_transforms_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_compute_com_transforms *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->body_com.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->body_X_com.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)));
     if (wp_linear_contiguous)
@@ -7506,10 +7498,6 @@ static WP_FORCEINLINE void convert_free_distance_joint_qd_internal_to_public_cpu
     wp::launch_bounds_t<1> *dim,
     wp_args_convert_free_distance_joint_qd_internal_to_public *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_type.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_parent.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_X_p.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_q.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_com.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->joint_qd_internal.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->joint_qd_public.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -7601,10 +7589,6 @@ static WP_FORCEINLINE void zero_kinematic_body_forces_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_zero_kinematic_body_forces *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->body_flags.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->body_f.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)));
     if (wp_linear_contiguous)
@@ -7709,10 +7693,6 @@ static WP_FORCEINLINE void eval_dense_solve_batched_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_dense_solve_batched *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->L_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->L_dim.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->b_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->A.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->L.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->b.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->x.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->tmp.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -7978,10 +7958,6 @@ static WP_FORCEINLINE void eval_rigid_jacobian_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_rigid_jacobian *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->articulation_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_end.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_J_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_ancestor.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_S_s.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)) & (_wp_args->J.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -8111,10 +8087,6 @@ static WP_FORCEINLINE void compute_body_parent_f_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_compute_body_parent_f *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->body_q_com.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_solve_origin.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->body_f_s.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)) & (_wp_args->body_ft_s.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)) & (_wp_args->body_f_ext.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)) & (_wp_args->body_parent_f.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)));
     if (wp_linear_contiguous)
@@ -8262,10 +8234,6 @@ static WP_FORCEINLINE void convert_free_distance_joint_f_public_to_internal_cpu_
     wp::launch_bounds_t<1> *dim,
     wp_args_convert_free_distance_joint_f_public_to_internal *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_type.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_f_public.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->joint_f_internal.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -8396,10 +8364,6 @@ static WP_FORCEINLINE void eval_rigid_fk_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_rigid_fk *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     eval_rigid_fk_cpu_forward_tasks<false>(dim, _wp_args);
 }
@@ -8556,10 +8520,6 @@ static WP_FORCEINLINE void compute_spatial_inertia_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_compute_spatial_inertia *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->body_inertia.strides[0] == (int)sizeof(wp::mat_t<3, 3, wp::float32>)) & (_wp_args->body_mass.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->body_I_m.strides[0] == (int)sizeof(wp::mat_t<6, 6, wp::float32>)));
     if (wp_linear_contiguous)
@@ -8966,10 +8926,6 @@ static WP_FORCEINLINE void convert_free_distance_joint_f_internal_to_public_cpu_
     wp::launch_bounds_t<1> *dim,
     wp_args_convert_free_distance_joint_f_internal_to_public *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_type.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_parent.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_articulation.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_mask.strides[0] == (int)sizeof(bool)) & (_wp_args->joint_X_p.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_q.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_q_com.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->joint_f.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -9147,10 +9103,6 @@ static WP_FORCEINLINE void eval_articulation_fk_with_velocity_conversion_cpu_for
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_articulation_fk_with_velocity_conversion *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     eval_articulation_fk_with_velocity_conversion_cpu_forward_tasks<false>(dim, _wp_args);
 }
@@ -9276,10 +9228,6 @@ static WP_FORCEINLINE void zero_kinematic_joint_qdd_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_zero_kinematic_joint_qdd *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->body_flags.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qdd.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -9595,10 +9543,6 @@ static WP_FORCEINLINE void convert_free_distance_joint_qd_public_to_internal_cpu
     wp::launch_bounds_t<1> *dim,
     wp_args_convert_free_distance_joint_qd_public_to_internal *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_type.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_parent.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_X_p.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_q.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_com.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->joint_qd_public.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->joint_qd_internal.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -9706,10 +9650,6 @@ static WP_FORCEINLINE void eval_rigid_mass_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_rigid_mass *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->articulation_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_end.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_M_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->body_I_s.strides[0] == (int)sizeof(wp::mat_t<6, 6, wp::float32>)) & (_wp_args->M.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -9832,10 +9772,6 @@ static WP_FORCEINLINE void convert_body_force_com_to_origin_cpu_forward_dispatch
     wp::launch_bounds_t<1> *dim,
     wp_args_convert_body_force_com_to_origin *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->body_q.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_X_com.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_f_ext.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)));
     if (wp_linear_contiguous)
@@ -9970,10 +9906,6 @@ static WP_FORCEINLINE void eval_dense_gemm_batched_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_dense_gemm_batched *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->m.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->n.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->p.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->A_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->B_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->C_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->A.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->B.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->C.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -10170,10 +10102,6 @@ static WP_FORCEINLINE void reduce_mimic_forces_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_reduce_mimic_forces *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->articulation_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_end.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_mimic_joint.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_mimic_coeffs.strides[0] == (int)sizeof(wp::vec_t<2, wp::float32>)) & (_wp_args->joint_tau.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->joint_tau_reduced.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -10590,10 +10518,6 @@ static WP_FORCEINLINE void reduce_mimic_inertia_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_reduce_mimic_inertia *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->articulation_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_end.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_H_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_H_rows.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->articulation_dof_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_mimic_joint.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_mimic_coeffs.strides[0] == (int)sizeof(wp::vec_t<2, wp::float32>)) & (_wp_args->joint_armature.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->H.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->H_reduced.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -10771,10 +10695,6 @@ static WP_FORCEINLINE void accumulate_free_distance_joint_f_to_body_force_cpu_fo
     wp::launch_bounds_t<1> *dim,
     wp_args_accumulate_free_distance_joint_f_to_body_force *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_type.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_f_public.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->body_f_ext.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)));
     if (wp_linear_contiguous)
@@ -10882,10 +10802,6 @@ static WP_FORCEINLINE void eval_dense_cholesky_batched_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_dense_cholesky_batched *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->A_starts.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->A_dim.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->R_starts.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->A.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->R.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->L.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -11001,10 +10917,6 @@ static WP_FORCEINLINE void correct_free_distance_body_pose_from_world_twist_cpu_
     wp::launch_bounds_t<1> *dim,
     wp_args_correct_free_distance_body_pose_from_world_twist *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_indices.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->body_com.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->body_q_in.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_qd_out.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)) & (_wp_args->body_q_out.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)));
     if (wp_linear_contiguous)
@@ -11233,10 +11145,6 @@ static WP_FORCEINLINE void reconstruct_free_distance_joint_q_from_body_pose_cpu_
     wp::launch_bounds_t<1> *dim,
     wp_args_reconstruct_free_distance_joint_q_from_body_pose *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_indices.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_parent.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_q_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_X_p.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->joint_X_c.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_q.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->joint_q.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -11417,10 +11325,6 @@ static WP_FORCEINLINE void copy_kinematic_joint_state_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_copy_kinematic_joint_state *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_child.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->body_flags.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_q_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_q_in.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->joint_qd_in.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->joint_q_out.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->joint_qd_out.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -11737,10 +11641,6 @@ static WP_FORCEINLINE void eval_rigid_tau_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_rigid_tau *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     eval_rigid_tau_cpu_forward_tasks<false>(dim, _wp_args);
 }
@@ -11873,10 +11773,6 @@ static WP_FORCEINLINE void eval_articulation_fk_with_velocity_conversion_from_jo
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_articulation_fk_with_velocity_conversion_from_joint *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     eval_articulation_fk_with_velocity_conversion_from_joint_cpu_forward_tasks<false>(dim, _wp_args);
 }
@@ -12017,10 +11913,6 @@ static WP_FORCEINLINE void expand_mimic_accelerations_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_expand_mimic_accelerations *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->joint_qd_start.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_mimic_joint.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->joint_mimic_coeffs.strides[0] == (int)sizeof(wp::vec_t<2, wp::float32>)) & (_wp_args->joint_qdd.strides[0] == (int)sizeof(wp::float32)));
     if (wp_linear_contiguous)
@@ -12245,10 +12137,6 @@ static WP_FORCEINLINE void eval_rigid_id_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_rigid_id *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     eval_rigid_id_cpu_forward_tasks<false>(dim, _wp_args);
 }

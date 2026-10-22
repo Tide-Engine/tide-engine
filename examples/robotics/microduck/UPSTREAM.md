@@ -1,4 +1,4 @@
-# Pinned MicroDuck walk-model conversion
+# Pinned MicroDuck model and collision provenance
 
 Source: [Pollen Robotics microduck_rl](https://github.com/pollen-robotics/microduck_rl),
 revision `b02fdea4902c2b93b7d34a83a6f05da4ececb7d3`. Copyright 2026 Pollen
@@ -11,15 +11,43 @@ revision, without edits or newline conversion:
 | `upstream/scene_walk.xml` | `src/mjlab_microduck/robot/microduck/scene_walk.xml` | `6e23146c1a5025473b55ec94cbe37b08104ca388b7eb005ea277f8230736c8be` |
 | `upstream/LICENSE` | `LICENSE` | `2d3fd9ffffa70a4307498ec630b14a6b4731e010f8ddda92686eaf65733c2dfe` |
 
-The original MJCF descriptions and the transformed model data are
+The original MJCF descriptions and the transformed inertial/joint `model.tide` are
 Apache-2.0; the complete upstream license is retained in `upstream/LICENSE`.
 Upstream's pinned [LICENSE-MODELS.md](https://github.com/pollen-robotics/microduck_rl/blob/b02fdea4902c2b93b7d34a83a6f05da4ececb7d3/LICENSE-MODELS.md)
 explicitly separates XML/configuration/data from its CC BY-NC-SA 4.0 STL
-meshes. No upstream STL files are included, read, converted or sampled for
-geometry. Original XML references to absent mesh files are retained as
-provenance; this converter never opens them.
+meshes. The new mesh-derived collision support data is **CC BY-NC-SA 4.0**;
+see [`LICENSE-COLLISIONS.md`](LICENSE-COLLISIONS.md) and
+[`README-COLLISIONS.md`](README-COLLISIONS.md) for attribution, source hashes,
+the frozen data and its exporter. Upstream STL geometry was read, sampled and
+converted privately for that data. Raw STL files are not redistributed.
+The released neural model and code retain their separate existing licenses.
+The XML-only `tools/convert.py` still never opens meshes; its source references
+and Apache-2.0 inertial/joint output are distinct from the collision export.
 
 ## Original appearance and collision proxies
+
+The learned controller separately vendors the released Apache-2.0 VelStand v8
+model at Hugging Face revision `665ae4eb20bfe13bca1ef4ea6d4bb6b4a096e448`.
+`policy/README.md` records its original ONNX checksum, model card, manifest,
+exporter, graph and independent ONNX Runtime comparisons. The weights are
+unchanged. `policy.tide` implements the 61-slot input and 50 Hz inference,
+with target scaling/filtering from hardware source
+`942e58e3aa6dbb28e7037203fff11866122c7567`. BAM M6 parameters follow the
+training dependency `62bd8ce12154340be97e06f7f41a0ca8f116d967`. Rounded policy
+HOME is kept separate from precise model STAND. This port omits backlash,
+sensor/actuator delay and the daemon's separate limp/pose recovery wrapper.
+Inference agreement does not establish locomotion or recovery transfer. The
+default game still uses this hardware/BAM profile and the released weights;
+the scratch official CPU no-BAM rehearsal is a separate diagnostic profile.
+
+The integrated native/WASI probes of the fixed 174-collider model preserve W/S travel
+and pass seeded prone, side and supine recoveries. **D/right turning remains
+weak; arbitrary-fall recovery and reliable directional turning are unvalidated.**
+The [example README](README.md) gives the measured results and limits. Seeded
+success is not proof of arbitrary-fall recovery, hardware fidelity or exact
+training identity. Earlier no-BAM/61-sphere recovery failures describe the
+previous model. Geometry, self-contact, friction, limits and actuator/delay
+behavior remain differences between the game and the upstream training plant.
 
 The casings, camera/servo details and broad feet in `visuals.tide` are original
 procedural geometry. Appearance references are Pollen Robotics'
@@ -31,29 +59,96 @@ No photographs or photo textures are distributed with the example. These
 references document how the appearance was authored; the XML/data license
 does not describe the press photographs or the separate STL assets.
 
-The 61 sphere proxies per duck in `sandbox.tide` are separately authored
-estimates covering all 15 bodies, based on the original visual geometry and
-source link frames. They are not imported collision meshes or measured casing
-boundaries. Six marked spheres per foot approximate a 72 × 43 mm sole. Their
+The fixed model in `collisions.tide` contains 174 spheres per
+duck: 131 mesh-derived support spheres on 13 nonfoot bodies, 26 source-inscribed
+internal cores, 16 original foot-body proxies, then one appended procedural
+trunk-casing core. Including the floor and balls, the scene has 353 colliders.
+One constant model is used for walking, recovery and grabbing.
+The sampled nonfoot support error of the mesh-derived subset is approximately
+5.5 mm (maximum 5.542759 mm); it is not
+an exact source hull or a guarantee over every surface direction. The cores
+add interior volume, with two per nonfoot body at least 2 mm inward of the
+baseline support envelope. Those 26 cores retain their source-inscribed
+certificates. The additional body-0 core at `(.004, 0, -.006)` m, radius
+`.0115` m, approximates the visible black case. It is not source-hull-inscribed
+and expands selected support by 6.67484 mm; it is outside the source support
+certificate. The targeted private pick/prop regression fails three assertions
+on 173 spheres and passes on 174, including a point 2.5 mm inside the case and
+the ray hit. This is a narrow static-coverage check; it does not cover every
+rendered surface. Some visible trunk/head pointer positions can still miss.
+The wider interaction checks are listed below.
+Source hashes and fit provenance identify the fixed data;
+they do not establish exact training collision/material identity. The 17 named
+training contact-dimension overrides must not be generalized to all 70 robot
+collision geoms.
+
+Feet retain the original approximate 16 proxies, including 12 soles. Six marked
+spheres per foot approximate a 72 × 43 mm sole. Their
 original-frame centres are
 `(shift + x * 0.025, -0.0138146, -0.0140852 + side * 0.011)` metres, with
 `x = -1, 0, 1`, `side = -1, 1`, radius `0.010` m and `shift = -0.005` m
 on the left foot or `0.005` m on the right. Their bottom tangencies retain
-the XML foot site's original-frame Y coordinate `-0.0238146` m. Other spheres
-cover the ankle, leg, trunk, neck and head visuals approximately.
+the XML foot site's original-frame Y coordinate `-0.0238146` m. The four other
+foot-body spheres retain their earlier approximate ankle/foot coverage.
 
 The game converts each proxy into the principal body frame using the
 relationship below. It adds four original loose sphere props and a static
 infinite plane at world Y=0; the drawn floor covers only 4 × 3 m. All game
-colliders use stiffness 5600, damping 3, friction damping 1 and friction 0.8.
-The Newton package evaluates its actual upstream compliant rigid-contact
-kernel, with regularized friction and no static-friction constraint, at four
-substeps per 200 Hz game tick. Matching groups suppress each duck's internal
-collisions. These contact proxies, original visuals and gameplay material
+colliders use stiffness 5600, damping 3, friction damping 1 and explicitly opt
+into `ContactFriction.Coulomb`. Soles, floor and balls use friction 0.8;
+nonsole duck spheres use 0. The package's public default remains
+`ContactFriction.Regularized`. Both shapes must opt into Coulomb; its pair
+coefficient is the geometric mean. The upstream compliant normal response is
+unchanged. Joint and contact friction impulses share Newton's H/L mass solve
+in 16 fixed interleaved sweeps, with a fixed 32-iteration quadratic contact
+block bracket and no persistent solver state. The joint-only path retains
+eight sweeps. There are four substeps per 200 Hz game tick. Matching groups
+suppress each duck's internal collisions. These contact proxies, original visuals and gameplay material
 choices leave the source pin, authored mass/tensors and converter output
-unchanged. No STL files are used for either appearance or collision geometry.
+unchanged. Rendered appearance remains original procedural/photo-based geometry;
+collision support data is separately derived from upstream STL geometry.
 
-## Regeneration and validation
+Game joint stops use compliant gains 55/0.6, rather than clamping coordinates.
+Normal forward/reverse commands use 0.4 m/s and yaw requests use 1 rad/s;
+either held Shift boosts signed translation to 0.5 m/s and yaw to 1.25 rad/s,
+including reverse and diagonals. The 0.5 reverse trial fell, and boosted turns
+may stumble: these are policy requests, not guaranteed stable/actual speeds,
+fast-forward or artificial forces. Learned turning uses `turn = -drive`:
+A/left now produces the passing negative-yaw turn, while D/right is weak.
+Manual drive/trim behavior is unchanged. Gearbox friction uses preceding
+successful applied motor effort and joint load; voltage sag uses raw motor
+history before the separate effort ceiling. Reset clears those histories and
+joint effort/load/applied-effort readback before controls run on the reset tick.
+These are game/runtime choices, not edits to the source XML, converted model,
+policy weights or a claim of equivalent MuJoCo/training dynamics.
+
+## Frozen collision-data export
+
+`collision_spheres.json` is the frozen numeric source for `collisions.tide`.
+`collision_provenance.json` records pinned XML/STL source hashes, attribution,
+fit settings and tested record order; `collision_certificates.json` records
+geometry checks and their scope. Keep the frozen decimal values and record
+order: 131 nonfoot support spheres, 26 source-inscribed cores, 16 original foot
+proxies, then the procedural visual-casing core.
+Those values preserve the private probe's tested float32 geometry; re-exporting
+higher-precision research coordinates is a different numeric artifact.
+
+The separate standard-library exporter performs no fitting or simulation:
+
+```powershell
+python -B examples/robotics/microduck/tools/export_collisions.py
+python -B examples/robotics/microduck/tools/export_collisions.py --check
+```
+
+It verifies the frozen JSON hash/schema, finite values, positive radii, body
+coverage and sole assignments, and emits deterministic source. It needs no
+STL, MuJoCo, NumPy, simulator, network or build cache. Full fit regeneration is
+a separate private research workflow tied to the recorded assets and numeric
+environment. Ordinary game builds compile the checked-in collision data and
+need neither exporter nor private meshes. The licenses and notices beside
+the data identify its CC BY-NC-SA 4.0 provenance separately from code/XML.
+
+## XML model regeneration and validation
 
 From the repository root, with `TIDE_HIDDEN=1` in the agent shell:
 
@@ -90,15 +185,68 @@ Independent review found no issues; its separate 258-pose FK check stayed
 within `8.08e-9` m and `1.50e-7` rotation-matrix element error. Cross-platform
 regeneration and dynamic simulation validation are outside these checks.
 
-Separate validation of the current collision integration passes all 33
-backend runtime tests on native/WASI debug and release, including nine
-independent stock Newton contact-reference samples checking state and forces.
-All 40 bundled upstream hashes and 46 installed source/header files match
-the checkout. Installed CLI native/web release builds and final-profile
-WebGL/WebGPU interaction checks pass. The [example README](README.md) records
-the sphere-envelope clearance and unassisted-topple measurements. These
-integration checks leave the XML/model pins and conversion unchanged and do
-not establish physical fidelity or sim-to-real transfer.
+The fd6f stability-basis native/WASI hosts both pass 7/8, with all nine emitted
+final whole-world hashes matching, including the repeated walk baseline and
+known D/right failure. `build/microduck-run-check/final-test-summary.json`
+records W/S travel of 0.786932/0.863201 m, and Shift+W travel of 1.155245 m:
+0.368313 m (46.8%) above W, with 14/14 loaded cycles. Prone/side/supine one-second
+upright dwell confirms at 1.340/2.115/1.905 s, each with final-2s upright 100%.
+A/left reaches -3.316523 rad; D/right reaches only +0.196558 rad and fails
+the threshold. The fully fitted 150-sphere alternative failed walking and is
+not the selected model. No random-fall reliability or sim-to-real claim follows.
+
+The right-turn CTest is explicitly disabled with label `known-limitation`, while
+the seven supported cases register normally. Its strict 0.25 rad assertion still
+runs directly in the target/full host, which measures 7/8. The missing unrelated
+`bench/` directory blocks CMake configuration; registration inspection and
+installed-host evidence are not a clean full-suite CTest pass.
+
+Final runtime SHA-256 prefix `4f7a9110` passes 63 runtime tests on native
+and WASI, including three new stability regressions. Installed CLI native
+and web builds pass. All-direction boost policy checks pass 13 common tests on
+both targets and 14 on the threaded native host, including 1,215 actual worker callbacks; all four
+cadence-residue replay hashes match. Fresh-process joins in both native/WASI
+directions produce byte-identical 128,254-byte files (SHA-256
+`570cc830abd1ca6f0170f31a2d149060cc0027d321791c635e553688a31347fe`).
+Browser W/Shift+W/A/R and F8/F7 checks pass without errors, with screenshots
+inspected. A final 12-second steady WebGL observation shows 32.08 ms/frame
+(31 FPS), 2.35 ms/tick and 1.77 ms Newton work, 401 ticks/sec and 12.9 ticks/frame
+under combined client/server load. These snapshots are not a paired benchmark
+or evidence of 60 FPS or fully resolved browser lag. The basis's 23 native
+manual behavior cases pass; both target pin reruns pass
+1/1 for observed hash `90ed0aaf9bb442c8`. The full WASI 24-case suite has not
+been repeated on the final source; older complete runs and grab captures are historical.
+
+The adapter centers transient virtual free-joint parent frames at each body's
+current origin, with zero initial translation coordinates, preserving public
+COM/world conventions while avoiding distant-origin Cholesky cancellation.
+On the fd6f stability basis, corrected close-duck/ball/grab and ordinary
+full-scene W runs complete 4,000 native/WASI ticks with matching hashes `4cb7f65b76088097` and
+`658515fe75a71d1d`. A separate paired native block-multiply benchmark on a
+frozen previous-control idle scene improves 3.38 to 1.72 ms/tick, with three
+output arrays byte-identical for 1,020 ticks. Basis loaded headless W timings
+are 1.594 ms/tick native and 3.185 ms/tick WASI, not browser performance.
+The package's `UPSTREAM.md` describes these adapter changes and changed pins.
+
+Final-source walk/Shift+W checks pass 1/1 per target, preserving basis hashes
+`af41801b0af94572` / `dc74c754ef1b6356`; the current controls/replay summary is
+`build/microduck-run-check/all-boost-jtp4-test-summary.json`. The ordered
+four-column JᵀP optimization retains every term, tail and finite check.
+A paired native `nt_step` comparison measures 1.459854 to 1.088080 ms/call
+(25.47%) with all record bytes/status equal over 1,020 calls. One captured
+35/28/353 scene snapshot matches native/WASI SIMD, hash `d267a59f35210b5f`.
+This bounded result is separate from the earlier block benchmark and must not
+be multiplied into a precise cumulative or browser performance claim.
+Reverse boost falling or boosted turns stumbling is a controller capability
+limit, distinct from the corrected Newton numerical `Unstable` error.
+
+Earlier 33-case regularized-contact reference tests, installed-source/hash
+checks, assisted sole-envelope clearance/topple measurements and full-suite
+counts are historical evidence for the preceding manual sandbox. They are not
+a full-suite validation of the new model. Current measured results and the
+remaining checks are in the [example README](README.md).
+These checks leave XML/model pins and conversion unchanged and do not establish
+physical fidelity or sim-to-real transfer.
 
 ## Preserved model and interface
 
@@ -221,8 +369,8 @@ It examines sites/cameras/geoms only for frame validation.
 The empty equality section creates no loop; equality defaults do not create
 constraints. Hinge ranges are retained as data; a fixture chooses whether to
 enable Newton's soft limit forces. No mesh, contacts, friction, MuJoCo servo
-or BAM actuator behavior is implemented by this conversion. The sandbox's
-original compound sphere geometry and package contacts are separate from this
+or BAM actuator behavior is implemented by this XML conversion. The sandbox's
+separate compound sphere collision export and package contacts are separate from this
 unchanged conversion. Its mouse pulls and upright/heading/lane assistance are
 ordinary game forces and torques. Current upstream
 Python training configures different actuators; the XML settings here are a

@@ -17,6 +17,43 @@ NEWTON_REVISION = "ea4899864046dcd5981f8ba0bc3d8c25e65dcb96"
 WARP_REVISION = "b346b941a4c0cd19c510db67d6506d781464ed5b"
 
 
+def strip_unused_scalar_tile_guards(source):
+    """Remove only Warp's unused scalar-dispatch tile scratch guards.
+
+    The guard constructor touches shared function-static Warp storage even
+    when no tile operation is emitted. Accept the exact pinned dispatcher
+    prologue, and fail closed if a future export actually needs tile support.
+    """
+    if re.findall(r"(?m)^#define WP_TILE_BLOCK_DIM (.+)$", source) != ["1"]:
+        raise RuntimeError("tile guard removal requires the scalar block_dim=1 profile")
+    dispatcher = (
+        r"(?m)(^static WP_FORCEINLINE void \w+_cpu_forward_dispatch\("
+        r"[^{};]*\)\n\{\n)"
+    )
+    guard = (
+        "    wp::tile_shared_storage_t tile_mem;\n"
+        "#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)\n"
+        "    wp::shared_tile_storage = &tile_mem;\n"
+        "#endif\n"
+    )
+    dispatchers = len(re.findall(dispatcher, source))
+    stripped, removed = re.subn(dispatcher + re.escape(guard), r"\1", source)
+    if not dispatchers or removed != dispatchers:
+        raise RuntimeError("unused tile guard no longer matches every scalar CPU dispatcher")
+    # Check identifiers in code, not comments or string/character literals.
+    code = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
+                  " ", stripped, flags=re.DOTALL)
+    tile_identifiers = sorted({
+        token for token in re.findall(r"\b[A-Za-z_]\w*\b", code)
+        if re.search(r"(?:^|_)tiles?(?:_|$)", token, re.IGNORECASE)
+        and token != "WP_TILE_BLOCK_DIM"
+    })
+    if tile_identifiers:
+        raise RuntimeError("scalar CPU export contains unsupported tile usage: " +
+                           ", ".join(tile_identifiers))
+    return stripped
+
+
 def revision(folder):
     return subprocess.check_output(
         ["git", "-C", str(folder), "rev-parse", "HEAD"], text=True
@@ -40,6 +77,7 @@ def export_source(module, output, filename, wp):
         if len(generated) != 1:
             raise RuntimeError("expected exactly one generated module: " + filename)
         source = generated[0].read_text(encoding="utf-8")
+    source = strip_unused_scalar_tile_guards(source)
     source = re.sub(
         r"(?m)^// .*?((?:newton|warp)[/\\]_src[/\\].*?:\d+)$",
         lambda match: "// " + match[1].replace("\\", "/"),

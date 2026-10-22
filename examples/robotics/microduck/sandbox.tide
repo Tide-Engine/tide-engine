@@ -52,7 +52,8 @@ int NextDuckSerial(int serial)
 void MakeDuckSandbox(mut DuckSandbox sandbox)
 {
     sandbox.floor = Spawn(Body { type = BodyType.Static }, Collider {
-        type = ColliderType.Plane, stiffness = 5600, damping = 3, frictionDamping = 1
+        type = ColliderType.Plane, stiffness = 5600, damping = 3, frictionDamping = 1,
+        frictionModel = ContactFriction.Coulomb
     }, SandboxBody);
     for (int i = 0; i < 4; i += 1)
     {
@@ -67,7 +68,8 @@ void MakeDuckSandbox(mut DuckSandbox sandbox)
             mass = mass, inertia = float3(0.4 * mass * radius * radius), position = home
         }, Collider {
             type = ColliderType.Sphere, radius = radius,
-            stiffness = 5600, damping = 3, frictionDamping = 1
+            stiffness = 5600, damping = 3, frictionDamping = 1,
+            frictionModel = ContactFriction.Coulomb
         }, LooseBall { home = home, radius = radius, color = color }, SandboxBody, Grabbable));
     }
 }
@@ -96,8 +98,9 @@ void ResetDuckBalls(DuckSandbox sandbox, mut World world)
     }
 }
 
-// These original sphere estimates follow visuals.tide's original link frames,
-// not CAD/STLs. Only this conversion knows about the principal-body frame.
+// Frozen collision data uses original MJCF link frames. The derived geometry
+// and procedural exceptions are documented in README-COLLISIONS.md. Only this
+// conversion knows about the principal-body frame.
 void DuckProxy(Entity body, quaternion principalRotation, int seat, float3 original,
                float radius, mut List<Entity> colliders, mut List<Entity> soles, int foot = -1)
 {
@@ -106,7 +109,9 @@ void DuckProxy(Entity body, quaternion principalRotation, int seat, float3 origi
         body = body, type = ColliderType.Sphere,
         position = Math.Rotate(inverse, original), rotation = inverse,
         radius = radius, exclusionGroup = seat + 1,
-        stiffness = 5600, damping = 3, frictionDamping = 1
+        stiffness = 5600, damping = 3, frictionDamping = 1,
+        friction = foot >= 0 ? 0.8 : 0,
+        frictionModel = ContactFriction.Coulomb
     }, Grabbable);
     colliders.Add(collider);
     if (foot >= 0)
@@ -119,89 +124,9 @@ void DuckProxy(Entity body, quaternion principalRotation, int seat, float3 origi
 void DuckCollisionShapes(List<Entity> bodies, List<DuckBodyDefinition> model, int seat,
                          mut List<Entity> colliders, mut List<Entity> soles)
 {
-    for (int i = 0; i < 15; i += 1)
-    {
-        var body = bodies[i];
-        var principal = model[i].principalRotation;
-        if (i == 0)
-        {
-            for (int x = 0; x < 2; x += 1)
-                for (int side = -1; side <= 1; side += 2)
-                    DuckProxy(body, principal, seat, float3(-0.040 + x * 0.035, side * 0.014, 0.020),
-                              0.024, colliders, soles);
-            DuckProxy(body, principal, seat, float3(0.006, 0, -0.003), 0.023, colliders, soles);
-        }
-        else if (i == 1 || i == 10)
-        {
-            DuckProxy(body, principal, seat, float3(0, 0.004, 0.0125), 0.016, colliders, soles);
-            DuckProxy(body, principal, seat, float3(0, 0.018, 0.0125), 0.010, colliders, soles);
-        }
-        else if (i == 2 || i == 11)
-        {
-            DuckProxy(body, principal, seat, float3(0, 0, -0.002), 0.010, colliders, soles);
-            DuckProxy(body, principal, seat, float3(0.014, 0, -0.012), 0.011, colliders, soles);
-            DuckProxy(body, principal, seat, float3(0.025, 0, -0.0185), 0.011, colliders, soles);
-        }
-        else if (i == 3 || i == 12)
-        {
-            var sign = i == 3 ? 1.0 : -1.0;
-            DuckProxy(body, principal, seat, float3(0, 0.009, 0.0125), 0.017, colliders, soles);
-            DuckProxy(body, principal, seat, float3(sign * 0.011, 0.018, 0.021), 0.017, colliders, soles);
-            DuckProxy(body, principal, seat, float3(sign * 0.022, 0.0267771, 0.0125), 0.017, colliders, soles);
-        }
-        else if (i == 4 || i == 13)
-        {
-            var ankle = i == 4 ? float3(0, 0.042, -0.026) : float3(-0.042, 0, -0.026);
-            var along = i == 4 ? float3(0, 1, 0) : float3(-1, 0, 0);
-            DuckProxy(body, principal, seat, float3(0, 0, 0.004), 0.009, colliders, soles);
-            DuckProxy(body, principal, seat, ankle * 0.5 + float3(0, 0, 0.012), 0.010, colliders, soles);
-            DuckProxy(body, principal, seat, ankle - along * 0.010 + float3(0, 0, 0.0145),
-                      0.017, colliders, soles);
-        }
-        else if (i == 5 || i == 14)
-        {
-            var shift = i == 5 ? -0.005 : 0.005;
-            // Six equal bottom tangencies approximate each 72 x 43 mm sole.
-            for (int x = -1; x <= 1; x += 1)
-                for (int side = -1; side <= 1; side += 2)
-                    DuckProxy(body, principal, seat, float3(shift + x * 0.025, -0.0138146,
-                              -0.0140852 + side * 0.011), 0.010, colliders, soles, i == 5 ? 0 : 1);
-            DuckProxy(body, principal, seat, float3(0), 0.008, colliders, soles);
-            DuckProxy(body, principal, seat, float3(0, -0.006, -0.0140852), 0.010, colliders, soles);
-        }
-        else if (i == 6)
-        {
-            for (int link = 0; link < 3; link += 1)
-                DuckProxy(body, principal, seat, float3(0, -0.005 - link * 0.020, 0.0145),
-                          0.014, colliders, soles);
-        }
-        else if (i == 7)
-        {
-            DuckProxy(body, principal, seat, float3(0), 0.010, colliders, soles);
-            DuckProxy(body, principal, seat, float3(0, 0.012, -0.009), 0.011, colliders, soles);
-        }
-        else if (i == 8)
-        {
-            DuckProxy(body, principal, seat, float3(-0.004, 0, 0.0145), 0.017, colliders, soles);
-            DuckProxy(body, principal, seat, float3(-0.0179, 0, 0.0145), 0.008, colliders, soles);
-        }
-        else
-        {
-            // The head visual's drawing frame is rotated within its source link.
-            var frame = quaternion(0.70710678, 0.70710678, 0, 0);
-            for (int side = -1; side <= 1; side += 2)
-                for (int up = 0; up < 2; up += 1)
-                    for (int front = 0; front < 2; front += 1)
-                        DuckProxy(body, principal, seat, Math.Rotate(frame,
-                                  float3(side * 0.019, 0.012 + up * 0.012, 0.007 + front * 0.041)),
-                                  0.023, colliders, soles);
-            for (int side = -1; side <= 1; side += 2)
-                DuckProxy(body, principal, seat, Math.Rotate(frame, float3(side * 0.025, -0.005, 0.057)),
-                          0.015, colliders, soles);
-            DuckProxy(body, principal, seat, Math.Rotate(frame, float3(0, 0.0155, 0.0768)),
-                      0.010, colliders, soles);
-        }
-    }
+    foreach (var shape in DuckCollisionModel())
+        DuckProxy(bodies[shape.body], model[shape.body].principalRotation, seat,
+                  shape.position, shape.radius, colliders, soles, shape.foot);
 }
 
 float2 DuckFootLoads(Duck duck, World world)
