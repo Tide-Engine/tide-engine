@@ -210,6 +210,11 @@ static tide_headless_desc tide_run_headless_desc;
 // (Time.seed), in place of one from the system
 static bool tide_run_seeded;
 static uint32_t tide_run_seed;
+// --shards <n> and --shard-width <units>: a sharded game's matches on this
+// machine split into n regions along x from the start, each that wide (0: 16
+// times the game's shardRange), for trying borders out (tide/shards.h)
+static uint32_t tide_run_shards;
+static double tide_run_shard_width;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
 // The server went away or turned this machine away: not because it left,
@@ -603,6 +608,8 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_headless_desc = (tide_headless_desc){0};
     tide_run_seeded = false;
     tide_run_seed = 0;
+    tide_run_shards = 0;
+    tide_run_shard_width = 0.0;
     tide_run_data_directory = NULL;
     bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
@@ -623,6 +630,16 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             const char *takes = "the seed of the matches this machine starts, a whole number from 0 to 2147483647, like --seed 7";
             tide_run_seed = tide_run_whole(&i, arg, 2147483647u, takes);
             tide_run_seeded = true;
+        } else if (strcmp(arg, "--shards") == 0) {
+            const char *takes = "how many regions a sharded game's match starts split into along x, from 1 to 256, like --shards 2";
+            tide_run_shards = tide_run_whole(&i, arg, 256u, takes);
+            if (!tide_run_game->game->shards) {
+                fprintf(stderr, "tide: --shards is for a sharded game: one with 'settings { shards = true; }'\n");
+                exit(2);
+            }
+        } else if (strcmp(arg, "--shard-width") == 0) {
+            const char *takes = "how wide each region --shards makes is, in world units, like --shard-width 100";
+            tide_run_shard_width = tide_run_number(&i, arg, 1e-3, 1e12, takes);
         } else if (strcmp(arg, "--scale") == 0) {
             const char *takes = "a display's scale from 0.25 to 8, like --scale 2";
             tide_run_headless_desc.scale = (float)tide_run_number(&i, arg, 0.25, 8.0, takes);
@@ -759,7 +776,14 @@ static inline void tide_run_debug_views(void)
 // rate unless the host said otherwise.
 static inline tide_session *tide_run_new_session(void)
 {
+    // A sharded game's regions, as --shards and --shard-width say: centered on 0 along x
+    const tide_shard_game *sharded = tide_run_game->game->shards;
+    const uint32_t regions = tide_run_shards ? tide_run_shards : 1u;
+    const double width = tide_run_shard_width > 0.0 ? tide_run_shard_width : sharded ? 16.0 * sharded->range : 1.0;
+    const double half = 0.5 * width * (double)regions;
     return tide_session_create(&(tide_session_desc){
+        .shard_world = {{-half, -half, -half}, {half, half, half}},
+        .shard_split = {regions, 1u, 1u},
         .game = tide_run_game->game,
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,

@@ -18133,6 +18133,8 @@ static void gen_api(gen *g)
               "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
     sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n    (void)verified_previous;\n    (void)verified_alpha;\n");
+    // Shards.Owns in views: what the world they draw owns
+    if (sharded(g)) sb_put(o, "    tide_shard_use(w, w ? tide_shard_owns_world : NULL);\n");
     if (prog->seed_local) sb_put(o, "    local->tide_match_seed = w ? w->Time.seed : 0;\n");
     if (prog->uses_texture_size) sb_put(o, "    tide_target_pixels_fn tide_previous_pixels = tide_texture_target_pixels(draw->target_pixels);\n");
     // What the frame's draws send for code the GPU runs that rolls or reads the seed: one roll of this

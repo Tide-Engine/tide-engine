@@ -9,6 +9,8 @@
 #include "tide/sha256.h"
 #include "tide/pack.h"
 #include "tide/shard.h"
+#include "tide/shard_client.h"
+#include "tide/shards.h"
 
 // Every datagram starts with a header: "PU", the protocol version and a type.
 //
@@ -5449,6 +5451,11 @@ struct tide_session {
     // What its matches sent, for the host to hand the game's local handlers
     // (tide_session_events): its clients' own, one after another
     tide_event_log heard;
+
+    // A sharded game's match on this machine: every shard (tide/shards.h), and
+    // this machine's player in it, `client` being its home shard's client
+    tide_shards *shards;
+    tide_shard_client *shard_client;
 };
 
 // The session's own time starts over with each match.
@@ -5487,7 +5494,14 @@ static void tear_down(tide_session *s)
     }
     if (s->client) keep_traffic(s, s->client->traffic);
     if (s->server) keep_traffic(s, s->server->traffic);
-    tide_client_destroy(s->client);
+    if (s->shard_client) {
+        tide_shard_client_destroy(s->shard_client); // Its clients, the home's among them
+        s->shard_client = NULL;
+    } else {
+        tide_client_destroy(s->client);
+    }
+    tide_shards_destroy(s->shards);
+    s->shards = NULL;
     tide_server_destroy(s->server);
     tide_loopback_destroy(s->loopback);
     drop_stale(s);
@@ -5536,12 +5550,88 @@ void tide_session_leave(tide_session *s)
     push_event(s, (tide_session_event){.kind = TIDE_SESSION_DISCONNECTED_EVENT, .reason = TIDE_DISCONNECT_LEFT});
 }
 
+// A sharded game's match on this machine: every shard of it in this process
+// (tide/shards.h), each a server over loopback, and this machine's player in
+// it, following its entities from shard to shard (tide/shard_client.h).
+#define SHARDS_HERE 512u // Shards a match on this machine can have: two loopback endpoints each
+
+static void shard_transports(void *user, const uint32_t shard, tide_transport out[2])
+{
+    const tide_session *s = user;
+    if (shard < SHARDS_HERE) out[0] = tide_loopback_endpoint(s->loopback, 1u + shard);
+}
+
+static bool shard_reach(void *user, const uint32_t shard, const uint64_t match, tide_transport *transport,
+                        tide_address *server)
+{
+    const tide_session *s = user;
+    (void)match;
+    if (shard >= SHARDS_HERE) return false;
+    *transport = tide_loopback_endpoint(s->loopback, 1u + SHARDS_HERE + shard);
+    *server = tide_loopback_address(1u + shard);
+    return true;
+}
+
+static void start_shards(tide_session *s, const void *start, const double now)
+{
+    s->loopback = tide_loopback_create(1);
+    if (!s->loopback) {
+        tide_session_fail(s, TIDE_DISCONNECT_FAILED);
+        return;
+    }
+    tide_loopback_set_time(s->loopback, now);
+    const tide_shards_desc shards = {
+        .game = s->desc.game,
+        .tick_rate = s->desc.tick_rate,
+        .start = start,
+        .seed = s->desc.entropy ? (uint32_t)s->desc.entropy() & 0x7FFFFFFFu : s->desc.seed,
+        .world = s->desc.shard_world,
+        .split = {s->desc.shard_split[0], s->desc.shard_split[1], s->desc.shard_split[2]},
+        .most_entities = s->desc.shard_most,
+        .transports = shard_transports,
+        .user = s,
+        .jobs = s->desc.jobs,
+    };
+    s->shards = tide_shards_create(&shards, now);
+    const tide_shard_client_desc client = {
+        .client = {
+            .game = s->desc.game,
+            .transport = tide_loopback_endpoint(s->loopback, 1u + SHARDS_HERE),
+            .server = tide_loopback_address(1u),
+            .sample = s->desc.sample,
+            .user = s->desc.user,
+            .lead = 0, // Its inputs go straight in: the shards tick right after it
+            .jobs = s->desc.jobs,
+            .now_ns = s->desc.now_ns,
+            .resim_budget = s->desc.resim_budget,
+            .guess_seconds = s->desc.guess_seconds,
+            .correct_views = s->desc.correct_views,
+            .events = &s->heard,
+        },
+        .reach = shard_reach,
+        .user = s,
+    };
+    s->shard_client = s->shards ? tide_shard_client_create(&client, now) : NULL;
+    if (!s->shard_client) {
+        tear_down(s);
+        tide_session_fail(s, TIDE_DISCONNECT_FAILED);
+        return;
+    }
+    s->client = tide_shard_client_home(s->shard_client);
+    s->last_state = TIDE_SESSION_CONNECTING;
+}
+
 // A server with this machine's player on it, over loopback, and no one else
 // until it's opened.
 static void start_server(tide_session *s, const void *start, const void *world, const tide_player_set players,
                          const double now)
 {
     tide_session_leave(s);
+    if (s->desc.game->shards && !world) {
+        start_clock(s, now);
+        start_shards(s, start, now);
+        return;
+    }
     start_clock(s, now);
     s->loopback = tide_loopback_create(1);
     if (!s->loopback) {
@@ -5708,9 +5798,18 @@ void tide_session_update(tide_session *s, const double now)
     const double t = now - s->paused;
 
     if (s->loopback) tide_loopback_set_time(s->loopback, t);
-    update_client(s->client, t);
-    if (s->server) tide_server_update(s->server, t);
-    update_client(s->client, t); // What the server just sent: this machine's ticks, at once
+    if (s->shard_client) { // Every shard, then this machine's player, now at home wherever its entities are
+        tide_shard_client_update(s->shard_client, t);
+        tide_shards_update(s->shards, t);
+        tide_shard_client_update(s->shard_client, t);
+        s->client = tide_shard_client_home(s->shard_client);
+        s->client->local_receive = s->local_receive;
+        s->client->local_user = s->local_user;
+    } else {
+        update_client(s->client, t);
+        if (s->server) tide_server_update(s->server, t);
+        update_client(s->client, t); // What the server just sent: this machine's ticks, at once
+    }
 
     const tide_client_status status = tide_client_status_of(s->client);
     if (!s->server && status.cookie) s->cookie = status.cookie;
@@ -5845,7 +5944,7 @@ tide_session_status tide_session_status_of(const tide_session *s)
         status.client.state = TIDE_SESSION_CONNECTING;
         status.client.player = tide_player_from_index(s->stale->player);
     }
-    status.server = s->server != NULL;
+    status.server = s->server != NULL || s->shards != NULL;
     status.open = s->open;
     status.skipped = s->paused;
     traffic t = s->traffic;
@@ -6231,6 +6330,7 @@ static void take_server_world(tide_client *c, const tide_server *s)
 
 bool tide_session_migrate(tide_session *s, const tide_game *game, const tide_migrate_fn migrate, void *user)
 {
+    if (s->shards || s->shard_client) return false; // A sharded match starts over (notes/sharding.md, Gaps)
     const bool own = s->server && s->client; // This machine's player, on its own server
     server_migration sm = {0};
     client_migration cm = {0};

@@ -8,6 +8,7 @@
 #include "tide/jobs.h"
 #include "tide/net.h"
 #include "tide/player.h"
+#include "tide/shard.h"
 
 // Sessions: how a machine takes part in a match.
 //
@@ -574,6 +575,12 @@ typedef struct tide_session_desc {
     uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're `seed`
     uint32_t seed;             // With no entropy, the seed of every match it starts: 0 unless the host picked one
     tide_view_correct_fn correct_views; // Optional: presentation corrections, using `user`
+    // A sharded game's matches on this machine (tide/shards.h): the box the
+    // regions divide, regions along each axis to start with (0 counts as 1),
+    // and how many entities a region's shard owns before it splits (0: never).
+    tide_shard_box shard_world;
+    uint32_t shard_split[3];
+    uint32_t shard_most;
 } tide_session_desc;
 
 typedef enum tide_session_event_kind {
