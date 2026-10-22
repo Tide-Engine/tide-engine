@@ -74,6 +74,18 @@ MonoBehaviour:
   extra:
   fixed: 1
   gone: 5
+  cargo:
+    mass: 12
+    owner: {fileID: 200}
+  tags:
+    items: 0500000006000000
+  initial: 65
+  slots: 010000000200000003000000
+  holds:
+  - mass: 1
+    owner: {fileID: 0}
+  - mass: 2
+    owner: {fileID: 100}
 --- !u!114 &104
 MonoBehaviour:
   m_ObjectHideFlags: 0

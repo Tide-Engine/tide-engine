@@ -6345,9 +6345,10 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
     make_folder("lsp_unity/Assets");
     make_folder("lsp_unity/Assets/Tide");
     write_file("lsp_unity/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.0.0f1\n");
-    static const char game[] = "component Health { int hp; int armor; }\n"
+    static const char game[] = "component Health { int hp; int armor; Hold hold; List<Hold> holds; int Value; }\n"
                                "component Part { int hp; }\n"
-                               "scene Main { }\n";
+                               "scene Main { }\n"
+                               "struct Hold { int mass; }\n";
     write_file("lsp_unity/Assets/Tide/game.tide", game);
     write_file("lsp_unity/Assets/Thing.prefab",
                "%YAML 1.1\n"
@@ -6374,6 +6375,12 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
                "  m_EditorClassIdentifier: Tide.Game::Tide.Game.Health\n"
                "  hp: 10\n" // line 4
                "  armor: 1\n"
+               "  hold:\n"
+               "    mass: 4\n" // line 7: a struct's field
+               "  holds:\n"
+               "  - mass: 1\n" // line 9: ...in a list's element
+               "  - mass: 2\n"
+               "  Value_: 3\n" // line 11: Value, a member's name, has _ after
                "--- !u!114 &51\n"
                "MonoBehaviour:\n"
                "  m_Script: {fileID: 11500000, guid: e20821468e5bb86e036f171ea41778ed, type: 3}\n" // Part's
@@ -6390,6 +6397,9 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
                "    - target: {fileID: 51, guid: 11112222333344445555666677778888, type: 3}\n"
                "      propertyPath: hp\n" // its Part's
                "      value: 5\n"
+               "    - target: {fileID: 50, guid: 11112222333344445555666677778888, type: 3}\n"
+               "      propertyPath: holds.Array.data[1].mass\n" // line 11: a struct's field, in a list's element
+               "      value: 7\n"
                "  m_SourcePrefab: {fileID: 100100000, guid: 11112222333344445555666677778888, type: 3}\n");
     write_file("lsp_unity/Assets/Holder.prefab.meta", "fileFormatVersion: 2\nguid: 99992222333344445555666677778888\n");
     char root[700], uri[700];
@@ -6412,6 +6422,16 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
     TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":5,\"character\":20},\"end\":{\"line\":5,\"character\":22}},\"newText\":\"health\"}"));
     TIDE_CHECK(has(field, "Holder.prefab"));
     TIDE_CHECK(!has(field, "\"line\":8,") && !has(field, "\"line\":9,"));
+    // A struct's field, wherever a component holds the struct: its keys, and an instance's change of one
+    const char *mass = request_at(uri, "textDocument/rename", 3, 18, "\"newName\":\"weight\"");
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":7,\"character\":4},\"end\":{\"line\":7,\"character\":8}},\"newText\":\"weight\"}"));
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":9,\"character\":4},\"end\":{\"line\":9,\"character\":8}},\"newText\":\"weight\"}"));
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":10,\"character\":4},\"end\":{\"line\":10,\"character\":8}},\"newText\":\"weight\"}"));
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":11,\"character\":40},\"end\":{\"line\":11,\"character\":44}},\"newText\":\"weight\"}"));
+    // A field named as the class's members are: its key with _ after, renamed to one without
+    const int value_at = (int)(strstr(game, "int Value") + 4 - game);
+    const char *count = request_at(uri, "textDocument/rename", 0, value_at, "\"newName\":\"count\"");
+    TIDE_CHECK(has(count, "{\"range\":{\"start\":{\"line\":11,\"character\":2},\"end\":{\"line\":11,\"character\":8}},\"newText\":\"count\"}"));
     remove_game_file("lsp_unity/Assets/Tide/game.tide");
     remove_game_file("lsp_unity/Assets/Thing.prefab");
     remove_game_file("lsp_unity/Assets/Other.prefab");

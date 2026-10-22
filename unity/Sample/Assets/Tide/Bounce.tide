@@ -12,6 +12,7 @@ scene Main { }
 component Spinner
 {
     float speed = 1;
+    char badge = 'S';
 }
 
 // Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them
@@ -25,6 +26,8 @@ singleton Extras
     Entity bonus;
     Entity tossed;
     string said;
+    Set<PlayerID> speakers; // Who's said something
+    Grid2<byte> board;      // A cell for each line said
 }
 
 // A line from Unity's UI, which the match keeps for everyone: TideRunner.Get<Extras>().said in C#
@@ -36,6 +39,9 @@ command Say
 command(Say say, PlayerID sender) Saying(mut Extras extras)
 {
     extras.said = say.text;
+    extras.speakers.Add(sender);
+    if (extras.board.size.x == 0) extras.board = Grid2(8, 8);
+    extras.board[3, 4] += 1;
 }
 
 // A ball nobody rolls, in and out of the box: a GameObject made and let go of as its entity comes and goes, which
@@ -91,12 +97,20 @@ input Roll
     }
 }
 
+// A ball's trail, which a prefab sets in Unity's inspector as any struct field
+struct Trail
+{
+    float length;
+    Color tint;
+}
+
 component Ball
 {
     float3 velocity;
     Color color;
     int seat;
     int bounces;
+    Trail trail;
     local int heard; // This machine's, as its local handler counts its bounces (Heard)
 }
 

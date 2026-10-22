@@ -95,7 +95,8 @@ isn't UTF-8 or a command too big to send. Both are the generated game's
 (`notes/language.md`, Events, text commands and command defaults); the embed
 host passes them through unchanged, and `TIDE_EMBED_ABI` stays 3 (no function
 or struct of `tide/embed.h` changed; the packet says its own version). Tests:
-`embed_heard_events`, `embed_commands_and_scenes`.
+`embed_heard_events`, `embed_commands_and_scenes`. Version 4 the same day: lists, maps, sets and grids, what they
+hold included, each STRINGS entry from a multiple of 8 (`embed_containers`).
 
 Stats inside another program (2026-10-21, owner: `--stats` in the runner's
 Arguments did nothing). They were left out embedded ("the other program has

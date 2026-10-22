@@ -30,7 +30,33 @@ command Bump { int by; }
 command Rename { string name; List<byte> marks; }
 
 // What the other program hears as this machine's local handlers would (the packet's EVENTS)
-event Ticked { int ticks; string label; }
+event Ticked { int ticks; string label; List<string> words; }
+
+// Containers in the packet: each packed into its STRINGS, what they hold too
+struct Note { string text; int at; }
+
+singleton Shelf
+{
+    List<string> words;
+    List<Note> notes;
+    Map<string, int> counts;
+    Set<int> ids;
+    Grid2<byte> cells;
+    bool filled;
+}
+
+system Fill(mut Shelf shelf)
+{
+    if (shelf.filled) return;
+    shelf.filled = true;
+    shelf.words = ["tide", "unity"];
+    shelf.notes = [Note { text = "first", at = 3 }];
+    shelf.counts["apples"] = 2;
+    shelf.counts["pears"] = 5;
+    shelf.ids = [7, 9];
+    shelf.cells = Grid2(100, 50);
+    shelf.cells[70, 40] = 6;
+}
 
 input Keys
 {
@@ -51,7 +77,7 @@ system Count(Keys keys, mut Counter counter)
 {
     counter.ticks += 1;
     if (keys.space) counter.presses += 1;
-    if (counter.ticks % 10 == 0) this.Send(Ticked { ticks = counter.ticks, label = counter.label });
+    if (counter.ticks % 10 == 0) this.Send(Ticked { ticks = counter.ticks, label = counter.label, words = ["a", "b"] });
 }
 
 system Rise(mut Tally tally, Time time)

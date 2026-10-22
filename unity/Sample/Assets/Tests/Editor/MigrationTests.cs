@@ -19,7 +19,8 @@ public class MigrationTests
     {
         if (!AssetDatabase.IsValidFolder(Folder)) AssetDatabase.CreateFolder("Assets", "TideMigrationTestTemp");
         var made = new GameObject("Base");
-        List(made, ("Spinner", "speed = 2"), ("Ball", "seat = 2, color = Color(1, 0, 0), velocity = float3(1, 2, 3)"),
+        List(made, ("Spinner", "speed = 2, badge = 'x'"),
+             ("Ball", "seat = 2, color = Color(1, 0, 0), velocity = float3(1, 2, 3), trail = Trail { length = 4, tint = Color(0, 1, 0) }"),
              ("Transform", "localPosition = float3(0, 1, 0)"));
         var arm = new GameObject("Arm");
         arm.transform.SetParent(made.transform);
@@ -90,6 +91,9 @@ public class MigrationTests
         Assert.AreEqual(2, Field(source, "Ball", "seat").intValue);
         Assert.AreEqual(new Color(1, 0, 0, 1), Field(source, "Ball", "color").colorValue, "Color(r, g, b) is opaque");
         Assert.AreEqual(new Vector3(1, 2, 3), Field(source, "Ball", "velocity").vector3Value);
+        Assert.AreEqual(4f, Field(source, "Ball", "trail.length").floatValue, "a struct's field");
+        Assert.AreEqual(new Color(0, 1, 0, 1), Field(source, "Ball", "trail.tint").colorValue);
+        Assert.AreEqual('x', Field(source, "Spinner", "badge").intValue, "a char, as its code point");
         Assert.AreEqual(new[] { "Transform" }, Listed(source), "Transform's values stay listed, over the GameObject's placement");
         Assert.AreEqual(7, Field(source.transform.Find("Arm").gameObject, "Owner", "player").intValue);
         Assert.AreEqual(new[] { "Spinner" }, Listed(source.transform.Find("Odd").gameObject), "an expression stays listed");

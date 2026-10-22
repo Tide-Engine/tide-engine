@@ -321,7 +321,11 @@ them, and `runner.OnVerified` once the server confirms them, with an entity's
 own view hearing those sent to it (`GetComponent<TideEntityView>().On`); and
 `runner.Send(new Tide.Game.Buy { item = "sword" }, target)` sends a command,
 its text included, to the match or to the entity a GameObject shows. Local
-fields are on their components, shown in Play.
+fields are on their components, shown in Play. Every Tide type has its C#: a
+struct is a C# struct, and `List`, `Set`, `Map` and `Grid2`/`Grid3` are
+`List<T>`, `Tide.TideSet<T>`, `Dictionary<K, V>` and `Tide.TideGrid2<T>`. A
+component's struct, list, set, array and `char` fields are set in the
+inspector and baked; its maps and grids are filled in by game code.
 Older projects list components on the TideEntity itself, which tide still reads:
 Tools > Tide > Convert TideEntity Lists to Components makes them components of
 their own. Everything from Unity is under the

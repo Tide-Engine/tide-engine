@@ -378,6 +378,21 @@ sense"; `notes/unity.md`, Events, commands and singletons in C#).**
   entity's place), `embed_commands_and_scenes` (Rename's text and bytes, cut short, a missing entry, bad UTF-8),
   `embed_schema` (Ticked an event, listed after the commands), all in `platform/tests/embed.c`.
 
+**Containers in the view packet (2026-10-22, owner: "lets bridge any gaps").** `gen_embed_packers` (embed_codegen.inc,
+emitted by `gen_embed_heard` before `gen_heard`, so heard events use them) writes a packer for every list
+(`tide_embed_list<n>`), map and set (`tide_embed_map<n>`) and grid type (`tide_embed_<shape>`) and every type's fix
+(`tide_embed_fix_<T>`, prototypes first, as they call each other): `embed_fix_value` makes a value's heap fields the
+packet's handles wherever they are, so a list's elements, a map's keys and values and a struct's fields can hold
+text and containers in turn. A list of plain elements is `tide_packet_list`; others are copied into the scratch area,
+fixed and written as one entry; a map walks `tide_map_next` in insertion order into count, keys (to 8 bytes),
+values; a grid writes its directory's chunks as they are (`tide_grid_records`, `tide_grid_chunk_at`), so it costs
+what it holds, with a 48-byte header (dims, cell, shifts, size, chunks); a grid of cells holding text is 0. The heard
+events' store copies its STRINGS into each packet first (`tide_embed_heard_strings`), so their handles are the
+packet's unchanged and nothing is remapped. `tide_packet_text`/`_list` start each entry from a multiple of 8
+(`align_text` in `engine/src/embed_game.c`), so another language reads elements in place. Packet version 4. Test:
+`embed_containers` (a singleton's `List<string>`, `List<Note>`, `Map<string, int>`, `Set<int>` and `Grid2<byte>`,
+each read back as the header says), and Ticked's `List<string>` through `embed_heard_events`.
+
 For `tide unity --assets`: `compile_input.text` gives a file's text in place
 of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
 `parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,

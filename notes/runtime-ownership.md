@@ -135,7 +135,9 @@ table of which components are scenes' tags, which the schema marks (2026-10-21);
 still no generated call into the engine beyond those above. On 2026-10-22 the packet gained an EVENTS section
 (`TIDE_PACKET_EVENTS`, version 3: the events this machine heard, which the generated code keeps in a `tide_packet`
 of its own and writes with `tide_packet_grow`), `tide_embed_game` its last members `event_count`/`events`, the
-schema an "events" list and kind "event", and `defaults` commands' values too; no new engine function.
+schema an "events" list and kind "event", and `defaults` commands' values too; no new engine function. The same
+day `tide_packet_text` and `tide_packet_list` began each entry from a multiple of 8 of STRINGS' bytes (version 4), and
+generated code packs lists, maps, sets and grids with the functions above.
 
 ## Double Position attribute (2026-10-20)
 

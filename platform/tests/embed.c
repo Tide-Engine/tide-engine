@@ -457,6 +457,15 @@ TIDE_TEST(embed_heard_events)
                 uint32_t length = 0;
                 const uint8_t *label = strings_entry(p, size, heard.label.at, &length);
                 labels &= label && length == 7u && memcmp(label, "counted", 7) == 0 && heard.ticks % 10 == 0;
+                // A list of text: its elements the packet's handles too
+                const uint8_t *words = strings_entry(p, size, heard.words.at, &length);
+                labels &= words && length == 2u * sizeof(tide_text);
+                if (words) {
+                    tide_text second;
+                    memcpy(&second, words + sizeof second, sizeof second);
+                    const uint8_t *b = strings_entry(p, size, second.at, &length);
+                    labels &= b && length == 1u && b[0] == 'b';
+                }
             }
             at += record;
         }
@@ -466,6 +475,59 @@ TIDE_TEST(embed_heard_events)
     TIDE_CHECK(targets);
     TIDE_CHECK(labels);
     TIDE_CHECK(ordered); // Each once, as heard
+    tide_embed_destroy(e);
+}
+
+// Lists, maps, sets and grids, what they hold the packet's too: a singleton's, as STRINGS lays them out.
+TIDE_TEST(embed_containers)
+{
+    char *argv[] = {program};
+    tide_embed *e = start(1, argv);
+    TIDE_CHECK(e != NULL);
+    frames(e, 10, NULL);
+    uint32_t size = 0, count = 0, length = 0;
+    const uint8_t *p = tide_embed_view(e, &size);
+    const uint8_t *at = section(p, size, TIDE_PACKET_SINGLETON, type_named("Shelf"), &count, NULL);
+    TIDE_REQUIRE(at != NULL);
+    Shelf shelf;
+    memcpy(&shelf, at, sizeof shelf);
+    // List<string>: handles of text
+    const uint8_t *words = strings_entry(p, size, shelf.words.at, &length);
+    TIDE_REQUIRE(words && length == 2u * sizeof(tide_text));
+    tide_text word;
+    memcpy(&word, words + sizeof word, sizeof word);
+    const uint8_t *unity = strings_entry(p, size, word.at, &length);
+    TIDE_CHECK(unity && length == 5u && memcmp(unity, "unity", 5) == 0);
+    // List<Note>: structs whose text is a handle
+    const uint8_t *notes = strings_entry(p, size, shelf.notes.at, &length);
+    TIDE_REQUIRE(notes && length == sizeof(Note));
+    Note note;
+    memcpy(&note, notes, sizeof note);
+    const uint8_t *first = strings_entry(p, size, note.text.at, &length);
+    TIDE_CHECK(note.at == 3 && first && length == 5u && memcmp(first, "first", 5) == 0);
+    // Map<string, int>: count, 0, keys (to 8 bytes), values, as they were added
+    uint32_t handle;
+    memcpy(&handle, &shelf.counts, sizeof handle);
+    const uint8_t *counts = strings_entry(p, size, handle, &length);
+    TIDE_REQUIRE(counts && length == 8u + 8u + 2u * 4u && u32_at(counts, 0) == 2u);
+    tide_text key;
+    memcpy(&key, counts + 8u + sizeof key, sizeof key);
+    const uint8_t *pears = strings_entry(p, size, key.at, &length);
+    TIDE_CHECK(pears && length == 5u && memcmp(pears, "pears", 5) == 0);
+    TIDE_CHECK(u32_at(counts, 16) == 2u && u32_at(counts, 20) == 5u);
+    // Set<int>: count, 0, keys
+    memcpy(&handle, &shelf.ids, sizeof handle);
+    const uint8_t *ids = strings_entry(p, size, handle, &length);
+    TIDE_CHECK(ids && length == 16u && u32_at(ids, 0) == 2u && u32_at(ids, 8) == 7u && u32_at(ids, 12) == 9u);
+    // Grid2<byte>: its shape and size, then the one chunk it has, holding the cell set
+    const uint8_t *cells = strings_entry(p, size, shelf.cells.at, &length);
+    TIDE_REQUIRE(cells && length >= 48u + 16u);
+    TIDE_CHECK(u32_at(cells, 0) == 2u && u32_at(cells, 4) == 1u && u32_at(cells, 20) == 100u && u32_at(cells, 24) == 50u);
+    TIDE_CHECK(u32_at(cells, 32) == 1u); // One chunk
+    const uint32_t sx = u32_at(cells, 8), sy = u32_at(cells, 12);
+    TIDE_CHECK((int32_t)u32_at(cells, 48) == 70 >> sx && (int32_t)u32_at(cells, 52) == 40 >> sy);
+    const uint32_t place = (70u & ((1u << sx) - 1u)) | (40u & ((1u << sy) - 1u)) << sx;
+    TIDE_CHECK(cells[48u + 16u + place] == 6u);
     tide_embed_destroy(e);
 }
 

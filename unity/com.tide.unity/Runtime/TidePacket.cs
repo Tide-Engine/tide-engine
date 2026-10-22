@@ -55,7 +55,7 @@ namespace Tide
     public sealed unsafe class TidePacket
     {
         public const uint Magic = 0x56444954; // "TIDV"
-        public const uint Version = 3;
+        public const uint Version = 4;
         const int HeaderSize = 48;
         const int EntitySize = 24;
         const int SectionHeaderSize = 24;
@@ -240,6 +240,13 @@ namespace Tide
             count = 0;
             if (elementSize == 0 || !Entry(handle, out var at, out var length)) return null;
             count = (int)(length / elementSize);
+            return bytes + at;
+        }
+
+        // A text's, list's, map's, set's or grid's entry: its bytes, as tide/embed_game.h's STRINGS lays it out, or null.
+        public byte* Bytes(uint handle, out uint length)
+        {
+            if (!Entry(handle, out var at, out length)) return null;
             return bytes + at;
         }
 

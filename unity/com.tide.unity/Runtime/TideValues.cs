@@ -62,6 +62,21 @@ namespace Tide
         }
     }
 
+    // A map or set field of a view packet's value: its handle in the packet's STRINGS (0 for empty), in the first of the
+    // 24 bytes the game's C has for one (TideRead.Map and Set read it).
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    public struct TideMap
+    {
+        [FieldOffset(0)] public uint handle;
+    }
+
+    // A grid field of a view packet's value: its handle in the packet's STRINGS (TideRead.Grid2 and Grid3 read it).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TideGrid
+    {
+        public uint handle;
+    }
+
     // An entity field: Tide's handle of one, which the packet's entities have too (TideEntityRow).
     [StructLayout(LayoutKind.Sequential)]
     public struct TideEntityId

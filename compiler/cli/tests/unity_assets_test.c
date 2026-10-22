@@ -111,9 +111,11 @@ TIDE_TEST(unity_prefabs_and_scenes_as_tide_prefabs)
 }
 
 // The game's own components (com.tide.game's, as its components.json says how they're serialized), from
-// tests/unity_components, written as Unity writes them: a prefab's fields of each form, a field the component no
-// longer has and a component the game no longer has, both left out; and a scene's instance of it changing fields
-// (an element of each list, a color's channel, its entity to one of the scene's own) and removing a component.
+// tests/unity_components, written as Unity writes them: a prefab's fields of each shape (a struct holding an entity,
+// a set, a char, an array, a list of structs among them), a field the component no longer has and a component the
+// game no longer has, both left out; and a scene's instance of it changing fields (an element of each list, a color's
+// channel, its entity to one of the scene's own, a struct's field, an entity in a list's struct, a set's item, the
+// char) and removing a component.
 TIDE_TEST(unity_components_as_tide_components)
 {
     unity_sources s;
@@ -121,7 +123,9 @@ TIDE_TEST(unity_components_as_tide_components)
     const char *ship = text_of(&s, "Assets/Ship.prefab");
     TIDE_REQUIRE(ship != NULL);
     TIDE_CHECK(strstr(ship, "    Ship { speed = 2.5, heading = float3(0, 0, 1), tint = Color(1, 0.5, 0, 1), title = \"Flag \\\"one\\\"\", "
-                            "crew = Pilot, marks = [1, 2], stops = [float2(1, 2), float2(3, 4)], mode = Mode.Fast, fixed = true };\n"
+                            "crew = Pilot, marks = [1, 2], stops = [float2(1, 2), float2(3, 4)], mode = Mode.Fast, fixed = true, "
+                            "cargo = Hold { mass = 12, owner = Pilot }, tags = [5, 6], initial = 'A', slots = [1, 2, 3], "
+                            "holds = [Hold { mass = 1, owner = default }, Hold { mass = 2, owner = this }] };\n"
                             "    entity Pilot // Pilot\n") != NULL);
     TIDE_CHECK(strstr(ship, "        Cargo { mass = 4 };\n") != NULL);
     TIDE_CHECK(strstr(ship, "Removed") == NULL && strstr(ship, "gone") == NULL);
@@ -130,7 +134,8 @@ TIDE_TEST(unity_components_as_tide_components)
     TIDE_CHECK(strstr(fleet, "    entity Flagship // Flagship\n    {\n") != NULL);
     TIDE_CHECK(strstr(fleet, "        Ship { speed = 7, heading = float3(0, 0, 1), tint = Color(1, 1, 0, 1), title = \"Flag \\\"one\\\"\", "
                              "crew = Dock, marks = [1, 2, 9], stops = [float2(1, 2), float2(3, 8)], mode = Mode.Fast, "
-                             "extra = float2(1, 2), fixed = true };\n") != NULL);
+                             "extra = float2(1, 2), fixed = true, cargo = Hold { mass = 20, owner = Flagship.Pilot }, tags = [5, 7], "
+                             "initial = 'B', slots = [1, 2, 3], holds = [Hold { mass = 1, owner = Dock }, Hold { mass = 2, owner = this }] };\n") != NULL);
     TIDE_CHECK(strstr(fleet, "Cargo") == NULL);
     unity_sources_free(&s);
 }
