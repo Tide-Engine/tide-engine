@@ -41,6 +41,7 @@ packages/box3d/box3d/** -text
 compiler/third_party/ufbx/** -text
 compiler/third_party/stb_image/** -text
 compiler/third_party/dr_libs/** -text
+packages/voice/opus/** -text -whitespace
 compiler/tests/e2e/audio_import/** -text
 
 # Reproducible skinned fixture and saved measurements retain their hashed bytes.

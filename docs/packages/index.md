@@ -1,10 +1,10 @@
 ---
-description: "Find Tide's bundled Box2D, Box3D, Rooms, Lobby and Steam packages, learn what needs a package and locate docs for packages from git or local folders."
+description: "Find Tide's bundled physics, multiplayer menu, Steam and Opus voice chat packages, and locate docs for packages from git or local folders."
 ---
 
 # Packages
 
-Packages add shared Tide code and C libraries to a game. Tide bundles five optional packages: two physics integrations, two multiplayer menus and a Steam integration. Each has its own page here, with setup, API examples and current limits.
+Packages add shared Tide code and C libraries to a game. Tide bundles six optional packages: two physics integrations, two multiplayer menus, a Steam integration and Opus voice chat. Each has its own page here, with setup, API examples and current limits.
 
 ## Bundled packages
 
@@ -17,6 +17,7 @@ The name in the first column is what you pass to `tide add` or write in `tide.pa
 | `rooms` | `Rooms` | Play, Host and Join menus, room-code sharing and volume settings | [Rooms](./rooms.md) |
 | `lobby` | `Lobbies` | Pre-match lobbies, ready flags, browsing and quick match, with a menu | [Lobby](./lobby.md) |
 | `steam` | `Steam` | Steam identity, lobbies, matchmaking and match transport for `lobby` | [Steam](./steam.md) |
+| `voice` | `Voice` | Optional Opus voice chat through sessions, push-to-talk and receive volume | [Voice chat](./voice.md) |
 
 Choose `rooms` for a simple Play/Host/Join flow, or `lobby` when players gather before a match and browse or find games. `steam` extends `lobby` for desktop Steam builds and requires the game's own Steamworks library; that library is not bundled with Tide.
 

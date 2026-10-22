@@ -1,5 +1,14 @@
 # Hot reloading
 
+## Optional voice lifecycle (2026-10-22)
+
+Retained native reload calls the old voice provider's stop after mixer forget
+and before library unload, detaching session callbacks and freeing private
+codec/sample state. Full restart uses the same stop through `tide_run_end`.
+No speech history is serialized or carried into the next build. Package
+contracts, sender-replacement/reconnect coverage and full validation are in
+`notes/voice-package.md`.
+
 Library loading for another program (2026-10-20): `reload.c`'s helpers for
 carrying state over and loading, checking and swapping `game-<n>` libraries
 moved, unchanged but for one line, into `platform/src/reload_library.inc`,

@@ -1,5 +1,17 @@
 # No Tide code can corrupt memory
 
+## Optional voice and local packets (2026-10-22)
+
+Session local data checks packet bounds, greeted source/cookie, recipient
+identity and payload size before callback/relay; sender work has a fixed
+token bucket. The package validates Opus packet duration/channels and uses
+bounded speaker/jitter/sample queues, generation-tagged capture, copied
+playback cutoffs and SPSC ownership. Codec work never runs in the audio
+callback. Host stop follows mixer forget before any queue/code is freed.
+Malformed control/oversize/wrong-cookie packets, rate bounds, mute/reconnect
+and finite lossy-decoder output are covered on native/WASI. Detailed contracts
+and validation: `notes/voice-package.md`.
+
 ## Computed property receivers (2026-10-21)
 
 Array property setters use checked slot helpers and compiler-known offsetof

@@ -1,5 +1,15 @@
 # Audio
 
+## Optional Opus voice package (2026-10-22)
+
+`packages/voice` now adds session voice over the existing microphone and
+audio effects. A muted microphone effect copies bounded blocks to the frame
+thread for Opus; receive effects read decoded PCM queues. No mixer/capture
+backend, clip layout or generated audio API changed. Merely listing the
+package opens no device. Contracts, buffering, ownership and validation are
+in `notes/voice-package.md`; older "voice chat not built" entries below
+describe the pre-package implementation.
+
 Scalar Clip values without assets (2026-10-19) now request their existing C
 definition even when no Sound, microphone or clip asset is declared. The
 checker distinguishes using a Clip type/value from enabling playback; unused

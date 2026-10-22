@@ -1,0 +1,24 @@
+// Optional session voice. A game's local code enables reception and sets
+// transmitting while push-to-talk is held. Nothing belongs to the match.
+namespace Voice;
+
+local singleton VoiceClient
+{
+    bool enabled;
+    bool transmitting;
+    float volume = 1;
+}
+
+extern void TideVoiceConfigure(bool enabled, bool transmitting, float volume, Clip microphone);
+
+// A view changing these fields uses [Before(Voice.ConfigureVoice)] when
+// the setting should take effect in the same frame.
+view ConfigureVoice(VoiceClient voice)
+{
+    TideVoiceConfigure(voice.enabled, voice.transmitting, voice.volume, Clip.Microphone);
+}
+
+// Local receive gain for one player; zero mutes. It persists until changed,
+// or the match changes. This does not stop other players receiving them.
+[NativeName("TideVoiceSetVolume")]
+extern void SetVolume(PlayerID player, float volume);

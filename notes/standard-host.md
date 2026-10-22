@@ -1,5 +1,15 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Optional voice provider (2026-10-22)
+
+The host table's optional `voice` getter obtains registration from the game's
+own engine copy. After views and before audio submission, a non-embedded host
+runs its provider's frame callback with the session/audio list/current time.
+Teardown forgets audio before calling stop; retained native reload also stops
+the old provider before unload. Games with no registered provider allocate or
+send nothing for voice. The actual three-process headless capture regression
+and all C/API/lifetime contracts are in `notes/voice-package.md`.
+
 ## Leave, drop and rejoin in a run of several players (2026-10-21)
 
 The owner approved Claude's proposal after AI trials could not test

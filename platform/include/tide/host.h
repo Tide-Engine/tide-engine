@@ -21,6 +21,7 @@
 #include "tide/session.h"
 #include "tide/stats.h"
 #include "tide/time.h"
+#include "tide/voice.h"
 
 typedef struct tide_run_desc {
     const char *title;      // The window's title, over the game's title setting; NULL for that
@@ -117,6 +118,8 @@ typedef struct tide_host_game {
     // What another program needs to run the game (tide/embed.h): its view
     // packet, commands and scenes by name; NULL for a game built without it.
     const struct tide_embed_game *embed;
+    // Optional voice package, registered in the game's own engine copy.
+    const tide_voice_provider *(*voice)(void);
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -839,6 +842,13 @@ static inline void tide_run_begin(void)
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
+    if (tide_run_game->voice) {
+        const tide_voice_provider *voice = tide_run_game->voice();
+        if (voice && voice->stop) {
+            tide_platform_audio_forget();
+            voice->stop(voice->self, tide_run_session);
+        }
+    }
     tide_run_hosting_leave();
     const bool open = tide_run_drawer.open;
     tide_stats_free(&tide_run_drawer);
@@ -1042,6 +1052,10 @@ static inline int tide_run_frame(void *user, const float seconds)
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
+    if (game->voice && !tide_run_embedded) {
+        const tide_voice_provider *voice = game->voice();
+        if (voice) voice->frame(voice->self, s, &tide_run_audio, tide_run_now);
+    }
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);

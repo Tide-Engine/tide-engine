@@ -4382,13 +4382,20 @@ Picks made as the microphone was built (2026-10-07, the eighth card), awaiting t
 - **A run with no window plays a file into it**: `--microphone <file>` (`tide_headless_desc.microphone`, a WAV or Ogg Vorbis, read before anything runs and refused with exit code 2 when it can't be), looped, a 60th of a second of it a frame through the same path a device's frames take, so a test hears it where a player would be heard; without it the microphone is silent.
 - **Capture validation:** `tide_platform_audio_device` opens and closes this machine's WASAPI capture (nothing checks what it hears: a muted one hears silence). A headless Chrome check with its fake microphone ran `getUserMedia`, the input worklet and the WebAssembly capture bridge through the resampler and mixer: nonzero samples reached a muted voice's effect, output stayed silent, and closing capture ended the stream's tracks. Six Node checks cover delayed permission and worklet answers after close/reopen, queued messages, sample delivery and the input processor. **Not run here:** CoreAudio, ALSA with a device, AAudio, and the browser's physical microphone or permission prompts. **Not built:** choosing a device, stereo capture, echo cancellation or gain control as choices (the web's `getUserMedia` has the browser's defaults), Android's permission result as a callback (the platform polls), a macOS bundle with its usage text, voice chat.
 
+### Optional voice package (2026-10-22)
+
+**Decided:** working voice chat through sessions is an optional package using Opus and the existing microphone. Games without the package do not compile/link its codec or allocate its buffers. Voice is local presentation, outside ticks, commands, rollback, snapshots and deterministic hashes.
+
+**Implemented provisional choices:** `voice` / namespace `Voice`, local `VoiceClient.enabled`, `transmitting` and `volume`, `ConfigureVoice` ordering, and `SetVolume(PlayerID, float)`. Both flags default false; microphone capture requires transmission in a connected session. The host relays unreliable packets to other subscribed players. Global chat, 48 kHz mono, 20 ms frames, 24 kbit/s, 40 ms initial receive buffering, Opus DTX/FEC/concealment, 32 receive slots and 32 player gains are first-build choices. C hosts use the optional `tide_voice_provider` and local-data session API; no language builtin or generated runtime call is added. [Voice chat](./packages/voice.md) documents use and limits. Teams, proximity routing, positional voice and embedded Unity audio remain unbuilt.
+
+The older microphone implementation notes above describe the pre-package state; voice chat is no longer deferred.
+
 ### Open
 
 - Effects a game can't write itself: a reverb, which needs more state than a struct of plain fields (a `float[N]` delay line fits once arrays are in `audio` state structs, which is the first thing to try), and sends to a shared reverb bus.
 - A chain of `audio` declarations on one voice (`List<Effect>`), where v1 has one.
 - 3D audio beyond panning and distance: HRTF, occlusion, doppler (`pitch` by hand does the last).
 - Streaming a clip from a URL or a file at runtime (`Web.Fetch` gives the bytes; a `Clip` made of bytes is the missing piece), and recording to a file.
-- Voice chat as a package over the data channel, with the microphone as its source.
 - Sample-accurate scheduling (a sound that starts at a tick's exact time, music synced to the match's beat): `Audio.Play` starts at the next block.
 - Whether the simulation should ever hear audio (a rhythm game's match reading the music's position): today it reads `Time.t` and the view keeps the music to it.
 

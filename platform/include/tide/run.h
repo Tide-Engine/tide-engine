@@ -256,6 +256,7 @@ static const tide_host_game tide_host_game_api = {
     .correct_views = tide_run_local_correct,
 #endif
     .network = tide_network_get,
+    .voice = tide_voice_get,
 #ifdef TIDE_HAS_EMBED
     .layout = &tide_game_layout,
     .embed = &tide_game_embed,

@@ -1,5 +1,10 @@
 # Repository layout and reference history
 
+Optional voice (2026-10-22): `packages/voice` is the sixth bundled package,
+with vendored libopus and its own Tide/C bridge. The engine contains only
+registration/local-session-data support; games omitting it link no codec.
+Contracts and validation: `notes/voice-package.md`.
+
 Managed hosting (2026-10-15): the Node/SQLite service is in tide-services
 (below). compiler/cli/deploy.c owns local bundle/login/upload commands;
 managed_run.h is the generated game's platform-free WASI reactor host.

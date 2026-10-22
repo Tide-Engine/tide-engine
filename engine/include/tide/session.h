@@ -529,6 +529,14 @@ void tide_client_mark_presented(tide_client *c);
 
 typedef struct tide_session tide_session;
 
+// Unreliable machine-local data, outside simulation, commands and snapshots.
+// The server supplies the sender and a connection identity (not its secret
+// cookie). Bytes are borrowed only for the callback. Calls run on the frame
+// thread. A receiver must not change/destroy its session inside the callback.
+#define TIDE_LOCAL_DATA_BYTES 512u
+typedef void (*tide_local_data_fn)(void *user, tide_player_id sender, uint64_t connection,
+                                   const uint8_t *data, uint32_t size);
+
 typedef struct tide_session_desc {
     const tide_game *game;
     uint32_t tick_rate; // The matches it starts: 0 for the game's at the time (tide_game.tick_rate), or else 60
@@ -627,6 +635,17 @@ void tide_session_fail_message(tide_session *s, tide_disconnect_reason reason, c
 // browser that froze the page): the match goes on from where it stopped.
 void tide_session_update(tide_session *s, double now);
 bool tide_session_send_command(tide_session *s, const uint8_t *data, uint32_t size);
+// Subscribe, or unsubscribe with NULL. Only subscribed, connected players
+// receive data. The subscription follows this session across matches/migration.
+// The server relays to the other subscribed players, never back to the sender.
+// No listener means no subscription traffic or packet buffers. Payloads are
+// 1..TIDE_LOCAL_DATA_BYTES bytes; at most 60 packets/second, with a four-packet
+// burst. Lost, reordered and duplicate packets are the application's concern.
+void tide_session_listen_data(tide_session *s, tide_local_data_fn receive, void *user);
+bool tide_session_send_data(tide_session *s, const uint8_t *data, uint32_t size);
+// Local identity changes when this session starts/joins/adopts another match.
+// Used to discard presentation buffers even if player/cookie values repeat.
+uint64_t tide_session_data_generation(const tide_session *s);
 // Seconds from the last update until the match is due its next tick: when it
 // next needs an update, for a host with nothing else to do meanwhile, like one
 // whose window nobody sees (tide_platform_next_frame). Outside a match, or
